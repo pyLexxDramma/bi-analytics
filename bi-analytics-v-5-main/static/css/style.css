@@ -1,0 +1,851 @@
+
+/* ┌────────────────────────────────────────────────────────────────────────┐ */
+/* │ Цвет фона #12385C / hsl(209,67%,22%);                                  │ */
+/* └────────────────────────────────────────────────────────────────────────┘ */
+
+
+:root{
+
+    --themeBackgroundColor: hsl(190,40%,98%);
+    --themeBackgroundColor: hsl(210,67%,96%);
+    --themeBackgroundColor: hsl(216,28%,7%);
+    --themeBackgroundColor: hsl(209,67%,22%);
+
+    --themeDarkBackgroundColor: hsl(209,67%,18%);
+
+    --themeFontColor: hsl(210,67%,96%);
+
+    --theColor: 210,67%,96%;
+}
+
+/* ┌────────────────────────────────────────────────────────────────────────┐ */
+/* │ ⊗ СКРЫВАЕМ САЙДБАР ПО УМОЛЧАНИЮ ЧТОБЫ НЕ БЫЛО МЕРЦАНИЯ ¤ Start         │ */
+/* └────────────────────────────────────────────────────────────────────────┘ */
+
+/* section[data-testid="stSidebar"] {
+    display: none !important;
+}
+div[data-testid="collapsedControl"] {
+    display: none !important;
+} */
+
+/* ┌────────────────────────────────────────────────────────────────────────┐ */
+/* │ ⊗ СКРЫВАЕМ САЙДБАР ПО УМОЛЧАНИЮ ЧТОБЫ НЕ БЫЛО МЕРЦАНИЯ ¤ End           │ */
+/* └────────────────────────────────────────────────────────────────────────┘ */
+
+.main-header {
+    font-size: 2.5rem;
+    font-weight: bold;
+    color: #1f77b4;
+    margin-bottom: 1rem;
+}
+.metric-card {
+    background-color: #262730;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    margin: 0.5rem 0;
+}
+/* Фон основной области — как у меню (sidebar) */
+.stApp {
+    background-color: var(--themeBackgroundColor) !important;
+}
+/* Контейнер контента — тот же тон */
+.main .block-container,
+.main .element-container,
+.main h1, .main h2, .main h3, .main h4, .main h5, .main h6,
+.main p, .main span, .main label {
+    color: #ffffff !important;
+}
+.main .block-container {
+    background-color: rgba(18, 56, 92, 0.8) !important;
+}
+/* Хедер — такой же цвет, как фон */
+header[data-testid="stHeader"],
+[data-testid="stHeader"],
+.stHeader,
+div[data-testid="stHeader"],
+.stHeader > div,
+header > div,
+div[data-testid="stHeader"] > div {
+    background-color: var(--themeBackgroundColor) !important;
+    border-bottom: none !important;
+}
+header[data-testid="stHeader"] *,
+[data-testid="stHeader"] *,
+.stHeader * {
+    color: #ffffff !important;
+}
+/* Стилизация кнопок - темные с окантовкой, белый текст */
+.stButton > button {
+    background-color: #2a2a3a !important;
+    color: #ffffff !important;
+    border: 1px solid #4a5568 !important;
+    border-radius: 4px !important;
+    padding: 0.5rem 1rem !important;
+    font-weight: 500 !important;
+    transition: all 0.2s ease !important;
+}
+.stButton > button:hover {
+    background-color: #3a3a4a !important;
+    border-color: #5a5a6a !important;
+    color: #ffffff !important;
+}
+.stButton > button:focus {
+    border-color: #1f77b4 !important;
+    box-shadow: 0 0 0 2px rgba(31, 119, 180, 0.2) !important;
+    outline: none !important;
+}
+/* Кнопки primary - темные с более яркой окантовкой */
+.stButton > button[kind="primary"] {
+    background-color: #1a1a2a !important;
+    color: #ffffff !important;
+    border: 1px solid #1f77b4 !important;
+}
+.stButton > button[kind="primary"]:hover {
+    background-color: #2a2a3a !important;
+    border-color: #2a8bc4 !important;
+    color: #ffffff !important;
+}
+/* Отключенные кнопки */
+.stButton > button:disabled {
+    background-color: #1a1a2a !important;
+    color: #666666 !important;
+    border-color: #333333 !important;
+    opacity: 0.6 !important;
+}
+/* Стилизация selectbox */
+.stSelectbox > div > div > select {
+    background-color: #2a2a3a !important;
+    color: #ffffff !important;
+    border: 1px solid #4a5568 !important;
+    border-radius: 4px !important;
+}
+.stSelectbox > div > div > select:focus {
+    border-color: #1f77b4 !important;
+    box-shadow: 0 0 0 2px rgba(31, 119, 180, 0.2) !important;
+    outline: none !important;
+}
+/* Стилизация checkbox */
+.stCheckbox > label {
+    color: #ffffff !important;
+}
+/* Стилизация date input */
+.stDateInput > div > div > input {
+    background-color: #2a2a3a !important;
+    color: #ffffff !important;
+    border: 1px solid #4a5568 !important;
+}
+/* Стилизация number input */
+.stNumberInput > div > div > input {
+    background-color: #2a2a3a !important;
+    color: #ffffff !important;
+    border: 1px solid #4a5568 !important;
+    border-radius: 4px !important;
+}
+.stNumberInput > div > div > input:focus {
+    border-color: #1f77b4 !important;
+    box-shadow: 0 0 0 2px rgba(31, 119, 180, 0.2) !important;
+    outline: none !important;
+}
+/* Стилизация multiselect */
+.stMultiSelect > div > div {
+    background-color: #2a2a3a !important;
+    color: #ffffff !important;
+    border: 1px solid #4a5568 !important;
+}
+/* Стилизация file uploader */
+.stFileUploader > div {
+    background-color: #2a2a3a !important;
+    border: 1px solid #4a5568 !important;
+    border-radius: 4px !important;
+}
+/* Таблицы — фон синий #12385C, шрифт белый (переопределяем стандартный чёрный Streamlit) */
+.main table,
+.main table th,
+.main table td,
+.main table thead th,
+.main table tbody th,
+.main table tbody td,
+table,
+table th,
+table td,
+table thead th,
+table tbody th,
+table tbody td {
+    background-color: var(--themeBackgroundColor) !important;
+    color: #ffffff !important;
+    /* border-color: rgba(255, 255, 255, 0.25) !important; */
+    border: 0 !important;
+    font-size: 14px !important;
+}
+
+table td.bd-cell-red,
+table tbody td.bd-cell-red,
+table tbody tr:nth-child(odd) td.bd-cell-red,
+table tbody tr:nth-child(even) td.bd-cell-red {
+    color: #c0392b !important;
+}
+table td.bd-cell-green,
+table tbody td.bd-cell-green,
+table tbody tr:nth-child(odd) td.bd-cell-green,
+table tbody tr:nth-child(even) td.bd-cell-green {
+    color: #27ae60 !important;
+}
+table td.bd-cell-red *,
+table td.bd-cell-green * {
+    color: inherit !important;
+}
+
+
+.main table *,
+table th *,
+table td * {
+    color: #ffffff !important;
+}
+/* st.dataframe и st.table — контейнер и все ячейки */
+[data-testid="stDataFrame"],
+[data-testid="stDataFrame"] *,
+.stDataFrame,
+.stDataFrame *,
+div[data-testid="stDataFrame"] [role="cell"],
+div[data-testid="stDataFrame"] [role="columnheader"],
+[data-testid="stDataFrame"] td,
+[data-testid="stDataFrame"] th,
+[data-testid="stDataFrame"] .cell,
+[data-testid="stDataFrame"] [class*="cell"] {
+    background-color: var(--themeBackgroundColor) !important;
+    color: #ffffff !important;
+    font-size: 14px !important;
+}
+[data-testid="stDataFrame"] span,
+[data-testid="stDataFrame"] div,
+.stDataFrame span,
+.stDataFrame div {
+    color: #ffffff !important;
+}
+/* Таблица редактирования (st.data_editor) — видимый текст */
+[data-testid="stDataFrame"] input,
+[data-testid="stDataFrame"] [contenteditable="true"],
+.stDataFrame input,
+.stDataFrame [contenteditable="true"] {
+    color: #ffffff !important;
+    background-color: #1e3a5f !important;
+    border: 1px solid rgba(255,255,255,0.3) !important;
+}
+
+
+
+
+
+
+
+/* ┌────────────────────────────────────────────────────────────────────────┐ */
+/* │ ⊗ INPUT ¤ Start                                                        │ */
+/* └────────────────────────────────────────────────────────────────────────┘ */
+
+input{
+    /* width: calc(100% - 79px);
+    height: 29px;
+    display: flex;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center; */
+    /* font: 300 normal .884rem/1.4 'Inter', sans-serif;
+    letter-spacing: .008em;
+    text-indent: 0; */
+    /* color: hsl(215,41%,8%) !important; */
+    color: hsl(210,67%,96%) !important;
+    background-color: transparent !important;
+    overflow: none !important;
+    outline: none !important;
+    resize: none !important;
+    border-radius: 4px !important;
+    /* padding: 6px 11px 5px 66px !important;
+    margin: 4px 0 0 0 !important; */
+    box-shadow: none !important;
+    border: none !important;
+    transition: border .08s ease-in-out 0s !important;
+}
+/* input:not(:focus){
+    border: 1px solid hsl(214,34%,80%) !important;
+}
+input:focus{
+    border: 1px solid hsl(181,54%,50%) !important;
+} */
+
+textarea{
+    /* width: calc(100% - 24px);
+    min-height: 60px;
+    height: calc(100% - 25px); */
+    /* display: flex;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center; */
+    /* font: 300 normal .884rem/1.4 'Inter', sans-serif;
+    letter-spacing: .008em;
+    text-indent: 0; */
+    color: hsl(215,41%,8%) !important;
+    background-color: transparent !important;
+    overflow: none !important;
+    outline: none !important;
+    resize: none !important;
+    /* border-radius: 3px !important; */
+    border-radius: 4px !important;
+    box-shadow: 0 0 0 0 none !important;
+    /* padding: 15px 11px 8px 11px !important;
+    margin: 4px 0 0 0 !important; */
+    transition: border .08s ease-in-out 0s !important;
+}
+/* textarea:not(:focus){
+    border: 1px solid hsl(214,34%,80%) !important;
+}
+textarea:focus{
+    border: 1px solid hsl(181,54%,50%) !important;
+} */
+
+/* ┌────────────────────────────────────────────────────────────────────────┐ */
+/* │ ⊗ INPUT ¤ End                                                          │ */
+/* └────────────────────────────────────────────────────────────────────────┘ */
+
+/* ┌────────────────────────────────────────────────────────────────────────┐ */
+/* │ ⊗ Скрыть подсказку "Press Enter to submit form" ¤ Start                │ */
+/* └────────────────────────────────────────────────────────────────────────┘ */
+
+/* Скрыть подсказку "Press Enter to submit form" */
+[data-testid="stForm"] [data-testid="InputInstructions"] {
+    display: none !important;
+}
+
+/* Скрыть все инструкции в форме */
+[data-testid="stForm"] .st-emotion-cache-1gulkj5,
+[data-testid="stForm"] .st-emotion-cache-10y5sf6 {
+    display: none !important;
+}
+
+/* ┌────────────────────────────────────────────────────────────────────────┐ */
+/* │ ⊗ Скрыть подсказку "Press Enter to submit form" ¤ End                  │ */
+/* └────────────────────────────────────────────────────────────────────────┘ */
+
+/* ┌────────────────────────────────────────────────────────────────────────┐ */
+/* │ ⊗ Кастомный fixed-блок под AI ¤ Start                                  │ */
+/* └────────────────────────────────────────────────────────────────────────┘ */
+
+div.dragonBlock{
+    height: 0 !important;
+    position: fixed !important;
+    z-index: 2000000 !important;
+    top: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    margin: 0 auto auto auto !important;
+    /* visibility: visible !important;
+    opacity: 1 !important;
+    transition: visibility 0s ease-in-out 0s, opacity 0s ease-in-out 0s !important; */
+    will-change: transform !important;
+    pointer-events: none !important;
+}
+@media only screen and (min-width: 0px) and (max-width: 768px){
+
+    div.dragonBlock{
+        width: calc(100% - 34px) !important;
+    }
+}
+@media only screen and (min-width: 768.1px) and (max-width: 1260px){
+
+    div.dragonBlock{
+        width: 700px !important;
+    }
+}
+@media (min-width: 1260.1px){
+
+    div.dragonBlock{
+        width: 1200px !important;
+    }
+}
+div.dragonBlock > section{
+    width: 100% !important;
+    height: 100% !important;
+    display: flex !important;
+    flex-direction: row !important;
+    justify-content: flex-end !important;
+    align-items: flex-start !important;
+}
+div.dragonBlock > section > div{
+    width: 0 !important;
+    height: calc(100vh - 20px) !important;
+    height: calc(100svh - 20px) !important;
+    position: relative !important;
+}
+div.dragonBlock > section > div > section{
+    height: 0 !important;
+    position: absolute !important;
+    z-index: 5000000 !important;
+    top: auto !important;
+    right: 100% !important;
+    bottom: 0 !important;
+    left: unset !important;
+    display: flex !important;
+    flex-direction: row !important;
+    justify-content: center !important;
+    align-items: center !important;
+    margin: auto 0 auto auto !important;
+    pointer-events: auto !important;
+
+    /* box-shadow: 0 0 0 4px gold !important; */
+}
+@media only screen and (min-width: 0px) and (max-width: 768px){
+
+    div.dragonBlock > section > div > section{
+        width: calc(100% - 34px) !important;
+    }
+}
+@media only screen and (min-width: 768.1px) and (max-width: 1260px){
+
+    div.dragonBlock > section > div > section{
+        width: 700px !important;
+    }
+}
+@media (min-width: 1260.1px){
+
+    div.dragonBlock > section > div > section{
+        width: 1200px !important;
+    }
+}
+div.dragonBlock > section > div > section > div{
+    width: 100% !important;
+    height: 100% !important;
+    position: relative !important;
+}
+div.dragonBlock > section > div > section > div > section{
+    width: calc(100% - 14px) !important;
+    max-width: 420px !important;
+    height: 240px !important;
+    position: absolute !important;
+    z-index: 6000000 !important;
+    top: auto !important;
+    right: 0 !important;
+    bottom: 100% !important;
+    left: 0 !important;
+    display: flex !important;
+    flex-direction: row !important;
+    justify-content: center !important;
+    align-items: center !important;
+    margin: auto auto 0 auto !important;
+    background-color: hsl(168,100%,32%) !important;
+    /* border: 1px solid blue !important; */
+    border-radius: 4px !important;
+    overflow: hidden !important;
+}
+div.dragonBlock > section > div > section > div > section > div.ai-anchor{
+    width: 100% !important;
+    height: 100% !important;
+    box-shadow: inset 0 0 0 4px hsl(198,78%,70%) !important;
+}
+
+/* ┌────────────────────────────────────────────────────────────────────────┐ */
+/* │ ⊗ Кастомный fixed-блок под AI ¤ End                                    │ */
+/* └────────────────────────────────────────────────────────────────────────┘ */
+
+/* ┌────────────────────────────────────────────────────────────────────────┐ */
+/* │ ⊗ Я хз что это пока ¤ Start                                            │ */
+/* └────────────────────────────────────────────────────────────────────────┘ */
+
+div[data-testid="stDataFrame"] [role="grid"] {
+    background-color: #12385C !important;
+}
+
+div[data-testid="stDataFrame"] [role="row"],
+div[data-testid="stDataFrame"] [role="cell"] {
+    background-color: #12385C !important;
+    color: #ffffff !important;
+}
+
+/* Заголовки таблицы */
+div[data-testid="stDataFrame"] [role="columnheader"] {
+    background-color: #0d2b47 !important;
+    color: #e0f0ff !important;
+}
+
+/* ┌────────────────────────────────────────────────────────────────────────┐ */
+/* │ ⊗ Я хз что это пока ¤ End                                              │ */
+/* └────────────────────────────────────────────────────────────────────────┘ */
+
+/* Весь sidebar */
+[data-testid="stSidebar"]{
+    background-color: #12385C !important;
+    border-right: 1px solid rgba(255,255,255,0.1) !important;
+}
+[data-testid="stSidebar"] > div:first-child {
+    background-color: #12385C !important;
+    overflow-y: scroll !important;          /* ← force vertical scroll */
+    overflow-x: hidden !important;
+    scrollbar-width: thin !important;       /* Firefox: тонкий скроллбар */
+    scrollbar-color: #4a6a8c transparent !important;  /* Firefox: цвета */
+}
+/* 3. Самый важный — внутренний скроллируемый контент */
+[data-testid="stSidebarContent"] {
+    overflow-y: scroll !important;
+    overflow-x: hidden !important;
+    height: 100% !important;                /* растягиваем на всю высоту */
+    scrollbar-width: thin !important;
+    scrollbar-color: #4a6a8c transparent !important;
+}
+/* 4. WebKit-браузеры (Chrome, Edge, Safari) — заставляем показывать всегда */
+[data-testid="stSidebarContent"]::-webkit-scrollbar {
+    width: 4px !important;                  /* ширина скроллбара */
+    display: block !important;              /* ← ключевой момент */
+}
+/* Трек — полностью прозрачный фон, без padding/margin */
+[data-testid="stSidebarContent"]::-webkit-scrollbar-track {
+    background: transparent !important;
+    border: none !important;         /* ← убираем любые бордеры */
+    margin: 0 !important;            /* ← иногда помогает */
+    padding: 0 !important;
+}
+/* Ползунок — занимает ВСЮ ширину (4px), без внутренних отступов */
+[data-testid="stSidebarContent"]::-webkit-scrollbar-thumb {
+    background: #4a6a8c !important;
+    border: none !important;         /* ← обязательно, без бордера */
+    border-radius: 0 !important;     /* плоский, без скругления */
+    box-shadow: none !important;     /* убираем тени */
+}
+/* На hover — можно чуть ярче, но ширина остаётся 4px */
+[data-testid="stSidebarContent"]::-webkit-scrollbar-thumb:hover {
+    background: #5a7a9c !important;
+}
+
+/* ┌────────────────────────────────────────────────────────────────────────┐ */
+/* │ ⊗ Кастомные шрифты ¤ Start                                             │ */
+/* └────────────────────────────────────────────────────────────────────────┘ */
+
+h1.Buquhununee{
+    width: 100% !important;
+    height: auto !important;
+    font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+    font-weight: 800 !important;
+    font-style: normal !important;
+    font-size: 2.94rem !important;
+    line-height: 1.08 !important;
+    letter-spacing: 0.004em !important;
+    text-align: left !important;
+    color: var(--themeFontColor) !important;
+    margin: 0 0 34px 0 !important;
+    padding: 0 !important;
+
+    /* box-shadow: inset 0 0 0 1px gold !important; */
+}
+h1.Buquhununee > span:not(:first-child){
+    width: 0 !important;
+    height: 0 !important;
+    overflow: hidden !important;
+
+    /* box-shadow: 0 0 0 4px hotpink !important; */
+}
+h2.Duquhununee{
+    width: 100% !important;
+    height: auto !important;
+    font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+    font-weight: 700 !important;
+    font-style: normal !important;
+    font-size: 1.84rem !important;
+    line-height: 1.08 !important;
+    letter-spacing: 0.004em !important;
+    text-align: left !important;
+    color: var(--themeFontColor) !important;
+    margin: 0 0 40px 0 !important;
+    padding: 0 !important;
+
+    /* box-shadow: inset 0 0 0 1px gold !important; */
+}
+h2.Duquhununee > span:not(:first-child){
+    width: 0 !important;
+    height: 0 !important;
+    overflow: hidden !important;
+
+    /* box-shadow: 0 0 0 4px hotpink !important; */
+}
+h3.Muquhununee{
+    width: 100% !important;
+    height: auto !important;
+    font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+    font-weight: 700 !important;
+    font-style: normal !important;
+    font-size: 1.84rem !important;
+    line-height: 1.08 !important;
+    letter-spacing: 0.004em !important;
+    text-align: left !important;
+    color: var(--themeFontColor) !important;
+    margin: 0 0 40px 0 !important;
+    padding: 0 !important;
+
+    /* box-shadow: inset 0 0 0 1px gold !important; */
+}
+h3.Muquhununee > span:not(:first-child){
+    width: 0 !important;
+    height: 0 !important;
+    overflow: hidden !important;
+
+    /* box-shadow: 0 0 0 4px hotpink !important; */
+}
+
+/* ┌────────────────────────────────────────────────────────────────────────┐ */
+/* │ ⊗ Кастомные шрифты ¤ End                                               │ */
+/* └────────────────────────────────────────────────────────────────────────┘ */
+
+/* ┌────────────────────────────────────────────────────────────────────────┐ */
+/* │ ⊗ Табсы ¤ Start                                                        │ */
+/* └────────────────────────────────────────────────────────────────────────┘ */
+
+.stTabs {
+
+}
+.stTabs div[data-baseweb="tab-list"]{
+    gap: .5rem !important;
+    padding: 0 !important;
+}
+.stTabs button[data-baseweb="tab"]{
+    -webkit-tap-highlight-color: transparent !important;
+    -webkit-touch-callout: none !important;
+    user-select: none !important;
+    appearance: none !important;
+    outline: none !important;
+    padding: 1.4rem .5rem !important;
+    border: 0 !important;
+    margin: 0 !important;
+    cursor: pointer !important;
+    transition: background-color .3s ease-in-out 0s, color .3s ease-in-out 0s !important;
+}
+.stTabs button[data-baseweb="tab"]:not(:hover){
+    background-color: transparent !important;
+    color: hsla(210,67%,96%,.9) !important;
+}
+.stTabs button[data-baseweb="tab"]:hover{
+    background-color: transparent !important;
+    color: hsla(210,67%,96%,1) !important;
+}
+.stTabs button[data-baseweb="tab"] p{
+    font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+    font-weight: 500 !important;
+    font-style: normal !important;
+    font-size: .94rem !important;
+    line-height: 1.08 !important;
+    letter-spacing: 0.004em !important;
+    text-align: left !important;
+}
+.stTabs button[data-baseweb="tab"][aria-selected="true"] {
+    color: #ff4b4b !important;
+}
+.stTabs div[data-baseweb="tab-border"] {
+    background-color: hsla(210,67%,96%,.4) !important;
+    height: 2px !important;
+}
+.stTabs [data-baseweb="tab-panel"]{
+    margin: 80px 0 0 0 !important;
+}
+
+/* ┌────────────────────────────────────────────────────────────────────────┐ */
+/* │ ⊗ Табсы ¤ End                                                          │ */
+/* └────────────────────────────────────────────────────────────────────────┘ */
+
+/* ┌────────────────────────────────────────────────────────────────────────┐ */
+/* │ ⊗ Таблицы ¤ Start                                                      │ */
+/* └────────────────────────────────────────────────────────────────────────┘ */
+
+table{
+    width: calc(100% - 2px) !important;
+    border-collapse: separate !important;
+    border-spacing: 0 !important;
+    border-radius: 3px !important;
+    overflow: hidden !important;
+    /* background-color: hsla(var(--theColor),.3) !important; */
+    background-color: var(--themeBackgroundColor) !important;
+    border: 1px solid hsla(var(--theColor),.9) !important;
+    /* border: 0 solid hsla(var(--theColor),.9) !important; */
+}
+table thead th{
+    /* background-color: #0d2b47 !important;  */
+    font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+    font-weight: 400 !important;
+    font-style: normal !important;
+    font-size: .938 !important;
+    line-height: 1.34 !important;
+    letter-spacing: 0.003em !important;
+    text-align: left !important;
+    color: hsla(var(--theColor),1) !important;
+    padding: 12px 14px !important;
+    /* border-bottom: 1px solid hsla(210,67%,96%,.4) !important; */
+    background-color: var(--themeDarkBackgroundColor) !important;
+    border-bottom: 0 solid hsla(var(--theColor),.4) !important;
+    /* border: 0 !important; */
+}
+table thead th:first-of-type{
+    border-right: 1px solid hsla(var(--theColor),.9) !important;
+}
+table thead th:not(:first-of-type):not(:last-of-type){
+    border-right: 1px solid hsla(var(--theColor),.9) !important;
+}
+table thead th:last-of-type{
+    border-right: 0 solid hsla(var(--theColor),.9) !important;
+}
+table tbody td{
+    /* background-color: var(--themeBackgroundColor) !important; */
+    font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+    font-weight: 300 !important;
+    font-style: normal !important;
+    font-size: .875rem !important;
+    line-height: 1.34 !important;
+    letter-spacing: 0.003em !important;
+    text-align: left !important;
+    color: hsla(var(--theColor),1) !important;
+    padding: 12px 14px !important;
+    /* border-bottom: 1px solid hsla(210,67%,96%,.4) !important; */
+    transition: background-color 0.2s ease !important;
+    /* border: 0 !important; */
+}
+table tbody td:first-of-type{
+    border-right: 1px solid hsla(var(--theColor),.9) !important;
+}
+table tbody td:not(:first-of-type):not(:last-of-type){
+    border-right: 1px solid hsla(var(--theColor),.9) !important;
+}
+table tbody td:last-of-type{
+    border-right: 0 solid hsla(var(--theColor),.9) !important;
+}
+table tbody tr:first-of-type td{
+    border-top: 1px solid hsla(var(--theColor),.9) !important;
+}
+table tbody tr:not(:first-of-type):not(:last-of-type) td{
+    border-top: 1px solid hsla(var(--theColor),.4) !important;
+}
+table tbody tr:last-of-type td{
+    border-top: 1px solid hsla(var(--theColor),.4) !important;
+    /* border-top: 1px solid var(--themeBackgroundColor) !important; */
+}
+/* Альтернативный вариант - чередующиеся строки (zebra stripes) */
+table tbody tr:nth-child(odd) td{
+    /* background-color: rgba(255, 255, 255, 0.02) !important; */
+    /* background-color: var(--themeBackgroundColor) !important; dd*/
+    background-color: transparent !important;
+    /* border-bottom: 0 !important; */
+}
+table tbody tr:nth-child(even) td{
+    /* background-color: rgba(255, 255, 255, 0.02) !important; */
+    /* background-color: hsla(var(--theColor),.04) !important; */
+    background-color: hsl(209,67%,30%) !important;
+    /* border-bottom: 0 !important; */
+}
+/* table tbody tr:nth-child(even):hover td {
+    background-color: rgba(255, 255, 255, 0.07) !important;
+} */
+
+/* Для узких экранов - адаптивность */
+@media (max-width: 768px) {
+    table thead th,
+    table tbody td {
+        padding: 10px 12px !important;
+        font-size: 13px !important;
+    }
+}
+
+/* ┌────────────────────────────────────────────────────────────────────────┐ */
+/* │ ⊗ Таблицы ¤ End                                                        │ */
+/* └────────────────────────────────────────────────────────────────────────┘ */
+
+/* input[aria-label="Enter"] {
+    box-shadow: 0 0 0 4px hotpink;
+} */
+
+/* ┌────────────────────────────────────────────────────────────────────────┐ */
+/* │ ⊗ Адаптивность и читаемость графиков/таблиц ¤ Start                   │ */
+/* └────────────────────────────────────────────────────────────────────────┘ */
+
+/* Основной контейнер — комфортный максимум для широких мониторов */
+.main .block-container {
+    max-width: 1400px !important;
+    padding-left: 2rem !important;
+    padding-right: 2rem !important;
+}
+
+/* HTML-таблицы (st.markdown с unsafe_allow_html) — горизонтальная прокрутка */
+.main div[data-testid="stMarkdownContainer"] > div {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+}
+
+/* Plotly-контейнер — полная ширина без обрезания */
+.main div[data-testid="stPlotlyChart"],
+.main div[data-testid="element-container"] iframe {
+    width: 100% !important;
+    min-height: 0 !important;
+}
+
+/* Кастомные HTML-таблицы (format_dataframe_as_html и бюджетные таблицы) */
+.bd-table-wrap {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    width: 100% !important;
+    max-width: 100% !important;
+}
+
+/* ── Мобильные экраны (< 768px) ───────────────────────────────────────── */
+@media (max-width: 768px) {
+    .main .block-container {
+        padding-left: 0.75rem !important;
+        padding-right: 0.75rem !important;
+    }
+
+    /* Заголовки меньше на мобилке */
+    .main h1 { font-size: 1.5rem !important; }
+    .main h2 { font-size: 1.25rem !important; }
+    .main h3 { font-size: 1.1rem !important; }
+
+    /* Вкладки (tabs) — перенос на следующую строку */
+    .stTabs div[data-baseweb="tab-list"] {
+        flex-wrap: wrap !important;
+        gap: 0.25rem !important;
+    }
+    .stTabs button[data-baseweb="tab"] {
+        padding: 0.75rem 0.5rem !important;
+        font-size: 0.85rem !important;
+    }
+
+    /* Метрики — одна в ряд */
+    div[data-testid="metric-container"] {
+        min-width: 120px !important;
+    }
+}
+
+/* ── Планшетные экраны (768px – 1200px) ───────────────────────────────── */
+@media (min-width: 769px) and (max-width: 1200px) {
+    .main .block-container {
+        padding-left: 1.5rem !important;
+        padding-right: 1.5rem !important;
+    }
+}
+
+/* ── Широкие мониторы (> 1400px) ─────────────────────────────────────── */
+@media (min-width: 1401px) {
+    .main .block-container {
+        max-width: 1600px !important;
+    }
+}
+
+/* Метрики — минимальная ширина чтобы цифры не переносились */
+div[data-testid="metric-container"] {
+    min-width: 140px !important;
+}
+div[data-testid="stMetricValue"] {
+    font-size: clamp(1.1rem, 2vw, 1.75rem) !important;
+    white-space: nowrap !important;
+}
+div[data-testid="stMetricLabel"] {
+    font-size: clamp(0.75rem, 1.2vw, 0.9rem) !important;
+}
+div[data-testid="stMetricDelta"] {
+    font-size: clamp(0.7rem, 1vw, 0.85rem) !important;
+}
+
+/* ┌────────────────────────────────────────────────────────────────────────┐ */
+/* │ ⊗ Адаптивность и читаемость графиков/таблиц ¤ End                     │ */
+/* └────────────────────────────────────────────────────────────────────────┘ */

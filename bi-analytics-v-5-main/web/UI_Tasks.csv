@@ -1,0 +1,70 @@
+Column1;Column2;Column3;Column4
+Название;Комментарий;en;ru
+UI_Tasks_AddTaskAssignedRole;;Add;Добавить
+UI_Tasks_Author;"Текст метки в заданиях ""Автор""";Author;Автор
+UI_Tasks_AutoApprovedMessageWithAdditionalApprove;Стандартное сообщение при авто завершении задания согласно мнению ответственного доп. согласующего.;Auto-approved by the system according to responsible approver's conclusion;Автоматически завершено системой согласно мнению ответственного доп. согласующего
+UI_Tasks_AutoApproveNotice;;Attention, this document will be automatically approved by system;Внимание, данный документ будет автоматически согласован системой
+UI_Tasks_CompletionOptions_Accept;"Текст варианта завершения задания ""Accept""";Accept;Принять
+UI_Tasks_CompletionOptions_AddComment;"Текст варианта завершения задания ""AddComment""";Add comment;Добавить комментарий
+UI_Tasks_CompletionOptions_AdditionalApproval;"Текст варианта завершения задания ""AdditionalApproval""";Additional approval;Запросить дополнительное согласование
+UI_Tasks_CompletionOptions_Approve;"Текст варианта завершения задания ""Approve""";Approve;Согласовать
+UI_Tasks_CompletionOptions_AuthorActions;"Текст кнопки ""Действия автора""";Author actions;Действия автора
+UI_Tasks_CompletionOptions_Back;"Текст кнопки ""Назад""";Back;Назад
+UI_Tasks_CompletionOptions_Cancel;"Текст варианта завершения задания ""Cancel""";Cancel;Отмена
+UI_Tasks_CompletionOptions_CancelApprovalProcess;"Текст варианта завершения задания ""CancelApprovalProcess""";Cancel process;Отменить процесс
+UI_Tasks_CompletionOptions_Complete;"Текст варианта завершения задания ""Complete""";Complete;Завершить
+UI_Tasks_CompletionOptions_Continue;"Текст варианта завершения задания ""Continue""";Continue process;Продолжить процесс
+UI_Tasks_CompletionOptions_CreateChildResolution;"Текст варианта завершения задания ""CreateChildResolution""";Create subtask;Создать подзадачу
+UI_Tasks_CompletionOptions_Decline;"Текст варианта завершения задания ""Decline""";Decline;Отказ
+UI_Tasks_CompletionOptions_Delegate;"Текст варианта завершения задания ""Delegate""";Delegate;Делегировать
+UI_Tasks_CompletionOptions_DeregisterDocument;"Текст варианта завершения задания ""DeregisterDocument""";Cancel document registration;Отменить регистрацию документа
+UI_Tasks_CompletionOptions_Disapprove;"Текст варианта завершения задания ""Disapprove""";Reject;Не согласовать
+UI_Tasks_CompletionOptions_HiddenByDefaultActions;"Текст кнопки ""Скрытые по умолчанию действия""";Hidden by default actions;Скрытые по умолчанию действия
+UI_Tasks_CompletionOptions_HideHiddenByDefaultActions;"Текст кнопки ""Скрыть действия, скрываемые по умолчанию""";Hide hidden by default actions;Скрыть действия, скрываемые по умолчанию
+UI_Tasks_CompletionOptions_InProgress;"Текст кнопки ""В работу""";In progress;В работу
+UI_Tasks_CompletionOptions_ModifyAsAuthor;"Текст варианта завершения задания ""ModifyAsAuthor""";Modify parameters as author;Изменить параметры как автор
+UI_Tasks_CompletionOptions_More;"Текст кнопки ""ещё""";more;ещё
+UI_Tasks_CompletionOptions_NewApprovalCycle;"Текст варианта завершения задания ""NewApprovalCycle""";Start new cycle;Начать новый цикл
+UI_Tasks_CompletionOptions_OptionA;"Текст варианта завершения задания ""OptionA""";Option A;Вариант А
+UI_Tasks_CompletionOptions_OptionB;"Текст варианта завершения задания ""OptionB""";Option B;Вариант Б
+UI_Tasks_CompletionOptions_Postpone;"Текст кнопки ""Отложить""";Postpone;Отложить
+UI_Tasks_CompletionOptions_Rebuild;"Текст варианта завершения задания ""Rebuild""";Return back for revision;Вернуть документ на доработку
+UI_Tasks_CompletionOptions_RegisterDocument;"Текст варианта завершения задания ""RegisterDocument""";Register document;Зарегистрировать документ
+UI_Tasks_CompletionOptions_Reject;"Текст варианта завершения задания ""Reject""";Reject process;Отозвать процесс
+UI_Tasks_CompletionOptions_RequestComments;"Текст варианта завершения задания ""RequestComments""";Request comments;Запросить комментарии
+UI_Tasks_CompletionOptions_ReturnFromPostponed;"Текст кнопки ""Вернуть из отложенного""";Return from postponed;Вернуть из отложенного
+UI_Tasks_CompletionOptions_ReturnToRole;"Текст кнопки ""Вернуть на роль""";Return to role;Вернуть на роль
+UI_Tasks_CompletionOptions_Revoke;"Текст варианта завершения задания ""Revoke""";Revoke;Отозвать
+UI_Tasks_CompletionOptions_SendToPerformer;"Текст варианта завершения задания ""SendToPerformer""";Send to;Отправлен
+UI_Tasks_CompletionOptions_ShowDialog;;Open dialog;Открыть диалог
+UI_Tasks_CompletionOptions_Sign;"Текст варианта завершения задания ""Sign""";Sign;Подписан
+UI_Tasks_CompletionOptions_TakeOver;"Текст варианта завершения задания ""TakeOver""";Take over;Перевести на себя
+UI_Tasks_Created;"Текст метки в заданиях ""Создано""";Created;Создано
+UI_Tasks_CurrentPerformer;"Текст метки в заданиях ""В работе у""";Current performer;В работе у
+UI_Tasks_DefaultAutoApprovedMessage;Стандартное сообщение при авто завершении задания;Auto-approved by system;Автоматически согласовано системой по истечении срока
+UI_Tasks_DeleteTaskAssignedRole;;Delete;Удалить
+UI_Tasks_Deputy;; (deputy); (заместитель)
+UI_Tasks_DueDate;"Текст метки в заданиях ""Завершить""";Due date;Завершить
+UI_Tasks_Expired;"Текст метки в заданиях ""Просрочено""";Expired:;Просрочено
+UI_Tasks_FunctionRoles;;Function roles;Функциональные роли
+UI_Tasks_HideAdditionalTaskLocked;"Кнопка ""скрыть задания автора"" в списке заданий.";hide additional tasks;убрать скрытые задания
+UI_Tasks_HidePostponed;"Кнопка ""скрыть отложенные задания"" в списке заданий.";hide postponed tasks;скрыть отложенные задания
+UI_Tasks_On;; on; для
+UI_Tasks_OpenEmployeeTooltip;"Тултип ""Нажмите, чтобы открыть карточку сотрудника""";Click to open employee card;Нажмите, чтобы открыть карточку сотрудника
+UI_Tasks_OpenRoleTooltip;"Тултип ""Нажмите, чтобы открыть карточку роли""";Click to open role card;Нажмите, чтобы открыть карточку роли
+UI_Tasks_OpenTaskAssignedRolesWindow;"Тултип ""Нажмите, чтобы открыть диалог просмотра/редактирования ролей задания""";Click to open task roles view/edit dialog;Нажмите, чтобы открыть диалог просмотра/редактирования ролей задания
+UI_Tasks_PassedFrom;"Текст метки в заданиях ""Передано от""";passed from;от
+UI_Tasks_PostponedFrom;"Текст метки в заданиях ""Отложено от""";Postponed from;Отложено от
+UI_Tasks_PostponedTo;"Текст метки в заданиях ""Отложено до""";Postponed to;Отложено до
+UI_Tasks_PostponeUntil;"Заголовок контрола ""Отложить до"" в специальной форме откладывания заданий.";Postpone until;Отложить до
+UI_Tasks_ProcessingSince;"Текст метки в заданиях ""В работе с""";Processing since;В работе с
+UI_Tasks_RemindAbout;"Заголовок контрола ""Напомнить про"" в специальной форме откладывания заданий.";Remind about;Напомнить про
+UI_Tasks_SetMasterTaskAssignedRole;;"Set ""Main""";"Сделать ""Основной"""
+UI_Tasks_SetShowInTaskDetailsTaskAssignedRole;;Show in task details;Отображать в задании
+UI_Tasks_ShowAdditionalTaskLocked;"Кнопка ""показать скрытые задания"" в списке заданий.";show hidden tasks;показать скрытые задания
+UI_Tasks_ShowPostponed;"Кнопка ""показать отложенные задания"" в списке заданий.";show postponed tasks;показать отложенные задания
+UI_Tasks_TimeLeft;"Текст метки в заданиях ""Завершить""";Time left;Завершить
+UI_Tasks_YouAreTheAuthor;"Текст метки в заданиях ""вы автор задания""";you are the author;вы автор задания
+UI_Tasks_YouAreTheAuthorDeputy;Текст метки в заданиях для заместителя автора;you are the author's deputy;вы заместитель автора
+UI_Tasks_YouAreThePerformerDeputy;"Текст метки в заданиях ""вы заместитель исполнителя""";you are the performer deputy;вы заместитель исполнителя
+UI_Tasks_Zone;;({0});({0})

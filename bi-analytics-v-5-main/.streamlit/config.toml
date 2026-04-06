@@ -1,0 +1,93 @@
+# .streamlit/config.toml
+
+# ┌──────────────────────────────────────────────────────────────────────────┐ #
+# │ ⊗ СКРЫВАЕМ САЙДБАР ПО УМОЛЧАНИЮ ЧТОБЫ НЕ БЫЛО МЕРЦАНИЯ ¤ Start           │ #
+# └──────────────────────────────────────────────────────────────────────────┘ #
+
+[client]
+showSidebarNavigation = false
+
+# ┌──────────────────────────────────────────────────────────────────────────┐ #
+# │ ⊗ СКРЫВАЕМ САЙДБАР ПО УМОЛЧАНИЮ ЧТОБЫ НЕ БЫЛО МЕРЦАНИЯ ¤ End             │ #
+# └──────────────────────────────────────────────────────────────────────────┘ #
+
+
+[server]
+enableStaticServing = true
+
+# =============================================
+# Определение шрифта Inter (все начертания)
+# =============================================
+
+[[theme.fontFaces]]
+family = "Inter"
+url    = "static/fonts/Inter_Thin.woff2"
+weight = 100
+style  = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url    = "static/fonts/Inter_Extra_Light.woff2"
+weight = 200
+style  = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url    = "static/fonts/Inter_Light.woff2"
+weight = 300
+style  = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url    = "static/fonts/Inter_Regular.woff2"
+weight = 400
+style  = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url    = "static/fonts/Inter_Medium.woff2"
+weight = 500
+style  = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url    = "static/fonts/Inter_Semi_Bold.woff2"
+weight = 600
+style  = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url    = "static/fonts/Inter_Bold.woff2"
+weight = 700
+style  = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url    = "static/fonts/Inter_Extra_Bold.woff2"
+weight = 800
+style  = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url    = "static/fonts/Inter_Black.woff2"
+weight = 900
+style  = "normal"
+
+# =============================================
+# Основные настройки темы
+# =============================================
+
+[theme]
+# Базовая тема: light или dark
+base = "dark"
+
+# Шрифты приложения
+font = "Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+headingFont = "Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+codeFont = "Consolas, 'Courier New', monospace"
+
+# Опционально: можно явно указать цвета, если хочется чуть подправить
+# primaryColor       = "#0068c9"         # основной акцентный цвет кнопок и т.д.
+# backgroundColor    = "#ffffff"
+# secondaryBackgroundColor = "#f0f2f6"
+# textColor          = "#262730"

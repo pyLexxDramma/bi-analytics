@@ -1,0 +1,94 @@
+/* ////////////////////////////////////////////////////////////////////////// */
+
+/* -------------------------------------------------------------------------- */
+/* ----- Thin ----------------------- swap ------------------------ 100 ----- */
+/* ----- Extra_Light ---------------- swap ------------------------ 200 ----- */
+/* ----- Light ---------------------- swap ------------------------ 300 ----- */
+/* ----- Regular -------------------- swap ------------------------ 400 ----- */
+/* ----- Medium --------------------- swap ------------------------ 500 ----- */
+/* ----- Semi_Bold ------------------ swap ------------------------ 600 ----- */
+/* ----- Bold ----------------------- swap ------------------------ 700 ----- */
+/* ----- Extra_Bold ----------------- swap ------------------------ 800 ----- */
+/* ----- Black ---------------------- swap ------------------------ 900 ----- */
+/* -------------------------------------------------------------------------- */
+
+/* ////////////////////////////////////////////////////////////////////////// */
+
+/* -------------------------------------------------------------------------- */
+/* ----- Material Icons (через Google Fonts) ------------------------------- */
+/* -------------------------------------------------------------------------- */
+
+@import url('https://fonts.googleapis.com/icon?family=Material+Icons');
+
+/* -------------------------------------------------------------------------- */
+/* ----- Inter -------------------------------------------------------------- */
+/* -------------------------------------------------------------------------- */
+
+@font-face{
+    font-family: 'Inter';
+		src: url('../fonts/Inter/Inter_Thin.woff2') format('woff2');
+    font-weight: 100;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face{
+    font-family: 'Inter';
+		src: url('../fonts/Inter/Inter_Extra_Light.woff2') format('woff2');
+    font-weight: 200;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face{
+    font-family: 'Inter';
+		src: url('../fonts/Inter/Inter_Light.woff2') format('woff2');
+    font-weight: 300;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face{
+    font-family: 'Inter';
+		src: url('../fonts/Inter/Inter_Regular.woff2') format('woff2');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face{
+    font-family: 'Inter';
+		src: url('../fonts/Inter/Inter_Medium.woff2') format('woff2');
+    font-weight: 500;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face{
+    font-family: 'Inter';
+		src: url('../fonts/Inter/Inter_Semi_Bold.woff2') format('woff2');
+    font-weight: 600;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face{
+    font-family: 'Inter';
+		src: url('../fonts/Inter/Inter_Bold.woff2') format('woff2');
+    font-weight: 700;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face{
+    font-family: 'Inter';
+		src: url('../fonts/Inter/Inter_Extra_Bold.woff2') format('woff2');
+    font-weight: 800;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face{
+    font-family: 'Inter';
+		src: url('../fonts/Inter/Inter_Black.woff2') format('woff2');
+    font-weight: 900;
+    font-style: normal;
+    font-display: swap;
+}
+
+/* -------------------------------------------------------------------------- */
+/* ----- Inter -------------------------------------------------------------- */
+/* -------------------------------------------------------------------------- */
+
