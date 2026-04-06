@@ -61,10 +61,11 @@ ehthumbs.db
 # =====================================
 # Databases & sensitive data
 # =====================================
-# *.db
+*.db
 *.sqlite
 *.sqlite3
-# users.db
+data/web_data.db
+users.db
 
 # =====================================
 # Data files (большие / тестовые файлы)
