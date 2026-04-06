@@ -97,6 +97,7 @@ streamlit.log
 *.ps1
 run_*.*
 start_*.*
+!start_visualization_app.bat
 debug_*.*
 test_*.py       # если это одноразовые тесты
 
