@@ -98,6 +98,7 @@ streamlit.log
 run_*.*
 start_*.*
 !start_visualization_app.bat
+!scripts/set-remote-env-user.ps1.example
 debug_*.*
 test_*.py       # если это одноразовые тесты
 

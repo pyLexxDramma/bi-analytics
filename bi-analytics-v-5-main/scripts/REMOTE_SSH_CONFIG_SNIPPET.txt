@@ -1,0 +1,13 @@
+# Добавьте в файл C:\Users\ВАШ_ПОЛЬЗОВАТЕЛЬ\.ssh\config (создайте папку .ssh при необходимости)
+
+Host dash-ai-bi
+    HostName 94.141.105.174
+    Port 2299
+    User dashai
+
+Host dash-ai-ai
+    HostName 94.141.105.174
+    Port 2275
+    User iiuser
+
+# После сохранения: в Cursor — Remote-SSH: Connect to Host → dash-ai-bi

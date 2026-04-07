@@ -1,0 +1,8 @@
+# Скопируйте в set-remote-env-user.ps1, подставьте пароли, запустите ОДИН раз от имени пользователя:
+#   powershell -ExecutionPolicy Bypass -File .\scripts\set-remote-env-user.ps1
+# Затем полностью закройте и снова откройте Cursor — расширение SFTP подхватит переменные.
+
+[Environment]::SetEnvironmentVariable("FTP_AI_PASSWORD", "ВСТАВЬТЕ_ПАРОЛЬ_FTP_AI", "User")
+[Environment]::SetEnvironmentVariable("DASHAI_SSH_PASSWORD", "ВСТАВЬТЕ_ПАРОЛЬ_SSH_DASHAI", "User")
+
+Write-Host "Готово. Перезапустите Cursor (Quit), затем SFTP: List All Profiles."
