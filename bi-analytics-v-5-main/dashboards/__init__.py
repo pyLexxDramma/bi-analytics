@@ -2,7 +2,10 @@
 Регистр дашбордов: имя отчёта -> функция отрисовки.
 Функции отрисовки импортируются из dashboards._renderers.
 """
+from functools import partial
 from typing import Callable, Dict, List, Tuple
+
+from dashboards.export_wrap import run_dashboard_with_auto_export, slug_report_name
 
 # Список отчётов по категориям (4 категории: причины, финансы, здоровье проектов, прочее)
 REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
@@ -125,7 +128,7 @@ def _get_dashboards() -> Dict[str, Callable]:
 
         dashboard_debit_credit = _stub_debit
 
-    return {
+    raw: Dict[str, Callable] = {
         "Динамика отклонений": dashboard_deviations_combined,
         "Динамика отклонений по месяцам": dashboard_deviations_combined,
         "Динамика причин отклонений": dashboard_deviations_combined,
@@ -149,6 +152,11 @@ def _get_dashboards() -> Dict[str, Callable]:
         "Просрочка выдачи РД": dashboard_rd_delay,
         "СКУД стройка": dashboard_skud_stroyka,
     }
+    out: Dict[str, Callable] = {}
+    for name, fn in raw.items():
+        sk = slug_report_name(name)
+        out[name] = partial(run_dashboard_with_auto_export, fn, sk)
+    return out
 
 
 # Ленивая загрузка, чтобы при импорте dashboards не тянуть project_visualization_app

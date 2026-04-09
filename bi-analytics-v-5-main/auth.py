@@ -14,7 +14,7 @@ import hashlib
 import secrets
 import string
 from datetime import datetime, timedelta
-from typing import Optional, Tuple
+from typing import Dict, FrozenSet, List, Optional, Tuple
 import streamlit as st
 
 from config import DB_PATH
@@ -32,6 +32,33 @@ ADMIN_ROLES = ["superadmin", "admin"]
 
 # Роли с доступом к отчетам
 REPORT_ROLES = ["manager", "analyst", "admin", "superadmin"]
+
+# RBAC: для роли перечислите отчёты (имена как в меню), которые скрыть.
+# Администраторы и суперадмины всегда видят все отчёты.
+_ROLE_REPORT_DENYLIST: Dict[str, FrozenSet[str]] = {
+    "manager": frozenset(),
+    "analyst": frozenset(),
+}
+
+# Если для отчёта задан allowlist — отчёт виден только перечисленным ролям (плюс admin/superadmin).
+_REPORT_ROLE_ALLOWLIST: Dict[str, FrozenSet[str]] = {}
+
+
+def user_can_open_report(role: str, report_name: str) -> bool:
+    """Проверка доступа к одному отчёту по роли."""
+    if role in ("superadmin", "admin"):
+        return True
+    if report_name in _ROLE_REPORT_DENYLIST.get(role, frozenset()):
+        return False
+    allowed_only = _REPORT_ROLE_ALLOWLIST.get(report_name)
+    if allowed_only is not None and role not in allowed_only:
+        return False
+    return True
+
+
+def filter_reports_for_role(role: str, report_names: List[str]) -> List[str]:
+    """Список отчётов, доступных роли (меню, радиокнопки)."""
+    return [n for n in report_names if user_can_open_report(role, n)]
 
 
 def init_db():
@@ -382,7 +409,7 @@ def change_password(
 
     try:
         from logger import log_action
-        log_action(username, "password_reset")
+        log_action(username, "password_changed", "смена пароля в профиле")
     except Exception:
         pass
 
@@ -495,8 +522,11 @@ def render_sidebar_menu(current_page: str = "reports"):
                 icons = ["", "", ""]
                 for i, (cat_name, reports) in enumerate(REPORT_CATEGORIES):
                     icon = icons[i] if i < len(icons) else ""
+                    visible = filter_reports_for_role(user["role"], list(reports))
+                    if not visible:
+                        continue
                     with st.expander(f"{icon} {cat_name}", expanded=False):
-                        for report in reports:
+                        for report in visible:
                             button_type = (
                                 "primary" if current_dashboard == report else "secondary"
                             )

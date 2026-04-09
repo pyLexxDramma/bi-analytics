@@ -57,7 +57,7 @@ def _sample_for_chart(df: pd.DataFrame, max_rows: int = _MAX_CHART_ROWS) -> pd.D
 def _limit_bar_categories(
     df: pd.DataFrame,
     value_col: str,
-    max_bars: int = 50,
+    max_bars: int = 40,
     label: str = "позиций",
 ) -> pd.DataFrame:
     """
@@ -85,14 +85,16 @@ _PLOTLY_CONFIG = {
     "responsive": True,
     "displayModeBar": True,
     "displaylogo": False,
+    "scrollZoom": True,
     "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d"],
 }
 
 
-def render_chart(fig, key: str = None, height: int = None) -> None:
+def render_chart(fig, key: str = None, height: int = None, max_height: int = 900) -> None:
     """
     Единая точка вывода Plotly-графика с адаптивной конфигурацией.
     Заменяет прямые вызовы st.plotly_chart() по всему файлу.
+    Если задан только height — ограничиваем сверху max_height для читаемости на больших bar-графиках.
     """
     kwargs = {
         "use_container_width": True,
@@ -100,8 +102,9 @@ def render_chart(fig, key: str = None, height: int = None) -> None:
     }
     if key:
         kwargs["key"] = key
-    if height:
-        fig.update_layout(height=height)
+    if height is not None:
+        h = min(int(height), int(max_height)) if max_height else int(height)
+        fig.update_layout(height=h)
     st.plotly_chart(fig, **kwargs)
 
 
@@ -137,17 +140,42 @@ def render_export_buttons(
     if not buttons:
         return
 
+    def _log_export(fmt_name: str, file_name: str):
+        try:
+            from auth import get_current_user
+            from logger import log_action
+
+            u = get_current_user()
+            if u:
+                log_action(
+                    u["username"],
+                    "data_exported",
+                    f"{fmt_name}:{file_name} ({key_prefix})",
+                )
+        except Exception:
+            pass
+
     cols = st.columns(len(buttons))
     for col, (fmt, data, name) in zip(cols, buttons):
         mime = "text/csv" if fmt == "csv" else "image/png"
         label = f"Скачать {fmt.upper()}"
-        col.download_button(
-            label=label,
-            data=data,
-            file_name=name,
-            mime=mime,
-            key=f"{key_prefix}_{fmt}",
-        )
+        try:
+            col.download_button(
+                label=label,
+                data=data,
+                file_name=name,
+                mime=mime,
+                key=f"{key_prefix}_{fmt}",
+                on_click=lambda fn=name, ft=fmt: _log_export(ft, fn),
+            )
+        except TypeError:
+            col.download_button(
+                label=label,
+                data=data,
+                file_name=name,
+                mime=mime,
+                key=f"{key_prefix}_{fmt}",
+            )
 
 def dashboard_deviations_combined(df):
 
@@ -565,13 +593,6 @@ def dashboard_reasons_of_deviation(df):
             display_df[date_col] = display_df[date_col].apply(_date_only)
     # st.table(style_dataframe_for_dark_theme(display_df, days_column="Отклонений в днях"))
     st.markdown(format_dataframe_as_html(display_df), unsafe_allow_html=True)
-
-    st.markdown("---")
-    render_export_buttons(
-        df=display_df,
-        csv_filename="причины_отклонений.csv",
-        key_prefix="dash_reasons",
-    )
 
 
 # ==================== DASHBOARD 2: Dynamics of Deviations ====================

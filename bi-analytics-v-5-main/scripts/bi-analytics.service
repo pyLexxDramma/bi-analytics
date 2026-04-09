@@ -1,0 +1,22 @@
+[Unit]
+Description=BI Analytics Streamlit dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=dashai
+Group=dashai
+WorkingDirectory=/opt/bi-analytics
+Environment=PYTHONUNBUFFERED=1
+# Optional: WEB_DB_PATH, DATA_MODE, etc. (see config.py / web_schema.py)
+EnvironmentFile=-/etc/default/bi-analytics
+ExecStart=/opt/bi-analytics/venv/bin/streamlit run /opt/bi-analytics/project_visualization_app.py \
+  --server.port 8501 \
+  --server.address 127.0.0.1 \
+  --server.headless true \
+  --browser.gatherUsageStats false
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

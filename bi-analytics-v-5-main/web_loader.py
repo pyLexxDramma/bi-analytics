@@ -35,6 +35,7 @@ from web_schema import (
 # MSP экспортирует файлы с русскими названиями колонок (Windows-1251).
 # Дашборды ожидают английские canonical-имена из data_loader.column_mapping.
 _MSP_COLUMN_REMAP: Dict[str, str] = {
+    "Название задачи":       "task name",
     "Название":              "task name",
     "Начало":                "plan start",
     "Окончание":             "plan end",
@@ -61,6 +62,11 @@ _MSP_COLUMN_REMAP: Dict[str, str] = {
     "Дата_ограничения":      "constraint date",
     "Уникальный_идентификатор": "unique id",
     "Ид":                    "task id seq",
+    # Варианты с пробелами (экспорт MSP / Excel)
+    "Базовое начало":       "base start",
+    "Базовое окончание":    "base end",
+    "План начало":          "plan start",
+    "План окончание":       "plan end",
 }
 
 
@@ -244,37 +250,60 @@ def _load_resources_file(filepath: Path) -> Optional[pd.DataFrame]:
       Строка 3+: данные
     """
     encodings = ["utf-8", "utf-8-sig", "windows-1251", "cp1251"]
-    for encoding in encodings:
-        try:
-            df = pd.read_csv(
-                filepath,
-                sep=";",
-                encoding=encoding,
-                header=2,           # Строка 2 (0-based) — реальный заголовок
-                quoting=csv.QUOTE_MINIMAL,
-                quotechar='"',
-                doublequote=True,
-                on_bad_lines="skip",
-            )
-            # Нормализуем имена колонок
-            df.columns = [
-                str(c).replace("\ufeff", "").replace("\n", " ").replace("\r", " ").strip()
-                for c in df.columns
-            ]
-            # Убираем полностью пустые строки
-            df = df.dropna(how="all")
-            if df.empty or len(df.columns) < 3:
-                continue
-            # Переименовываем "Подрядчик" → "Контрагент" для совместимости с дашбордами
-            if "Подрядчик" in df.columns and "Контрагент" not in df.columns:
-                df = df.rename(columns={"Подрядчик": "Контрагент"})
-            df.attrs["data_type"] = "resources"
-            return df
-        except (UnicodeDecodeError, pd.errors.ParserError):
-            continue
-        except Exception:
-            continue
+    seps = [";", ","]
+    # На FTP иногда 2 или 1 строка «служебных» строк — пробуем несколько header
+    for header_row in (2, 1, 0):
+        for encoding in encodings:
+            for sep in seps:
+                try:
+                    df = pd.read_csv(
+                        filepath,
+                        sep=sep,
+                        encoding=encoding,
+                        header=header_row,
+                        quoting=csv.QUOTE_MINIMAL,
+                        quotechar='"',
+                        doublequote=True,
+                        on_bad_lines="skip",
+                    )
+                    df.columns = [
+                        str(c).replace("\ufeff", "").replace("\n", " ").replace("\r", " ").strip()
+                        for c in df.columns
+                    ]
+                    df = df.dropna(how="all")
+                    if df.empty or len(df.columns) < 3:
+                        continue
+                    cols_low = [str(c).lower() for c in df.columns]
+                    has_contractor = any(
+                        x in cols_low
+                        for x in ("контрагент", "подрядчик", "contractor")
+                    )
+                    if not has_contractor:
+                        continue
+                    if "Подрядчик" in df.columns and "Контрагент" not in df.columns:
+                        df = df.rename(columns={"Подрядчик": "Контрагент"})
+                    # Синонимы из маппинга отчётов (ГДРС)
+                    _ru_res_aliases = {
+                        "тип ресурса": "тип ресурсов",
+                        "Тип ресурса": "тип ресурсов",
+                    }
+                    for a, b in _ru_res_aliases.items():
+                        if a in df.columns and b not in df.columns:
+                            df = df.rename(columns={a: b})
+                    df.attrs["data_type"] = "resources"
+                    return df
+                except (UnicodeDecodeError, pd.errors.ParserError):
+                    continue
+                except Exception:
+                    continue
     return None
+
+
+def _format_skip_reason(rel_path: str, reason: str, detail: str = "") -> str:
+    msg = f"{rel_path}: {reason}"
+    if detail:
+        msg += f" — {detail}"
+    return msg
 
 
 # ── Утилиты ─────────────────────────────────────────────────────────────────
@@ -356,20 +385,25 @@ def _infer_file_type(df: pd.DataFrame, file_name: str) -> str:
     name_lower = file_name.lower()
     cols = [str(c).lower() for c in df.columns]
 
-    # MSP-файл: содержит характерные колонки с подчёркиванием
+    # MSP-файл: подчёркивания или пробелы в типичных заголовках
     has_msp_cols = any(c in cols for c in [
         "базовое_начало", "базовое_окончание", "причины_отклонений",
         "уровень_структуры",
+        "базовое начало", "базовое окончание", "причины отклонений",
+        "уровень структуры", "шифр_пд_и_рд", "шифр пд и рд",
     ])
     has_task_name = any(c in cols for c in ["название", "task name", "задача"])
     has_dates = any(c in cols for c in ["начало", "plan start", "старт план"])
     if has_msp_cols or (has_task_name and has_dates and "начало" in cols):
         return "msp"
 
-    # Ресурсы: содержит "подрядчик"/"контрагент" + недели
+    # Ресурсы: контрагент/подрядчик + недели или даты в заголовках (01.01.2026)
     has_contractor = any(c in cols for c in ["контрагент", "подрядчик", "contractor"])
     has_weeks = any("неделя" in c or "недели" in c for c in cols)
-    if has_contractor and has_weeks:
+    has_date_headers = any(re.match(r"^\d{2}\.\d{2}\.\d{4}", c.strip()) for c in cols)
+    if has_contractor and (has_weeks or has_date_headers):
+        if "среднее за неделю" in " ".join(cols) or "техник" in name_lower:
+            return "technique"
         return "resources"
 
     # Бюджет
@@ -387,8 +421,10 @@ def _infer_file_type(df: pd.DataFrame, file_name: str) -> str:
     if has_contract and has_sum:
         return "debit_credit"
 
-    # Техника
-    if "technique" in name_lower or "техник" in name_lower:
+    # Техника по содержимому
+    if any("среднее за неделю" in c for c in cols):
+        return "technique"
+    if "technique" in name_lower or "техник" in name_lower or "tehnik" in name_lower:
         return "technique"
 
     return "unknown"
@@ -456,7 +492,14 @@ def load_all_from_web() -> Dict:
     """
     from data_loader import load_data, ensure_data_session_state, update_session_with_loaded_file
 
-    result = {"loaded": 0, "skipped": 0, "errors": [], "version_id": None}
+    result = {
+        "loaded": 0,
+        "skipped": 0,
+        "errors": [],
+        "warnings": [],
+        "diagnostics": [],
+        "version_id": None,
+    }
 
     files = scan_web_files(extensions=(".csv",)) + scan_new_csv_demo_files()
     if not files:
@@ -496,6 +539,14 @@ def load_all_from_web() -> Dict:
                     df = _load_resources_file(filepath)
                     if df is None or df.empty:
                         result["skipped"] += 1
+                        result["errors"].append(
+                            _format_skip_reason(
+                                rel_path,
+                                "ресурсы не распознаны",
+                                "ожидался многострочный заголовок (Проект;Подрядчик;…); "
+                                "проверьте разделитель ; или , и кодировку",
+                            )
+                        )
                         continue
                     file_type = "resources"
                     file_id = _register_file(cur, version_id, file_info, file_type, len(df))
@@ -504,6 +555,12 @@ def load_all_from_web() -> Dict:
                     result["loaded"] += 1
                     df.attrs["data_type"] = "resources"
                     update_session_with_loaded_file(df, rel_path)
+                    result["diagnostics"].append({
+                        "file": rel_path,
+                        "type": "resources",
+                        "rows": int(len(df)),
+                        "columns": [str(c) for c in df.columns[:25]],
+                    })
                     continue
 
                 # ── Пропускаем ненужные файлы ──────────────────────────────
@@ -518,6 +575,13 @@ def load_all_from_web() -> Dict:
 
                 if df is None or df.empty:
                     result["skipped"] += 1
+                    result["errors"].append(
+                        _format_skip_reason(
+                            rel_path,
+                            "не удалось прочитать CSV",
+                            "пустой файл, неверный разделитель (; ,), кодировка (UTF-8 / Windows-1251) или нет заголовков",
+                        )
+                    )
                     continue
 
                 # ── Уточняем тип (с учётом содержимого) ────────────────────
@@ -532,6 +596,14 @@ def load_all_from_web() -> Dict:
 
                 # Пропускаем skip-файлы (могли определиться только по колонкам)
                 if file_type == "skip":
+                    result["skipped"] += 1
+                    continue
+
+                if file_type == "unknown":
+                    preview = ", ".join(str(c) for c in list(df.columns)[:15])
+                    result["warnings"].append(
+                        f"{rel_path}: тип файла не распознан; первые колонки: {preview}"
+                    )
                     result["skipped"] += 1
                     continue
 
@@ -563,12 +635,20 @@ def load_all_from_web() -> Dict:
                     session_type = "project"
                 df.attrs["data_type"] = session_type
                 update_session_with_loaded_file(df, rel_path)
+                result["diagnostics"].append({
+                    "file": rel_path,
+                    "type": file_type,
+                    "rows": int(len(df)),
+                    "columns": [str(c) for c in df.columns[:25]],
+                })
 
             except Exception as e:
-                result["errors"].append(f"{rel_path}: {e}")
+                result["errors"].append(
+                    _format_skip_reason(rel_path, "исключение при обработке", str(e))
+                )
                 result["skipped"] += 1
 
-        # Обновляем статус версии
+        # Обновляем статус версии (warnings не делают partial, только errors)
         status = "partial" if result["errors"] else "success"
         cur.execute(
             "UPDATE web_versions SET status=?, rows_count=? WHERE id=?",
@@ -614,12 +694,32 @@ def _infer_file_type_by_name(file_name: str) -> str:
     stem = name_lower.rsplit(".", 1)[0]
 
     # ── MSP файлы проектов ───────────────────────────────────────────────────
-    if stem.startswith("msp_"):
+    if stem.startswith("msp_") or stem.startswith("msp-") or "msp_" in name_lower:
         return "msp"
 
     # ── Файлы ресурсов (ГДРС) ────────────────────────────────────────────────
-    if "resursi" in stem or "resursy" in stem or "ресурс" in stem:
+    if (
+        "resursi" in stem
+        or "resursy" in stem
+        or "ресурс" in stem
+        or "gdrs" in stem
+        or "_gdrc" in stem
+    ):
         return "resources"
+
+    # ── Техника по имени ─────────────────────────────────────────────────────
+    if any(
+        x in stem
+        for x in (
+            "tehnik",
+            "tehnika",
+            "technique",
+            "техник",
+            "texnik",
+            "other_techn",
+        )
+    ):
+        return "technique"
 
     # ── Плановая выдача РД (other_*_rd.csv) — пропускаем ────────────────────
     if stem.startswith("other_") and stem.endswith("_rd"):
@@ -636,7 +736,24 @@ def _infer_file_type_by_name(file_name: str) -> str:
     # ── Демо new_csv: дебиторка / бюджет обороты ─────────────────────────────
     if "debit" in stem and "credit" in stem:
         return "debit_credit"
-    if "sample_budget" in stem or stem.startswith("sample_budget"):
+    if (
+        "debitor" in stem
+        or "debtor" in stem
+        or "zadol" in stem
+        or "дз" in stem
+        or "кз" in stem
+    ):
+        return "debit_credit"
+    if (
+        "sample_budget" in stem
+        or stem.startswith("sample_budget")
+        or "bdds" in stem
+        or "бддс" in stem
+        or "budget" in stem
+        or "бюджет" in stem
+        or "oborot" in stem
+        or "оборот" in stem
+    ):
         return "budget"
 
     return "unknown"

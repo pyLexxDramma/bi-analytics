@@ -18,12 +18,16 @@ MOSCOW_TZ = pytz.timezone("Europe/Moscow")
 ACTION_LABELS = {
     "login": "Вход в систему",
     "logout": "Выход из системы",
-    "password_reset": "Смена пароля",
+    "password_reset": "Смена пароля / сброс",
+    "password_changed": "Смена пароля",
     "user_created": "Создание пользователя",
     "user_deleted": "Удаление пользователя",
     "role_changed": "Изменение роли",
+    "change_role": "Изменение роли",
     "access_granted": "Выдача доступа к проекту",
     "access_revoked": "Отзыв доступа к проекту",
+    "grant_project_access": "Выдача доступа к проекту",
+    "revoke_project_access": "Отзыв доступа к проекту",
     "data_exported": "Экспорт данных",
     "data_loaded": "Загрузка данных",
 }
@@ -95,8 +99,10 @@ def get_logs(
     limit: int = 100,
     username: Optional[str] = None,
     action: Optional[str] = None,
+    created_after: Optional[str] = None,
+    created_before: Optional[str] = None,
 ) -> List[Dict]:
-    """Возвращает последние записи журнала (с фильтрами по пользователю и действию)."""
+    """Возвращает последние записи журнала (фильтры: пользователь, действие, интервал дат ISO)."""
     conn = None
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -115,6 +121,12 @@ def get_logs(
         if action:
             query += " AND action = ?"
             params.append(action)
+        if created_after:
+            query += " AND created_at >= ?"
+            params.append(created_after)
+        if created_before:
+            query += " AND created_at <= ?"
+            params.append(created_before)
 
         query += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
@@ -146,6 +158,8 @@ def get_logs(
 def get_logs_count(
     username: Optional[str] = None,
     action: Optional[str] = None,
+    created_after: Optional[str] = None,
+    created_before: Optional[str] = None,
 ) -> int:
     """Возвращает количество записей журнала (с фильтрами)."""
     conn = None
@@ -162,6 +176,12 @@ def get_logs_count(
         if action:
             query += " AND action = ?"
             params.append(action)
+        if created_after:
+            query += " AND created_at >= ?"
+            params.append(created_after)
+        if created_before:
+            query += " AND created_at <= ?"
+            params.append(created_before)
 
         cursor.execute(query, params)
         return cursor.fetchone()[0]

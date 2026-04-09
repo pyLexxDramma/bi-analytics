@@ -6,6 +6,7 @@ _app_dir = Path(__file__).resolve().parent
 sys.path.insert(0, str(_app_dir))
 
 import streamlit as st
+import pandas as pd
 
 # # ← Новые импорты для теста
 # import datetime
@@ -26,6 +27,7 @@ from auth import (
     reset_password,
     verify_reset_token,
     get_user_by_username,
+    filter_reports_for_role,
 )
 from data_loader import (
     load_data,
@@ -444,23 +446,94 @@ def main():
     # Переключатель режима источника данных
     data_mode = st.radio(
         "Источник данных",
-        ["Загрузить вручную", "Из папки web/"],
+        ["Загрузить вручную", "Из папки web/", "FTP → web/"],
         horizontal=True,
         key="data_mode_radio",
     )
 
-    if data_mode == "Из папки web/":
+    if data_mode in ("Из папки web/", "FTP → web/"):
 
         from web_schema import init_web_schema, get_all_versions, get_active_version_id, activate_version
-        from web_loader import load_all_from_web, web_dir_exists, read_version_to_session
+        from web_loader import load_all_from_web, web_dir_exists, read_version_to_session, get_web_dir
 
         init_web_schema()
+
+        if data_mode == "FTP → web/":
+            from ftp_sync import merge_ftp_config, streamlit_secrets_to_config, sync_ftp_to_web
+
+            st.caption(
+                "Секреты: файл `.streamlit/secrets.toml`, секция `[ftp]` "
+                "(host, user, password, remote_dir, port, use_tls) "
+                "или переменные окружения BI_FTP_HOST / BI_FTP_USER / BI_FTP_PASSWORD."
+            )
+            with st.expander("Параметры FTP вручную (если нет secrets)", expanded=False):
+                _h = st.text_input("FTP host", key="ftp_host_override")
+                _u = st.text_input("FTP user", key="ftp_user_override")
+                _p = st.text_input("FTP password", type="password", key="ftp_pass_override")
+                _d = st.text_input("Удалённая папка", value="/", key="ftp_remote_dir_override")
+
+            cfg = merge_ftp_config(streamlit_secrets_to_config())
+            if _h.strip():
+                cfg["host"] = _h.strip()
+            if _u.strip():
+                cfg["user"] = _u.strip()
+            if _p:
+                cfg["password"] = _p
+            if _d.strip():
+                cfg["remote_dir"] = _d.strip()
+
+            b_ftp = st.button("Скачать CSV с FTP в web/ и загрузить в БД")
+            if b_ftp:
+                if not cfg.get("host") or not cfg.get("user"):
+                    st.error("Задайте host и user (secrets, env BI_FTP_* или поля выше).")
+                else:
+                    web_p = get_web_dir()
+                    web_p.mkdir(parents=True, exist_ok=True)
+                    with st.spinner("FTP: скачивание в web/…"):
+                        ftp_res = sync_ftp_to_web(web_p, config=cfg, progress=lambda m: None)
+                    if ftp_res.get("errors"):
+                        for e in ftp_res["errors"]:
+                            st.error(e)
+                    else:
+                        st.success(
+                            f"С FTP скачано файлов: {len(ftp_res.get('downloaded', []))}, "
+                            f"пропуск (не .csv): {ftp_res.get('skipped', 0)}"
+                        )
+                    with st.spinner("Читаю файлы из web/..."):
+                        result = load_all_from_web()
+                    st.cache_data.clear()
+                    st.session_state.pop("web_version_id", None)
+                    for w in result.get("warnings", []):
+                        st.warning(w)
+                    if result.get("errors"):
+                        st.warning(
+                            f"Загружено: {result['loaded']}, пропущено: {result['skipped']}"
+                        )
+                        for err in result["errors"]:
+                            st.error(err)
+                    else:
+                        st.success(f"В БД загружено файлов: {result['loaded']}")
+                    try:
+                        from logger import log_action
+                        u = get_current_user()
+                        if u:
+                            log_action(
+                                u["username"],
+                                "data_loaded",
+                                f"web+FTP: loaded={result.get('loaded')}, skipped={result.get('skipped')}",
+                            )
+                    except Exception:
+                        pass
+                    with st.expander("Диагностика колонок (первые файлы)", expanded=False):
+                        for row in result.get("diagnostics", [])[:40]:
+                            st.json(row)
+                    st.rerun()
 
         col1, col2 = st.columns([1, 3])
 
         with col1:
 
-            if st.button("Загрузить из web/"):
+            if data_mode == "Из папки web/" and st.button("Загрузить из web/"):
 
                 if not web_dir_exists():
 
@@ -475,6 +548,9 @@ def main():
                     # Сбрасываем web_version_id чтобы принудительно перечитать данные
                     st.session_state.pop("web_version_id", None)
 
+                    for w in result.get("warnings", []):
+                        st.warning(w)
+
                     if result["errors"]:
 
                         st.warning(f"Загружено: {result['loaded']}, пропущено: {result['skipped']}")
@@ -485,6 +561,20 @@ def main():
                     else:
 
                         st.success(f"Загружено файлов: {result['loaded']}")
+                    try:
+                        from logger import log_action
+                        u = get_current_user()
+                        if u:
+                            log_action(
+                                u["username"],
+                                "data_loaded",
+                                f"web/: loaded={result.get('loaded')}, skipped={result.get('skipped')}",
+                            )
+                    except Exception:
+                        pass
+                    with st.expander("Диагностика колонок", expanded=False):
+                        for row in result.get("diagnostics", [])[:40]:
+                            st.json(row)
 
                     st.rerun()
 
@@ -634,7 +724,16 @@ def main():
                 dashboards = get_dashboards()
                 render_fn = dashboards.get(selected_dashboard)
                 if render_fn:
-                    render_fn(df_for_render)
+                    if df_for_render is None or (
+                        isinstance(df_for_render, pd.DataFrame) and df_for_render.empty
+                    ):
+                        st.warning(
+                            f"Нет данных для отчёта «{selected_dashboard}». "
+                            "Загрузите данные (вручную, папка web/ или FTP), "
+                            "либо выберите другой отчёт."
+                        )
+                    else:
+                        render_fn(df_for_render)
                 else:
                     st.warning(
                         f"График '{selected_dashboard}' не найден. Пожалуйста, выберите другой график."
@@ -653,10 +752,18 @@ def main():
 
         # Единый источник списка отчётов — dashboards.REPORT_CATEGORIES (4 категории)
         from dashboards import REPORT_CATEGORIES
-        reason_options = REPORT_CATEGORIES[0][1]
-        budget_options = REPORT_CATEGORIES[1][1]
+        _role = user.get("role") or "analyst"
+        reason_options = filter_reports_for_role(_role, list(REPORT_CATEGORIES[0][1]))
+        budget_options = filter_reports_for_role(_role, list(REPORT_CATEGORIES[1][1]))
         # Объединяем категории 2 ("Здоровье проектов") и 3 ("Прочее") в один раздел
-        other_options = REPORT_CATEGORIES[2][1] + (REPORT_CATEGORIES[3][1] if len(REPORT_CATEGORIES) > 3 else [])
+        other_options = filter_reports_for_role(
+            _role,
+            list(REPORT_CATEGORIES[2][1])
+            + (list(REPORT_CATEGORIES[3][1]) if len(REPORT_CATEGORIES) > 3 else []),
+        )
+        if not reason_options and not budget_options and not other_options:
+            st.error("Для вашей роли нет доступных отчётов. Обратитесь к администратору.")
+            st.stop()
 
         # Determine current selection indices based on current_dashboard
         # Also sync radio button values in session_state when dashboard is selected from menu
@@ -868,7 +975,15 @@ def main():
             dashboards = get_dashboards()
             render_fn = dashboards.get(selected_dashboard)
             if render_fn:
-                render_fn(df_for_render)
+                if df_for_render is None or (
+                    isinstance(df_for_render, pd.DataFrame) and df_for_render.empty
+                ):
+                    st.warning(
+                        f"Нет данных для отчёта «{selected_dashboard}». "
+                        "Загрузите данные (вручную, web/ или FTP) или выберите другой отчёт."
+                    )
+                else:
+                    render_fn(df_for_render)
             else:
                 st.warning(
                     f"График '{selected_dashboard}' не найден. Пожалуйста, выберите другой график."

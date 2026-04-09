@@ -1,0 +1,5 @@
+# Copy to /etc/default/bi-analytics on the server if you need extra env vars (chmod 600).
+# Первый суперпользователь сейчас создаётся в db.py при пустой БД: admin / admin123 — смените пароль после первого входа.
+
+# WEB_DB_PATH=/opt/bi-analytics/data/web_data.db
+# DATA_MODE=auto

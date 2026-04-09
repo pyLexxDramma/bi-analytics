@@ -42,7 +42,7 @@ sys.path.insert(0, str(_app_root))
 
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date, time, timezone
 import sqlite3
 
 from auth import (
@@ -587,6 +587,7 @@ if user is not None:
 
         # Фильтры
         col1, col2, col3 = st.columns(3)
+        col4, col5 = st.columns(2)
 
         with col1:
 
@@ -618,11 +619,28 @@ if user is not None:
 
             log_limit = st.number_input("Количество записей", 10, 1000, 100, 10)
 
+        with col4:
+            date_from = st.date_input("С даты (UTC)", value=None, key="log_date_from")
+        with col5:
+            date_to = st.date_input("По дату (UTC)", value=None, key="log_date_to")
+
         username_filter = None if filter_username == "Все" else filter_username
         action_filter = None if filter_action == "Все" else filter_action
+        created_after_iso = None
+        created_before_iso = None
+        if date_from:
+            created_after_iso = datetime.combine(date_from, time.min, tzinfo=timezone.utc).isoformat()
+        if date_to:
+            created_before_iso = datetime.combine(date_to, time.max, tzinfo=timezone.utc).isoformat()
 
         # Получаем логи
-        logs = get_logs(limit=log_limit, username=username_filter, action=action_filter)
+        logs = get_logs(
+            limit=log_limit,
+            username=username_filter,
+            action=action_filter,
+            created_after=created_after_iso,
+            created_before=created_before_iso,
+        )
 
         if logs:
 

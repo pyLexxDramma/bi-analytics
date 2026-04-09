@@ -125,6 +125,8 @@ def load_data(uploaded_file, file_name: Optional[str] = None) -> Optional[pd.Dat
         # Бюджет Факт, Резерв, РД по Договору, Отклонение разделов РД, Всего загружено, На согласовании,
         # Выдана подрядчику, Выдано в производство работ, На доработке
         column_mapping = {
+            "№": "row no",
+            "No": "row no",
             "Проект": "project name",
             "Аббревиатура": "abbreviation",
             "Блок": "block",

@@ -70,6 +70,51 @@ Streamlit Cloud is the easiest and most appropriate option for deploying Streaml
 - Make sure `requirements.txt` is in the root of your repository
 - The main Streamlit file should be clearly named (e.g., `project_visualization_app.py`)
 
+---
+
+## VPS (закрытый контур, например ai.conall.ru)
+
+На своём сервере доступны **файлы отчётов** на диске: приложение использует `web/` и CLI `ingest_web_cli.py` для `data/web_data.db`. Для такой схемы удобна связка **Linux + systemd + nginx** и деплой из Git.
+
+### Один раз на сервере
+
+1. Установите `git`, `python3`, `python3-venv`, при необходимости `nginx`.
+2. Клонируйте репозиторий в каталог деплоя (пример `/opt/bi-analytics`), владелец — пользователь запуска (например `dashai`).
+3. При необходимости задайте переменные окружения: см. `scripts/etc-default-bi-analytics.example` → `/etc/default/bi-analytics`, `chmod 600`. Первый вход: после инициализации БД в коде создаётся `admin` / `admin123` — пароль смените в интерфейсе.
+4. Скопируйте `scripts/bi-analytics.service` в `/etc/systemd/system/`, поправьте `User`, `WorkingDirectory`, пути в `ExecStart`, затем `systemctl daemon-reload`, `enable`, `start`.
+5. Nginx: `scripts/nginx-bi-analytics.conf.example` — прокси на `127.0.0.1:8501`, для Streamlit нужны заголовки WebSocket `Upgrade` и `Connection`.
+6. Обновление: из корня клона `./scripts/server_deploy.sh` (venv, `pip`, ingest, `systemctl restart bi-analytics`).
+
+`users.db` и другие `*.db` не в Git — на проде делайте **бэкап** `users.db` перед рискованными операциями. **SSH:** вход по ключу; пароли не коммитьте.
+
+### FTP → папка `web/`
+
+В интерфейсе: **Источник данных → FTP → web/**. Файлы скачиваются в `web/`, затем вызывается та же загрузка, что и для локальной папки.
+
+**Streamlit Cloud / локально — secrets** (файл `.streamlit/secrets.toml`, не коммитить):
+
+```toml
+[ftp]
+host = "web.conall.ru"
+user = "ftp-user"
+password = "••••"
+remote_dir = "/"
+# port = 21
+# use_tls = false
+```
+
+**Сервер (systemd / docker):** переменные `BI_FTP_HOST`, `BI_FTP_USER`, `BI_FTP_PASSWORD`, при необходимости `BI_FTP_REMOTE_DIR`, `BI_FTP_PORT`, `BI_FTP_TLS=true`, `BI_FTP_TIMEOUT=60`.
+
+CLI без браузера: `python ftp_sync.py` (после активации venv), затем `python ingest_web_cli.py`.
+
+### Роли и отчёты (RBAC)
+
+В `auth.py`: словари **`_ROLE_REPORT_DENYLIST`** (роль → имена отчётов, которые скрыть) и **`_REPORT_ROLE_ALLOWLIST`** (отчёт → только эти роли; `admin`/`superadmin` всегда видят всё). Пустые `frozenset()` = без ограничений. Сверка колонок с ТЗ: `bi_analytics_report_mapping.md` (в репозитории/соседней папке аналитики) и блок **«Диагностика колонок»** после загрузки из `web/`.
+
+### Автодеплой после push
+
+Файл `.github/workflows/deploy-vps.yml`. В GitHub → **Settings → Secrets and variables → Actions**: `VPS_HOST`, `VPS_USER`, `VPS_PORT`, `VPS_SSH_KEY`, `VPS_DEPLOY_PATH`. На сервере нужны права на `git pull` и перезапуск сервиса (см. комментарии в `server_deploy.sh` и при необходимости `sudoers`).
+
 
 
 
