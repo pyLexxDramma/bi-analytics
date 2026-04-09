@@ -91,19 +91,23 @@ Streamlit Cloud is the easiest and most appropriate option for deploying Streaml
 
 В интерфейсе: **Источник данных → FTP → web/**. Файлы скачиваются в `web/`, затем вызывается та же загрузка, что и для локальной папки.
 
+**Продакшен-контур (сервера dash-ai):** доступ к выгрузкам CSV обычно через **FTP** к хосту **`web.conall.ru`**, пользователь **`ftp-ai`** (пароль выдаётся администратором, в Git не класть). Проверка с терминала: `ftp ftp-ai@web.conall.ru` или интерактивно `open web.conall.ru`, затем логин `ftp-ai`.
+
+Каталог **`remote_dir`** должен совпадать с тем, куда на FTP попадают файлы (часто **`/`** или домашний chroot пользователя — уточните при необходимости у админа).
+
 **Streamlit Cloud / локально — secrets** (файл `.streamlit/secrets.toml`, не коммитить):
 
 ```toml
 [ftp]
 host = "web.conall.ru"
-user = "ftp-user"
-password = "••••"
+user = "ftp-ai"
+password = "УКАЖИТЕ_ПАРОЛЬ_В_SECRETS_UI"
 remote_dir = "/"
 # port = 21
 # use_tls = false
 ```
 
-**Сервер (systemd / docker):** переменные `BI_FTP_HOST`, `BI_FTP_USER`, `BI_FTP_PASSWORD`, при необходимости `BI_FTP_REMOTE_DIR`, `BI_FTP_PORT`, `BI_FTP_TLS=true`, `BI_FTP_TIMEOUT=60`.
+**Сервер (systemd / docker):** переменные `BI_FTP_HOST=web.conall.ru`, `BI_FTP_USER=ftp-ai`, `BI_FTP_PASSWORD`, при необходимости `BI_FTP_REMOTE_DIR`, `BI_FTP_PORT`, `BI_FTP_TLS=true`, `BI_FTP_TIMEOUT=60`.
 
 CLI без браузера: `python ftp_sync.py` (после активации venv), затем `python ingest_web_cli.py`.
 
