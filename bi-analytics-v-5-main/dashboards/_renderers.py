@@ -130,6 +130,81 @@ _PLOTLY_CONFIG = {
 }
 
 
+def _series_is_non_numeric_non_date(x) -> bool:
+    """True, если ось по значениям похожа на категории/строки (не числа и не даты)."""
+    if x is None:
+        return False
+    s = pd.Series(x)
+    if s.empty:
+        return False
+    if pd.api.types.is_datetime64_any_dtype(s):
+        return False
+    if pd.api.types.is_numeric_dtype(s):
+        return False
+    return True
+
+
+def _clamp_plotly_scroll_zoom_padding(fig: go.Figure) -> None:
+    """
+    Уменьшает «пустые поля» при зуме колёсиком (scrollZoom):
+    - горизонтальные бары по датам (Gantt): ось X нельзя уводить далеко за пределы данных;
+    - категориальные оси у столбиков: без интерактивного «растягивания» категорий (пустые промежутки).
+
+    Вызывается из render_chart для всех фигур — для остальных типов графиков обычно no-op.
+    """
+    try:
+        traces = list(fig.data or [])
+    except Exception:
+        return
+    if not traces:
+        return
+
+    date_points = []
+    has_h_bar = False
+    has_v_categorical_bar = False
+
+    for tr in traces:
+        if type(tr).__name__ != "Bar":
+            continue
+        orient = getattr(tr, "orientation", None) or "v"
+        if orient == "h":
+            has_h_bar = True
+            for arr in (getattr(tr, "x", None), getattr(tr, "base", None)):
+                if arr is None:
+                    continue
+                s = pd.to_datetime(pd.Series(list(arr)), errors="coerce").dropna()
+                if not s.empty:
+                    date_points.extend(s.tolist())
+        elif orient == "v" and _series_is_non_numeric_non_date(getattr(tr, "x", None)):
+            has_v_categorical_bar = True
+
+    if has_h_bar:
+        try:
+            fig.update_yaxes(fixedrange=True)
+        except Exception:
+            pass
+    if has_v_categorical_bar:
+        try:
+            fig.update_xaxes(fixedrange=True)
+        except Exception:
+            pass
+
+    if len(date_points) < 1:
+        return
+    d0 = pd.Timestamp(min(date_points))
+    d1 = pd.Timestamp(max(date_points))
+    if pd.isna(d0) or pd.isna(d1):
+        return
+    span_sec = max((d1 - d0).total_seconds(), 86400.0)
+    pad_sec = max(span_sec * 0.06, 4 * 86400.0)
+    lo = (d0 - pd.Timedelta(seconds=pad_sec)).to_pydatetime()
+    hi = (d1 + pd.Timedelta(seconds=pad_sec)).to_pydatetime()
+    try:
+        fig.update_xaxes(minallowed=lo, maxallowed=hi)
+    except Exception:
+        pass
+
+
 def render_chart(
     fig,
     key: str = None,
@@ -157,6 +232,7 @@ def render_chart(
             fig.update_layout(title_text="")
         except Exception:
             pass
+    _clamp_plotly_scroll_zoom_padding(fig)
     st.plotly_chart(fig, **kwargs)
     if caption_below:
         _chart_caption_below(caption_below)
