@@ -577,6 +577,16 @@ def apply_default_filters(report_name: str, user_role: str, filter_widgets: dict
     return filter_widgets
 
 
+def _ru_column_is_integer_days(col) -> bool:
+    """Колонки с длительностью/отклонением в днях — целые, без .00."""
+    col_lower = str(col).lower()
+    if "дней" in col_lower or "в днях" in col_lower:
+        return True
+    if "днях" in col_lower and "отклон" in col_lower:
+        return True
+    return False
+
+
 def format_dataframe_as_html(
     df: Optional[pd.DataFrame],
     conditional_cols: Optional[Dict[str, Dict[str, str]]] = None,
@@ -608,15 +618,24 @@ def format_dataframe_as_html(
                 if is_scalar and not (isinstance(value, (int, float)) and pd.isna(value)):
                     if isinstance(value, (int, float)):
                         color = pos_color if value > 0 else neg_color
-                        if "дней" in col_lower:
+                        if _ru_column_is_integer_days(col):
                             formatted_value = f"{int(round(float(value), 0))}"
                         elif isinstance(value, float):
                             formatted_value = f"{value:.2f}"
                         else:
                             formatted_value = f"{int(value)}"
                     else:
-                        formatted_value = str(value) if value != "" else "0"
-                        color = neg_color
+                        if _ru_column_is_integer_days(col):
+                            try:
+                                fv = float(str(value).replace(",", ".").replace(" ", ""))
+                                formatted_value = f"{int(round(fv, 0))}"
+                                color = pos_color if fv > 0 else neg_color
+                            except (TypeError, ValueError):
+                                formatted_value = str(value) if value != "" else "0"
+                                color = neg_color
+                        else:
+                            formatted_value = str(value) if value != "" else "0"
+                            color = neg_color
                 else:
                     formatted_value = "0" if (is_scalar and pd.isna(value)) else str(value)
                     color = neg_color
@@ -625,8 +644,8 @@ def format_dataframe_as_html(
             else:
                 if isinstance(value, (int, float)) and is_scalar and not pd.isna(value):
                     col_lower = str(col).lower()
-                    # Отклонения в днях — целые; денежные/доли — с двумя знаками
-                    if "дней" in col_lower:
+                    # Сначала «в днях» — иначе «отклонения» попадут под денежное .2f
+                    if _ru_column_is_integer_days(col):
                         formatted_value = f"{int(round(float(value), 0))}"
                     elif (
                         "млн" in col_lower
@@ -641,6 +660,14 @@ def format_dataframe_as_html(
                         formatted_value = f"{value:.2f}"
                     else:
                         formatted_value = f"{int(value)}"
+                elif _ru_column_is_integer_days(col) and is_scalar and value not in ("", None) and not (
+                    isinstance(value, (int, float)) and pd.isna(value)
+                ):
+                    try:
+                        fv = float(str(value).replace(",", ".").replace(" ", ""))
+                        formatted_value = f"{int(round(fv, 0))}"
+                    except (TypeError, ValueError):
+                        formatted_value = "" if pd.isna(value) else str(value)
                 else:
                     formatted_value = "" if (is_scalar and pd.isna(value)) else str(value)
                 formatted_value = html_module.escape(str(formatted_value))
