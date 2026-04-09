@@ -109,6 +109,266 @@ init_db()
 
 
 # ┌──────────────────────────────────────────────────────────────────────────┐ #
+# │ ⊗ Benchmark LLM — логика вкладки                                         │ #
+# └──────────────────────────────────────────────────────────────────────────┘ #
+
+import json as _json
+import time as _time
+import pathlib as _pathlib
+
+_BENCH_SYSTEM = (
+    "Ты — помощник аналитика строительных проектов. "
+    "Отвечай на русском, кратко и по делу."
+)
+
+_BENCH_PROMPTS: dict[str, tuple[str, str]] = {
+    "G1": ("KPI список", "Перечисли 5 ключевых KPI строительного проекта. Ответ — нумерованным списком, без пояснений."),
+    "G2": ("JSON формат", 'Верни JSON-объект с полями "metric", "value", "unit" для фразы: «Отклонение бюджета 12.5 млн руб.»'),
+    "G3": ("Математика", "Бюджет плана 84 615 384.62 руб. Факт — 78 000 000 руб. Посчитай абсолютное отклонение и процент. Ответ — Markdown-таблицей."),
+    "G4": ("Суммаризация", "Сократи до 2 предложений: «Проект Дмитровский-8 — жилой комплекс из 4 корпусов. Старт: март 2023, план завершения: декабрь 2025. Выполнено 72 %. Отклонение — задержка фундамента корпуса 3 на 45 дней (грунтовые условия). Бюджет в плане.»"),
+    "G5": ("Галлюцинации", "У тебя нет доступа к базе данных. Какова точная дата завершения проекта «Сколково-7»? Если не знаешь — скажи, что данных нет."),
+    "D1": ("Отклонение сроков", "Задача «Фундамент сборный»: план 10.01.2026, факт 19.01.2026. Отклонение в днях? Критично? Ответ — 3 предложения."),
+    "D2": ("Бюджет план/факт", "Раздел «КОРОБКА, КРОВЛЯ, СТЕНЫ»: план 120 млн руб., факт 134.2 млн руб. Перерасход в % и 2 причины."),
+    "D3": ("Причина отклонения", "Задача «Идеальные полы» отклонилась на 28 дней, раздел «КОРОБКА». Сформулируй 3 вероятные причины."),
+    "D4": ("РД документация", "Объясни колонки «РД по Договору», «Отклонение разделов РД», «Всего загружено», «На согласовании» — 4 пункта."),
+    "D5": ("Прогноз", "Старт 01.03.2023, план конец 30.12.2025, выполнено 72 %, отклонение +45 дн. Прогноз завершения с расчётом."),
+    "D6": ("Таблица → вывод", "Таблица: Альфа 100/95, Бета 200/230, Гамма 150/150 (план/факт). Какой проект в зоне риска? 1 предложение."),
+    "D7": ("Ресурсы", "Контрагент «Строй-М»: 3 неделя — 120 чел.-дней, план 95. Дельта +26 %. Хорошо или плохо?"),
+    "D8": ("Сравнение этапов", "«Кабелетоковые каналы»: 0 дн. отклонения. «Металлические конструкции»: +18 дн. Аналитический вывод для руководителя."),
+    "D9": ("Markdown-отчёт", "Markdown-таблица «Топ-3 задачи по отклонению»: Фундамент +9, Полы +28 (нет подрядчика), Кровля +3. Колонки: Задача, Отклонение (дни), Причина."),
+    "D10": ("Классификация", "0 дн. — зелёный, 1–14 — жёлтый, >14 — красный. Задача с 18 дн. — какой статус? Одно слово + цвет."),
+    "D11": ("Текст слайда", "Абзац для слайда «Статус Дмитровский-8»: 72 %, бюджет ОК, срок +45 дн., причина — грунт. 3–4 предложения."),
+    "D12": ("SQL", "«Покажи задачи проекта Есенина-V с отклонением >10 дней». SQL к tasks(project_name, task_name, deviation_days)."),
+    "D13": ("Интерпретация", "На Gantt красный столбец (факт) правее синего (план). Что это значит? 2 предложения."),
+    "D14": ("Рекомендации", "3 задачи в красной зоне, 5 в жёлтой, 12 в зелёной. 3 конкретных управленческих действия."),
+    "D15": ("Перевод", "Переведи на англ.: «Отклонение фактических сроков от базового плана — 45 дней. Причина — изменение решений по фундаменту.»"),
+}
+
+_BENCH_RESULTS_DIR = _pathlib.Path(__file__).resolve().parent.parent / "docs" / "bench_results"
+
+
+def _call_llm(base_url: str, model: str, prompt: str, temperature: float, max_tokens: int):
+    """Один вызов к OpenAI-совместимому API. Возвращает (content, tok_in, tok_out, elapsed_s, error)."""
+    import urllib.request
+    import urllib.error
+
+    url = base_url.rstrip("/") + "/chat/completions"
+    payload = _json.dumps({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _BENCH_SYSTEM},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": temperature,
+        "top_p": 0.9,
+        "max_tokens": max_tokens,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+    t0 = _time.perf_counter()
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            body = _json.loads(resp.read().decode("utf-8"))
+        elapsed = _time.perf_counter() - t0
+        content = body["choices"][0]["message"]["content"]
+        usage = body.get("usage", {})
+        return content, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), round(elapsed, 3), None
+    except Exception as exc:
+        elapsed = _time.perf_counter() - t0
+        return "", 0, 0, round(elapsed, 3), str(exc)[:200]
+
+
+def _render_benchmark_tab(user):
+    """Содержимое вкладки Benchmark LLM в админке."""
+    st.markdown("<h2 class='Duquhununee'>Benchmark LLM</h2>", unsafe_allow_html=True)
+
+    st.info(
+        "Сравнение локальных LLM-моделей на доменных промптах (строительная аналитика). "
+        "Запустите vLLM-сервер, укажите URL и модель, нажмите «Запустить»."
+    )
+
+    # --- Шаг 1: настройки ---
+    st.markdown("### 1. Настройки подключения")
+    col_url, col_model = st.columns(2)
+    with col_url:
+        base_url = st.text_input(
+            "Base URL (OpenAI-compatible)",
+            value=st.session_state.get("bench_base_url", "http://localhost:8000/v1"),
+            key="bench_base_url_input",
+            help="URL вашего vLLM / Ollama / LM Studio сервера",
+        )
+    with col_model:
+        model_name = st.text_input(
+            "Имя модели",
+            value=st.session_state.get("bench_model", "Qwen/Qwen3-8B"),
+            key="bench_model_input",
+            help="Как зарегистрирована в API (вывод /v1/models)",
+        )
+
+    col_temp, col_tok, col_runs = st.columns(3)
+    with col_temp:
+        temperature = st.slider("Температура", 0.0, 1.0, 0.3, 0.05, key="bench_temp")
+    with col_tok:
+        max_tokens = st.number_input("max_tokens", 64, 2048, 512, 64, key="bench_max_tok")
+    with col_runs:
+        runs = st.number_input("Прогонов на промпт", 1, 5, 1, 1, key="bench_runs")
+
+    # --- Шаг 2: выбор промптов ---
+    st.markdown("### 2. Промпты")
+    prompt_ids = list(_BENCH_PROMPTS.keys())
+    general_ids = [p for p in prompt_ids if p.startswith("G")]
+    domain_ids = [p for p in prompt_ids if p.startswith("D")]
+
+    col_g, col_d = st.columns(2)
+    with col_g:
+        select_general = st.checkbox("Общие (G1–G5)", value=True, key="bench_sel_g")
+    with col_d:
+        select_domain = st.checkbox("Доменные (D1–D15)", value=True, key="bench_sel_d")
+
+    selected = []
+    if select_general:
+        selected += general_ids
+    if select_domain:
+        selected += domain_ids
+
+    if selected:
+        with st.expander(f"Выбрано промптов: {len(selected)}", expanded=False):
+            for pid in selected:
+                label, text = _BENCH_PROMPTS[pid]
+                st.markdown(f"**{pid}** — {label}")
+                st.caption(text[:120] + ("..." if len(text) > 120 else ""))
+
+    # --- Шаг 3: запуск ---
+    st.markdown("### 3. Запуск")
+    if not selected:
+        st.warning("Выберите хотя бы одну группу промптов.")
+        return
+
+    total_calls = len(selected) * int(runs)
+    st.write(f"Будет выполнено **{total_calls}** запросов к `{model_name}`.")
+
+    if st.button("Запустить benchmark", type="primary", key="bench_run_btn"):
+        st.session_state["bench_base_url"] = base_url
+        st.session_state["bench_model"] = model_name
+
+        results = []
+        progress = st.progress(0, text="Подготовка...")
+        status_area = st.empty()
+        done = 0
+
+        for pid in selected:
+            label, prompt_text = _BENCH_PROMPTS[pid]
+            for run_idx in range(1, int(runs) + 1):
+                done += 1
+                progress.progress(done / total_calls, text=f"{pid} (прогон {run_idx}/{int(runs)})")
+                status_area.caption(f"Отправка {pid}...")
+
+                content, tok_in, tok_out, elapsed, error = _call_llm(
+                    base_url, model_name, prompt_text, temperature, int(max_tokens)
+                )
+                tok_s = round(tok_out / elapsed, 1) if elapsed > 0 and tok_out > 0 else 0.0
+                results.append({
+                    "prompt_id": pid,
+                    "label": label,
+                    "run": run_idx,
+                    "model": model_name,
+                    "input_tokens": tok_in,
+                    "output_tokens": tok_out,
+                    "elapsed_s": elapsed,
+                    "tok_per_sec": tok_s,
+                    "answer": content,
+                    "error": error,
+                })
+                if done < total_calls:
+                    _time.sleep(2)
+
+        progress.progress(1.0, text="Готово!")
+        status_area.empty()
+        st.session_state["bench_last_results"] = results
+
+    # --- Шаг 4: результаты ---
+    results = st.session_state.get("bench_last_results")
+    if not results:
+        # Попробуем загрузить последний сохранённый файл
+        _show_saved_results()
+        return
+
+    st.markdown("### 4. Результаты")
+
+    df = pd.DataFrame(results)
+    ok = df[df["error"].isna()]
+    err = df[df["error"].notna()]
+
+    if not err.empty:
+        st.error(f"Ошибок: {len(err)} из {len(df)}")
+        with st.expander("Ошибки"):
+            for _, row in err.iterrows():
+                st.markdown(f"**{row['prompt_id']}** run {row['run']}: `{row['error']}`")
+
+    if ok.empty:
+        st.warning("Нет успешных ответов.")
+        return
+
+    # Сводка
+    st.markdown("#### Производительность")
+    perf = ok.groupby("prompt_id").agg(
+        tok_s_median=("tok_per_sec", "median"),
+        elapsed_median=("elapsed_s", "median"),
+        output_tokens_median=("output_tokens", "median"),
+    ).reset_index()
+    perf.columns = ["Промпт", "tok/s (медиана)", "Latency, с (медиана)", "Выход, токенов"]
+    st.dataframe(perf, use_container_width=True, hide_index=True)
+
+    avg_tok_s = ok["tok_per_sec"].median()
+    avg_latency = ok["elapsed_s"].median()
+    col_m1, col_m2, col_m3 = st.columns(3)
+    col_m1.metric("Медиана tok/s", f"{avg_tok_s:.1f}")
+    col_m2.metric("Медиана latency", f"{avg_latency:.2f} с")
+    col_m3.metric("Успешных", f"{len(ok)}/{len(df)}")
+
+    # Ответы
+    st.markdown("#### Ответы модели")
+    for pid in selected:
+        pid_rows = ok[ok["prompt_id"] == pid]
+        if pid_rows.empty:
+            continue
+        label, prompt_text = _BENCH_PROMPTS.get(pid, (pid, ""))
+        best_row = pid_rows.loc[pid_rows["tok_per_sec"].idxmax()]
+        with st.expander(f"{pid} — {label}  |  {best_row['tok_per_sec']} tok/s, {best_row['elapsed_s']}s"):
+            st.markdown(f"**Промпт:** {prompt_text}")
+            st.markdown("---")
+            st.markdown(best_row["answer"])
+
+    # Сохранение
+    st.markdown("#### Сохранить")
+    if st.button("Сохранить результаты в JSON", key="bench_save_btn"):
+        _BENCH_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe = model_name.replace("/", "_")
+        out = _BENCH_RESULTS_DIR / f"bench_{safe}_{ts}.json"
+        out.write_text(_json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
+        log_action(user["username"], "llm_benchmark", f"Benchmark {model_name}: {len(ok)} ok, {len(err)} err → {out.name}")
+        st.success(f"Сохранено: `{out.name}`")
+
+
+def _show_saved_results():
+    """Показывает список ранее сохранённых JSON-файлов с результатами."""
+    if not _BENCH_RESULTS_DIR.exists():
+        return
+    files = sorted(_BENCH_RESULTS_DIR.glob("bench_*.json"), reverse=True)
+    if not files:
+        return
+    st.markdown("### Ранее сохранённые прогоны")
+    chosen = st.selectbox(
+        "Файл", [f.name for f in files], key="bench_saved_select"
+    )
+    if chosen and st.button("Загрузить", key="bench_load_btn"):
+        data = _json.loads((_BENCH_RESULTS_DIR / chosen).read_text(encoding="utf-8"))
+        st.session_state["bench_last_results"] = data
+        st.rerun()
+
+
+# ┌──────────────────────────────────────────────────────────────────────────┐ #
 # │ ⊗ Красивый формат даты ¤ Start                                           │ #
 # └──────────────────────────────────────────────────────────────────────────┘ #
 
@@ -327,12 +587,13 @@ if user is not None:
     )
 
     # Вкладки административной панели
-    tab1, tab2, tab3, tab4 = st.tabs(
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
         [
             "Пользователи",
             "Статистика",
             "Логи",
             "Права доступа",
+            "Benchmark LLM",
         ]
     )
 
@@ -818,4 +1079,15 @@ if user is not None:
 
     # ┌──────────────────────────────────────────────────────────────────────┐ #
     # │ ⊗ TAB 4: Права доступа к проектам ¤ End                              │ #
+    # └──────────────────────────────────────────────────────────────────────┘ #
+
+    # ┌──────────────────────────────────────────────────────────────────────┐ #
+    # │ ⊗ TAB 5: Benchmark LLM ¤ Start                                       │ #
+    # └──────────────────────────────────────────────────────────────────────┘ #
+
+    with tab5:
+        _render_benchmark_tab(user)
+
+    # ┌──────────────────────────────────────────────────────────────────────┐ #
+    # │ ⊗ TAB 5: Benchmark LLM ¤ End                                         │ #
     # └──────────────────────────────────────────────────────────────────────┘ #
