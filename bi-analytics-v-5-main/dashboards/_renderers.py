@@ -34,6 +34,7 @@ except ImportError:
         return f'<div style="overflow-x: auto; margin: 1em 0;">{df.to_html(index=False)}</div>'
 
 import textwrap
+import html as html_module
 
 # Максимальное число строк, передаваемых в Plotly для scatter/line-графиков.
 # Для агрегированных (bar, pie) ограничение не нужно — там строк обычно немного.
@@ -78,6 +79,45 @@ def wrap_label(text, width=15):
     return "<br>".join(textwrap.wrap(text, width=width))
 
 
+def _xaxis_range_positive(values, pad: float = 1.15, min_span: float = 1.0):
+    """
+    Диапазон оси X для неотрицательных величин (гориз. bar): без лишнего «пустого» поля справа.
+    Учитывает только конечные неотрицательные числа; иначе — компактный дефолт.
+    """
+    s = pd.to_numeric(pd.Series(values), errors="coerce")
+    s = s.replace([np.inf, -np.inf], np.nan).dropna()
+    s = s[s >= 0]
+    if s.empty:
+        return [0.0, float(min_span)]
+    xmax = float(s.max())
+    if not np.isfinite(xmax) or xmax <= 0:
+        xmax = float(min_span)
+    upper = max(xmax * pad, float(min_span))
+    return [0.0, upper]
+
+
+def _clean_display_str(val, empty: str = "") -> str:
+    """Строка для ячеек: без nan/None; без «Н/Д» в табличных данных."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return empty
+    s = str(val).strip()
+    if not s or s.lower() in ("nan", "nat", "none"):
+        return empty
+    return s
+
+
+def _chart_caption_below(title: str) -> None:
+    """Заголовок под графиком (после подписей значений на столбцах/точках)."""
+    if not title:
+        return
+    esc = html_module.escape(str(title))
+    st.markdown(
+        "<p style='text-align:center;color:#e8eef5;margin:0.35rem 0 0.75rem;font-size:1rem;'>"
+        f"<b>{esc}</b></p>",
+        unsafe_allow_html=True,
+    )
+
+
 # Единая конфигурация Plotly для всех графиков:
 # responsive=True — перерисовка при изменении размера окна браузера
 # displayModeBar — панель инструментов только при hover
@@ -90,11 +130,18 @@ _PLOTLY_CONFIG = {
 }
 
 
-def render_chart(fig, key: str = None, height: int = None, max_height: int = 900) -> None:
+def render_chart(
+    fig,
+    key: str = None,
+    height: int = None,
+    max_height: int = 900,
+    caption_below: str = None,
+) -> None:
     """
     Единая точка вывода Plotly-графика с адаптивной конфигурацией.
     Заменяет прямые вызовы st.plotly_chart() по всему файлу.
     Если задан только height — ограничиваем сверху max_height для читаемости на больших bar-графиках.
+    caption_below — подпись под графиком (заголовок снизу); при этом у fig убирается верхний title.
     """
     kwargs = {
         "use_container_width": True,
@@ -105,7 +152,14 @@ def render_chart(fig, key: str = None, height: int = None, max_height: int = 900
     if height is not None:
         h = min(int(height), int(max_height)) if max_height else int(height)
         fig.update_layout(height=h)
+    if caption_below:
+        try:
+            fig.update_layout(title_text="")
+        except Exception:
+            pass
     st.plotly_chart(fig, **kwargs)
+    if caption_below:
+        _chart_caption_below(caption_below)
 
 
 def render_export_buttons(
@@ -467,73 +521,73 @@ def dashboard_reasons_of_deviation(df):
         reason_counts = filtered_df["reason of deviation"].value_counts().reset_index()
         reason_counts.columns = ["Причина", "Количество"]
 
-    fig = px.bar(
-        reason_counts,
-        x="Причина",
-        y="Количество",
-        title="Количество задач по причинам",
-        labels={
-            "Причина": "Причина отклонения",
-            "Количество": "Количество задач",
-        },
-        text="Количество",
-    )
-    fig.update_traces(
-        textposition="outside", textfont=dict(size=14, color="white")
-    )
-    fig = apply_chart_background(fig)
-    fig.update_layout(
-        yaxis=dict(range=[0, reason_counts["Количество"].max() * 1.2])
-    )
-    n = len(reason_counts)
-    if n > 6:
-        fig.update_xaxes(tickangle=-45)
-    else:
-        fig.update_xaxes(
-            tickangle=0,
-            tickmode="array",
-            tickvals=reason_counts["Причина"].tolist(),
-            ticktext=[wrap_label(r, width=15) for r in reason_counts["Причина"].tolist()],
-            tickfont=dict(size=14),
-            ticklabelstandoff=12,
-            overwrite=True,
+        fig = px.bar(
+            reason_counts,
+            x="Причина",
+            y="Количество",
+            title=None,
+            labels={
+                "Причина": "Причина отклонения",
+                "Количество": "Количество задач",
+            },
+            text="Количество",
         )
-    render_chart(fig)
+        fig.update_traces(
+            textposition="outside", textfont=dict(size=14, color="white")
+        )
+        fig = apply_chart_background(fig)
+        fig.update_layout(
+            yaxis=dict(range=[0, reason_counts["Количество"].max() * 1.2])
+        )
+        n = len(reason_counts)
+        if n > 6:
+            fig.update_xaxes(tickangle=-45)
+        else:
+            fig.update_xaxes(
+                tickangle=0,
+                tickmode="array",
+                tickvals=reason_counts["Причина"].tolist(),
+                ticktext=[wrap_label(r, width=15) for r in reason_counts["Причина"].tolist()],
+                tickfont=dict(size=14),
+                ticklabelstandoff=12,
+                overwrite=True,
+            )
+        render_chart(fig, caption_below="Количество задач по причинам")
 
-    reason_counts["label_text"] = (
-        reason_counts["Причина"].apply(wrap_label)
-        + "<br>("
-        + (reason_counts["Количество"] / reason_counts["Количество"].sum() * 100)
-        .round(0)
-        .astype(int)
-        .astype(str)
-        + "%)<br>"
-        + reason_counts["Количество"].astype(str)
-    )
+        reason_counts["label_text"] = (
+            reason_counts["Причина"].apply(wrap_label)
+            + "<br>("
+            + (reason_counts["Количество"] / reason_counts["Количество"].sum() * 100)
+            .round(0)
+            .astype(int)
+            .astype(str)
+            + "%)<br>"
+            + reason_counts["Количество"].astype(str)
+        )
 
-    fig = px.pie(
-        reason_counts,
-        values="Количество",
-        names="Причина",
-        title="Причины отклонений",
-    )
-    fig.update_traces(
-        text=reason_counts["label_text"],
-        textinfo="text",
-        textposition="inside",
-        textfont=dict(size=12, color="white"),
-        domain=dict(x=[0.0, 0.75], y=[0.15, 1.0]),
-        insidetextorientation="horizontal",
-    )
-    fig.update_layout(
-        height=680,
-        margin=dict(l=0, r=20, t=40, b=0),
-        legend=dict(x=1.28, y=1.0, xanchor="right", yanchor="top"),
-        font=dict(family="Inter, system-ui, sans-serif"),
-        autosize=False,
-    )
-    fig = apply_chart_background(fig)
-    render_chart(fig)
+        fig = px.pie(
+            reason_counts,
+            values="Количество",
+            names="Причина",
+            title=None,
+        )
+        fig.update_traces(
+            text=reason_counts["label_text"],
+            textinfo="text",
+            textposition="inside",
+            textfont=dict(size=12, color="white"),
+            domain=dict(x=[0.0, 0.75], y=[0.15, 1.0]),
+            insidetextorientation="horizontal",
+        )
+        fig.update_layout(
+            height=680,
+            margin=dict(l=0, r=20, t=40, b=0),
+            legend=dict(x=1.28, y=1.0, xanchor="right", yanchor="top"),
+            font=dict(family="Inter, system-ui, sans-serif"),
+            autosize=False,
+        )
+        fig = apply_chart_background(fig)
+        render_chart(fig, caption_below="Причины отклонений")
 
     # Detailed table — названия колонок на русском, дни: красный если > 0, зелёный если 0
     st.subheader("Детальные данные")
@@ -914,7 +968,7 @@ def dashboard_dynamics_of_deviations(df):
                 grouped_data,
                 x="period",
                 y="Количество задач",
-                title=f"Количество задач с отклонениями по {period_label.lower()}",
+                title=None,
                 labels={"period": period_label, "Количество задач": "Количество задач"},
                 text="Количество задач",
             )
@@ -923,7 +977,10 @@ def dashboard_dynamics_of_deviations(df):
                 textposition="outside", textfont=dict(size=14, color="white")
             )
             fig = apply_chart_background(fig)
-            render_chart(fig)
+            render_chart(
+                fig,
+                caption_below=f"Количество задач с отклонениями по {period_label.lower()}",
+            )
 
         with col2:
             if grouped_data["Всего дней отклонений"].sum() > 0:
@@ -935,14 +992,17 @@ def dashboard_dynamics_of_deviations(df):
                     grouped_data,
                     x="period",
                     y="Всего дней отклонений",
-                    title=f"Всего дней отклонений по {period_label.lower()}",
+                    title=None,
                     markers=True,
                     text="_дни_текст",
                 )
                 fig.update_xaxes(tickangle=-45)
                 fig.update_traces(textposition="top center", textfont=dict(color="white"))
                 fig = apply_chart_background(fig)
-                render_chart(fig)
+                render_chart(
+                    fig,
+                    caption_below=f"Всего дней отклонений по {period_label.lower()}",
+                )
             else:
                 st.info("Нет данных по дням отклонений.")
     else:  # Grouped by project and/or reason
@@ -968,7 +1028,7 @@ def dashboard_dynamics_of_deviations(df):
                 x="period",
                 y="Всего дней отклонений",
                 color="project name",
-                title="Дни отклонений по периоду",
+                title=None,
                 labels={"period": "", "Всего дней отклонений": "Дни отклонений"},
                 text="_дни_текст",
             )
@@ -985,7 +1045,7 @@ def dashboard_dynamics_of_deviations(df):
                 # Update trace with textangle=0 to ensure horizontal text
                 fig.data[i].update(textangle=0)
             fig = apply_chart_background(fig)
-            render_chart(fig)
+            render_chart(fig, caption_below="Дни отклонений по периоду")
 
         # Show by reason if reason is in group
         if "reason of deviation" in group_cols:
@@ -1017,7 +1077,7 @@ def dashboard_dynamics_of_deviations(df):
                 x="period",
                 y="Всего дней отклонений",
                 color="reason of deviation",
-                title="Дни отклонений по периоду и причинам",
+                title=None,
                 labels={"period": "", "Всего дней отклонений": "Дни отклонений"},
                 text="_дни_текст",
             )
@@ -1077,7 +1137,7 @@ def dashboard_dynamics_of_deviations(df):
             fig.update_layout(annotations=annotations)
 
             fig = apply_chart_background(fig)
-            render_chart(fig)
+            render_chart(fig, caption_below="Дни отклонений по периоду и причинам")
 
     # Summary table
     # If project is in group, show summary grouped by project overall (aggregate across all periods)
@@ -1385,33 +1445,35 @@ def dashboard_plan_fact_dates(df):
         st.info("Нет задач с плановыми или фактическими датами для выбранных фильтров.")
         return
 
-    # Перевычисляем маску на актуальном индексе filtered_df (после фильтрации)
-    both_dates_mask = (
-        filtered_df["plan start"].notna()
-        & filtered_df["plan end"].notna()
-        & filtered_df["base start"].notna()
-        & filtered_df["base end"].notna()
+    # Перевычисляем маски: начало и конец считаются отдельно, если есть обе даты пары
+    both_starts = (
+        filtered_df["plan start"].notna() & filtered_df["base start"].notna()
     )
+    both_ends = filtered_df["plan end"].notna() & filtered_df["base end"].notna()
 
-    # Calculate date differences for tasks that have both plan and fact
-    # float64 (не None/object), чтобы .loc-присвоение не меняло dtype
-    filtered_df["plan_start_diff"] = float("nan")
-    filtered_df["plan_end_diff"] = float("nan")
+    filtered_df["plan_start_diff"] = np.nan
+    filtered_df["plan_end_diff"] = np.nan
     filtered_df["total_diff_days"] = 0.0
 
-    if both_dates_mask.any():
-        # Дни с дробной частью (total_seconds / 86400)
-        start_diff = (
-            filtered_df.loc[both_dates_mask, "base start"]
-            - filtered_df.loc[both_dates_mask, "plan start"]
+    if both_starts.any():
+        filtered_df.loc[both_starts, "plan_start_diff"] = (
+            filtered_df.loc[both_starts, "base start"]
+            - filtered_df.loc[both_starts, "plan start"]
         ).dt.total_seconds() / 86400
-        end_diff = (
-            filtered_df.loc[both_dates_mask, "base end"]
-            - filtered_df.loc[both_dates_mask, "plan end"]
+    if both_ends.any():
+        filtered_df.loc[both_ends, "plan_end_diff"] = (
+            filtered_df.loc[both_ends, "base end"]
+            - filtered_df.loc[both_ends, "plan end"]
         ).dt.total_seconds() / 86400
-        filtered_df.loc[both_dates_mask, "plan_start_diff"] = start_diff
-        filtered_df.loc[both_dates_mask, "plan_end_diff"] = end_diff
-        filtered_df.loc[both_dates_mask, "total_diff_days"] = end_diff.abs()
+
+    has_end = filtered_df["plan_end_diff"].notna()
+    filtered_df.loc[has_end, "total_diff_days"] = filtered_df.loc[
+        has_end, "plan_end_diff"
+    ].abs()
+    only_start = (~has_end) & filtered_df["plan_start_diff"].notna()
+    filtered_df.loc[only_start, "total_diff_days"] = filtered_df.loc[
+        only_start, "plan_start_diff"
+    ].abs()
 
     # Sort by task name (alphabetically) for consistent display
     filtered_df = filtered_df.sort_values("task name", ascending=True)
@@ -1608,14 +1670,16 @@ def dashboard_plan_fact_dates(df):
                     )
                 )
                 fig_section.update_layout(
-                    title="Отклонение текущего срока от базового плана по этапам",
                     xaxis_title="Этап",
                     yaxis_title="Отклонение (дней)",
                     height=max(400, len(section_dev) * 50),
                     showlegend=False,
                 )
                 fig_section = apply_chart_background(fig_section)
-                render_chart(fig_section)
+                render_chart(
+                    fig_section,
+                    caption_below="Отклонение текущего срока от базового плана по этапам",
+                )
 
         # Checkbox to show/hide completion percentage
         show_completion = st.checkbox(
@@ -1782,7 +1846,6 @@ def dashboard_plan_fact_dates(df):
                     )
                 )
         fig_gantt.update_layout(
-            title="План/факт по этапам",
             xaxis_title="Дата",
             yaxis_title="Этапы",
             height=max(600, len(unique_tasks_sorted) * 150),
@@ -1803,21 +1866,22 @@ def dashboard_plan_fact_dates(df):
         left_margin = min(max_line_len * 8, 400)
         fig_gantt.update_layout(margin=dict(l=left_margin, r=30, t=50, b=150))
         fig_gantt.update_yaxes(tickfont=dict(size=12))
-        render_chart(fig_gantt)
+        render_chart(fig_gantt, caption_below="План/факт по этапам")
 
-    # Форматирование даты для отображения
+    # Форматирование даты для отображения (без «Н/Д» — пустая ячейка, если даты нет)
     def format_date_display(date_val):
         if pd.isna(date_val):
-            return "Н/Д"
+            return ""
         if isinstance(date_val, pd.Timestamp):
             return date_val.strftime("%d.%m.%Y")
         try:
             dt = pd.to_datetime(date_val, errors="coerce", dayfirst=True)
             if pd.notna(dt):
                 return dt.strftime("%d.%m.%Y")
-        except:
+        except Exception:
             pass
-        return str(date_val) if date_val else "Н/Д"
+        s = str(date_val).strip() if date_val else ""
+        return s if s and s.lower() not in ("nan", "nat", "none") else ""
 
     # Селектор задачи для метрик окончания проекта (только при выборе конкретного проекта)
     selected_task_for_metrics = None
@@ -1876,13 +1940,28 @@ def dashboard_plan_fact_dates(df):
             else:
                 task_row = df[task_mask].iloc[0]
 
+    def _fallback_max_deviation_days(task_label: str, project_choice: str, src: pd.DataFrame):
+        """Макс. |отклонение| по строкам задачи в отфильтрованных данных, если в строке нет обеих дат конца."""
+        if src is None or src.empty or "task name" not in src.columns:
+            return None
+        m = src["task name"].astype(str).str.strip() == str(task_label).strip()
+        if project_choice != "Все" and "project name" in src.columns:
+            m &= src["project name"].astype(str).str.strip() == str(project_choice).strip()
+        sub = src.loc[m]
+        if sub.empty or "total_diff_days" not in sub.columns:
+            return None
+        vals = pd.to_numeric(sub["total_diff_days"], errors="coerce").dropna()
+        if vals.empty:
+            return None
+        return float(vals.max())
+
     # Add comparison metrics
     col1, col2, col3 = st.columns(3)
 
     # Максимальное отклонение (дней) - отклонение факта от плана для выбранной задачи
     with col1:
+        deviation_days = None
         if task_row is not None:
-            # Преобразуем даты в datetime если нужно
             plan_end = task_row.get("plan end")
             base_end = task_row.get("base end")
 
@@ -1893,46 +1972,40 @@ def dashboard_plan_fact_dates(df):
 
             if pd.notna(plan_end) and pd.notna(base_end):
                 deviation_days = (base_end - plan_end).total_seconds() / 86400
-                deviation_str = f"{int(round(deviation_days, 0))}"
-
-                # Цвет: отрицательное = зеленый, положительное = красный
-                # Используем delta_color="inverse": отрицательные значения = зеленый, положительные = красный
-                st.metric(
-                    "Максимальное отклонение (дней)",
-                    deviation_str,
-                    delta=f"{int(round(deviation_days, 0))}",
-                    delta_color="inverse",
-                )
-            else:
-                st.metric("Максимальное отклонение (дней)", "Н/Д")
+        if deviation_days is None:
+            deviation_days = _fallback_max_deviation_days(
+                task_name_to_find, selected_project, filtered_df
+            )
+        if deviation_days is not None:
+            deviation_str = f"{int(round(float(deviation_days), 0))}"
+            st.metric(
+                "Максимальное отклонение (дней)",
+                deviation_str,
+                delta=deviation_str,
+                delta_color="inverse",
+            )
         else:
-            st.metric("Максимальное отклонение (дней)", "Н/Д")
+            st.metric("Максимальное отклонение (дней)", "—")
 
     # План окончания проекта - дата из задачи "Разрешение на ввод в эксплуатацию"
     with col2:
+        plan_end_str = ""
         if task_row is not None:
             plan_end = task_row.get("plan end")
             if pd.notna(plan_end):
                 plan_end = pd.to_datetime(plan_end, errors="coerce", dayfirst=True)
                 plan_end_str = format_date_display(plan_end)
-            else:
-                plan_end_str = "Н/Д"
-            st.metric("План окончания проекта", plan_end_str)
-        else:
-            st.metric("План окончания проекта", "Н/Д")
+        st.metric("План окончания проекта", plan_end_str or "—")
 
     # Факт окончания проекта - дата из задачи "Разрешение на ввод в эксплуатацию"
     with col3:
+        fact_end_str = ""
         if task_row is not None:
             base_end = task_row.get("base end")
             if pd.notna(base_end):
                 base_end = pd.to_datetime(base_end, errors="coerce", dayfirst=True)
                 fact_end_str = format_date_display(base_end)
-            else:
-                fact_end_str = "Н/Д"
-            st.metric("Факт окончания проекта", fact_end_str)
-        else:
-            st.metric("Факт окончания проекта", "Н/Д")
+        st.metric("Факт окончания проекта", fact_end_str or "—")
 
     # Добавляем разделитель и аналогичные метрики для задачи "Разрешение на строительство"
     st.markdown("---")
@@ -1950,10 +2023,10 @@ def dashboard_plan_fact_dates(df):
         if task_mask_construction.any():
             task_row_construction = df[task_mask_construction].iloc[0]
 
-    # Максимальное отклонение (дней) - отклонение факта от плана для задачи "Разрешение на строительство"
+    # Максимальное отклонение (дней) — задача «Разрешение на строительство»
     with col1_construction:
+        dev_c = None
         if task_row_construction is not None:
-            # Преобразуем даты в datetime если нужно
             plan_end_construction = task_row_construction.get("plan end")
             base_end_construction = task_row_construction.get("base end")
 
@@ -1967,26 +2040,27 @@ def dashboard_plan_fact_dates(df):
                 )
 
             if pd.notna(plan_end_construction) and pd.notna(base_end_construction):
-                deviation_days_construction = (
+                dev_c = (
                     base_end_construction - plan_end_construction
                 ).total_seconds() / 86400
-                deviation_str_construction = f"{int(round(deviation_days_construction, 0))}"
-
-                # Цвет: отрицательное = зеленый, положительное = красный
-                # Используем delta_color="inverse": отрицательные значения = зеленый, положительные = красный
-                st.metric(
-                    "Максимальное отклонение (дней)",
-                    deviation_str_construction,
-                    delta=f"{int(round(deviation_days_construction, 0))}",
-                    delta_color="inverse",
-                )
-            else:
-                st.metric("Максимальное отклонение (дней)", "Н/Д")
+        if dev_c is None:
+            dev_c = _fallback_max_deviation_days(
+                task_name_construction, selected_project, filtered_df
+            )
+        if dev_c is not None:
+            dstr = f"{int(round(float(dev_c), 0))}"
+            st.metric(
+                "Максимальное отклонение (дней)",
+                dstr,
+                delta=dstr,
+                delta_color="inverse",
+            )
         else:
-            st.metric("Максимальное отклонение (дней)", "Н/Д")
+            st.metric("Максимальное отклонение (дней)", "—")
 
     # План окончания проекта - дата из задачи "Разрешение на строительство"
     with col2_construction:
+        plan_end_str_construction = ""
         if task_row_construction is not None:
             plan_end_construction = task_row_construction.get("plan end")
             if pd.notna(plan_end_construction):
@@ -1994,14 +2068,11 @@ def dashboard_plan_fact_dates(df):
                     plan_end_construction, errors="coerce", dayfirst=True
                 )
                 plan_end_str_construction = format_date_display(plan_end_construction)
-            else:
-                plan_end_str_construction = "Н/Д"
-            st.metric("План окончания проекта", plan_end_str_construction)
-        else:
-            st.metric("План окончания проекта", "Н/Д")
+        st.metric("План окончания проекта", plan_end_str_construction or "—")
 
     # Факт окончания проекта - дата из задачи "Разрешение на строительство"
     with col3_construction:
+        fact_end_str_construction = ""
         if task_row_construction is not None:
             base_end_construction = task_row_construction.get("base end")
             if pd.notna(base_end_construction):
@@ -2009,11 +2080,7 @@ def dashboard_plan_fact_dates(df):
                     base_end_construction, errors="coerce", dayfirst=True
                 )
                 fact_end_str_construction = format_date_display(base_end_construction)
-            else:
-                fact_end_str_construction = "Н/Д"
-            st.metric("Факт окончания проекта", fact_end_str_construction)
-        else:
-            st.metric("Факт окончания проекта", "Н/Д")
+        st.metric("Факт окончания проекта", fact_end_str_construction or "—")
 
     # Summary table - format dates properly, sorted by difference
     summary_data = []
@@ -2026,25 +2093,26 @@ def dashboard_plan_fact_dates(df):
         start_diff = row.get("plan_start_diff", 0)
         end_diff = row.get("plan_end_diff", 0)
 
-        # Format dates for display
+        # Format dates for display (без «Н/Д»)
         def format_date(date_val):
             if pd.isna(date_val):
-                return "Н/Д"
+                return ""
             if isinstance(date_val, pd.Timestamp):
                 return date_val.strftime("%d.%m.%Y")
             try:
                 dt = pd.to_datetime(date_val, errors="coerce", dayfirst=True)
                 if pd.notna(dt):
                     return dt.strftime("%d.%m.%Y")
-            except:
+            except Exception:
                 pass
-            return str(date_val) if date_val else "Н/Д"
+            s = str(date_val).strip() if date_val else ""
+            return s if s and s.lower() not in ("nan", "nat", "none") else ""
 
         summary_data.append(
             {
-                "Проект": row.get("project name", "Н/Д"),
-                "Задача": row.get("task name", "Н/Д"),
-                "Раздел": row.get("section", "Н/Д"),
+                "Проект": _clean_display_str(row.get("project name")),
+                "Задача": _clean_display_str(row.get("task name")),
+                "Раздел": _clean_display_str(row.get("section")),
                 "План Начало": format_date(plan_start),
                 "План Конец": format_date(plan_end),
                 "Факт Начало": format_date(base_start),
@@ -2410,6 +2478,11 @@ def dashboard_deviation_by_tasks_current_month(df):
                 deviations["Процент выполнения"], errors="coerce"
             )
 
+        # Числовая ось: убирает ошибочный масштаб и «пустое» поле справа на гориз. bar
+        deviations["Суммарно дней отклонений"] = pd.to_numeric(
+            deviations["Суммарно дней отклонений"], errors="coerce"
+        ).fillna(0)
+
         # Sort by deviation amount (descending - largest first)
         deviations = deviations.sort_values("Суммарно дней отклонений", ascending=False)
 
@@ -2457,7 +2530,7 @@ def dashboard_deviation_by_tasks_current_month(df):
             x="Суммарно дней отклонений",
             y="Отображение",
             orientation="h",
-            title="Отклонения от базового плана",
+            title=None,
             labels={
                 "Суммарно дней отклонений": "Суммарно дней отклонений",
                 "Отображение": y_column,
@@ -2491,10 +2564,10 @@ def dashboard_deviation_by_tasks_current_month(df):
         left_margin = min(max_line_len * 8, 400)
         fig.update_layout(
             height=max(300, len(deviations) * 80),
-            margin=dict(l=left_margin, r=10, t=50, b=80),
-            xaxis=dict(range=[0, deviations["Суммарно дней отклонений"].max() * 1.15])
+            margin=dict(l=left_margin, r=10, t=40, b=80),
+            xaxis=dict(range=_xaxis_range_positive(deviations["Суммарно дней отклонений"])),
         )
-        render_chart(fig)
+        render_chart(fig, caption_below="Отклонения от базового плана")
 
         # Additional histogram with detail by section and task
         st.subheader("Детализация отклонений по разделам и задачам")
@@ -2586,12 +2659,15 @@ def dashboard_deviation_by_tasks_current_month(df):
                 if detail_deviations.empty:
                     st.info("Нет неотрицательных отклонений для детализации.")
                 else:
+                    detail_deviations["Суммарно дней отклонений"] = pd.to_numeric(
+                        detail_deviations["Суммарно дней отклонений"], errors="coerce"
+                    ).fillna(0)
                     fig_detail = px.bar(
                         detail_deviations,
                         x="Суммарно дней отклонений",
                         y="Отображение",
                         orientation="h",
-                        title="Детализация отклонений по разделам и задачам",
+                        title=None,
                         labels={
                             "Суммарно дней отклонений": "Суммарно дней отклонений",
                             "Отображение": "Задача (Раздел)",
@@ -2623,10 +2699,17 @@ def dashboard_deviation_by_tasks_current_month(df):
                     ) if not detail_deviations.empty else 20
                     left_margin = min(max_line_len * 8, 400)
                     fig_detail.update_layout(
-                        margin=dict(l=left_margin, r=10, t=50, b=80),
-                        xaxis=dict(range=[0, detail_deviations["Суммарно дней отклонений"].max() * 1.15])
+                        margin=dict(l=left_margin, r=10, t=40, b=80),
+                        xaxis=dict(
+                            range=_xaxis_range_positive(
+                                detail_deviations["Суммарно дней отклонений"]
+                            )
+                        ),
                     )
-                    render_chart(fig_detail)
+                    render_chart(
+                        fig_detail,
+                        caption_below="Детализация отклонений по разделам и задачам",
+                    )
             else:
                 st.warning("Поля 'section' или 'task name' не найдены для детализации.")
     else:
@@ -2926,7 +3009,7 @@ def dashboard_dynamics_of_reasons(df):
                 reason_summary,
                 x="reason of deviation",
                 y="Количество",
-                title="Динамика причин отклонений по причинам",
+                title=None,
                 labels={
                     "reason of deviation": "Причина отклонения",
                     "Количество": "Количество отклонений",
@@ -2965,7 +3048,7 @@ def dashboard_dynamics_of_reasons(df):
                     chart_data,
                     x=period_col,
                     y="Количество",
-                    title="Динамика причин отклонений по периодам",
+                    title=None,
                     labels={
                         period_col: period_label,
                         "Количество": "Количество отклонений",
@@ -2982,7 +3065,7 @@ def dashboard_dynamics_of_reasons(df):
                     x=period_col,
                     y="Количество",
                     color="reason of deviation",
-                    title="Динамика причин отклонений по периодам",
+                    title=None,
                     labels={
                         period_col: period_label,
                         "reason of deviation": "Причина отклонения",
@@ -3087,7 +3170,12 @@ def dashboard_dynamics_of_reasons(df):
                     )
 
         fig = apply_chart_background(fig)
-        render_chart(fig)
+        _reasons_chart_caption = (
+            "Динамика причин отклонений по причинам"
+            if view_type == "По причинам"
+            else "Динамика причин отклонений по периодам"
+        )
+        render_chart(fig, caption_below=_reasons_chart_caption)
 
         # Summary table - always show by reason (summarized values)
         # Group by reason and sum across all periods
@@ -3412,14 +3500,14 @@ def dashboard_budget_by_period(df):
                     )
                 )
             fig.update_layout(
-                title=f"БДДС{title_suffix}",
+                title_text="",
                 xaxis_title=period_label,
                 yaxis_title="млн руб.",
                 barmode="group",
                 xaxis=dict(tickangle=-45),
             )
             fig = apply_chart_background(fig)
-            render_chart(fig)
+            render_chart(fig, caption_below=f"БДДС{title_suffix}")
 
         _budget_period_chart()
 
@@ -3528,7 +3616,7 @@ def dashboard_budget_by_period(df):
                 )
             )
             fig_lot.update_layout(
-                title=dict(text="План/факт/отклонение по лотам", font=dict(size=24)),
+                title_text="",
                 xaxis_title="млн руб.",
                 yaxis_title="Этапы",
                 barmode="group",
@@ -3548,7 +3636,7 @@ def dashboard_budget_by_period(df):
                 margin=dict(l=left_margin, r=200, t=80, b=50),
                 xaxis=dict(range=[0, max_val * 1.31])
             )
-            render_chart(fig_lot)
+            render_chart(fig_lot, caption_below="План/факт/отклонение по лотам")
 
             st.subheader("Сводка бюджета по лотам")
             table_lot = budget_summary_lot.drop(columns=["period_original"], errors="ignore").copy()
@@ -3802,14 +3890,14 @@ def dashboard_budget_cumulative(df):
         )
 
     fig_cum.update_layout(
-        title="БДДС накопительно",
+        title_text="",
         xaxis_title=period_label,
         yaxis_title="млн руб.",
         barmode="group",
         xaxis=dict(tickangle=-45),
     )
     fig_cum = apply_chart_background(fig_cum)
-    render_chart(fig_cum)
+    render_chart(fig_cum, caption_below="БДДС накопительно")
 
     # Summary table with cumulative data (млн руб., два знака после запятой)
     st.subheader(f"Сводка бюджета (накопительно) по {period_label.lower()}")
@@ -4052,7 +4140,7 @@ def dashboard_budget_by_section(df):
                     )
                 )
             fig.update_layout(
-                title=dict(text=f"План/факт/отклонение по лотам{title_suffix}", font=dict(size=24)),
+                title_text="",
                 xaxis_title=dict(text=period_label, font=dict(size=20)),
                 yaxis_title=dict(text="млн руб.", font=dict(size=20)),
                 barmode="group",
@@ -4061,6 +4149,7 @@ def dashboard_budget_by_section(df):
                 legend=dict(font=dict(size=18)),
                 height=600,
             )
+            _lot_budget_caption = f"План/факт/отклонение по лотам{title_suffix}"
         else:
             # Все этапы: ось Y = этапы, ось X = млн руб.
             section_chart_data = (
@@ -4109,7 +4198,7 @@ def dashboard_budget_by_section(df):
                     )
                 )
             fig.update_layout(
-                title=dict(text="План/факт/отклонение по лотам", font=dict(size=24)),
+                title_text="",
                 xaxis_title=dict(text="млн руб.", font=dict(size=20)),
                 yaxis_title=dict(text="Этапы", font=dict(size=20)),
                 barmode="group",
@@ -4118,8 +4207,9 @@ def dashboard_budget_by_section(df):
                 legend=dict(font=dict(size=18)),
                 height=max(400, len(section_chart_data) * 44),
             )
+            _lot_budget_caption = "План/факт/отклонение по лотам"
         fig = apply_chart_background(fig)
-        render_chart(fig)
+        render_chart(fig, caption_below=_lot_budget_caption)
 
     _budget_section_chart()
 
@@ -4318,14 +4408,14 @@ def dashboard_bdr(df):
             )
         )
         fig.update_layout(
-            title=f"БДР — доходы и расходы{title_suffix}",
+            title_text="",
             xaxis_title=period_label,
             yaxis_title="млн руб.",
             barmode="group",
             xaxis=dict(tickangle=-45),
         )
         fig = apply_chart_background(fig)
-        render_chart(fig)
+        render_chart(fig, caption_below=f"БДР — доходы и расходы{title_suffix}")
 
     _bdr_chart()
 
@@ -4654,7 +4744,7 @@ def dashboard_rd_delay(df):
             x="Отклонение разделов РД",
             y=y_column,
             orientation="h",
-            title="Просрочка выдачи РД",
+            title=None,
             labels={
                 y_column: y_title,
                 "Отклонение разделов РД": "Отклонение разделов РД",
@@ -4695,7 +4785,7 @@ def dashboard_rd_delay(df):
         )
 
         fig = apply_chart_background(fig)
-        render_chart(fig)
+        render_chart(fig, caption_below="Просрочка выдачи РД")
 
         # Summary table (с % выполнения РД/ПД и раскраской отклонения: >0 красный, <=0 зелёный)
         st.subheader("Сводка по просрочке")
@@ -5246,7 +5336,7 @@ def dashboard_technique(df):
                     )
                 )
                 fig_hist.update_layout(
-                    title=f"Фактическое количество по периодам (точки — недели): {label}",
+                    title_text="",
                     xaxis_title="Период — неделя",
                     yaxis_title="Количество",
                     height=400,
@@ -5259,9 +5349,11 @@ def dashboard_technique(df):
                 )
                 fig_hist = apply_chart_background(fig_hist)
                 with hist_cols[idx]:
-                    cap = f"Факт по периодам: {label} (группировка по периоду, точки — по неделям)"
-                    st.caption(cap)
-                    render_chart(fig_hist, key=f"{key_prefix}_hist_period_{idx}")
+                    render_chart(
+                        fig_hist,
+                        key=f"{key_prefix}_hist_period_{idx}",
+                        caption_below=f"Фактическое количество по периодам (точки — недели): {label}",
+                    )
             else:
                 # Нет колонок по неделям — один столбец/точка на период (сумма)
                 by_period = (
@@ -5277,7 +5369,6 @@ def dashboard_technique(df):
                 )
                 by_period = by_period.sort_values(period_col_hist)
                 with hist_cols[idx]:
-                    st.caption(f"Факт по периодам: {label} (количество и %)")
                     fig_hist = go.Figure()
                     is_resources_fb = "Ресурсы" in label or "Люди" in label
                     if is_resources_fb:
@@ -5306,7 +5397,7 @@ def dashboard_technique(df):
                             )
                         )
                     fig_hist.update_layout(
-                        title=f"Фактическое количество по периодам: {label}",
+                        title_text="",
                         xaxis_title="Период",
                         yaxis_title="Количество",
                         height=400,
@@ -5314,7 +5405,11 @@ def dashboard_technique(df):
                         xaxis=dict(tickangle=-45),
                     )
                     fig_hist = apply_chart_background(fig_hist)
-                    render_chart(fig_hist, key=f"{key_prefix}_hist_period_fallback_{idx}")
+                    render_chart(
+                        fig_hist,
+                        key=f"{key_prefix}_hist_period_fallback_{idx}",
+                        caption_below=f"Фактическое количество по периодам: {label}",
+                    )
 
     # Обрабатываем каждый проект отдельно
     for project_name in projects_to_process:
@@ -5361,7 +5456,7 @@ def dashboard_technique(df):
                     pie_plan_fact,
                     values="Значение",
                     names="Тип",
-                    title=f"План и факт — {project_name}",
+                    title=None,
                     color_discrete_sequence=["#3498db", "#2ecc71"],
                 )
                 fig_pie_pf.update_traces(
@@ -5373,7 +5468,7 @@ def dashboard_technique(df):
                 )
                 fig_pie_pf.update_layout(height=450, showlegend=True, title_font_size=14)
                 fig_pie_pf = apply_chart_background(fig_pie_pf)
-                render_chart(fig_pie_pf)
+                render_chart(fig_pie_pf, caption_below=f"План и факт — {project_name}")
 
         # ========== Chart 1: Pie Chart by Contractor (Delta %) ==========
         st.subheader("Круговая диаграмма: Распределение дельты (%) по контрагентам")
@@ -5515,7 +5610,7 @@ def dashboard_technique(df):
                     contractor_delta_pct_abs,
                     values="Дельта (%)_abs",
                     names="Контрагент",
-                    title="Распределение дельты (%) по контрагентам",
+                    title=None,
                     color_discrete_sequence=px.colors.qualitative.Set3,
                 )
 
@@ -5539,7 +5634,10 @@ def dashboard_technique(df):
                 )
 
                 fig_pie = apply_chart_background(fig_pie)
-                render_chart(fig_pie)
+                render_chart(
+                    fig_pie,
+                    caption_below="Распределение дельты (%) по контрагентам",
+                )
 
         # ========== Доли факта по людям и технике по подрядчикам (100% = все люди / вся техника) ==========
         if "data_source" in project_filtered_df.columns and "Контрагент" in project_filtered_df.columns and "week_sum" in project_filtered_df.columns:
@@ -5700,7 +5798,7 @@ def dashboard_technique(df):
 
         period_caption = f" Период: {', '.join(str(p) for p in selected_periods[:5])}{'…' if len(selected_periods) > 5 else ''}" if (period_col and selected_periods) else ""
         fig_bar.update_layout(
-            title="План, Среднее за месяц и Дельта по контрагентам" + period_caption,
+            title_text="",
             xaxis_title="Контрагент",
             yaxis_title="Значение",
             barmode="group",
@@ -5712,7 +5810,10 @@ def dashboard_technique(df):
         )
 
         fig_bar = apply_chart_background(fig_bar)
-        render_chart(fig_bar)
+        render_chart(
+            fig_bar,
+            caption_below="План, Среднее за месяц и Дельта по контрагентам" + period_caption,
+        )
 
         # ========== Chart 3: Pie Chart by Contractor (Plan + Average) ==========
         st.subheader(
@@ -5776,7 +5877,7 @@ def dashboard_technique(df):
                 contractor_plan_avg,
                 values="Сумма",
                 names="Контрагент",
-                title="Распределение суммы Плана и Среднего за месяц по контрагентам",
+                title=None,
                 color_discrete_sequence=px.colors.qualitative.Set2,
             )
 
@@ -5808,7 +5909,10 @@ def dashboard_technique(df):
             )
 
             fig_pie_plan_avg = apply_chart_background(fig_pie_plan_avg)
-            render_chart(fig_pie_plan_avg)
+            render_chart(
+                fig_pie_plan_avg,
+                caption_below="Распределение суммы Плана и Среднего за месяц по контрагентам",
+            )
 
         # ========== Summary Table ==========
         st.subheader("Сводная таблица по контрагентам")
@@ -6339,7 +6443,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     )
                 )
                 fig_hist.update_layout(
-                    title=f"Фактическое количество по периодам (точки — недели): {label}",
+                    title_text="",
                     xaxis_title="Период — неделя",
                     yaxis_title="Количество",
                     height=400,
@@ -6352,9 +6456,11 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 )
                 fig_hist = apply_chart_background(fig_hist)
                 with hist_cols[idx]:
-                    cap = f"Факт по периодам: {label} (группировка по периоду, точки — по неделям)"
-                    st.caption(cap)
-                    render_chart(fig_hist, key=f"{key_prefix}_hist_period_{idx}")
+                    render_chart(
+                        fig_hist,
+                        key=f"{key_prefix}_hist_period_{idx}",
+                        caption_below=f"Фактическое количество по периодам (точки — недели): {label}",
+                    )
             else:
                 # Нет колонок по неделям — один столбец/точка на период (сумма)
                 by_period = (
@@ -6370,7 +6476,6 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 )
                 by_period = by_period.sort_values(period_col_hist)
                 with hist_cols[idx]:
-                    st.caption(f"Факт по периодам: {label} (количество и %)")
                     fig_hist = go.Figure()
                     is_resources_fb = "Ресурсы" in label or "Люди" in label
                     if is_resources_fb:
@@ -6399,7 +6504,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                             )
                         )
                     fig_hist.update_layout(
-                        title=f"Фактическое количество по периодам: {label}",
+                        title_text="",
                         xaxis_title="Период",
                         yaxis_title="Количество",
                         height=400,
@@ -6407,7 +6512,11 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                         xaxis=dict(tickangle=-45),
                     )
                     fig_hist = apply_chart_background(fig_hist)
-                    render_chart(fig_hist, key=f"{key_prefix}_hist_period_fallback_{idx}")
+                    render_chart(
+                        fig_hist,
+                        key=f"{key_prefix}_hist_period_fallback_{idx}",
+                        caption_below=f"Фактическое количество по периодам: {label}",
+                    )
 
     # Обрабатываем каждый проект отдельно
     for project_name in projects_to_process:
@@ -6454,7 +6563,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     pie_plan_fact,
                     values="Значение",
                     names="Тип",
-                    title=f"План и факт — {project_name}",
+                    title=None,
                     color_discrete_sequence=["#3498db", "#2ecc71"],
                 )
                 fig_pie_pf.update_traces(
@@ -6466,7 +6575,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 )
                 fig_pie_pf.update_layout(height=450, showlegend=True, title_font_size=14)
                 fig_pie_pf = apply_chart_background(fig_pie_pf)
-                render_chart(fig_pie_pf)
+                render_chart(fig_pie_pf, caption_below=f"План и факт — {project_name}")
 
         # ========== Chart 1: Pie Chart by Contractor (Delta %) ==========
         st.subheader("Круговая диаграмма: Распределение дельты (%) по контрагентам")
@@ -6608,7 +6717,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     contractor_delta_pct_abs,
                     values="Дельта (%)_abs",
                     names="Контрагент",
-                    title="Распределение дельты (%) по контрагентам",
+                    title=None,
                     color_discrete_sequence=px.colors.qualitative.Set3,
                 )
 
@@ -6632,7 +6741,10 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 )
 
                 fig_pie = apply_chart_background(fig_pie)
-                render_chart(fig_pie)
+                render_chart(
+                    fig_pie,
+                    caption_below="Распределение дельты (%) по контрагентам",
+                )
 
         # ========== Доли факта по людям и технике по подрядчикам (100% = все люди / вся техника) ==========
         if "data_source" in project_filtered_df.columns and "Контрагент" in project_filtered_df.columns and "week_sum" in project_filtered_df.columns:
@@ -6783,7 +6895,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
 
         period_caption = f" Период: {', '.join(str(p) for p in selected_periods[:5])}{'…' if len(selected_periods) > 5 else ''}" if (period_col and selected_periods) else ""
         fig_bar.update_layout(
-            title="План, Среднее за месяц и Дельта по контрагентам" + period_caption,
+            title_text="",
             xaxis_title="Контрагент",
             yaxis_title="Значение",
             barmode="group",
@@ -6793,7 +6905,10 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         )
 
         fig_bar = apply_chart_background(fig_bar)
-        render_chart(fig_bar)
+        render_chart(
+            fig_bar,
+            caption_below="План, Среднее за месяц и Дельта по контрагентам" + period_caption,
+        )
 
         # ========== Chart 3: Pie Chart by Contractor (Plan + Average) ==========
         st.subheader(
@@ -6848,7 +6963,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 contractor_plan_avg,
                 values="Сумма",
                 names="Контрагент",
-                title="Распределение суммы Плана и Среднего за месяц по контрагентам",
+                title=None,
                 color_discrete_sequence=px.colors.qualitative.Set2,
             )
 
@@ -6879,7 +6994,10 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             )
 
             fig_pie_plan_avg = apply_chart_background(fig_pie_plan_avg)
-            render_chart(fig_pie_plan_avg)
+            render_chart(
+                fig_pie_plan_avg,
+                caption_below="Распределение суммы Плана и Среднего за месяц по контрагентам",
+            )
 
             # ========== Summary Table ==========
             st.subheader("Сводная таблица по контрагентам")
@@ -7321,19 +7439,19 @@ def dashboard_skud_stroyka(df):
                 grouped_data,
                 x=x_col,
                 y="Среднее за месяц",
-                title="Среднее за месяц по людям в динамике",
+                title=None,
                 labels={x_col: "Месяц", "Среднее за месяц": "Среднее за месяц (чел.)"},
                 markers=True,
             )
             fig.update_xaxes(tickangle=-45)
             fig = apply_chart_background(fig)
-            render_chart(fig)
+            render_chart(fig, caption_below="Среднее за месяц по людям в динамике")
         else:
             # Single value bar chart
             fig = px.bar(
                 grouped_data,
                 y="Среднее за месяц",
-                title="Среднее за месяц по людям",
+                title=None,
                 labels={"Среднее за месяц": "Среднее за месяц (чел.)"},
                 text="Среднее за месяц",
             )
@@ -7341,7 +7459,7 @@ def dashboard_skud_stroyka(df):
                 textposition="outside", textfont=dict(size=12, color="white")
             )
             fig = apply_chart_background(fig)
-            render_chart(fig)
+            render_chart(fig, caption_below="Среднее за месяц по людям")
     else:
         # Grouped visualization
         grouping_cols = [col for col in group_cols if col != "period_month"]
@@ -7361,7 +7479,7 @@ def dashboard_skud_stroyka(df):
                     x=x_col,
                     y="Среднее за месяц",
                     color=color_col,
-                    title="Среднее за месяц по людям в динамике",
+                    title=None,
                     labels={
                         x_col: "Месяц",
                         "Среднее за месяц": "Среднее за месяц (чел.)",
@@ -7374,7 +7492,7 @@ def dashboard_skud_stroyka(df):
                     textposition="outside", textfont=dict(size=12, color="white")
                 )
                 fig = apply_chart_background(fig)
-                render_chart(fig)
+                render_chart(fig, caption_below="Среднее за месяц по людям в динамике")
             elif len(grouping_cols) > 1:
                 # Multiple grouping columns - use first for color, show others in hover
                 fig = px.bar(
@@ -7382,7 +7500,7 @@ def dashboard_skud_stroyka(df):
                     x=x_col,
                     y="Среднее за месяц",
                     color=grouping_cols[0],
-                    title="Среднее за месяц по людям в динамике",
+                    title=None,
                     labels={
                         x_col: "Месяц",
                         "Среднее за месяц": "Среднее за месяц (чел.)",
@@ -7396,14 +7514,14 @@ def dashboard_skud_stroyka(df):
                     textposition="outside", textfont=dict(size=12, color="white")
                 )
                 fig = apply_chart_background(fig)
-                render_chart(fig)
+                render_chart(fig, caption_below="Среднее за месяц по людям в динамике")
             else:
                 # Fallback to line chart
                 fig = px.line(
                     grouped_data,
                     x=x_col,
                     y="Среднее за месяц",
-                    title="Среднее за месяц по людям в динамике",
+                    title=None,
                     labels={
                         x_col: "Месяц",
                         "Среднее за месяц": "Среднее за месяц (чел.)",
@@ -7412,7 +7530,7 @@ def dashboard_skud_stroyka(df):
                 )
                 fig.update_xaxes(tickangle=-45)
                 fig = apply_chart_background(fig)
-                render_chart(fig)
+                render_chart(fig, caption_below="Среднее за месяц по людям в динамике")
         elif len(grouping_cols) > 0:
             # Grouped bar chart without time series (single month selected)
             color_col = grouping_cols[0] if len(grouping_cols) == 1 else None
@@ -7421,7 +7539,7 @@ def dashboard_skud_stroyka(df):
                     grouped_data,
                     x=color_col,
                     y="Среднее за месяц",
-                    title="Среднее за месяц по людям",
+                    title=None,
                     labels={"Среднее за месяц": "Среднее за месяц (чел.)"},
                     text="Среднее за месяц",
                 )
@@ -7430,7 +7548,7 @@ def dashboard_skud_stroyka(df):
                 )
                 fig.update_xaxes(tickangle=-45)
                 fig = apply_chart_background(fig)
-                render_chart(fig)
+                render_chart(fig, caption_below="Среднее за месяц по людям")
             else:
                 st.info("Не удалось построить график с выбранной группировкой.")
         else:
@@ -8093,7 +8211,7 @@ def dashboard_documentation(df):
             fig_pie = px.pie(
                 values=list(pie_data.values()),
                 names=list(pie_data.keys()),
-                title="Исполнение РД",
+                title=None,
                 color_discrete_map={
                     "На согласовании": "#2E86AB",
                     "Выдано в производство работ": "#06A77D",
@@ -8109,7 +8227,7 @@ def dashboard_documentation(df):
             )
 
             fig_pie = apply_chart_background(fig_pie)
-            render_chart(fig_pie)
+            render_chart(fig_pie, caption_below="Исполнение РД")
         else:
             st.info("Нет данных для построения графика 'Исполнение РД'.")
     except Exception as e:
@@ -8302,7 +8420,7 @@ def dashboard_documentation(df):
                 x="Дата",
                 y="Количество",
                 color="Тип",
-                title="Динамика выдачи РД",
+                title=None,
                 markers=True,
                 labels={"Количество": "Количество", "Дата": "Дата (Старт План)"},
                 text="Текст",
@@ -8344,7 +8462,7 @@ def dashboard_documentation(df):
                 textfont=dict(size=10, color="white"),
             )
             fig_dynamics = apply_chart_background(fig_dynamics)
-            render_chart(fig_dynamics)
+            render_chart(fig_dynamics, caption_below="Динамика выдачи РД")
         else:
             st.warning("Нет данных для построения графика 'Динамика выдачи РД'.")
     except Exception as e:
@@ -8651,7 +8769,7 @@ def dashboard_budget_by_type(df):
                     x="project name",
                     y="Сумма",
                     color="Тип бюджета",
-                    title="Бюджет план/факт/корректировка/отклонение по проектам",
+                    title=None,
                     labels={"project name": "Проект", "Сумма": "Сумма бюджета (руб.)"},
                     barmode="group",
                     text="Сумма_млн",
@@ -8683,7 +8801,10 @@ def dashboard_budget_by_type(df):
                 )
 
                 fig_hist = apply_chart_background(fig_hist)
-                render_chart(fig_hist)
+                render_chart(
+                    fig_hist,
+                    caption_below="Бюджет план/факт/корректировка/отклонение по проектам",
+                )
 
                 # Summary table (суммы в млн руб., два знака, подпись в названии колонки)
                 st.subheader("Сводная таблица по проектам")
@@ -8919,7 +9040,7 @@ def dashboard_budget_old_charts(df):
             x=period_col,
             y="Сумма",
             color="Тип бюджета",
-            title="Бюджет по типам по периоду (накопительно)",
+            title=None,
             labels={period_col: period_label, "Сумма": "Сумма, млн руб."},
             text="Сумма",
             color_discrete_map={
@@ -8932,7 +9053,7 @@ def dashboard_budget_old_charts(df):
         fig.update_xaxes(tickangle=-45)
         fig.update_traces(textposition="top center")
         fig = apply_chart_background(fig)
-        render_chart(fig)
+        render_chart(fig, caption_below="Бюджет по типам по периоду (накопительно)")
 
     with col2:
         # Grouped bar chart
@@ -8941,7 +9062,7 @@ def dashboard_budget_old_charts(df):
             x=period_col,
             y="Сумма",
             color="Тип бюджета",
-            title="Бюджет по типам по периоду",
+            title=None,
             labels={period_col: period_label, "Сумма": "Сумма, млн руб."},
             barmode="group",
             text="Сумма",
@@ -8955,7 +9076,7 @@ def dashboard_budget_old_charts(df):
         fig.update_xaxes(tickangle=-45)
         fig.update_traces(textposition="outside", textfont=dict(size=14, color="white"))
         fig = apply_chart_background(fig)
-        render_chart(fig)
+        render_chart(fig, caption_below="Бюджет по типам по периоду")
 
     # Line chart comparing all types
     fig = px.line(
@@ -8963,7 +9084,7 @@ def dashboard_budget_old_charts(df):
         x=period_col,
         y="Сумма",
         color="Тип бюджета",
-        title="Сравнение типов бюджета по периоду",
+        title=None,
         labels={period_col: period_label, "Сумма": "Сумма, млн руб."},
         markers=True,
         text="Сумма",
@@ -8977,7 +9098,7 @@ def dashboard_budget_old_charts(df):
     fig.update_xaxes(tickangle=-45)
     fig.update_traces(textposition="top center")
     fig = apply_chart_background(fig)
-    render_chart(fig)
+    render_chart(fig, caption_below="Сравнение типов бюджета по периоду")
 
     # Summary metrics (суммы уже в млн руб.)
     col1, col2, col3, col4 = st.columns(4)
@@ -9409,7 +9530,7 @@ def dashboard_approved_budget(df):
     )
 
     fig.update_layout(
-        title="Утвержденный бюджет по месяцам",
+        title_text="",
         xaxis_title="Месяц",
         yaxis_title="млн руб.",
         hovermode="x unified",
@@ -9418,7 +9539,7 @@ def dashboard_approved_budget(df):
     )
 
     fig = apply_chart_background(fig)
-    render_chart(fig)
+    render_chart(fig, caption_below="Утвержденный бюджет по месяцам")
 
     # Сводная таблица (млн руб.)
     st.subheader("Сводная таблица утвержденного бюджета по месяцам")
@@ -9557,7 +9678,8 @@ def dashboard_forecast_budget(df):
         # Подготавливаем данные для редактирования в первый раз
         current_data = project_df.copy()
         if "section" not in current_data.columns:
-            current_data["section"] = "—"
+            current_data["section"] = ""
+        current_data["section"] = current_data["section"].apply(_clean_display_str)
         edit_df = current_data[
             ["task name", "section", "plan start", "plan end", "budget plan"]
         ].copy()
@@ -9574,8 +9696,9 @@ def dashboard_forecast_budget(df):
         edit_df["plan start"] = edit_df["plan start"].dt.date
         edit_df["plan end"] = edit_df["plan end"].dt.date
 
-        # Переименовываем колонки; бюджет в млн руб. для отображения с точкой
-        edit_df["budget plan"] = (edit_df["budget plan"].astype(float) / 1e6).round(2)
+        # Переименовываем колонки; бюджет в млн руб. (по умолчанию 0, если нет значения)
+        bp = pd.to_numeric(edit_df["budget plan"], errors="coerce").fillna(0.0)
+        edit_df["budget plan"] = (bp / 1e6).round(2)
         edit_df.columns = [
             "Задача",
             "Раздел",
@@ -9590,7 +9713,8 @@ def dashboard_forecast_budget(df):
     if f"forecast_edit_table_{selected_project}" not in st.session_state:
         current_data = project_df.copy()
         if "section" not in current_data.columns:
-            current_data["section"] = "—"
+            current_data["section"] = ""
+        current_data["section"] = current_data["section"].apply(_clean_display_str)
         edit_df = current_data[
             ["task name", "section", "plan start", "plan end", "budget plan"]
         ].copy()
@@ -9602,7 +9726,8 @@ def dashboard_forecast_budget(df):
         )
         edit_df["plan start"] = edit_df["plan start"].dt.date
         edit_df["plan end"] = edit_df["plan end"].dt.date
-        edit_df["budget plan"] = (edit_df["budget plan"].astype(float) / 1e6).round(2)
+        bp2 = pd.to_numeric(edit_df["budget plan"], errors="coerce").fillna(0.0)
+        edit_df["budget plan"] = (bp2 / 1e6).round(2)
         edit_df.columns = [
             "Задача",
             "Раздел",
@@ -9625,6 +9750,8 @@ def dashboard_forecast_budget(df):
         edit_df = edit_df.rename(columns={"plan start": "План. начало"})
     if "План. окончание" not in edit_df.columns and "plan end" in edit_df.columns:
         edit_df = edit_df.rename(columns={"plan end": "План. окончание"})
+    if "Раздел" in edit_df.columns:
+        edit_df["Раздел"] = edit_df["Раздел"].apply(_clean_display_str)
 
     st.subheader("Редактирование данных задач")
     st.info(
@@ -9721,7 +9848,8 @@ def dashboard_forecast_budget(df):
         st.session_state[f"forecast_edited_data_{selected_project}"] = project_df.copy()
         project_for_reset = project_df.copy()
         if "section" not in project_for_reset.columns:
-            project_for_reset["section"] = "—"
+            project_for_reset["section"] = ""
+        project_for_reset["section"] = project_for_reset["section"].apply(_clean_display_str)
         edit_df_reset = project_for_reset[
             ["task name", "section", "plan start", "plan end", "budget plan"]
         ].copy()
@@ -9733,7 +9861,8 @@ def dashboard_forecast_budget(df):
         )
         edit_df_reset["plan start"] = edit_df_reset["plan start"].dt.date
         edit_df_reset["plan end"] = edit_df_reset["plan end"].dt.date
-        edit_df_reset["budget plan"] = (edit_df_reset["budget plan"].astype(float) / 1e6).round(2)
+        bp_r = pd.to_numeric(edit_df_reset["budget plan"], errors="coerce").fillna(0.0)
+        edit_df_reset["budget plan"] = (bp_r / 1e6).round(2)
         edit_df_reset.columns = [
             "Задача",
             "Раздел",
@@ -9878,7 +10007,6 @@ def dashboard_forecast_budget(df):
     )
 
     fig.update_layout(
-        title=f"Прогнозный бюджет по месяцам (Проект: {selected_project})",
         xaxis_title="Месяц",
         yaxis_title="млн руб.",
         hovermode="x unified",
@@ -9887,7 +10015,10 @@ def dashboard_forecast_budget(df):
     )
 
     fig = apply_chart_background(fig)
-    render_chart(fig)
+    render_chart(
+        fig,
+        caption_below=f"Прогнозный бюджет по месяцам (проект: {selected_project})",
+    )
 
     # Сводная таблица — значения в млн руб. (пересчёт из рублей: / 1e6)
     st.subheader("Сводная таблица прогнозного бюджета по месяцам")
@@ -9933,6 +10064,8 @@ def dashboard_forecast_budget(df):
         "task name": "Задача",
         "month": "Месяц",
     })
+    if "Раздел" in detail_table.columns:
+        detail_table["Раздел"] = detail_table["Раздел"].apply(_clean_display_str)
     # Формат отображения с точкой
     detail_table["Плановый бюджет, млн руб."] = detail_table["Плановый бюджет, млн руб."].apply(
         lambda x: f"{float(x):.2f}" if pd.notna(x) else "0.00"

@@ -31,7 +31,38 @@ TABLE_COLUMN_EN_TO_RU = {
     "deviation": "Отклонение",
     "section": "Раздел",
     "plan_month": "План (месяц)",
+    # Доп. варианты (регистр / экспорт Plotly)
+    "project": "Проект",
+    "task": "Задача",
+    "month": "Месяц",
+    "count": "Количество",
+    "quantity": "Количество",
+    "start": "Начало",
+    "end": "Окончание",
+    "duration": "Длительность",
+    "type": "Тип",
+    "value": "Значение",
+    "budget plan": "Плановый бюджет",
+    "budget fact": "Фактический бюджет",
+    "forecast budget": "Прогнозный бюджет",
+    "approved budget": "Утверждённый бюджет",
 }
+
+
+def ru_column_header(col: Any) -> str:
+    """Заголовок колонки для HTML/таблиц: англ. → рус., иначе как есть."""
+    if col is None:
+        return ""
+    s = str(col).strip()
+    if s in TABLE_COLUMN_EN_TO_RU:
+        return TABLE_COLUMN_EN_TO_RU[s]
+    low = s.lower()
+    if low in TABLE_COLUMN_EN_TO_RU:
+        return TABLE_COLUMN_EN_TO_RU[low]
+    for en, ru in TABLE_COLUMN_EN_TO_RU.items():
+        if en.lower() == low:
+            return ru
+    return s
 
 # Цвет фона таблиц (как у графиков)
 TABLE_BG_COLOR = "hsl(209,67%,12%)"
@@ -561,7 +592,7 @@ def format_dataframe_as_html(
     )
     html_table += "<thead><tr>"
     for col in df.columns:
-        col_escaped = html_module.escape(str(col))
+        col_escaped = html_module.escape(ru_column_header(col))
         html_table += f"<th style='padding: 8px; background-color: rgba(18, 56, 92, 0.95);'>{col_escaped}</th>"
     html_table += "</tr></thead><tbody>"
     for idx, row in df.iterrows():
@@ -573,10 +604,16 @@ def format_dataframe_as_html(
                 cond_config = conditional_cols[col]
                 pos_color = cond_config.get("positive_color", "#ff4444")
                 neg_color = cond_config.get("negative_color", "#44ff44")
+                col_lower = str(col).lower()
                 if is_scalar and not (isinstance(value, (int, float)) and pd.isna(value)):
                     if isinstance(value, (int, float)):
                         color = pos_color if value > 0 else neg_color
-                        formatted_value = f"{value:.2f}" if isinstance(value, float) else f"{int(value)}"
+                        if "дней" in col_lower:
+                            formatted_value = f"{int(round(float(value), 0))}"
+                        elif isinstance(value, float):
+                            formatted_value = f"{value:.2f}"
+                        else:
+                            formatted_value = f"{int(value)}"
                     else:
                         formatted_value = str(value) if value != "" else "0"
                         color = neg_color
@@ -587,7 +624,18 @@ def format_dataframe_as_html(
                 html_table += f"<td style='padding: 8px; color: {color}; font-weight: bold;'>{formatted_value}</td>"
             else:
                 if isinstance(value, (int, float)) and is_scalar and not pd.isna(value):
-                    if "отклонен" in str(col).lower() or "deviation" in str(col).lower():
+                    col_lower = str(col).lower()
+                    # Отклонения в днях — целые; денежные/доли — с двумя знаками
+                    if "дней" in col_lower:
+                        formatted_value = f"{int(round(float(value), 0))}"
+                    elif (
+                        "млн" in col_lower
+                        or "руб" in col_lower
+                        or "бюджет" in col_lower
+                        or "%" in col_lower
+                    ):
+                        formatted_value = f"{float(value):.2f}"
+                    elif "отклонен" in col_lower or "deviation" in col_lower:
                         formatted_value = f"{float(value):.2f}"
                     elif isinstance(value, float) and (value % 1 != 0 or abs(value) < 1):
                         formatted_value = f"{value:.2f}"
