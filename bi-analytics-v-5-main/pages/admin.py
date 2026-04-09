@@ -147,7 +147,16 @@ _BENCH_PROMPTS: dict[str, tuple[str, str]] = {
 _BENCH_RESULTS_DIR = _pathlib.Path(__file__).resolve().parent.parent / "docs" / "bench_results"
 
 
-def _call_llm(base_url: str, model: str, prompt: str, temperature: float, max_tokens: int):
+_PROVIDER_PRESETS = {
+    "Свой сервер (vLLM / Ollama)": {"url": "http://localhost:8000/v1", "model": "Qwen/Qwen3-8B", "needs_key": False},
+    "Groq (free tier)":            {"url": "https://api.groq.com/openai/v1", "model": "qwen-qwq-32b", "needs_key": True},
+    "Together.ai":                 {"url": "https://api.together.xyz/v1", "model": "Qwen/Qwen2.5-7B-Instruct-Turbo", "needs_key": True},
+    "OpenRouter":                  {"url": "https://openrouter.ai/api/v1", "model": "qwen/qwen3-8b", "needs_key": True},
+    "OpenAI":                      {"url": "https://api.openai.com/v1", "model": "gpt-4o-mini", "needs_key": True},
+}
+
+
+def _call_llm(base_url: str, model: str, prompt: str, temperature: float, max_tokens: int, api_key: str = ""):
     """Один вызов к OpenAI-совместимому API. Возвращает (content, tok_in, tok_out, elapsed_s, error)."""
     import urllib.request
     import urllib.error
@@ -164,7 +173,11 @@ def _call_llm(base_url: str, model: str, prompt: str, temperature: float, max_to
         "max_tokens": max_tokens,
     }).encode("utf-8")
 
-    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    req = urllib.request.Request(url, data=payload, headers=headers)
     t0 = _time.perf_counter()
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
@@ -183,27 +196,61 @@ def _render_benchmark_tab(user):
     st.markdown("<h2 class='Duquhununee'>Benchmark LLM</h2>", unsafe_allow_html=True)
 
     st.info(
-        "Сравнение локальных LLM-моделей на доменных промптах (строительная аналитика). "
-        "Запустите vLLM-сервер, укажите URL и модель, нажмите «Запустить»."
+        "Сравнение LLM-моделей на доменных промптах (строительная аналитика). "
+        "Выберите провайдер, укажите API-ключ (если нужен) и нажмите «Запустить»."
     )
 
     # --- Шаг 1: настройки ---
     st.markdown("### 1. Настройки подключения")
+
+    provider_names = list(_PROVIDER_PRESETS.keys())
+    provider = st.selectbox(
+        "Провайдер",
+        provider_names,
+        index=0,
+        key="bench_provider",
+        help="Выберите готовый пресет или «Свой сервер» для локального vLLM / Ollama",
+    )
+    preset = _PROVIDER_PRESETS[provider]
+
     col_url, col_model = st.columns(2)
     with col_url:
         base_url = st.text_input(
             "Base URL (OpenAI-compatible)",
-            value=st.session_state.get("bench_base_url", "http://localhost:8000/v1"),
+            value=st.session_state.get("bench_base_url", preset["url"]),
             key="bench_base_url_input",
-            help="URL вашего vLLM / Ollama / LM Studio сервера",
+            help="URL API-сервера",
         )
     with col_model:
         model_name = st.text_input(
             "Имя модели",
-            value=st.session_state.get("bench_model", "Qwen/Qwen3-8B"),
+            value=st.session_state.get("bench_model", preset["model"]),
             key="bench_model_input",
-            help="Как зарегистрирована в API (вывод /v1/models)",
+            help="Имя модели как в /v1/models (зависит от провайдера)",
         )
+
+    api_key = ""
+    if preset["needs_key"]:
+        api_key = st.text_input(
+            "API Key",
+            type="password",
+            value=st.session_state.get("bench_api_key", ""),
+            key="bench_api_key_input",
+            help=f"Ключ для {provider}. Не сохраняется на сервере.",
+        )
+        if not api_key:
+            st.warning(f"Для {provider} нужен API-ключ. Получите его на сайте провайдера.")
+
+    # Быстрая проверка подключения
+    if st.button("Проверить подключение", key="bench_ping_btn"):
+        with st.spinner("Подключение..."):
+            content, _ti, _to, elapsed, error = _call_llm(
+                base_url, model_name, "Ответь одним словом: работает?", 0.0, 16, api_key=api_key
+            )
+        if error:
+            st.error(f"Ошибка: {error}")
+        else:
+            st.success(f"OK ({elapsed:.2f}с): {content[:80]}")
 
     col_temp, col_tok, col_runs = st.columns(3)
     with col_temp:
@@ -247,9 +294,12 @@ def _render_benchmark_tab(user):
     total_calls = len(selected) * int(runs)
     st.write(f"Будет выполнено **{total_calls}** запросов к `{model_name}`.")
 
-    if st.button("Запустить benchmark", type="primary", key="bench_run_btn"):
+    can_run = bool(not preset["needs_key"] or api_key)
+    if st.button("Запустить benchmark", type="primary", key="bench_run_btn", disabled=not can_run):
         st.session_state["bench_base_url"] = base_url
         st.session_state["bench_model"] = model_name
+        if api_key:
+            st.session_state["bench_api_key"] = api_key
 
         results = []
         progress = st.progress(0, text="Подготовка...")
@@ -264,7 +314,7 @@ def _render_benchmark_tab(user):
                 status_area.caption(f"Отправка {pid}...")
 
                 content, tok_in, tok_out, elapsed, error = _call_llm(
-                    base_url, model_name, prompt_text, temperature, int(max_tokens)
+                    base_url, model_name, prompt_text, temperature, int(max_tokens), api_key=api_key
                 )
                 tok_s = round(tok_out / elapsed, 1) if elapsed > 0 and tok_out > 0 else 0.0
                 results.append({
