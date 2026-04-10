@@ -4143,7 +4143,7 @@ def dashboard_bdr(df):
         columns={"_revenue": "Доходы", "_expense": "Расходы", "_result": "Результат (сальдо)"}
     )
 
-    bdr_summary["period_display"] = bdr_summary[period_col].apply(format_period_ru)
+    bdr_summary["Период"] = bdr_summary[period_col].apply(format_period_ru)
 
     @st.fragment
     def _bdr_chart():
@@ -4159,7 +4159,7 @@ def dashboard_bdr(df):
         else:
             title_suffix = ""
         fig = go.Figure()
-        x_vals = chart_df["period_display"]
+        x_vals = chart_df["Период"]
         fig.add_trace(
             go.Bar(
                 x=x_vals,
@@ -4209,9 +4209,9 @@ def dashboard_bdr(df):
 
     st.subheader("Сводка БДР по периоду")
     display_df = bdr_summary[
-        [c for c in ["period_display", "Доходы", "Расходы", "Результат (сальдо)"] if c in bdr_summary.columns]
+        [c for c in ["Период", "Доходы", "Расходы", "Результат (сальдо)"] if c in bdr_summary.columns]
     ].copy()
-    display_df = display_df.rename(columns={"period_display": period_label})
+    display_df = display_df.rename(columns={"Период": period_label})
     for col in ["Доходы", "Расходы", "Результат (сальдо)"]:
         if col in display_df.columns:
             display_df[col] = (display_df[col] / 1e6).round(2).apply(
@@ -4936,9 +4936,9 @@ def dashboard_technique(df):
                         pass
             return period_str
 
-        work_df["period_display"] = work_df[period_col].apply(parse_period)
+        work_df["Период"] = work_df[period_col].apply(parse_period)
     else:
-        work_df["period_display"] = "Н/Д"
+        work_df["Период"] = "Н/Д"
 
     has_plan_data = (
         "План_numeric" in work_df.columns
@@ -7276,7 +7276,7 @@ def dashboard_skud_stroyka(df):
         grouped_data["Среднее за месяц"] = grouped_data["Среднее за месяц"].round(1)
 
     if "period_month" in grouped_data.columns:
-        grouped_data["period_display"] = grouped_data["period_month"].apply(
+        grouped_data["Период"] = grouped_data["period_month"].apply(
             format_period_ru
         )
 
@@ -7327,15 +7327,15 @@ def dashboard_skud_stroyka(df):
     # Create visualization
     has_period = (
         "period_month" in grouped_data.columns
-        or "period_display" in grouped_data.columns
+        or "Период" in grouped_data.columns
     )
 
     if selected_grouping == "Без группировки":
         if has_period:
             # Simple line chart with time series
             x_col = (
-                "period_display"
-                if "period_display" in grouped_data.columns
+                "Период"
+                if "Период" in grouped_data.columns
                 else "period_month"
             )
             fig = px.line(
@@ -7372,8 +7372,8 @@ def dashboard_skud_stroyka(df):
         if has_period and len(grouping_cols) > 0:
             # Grouped bar chart with time series
             x_col = (
-                "period_display"
-                if "period_display" in grouped_data.columns
+                "Период"
+                if "Период" in grouped_data.columns
                 else "period_month"
             )
             color_col = grouping_cols[0] if len(grouping_cols) == 1 else None
@@ -7466,12 +7466,12 @@ def dashboard_skud_stroyka(df):
 
         # Add period column only if not filtering by specific period range
         if (selected_period_from == "Все" and selected_period_to == "Все") and (
-            "period_display" in grouped_data.columns
+            "Период" in grouped_data.columns
             or "period_month" in grouped_data.columns
         ):
             display_cols.append(
-                "period_display"
-                if "period_display" in grouped_data.columns
+                "Период"
+                if "Период" in grouped_data.columns
                 else "period_month"
             )
 
@@ -7496,24 +7496,27 @@ def dashboard_skud_stroyka(df):
 # ==================== DASHBOARD: ГДРС (3 таба) ====================
 def dashboard_technique_tabs(df):
     """
-    ГДРС: 3 вкладки — ГДРС (люди), ГДРС (техника), Динамика людей и техники.
+    ГДРС: 4 вкладки — Рабочая сила, Техника, Динамика, СКУД стройка.
     """
-    st.header("🔧 ГДРС")
+    st.header("ГДРС")
     st.caption("Данные из загруженных файлов ресурсов и техники. Если данных нет — загрузите соответствующие CSV-файлы.")
-    tab1, tab2, tab3 = st.tabs([
-        "ГДРС (люди)",
-        "ГДРС (техника)",
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "Рабочая сила",
+        "Техника",
         "Динамика людей и техники",
+        "СКУД стройка",
     ])
     with tab1:
-        st.subheader("График движения рабочей силы (люди)")
+        st.subheader("График движения рабочей силы")
         dashboard_workforce_movement(df, data_source_filter="Ресурсы", show_header=False, key_prefix="gdrs_people")
     with tab2:
-        st.subheader("График движения рабочей силы (техника)")
+        st.subheader("График движения техники")
         dashboard_workforce_movement(df, data_source_filter="Техника", show_header=False, key_prefix="gdrs_technique")
     with tab3:
         st.subheader("Динамика людей и техники")
         dashboard_workforce_movement(df, data_source_filter=None, show_header=False, key_prefix="gdrs_dynamics")
+    with tab4:
+        dashboard_skud_stroyka(df)
 
 
 # ==================== DASHBOARD: Дебиторская и кредиторская задолженность подрядчиков ====================
@@ -7686,6 +7689,21 @@ def dashboard_executive_documentation(df):
 
     work = tessa_df.copy()
     work.columns = [str(c).strip() for c in work.columns]
+
+    _must_have = None
+    for c in ["ObjectName", "objectname", "Объект"]:
+        if c in work.columns:
+            _must_have = c
+            break
+    if _must_have:
+        work = work[
+            work[_must_have].notna()
+            & (~work[_must_have].astype(str).str.strip().isin(["", "nan", "None", "NaN"]))
+        ].reset_index(drop=True)
+
+    if work.empty:
+        st.info("Нет данных с заполненными полями документов.")
+        return
 
     krstates_df = st.session_state.get("reference_krstates", None)
     status_map = {}

@@ -9,11 +9,34 @@ from dashboards.export_wrap import run_dashboard_with_auto_export, slug_report_n
 
 REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
     (
-        "Сроки",
+        "Девелоперские проекты",
         [
-            "Динамика отклонений",
-            "Отклонение от базового плана",
-            "Значения отклонений от базового плана",
+            "Девелоперские проекты",
+        ],
+    ),
+    (
+        "Предписания по подрядчикам",
+        [
+            "Предписания по подрядчикам",
+        ],
+    ),
+    (
+        "Исполнительная документация",
+        [
+            "Исполнительная документация",
+        ],
+    ),
+    (
+        "ГДРС",
+        [
+            "ГДРС",
+        ],
+    ),
+    (
+        "Проектные работы",
+        [
+            "Рабочая/Проектная документация",
+            "Просрочка выдачи РД",
         ],
     ),
     (
@@ -28,24 +51,11 @@ REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
         ],
     ),
     (
-        "Проектные работы",
+        "Сроки",
         [
-            "Рабочая/Проектная документация",
-            "Просрочка выдачи РД",
-        ],
-    ),
-    (
-        "ГДРС",
-        [
-            "ГДРС",
-            "График движения рабочей силы",
-            "СКУД стройка",
-        ],
-    ),
-    (
-        "Исполнительная документация",
-        [
-            "Исполнительная документация",
+            "Динамика отклонений",
+            "Отклонение от базового плана",
+            "Значения отклонений от базового плана",
         ],
     ),
     (
@@ -111,10 +121,6 @@ def _get_dashboards() -> Dict[str, Callable]:
     if dashboard_technique_tabs is None:
         dashboard_technique_tabs = _renderers.dashboard_technique
     dashboard_workforce_movement = _renderers.dashboard_workforce_movement
-    dashboard_workforce_and_skud = getattr(_renderers, "dashboard_workforce_and_skud", None)
-    if dashboard_workforce_and_skud is None:
-        dashboard_workforce_and_skud = _renderers.dashboard_workforce_movement
-    dashboard_skud_stroyka = _renderers.dashboard_skud_stroyka
     dashboard_executive_documentation = getattr(_renderers, "dashboard_executive_documentation", None)
     if dashboard_executive_documentation is None:
 
@@ -140,6 +146,67 @@ def _get_dashboards() -> Dict[str, Callable]:
 
         dashboard_debit_credit = _stub_debit
 
+    dashboard_predpisania = getattr(_renderers, "dashboard_predpisania", None)
+    if dashboard_predpisania is None:
+
+        def _stub_predpisania(df):
+            st.header("Предписания по подрядчикам")
+            tessa_df = st.session_state.get("tessa_data")
+            if tessa_df is None or tessa_df.empty:
+                st.warning("Для отчёта необходимы данные из TESSA. Загрузите файлы tessa_*.")
+                return
+            work = tessa_df.copy()
+            work.columns = [str(c).strip() for c in work.columns]
+            kind_col = None
+            for c in ["KindName", "kindname"]:
+                if c in work.columns:
+                    kind_col = c
+                    break
+            if kind_col:
+                pred = work[work[kind_col].astype(str).str.contains("Предписан", case=False, na=False)]
+            else:
+                pred = pd.DataFrame()
+            if pred.empty:
+                st.info("Нет данных по предписаниям в загруженных файлах TESSA.")
+                return
+            st.metric("Всего предписаний", len(pred))
+            import plotly.express as px
+            if "CONTR" in pred.columns:
+                by_contr = pred.groupby("CONTR").size().reset_index(name="Количество").sort_values("Количество", ascending=True)
+                fig = px.bar(by_contr, y="CONTR", x="Количество", orientation="h",
+                             labels={"CONTR": "Подрядчик"}, text="Количество",
+                             color_discrete_sequence=["#E85D75"])
+                fig.update_traces(textposition="outside", textfont=dict(color="white"))
+                fig.update_layout(height=max(350, len(by_contr)*35+100), yaxis_title="", xaxis_title="Количество")
+                from dashboards._renderers import apply_chart_background, render_chart
+                fig = apply_chart_background(fig)
+                render_chart(fig, caption_below="Предписания по подрядчикам")
+            display_cols = [c for c in ["ObjectName","CONTR","DocNumber","DocDescription","KrState","CreationDate"] if c in pred.columns]
+            if display_cols:
+                from dashboards._renderers import _render_html_table
+                st.subheader("Таблица предписаний")
+                _render_html_table(pred[display_cols].rename(columns={
+                    "ObjectName": "Объект", "CONTR": "Контрагент",
+                    "DocNumber": "Номер", "DocDescription": "Описание",
+                    "KrState": "Статус", "CreationDate": "Дата создания",
+                }))
+
+        dashboard_predpisania = _stub_predpisania
+
+    dashboard_developer_projects = getattr(_renderers, "dashboard_developer_projects", None)
+    if dashboard_developer_projects is None:
+
+        def _stub_developer(df):
+            st.header("Девелоперские проекты")
+            if df is None or df.empty:
+                st.warning("Загрузите данные проекта (MSP) для отчёта «Девелоперские проекты».")
+                return
+            st.info("Отчёт «Девелоперские проекты» находится в разработке. "
+                    "Будут реализованы: таблица по фазам/стадиям, план/факт/отклонение, "
+                    "подсветка при % выполнения ≠ 100, выборка ДС и предписания.")
+
+        dashboard_developer_projects = _stub_developer
+
     raw: Dict[str, Callable] = {
         "Динамика отклонений": dashboard_deviations_combined,
         "Динамика отклонений по месяцам": dashboard_deviations_combined,
@@ -160,9 +227,9 @@ def _get_dashboards() -> Dict[str, Callable]:
         "Дебиторская и кредиторская задолженность подрядчиков": dashboard_debit_credit,
         "Исполнительная документация": dashboard_executive_documentation,
         "Здоровье проектов": dashboard_project_health,
-        "График движения рабочей силы": dashboard_workforce_and_skud,
         "Просрочка выдачи РД": dashboard_rd_delay,
-        "СКУД стройка": dashboard_skud_stroyka,
+        "Предписания по подрядчикам": dashboard_predpisania,
+        "Девелоперские проекты": dashboard_developer_projects,
     }
     return raw
 

@@ -698,19 +698,7 @@ def main():
 
             dashboards_using_technique = ("ГДРС",)
 
-            dashboards_using_resources = ("График движения рабочей силы", "СКУД стройка")
-
-            if selected_dashboard == "ГДРС":
-
-                # Табы используют ресурсы и/или технику из session_state; передаём что есть для fallback
-
-                df_for_render = resources_data if has_resources_data else (technique_data if has_technique_data else df)
-
-            elif selected_dashboard in dashboards_using_technique:
-
-                df_for_render = technique_data if has_technique_data else df
-
-            elif selected_dashboard in dashboards_using_resources:
+            if selected_dashboard in dashboards_using_technique:
 
                 df_for_render = resources_data if has_resources_data else (technique_data if has_technique_data else df)
 
@@ -951,17 +939,7 @@ def main():
 
         dashboards_using_technique = ("ГДРС",)
 
-        dashboards_using_resources = ("График движения рабочей силы", "СКУД стройка")
-
-        if selected_dashboard == "ГДРС":
-
-            df_for_render = resources_data if has_resources_data else (technique_data if has_technique_data else df)
-
-        elif selected_dashboard in dashboards_using_technique:
-
-            df_for_render = technique_data if has_technique_data else df
-
-        elif selected_dashboard in dashboards_using_resources:
+        if selected_dashboard in dashboards_using_technique:
 
             df_for_render = resources_data if has_resources_data else (technique_data if has_technique_data else df)
 

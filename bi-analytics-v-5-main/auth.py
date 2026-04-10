@@ -554,17 +554,9 @@ def render_sidebar_menu(current_page: str = "reports"):
 
         # 1. Отчеты (если есть доступ)
         if has_report_access(user["role"]):
-            if current_page == "reports":
-                st.button(
-                    "Отчеты",
-                    width="stretch",
-                    type="primary",
-                    disabled=True,
-                    help="Текущая страница",
-                )
-            else:
-                if st.button("Отчеты", width="stretch"):
-                    st.switch_page("project_visualization_app.py")
+            btn_type = "primary" if current_page == "reports" else "secondary"
+            if st.button("Отчеты", width="stretch", type=btn_type):
+                st.switch_page("project_visualization_app.py")
 
             # Список отчетов под кнопкой "Отчеты" (единый источник: dashboards.REPORT_CATEGORIES)
             if current_page == "reports":
