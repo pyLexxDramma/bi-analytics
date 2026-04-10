@@ -10011,3 +10011,393 @@ def dashboard_forecast_budget(df):
     st.markdown(format_dataframe_as_html(detail_table), unsafe_allow_html=True)
     _csv = detail_table.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
     st.download_button("Скачать CSV", _csv, "forecast_budget_detail.csv", "text/csv", key="fcast_detail_csv")
+
+
+# ==================== DASHBOARD: Предписания по подрядчикам ====================
+def dashboard_predpisania(df):
+    """Отчёт «Предписания по подрядчикам» — данные из TESSA (KindName содержит 'Предписан')."""
+    st.header("Предписания по подрядчикам")
+
+    tessa_df = st.session_state.get("tessa_data", None)
+    if tessa_df is None or tessa_df.empty:
+        st.warning("Для отчёта необходимы данные из TESSA. Загрузите файлы tessa_*_id.csv.")
+        return
+
+    work = tessa_df.copy()
+    work.columns = [str(c).strip() for c in work.columns]
+
+    kind_col = None
+    for c in ["KindName", "kindname", "Вид"]:
+        if c in work.columns:
+            kind_col = c
+            break
+
+    if kind_col:
+        pred = work[work[kind_col].astype(str).str.contains("Предписан", case=False, na=False)].copy()
+    else:
+        pred = pd.DataFrame()
+
+    if pred.empty:
+        st.info("Нет данных по предписаниям в загруженных файлах TESSA.")
+        return
+
+    _must_have = None
+    for c in ["ObjectName", "objectname", "Объект"]:
+        if c in pred.columns:
+            _must_have = c
+            break
+    if _must_have:
+        pred = pred[
+            pred[_must_have].notna()
+            & (~pred[_must_have].astype(str).str.strip().isin(["", "nan", "None", "NaN"]))
+        ].reset_index(drop=True)
+
+    if pred.empty:
+        st.info("Нет предписаний с заполненным объектом.")
+        return
+
+    krstates_df = st.session_state.get("reference_krstates", None)
+    status_map = {}
+    if krstates_df is not None and not krstates_df.empty:
+        for _, row in krstates_df.iterrows():
+            name = str(row.get("Название", "")).strip()
+            ru = str(row.get("ru", "")).strip()
+            if name and ru:
+                status_map[name] = ru
+    if "KrState" in pred.columns:
+        pred["Статус"] = pred["KrState"].apply(
+            lambda x: status_map.get(str(x).strip(), str(x).strip()) if pd.notna(x) else "Неизвестно"
+        )
+    else:
+        pred["Статус"] = "Неизвестно"
+
+    obj_col = None
+    for c in ["ObjectName", "objectname", "Объект"]:
+        if c in pred.columns:
+            obj_col = c
+            break
+    contr_col = None
+    for c in ["CONTR", "Контрагент", "contr"]:
+        if c in pred.columns:
+            contr_col = c
+            break
+
+    # --- Фильтры ---
+    filter_cols = st.columns(3)
+    with filter_cols[0]:
+        if obj_col:
+            objects = ["Все"] + sorted(pred[obj_col].dropna().astype(str).str.strip().unique().tolist())
+            sel_obj = st.selectbox("Объект", objects, key="pred_obj")
+        else:
+            sel_obj = "Все"
+    with filter_cols[1]:
+        if contr_col:
+            contrs = ["Все"] + sorted(pred[contr_col].dropna().astype(str).str.strip().unique().tolist())
+            sel_contr = st.selectbox("Подрядчик", contrs, key="pred_contr")
+        else:
+            sel_contr = "Все"
+    with filter_cols[2]:
+        statuses = ["Все"] + sorted(pred["Статус"].dropna().unique().tolist())
+        sel_status = st.selectbox("Статус", statuses, key="pred_status")
+
+    filtered = pred.copy()
+    if sel_obj != "Все" and obj_col:
+        filtered = filtered[filtered[obj_col].astype(str).str.strip() == sel_obj]
+    if sel_contr != "Все" and contr_col:
+        filtered = filtered[filtered[contr_col].astype(str).str.strip() == sel_contr]
+    if sel_status != "Все":
+        filtered = filtered[filtered["Статус"] == sel_status]
+
+    if filtered.empty:
+        st.info("Нет данных при выбранных фильтрах.")
+        return
+
+    # --- Метрики ---
+    total = len(filtered)
+    status_counts = filtered["Статус"].value_counts()
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Всего предписаний", total)
+    m2.metric("На согласовании", int(status_counts.get("На согласовании", 0)))
+    m3.metric("Подписан / Согласован",
+              int(status_counts.get("Подписан", 0)) + int(status_counts.get("Согласован", 0)))
+    m4.metric("На доработке", int(status_counts.get("На доработке", 0)))
+
+    # --- Графики ---
+    tab_charts, tab_table = st.tabs(["Графики", "Таблица"])
+
+    with tab_charts:
+        if contr_col and contr_col in filtered.columns:
+            st.subheader("Предписания по подрядчикам")
+            by_contr = (filtered.groupby(contr_col).size()
+                        .reset_index(name="Количество")
+                        .sort_values("Количество", ascending=True))
+            fig1 = px.bar(
+                by_contr, y=contr_col, x="Количество", orientation="h",
+                text="Количество",
+                labels={contr_col: "Подрядчик"},
+                color_discrete_sequence=["#E85D75"],
+            )
+            fig1.update_traces(textposition="outside", textfont=dict(color="white"))
+            fig1.update_layout(
+                height=max(350, len(by_contr) * 35 + 100),
+                yaxis_title="", xaxis_title="Количество",
+            )
+            fig1 = apply_chart_background(fig1)
+            render_chart(fig1, caption_below="Количество предписаний по подрядчикам", key="pred_by_contr")
+
+        st.subheader("Предписания по статусам")
+        status_df = status_counts.reset_index()
+        status_df.columns = ["Статус", "Количество"]
+        fig2 = px.pie(
+            status_df, names="Статус", values="Количество",
+            color_discrete_sequence=px.colors.qualitative.Set2,
+        )
+        fig2.update_traces(textinfo="label+percent+value", textfont_size=12)
+        fig2 = apply_chart_background(fig2)
+        fig2.update_layout(height=420)
+        render_chart(fig2, caption_below="Распределение предписаний по статусам", key="pred_status_pie")
+
+        if obj_col and obj_col in filtered.columns:
+            st.subheader("Предписания по объектам")
+            by_obj = (filtered.groupby(obj_col).size()
+                      .reset_index(name="Количество")
+                      .sort_values("Количество", ascending=False))
+            fig3 = px.bar(
+                by_obj, x=obj_col, y="Количество", text="Количество",
+                labels={obj_col: "Объект"},
+                color_discrete_sequence=["#06A77D"],
+            )
+            fig3.update_traces(textposition="outside", textfont=dict(size=13, color="white"))
+            fig3 = apply_chart_background(fig3)
+            fig3.update_layout(height=450, xaxis_title="Объект", yaxis_title="Количество", xaxis_tickangle=-45)
+            render_chart(fig3, caption_below="Количество предписаний по объектам", key="pred_by_obj")
+
+    with tab_table:
+        st.subheader("Детальная таблица предписаний")
+        display_cols = []
+        for c in [obj_col, contr_col, "DocNumber", "DocDescription", "Статус", "CreationDate"]:
+            if c and c in filtered.columns:
+                display_cols.append(c)
+        if not display_cols:
+            display_cols = list(filtered.columns[:8])
+        table_df = filtered[display_cols].copy()
+        rename = {
+            "DocNumber": "Номер", "DocDescription": "Описание",
+            "CreationDate": "Дата создания",
+        }
+        if obj_col:
+            rename[obj_col] = "Объект"
+        if contr_col:
+            rename[contr_col] = "Подрядчик"
+        table_df = table_df.rename(columns=rename)
+        st.caption(f"Записей: {len(table_df)}")
+        _render_html_table(table_df)
+        csv_bytes = table_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+        st.download_button("Скачать CSV", csv_bytes, "predpisania.csv", "text/csv", key="pred_csv")
+
+
+# ==================== DASHBOARD: Девелоперские проекты ====================
+def dashboard_developer_projects(df):
+    """
+    Отчёт «Девелоперские проекты» — сводка по проектам из MSP-данных.
+    Таблица: проект, фазы/разделы, план/факт/отклонение, % выполнения.
+    """
+    st.header("Девелоперские проекты")
+
+    if df is None or not hasattr(df, "columns") or df.empty:
+        st.warning("Загрузите файл с данными проекта (MSP) для отчёта «Девелоперские проекты».")
+        return
+
+    work = df.copy()
+
+    def _find(possible):
+        for name in possible:
+            for c in work.columns:
+                if name.strip().lower() == str(c).strip().lower():
+                    return c
+        return None
+
+    project_col = _find(["project name", "Проект", "проект", "Project"])
+    task_col = _find(["task name", "Название", "Task Name"])
+    section_col = _find(["section", "Раздел", "БЛОК"])
+    pct_col = _find(["pct complete", "Процент_завершения", "% завершения", "% Complete"])
+    plan_start_col = _find(["plan start", "Начало", "Plan Start"])
+    plan_end_col = _find(["plan end", "Окончание", "Plan End"])
+    base_start_col = _find(["base start", "Базовое_начало", "Base Start"])
+    base_end_col = _find(["base end", "Базовое_окончание", "Base End"])
+    dev_days_col = _find(["deviation in days", "Отклонений в днях", "Отклонение в днях"])
+
+    if not project_col and not task_col:
+        st.warning("Не найдены ключевые колонки (проект, задача). Проверьте формат файла.")
+        return
+
+    # --- Фильтры ---
+    f1, f2 = st.columns(2)
+    with f1:
+        if project_col and project_col in work.columns:
+            projects = ["Все"] + sorted(work[project_col].dropna().astype(str).str.strip().unique().tolist())
+            sel_proj = st.selectbox("Проект", projects, key="dev_proj")
+        else:
+            sel_proj = "Все"
+    with f2:
+        if section_col and section_col in work.columns:
+            sections = ["Все"] + sorted(work[section_col].dropna().astype(str).str.strip().unique().tolist())
+            sel_section = st.selectbox("Раздел / Блок", sections, key="dev_section")
+        else:
+            sel_section = "Все"
+
+    filtered = work.copy()
+    if sel_proj != "Все" and project_col:
+        filtered = filtered[filtered[project_col].astype(str).str.strip() == sel_proj]
+    if sel_section != "Все" and section_col:
+        filtered = filtered[filtered[section_col].astype(str).str.strip() == sel_section]
+
+    if filtered.empty:
+        st.info("Нет данных при выбранных фильтрах.")
+        return
+
+    # --- Метрики ---
+    if pct_col and pct_col in filtered.columns:
+        pct_vals = pd.to_numeric(filtered[pct_col], errors="coerce")
+        avg_pct = pct_vals.mean()
+        done_count = (pct_vals == 100).sum()
+        in_progress = ((pct_vals > 0) & (pct_vals < 100)).sum()
+        not_started = (pct_vals == 0).sum()
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Всего задач", len(filtered))
+        m2.metric("Завершено (100%)", int(done_count))
+        m3.metric("В работе", int(in_progress))
+        m4.metric("Не начато (0%)", int(not_started))
+
+        st.caption(f"Средний % выполнения: {avg_pct:.1f}%")
+    else:
+        st.metric("Всего задач", len(filtered))
+
+    # --- Вкладки ---
+    tab_overview, tab_deviations, tab_detail = st.tabs(["Сводка по проектам", "Отклонения", "Детальная таблица"])
+
+    with tab_overview:
+        if project_col and pct_col:
+            st.subheader("Средний % выполнения по проектам")
+            pct_numeric = pd.to_numeric(filtered[pct_col], errors="coerce")
+            proj_summary = filtered.assign(_pct=pct_numeric).groupby(project_col).agg(
+                Задач=("_pct", "size"),
+                Среднее_выполнение=("_pct", "mean"),
+                Завершено=("_pct", lambda x: (x == 100).sum()),
+            ).reset_index()
+            proj_summary["Среднее_выполнение"] = proj_summary["Среднее_выполнение"].round(1)
+            proj_summary = proj_summary.rename(columns={
+                project_col: "Проект",
+                "Среднее_выполнение": "Ср. выполнение, %",
+            })
+            proj_summary = proj_summary.sort_values("Ср. выполнение, %", ascending=True)
+
+            fig1 = px.bar(
+                proj_summary, y="Проект", x="Ср. выполнение, %",
+                orientation="h", text="Ср. выполнение, %",
+                color="Ср. выполнение, %",
+                color_continuous_scale=["#E85D75", "#FFD166", "#06A77D"],
+                range_color=[0, 100],
+            )
+            fig1.update_traces(textposition="outside", textfont=dict(color="white", size=12))
+            fig1 = apply_chart_background(fig1)
+            fig1.update_layout(
+                height=max(350, len(proj_summary) * 40 + 100),
+                yaxis_title="", xaxis_title="% выполнения",
+                coloraxis_showscale=False,
+            )
+            render_chart(fig1, caption_below="Средний процент выполнения задач по проектам", key="dev_pct_bar")
+
+            st.subheader("Сводная таблица")
+            _render_html_table(proj_summary)
+
+        elif section_col and pct_col:
+            st.subheader("Средний % выполнения по разделам")
+            pct_numeric = pd.to_numeric(filtered[pct_col], errors="coerce")
+            sec_summary = filtered.assign(_pct=pct_numeric).groupby(section_col).agg(
+                Задач=("_pct", "size"),
+                Среднее_выполнение=("_pct", "mean"),
+            ).reset_index()
+            sec_summary["Среднее_выполнение"] = sec_summary["Среднее_выполнение"].round(1)
+            sec_summary = sec_summary.rename(columns={section_col: "Раздел", "Среднее_выполнение": "Ср. выполнение, %"})
+            _render_html_table(sec_summary)
+
+    with tab_deviations:
+        if dev_days_col and dev_days_col in filtered.columns:
+            st.subheader("Отклонения от базового плана")
+            dev_vals = pd.to_numeric(filtered[dev_days_col], errors="coerce")
+            has_deviation = dev_vals.notna() & (dev_vals != 0)
+            dev_data = filtered[has_deviation].copy()
+            dev_data["_dev"] = pd.to_numeric(dev_data[dev_days_col], errors="coerce")
+
+            if dev_data.empty:
+                st.info("Нет задач с отклонениями.")
+            else:
+                delayed = (dev_data["_dev"] > 0).sum()
+                ahead = (dev_data["_dev"] < 0).sum()
+                d1, d2, d3 = st.columns(3)
+                d1.metric("Задач с отклонениями", len(dev_data))
+                d2.metric("Отстают (> 0 дней)", int(delayed))
+                d3.metric("Опережают (< 0 дней)", int(ahead))
+
+                group_col = project_col or section_col
+                if group_col and group_col in dev_data.columns:
+                    avg_dev = (dev_data.groupby(group_col)["_dev"].mean()
+                               .reset_index(name="Ср. отклонение, дней")
+                               .sort_values("Ср. отклонение, дней", ascending=True))
+                    avg_dev["Ср. отклонение, дней"] = avg_dev["Ср. отклонение, дней"].round(1)
+                    fig2 = px.bar(
+                        avg_dev, y=group_col, x="Ср. отклонение, дней",
+                        orientation="h", text="Ср. отклонение, дней",
+                        color="Ср. отклонение, дней",
+                        color_continuous_scale=["#06A77D", "#FFD166", "#E85D75"],
+                    )
+                    fig2.update_traces(textposition="outside", textfont=dict(color="white", size=12))
+                    fig2 = apply_chart_background(fig2)
+                    fig2.update_layout(
+                        height=max(350, len(avg_dev) * 40 + 100),
+                        yaxis_title="", xaxis_title="Дней",
+                        coloraxis_showscale=False,
+                    )
+                    render_chart(fig2, caption_below="Среднее отклонение от базового плана", key="dev_deviation_bar")
+        else:
+            st.info("Колонка «Отклонение в днях» не найдена в данных.")
+
+    with tab_detail:
+        st.subheader("Детальная таблица")
+        display_cols = []
+        for c in [project_col, section_col, task_col, pct_col, plan_start_col, plan_end_col,
+                   base_end_col, dev_days_col]:
+            if c and c in filtered.columns:
+                display_cols.append(c)
+        if not display_cols:
+            display_cols = list(filtered.columns[:10])
+        detail = filtered[display_cols].copy()
+        rename = {}
+        if project_col:
+            rename[project_col] = "Проект"
+        if section_col:
+            rename[section_col] = "Раздел"
+        if task_col:
+            rename[task_col] = "Задача"
+        if pct_col:
+            rename[pct_col] = "% выполнения"
+        if plan_start_col:
+            rename[plan_start_col] = "План начало"
+        if plan_end_col:
+            rename[plan_end_col] = "План окончание"
+        if base_end_col:
+            rename[base_end_col] = "Базовое окончание"
+        if dev_days_col:
+            rename[dev_days_col] = "Отклонение, дней"
+        detail = detail.rename(columns=rename)
+
+        if "% выполнения" in detail.columns:
+            detail["% выполнения"] = pd.to_numeric(detail["% выполнения"], errors="coerce").fillna(0).astype(int)
+
+        st.caption(f"Записей: {len(detail)}")
+        _render_html_table(detail)
+        csv_bytes = detail.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+        st.download_button("Скачать CSV", csv_bytes, "developer_projects.csv", "text/csv", key="dev_proj_csv")

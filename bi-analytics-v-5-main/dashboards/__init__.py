@@ -146,66 +146,8 @@ def _get_dashboards() -> Dict[str, Callable]:
 
         dashboard_debit_credit = _stub_debit
 
-    dashboard_predpisania = getattr(_renderers, "dashboard_predpisania", None)
-    if dashboard_predpisania is None:
-
-        def _stub_predpisania(df):
-            st.header("Предписания по подрядчикам")
-            tessa_df = st.session_state.get("tessa_data")
-            if tessa_df is None or tessa_df.empty:
-                st.warning("Для отчёта необходимы данные из TESSA. Загрузите файлы tessa_*.")
-                return
-            work = tessa_df.copy()
-            work.columns = [str(c).strip() for c in work.columns]
-            kind_col = None
-            for c in ["KindName", "kindname"]:
-                if c in work.columns:
-                    kind_col = c
-                    break
-            if kind_col:
-                pred = work[work[kind_col].astype(str).str.contains("Предписан", case=False, na=False)]
-            else:
-                pred = pd.DataFrame()
-            if pred.empty:
-                st.info("Нет данных по предписаниям в загруженных файлах TESSA.")
-                return
-            st.metric("Всего предписаний", len(pred))
-            import plotly.express as px
-            if "CONTR" in pred.columns:
-                by_contr = pred.groupby("CONTR").size().reset_index(name="Количество").sort_values("Количество", ascending=True)
-                fig = px.bar(by_contr, y="CONTR", x="Количество", orientation="h",
-                             labels={"CONTR": "Подрядчик"}, text="Количество",
-                             color_discrete_sequence=["#E85D75"])
-                fig.update_traces(textposition="outside", textfont=dict(color="white"))
-                fig.update_layout(height=max(350, len(by_contr)*35+100), yaxis_title="", xaxis_title="Количество")
-                from dashboards._renderers import apply_chart_background, render_chart
-                fig = apply_chart_background(fig)
-                render_chart(fig, caption_below="Предписания по подрядчикам")
-            display_cols = [c for c in ["ObjectName","CONTR","DocNumber","DocDescription","KrState","CreationDate"] if c in pred.columns]
-            if display_cols:
-                from dashboards._renderers import _render_html_table
-                st.subheader("Таблица предписаний")
-                _render_html_table(pred[display_cols].rename(columns={
-                    "ObjectName": "Объект", "CONTR": "Контрагент",
-                    "DocNumber": "Номер", "DocDescription": "Описание",
-                    "KrState": "Статус", "CreationDate": "Дата создания",
-                }))
-
-        dashboard_predpisania = _stub_predpisania
-
-    dashboard_developer_projects = getattr(_renderers, "dashboard_developer_projects", None)
-    if dashboard_developer_projects is None:
-
-        def _stub_developer(df):
-            st.header("Девелоперские проекты")
-            if df is None or df.empty:
-                st.warning("Загрузите данные проекта (MSP) для отчёта «Девелоперские проекты».")
-                return
-            st.info("Отчёт «Девелоперские проекты» находится в разработке. "
-                    "Будут реализованы: таблица по фазам/стадиям, план/факт/отклонение, "
-                    "подсветка при % выполнения ≠ 100, выборка ДС и предписания.")
-
-        dashboard_developer_projects = _stub_developer
+    dashboard_predpisania = _renderers.dashboard_predpisania
+    dashboard_developer_projects = _renderers.dashboard_developer_projects
 
     raw: Dict[str, Callable] = {
         "Динамика отклонений": dashboard_deviations_combined,
