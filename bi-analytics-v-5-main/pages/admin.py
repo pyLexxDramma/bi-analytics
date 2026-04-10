@@ -43,6 +43,13 @@ sys.path.insert(0, str(_app_root))
 import streamlit as st
 import pandas as pd
 from datetime import datetime, date, time, timezone
+
+_TABLE_CSS = '<style>.ht-wrap{overflow-x:auto;margin:.5rem 0 1rem}.ht{width:100%;border-collapse:collapse;font-size:13px;font-family:Inter,system-ui,sans-serif}.ht th{position:sticky;top:0;background:#1a1c23;color:#fafafa;padding:8px 12px;text-align:left;border-bottom:2px solid #444;font-weight:600;white-space:nowrap}.ht td{padding:6px 12px;border-bottom:1px solid #333;color:#e0e0e0;white-space:nowrap;max-width:400px;overflow:hidden;text-overflow:ellipsis}.ht tr:hover td{background:#262833}</style>'
+
+def _html_table(df, max_rows=300):
+    show = df.head(max_rows).fillna("")
+    html = show.to_html(index=False, classes="ht", escape=True, border=0)
+    st.markdown(_TABLE_CSS + '<div class="ht-wrap">' + html + '</div>', unsafe_allow_html=True)
 import sqlite3
 
 from auth import (
@@ -51,6 +58,7 @@ from auth import (
     has_admin_access,
     require_auth,
     get_user_role_display,
+    delete_user,
     ROLES,
     init_db,
     render_sidebar_menu,
@@ -367,7 +375,7 @@ def _render_benchmark_tab(user):
         output_tokens_median=("output_tokens", "median"),
     ).reset_index()
     perf.columns = ["Промпт", "tok/s (медиана)", "Latency, с (медиана)", "Выход, токенов"]
-    st.dataframe(perf, use_container_width=True, hide_index=True)
+    _html_table(perf)
 
     avg_tok_s = ok["tok_per_sec"].median()
     avg_latency = ok["elapsed_s"].median()
@@ -810,6 +818,52 @@ if user is not None:
 
             st.info("Нет активных пользователей")
 
+        # Удаление пользователя (только для суперадминистратора)
+        if user["role"] == "superadmin":
+            st.markdown("### Удалить пользователя")
+
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, username, role FROM users WHERE username != ? ORDER BY username",
+                (user["username"],),
+            )
+            deletable_users = cursor.fetchall()
+            conn.close()
+
+            if deletable_users:
+                del_options = {
+                    f"{u[1]} ({get_user_role_display(u[2])})": u[0]
+                    for u in deletable_users
+                }
+                del_selected = st.selectbox(
+                    "Выберите пользователя для удаления",
+                    options=list(del_options.keys()),
+                    key="del_user_select",
+                )
+                del_user_id = del_options[del_selected]
+                del_username = del_selected.split(" (")[0]
+
+                confirm = st.checkbox(
+                    f"Подтверждаю удаление пользователя «{del_username}» и всех его данных",
+                    key="del_user_confirm",
+                )
+
+                if st.button(
+                    "Удалить пользователя",
+                    type="primary",
+                    disabled=not confirm,
+                    key="del_user_btn",
+                ):
+                    ok, msg = delete_user(del_user_id, user["username"])
+                    if ok:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+            else:
+                st.info("Нет пользователей, доступных для удаления")
+
     # ┌──────────────────────────────────────────────────────────────────────┐ #
     # │ ⊗ TAB 1: Управление пользователями ¤ End                             │ #
     # └──────────────────────────────────────────────────────────────────────┘ #
@@ -1101,11 +1155,7 @@ if user is not None:
                         )
 
                     df_perms = pd.DataFrame(perms_data)
-                    st.dataframe(
-                        df_perms[["Пользователь", "Роль", "Выдано", "Выдал"]],
-                        use_container_width=True,
-                        hide_index=True,
-                    )
+                    _html_table(df_perms[["Пользователь", "Роль", "Выдано", "Выдал"]])
 
                     # Кнопки отзыва прав
                     for perm in project_perms:

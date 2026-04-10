@@ -119,3 +119,7 @@ credentials.*
 # =====================================
 *.sync-conflict-*
 .devcontainer/
+
+# Локальные прогоны / скриншоты QA (не часть приложения)
+docs/bench_results/
+qa_final/

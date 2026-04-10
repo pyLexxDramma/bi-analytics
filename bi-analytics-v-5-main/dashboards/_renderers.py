@@ -9,8 +9,40 @@ from datetime import datetime, timedelta, date
 import numpy as np
 
 from config import RUSSIAN_MONTHS
+
+
+_TABLE_CSS = """
+<style>
+.rendered-table-wrap {overflow-x:auto; margin:0.5rem 0 1rem 0}
+.rendered-table {
+  width:100%; border-collapse:collapse; font-size:13px;
+  font-family:Inter,system-ui,sans-serif;
+}
+.rendered-table th {
+  position:sticky; top:0; background:#1a1c23; color:#fafafa;
+  padding:8px 12px; text-align:left; border-bottom:2px solid #444;
+  font-weight:600; white-space:nowrap;
+}
+.rendered-table td {
+  padding:6px 12px; border-bottom:1px solid #333; color:#e0e0e0;
+  white-space:nowrap; max-width:400px; overflow:hidden; text-overflow:ellipsis;
+}
+.rendered-table tr:hover td {background:#262833}
+.rendered-table tr:nth-child(even) td {background:rgba(255,255,255,0.02)}
+</style>
+"""
+
+def _render_html_table(df, max_rows=500):
+    """Render a DataFrame as a styled HTML table (bypasses broken st.dataframe canvas)."""
+    show = df.head(max_rows).fillna("")
+    html = show.to_html(index=False, classes="rendered-table", escape=True, border=0)
+    st.markdown(_TABLE_CSS + '<div class="rendered-table-wrap">' + html + "</div>",
+                unsafe_allow_html=True)
+    if len(df) > max_rows:
+        st.caption(f"Показано {max_rows} из {len(df)} записей. Скачайте CSV для полных данных.")
 from utils import (
     get_russian_month_name,
+    format_period_ru,
     apply_chart_background,
     get_report_param_value,
     apply_default_filters,
@@ -33,6 +65,7 @@ except ImportError:
             return "<p>Нет данных для отображения.</p>"
         return f'<div style="overflow-x: auto; margin: 1em 0;">{df.to_html(index=False)}</div>'
 
+import re
 import textwrap
 import html as html_module
 
@@ -112,8 +145,8 @@ def _chart_caption_below(title: str) -> None:
         return
     esc = html_module.escape(str(title))
     st.markdown(
-        "<p style='text-align:center;color:#e8eef5;margin:0.35rem 0 0.75rem;font-size:1rem;'>"
-        f"<b>{esc}</b></p>",
+        "<p style='text-align:center;color:#e8eef5;margin:0.6rem 0 1rem;font-size:1.08rem;font-weight:700;'>"
+        f"{esc}</p>",
         unsafe_allow_html=True,
     )
 
@@ -219,7 +252,7 @@ def render_chart(
     caption_below — подпись под графиком (заголовок снизу); при этом у fig убирается верхний title.
     """
     kwargs = {
-        "use_container_width": True,
+        "width": "stretch",
         "config": _PLOTLY_CONFIG,
     }
     if key:
@@ -359,19 +392,6 @@ def dashboard_reasons_of_deviation(df):
         unsafe_allow_html=True,
     )
 
-    # Helper function to format months
-    def format_month(period_val):
-        if pd.isna(period_val):
-            return "Н/Д"
-        if isinstance(period_val, pd.Period):
-            try:
-                month_name = get_russian_month_name(period_val)
-                year = period_val.year
-                return f"{month_name} {year}"
-            except:
-                return str(period_val)
-        return str(period_val)
-
     # Все фильтры в один ряд: Проект, Этап, Причина, Месяц (4 колонки)
     col1, col2, col3, col4 = st.columns(4)
 
@@ -423,7 +443,7 @@ def dashboard_reasons_of_deviation(df):
         if has_plan_month_column:
             unique_months = df["plan_month"].dropna().unique()
             if len(unique_months) > 0:
-                month_dict = {format_month(m): m for m in unique_months}
+                month_dict = {format_period_ru(m): m for m in unique_months}
                 available_months = sorted(
                     month_dict.keys(), key=lambda x: month_dict[x]
                 )
@@ -438,7 +458,7 @@ def dashboard_reasons_of_deviation(df):
                 if mask.any():
                     temp_months = df.loc[mask, "plan end"].dt.to_period("M").unique()
                     if len(temp_months) > 0:
-                        month_dict = {format_month(m): m for m in temp_months}
+                        month_dict = {format_period_ru(m): m for m in temp_months}
                         available_months = sorted(
                             month_dict.keys(), key=lambda x: month_dict[x]
                         )
@@ -515,19 +535,8 @@ def dashboard_reasons_of_deviation(df):
         if selected_period is not None:
             filtered_df = filtered_df[filtered_df["plan_month"] == selected_period]
         else:
-            # Fallback: try to match formatted string
-            def format_month_for_comparison(period_val):
-                if isinstance(period_val, pd.Period):
-                    try:
-                        month_name = get_russian_month_name(period_val)
-                        year = period_val.year
-                        return f"{month_name} {year}"
-                    except:
-                        pass
-                return str(period_val)
-
             filtered_df = filtered_df[
-                filtered_df["plan_month"].apply(format_month_for_comparison)
+                filtered_df["plan_month"].apply(format_period_ru)
                 == selected_month
             ]
 
@@ -630,37 +639,42 @@ def dashboard_reasons_of_deviation(df):
             )
         render_chart(fig, caption_below="Количество задач по причинам")
 
-        reason_counts["label_text"] = (
-            reason_counts["Причина"].apply(wrap_label)
-            + "<br>("
-            + (reason_counts["Количество"] / reason_counts["Количество"].sum() * 100)
-            .round(0)
-            .astype(int)
-            .astype(str)
-            + "%)<br>"
-            + reason_counts["Количество"].astype(str)
-        )
+        total = reason_counts["Количество"].sum()
+        reason_counts["pct"] = (reason_counts["Количество"] / total * 100).round(1)
 
+        n_reasons = len(reason_counts)
         fig = px.pie(
             reason_counts,
             values="Количество",
             names="Причина",
             title=None,
         )
-        fig.update_traces(
-            text=reason_counts["label_text"],
-            textinfo="text",
-            textposition="inside",
-            textfont=dict(size=12, color="white"),
-            domain=dict(x=[0.0, 0.75], y=[0.15, 1.0]),
-            insidetextorientation="horizontal",
-        )
+        if n_reasons <= 6:
+            fig.update_traces(
+                textinfo="label+percent",
+                textposition="outside",
+                textfont_size=11,
+                insidetextorientation="radial",
+            )
+        else:
+            fig.update_traces(
+                textinfo="percent",
+                textposition="inside",
+                insidetextorientation="radial",
+                textfont_size=10,
+            )
         fig.update_layout(
-            height=680,
-            margin=dict(l=0, r=20, t=40, b=0),
-            legend=dict(x=1.28, y=1.0, xanchor="right", yanchor="top"),
+            height=600,
+            margin=dict(l=20, r=20, t=30, b=30),
+            legend=dict(
+                orientation="h",
+                x=0.5, y=-0.15,
+                xanchor="center", yanchor="top",
+                font=dict(size=9),
+            ),
             font=dict(family="Inter, system-ui, sans-serif"),
-            autosize=False,
+            uniformtext=dict(minsize=7, mode="hide"),
+            showlegend=True,
         )
         fig = apply_chart_background(fig)
         render_chart(fig, caption_below="Причины отклонений")
@@ -721,8 +735,10 @@ def dashboard_reasons_of_deviation(df):
     for date_col in ("Конец план", "Конец факт"):
         if date_col in display_df.columns:
             display_df[date_col] = display_df[date_col].apply(_date_only)
-    # st.table(style_dataframe_for_dark_theme(display_df, days_column="Отклонений в днях"))
-    st.markdown(format_dataframe_as_html(display_df), unsafe_allow_html=True)
+    st.caption(f"Записей: {len(display_df)}")
+    _render_html_table(display_df)
+    _csv = display_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+    st.download_button("Скачать CSV", _csv, "deviations_detail.csv", "text/csv", key="devtable_csv_1")
 
 
 # ==================== DASHBOARD 2: Dynamics of Deviations ====================
@@ -931,109 +947,7 @@ def dashboard_dynamics_of_deviations(df):
         grouped_data["Всего дней отклонений"] = 0
         grouped_data["Среднее дней отклонений"] = 0
 
-    # Format period for display - convert to readable format
-    def format_period(period_val):
-        if pd.isna(period_val):
-            return "Н/Д"
-
-        # Try to convert to Period if it's a string representation
-        period_obj = None
-        if isinstance(period_val, pd.Period):
-            period_obj = period_val
-        elif isinstance(period_val, str):
-            # Try to parse string like "2025-01" or "2025-01-01"
-            try:
-                if "-" in period_val:
-                    parts = period_val.split("-")
-                    if len(parts) >= 2:
-                        year = int(parts[0])
-                        month = int(parts[1])
-                        # Try to create Period object
-                        try:
-                            period_obj = pd.Period(f"{year}-{month:02d}", freq="M")
-                        except:
-                            # If that fails, try to parse as date and convert
-                            try:
-                                date_obj = pd.to_datetime(period_val)
-                                period_obj = date_obj.to_period("M")
-                            except:
-                                pass
-            except:
-                pass
-
-        # If we have a Period object, format it
-        if period_obj is not None:
-            try:
-                if period_obj.freqstr == "M" or period_obj.freqstr.startswith(
-                    "M"
-                ):  # Month
-                    month_name = get_russian_month_name(period_obj)
-                    year = period_obj.year
-                    if month_name:
-                        return f"{month_name} {year}"
-                elif period_obj.freqstr == "Q" or period_obj.freqstr.startswith(
-                    "Q"
-                ):  # Quarter
-                    return f"Q{period_obj.quarter} {period_obj.year}"
-                elif period_obj.freqstr == "Y" or period_obj.freqstr == "A-DEC":  # Year
-                    return str(period_obj.year)
-                else:
-                    month_name = get_russian_month_name(period_obj)
-                    year = period_obj.year
-                    if month_name:
-                        return f"{month_name} {year}"
-            except:
-                pass
-
-        # If it's still a Period object (original), try direct formatting
-        if isinstance(period_val, pd.Period):
-            try:
-                if period_val.freqstr == "M" or period_val.freqstr.startswith(
-                    "M"
-                ):  # Month
-                    month_name = get_russian_month_name(period_val)
-                    year = period_val.year
-                    if month_name:
-                        return f"{month_name} {year}"
-                elif period_val.freqstr == "Q" or period_val.freqstr.startswith(
-                    "Q"
-                ):  # Quarter
-                    return f"Q{period_val.quarter} {period_val.year}"
-                elif period_val.freqstr == "Y" or period_val.freqstr == "A-DEC":  # Year
-                    return str(period_val.year)
-            except:
-                pass
-
-        # Try parsing as string
-        period_str = str(period_val)
-        try:
-            if "-" in period_str:
-                parts = period_str.split("-")
-                if len(parts) >= 2:
-                    year = parts[0]
-                    month = parts[1]
-                    # Remove any extra characters
-                    month = month.split()[0] if " " in month else month
-                    try:
-                        month_num = int(month)
-                        month_name = RUSSIAN_MONTHS.get(month_num, "")
-                        if month_name:
-                            return f"{month_name} {year}"
-                    except:
-                        pass
-        except:
-            pass
-
-        # If it's a date, format it
-        try:
-            if isinstance(period_val, (pd.Timestamp, datetime)):
-                return period_val.strftime("%d.%m.%Y")
-        except:
-            pass
-
-        return period_str
-
-    grouped_data["period"] = grouped_data["period"].apply(format_period)
+    grouped_data["period"] = grouped_data["period"].apply(format_period_ru)
 
     # Visualizations
     if len(group_cols) == 1:  # Only period
@@ -1316,7 +1230,7 @@ def dashboard_dynamics_of_deviations(df):
                     # Форматируем периоды для сравнения
                     filtered_df_for_summary.loc[mask, "temp_period_formatted"] = (
                         filtered_df_for_summary.loc[mask, "temp_period"].apply(
-                            format_period
+                            format_period_ru
                         )
                     )
                     # Фильтруем по выбранному периоду
@@ -1399,8 +1313,10 @@ def dashboard_dynamics_of_deviations(df):
                 except (TypeError, ValueError): return x
             project_summary[period_col_name] = project_summary[period_col_name].apply(_fmt_days)
 
-        # st.table(style_dataframe_for_dark_theme(project_summary))
-        st.markdown(format_dataframe_as_html(project_summary), unsafe_allow_html=True)
+        st.caption(f"Записей: {len(project_summary)}")
+        _render_html_table(project_summary)
+        _csv = project_summary.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+        st.download_button("Скачать CSV", _csv, "project_summary.csv", "text/csv", key="proj_summary_csv")
     else:
         # No project in group, show regular summary by period (только количество, без дней)
         group_desc = [period_label] + [c for c in group_cols if c != "period"]
@@ -1413,8 +1329,10 @@ def dashboard_dynamics_of_deviations(df):
             "project name": "Проект",
             "reason of deviation": "Причина отклонений",
         })
-        # st.table(style_dataframe_for_dark_theme(display_grouped))
-        st.markdown(format_dataframe_as_html(display_grouped), unsafe_allow_html=True)
+        st.caption(f"Записей: {len(display_grouped)}")
+        _render_html_table(display_grouped)
+        _csv = display_grouped.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+        st.download_button("Скачать CSV", _csv, "grouped_summary.csv", "text/csv", key="grouped_csv")
 
 
 # ==================== DASHBOARD 3: Plan/Fact Dates for Tasks ====================
@@ -1752,6 +1670,7 @@ def dashboard_plan_fact_dates(df):
                     showlegend=False,
                 )
                 fig_section = apply_chart_background(fig_section)
+                fig_section.update_layout(margin=dict(t=30))
                 render_chart(
                     fig_section,
                     caption_below="Отклонение текущего срока от базового плана по этапам",
@@ -2264,8 +2183,10 @@ def dashboard_plan_fact_dates(df):
         if col in summary_df.columns:
             summary_df[col] = summary_df[col].apply(_format_int_days)
     st.subheader("Детальные даты задач")
-    # st.table(style_dataframe_for_dark_theme(summary_df))
-    st.markdown(format_dataframe_as_html(summary_df), unsafe_allow_html=True)
+    st.caption(f"Записей: {len(summary_df)}")
+    _render_html_table(summary_df)
+    _csv = summary_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+    st.download_button("Скачать CSV", _csv, "detail_dates.csv", "text/csv", key="detail_dates_csv")
 
 
 # ==================== DASHBOARD 4: Deviation Amount by Tasks ====================
@@ -2532,9 +2453,11 @@ def dashboard_deviation_by_tasks_current_month(df):
             ]
             deviations["Отображение"] = deviations["Проект"]
 
-        # Перенос длинных подписей оси Y
-        def _wrap_label_dev(text, max_len=25):
-            words = str(text).split(" ")
+        def _wrap_label_dev(text, max_len=30, max_total=60):
+            s = str(text)
+            if len(s) > max_total:
+                s = s[:max_total - 1] + "…"
+            words = s.split(" ")
             lines, current = [], ""
             for word in words:
                 if len(current) + len(word) + 1 > max_len:
@@ -2544,7 +2467,7 @@ def dashboard_deviation_by_tasks_current_month(df):
                     current = (current + " " + word).strip()
             if current:
                 lines.append(current)
-            return "<br>".join(lines)
+            return "<br>".join(lines[:3])
 
         deviations["Отображение"] = deviations["Отображение"].apply(_wrap_label_dev)
 
@@ -2639,7 +2562,7 @@ def dashboard_deviation_by_tasks_current_month(df):
         ) if not deviations.empty else 20
         left_margin = min(max_line_len * 8, 400)
         fig.update_layout(
-            height=max(300, len(deviations) * 80),
+            height=max(350, len(deviations) * 80),
             margin=dict(l=left_margin, r=10, t=40, b=80),
             xaxis=dict(range=_xaxis_range_positive(deviations["Суммарно дней отклонений"])),
         )
@@ -2705,9 +2628,11 @@ def dashboard_deviation_by_tasks_current_month(df):
                     + ")"
                 )
 
-                # Перенос длинных подписей
-                def _wrap_label(text, max_len=25):
-                    words = text.split(" ")
+                def _wrap_label(text, max_len=30, max_total=60):
+                    s = str(text)
+                    if len(s) > max_total:
+                        s = s[:max_total - 1] + "…"
+                    words = s.split(" ")
                     lines, current = [], ""
                     for word in words:
                         if len(current) + len(word) + 1 > max_len:
@@ -2717,7 +2642,7 @@ def dashboard_deviation_by_tasks_current_month(df):
                             current = (current + " " + word).strip()
                     if current:
                         lines.append(current)
-                    return "<br>".join(lines)
+                    return "<br>".join(lines[:3])
 
                 detail_deviations["Отображение"] = detail_deviations["Отображение"].apply(_wrap_label)
 
@@ -2738,6 +2663,21 @@ def dashboard_deviation_by_tasks_current_month(df):
                     detail_deviations["Суммарно дней отклонений"] = pd.to_numeric(
                         detail_deviations["Суммарно дней отклонений"], errors="coerce"
                     ).fillna(0)
+                    table_display = detail_deviations[["Раздел", "Задача", "Суммарно дней отклонений"]].copy()
+                    table_display["Суммарно дней отклонений"] = table_display["Суммарно дней отклонений"].apply(
+                        lambda x: int(round(x, 0)) if pd.notna(x) else 0
+                    )
+                    table_display = table_display.sort_values("Суммарно дней отклонений", ascending=False)
+                    st.caption(f"Записей: {len(table_display)}")
+                    _render_html_table(table_display)
+                    csv_data = table_display.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+                    st.download_button(
+                        label="Скачать CSV",
+                        data=csv_data,
+                        file_name="deviation_details.csv",
+                        mime="text/csv",
+                        key="deviation_detail_csv_export",
+                    )
                     fig_detail = px.bar(
                         detail_deviations,
                         x="Суммарно дней отклонений",
@@ -3004,63 +2944,7 @@ def dashboard_dynamics_of_reasons(df):
             .reset_index(name="Количество")
         )
 
-        # Format period for display
-        def format_period(period_val):
-            if pd.isna(period_val):
-                return "Н/Д"
-            if isinstance(period_val, pd.Period):
-                try:
-                    if period_val.freqstr == "M" or period_val.freqstr.startswith(
-                        "M"
-                    ):  # Month
-                        month_name = get_russian_month_name(period_val)
-                        year = period_val.year
-                        return f"{month_name} {year}"
-                    elif period_val.freqstr == "Q" or period_val.freqstr.startswith(
-                        "Q"
-                    ):  # Quarter
-                        return f"Q{period_val.quarter} {period_val.year}"
-                    elif (
-                        period_val.freqstr == "Y" or period_val.freqstr == "A-DEC"
-                    ):  # Year
-                        return str(period_val.year)
-                    else:
-                        month_name = get_russian_month_name(period_val)
-                    year = period_val.year
-                    return f"{month_name} {year}"
-                except:
-                    # Try parsing as string
-                    period_str = str(period_val)
-                    try:
-                        if "-" in period_str:
-                            parts = period_str.split("-")
-                            if len(parts) >= 2:
-                                year = parts[0]
-                                month = parts[1]
-                                month_num = int(month)
-                                month_name = RUSSIAN_MONTHS.get(month_num, "")
-                                if month_name:
-                                    return f"{month_name} {year}"
-                    except:
-                        pass
-                    return str(period_val)
-            elif isinstance(period_val, str):
-                # Try parsing string like "2025-01"
-                try:
-                    if "-" in period_val:
-                        parts = period_val.split("-")
-                        if len(parts) >= 2:
-                            year = parts[0]
-                            month = parts[1]
-                            month_num = int(month)
-                            month_name = RUSSIAN_MONTHS.get(month_num, "")
-                            if month_name:
-                                return f"{month_name} {year}"
-                except:
-                    pass
-            return str(period_val)
-
-        reason_dynamics[period_col] = reason_dynamics[period_col].apply(format_period)
+        reason_dynamics[period_col] = reason_dynamics[period_col].apply(format_period_ru)
 
         # Aggregate again after formatting to handle potential duplicates from formatting
         reason_dynamics = (
@@ -3266,8 +3150,10 @@ def dashboard_dynamics_of_reasons(df):
         )
 
         st.subheader(f"Сводная таблица по {period_label.lower()}")
-        # st.table(style_dataframe_for_dark_theme(summary_by_reason))
-        st.markdown(format_dataframe_as_html(summary_by_reason), unsafe_allow_html=True)
+        st.caption(f"Записей: {len(summary_by_reason)}")
+        _render_html_table(summary_by_reason)
+        _csv = summary_by_reason.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+        st.download_button("Скачать CSV", _csv, "reasons_summary.csv", "text/csv", key="reasons_csv")
     else:
         st.warning("Столбец 'reason of deviation' не найден в данных.")
 
@@ -3399,60 +3285,6 @@ def dashboard_budget_by_period(df):
     if lot_col not in filtered_df.columns:
         lot_col = "section"  # fallback для группировки по лотам
 
-    # Format period for display (общая для обоих табов)
-    def format_period_display(period_val):
-        if pd.isna(period_val):
-            return "Н/Д"
-        if isinstance(period_val, pd.Period):
-            try:
-                if period_val.freqstr == "M" or period_val.freqstr.startswith(
-                    "M"
-                ):  # Month
-                    month_name = get_russian_month_name(period_val)
-                    year = period_val.year
-                    return f"{month_name} {year}"
-                elif period_val.freqstr == "Q" or period_val.freqstr.startswith(
-                    "Q"
-                ):  # Quarter
-                    return f"Q{period_val.quarter} {period_val.year}"
-                elif period_val.freqstr == "Y" or period_val.freqstr == "A-DEC":  # Year
-                    return str(period_val.year)
-                else:
-                    month_name = get_russian_month_name(period_val)
-                    year = period_val.year
-                    return f"{month_name} {year}"
-            except:
-                # Try parsing as string
-                period_str = str(period_val)
-                try:
-                    if "-" in period_str:
-                        parts = period_str.split("-")
-                        if len(parts) >= 2:
-                            year = parts[0]
-                            month = parts[1]
-                            month_num = int(month)
-                            month_name = RUSSIAN_MONTHS.get(month_num, "")
-                            if month_name:
-                                return f"{month_name} {year}"
-                except:
-                    pass
-                return str(period_val)
-        elif isinstance(period_val, str):
-            # Try parsing string like "2025-01"
-            try:
-                if "-" in period_val:
-                    parts = period_val.split("-")
-                    if len(parts) >= 2:
-                        year = parts[0]
-                        month = parts[1]
-                        month_num = int(month)
-                        month_name = RUSSIAN_MONTHS.get(month_num, "")
-                        if month_name:
-                            return f"{month_name} {year}"
-            except:
-                pass
-        return str(period_val)
-
     tab_period, tab_lot = st.tabs(["По периодам", "По лотам"])
 
     with tab_period:
@@ -3467,7 +3299,7 @@ def dashboard_budget_by_period(df):
 
         # Store original period values for sorting before formatting
         budget_summary["period_original"] = budget_summary[period_col]
-        budget_summary[period_col] = budget_summary[period_col].apply(format_period_display)
+        budget_summary[period_col] = budget_summary[period_col].apply(format_period_ru)
 
         @st.fragment
         def _budget_period_chart():
@@ -3621,7 +3453,7 @@ def dashboard_budget_by_period(df):
                 filtered_df.groupby([period_col, lot_col]).agg(agg_dict_lot).reset_index()
             )
             budget_summary_lot["period_original"] = budget_summary_lot[period_col]
-            budget_summary_lot[period_col] = budget_summary_lot[period_col].apply(format_period_display)
+            budget_summary_lot[period_col] = budget_summary_lot[period_col].apply(format_period_ru)
 
             # hide_reserve_lot = st.checkbox(
             #     "Скрыть отклонение", value=True, key="budget_lot_hide_reserve"
@@ -3846,61 +3678,7 @@ def dashboard_budget_cumulative(df):
         filtered_df.groupby([period_col, "project name"]).agg(agg_dict).reset_index()
     )
 
-    # Format period for display
-    def format_period_display(period_val):
-        if pd.isna(period_val):
-            return "Н/Д"
-        if isinstance(period_val, pd.Period):
-            try:
-                if period_val.freqstr == "M" or period_val.freqstr.startswith(
-                    "M"
-                ):  # Month
-                    month_name = get_russian_month_name(period_val)
-                    year = period_val.year
-                    return f"{month_name} {year}"
-                elif period_val.freqstr == "Q" or period_val.freqstr.startswith(
-                    "Q"
-                ):  # Quarter
-                    return f"Q{period_val.quarter} {period_val.year}"
-                elif period_val.freqstr == "Y" or period_val.freqstr == "A-DEC":  # Year
-                    return str(period_val.year)
-                else:
-                    month_name = get_russian_month_name(period_val)
-                    year = period_val.year
-                    return f"{month_name} {year}"
-            except:
-                # Try parsing as string
-                period_str = str(period_val)
-                try:
-                    if "-" in period_str:
-                        parts = period_str.split("-")
-                        if len(parts) >= 2:
-                            year = parts[0]
-                            month = parts[1]
-                            month_num = int(month)
-                            month_name = RUSSIAN_MONTHS.get(month_num, "")
-                            if month_name:
-                                return f"{month_name} {year}"
-                except:
-                    pass
-                return str(period_val)
-        elif isinstance(period_val, str):
-            # Try parsing string like "2025-01"
-            try:
-                if "-" in period_val:
-                    parts = period_val.split("-")
-                    if len(parts) >= 2:
-                        year = parts[0]
-                        month = parts[1]
-                        month_num = int(month)
-                        month_name = RUSSIAN_MONTHS.get(month_num, "")
-                        if month_name:
-                            return f"{month_name} {year}"
-            except:
-                pass
-        return str(period_val)
-
-    budget_summary[period_col] = budget_summary[period_col].apply(format_period_display)
+    budget_summary[period_col] = budget_summary[period_col].apply(format_period_ru)
 
     # Aggregate data
     if selected_project != "Все":
@@ -4085,63 +3863,9 @@ def dashboard_budget_by_section(df):
         .reset_index()
     )
 
-    # Format period for display
-    def format_period_display(period_val):
-        if pd.isna(period_val):
-            return "Н/Д"
-        if isinstance(period_val, pd.Period):
-            try:
-                if period_val.freqstr == "M" or period_val.freqstr.startswith(
-                    "M"
-                ):  # Month
-                    month_name = get_russian_month_name(period_val)
-                    year = period_val.year
-                    return f"{month_name} {year}"
-                elif period_val.freqstr == "Q" or period_val.freqstr.startswith(
-                    "Q"
-                ):  # Quarter
-                    return f"Q{period_val.quarter} {period_val.year}"
-                elif period_val.freqstr == "Y" or period_val.freqstr == "A-DEC":  # Year
-                    return str(period_val.year)
-                else:
-                    month_name = get_russian_month_name(period_val)
-                    year = period_val.year
-                    return f"{month_name} {year}"
-            except:
-                # Try parsing as string
-                period_str = str(period_val)
-                try:
-                    if "-" in period_str:
-                        parts = period_str.split("-")
-                        if len(parts) >= 2:
-                            year = parts[0]
-                            month = parts[1]
-                            month_num = int(month)
-                            month_name = RUSSIAN_MONTHS.get(month_num, "")
-                            if month_name:
-                                return f"{month_name} {year}"
-                except:
-                    pass
-                return str(period_val)
-        elif isinstance(period_val, str):
-            # Try parsing string like "2025-01"
-            try:
-                if "-" in period_val:
-                    parts = period_val.split("-")
-                    if len(parts) >= 2:
-                        year = parts[0]
-                        month = parts[1]
-                        month_num = int(month)
-                        month_name = RUSSIAN_MONTHS.get(month_num, "")
-                        if month_name:
-                            return f"{month_name} {year}"
-            except:
-                pass
-        return str(period_val)
-
     # Store original period values for sorting before formatting
     budget_summary["period_original"] = budget_summary[period_col]
-    budget_summary[period_col] = budget_summary[period_col].apply(format_period_display)
+    budget_summary[period_col] = budget_summary[period_col].apply(format_period_ru)
 
     # Checkbox to hide/show deviation
     hide_reserve = st.checkbox(
@@ -4419,21 +4143,7 @@ def dashboard_bdr(df):
         columns={"_revenue": "Доходы", "_expense": "Расходы", "_result": "Результат (сальдо)"}
     )
 
-    def format_period_display(period_val):
-        if pd.isna(period_val):
-            return "Н/Д"
-        if isinstance(period_val, pd.Period):
-            try:
-                if getattr(period_val, "freqstr", "") and ("M" in str(period_val.freqstr) or str(period_val.freqstr).startswith("M")):
-                    return f"{get_russian_month_name(period_val)} {period_val.year}"
-                if getattr(period_val, "freqstr", "") and "Q" in str(period_val.freqstr):
-                    return f"Q{period_val.quarter} {period_val.year}"
-                return str(period_val)
-            except Exception:
-                return str(period_val)
-        return str(period_val)
-
-    bdr_summary["period_display"] = bdr_summary[period_col].apply(format_period_display)
+    bdr_summary["period_display"] = bdr_summary[period_col].apply(format_period_ru)
 
     @st.fragment
     def _bdr_chart():
@@ -4488,7 +4198,9 @@ def dashboard_bdr(df):
             xaxis_title=period_label,
             yaxis_title="млн руб.",
             barmode="group",
-            xaxis=dict(tickangle=-45),
+            xaxis=dict(tickangle=-60, tickfont=dict(size=8), nticks=24),
+            margin=dict(b=100),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
         )
         fig = apply_chart_background(fig)
         render_chart(fig, caption_below=f"БДР — доходы и расходы{title_suffix}")
@@ -4882,6 +4594,8 @@ def dashboard_rd_delay(df):
         #     days_column="Отклонение разделов РД",
         # ))
         st.markdown(format_dataframe_as_html(summary_table), unsafe_allow_html=True)
+        _csv = summary_table.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+        st.download_button("Скачать CSV", _csv, "rd_delay_summary.csv", "text/csv", key="rd_delay_csv")
 
         # Таблица: План окончания ПД/РД и Факт окончания ПД/РД
         if (plan_end_col and plan_end_col in filtered_df.columns) or (fact_end_col and fact_end_col in filtered_df.columns):
@@ -4956,11 +4670,7 @@ def dashboard_rd_delay(df):
 def dashboard_technique(df):
     st.header("ГДРС")
 
-    # Get technique data from session state; fallback to passed df for correct display
     technique_df = st.session_state.get("technique_data", None)
-    if (technique_df is None or technique_df.empty) and df is not None and not df.empty:
-        technique_df = df
-
     if technique_df is None or technique_df.empty:
         st.warning(
             "Для отображения аналитики по технике необходимо загрузить файл с данными о технике."
@@ -4974,10 +4684,48 @@ def dashboard_technique(df):
     st.caption("Данные из загруженного файла с данными о технике.")
 
     key_prefix = "gdrs_technique"
-    # Create working copy
     work_df = technique_df.copy()
 
-    # Helper function to find columns by partial match (handles encoding issues)
+    date_cols_found = [c for c in work_df.columns if re.match(r'^\d{2}\.{1,2}\d{2}\.\d{4}$', str(c))]
+    if date_cols_found and "Период" not in work_df.columns:
+        id_cols = [c for c in ["Проект", "Контрагент", "тип ресурсов", "data_source"]
+                   if c in work_df.columns]
+        avg_month_col = None
+        for c in work_df.columns:
+            cl = str(c).lower()
+            if "среднее" in cl and ("за месяц" in cl or "количество ресурсов" in cl):
+                vals = pd.to_numeric(work_df[c], errors="coerce")
+                if vals.notna().any() and (vals != 0).any():
+                    avg_month_col = c
+                    break
+        if not avg_month_col:
+            for c in reversed(list(work_df.columns)):
+                cl = str(c).lower()
+                if "среднее" in cl and not cl.startswith("тип"):
+                    vals = pd.to_numeric(work_df[c], errors="coerce")
+                    if vals.notna().any() and (vals != 0).any():
+                        avg_month_col = c
+                        break
+
+        for dc in date_cols_found:
+            work_df[dc] = pd.to_numeric(work_df[dc], errors="coerce")
+
+        if id_cols:
+            agg = work_df.groupby(id_cols, dropna=False).agg(
+                **{dc: (dc, "mean") for dc in date_cols_found}
+            ).reset_index()
+            agg["Среднее за месяц"] = agg[date_cols_found].mean(axis=1).round(1)
+            if avg_month_col and avg_month_col in work_df.columns:
+                month_avg = work_df.groupby(id_cols, dropna=False)[avg_month_col].first().reset_index()
+                month_avg["_avg_num"] = pd.to_numeric(month_avg[avg_month_col], errors="coerce")
+                if month_avg["_avg_num"].notna().any() and (month_avg["_avg_num"] != 0).any():
+                    agg["Среднее за месяц"] = month_avg["_avg_num"].values
+            agg = agg.drop(columns=date_cols_found, errors="ignore")
+            work_df = agg
+        else:
+            work_df["Среднее за месяц"] = work_df[date_cols_found].mean(axis=1).round(1)
+            work_df = work_df.drop(columns=date_cols_found, errors="ignore")
+
     def find_column_by_partial(df, possible_names):
         """Find column by possible names (exact or partial match)"""
         for col in df.columns:
@@ -5192,7 +4940,11 @@ def dashboard_technique(df):
     else:
         work_df["period_display"] = "Н/Д"
 
-    # Find Проект column
+    has_plan_data = (
+        "План_numeric" in work_df.columns
+        and work_df["План_numeric"].sum() > 0
+    )
+
     project_col = None
     if "Проект" in work_df.columns:
         project_col = "Проект"
@@ -5201,20 +4953,12 @@ def dashboard_technique(df):
             work_df, ["Проект", "проект", "project", "Project"]
         )
 
-    # Period column for filter and bar chart
     period_col = None
-    if "Период" in work_df.columns:
-        period_col = "Период"
-    else:
-        period_col = find_column_by_partial(
-            work_df, ["Период", "период", "period", "Месяц", "месяц", "month"]
-        )
+    period_col = "Период" if "Период" in work_df.columns else None
 
-    # Filters - project, contractor, period
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
 
     with col1:
-        # Project filter - multiselect для выбора нескольких проектов
         if project_col and project_col in work_df.columns:
             all_projects = sorted(work_df[project_col].dropna().unique().tolist())
             selected_projects = st.multiselect(
@@ -5228,7 +4972,6 @@ def dashboard_technique(df):
             st.info("Колонка 'Проект' не найдена")
 
     with col2:
-        # Contractor filter
         if "Контрагент" in work_df.columns:
             contractors = ["Все"] + sorted(
                 work_df["Контрагент"].dropna().unique().tolist()
@@ -5240,20 +4983,7 @@ def dashboard_technique(df):
             selected_contractor = "Все"
             st.info("Колонка 'Контрагент' не найдена")
 
-    with col3:
-        # Period filter (for bar chart: Plan, Среднее за месяц, Дельта)
-        if period_col and period_col in work_df.columns:
-            all_periods = sorted(work_df[period_col].dropna().astype(str).str.strip().unique().tolist())
-            selected_periods = st.multiselect(
-                "Фильтр по периоду (столбчатая План/Факт)",
-                all_periods,
-                default=all_periods,
-                key="technique_period",
-            )
-        else:
-            all_periods = []
-            selected_periods = []
-            st.info("Колонка 'Период' не найдена")
+    selected_periods = []
 
     # Apply filters
     filtered_df = work_df.copy()
@@ -5487,9 +5217,7 @@ def dashboard_technique(df):
                         caption_below=f"Фактическое количество по периодам: {label}",
                     )
 
-    # Обрабатываем каждый проект отдельно
     for project_name in projects_to_process:
-        # Фильтруем данные по проекту
         project_filtered_df = filtered_df.copy()
         if (
             project_col
@@ -5504,12 +5232,48 @@ def dashboard_technique(df):
         if project_filtered_df.empty:
             continue
 
-        # Заголовок для проекта
         if len(projects_to_process) > 1:
             st.markdown("---")
             st.subheader(f"Проект: {project_name}")
 
-        # ========== Круговая диаграмма: План и факт (люди) по проекту ==========
+        if not has_plan_data and "Контрагент" in project_filtered_df.columns and "week_sum" in project_filtered_df.columns:
+            _bar_avg = (
+                project_filtered_df.groupby("Контрагент", as_index=False)["week_sum"]
+                .sum()
+                .rename(columns={"week_sum": "Среднее за месяц"})
+            )
+            _bar_avg["Среднее за месяц"] = _bar_avg["Среднее за месяц"].round(1)
+            _bar_avg = _bar_avg[_bar_avg["Среднее за месяц"] > 0].sort_values("Среднее за месяц", ascending=False)
+            if not _bar_avg.empty:
+                fig_avg = px.bar(
+                    _bar_avg, x="Контрагент", y="Среднее за месяц",
+                    text=_bar_avg["Среднее за месяц"].apply(lambda v: f"{v:.0f}"),
+                    color_discrete_sequence=["#2ecc71"],
+                )
+                _pslug = str(project_name).replace(" ", "_")[:20]
+                fig_avg.update_traces(textposition="outside", textfont=dict(size=12, color="white"))
+                fig_avg.update_layout(height=500, xaxis=dict(tickangle=-45), yaxis_title="Среднее за месяц")
+                fig_avg = apply_chart_background(fig_avg)
+                render_chart(fig_avg, key=f"{key_prefix}_avg_bar_{_pslug}", caption_below=f"Среднее количество ресурсов — {project_name}")
+
+                total_avg = _bar_avg["Среднее за месяц"].sum()
+                if total_avg > 0:
+                    fig_pie_avg = px.pie(
+                        _bar_avg, values="Среднее за месяц", names="Контрагент",
+                        title=None, color_discrete_sequence=px.colors.qualitative.Set3,
+                    )
+                    fig_pie_avg.update_traces(textinfo="label+percent", textposition="auto", textfont_size=10, insidetextorientation="radial")
+                    fig_pie_avg.update_layout(
+                        height=500, showlegend=True,
+                        legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.05, font=dict(size=10)),
+                        uniformtext=dict(minsize=8, mode="hide"),
+                    )
+                    fig_pie_avg = apply_chart_background(fig_pie_avg)
+                    render_chart(fig_pie_avg, key=f"{key_prefix}_avg_pie_{_pslug}", caption_below=f"Распределение ресурсов — {project_name}")
+            else:
+                st.info("Нет данных для отображения.")
+            continue
+
         df_people = project_filtered_df.copy()
         if "data_source" in df_people.columns:
             df_people = df_people[
@@ -5536,13 +5300,19 @@ def dashboard_technique(df):
                     color_discrete_sequence=["#3498db", "#2ecc71"],
                 )
                 fig_pie_pf.update_traces(
-                    textinfo="label+value+percent",
-                    texttemplate="%{label}<br>%{value:,.0f}<br>(%{percent:.0%})",
-                    textposition="inside",
-                    textfont=dict(size=14, color="white"),
+                    textinfo="label+percent",
+                    textposition="auto",
+                    textfont_size=10,
+                    insidetextorientation="radial",
                     hovertemplate="%{label}: %{value:,.0f} (%{percent:.0%})<extra></extra>",
                 )
-                fig_pie_pf.update_layout(height=450, showlegend=True, title_font_size=14)
+                fig_pie_pf.update_layout(
+                    height=500,
+                    showlegend=True,
+                    title_font_size=14,
+                    uniformtext=dict(minsize=8, mode="hide"),
+                    legend=dict(orientation="v", font=dict(size=10)),
+                )
                 fig_pie_pf = apply_chart_background(fig_pie_pf)
                 render_chart(fig_pie_pf, caption_below=f"План и факт — {project_name}")
 
@@ -5694,17 +5464,17 @@ def dashboard_technique(df):
                     height=600,
                     showlegend=True,
                     legend=dict(
-                        orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.1
+                        orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.1, font=dict(size=10),
                     ),
                     title_font_size=16,
+                    uniformtext=dict(minsize=8, mode="hide"),
                 )
 
-                # На круговой диаграмме: подпись с абсолютным значением и процентом (без наведения)
                 fig_pie.update_traces(
-                    textinfo="label+value+percent",
-                    texttemplate="%{label}<br>%{value}<br>(%{percent:.0%})",
-                    textposition="inside",
-                    textfont=dict(size=12, color="white"),
+                    textinfo="label+percent",
+                    textposition="auto",
+                    textfont_size=10,
+                    insidetextorientation="radial",
                     customdata=original_values,
                     hovertemplate="<b>%{label}</b><br>Дельта (%): %{customdata:.0f}%<br>Процент: %{percent}<br><extra></extra>",
                 )
@@ -5961,17 +5731,17 @@ def dashboard_technique(df):
                 height=600,
                 showlegend=True,
                 legend=dict(
-                    orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.1
+                    orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.1, font=dict(size=10),
                 ),
                 title_font_size=16,
+                uniformtext=dict(minsize=8, mode="hide"),
             )
 
-            # На круговой диаграмме: абсолютное значение и процент в подписи (без наведения)
             fig_pie_plan_avg.update_traces(
-                textinfo="label+value+percent",
-                texttemplate="%{label}<br>%{value:,.0f}<br>(%{percent:.0%})",
-                textposition="inside",
-                textfont=dict(size=12, color="white"),
+                textinfo="label+percent",
+                textposition="auto",
+                textfont_size=10,
+                insidetextorientation="radial",
             )
             # Долю факта и отклонения оставляем в hover
             fig_pie_plan_avg.update_traces(
@@ -6037,14 +5807,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
     if show_header:
         st.header("👥 График движения рабочей силы")
 
-    # Get resources and technique data from session state; use passed df as fallback for display
     resources_df = st.session_state.get("resources_data", None)
     technique_df = st.session_state.get("technique_data", None)
     combined_df = None
-    if (resources_df is None or resources_df.empty) and (technique_df is None or technique_df.empty) and df is not None and not df.empty:
-        # Passed df from main app (e.g. resources or technique) — use as single source
-        combined_df = df.copy()
-        combined_df["data_source"] = "Данные"
 
     if combined_df is None or combined_df.empty:
         if data_source_filter == "Техника":
@@ -6090,13 +5855,50 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             )
             return
 
-    # Данные для круговых и иных диаграмм берутся только из загруженных файлов (resources_data + technique_data)
     st.caption("Данные из загруженных файлов (ресурсы и/или техника).")
 
-    # Create working copy
     work_df = combined_df.copy()
 
-    # Helper function to find columns by partial match (handles encoding issues)
+    date_cols_found = [c for c in work_df.columns if re.match(r'^\d{2}\.{1,2}\d{2}\.\d{4}$', str(c))]
+    if date_cols_found and "Период" not in work_df.columns:
+        id_cols = [c for c in ["Проект", "Контрагент", "тип ресурсов", "data_source"]
+                   if c in work_df.columns]
+        avg_month_col = None
+        for c in work_df.columns:
+            cl = str(c).lower()
+            if "среднее" in cl and ("за месяц" in cl or "количество ресурсов" in cl):
+                vals = pd.to_numeric(work_df[c], errors="coerce")
+                if vals.notna().any() and (vals != 0).any():
+                    avg_month_col = c
+                    break
+        if not avg_month_col:
+            for c in reversed(list(work_df.columns)):
+                cl = str(c).lower()
+                if "среднее" in cl and not cl.startswith("тип"):
+                    vals = pd.to_numeric(work_df[c], errors="coerce")
+                    if vals.notna().any() and (vals != 0).any():
+                        avg_month_col = c
+                        break
+
+        for dc in date_cols_found:
+            work_df[dc] = pd.to_numeric(work_df[dc], errors="coerce")
+
+        if id_cols:
+            agg = work_df.groupby(id_cols, dropna=False).agg(
+                **{dc: (dc, "mean") for dc in date_cols_found}
+            ).reset_index()
+            agg["Среднее за месяц"] = agg[date_cols_found].mean(axis=1).round(1)
+            if avg_month_col and avg_month_col in work_df.columns:
+                month_avg = work_df.groupby(id_cols, dropna=False)[avg_month_col].first().reset_index()
+                month_avg["_avg_num"] = pd.to_numeric(month_avg[avg_month_col], errors="coerce")
+                if month_avg["_avg_num"].notna().any() and (month_avg["_avg_num"] != 0).any():
+                    agg["Среднее за месяц"] = month_avg["_avg_num"].values
+            agg = agg.drop(columns=date_cols_found, errors="ignore")
+            work_df = agg
+        else:
+            work_df["Среднее за месяц"] = work_df[date_cols_found].mean(axis=1).round(1)
+            work_df = work_df.drop(columns=date_cols_found, errors="ignore")
+
     def find_column_by_partial(df, possible_names):
         """Find column by possible names (exact or partial match)"""
         for col in df.columns:
@@ -6158,6 +5960,12 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
     if work_df.empty:
         st.warning("Данные пусты после обработки.")
         return
+
+    for wc in week_columns:
+        if wc in work_df.columns:
+            work_df[wc] = work_df[wc].fillna(0)
+    if "План" in work_df.columns:
+        work_df["План"] = work_df["План"].fillna(0)
 
     # Process numeric columns
     # Process План
@@ -6291,13 +6099,16 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             ) * 100
         work_df["Дельта_процент_numeric"] = work_df["Дельта_процент_numeric"].fillna(0)
 
-    # Ensure Среднее_за_неделю_numeric exists (should already be calculated above)
     if "Среднее_за_неделю_numeric" not in work_df.columns:
-        # Fallback: calculate from week_sum / number of weeks
         num_weeks = len(week_columns) if week_columns else 4
         work_df["Среднее_за_неделю_numeric"] = (
             work_df["week_sum"] / num_weeks if num_weeks > 0 else 0
         )
+
+    has_plan_data = (
+        "План_numeric" in work_df.columns
+        and work_df["План_numeric"].sum() > 0
+    )
 
     # Find Проект column
     project_col = None
@@ -6308,20 +6119,11 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             work_df, ["Проект", "проект", "project", "Project"]
         )
 
-    # Period column for bar chart filter
-    period_col = None
-    if "Период" in work_df.columns:
-        period_col = "Период"
-    else:
-        period_col = find_column_by_partial(
-            work_df, ["Период", "период", "period", "Месяц", "месяц", "month"]
-        )
+    period_col = "Период" if "Период" in work_df.columns else None
 
-    # Filters - project, contractor, period
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
 
     with col1:
-        # Project filter - multiselect для выбора нескольких проектов
         if project_col and project_col in work_df.columns:
             all_projects = sorted(work_df[project_col].dropna().unique().tolist())
             selected_projects = st.multiselect(
@@ -6335,7 +6137,6 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             st.info("Колонка 'Проект' не найдена")
 
     with col2:
-        # Contractor filter
         if "Контрагент" in work_df.columns:
             contractors = ["Все"] + sorted(
                 work_df["Контрагент"].dropna().unique().tolist()
@@ -6347,24 +6148,11 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             selected_contractor = "Все"
             st.info("Колонка 'Контрагент' не найдена")
 
-    with col3:
-        if period_col and period_col in work_df.columns:
-            all_periods = sorted(work_df[period_col].dropna().astype(str).str.strip().unique().tolist())
-            selected_periods = st.multiselect(
-                "Фильтр по периоду (столбчатая План/Факт)",
-                all_periods,
-                default=all_periods,
-                key=f"{key_prefix}_period",
-            )
-        else:
-            all_periods = []
-            selected_periods = []
-            st.info("Колонка 'Период' не найдена")
+    selected_periods = []
 
     # Apply filters
     filtered_df = work_df.copy()
     if selected_projects and project_col and project_col in filtered_df.columns:
-        # Фильтруем по выбранным проектам
         project_mask = (
             filtered_df[project_col]
             .astype(str)
@@ -6373,7 +6161,6 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         )
         filtered_df = filtered_df[project_mask]
     if selected_contractor != "Все" and "Контрагент" in filtered_df.columns:
-        # Use string comparison with strip to handle whitespace
         filtered_df = filtered_df[
             filtered_df["Контрагент"].astype(str).str.strip()
             == str(selected_contractor).strip()
@@ -6410,16 +6197,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         else:
             projects_to_process = ["Все проекты"]
 
-    # Гистограммы: факт по периодам (люди и техника отдельно), количество и %
     period_col_hist = period_col
-    if period_col_hist is None:
-        if "Период" in filtered_df.columns:
-            period_col_hist = "Период"
-        else:
-            period_col_hist = find_column_by_partial(
-                filtered_df,
-                ["Период", "период", "period", "Месяц", "месяц", "month"],
-            )
+    if period_col_hist is None and "Период" in filtered_df.columns:
+        period_col_hist = "Период"
     if period_col_hist and "week_sum" in filtered_df.columns:
         sources_hist = []
         if "data_source" in filtered_df.columns:
@@ -6594,9 +6374,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                         caption_below=f"Фактическое количество по периодам: {label}",
                     )
 
-    # Обрабатываем каждый проект отдельно
     for project_name in projects_to_process:
-        # Фильтруем данные по проекту
         project_filtered_df = filtered_df.copy()
         if (
             project_col
@@ -6611,12 +6389,48 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         if project_filtered_df.empty:
             continue
 
-        # Заголовок для проекта
         if len(projects_to_process) > 1:
             st.markdown("---")
             st.subheader(f"Проект: {project_name}")
 
-        # ========== Круговая диаграмма: План и факт (люди) по проекту ==========
+        if not has_plan_data and "Контрагент" in project_filtered_df.columns and "week_sum" in project_filtered_df.columns:
+            _bar_avg = (
+                project_filtered_df.groupby("Контрагент", as_index=False)["week_sum"]
+                .sum()
+                .rename(columns={"week_sum": "Среднее за месяц"})
+            )
+            _bar_avg["Среднее за месяц"] = _bar_avg["Среднее за месяц"].round(1)
+            _bar_avg = _bar_avg[_bar_avg["Среднее за месяц"] > 0].sort_values("Среднее за месяц", ascending=False)
+            if not _bar_avg.empty:
+                fig_avg = px.bar(
+                    _bar_avg, x="Контрагент", y="Среднее за месяц",
+                    text=_bar_avg["Среднее за месяц"].apply(lambda v: f"{v:.0f}"),
+                    color_discrete_sequence=["#2ecc71"],
+                )
+                _pslug = str(project_name).replace(" ", "_")[:20]
+                fig_avg.update_traces(textposition="outside", textfont=dict(size=12, color="white"))
+                fig_avg.update_layout(height=500, xaxis=dict(tickangle=-45), yaxis_title="Среднее за месяц")
+                fig_avg = apply_chart_background(fig_avg)
+                render_chart(fig_avg, key=f"{key_prefix}_avg_bar_{_pslug}", caption_below=f"Среднее количество ресурсов — {project_name}")
+
+                total_avg = _bar_avg["Среднее за месяц"].sum()
+                if total_avg > 0:
+                    fig_pie_avg = px.pie(
+                        _bar_avg, values="Среднее за месяц", names="Контрагент",
+                        title=None, color_discrete_sequence=px.colors.qualitative.Set3,
+                    )
+                    fig_pie_avg.update_traces(textinfo="label+percent", textposition="auto", textfont_size=10, insidetextorientation="radial")
+                    fig_pie_avg.update_layout(
+                        height=500, showlegend=True,
+                        legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.05, font=dict(size=10)),
+                        uniformtext=dict(minsize=8, mode="hide"),
+                    )
+                    fig_pie_avg = apply_chart_background(fig_pie_avg)
+                    render_chart(fig_pie_avg, key=f"{key_prefix}_avg_pie_{_pslug}", caption_below=f"Распределение ресурсов — {project_name}")
+            else:
+                st.info("Нет данных для отображения.")
+            continue
+
         df_people = project_filtered_df.copy()
         if "data_source" in df_people.columns:
             df_people = df_people[
@@ -6643,13 +6457,19 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     color_discrete_sequence=["#3498db", "#2ecc71"],
                 )
                 fig_pie_pf.update_traces(
-                    textinfo="label+value+percent",
-                    texttemplate="%{label}<br>%{value:,.0f}<br>(%{percent:.0%})",
-                    textposition="inside",
-                    textfont=dict(size=14, color="white"),
+                    textinfo="label+percent",
+                    textposition="auto",
+                    textfont_size=10,
+                    insidetextorientation="radial",
                     hovertemplate="%{label}: %{value:,.0f} (%{percent:.0%})<extra></extra>",
                 )
-                fig_pie_pf.update_layout(height=450, showlegend=True, title_font_size=14)
+                fig_pie_pf.update_layout(
+                    height=500,
+                    showlegend=True,
+                    title_font_size=14,
+                    uniformtext=dict(minsize=8, mode="hide"),
+                    legend=dict(orientation="v", font=dict(size=10)),
+                )
                 fig_pie_pf = apply_chart_background(fig_pie_pf)
                 render_chart(fig_pie_pf, caption_below=f"План и факт — {project_name}")
 
@@ -6801,17 +6621,17 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     height=600,
                     showlegend=True,
                     legend=dict(
-                        orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.1
+                        orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.1, font=dict(size=10),
                     ),
                     title_font_size=16,
+                    uniformtext=dict(minsize=8, mode="hide"),
                 )
 
-                # На круговой диаграмме: абсолютное значение и процент в подписи (без наведения)
                 fig_pie.update_traces(
-                    textinfo="label+value+percent",
-                    texttemplate="%{label}<br>%{value}<br>(%{percent:.0%})",
-                    textposition="inside",
-                    textfont=dict(size=12, color="white"),
+                    textinfo="label+percent",
+                    textposition="auto",
+                    textfont_size=10,
+                    insidetextorientation="radial",
                     customdata=original_values,
                     hovertemplate="<b>%{label}</b><br>Дельта (%): %{customdata:.0f}%<br>Процент: %{percent}<br><extra></extra>",
                 )
@@ -7047,17 +6867,17 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 height=600,
                 showlegend=True,
                 legend=dict(
-                    orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.1
+                    orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.1, font=dict(size=10),
                 ),
                 title_font_size=16,
+                uniformtext=dict(minsize=8, mode="hide"),
             )
 
-            # На круговой диаграмме: абсолютное значение и процент в подписи (без наведения)
             fig_pie_plan_avg.update_traces(
-                textinfo="label+value+percent",
-                texttemplate="%{label}<br>%{value:,.0f}<br>(%{percent:.0%})",
-                textposition="inside",
-                textfont=dict(size=12, color="white"),
+                textinfo="label+percent",
+                textposition="auto",
+                textfont_size=10,
+                insidetextorientation="radial",
             )
             fig_pie_plan_avg.update_traces(
                 customdata=list(
@@ -7115,11 +6935,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
 def dashboard_skud_stroyka(df):
     st.header("СКУД стройка")
 
-    # Get resources data from session state; fallback to passed df for correct display
     resources_df = st.session_state.get("resources_data", None)
-    if (resources_df is None or resources_df.empty) and df is not None and not df.empty:
-        resources_df = df
-
     if resources_df is None or resources_df.empty:
         st.warning(
             "Для отображения графика СКУД стройка необходимо загрузить файл с данными о ресурсах."
@@ -7129,7 +6945,6 @@ def dashboard_skud_stroyka(df):
         )
         return
 
-    # Create working copy
     work_df = resources_df.copy()
 
     # Helper function to find columns by partial match
@@ -7161,32 +6976,58 @@ def dashboard_skud_stroyka(df):
 
     # Find average column (Среднее за неделю or Среднее за месяц)
     avg_col = None
-    if "Среднее за неделю" in work_df.columns:
-        avg_col = "Среднее за неделю"
-    elif "Среднее за месяц" in work_df.columns:
-        avg_col = "Среднее за месяц"
-    else:
-        avg_col = find_column_by_partial(
-            work_df, ["Среднее за неделю", "Среднее за месяц", "среднее", "average"]
-        )
+    avg_col = None
+    avg_candidates = [
+        "среднее значение количество ресурсов в день за месяц",
+        "Среднее за неделю",
+        "Среднее за месяц",
+    ]
+    for cand in avg_candidates:
+        if cand in work_df.columns:
+            avg_col = cand
+            break
+    if not avg_col:
+        for c in work_df.columns:
+            cl = str(c).lower()
+            if "среднее" in cl and "за месяц" in cl:
+                avg_col = c
+                break
+    if not avg_col:
+        for c in reversed(list(work_df.columns)):
+            cl = str(c).lower()
+            if "среднее" in cl:
+                test = pd.to_numeric(work_df[c], errors="coerce")
+                if test.notna().any():
+                    avg_col = c
+                    break
+
+    if not avg_col:
+        date_cols = [c for c in work_df.columns if re.match(r'^\d{2}\.{1,2}\d{2}\.\d{4}$', str(c))]
+        if date_cols:
+            for dc in date_cols:
+                work_df[dc] = pd.to_numeric(work_df[dc], errors="coerce")
+            work_df["Среднее_расчёт"] = work_df[date_cols].mean(axis=1)
+            avg_col = "Среднее_расчёт"
 
     if not avg_col:
         st.error(
             "Не найдена колонка со средним значением (Среднее за неделю или Среднее за месяц)"
         )
-        st.info(f"Доступные колонки: {', '.join(work_df.columns)}")
-        st.info(f"Количество строк в данных: {len(work_df)}")
         return
 
-    # Process average column to numeric
-    work_df["Среднее_numeric"] = pd.to_numeric(
-        work_df[avg_col].astype(str).str.replace(",", ".").str.replace(" ", ""),
-        errors="coerce",
+    cleaned = (
+        work_df[avg_col]
+        .astype(str)
+        .str.replace(",", ".", regex=False)
+        .str.replace(r"\s+", "", regex=True)
+        .str.replace("\u00a0", "", regex=False)
+        .str.replace("−", "-", regex=False)
+        .str.strip()
     )
+    work_df["Среднее_numeric"] = pd.to_numeric(cleaned, errors="coerce")
 
-    # Check if we have any valid numeric values
     if work_df["Среднее_numeric"].isna().all():
-        st.error("Все значения в колонке со средним значением не являются числами.")
+        st.warning("Все значения в колонке со средним значением не удалось преобразовать в числа.")
         st.info(
             f"Примеры значений из колонки '{avg_col}': {work_df[avg_col].head(10).tolist()}"
         )
@@ -7197,47 +7038,45 @@ def dashboard_skud_stroyka(df):
 
     # Process period column - try to convert to datetime/period
     if period_col and period_col in work_df.columns:
-        # Try to parse period as date
         work_df["period_parsed"] = pd.to_datetime(
             work_df[period_col], errors="coerce", dayfirst=True
         )
-        # If parsing failed, try to extract month/year from string
         mask = work_df["period_parsed"].isna()
         if mask.any():
-            # Try to extract month and year from period string
             def extract_period(val):
                 if pd.isna(val):
                     return None
                 val_str = str(val)
-                # Try patterns like "2025-01", "01.2025", "январь 2025", etc.
                 try:
-                    # Try YYYY-MM format
                     if "-" in val_str:
                         parts = val_str.split("-")
                         if len(parts) >= 2:
                             year = int(parts[0])
                             month = int(parts[1])
                             return pd.Period(f"{year}-{month:02d}", freq="M")
-                    # Try DD.MM.YYYY or MM.YYYY
                     if "." in val_str:
                         parts = val_str.split(".")
                         if len(parts) >= 2:
-                            if len(parts) == 3:  # DD.MM.YYYY
+                            if len(parts) == 3:
                                 year = int(parts[2])
                                 month = int(parts[1])
-                            else:  # MM.YYYY
+                            else:
                                 year = int(parts[1])
                                 month = int(parts[0])
                             return pd.Period(f"{year}-{month:02d}", freq="M")
-                except:
+                except Exception:
                     pass
                 return None
 
-            work_df.loc[mask, "period_parsed"] = work_df.loc[mask, period_col].apply(
-                extract_period
-            )
+            parsed_values = work_df.loc[mask, period_col].apply(extract_period)
+            if parsed_values.notna().any():
+                try:
+                    work_df["period_parsed"] = work_df["period_parsed"].astype(object)
+                    work_df.loc[mask, "period_parsed"] = parsed_values
+                except TypeError:
+                    work_df["period_parsed"] = work_df["period_parsed"].astype(object)
+                    work_df.loc[mask, "period_parsed"] = parsed_values
 
-        # Convert to Period if possible
         work_df["period_month"] = work_df["period_parsed"].apply(
             lambda x: (
                 x.to_period("M")
@@ -7269,7 +7108,7 @@ def dashboard_skud_stroyka(df):
             available_months = sorted(
                 work_df[work_df["period_month"].notna()]["period_month"].unique()
             )
-            month_options = ["Все"] + [str(m) for m in available_months]
+            month_options = ["Все"] + [format_period_ru(m) for m in available_months]
             selected_period_from = st.selectbox(
                 "Период от", month_options, key="skud_period_from"
             )
@@ -7284,7 +7123,7 @@ def dashboard_skud_stroyka(df):
             available_months = sorted(
                 work_df[work_df["period_month"].notna()]["period_month"].unique()
             )
-            month_options = ["Все"] + [str(m) for m in available_months]
+            month_options = ["Все"] + [format_period_ru(m) for m in available_months]
             selected_period_to = st.selectbox(
                 "Период до", month_options, key="skud_period_to"
             )
@@ -7433,24 +7272,12 @@ def dashboard_skud_stroyka(df):
                 mean_value = 0
             grouped_data = pd.DataFrame({"Среднее за месяц": [mean_value]})
 
-    # Format period for display
-    def format_period_display(period_val):
-        if pd.isna(period_val):
-            return "Н/Д"
-        if isinstance(period_val, pd.Period):
-            try:
-                month_name = get_russian_month_name(period_val)
-                year = period_val.year
-                if month_name:
-                    return f"{month_name} {year}"
-                return str(period_val)
-            except:
-                return str(period_val)
-        return str(period_val)
+    if "Среднее за месяц" in grouped_data.columns:
+        grouped_data["Среднее за месяц"] = grouped_data["Среднее за месяц"].round(1)
 
     if "period_month" in grouped_data.columns:
         grouped_data["period_display"] = grouped_data["period_month"].apply(
-            format_period_display
+            format_period_ru
         )
 
     # Check if we have data to display
@@ -7515,10 +7342,12 @@ def dashboard_skud_stroyka(df):
                 grouped_data,
                 x=x_col,
                 y="Среднее за месяц",
+                text="Среднее за месяц",
                 title=None,
                 labels={x_col: "Месяц", "Среднее за месяц": "Среднее за месяц (чел.)"},
                 markers=True,
             )
+            fig.update_traces(textposition="top center", textfont_size=10)
             fig.update_xaxes(tickangle=-45)
             fig = apply_chart_background(fig)
             render_chart(fig, caption_below="Среднее за месяц по людям в динамике")
@@ -7670,6 +7499,7 @@ def dashboard_technique_tabs(df):
     ГДРС: 3 вкладки — ГДРС (люди), ГДРС (техника), Динамика людей и техники.
     """
     st.header("🔧 ГДРС")
+    st.caption("Данные из загруженных файлов ресурсов и техники. Если данных нет — загрузите соответствующие CSV-файлы.")
     tab1, tab2, tab3 = st.tabs([
         "ГДРС (люди)",
         "ГДРС (техника)",
@@ -7723,13 +7553,13 @@ def dashboard_debit_credit(df):
     work = data.copy()
     work.columns = [str(c).strip() for c in work.columns]
 
-    contractor_col = _find_col(work, ["Название организации", "подрядчик", "Подрядчик", "contractor", "Организация"])
+    contractor_col = _find_col(work, ["Название контрагента", "Название организации", "подрядчик", "Подрядчик", "contractor", "Организация"])
     type_col = _find_col(work, ["Тип подрядчика", "тип подрядчика", "contractor type"])
-    contract_col = _find_col(work, ["Договор", "договор", "Номер договора", "contract"])
+    contract_col = _find_col(work, ["Номер договора", "Договор", "договор", "contract"])
     total_col = _find_col(work, ["Сумма в договоре", "сумма в договоре", "Общая сумма", "contract sum"])
-    paid_col = _find_col(work, ["Выплачено", "выплачено", "Выплаченная сумма", "paid"])
-    advance_col = _find_col(work, ["Аванс", "аванс", "Авансированная сумма", "advance"])
-    balance_col = _find_col(work, ["Остаток на конец периода", "Остаток на период", "остаток", "balance"])
+    paid_col = _find_col(work, ["Выплачено", "выплачено", "Выплаченная сумма", "ВсегоОплат", "paid"])
+    advance_col = _find_col(work, ["Аванс", "аванс", "Авансированная сумма", "ВсегоОплат_Аванс", "advance"])
+    balance_col = _find_col(work, ["Остаток на конец периода", "Остаток на период", "ОстатокНаКонецПериода", "остаток", "balance"])
 
     if not contract_col:
         st.error("Не найдена колонка «Договор». Проверьте заголовки файла.")
@@ -7804,13 +7634,23 @@ def dashboard_debit_credit(df):
         st.info("Нет данных для графика.")
     else:
         fig = go.Figure()
-        x = chart_df["Договор"].astype(str)
+        x = chart_df["Договор"].astype(str).apply(lambda s: s[:30] + "…" if len(s) > 30 else s)
         colors = {"Сумма в договоре": "#2E86AB", "Выплачено": "#27ae60", "Аванс": "#F39C12", "Остаток на период": "#e74c3c"}
         for col in value_cols:
-            fig.add_trace(go.Bar(name=col, x=x, y=chart_df[col], marker_color=colors.get(col, None)))
-        fig.update_layout(barmode="group", xaxis_tickangle=-45, height=500, legend=dict(orientation="h", yanchor="bottom", y=1.02))
+            fig.add_trace(go.Bar(
+                name=col, x=x, y=chart_df[col], marker_color=colors.get(col, None),
+                text=chart_df[col].apply(lambda v: f"{v:,.0f}".replace(",", " ") if pd.notna(v) else ""),
+                textposition="none",
+            ))
+        fig.update_layout(
+            barmode="group",
+            height=600,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+            xaxis=dict(tickangle=-90, tickfont=dict(size=7)),
+            margin=dict(b=180),
+        )
         fig = apply_chart_background(fig)
-        render_chart(fig)
+        render_chart(fig, caption_below="Задолженность по договорам")
 
     # Таблица с группировкой по договору и строкой Итого
     st.subheader("Таблица по договорам")
@@ -7825,15 +7665,155 @@ def dashboard_debit_credit(df):
     display_df = table_df.copy()
     for col in value_cols:
         display_df[col] = display_df[col].apply(lambda x: f"{float(x):,.0f}".replace(",", " ") if pd.notna(x) else "—")
-    # st.table(style_dataframe_for_dark_theme(display_df))
-    st.markdown(format_dataframe_as_html(display_df), unsafe_allow_html=True)
+    st.caption(f"Записей: {len(display_df)}")
+    _render_html_table(display_df)
+    _csv = display_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+    st.download_button("Скачать CSV", _csv, "debit_credit.csv", "text/csv", key="debit_credit_csv")
 
 
 # ==================== DASHBOARD: Исполнительная документация (отдельный отчёт в группе «Прочее») ====================
 def dashboard_executive_documentation(df):
-    """Отчёт «Исполнительная документация» в группе «Прочее». Графики в разработке."""
+    """Отчёт «Исполнительная документация» — данные из TESSA."""
     st.header("Исполнительная документация")
-    st.info("Раздел «Исполнительная документация». Графики в разработке.")
+
+    tessa_df = st.session_state.get("tessa_data", None)
+    if tessa_df is None or tessa_df.empty:
+        st.warning(
+            "Для отчёта «Исполнительная документация» необходимы данные из TESSA. "
+            "Загрузите файлы tessa_*_id.csv через папку web/."
+        )
+        return
+
+    work = tessa_df.copy()
+    work.columns = [str(c).strip() for c in work.columns]
+
+    krstates_df = st.session_state.get("reference_krstates", None)
+    status_map = {}
+    if krstates_df is not None and not krstates_df.empty:
+        for _, row in krstates_df.iterrows():
+            name = str(row.get("Название", "")).strip()
+            ru = str(row.get("ru", "")).strip()
+            if name and ru:
+                status_map[name] = ru
+
+    if "KrState" in work.columns:
+        work["Статус"] = work["KrState"].apply(
+            lambda x: status_map.get(str(x).strip(), str(x).strip()) if pd.notna(x) else "Неизвестно"
+        )
+    elif "KrStateID" in work.columns:
+        work["Статус"] = work["KrStateID"].astype(str)
+    else:
+        work["Статус"] = "Неизвестно"
+
+    obj_col = None
+    for c in ["ObjectName", "objectname", "Объект"]:
+        if c in work.columns:
+            obj_col = c
+            break
+
+    contr_col = None
+    for c in ["CONTR", "Контрагент", "contr"]:
+        if c in work.columns:
+            contr_col = c
+            break
+
+    kind_col = None
+    for c in ["KindName", "kindname", "Вид"]:
+        if c in work.columns:
+            kind_col = c
+            break
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if obj_col and obj_col in work.columns:
+            objects = ["Все"] + sorted(work[obj_col].dropna().astype(str).str.strip().unique().tolist())
+            sel_obj = st.selectbox("Объект", objects, key="exec_doc_object")
+        else:
+            sel_obj = "Все"
+    with c2:
+        if contr_col and contr_col in work.columns:
+            contrs = ["Все"] + sorted(work[contr_col].dropna().astype(str).str.strip().unique().tolist())
+            sel_contr = st.selectbox("Контрагент", contrs, key="exec_doc_contr")
+        else:
+            sel_contr = "Все"
+    with c3:
+        if kind_col and kind_col in work.columns:
+            kinds = ["Все"] + sorted(work[kind_col].dropna().astype(str).str.strip().unique().tolist())
+            sel_kind = st.selectbox("Вид документа", kinds, key="exec_doc_kind")
+        else:
+            sel_kind = "Все"
+
+    filtered = work.copy()
+    if sel_obj != "Все" and obj_col:
+        filtered = filtered[filtered[obj_col].astype(str).str.strip() == sel_obj]
+    if sel_contr != "Все" and contr_col:
+        filtered = filtered[filtered[contr_col].astype(str).str.strip() == sel_contr]
+    if sel_kind != "Все" and kind_col:
+        filtered = filtered[filtered[kind_col].astype(str).str.strip() == sel_kind]
+
+    if filtered.empty:
+        st.info("Нет данных при выбранных фильтрах.")
+        return
+
+    total_docs = len(filtered)
+    status_counts = filtered["Статус"].value_counts()
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Всего документов", total_docs)
+    m2.metric("На согласовании", int(status_counts.get("На согласовании", 0)))
+    m3.metric("Подписан", int(status_counts.get("Подписан", status_counts.get("Согласован", 0))))
+    m4.metric("На доработке", int(status_counts.get("На доработке", 0)))
+
+    st.subheader("Распределение по статусам")
+    status_df = status_counts.reset_index()
+    status_df.columns = ["Статус", "Количество"]
+    fig = px.bar(
+        status_df, x="Статус", y="Количество",
+        text="Количество",
+        color_discrete_sequence=["#2E86AB"],
+    )
+    fig.update_traces(textposition="outside", textfont=dict(size=13, color="white"))
+    fig = apply_chart_background(fig)
+    fig.update_layout(height=450, xaxis_title="Статус документа", yaxis_title="Количество")
+    render_chart(fig, caption_below="Документы по статусам")
+
+    if obj_col and obj_col in filtered.columns:
+        st.subheader("Документы по объектам")
+        obj_counts = filtered.groupby(obj_col).size().reset_index(name="Количество")
+        obj_counts = obj_counts.sort_values("Количество", ascending=False)
+        fig2 = px.bar(
+            obj_counts, x=obj_col, y="Количество",
+            text="Количество",
+            color_discrete_sequence=["#06A77D"],
+        )
+        fig2.update_traces(textposition="outside", textfont=dict(size=13, color="white"))
+        fig2 = apply_chart_background(fig2)
+        fig2.update_layout(height=450, xaxis_title="Объект", yaxis_title="Количество", xaxis_tickangle=-45)
+        render_chart(fig2, caption_below="Количество документов по объектам")
+
+    st.subheader("Детальная таблица")
+    display_cols = []
+    for c in [obj_col, contr_col, kind_col, "DocNumber", "DocDescription", "Статус", "CreationDate"]:
+        if c and c in filtered.columns:
+            display_cols.append(c)
+    if not display_cols:
+        display_cols = list(filtered.columns[:8])
+    table_df = filtered[display_cols].copy()
+    rename = {
+        "DocNumber": "Номер", "DocDescription": "Описание",
+        "CreationDate": "Дата создания",
+    }
+    if obj_col:
+        rename[obj_col] = "Объект"
+    if contr_col:
+        rename[contr_col] = "Контрагент"
+    if kind_col:
+        rename[kind_col] = "Вид документа"
+    table_df = table_df.rename(columns=rename)
+    st.caption(f"Записей: {len(table_df)}")
+    _render_html_table(table_df)
+    csv_bytes = table_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+    st.download_button("Скачать CSV", csv_bytes, "executive_docs.csv", "text/csv", key="exec_doc_csv")
 
 
 # ==================== DASHBOARD: Здоровье проектов (по фазе: план, факт, отклонение) ====================
@@ -8127,6 +8107,7 @@ def dashboard_documentation(df):
                     min_value=min_date,
                     max_value=max_date,
                     key="doc_date_start",
+                    format="DD.MM.YYYY",
                 )
                 selected_date_end = st.date_input(
                     "Дата окончания периода",
@@ -8134,6 +8115,7 @@ def dashboard_documentation(df):
                     min_value=min_date,
                     max_value=max_date,
                     key="doc_date_end",
+                    format="DD.MM.YYYY",
                 )
 
     # Filter by RD status
@@ -8295,11 +8277,17 @@ def dashboard_documentation(df):
             )
             # На круговой диаграмме: абсолютное значение и процент в подписи (без наведения)
             fig_pie.update_traces(
-                textinfo="label+value+percent",
-                texttemplate="%{label}<br>%{value}<br>(%{percent:.0%})",
-                textposition="inside",
-                textfont=dict(size=14, color="white"),
+                textinfo="label+percent",
+                textposition="auto",
+                textfont_size=10,
+                insidetextorientation="radial",
                 hovertemplate="<b>%{label}</b><br>Значение: %{value}<br>Процент: %{percent}<br><extra></extra>",
+            )
+            fig_pie.update_layout(
+                height=500,
+                showlegend=True,
+                uniformtext=dict(minsize=8, mode="hide"),
+                legend=dict(orientation="v", font=dict(size=10)),
             )
 
             fig_pie = apply_chart_background(fig_pie)
@@ -8503,9 +8491,11 @@ def dashboard_documentation(df):
             )
 
             fig_dynamics.update_layout(
-                xaxis_title="Дата (Старт План)",
+                xaxis_title="Период",
                 yaxis_title="Количество",
                 hovermode="x unified",
+                height=550,
+                xaxis=dict(tickangle=-45, tickfont=dict(size=10)),
                 legend=dict(
                     orientation="h",
                     yanchor="bottom",
@@ -8532,8 +8522,8 @@ def dashboard_documentation(df):
             # Add text labels and format - ensure text is always visible
             fig_dynamics.update_traces(
                 line=dict(width=2),
-                marker=dict(size=8),
-                mode="lines+markers+text",  # Enable text display mode
+                marker=dict(size=6),
+                mode="lines+markers+text",
                 textposition="top center",
                 textfont=dict(size=10, color="white"),
             )
@@ -8705,6 +8695,8 @@ def dashboard_budget_by_type(df):
     #     finance_deviation_column="Отклонение, млн руб.",
     # ))
     st.markdown(format_dataframe_as_html(budget_table_display), unsafe_allow_html=True)
+    _csv = budget_table_display.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+    st.download_button("Скачать CSV", _csv, "budget_plan_fact.csv", "text/csv", key="budget_type_csv")
 
     # ========== Histogram: Budget by Project and Type ==========
     st.subheader("Гистограмма: Бюджет план/факт/корректировка/отклонение по проектам")
@@ -8910,6 +8902,8 @@ def dashboard_budget_by_type(df):
 
                 # st.table(style_dataframe_for_dark_theme(summary_hist))
                 st.markdown(format_dataframe_as_html(summary_hist), unsafe_allow_html=True)
+                _csv = summary_hist.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+                st.download_button("Скачать CSV", _csv, "budget_summary.csv", "text/csv", key="budget_summary_csv")
         else:
             st.warning(
                 "Колонка 'project name' не найдена в данных для построения гистограммы."
@@ -9002,62 +8996,8 @@ def dashboard_budget_old_charts(df):
         .reset_index()
     )
 
-    # Format period for display
-    def format_period_display(period_val):
-        if pd.isna(period_val):
-            return "Н/Д"
-        if isinstance(period_val, pd.Period):
-            try:
-                if period_val.freqstr == "M" or period_val.freqstr.startswith(
-                    "M"
-                ):  # Month
-                    month_name = get_russian_month_name(period_val)
-                    year = period_val.year
-                    return f"{month_name} {year}"
-                elif period_val.freqstr == "Q" or period_val.freqstr.startswith(
-                    "Q"
-                ):  # Quarter
-                    return f"Q{period_val.quarter} {period_val.year}"
-                elif period_val.freqstr == "Y" or period_val.freqstr == "A-DEC":  # Year
-                    return str(period_val.year)
-                else:
-                    month_name = get_russian_month_name(period_val)
-                    year = period_val.year
-                    return f"{month_name} {year}"
-            except:
-                # Try parsing as string
-                period_str = str(period_val)
-                try:
-                    if "-" in period_str:
-                        parts = period_str.split("-")
-                        if len(parts) >= 2:
-                            year = parts[0]
-                            month = parts[1]
-                            month_num = int(month)
-                            month_name = RUSSIAN_MONTHS.get(month_num, "")
-                            if month_name:
-                                return f"{month_name} {year}"
-                except:
-                    pass
-                return str(period_val)
-        elif isinstance(period_val, str):
-            # Try parsing string like "2025-01"
-            try:
-                if "-" in period_val:
-                    parts = period_val.split("-")
-                    if len(parts) >= 2:
-                        year = parts[0]
-                        month = parts[1]
-                        month_num = int(month)
-                        month_name = RUSSIAN_MONTHS.get(month_num, "")
-                        if month_name:
-                            return f"{month_name} {year}"
-            except:
-                pass
-        return str(period_val)
-
     budget_by_period[period_col] = budget_by_period[period_col].apply(
-        format_period_display
+        format_period_ru
     )
 
     # Checkbox to hide/show deviation (default: hidden)
@@ -9543,34 +9483,7 @@ def dashboard_approved_budget(df):
     # Сортируем по месяцам
     monthly_approved = monthly_approved.sort_values("month")
 
-    # Форматируем месяц для отображения
-    def format_month_display(period_val):
-        if pd.isna(period_val):
-            return "Н/Д"
-        try:
-            if isinstance(period_val, pd.Period):
-                month_num = period_val.month
-                year = period_val.year
-                RUSSIAN_MONTHS = {
-                    1: "Январь",
-                    2: "Февраль",
-                    3: "Март",
-                    4: "Апрель",
-                    5: "Май",
-                    6: "Июнь",
-                    7: "Июль",
-                    8: "Август",
-                    9: "Сентябрь",
-                    10: "Октябрь",
-                    11: "Ноябрь",
-                    12: "Декабрь",
-                }
-                return f"{RUSSIAN_MONTHS.get(month_num, 'Н/Д')} {year}"
-            return str(period_val)
-        except:
-            return str(period_val)
-
-    monthly_approved["Месяц"] = monthly_approved["month"].apply(format_month_display)
+    monthly_approved["Месяц"] = monthly_approved["month"].apply(format_period_ru)
     # Значения в млн руб. для отображения
     monthly_approved["approved budget млн"] = (monthly_approved["approved budget"] / 1e6).round(2)
     monthly_approved["budget plan млн"] = (monthly_approved["budget plan"] / 1e6).round(2)
@@ -9599,7 +9512,12 @@ def dashboard_approved_budget(df):
             x=monthly_approved["Месяц"],
             y=monthly_approved["budget plan млн"],
             name="Плановый бюджет (сумма)",
-            mode="lines+markers",
+            mode="lines+markers+text",
+            text=monthly_approved["budget plan млн"].apply(
+                lambda x: f"{x:.2f}" if pd.notna(x) else ""
+            ),
+            textposition="top center",
+            textfont=dict(size=10),
             line=dict(color="#F18F01", width=2),
             marker=dict(size=8, color="#F18F01"),
         )
@@ -9612,6 +9530,7 @@ def dashboard_approved_budget(df):
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         height=600,
+        xaxis=dict(tickangle=-45, tickfont=dict(size=9), nticks=20),
     )
 
     fig = apply_chart_background(fig)
@@ -9628,6 +9547,8 @@ def dashboard_approved_budget(df):
         "Плановый бюджет (сумма), млн руб."
     ].apply(lambda x: f"{float(x):.2f}" if pd.notna(x) else "0.00")
     st.markdown(format_dataframe_as_html(summary_table), unsafe_allow_html=True)
+    _csv = summary_table.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+    st.download_button("Скачать CSV", _csv, "approved_budget_summary.csv", "text/csv", key="appr_budget_summary_csv")
 
     # Детальная таблица (млн руб.)
     st.subheader("Детальная таблица распределения бюджета")
@@ -9641,7 +9562,7 @@ def dashboard_approved_budget(df):
             "approved budget",
         ]
     ].copy()
-    detail_table["month"] = detail_table["month"].apply(format_month_display)
+    detail_table["month"] = detail_table["month"].apply(format_period_ru)
     detail_table["Плановый бюджет"] = (detail_table["budget plan"] / 1e6).round(2).apply(
         lambda x: f"{float(x):.2f}" if pd.notna(x) else "0.00"
     )
@@ -9658,6 +9579,8 @@ def dashboard_approved_budget(df):
         "Утвержденный бюджет, млн руб.",
     ]
     st.markdown(format_dataframe_as_html(detail_table), unsafe_allow_html=True)
+    _csv = detail_table.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+    st.download_button("Скачать CSV", _csv, "approved_budget_detail.csv", "text/csv", key="appr_budget_detail_csv")
 
 
 # ==================== DASHBOARD: Forecast Budget ====================
@@ -9838,72 +9761,9 @@ def dashboard_forecast_budget(df):
         st.info("Нет задач для отображения в таблице редактирования для выбранного проекта.")
         edited_df = edit_df.copy()
     else:
-        # Форма с отдельными полями ввода вместо data_editor — текст и значения видны в тёмной теме
-        # Заголовки в тех же колонках, что и данные — подписи не кучкуются
-        h1, h2, h3, h4, h5 = st.columns(5)
-        with h1:
-            st.caption("**Задача**")
-        with h2:
-            st.caption("**Раздел**")
-        with h3:
-            st.caption("**План. начало**")
-        with h4:
-            st.caption("**План. окончание**")
-        with h5:
-            st.caption("**Плановый бюджет, млн руб.**")
-        edited_rows = []
-        budget_col_name = "Плановый бюджет, млн руб." if "Плановый бюджет, млн руб." in edit_df.columns else "budget plan"
-        for i in range(len(edit_df)):
-            row = edit_df.iloc[i]
-            plan_start_val = row["План. начало"] if "План. начало" in row.index else row.get("plan start")
-            plan_end_val = row["План. окончание"] if "План. окончание" in row.index else row.get("plan end")
-            raw_budget = row.get(budget_col_name)
-            if pd.notna(raw_budget):
-                v = float(raw_budget)
-                # Всегда показывать в млн руб.: если значение в рублях (по имени колонки или по величине), делим на 1e6
-                if budget_col_name == "budget plan" or v > 1e5:
-                    budget_val = round(v / 1e6, 2)
-                else:
-                    budget_val = v
-            else:
-                budget_val = 0.0
-            c1, c2, c3, c4, c5 = st.columns(5)
-            with c1:
-                st.text(str(row["Задача"])[:50] + ("…" if len(str(row["Задача"])) > 50 else ""))
-            with c2:
-                st.text(str(row["Раздел"])[:30] + ("…" if len(str(row["Раздел"])) > 30 else ""))
-            with c3:
-                plan_start = st.date_input(
-                    "План. начало",
-                    value=plan_start_val,
-                    key=f"forecast_plan_start_{selected_project}_{i}",
-                    label_visibility="collapsed",
-                )
-            with c4:
-                plan_end = st.date_input(
-                    "План. окончание",
-                    value=plan_end_val,
-                    key=f"forecast_plan_end_{selected_project}_{i}",
-                    label_visibility="collapsed",
-                )
-            with c5:
-                budget = st.number_input(
-                    "Бюджет, млн руб.",
-                    value=budget_val,
-                    min_value=0.0,
-                    step=0.01,
-                    format="%.2f",
-                    key=f"forecast_budget_{selected_project}_{i}",
-                    label_visibility="collapsed",
-                )
-            edited_rows.append({
-                "Задача": row.get("Задача", row.get("task name", "")),
-                "Раздел": row.get("Раздел", row.get("section", "")),
-                "План. начало": plan_start,
-                "План. окончание": plan_end,
-                "Плановый бюджет, млн руб.": budget,
-            })
-        edited_df = pd.DataFrame(edited_rows)
+        st.caption(f"Записей: {len(edit_df)}")
+        _render_html_table(edit_df)
+        edited_df = edit_df.copy()
 
     # Кнопка для применения изменений
     col_apply, col_reset = st.columns(2)
@@ -10015,34 +9875,7 @@ def dashboard_forecast_budget(df):
     # Сортируем по месяцам
     monthly_forecast = monthly_forecast.sort_values("month")
 
-    # Форматируем месяц для отображения
-    def format_month_display(period_val):
-        if pd.isna(period_val):
-            return "Н/Д"
-        try:
-            if isinstance(period_val, pd.Period):
-                month_num = period_val.month
-                year = period_val.year
-                RUSSIAN_MONTHS = {
-                    1: "Январь",
-                    2: "Февраль",
-                    3: "Март",
-                    4: "Апрель",
-                    5: "Май",
-                    6: "Июнь",
-                    7: "Июль",
-                    8: "Август",
-                    9: "Сентябрь",
-                    10: "Октябрь",
-                    11: "Ноябрь",
-                    12: "Декабрь",
-                }
-                return f"{RUSSIAN_MONTHS.get(month_num, 'Н/Д')} {year}"
-            return str(period_val)
-        except:
-            return str(period_val)
-
-    monthly_forecast["Месяц"] = monthly_forecast["month"].apply(format_month_display)
+    monthly_forecast["Месяц"] = monthly_forecast["month"].apply(format_period_ru)
     # Значения в млн руб. с точкой как десятичным разделителем
     monthly_forecast["forecast budget млн"] = (monthly_forecast["forecast budget"] / 1e6).round(2)
     monthly_forecast["budget plan млн"] = (monthly_forecast["budget plan"] / 1e6).round(2)
@@ -10076,7 +9909,12 @@ def dashboard_forecast_budget(df):
             x=monthly_forecast["Месяц"],
             y=monthly_forecast["budget plan млн"],
             name="Плановый бюджет (сумма)",
-            mode="lines+markers",
+            mode="lines+markers+text",
+            text=monthly_forecast["budget plan млн"].apply(
+                lambda x: f"{x:.2f}" if pd.notna(x) else ""
+            ),
+            textposition="top center",
+            textfont=dict(size=10),
             line=dict(color="#F18F01", width=2),
             marker=dict(size=8, color="#F18F01"),
         )
@@ -10113,6 +9951,8 @@ def dashboard_forecast_budget(df):
         "Плановый бюджет (сумма), млн руб."
     ].apply(lambda x: f"{float(x):.2f}" if pd.notna(x) else "0.00")
     st.markdown(format_dataframe_as_html(summary_table), unsafe_allow_html=True)
+    _csv = summary_table.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+    st.download_button("Скачать CSV", _csv, "forecast_budget_summary.csv", "text/csv", key="fcast_summary_csv")
 
     st.subheader("Детальная таблица распределения прогнозного бюджета")
     detail_table = forecast_budget_df[
@@ -10125,7 +9965,7 @@ def dashboard_forecast_budget(df):
             "forecast budget",
         ]
     ].copy()
-    detail_table["month"] = detail_table["month"].apply(format_month_display)
+    detail_table["month"] = detail_table["month"].apply(format_period_ru)
     # Пересчёт в млн руб.: исходные колонки в рублях
     detail_table["Плановый бюджет, млн руб."] = (
         pd.to_numeric(detail_table["budget plan"], errors="coerce").fillna(0) / 1e6
@@ -10151,3 +9991,5 @@ def dashboard_forecast_budget(df):
     )
     # st.table(style_dataframe_for_dark_theme(detail_table))
     st.markdown(format_dataframe_as_html(detail_table), unsafe_allow_html=True)
+    _csv = detail_table.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+    st.download_button("Скачать CSV", _csv, "forecast_budget_detail.csv", "text/csv", key="fcast_detail_csv")

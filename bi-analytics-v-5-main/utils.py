@@ -175,6 +175,43 @@ def get_russian_month_name(period_val: Any) -> str:
     return ""
 
 
+def format_period_ru(period_val) -> str:
+    if period_val is None or (isinstance(period_val, float) and pd.isna(period_val)):
+        return "Н/Д"
+    try:
+        if isinstance(period_val, pd.Period):
+            month_num = period_val.month
+            year = period_val.year
+            return f"{RUSSIAN_MONTHS.get(month_num, 'Н/Д')} {year}"
+        if isinstance(period_val, pd.Timestamp):
+            return f"{RUSSIAN_MONTHS.get(period_val.month, 'Н/Д')} {period_val.year}"
+        if isinstance(period_val, str):
+            s = period_val.strip()
+            if not s or s.lower() in ("nan", "nat", "none"):
+                return "Н/Д"
+            if "-" in s:
+                parts = s.split("-")
+                if len(parts) >= 2:
+                    try:
+                        year = int(parts[0])
+                        month = int(parts[1])
+                        return f"{RUSSIAN_MONTHS.get(month, 'Н/Д')} {year}"
+                    except (ValueError, TypeError):
+                        pass
+            try:
+                ts = pd.Timestamp(s)
+                if pd.notna(ts):
+                    return f"{RUSSIAN_MONTHS.get(ts.month, 'Н/Д')} {ts.year}"
+            except Exception:
+                pass
+            return s
+        if hasattr(period_val, "month") and hasattr(period_val, "year"):
+            return f"{RUSSIAN_MONTHS.get(period_val.month, 'Н/Д')} {period_val.year}"
+    except Exception:
+        pass
+    return str(period_val) if period_val is not None else "Н/Д"
+
+
 def apply_chart_background(fig):
     """
     Применяет единый стиль (тёмная тема) ко всем графикам Plotly.
@@ -578,11 +615,15 @@ def apply_default_filters(report_name: str, user_role: str, filter_widgets: dict
 
 
 def _ru_column_is_integer_days(col) -> bool:
-    """Колонки с длительностью/отклонением в днях — целые, без .00."""
+    """Колонки с длительностью/отклонением в днях или разделах — целые, без .00."""
     col_lower = str(col).lower()
     if "дней" in col_lower or "в днях" in col_lower:
         return True
     if "днях" in col_lower and "отклон" in col_lower:
+        return True
+    if "отклонение разделов" in col_lower:
+        return True
+    if "число отклонений" in col_lower:
         return True
     return False
 
@@ -640,7 +681,7 @@ def format_dataframe_as_html(
                     formatted_value = "0" if (is_scalar and pd.isna(value)) else str(value)
                     color = neg_color
                 formatted_value = html_module.escape(str(formatted_value))
-                html_table += f"<td style='padding: 8px; color: {color}; font-weight: bold;'>{formatted_value}</td>"
+                html_table += f"<td style='padding: 8px; border: 1px solid rgba(255,255,255,0.15); color: {color}; font-weight: bold;'>{formatted_value}</td>"
             else:
                 if isinstance(value, (int, float)) and is_scalar and not pd.isna(value):
                     col_lower = str(col).lower()
@@ -671,7 +712,7 @@ def format_dataframe_as_html(
                 else:
                     formatted_value = "" if (is_scalar and pd.isna(value)) else str(value)
                 formatted_value = html_module.escape(str(formatted_value))
-                cell_style = "padding: 8px;"
+                cell_style = "padding: 8px; border: 1px solid rgba(255,255,255,0.15);"
                 if column_colors and col in column_colors:
                     cell_style += f" color: {column_colors[col]};"
                 html_table += f"<td style='{cell_style}'>{formatted_value}</td>"

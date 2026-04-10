@@ -360,9 +360,9 @@ def main():
                     # ИСПРАВЛЕНИЕ: убираем колонки, делаем кнопки одна под другой
                     st.markdown("<br>", unsafe_allow_html=True)
 
-                    submit_button = st.form_submit_button("Войти", type="primary", use_container_width=True)
+                    submit_button = st.form_submit_button("Войти", type="primary", width="stretch")
 
-                    submit_reset = st.form_submit_button("Забыли пароль?", use_container_width=True)
+                    submit_reset = st.form_submit_button("Забыли пароль?", width="stretch")
 
                     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -873,7 +873,7 @@ def main():
         # Section 1: Причины отклонений
         with st.expander("Причины отклонений", expanded=expand_reason):
             reason_dashboard = st.radio(
-                "",
+                "Причины отклонений",
                 reason_options,
                 key="reason_radio",
                 label_visibility="collapsed",
@@ -883,7 +883,7 @@ def main():
         # Section 2: Аналитика по финансам
         with st.expander("Аналитика по финансам", expanded=expand_budget):
             budget_dashboard = st.radio(
-                "",
+                "Аналитика по финансам",
                 budget_options,
                 key="budget_radio",
                 label_visibility="collapsed",
@@ -893,7 +893,7 @@ def main():
         # Section 3: Прочее
         with st.expander("Прочее", expanded=expand_other):
             other_dashboard = st.radio(
-                "",
+                "Прочее",
                 other_options,
                 key="other_radio",
                 label_visibility="collapsed",

@@ -15,6 +15,21 @@ ETL_SQLITE_DB_PATH: str = os.environ.get(
 )
 DATA_MODE: str = os.environ.get("DATA_MODE", "auto").strip().lower()
 
+MSP_PROJECT_NAME_MAP: Dict[str, str] = {
+    "dmitrovsky1": "Дмитровский 1",
+    "dmitrovsky": "Дмитровский",
+    "esipovo5": "Есипово V",
+    "esipovo": "Есипово",
+    "leninsky": "Ленинский",
+    "leninsky1": "Ленинский",
+    "koledino": "Коледино",
+    "дмитровский1": "Дмитровский 1",
+    "дмитровский": "Дмитровский",
+    "есипово5": "Есипово V",
+    "есипово": "Есипово",
+    "ленинский": "Ленинский",
+}
+
 # Русские названия месяцев (для графиков и отчётов)
 RUSSIAN_MONTHS: Dict[int, str] = {
     1: "Январь",

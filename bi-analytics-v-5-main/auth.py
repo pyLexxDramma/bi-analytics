@@ -310,6 +310,59 @@ def reset_password(token: str, new_password: str) -> bool:
     return True
 
 
+def delete_user(user_id: int, deleted_by: str) -> Tuple[bool, str]:
+    """Полное удаление пользователя и всех связанных данных."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT role FROM users WHERE username = ? AND is_active = 1",
+        (deleted_by,),
+    )
+    actor = cursor.fetchone()
+    if not actor or actor[0] != "superadmin":
+        conn.close()
+        return False, "Удалять пользователей может только суперадминистратор"
+
+    cursor.execute("SELECT username, role FROM users WHERE id = ?", (user_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return False, "Пользователь не найден"
+
+    target_username, target_role = row
+
+    if target_username == deleted_by:
+        conn.close()
+        return False, "Нельзя удалить самого себя"
+
+    if target_role == "superadmin":
+        cursor.execute("SELECT COUNT(*) FROM users WHERE role = 'superadmin' AND is_active = 1")
+        if cursor.fetchone()[0] <= 1:
+            conn.close()
+            return False, "Нельзя удалить последнего суперадминистратора"
+
+    try:
+        cursor.execute("DELETE FROM project_permissions WHERE user_id = ?", (user_id,))
+        cursor.execute("DELETE FROM password_reset_tokens WHERE username = ?", (target_username,))
+        cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return False, f"Ошибка базы данных: {e}"
+
+    conn.close()
+
+    try:
+        from logger import log_action
+        log_action(deleted_by, "user_deleted", f"Удалён пользователь {target_username} (id={user_id}, role={target_role})")
+    except Exception:
+        pass
+
+    return True, f"Пользователь «{target_username}» удалён"
+
+
 def has_admin_access(user_role: str) -> bool:
     """Проверка доступа к административной панели"""
     return user_role in ADMIN_ROLES
@@ -504,13 +557,13 @@ def render_sidebar_menu(current_page: str = "reports"):
             if current_page == "reports":
                 st.button(
                     "Отчеты",
-                    use_container_width=True,
+                    width="stretch",
                     type="primary",
                     disabled=True,
                     help="Текущая страница",
                 )
             else:
-                if st.button("Отчеты", use_container_width=True):
+                if st.button("Отчеты", width="stretch"):
                     st.switch_page("project_visualization_app.py")
 
             # Список отчетов под кнопкой "Отчеты" (единый источник: dashboards.REPORT_CATEGORIES)
@@ -533,7 +586,7 @@ def render_sidebar_menu(current_page: str = "reports"):
                             )
                             if st.button(
                                 f"• {report}",
-                                use_container_width=True,
+                                width="stretch",
                                 key=f"menu_report_{report}",
                                 type=button_type,
                             ):
@@ -547,26 +600,26 @@ def render_sidebar_menu(current_page: str = "reports"):
             if current_page == "admin":
                 st.button(
                     "Общие настройки",
-                    use_container_width=True,
+                    width="stretch",
                     type="primary",
                     disabled=True,
                     help="Текущая страница",
                 )
             else:
-                if st.button("Общие настройки", use_container_width=True):
+                if st.button("Общие настройки", width="stretch"):
                     st.switch_page("pages/admin.py")
 
         # Настройки профиля (для всех ролей)
         if current_page == "profile":
             st.button(
                 "Настройки профиля",
-                use_container_width=True,
+                width="stretch",
                 type="primary",
                 disabled=True,
                 help="Текущая страница",
             )
         else:
-            if st.button("Настройки профиля", use_container_width=True):
+            if st.button("Настройки профиля", width="stretch"):
                 st.switch_page("pages/profile.py")
 
         # Параметры отчетов (фильтры) - доступны аналитикам и администраторам (не менеджерам)
@@ -574,19 +627,19 @@ def render_sidebar_menu(current_page: str = "reports"):
             if current_page == "analyst_params":
                 st.button(
                     "Параметры отчетов",
-                    use_container_width=True,
+                    width="stretch",
                     type="primary",
                     disabled=True,
                     help="Текущая страница",
                 )
             else:
-                if st.button("Параметры отчетов", use_container_width=True):
+                if st.button("Параметры отчетов", width="stretch"):
                     st.switch_page("pages/analyst_params.py")
 
         # 3. Выход (для всех ролей)
         st.markdown("---")
 
-        if st.button("Выйти", use_container_width=True):
+        if st.button("Выйти", width="stretch"):
 
             logout()
 
@@ -656,7 +709,7 @@ def render_sidebar_menu(current_page: str = "reports"):
                     data=csv_bytes,
                     file_name="project_data_export.csv",
                     mime="text/csv",
-                    use_container_width=True,
+                    width="stretch",
                     key="sidebar_csv_export",
                 )
 

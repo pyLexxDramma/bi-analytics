@@ -241,6 +241,14 @@ def ensure_data_session_state() -> None:
         st.session_state.loaded_files_info = {}
     if "previous_uploaded_files" not in st.session_state:
         st.session_state.previous_uploaded_files = []
+    if "tessa_data" not in st.session_state:
+        st.session_state.tessa_data = None
+    if "reference_contractors" not in st.session_state:
+        st.session_state.reference_contractors = None
+    if "reference_krstates" not in st.session_state:
+        st.session_state.reference_krstates = None
+    if "reference_docstates" not in st.session_state:
+        st.session_state.reference_docstates = None
 
 
 def update_session_with_loaded_file(df: pd.DataFrame, file_id: str) -> None:

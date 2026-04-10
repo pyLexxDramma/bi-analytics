@@ -7,7 +7,6 @@ from typing import Callable, Dict, List, Tuple
 
 from dashboards.export_wrap import run_dashboard_with_auto_export, slug_report_name
 
-# Список отчётов по категориям (4 категории: причины, финансы, здоровье проектов, прочее)
 REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
     (
         "Сроки",
@@ -25,21 +24,34 @@ REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
             "Бюджет план/факт",
             "Утвержденный бюджет",
             "Прогнозный бюджет",
+            "Дебиторская и кредиторская задолженность подрядчиков",
+        ],
+    ),
+    (
+        "Проектные работы",
+        [
+            "Рабочая/Проектная документация",
+            "Просрочка выдачи РД",
+        ],
+    ),
+    (
+        "ГДРС",
+        [
+            "ГДРС",
+            "График движения рабочей силы",
+            "СКУД стройка",
+        ],
+    ),
+    (
+        "Исполнительная документация",
+        [
+            "Исполнительная документация",
         ],
     ),
     (
         "Здоровье проектов",
         [
             "Здоровье проектов",
-        ],
-    ),
-    (
-        "Прочее",
-        [
-            "Рабочая/Проектная документация",
-            "ГДРС",
-            "Дебиторская и кредиторская задолженность подрядчиков",
-            "Исполнительная документация",
         ],
     ),
 ]
@@ -152,11 +164,7 @@ def _get_dashboards() -> Dict[str, Callable]:
         "Просрочка выдачи РД": dashboard_rd_delay,
         "СКУД стройка": dashboard_skud_stroyka,
     }
-    out: Dict[str, Callable] = {}
-    for name, fn in raw.items():
-        sk = slug_report_name(name)
-        out[name] = partial(run_dashboard_with_auto_export, fn, sk)
-    return out
+    return raw
 
 
 # Ленивая загрузка, чтобы при импорте dashboards не тянуть project_visualization_app

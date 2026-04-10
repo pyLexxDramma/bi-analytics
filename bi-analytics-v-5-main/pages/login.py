@@ -208,11 +208,11 @@ else:
 
         with col1:
             submit_button = st.form_submit_button(
-                "Войти", type="primary", use_container_width=True
+                "Войти", type="primary", width="stretch"
             )
 
         with col2:
-            if st.form_submit_button("Забыли пароль?", use_container_width=True):
+            if st.form_submit_button("Забыли пароль?", width="stretch"):
                 st.session_state.reset_mode = True
                 st.rerun()
 

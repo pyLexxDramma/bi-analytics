@@ -132,9 +132,15 @@ def _apply_msp_column_mapping(df: pd.DataFrame, project_name: str) -> pd.DataFra
     remap = {k: v for k, v in _MSP_COLUMN_REMAP.items() if k in df.columns}
     df = df.rename(columns=remap)
 
-    # Добавляем project name из имени файла (если нет)
-    if "project name" not in df.columns and project_name:
-        df["project name"] = project_name
+    if "project name" not in df.columns:
+        from config import MSP_PROJECT_NAME_MAP
+        ru_name = MSP_PROJECT_NAME_MAP.get(project_name, project_name) if project_name else ""
+        df["project name"] = ru_name
+    else:
+        from config import MSP_PROJECT_NAME_MAP
+        df["project name"] = df["project name"].apply(
+            lambda x: MSP_PROJECT_NAME_MAP.get(str(x).strip(), x) if pd.notna(x) else x
+        )
 
     # ── Вспомогательные функции ──────────────────────────────────────────────
     def _parse_msp_date(val):
@@ -235,6 +241,29 @@ def _apply_msp_column_mapping(df: pd.DataFrame, project_name: str) -> pd.DataFra
             df.loc[mask, "actual_quarter"] = df.loc[mask, "base end"].dt.to_period("Q")
             df.loc[mask, "actual_year"] = df.loc[mask, "base end"].dt.to_period("Y")
 
+    if "level" in df.columns and "task name" in df.columns:
+        df["level"] = pd.to_numeric(df["level"], errors="coerce")
+        if "section" not in df.columns:
+            df["section"] = ""
+        current_sections = {}
+        proj_name = df["project name"].iloc[0] if "project name" in df.columns and len(df) > 0 else ""
+        for idx in df.index:
+            lvl = df.at[idx, "level"]
+            task = str(df.at[idx, "task name"]).strip() if pd.notna(df.at[idx, "task name"]) else ""
+            if pd.notna(lvl):
+                lvl_int = int(lvl)
+                if lvl_int == 1:
+                    current_sections[lvl_int] = str(proj_name) if proj_name else task
+                else:
+                    current_sections[lvl_int] = task
+                for k in list(current_sections.keys()):
+                    if k > lvl_int:
+                        del current_sections[k]
+                if lvl_int >= 3 and 2 in current_sections:
+                    df.at[idx, "section"] = current_sections[2]
+                elif lvl_int >= 2 and 1 in current_sections:
+                    df.at[idx, "section"] = current_sections[1]
+
     df.attrs["data_type"] = "project"
     return df
 
@@ -282,7 +311,6 @@ def _load_resources_file(filepath: Path) -> Optional[pd.DataFrame]:
                         continue
                     if "Подрядчик" in df.columns and "Контрагент" not in df.columns:
                         df = df.rename(columns={"Подрядчик": "Контрагент"})
-                    # Синонимы из маппинга отчётов (ГДРС)
                     _ru_res_aliases = {
                         "тип ресурса": "тип ресурсов",
                         "Тип ресурса": "тип ресурсов",
@@ -290,12 +318,119 @@ def _load_resources_file(filepath: Path) -> Optional[pd.DataFrame]:
                     for a, b in _ru_res_aliases.items():
                         if a in df.columns and b not in df.columns:
                             df = df.rename(columns={a: b})
+
+                    from config import MSP_PROJECT_NAME_MAP
+                    if "Проект" in df.columns:
+                        df["Проект"] = df["Проект"].apply(
+                            lambda x: MSP_PROJECT_NAME_MAP.get(
+                                str(x).strip().lower().replace(" ", ""), str(x).strip()
+                            ) if pd.notna(x) else x
+                        )
+
                     df.attrs["data_type"] = "resources"
                     return df
                 except (UnicodeDecodeError, pd.errors.ParserError):
                     continue
                 except Exception:
                     continue
+    return None
+
+
+def _load_1c_json_dk(filepath: Path) -> Optional[pd.DataFrame]:
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            raw = json.load(f)
+        if not raw or not isinstance(raw, list):
+            return None
+        rows = []
+        for item in raw:
+            try:
+                flat = {}
+                org = item.get("Организация") or {}
+                flat["Название организации"] = org.get("НаименованиеОрганизации", "")
+                flat["ID_Организации"] = org.get("ID_Организации", "")
+                contr = item.get("Контрагент") or {}
+                flat["Название контрагента"] = contr.get("НаименованиеКонтрагента", "")
+                flat["ID_Контрагента"] = contr.get("ID_Контрагента", "")
+                dog = item.get("Договор") or {}
+                flat["Номер договора"] = str(dog.get("НомерДоговора", "") or "").strip()
+                flat["ID_Договора"] = dog.get("ID_Договора", "")
+                flat["Дата договора"] = dog.get("ДатаДоговора", "")
+                sum_str = str(dog.get("СуммаДоговора", "0") or "0").replace(",", "").replace(" ", "")
+                try:
+                    flat["Сумма в договоре"] = float(sum_str) if sum_str else 0.0
+                except (ValueError, TypeError):
+                    flat["Сумма в договоре"] = 0.0
+                def _safe_float(val):
+                    try:
+                        return float(val) if val is not None else 0.0
+                    except (ValueError, TypeError):
+                        return 0.0
+                flat["ОстатокНаНачало"] = _safe_float(item.get("ОстатокНаНачало", 0))
+                flat["ОстатокНаНачалоПериода"] = _safe_float(item.get("ОстатокНаНачалоПериода", 0))
+                flat["ОстатокНаНачалоПериодаПоАвансам"] = _safe_float(item.get("ОстатокНаНачалоПериодаПоАвансам", 0))
+                flat["Выплачено"] = _safe_float(item.get("ВсегоОплат", 0))
+                flat["Аванс"] = _safe_float(item.get("ВсегоОплат_Аванс", 0))
+                flat["ОстатокНаКонец"] = _safe_float(item.get("ОстатокНаКонец", 0))
+                flat["Остаток на конец периода"] = _safe_float(item.get("ОстатокНаКонецПериода", 0))
+                flat["ОстатокНаКонецПериодаПоАвансам"] = _safe_float(item.get("ОстатокНаКонецПериодаПоАвансам", 0))
+                rows.append(flat)
+            except Exception:
+                continue
+        if not rows:
+            return None
+        df = pd.DataFrame(rows)
+        df.attrs["data_type"] = "debit_credit"
+        return df
+    except Exception:
+        return None
+
+
+def _load_1c_json_spravochniki(filepath: Path) -> Optional[pd.DataFrame]:
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            raw = json.load(f)
+        if not raw or not isinstance(raw, list):
+            return None
+        return pd.DataFrame(raw)
+    except Exception:
+        return None
+
+
+def _load_tessa_file(filepath: Path) -> Optional[pd.DataFrame]:
+    encodings = ["utf-8", "utf-8-sig", "windows-1251", "cp1251"]
+    for encoding in encodings:
+        try:
+            df = pd.read_csv(
+                filepath, sep=";", encoding=encoding,
+                quoting=csv.QUOTE_MINIMAL, quotechar='"', doublequote=True,
+                on_bad_lines="skip",
+            )
+            df.columns = [
+                str(c).replace("\ufeff", "").replace("\n", " ").replace("\r", " ").strip()
+                for c in df.columns
+            ]
+            df = df.dropna(how="all")
+            if df.empty or len(df.columns) < 3:
+                continue
+            df.attrs["data_type"] = "tessa"
+            return df
+        except (UnicodeDecodeError, pd.errors.ParserError):
+            continue
+    return None
+
+
+def _load_reference_csv(filepath: Path) -> Optional[pd.DataFrame]:
+    encodings = ["utf-8", "utf-8-sig", "windows-1251", "cp1251"]
+    for encoding in encodings:
+        try:
+            df = pd.read_csv(filepath, sep=",", encoding=encoding, on_bad_lines="skip")
+            df.columns = [str(c).replace("\ufeff", "").strip() for c in df.columns]
+            if df.empty:
+                continue
+            return df
+        except (UnicodeDecodeError, pd.errors.ParserError):
+            continue
     return None
 
 
@@ -316,7 +451,7 @@ def web_dir_exists() -> bool:
     return get_web_dir().exists()
 
 
-def scan_web_files(extensions: tuple = (".csv",)) -> List[Dict]:
+def scan_web_files(extensions: tuple = (".csv", ".json")) -> List[Dict]:
     """Рекурсивно сканирует web/ и возвращает список файлов."""
     web_dir = get_web_dir()
     if not web_dir.exists():
@@ -501,7 +636,7 @@ def load_all_from_web() -> Dict:
         "version_id": None,
     }
 
-    files = scan_web_files(extensions=(".csv",)) + scan_new_csv_demo_files()
+    files = scan_web_files(extensions=(".csv", ".json")) + scan_new_csv_demo_files()
     if not files:
         result["errors"].append("Папка web/ пуста или не найдена, и new_csv/ без демо-файлов.")
         return result
@@ -513,6 +648,10 @@ def load_all_from_web() -> Dict:
     st.session_state.technique_data = None
     st.session_state.debit_credit_data = None
     st.session_state.loaded_files_info = {}
+    st.session_state.tessa_data = None
+    st.session_state["reference_contractors"] = None
+    st.session_state["reference_krstates"] = None
+    st.session_state["reference_docstates"] = None
 
     import sqlite3
     conn = sqlite3.connect(WEB_DB_PATH)
@@ -566,6 +705,98 @@ def load_all_from_web() -> Dict:
                 # ── Пропускаем ненужные файлы ──────────────────────────────
                 if file_type_by_name == "skip":
                     result["skipped"] += 1
+                    continue
+
+                # ── JSON файлы из 1С ─────────────────────────────────────────
+                if file_type_by_name == "debit_credit_json":
+                    df = _load_1c_json_dk(filepath)
+                    if df is not None and not df.empty:
+                        file_type = "debit_credit"
+                        file_id = _register_file(cur, version_id, file_info, file_type, len(df))
+                        _save_rows(cur, version_id, file_id, file_type, name, df)
+                        total_rows += len(df)
+                        result["loaded"] += 1
+                        df.attrs["data_type"] = "debit_credit"
+                        update_session_with_loaded_file(df, rel_path)
+                        result["diagnostics"].append({
+                            "file": rel_path, "type": "debit_credit", "rows": int(len(df)),
+                            "columns": [str(c) for c in df.columns[:25]],
+                        })
+                    else:
+                        result["skipped"] += 1
+                        result["errors"].append(_format_skip_reason(rel_path, "JSON DK не распознан"))
+                    continue
+
+                if file_type_by_name == "reference_json":
+                    ref_df = _load_1c_json_spravochniki(filepath)
+                    if ref_df is not None and not ref_df.empty:
+                        st.session_state["reference_contractors"] = ref_df
+                        result["loaded"] += 1
+                        result["diagnostics"].append({
+                            "file": rel_path, "type": "reference", "rows": int(len(ref_df)),
+                            "columns": [str(c) for c in ref_df.columns[:25]],
+                        })
+                    else:
+                        result["skipped"] += 1
+                    continue
+
+                if file_type_by_name == "budget_json":
+                    result["skipped"] += 1
+                    continue
+
+                # ── TESSA файлы ──────────────────────────────────────────────
+                if file_type_by_name == "tessa":
+                    df = _load_tessa_file(filepath)
+                    if df is not None and not df.empty:
+                        file_type = "tessa"
+                        file_id = _register_file(cur, version_id, file_info, file_type, len(df))
+                        _save_rows(cur, version_id, file_id, file_type, name, df)
+                        total_rows += len(df)
+                        result["loaded"] += 1
+                        if st.session_state.get("tessa_data") is None:
+                            st.session_state["tessa_data"] = df
+                        else:
+                            st.session_state["tessa_data"] = pd.concat(
+                                [st.session_state["tessa_data"], df], ignore_index=True
+                            )
+                        result["diagnostics"].append({
+                            "file": rel_path, "type": "tessa", "rows": int(len(df)),
+                            "columns": [str(c) for c in df.columns[:25]],
+                        })
+                    else:
+                        result["skipped"] += 1
+                    continue
+
+                # ── Справочники CSV (KrStates, DocStates) ────────────────────
+                if file_type_by_name == "reference_csv":
+                    ref_df = _load_reference_csv(filepath)
+                    if ref_df is not None and not ref_df.empty:
+                        ref_key = "krstates" if "krstate" in name.lower() else "docstates"
+                        st.session_state[f"reference_{ref_key}"] = ref_df
+                        result["loaded"] += 1
+                    else:
+                        result["skipped"] += 1
+                    continue
+
+                # ── RD plan файлы ────────────────────────────────────────────
+                if file_type_by_name == "rd_plan":
+                    content = filepath.read_bytes()
+                    wrapped = _FileWrapper(content, name)
+                    df = load_data(wrapped, file_name=name)
+                    if df is not None and not df.empty:
+                        file_type = "project"
+                        df.attrs["data_type"] = "project"
+                        file_id = _register_file(cur, version_id, file_info, file_type, len(df))
+                        _save_rows(cur, version_id, file_id, file_type, name, df)
+                        total_rows += len(df)
+                        result["loaded"] += 1
+                        update_session_with_loaded_file(df, rel_path)
+                        result["diagnostics"].append({
+                            "file": rel_path, "type": "rd_plan", "rows": int(len(df)),
+                            "columns": [str(c) for c in df.columns[:25]],
+                        })
+                    else:
+                        result["skipped"] += 1
                     continue
 
                 # ── Загружаем через data_loader ─────────────────────────────
@@ -721,16 +952,20 @@ def _infer_file_type_by_name(file_name: str) -> str:
     ):
         return "technique"
 
-    # ── Плановая выдача РД (other_*_rd.csv) — пропускаем ────────────────────
+    # ── Плановая выдача РД (other_*_rd.csv) ─────────────────────────────────
     if stem.startswith("other_") and stem.endswith("_rd"):
-        return "skip"
+        return "rd_plan"
 
-    # ── TESSA файлы — пропускаем ─────────────────────────────────────────────
+    # ── TESSA файлы ──────────────────────────────────────────────────────────
     if stem.startswith("tessa_"):
-        return "skip"
+        return "tessa"
 
-    # ── Статические справочники — пропускаем ─────────────────────────────────
-    if stem in ("docstates", "krstates", "ui_tasks"):
+    # ── Справочники KrStates / DocStates ─────────────────────────────────────
+    if stem in ("docstates", "krstates"):
+        return "reference_csv"
+
+    # ── Статические файлы — пропускаем ───────────────────────────────────────
+    if stem in ("ui_tasks",):
         return "skip"
 
     # ── Демо new_csv: дебиторка / бюджет обороты ─────────────────────────────
@@ -755,6 +990,16 @@ def _infer_file_type_by_name(file_name: str) -> str:
         or "оборот" in stem
     ):
         return "budget"
+
+    # ── 1C JSON файлы ──────────────────────────────────────────────────────────
+    if name_lower.endswith(".json"):
+        if "dk" in stem.lower():
+            return "debit_credit_json"
+        if "spravochniki" in stem.lower() or "справочник" in stem.lower():
+            return "reference_json"
+        if "dannye" in stem.lower() or "данные" in stem.lower():
+            return "budget_json"
+        return "skip"
 
     return "unknown"
 
@@ -859,3 +1104,18 @@ def read_version_to_session(version_id: int):
     # ── Данные техники ───────────────────────────────────────────────────────
     tech = _load_version_data(version_id, "technique")
     st.session_state.technique_data = tech if (tech is not None and not tech.empty) else None
+
+    # ── Данные TESSA (исполнительная документация) ────────────────────────
+    tessa = _load_version_data(version_id, "tessa")
+    if tessa is not None and not tessa.empty:
+        st.session_state["tessa_data"] = tessa
+    elif st.session_state.get("tessa_data") is None:
+        st.session_state["tessa_data"] = None
+
+    # ── Справочники (KrStates / DocStates) ────────────────────────────────
+    # Загружаются из CSV при load_all_from_web(), не из БД;
+    # если уже в session_state — не трогаем
+    if st.session_state.get("reference_krstates") is None:
+        kr_path = Path(__file__).resolve().parent / "web" / "KrStates.csv"
+        if kr_path.exists():
+            st.session_state["reference_krstates"] = _load_reference_csv(kr_path)
