@@ -34,7 +34,9 @@ _TABLE_CSS = """
 
 def _render_html_table(df, max_rows=500):
     """Render a DataFrame as a styled HTML table (bypasses broken st.dataframe canvas)."""
-    show = df.head(max_rows).fillna("")
+    show = df.head(max_rows).copy()
+    for col in show.columns:
+        show[col] = [str(v) if pd.notna(v) else "" for v in show[col]]
     html = show.to_html(index=False, classes="rendered-table", escape=True, border=0)
     st.markdown(_TABLE_CSS + '<div class="rendered-table-wrap">' + html + "</div>",
                 unsafe_allow_html=True)
@@ -10227,6 +10229,14 @@ def dashboard_developer_projects(df):
     base_start_col = _find(["base start", "Базовое_начало", "Base Start"])
     base_end_col = _find(["base end", "Базовое_окончание", "Base End"])
     dev_days_col = _find(["deviation in days", "Отклонений в днях", "Отклонение в днях"])
+
+    # Убираем полностью пустые строки (артефакты MSP-экспорта)
+    key_col = task_col or project_col
+    if key_col:
+        work = work[
+            work[key_col].notna()
+            & (~work[key_col].astype(str).str.strip().isin(["", "nan", "None", "NaN"]))
+        ].reset_index(drop=True)
 
     if not project_col and not task_col:
         st.warning("Не найдены ключевые колонки (проект, задача). Проверьте формат файла.")

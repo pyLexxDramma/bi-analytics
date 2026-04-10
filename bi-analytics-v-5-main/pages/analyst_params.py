@@ -52,7 +52,9 @@ import pandas as pd
 _TABLE_CSS = '<style>.ht-wrap{overflow-x:auto;margin:.5rem 0 1rem}.ht{width:100%;border-collapse:collapse;font-size:13px;font-family:Inter,system-ui,sans-serif}.ht th{position:sticky;top:0;background:#1a1c23;color:#fafafa;padding:8px 12px;text-align:left;border-bottom:2px solid #444;font-weight:600;white-space:nowrap}.ht td{padding:6px 12px;border-bottom:1px solid #333;color:#e0e0e0;white-space:nowrap;max-width:400px;overflow:hidden;text-overflow:ellipsis}.ht tr:hover td{background:#262833}</style>'
 
 def _html_table(df, max_rows=300):
-    show = df.head(max_rows).fillna("")
+    show = df.head(max_rows).copy()
+    for col in show.columns:
+        show[col] = [str(v) if pd.notna(v) else "" for v in show[col]]
     html = show.to_html(index=False, classes="ht", escape=True, border=0)
     st.markdown(_TABLE_CSS + '<div class="ht-wrap">' + html + '</div>', unsafe_allow_html=True)
 
