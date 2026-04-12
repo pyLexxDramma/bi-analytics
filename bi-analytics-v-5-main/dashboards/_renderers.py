@@ -7676,35 +7676,67 @@ def dashboard_debit_credit(df):
     st.download_button("Скачать CSV", _csv, "debit_credit.csv", "text/csv", key="debit_credit_csv")
 
 
+# ── TESSA: поиск колонок и дат (Исполнительная документация / Предписания) ──
+def _tessa_find_column(df, candidates):
+    """Возвращает имя колонки из df по списку возможных имён (точное и частичное совпадение)."""
+    if df is None or not hasattr(df, "columns"):
+        return None
+    cols = list(df.columns)
+    for cand in candidates:
+        c0 = cand.strip().lower()
+        for c in cols:
+            if str(c).strip().lower() == c0:
+                return c
+    for cand in candidates:
+        c0 = cand.strip().lower()
+        for c in cols:
+            if c0 in str(c).strip().lower():
+                return c
+    return None
+
+
+def _tessa_to_datetime(series):
+    """Парсинг дат из TESSA (dd.mm.yyyy и пр.)."""
+    if series is None:
+        return pd.Series(dtype="datetime64[ns]")
+    return pd.to_datetime(series, errors="coerce", dayfirst=True)
+
+
 # ==================== DASHBOARD: Исполнительная документация (отдельный отчёт в группе «Прочее») ====================
 def dashboard_executive_documentation(df):
-    """Отчёт «Исполнительная документация» — данные из TESSA."""
+    """
+    Отчёт «Исполнительная документация» — TESSA.
+    ТЗ: группировка по подрядчикам и объектам, фильтр по периоду, чекбокс «Не отображать просрочку,
+    если ИД сдана», KPI по статусам, блоки просрочки подрядчика/заказчика, детальная таблица.
+    Исключаем строки видов «Предписание» — они в отчёте «Предписания по подрядчикам».
+    """
     st.header("Исполнительная документация")
 
     tessa_df = st.session_state.get("tessa_data", None)
     if tessa_df is None or tessa_df.empty:
         st.warning(
             "Для отчёта «Исполнительная документация» необходимы данные из TESSA. "
-            "Загрузите файлы tessa_*_id.csv через папку web/."
+            "Загрузите файлы tessa_*.csv через папку web/."
         )
         return
 
     work = tessa_df.copy()
     work.columns = [str(c).strip() for c in work.columns]
 
-    _must_have = None
-    for c in ["ObjectName", "objectname", "Объект"]:
-        if c in work.columns:
-            _must_have = c
-            break
-    if _must_have:
+    kind_col = _tessa_find_column(work, ["KindName", "kindname", "Вид"])
+    if kind_col:
+        mask_pred = work[kind_col].astype(str).str.contains("Предписан", case=False, na=False)
+        work = work[~mask_pred].reset_index(drop=True)
+
+    obj_col = _tessa_find_column(work, ["ObjectName", "objectname", "Объект"])
+    if obj_col:
         work = work[
-            work[_must_have].notna()
-            & (~work[_must_have].astype(str).str.strip().isin(["", "nan", "None", "NaN"]))
+            work[obj_col].notna()
+            & (~work[obj_col].astype(str).str.strip().isin(["", "nan", "None", "NaN"]))
         ].reset_index(drop=True)
 
     if work.empty:
-        st.info("Нет данных с заполненными полями документов.")
+        st.info("Нет данных по исполнительной документации (после исключения предписаний и пустых объектов).")
         return
 
     krstates_df = st.session_state.get("reference_krstates", None)
@@ -7725,43 +7757,64 @@ def dashboard_executive_documentation(df):
     else:
         work["Статус"] = "Неизвестно"
 
-    obj_col = None
-    for c in ["ObjectName", "objectname", "Объект"]:
-        if c in work.columns:
-            obj_col = c
-            break
+    contr_col = _tessa_find_column(work, ["CONTR", "Контрагент", "contr"])
+    card_col = _tessa_find_column(work, ["CardId", "CardID", "cardId", "DocID", "DocId"])
+    creation_col = _tessa_find_column(work, ["CreationDate", "creationdate", "Дата создания"])
+    completed_col = _tessa_find_column(work, ["Completed", "completed", "CompletionDate", "Дата завершения"])
+    plan_col = _tessa_find_column(work, ["PlanDate", "DueDate", "Срок", "Плановая дата"])
 
-    contr_col = None
-    for c in ["CONTR", "Контрагент", "contr"]:
-        if c in work.columns:
-            contr_col = c
-            break
+    if creation_col:
+        work["_cd"] = _tessa_to_datetime(work[creation_col])
+    else:
+        work["_cd"] = pd.NaT
 
-    kind_col = None
-    for c in ["KindName", "kindname", "Вид"]:
-        if c in work.columns:
-            kind_col = c
-            break
+    dmin = work["_cd"].min()
+    dmax = work["_cd"].max()
+    today = date.today()
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        if obj_col and obj_col in work.columns:
+    st.markdown("**Фильтры**")
+    fc1, fc2, fc3 = st.columns(3)
+    with fc1:
+        if obj_col:
             objects = ["Все"] + sorted(work[obj_col].dropna().astype(str).str.strip().unique().tolist())
             sel_obj = st.selectbox("Объект", objects, key="exec_doc_object")
         else:
             sel_obj = "Все"
-    with c2:
-        if contr_col and contr_col in work.columns:
+    with fc2:
+        if contr_col:
             contrs = ["Все"] + sorted(work[contr_col].dropna().astype(str).str.strip().unique().tolist())
             sel_contr = st.selectbox("Контрагент", contrs, key="exec_doc_contr")
         else:
             sel_contr = "Все"
-    with c3:
-        if kind_col and kind_col in work.columns:
+    with fc3:
+        if kind_col:
             kinds = ["Все"] + sorted(work[kind_col].dropna().astype(str).str.strip().unique().tolist())
             sel_kind = st.selectbox("Вид документа", kinds, key="exec_doc_kind")
         else:
             sel_kind = "Все"
+
+    fp1, fp2 = st.columns(2)
+    with fp1:
+        if pd.notna(dmin) and pd.notna(dmax):
+            dr = st.date_input(
+                "Период (по дате создания в TESSA)",
+                value=(dmin.date() if hasattr(dmin, "date") else dmin, dmax.date() if hasattr(dmax, "date") else dmax),
+                key="exec_doc_period",
+            )
+            if isinstance(dr, tuple) and len(dr) == 2:
+                p_start, p_end = dr
+            else:
+                p_start, p_end = dr, dr
+        else:
+            p_start = p_end = None
+            st.caption("В данных нет распознанной колонки даты создания — период не применяется.")
+    with fp2:
+        hide_overdue_if_done = st.checkbox(
+            "Не отображать просрочку, если ИД сдана (подписана/согласована)",
+            value=True,
+            key="exec_doc_hide_overdue_signed",
+            help="Если включено, для подписанных документов в таблице просрочки скрываются; из суммарных просрочек они исключаются.",
+        )
 
     filtered = work.copy()
     if sel_obj != "Все" and obj_col:
@@ -7770,70 +7823,168 @@ def dashboard_executive_documentation(df):
         filtered = filtered[filtered[contr_col].astype(str).str.strip() == sel_contr]
     if sel_kind != "Все" and kind_col:
         filtered = filtered[filtered[kind_col].astype(str).str.strip() == sel_kind]
+    if creation_col and p_start is not None and p_end is not None:
+        ts_start = pd.Timestamp(p_start)
+        ts_end = pd.Timestamp(p_end) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+        filtered = filtered[filtered["_cd"].notna() & (filtered["_cd"] >= ts_start) & (filtered["_cd"] <= ts_end)]
 
     if filtered.empty:
         st.info("Нет данных при выбранных фильтрах.")
         return
 
-    total_docs = len(filtered)
-    status_counts = filtered["Статус"].value_counts()
+    stu = filtered["Статус"].astype(str)
 
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Всего документов", total_docs)
-    m2.metric("На согласовании", int(status_counts.get("На согласовании", 0)))
-    m3.metric("Подписан", int(status_counts.get("Подписан", status_counts.get("Согласован", 0))))
-    m4.metric("На доработке", int(status_counts.get("На доработке", 0)))
+    def _has_status(s, *parts):
+        sl = s.lower()
+        return any(p.lower() in sl for p in parts)
 
-    st.subheader("Распределение по статусам")
-    status_df = status_counts.reset_index()
-    status_df.columns = ["Статус", "Количество"]
-    fig = px.bar(
-        status_df, x="Статус", y="Количество",
-        text="Количество",
-        color_discrete_sequence=["#2E86AB"],
-    )
-    fig.update_traces(textposition="outside", textfont=dict(size=13, color="white"))
-    fig = apply_chart_background(fig)
-    fig.update_layout(height=450, xaxis_title="Статус документа", yaxis_title="Количество")
-    render_chart(fig, caption_below="Документы по статусам")
+    is_signed = stu.map(lambda s: _has_status(s, "Подписан", "Согласован"))
+    is_declined = stu.map(lambda s: _has_status(s, "Отказ"))
+    sl = stu.str.lower()
+    is_on_agree = (sl == "на согласовании") | sl.str.contains("на согласовании", na=False)
+    is_rework = stu.map(lambda s: "доработ" in str(s).lower())
 
-    if obj_col and obj_col in filtered.columns:
-        st.subheader("Документы по объектам")
-        obj_counts = filtered.groupby(obj_col).size().reset_index(name="Количество")
-        obj_counts = obj_counts.sort_values("Количество", ascending=False)
-        fig2 = px.bar(
-            obj_counts, x=obj_col, y="Количество",
+    if card_col and card_col in filtered.columns:
+        total_docs = filtered[card_col].nunique()
+    else:
+        total_docs = len(filtered)
+
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    m1.metric("Всего документов (уник. карточек)" if card_col else "Всего документов", int(total_docs))
+    m2.metric("Отказы", int(is_declined.sum()))
+    m3.metric("На согласовании", int(is_on_agree.sum()))
+    m4.metric("Подписано / согласовано", int(is_signed.sum()))
+    m5.metric("На доработке", int(is_rework.sum()))
+    overdue_mask = (~is_signed) & (~is_declined)
+    total_overdue = int(overdue_mask.sum())
+    m6.metric("Не завершено (без подписи и без отказа)", total_overdue)
+
+    oc1, oc2 = st.columns(2)
+    with oc1:
+        st.subheader("Просрочка подрядчика (сдача ИД)")
+        cnt_c = int((overdue_mask & is_rework).sum())
+        st.metric("Документов на доработке у подрядчика", cnt_c)
+        if contr_col and contr_col in filtered.columns and cnt_c > 0:
+            sub = filtered[overdue_mask & is_rework]
+            by_c = sub.groupby(contr_col).size().reset_index(name="Количество").sort_values("Количество", ascending=True)
+            fig_c = px.bar(by_c, y=contr_col, x="Количество", orientation="h", text="Количество", color_discrete_sequence=["#f87171"])
+            fig_c.update_traces(textposition="outside", textfont=dict(color="white"))
+            fig_c = apply_chart_background(fig_c)
+            fig_c.update_layout(height=max(280, len(by_c) * 32 + 80), yaxis_title="", xaxis_title="")
+            render_chart(fig_c, caption_below="По подрядчикам (на доработке)", key="exec_overdue_contractor")
+    with oc2:
+        st.subheader("Просрочка заказчика (согласование)")
+        cnt_u = int((overdue_mask & is_on_agree).sum())
+        st.metric("Документов на согласовании у заказчика", cnt_u)
+        if contr_col and contr_col in filtered.columns and cnt_u > 0:
+            sub = filtered[overdue_mask & is_on_agree]
+            by_u = sub.groupby(contr_col).size().reset_index(name="Количество").sort_values("Количество", ascending=True)
+            fig_u = px.bar(by_u, y=contr_col, x="Количество", orientation="h", text="Количество", color_discrete_sequence=["#fbbf24"])
+            fig_u.update_traces(textposition="outside", textfont=dict(color="white"))
+            fig_u = apply_chart_background(fig_u)
+            fig_u.update_layout(height=max(280, len(by_u) * 32 + 80), yaxis_title="", xaxis_title="")
+            render_chart(fig_u, caption_below="По подрядчикам (на согласовании)", key="exec_overdue_customer")
+
+    tab_sum, tab_detail, tab_dyn = st.tabs(["Накопительным итогом", "Детальный отчёт", "Динамика по месяцам"])
+
+    with tab_sum:
+        st.subheader("Распределение по статусам")
+        status_counts = filtered["Статус"].value_counts()
+        status_df = status_counts.reset_index()
+        status_df.columns = ["Статус", "Количество"]
+        fig = px.bar(
+            status_df, x="Статус", y="Количество",
             text="Количество",
-            color_discrete_sequence=["#06A77D"],
+            color_discrete_sequence=["#2E86AB"],
         )
-        fig2.update_traces(textposition="outside", textfont=dict(size=13, color="white"))
-        fig2 = apply_chart_background(fig2)
-        fig2.update_layout(height=450, xaxis_title="Объект", yaxis_title="Количество", xaxis_tickangle=-45)
-        render_chart(fig2, caption_below="Количество документов по объектам")
+        fig.update_traces(textposition="outside", textfont=dict(size=13, color="white"))
+        fig.update_layout(xaxis_tickangle=-35)
+        fig = apply_chart_background(fig)
+        fig.update_layout(height=450, xaxis_title="Статус", yaxis_title="Количество")
+        render_chart(fig, caption_below="Документы по статусам", key="exec_status_bar")
 
-    st.subheader("Детальная таблица")
-    display_cols = []
-    for c in [obj_col, contr_col, kind_col, "DocNumber", "DocDescription", "Статус", "CreationDate"]:
-        if c and c in filtered.columns:
-            display_cols.append(c)
-    if not display_cols:
-        display_cols = list(filtered.columns[:8])
-    table_df = filtered[display_cols].copy()
-    rename = {
-        "DocNumber": "Номер", "DocDescription": "Описание",
-        "CreationDate": "Дата создания",
-    }
-    if obj_col:
-        rename[obj_col] = "Объект"
-    if contr_col:
-        rename[contr_col] = "Контрагент"
-    if kind_col:
-        rename[kind_col] = "Вид документа"
-    table_df = table_df.rename(columns=rename)
-    st.caption(f"Записей: {len(table_df)}")
-    _render_html_table(table_df)
-    csv_bytes = table_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-    st.download_button("Скачать CSV", csv_bytes, "executive_docs.csv", "text/csv", key="exec_doc_csv")
+        if obj_col and obj_col in filtered.columns:
+            st.subheader("Документы по объектам")
+            obj_counts = filtered.groupby(obj_col).size().reset_index(name="Количество")
+            obj_counts = obj_counts.sort_values("Количество", ascending=False)
+            fig2 = px.bar(
+                obj_counts, x=obj_col, y="Количество",
+                text="Количество",
+                color_discrete_sequence=["#06A77D"],
+            )
+            fig2.update_traces(textposition="outside", textfont=dict(size=13, color="white"))
+            fig2 = apply_chart_background(fig2)
+            fig2.update_layout(height=450, xaxis_title="Объект", yaxis_title="Количество", xaxis_tickangle=-45)
+            render_chart(fig2, caption_below="Количество документов по объектам", key="exec_obj_bar")
+
+        if creation_col and filtered["_cd"].notna().any():
+            rmin = filtered["_cd"].min()
+            rmax = filtered["_cd"].max()
+            st.caption(
+                f"Диапазон дат создания в выборке: "
+                f"{rmin.strftime('%d.%m.%Y') if pd.notna(rmin) else '—'} — "
+                f"{rmax.strftime('%d.%m.%Y') if pd.notna(rmax) else '—'} "
+                f"(ТЗ: min/max CreationDate в Tessa.Tasks)"
+            )
+
+    with tab_detail:
+        st.subheader("Детальный отчёт по сдаче и согласованию ИД")
+        disp = filtered.copy()
+        rows_out = []
+        for _, row in disp.iterrows():
+            st_l = str(row.get("Статус", ""))
+            signed_row = _has_status(st_l, "Подписан", "Согласован")
+            hide_ov = hide_overdue_if_done and signed_row
+            plan_d = row.get(plan_col) if plan_col else None
+            fact_d = row.get(completed_col) if completed_col else None
+            pr_sub = ""
+            pr_cust = ""
+            if not hide_ov and plan_col and pd.notna(_tessa_to_datetime(pd.Series([plan_d])).iloc[0]):
+                pdt = _tessa_to_datetime(pd.Series([plan_d])).iloc[0]
+                if pd.notna(pdt):
+                    if completed_col and pd.notna(_tessa_to_datetime(pd.Series([fact_d])).iloc[0]):
+                        fdt = _tessa_to_datetime(pd.Series([fact_d])).iloc[0]
+                        if pd.notna(fdt):
+                            pr_sub = f"{max(0, (fdt.date() - pdt.date()).days)} дн."
+                    elif pd.notna(pdt):
+                        pr_sub = f"{max(0, (today - pdt.date()).days)} дн." if hasattr(pdt, "date") else ""
+            if hide_ov:
+                pr_sub = "—"
+                pr_cust = "—"
+            rows_out.append({
+                "Контрагент": row.get(contr_col, "") if contr_col else "",
+                "Объект": row.get(obj_col, "") if obj_col else "",
+                "№ документа": row.get("DocNumber", row.get("DocID", "")),
+                "Тип": row.get(kind_col, "") if kind_col else "",
+                "Плановая дата": plan_d if plan_col else "",
+                "Факт сдачи": fact_d if completed_col else "",
+                "Просрочка сдачи": pr_sub if not hide_ov else "—",
+                "Статус": st_l,
+                "Дата создания": row.get(creation_col, "") if creation_col else "",
+            })
+        table_df = pd.DataFrame(rows_out)
+        st.caption(f"Записей: {len(table_df)}")
+        _render_html_table(table_df)
+        csv_bytes = table_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+        st.download_button("Скачать CSV", csv_bytes, "executive_docs.csv", "text/csv", key="exec_doc_csv")
+
+    with tab_dyn:
+        st.subheader("Динамика по месяцам (по дате создания)")
+        if not creation_col or filtered["_cd"].isna().all():
+            st.info("Нет колонки даты создания для построения динамики.")
+        else:
+            dyn = filtered.assign(_m=filtered["_cd"].dt.to_period("M"))
+            dyn = dyn[dyn["_m"].notna()]
+            if dyn.empty:
+                st.info("Недостаточно дат для динамики.")
+            else:
+                cnt = dyn.groupby("_m").size().reset_index(name="Новых документов")
+                cnt["_m"] = cnt["_m"].astype(str)
+                fig3 = px.bar(cnt, x="_m", y="Новых документов", text="Новых документов", color_discrete_sequence=["#60a5fa"])
+                fig3.update_traces(textposition="outside", textfont=dict(color="white"))
+                fig3 = apply_chart_background(fig3)
+                fig3.update_layout(height=400, xaxis_title="Месяц", yaxis_title="Количество")
+                render_chart(fig3, caption_below="Поступление документов по месяцам", key="exec_month_dyn")
 
 
 # ==================== DASHBOARD: Здоровье проектов (по фазе: план, факт, отклонение) ====================
@@ -10017,23 +10168,22 @@ def dashboard_forecast_budget(df):
 
 # ==================== DASHBOARD: Предписания по подрядчикам ====================
 def dashboard_predpisania(df):
-    """Отчёт «Предписания по подрядчикам» — данные из TESSA (KindName содержит 'Предписан')."""
+    """
+    Отчёт «Предписания по подрядчикам» — TESSA, KindName содержит «Предписан».
+    Макет: фильтры Проект (объект) / Подрядчик / № договора; KPI: неустранённые, просроченные, критические;
+    столбчатая диаграмма: по подрядчикам (просроченные внутри общего числа); детальная таблица.
+    """
     st.header("Предписания по подрядчикам")
 
     tessa_df = st.session_state.get("tessa_data", None)
     if tessa_df is None or tessa_df.empty:
-        st.warning("Для отчёта необходимы данные из TESSA. Загрузите файлы tessa_*_id.csv.")
+        st.warning("Для отчёта необходимы данные из TESSA. Загрузите файлы tessa_*.csv.")
         return
 
     work = tessa_df.copy()
     work.columns = [str(c).strip() for c in work.columns]
 
-    kind_col = None
-    for c in ["KindName", "kindname", "Вид"]:
-        if c in work.columns:
-            kind_col = c
-            break
-
+    kind_col = _tessa_find_column(work, ["KindName", "kindname", "Вид"])
     if kind_col:
         pred = work[work[kind_col].astype(str).str.contains("Предписан", case=False, na=False)].copy()
     else:
@@ -10043,19 +10193,15 @@ def dashboard_predpisania(df):
         st.info("Нет данных по предписаниям в загруженных файлах TESSA.")
         return
 
-    _must_have = None
-    for c in ["ObjectName", "objectname", "Объект"]:
-        if c in pred.columns:
-            _must_have = c
-            break
-    if _must_have:
+    obj_col = _tessa_find_column(pred, ["ObjectName", "objectname", "Объект", "ProjectName", "Проект"])
+    if obj_col:
         pred = pred[
-            pred[_must_have].notna()
-            & (~pred[_must_have].astype(str).str.strip().isin(["", "nan", "None", "NaN"]))
+            pred[obj_col].notna()
+            & (~pred[obj_col].astype(str).str.strip().isin(["", "nan", "None", "NaN"]))
         ].reset_index(drop=True)
 
     if pred.empty:
-        st.info("Нет предписаний с заполненным объектом.")
+        st.info("Нет предписаний с заполненным объектом/проектом.")
         return
 
     krstates_df = st.session_state.get("reference_krstates", None)
@@ -10073,81 +10219,152 @@ def dashboard_predpisania(df):
     else:
         pred["Статус"] = "Неизвестно"
 
-    obj_col = None
-    for c in ["ObjectName", "objectname", "Объект"]:
-        if c in pred.columns:
-            obj_col = c
-            break
-    contr_col = None
-    for c in ["CONTR", "Контрагент", "contr"]:
-        if c in pred.columns:
-            contr_col = c
-            break
+    contr_col = _tessa_find_column(pred, ["CONTR", "Контрагент", "contr"])
+    contract_col = _tessa_find_column(
+        pred,
+        ["ContractNumber", "НомерДоговора", "Номер договора", "Договор", "DocContract", "Contract"],
+    )
+    due_col = _tessa_find_column(
+        pred,
+        ["DueDate", "Срок", "PlanEnd", "Completed", "CompletionDate", "Срок устранения"],
+    )
+    doc_num_col = _tessa_find_column(pred, ["DocNumber", "Number", "Номер"])
 
-    # --- Фильтры ---
-    filter_cols = st.columns(3)
-    with filter_cols[0]:
+    st_l = pred["Статус"].astype(str)
+    pred["_signed"] = st_l.str.contains("Подписан", case=False, na=False) | st_l.str.contains("Согласован", case=False, na=False)
+    if due_col:
+        pred["_due"] = _tessa_to_datetime(pred[due_col])
+    else:
+        pred["_due"] = pd.NaT
+    def _overdue_days_row(r):
+        if r["_signed"]:
+            return 0
+        if pd.notna(r["_due"]):
+            d = r["_due"]
+            if hasattr(d, "date"):
+                dd = d.date() if hasattr(d, "date") else d
+            else:
+                dd = pd.to_datetime(d, errors="coerce")
+                dd = dd.date() if pd.notna(dd) else None
+            if dd and date.today() > dd:
+                return (date.today() - dd).days
+        return 0
+
+    pred["_overdue_days"] = pred.apply(_overdue_days_row, axis=1)
+    pred["_critical"] = pred["_overdue_days"] > 30
+
+    # --- Фильтры (макет Предписания.html) ---
+    f1, f2, f3 = st.columns(3)
+    with f1:
         if obj_col:
             objects = ["Все"] + sorted(pred[obj_col].dropna().astype(str).str.strip().unique().tolist())
-            sel_obj = st.selectbox("Объект", objects, key="pred_obj")
+            sel_obj = st.selectbox("Проект (объект)", objects, key="pred_obj")
         else:
             sel_obj = "Все"
-    with filter_cols[1]:
+    with f2:
         if contr_col:
             contrs = ["Все"] + sorted(pred[contr_col].dropna().astype(str).str.strip().unique().tolist())
             sel_contr = st.selectbox("Подрядчик", contrs, key="pred_contr")
         else:
             sel_contr = "Все"
-    with filter_cols[2]:
-        statuses = ["Все"] + sorted(pred["Статус"].dropna().unique().tolist())
-        sel_status = st.selectbox("Статус", statuses, key="pred_status")
+    with f3:
+        contract_q = st.text_input("№ договора (частичный поиск)", "", key="pred_contract_q")
 
     filtered = pred.copy()
     if sel_obj != "Все" and obj_col:
         filtered = filtered[filtered[obj_col].astype(str).str.strip() == sel_obj]
     if sel_contr != "Все" and contr_col:
         filtered = filtered[filtered[contr_col].astype(str).str.strip() == sel_contr]
-    if sel_status != "Все":
-        filtered = filtered[filtered["Статус"] == sel_status]
+    if contract_q.strip() and contract_col:
+        filtered = filtered[
+            filtered[contract_col].astype(str).str.lower().str.contains(contract_q.strip().lower(), na=False)
+        ]
 
     if filtered.empty:
         st.info("Нет данных при выбранных фильтрах.")
         return
 
-    # --- Метрики ---
-    total = len(filtered)
-    status_counts = filtered["Статус"].value_counts()
+    unresolved = (~filtered["_signed"]).sum()
+    overdue_cnt = (filtered["_overdue_days"] > 0).sum()
+    critical_cnt = filtered["_critical"].sum()
 
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Всего предписаний", total)
-    m2.metric("На согласовании", int(status_counts.get("На согласовании", 0)))
-    m3.metric("Подписан / Согласован",
-              int(status_counts.get("Подписан", 0)) + int(status_counts.get("Согласован", 0)))
-    m4.metric("На доработке", int(status_counts.get("На доработке", 0)))
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Всего в выборке", len(filtered))
+    k2.metric("Неустранённые (не подписаны)", int(unresolved))
+    k3.metric("Просроченные", int(overdue_cnt))
+    k4.metric("Критические (> 30 дн.)", int(critical_cnt))
+    if not due_col:
+        st.caption("Для расчёта просрочки укажите в данных TESSA колонку срока (DueDate / Срок / Completed и т.п.).")
 
-    # --- Графики ---
-    tab_charts, tab_table = st.tabs(["Графики", "Таблица"])
+    tab_main, tab_extra = st.tabs(["Сводка и диаграммы", "По статусам и экспорт"])
 
-    with tab_charts:
+    with tab_main:
         if contr_col and contr_col in filtered.columns:
-            st.subheader("Предписания по подрядчикам")
-            by_contr = (filtered.groupby(contr_col).size()
-                        .reset_index(name="Количество")
-                        .sort_values("Количество", ascending=True))
-            fig1 = px.bar(
-                by_contr, y=contr_col, x="Количество", orientation="h",
-                text="Количество",
-                labels={contr_col: "Подрядчик"},
-                color_discrete_sequence=["#E85D75"],
+            st.subheader("Предписания по подрядчикам (синий — неустранённые, оранжевый — просроченные)")
+            grp = filtered.groupby(contr_col, as_index=False).agg(
+                Всего=("_signed", lambda s: int((~s).sum())),
+                Просрочено=("_overdue_days", lambda x: int((x > 0).sum())),
             )
-            fig1.update_traces(textposition="outside", textfont=dict(color="white"))
+            grp = grp.sort_values("Всего", ascending=True)
+            fig1 = go.Figure()
+            fig1.add_trace(go.Bar(
+                y=grp[contr_col], x=grp["Всего"], name="Неустранённые", orientation="h",
+                marker_color="#3498db", text=grp["Всего"], textposition="outside",
+            ))
+            fig1.add_trace(go.Bar(
+                y=grp[contr_col], x=grp["Просрочено"], name="Просроченные", orientation="h",
+                marker_color="#e67e22", text=grp["Просрочено"], textposition="outside",
+            ))
             fig1.update_layout(
-                height=max(350, len(by_contr) * 35 + 100),
-                yaxis_title="", xaxis_title="Количество",
+                barmode="group",
+                bargap=0.28,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
             )
             fig1 = apply_chart_background(fig1)
-            render_chart(fig1, caption_below="Количество предписаний по подрядчикам", key="pred_by_contr")
+            fig1.update_layout(
+                height=max(360, len(grp) * 40 + 120),
+                yaxis_title="", xaxis_title="Количество",
+            )
+            render_chart(fig1, caption_below="По подрядчикам: неустранённые и просроченные", key="pred_bar_group")
 
+        st.subheader("Детальная таблица (сортировка: критические и просрочка сверху)")
+        show = filtered.copy()
+        show = show.sort_values(["_critical", "_overdue_days"], ascending=[False, False])
+        out_cols = []
+        if contr_col:
+            out_cols.append(contr_col)
+        if obj_col:
+            out_cols.append(obj_col)
+        if contract_col:
+            out_cols.append(contract_col)
+        if doc_num_col:
+            out_cols.append(doc_num_col)
+        if due_col:
+            out_cols.append(due_col)
+        out_cols.extend(["_overdue_days", "_critical", "Статус"])
+        out_cols = [c for c in out_cols if c in show.columns]
+        table_df = show[out_cols].copy()
+        table_df = table_df.rename(columns={
+            "_overdue_days": "Дней просрочки",
+            "_critical": "Критическое (>30 дн.)",
+        })
+        if contr_col:
+            table_df = table_df.rename(columns={contr_col: "Подрядчик"})
+        if obj_col:
+            table_df = table_df.rename(columns={obj_col: "Проект"})
+        if contract_col:
+            table_df = table_df.rename(columns={contract_col: "№ договора"})
+        if doc_num_col:
+            table_df = table_df.rename(columns={doc_num_col: "№ предписания"})
+        if due_col:
+            table_df = table_df.rename(columns={due_col: "Срок / дата контроля"})
+        st.caption(f"Записей: {len(table_df)}")
+        _render_html_table(table_df)
+        csv_bytes = table_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+        st.download_button("Скачать CSV", csv_bytes, "predpisania.csv", "text/csv", key="pred_csv")
+
+    with tab_extra:
+        status_counts = filtered["Статус"].value_counts()
         st.subheader("Предписания по статусам")
         status_df = status_counts.reset_index()
         status_df.columns = ["Статус", "Количество"]
@@ -10174,29 +10391,6 @@ def dashboard_predpisania(df):
             fig3 = apply_chart_background(fig3)
             fig3.update_layout(height=450, xaxis_title="Объект", yaxis_title="Количество", xaxis_tickangle=-45)
             render_chart(fig3, caption_below="Количество предписаний по объектам", key="pred_by_obj")
-
-    with tab_table:
-        st.subheader("Детальная таблица предписаний")
-        display_cols = []
-        for c in [obj_col, contr_col, "DocNumber", "DocDescription", "Статус", "CreationDate"]:
-            if c and c in filtered.columns:
-                display_cols.append(c)
-        if not display_cols:
-            display_cols = list(filtered.columns[:8])
-        table_df = filtered[display_cols].copy()
-        rename = {
-            "DocNumber": "Номер", "DocDescription": "Описание",
-            "CreationDate": "Дата создания",
-        }
-        if obj_col:
-            rename[obj_col] = "Объект"
-        if contr_col:
-            rename[contr_col] = "Подрядчик"
-        table_df = table_df.rename(columns=rename)
-        st.caption(f"Записей: {len(table_df)}")
-        _render_html_table(table_df)
-        csv_bytes = table_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        st.download_button("Скачать CSV", csv_bytes, "predpisania.csv", "text/csv", key="pred_csv")
 
 
 # ==================== DASHBOARD: Девелоперские проекты ====================
