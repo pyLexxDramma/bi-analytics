@@ -7,6 +7,36 @@ from typing import Callable, Dict, List, Tuple
 
 from dashboards.export_wrap import run_dashboard_with_auto_export, slug_report_name
 
+# Категории для трёх блоков радиокнопок на главной странице (не путать с порядком REPORT_CATEGORIES).
+MAIN_PANEL_TIMELINE_CATEGORY = "Сроки"
+MAIN_PANEL_FINANCE_CATEGORY = "Финансы"
+
+
+def get_main_panel_report_lists(role: str) -> Tuple[List[str], List[str], List[str]]:
+    """
+    Возвращает (отчёты «Сроки», отчёты «Финансы», все остальные отчёты) с учётом RBAC.
+    Единый источник — REPORT_CATEGORIES; не зависит от порядка категорий в списке.
+    """
+    from auth import filter_reports_for_role
+
+    timeline: List[str] = []
+    finance: List[str] = []
+    for title, reps in REPORT_CATEGORIES:
+        if title == MAIN_PANEL_TIMELINE_CATEGORY:
+            timeline = list(reps)
+        elif title == MAIN_PANEL_FINANCE_CATEGORY:
+            finance = list(reps)
+    all_flat: List[str] = []
+    for _, reps in REPORT_CATEGORIES:
+        all_flat.extend(list(reps))
+    other = [r for r in all_flat if r not in timeline and r not in finance]
+    return (
+        filter_reports_for_role(role, timeline),
+        filter_reports_for_role(role, finance),
+        filter_reports_for_role(role, other),
+    )
+
+
 REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
     (
         "Девелоперские проекты",
@@ -30,13 +60,17 @@ REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
         "ГДРС",
         [
             "ГДРС",
+            "График движения рабочей силы",
+            "СКУД стройка",
         ],
     ),
     (
         "Проектные работы",
         [
-            "Рабочая/Проектная документация",
+            "Рабочая документация",
+            "Проектная документация",
             "Просрочка выдачи РД",
+            "Просрочка выдачи ПД",
         ],
     ),
     (
@@ -53,9 +87,11 @@ REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
     (
         "Сроки",
         [
-            "Динамика отклонений",
+            "Причины отклонений",
+            "Динамика отклонений по месяцам",
             "Отклонение от базового плана",
-            "Значения отклонений от базового плана",
+            "Контрольные точки",
+            "График проекта",
         ],
     ),
     (
@@ -116,11 +152,25 @@ def _get_dashboards() -> Dict[str, Callable]:
     dashboard_forecast_budget = _renderers.dashboard_forecast_budget
     dashboard_rd_delay = _renderers.dashboard_rd_delay
     dashboard_documentation = _renderers.dashboard_documentation
+    dashboard_working_documentation = getattr(
+        _renderers, "dashboard_working_documentation", dashboard_documentation
+    )
+    dashboard_project_documentation = getattr(
+        _renderers, "dashboard_project_documentation", dashboard_documentation
+    )
     dashboard_technique = _renderers.dashboard_technique
     dashboard_technique_tabs = getattr(_renderers, "dashboard_technique_tabs", None)
     if dashboard_technique_tabs is None:
         dashboard_technique_tabs = _renderers.dashboard_technique
     dashboard_workforce_movement = _renderers.dashboard_workforce_movement
+    dashboard_skud_stroyka = getattr(_renderers, "dashboard_skud_stroyka", None)
+    if dashboard_skud_stroyka is None:
+
+        def _stub_skud(df):
+            st.header("СКУД стройка")
+            st.info("Модуль не загружен из dashboards._renderers.")
+
+        dashboard_skud_stroyka = _stub_skud
     dashboard_executive_documentation = getattr(_renderers, "dashboard_executive_documentation", None)
     if dashboard_executive_documentation is None:
 
@@ -148,11 +198,45 @@ def _get_dashboards() -> Dict[str, Callable]:
 
     dashboard_predpisania = _renderers.dashboard_predpisania
     dashboard_developer_projects = _renderers.dashboard_developer_projects
+    dashboard_control_points = getattr(_renderers, "dashboard_control_points", None)
+    dashboard_project_schedule_chart = getattr(_renderers, "dashboard_project_schedule_chart", None)
+    dashboard_pravki_report_hidden = getattr(_renderers, "dashboard_pravki_report_hidden", None)
+    dashboard_pd_delay = getattr(_renderers, "dashboard_pd_delay", None)
+
+    if dashboard_control_points is None:
+
+        def _stub_cp(df):
+            st.header("Контрольные точки")
+            st.info("Модуль в разработке (правки 04.2026).")
+
+        dashboard_control_points = _stub_cp
+
+    if dashboard_project_schedule_chart is None:
+
+        def _stub_psc(df):
+            st.header("График проекта")
+            st.info("Модуль в разработке (правки 04.2026).")
+
+        dashboard_project_schedule_chart = _stub_psc
+
+    if dashboard_pravki_report_hidden is None:
+
+        def _stub_hidden(df):
+            st.info("Отчёт скрыт по правкам заказчика.")
+
+        dashboard_pravki_report_hidden = _stub_hidden
+
+    if dashboard_pd_delay is None:
+        dashboard_pd_delay = dashboard_rd_delay
 
     raw: Dict[str, Callable] = {
+        # Сроки: каноническое имя «Причины отклонений» + обратная совместимость
+        "Причины отклонений": dashboard_deviations_combined,
         "Динамика отклонений": dashboard_deviations_combined,
-        "Динамика отклонений по месяцам": dashboard_deviations_combined,
+        "Динамика отклонений по месяцам": dashboard_dynamics_of_deviations,
         "Динамика причин отклонений": dashboard_deviations_combined,
+        "Контрольные точки": dashboard_control_points,
+        "График проекта": dashboard_project_schedule_chart,
         "БДДС": dashboard_budget_by_period,
         "БДДС по месяцам": dashboard_budget_by_period,
         "БДР": dashboard_bdr,
@@ -163,13 +247,23 @@ def _get_dashboards() -> Dict[str, Callable]:
         "Бюджет по проекту": dashboard_approved_budget,
         "Прогнозный бюджет": dashboard_forecast_budget,
         "Отклонение от базового плана": dashboard_plan_fact_dates,
-        "Значения отклонений от базового плана": dashboard_deviation_by_tasks_current_month,
+        "Значения отклонений от базового плана": dashboard_pravki_report_hidden,
         "Рабочая/Проектная документация": dashboard_documentation,
+        "Рабочая документация": dashboard_working_documentation,
+        "Проектная документация": dashboard_project_documentation,
         "ГДРС": dashboard_technique_tabs,
+        "График движения рабочей силы": partial(
+            dashboard_workforce_movement,
+            data_source_filter="Ресурсы",
+            show_header=True,
+            key_prefix="nav_gdrs_workforce",
+        ),
+        "СКУД стройка": dashboard_skud_stroyka,
         "Дебиторская и кредиторская задолженность подрядчиков": dashboard_debit_credit,
         "Исполнительная документация": dashboard_executive_documentation,
         "Здоровье проектов": dashboard_project_health,
         "Просрочка выдачи РД": dashboard_rd_delay,
+        "Просрочка выдачи ПД": dashboard_pd_delay,
         "Предписания по подрядчикам": dashboard_predpisania,
         "Девелоперские проекты": dashboard_developer_projects,
     }
@@ -177,14 +271,19 @@ def _get_dashboards() -> Dict[str, Callable]:
 
 
 # Ленивая загрузка, чтобы при импорте dashboards не тянуть project_visualization_app
+# Увеличьте версию при изменении реестра отчётов — иначе долгоживущий процесс Streamlit
+# может держать устаревший словарь в памяти.
+_DASHBOARDS_REGISTRY_VERSION = 4
 _dashboards_cache: Dict[str, Callable] = {}
+_dashboards_cache_version: int = 0
 
 
 def get_dashboards() -> Dict[str, Callable]:
     """Возвращает словарь DASHBOARDS (кэшируется)."""
-    global _dashboards_cache
-    if not _dashboards_cache:
+    global _dashboards_cache, _dashboards_cache_version
+    if not _dashboards_cache or _dashboards_cache_version != _DASHBOARDS_REGISTRY_VERSION:
         _dashboards_cache = _get_dashboards()
+        _dashboards_cache_version = _DASHBOARDS_REGISTRY_VERSION
     return _dashboards_cache
 
 

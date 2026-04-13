@@ -686,7 +686,7 @@ def main():
 
             else:
 
-                st.session_state.current_dashboard = "Динамика отклонений"
+                st.session_state.current_dashboard = "Причины отклонений"
 
         # If dashboard was selected from sidebar menu, show only the selected dashboard
         # without the selection panels
@@ -738,17 +738,10 @@ def main():
         # Выбор панели - перенесен в основную область
         st.markdown("### Выбор панели")
 
-        # Единый источник списка отчётов — dashboards.REPORT_CATEGORIES (4 категории)
-        from dashboards import REPORT_CATEGORIES
+        # Три блока радиокнопок: «Сроки», «Финансы», остальные отчёты (см. dashboards.get_main_panel_report_lists)
+        from dashboards import get_main_panel_report_lists
         _role = user.get("role") or "analyst"
-        reason_options = filter_reports_for_role(_role, list(REPORT_CATEGORIES[0][1]))
-        budget_options = filter_reports_for_role(_role, list(REPORT_CATEGORIES[1][1]))
-        # Объединяем категории 2 ("Здоровье проектов") и 3 ("Прочее") в один раздел
-        other_options = filter_reports_for_role(
-            _role,
-            list(REPORT_CATEGORIES[2][1])
-            + (list(REPORT_CATEGORIES[3][1]) if len(REPORT_CATEGORIES) > 3 else []),
-        )
+        reason_options, budget_options, other_options = get_main_panel_report_lists(_role)
         if not reason_options and not budget_options and not other_options:
             st.error("Для вашей роли нет доступных отчётов. Обратитесь к администратору.")
             st.stop()
@@ -786,55 +779,39 @@ def main():
                 if budget_options:
                     st.session_state.budget_radio = budget_options[0]
 
-        # Синхронизируем радиокнопки с current_dashboard при каждой загрузке,
-        # чтобы после выбора отчёта из бокового меню (например БДДС) отображался правильный пункт
-        if current_dashboard:
-            if current_dashboard in reason_options:
-                st.session_state.reason_radio = current_dashboard
-            if current_dashboard in budget_options:
-                st.session_state.budget_radio = current_dashboard
-            if current_dashboard in other_options:
-                st.session_state.other_radio = current_dashboard
+        # Не синхронизируем радио с current_dashboard на каждом прогоне: Streamlit уже
+        # обновил ключи reason_radio / … по клику; перезапись устаревшим current_dashboard
+        # откатывала выбор (например обратно на «Динамика отклонений по месяцам»).
 
-        # Determine indices from session_state or current_dashboard
-        # Streamlit radio stores the actual option value, not the index
+        # Индексы для st.radio: сначала фактическое значение ключа виджета (уже обновлён по клику),
+        # иначе current_dashboard. Иначе index=… пересчитывался по устаревшему current_dashboard и
+        # сбрасывал выбор (часто на «Динамика отклонений по месяцам»).
         reason_index = 0
-        if current_dashboard in reason_options:
-            reason_index = reason_options.index(current_dashboard)
-        elif "reason_radio" in st.session_state:
-            try:
-                # session_state contains the actual option value, not index
-                if st.session_state.reason_radio in reason_options:
-                    reason_index = reason_options.index(st.session_state.reason_radio)
-                else:
-                    # If value is not in options, use default
-                    reason_index = 0
-            except (ValueError, TypeError, IndexError):
-                reason_index = 0
+        try:
+            if "reason_radio" in st.session_state and st.session_state.reason_radio in reason_options:
+                reason_index = reason_options.index(st.session_state.reason_radio)
+            elif current_dashboard in reason_options:
+                reason_index = reason_options.index(current_dashboard)
+        except (ValueError, TypeError, IndexError):
+            reason_index = 0
 
         budget_index = 0
-        if current_dashboard in budget_options:
-            budget_index = budget_options.index(current_dashboard)
-        elif "budget_radio" in st.session_state:
-            try:
-                if st.session_state.budget_radio in budget_options:
-                    budget_index = budget_options.index(st.session_state.budget_radio)
-                else:
-                    budget_index = 0
-            except (ValueError, TypeError, IndexError):
-                budget_index = 0
+        try:
+            if "budget_radio" in st.session_state and st.session_state.budget_radio in budget_options:
+                budget_index = budget_options.index(st.session_state.budget_radio)
+            elif current_dashboard in budget_options:
+                budget_index = budget_options.index(current_dashboard)
+        except (ValueError, TypeError, IndexError):
+            budget_index = 0
 
         other_index = 0
-        if current_dashboard in other_options:
-            other_index = other_options.index(current_dashboard)
-        elif "other_radio" in st.session_state:
-            try:
-                if st.session_state.other_radio in other_options:
-                    other_index = other_options.index(st.session_state.other_radio)
-                else:
-                    other_index = 0
-            except (ValueError, TypeError, IndexError):
-                other_index = 0
+        try:
+            if "other_radio" in st.session_state and st.session_state.other_radio in other_options:
+                other_index = other_options.index(st.session_state.other_radio)
+            elif current_dashboard in other_options:
+                other_index = other_options.index(current_dashboard)
+        except (ValueError, TypeError, IndexError):
+            other_index = 0
 
         # Определяем, какой expander должен быть развернут при выборе из меню
         current_dashboard = st.session_state.get("current_dashboard", "")
@@ -888,54 +865,52 @@ def main():
                 index=other_index,
             )
 
-            # Determine selected dashboard based on radio button values
-            # Note: Selection from sidebar menu is handled earlier and stops execution with st.stop()
-            # So this code only runs when user selects dashboard via radio buttons in main area
-            # Always use current radio button values to determine selected dashboard
-            # This ensures that clicking on a radio button (even if already selected) works correctly
-            if reason_dashboard != st.session_state.get(
-                "prev_reason", reason_options[0]
+        # Выбор отчёта по радио — после всех трёх виджетов (не внутри expander «Прочее»),
+        # чтобы логика не выглядела привязанной только к третьей группе.
+        # Выбор из бокового меню обрабатывается выше и завершается st.stop().
+        if reason_dashboard != st.session_state.get(
+            "prev_reason", reason_options[0]
+        ):
+            selected_dashboard = reason_dashboard
+            st.session_state.current_dashboard = reason_dashboard
+            st.session_state.prev_reason = reason_dashboard
+            st.session_state.prev_budget = budget_options[0]
+            st.session_state.prev_other = other_options[0]
+        elif budget_dashboard != st.session_state.get(
+            "prev_budget", budget_options[0]
+        ):
+            selected_dashboard = budget_dashboard
+            st.session_state.current_dashboard = budget_dashboard
+            st.session_state.prev_budget = budget_dashboard
+            st.session_state.prev_reason = reason_options[0]
+            st.session_state.prev_other = other_options[0]
+        elif other_dashboard != st.session_state.get(
+            "prev_other", other_options[0]
+        ):
+            selected_dashboard = other_dashboard
+            st.session_state.current_dashboard = other_dashboard
+            st.session_state.prev_other = other_dashboard
+            st.session_state.prev_reason = reason_options[0]
+            st.session_state.prev_budget = budget_options[0]
+        else:
+            # Сохраняем текущий выбор из меню/радио: приоритет у current_dashboard,
+            # чтобы после выбора из бокового меню (например БДДС) не переключалось на первый пункт «Причины отклонений»
+            current = st.session_state.current_dashboard
+            if current and (
+                current in reason_options
+                or current in budget_options
+                or current in other_options
             ):
+                selected_dashboard = current
+            elif reason_dashboard in reason_options:
                 selected_dashboard = reason_dashboard
-                st.session_state.current_dashboard = reason_dashboard
-                st.session_state.prev_reason = reason_dashboard
-                st.session_state.prev_budget = budget_options[0]
-                st.session_state.prev_other = other_options[0]
-            elif budget_dashboard != st.session_state.get(
-                "prev_budget", budget_options[0]
-            ):
+            elif budget_dashboard in budget_options:
                 selected_dashboard = budget_dashboard
-                st.session_state.current_dashboard = budget_dashboard
-                st.session_state.prev_budget = budget_dashboard
-                st.session_state.prev_reason = reason_options[0]
-                st.session_state.prev_other = other_options[0]
-            elif other_dashboard != st.session_state.get(
-                "prev_other", other_options[0]
-            ):
+            elif other_dashboard in other_options:
                 selected_dashboard = other_dashboard
-                st.session_state.current_dashboard = other_dashboard
-                st.session_state.prev_other = other_dashboard
-                st.session_state.prev_reason = reason_options[0]
-                st.session_state.prev_budget = budget_options[0]
             else:
-                # Сохраняем текущий выбор из меню/радио: приоритет у current_dashboard,
-                # чтобы после выбора из бокового меню (например БДДС) не переключалось на первый пункт «Причины отклонений»
-                current = st.session_state.current_dashboard
-                if current and (
-                    current in reason_options
-                    or current in budget_options
-                    or current in other_options
-                ):
-                    selected_dashboard = current
-                elif reason_dashboard in reason_options:
-                    selected_dashboard = reason_dashboard
-                elif budget_dashboard in budget_options:
-                    selected_dashboard = budget_dashboard
-                elif other_dashboard in other_options:
-                    selected_dashboard = other_dashboard
-                else:
-                    selected_dashboard = current or reason_dashboard
-                st.session_state.current_dashboard = selected_dashboard
+                selected_dashboard = current or reason_dashboard
+            st.session_state.current_dashboard = selected_dashboard
 
         dashboards_using_technique = ("ГДРС",)
 
@@ -980,15 +955,14 @@ def main():
 
         **Доступные панели:**
 
-        **Причины отклонений:**
-        - **Динамика отклонений** (табы: по месяцам, динамика, причины)
-        - **Отклонение текущего срока от базового плана**, **Значения отклонений от базового плана**
+        **Сроки (по правкам):**
+        - **Причины отклонений**, **Динамика отклонений по месяцам**, **Отклонение от базового плана**, **Контрольные точки**, **График проекта**
 
-        **💰 Аналитика по финансам:**
-        - **БДДС** (табы: по периодам, по лотам); **БДР**, **Бюджет план/факт**, **Утвержденный бюджет**, **Прогнозный бюджет**
+        **Финансы:**
+        - **БДДС**, **БДР**, **Бюджет план/факт**, **Утверждённый бюджет**, **Прогнозный бюджет**, **ДЗ/КЗ подрядчиков**
 
         **Прочее:**
-        - **Выдача рабочей/проектной документации** (включая просрочку выдачи РД), **ГДРС** (табы: ГДРС люди/техника, динамика), **Исполнительная документация**
+        - Девелоперские проекты, предписания, исполнительная документация, ГДРС, проектные работы, здоровье проектов
 
         **Для начала работы:**
         1. Загрузите файл с данными (CSV или Excel) через боковую панель

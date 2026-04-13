@@ -649,6 +649,7 @@ def load_all_from_web() -> Dict:
     st.session_state.debit_credit_data = None
     st.session_state.loaded_files_info = {}
     st.session_state.tessa_data = None
+    st.session_state["tessa_tasks_data"] = None
     st.session_state["reference_contractors"] = None
     st.session_state["reference_krstates"] = None
     st.session_state["reference_docstates"] = None
@@ -745,6 +746,29 @@ def load_all_from_web() -> Dict:
                     continue
 
                 # ── TESSA файлы ──────────────────────────────────────────────
+                if file_type_by_name == "tessa_tasks":
+                    df = _load_tessa_file(filepath)
+                    if df is not None and not df.empty:
+                        file_type = "tessa_tasks"
+                        file_id = _register_file(cur, version_id, file_info, file_type, len(df))
+                        _save_rows(cur, version_id, file_id, file_type, name, df)
+                        total_rows += len(df)
+                        result["loaded"] += 1
+                        df.attrs["data_type"] = "tessa_tasks"
+                        if st.session_state.get("tessa_tasks_data") is None:
+                            st.session_state["tessa_tasks_data"] = df
+                        else:
+                            st.session_state["tessa_tasks_data"] = pd.concat(
+                                [st.session_state["tessa_tasks_data"], df], ignore_index=True
+                            )
+                        result["diagnostics"].append({
+                            "file": rel_path, "type": "tessa_tasks", "rows": int(len(df)),
+                            "columns": [str(c) for c in df.columns[:25]],
+                        })
+                    else:
+                        result["skipped"] += 1
+                    continue
+
                 if file_type_by_name == "tessa":
                     df = _load_tessa_file(filepath)
                     if df is not None and not df.empty:
@@ -956,7 +980,11 @@ def _infer_file_type_by_name(file_name: str) -> str:
     if stem.startswith("other_") and stem.endswith("_rd"):
         return "rd_plan"
 
-    # ── TESSA файлы ──────────────────────────────────────────────────────────
+    # ── TESSA: задачи (CardId, KindName, …) — отдельный тип, чтобы join с Id по правкам ──
+    if "tessa_tasks" in stem or (stem.startswith("tessa_") and "tasks" in stem):
+        return "tessa_tasks"
+
+    # ── TESSA файлы (карточки / Id) ──────────────────────────────────────────
     if stem.startswith("tessa_"):
         return "tessa"
 
@@ -988,12 +1016,18 @@ def _infer_file_type_by_name(file_name: str) -> str:
         or "бюджет" in stem
         or "oborot" in stem
         or "оборот" in stem
+        or "oborotypopodryad" in stem
+        or "oboroty_po_podryad" in stem
+        or "оборотыпоподряд" in stem
+        or "oborot_po_podryad" in stem
     ):
         return "budget"
 
     # ── 1C JSON файлы ──────────────────────────────────────────────────────────
     if name_lower.endswith(".json"):
         if "dk" in stem.lower():
+            return "debit_credit_json"
+        if "dtkttpopodryad" in stem.lower() or "dtkt" in stem.lower() or "дткт" in stem.lower():
             return "debit_credit_json"
         if "spravochniki" in stem.lower() or "справочник" in stem.lower():
             return "reference_json"
@@ -1111,6 +1145,13 @@ def read_version_to_session(version_id: int):
         st.session_state["tessa_data"] = tessa
     elif st.session_state.get("tessa_data") is None:
         st.session_state["tessa_data"] = None
+
+    # ── TESSA Tasks (отдельный файл для join CardId ↔ DocID) ───────────────
+    tt = _load_version_data(version_id, "tessa_tasks")
+    if tt is not None and not tt.empty:
+        st.session_state["tessa_tasks_data"] = tt
+    elif st.session_state.get("tessa_tasks_data") is None:
+        st.session_state["tessa_tasks_data"] = None
 
     # ── Справочники (KrStates / DocStates) ────────────────────────────────
     # Загружаются из CSV при load_all_from_web(), не из БД;

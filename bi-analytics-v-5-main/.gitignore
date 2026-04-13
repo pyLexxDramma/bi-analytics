@@ -120,6 +120,20 @@ credentials.*
 *.sync-conflict-*
 .devcontainer/
 
-# Локальные прогоны / скриншоты QA (не часть приложения)
+# Локальные прогоны / скриншоты QA (не часть приложения, не в GitHub)
 docs/bench_results/
 qa_final/
+qa_audit/
+qa_screenshots/
+qa_full_interactive/
+qa_scroll/
+qa_tables/
+qa_tables_final/
+qa_tables_v2/
+qa_verify/
+qa_pravki_nav_check/
+
+# Визуальные/дымовые проверки и зависимости только для них (не runtime приложения)
+scripts/playwright_smoke_ui.py
+scripts/streamlit_visual_audit.py
+scripts/requirements-visual-audit.txt

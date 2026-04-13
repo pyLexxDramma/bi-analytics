@@ -243,6 +243,8 @@ def ensure_data_session_state() -> None:
         st.session_state.previous_uploaded_files = []
     if "tessa_data" not in st.session_state:
         st.session_state.tessa_data = None
+    if "tessa_tasks_data" not in st.session_state:
+        st.session_state.tessa_tasks_data = None
     if "reference_contractors" not in st.session_state:
         st.session_state.reference_contractors = None
     if "reference_krstates" not in st.session_state:
@@ -302,6 +304,18 @@ def update_session_with_loaded_file(df: pd.DataFrame, file_id: str) -> None:
             "rows": len(df),
             "columns": list(df.columns),
         }
+    elif data_type == "tessa_tasks":
+        if st.session_state.tessa_tasks_data is None:
+            st.session_state.tessa_tasks_data = df
+        else:
+            st.session_state.tessa_tasks_data = pd.concat(
+                [st.session_state.tessa_tasks_data, df], ignore_index=True
+            )
+        st.session_state.loaded_files_info[file_id] = {
+            "type": "tessa_tasks",
+            "rows": len(df),
+            "columns": list(df.columns),
+        }
 
 
 def remove_file_from_session(file_name: str) -> None:
@@ -318,6 +332,8 @@ def remove_file_from_session(file_name: str) -> None:
         st.session_state.technique_data = None
     elif file_type == "debit_credit":
         st.session_state.debit_credit_data = None
+    elif file_type == "tessa_tasks":
+        st.session_state.tessa_tasks_data = None
     del st.session_state.loaded_files_info[file_name]
 
 
@@ -330,6 +346,7 @@ def clear_all_data_for_removed_files(files_to_remove: list) -> None:
         st.session_state.resources_data = None
         st.session_state.technique_data = None
         st.session_state.debit_credit_data = None
+        st.session_state.tessa_tasks_data = None
         st.session_state.loaded_files_info = {}
 
 

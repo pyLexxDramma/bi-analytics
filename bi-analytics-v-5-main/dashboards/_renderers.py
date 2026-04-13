@@ -10,6 +10,8 @@ import numpy as np
 
 from config import RUSSIAN_MONTHS
 
+from dashboards.dev_projects_tz_matrix import build_dev_tz_matrix_rows, render_dev_tz_matrix
+
 
 _TABLE_CSS = """
 <style>
@@ -1339,7 +1341,7 @@ def dashboard_dynamics_of_deviations(df):
 
 # ==================== DASHBOARD 3: Plan/Fact Dates for Tasks ====================
 def dashboard_plan_fact_dates(df):
-    st.header("Отклонение текущего срока от базового плана")
+    st.header("Отклонение от базового плана")
 
     # Helper function to find columns by partial match
     def find_column(df, possible_names):
@@ -4042,7 +4044,7 @@ def dashboard_bdr(df):
     или из budget plan / budget fact: план = доходы, факт = расходы.
     Результат (сальдо) = Доходы - Расходы.
     """
-    st.header("БДР")
+    st.header("БДР. План/факт расходов")
 
     if df is None or not hasattr(df, "columns") or df.empty:
         st.warning("⚠️ Нет данных для отображения. Загрузите данные проекта.")
@@ -5514,9 +5516,9 @@ def dashboard_technique(df):
                 display_df["Доля (%)"] = display_df["Доля (%)"].astype(str) + "%"
                 st.markdown(budget_table_to_html(display_df), unsafe_allow_html=True)
 
-        # ========== Chart 2: Bar Chart by Contractor (Plan, Average, Delta) ==========
+        # ========== Chart 2: Bar Chart by Contractor (Plan, Average, Отклонение) ==========
         st.subheader(
-            "Столбчатая диаграмма: План, Среднее за месяц, Дельта (группировка по контрагенту)"
+            "Столбчатая диаграмма: План, Среднее за месяц, Отклонение (группировка по контрагенту; сортировка по убыванию Плана)"
         )
 
         # Filter by selected period(s) for this chart
@@ -5546,12 +5548,12 @@ def dashboard_technique(df):
             )
             .reset_index()
         )
-        contractor_data.columns = ["Контрагент", "План", "Среднее за месяц", "Дельта"]
+        contractor_data.columns = ["Контрагент", "План", "Среднее за месяц", "Отклонение"]
 
-        contractor_data["Дельта"] = pd.to_numeric(
-            contractor_data["Дельта"], errors="coerce"
+        contractor_data["Отклонение"] = pd.to_numeric(
+            contractor_data["Отклонение"], errors="coerce"
         ).fillna(0)
-        contractor_data = contractor_data.sort_values("Контрагент")
+        contractor_data = contractor_data.sort_values("План", ascending=False)
 
         total_plan = contractor_data["План"].sum() or 1
         total_fact = contractor_data["Среднее за месяц"].sum() or 1
@@ -5589,11 +5591,11 @@ def dashboard_technique(df):
             )
         )
 
-        # Дельта: подпись — абсолютное значение и % от плана контрагента
-        delta_values = contractor_data["Дельта"].fillna(0)
+        # Отклонение: подпись — абсолютное значение и % от плана контрагента
+        delta_values = contractor_data["Отклонение"].fillna(0)
         delta_abs = delta_values.abs()
         plan_vals = contractor_data["План"].replace(0, 1)
-        delta_pct = (contractor_data["Дельта"] / plan_vals * 100).round(0)
+        delta_pct = (contractor_data["Отклонение"] / plan_vals * 100).round(0)
         delta_text = [
             f"{int(abs(d))} ({pct:.0f}%)" if abs(d) >= 0.5 else "0"
             for d, pct in zip(delta_values, delta_pct)
@@ -5603,7 +5605,7 @@ def dashboard_technique(df):
         if positive_mask.any():
             fig_bar.add_trace(
                 go.Bar(
-                    name="Дельта (+)",
+                    name="Отклонение (+)",
                     x=contractor_data.loc[positive_mask, "Контрагент"],
                     y=delta_abs[positive_mask],
                     marker_color="#2ecc71",
@@ -5618,7 +5620,7 @@ def dashboard_technique(df):
         if negative_mask.any():
             fig_bar.add_trace(
                 go.Bar(
-                    name="Дельта (-)",
+                    name="Отклонение (-)",
                     x=contractor_data.loc[negative_mask, "Контрагент"],
                     y=delta_abs[negative_mask],
                     marker_color="#e74c3c",
@@ -5633,7 +5635,7 @@ def dashboard_technique(df):
         if zero_mask.any():
             fig_bar.add_trace(
                 go.Bar(
-                    name="Дельта (0)",
+                    name="Отклонение (0)",
                     x=contractor_data.loc[zero_mask, "Контрагент"],
                     y=delta_abs[zero_mask],
                     marker_color="#95a5a6",
@@ -5660,12 +5662,12 @@ def dashboard_technique(df):
         fig_bar = apply_chart_background(fig_bar)
         render_chart(
             fig_bar,
-            caption_below="План, Среднее за месяц и Дельта по контрагентам" + period_caption,
+            caption_below="План, Среднее за месяц и Отклонение по контрагентам" + period_caption,
         )
 
         # ========== Chart 3: Pie Chart by Contractor (Plan + Average) ==========
         st.subheader(
-            "Круговая диаграмма: Распределение суммы Плана и Среднего за месяц по контрагентам"
+            "Круговые диаграммы: Рабочие/техника (план/факт) и Рабочие/техника (% фактический по подрядчикам)"
         )
 
         # Group by Контрагент and aggregate for pie chart (Plan + Average)
@@ -5685,7 +5687,7 @@ def dashboard_technique(df):
             "Контрагент",
             "План",
             "Среднее за месяц",
-            "Дельта",
+            "Отклонение",
         ]
 
         # Calculate sum of Plan + Average for each contractor
@@ -5693,7 +5695,7 @@ def dashboard_technique(df):
             contractor_plan_avg["План"] + contractor_plan_avg["Среднее за месяц"]
         )
 
-        # Calculate доля факта (Среднее за месяц / Сумма * 100) and доля отклонения (Дельта / План * 100)
+        # Calculate доля факта (Среднее за месяц / Сумма * 100) and доля отклонения (Отклонение / План * 100)
         contractor_plan_avg["Доля факта (%)"] = 0
         contractor_plan_avg["Доля отклонения (%)"] = 0
         mask_sum = contractor_plan_avg["Сумма"] != 0
@@ -5703,7 +5705,7 @@ def dashboard_technique(df):
         ) * 100
         mask_plan = contractor_plan_avg["План"] != 0
         contractor_plan_avg.loc[mask_plan, "Доля отклонения (%)"] = (
-            contractor_plan_avg.loc[mask_plan, "Дельта"]
+            contractor_plan_avg.loc[mask_plan, "Отклонение"]
             / contractor_plan_avg.loc[mask_plan, "План"]
         ) * 100
 
@@ -5773,12 +5775,12 @@ def dashboard_technique(df):
         summary_table["Среднее за месяц"] = summary_table["Среднее за месяц"].apply(
             lambda x: f"{int(x)}" if pd.notna(x) else "0"
         )
-        summary_table["Дельта"] = summary_table["Дельта"].apply(
+        summary_table["Отклонение"] = summary_table["Отклонение"].apply(
             lambda x: f"{int(x)}" if pd.notna(x) else "0"
         )
 
         st.markdown(
-            budget_table_to_html(summary_table, finance_deviation_column="Дельта"),
+            budget_table_to_html(summary_table, finance_deviation_column="Отклонение"),
             unsafe_allow_html=True,
         )
 
@@ -5794,8 +5796,8 @@ def dashboard_technique(df):
             st.metric("Общее среднее за месяц", f"{int(total_average)}")
 
         with col3:
-            total_delta = contractor_data["Дельта"].sum()
-            st.metric("Общая дельта", f"{int(total_delta)}")
+            total_delta = contractor_data["Отклонение"].sum()
+            st.metric("Общее отклонение", f"{int(total_delta)}")
 
 
 # ==================== DASHBOARD 8.6.7: Workforce Movement ====================
@@ -6674,9 +6676,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     unsafe_allow_html=True,
                 )
 
-        # ========== Chart 2: Bar Chart by Contractor (Plan, Average, Delta) ==========
+        # ========== Chart 2: Bar Chart by Contractor (Plan, Average, Отклонение) ==========
         st.subheader(
-            "Столбчатая диаграмма: План, Среднее за месяц, Дельта (группировка по контрагенту)"
+            "Столбчатая диаграмма: План, Среднее за месяц, Отклонение (группировка по контрагенту; сортировка по убыванию Плана)"
         )
 
         bar_df = project_filtered_df.copy()
@@ -6702,14 +6704,14 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             .reset_index()
         )
 
-        contractor_data.columns = ["Контрагент", "План", "Среднее за месяц", "Дельта"]
+        contractor_data.columns = ["Контрагент", "План", "Среднее за месяц", "Отклонение"]
 
-        # Ensure Дельта column has numeric values
-        contractor_data["Дельта"] = pd.to_numeric(
-            contractor_data["Дельта"], errors="coerce"
+        # Ensure Отклонение column has numeric values
+        contractor_data["Отклонение"] = pd.to_numeric(
+            contractor_data["Отклонение"], errors="coerce"
         ).fillna(0)
 
-        contractor_data = contractor_data.sort_values("Контрагент")
+        contractor_data = contractor_data.sort_values("План", ascending=False)
 
         total_plan = contractor_data["План"].sum() or 1
         total_fact = contractor_data["Среднее за месяц"].sum() or 1
@@ -6740,10 +6742,10 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             )
         )
 
-        delta_values = contractor_data["Дельта"].fillna(0)
+        delta_values = contractor_data["Отклонение"].fillna(0)
         delta_abs = delta_values.abs()
         plan_vals = contractor_data["План"].replace(0, 1)
-        delta_pct = (contractor_data["Дельта"] / plan_vals * 100).round(0)
+        delta_pct = (contractor_data["Отклонение"] / plan_vals * 100).round(0)
         delta_text = [
             f"{int(abs(d))} ({pct:.0f}%)" if abs(d) >= 0.5 else "0"
             for d, pct in zip(delta_values, delta_pct)
@@ -6752,7 +6754,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         if positive_mask.any():
             fig_bar.add_trace(
                 go.Bar(
-                    name="Дельта (+)",
+                    name="Отклонение (+)",
                     x=contractor_data.loc[positive_mask, "Контрагент"],
                     y=delta_abs[positive_mask],
                     marker_color="#2ecc71",
@@ -6766,7 +6768,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         if negative_mask.any():
             fig_bar.add_trace(
                 go.Bar(
-                    name="Дельта (-)",
+                    name="Отклонение (-)",
                     x=contractor_data.loc[negative_mask, "Контрагент"],
                     y=delta_abs[negative_mask],
                     marker_color="#e74c3c",
@@ -6780,7 +6782,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         if zero_mask.any():
             fig_bar.add_trace(
                 go.Bar(
-                    name="Дельта (0)",
+                    name="Отклонение (0)",
                     x=contractor_data.loc[zero_mask, "Контрагент"],
                     y=delta_abs[zero_mask],
                     marker_color="#95a5a6",
@@ -6805,12 +6807,12 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         fig_bar = apply_chart_background(fig_bar)
         render_chart(
             fig_bar,
-            caption_below="План, Среднее за месяц и Дельта по контрагентам" + period_caption,
+            caption_below="План, Среднее за месяц и Отклонение по контрагентам" + period_caption,
         )
 
         # ========== Chart 3: Pie Chart by Contractor (Plan + Average) ==========
         st.subheader(
-            "Круговая диаграмма: Распределение суммы Плана и Среднего за месяц по контрагентам"
+            "Круговые диаграммы: Рабочие/техника (план/факт) и Рабочие/техника (% фактический по подрядчикам)"
         )
 
         # Group by Контрагент and aggregate for pie chart (Plan + Average)
@@ -6826,14 +6828,14 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             .reset_index()
         )
 
-        contractor_plan_avg.columns = ["Контрагент", "План", "Среднее за месяц", "Дельта"]
+        contractor_plan_avg.columns = ["Контрагент", "План", "Среднее за месяц", "Отклонение"]
 
         # Calculate sum of Plan + Average for each contractor
         contractor_plan_avg["Сумма"] = (
             contractor_plan_avg["План"] + contractor_plan_avg["Среднее за месяц"]
         )
 
-        # Calculate доля факта (Среднее за месяц / Сумма * 100) and доля отклонения (Дельта / План * 100)
+        # Calculate доля факта (Среднее за месяц / Сумма * 100) and доля отклонения (Отклонение / План * 100)
         contractor_plan_avg["Доля факта (%)"] = 0
         contractor_plan_avg["Доля отклонения (%)"] = 0
         mask_sum = contractor_plan_avg["Сумма"] != 0
@@ -6843,7 +6845,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         ) * 100
         mask_plan = contractor_plan_avg["План"] != 0
         contractor_plan_avg.loc[mask_plan, "Доля отклонения (%)"] = (
-            contractor_plan_avg.loc[mask_plan, "Дельта"]
+            contractor_plan_avg.loc[mask_plan, "Отклонение"]
             / contractor_plan_avg.loc[mask_plan, "План"]
         ) * 100
 
@@ -6908,12 +6910,12 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             summary_table["Среднее за месяц"] = summary_table["Среднее за месяц"].apply(
                 lambda x: f"{int(x)}" if pd.notna(x) else "0"
             )
-            summary_table["Дельта"] = summary_table["Дельта"].apply(
+            summary_table["Отклонение"] = summary_table["Отклонение"].apply(
                 lambda x: f"{int(x)}" if pd.notna(x) else "0"
             )
 
             st.markdown(
-                budget_table_to_html(summary_table, finance_deviation_column="Дельта"),
+                budget_table_to_html(summary_table, finance_deviation_column="Отклонение"),
                 unsafe_allow_html=True,
             )
 
@@ -6929,8 +6931,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 st.metric("Общее среднее за месяц", f"{int(total_average)}")
 
             with col3:
-                total_delta = contractor_data["Дельта"].sum()
-                st.metric("Общая дельта", f"{int(total_delta)}")
+                total_delta = contractor_data["Отклонение"].sum()
+                st.metric("Общее отклонение", f"{int(total_delta)}")
 
 
 # ==================== DASHBOARD 8.6: SKUD Stroyka ====================
@@ -7695,6 +7697,40 @@ def _tessa_find_column(df, candidates):
     return None
 
 
+def _tessa_cell_has_value(v) -> bool:
+    if v is None:
+        return False
+    if isinstance(v, float) and pd.isna(v):
+        return False
+    s = str(v).strip().lower()
+    return s not in ("", "nan", "none", "nat")
+
+
+def _tessa_norm_join_key(val) -> str:
+    """Единый ключ для DocID / CardId: 83, 83.0, «83» → «83»."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return ""
+    try:
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            fv = float(val)
+            if fv == int(fv):
+                return str(int(fv))
+    except (TypeError, ValueError, OverflowError):
+        pass
+    s = str(val).strip()
+    if len(s) > 2 and s.endswith(".0") and s[:-2].replace("-", "").isdigit():
+        return s[:-2]
+    return s
+
+
+def _tessa_row_join_key(row, doc_col, card_col) -> str:
+    if doc_col and doc_col in row.index and _tessa_cell_has_value(row[doc_col]):
+        return _tessa_norm_join_key(row[doc_col])
+    if card_col and card_col in row.index and _tessa_cell_has_value(row[card_col]):
+        return _tessa_norm_join_key(row[card_col])
+    return ""
+
+
 def _tessa_to_datetime(series):
     """Парсинг дат из TESSA (dd.mm.yyyy и пр.)."""
     if series is None:
@@ -7702,15 +7738,126 @@ def _tessa_to_datetime(series):
     return pd.to_datetime(series, errors="coerce", dayfirst=True)
 
 
+def _krstate_bucket(raw) -> str:
+    """Сопоставление с KrStates_Doc_* из PDF (если в данных англ. идентификаторы)."""
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return "other"
+    s = str(raw).strip()
+    sl = s.lower()
+    if "declined" in sl or "отказ" in sl:
+        return "declined"
+    if "active" in sl or "doc_active" in sl:
+        return "active"
+    if "signed" in sl:
+        return "signed"
+    return "other"
+
+
+# ── Исполнительная документация: детальная таблица (тёмная тема, как остальной дашборд) ──
+_EXEC_DOC_DETAIL_CSS = """
+<style>
+.exec-doc-table-wrap { overflow-x:auto; margin:0.75rem 0 1rem; border-radius:8px; border:1px solid #333; }
+.exec-doc-table { width:100%; border-collapse:collapse; font-size:13px; font-family:Inter,system-ui,sans-serif; }
+.exec-doc-table th {
+  text-align:left; padding:10px 12px; background:#1a1c23; color:#fafafa;
+  border-bottom:2px solid #444; font-size:11px; font-weight:600;
+  text-transform:uppercase; letter-spacing:0.04em; white-space:nowrap;
+}
+.exec-doc-table td {
+  padding:8px 12px; border-bottom:1px solid #333; color:#e8eef5;
+  vertical-align:middle; max-width:340px;
+}
+.exec-doc-table tr:nth-child(even) td { background:rgba(255,255,255,0.02); }
+.exec-doc-table tr:hover td { background:#262833; }
+.exec-delay-val { color:#5eead4; font-weight:600; font-variant-numeric:tabular-nums; }
+.exec-dash { color:#8892a0; }
+.exec-pill { display:inline-block; padding:4px 12px; border-radius:999px; font-size:12px; font-weight:600; white-space:nowrap; }
+.exec-pill-signed { background:rgba(34,197,94,0.18); color:#86efac; border:1px solid rgba(34,197,94,0.45); }
+.exec-pill-customer { background:rgba(251,191,36,0.15); color:#fcd34d; border:1px solid rgba(251,191,36,0.45); }
+.exec-pill-contractor { background:rgba(248,113,113,0.14); color:#fca5a5; border:1px solid rgba(248,113,113,0.45); }
+.exec-pill-declined { background:rgba(148,163,184,0.12); color:#cbd5e1; border:1px solid #64748b; }
+.exec-pill-default { background:#262833; color:#e0e0e0; border:1px solid #444; }
+.exec-pill-muted { color:#64748b; border:1px dashed #444; padding:3px 10px; border-radius:8px; font-size:12px; }
+</style>
+"""
+
+
+def _exec_status_pill_html(status: str) -> str:
+    """Бейджи статуса как на макете: Подписано / У Заказчика / У Подрядчика."""
+    esc = html_module.escape
+    s = str(status or "").strip()
+    if not s:
+        return f'<span class="exec-pill-muted">{esc("—")}</span>'
+    sl = s.lower()
+    if "на согласован" in sl or sl == "на согласовании":
+        return f'<span class="exec-pill exec-pill-customer">{esc("У Заказчика")}</span>'
+    if "доработ" in sl:
+        return f'<span class="exec-pill exec-pill-contractor">{esc("У Подрядчика")}</span>'
+    if "подписан" in sl or ("согласован" in sl and "на согласован" not in sl) or "утвержд" in sl:
+        return f'<span class="exec-pill exec-pill-signed">{esc("Подписано")}</span>'
+    if "отказ" in sl or "declined" in sl:
+        return f'<span class="exec-pill exec-pill-declined">{esc(s)}</span>'
+    if "заказчик" in sl and "подряд" not in sl:
+        return f'<span class="exec-pill exec-pill-customer">{esc("У Заказчика")}</span>'
+    if "подряд" in sl and "заказ" not in sl and ("сдач" in sl or "возврат" in sl or "исправ" in sl):
+        return f'<span class="exec-pill exec-pill-contractor">{esc("У Подрядчика")}</span>'
+    return f'<span class="exec-pill exec-pill-default">{esc(s)}</span>'
+
+
+def _exec_delay_cell_html(val: str) -> str:
+    """Просрочка: выделение цианом для значений вида «+2 дня», «5 дн.»."""
+    esc = html_module.escape
+    s = str(val or "").strip()
+    if not s or s == "—":
+        return f'<span class="exec-dash">{esc("—")}</span>'
+    if re.search(r"^[\d\s\+\-]+.*дн", s, re.I):
+        return f'<span class="exec-delay-val">{esc(s)}</span>'
+    return esc(s)
+
+
+def _exec_detail_table_html(df: pd.DataFrame, max_rows: int = 500) -> str:
+    """HTML-таблица детального отчёта ИД: CAPS-заголовки, циан для просрочек, пилюли статусов."""
+    esc = html_module.escape
+    if df is None or df.empty:
+        return f'<p style="color:#8892a0;padding:12px;">{esc("Нет строк для отображения.")}</p>'
+    show = df.head(max_rows)
+    cols = list(show.columns)
+    thead = "<thead><tr>" + "".join(f"<th>{esc(c)}</th>" for c in cols) + "</tr></thead>"
+    delay_cols = {"Просрочка сдачи", "Просрочка соглас."}
+    status_col = "Статус"
+    body_parts = ["<tbody>"]
+    for _, row in show.iterrows():
+        body_parts.append("<tr>")
+        for c in cols:
+            v = row.get(c, "")
+            if pd.isna(v):
+                v = ""
+            raw = str(v) if v is not None else ""
+            if c == status_col:
+                inner = _exec_status_pill_html(raw)
+            elif c in delay_cols:
+                inner = _exec_delay_cell_html(raw)
+            else:
+                inner = esc(raw)
+            body_parts.append(f"<td>{inner}</td>")
+        body_parts.append("</tr>")
+    body_parts.append("</tbody>")
+    return (
+        '<div class="exec-doc-table-wrap"><table class="exec-doc-table">'
+        + thead
+        + "".join(body_parts)
+        + "</table></div>"
+    )
+
+
 # ==================== DASHBOARD: Исполнительная документация (отдельный отчёт в группе «Прочее») ====================
 def dashboard_executive_documentation(df):
     """
     Отчёт «Исполнительная документация» — TESSA.
-    ТЗ: группировка по подрядчикам и объектам, фильтр по периоду, чекбокс «Не отображать просрочку,
-    если ИД сдана», KPI по статусам, блоки просрочки подрядчика/заказчика, детальная таблица.
-    Исключаем строки видов «Предписание» — они в отчёте «Предписания по подрядчикам».
+    Исключаются строки KindName «Предписание» (отдельный отчёт «Предписания»).
     """
     st.header("Исполнительная документация")
+    st.caption("Контроль просрочек подрядчика и заказчика")
 
     tessa_df = st.session_state.get("tessa_data", None)
     if tessa_df is None or tessa_df.empty:
@@ -7762,6 +7909,14 @@ def dashboard_executive_documentation(df):
     creation_col = _tessa_find_column(work, ["CreationDate", "creationdate", "Дата создания"])
     completed_col = _tessa_find_column(work, ["Completed", "completed", "CompletionDate", "Дата завершения"])
     plan_col = _tessa_find_column(work, ["PlanDate", "DueDate", "Срок", "Плановая дата"])
+    transfer_col = _tessa_find_column(
+        work,
+        ["TransferToCustomer", "Дата передачи", "Передача заказчику", "DateToCustomer", "ПереданоЗаказчику"],
+    )
+    agree_col = _tessa_find_column(
+        work,
+        ["AgreementDate", "Дата согласования", "Согласовано", "ApprovalDate", "Дата подписания заказчиком"],
+    )
 
     if creation_col:
         work["_cd"] = _tessa_to_datetime(work[creation_col])
@@ -7813,7 +7968,11 @@ def dashboard_executive_documentation(df):
             "Не отображать просрочку, если ИД сдана (подписана/согласована)",
             value=True,
             key="exec_doc_hide_overdue_signed",
-            help="Если включено, для подписанных документов в таблице просрочки скрываются; из суммарных просрочек они исключаются.",
+        )
+        show_signed_in_table = st.checkbox(
+            "Отображать сданную ИД в детальной таблице",
+            value=False,
+            key="exec_doc_show_signed_table",
         )
 
     filtered = work.copy()
@@ -7844,26 +8003,68 @@ def dashboard_executive_documentation(df):
     is_on_agree = (sl == "на согласовании") | sl.str.contains("на согласовании", na=False)
     is_rework = stu.map(lambda s: "доработ" in str(s).lower())
 
+    if "KrState" in filtered.columns:
+        kb = filtered["KrState"].map(_krstate_bucket)
+        is_signed = is_signed | (kb == "signed")
+        is_declined = is_declined | (kb == "declined")
+        is_on_agree = is_on_agree | (kb == "active")
+
+    overdue_mask = (~is_signed) & (~is_declined)
+    cnt_c = int((overdue_mask & is_rework).sum())
+    cnt_u = int((overdue_mask & is_on_agree).sum())
+    total_overdue_two = cnt_c + cnt_u
+
     if card_col and card_col in filtered.columns:
         total_docs = filtered[card_col].nunique()
     else:
         total_docs = len(filtered)
 
-    m1, m2, m3, m4, m5, m6 = st.columns(6)
-    m1.metric("Всего документов (уник. карточек)" if card_col else "Всего документов", int(total_docs))
+    st.subheader("Накопительным итогом")
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Всего документов", int(total_docs))
     m2.metric("Отказы", int(is_declined.sum()))
     m3.metric("На согласовании", int(is_on_agree.sum()))
-    m4.metric("Подписано / согласовано", int(is_signed.sum()))
-    m5.metric("На доработке", int(is_rework.sum()))
-    overdue_mask = (~is_signed) & (~is_declined)
-    total_overdue = int(overdue_mask.sum())
-    m6.metric("Не завершено (без подписи и без отказа)", total_overdue)
+    m4.metric("Подписано", int(is_signed.sum()))
+    m5.metric("Всего просрочек (два типа)", total_overdue_two)
+    st.caption(
+        "Показатель «Всего просрочек» = просрочка подрядчика (доработка) "
+        "+ просрочка заказчика (на согласовании)."
+    )
 
     oc1, oc2 = st.columns(2)
+
+    def _row_days_late_plan(r):
+        if not plan_col:
+            return np.nan
+        pdt = _tessa_to_datetime(pd.Series([r.get(plan_col)])).iloc[0]
+        if pd.isna(pdt):
+            return np.nan
+        pday = pdt.date() if hasattr(pdt, "date") else pdt
+        if completed_col:
+            fdt = _tessa_to_datetime(pd.Series([r.get(completed_col)])).iloc[0]
+            if pd.notna(fdt):
+                fday = fdt.date() if hasattr(fdt, "date") else fdt
+                return max(0, (fday - pday).days)
+        return max(0, (today - pday).days)
+
     with oc1:
         st.subheader("Просрочка подрядчика (сдача ИД)")
-        cnt_c = int((overdue_mask & is_rework).sum())
         st.metric("Документов на доработке у подрядчика", cnt_c)
+        sub_c = filtered.loc[overdue_mask & is_rework].copy()
+        if plan_col and not sub_c.empty:
+            sub_c["_late_days"] = sub_c.apply(_row_days_late_plan, axis=1)
+            b1 = int(((sub_c["_late_days"] >= 0) & (sub_c["_late_days"] <= 7)).sum())
+            b2 = int(((sub_c["_late_days"] > 7) & (sub_c["_late_days"] <= 30)).sum())
+            b3 = int((sub_c["_late_days"] > 30).sum())
+            bc1, bc2, bc3 = st.columns(3)
+            bc1.metric("До 7 дней", b1)
+            bc2.metric("7–30 дней", b2)
+            bc3.metric("> 30 дней", b3)
+            if sub_c["_late_days"].notna().any():
+                st.caption(f"Средняя просрочка (дней): {sub_c['_late_days'].mean():.1f}")
+        elif cnt_c > 0:
+            st.caption("Для сегментации 0–7 / 7–30 / >30 дней укажите в TESSA плановую дату (PlanDate / DueDate / Срок).")
+
         if contr_col and contr_col in filtered.columns and cnt_c > 0:
             sub = filtered[overdue_mask & is_rework]
             by_c = sub.groupby(contr_col).size().reset_index(name="Количество").sort_values("Количество", ascending=True)
@@ -7871,11 +8072,20 @@ def dashboard_executive_documentation(df):
             fig_c.update_traces(textposition="outside", textfont=dict(color="white"))
             fig_c = apply_chart_background(fig_c)
             fig_c.update_layout(height=max(280, len(by_c) * 32 + 80), yaxis_title="", xaxis_title="")
-            render_chart(fig_c, caption_below="По подрядчикам (на доработке)", key="exec_overdue_contractor")
+            render_chart(fig_c, caption_below="Просрочка по подрядчикам (дней)", key="exec_overdue_contractor")
     with oc2:
         st.subheader("Просрочка заказчика (согласование)")
-        cnt_u = int((overdue_mask & is_on_agree).sum())
         st.metric("Документов на согласовании у заказчика", cnt_u)
+        sub_u = filtered.loc[overdue_mask & is_on_agree].copy()
+        if plan_col and not sub_u.empty:
+            sub_u["_late_days"] = sub_u.apply(_row_days_late_plan, axis=1)
+            u1, u2, u3 = st.columns(3)
+            u1.metric("До 7 дней", int(((sub_u["_late_days"] >= 0) & (sub_u["_late_days"] <= 7)).sum()))
+            u2.metric("7–30 дней", int(((sub_u["_late_days"] > 7) & (sub_u["_late_days"] <= 30)).sum()))
+            u3.metric("> 30 дней", int((sub_u["_late_days"] > 30).sum()))
+        elif cnt_u > 0:
+            st.caption("Для сегментации по дням укажите плановую дату в данных.")
+
         if contr_col and contr_col in filtered.columns and cnt_u > 0:
             sub = filtered[overdue_mask & is_on_agree]
             by_u = sub.groupby(contr_col).size().reset_index(name="Количество").sort_values("Количество", ascending=True)
@@ -7923,13 +8133,14 @@ def dashboard_executive_documentation(df):
             st.caption(
                 f"Диапазон дат создания в выборке: "
                 f"{rmin.strftime('%d.%m.%Y') if pd.notna(rmin) else '—'} — "
-                f"{rmax.strftime('%d.%m.%Y') if pd.notna(rmax) else '—'} "
-                f"(ТЗ: min/max CreationDate в Tessa.Tasks)"
+                f"{rmax.strftime('%d.%m.%Y') if pd.notna(rmax) else '—'}"
             )
 
     with tab_detail:
         st.subheader("Детальный отчёт по сдаче и согласованию ИД")
         disp = filtered.copy()
+        if not show_signed_in_table:
+            disp = disp.loc[~is_signed].copy()
         rows_out = []
         for _, row in disp.iterrows():
             st_l = str(row.get("Статус", ""))
@@ -7951,20 +8162,38 @@ def dashboard_executive_documentation(df):
             if hide_ov:
                 pr_sub = "—"
                 pr_cust = "—"
-            rows_out.append({
+            tr = row.get(transfer_col) if transfer_col else None
+            ag = row.get(agree_col) if agree_col else None
+            if not hide_ov and transfer_col and agree_col and pd.notna(_tessa_to_datetime(pd.Series([tr])).iloc[0]) and pd.notna(_tessa_to_datetime(pd.Series([ag])).iloc[0]):
+                t1 = _tessa_to_datetime(pd.Series([tr])).iloc[0]
+                t2 = _tessa_to_datetime(pd.Series([ag])).iloc[0]
+                if pd.notna(t1) and pd.notna(t2):
+                    pr_cust = f"{max(0, (t2.date() - t1.date()).days)} дн."
+            elif hide_ov:
+                pr_cust = "—"
+            row_dict = {
                 "Контрагент": row.get(contr_col, "") if contr_col else "",
                 "Объект": row.get(obj_col, "") if obj_col else "",
                 "№ документа": row.get("DocNumber", row.get("DocID", "")),
                 "Тип": row.get(kind_col, "") if kind_col else "",
-                "Плановая дата": plan_d if plan_col else "",
+                "Плановая дата сдачи": plan_d if plan_col else "",
                 "Факт сдачи": fact_d if completed_col else "",
                 "Просрочка сдачи": pr_sub if not hide_ov else "—",
+                "Дата передачи заказчику": row.get(transfer_col, "") if transfer_col else "",
+                "Дата согласования": row.get(agree_col, "") if agree_col else "",
+                "Просрочка соглас.": pr_cust if not hide_ov else "—",
                 "Статус": st_l,
                 "Дата создания": row.get(creation_col, "") if creation_col else "",
-            })
+            }
+            rows_out.append(row_dict)
         table_df = pd.DataFrame(rows_out)
         st.caption(f"Записей: {len(table_df)}")
-        _render_html_table(table_df)
+        st.markdown(
+            _EXEC_DOC_DETAIL_CSS + _exec_detail_table_html(table_df),
+            unsafe_allow_html=True,
+        )
+        if len(table_df) > 500:
+            st.caption("Показано 500 из записей — скачайте CSV для полного списка.")
         csv_bytes = table_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
         st.download_button("Скачать CSV", csv_bytes, "executive_docs.csv", "text/csv", key="exec_doc_csv")
 
@@ -8134,12 +8363,18 @@ def dashboard_workforce_and_skud(df):
 
 
 # ==================== DASHBOARD 8.7: Documentation ====================
-def dashboard_documentation(df):
-    st.header("Рабочая/Проектная документация")
+def dashboard_documentation(df, page_title: str = "Рабочая/Проектная документация"):
+    st.header(page_title)
+
+    if page_title == "Проектная документация":
+        st.info(
+            "По правкам заказчика ПД строится на задачах MSP (уровень 5, родитель «Проектная документация»). "
+            "Ниже — текущий экран РД/выдачи; отдельная логика и графики ПД будут уточнены на следующих шагах."
+        )
 
     if df is None or not hasattr(df, "columns") or df.empty:
         st.warning(
-            "Для отчёта «Рабочая/Проектная документация» загрузите файл с данными проекта (CSV/Excel с колонками по задачам и РД)."
+            f"Для отчёта «{page_title}» загрузите файл с данными проекта (CSV/Excel с колонками по задачам и РД)."
         )
         return
 
@@ -8710,6 +8945,16 @@ def dashboard_documentation(df):
 
     # Add "Просрочка выдачи РД" chart
     dashboard_rd_delay(df)
+
+
+def dashboard_working_documentation(df):
+    """Проектные работы: Рабочая документация (то же тело отчёта, отдельный пункт меню)."""
+    return dashboard_documentation(df, page_title="Рабочая документация")
+
+
+def dashboard_project_documentation(df):
+    """Проектные работы: Проектная документация (п. меню; детализация ПД — в следующих итерациях)."""
+    return dashboard_documentation(df, page_title="Проектная документация")
 
 
 # ==================== DASHBOARD 8: Budget by Type (Plan/Fact/Reserve) ====================
@@ -9923,7 +10168,7 @@ def dashboard_forecast_budget(df):
     if "Раздел" in edit_df.columns:
         edit_df["Раздел"] = edit_df["Раздел"].apply(_clean_display_str)
 
-    st.subheader("Редактирование данных задач")
+    st.subheader("Формирование БДДС прогноз")
     st.info(
         "Измените даты начала/окончания или плановый бюджет (в млн руб.). Изменения применяются при нажатии 'Применить изменения'."
     )
@@ -10166,14 +10411,403 @@ def dashboard_forecast_budget(df):
     st.download_button("Скачать CSV", _csv, "forecast_budget_detail.csv", "text/csv", key="fcast_detail_csv")
 
 
+# ── Предписания: KPI-кружки, легенда и таблица как в Предписания.html (тёмная тема) ──
+_PRED_DASH_MOCK_CSS = """
+<style>
+.pred-kpi-wrap { background:#13151c; border:1px solid #333; border-radius:12px; padding:16px; margin:0; }
+.pred-kpi-wrap.pred-kpi-wrap--body { padding-top:14px; }
+.pred-kpi-title { font-size:1rem; font-weight:600; color:#fafafa; margin:0 0 14px 0; border-bottom:1px solid #444; padding-bottom:10px; }
+.pred-kpi-circles { display:flex; flex-direction:column; gap:14px; }
+.pred-kpi-item { display:flex; align-items:center; gap:12px; }
+.pred-kpi-circle { width:72px; height:72px; border-radius:50%; display:flex; flex-direction:column; justify-content:center; align-items:center; color:#fff; font-weight:600; flex-shrink:0; box-shadow:0 2px 8px rgba(0,0,0,.35); }
+.pred-kpi-circle .n { font-size:22px; line-height:1.1; }
+.pred-kpi-circle .s { font-size:9px; opacity:.92; text-transform:uppercase; letter-spacing:.35px; }
+.pred-kpi-circle.blue { background:linear-gradient(135deg,#3498db,#2980b9); }
+.pred-kpi-circle.orange { background:linear-gradient(135deg,#e67e22,#d35400); }
+.pred-kpi-circle.red { background:linear-gradient(135deg,#e74c3c,#c0392b); }
+.pred-kpi-info h4 { margin:0 0 4px 0; font-size:14px; font-weight:600; color:#fafafa; }
+.pred-kpi-info p { margin:0; font-size:12px; color:#a0a0a0; }
+.pred-leg { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:8px; padding:8px 12px; background:#1a1c23; border-radius:12px; border:1px solid #444; font-size:13px; color:#e0e0e0; }
+.pred-mock-table-wrap { margin-top:4px; overflow-x:auto; border-radius:8px; border:1px solid #444; }
+.pred-mock-table-wrap table { width:100%; border-collapse:collapse; font-size:13px; min-width:900px; }
+.pred-mock-table-wrap th { text-align:left; padding:10px 12px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:11px; letter-spacing:0.02em; }
+.pred-mock-table-wrap td { padding:8px 12px; border-bottom:1px solid #333; color:#e0e0e0; vertical-align:top; }
+.pred-mock-table-wrap tr.pred-crit td { background:rgba(231,76,60,0.07); }
+.pred-td-contr { font-weight:600; color:#fafafa; background:#1a1c23; }
+.pred-td-sub { font-size:11px; color:#8892a0; margin-top:4px; }
+.pred-tag { background:#262833; border:1px solid #444; padding:3px 8px; border-radius:20px; font-size:12px; color:#e0e0e0; display:inline-block; }
+.pred-days-neg { color:#f87171; font-weight:600; background:rgba(248,113,113,0.12); padding:3px 10px; border-radius:20px; display:inline-block; }
+.pred-crit-yes { background:#c0392b; color:#fff; padding:4px 10px; border-radius:20px; font-size:12px; font-weight:500; }
+.pred-crit-dash { color:#888; font-size:14px; }
+.pred-mock-head { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px; }
+.pred-mock-title { font-size:1.05rem; font-weight:600; color:#fafafa; }
+.pred-mock-sort { font-size:12px; color:#a0a0a0; }
+.pred-mock-badge { background:#c0392b; color:#fff; padding:4px 14px; border-radius:20px; font-size:13px; font-weight:500; }
+</style>
+"""
+
+# Заголовки таблицы «Неустраненные предписания» (единые для HTML и полной таблицы)
+_PRED_MOCK_TABLE_COLUMNS = (
+    "Подрядчик",
+    "Проект",
+    "№ договора",
+    "№ предписания",
+    "Срок устранения предписания",
+    "Дней просрочки",
+    "Критические предписания",
+)
+
+
+def _pred_fmt_days_display(val) -> str:
+    """Дни просрочки для таблицы: положительное число дней показываем как −N (как в макете)."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return ""
+    try:
+        v = int(round(float(val)))
+    except (TypeError, ValueError):
+        return str(val).strip()
+    if v <= 0:
+        return "0" if v == 0 else str(v)
+    return f"-{v}"
+
+
+def _pred_fmt_due(val) -> str:
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return ""
+    dt = pd.to_datetime(val, errors="coerce", dayfirst=True)
+    if pd.isna(dt):
+        return _clean_display_str(val)
+    return dt.strftime("%d.%m.%Y")
+
+
+def _pred_fmt_num(val) -> str:
+    if val is None or (isinstance(val, float) and pd.isna(val)) or str(val).strip() == "":
+        return "—"
+    try:
+        nf = float(val)
+        return str(int(nf)) if nf == int(nf) else str(nf).strip()
+    except (TypeError, ValueError):
+        return str(val).strip()
+
+
+def _pred_guess_contract_column(df, exclude=None):
+    """Если явного столбца договора нет — ищем по подстроке в имени колонки."""
+    if df is None or not hasattr(df, "columns"):
+        return None
+    ex = {str(c).strip().lower() for c in (exclude or []) if c is not None}
+    for col in df.columns:
+        k = str(col).strip().lower()
+        if k in ex:
+            continue
+        if k in ("contr", "con"):
+            continue
+        if "подрядчик" in k and "договор" not in k:
+            continue
+        if "договор" in k or "contract" in k:
+            return col
+    return None
+
+
+def _pred_guess_due_column(df, exclude=None):
+    """Колонка срока устранения: по подстроке, без дат создания/загрузки; приоритет — «устран», DueDate, deadline."""
+    if df is None or not hasattr(df, "columns"):
+        return None
+    ex = {str(c).strip().lower() for c in (exclude or []) if c is not None}
+    scored = []
+    for col in df.columns:
+        k = str(col).strip().lower()
+        if k in ex:
+            continue
+        if "создан" in k or "creation" in k or "загруз" in k:
+            continue
+        score = 0
+        if "устран" in k:
+            score += 6
+        kn = k.replace(" ", "")
+        if "duedate" in kn or "due_date" in k:
+            score += 5
+        if "deadline" in k:
+            score += 4
+        if "контрольный" in k and "срок" in k:
+            score += 4
+        if "planend" in kn or "plan_end" in k:
+            score += 3
+        if k == "срок" or (k.startswith("срок ") and "создан" not in k):
+            score += 1
+        if score > 0:
+            scored.append((score, col))
+    if not scored:
+        return None
+    scored.sort(key=lambda x: (-x[0], str(x[1]).lower()))
+    return scored[0][1]
+
+
+def _pred_build_seven_column_df(
+    show: pd.DataFrame,
+    contr_col,
+    obj_col,
+    contract_col,
+    doc_num_col,
+    due_col,
+) -> pd.DataFrame:
+    """Детальная таблица строго из 7 колонок (как макет), порядок фиксирован; пустые ячейки — «—» или пусто."""
+    cols = list(_PRED_MOCK_TABLE_COLUMNS)
+    if show is None or show.empty:
+        return pd.DataFrame(columns=cols)
+    rows = []
+    for _, row in show.iterrows():
+        def _cell(col):
+            if not col or col not in show.columns:
+                return None
+            return row[col]
+
+        sub = _clean_display_str(_cell(contr_col), empty="") if contr_col and contr_col in show.columns else ""
+        pod = _clean_display_str(_cell(obj_col), empty="") if obj_col and obj_col in show.columns else ""
+        contr_s = sub if sub else "—"
+        proj_s = pod if pod else "—"
+        dog = _pred_fmt_num(_cell(contract_col)) if contract_col and contract_col in show.columns else "—"
+        num = _pred_fmt_num(_cell(doc_num_col)) if doc_num_col and doc_num_col in show.columns else "—"
+        due_s = _pred_fmt_due(_cell(due_col)) if due_col and due_col in show.columns else ""
+        days = _pred_fmt_days_display(_cell("_overdue_days"))
+        cv = _cell("_critical")
+        crit = "Критическое" if cv is True else ("—" if cv is False else "")
+        rows.append({
+            "Подрядчик": contr_s,
+            "Проект": proj_s,
+            "№ договора": dog,
+            "№ предписания": num,
+            "Срок устранения предписания": due_s,
+            "Дней просрочки": days,
+            "Критические предписания": crit,
+        })
+    return pd.DataFrame(rows, columns=cols)
+
+
+def _pred_overdue_mock_table_html(rows: list, overdue_total: int) -> str:
+    """Таблица просроченных как в макете: rowspan по подрядчику, бейджи «Критическое», дни со знаком −."""
+    esc = html_module.escape
+    head = (
+        '<div class="pred-mock-head"><div>'
+        f'<div class="pred-mock-title">{esc("Неустраненные предписания")}</div>'
+        f'<div class="pred-mock-sort">{esc("Сортировка: по подрядчикам ↑, по просрочке ↓, критические вверху")}</div>'
+        "</div>"
+        f'<span class="pred-mock-badge">{esc(str(overdue_total))} просроченных</span></div>'
+    )
+    if not rows:
+        return _PRED_DASH_MOCK_CSS + head + f'<p style="color:#a0a0a0;padding:16px;">{esc("Нет просроченных предписаний")}</p>'
+
+    thead = (
+        "<thead><tr>"
+        + "".join(f"<th>{esc(h)}</th>" for h in _PRED_MOCK_TABLE_COLUMNS)
+        + "</tr></thead>"
+    )
+    parts = [_PRED_DASH_MOCK_CSS, head, '<div class="pred-mock-table-wrap"><table>', thead, "<tbody>"]
+    for block in rows:
+        contr = esc(str(block["contractor"]))
+        rowspan = int(block["rowspan"])
+        sub = esc(block["subline"])
+        for i, r in enumerate(block["lines"]):
+            cr = "pred-crit" if r.get("critical") else ""
+            parts.append(f'<tr class="{cr}">')
+            if i == 0:
+                parts.append(
+                    f'<td class="pred-td-contr" rowspan="{rowspan}">{contr}'
+                    f'<div class="pred-td-sub">{sub}</div></td>'
+                )
+            parts.append(f'<td><span class="pred-tag">{esc(r["project"])}</span></td>')
+            parts.append(f'<td><span class="pred-tag">{esc(r["contract"])}</span></td>')
+            parts.append(f"<td>{esc(r['number'])}</td>")
+            parts.append(f"<td>{esc(r['due'])}</td>")
+            days = int(r["days"]) if pd.notna(r.get("days")) else 0
+            parts.append(f'<td><span class="pred-days-neg">-{esc(str(days))}</span></td>')
+            if r.get("critical"):
+                parts.append(f'<td><span class="pred-crit-yes">{esc("Критическое")}</span></td>')
+            else:
+                parts.append('<td><span class="pred-crit-dash">—</span></td>')
+            parts.append("</tr>")
+    parts.append("</tbody></table></div>")
+    return "".join(parts)
+
+
+def _pred_kpi_circles_html(
+    n_unresolved: int,
+    n_overdue: int,
+    n_critical: int,
+    *,
+    with_heading: bool = True,
+) -> str:
+    """with_heading=False — заголовок «Ключевые показатели» выводится через st.subheader (ровная строка с левым блоком)."""
+    e = html_module.escape
+    title_html = (
+        '<div class="pred-kpi-title">🎯 Ключевые показатели</div>'
+        if with_heading
+        else ""
+    )
+    wrap_cls = "pred-kpi-wrap" + (" pred-kpi-wrap--body" if not with_heading else "")
+    return (
+        _PRED_DASH_MOCK_CSS
+        + f'<div class="{wrap_cls}">'
+        + title_html
+        + '<div class="pred-kpi-circles">'
+        + '<div class="pred-kpi-item"><div class="pred-kpi-circle blue"><span class="n">'
+        + e(str(n_unresolved))
+        + '</span><span class="s">всего</span></div><div class="pred-kpi-info"><h4>Неустраненные предписания</h4><p>Общее количество</p></div></div>'
+        + '<div class="pred-kpi-item"><div class="pred-kpi-circle orange"><span class="n">'
+        + e(str(n_overdue))
+        + '</span><span class="s">всего</span></div><div class="pred-kpi-info"><h4>Просроченные предписания</h4><p>Требуют немедленного внимания</p></div></div>'
+        + '<div class="pred-kpi-item"><div class="pred-kpi-circle red"><span class="n">'
+        + e(str(n_critical))
+        + '</span><span class="s">всего</span></div><div class="pred-kpi-info"><h4>Критические предписания</h4><p>Просрочка более 30 дней</p></div></div>'
+        + "</div></div>"
+    )
+
+
+def _pred_build_overdue_mock_blocks(
+    overdue_df: pd.DataFrame,
+    contr_col,
+    obj_col,
+    contract_col,
+    doc_num_col,
+    due_col,
+) -> list:
+    """Строки для HTML-таблицы просроченных: группировка по подрядчику (rowspan)."""
+    if overdue_df is None or overdue_df.empty:
+        return []
+    sort_cols = ["_critical", "_overdue_days"]
+    asc_crit = [False, False]
+    if contr_col and contr_col in overdue_df.columns:
+        d = overdue_df.sort_values([contr_col] + sort_cols, ascending=[True] + asc_crit).copy()
+    else:
+        d = overdue_df.sort_values(sort_cols, ascending=asc_crit).copy()
+
+    def _line_from_row(r):
+        proj = "—"
+        if obj_col and obj_col in d.columns:
+            proj = _clean_display_str(r.get(obj_col), empty="—") or "—"
+        cnum = "—"
+        if contract_col and contract_col in d.columns:
+            cnum = _pred_fmt_num(r.get(contract_col))
+        num = "—"
+        if doc_num_col and doc_num_col in d.columns:
+            num = _pred_fmt_num(r.get(doc_num_col))
+        due_s = ""
+        if due_col and due_col in d.columns:
+            due_s = _pred_fmt_due(r.get(due_col))
+        od = r.get("_overdue_days")
+        try:
+            days = int(od) if pd.notna(od) else 0
+        except (TypeError, ValueError):
+            days = 0
+        crit = bool(r.get("_critical"))
+        return {
+            "project": proj,
+            "contract": cnum,
+            "number": num,
+            "due": due_s,
+            "days": days,
+            "critical": crit,
+        }
+
+    blocks = []
+    if contr_col and contr_col in d.columns:
+        for contr, g in d.groupby(contr_col, sort=False):
+            lines = [_line_from_row(r) for _, r in g.iterrows()]
+            if not lines:
+                continue
+            crit_n = sum(1 for ln in lines if ln.get("critical"))
+            sub = f"всего: {len(lines)} | крит: {crit_n}"
+            blocks.append({
+                "contractor": str(contr).strip() or "—",
+                "rowspan": len(lines),
+                "subline": sub,
+                "lines": lines,
+            })
+    else:
+        lines = [_line_from_row(r) for _, r in d.iterrows()]
+        if lines:
+            crit_n = sum(1 for ln in lines if ln.get("critical"))
+            blocks.append({
+                "contractor": "—",
+                "rowspan": len(lines),
+                "subline": f"всего: {len(lines)} | крит: {crit_n}",
+                "lines": lines,
+            })
+    return blocks
+
+
+def _tessa_fill_card_from_doc_lookup(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    TESSA: строки карточки (DocID) и задачи (CardId) с одним идентификатором — объединяем поля.
+
+    1) Ключ нормализуется (83, 83.0, «83» совпадают).
+    2) По каждому ключу собираем «лучшие» непустые значения по всем строкам с этим ключом
+       (не только строки «только DocID» — иначе договор/срок не подтягиваются, если CardId везде заполнен).
+    3) Вторым проходом заполняем пустые ячейки из агрегата.
+    """
+    if df is None or df.empty:
+        return df
+    doc_col = _tessa_find_column(
+        df,
+        ["DocID", "DocId", "DocumentID", "DocumentId", "ИдДокумента", "Ид документа", "ИдентификаторДокумента"],
+    )
+    card_col = _tessa_find_column(
+        df,
+        ["CardId", "CardID", "cardId", "ИдКарточки", "ИдЗадачи", "TaskCardId", "CardIDЗадачи"],
+    )
+    if not doc_col and not card_col:
+        return df
+    if doc_col and card_col and str(doc_col) == str(card_col):
+        return df
+    out = df.copy()
+    join_keys = [_tessa_row_join_key(out.loc[i], doc_col, card_col) for i in out.index]
+    out["_join_key_tmp"] = join_keys
+    merged_by_key: dict = {}
+    for _, row in out.iterrows():
+        k = row["_join_key_tmp"]
+        if not k:
+            continue
+        if k not in merged_by_key:
+            merged_by_key[k] = {}
+        tgt = merged_by_key[k]
+        for col in out.columns:
+            if col == "_join_key_tmp":
+                continue
+            v = row[col]
+            if not _tessa_cell_has_value(v):
+                continue
+            if col not in tgt or not _tessa_cell_has_value(tgt.get(col)):
+                tgt[col] = v
+    for idx, row in out.iterrows():
+        k = row["_join_key_tmp"]
+        if not k or k not in merged_by_key:
+            continue
+        src = merged_by_key[k]
+        for col, v in src.items():
+            if col == "_join_key_tmp":
+                continue
+            cur = out.at[idx, col]
+            if _tessa_cell_has_value(cur):
+                continue
+            if _tessa_cell_has_value(v):
+                out.at[idx, col] = v
+        if doc_col and doc_col in out.columns and not _tessa_cell_has_value(out.at[idx, doc_col]) and k:
+            out.at[idx, doc_col] = k
+    out = out.drop(columns=["_join_key_tmp"], errors="ignore")
+    return out
+
+
 # ==================== DASHBOARD: Предписания по подрядчикам ====================
 def dashboard_predpisania(df):
     """
     Отчёт «Предписания по подрядчикам» — TESSA, KindName содержит «Предписан».
-    Макет: фильтры Проект (объект) / Подрядчик / № договора; KPI: неустранённые, просроченные, критические;
-    столбчатая диаграмма: по подрядчикам (просроченные внутри общего числа); детальная таблица.
+    Оформление в общей тёмной теме дашборда (как остальные отчёты).
     """
     st.header("Предписания по подрядчикам")
+    st.caption(
+        "Данные TESSA, виды «Предписание». Поля «№ договора» и «Срок устранения» ищутся по типовым именам "
+        "(ContractNumber, DueDate и др.); при раздельных файлах Id (DocID) и Tasks (CardId) строки задач "
+        "дополняются полями карточки, если CardId совпадает с DocID."
+    )
 
     tessa_df = st.session_state.get("tessa_data", None)
     if tessa_df is None or tessa_df.empty:
@@ -10182,6 +10816,7 @@ def dashboard_predpisania(df):
 
     work = tessa_df.copy()
     work.columns = [str(c).strip() for c in work.columns]
+    work = _tessa_fill_card_from_doc_lookup(work)
 
     kind_col = _tessa_find_column(work, ["KindName", "kindname", "Вид"])
     if kind_col:
@@ -10204,6 +10839,9 @@ def dashboard_predpisania(df):
         st.info("Нет предписаний с заполненным объектом/проектом.")
         return
 
+    # Повторно объединяем по ключу уже внутри выборки «предписания» (договор/срок могли быть только в других строках)
+    pred = _tessa_fill_card_from_doc_lookup(pred)
+
     krstates_df = st.session_state.get("reference_krstates", None)
     status_map = {}
     if krstates_df is not None and not krstates_df.empty:
@@ -10222,13 +10860,73 @@ def dashboard_predpisania(df):
     contr_col = _tessa_find_column(pred, ["CONTR", "Контрагент", "contr"])
     contract_col = _tessa_find_column(
         pred,
-        ["ContractNumber", "НомерДоговора", "Номер договора", "Договор", "DocContract", "Contract"],
+        [
+            "ContractNumber",
+            "НомерДоговора",
+            "Номер договора",
+            "Номер_договора",
+            "DocContract",
+            "DocContractNumber",
+            "Contract",
+            "Договор",
+            "ДоговорНомер",
+            "РегистрационныйНомерДоговора",
+            "НомерДоговораПодрядчика",
+            "РНД",
+            "ШифрДоговора",
+            "DogNumber",
+            "НомерРД",
+            "РДПоДоговору",
+        ],
     )
     due_col = _tessa_find_column(
         pred,
-        ["DueDate", "Срок", "PlanEnd", "Completed", "CompletionDate", "Срок устранения"],
+        [
+            "DueDate",
+            "Срок устранения предписания",
+            "Срок устранения",
+            "СрокУстранения",
+            "PlanEnd",
+            "Deadline",
+            "Контрольный срок",
+            "PlanDate",
+            "ДатаПлановогоОкончания",
+            "ДатаСрока",
+            "СрокПредписания",
+            "ДатаИсполнения",
+            "ExecutionDate",
+            "TargetDate",
+        ],
     )
-    doc_num_col = _tessa_find_column(pred, ["DocNumber", "Number", "Номер"])
+    completion_col = _tessa_find_column(
+        pred,
+        ["Completed", "CompletionDate", "Дата завершения", "Факт устранения"],
+    )
+    doc_num_col = _tessa_find_column(
+        pred,
+        [
+            "DocNumber",
+            "Номер предписания",
+            "НомерПредписания",
+            "НомерДокумента",
+            "Number",
+        ],
+    )
+    if not doc_num_col:
+        for col in pred.columns:
+            k = str(col).strip().lower()
+            if contract_col is not None and str(col) == str(contract_col):
+                continue
+            if "номер" in k and "договор" not in k and "contract" not in k:
+                doc_num_col = col
+                break
+    creation_col_pred = _tessa_find_column(pred, ["CreationDate", "creationdate", "Дата создания"])
+
+    _excl_guess = [kind_col, contr_col, obj_col, doc_num_col, creation_col_pred, completion_col]
+    if not contract_col:
+        contract_col = _pred_guess_contract_column(pred, exclude=_excl_guess)
+    if not due_col:
+        due_col = _pred_guess_due_column(pred, exclude=_excl_guess + [contract_col])
 
     st_l = pred["Статус"].astype(str)
     pred["_signed"] = st_l.str.contains("Подписан", case=False, na=False) | st_l.str.contains("Согласован", case=False, na=False)
@@ -10236,13 +10934,18 @@ def dashboard_predpisania(df):
         pred["_due"] = _tessa_to_datetime(pred[due_col])
     else:
         pred["_due"] = pd.NaT
+
     def _overdue_days_row(r):
         if r["_signed"]:
             return 0
+        if completion_col:
+            cd = _tessa_to_datetime(pd.Series([r.get(completion_col)])).iloc[0]
+            if pd.notna(cd):
+                return 0
         if pd.notna(r["_due"]):
             d = r["_due"]
             if hasattr(d, "date"):
-                dd = d.date() if hasattr(d, "date") else d
+                dd = d.date()
             else:
                 dd = pd.to_datetime(d, errors="coerce")
                 dd = dd.date() if pd.notna(dd) else None
@@ -10253,27 +10956,49 @@ def dashboard_predpisania(df):
     pred["_overdue_days"] = pred.apply(_overdue_days_row, axis=1)
     pred["_critical"] = pred["_overdue_days"] > 30
 
-    # --- Фильтры (макет Предписания.html) ---
-    f1, f2, f3 = st.columns(3)
-    with f1:
+    st.markdown("**Фильтры**")
+    fc1, fc2, fc3, fb1, fb2 = st.columns([2, 2, 2, 1, 1])
+    if obj_col:
+        projects = ["Все проекты"] + sorted(pred[obj_col].dropna().astype(str).str.strip().unique().tolist())
+    else:
+        projects = ["Все проекты"]
+    if contr_col:
+        contractors = ["Все подрядчики"] + sorted(
+            pred[contr_col].dropna().astype(str).str.strip().unique().tolist(),
+            key=lambda x: str(x).lower(),
+        )
+    else:
+        contractors = ["Все подрядчики"]
+
+    with fc1:
         if obj_col:
-            objects = ["Все"] + sorted(pred[obj_col].dropna().astype(str).str.strip().unique().tolist())
-            sel_obj = st.selectbox("Проект (объект)", objects, key="pred_obj")
+            sel_obj = st.selectbox("Проект", projects, key="pred_m_p")
         else:
-            sel_obj = "Все"
-    with f2:
+            sel_obj = "Все проекты"
+    with fc2:
         if contr_col:
-            contrs = ["Все"] + sorted(pred[contr_col].dropna().astype(str).str.strip().unique().tolist())
-            sel_contr = st.selectbox("Подрядчик", contrs, key="pred_contr")
+            sel_contr = st.selectbox("Подрядчик", contractors, key="pred_m_c")
         else:
-            sel_contr = "Все"
-    with f3:
-        contract_q = st.text_input("№ договора (частичный поиск)", "", key="pred_contract_q")
+            sel_contr = "Все подрядчики"
+    with fc3:
+        contract_q = st.text_input("№ договора (частичный поиск)", "", key="pred_m_contract")
+    with fb1:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.button("Применить", key="pred_m_apply", type="primary", use_container_width=True)
+    with fb2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("Сбросить", key="pred_m_reset", use_container_width=True):
+            if obj_col:
+                st.session_state.pred_m_p = "Все проекты"
+            if contr_col:
+                st.session_state.pred_m_c = "Все подрядчики"
+            st.session_state.pred_m_contract = ""
+            st.rerun()
 
     filtered = pred.copy()
-    if sel_obj != "Все" and obj_col:
+    if sel_obj != "Все проекты" and obj_col:
         filtered = filtered[filtered[obj_col].astype(str).str.strip() == sel_obj]
-    if sel_contr != "Все" and contr_col:
+    if sel_contr != "Все подрядчики" and contr_col:
         filtered = filtered[filtered[contr_col].astype(str).str.strip() == sel_contr]
     if contract_q.strip() and contract_col:
         filtered = filtered[
@@ -10284,113 +11009,261 @@ def dashboard_predpisania(df):
         st.info("Нет данных при выбранных фильтрах.")
         return
 
-    unresolved = (~filtered["_signed"]).sum()
-    overdue_cnt = (filtered["_overdue_days"] > 0).sum()
-    critical_cnt = filtered["_critical"].sum()
-
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Всего в выборке", len(filtered))
-    k2.metric("Неустранённые (не подписаны)", int(unresolved))
-    k3.metric("Просроченные", int(overdue_cnt))
-    k4.metric("Критические (> 30 дн.)", int(critical_cnt))
     if not due_col:
-        st.caption("Для расчёта просрочки укажите в данных TESSA колонку срока (DueDate / Срок / Completed и т.п.).")
+        st.caption(
+            "Срок устранения считается отдельно от даты завершения (Completed). "
+            "Укажите DueDate или «Срок устранения» в TESSA."
+        )
 
-    tab_main, tab_extra = st.tabs(["Сводка и диаграммы", "По статусам и экспорт"])
+    unres_mask = ~filtered["_signed"]
+    n_unresolved = int(unres_mask.sum())
+    n_overdue = int((unres_mask & (filtered["_overdue_days"] > 0)).sum())
+    n_critical = int((unres_mask & filtered["_critical"]).sum())
 
-    with tab_main:
-        if contr_col and contr_col in filtered.columns:
-            st.subheader("Предписания по подрядчикам (синий — неустранённые, оранжевый — просроченные)")
-            grp = filtered.groupby(contr_col, as_index=False).agg(
-                Всего=("_signed", lambda s: int((~s).sum())),
-                Просрочено=("_overdue_days", lambda x: int((x > 0).sum())),
+    fu = filtered.loc[unres_mask]
+    # Одна строка заголовков 2:1 — выравнивание с левым «Предписания…» и правым «Ключевые показатели»
+    pred_h_left, pred_h_right = st.columns([2, 1])
+    with pred_h_left:
+        st.subheader("Предписания по подрядчикам")
+    with pred_h_right:
+        st.subheader("Ключевые показатели")
+
+    col_chart, col_kpi = st.columns([2, 1])
+
+    with col_chart:
+        st.markdown(
+            _PRED_DASH_MOCK_CSS
+            + '<div class="pred-leg"><span style="color:#3498db;font-weight:600;">■</span> Неустраненные (всего) '
+            "&nbsp;·&nbsp; <span style=\"color:#e67e22;font-weight:600;\">■</span> Просроченные "
+            "&nbsp;·&nbsp; Числа у синих столбцов — всего неустранённых по подрядчику (как «пузыри» в макете).</div>",
+            unsafe_allow_html=True,
+        )
+        if contr_col and contr_col in fu.columns and not fu.empty:
+            grp = (
+                fu.groupby(contr_col, as_index=False)
+                .agg(
+                    Всего=(contr_col, "size"),
+                    Просрочено=("_overdue_days", lambda x: int((x > 0).sum())),
+                )
+                .sort_values("Всего", ascending=False)
             )
-            grp = grp.sort_values("Всего", ascending=True)
             fig1 = go.Figure()
-            fig1.add_trace(go.Bar(
-                y=grp[contr_col], x=grp["Всего"], name="Неустранённые", orientation="h",
-                marker_color="#3498db", text=grp["Всего"], textposition="outside",
-            ))
-            fig1.add_trace(go.Bar(
-                y=grp[contr_col], x=grp["Просрочено"], name="Просроченные", orientation="h",
-                marker_color="#e67e22", text=grp["Просрочено"], textposition="outside",
-            ))
+            fig1.add_trace(
+                go.Bar(
+                    y=grp[contr_col],
+                    x=grp["Всего"],
+                    name="Неустраненные",
+                    orientation="h",
+                    marker_color="#3498db",
+                    text=grp["Всего"],
+                    textposition="outside",
+                    textfont=dict(color="#ffffff", size=14),
+                )
+            )
+            fig1.add_trace(
+                go.Bar(
+                    y=grp[contr_col],
+                    x=grp["Просрочено"],
+                    name="Просроченные",
+                    orientation="h",
+                    marker_color="#e67e22",
+                    text=grp["Просрочено"],
+                    textposition="outside",
+                    textfont=dict(color="#ffffff", size=14),
+                )
+            )
             fig1.update_layout(
                 barmode="group",
                 bargap=0.28,
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
             )
-            fig1 = apply_chart_background(fig1)
-            fig1.update_layout(
-                height=max(360, len(grp) * 40 + 120),
-                yaxis_title="", xaxis_title="Количество",
+            xmax = max(
+                float(pd.to_numeric(grp["Всего"], errors="coerce").fillna(0).max()),
+                float(pd.to_numeric(grp["Просрочено"], errors="coerce").fillna(0).max()),
+                1.0,
             )
-            render_chart(fig1, caption_below="По подрядчикам: неустранённые и просроченные", key="pred_bar_group")
+            fig1.update_layout(
+                height=max(320, len(grp) * 36 + 100),
+                yaxis_title="",
+                xaxis_title="Количество",
+                margin=dict(l=8, r=48, t=40, b=8),
+                xaxis=dict(range=[0, xmax * 1.35]),
+                uniformtext=dict(minsize=9, mode="show"),
+            )
+            fig1 = apply_chart_background(fig1)
+            fig1.update_layout(uniformtext=dict(minsize=9, mode="show"))
+            render_chart(fig1, key="pred_bar_main", caption_below="По подрядчикам: неустраненные и просроченные")
+        else:
+            st.info("Нет данных для диаграммы (нужна колонка подрядчика и неустраненные строки).")
 
-        st.subheader("Детальная таблица (сортировка: критические и просрочка сверху)")
-        show = filtered.copy()
-        show = show.sort_values(["_critical", "_overdue_days"], ascending=[False, False])
-        out_cols = []
-        if contr_col:
-            out_cols.append(contr_col)
-        if obj_col:
-            out_cols.append(obj_col)
-        if contract_col:
-            out_cols.append(contract_col)
-        if doc_num_col:
-            out_cols.append(doc_num_col)
-        if due_col:
-            out_cols.append(due_col)
-        out_cols.extend(["_overdue_days", "_critical", "Статус"])
-        out_cols = [c for c in out_cols if c in show.columns]
-        table_df = show[out_cols].copy()
-        table_df = table_df.rename(columns={
-            "_overdue_days": "Дней просрочки",
-            "_critical": "Критическое (>30 дн.)",
-        })
-        if contr_col:
-            table_df = table_df.rename(columns={contr_col: "Подрядчик"})
-        if obj_col:
-            table_df = table_df.rename(columns={obj_col: "Проект"})
-        if contract_col:
-            table_df = table_df.rename(columns={contract_col: "№ договора"})
-        if doc_num_col:
-            table_df = table_df.rename(columns={doc_num_col: "№ предписания"})
-        if due_col:
-            table_df = table_df.rename(columns={due_col: "Срок / дата контроля"})
-        st.caption(f"Записей: {len(table_df)}")
-        _render_html_table(table_df)
-        csv_bytes = table_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        st.download_button("Скачать CSV", csv_bytes, "predpisania.csv", "text/csv", key="pred_csv")
+    with col_kpi:
+        st.markdown(
+            _pred_kpi_circles_html(n_unresolved, n_overdue, n_critical, with_heading=False),
+            unsafe_allow_html=True,
+        )
 
-    with tab_extra:
+    overdue_only = filtered.loc[unres_mask & (filtered["_overdue_days"] > 0)].copy()
+    mock_blocks = _pred_build_overdue_mock_blocks(
+        overdue_only, contr_col, obj_col, contract_col, doc_num_col, due_col
+    )
+    st.markdown(_pred_overdue_mock_table_html(mock_blocks, n_overdue), unsafe_allow_html=True)
+
+    st.subheader("Все неустраненные предписания — детальная таблица")
+    st.caption("Сортировка: критические и просрочка сверху.")
+    show = filtered.loc[unres_mask].copy()
+    show = show.sort_values(["_critical", "_overdue_days"], ascending=[False, False])
+
+    # Ровно 7 колонок в фиксированном порядке (как макет)
+    table_df = _pred_build_seven_column_df(
+        show, contr_col, obj_col, contract_col, doc_num_col, due_col
+    )
+
+    overdue_cnt = int((show["_overdue_days"] > 0).sum())
+    st.caption(f"Записей: {len(table_df)} · просроченных: {overdue_cnt}")
+    _render_html_table(table_df)
+    csv_bytes = table_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+    st.download_button("Скачать CSV", csv_bytes, "predpisania.csv", "text/csv", key="pred_csv")
+
+    with st.expander("По статусам и объектам", expanded=False):
         status_counts = filtered["Статус"].value_counts()
         st.subheader("Предписания по статусам")
         status_df = status_counts.reset_index()
         status_df.columns = ["Статус", "Количество"]
         fig2 = px.pie(
-            status_df, names="Статус", values="Количество",
+            status_df,
+            names="Статус",
+            values="Количество",
             color_discrete_sequence=px.colors.qualitative.Set2,
         )
         fig2.update_traces(textinfo="label+percent+value", textfont_size=12)
         fig2 = apply_chart_background(fig2)
         fig2.update_layout(height=420)
-        render_chart(fig2, caption_below="Распределение предписаний по статусам", key="pred_status_pie")
+        render_chart(fig2, key="pred_status_pie", caption_below="Распределение предписаний по статусам")
 
         if obj_col and obj_col in filtered.columns:
             st.subheader("Предписания по объектам")
-            by_obj = (filtered.groupby(obj_col).size()
-                      .reset_index(name="Количество")
-                      .sort_values("Количество", ascending=False))
+            by_obj = (
+                filtered.groupby(obj_col)
+                .size()
+                .reset_index(name="Количество")
+                .sort_values("Количество", ascending=False)
+            )
             fig3 = px.bar(
-                by_obj, x=obj_col, y="Количество", text="Количество",
+                by_obj,
+                x=obj_col,
+                y="Количество",
+                text="Количество",
                 labels={obj_col: "Объект"},
                 color_discrete_sequence=["#06A77D"],
             )
             fig3.update_traces(textposition="outside", textfont=dict(size=13, color="white"))
             fig3 = apply_chart_background(fig3)
             fig3.update_layout(height=450, xaxis_title="Объект", yaxis_title="Количество", xaxis_tickangle=-45)
-            render_chart(fig3, caption_below="Количество предписаний по объектам", key="pred_by_obj")
+            render_chart(fig3, key="pred_by_obj", caption_below="Количество предписаний по объектам")
+
+
+_DEV_DETAIL_TABLE_CSS = """
+<style>
+.rendered-table tr.dev-detail-row-warn td {
+  background: rgba(220, 53, 69, 0.28) !important;
+  color: #ffd6d6;
+}
+</style>
+"""
+
+
+def _dev_fmt_cell_nd(v):
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return "Н/Д"
+    s = str(v).strip()
+    if s.lower() in ("", "nan", "none", "nat"):
+        return "Н/Д"
+    return s
+
+
+def _dev_fmt_date_ru(v):
+    if v is None:
+        return "Н/Д"
+    # NaT / NaN / NAType — до strftime (у pd.NaT isinstance Timestamp, но strftime падает)
+    try:
+        if pd.isna(v):
+            return "Н/Д"
+    except (TypeError, ValueError):
+        pass
+    if isinstance(v, float) and pd.isna(v):
+        return "Н/Д"
+    if isinstance(v, pd.Timestamp):
+        return v.strftime("%d.%m.%Y")
+    if isinstance(v, datetime):
+        return v.strftime("%d.%m.%Y")
+    if isinstance(v, date):
+        return v.strftime("%d.%m.%Y")
+    ts = pd.to_datetime(v, errors="coerce")
+    if pd.isna(ts):
+        return "Н/Д"
+    return ts.strftime("%d.%m.%Y")
+
+
+def _dev_column_looks_like_date(col_name: str) -> bool:
+    n = str(col_name).lower()
+    if "отклонение" in n or "дней" in n or "%" in n:
+        return False
+    if any(k in n for k in ("начало", "окончание", "окончан", "дата")):
+        return True
+    if ("plan" in n or "base" in n) and ("start" in n or "end" in n):
+        return True
+    return False
+
+
+def _render_dev_detail_table(df, max_rows=500):
+    """Детальная таблица по правкам: даты дд.мм.гггг или «Н/Д»; подсветка строк с % выполнения < 100 (по ТЗ — красный)."""
+    show = df.head(max_rows).copy()
+    pct_name = "% выполнения"
+    esc = html_module.escape
+
+    thead = "<thead><tr>" + "".join(f"<th>{esc(str(c))}</th>" for c in show.columns) + "</tr></thead>"
+    body_parts = []
+    for _, row in show.iterrows():
+        pct_raw = row[pct_name] if pct_name in show.columns else None
+        pct_num = pd.to_numeric(pct_raw, errors="coerce")
+        # По ТЗ: подсветка при % выполнения < 100 (не трогаем > 100 как «не завершено»)
+        warn = pd.notna(pct_num) and float(pct_num) < 100.0
+        tr_o = '<tr class="dev-detail-row-warn">' if warn else "<tr>"
+        tds = []
+        for col in show.columns:
+            v = row[col]
+            if col == pct_name:
+                if pd.isna(pct_num):
+                    cell = "Н/Д"
+                elif abs(float(pct_num) - round(float(pct_num))) < 1e-6:
+                    cell = str(int(round(float(pct_num))))
+                else:
+                    cell = f"{float(pct_num):.1f}".replace(".", ",")
+            elif _dev_column_looks_like_date(str(col)):
+                cell = _dev_fmt_date_ru(v)
+            else:
+                if isinstance(v, (pd.Timestamp, datetime, date)):
+                    cell = _dev_fmt_date_ru(v)
+                else:
+                    num_try = pd.to_numeric(v, errors="coerce")
+                    if pd.notna(num_try) and str(v).strip() != "":
+                        fv = float(num_try)
+                        if abs(fv - round(fv)) < 1e-9:
+                            cell = str(int(round(fv)))
+                        else:
+                            cell = str(fv).replace(".", ",")
+                    else:
+                        cell = _dev_fmt_cell_nd(v)
+            tds.append(f"<td>{esc(cell)}</td>")
+        body_parts.append(tr_o + "".join(tds) + "</tr>")
+    tbody = "<tbody>" + "".join(body_parts) + "</tbody>"
+    html_tbl = '<table class="rendered-table" border="0">' + thead + tbody + "</table>"
+    st.markdown(
+        _TABLE_CSS + _DEV_DETAIL_TABLE_CSS + '<div class="rendered-table-wrap">' + html_tbl + "</div>",
+        unsafe_allow_html=True,
+    )
+    if len(df) > max_rows:
+        st.caption(f"Показано {max_rows} из {len(df)} записей. Скачайте CSV для полных данных.")
 
 
 # ==================== DASHBOARD: Девелоперские проекты ====================
@@ -10400,6 +11273,11 @@ def dashboard_developer_projects(df):
     Таблица: проект, фазы/разделы, план/факт/отклонение, % выполнения.
     """
     st.header("Девелоперские проекты")
+    st.caption(
+        "По правкам: на вкладке «Сводка» — блок «Выборка ДС» (план/факт из project_data по сценарию и статье); "
+        "счётчик предписаний TESSA — по выгрузке в сессии; в «Детальной таблице» — даты в формате дд.мм.гггг "
+        "или «Н/Д», красная подсветка строк, где % выполнения < 100 (по ТЗ)."
+    )
 
     if df is None or not hasattr(df, "columns") or df.empty:
         st.warning("Загрузите файл с данными проекта (MSP) для отчёта «Девелоперские проекты».")
@@ -10461,6 +11339,15 @@ def dashboard_developer_projects(df):
         st.info("Нет данных при выбранных фильтрах.")
         return
 
+    matrix_df = work.copy()
+    if sel_proj != "Все" and project_col:
+        matrix_df = matrix_df[matrix_df[project_col].astype(str).str.strip() == sel_proj]
+    uniq_proj_n = (
+        int(work[project_col].dropna().astype(str).str.strip().nunique())
+        if project_col and project_col in work.columns
+        else 1
+    )
+
     # --- Метрики ---
     if pct_col and pct_col in filtered.columns:
         pct_vals = pd.to_numeric(filtered[pct_col], errors="coerce")
@@ -10479,8 +11366,41 @@ def dashboard_developer_projects(df):
     else:
         st.metric("Всего задач", len(filtered))
 
+    tessa_df_dev = st.session_state.get("tessa_data")
+    if tessa_df_dev is not None and not getattr(tessa_df_dev, "empty", True):
+        tk = tessa_df_dev.copy()
+        tk.columns = [str(c).strip() for c in tk.columns]
+        k_kind = _tessa_find_column(tk, ["KindName", "kindname", "Вид"])
+        if k_kind:
+            pr_n = int(
+                tk[k_kind].astype(str).str.contains("Предписан", case=False, na=False).sum()
+            )
+            st.metric("Предписаний в TESSA (по выгрузке)", pr_n)
+        else:
+            st.caption("TESSA загружена; для счётчика предписаний нужна колонка вида (KindName).")
+
     # --- Вкладки ---
-    tab_overview, tab_deviations, tab_detail = st.tabs(["Сводка по проектам", "Отклонения", "Детальная таблица"])
+    tab_tz, tab_overview, tab_deviations, tab_detail = st.tabs(
+        ["Матрица по ТЗ", "Сводка по проектам", "Отклонения", "Детальная таблица"]
+    )
+
+    with tab_tz:
+        st.subheader("Матрица контрольных точек (ТЗ)")
+        if sel_proj == "Все" and project_col and uniq_proj_n > 1:
+            st.info(
+                "Выберите один проект в фильтре «Проект» — матрица строится по одному MSP-проекту "
+                "(иначе смешиваются задачи разных проектов)."
+            )
+        elif matrix_df.empty:
+            st.info("Нет строк MSP для выбранного проекта.")
+        else:
+            rows_tz, cap_tz = build_dev_tz_matrix_rows(
+                matrix_df,
+                st.session_state.get("project_data"),
+                st.session_state,
+            )
+            st.caption(cap_tz)
+            render_dev_tz_matrix(rows_tz, _TABLE_CSS)
 
     with tab_overview:
         if project_col and pct_col:
@@ -10527,6 +11447,67 @@ def dashboard_developer_projects(df):
             sec_summary["Среднее_выполнение"] = sec_summary["Среднее_выполнение"].round(1)
             sec_summary = sec_summary.rename(columns={section_col: "Раздел", "Среднее_выполнение": "Ср. выполнение, %"})
             _render_html_table(sec_summary)
+
+        with st.expander("Выборка ДС (обороты по подрядчикам / БДДС)", expanded=False):
+            st.caption(
+                "По правкам: из project_data — строки с «Сценарием»; план = сценарий с «бюджет» "
+                "без статей «БДР» в «Статье оборотов»; факт = сценарий с «факт»."
+            )
+            full_pd = st.session_state.get("project_data")
+            if full_pd is None or full_pd.empty:
+                st.info("Нет строк в project_data (загрузите обороты/БДДС через web/).")
+            else:
+                bd = full_pd.copy()
+                bd.columns = [str(c).strip() for c in bd.columns]
+
+                def _col_ci(names):
+                    for n in names:
+                        n0 = n.strip().lower()
+                        for c in bd.columns:
+                            if str(c).strip().lower() == n0:
+                                return c
+                    for n in names:
+                        n0 = n.strip().lower()
+                        for c in bd.columns:
+                            cl = str(c).strip().lower()
+                            if n0 in cl:
+                                return c
+                    return None
+
+                scen_col = _col_ci(["Сценарий", "Scenario", "сценарий"])
+                sum_col = _col_ci(["Сумма", "Sum", "Amount", "СуммаОборота"])
+                art_col = _col_ci(["Статья оборотов", "СтатьяОборотов", "статья оборотов", "Статья"])
+
+                if not scen_col or not sum_col:
+                    st.info("Не найдены колонки «Сценарий» и/или «Сумма» — выборка ДС недоступна.")
+                else:
+                    b = bd[bd[scen_col].notna()].copy()
+                    b = b[b[scen_col].astype(str).str.strip() != ""]
+                    if b.empty:
+                        st.info("Нет строк с заполненным сценарием.")
+                    else:
+                        scen_s = b[scen_col].astype(str)
+                        art_s = (
+                            b[art_col].astype(str)
+                            if art_col and art_col in b.columns
+                            else pd.Series("", index=b.index)
+                        )
+                        plan_mask = scen_s.str.contains("бюджет", case=False, na=False) & ~art_s.str.contains(
+                            "бдр", case=False, na=False
+                        )
+                        fact_mask = scen_s.str.contains("факт", case=False, na=False)
+                        plan_sum = pd.to_numeric(b.loc[plan_mask, sum_col], errors="coerce").fillna(0).sum()
+                        fact_sum = pd.to_numeric(b.loc[fact_mask, sum_col], errors="coerce").fillna(0).sum()
+                        c1, c2, c3 = st.columns(3)
+                        c1.metric("План (бюджет, без статей БДР), руб.", f"{plan_sum:,.0f}".replace(",", " "))
+                        c2.metric("Факт, руб.", f"{fact_sum:,.0f}".replace(",", " "))
+                        c3.metric("Отклонение (факт − план), руб.", f"{(fact_sum - plan_sum):,.0f}".replace(",", " "))
+                        show_cols = [scen_col, sum_col]
+                        if art_col and art_col in b.columns:
+                            show_cols.insert(1, art_col)
+                        snap = b[show_cols].head(400).copy()
+                        st.caption(f"Пример строк (до 400 из {len(b)}).")
+                        _render_html_table(snap)
 
     with tab_deviations:
         if dev_days_col and dev_days_col in filtered.columns:
@@ -10599,9 +11580,88 @@ def dashboard_developer_projects(df):
         detail = detail.rename(columns=rename)
 
         if "% выполнения" in detail.columns:
-            detail["% выполнения"] = pd.to_numeric(detail["% выполнения"], errors="coerce").fillna(0).astype(int)
+            detail["% выполнения"] = pd.to_numeric(detail["% выполнения"], errors="coerce")
 
-        st.caption(f"Записей: {len(detail)}")
-        _render_html_table(detail)
+        st.caption(
+            f"Записей: {len(detail)} · «Н/Д» — нет данных; красным выделены строки, где % выполнения < 100%."
+        )
+        _render_dev_detail_table(detail)
         csv_bytes = detail.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
         st.download_button("Скачать CSV", csv_bytes, "developer_projects.csv", "text/csv", key="dev_proj_csv")
+
+
+# ── Правки заказчика (Правки 1.pdf): скрытые и новые отчёты ─────────────────
+def dashboard_pravki_report_hidden(df):
+    """Заглушка: отчёт исключён из меню по правкам."""
+    st.info(
+        "Отчёт «Значения отклонений от базового плана» скрыт по правкам заказчика. "
+        "Используйте «Отклонение от базового плана» или «Причины отклонений»."
+    )
+
+
+def dashboard_control_points(df):
+    """
+    Контрольные точки (MSP): по правкам — фильтры по блокам/лотам, индикаторы отклонений,
+    админ-настройка списка задач и журнал изменений (в разработке).
+    """
+    st.header("Контрольные точки")
+    st.caption(
+        "План = базовое окончание MSP, факт = окончание; отклонение = факт − план (по правкам). "
+        "Полный функционал (выбор задач из MSP в админке, аудит) подключается отдельно."
+    )
+    if df is None or df.empty:
+        st.warning("Загрузите данные MSP (проект).")
+        return
+    work = df.copy()
+    if "base end" not in work.columns or "plan end" not in work.columns:
+        st.warning("Нужны колонки «base end» / «plan end» (или русские аналоги после загрузки MSP).")
+        return
+    bs = pd.to_datetime(work["base end"], errors="coerce")
+    pe = pd.to_datetime(work["plan end"], errors="coerce")
+    dev_days = (pe - bs).dt.days
+    st.metric("Задач в выборке", len(work))
+    st.metric("С отклонением окончания (дней ≠ 0)", int((dev_days.notna() & (dev_days != 0)).sum()))
+    sample = work.head(30).copy()
+    sample["_отклонение_дн"] = dev_days.loc[sample.index].values
+    cols = [c for c in ("project name", "task name", "plan end", "base end") if c in sample.columns]
+    if cols:
+        st.dataframe(sample[cols + ["_отклонение_дн"]], use_container_width=True, hide_index=True)
+
+
+def dashboard_project_schedule_chart(df):
+    """График проекта — каркас по правкам (детализация по макету заказчика)."""
+    st.header("График проекта")
+    st.info(
+        "Раздел введён по правкам. Подключите макет/HTML или уточните состав графиков — "
+        "ниже показана краткая сводка по загруженному MSP."
+    )
+    if df is None or df.empty:
+        st.warning("Загрузите данные MSP.")
+        return
+    pref = [
+        c
+        for c in (
+            "project name",
+            "task name",
+            "plan start",
+            "plan end",
+            "base start",
+            "base end",
+            "pct complete",
+        )
+        if c in df.columns
+    ]
+    st.dataframe(
+        df[pref].head(80) if pref else df.head(80),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+def dashboard_pd_delay(df):
+    """Просрочка выдачи ПД — по правкам на базе MSP (временно общий каркас с РД)."""
+    st.caption(
+        "По правкам: источник — MSP; фильтры «Проект», «Разделы ПД»; замена РД→ПД в подписях. "
+        "Ниже — тот же расчёт просрочки, что и для РД, пока не выделен отдельный набор колонок ПД."
+    )
+    dashboard_rd_delay(df)

@@ -62,7 +62,7 @@ PREDEFINED_PARAMETERS = {
             'editable': True
         }
     ],
-    "Отклонение текущего срока от базового плана": [
+    "Отклонение от базового плана": [
         {
             'key': 'selected_task_for_plan_fact',
             'name': 'Задача для расчета план-факта',
@@ -72,6 +72,11 @@ PREDEFINED_PARAMETERS = {
         }
     ]
 }
+
+# Обратная совместимость со старым названием отчёта в БД/настройках
+PREDEFINED_PARAMETERS["Отклонение текущего срока от базового плана"] = PREDEFINED_PARAMETERS[
+    "Отклонение от базового плана"
+]
 
 
 def get_report_parameter(report_name: str, parameter_key: str) -> Optional[Dict]:
