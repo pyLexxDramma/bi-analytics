@@ -110,6 +110,60 @@ def _gdrs_match_data_source(series: pd.Series, wanted) -> pd.Series:
     return s == w
 
 
+def _gdrs_is_metric_like_period_false_positive(col) -> bool:
+    """Колонка не может быть «периодом»: метрики, дельта, суточные даты, служебные."""
+    s = str(col).strip().lower()
+    if not s:
+        return True
+    if s.startswith("unnamed"):
+        return True
+    if _gdrs_header_is_dd_mm_yyyy(col):
+        return True
+    bad = (
+            "среднее" in s
+            or "количество ресурс" in s
+            or "за день" in s
+            or "неделя" in s
+            or "недел" in s
+            or "дельт" in s
+            or "отклон" in s
+            or "план" == s
+            or "факт" == s
+            or "data_source" in s
+            or "тип ресурсов" in s
+    )
+    if bad:
+        return True
+    # «…за месяц» в длинном названии метрики, не колонка «Месяц»
+    if "за месяц" in s and s not in ("месяц", "за месяц") and "период" not in s:
+        if not (s.startswith("месяц") or s.startswith("период")):
+            return True
+    return False
+
+
+def _gdrs_resolve_period_column(df: pd.DataFrame):
+    """
+    Колонка календарного периода (Период / Месяц). Не используем find_column_by_partial
+    с подстрокой «месяц» — иначе матчится «среднее … за месяц» и ломается ось X.
+    """
+    if df is None or getattr(df, "empty", True):
+        return None
+    for c in df.columns:
+        if _gdrs_is_metric_like_period_false_positive(c):
+            continue
+        t = str(c).strip()
+        tl = t.lower()
+        if tl in ("период", "месяц", "period", "month"):
+            return c
+    for c in df.columns:
+        if _gdrs_is_metric_like_period_false_positive(c):
+            continue
+        tl = str(c).strip().lower()
+        if tl.startswith("период") or tl.startswith("месяц"):
+            return c
+    return None
+
+
 def _sample_for_chart(df: pd.DataFrame, max_rows: int = _MAX_CHART_ROWS) -> pd.DataFrame:
     """
     Если датафрейм превышает max_rows, равномерно сэмплирует его и показывает уведомление.
@@ -4963,41 +5017,29 @@ def dashboard_technique(df):
         work_df["Дельта_процент_numeric"] = work_df["Дельта_процент_numeric"].fillna(0)
 
     # Find Проект column
-    period_col = None
-    if "Период" in work_df.columns:
-        period_col = "Период"
-    else:
-        # Try to find period column by partial match
-        period_col = find_column_by_partial(
-            work_df, ["Период", "период", "period", "Месяц", "месяц", "month"]
-        )
+    # Период: нельзя искать через «месяц» в подстроке — матчится «среднее … за месяц» и ломает графики.
+    src_period = _gdrs_resolve_period_column(work_df)
+    if src_period:
+        if src_period != "Период":
+            def parse_period(period_val):
+                if pd.isna(period_val):
+                    return None
+                period_str = str(period_val).strip()
+                if "." in period_str:
+                    parts = period_str.split(".")
+                    if len(parts) >= 2:
+                        month_part = parts[0].strip()
+                        year_part = parts[1].strip()
+                        try:
+                            year = int(year_part)
+                            if year < 100:
+                                year = 2000 + year
+                            return f"{month_part}.{year}"
+                        except Exception:
+                            pass
+                return period_str
 
-    if period_col:
-        # Parse period format like "дек.25" or "декабрь 2025"
-        def parse_period(period_val):
-            if pd.isna(period_val):
-                return None
-            period_str = str(period_val).strip()
-            # Try to extract year and month
-            # Format: "дек.25" -> period="дек.2025"
-            # Format: "декабрь 2025" -> period="декабрь 2025"
-            if "." in period_str:
-                parts = period_str.split(".")
-                if len(parts) >= 2:
-                    month_part = parts[0].strip()
-                    year_part = parts[1].strip()
-                    try:
-                        year = int(year_part)
-                        if year < 100:
-                            year = 2000 + year
-                        return f"{month_part}.{year}"
-                    except:
-                        pass
-            return period_str
-
-        work_df["Период"] = work_df[period_col].apply(parse_period)
-    else:
-        work_df["Период"] = "Н/Д"
+            work_df["Период"] = work_df[src_period].apply(parse_period)
 
     has_plan_data = (
         "План_numeric" in work_df.columns
@@ -5012,8 +5054,7 @@ def dashboard_technique(df):
             work_df, ["Проект", "проект", "project", "Project"]
         )
 
-    period_col = None
-    period_col = "Период" if "Период" in work_df.columns else None
+    period_col = _gdrs_resolve_period_column(work_df)
 
     col1, col2 = st.columns(2)
 
@@ -5094,14 +5135,7 @@ def dashboard_technique(df):
             projects_to_process = ["Все проекты"]
 
     # Гистограммы: факт по периодам (люди и техника отдельно), количество и %
-    period_col_hist = None
-    if "Период" in filtered_df.columns:
-        period_col_hist = "Период"
-    else:
-        period_col_hist = find_column_by_partial(
-            filtered_df,
-            ["Период", "период", "period", "Месяц", "месяц", "month"],
-        )
+    period_col_hist = _gdrs_resolve_period_column(filtered_df)
     if period_col_hist and "week_sum" in filtered_df.columns:
         sources_hist = []
         if "data_source" in filtered_df.columns:
@@ -5273,6 +5307,78 @@ def dashboard_technique(df):
                         key=f"{key_prefix}_hist_period_fallback_{idx}",
                         caption_below=f"Фактическое количество по периодам: {label}",
                     )
+
+    elif "week_sum" in filtered_df.columns:
+        # Нет отдельной колонки периода (типично для web-выгрузки только с датами в заголовках): факт по подрядчикам
+        st.caption("В файле нет колонки «Период» — показан суммарный факт по подрядчикам.")
+        sources_fb = []
+        if "data_source" in filtered_df.columns:
+            sources_fb = filtered_df["data_source"].dropna().unique().tolist()
+        else:
+            sources_fb = [None]
+        labels_fb = []
+        for s in sources_fb:
+            if s is None:
+                labels_fb.append("Данные")
+            elif str(s).strip().lower() in ("ресурсы", "ресурс"):
+                labels_fb.append("Люди (ресурсы)")
+            elif str(s).strip().lower() in ("техника", "tech", "technique"):
+                labels_fb.append("Техника")
+            else:
+                labels_fb.append(str(s))
+        fb_cols = st.columns(max(1, len(sources_fb)))
+        for fbi, (src_fb, lab_fb) in enumerate(zip(sources_fb, labels_fb)):
+            if src_fb is None:
+                df_fb = filtered_df.copy()
+            else:
+                df_fb = filtered_df[_gdrs_match_data_source(filtered_df["data_source"], src_fb)].copy()
+            if df_fb.empty or "Контрагент" not in df_fb.columns:
+                with fb_cols[fbi]:
+                    st.caption(f"Факт по подрядчикам: {lab_fb}")
+                    st.info("Нет данных.")
+                continue
+            by_c = (
+                df_fb.groupby("Контрагент", as_index=False)["week_sum"]
+                .sum()
+                .assign(Факт=lambda x: pd.to_numeric(x["week_sum"], errors="coerce").fillna(0))
+            )
+            by_c = by_c[by_c["Факт"].abs() > 0].sort_values("Факт", ascending=False)
+            if by_c.empty:
+                with fb_cols[fbi]:
+                    st.caption(f"Факт по подрядчикам: {lab_fb}")
+                    st.info("Нет данных для отображения.")
+                continue
+            tot = float(by_c["Факт"].sum())
+            by_c["pct"] = (by_c["Факт"] / tot * 100.0).round(1) if tot else 0.0
+            is_res = "ресурс" in lab_fb.lower() or "люди" in lab_fb.lower()
+            col_bar = "#3498db" if is_res else "#e67e22"
+            fig_fb = go.Figure(
+                data=[
+                    go.Bar(
+                        x=by_c["Контрагент"],
+                        y=by_c["Факт"],
+                        marker_color=col_bar,
+                        text=[f"{int(r['Факт'])} ({r['pct']}%)" for _, r in by_c.iterrows()],
+                        textposition="outside",
+                        textfont=dict(size=11, color="white"),
+                    )
+                ]
+            )
+            fig_fb.update_layout(
+                title_text="",
+                xaxis_title="Контрагент",
+                yaxis_title="Факт (сумма)",
+                height=420,
+                showlegend=False,
+                xaxis=dict(tickangle=-45),
+            )
+            fig_fb = apply_chart_background(fig_fb)
+            with fb_cols[fbi]:
+                render_chart(
+                    fig_fb,
+                    key=f"{key_prefix}_hist_noperiod_{fbi}",
+                    caption_below=f"Факт по подрядчикам (в выгрузке нет колонки периода): {lab_fb}",
+                )
 
     plan_fact_row_done = False
     for project_name in projects_to_process:
@@ -6346,11 +6452,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             ],
         )
 
-    period_col = "Период" if "Период" in work_df.columns else None
-    if period_col is None:
-        period_col = find_column_by_partial(
-            work_df, ["Период", "период", "period", "Месяц", "месяц", "month"]
-        )
+    period_col = _gdrs_resolve_period_column(work_df)
 
     col1, col2 = st.columns(2)
 
@@ -6458,9 +6560,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         else:
             st.info("Нет колонок для таблицы с выбранными фильтрами.")
 
-    period_col_hist = period_col
-    if period_col_hist is None and "Период" in filtered_df.columns:
-        period_col_hist = "Период"
+    period_col_hist = _gdrs_resolve_period_column(filtered_df)
     if period_col_hist and "week_sum" in filtered_df.columns:
         sources_hist = []
         if "data_source" in filtered_df.columns:
@@ -6632,6 +6732,77 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                         key=f"{key_prefix}_hist_period_fallback_{idx}",
                         caption_below=f"Фактическое количество по периодам: {label}",
                     )
+
+    elif "week_sum" in filtered_df.columns:
+        st.caption("В файле нет колонки «Период» — показан суммарный факт по подрядчикам.")
+        sources_wfb = []
+        if "data_source" in filtered_df.columns:
+            sources_wfb = filtered_df["data_source"].dropna().unique().tolist()
+        else:
+            sources_wfb = [None]
+        labels_wfb = []
+        for s in sources_wfb:
+            if s is None:
+                labels_wfb.append("Данные")
+            elif str(s).strip().lower() in ("ресурсы", "ресурс"):
+                labels_wfb.append("Люди (ресурсы)")
+            elif str(s).strip().lower() in ("техника", "tech", "technique"):
+                labels_wfb.append("Техника")
+            else:
+                labels_wfb.append(str(s))
+        wfb_cols = st.columns(max(1, len(sources_wfb)))
+        for wfi, (src_wfb, lab_wfb) in enumerate(zip(sources_wfb, labels_wfb)):
+            if src_wfb is None:
+                df_wfb = filtered_df.copy()
+            else:
+                df_wfb = filtered_df[_gdrs_match_data_source(filtered_df["data_source"], src_wfb)].copy()
+            if df_wfb.empty or "Контрагент" not in df_wfb.columns:
+                with wfb_cols[wfi]:
+                    st.caption(f"Факт по подрядчикам: {lab_wfb}")
+                    st.info("Нет данных.")
+                continue
+            by_w = (
+                df_wfb.groupby("Контрагент", as_index=False)["week_sum"]
+                .sum()
+                .assign(Факт=lambda x: pd.to_numeric(x["week_sum"], errors="coerce").fillna(0))
+            )
+            by_w = by_w[by_w["Факт"].abs() > 0].sort_values("Факт", ascending=False)
+            if by_w.empty:
+                with wfb_cols[wfi]:
+                    st.caption(f"Факт по подрядчикам: {lab_wfb}")
+                    st.info("Нет данных для отображения.")
+                continue
+            tw = float(by_w["Факт"].sum())
+            by_w["pct"] = (by_w["Факт"] / tw * 100.0).round(1) if tw else 0.0
+            is_rw = "ресурс" in lab_wfb.lower() or "люди" in lab_wfb.lower()
+            cbar = "#3498db" if is_rw else "#e67e22"
+            fig_wfb = go.Figure(
+                data=[
+                    go.Bar(
+                        x=by_w["Контрагент"],
+                        y=by_w["Факт"],
+                        marker_color=cbar,
+                        text=[f"{int(r['Факт'])} ({r['pct']}%)" for _, r in by_w.iterrows()],
+                        textposition="outside",
+                        textfont=dict(size=11, color="white"),
+                    )
+                ]
+            )
+            fig_wfb.update_layout(
+                title_text="",
+                xaxis_title="Контрагент",
+                yaxis_title="Факт (сумма)",
+                height=420,
+                showlegend=False,
+                xaxis=dict(tickangle=-45),
+            )
+            fig_wfb = apply_chart_background(fig_wfb)
+            with wfb_cols[wfi]:
+                render_chart(
+                    fig_wfb,
+                    key=f"{key_prefix}_hist_noperiod_{wfi}",
+                    caption_below=f"Факт по подрядчикам (нет колонки периода): {lab_wfb}",
+                )
 
     # --- ГДРС (правки): несколько проектов — круговые «план/факт» в одну строку, сводка справа
     def _gdrs_plan_fact_data_slice(pdf: pd.DataFrame) -> pd.DataFrame:
