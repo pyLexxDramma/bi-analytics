@@ -436,17 +436,17 @@ def render_export_buttons(
 
 def dashboard_deviations_combined(df):
 
-    """Единый отчёт «Динамика отклонений» с табами: по месяцам, динамика, причины."""
+    """Единый отчёт по отклонениям с табами (макет правок: общий заголовок «Причины отклонений»)."""
     if df is None or not hasattr(df, "columns") or df.empty:
         st.warning(
             "Нет данных для отображения. Пожалуйста, загрузите данные проекта."
         )
         return
 
-    st.header("Динамика отклонений")
+    st.header("Причины отклонений")
 
     tab_by_month, tab_dynamics, tab_reasons = st.tabs(
-        ["По месяцам", "Динамика отклонений", "Причины отклонений"]
+        ["Доли причин по проекту", "Динамика по периодам", "Динамика причин"]
     )
     with tab_by_month:
         dashboard_reasons_of_deviation(df)
@@ -1776,7 +1776,95 @@ def dashboard_plan_fact_dates(df):
 
     bar_df = pd.DataFrame(bar_data)
 
-    if bar_df.empty:
+    covenant_block = (
+        selected_section != "Все"
+        and "ковенант" in str(selected_section).lower()
+    )
+
+    if covenant_block:
+        st.caption(
+            "Режим «Ковенанты»: нижние диаграммы из общего макета скрыты; показан таймлайн вех "
+            "(базовое окончание и окончание)."
+        )
+        pe_col, fe_col = "plan end", "base end"
+        if pe_col not in filtered_df.columns or fe_col not in filtered_df.columns:
+            st.warning("Нет колонок с датами окончания для таймлайна ковенантов.")
+        else:
+            tdf = filtered_df.copy()
+            tdf[pe_col] = pd.to_datetime(tdf[pe_col], errors="coerce", dayfirst=True)
+            tdf[fe_col] = pd.to_datetime(tdf[fe_col], errors="coerce", dayfirst=True)
+            tdf = tdf[tdf[pe_col].notna() | tdf[fe_col].notna()]
+            if tdf.empty:
+                st.info("Нет дат для отображения таймлайна.")
+            else:
+                def _cov_y(row):
+                    tn = row.get("task name", "—")
+                    pr = row.get("project name", "")
+                    if selected_project == "Все" and pr is not None and str(pr).strip():
+                        return f"{tn} ({pr})"
+                    return str(tn)
+
+                tdf["_y"] = tdf.apply(_cov_y, axis=1)
+                tdf = tdf.sort_values("_y")
+                fig_cov = go.Figure()
+                fig_cov.add_trace(
+                    go.Scatter(
+                        x=tdf[pe_col],
+                        y=tdf["_y"],
+                        mode="markers+text",
+                        name="Базовое окончание",
+                        marker=dict(
+                            symbol="square",
+                            size=12,
+                            color="#2E86AB",
+                            line=dict(width=1, color="#e0e0e0"),
+                        ),
+                        text=tdf[pe_col].apply(
+                            lambda d: d.strftime("%d.%m.%Y") if pd.notna(d) else ""
+                        ),
+                        textposition="top center",
+                        textfont=dict(size=11, color="white"),
+                        hovertemplate="%{y}<br>Базовое окончание: %{x|%d.%m.%Y}<extra></extra>",
+                    )
+                )
+                fig_cov.add_trace(
+                    go.Scatter(
+                        x=tdf[fe_col],
+                        y=tdf["_y"],
+                        mode="markers+text",
+                        name="Окончание (факт)",
+                        marker=dict(
+                            symbol="diamond",
+                            size=12,
+                            color="#FF6347",
+                            line=dict(width=1, color="#e0e0e0"),
+                        ),
+                        text=tdf[fe_col].apply(
+                            lambda d: d.strftime("%d.%m.%Y") if pd.notna(d) else ""
+                        ),
+                        textposition="bottom center",
+                        textfont=dict(size=11, color="white"),
+                        hovertemplate="%{y}<br>Окончание: %{x|%d.%m.%Y}<extra></extra>",
+                    )
+                )
+                nuniq = tdf["_y"].nunique()
+                fig_cov.update_layout(
+                    xaxis_title="Дата",
+                    yaxis_title="Задача",
+                    height=max(420, int(nuniq) * 36),
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="right",
+                        x=1,
+                    ),
+                    xaxis=dict(type="date", tickformat="%d.%m.%Y"),
+                    margin=dict(l=10, r=20, t=50, b=60),
+                )
+                fig_cov = apply_chart_background(fig_cov)
+                render_chart(fig_cov, caption_below="Ковенанты: базовое окончание и факт (таймлайн)")
+    elif bar_df.empty:
         st.info("Нет данных для отображения графика.")
     else:
         # График по этапам: ось X = этап, ось Y = отклонение (дней)
