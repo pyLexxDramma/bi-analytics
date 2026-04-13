@@ -838,22 +838,14 @@ def dashboard_reasons_of_deviation(df):
             names="Причина",
             title=None,
         )
-        if n_reasons <= 6:
-            fig.update_traces(
-                textinfo="label+percent",
-                textposition="outside",
-                textfont_size=11,
-                insidetextorientation="radial",
-            )
-        else:
-            fig.update_traces(
-                textinfo="percent",
-                textposition="inside",
-                insidetextorientation="radial",
-                textfont_size=10,
-            )
+        _pie_textpos = "outside" if n_reasons <= 6 else "inside"
+        _pie_font = 11 if n_reasons <= 6 else 10
         fig.update_traces(
-            texttemplate="%{label}<br>%{value} (%{percent})",
+            textinfo="none",
+            texttemplate="%{label}<br>%{value}<br>(%{percent})",
+            textposition=_pie_textpos,
+            textfont_size=_pie_font,
+            insidetextorientation="radial",
             hovertemplate="<b>%{label}</b><br>Количество: %{value}<br>Доля: %{percent}<extra></extra>",
         )
         fig.update_layout(
@@ -1713,6 +1705,9 @@ def dashboard_dynamics_of_deviations(df):
 # ==================== DASHBOARD 3: Plan/Fact Dates for Tasks ====================
 def dashboard_plan_fact_dates(df):
     st.header("Отклонение от базового плана")
+    if df is None or not hasattr(df, "columns") or df.empty:
+        st.warning("Нет данных для отображения. Загрузите файл с задачами MSP.")
+        return
 
     # Helper function to find columns by partial match
     def find_column(df, possible_names):
