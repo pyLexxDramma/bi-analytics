@@ -6566,45 +6566,51 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             title=None,
             color_discrete_sequence=px.colors.qualitative.Set3,
         )
-        # На куске мало места: подписи только % внутри сегментов; названия — в легенде справа
+        # Подписи только % в сегментах; названия подрядчиков — в легенде под кругом
         fig_cf.update_traces(
             textinfo="percent",
             texttemplate="%{percent:.0%}",
             textposition="inside",
-            textfont_size=11,
+            textfont_size=12,
             insidetextorientation="horizontal",
             hovertemplate="<b>%{label}</b><br>Факт: %{value:,.0f} (%{percent:.0%})<extra></extra>",
         )
+        _n_parts = max(1, len(pie_df.index))
+        # Легенда под кругом (не справа): на всю ширину колонку не сжимает подписи
+        _leg_lines = max(2, int((_n_parts + 2) // 3))
+        _bottom_pad = min(260, 96 + 22 * _leg_lines)
         fig_cf.update_layout(
-            height=460,
+            height=520,
             showlegend=True,
             title_font_size=14,
-            uniformtext=dict(minsize=7, mode="hide"),
+            uniformtext=dict(minsize=8, mode="hide"),
             legend=dict(
-                orientation="v",
-                yanchor="middle",
-                y=0.5,
-                xanchor="left",
-                x=1.02,
-                font=dict(size=10),
+                orientation="h",
+                yanchor="top",
+                y=-0.06,
+                x=0.5,
+                xanchor="center",
+                font=dict(size=11),
+                bgcolor="rgba(0,0,0,0)",
+                traceorder="normal",
+                itemwidth=30,
             ),
-            margin=dict(l=16, r=16, t=24, b=24),
+            margin=dict(l=48, r=48, t=32, b=_bottom_pad),
         )
         fig_cf = apply_chart_background(fig_cf)
-        # apply_chart_background задаёт легенду снизу — для круговой возвращаем читаемый вариант
-        _n_parts = max(1, len(pie_df.index))
-        _r_margin = min(340, max(96, 88 + 11 * _n_parts))
+        # Снова поджимаем легенду к области графика — общий стиль задаёт y=-0.25
         fig_cf.update_layout(
             legend=dict(
-                orientation="v",
-                yanchor="middle",
-                y=0.5,
-                xanchor="left",
-                x=1.02,
-                font=dict(size=10),
+                orientation="h",
+                yanchor="top",
+                y=-0.02,
+                x=0.5,
+                xanchor="center",
+                font=dict(size=11),
                 bgcolor="rgba(0,0,0,0)",
             ),
-            margin=dict(l=20, r=_r_margin, t=32, b=40),
+            margin=dict(l=48, r=48, t=36, b=_bottom_pad),
+            height=540,
         )
         plan_sum = (
             float(pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0).sum())
@@ -6687,7 +6693,6 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             st.subheader("Техника (% фактический по подрядчикам)")
         else:
             st.subheader("Рабочие (% фактический по подрядчикам)")
-        cf_cols = st.columns(len(projects_to_process))
         for _ix, _pname in enumerate(projects_to_process):
             _pdf = filtered_df.copy()
             if project_col in _pdf.columns and _pname != "Все проекты":
@@ -6695,30 +6700,29 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     _pdf[project_col].astype(str).str.strip() == str(_pname).strip()
                 ]
             fig_cf, met_cf = _gdrs_contractor_fact_fig_and_metrics(_pdf)
-            with cf_cols[_ix]:
-                st.markdown(f"##### {_pname}")
-                if fig_cf is not None and met_cf is not None:
-                    cf_a1, cf_a2 = st.columns([3, 2])
-                    with cf_a1:
-                        render_chart(
-                            fig_cf,
-                            key=f"{key_prefix}_contractor_fact_row_{_ix}",
-                            caption_below="",
-                        )
-                    with cf_a2:
-                        _cfc = "#e74c3c" if met_cf["dev"] > 0 else "#27ae60"
-                        _pl = float(met_cf.get("plan") or 0)
-                        _pl_disp = "—" if _pl == 0.0 else str(int(round(_pl)))
-                        st.markdown(
-                            f"**План:** {_pl_disp}\n\n"
-                            f"**Факт:** {int(round(met_cf['fact']))}\n\n"
-                            f"**Отклонение:** <span style='color:{_cfc};font-size:1.15em'>●</span> "
-                            f"{int(round(met_cf['dev']))}\n\n"
-                            + _gdrs_fp_pct_caption_line(met_cf),
-                            unsafe_allow_html=True,
-                        )
-                else:
-                    st.caption("Нет данных по факту подрядчиков по этому проекту.")
+            st.markdown(f"#### {_pname}")
+            if fig_cf is not None and met_cf is not None:
+                render_chart(
+                    fig_cf,
+                    key=f"{key_prefix}_contractor_fact_row_{_ix}",
+                    height=540,
+                    max_height=720,
+                    caption_below="",
+                )
+                _cfc = "#e74c3c" if met_cf["dev"] > 0 else "#27ae60"
+                _pl = float(met_cf.get("plan") or 0)
+                _pl_disp = "—" if _pl == 0.0 else str(int(round(_pl)))
+                st.markdown(
+                    f"**План:** {_pl_disp}  **Факт:** {int(round(met_cf['fact']))}  "
+                    f"**Отклонение:** <span style='color:{_cfc};font-size:1.1em'>●</span> "
+                    f"{int(round(met_cf['dev']))}  "
+                    + _gdrs_fp_pct_caption_line(met_cf),
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.caption("Нет данных по факту подрядчиков по этому проекту.")
+            if _ix < len(projects_to_process) - 1:
+                st.markdown("---")
         contractor_fact_row_done = True
         st.markdown("---")
 
