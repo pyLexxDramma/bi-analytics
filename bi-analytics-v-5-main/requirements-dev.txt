@@ -1,0 +1,2 @@
+# Локальные E2E / Playwright (не нужны для запуска дашборда и Streamlit Cloud)
+playwright>=1.40.0

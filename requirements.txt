@@ -1,0 +1,3 @@
+# Корень репозитория для Streamlit Community Cloud и любых CI:
+# pip читает этот файл; сами зависимости приложения — во внутренней папке.
+-r bi-analytics-v-5-main/requirements.txt
