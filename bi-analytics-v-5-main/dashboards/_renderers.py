@@ -4680,7 +4680,7 @@ def dashboard_technique(df):
             "Для отображения аналитики по технике необходимо загрузить файл с данными о технике."
         )
         st.info(
-            "Ожидаемые колонки: Проект, Контрагент, Период, План, Среднее за месяц или Среднее за неделю, 1–5 неделя, Дельта, Дельта (%)"
+            "Ожидаемые колонки: Проект, Контрагент, Период, План, Среднее за месяц или Среднее за неделю, 1–5 неделя; «Дельта» / «Дельта (%)» в отчёте: отклонение и отклонение %."
         )
         return
 
@@ -5321,7 +5321,7 @@ def dashboard_technique(df):
                 render_chart(fig_pie_pf, caption_below=f"План и факт — {project_name}")
 
         # ========== Chart 1: Pie Chart by Contractor (Delta %) ==========
-        st.subheader("Круговая диаграмма: Распределение дельты (%) по контрагентам")
+        st.subheader("Круговая диаграмма: Распределение отклонения % по контрагентам")
 
         # Group by Контрагент and aggregate for pie chart (Delta %)
         # Ensure Дельта_процент_numeric exists - check if it was created in work_df
@@ -5385,13 +5385,13 @@ def dashboard_technique(df):
                     ].fillna(0)
                 else:
                     st.error(
-                        "Не удалось найти или рассчитать Дельта (%). Отсутствуют необходимые колонки."
+                        "Не удалось найти или рассчитать отклонение %. Отсутствуют необходимые колонки."
                     )
                     st.info(
                         f"Доступные колонки: {', '.join(project_filtered_df.columns)}"
                     )
                     contractor_delta_pct = pd.DataFrame(
-                        columns=["Контрагент", "Дельта (%)"]
+                        columns=["Контрагент", "Отклонение %"]
                     )
 
         # Group by contractor and aggregate
@@ -5407,34 +5407,34 @@ def dashboard_technique(df):
                     .reset_index()
                 )
 
-                contractor_delta_pct.columns = ["Контрагент", "Дельта (%)"]
+                contractor_delta_pct.columns = ["Контрагент", "Отклонение %"]
             else:
                 contractor_delta_pct = pd.DataFrame(
-                    columns=["Контрагент", "Дельта (%)"]
+                    columns=["Контрагент", "Отклонение %"]
                 )
         else:
-            contractor_delta_pct = pd.DataFrame(columns=["Контрагент", "Дельта (%)"])
+            contractor_delta_pct = pd.DataFrame(columns=["Контрагент", "Отклонение %"])
 
         # Check if we have data (внутри цикла по проектам — круговая и столбчатая по каждому проекту)
         if contractor_delta_pct.empty or len(contractor_delta_pct) == 0:
             st.info("Нет данных для отображения круговой диаграммы.")
         else:
-            # Ensure Дельта (%) is numeric
-            contractor_delta_pct["Дельта (%)"] = pd.to_numeric(
-                contractor_delta_pct["Дельта (%)"], errors="coerce"
+            # Ensure «Отклонение %» is numeric
+            contractor_delta_pct["Отклонение %"] = pd.to_numeric(
+                contractor_delta_pct["Отклонение %"], errors="coerce"
             ).fillna(0)
 
             # Check if we have any non-zero values
-            total_abs_sum = contractor_delta_pct["Дельта (%)"].abs().sum()
+            total_abs_sum = contractor_delta_pct["Отклонение %"].abs().sum()
 
             if total_abs_sum == 0:
                 st.info(
-                    "Все значения дельты (%) равны нулю. Диаграмма не может быть построена."
+                    "Все значения отклонения % равны нулю. Диаграмма не может быть построена."
                 )
             else:
                 # Remove only exactly zero values (not small values)
                 non_zero_data = contractor_delta_pct[
-                    contractor_delta_pct["Дельта (%)"] != 0
+                    contractor_delta_pct["Отклонение %"] != 0
                 ].copy()
 
                 # Use non-zero data if available
@@ -5443,22 +5443,22 @@ def dashboard_technique(df):
 
                 # Sort by absolute value for better visualization
                 contractor_delta_pct = contractor_delta_pct.sort_values(
-                    "Дельта (%)", key=abs, ascending=False
+                    "Отклонение %", key=abs, ascending=False
                 )
 
                 # Create a copy with absolute values for pie chart (pie charts don't support negative values)
                 contractor_delta_pct_abs = contractor_delta_pct.copy()
-                contractor_delta_pct_abs["Дельта (%)_abs"] = contractor_delta_pct_abs[
-                    "Дельта (%)"
+                contractor_delta_pct_abs["Отклонение %_abs"] = contractor_delta_pct_abs[
+                    "Отклонение %"
                 ].abs()
 
                 # Store original values for display
-                original_values = contractor_delta_pct_abs["Дельта (%)"].tolist()
+                original_values = contractor_delta_pct_abs["Отклонение %"].tolist()
 
                 # Create pie chart using absolute values
                 fig_pie = px.pie(
                     contractor_delta_pct_abs,
-                    values="Дельта (%)_abs",
+                    values="Отклонение %_abs",
                     names="Контрагент",
                     title=None,
                     color_discrete_sequence=px.colors.qualitative.Set3,
@@ -5480,13 +5480,13 @@ def dashboard_technique(df):
                     textfont_size=10,
                     insidetextorientation="radial",
                     customdata=original_values,
-                    hovertemplate="<b>%{label}</b><br>Дельта (%): %{customdata:.0f}%<br>Процент: %{percent}<br><extra></extra>",
+                    hovertemplate="<b>%{label}</b><br>Отклонение %: %{customdata:.0f}%<br>Процент: %{percent}<br><extra></extra>",
                 )
 
                 fig_pie = apply_chart_background(fig_pie)
                 render_chart(
                     fig_pie,
-                    caption_below="Распределение дельты (%) по контрагентам",
+                    caption_below="Распределение отклонения % по контрагентам",
                 )
 
         # ========== Доли факта по людям и технике по подрядчикам (100% = все люди / вся техника) ==========
@@ -5508,12 +5508,12 @@ def dashboard_technique(df):
                 total_fact = by_contractor["Факт"].sum()
                 if total_fact == 0:
                     continue
-                by_contractor["Доля (%)"] = (by_contractor["Факт"] / total_fact * 100).round(1)
+                by_contractor["%"] = (by_contractor["Факт"] / total_fact * 100).round(1)
                 by_contractor = by_contractor.sort_values("Факт", ascending=False)
                 st.caption(f"Доли факта по {type_label.lower()} по подрядчикам (всего {type_label.lower()}: 100% = {int(round(total_fact, 0))})")
-                display_df = by_contractor[["Контрагент", "Факт", "Доля (%)"]].copy()
+                display_df = by_contractor[["Контрагент", "Факт", "%"]].copy()
                 display_df["Факт"] = display_df["Факт"].apply(lambda x: int(round(x, 0)))
-                display_df["Доля (%)"] = display_df["Доля (%)"].astype(str) + "%"
+                display_df["%"] = display_df["%"].astype(str) + "%"
                 st.markdown(budget_table_to_html(display_df), unsafe_allow_html=True)
 
         # ========== Chart 2: Bar Chart by Contractor (Plan, Average, Отклонение) ==========
@@ -5844,7 +5844,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             "Для отображения графика движения рабочей силы необходимо загрузить файл с данными о ресурсах или технике."
         )
         st.info(
-            "Ожидаемые колонки: Проект, Контрагент, Период, План, Среднее за месяц (ресурсы) или Среднее за неделю (техника), 1–5 неделя, Дельта, Дельта (%)"
+            "Ожидаемые колонки: Проект, Контрагент, Период, План, Среднее за месяц (ресурсы) или Среднее за неделю (техника), 1–5 неделя; при необходимости в данных — «Дельта» / «Дельта (%)» (в отчёте отображаются как отклонение и отклонение %)."
         )
         return
 
@@ -6478,7 +6478,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 render_chart(fig_pie_pf, caption_below=f"План и факт — {project_name}")
 
         # ========== Chart 1: Pie Chart by Contractor (Delta %) ==========
-        st.subheader("Круговая диаграмма: Распределение дельты (%) по контрагентам")
+        st.subheader("Круговая диаграмма: Распределение отклонения % по контрагентам")
 
         # Group by Контрагент and aggregate for pie chart (Delta %)
         # Ensure Дельта_процент_numeric exists - check if it was created in work_df
@@ -6542,13 +6542,13 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     ].fillna(0)
                 else:
                     st.error(
-                        "Не удалось найти или рассчитать Дельта (%). Отсутствуют необходимые колонки."
+                        "Не удалось найти или рассчитать отклонение %. Отсутствуют необходимые колонки."
                     )
                     st.info(
                         f"Доступные колонки: {', '.join(project_filtered_df.columns)}"
                     )
                     contractor_delta_pct = pd.DataFrame(
-                        columns=["Контрагент", "Дельта (%)"]
+                        columns=["Контрагент", "Отклонение %"]
                     )
 
         # Group by contractor and aggregate
@@ -6564,34 +6564,34 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     .reset_index()
                 )
 
-                contractor_delta_pct.columns = ["Контрагент", "Дельта (%)"]
+                contractor_delta_pct.columns = ["Контрагент", "Отклонение %"]
             else:
                 contractor_delta_pct = pd.DataFrame(
-                    columns=["Контрагент", "Дельта (%)"]
+                    columns=["Контрагент", "Отклонение %"]
                 )
         else:
-            contractor_delta_pct = pd.DataFrame(columns=["Контрагент", "Дельта (%)"])
+            contractor_delta_pct = pd.DataFrame(columns=["Контрагент", "Отклонение %"])
 
         # Check if we have data (внутри цикла по проектам — круговая и столбчатая по каждому проекту)
         if contractor_delta_pct.empty or len(contractor_delta_pct) == 0:
             st.info("Нет данных для отображения круговой диаграммы.")
         else:
-            # Ensure Дельта (%) is numeric
-            contractor_delta_pct["Дельта (%)"] = pd.to_numeric(
-                contractor_delta_pct["Дельта (%)"], errors="coerce"
+            # Ensure «Отклонение %» is numeric
+            contractor_delta_pct["Отклонение %"] = pd.to_numeric(
+                contractor_delta_pct["Отклонение %"], errors="coerce"
             ).fillna(0)
 
             # Check if we have any non-zero values
-            total_abs_sum = contractor_delta_pct["Дельта (%)"].abs().sum()
+            total_abs_sum = contractor_delta_pct["Отклонение %"].abs().sum()
 
             if total_abs_sum == 0:
                 st.info(
-                    "Все значения дельты (%) равны нулю. Диаграмма не может быть построена."
+                    "Все значения отклонения % равны нулю. Диаграмма не может быть построена."
                 )
             else:
                 # Remove only exactly zero values (not small values)
                 non_zero_data = contractor_delta_pct[
-                    contractor_delta_pct["Дельта (%)"] != 0
+                    contractor_delta_pct["Отклонение %"] != 0
                 ].copy()
 
                 # Use non-zero data if available
@@ -6600,22 +6600,22 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
 
                 # Sort by absolute value for better visualization
                 contractor_delta_pct = contractor_delta_pct.sort_values(
-                    "Дельта (%)", key=abs, ascending=False
+                    "Отклонение %", key=abs, ascending=False
                 )
 
                 # Create a copy with absolute values for pie chart (pie charts don't support negative values)
                 contractor_delta_pct_abs = contractor_delta_pct.copy()
-                contractor_delta_pct_abs["Дельта (%)_abs"] = contractor_delta_pct_abs[
-                    "Дельта (%)"
+                contractor_delta_pct_abs["Отклонение %_abs"] = contractor_delta_pct_abs[
+                    "Отклонение %"
                 ].abs()
 
                 # Store original values for display
-                original_values = contractor_delta_pct_abs["Дельта (%)"].tolist()
+                original_values = contractor_delta_pct_abs["Отклонение %"].tolist()
 
                 # Create pie chart using absolute values
                 fig_pie = px.pie(
                     contractor_delta_pct_abs,
-                    values="Дельта (%)_abs",
+                    values="Отклонение %_abs",
                     names="Контрагент",
                     title=None,
                     color_discrete_sequence=px.colors.qualitative.Set3,
@@ -6637,13 +6637,13 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     textfont_size=10,
                     insidetextorientation="radial",
                     customdata=original_values,
-                    hovertemplate="<b>%{label}</b><br>Дельта (%): %{customdata:.0f}%<br>Процент: %{percent}<br><extra></extra>",
+                    hovertemplate="<b>%{label}</b><br>Отклонение %: %{customdata:.0f}%<br>Процент: %{percent}<br><extra></extra>",
                 )
 
                 fig_pie = apply_chart_background(fig_pie)
                 render_chart(
                     fig_pie,
-                    caption_below="Распределение дельты (%) по контрагентам",
+                    caption_below="Распределение отклонения % по контрагентам",
                 )
 
         # ========== Доли факта по людям и технике по подрядчикам (100% = все люди / вся техника) ==========
@@ -6665,14 +6665,14 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 total_fact = by_contractor["Факт"].sum()
                 if total_fact == 0:
                     continue
-                by_contractor["Доля (%)"] = (by_contractor["Факт"] / total_fact * 100).round(1)
+                by_contractor["%"] = (by_contractor["Факт"] / total_fact * 100).round(1)
                 by_contractor = by_contractor.sort_values("Факт", ascending=False)
                 st.caption(f"Доли факта по {type_label.lower()} по подрядчикам (всего {type_label.lower()}: 100% = {int(round(total_fact, 0))})")
                 display_df = by_contractor.copy()
                 display_df["Факт"] = display_df["Факт"].apply(lambda x: int(round(x, 0)))
-                display_df["Доля (%)"] = display_df["Доля (%)"].astype(str) + "%"
+                display_df["%"] = display_df["%"].astype(str) + "%"
                 st.markdown(
-                    budget_table_to_html(display_df[["Контрагент", "Факт", "Доля (%)"]]),
+                    budget_table_to_html(display_df[["Контрагент", "Факт", "%"]]),
                     unsafe_allow_html=True,
                 )
 

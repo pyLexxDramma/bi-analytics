@@ -1,0 +1,6 @@
+# Локальные прогоны Playwright / артефакты проверки UI
+_visual_check_playwright.py
+_visual_check_out/
+
+# Корень репозитория
+__pycache__/
