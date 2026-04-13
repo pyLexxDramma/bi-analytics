@@ -1742,6 +1742,9 @@ def dashboard_plan_fact_dates(df):
     dates_pct_col = _find_column_by_keywords(
         df, ("percent complete", "% заверш", "выполн", "complete", "percent")
     )
+    dates_notes_col = _find_column_by_keywords(
+        df, ("note", "заметк", "comment", "remark", "notes")
+    )
 
     col1, col2, col3 = st.columns(3)
 
@@ -1764,10 +1767,15 @@ def dashboard_plan_fact_dates(df):
             selected_section = "Все"
 
     with col3:
-        level_options = ["Сводные (1–3 ур.)", "Все уровни"]
+        level_options = [
+            "Сводные (1–3 ур.)",
+            "Уровень 4 (верхний)",
+            "Уровень 5 (детальный)",
+            "Все уровни",
+        ]
         if "level" in df.columns:
             selected_level = st.selectbox(
-                "Детализация", level_options, index=0, key="dates_level"
+                "Детализация (уровень MSP)", level_options, index=0, key="dates_level"
             )
         else:
             selected_level = "Все уровни"
@@ -1809,6 +1817,54 @@ def dashboard_plan_fact_dates(df):
             help="Оставить строки, где отклонение окончания (факт − план) < 0.",
         )
 
+    d3a, d3b, d3c = st.columns(3)
+    with d3a:
+        dates_value_type = st.selectbox(
+            "Тип значения",
+            ["Даты (план/факт)", "Отклонение (дней)"],
+            index=0,
+            key="dates_value_type",
+            help="Макет: даты или акцент на отклонениях в днях в итоговой таблице.",
+        )
+    with d3b:
+        dates_sort_order = st.selectbox(
+            "Сортировка таблицы",
+            [
+                "Отклонение конца — по убыванию",
+                "Отклонение конца — по возрастанию",
+                "Отклонение начала — по убыванию",
+                "Отклонение начала — по возрастанию",
+            ],
+            index=0,
+            key="dates_sort_order",
+        )
+    with d3c:
+        dates_show_reason_notes = st.checkbox(
+            "Колонки причина и заметки (если есть в данных)",
+            value=True,
+            key="dates_show_reason_notes",
+        )
+
+    tbl_opt1, tbl_opt2, tbl_opt3 = st.columns(3)
+    with tbl_opt1:
+        tbl_show_end = st.checkbox(
+            "Таблица: отклонение окончания",
+            value=True,
+            key="dates_tbl_end",
+        )
+    with tbl_opt2:
+        tbl_show_start = st.checkbox(
+            "Таблица: отклонение начала",
+            value=True,
+            key="dates_tbl_start",
+        )
+    with tbl_opt3:
+        tbl_show_dur = st.checkbox(
+            "Таблица: отклонение длительности",
+            value=False,
+            key="dates_tbl_dur",
+        )
+
     # Apply filters
     filtered_df = df.copy()
     if selected_project != "Все" and "project name" in filtered_df.columns:
@@ -1835,12 +1891,17 @@ def dashboard_plan_fact_dates(df):
             filtered_df[dates_building_col].astype(str).str.strip()
             == str(selected_building_dates).strip()
         ]
-    # Фильтр по уровню иерархии
-    if selected_level == "Сводные (1–3 ур.)" and "level" in filtered_df.columns:
+    # Фильтр по уровню иерархии (макет: сводные 1–3, верхний 4, детальный 5)
+    if "level" in filtered_df.columns:
         level_num = pd.to_numeric(filtered_df["level"], errors="coerce")
-        mask_level = level_num.notna() & (level_num <= 3)
-        if mask_level.any():
-            filtered_df = filtered_df[mask_level]
+        if selected_level == "Сводные (1–3 ур.)":
+            mask_level = level_num.notna() & (level_num <= 3)
+            if mask_level.any():
+                filtered_df = filtered_df[mask_level]
+        elif selected_level == "Уровень 4 (верхний)":
+            filtered_df = filtered_df[level_num == 4]
+        elif selected_level == "Уровень 5 (детальный)":
+            filtered_df = filtered_df[level_num == 5]
 
     if filtered_df.empty:
         st.info("Нет данных для выбранных фильтров.")
@@ -2736,63 +2797,89 @@ def dashboard_plan_fact_dates(df):
                 fact_end_str_construction = format_date_display(base_end_construction)
         st.metric("Факт окончания проекта", fact_end_str_construction or "—")
 
-    # Summary table - format dates properly, sorted by difference
+    # Summary table — макет: даты / отклонения, видимые столбцы, сортировка
     summary_data = []
+
+    def _format_date_cell(date_val):
+        if pd.isna(date_val):
+            return ""
+        if isinstance(date_val, pd.Timestamp):
+            return date_val.strftime("%d.%m.%Y")
+        try:
+            dt = pd.to_datetime(date_val, errors="coerce", dayfirst=True)
+            if pd.notna(dt):
+                return dt.strftime("%d.%m.%Y")
+        except Exception:
+            pass
+        s = str(date_val).strip() if date_val else ""
+        return s if s and s.lower() not in ("nan", "nat", "none") else ""
+
     for idx, row in filtered_df.iterrows():
         plan_start = row.get("plan start", pd.NaT)
         plan_end = row.get("plan end", pd.NaT)
         base_start = row.get("base start", pd.NaT)
         base_end = row.get("base end", pd.NaT)
-        diff_days = row.get("total_diff_days", 0)
-        start_diff = row.get("plan_start_diff", 0)
-        end_diff = row.get("plan_end_diff", 0)
-
-        # Format dates for display (без «Н/Д»)
-        def format_date(date_val):
-            if pd.isna(date_val):
-                return ""
-            if isinstance(date_val, pd.Timestamp):
-                return date_val.strftime("%d.%m.%Y")
+        start_diff = row.get("plan_start_diff", np.nan)
+        end_diff = row.get("plan_end_diff", np.nan)
+        dur_diff = np.nan
+        if (
+            pd.notna(plan_start)
+            and pd.notna(plan_end)
+            and pd.notna(base_start)
+            and pd.notna(base_end)
+        ):
             try:
-                dt = pd.to_datetime(date_val, errors="coerce", dayfirst=True)
-                if pd.notna(dt):
-                    return dt.strftime("%d.%m.%Y")
+                pdur = (plan_end - plan_start).total_seconds() / 86400.0
+                fdur = (base_end - base_start).total_seconds() / 86400.0
+                dur_diff = fdur - pdur
             except Exception:
-                pass
-            s = str(date_val).strip() if date_val else ""
-            return s if s and s.lower() not in ("nan", "nat", "none") else ""
+                dur_diff = np.nan
 
-        summary_data.append(
-            {
-                "Проект": _clean_display_str(row.get("project name")),
-                "Задача": _clean_display_str(row.get("task name")),
-                "Раздел": _clean_display_str(row.get("section")),
-                "План Начало": format_date(plan_start),
-                "План Конец": format_date(plan_end),
-                "Факт Начало": format_date(base_start),
-                "Факт Конец": format_date(base_end),
-                "Отклонение начала (дней)": start_diff,
-                "Отклонение конца (дней)": end_diff,
-            }
-        )
+        rec = {
+            "Проект": _clean_display_str(row.get("project name")),
+            "Задача": _clean_display_str(row.get("task name")),
+            "Раздел": _clean_display_str(row.get("section")),
+            "План Начало": _format_date_cell(plan_start),
+            "План Конец": _format_date_cell(plan_end),
+            "Факт Начало": _format_date_cell(base_start),
+            "Факт Конец": _format_date_cell(base_end),
+            "Отклонение начала (дней)": start_diff,
+            "Отклонение конца (дней)": end_diff,
+            "Отклонение длительности (дней)": dur_diff,
+        }
+        if "reason of deviation" in filtered_df.columns:
+            rec["Причина отклонения"] = _clean_display_str(
+                row.get("reason of deviation")
+            )
+        if dates_notes_col and dates_notes_col in filtered_df.columns:
+            rec["Заметки"] = _clean_display_str(row.get(dates_notes_col))
+        summary_data.append(rec)
 
     summary_df = pd.DataFrame(summary_data)
-    # Convert 'Отклонение конца (дней)' to numeric for proper sorting
-    summary_df["Отклонение конца (дней)"] = pd.to_numeric(
-        summary_df["Отклонение конца (дней)"], errors="coerce"
-    )
-    summary_df["Отклонение начала (дней)"] = pd.to_numeric(
-        summary_df["Отклонение начала (дней)"], errors="coerce"
-    )
+    for col in (
+        "Отклонение начала (дней)",
+        "Отклонение конца (дней)",
+        "Отклонение длительности (дней)",
+    ):
+        if col in summary_df.columns:
+            summary_df[col] = pd.to_numeric(summary_df[col], errors="coerce")
 
-    # По правкам макета: суммарные столбцы по задачам не выводим
+    sort_key = "Отклонение конца (дней)"
+    ascending = False
+    if dates_sort_order == "Отклонение конца — по возрастанию":
+        ascending = True
+    elif dates_sort_order == "Отклонение начала — по убыванию":
+        sort_key = "Отклонение начала (дней)"
+        ascending = False
+    elif dates_sort_order == "Отклонение начала — по возрастанию":
+        sort_key = "Отклонение начала (дней)"
+        ascending = True
 
-    # Sort by end date difference (largest first, descending order)
-    # Handle NaN values by placing them at the end
-    summary_df = summary_df.sort_values(
-        "Отклонение конца (дней)", ascending=False, na_position="last"
-    )
-    # Отображение дней целыми числами без знаков после запятой и точки
+    if sort_key in summary_df.columns:
+        summary_df = summary_df.sort_values(
+            sort_key, ascending=ascending, na_position="last"
+        )
+
     def _format_int_days(x):
         if pd.isna(x) or str(x).strip() == "":
             return ""
@@ -2801,11 +2888,52 @@ def dashboard_plan_fact_dates(df):
         except (TypeError, ValueError):
             return ""
 
-    for col in ["Отклонение начала (дней)", "Отклонение конца (дней)"]:
+    for col in (
+        "Отклонение начала (дней)",
+        "Отклонение конца (дней)",
+        "Отклонение длительности (дней)",
+    ):
         if col in summary_df.columns:
             summary_df[col] = summary_df[col].apply(_format_int_days)
+
+    out_cols = ["Проект", "Задача", "Раздел"]
+    if dates_value_type == "Даты (план/факт)":
+        out_cols += [
+            "План Начало",
+            "План Конец",
+            "Факт Начало",
+            "Факт Конец",
+        ]
+    if tbl_show_start:
+        out_cols.append("Отклонение начала (дней)")
+    if tbl_show_end:
+        out_cols.append("Отклонение конца (дней)")
+    if tbl_show_dur:
+        out_cols.append("Отклонение длительности (дней)")
+    if dates_show_reason_notes:
+        if "Причина отклонения" in summary_df.columns:
+            out_cols.append("Причина отклонения")
+        if "Заметки" in summary_df.columns:
+            out_cols.append("Заметки")
+    out_cols = [c for c in out_cols if c in summary_df.columns]
+    summary_df = summary_df[out_cols]
+    if dates_value_type == "Отклонение (дней)" and not any(
+        c in summary_df.columns
+        for c in (
+            "Отклонение начала (дней)",
+            "Отклонение конца (дней)",
+            "Отклонение длительности (дней)",
+        )
+    ):
+        st.warning(
+            "В режиме «Отклонение (дней)» нет столбцов отклонения: включите один из чекбоксов ниже "
+            "или переключите тип значения на «Даты (план/факт)»."
+        )
+
     st.subheader("Отклонение от базового плана (таблица)")
-    st.caption(f"Записей: {len(summary_df)}")
+    st.caption(
+        f"Записей: {len(summary_df)} · тип: {dates_value_type} · сортировка: {dates_sort_order}"
+    )
     _render_html_table(summary_df)
     _csv = summary_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
     st.download_button("Скачать CSV", _csv, "detail_dates.csv", "text/csv", key="detail_dates_csv")
