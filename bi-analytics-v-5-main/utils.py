@@ -228,7 +228,9 @@ def apply_chart_background(fig):
             color=TABLE_TEXT_COLOR,
             size=13,
         ),
+        # text обязателен: иначе во фронтенде Plotly иногда показывает строку «undefined»
         title=dict(
+            text="",
             font=dict(color=TABLE_TEXT_COLOR, size=15),
             pad=dict(t=4),
         ),

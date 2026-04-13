@@ -6566,22 +6566,46 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             title=None,
             color_discrete_sequence=px.colors.qualitative.Set3,
         )
+        # На куске мало места: подписи только % внутри сегментов; названия — в легенде справа
         fig_cf.update_traces(
-            textinfo="label+percent",
-            textposition="auto",
-            textfont_size=10,
-            insidetextorientation="radial",
+            textinfo="percent",
+            texttemplate="%{percent:.0%}",
+            textposition="inside",
+            textfont_size=11,
+            insidetextorientation="horizontal",
             hovertemplate="<b>%{label}</b><br>Факт: %{value:,.0f} (%{percent:.0%})<extra></extra>",
         )
         fig_cf.update_layout(
-            height=420,
+            height=460,
             showlegend=True,
             title_font_size=14,
-            uniformtext=dict(minsize=8, mode="hide"),
-            legend=dict(orientation="v", font=dict(size=10)),
-            margin=dict(l=10, r=10, t=10, b=10),
+            uniformtext=dict(minsize=7, mode="hide"),
+            legend=dict(
+                orientation="v",
+                yanchor="middle",
+                y=0.5,
+                xanchor="left",
+                x=1.02,
+                font=dict(size=10),
+            ),
+            margin=dict(l=16, r=16, t=24, b=24),
         )
         fig_cf = apply_chart_background(fig_cf)
+        # apply_chart_background задаёт легенду снизу — для круговой возвращаем читаемый вариант
+        _n_parts = max(1, len(pie_df.index))
+        _r_margin = min(340, max(96, 88 + 11 * _n_parts))
+        fig_cf.update_layout(
+            legend=dict(
+                orientation="v",
+                yanchor="middle",
+                y=0.5,
+                xanchor="left",
+                x=1.02,
+                font=dict(size=10),
+                bgcolor="rgba(0,0,0,0)",
+            ),
+            margin=dict(l=20, r=_r_margin, t=32, b=40),
+        )
         plan_sum = (
             float(pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0).sum())
             if "План_numeric" in d.columns
@@ -6589,7 +6613,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         )
         fact_sum = float(by_c["_f"].sum())
         dev = plan_sum - fact_sum
-        fp_pct = (fact_sum / plan_sum * 100.0) if plan_sum else 0.0
+        fp_pct = (fact_sum / plan_sum * 100.0) if plan_sum else None
         return fig_cf, {
             "plan": plan_sum,
             "fact": fact_sum,
@@ -6649,6 +6673,14 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         and "Контрагент" in filtered_df.columns
         and "week_sum" in filtered_df.columns
     )
+    def _gdrs_fp_pct_caption_line(met: dict) -> str:
+        """Строка „факт/план“; если плана нет или 0 — без деления на ноль."""
+        fp = met.get("fp_pct")
+        pl = float(met.get("plan") or 0)
+        if fp is None or pl == 0.0:
+            return "*(% к плану недоступен — в данных нет или ноль в «План»)*"
+        return f"*({fp:.1f}% — факт/план)*"
+
     contractor_fact_row_done = False
     if show_contractor_fact_row:
         if (data_source_filter or "").strip().lower() == "техника":
@@ -6675,12 +6707,14 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                         )
                     with cf_a2:
                         _cfc = "#e74c3c" if met_cf["dev"] > 0 else "#27ae60"
+                        _pl = float(met_cf.get("plan") or 0)
+                        _pl_disp = "—" if _pl == 0.0 else str(int(round(_pl)))
                         st.markdown(
-                            f"**План:** {int(round(met_cf['plan']))}\n\n"
+                            f"**План:** {_pl_disp}\n\n"
                             f"**Факт:** {int(round(met_cf['fact']))}\n\n"
                             f"**Отклонение:** <span style='color:{_cfc};font-size:1.15em'>●</span> "
                             f"{int(round(met_cf['dev']))}\n\n"
-                            f"*({met_cf['fp_pct']:.1f}% — факт/план)*",
+                            + _gdrs_fp_pct_caption_line(met_cf),
                             unsafe_allow_html=True,
                         )
                 else:
@@ -6806,12 +6840,14 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     )
                 with cf_c2:
                     _cfc = "#e74c3c" if met_cf["dev"] > 0 else "#27ae60"
+                    _pl = float(met_cf.get("plan") or 0)
+                    _pl_disp = "—" if _pl == 0.0 else str(int(round(_pl)))
                     st.markdown(
-                        f"**План:** {int(round(met_cf['plan']))}\n\n"
+                        f"**План:** {_pl_disp}\n\n"
                         f"**Факт:** {int(round(met_cf['fact']))}\n\n"
                         f"**Отклонение:** <span style='color:{_cfc};font-size:1.15em'>●</span> "
                         f"{int(round(met_cf['dev']))}\n\n"
-                        f"*({met_cf['fp_pct']:.1f}% — факт/план)*",
+                        + _gdrs_fp_pct_caption_line(met_cf),
                         unsafe_allow_html=True,
                     )
             else:
