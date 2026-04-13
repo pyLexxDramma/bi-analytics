@@ -497,10 +497,16 @@ def _parse_finance_value(v) -> Optional[float]:
 def budget_table_to_html(
     df: pd.DataFrame,
     finance_deviation_column: Optional[str] = None,
+    *,
+    deviation_red_if_positive_only: bool = False,
 ) -> str:
     """
-    Строит HTML таблицы бюджета с раскраской колонки отклонения:
-    положительное или ноль = красный фон, отрицательное = зелёный.
+    Строит HTML таблицы бюджета с раскраской колонки отклонения.
+
+    По умолчанию (финансы бюджета): значение ≥ 0 — красный шрифт, < 0 — зелёный.
+
+    Если ``deviation_red_if_positive_only=True`` (например, отклонение = план − факт в ГДРС):
+    значение > 0 — красный, ≤ 0 — зелёный.
     """
     if df is None or df.empty:
         return "<p>Нет данных для отображения.</p>"
@@ -530,7 +536,10 @@ def budget_table_to_html(
             if finance_deviation_column and col == finance_deviation_column:
                 num = _parse_finance_value(val)
                 if num is not None:
-                    cell_class = "bd-cell-red" if num >= 0 else "bd-cell-green"
+                    if deviation_red_if_positive_only:
+                        cell_class = "bd-cell-red" if num > 0 else "bd-cell-green"
+                    else:
+                        cell_class = "bd-cell-red" if num >= 0 else "bd-cell-green"
                     parts.append(
                         f'<td class="{cell_class}" style="padding: 8px; font-weight: bold;"><span>{val_esc}</span></td>'
                     )

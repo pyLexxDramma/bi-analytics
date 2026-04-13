@@ -5491,7 +5491,7 @@ def dashboard_technique(df):
                     caption_below="Распределение отклонения % по контрагентам",
                 )
 
-        # ========== Доли факта по людям и технике по подрядчикам (100% = все люди / вся техника) ==========
+        # ========== Таблица по подрядчикам: план, факт, % (факт/план), отклонение ==========
         if "data_source" in project_filtered_df.columns and "Контрагент" in project_filtered_df.columns and "week_sum" in project_filtered_df.columns:
             for _type, type_label, type_key in [
                 ("ресурсы", "Люди", "people"),
@@ -5502,21 +5502,62 @@ def dashboard_technique(df):
                 ]
                 if df_type.empty:
                     continue
-                by_contractor = (
-                    df_type.groupby("Контрагент", as_index=False)["week_sum"]
-                    .sum()
-                    .rename(columns={"week_sum": "Факт"})
+                _agg = {"week_sum": "sum"}
+                if "План_numeric" in df_type.columns:
+                    _agg["План_numeric"] = "sum"
+                by_contractor = df_type.groupby("Контрагент", as_index=False).agg(_agg)
+                by_contractor = by_contractor.rename(
+                    columns={"week_sum": "Факт", "План_numeric": "План"}
                 )
-                total_fact = by_contractor["Факт"].sum()
-                if total_fact == 0:
+                if "План" not in by_contractor.columns:
+                    by_contractor["План"] = 0.0
+                by_contractor["Факт"] = pd.to_numeric(
+                    by_contractor["Факт"], errors="coerce"
+                ).fillna(0.0)
+                by_contractor["План"] = pd.to_numeric(
+                    by_contractor["План"], errors="coerce"
+                ).fillna(0.0)
+                by_contractor["Отклонение"] = by_contractor["План"] - by_contractor["Факт"]
+                by_contractor["%"] = by_contractor.apply(
+                    lambda r: (
+                        round(float(r["Факт"]) / float(r["План"]) * 100.0, 1)
+                        if float(r["План"]) != 0.0
+                        else None
+                    ),
+                    axis=1,
+                )
+                by_contractor = by_contractor[
+                    (by_contractor["Факт"] != 0) | (by_contractor["План"] != 0)
+                ].copy()
+                if by_contractor.empty:
                     continue
-                by_contractor["%"] = (by_contractor["Факт"] / total_fact * 100).round(1)
-                by_contractor = by_contractor.sort_values("Факт", ascending=False)
-                st.caption(f"Доли факта по {type_label.lower()} по подрядчикам (всего {type_label.lower()}: 100% = {int(round(total_fact, 0))})")
-                display_df = by_contractor[["Контрагент", "Факт", "%"]].copy()
-                display_df["Факт"] = display_df["Факт"].apply(lambda x: int(round(x, 0)))
-                display_df["%"] = display_df["%"].astype(str) + "%"
-                st.markdown(budget_table_to_html(display_df), unsafe_allow_html=True)
+                by_contractor = by_contractor.sort_values("План", ascending=False)
+                st.caption(
+                    f"{type_label}: план, факт, «%» = факт/план×100%, отклонение = план − факт по подрядчикам"
+                )
+                display_df = by_contractor[
+                    ["Контрагент", "План", "Факт", "%", "Отклонение"]
+                ].copy()
+                display_df["План"] = display_df["План"].apply(
+                    lambda x: int(round(x, 0)) if pd.notna(x) else 0
+                )
+                display_df["Факт"] = display_df["Факт"].apply(
+                    lambda x: int(round(x, 0)) if pd.notna(x) else 0
+                )
+                display_df["%"] = display_df["%"].apply(
+                    lambda v: f"{v:.1f}%" if v is not None and pd.notna(v) else "—"
+                )
+                display_df["Отклонение"] = display_df["Отклонение"].apply(
+                    lambda x: int(round(x, 0)) if pd.notna(x) else 0
+                )
+                st.markdown(
+                    budget_table_to_html(
+                        display_df,
+                        finance_deviation_column="Отклонение",
+                        deviation_red_if_positive_only=True,
+                    ),
+                    unsafe_allow_html=True,
+                )
 
         # ========== Chart 2: Bar Chart by Contractor (Plan, Average, Отклонение) ==========
         st.subheader(
@@ -6775,7 +6816,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     )
             else:
                 st.info("Нет данных для отображения круговой диаграммы по подрядчикам.")
-        # ========== Доли факта по людям и технике по подрядчикам (100% = все люди / вся техника) ==========
+        # ========== Таблица по подрядчикам: план, факт, % (факт/план), отклонение ==========
         if "data_source" in project_filtered_df.columns and "Контрагент" in project_filtered_df.columns and "week_sum" in project_filtered_df.columns:
             for _type, type_label, type_key in [
                 ("ресурсы", "Люди", "people"),
@@ -6786,22 +6827,60 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 ]
                 if df_type.empty:
                     continue
-                by_contractor = (
-                    df_type.groupby("Контрагент", as_index=False)["week_sum"]
-                    .sum()
-                    .rename(columns={"week_sum": "Факт"})
+                _agg = {"week_sum": "sum"}
+                if "План_numeric" in df_type.columns:
+                    _agg["План_numeric"] = "sum"
+                by_contractor = df_type.groupby("Контрагент", as_index=False).agg(_agg)
+                by_contractor = by_contractor.rename(
+                    columns={"week_sum": "Факт", "План_numeric": "План"}
                 )
-                total_fact = by_contractor["Факт"].sum()
-                if total_fact == 0:
+                if "План" not in by_contractor.columns:
+                    by_contractor["План"] = 0.0
+                by_contractor["Факт"] = pd.to_numeric(
+                    by_contractor["Факт"], errors="coerce"
+                ).fillna(0.0)
+                by_contractor["План"] = pd.to_numeric(
+                    by_contractor["План"], errors="coerce"
+                ).fillna(0.0)
+                by_contractor["Отклонение"] = by_contractor["План"] - by_contractor["Факт"]
+                by_contractor["%"] = by_contractor.apply(
+                    lambda r: (
+                        round(float(r["Факт"]) / float(r["План"]) * 100.0, 1)
+                        if float(r["План"]) != 0.0
+                        else None
+                    ),
+                    axis=1,
+                )
+                by_contractor = by_contractor[
+                    (by_contractor["Факт"] != 0) | (by_contractor["План"] != 0)
+                ].copy()
+                if by_contractor.empty:
                     continue
-                by_contractor["%"] = (by_contractor["Факт"] / total_fact * 100).round(1)
-                by_contractor = by_contractor.sort_values("Факт", ascending=False)
-                st.caption(f"Доли факта по {type_label.lower()} по подрядчикам (всего {type_label.lower()}: 100% = {int(round(total_fact, 0))})")
-                display_df = by_contractor.copy()
-                display_df["Факт"] = display_df["Факт"].apply(lambda x: int(round(x, 0)))
-                display_df["%"] = display_df["%"].astype(str) + "%"
+                by_contractor = by_contractor.sort_values("План", ascending=False)
+                st.caption(
+                    f"{type_label}: план, факт, «%» = факт/план×100%, отклонение = план − факт по подрядчикам"
+                )
+                display_df = by_contractor[
+                    ["Контрагент", "План", "Факт", "%", "Отклонение"]
+                ].copy()
+                display_df["План"] = display_df["План"].apply(
+                    lambda x: int(round(x, 0)) if pd.notna(x) else 0
+                )
+                display_df["Факт"] = display_df["Факт"].apply(
+                    lambda x: int(round(x, 0)) if pd.notna(x) else 0
+                )
+                display_df["%"] = display_df["%"].apply(
+                    lambda v: f"{v:.1f}%" if v is not None and pd.notna(v) else "—"
+                )
+                display_df["Отклонение"] = display_df["Отклонение"].apply(
+                    lambda x: int(round(x, 0)) if pd.notna(x) else 0
+                )
                 st.markdown(
-                    budget_table_to_html(display_df[["Контрагент", "Факт", "%"]]),
+                    budget_table_to_html(
+                        display_df,
+                        finance_deviation_column="Отклонение",
+                        deviation_red_if_positive_only=True,
+                    ),
                     unsafe_allow_html=True,
                 )
 
