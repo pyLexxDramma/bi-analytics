@@ -233,6 +233,18 @@ def _clean_display_str(val, empty: str = "") -> str:
     return s
 
 
+def _find_column_by_keywords(df, keywords: tuple):
+    """Первое имя колонки, в котором встречается любое из ключевых слов (без учёта регистра)."""
+    if df is None or not hasattr(df, "columns"):
+        return None
+    for col in df.columns:
+        cn = str(col).lower()
+        for kw in keywords:
+            if str(kw).lower() in cn:
+                return col
+    return None
+
+
 def _chart_caption_below(title: str) -> None:
     """Заголовок под графиком (после подписей значений на столбцах/точках)."""
     if not title:
@@ -473,8 +485,8 @@ def dashboard_reasons_of_deviation(df):
 
     st.header("Доли причин отклонений по проекту")
     st.caption(
-        "По умолчанию отображаются все проекты и доступные периоды. Отдельный отчёт "
-        "«Динамика отклонений по месяцам» (временной ряд) — в объединённом экране «Динамика отклонений», вкладка «Динамика отклонений»."
+        "По умолчанию — все проекты и доступные периоды. Временной ряд — отчёт "
+        "«Динамика отклонений по месяцам» или объединённый экран «Причины отклонений», вкладка «Динамика по периодам»."
     )
 
     # Add CSS to force filters in one row
@@ -490,8 +502,12 @@ def dashboard_reasons_of_deviation(df):
         unsafe_allow_html=True,
     )
 
-    # Фильтры: проект, этап/раздел, функциональный блок (если есть), причина, месяц
-    col1, col2, col3, col4, col5 = st.columns(5)
+    building_col = _find_column_by_keywords(
+        df, ("building", "строение", "лот", "lot", "bldg")
+    )
+
+    # Фильтры: проект, этап, причина, функциональный блок
+    col1, col2, col3, col4 = st.columns(4)
 
     with col1:
         try:
@@ -543,42 +559,65 @@ def dashboard_reasons_of_deviation(df):
         else:
             selected_block = "Все"
 
-    with col5:
-        available_months = []
+    # Период (с / по), строение — макет правок
+    available_months = []
+    try:
+        has_plan_month_column = "plan_month" in df.columns
+    except (AttributeError, TypeError):
+        has_plan_month_column = False
+
+    if has_plan_month_column:
+        unique_months = df["plan_month"].dropna().unique()
+        if len(unique_months) > 0:
+            month_dict = {format_period_ru(m): m for m in unique_months}
+            available_months = sorted(
+                month_dict.keys(), key=lambda x: month_dict[x]
+            )
+    else:
         try:
-            has_plan_month_column = "plan_month" in df.columns
+            has_plan_end_column = "plan end" in df.columns
         except (AttributeError, TypeError):
-            has_plan_month_column = False
+            has_plan_end_column = False
 
-        if has_plan_month_column:
-            unique_months = df["plan_month"].dropna().unique()
-            if len(unique_months) > 0:
-                month_dict = {format_period_ru(m): m for m in unique_months}
-                available_months = sorted(
-                    month_dict.keys(), key=lambda x: month_dict[x]
-                )
+        if has_plan_end_column:
+            mask = df["plan end"].notna()
+            if mask.any():
+                temp_months = df.loc[mask, "plan end"].dt.to_period("M").unique()
+                if len(temp_months) > 0:
+                    month_dict = {format_period_ru(m): m for m in temp_months}
+                    available_months = sorted(
+                        month_dict.keys(), key=lambda x: month_dict[x]
+                    )
+
+    r2a, r2b, r2c = st.columns(3)
+    with r2a:
+        if building_col:
+            bvals = ["Все"] + sorted(
+                df[building_col].dropna().astype(str).str.strip().unique().tolist()
+            )
+            selected_building = st.selectbox(
+                "Строение", bvals, key="reason_building"
+            )
         else:
-            try:
-                has_plan_end_column = "plan end" in df.columns
-            except (AttributeError, TypeError):
-                has_plan_end_column = False
-
-            if has_plan_end_column:
-                mask = df["plan end"].notna()
-                if mask.any():
-                    temp_months = df.loc[mask, "plan end"].dt.to_period("M").unique()
-                    if len(temp_months) > 0:
-                        month_dict = {format_period_ru(m): m for m in temp_months}
-                        available_months = sorted(
-                            month_dict.keys(), key=lambda x: month_dict[x]
-                        )
-
+            selected_building = "Все"
+    with r2b:
         if len(available_months) > 0:
-            months = ["Все"] + available_months
-            selected_month = st.selectbox("Месяц", months, key="reason_month")
+            months_opts = ["Все"] + available_months
+            period_from = st.selectbox(
+                "Период с", months_opts, key="reason_period_from"
+            )
         else:
-            selected_month = "Все"
-            st.selectbox("Месяц", ["Все"], key="reason_month", disabled=True)
+            period_from = "Все"
+            st.selectbox("Период с", ["Все"], key="reason_period_from", disabled=True)
+    with r2c:
+        if len(available_months) > 0:
+            months_opts = ["Все"] + available_months
+            period_to = st.selectbox(
+                "Период по", months_opts, key="reason_period_to"
+            )
+        else:
+            period_to = "Все"
+            st.selectbox("Период по", ["Все"], key="reason_period_to", disabled=True)
 
     # Apply all filters - fix filtering logic
     filtered_df = df.copy()
@@ -621,39 +660,62 @@ def dashboard_reasons_of_deviation(df):
             filtered_df["block"].astype(str).str.strip() == str(selected_block).strip()
         ]
 
+    if (
+        selected_building != "Все"
+        and building_col
+        and building_col in filtered_df.columns
+    ):
+        filtered_df = filtered_df[
+            filtered_df[building_col].astype(str).str.strip()
+            == str(selected_building).strip()
+        ]
+
     try:
         has_plan_month_col = "plan_month" in filtered_df.columns
     except (AttributeError, TypeError):
         has_plan_month_col = False
 
-    if selected_month != "Все" and has_plan_month_col:
-        # Convert selected month back to Period format for comparison
-        def month_to_period(month_str):
-            try:
-                # Parse "Январь 2025" format (Russian month names)
-                parts = month_str.split()
-                if len(parts) == 2:
-                    month_name, year = parts
-                    # Find month number from Russian month name
-                    month_num = None
-                    for num, russian_name in RUSSIAN_MONTHS.items():
-                        if russian_name == month_name:
-                            month_num = num
-                            break
-                    if month_num:
-                        return pd.Period(f"{year}-{month_num:02d}", freq="M")
-            except:
-                pass
-            return None
+    def _month_str_to_period(month_str):
+        try:
+            parts = str(month_str).split()
+            if len(parts) == 2:
+                month_name, year = parts
+                month_num = None
+                for num, russian_name in RUSSIAN_MONTHS.items():
+                    if russian_name == month_name:
+                        month_num = num
+                        break
+                if month_num:
+                    return pd.Period(f"{year}-{month_num:02d}", freq="M")
+        except Exception:
+            pass
+        return None
 
-        selected_period = month_to_period(selected_month)
-        if selected_period is not None:
-            filtered_df = filtered_df[filtered_df["plan_month"] == selected_period]
-        else:
-            filtered_df = filtered_df[
-                filtered_df["plan_month"].apply(format_period_ru)
-                == selected_month
-            ]
+    if has_plan_month_col and (period_from != "Все" or period_to != "Все"):
+        pf = _month_str_to_period(period_from) if period_from != "Все" else None
+        pt = _month_str_to_period(period_to) if period_to != "Все" else None
+        if pf is not None and pt is not None and pf > pt:
+            pf, pt = pt, pf
+        if pf is not None:
+            filtered_df = filtered_df[filtered_df["plan_month"] >= pf]
+        if pt is not None:
+            filtered_df = filtered_df[filtered_df["plan_month"] <= pt]
+    elif not has_plan_month_col and "plan end" in filtered_df.columns:
+        pf = _month_str_to_period(period_from) if period_from != "Все" else None
+        pt = _month_str_to_period(period_to) if period_to != "Все" else None
+        if pf is not None or pt is not None:
+            if pf is not None and pt is not None and pf > pt:
+                pf, pt = pt, pf
+            _pe = pd.to_datetime(
+                filtered_df["plan end"], errors="coerce", dayfirst=True
+            )
+            pm = _pe.dt.to_period("M")
+            ok = pd.Series(True, index=filtered_df.index)
+            if pf is not None:
+                ok &= pm >= pf
+            if pt is not None:
+                ok &= pm <= pt
+            filtered_df = filtered_df[ok]
 
     # Filter tasks relevant for "dynamics of deviations": deviation=1/True OR reason of deviation filled
     try:
@@ -790,6 +852,10 @@ def dashboard_reasons_of_deviation(df):
                 insidetextorientation="radial",
                 textfont_size=10,
             )
+        fig.update_traces(
+            texttemplate="%{label}<br>%{value} (%{percent})",
+            hovertemplate="<b>%{label}</b><br>Количество: %{value}<br>Доля: %{percent}<extra></extra>",
+        )
         fig.update_layout(
             height=600,
             margin=dict(l=20, r=20, t=30, b=30),
@@ -817,8 +883,179 @@ def dashboard_reasons_of_deviation(df):
         unsafe_allow_html=True,
     )
 
-    # Detailed table — названия колонок на русском, дни: красный если > 0, зелёный если 0
+    # Детальная таблица по макету (п. 11): уровень 5, причина заполнена, отклонение окончания < 0
     st.subheader("Детальные данные")
+    notes_col_m = _find_column_by_keywords(
+        filtered_df, ("note", "заметк", "comment", "remark", "notes")
+    )
+    work_m = filtered_df.copy()
+    try:
+        ensure_date_columns(work_m)
+    except Exception:
+        pass
+    if "plan end" in work_m.columns:
+        work_m["plan end"] = pd.to_datetime(
+            work_m["plan end"], errors="coerce", dayfirst=True
+        )
+    if "base end" in work_m.columns:
+        work_m["base end"] = pd.to_datetime(
+            work_m["base end"], errors="coerce", dayfirst=True
+        )
+
+    work_m["_end_diff"] = np.nan
+    if "plan end" in work_m.columns and "base end" in work_m.columns:
+        _m = work_m["plan end"].notna() & work_m["base end"].notna()
+        work_m.loc[_m, "_end_diff"] = (
+            work_m.loc[_m, "base end"] - work_m.loc[_m, "plan end"]
+        ).dt.total_seconds() / 86400.0
+
+    mask_r = pd.Series(True, index=work_m.index)
+    if "reason of deviation" in work_m.columns:
+        mask_r = (
+            work_m["reason of deviation"].notna()
+            & (work_m["reason of deviation"].astype(str).str.strip() != "")
+        )
+    mask_l = pd.Series(True, index=work_m.index)
+    if "level" in work_m.columns:
+        _ln = pd.to_numeric(work_m["level"], errors="coerce")
+        mask_l = _ln == 5
+    mask_neg = work_m["_end_diff"].notna() & (work_m["_end_diff"] < 0)
+    maket_df = work_m[mask_r & mask_l & mask_neg].copy()
+    maket_df = maket_df.sort_values("_end_diff", ascending=True)
+
+    if maket_df.empty:
+        st.info(
+            "По макету нет строк: уровень 5, непустая причина, отклонение окончания < 0. "
+            "Ниже — полная выгрузка по текущим фильтрам."
+        )
+    else:
+        st.caption(
+            "По макету: уровень 5 MSP, причина отклонения заполнена, отклонение окончания < 0. "
+            "Сортировка: по возрастанию отклонения (худшее сверху)."
+        )
+        _date_bg_m = "rgba(46, 134, 171, 0.22)"
+        _tbl_m = [
+            '<div class="rendered-table-wrap" style="margin-top:0.5rem">',
+            '<table class="rendered-table" style="border-collapse:collapse;width:100%">',
+            "<thead><tr>",
+        ]
+        _hdrs = ["№", "Проект"]
+        if "block" in maket_df.columns:
+            _hdrs.append("Функциональный блок")
+        if building_col and building_col in maket_df.columns:
+            _hdrs.append("Строение")
+        _hdrs.extend(
+            [
+                "Базовое окончание",
+                "Окончание",
+                "Отклонение",
+                "Причина отклонения",
+                "Заметки",
+            ]
+        )
+        for h in _hdrs:
+            _tbl_m.append(f"<th>{html_module.escape(h)}</th>")
+        _tbl_m.append("</tr></thead><tbody>")
+
+        for i, (_, rr) in enumerate(maket_df.iterrows(), start=1):
+            pr = _clean_display_str(rr.get("project name"))
+            fb = (
+                _clean_display_str(rr.get("block"))
+                if "block" in maket_df.columns
+                else ""
+            )
+            stv = (
+                _clean_display_str(rr.get(building_col))
+                if building_col and building_col in maket_df.columns
+                else ""
+            )
+            pe = rr.get("plan end")
+            fe = rr.get("base end")
+            ed = rr.get("_end_diff")
+            pe_s = pe.strftime("%d.%m.%Y") if pd.notna(pe) else ""
+            fe_s = fe.strftime("%d.%m.%Y") if pd.notna(fe) else ""
+            ed_s = ""
+            if pd.notna(ed):
+                ed_s = str(int(round(float(ed), 0)))
+            rs = _clean_display_str(rr.get("reason of deviation"))
+            nt = ""
+            if notes_col_m and notes_col_m in maket_df.columns:
+                nt = _clean_display_str(rr.get(notes_col_m))
+
+            _tbl_m.append("<tr>")
+            _tbl_m.append(f"<td>{html_module.escape(str(i))}</td>")
+            _tbl_m.append(f"<td>{html_module.escape(pr)}</td>")
+            if "block" in maket_df.columns:
+                _tbl_m.append(f"<td>{html_module.escape(fb)}</td>")
+            if building_col and building_col in maket_df.columns:
+                _tbl_m.append(f"<td>{html_module.escape(stv)}</td>")
+            _tbl_m.append(
+                f'<td style="background:{_date_bg_m}">{html_module.escape(pe_s)}</td>'
+            )
+            _tbl_m.append(
+                f'<td style="background:{_date_bg_m}">{html_module.escape(fe_s)}</td>'
+            )
+            if pd.isna(ed):
+                _tbl_m.append(
+                    f'<td style="background:{_date_bg_m}">{html_module.escape("—")}</td>'
+                )
+            else:
+                try:
+                    ev = float(ed)
+                except (TypeError, ValueError):
+                    _tbl_m.append(
+                        f'<td style="background:{_date_bg_m}">{html_module.escape(ed_s)}</td>'
+                    )
+                else:
+                    clr = "#c0392b" if ev < 0 else "#27ae60"
+                    _tbl_m.append(
+                        f'<td style="background:{_date_bg_m};color:{clr};font-weight:600">{html_module.escape(ed_s)}</td>'
+                    )
+            _tbl_m.append(f"<td>{html_module.escape(rs)}</td>")
+            _tbl_m.append(f"<td>{html_module.escape(nt)}</td>")
+            _tbl_m.append("</tr>")
+
+        _tbl_m.append("</tbody></table></div>")
+        st.markdown(_TABLE_CSS + "".join(_tbl_m), unsafe_allow_html=True)
+        st.caption(f"Записей (по макету): {len(maket_df)}")
+        _maket_out = []
+        for i, (_, rr) in enumerate(maket_df.iterrows(), start=1):
+            row = {"№": i, "Проект": _clean_display_str(rr.get("project name"))}
+            if "block" in maket_df.columns:
+                row["Функциональный блок"] = _clean_display_str(rr.get("block"))
+            if building_col and building_col in maket_df.columns:
+                row["Строение"] = _clean_display_str(rr.get(building_col))
+            pe = rr.get("plan end")
+            fe = rr.get("base end")
+            ed = rr.get("_end_diff")
+            row["Базовое окончание"] = (
+                pe.strftime("%d.%m.%Y") if pd.notna(pe) else ""
+            )
+            row["Окончание"] = fe.strftime("%d.%m.%Y") if pd.notna(fe) else ""
+            row["Отклонение"] = (
+                int(round(float(ed), 0)) if pd.notna(ed) else ""
+            )
+            row["Причина отклонения"] = _clean_display_str(
+                rr.get("reason of deviation")
+            )
+            row["Заметки"] = (
+                _clean_display_str(rr.get(notes_col_m))
+                if notes_col_m and notes_col_m in maket_df.columns
+                else ""
+            )
+            _maket_out.append(row)
+        _maket_csv = pd.DataFrame(_maket_out).to_csv(
+            index=False, encoding="utf-8-sig"
+        ).encode("utf-8-sig")
+        st.download_button(
+            "Скачать CSV (по макету)",
+            _maket_csv,
+            "deviations_detail_maket.csv",
+            "text/csv",
+            key="devtable_csv_maket",
+        )
+
+    st.caption("Полная выгрузка по текущим фильтрам")
     display_cols = [
         "project name",
         "task name",
@@ -1499,6 +1736,13 @@ def dashboard_plan_fact_dates(df):
                     return col
         return None
 
+    dates_building_col = _find_column_by_keywords(
+        df, ("building", "строение", "лот", "lot", "bldg")
+    )
+    dates_pct_col = _find_column_by_keywords(
+        df, ("percent complete", "% заверш", "выполн", "complete", "percent")
+    )
+
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -1528,6 +1772,43 @@ def dashboard_plan_fact_dates(df):
         else:
             selected_level = "Все уровни"
 
+    d2a, d2b, d2c, d2d = st.columns(4)
+    with d2a:
+        if "block" in df.columns:
+            blks = ["Все"] + sorted(
+                df["block"].dropna().astype(str).str.strip().unique().tolist()
+            )
+            selected_block_dates = st.selectbox(
+                "Функциональный блок", blks, key="dates_block"
+            )
+        else:
+            selected_block_dates = "Все"
+    with d2b:
+        if dates_building_col:
+            bopts = ["Все"] + sorted(
+                df[dates_building_col].dropna().astype(str).str.strip().unique().tolist()
+            )
+            selected_building_dates = st.selectbox(
+                "Строение", bopts, key="dates_building"
+            )
+        else:
+            selected_building_dates = "Все"
+    with d2c:
+        hide_completed_dates = st.checkbox(
+            "Скрыть завершённые (100%)",
+            value=False,
+            key="dates_hide_done",
+            disabled=dates_pct_col is None,
+            help="Скрыть задачи со 100% выполнения в колонке выгрузки MSP (если колонка найдена).",
+        )
+    with d2d:
+        only_negative_dev_dates = st.checkbox(
+            "Только отрицательное отклонение окончания",
+            value=False,
+            key="dates_only_neg_end",
+            help="Оставить строки, где отклонение окончания (факт − план) < 0.",
+        )
+
     # Apply filters
     filtered_df = df.copy()
     if selected_project != "Все" and "project name" in filtered_df.columns:
@@ -1539,6 +1820,20 @@ def dashboard_plan_fact_dates(df):
         filtered_df = filtered_df[
             filtered_df["section"].astype(str).str.strip()
             == str(selected_section).strip()
+        ]
+    if selected_block_dates != "Все" and "block" in filtered_df.columns:
+        filtered_df = filtered_df[
+            filtered_df["block"].astype(str).str.strip()
+            == str(selected_block_dates).strip()
+        ]
+    if (
+        selected_building_dates != "Все"
+        and dates_building_col
+        and dates_building_col in filtered_df.columns
+    ):
+        filtered_df = filtered_df[
+            filtered_df[dates_building_col].astype(str).str.strip()
+            == str(selected_building_dates).strip()
         ]
     # Фильтр по уровню иерархии
     if selected_level == "Сводные (1–3 ур.)" and "level" in filtered_df.columns:
@@ -1606,6 +1901,22 @@ def dashboard_plan_fact_dates(df):
     filtered_df.loc[only_start, "total_diff_days"] = filtered_df.loc[
         only_start, "plan_start_diff"
     ].abs()
+
+    if hide_completed_dates and dates_pct_col and dates_pct_col in filtered_df.columns:
+        _pct = pd.to_numeric(filtered_df[dates_pct_col], errors="coerce")
+        filtered_df = filtered_df[_pct.isna() | (_pct < 100.0001)]
+
+    if only_negative_dev_dates:
+        filtered_df = filtered_df[
+            filtered_df["plan_end_diff"].notna()
+            & (filtered_df["plan_end_diff"] < 0)
+        ]
+
+    if filtered_df.empty:
+        st.info(
+            "Нет данных после фильтров «Скрыть завершённые» / «Только отрицательное отклонение»."
+        )
+        return
 
     # Sort by task name (alphabetically) for consistent display
     filtered_df = filtered_df.sort_values("task name", ascending=True)
