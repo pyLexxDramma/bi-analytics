@@ -5221,6 +5221,7 @@ def dashboard_technique(df):
                         caption_below=f"Фактическое количество по периодам: {label}",
                     )
 
+    plan_fact_row_done = False
     for project_name in projects_to_process:
         project_filtered_df = filtered_df.copy()
         if (
@@ -5278,47 +5279,48 @@ def dashboard_technique(df):
                 st.info("Нет данных для отображения.")
             continue
 
-        df_people = project_filtered_df.copy()
-        if "data_source" in df_people.columns:
-            df_people = df_people[
-                df_people["data_source"].astype(str).str.strip().str.lower() == "ресурсы"
-            ].copy()
-        if not df_people.empty and "План_numeric" in df_people.columns and "week_sum" in df_people.columns:
-            plan_sum = df_people["План_numeric"].sum()
-            fact_sum = df_people["week_sum"].sum()
-            total_pf = plan_sum + fact_sum
-            if total_pf > 0:
-                plan_pct = round(plan_sum / total_pf * 100, 1)
-                fact_pct = round(fact_sum / total_pf * 100, 1)
-                pie_plan_fact = pd.DataFrame({
-                    "Тип": ["План", "Факт"],
-                    "Значение": [plan_sum, fact_sum],
-                    "Текст": [f"План: {int(plan_sum)} ({plan_pct}%)", f"Факт: {int(fact_sum)} ({fact_pct}%)"],
-                })
-                st.subheader("План и факт (люди) по проекту")
-                fig_pie_pf = px.pie(
-                    pie_plan_fact,
-                    values="Значение",
-                    names="Тип",
-                    title=None,
-                    color_discrete_sequence=["#3498db", "#2ecc71"],
-                )
-                fig_pie_pf.update_traces(
-                    textinfo="label+percent",
-                    textposition="auto",
-                    textfont_size=10,
-                    insidetextorientation="radial",
-                    hovertemplate="%{label}: %{value:,.0f} (%{percent:.0%})<extra></extra>",
-                )
-                fig_pie_pf.update_layout(
-                    height=500,
-                    showlegend=True,
-                    title_font_size=14,
-                    uniformtext=dict(minsize=8, mode="hide"),
-                    legend=dict(orientation="v", font=dict(size=10)),
-                )
-                fig_pie_pf = apply_chart_background(fig_pie_pf)
-                render_chart(fig_pie_pf, caption_below=f"План и факт — {project_name}")
+        if not plan_fact_row_done:
+            df_people = project_filtered_df.copy()
+            if "data_source" in df_people.columns:
+                df_people = df_people[
+                    df_people["data_source"].astype(str).str.strip().str.lower() == "ресурсы"
+                ].copy()
+            if not df_people.empty and "План_numeric" in df_people.columns and "week_sum" in df_people.columns:
+                plan_sum = df_people["План_numeric"].sum()
+                fact_sum = df_people["week_sum"].sum()
+                total_pf = plan_sum + fact_sum
+                if total_pf > 0:
+                    plan_pct = round(plan_sum / total_pf * 100, 1)
+                    fact_pct = round(fact_sum / total_pf * 100, 1)
+                    pie_plan_fact = pd.DataFrame({
+                        "Тип": ["План", "Факт"],
+                        "Значение": [plan_sum, fact_sum],
+                        "Текст": [f"План: {int(plan_sum)} ({plan_pct}%)", f"Факт: {int(fact_sum)} ({fact_pct}%)"],
+                    })
+                    st.subheader("План и факт (люди) по проекту")
+                    fig_pie_pf = px.pie(
+                        pie_plan_fact,
+                        values="Значение",
+                        names="Тип",
+                        title=None,
+                        color_discrete_sequence=["#3498db", "#2ecc71"],
+                    )
+                    fig_pie_pf.update_traces(
+                        textinfo="label+percent",
+                        textposition="auto",
+                        textfont_size=10,
+                        insidetextorientation="radial",
+                        hovertemplate="%{label}: %{value:,.0f} (%{percent:.0%})<extra></extra>",
+                    )
+                    fig_pie_pf.update_layout(
+                        height=500,
+                        showlegend=True,
+                        title_font_size=14,
+                        uniformtext=dict(minsize=8, mode="hide"),
+                        legend=dict(orientation="v", font=dict(size=10)),
+                    )
+                    fig_pie_pf = apply_chart_background(fig_pie_pf)
+                    render_chart(fig_pie_pf, caption_below=f"План и факт — {project_name}")
 
         # ========== Chart 1: Pie Chart by Contractor (Delta %) ==========
         st.subheader("Круговая диаграмма: Распределение отклонения % по контрагентам")
@@ -6432,6 +6434,121 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                         caption_below=f"Фактическое количество по периодам: {label}",
                     )
 
+    # --- ГДРС (правки): несколько проектов — круговые «план/факт» в одну строку, сводка справа
+    def _gdrs_plan_fact_data_slice(pdf: pd.DataFrame) -> pd.DataFrame:
+        if pdf is None or pdf.empty:
+            return pdf
+        if "data_source" not in pdf.columns:
+            return pdf
+        dst = (data_source_filter or "").strip().lower()
+        if dst == "техника":
+            return pdf[
+                pdf["data_source"].astype(str).str.strip().str.lower() == "техника"
+            ].copy()
+        if dst == "ресурсы":
+            return pdf[
+                pdf["data_source"].astype(str).str.strip().str.lower() == "ресурсы"
+            ].copy()
+        rk = st.session_state.get(f"{key_prefix}_resource_kind", "Рабочие (ресурсы)")
+        if rk == "Техника":
+            return pdf[
+                pdf["data_source"].astype(str).str.strip().str.lower() == "техника"
+            ].copy()
+        if rk == "Все":
+            return pdf[
+                pdf["data_source"].astype(str).str.strip().str.lower() == "ресурсы"
+            ].copy()
+        return pdf[pdf["data_source"].astype(str).str.strip().str.lower() == "ресурсы"].copy()
+
+    def _gdrs_plan_fact_fig_and_metrics(pdf: pd.DataFrame):
+        d = _gdrs_plan_fact_data_slice(pdf)
+        if d is None or d.empty or "План_numeric" not in d.columns or "week_sum" not in d.columns:
+            return None, None
+        plan_sum = float(pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0).sum())
+        fact_sum = float(pd.to_numeric(d["week_sum"], errors="coerce").fillna(0).sum())
+        total_pf = plan_sum + fact_sum
+        if total_pf <= 0:
+            return None, None
+        dev = plan_sum - fact_sum
+        fp_pct = (fact_sum / plan_sum * 100.0) if plan_sum else 0.0
+        pie_plan_fact = pd.DataFrame(
+            {"Тип": ["План", "Факт"], "Значение": [plan_sum, fact_sum]}
+        )
+        fig_pie_pf = px.pie(
+            pie_plan_fact,
+            values="Значение",
+            names="Тип",
+            title=None,
+            color_discrete_sequence=["#3498db", "#2ecc71"],
+        )
+        fig_pie_pf.update_traces(
+            textinfo="label+percent",
+            textposition="auto",
+            textfont_size=10,
+            insidetextorientation="radial",
+            hovertemplate="%{label}: %{value:,.0f} (%{percent:.0%})<extra></extra>",
+        )
+        fig_pie_pf.update_layout(
+            height=420,
+            showlegend=True,
+            title_font_size=14,
+            uniformtext=dict(minsize=8, mode="hide"),
+            legend=dict(orientation="v", font=dict(size=10)),
+            margin=dict(l=10, r=10, t=10, b=10),
+        )
+        fig_pie_pf = apply_chart_background(fig_pie_pf)
+        return fig_pie_pf, {
+            "plan": plan_sum,
+            "fact": fact_sum,
+            "dev": dev,
+            "fp_pct": fp_pct,
+        }
+
+    show_plan_fact_row = (
+        has_plan_data
+        and len(projects_to_process) > 1
+        and project_col
+        and project_col in filtered_df.columns
+    )
+    plan_fact_row_done = False
+    if show_plan_fact_row:
+        if (data_source_filter or "").strip().lower() == "техника":
+            st.subheader("Техника (план/факт)")
+        else:
+            st.subheader("Рабочие (план/факт)")
+        pf_cols = st.columns(len(projects_to_process))
+        for _ix, _pname in enumerate(projects_to_process):
+            _pdf = filtered_df.copy()
+            if project_col in _pdf.columns and _pname != "Все проекты":
+                _pdf = _pdf[
+                    _pdf[project_col].astype(str).str.strip() == str(_pname).strip()
+                ]
+            fig_pf, met_pf = _gdrs_plan_fact_fig_and_metrics(_pdf)
+            with pf_cols[_ix]:
+                st.markdown(f"##### {_pname}")
+                if fig_pf is not None and met_pf is not None:
+                    a1, a2 = st.columns([3, 2])
+                    with a1:
+                        render_chart(
+                            fig_pf,
+                            key=f"{key_prefix}_planfact_row_{_ix}",
+                            caption_below="",
+                        )
+                    with a2:
+                        _col = "#e74c3c" if met_pf["dev"] > 0 else "#27ae60"
+                        st.markdown(
+                            f"**План:** {int(round(met_pf['plan']))}\n\n"
+                            f"**Факт:** {int(round(met_pf['fact']))}\n\n"
+                            f"**Отклонение:** <span style='color:{_col};font-size:1.15em'>●</span> "
+                            f"{int(round(met_pf['dev']))}\n\n"
+                            f"*({met_pf['fp_pct']:.1f}% — факт/план)*",
+                            unsafe_allow_html=True,
+                        )
+                else:
+                    st.caption("Нет данных для плана/факта по этому проекту.")
+        plan_fact_row_done = True
+        st.markdown("---")
+
     for project_name in projects_to_process:
         project_filtered_df = filtered_df.copy()
         if (
@@ -6489,47 +6606,48 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 st.info("Нет данных для отображения.")
             continue
 
-        df_people = project_filtered_df.copy()
-        if "data_source" in df_people.columns:
-            df_people = df_people[
-                df_people["data_source"].astype(str).str.strip().str.lower() == "ресурсы"
-            ].copy()
-        if not df_people.empty and "План_numeric" in df_people.columns and "week_sum" in df_people.columns:
-            plan_sum = df_people["План_numeric"].sum()
-            fact_sum = df_people["week_sum"].sum()
-            total_pf = plan_sum + fact_sum
-            if total_pf > 0:
-                plan_pct = round(plan_sum / total_pf * 100, 1)
-                fact_pct = round(fact_sum / total_pf * 100, 1)
-                pie_plan_fact = pd.DataFrame({
-                    "Тип": ["План", "Факт"],
-                    "Значение": [plan_sum, fact_sum],
-                    "Текст": [f"План: {int(plan_sum)} ({plan_pct}%)", f"Факт: {int(fact_sum)} ({fact_pct}%)"],
-                })
-                st.subheader("План и факт (люди) по проекту")
-                fig_pie_pf = px.pie(
-                    pie_plan_fact,
-                    values="Значение",
-                    names="Тип",
-                    title=None,
-                    color_discrete_sequence=["#3498db", "#2ecc71"],
-                )
-                fig_pie_pf.update_traces(
-                    textinfo="label+percent",
-                    textposition="auto",
-                    textfont_size=10,
-                    insidetextorientation="radial",
-                    hovertemplate="%{label}: %{value:,.0f} (%{percent:.0%})<extra></extra>",
-                )
-                fig_pie_pf.update_layout(
-                    height=500,
-                    showlegend=True,
-                    title_font_size=14,
-                    uniformtext=dict(minsize=8, mode="hide"),
-                    legend=dict(orientation="v", font=dict(size=10)),
-                )
-                fig_pie_pf = apply_chart_background(fig_pie_pf)
-                render_chart(fig_pie_pf, caption_below=f"План и факт — {project_name}")
+        if not plan_fact_row_done:
+            df_people = project_filtered_df.copy()
+            if "data_source" in df_people.columns:
+                df_people = df_people[
+                    df_people["data_source"].astype(str).str.strip().str.lower() == "ресурсы"
+                ].copy()
+            if not df_people.empty and "План_numeric" in df_people.columns and "week_sum" in df_people.columns:
+                plan_sum = df_people["План_numeric"].sum()
+                fact_sum = df_people["week_sum"].sum()
+                total_pf = plan_sum + fact_sum
+                if total_pf > 0:
+                    plan_pct = round(plan_sum / total_pf * 100, 1)
+                    fact_pct = round(fact_sum / total_pf * 100, 1)
+                    pie_plan_fact = pd.DataFrame({
+                        "Тип": ["План", "Факт"],
+                        "Значение": [plan_sum, fact_sum],
+                        "Текст": [f"План: {int(plan_sum)} ({plan_pct}%)", f"Факт: {int(fact_sum)} ({fact_pct}%)"],
+                    })
+                    st.subheader("План и факт (люди) по проекту")
+                    fig_pie_pf = px.pie(
+                        pie_plan_fact,
+                        values="Значение",
+                        names="Тип",
+                        title=None,
+                        color_discrete_sequence=["#3498db", "#2ecc71"],
+                    )
+                    fig_pie_pf.update_traces(
+                        textinfo="label+percent",
+                        textposition="auto",
+                        textfont_size=10,
+                        insidetextorientation="radial",
+                        hovertemplate="%{label}: %{value:,.0f} (%{percent:.0%})<extra></extra>",
+                    )
+                    fig_pie_pf.update_layout(
+                        height=500,
+                        showlegend=True,
+                        title_font_size=14,
+                        uniformtext=dict(minsize=8, mode="hide"),
+                        legend=dict(orientation="v", font=dict(size=10)),
+                    )
+                    fig_pie_pf = apply_chart_background(fig_pie_pf)
+                    render_chart(fig_pie_pf, caption_below=f"План и факт — {project_name}")
 
         # ========== Chart 1: Pie Chart by Contractor (Delta %) ==========
         st.subheader("Круговая диаграмма: Распределение отклонения % по контрагентам")
