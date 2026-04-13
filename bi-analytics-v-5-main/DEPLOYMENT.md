@@ -22,9 +22,11 @@ Streamlit Cloud is the easiest and most appropriate option for deploying Streaml
 3. **Deploy your app**:
    - Click "New app"
    - Select your repository and branch (например `main`).
-   - **Main file path** (если код лежит во вложенной папке, как в этом репозитории):  
-     `bi-analytics-v-5-main/project_visualization_app.py`  
-     *Не* указывайте только `project_visualization_app.py` в корне — файла там нет, приложение упадёт с «Oh no».
+   - **Main file path** (рекомендуется файл в **корне** репозитория):  
+     **`streamlit_app.py`**  
+     Он подключает `bi-analytics-v-5-main/project_visualization_app.py` и устраняет ошибку **«Main module does not exist»**, если Cloud некорректно обрабатывает вложенный путь.  
+     Альтернатива: `bi-analytics-v-5-main/project_visualization_app.py` (точное имя файла и папки, регистр важен).
+   - **Python version** в настройках приложения: **3.12** или **3.11**. Не используйте экспериментальные ветки вроде **3.14** — сборка Streamlit может падать.
    - В корне репозитория должен быть `requirements.txt` (он подключает `bi-analytics-v-5-main/requirements.txt`), иначе на Cloud не установятся зависимости.
    - Click "Deploy!"
 
