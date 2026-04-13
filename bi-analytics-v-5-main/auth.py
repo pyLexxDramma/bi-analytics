@@ -552,39 +552,34 @@ def render_sidebar_menu(current_page: str = "reports"):
         # Меню навигации
         st.markdown("### Меню")
 
-        # 1. Отчеты (если есть доступ)
-        if has_report_access(user["role"]):
-            btn_type = "primary" if current_page == "reports" else "secondary"
-            if st.button("Отчеты", width="stretch", type=btn_type):
-                switch_page_app("project_visualization_app.py")
+        # 1. Отчеты (если есть доступ) — заголовок раздела, без перехода по клику
+        if has_report_access(user["role"]) and current_page == "reports":
+            from dashboards import REPORT_CATEGORIES
 
-            # Список отчетов под кнопкой "Отчеты" (единый источник: dashboards.REPORT_CATEGORIES)
-            if current_page == "reports":
-                from dashboards import REPORT_CATEGORIES
-                st.markdown("---")
-                st.markdown("#### Список отчетов")
-                current_dashboard = st.session_state.get("current_dashboard", "")
-                # Иконки: Причины отклонений, Аналитика по финансам, Прочее (3 категории)
-                icons = ["", "", ""]
-                for i, (cat_name, reports) in enumerate(REPORT_CATEGORIES):
-                    icon = icons[i] if i < len(icons) else ""
-                    visible = filter_reports_for_role(user["role"], list(reports))
-                    if not visible:
-                        continue
-                    with st.expander(f"{icon} {cat_name}", expanded=False):
-                        for report in visible:
-                            button_type = (
-                                "primary" if current_dashboard == report else "secondary"
-                            )
-                            if st.button(
-                                f"• {report}",
-                                width="stretch",
-                                key=f"menu_report_{report}",
-                                type=button_type,
-                            ):
-                                st.session_state.current_dashboard = report
-                                st.session_state.dashboard_selected_from_menu = True
-                                st.rerun()
+            st.markdown("#### Отчеты")
+            st.markdown("---")
+            current_dashboard = st.session_state.get("current_dashboard", "")
+            # Иконки: Причины отклонений, Аналитика по финансам, Прочее (3 категории)
+            icons = ["", "", ""]
+            for i, (cat_name, reports) in enumerate(REPORT_CATEGORIES):
+                icon = icons[i] if i < len(icons) else ""
+                visible = filter_reports_for_role(user["role"], list(reports))
+                if not visible:
+                    continue
+                with st.expander(f"{icon} {cat_name}", expanded=False):
+                    for report in visible:
+                        button_type = (
+                            "primary" if current_dashboard == report else "secondary"
+                        )
+                        if st.button(
+                            f"• {report}",
+                            width="stretch",
+                            key=f"menu_report_{report}",
+                            type=button_type,
+                        ):
+                            st.session_state.current_dashboard = report
+                            st.session_state.dashboard_selected_from_menu = True
+                            st.rerun()
 
         # 2. Настройки
         if has_admin_access(user["role"]):
