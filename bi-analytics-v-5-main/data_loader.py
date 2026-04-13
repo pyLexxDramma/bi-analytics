@@ -3,7 +3,8 @@
 Вся логика «прочитать файл и положить в сессию» — только здесь.
 """
 import csv
-from typing import Optional
+import re
+from typing import Optional, Tuple
 
 import pandas as pd
 import streamlit as st
@@ -12,7 +13,11 @@ import streamlit as st
 def detect_data_type(df: pd.DataFrame, file_name: Optional[str] = None) -> str:
     """Определение типа данных по структуре колонок и имени файла."""
     columns = [str(col).lower() for col in df.columns]
+    columns_joined = " ".join(columns)
     file_name_lower = str(file_name).lower() if file_name else ""
+    has_dd_mm_yyyy_col = any(
+        re.search(r"\d{1,2}\.\d{1,2}\.\d{4}", str(c)) for c in df.columns
+    )
 
     # Данные проекта: задача, план дат, бюджет
     if (
@@ -21,6 +26,12 @@ def detect_data_type(df: pd.DataFrame, file_name: Optional[str] = None) -> str:
         and any(col in columns for col in ["бюджет план", "budget plan"])
     ):
         return "project"
+
+    # ГДРС: кладём в resources — вкладка «Техника» при необходимости подхватывает тот же df из session.
+    if ("гдрс" in file_name_lower or "gdrs" in file_name_lower) and (
+        "тип ресурс" in columns_joined or has_dd_mm_yyyy_col
+    ):
+        return "resources"
 
     # Ресурсы/техника: sample_resources_data.csv, sample_technique_data.csv — Проект, Контрагент, Период, План, Среднее за месяц/неделю, 1–5 неделя, Дельта, Дельта (%)
     has_contractor = any(
@@ -54,6 +65,115 @@ def detect_data_type(df: pd.DataFrame, file_name: Optional[str] = None) -> str:
     return "project"
 
 
+def _score_tabular_shape(df: pd.DataFrame) -> int:
+    """
+    Оценка «похожести» на нормальную таблицу (ГДРС, ресурсы, проект).
+    Нужна, чтобы не брать вариант read_csv с sep=';', когда в файле запятая —
+    тогда вся строка попадает в одну колонку и графики пустые.
+    """
+    if df is None or getattr(df, "empty", True):
+        return -10**6
+    ncol = len(df.columns)
+    names = " ".join(str(c).lower() for c in df.columns)
+    score = min(ncol * 2, 40)
+    for key in (
+        "проект",
+        "контрагент",
+        "подразделение",
+        "план",
+        "период",
+        "тип ресурс",
+        "data_source",
+        "среднее",
+        "неделя",
+        "дельт",
+        "задача",
+        "бюджет",
+        "старт",
+        "факт",
+    ):
+        if key in names:
+            score += 10
+    for c in df.columns:
+        s = str(c).strip()
+        if re.search(r"\d{1,2}\.\d{1,2}\.\d{4}", s):
+            score += 3
+    if ncol <= 2:
+        score -= 60
+    elif ncol <= 4:
+        score -= 15
+    try:
+        c0 = df.iloc[:, 0]
+        med = c0.astype(str).str.len().median()
+        if pd.notna(med) and float(med) > 180:
+            score -= 40
+    except Exception:
+        pass
+    return score
+
+
+def _read_csv_best_effort(uploaded_file) -> Optional[pd.DataFrame]:
+    """Перебор кодировок и разделителей; выбирается вариант с максимальной оценкой таблицы."""
+    encodings = ["utf-8-sig", "utf-8", "windows-1251", "cp1251"]
+    seps = [";", ",", "\t"]
+    best_df = None
+    best_sc = None
+    for enc in encodings:
+        for sep in seps:
+            try:
+                uploaded_file.seek(0)
+                cand = pd.read_csv(
+                    uploaded_file,
+                    sep=sep,
+                    encoding=enc,
+                    quoting=csv.QUOTE_MINIMAL,
+                    quotechar='"',
+                    doublequote=True,
+                    decimal=",",
+                    low_memory=False,
+                )
+                sc = _score_tabular_shape(cand)
+                if best_sc is None or sc > best_sc:
+                    best_sc = sc
+                    best_df = cand
+            except Exception:
+                continue
+    if best_df is None:
+        for enc in encodings:
+            try:
+                uploaded_file.seek(0)
+                best_df = pd.read_csv(uploaded_file, encoding=enc)
+                break
+            except Exception:
+                continue
+        if best_df is None:
+            uploaded_file.seek(0)
+            best_df = pd.read_csv(uploaded_file)
+    return best_df
+
+
+def _read_excel_best_effort(uploaded_file) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
+    """
+    Чтение Excel: иногда первая строка — заголовок секции, не колонки.
+    Пробуем skiprows=0/1 и выбираем лучший по _score_tabular_shape.
+    """
+    best_df = None
+    best_sc = None
+    note = None
+    for skip in (0, 1, 2):
+        try:
+            uploaded_file.seek(0)
+            cand = pd.read_excel(uploaded_file, skiprows=skip)
+            sc = _score_tabular_shape(cand)
+            if best_sc is None or sc > best_sc:
+                best_sc = sc
+                best_df = cand
+                note = f"skiprows={skip}" if skip else None
+        except Exception:
+            continue
+    return best_df, note
+
+
 def load_data(uploaded_file, file_name: Optional[str] = None) -> Optional[pd.DataFrame]:
     """
     Загрузка данных из загруженного файла (CSV/Excel).
@@ -61,46 +181,15 @@ def load_data(uploaded_file, file_name: Optional[str] = None) -> Optional[pd.Dat
     """
     try:
         original_name = file_name if file_name else uploaded_file.name
+        excel_note = None  # подсказка при чтении .xlsx (skiprows)
         if uploaded_file.name.endswith(".csv"):
-            encodings = ["utf-8", "utf-8-sig", "windows-1251", "cp1251"]
-            df = None
-            for encoding in encodings:
-                try:
-                    uploaded_file.seek(0)
-                    df = pd.read_csv(
-                        uploaded_file,
-                        sep=";",
-                        encoding=encoding,
-                        quoting=csv.QUOTE_MINIMAL,
-                        quotechar='"',
-                        doublequote=True,
-                        decimal=",",  # европейский формат: 84615,38462
-                    )
-                    break
-                except (UnicodeDecodeError, pd.errors.ParserError):
-                    try:
-                        uploaded_file.seek(0)
-                        df = pd.read_csv(
-                            uploaded_file,
-                            sep=",",
-                            encoding=encoding,
-                            quoting=csv.QUOTE_MINIMAL,
-                            quotechar='"',
-                            doublequote=True,
-                            decimal=",",
-                        )
-                        break
-                    except (UnicodeDecodeError, pd.errors.ParserError):
-                        continue
+            df = _read_csv_best_effort(uploaded_file)
+        elif uploaded_file.name.endswith((".xlsx", ".xls")):
+            df, excel_note = _read_excel_best_effort(uploaded_file)
             if df is None:
                 uploaded_file.seek(0)
-                try:
-                    df = pd.read_csv(uploaded_file, encoding="utf-8")
-                except Exception:
-                    uploaded_file.seek(0)
-                    df = pd.read_csv(uploaded_file)
-        elif uploaded_file.name.endswith((".xlsx", ".xls")):
-            df = pd.read_excel(uploaded_file)
+                df = pd.read_excel(uploaded_file)
+                excel_note = None
         else:
             st.error("Неподдерживаемый формат файла. Загрузите CSV или Excel файл.")
             return None
@@ -221,6 +310,8 @@ def load_data(uploaded_file, file_name: Optional[str] = None) -> Optional[pd.Dat
         data_type = detect_data_type(df, original_name)
         df.attrs["data_type"] = data_type
         df.attrs["file_name"] = original_name
+        if excel_note:
+            df.attrs["excel_read_hint"] = excel_note
         return df
     except Exception as e:
         st.error(f"Ошибка загрузки файла: {str(e)}")
