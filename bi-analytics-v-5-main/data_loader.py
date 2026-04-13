@@ -112,6 +112,48 @@ def _score_tabular_shape(df: pd.DataFrame) -> int:
     return score
 
 
+def _maybe_promote_split_header_row(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    В Excel-макетах ГДРС подписи недель (1–5 неделя) часто идут второй строкой под шапкой:
+    переносим их в имена колонок и удаляем эту строку.
+    """
+    if df is None or getattr(df, "empty", True) or len(df) < 2:
+        return df
+    row0 = df.iloc[0]
+    promoted = 0
+    new_cols = []
+    for i, c in enumerate(df.columns):
+        v = row0.iloc[i]
+        cs = str(c).strip().replace("\n", " ").replace("\r", " ").strip()
+        if isinstance(v, str) and re.search(r"\d+\s*недел", v, re.I):
+            new_cols.append(v.strip())
+            promoted += 1
+        else:
+            new_cols.append(cs)
+    if promoted < 2:
+        return df
+    out = df.iloc[1:].reset_index(drop=True)
+    out.columns = new_cols
+    return out
+
+
+def _maybe_strip_gdrs_instruction_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Убирает строки с текстом ТЗ из макетов (колонка A / «Столбец … — данные из файла»)."""
+    if df is None or getattr(df, "empty", True):
+        return df
+    col0 = df.columns[0]
+    s0 = df[col0].map(lambda x: "" if pd.isna(x) else str(x))
+    mask = s0.str.len() < 200
+    mask &= ~s0.str.contains(r"Столбец\s+\"", regex=True, na=False)
+    mask &= ~s0.str.contains("пример данных см", case=False, na=False)
+    if "Контрагент" in df.columns:
+        sk = df["Контрагент"].map(lambda x: "" if pd.isna(x) else str(x))
+        mask &= sk.str.len() < 120
+        mask &= ~sk.str.contains("Столбец", na=False)
+    out = df.loc[mask.fillna(False)].reset_index(drop=True)
+    return out if not out.empty else df
+
+
 def _read_csv_best_effort(uploaded_file) -> Optional[pd.DataFrame]:
     """Перебор кодировок и разделителей; выбирается вариант с максимальной оценкой таблицы."""
     encodings = ["utf-8-sig", "utf-8", "windows-1251", "cp1251"]
@@ -152,25 +194,59 @@ def _read_csv_best_effort(uploaded_file) -> Optional[pd.DataFrame]:
     return best_df
 
 
-def _read_excel_best_effort(uploaded_file) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
+def _read_excel_best_effort(
+    uploaded_file, file_name: Optional[str] = None
+) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
     """
-    Чтение Excel: иногда первая строка — заголовок секции, не колонки.
-    Пробуем skiprows=0/1 и выбираем лучший по _score_tabular_shape.
+    Чтение Excel: шапка может быть на 5–20-й строке; в книге «Правки» таблица ГДРС — на листе «ГДРС».
+    Перебираем листы и skiprows, лучший вариант по _score_tabular_shape; затем подхватываем
+    вторую строку заголовка (недели) и убираем строки-инструкции из макета.
     """
     best_df = None
     best_sc = None
     note = None
-    for skip in (0, 1, 2):
+
+    try:
+        uploaded_file.seek(0)
+        xl = pd.ExcelFile(uploaded_file)
+        sheet_names = list(xl.sheet_names)
+    except Exception:
+        sheet_names = [0]
+
+    def _sheet_prio(name: object) -> tuple:
+        n = str(name).strip().lower()
+        if n in ("гдрс", "gdrs"):
+            return (0, n)
+        if "гдр" in n:
+            return (1, n)
+        if "ресурс" in n or "рабоч" in n:
+            return (2, n)
+        return (3, n)
+
+    for sheet in sorted(sheet_names, key=_sheet_prio):
+        for skip in range(0, 36):
+            try:
+                uploaded_file.seek(0)
+                cand = pd.read_excel(uploaded_file, sheet_name=sheet, skiprows=skip)
+                cand = _maybe_promote_split_header_row(cand)
+                sc = _score_tabular_shape(cand)
+                nval = f"sheet={sheet!r}, skiprows={skip}"
+                if best_sc is None or sc > best_sc:
+                    best_sc = sc
+                    best_df = cand
+                    note = nval
+            except Exception:
+                continue
+
+    if best_df is None:
         try:
             uploaded_file.seek(0)
-            cand = pd.read_excel(uploaded_file, skiprows=skip)
-            sc = _score_tabular_shape(cand)
-            if best_sc is None or sc > best_sc:
-                best_sc = sc
-                best_df = cand
-                note = f"skiprows={skip}" if skip else None
+            best_df = pd.read_excel(uploaded_file)
+            note = None
         except Exception:
-            continue
+            return None, None
+
+    best_df = _maybe_strip_gdrs_instruction_rows(best_df)
     return best_df, note
 
 
@@ -185,7 +261,7 @@ def load_data(uploaded_file, file_name: Optional[str] = None) -> Optional[pd.Dat
         if uploaded_file.name.endswith(".csv"):
             df = _read_csv_best_effort(uploaded_file)
         elif uploaded_file.name.endswith((".xlsx", ".xls")):
-            df, excel_note = _read_excel_best_effort(uploaded_file)
+            df, excel_note = _read_excel_best_effort(uploaded_file, original_name)
             if df is None:
                 uploaded_file.seek(0)
                 df = pd.read_excel(uploaded_file)

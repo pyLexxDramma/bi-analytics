@@ -375,3 +375,172 @@ def render_dev_tz_matrix(rows: List[Dict[str, Any]], table_css: str) -> None:
         table_css + _DEV_TZ_MATRIX_CSS + '<div class="rendered-table-wrap">' + html_tbl + "</div>",
         unsafe_allow_html=True,
     )
+
+
+# ── Контрольные точки (Сроки / макет file-009): проекты × вехи ───────────────
+
+CONTROL_POINT_MILESTONES: List[Tuple[str, str, dict]] = [
+    # title, slug, kwargs для _match_msp (+ ослабление родителя в _match_milestone_tasks)
+    ("ГПЗУ", "gpzu", {"level": 5.0, "name_contains": "ГПЗУ", "parent_l2_contains": "Ковенанты"}),
+    (
+        "Экспертиза стадии П",
+        "exp_p",
+        {"level": 5.0, "name_contains": "Экспертиза ПД", "parent_l2_contains": "Ковенанты"},
+    ),
+    (
+        "Начало финансирования",
+        "fin",
+        {"level": 5.0, "name_contains": "Начало финансирования", "parent_l2_contains": "Ковенанты"},
+    ),
+    (
+        "Стадия РД",
+        "rd",
+        {"level": 5.0, "name_contains": "Рабочая Документация (РД)", "parent_l2_contains": "Ковенанты"},
+    ),
+]
+
+
+def _project_name_column(df: pd.DataFrame) -> Optional[str]:
+    if "project name" in df.columns:
+        return "project name"
+    return _find_col(df, ["Проект", "Project", "project"])
+
+
+def _match_milestone_tasks(mdf: pd.DataFrame, kw: dict) -> pd.DataFrame:
+    """Как _match_msp; если с фильтром «Ковенанты» пусто — пробуем без родителя."""
+    if mdf is None or getattr(mdf, "empty", True):
+        return mdf.iloc[0:0].copy()
+    out = _match_msp(mdf, **kw)
+    if out.empty and kw.get("parent_l2_contains"):
+        kw2 = {k: v for k, v in kw.items() if k != "parent_l2_contains"}
+        out = _match_msp(mdf, **kw2)
+    return out
+
+
+def _one_milestone_cell(rows: pd.DataFrame) -> Tuple[str, str, str, bool]:
+    """
+    План = базовое окончание (base end), Факт = окончание (plan end).
+    Откл., дн. = Факт − План (календарные дни), как в правках к макету контрольных точек.
+    """
+    if rows is None or rows.empty:
+        return "Н/Д", "Н/Д", "Н/Д", True
+    tc = _task_name_col(rows)
+    if tc and tc in rows.columns:
+        r = rows.sort_values(by=tc).iloc[0]
+    else:
+        r = rows.iloc[0]
+    pdt, fdt, _pct = _msp_plan_fact_pct(r)
+    pl = _fmt_date_ru(pdt)
+    fl = _fmt_date_ru(fdt)
+    if pd.isna(pdt) or pd.isna(fdt):
+        return pl, fl, "Н/Д", True
+    dev = int((pd.Timestamp(fdt).normalize() - pd.Timestamp(pdt).normalize()).days)
+    otk = "0 дн." if dev == 0 else f"{dev:+d} дн."
+    ok = dev == 0
+    return pl, fl, otk, ok
+
+
+def build_control_points_df(mdf: pd.DataFrame) -> pd.DataFrame:
+    """Одна строка на проект; столбцы project, row_ok, {slug}_plan|_fact|_otkl."""
+    pcol = _project_name_column(mdf)
+    if pcol is None or mdf is None or mdf.empty:
+        return pd.DataFrame()
+    work = mdf.copy()
+    projects = sorted(work[pcol].dropna().astype(str).str.strip().unique())
+    rows_out: List[Dict[str, Any]] = []
+    for proj in projects:
+        sub = work[work[pcol].astype(str).str.strip() == proj]
+        rec: Dict[str, Any] = {"project": proj, "row_ok": True}
+        for title, slug, kw in CONTROL_POINT_MILESTONES:
+            m = _match_milestone_tasks(sub, kw)
+            pl, fl, otk, ok = _one_milestone_cell(m)
+            rec[f"{slug}_plan"] = pl
+            rec[f"{slug}_fact"] = fl
+            rec[f"{slug}_otkl"] = otk
+            rec[f"{slug}_ok"] = ok
+            if not ok:
+                rec["row_ok"] = False
+        rows_out.append(rec)
+    return pd.DataFrame(rows_out)
+
+
+_CONTROL_POINTS_CSS = """
+<style>
+.cp-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:8px; vertical-align:middle; }
+.cp-dot-ok { background:#22c55e; box-shadow:0 0 6px rgba(34,197,94,0.45); }
+.cp-dot-bad { background:#ef4444; box-shadow:0 0 6px rgba(239,68,68,0.45); }
+.rendered-table th.cp-ghead { text-align:center; background:#1f232d; font-size:12px; padding:6px 8px; }
+.rendered-table th.cp-sub { font-size:11px; color:#c9d1d9; font-weight:500; }
+</style>
+"""
+
+
+def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> None:
+    """Таблица «Контрольные точки проектов» + фильтр проектов + выгрузка CSV."""
+    esc = html_module.escape
+    df = build_control_points_df(mdf)
+    if df.empty:
+        st.warning("Нет строк проектов в данных MSP.")
+        return
+    projs = sorted(df["project"].astype(str).unique().tolist())
+    sel = st.multiselect("Проект", options=projs, default=projs, key="cp_projects_ms")
+    view = df[df["project"].isin(sel)].copy()
+    if view.empty:
+        st.caption("Выберите хотя бы один проект.")
+        return
+
+    ms_specs = [(t, s) for t, s, _k in CONTROL_POINT_MILESTONES]
+    thead1 = ['<th rowspan="2" style="min-width:180px">Проект</th>']
+    for title, slug in ms_specs:
+        thead1.append(f'<th colspan="3" class="cp-ghead">{esc(title)}</th>')
+    sub_headers: List[str] = []
+    for _title, slug in ms_specs:
+        sub_headers.extend(
+            [
+                f'<th class="cp-sub">{esc("План")}</th>',
+                f'<th class="cp-sub">{esc("Факт")}</th>',
+                f'<th class="cp-sub">{esc("Откл.")}</th>',
+            ]
+        )
+    thead_html = (
+        "<thead><tr>"
+        + "".join(thead1)
+        + "</tr><tr>"
+        + "".join(sub_headers)
+        + "</tr></thead>"
+    )
+    body: List[str] = ["<tbody>"]
+    for _, r in view.iterrows():
+        ok_row = bool(r.get("row_ok", True))
+        dot = "cp-dot-ok" if ok_row else "cp-dot-bad"
+        cells = [
+            f'<td><span class="cp-dot {dot}" title="{"OK" if ok_row else "Есть отклонения"}"></span>'
+            f"{esc(str(r.get('project', '')))}</td>"
+        ]
+        for _t, slug in ms_specs:
+            cells.append(f"<td>{esc(str(r.get(f'{slug}_plan', '')))}</td>")
+            cells.append(f"<td>{esc(str(r.get(f'{slug}_fact', '')))}</td>")
+            cells.append(f"<td>{esc(str(r.get(f'{slug}_otkl', '')))}</td>")
+        body.append("<tr>" + "".join(cells) + "</tr>")
+    body.append("</tbody>")
+    html_tbl = (
+        '<table class="rendered-table" border="0">'
+        + thead_html
+        + "".join(body)
+        + "</table>"
+    )
+    st.markdown(
+        table_css + _CONTROL_POINTS_CSS + '<div class="rendered-table-wrap">' + html_tbl + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    drop_ok = [c for c in view.columns if str(c).endswith("_ok")]
+    export = view.drop(columns=drop_ok, errors="ignore")
+    csv_bytes = export.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+    st.download_button(
+        "Скачать таблицу (CSV)",
+        csv_bytes,
+        "control_points.csv",
+        "text/csv",
+        key="cp_csv_dl",
+    )
