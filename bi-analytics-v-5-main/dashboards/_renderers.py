@@ -6504,6 +6504,58 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             "fp_pct": fp_pct,
         }
 
+    def _gdrs_contractor_fact_fig_and_metrics(pdf: pd.DataFrame):
+        """Круговая: доля факта по подрядчикам (кусочки = факт), сводка — как у план/факт."""
+        d = _gdrs_plan_fact_data_slice(pdf)
+        if d is None or d.empty:
+            return None, None
+        if "Контрагент" not in d.columns or "week_sum" not in d.columns:
+            return None, None
+        d = d.copy()
+        d["_f"] = pd.to_numeric(d["week_sum"], errors="coerce").fillna(0)
+        by_c = d.groupby("Контрагент", as_index=False)["_f"].sum()
+        by_c = by_c[by_c["_f"] > 0].sort_values("_f", ascending=False)
+        if by_c.empty or float(by_c["_f"].sum()) <= 0:
+            return None, None
+        pie_df = by_c.rename(columns={"_f": "Факт"})
+        fig_cf = px.pie(
+            pie_df,
+            values="Факт",
+            names="Контрагент",
+            title=None,
+            color_discrete_sequence=px.colors.qualitative.Set3,
+        )
+        fig_cf.update_traces(
+            textinfo="label+percent",
+            textposition="auto",
+            textfont_size=10,
+            insidetextorientation="radial",
+            hovertemplate="<b>%{label}</b><br>Факт: %{value:,.0f} (%{percent:.0%})<extra></extra>",
+        )
+        fig_cf.update_layout(
+            height=420,
+            showlegend=True,
+            title_font_size=14,
+            uniformtext=dict(minsize=8, mode="hide"),
+            legend=dict(orientation="v", font=dict(size=10)),
+            margin=dict(l=10, r=10, t=10, b=10),
+        )
+        fig_cf = apply_chart_background(fig_cf)
+        plan_sum = (
+            float(pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0).sum())
+            if "План_numeric" in d.columns
+            else 0.0
+        )
+        fact_sum = float(by_c["_f"].sum())
+        dev = plan_sum - fact_sum
+        fp_pct = (fact_sum / plan_sum * 100.0) if plan_sum else 0.0
+        return fig_cf, {
+            "plan": plan_sum,
+            "fact": fact_sum,
+            "dev": dev,
+            "fp_pct": fp_pct,
+        }
+
     show_plan_fact_row = (
         has_plan_data
         and len(projects_to_process) > 1
@@ -6549,6 +6601,52 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         plan_fact_row_done = True
         st.markdown("---")
 
+    show_contractor_fact_row = (
+        len(projects_to_process) > 1
+        and project_col
+        and project_col in filtered_df.columns
+        and "Контрагент" in filtered_df.columns
+        and "week_sum" in filtered_df.columns
+    )
+    contractor_fact_row_done = False
+    if show_contractor_fact_row:
+        if (data_source_filter or "").strip().lower() == "техника":
+            st.subheader("Техника (% фактический по подрядчикам)")
+        else:
+            st.subheader("Рабочие (% фактический по подрядчикам)")
+        cf_cols = st.columns(len(projects_to_process))
+        for _ix, _pname in enumerate(projects_to_process):
+            _pdf = filtered_df.copy()
+            if project_col in _pdf.columns and _pname != "Все проекты":
+                _pdf = _pdf[
+                    _pdf[project_col].astype(str).str.strip() == str(_pname).strip()
+                ]
+            fig_cf, met_cf = _gdrs_contractor_fact_fig_and_metrics(_pdf)
+            with cf_cols[_ix]:
+                st.markdown(f"##### {_pname}")
+                if fig_cf is not None and met_cf is not None:
+                    cf_a1, cf_a2 = st.columns([3, 2])
+                    with cf_a1:
+                        render_chart(
+                            fig_cf,
+                            key=f"{key_prefix}_contractor_fact_row_{_ix}",
+                            caption_below="",
+                        )
+                    with cf_a2:
+                        _cfc = "#e74c3c" if met_cf["dev"] > 0 else "#27ae60"
+                        st.markdown(
+                            f"**План:** {int(round(met_cf['plan']))}\n\n"
+                            f"**Факт:** {int(round(met_cf['fact']))}\n\n"
+                            f"**Отклонение:** <span style='color:{_cfc};font-size:1.15em'>●</span> "
+                            f"{int(round(met_cf['dev']))}\n\n"
+                            f"*({met_cf['fp_pct']:.1f}% — факт/план)*",
+                            unsafe_allow_html=True,
+                        )
+                else:
+                    st.caption("Нет данных по факту подрядчиков по этому проекту.")
+        contractor_fact_row_done = True
+        st.markdown("---")
+
     for project_name in projects_to_process:
         project_filtered_df = filtered_df.copy()
         if (
@@ -6568,6 +6666,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             st.markdown("---")
             st.subheader(f"Проект: {project_name}")
 
+        _pslug = str(project_name).replace(" ", "_")[:20]
+
         if not has_plan_data and "Контрагент" in project_filtered_df.columns and "week_sum" in project_filtered_df.columns:
             _bar_avg = (
                 project_filtered_df.groupby("Контрагент", as_index=False)["week_sum"]
@@ -6582,7 +6682,6 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     text=_bar_avg["Среднее за месяц"].apply(lambda v: f"{v:.0f}"),
                     color_discrete_sequence=["#2ecc71"],
                 )
-                _pslug = str(project_name).replace(" ", "_")[:20]
                 fig_avg.update_traces(textposition="outside", textfont=dict(size=12, color="white"))
                 fig_avg.update_layout(height=500, xaxis=dict(tickangle=-45), yaxis_title="Среднее за месяц")
                 fig_avg = apply_chart_background(fig_avg)
@@ -6649,175 +6748,33 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     fig_pie_pf = apply_chart_background(fig_pie_pf)
                     render_chart(fig_pie_pf, caption_below=f"План и факт — {project_name}")
 
-        # ========== Chart 1: Pie Chart by Contractor (Delta %) ==========
-        st.subheader("Круговая диаграмма: Распределение отклонения % по контрагентам")
-
-        # Group by Контрагент and aggregate for pie chart (Delta %)
-        # Ensure Дельта_процент_numeric exists - check if it was created in work_df
-        if "Дельта_процент_numeric" not in project_filtered_df.columns:
-            # Try to find Дельта (%) column by partial match
-            delta_pct_col = None
-            if "Дельта (%)" in project_filtered_df.columns:
-                delta_pct_col = "Дельта (%)"
+        # ========== Chart 1: круговая — % фактический по подрядчикам ==========
+        if not contractor_fact_row_done:
+            if (data_source_filter or "").strip().lower() == "техника":
+                st.subheader("Техника (% фактический по подрядчикам)")
             else:
-                delta_pct_col = find_column_by_partial(
-                    project_filtered_df,
-                    [
-                        "Дельта (%)",
-                        "Дельта %",
-                        "дельта (%)",
-                        "дельта %",
-                        "Delta %",
-                        "delta %",
-                        "Дельта(%)",
-                        "Дельта%",
-                    ],
-                )
-
-            if delta_pct_col and delta_pct_col in project_filtered_df.columns:
-                # Extract percentage values from the column
-                def extract_percentage(value):
-                    """Extract numeric value from percentage string like '-90%' or '90%', or numeric value"""
-                    if pd.isna(value):
-                        return 0
-                    # If already numeric, return as is
-                    if isinstance(value, (int, float)):
-                        return float(value)
-                    # Otherwise, try to extract from string
-                    value_str = str(value).strip()
-                    # Remove % sign and convert to float
-                    value_str = (
-                        value_str.replace("%", "").replace(",", ".").replace(" ", "")
+                st.subheader("Рабочие (% фактический по подрядчикам)")
+            fig_cf, met_cf = _gdrs_contractor_fact_fig_and_metrics(project_filtered_df)
+            if fig_cf is not None and met_cf is not None:
+                cf_c1, cf_c2 = st.columns([3, 2])
+                with cf_c1:
+                    render_chart(
+                        fig_cf,
+                        key=f"{key_prefix}_contractor_fact_{_pslug}",
+                        caption_below=f"Доля факта по подрядчикам — {project_name}",
                     )
-                    try:
-                        return float(value_str)
-                    except:
-                        return 0
-
-                project_filtered_df["Дельта_процент_numeric"] = project_filtered_df[
-                    delta_pct_col
-                ].apply(extract_percentage)
+                with cf_c2:
+                    _cfc = "#e74c3c" if met_cf["dev"] > 0 else "#27ae60"
+                    st.markdown(
+                        f"**План:** {int(round(met_cf['plan']))}\n\n"
+                        f"**Факт:** {int(round(met_cf['fact']))}\n\n"
+                        f"**Отклонение:** <span style='color:{_cfc};font-size:1.15em'>●</span> "
+                        f"{int(round(met_cf['dev']))}\n\n"
+                        f"*({met_cf['fp_pct']:.1f}% — факт/план)*",
+                        unsafe_allow_html=True,
+                    )
             else:
-                # Try to calculate from Дельта and План if available
-                if (
-                    "Дельта_numeric" in project_filtered_df.columns
-                    and "План_numeric" in project_filtered_df.columns
-                ):
-                    project_filtered_df["Дельта_процент_numeric"] = 0.0
-                    mask = project_filtered_df["План_numeric"] != 0
-                    project_filtered_df.loc[mask, "Дельта_процент_numeric"] = (
-                        project_filtered_df.loc[mask, "Дельта_numeric"]
-                        / project_filtered_df.loc[mask, "План_numeric"]
-                    ) * 100
-                    project_filtered_df["Дельта_процент_numeric"] = project_filtered_df[
-                        "Дельта_процент_numeric"
-                    ].fillna(0)
-                else:
-                    st.error(
-                        "Не удалось найти или рассчитать отклонение %. Отсутствуют необходимые колонки."
-                    )
-                    st.info(
-                        f"Доступные колонки: {', '.join(project_filtered_df.columns)}"
-                    )
-                    contractor_delta_pct = pd.DataFrame(
-                        columns=["Контрагент", "Отклонение %"]
-                    )
-
-        # Group by contractor and aggregate
-        if "Дельта_процент_numeric" in project_filtered_df.columns:
-            # Check if we have any data before grouping
-            if (
-                not project_filtered_df.empty
-                and "Контрагент" in project_filtered_df.columns
-            ):
-                contractor_delta_pct = (
-                    project_filtered_df.groupby("Контрагент")
-                    .agg({"Дельта_процент_numeric": "sum"})  # Sum of delta percentages
-                    .reset_index()
-                )
-
-                contractor_delta_pct.columns = ["Контрагент", "Отклонение %"]
-            else:
-                contractor_delta_pct = pd.DataFrame(
-                    columns=["Контрагент", "Отклонение %"]
-                )
-        else:
-            contractor_delta_pct = pd.DataFrame(columns=["Контрагент", "Отклонение %"])
-
-        # Check if we have data (внутри цикла по проектам — круговая и столбчатая по каждому проекту)
-        if contractor_delta_pct.empty or len(contractor_delta_pct) == 0:
-            st.info("Нет данных для отображения круговой диаграммы.")
-        else:
-            # Ensure «Отклонение %» is numeric
-            contractor_delta_pct["Отклонение %"] = pd.to_numeric(
-                contractor_delta_pct["Отклонение %"], errors="coerce"
-            ).fillna(0)
-
-            # Check if we have any non-zero values
-            total_abs_sum = contractor_delta_pct["Отклонение %"].abs().sum()
-
-            if total_abs_sum == 0:
-                st.info(
-                    "Все значения отклонения % равны нулю. Диаграмма не может быть построена."
-                )
-            else:
-                # Remove only exactly zero values (not small values)
-                non_zero_data = contractor_delta_pct[
-                    contractor_delta_pct["Отклонение %"] != 0
-                ].copy()
-
-                # Use non-zero data if available
-                if not non_zero_data.empty:
-                    contractor_delta_pct = non_zero_data
-
-                # Sort by absolute value for better visualization
-                contractor_delta_pct = contractor_delta_pct.sort_values(
-                    "Отклонение %", key=abs, ascending=False
-                )
-
-                # Create a copy with absolute values for pie chart (pie charts don't support negative values)
-                contractor_delta_pct_abs = contractor_delta_pct.copy()
-                contractor_delta_pct_abs["Отклонение %_abs"] = contractor_delta_pct_abs[
-                    "Отклонение %"
-                ].abs()
-
-                # Store original values for display
-                original_values = contractor_delta_pct_abs["Отклонение %"].tolist()
-
-                # Create pie chart using absolute values
-                fig_pie = px.pie(
-                    contractor_delta_pct_abs,
-                    values="Отклонение %_abs",
-                    names="Контрагент",
-                    title=None,
-                    color_discrete_sequence=px.colors.qualitative.Set3,
-                )
-
-                fig_pie.update_layout(
-                    height=600,
-                    showlegend=True,
-                    legend=dict(
-                        orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.1, font=dict(size=10),
-                    ),
-                    title_font_size=16,
-                    uniformtext=dict(minsize=8, mode="hide"),
-                )
-
-                fig_pie.update_traces(
-                    textinfo="label+percent",
-                    textposition="auto",
-                    textfont_size=10,
-                    insidetextorientation="radial",
-                    customdata=original_values,
-                    hovertemplate="<b>%{label}</b><br>Отклонение %: %{customdata:.0f}%<br>Процент: %{percent}<br><extra></extra>",
-                )
-
-                fig_pie = apply_chart_background(fig_pie)
-                render_chart(
-                    fig_pie,
-                    caption_below="Распределение отклонения % по контрагентам",
-                )
-
+                st.info("Нет данных для отображения круговой диаграммы по подрядчикам.")
         # ========== Доли факта по людям и технике по подрядчикам (100% = все люди / вся техника) ==========
         if "data_source" in project_filtered_df.columns and "Контрагент" in project_filtered_df.columns and "week_sum" in project_filtered_df.columns:
             for _type, type_label, type_key in [
