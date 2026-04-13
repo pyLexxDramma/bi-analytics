@@ -78,6 +78,38 @@ import html as html_module
 _MAX_CHART_ROWS = 5_000
 
 
+def _gdrs_header_is_dd_mm_yyyy(name) -> bool:
+    """
+    Колонка — календарный день: строка ДД.ММ.ГГГГ либо datetime/Timestamp в имени колонки после read_excel.
+    """
+    if name is None:
+        return False
+    try:
+        if pd.isna(name):
+            return False
+    except Exception:
+        pass
+    if isinstance(name, (pd.Timestamp, datetime, date)):
+        return True
+    t = str(name).strip()
+    if re.match(r"^\d{1,2}\.\d{1,2}\.\d{4}", t):
+        return True
+    if re.match(r"^\d{1,2}\.{2,3}\d{1,2}\.\d{4}", t):
+        return True
+    return False
+
+
+def _gdrs_match_data_source(series: pd.Series, wanted) -> pd.Series:
+    """Фильтр по data_source без учёта регистра."""
+    s = series.astype(str).str.strip().str.lower()
+    w = str(wanted).strip().lower()
+    if w in ("техника", "tech", "technique"):
+        return s.isin({"техника", "tech", "technique"})
+    if w in ("ресурсы", "ресурс"):
+        return s.isin({"ресурсы", "ресурс"})
+    return s == w
+
+
 def _sample_for_chart(df: pd.DataFrame, max_rows: int = _MAX_CHART_ROWS) -> pd.DataFrame:
     """
     Если датафрейм превышает max_rows, равномерно сэмплирует его и показывает уведомление.
@@ -4675,6 +4707,30 @@ def dashboard_technique(df):
     st.header("ГДРС")
 
     technique_df = st.session_state.get("technique_data", None)
+    resources_df = st.session_state.get("resources_data", None)
+
+    def _cols_lc_gdrs(pdf):
+        if pdf is None or getattr(pdf, "empty", True):
+            return []
+        return [str(c).lower().strip() for c in pdf.columns]
+
+    def _technique_shape_from_resources(pdf_res):
+        """Общая выгрузка web часто попадает только в resources_data."""
+        if pdf_res is None or getattr(pdf_res, "empty", True):
+            return None
+        cl = _cols_lc_gdrs(pdf_res)
+        if any("среднее значение за день" in c for c in cl):
+            return pdf_res
+        if any("среднее за недел" in c for c in cl):
+            return pdf_res
+        n_d = sum(1 for c in pdf_res.columns if _gdrs_header_is_dd_mm_yyyy(c))
+        if n_d >= 2 and any("тип ресурсов" in c for c in cl):
+            return pdf_res
+        return None
+
+    if technique_df is None or technique_df.empty:
+        technique_df = _technique_shape_from_resources(resources_df)
+
     if technique_df is None or technique_df.empty:
         st.warning(
             "Для отображения аналитики по технике необходимо загрузить файл с данными о технике."
@@ -4684,13 +4740,12 @@ def dashboard_technique(df):
         )
         return
 
-    # Данные для круговых и иных диаграмм берутся только из загруженного файла (session technique_data)
     st.caption("Данные из загруженного файла с данными о технике.")
 
     key_prefix = "gdrs_technique"
     work_df = technique_df.copy()
 
-    date_cols_found = [c for c in work_df.columns if re.match(r'^\d{2}\.{1,2}\d{2}\.\d{4}$', str(c))]
+    date_cols_found = [c for c in work_df.columns if _gdrs_header_is_dd_mm_yyyy(c)]
     if date_cols_found and "Период" not in work_df.columns:
         id_cols = [c for c in ["Проект", "Контрагент", "тип ресурсов", "data_source"]
                    if c in work_df.columns]
@@ -5068,9 +5123,7 @@ def dashboard_technique(df):
             if src is None:
                 df_hist = filtered_df.copy()
             else:
-                df_hist = filtered_df[
-                    filtered_df["data_source"].astype(str).str.strip() == str(src).strip()
-                ].copy()
+                df_hist = filtered_df[_gdrs_match_data_source(filtered_df["data_source"], src)].copy()
             if df_hist.empty:
                 with hist_cols[idx]:
                     st.caption(f"Факт по периодам: {label}")
@@ -5864,66 +5917,84 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             return []
         return [str(c).lower().strip() for c in pdf.columns]
 
+    def _has_pivot_date_columns(pdf):
+        """Колонки вида ДД.ММ.ГГГГ (выгрузка web/ с суточными значениями)."""
+        if pdf is None or getattr(pdf, "empty", True):
+            return False
+        return sum(1 for c in pdf.columns if _gdrs_header_is_dd_mm_yyyy(c)) >= 2
+
     def _like_technique(pdf):
-        """Техника в выгрузках: «Среднее за неделю» + недели (см. new_csv/sample_technique_data.csv)."""
-        return any("среднее за недел" in c for c in _cols_lc(pdf))
+        cl = _cols_lc(pdf)
+        if any("среднее за недел" in c for c in cl):
+            return True
+        if any("среднее значение за день" in c for c in cl):
+            return True
+        if _has_pivot_date_columns(pdf) and any("тип ресурсов" in c for c in cl):
+            return True
+        return False
 
     def _like_resources(pdf):
-        """Люди: «Среднее за месяц» (sample_resources_data.csv)."""
-        return any(
-            ("среднее за месяц" in c) or ("среднее за мес" in c) for c in _cols_lc(pdf)
-        )
+        cl = _cols_lc(pdf)
+        for c in cl:
+            if "среднее за месяц" in c or "среднее за мес" in c:
+                return True
+            if "за месяц" in c and ("ресурс" in c or "количество" in c):
+                return True
+            if "среднее значение" in c and "за месяц" in c:
+                return True
+        return False
 
-    # load_all_from_web кладёт *resursi*.csv только в resources_data; если по заголовкам это техника — берём оттуда.
+    def _ensure_row_data_source(pdf, default: str):
+        """Не затираем колонку data_source из файла (в одной таблице могут быть и люди, и техника)."""
+        out = pdf.copy()
+        if "data_source" not in out.columns:
+            out["data_source"] = default
+        else:
+            out["data_source"] = out["data_source"].astype(str).str.strip()
+        return out
+
+    # load_all_from_web кладёт *resursi*.csv в resources_data; тип по заголовкам / по колонке data_source строки.
     if data_source_filter == "Техника":
         if technique_df is not None and not technique_df.empty:
-            combined_df = technique_df.copy()
-            combined_df["data_source"] = "Техника"
+            combined_df = _ensure_row_data_source(technique_df.copy(), "Техника")
             _gdrs_src_diag = "session_state.technique_data"
-        elif resources_df is not None and not resources_df.empty and _like_technique(resources_df):
-            combined_df = resources_df.copy()
-            combined_df["data_source"] = "Техника"
+        elif resources_df is not None and not resources_df.empty and (
+            _like_technique(resources_df) or _has_pivot_date_columns(resources_df)
+        ):
+            combined_df = _ensure_row_data_source(resources_df.copy(), "Техника")
             _gdrs_src_diag = (
-                "session_state.resources_data — распознано как техника по колонке «Среднее за неделю» "
-                "(имя файла могло быть *resursi*, данные всё равно техника)"
+                "session_state.resources_data — структура как у техники (даты ДД.ММ.ГГГГ / «среднее значение за день» / data_source по строкам)"
             )
     elif data_source_filter == "Ресурсы":
         if resources_df is not None and not resources_df.empty:
-            combined_df = resources_df.copy()
-            combined_df["data_source"] = "Ресурсы"
+            combined_df = _ensure_row_data_source(resources_df.copy(), "Ресурсы")
             _gdrs_src_diag = "session_state.resources_data"
         elif technique_df is not None and not technique_df.empty and _like_resources(technique_df):
-            combined_df = technique_df.copy()
-            combined_df["data_source"] = "Ресурсы"
-            _gdrs_src_diag = "session_state.technique_data — распознаны как ресурсы по «Среднее за месяц»"
+            combined_df = _ensure_row_data_source(technique_df.copy(), "Ресурсы")
+            _gdrs_src_diag = "session_state.technique_data — распознаны как ресурсы по месячному среднему"
     else:
         if resources_df is not None and not resources_df.empty:
-            combined_df = resources_df.copy()
-            combined_df["data_source"] = "Ресурсы"
+            combined_df = _ensure_row_data_source(resources_df.copy(), "Ресурсы")
             _gdrs_src_diag = "session_state.resources_data"
         if technique_df is not None and not technique_df.empty:
             if combined_df is not None:
-                technique_copy = technique_df.copy()
-                technique_copy["data_source"] = "Техника"
+                technique_copy = _ensure_row_data_source(technique_df.copy(), "Техника")
                 combined_df = pd.concat(
                     [combined_df, technique_copy], ignore_index=True, sort=False
                 )
                 _gdrs_src_diag += " + technique_data"
             else:
-                combined_df = technique_df.copy()
-                combined_df["data_source"] = "Техника"
+                combined_df = _ensure_row_data_source(technique_df.copy(), "Техника")
                 _gdrs_src_diag = "session_state.technique_data"
 
     # df из главного приложения: только если структура совпадает (не подменяем людей техникой).
     if (combined_df is None or combined_df.empty) and df is not None and not getattr(df, "empty", True):
-        if data_source_filter == "Техника" and _like_technique(df):
-            combined_df = df.copy()
-            combined_df["data_source"] = "Техника"
-            _gdrs_src_diag = "аргумент df (техника по колонкам «Среднее за неделю»)"
-        elif data_source_filter == "Ресурсы" and _like_resources(df):
-            combined_df = df.copy()
-            combined_df["data_source"] = "Ресурсы"
-            _gdrs_src_diag = "аргумент df (ресурсы по колонкам «Среднее за месяц»)"
+        if data_source_filter == "Техника" and (_like_technique(df) or _has_pivot_date_columns(df)):
+            combined_df = _ensure_row_data_source(df.copy(), "Техника")
+            _gdrs_src_diag = "аргумент df (техника / суточные колонки)"
+        elif data_source_filter == "Ресурсы" and (_like_resources(df) or _has_pivot_date_columns(df)):
+            combined_df = _ensure_row_data_source(df.copy(), "Ресурсы")
+            _gdrs_src_diag = "аргумент df (ресурсы / сводная структура)"
 
     if combined_df is None or combined_df.empty:
         st.warning(
@@ -5938,11 +6009,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         )
         return
 
-    # При фильтре по источнику оставляем только нужные строки
+    # При фильтре по вкладке — без учёта регистра в колонке data_source
     if data_source_filter and "data_source" in combined_df.columns:
-        combined_df = combined_df[
-            combined_df["data_source"].astype(str).str.strip() == str(data_source_filter).strip()
-        ].copy()
+        combined_df = combined_df[_gdrs_match_data_source(combined_df["data_source"], data_source_filter)].copy()
         if combined_df.empty:
             st.warning(
                 f"Нет данных по источнику «{data_source_filter}». Загрузите соответствующий файл."
@@ -5952,13 +6021,6 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
     st.caption("Данные из загруженных файлов (ресурсы и/или техника).")
 
     work_df = combined_df.copy()
-
-    with st.expander("Диагностика: источник данных и заголовки колонок", expanded=False):
-        st.markdown(
-            f"**Источник:** {_gdrs_src_diag or '—'}  \n"
-            f"**Фильтр вкладки:** `{data_source_filter or 'все'}`"
-        )
-        st.code(", ".join([str(c) for c in work_df.columns]), language="text")
 
     # Правки ГДРС: на вкладке «всё вместе» — фильтр вида ресурсов; по умолчанию «Рабочие (ресурсы)»
     if (
@@ -5984,7 +6046,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             )
             return
 
-    date_cols_found = [c for c in work_df.columns if re.match(r'^\d{2}\.{1,2}\d{2}\.\d{4}$', str(c))]
+    date_cols_found = [c for c in work_df.columns if _gdrs_header_is_dd_mm_yyyy(c)]
     if date_cols_found and "Период" not in work_df.columns:
         id_cols = [c for c in ["Проект", "Контрагент", "тип ресурсов", "data_source"]
                    if c in work_df.columns]
@@ -6420,9 +6482,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             if src is None:
                 df_hist = filtered_df.copy()
             else:
-                df_hist = filtered_df[
-                    filtered_df["data_source"].astype(str).str.strip() == str(src).strip()
-                ].copy()
+                df_hist = filtered_df[_gdrs_match_data_source(filtered_df["data_source"], src)].copy()
             if df_hist.empty:
                 with hist_cols[idx]:
                     st.caption(f"Факт по периодам: {label}")
@@ -7351,7 +7411,7 @@ def dashboard_skud_stroyka(df):
                     break
 
     if not avg_col:
-        date_cols = [c for c in work_df.columns if re.match(r'^\d{2}\.{1,2}\d{2}\.\d{4}$', str(c))]
+        date_cols = [c for c in work_df.columns if _gdrs_header_is_dd_mm_yyyy(c)]
         if date_cols:
             for dc in date_cols:
                 work_df[dc] = pd.to_numeric(work_df[dc], errors="coerce")
