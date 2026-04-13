@@ -5,6 +5,26 @@
 import os
 from typing import Dict
 
+
+def switch_page_app(path: str) -> None:
+    """
+    Переход на страницу приложения. ``path`` — относительно каталога приложения
+    (например ``project_visualization_app.py``, ``pages/admin.py``).
+
+    Если задана переменная ``BI_ANALYTICS_SWITCH_PAGE_PREFIX`` (корневой
+    ``streamlit_app.py`` на Streamlit Cloud), к пути добавляется префикс папки
+    приложения, иначе ``st.switch_page`` не находит файлы.
+    """
+    import streamlit as st
+
+    path = path.replace("\\", "/").lstrip("/")
+    prefix = (
+        os.environ.get("BI_ANALYTICS_SWITCH_PAGE_PREFIX", "").strip().replace("\\", "/").rstrip("/")
+    )
+    if prefix:
+        path = f"{prefix}/{path}"
+    st.switch_page(path)
+
 # Пути
 BASE_DIR: str = os.path.dirname(os.path.abspath(__file__))
 DB_PATH: str = os.path.join(BASE_DIR, "users.db")

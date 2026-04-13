@@ -61,6 +61,7 @@ from auth import (
 )
 
 from logger import log_action
+from config import switch_page_app
 
 # Проверка, что мы в контексте Streamlit
 if is_streamlit_context():
@@ -124,7 +125,7 @@ if is_streamlit_context():
 
             logout()
 
-            st.switch_page("project_visualization_app.py")
+            switch_page_app("project_visualization_app.py")
 
     st.markdown("---")
 

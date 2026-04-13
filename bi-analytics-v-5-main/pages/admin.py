@@ -65,7 +65,7 @@ from auth import (
     init_db,
     render_sidebar_menu,
 )
-from config import DB_PATH
+from config import DB_PATH, switch_page_app
 from logger import log_action, get_logs, get_logs_count
 from settings import get_setting, set_setting, get_all_settings, SETTING_KEYS
 from utils import format_dataframe_as_html, load_custom_css
@@ -527,7 +527,7 @@ if is_streamlit_context():
 
         if st.button("Вернуться к отчетам"):
 
-            st.switch_page("project_visualization_app.py")
+            switch_page_app("project_visualization_app.py")
 
         st.stop()
 

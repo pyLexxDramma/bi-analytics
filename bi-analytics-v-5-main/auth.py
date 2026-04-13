@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import streamlit as st
 
-from config import DB_PATH
+from config import DB_PATH, switch_page_app
 
 # Роли пользователей
 ROLES = {
@@ -526,7 +526,7 @@ def is_streamlit_context():
 def require_auth():
     """Проверка авторизации с автоматическим редиректом"""
     if not check_authentication():
-        st.switch_page("project_visualization_app.py")
+        switch_page_app("project_visualization_app.py")
         st.stop()
 
 
@@ -556,7 +556,7 @@ def render_sidebar_menu(current_page: str = "reports"):
         if has_report_access(user["role"]):
             btn_type = "primary" if current_page == "reports" else "secondary"
             if st.button("Отчеты", width="stretch", type=btn_type):
-                st.switch_page("project_visualization_app.py")
+                switch_page_app("project_visualization_app.py")
 
             # Список отчетов под кнопкой "Отчеты" (единый источник: dashboards.REPORT_CATEGORIES)
             if current_page == "reports":
@@ -599,7 +599,7 @@ def render_sidebar_menu(current_page: str = "reports"):
                 )
             else:
                 if st.button("Общие настройки", width="stretch"):
-                    st.switch_page("pages/admin.py")
+                    switch_page_app("pages/admin.py")
 
         # Настройки профиля (для всех ролей)
         if current_page == "profile":
@@ -612,7 +612,7 @@ def render_sidebar_menu(current_page: str = "reports"):
             )
         else:
             if st.button("Настройки профиля", width="stretch"):
-                st.switch_page("pages/profile.py")
+                switch_page_app("pages/profile.py")
 
         # Параметры отчетов (фильтры) - доступны аналитикам и администраторам (не менеджерам)
         if user["role"] in ["analyst", "admin", "superadmin"]:
@@ -626,7 +626,7 @@ def render_sidebar_menu(current_page: str = "reports"):
                 )
             else:
                 if st.button("Параметры отчетов", width="stretch"):
-                    st.switch_page("pages/analyst_params.py")
+                    switch_page_app("pages/analyst_params.py")
 
         # 3. Выход (для всех ролей)
         st.markdown("---")

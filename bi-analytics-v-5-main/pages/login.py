@@ -24,6 +24,7 @@ from auth import (
     init_db,
     get_user_by_username,
 )
+from config import switch_page_app
 
 # Инициализация базы данных
 init_db()
@@ -41,7 +42,7 @@ st.set_page_config(
 if st.session_state.get("authenticated", False):
     st.success("Вы уже авторизованы!")
     if st.button("Перейти к панели"):
-        st.switch_page("project_visualization_app.py")
+        switch_page_app("project_visualization_app.py")
     st.stop()
 
 # Определяем режим: вход или восстановление пароля
@@ -227,7 +228,7 @@ else:
                     import time
 
                     time.sleep(1)
-                    st.switch_page("project_visualization_app.py")
+                    switch_page_app("project_visualization_app.py")
                 else:
                     st.error("Неверное имя пользователя или пароль")
             else:

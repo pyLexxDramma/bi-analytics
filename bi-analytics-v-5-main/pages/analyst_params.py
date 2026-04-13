@@ -67,6 +67,7 @@ from auth import (
     init_db,
     render_sidebar_menu
 )
+from config import switch_page_app
 try:
     from filters import (
         get_default_filters,
@@ -181,7 +182,7 @@ if is_streamlit_context():
 
         if st.button("Вернуться к отчетам"):
 
-            st.switch_page("project_visualization_app.py")
+            switch_page_app("project_visualization_app.py")
 
         st.stop()
 
@@ -535,4 +536,4 @@ if is_streamlit_context():
 
     if st.button("← Вернуться к отчетам"):
 
-        st.switch_page("project_visualization_app.py")
+        switch_page_app("project_visualization_app.py")

@@ -20,6 +20,10 @@ if not _MAIN.is_file():
         f"Не найден {_MAIN}. Проверьте структуру репозитория на GitHub."
     )
 
+# Главный файл для Streamlit — этот скрипт в корне репозитория; st.switch_page
+# считает пути от него, поэтому префикс каталога приложения (см. config.switch_page_app).
+os.environ["BI_ANALYTICS_SWITCH_PAGE_PREFIX"] = _APP_DIR.name
+
 os.chdir(_APP_DIR)
 if str(_APP_DIR) not in sys.path:
     sys.path.insert(0, str(_APP_DIR))
