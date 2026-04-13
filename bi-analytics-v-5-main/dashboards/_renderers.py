@@ -5882,6 +5882,16 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     combined_df = technique_df.copy()
                     combined_df["data_source"] = "Техника"
 
+    # Если в сессии нет нужного набора, но главное приложение передало df (например один общий файл),
+    # подставляем его — иначе вкладка «Техника» остаётся без данных, хотя отчёт получил df.
+    if (combined_df is None or combined_df.empty) and df is not None and not getattr(df, "empty", True):
+        if data_source_filter == "Техника" and (technique_df is None or getattr(technique_df, "empty", True)):
+            combined_df = df.copy()
+            combined_df["data_source"] = "Техника"
+        elif data_source_filter == "Ресурсы" and (resources_df is None or getattr(resources_df, "empty", True)):
+            combined_df = df.copy()
+            combined_df["data_source"] = "Ресурсы"
+
     if combined_df is None or combined_df.empty:
         st.warning(
             "Для отображения графика движения рабочей силы необходимо загрузить файл с данными о ресурсах или технике."
@@ -6100,6 +6110,36 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
     else:
         work_df["week_sum"] = 0
         work_df["Среднее_за_неделю_numeric"] = 0
+
+    # Факт (week_sum) не распознан по канонич. колонкам — пробуем типичные заголовки из файлов
+    _ws_sum = float(
+        pd.to_numeric(work_df.get("week_sum"), errors="coerce").fillna(0).abs().sum()
+    )
+    if _ws_sum == 0:
+        _col_m = find_column_by_partial(
+            work_df,
+            ["Среднее за месяц", "среднее за месяц", "среднее за мес", "Среднее за мес"],
+        )
+        _col_w = find_column_by_partial(
+            work_df, ["Среднее за неделю", "среднее за неделю", "средн за нед"]
+        )
+        if _col_m and _col_m in work_df.columns:
+            work_df["week_sum"] = pd.to_numeric(
+                work_df[_col_m].astype(str).str.replace(",", ".").str.replace(" ", ""),
+                errors="coerce",
+            ).fillna(0.0)
+            nw = len(week_columns) if week_columns else 4
+            if work_df["week_sum"].abs().sum() > 0:
+                work_df["Среднее_за_неделю_numeric"] = (
+                    work_df["week_sum"] / nw if nw else work_df["week_sum"]
+                )
+        elif _col_w and _col_w in work_df.columns:
+            work_df["Среднее_за_неделю_numeric"] = pd.to_numeric(
+                work_df[_col_w].astype(str).str.replace(",", ".").str.replace(" ", ""),
+                errors="coerce",
+            ).fillna(0.0)
+            _nw = len(week_columns) if week_columns else 4
+            work_df["week_sum"] = work_df["Среднее_за_неделю_numeric"] * _nw
 
     # Process Дельта (Delta) if available - try to find column by partial match
     delta_col = None
@@ -6593,7 +6633,6 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 font=dict(size=11),
                 bgcolor="rgba(0,0,0,0)",
                 traceorder="normal",
-                itemwidth=30,
             ),
             margin=dict(l=48, r=48, t=32, b=_bottom_pad),
         )
