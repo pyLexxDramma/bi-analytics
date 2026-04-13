@@ -406,6 +406,8 @@ def ensure_data_session_state() -> None:
         st.session_state.debit_credit_data = None
     if "loaded_files_info" not in st.session_state:
         st.session_state.loaded_files_info = {}
+    if "project_data_all_snapshots" not in st.session_state:
+        st.session_state["project_data_all_snapshots"] = None
     if "previous_uploaded_files" not in st.session_state:
         st.session_state.previous_uploaded_files = []
     if "tessa_data" not in st.session_state:
@@ -515,6 +517,7 @@ def clear_all_data_for_removed_files(files_to_remove: list) -> None:
         st.session_state.debit_credit_data = None
         st.session_state.tessa_tasks_data = None
         st.session_state.loaded_files_info = {}
+        st.session_state["project_data_all_snapshots"] = None
 
 
 def get_main_df() -> Optional[pd.DataFrame]:

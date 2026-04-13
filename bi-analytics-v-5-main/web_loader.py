@@ -644,6 +644,7 @@ def load_all_from_web() -> Dict:
     ensure_data_session_state()
     # Сбрасываем session_state перед новой загрузкой
     st.session_state.project_data = None
+    st.session_state["project_data_all_snapshots"] = None
     st.session_state.resources_data = None
     st.session_state.technique_data = None
     st.session_state.debit_credit_data = None
@@ -922,11 +923,14 @@ def load_all_from_web() -> Dict:
         cur.close()
         conn.close()
 
-    # ── Дедупликация: оставляем только последний снимок каждого проекта ────
+    # ── Все снимки до дедупликации — для отчёта «Динамика отклонений по месяцам» (ось по дате файла) ──
     if st.session_state.get("project_data") is not None:
+        st.session_state["project_data_all_snapshots"] = st.session_state.project_data.copy()
         st.session_state.project_data = _deduplicate_project_snapshots(
             st.session_state.project_data
         )
+    else:
+        st.session_state["project_data_all_snapshots"] = None
 
     return result
 
@@ -1123,6 +1127,10 @@ def read_version_to_session(version_id: int):
             dfs.append(df)
 
     combined = pd.concat(dfs, ignore_index=True) if dfs else None
+    if combined is not None:
+        st.session_state["project_data_all_snapshots"] = combined.copy()
+    else:
+        st.session_state["project_data_all_snapshots"] = None
     st.session_state.project_data = _deduplicate_project_snapshots(combined) if combined is not None else None
 
     deb = _load_version_data(version_id, "debit_credit")

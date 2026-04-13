@@ -1111,7 +1111,33 @@ def dashboard_reasons_of_deviation(df):
 # ==================== DASHBOARD 2: Dynamics of Deviations ====================
 def dashboard_dynamics_of_deviations(df):
 
-    st.header("Динамика отклонений")
+    st.header("Динамика отклонений по месяцам")
+    st.caption(
+        "По правкам: ось времени — по **дате окончания плана** (plan end) или по **дате снимка файла** "
+        "(несколько выгрузок MSP в web/; полный набор снимков хранится до схлопывания по проекту)."
+    )
+
+    _time_axis = st.radio(
+        "Ось времени",
+        [
+            "По дате окончания плана (plan end)",
+            "По дате снимка выгрузки (snapshot_date)",
+        ],
+        horizontal=True,
+        key="dynamics_time_axis_pravki",
+    )
+    source_df = df
+    if _time_axis.startswith("По дате снимка"):
+        snap = st.session_state.get("project_data_all_snapshots")
+        if snap is not None and not getattr(snap, "empty", True):
+            source_df = snap
+        if "snapshot_date" not in getattr(source_df, "columns", []):
+            st.warning(
+                "Нет колонки snapshot_date. Она задаётся для MSP-файлов вида msp_<проект>_…_<дд-мм-гггг>.csv. "
+                "Показана динамика по plan end из текущего набора."
+            )
+            source_df = df
+            _time_axis = "По дате окончания плана (plan end)"
 
     col1, col2, col3 = st.columns(3)
 
@@ -1130,8 +1156,8 @@ def dashboard_dynamics_of_deviations(df):
         period_type_en = period_map.get(period_type, "Month")
 
     with col2:
-        if "project name" in df.columns:
-            projects = ["Все"] + sorted(df["project name"].dropna().unique().tolist())
+        if "project name" in source_df.columns:
+            projects = ["Все"] + sorted(source_df["project name"].dropna().unique().tolist())
             selected_project = st.selectbox(
                 "Фильтр по проекту", projects, key="dynamics_project"
             )
@@ -1139,9 +1165,9 @@ def dashboard_dynamics_of_deviations(df):
             selected_project = "Все"
 
     with col3:
-        if "reason of deviation" in df.columns:
+        if "reason of deviation" in source_df.columns:
             reasons = ["Все"] + sorted(
-                df["reason of deviation"].dropna().unique().tolist()
+                source_df["reason of deviation"].dropna().unique().tolist()
             )
             selected_reason = st.selectbox(
                 "Фильтр по причине", reasons, key="dynamics_reason"
@@ -1150,7 +1176,7 @@ def dashboard_dynamics_of_deviations(df):
             selected_reason = "Все"
 
     # Apply filters
-    filtered_df = df.copy()
+    filtered_df = source_df.copy()
     if selected_project != "Все" and "project name" in filtered_df.columns:
         filtered_df = filtered_df[
             filtered_df["project name"].astype(str).str.strip()
@@ -1185,8 +1211,37 @@ def dashboard_dynamics_of_deviations(df):
         st.info("Нет данных для выбранных фильтров.")
         return
 
+    use_snapshot_period = (
+        _time_axis.startswith("По дате снимка")
+        and "snapshot_date" in filtered_df.columns
+    )
+    if use_snapshot_period:
+        filtered_df = filtered_df.copy()
+        filtered_df["snapshot_date"] = pd.to_datetime(
+            filtered_df["snapshot_date"], errors="coerce"
+        )
+        sd = filtered_df["snapshot_date"]
+        if period_type_en == "Day":
+            mask = sd.notna()
+            filtered_df.loc[mask, "period"] = sd.loc[mask].dt.date
+            period_label = "День (дата снимка файла)"
+        elif period_type_en == "Month":
+            mask = sd.notna()
+            filtered_df.loc[mask, "period"] = sd.loc[mask].dt.to_period("M")
+            period_label = "Месяц (дата снимка файла)"
+        elif period_type_en == "Quarter":
+            mask = sd.notna()
+            filtered_df.loc[mask, "period"] = sd.loc[mask].dt.to_period("Q")
+            period_label = "Квартал (дата снимка файла)"
+        else:
+            mask = sd.notna()
+            filtered_df.loc[mask, "period"] = sd.loc[mask].dt.to_period("Y")
+            period_label = "Год (дата снимка файла)"
+        if not mask.any():
+            st.warning("Нет заполненной snapshot_date после фильтров.")
+            return
     # Extract period from plan end dates
-    if period_type_en == "Day":
+    elif period_type_en == "Day":
         # Use date (day level)
         if "plan end" in filtered_df.columns:
             mask = filtered_df["plan end"].notna()
@@ -6553,8 +6608,8 @@ def dashboard_technique(df):
         )
 
         # Calculate доля факта (Среднее за месяц / Сумма * 100) and доля отклонения (Отклонение / План * 100)
-        contractor_plan_avg["Доля факта (%)"] = 0
-        contractor_plan_avg["Доля отклонения (%)"] = 0
+        contractor_plan_avg["Доля факта (%)"] = 0.0
+        contractor_plan_avg["Доля отклонения (%)"] = 0.0
         mask_sum = contractor_plan_avg["Сумма"] != 0
         contractor_plan_avg.loc[mask_sum, "Доля факта (%)"] = (
             contractor_plan_avg.loc[mask_sum, "Среднее за месяц"]
@@ -8067,8 +8122,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         )
 
         # Calculate доля факта (Среднее за месяц / Сумма * 100) and доля отклонения (Отклонение / План * 100)
-        contractor_plan_avg["Доля факта (%)"] = 0
-        contractor_plan_avg["Доля отклонения (%)"] = 0
+        contractor_plan_avg["Доля факта (%)"] = 0.0
+        contractor_plan_avg["Доля отклонения (%)"] = 0.0
         mask_sum = contractor_plan_avg["Сумма"] != 0
         contractor_plan_avg.loc[mask_sum, "Доля факта (%)"] = (
             contractor_plan_avg.loc[mask_sum, "Среднее за месяц"]
@@ -12959,15 +13014,60 @@ def dashboard_control_points(df):
 
 
 def dashboard_project_schedule_chart(df):
-    """График проекта — каркас по правкам (детализация по макету заказчика)."""
+    """График проекта: временная шкала (Gantt) по plan start / plan end из MSP."""
     st.header("График проекта")
-    st.info(
-        "По макету правок — диаграмма Ганта / временная шкала из MSP (колонки задач, %, окончания). "
-        "Ниже — краткая сводка по загруженным строкам; полноценный Gantt подключается при согласовании экспорта."
+    st.caption(
+        "Диаграмма Ганта по полям «План начало» / «План окончание» (plan start / plan end). "
+        "При необходимости сузьте выборку фильтром по проекту."
     )
     if df is None or df.empty:
         st.warning("Загрузите данные MSP.")
         return
+    work = df.copy()
+    if "plan start" not in work.columns or "plan end" not in work.columns:
+        st.warning("Нужны колонки plan start и plan end (даты задач).")
+        pref = [c for c in ("project name", "task name", "plan start", "plan end") if c in work.columns]
+        st.dataframe(work[pref].head(80) if pref else work.head(80), use_container_width=True, hide_index=True)
+        return
+
+    work["plan start"] = pd.to_datetime(work["plan start"], errors="coerce")
+    work["plan end"] = pd.to_datetime(work["plan end"], errors="coerce")
+    plot_df = work[
+        work["plan start"].notna() & work["plan end"].notna()
+    ].copy()
+    if plot_df.empty:
+        st.info("Нет строк с заполненными plan start и plan end.")
+        return
+
+    if "project name" in plot_df.columns:
+        projs = ["Все"] + sorted(plot_df["project name"].dropna().astype(str).unique().tolist())
+        sel = st.selectbox("Проект", projs, key="gantt_project_filter")
+        if sel != "Все":
+            plot_df = plot_df[plot_df["project name"].astype(str).str.strip() == str(sel).strip()]
+
+    if "task name" not in plot_df.columns:
+        plot_df["task name"] = plot_df.index.astype(str)
+    plot_df = plot_df.sort_values("plan start").head(400)
+    label_col = "task name"
+    try:
+        _tl_kwargs = dict(
+            x_start="plan start",
+            x_end="plan end",
+            y=label_col,
+        )
+        if "pct complete" in plot_df.columns:
+            _tl_kwargs["color"] = "pct complete"
+        fig = px.timeline(plot_df, **_tl_kwargs)
+    except Exception as e:
+        st.warning(f"Не удалось построить диаграмму: {e}")
+        st.dataframe(plot_df.head(50), use_container_width=True)
+        return
+    fig.update_yaxes(autorange="reversed", title_text="Задача")
+    fig.update_xaxes(title_text="Дата")
+    fig.update_layout(height=min(900, 120 + 28 * len(plot_df)), margin=dict(l=10, r=10, t=30, b=40))
+    fig = apply_chart_background(fig)
+    render_chart(fig, caption_below="Плановые сроки задач (plan start → plan end)")
+
     pref = [
         c
         for c in (
@@ -12981,11 +13081,12 @@ def dashboard_project_schedule_chart(df):
         )
         if c in df.columns
     ]
-    st.dataframe(
-        df[pref].head(80) if pref else df.head(80),
-        use_container_width=True,
-        hide_index=True,
-    )
+    with st.expander("Таблица (первые строки)", expanded=False):
+        st.dataframe(
+            df[pref].head(80) if pref else df.head(80),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 
 def dashboard_pd_delay(df):
