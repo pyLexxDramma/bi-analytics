@@ -471,7 +471,11 @@ def dashboard_reasons_of_deviation(df):
         )
         return
 
-    st.header("Динамика отклонений по месяцам")
+    st.header("Доли причин отклонений по проекту")
+    st.caption(
+        "По умолчанию отображаются все проекты и доступные периоды. Отдельный отчёт "
+        "«Динамика отклонений по месяцам» (временной ряд) — в объединённом экране «Динамика отклонений», вкладка «Динамика отклонений»."
+    )
 
     # Add CSS to force filters in one row
     st.markdown(
@@ -486,8 +490,8 @@ def dashboard_reasons_of_deviation(df):
         unsafe_allow_html=True,
     )
 
-    # Все фильтры в один ряд: Проект, Этап, Причина, Месяц (4 колонки)
-    col1, col2, col3, col4 = st.columns(4)
+    # Фильтры: проект, этап/раздел, функциональный блок (если есть), причина, месяц
+    col1, col2, col3, col4, col5 = st.columns(5)
 
     with col1:
         try:
@@ -528,6 +532,18 @@ def dashboard_reasons_of_deviation(df):
             selected_reason = "Все"
 
     with col4:
+        try:
+            has_block_column = "block" in df.columns
+        except (AttributeError, TypeError):
+            has_block_column = False
+
+        if has_block_column:
+            blocks = ["Все"] + sorted(df["block"].dropna().astype(str).str.strip().unique().tolist())
+            selected_block = st.selectbox("Функциональный блок", blocks, key="reason_block")
+        else:
+            selected_block = "Все"
+
+    with col5:
         available_months = []
         try:
             has_plan_month_column = "plan_month" in df.columns
@@ -600,6 +616,11 @@ def dashboard_reasons_of_deviation(df):
             == str(selected_section).strip()
         ]
 
+    if selected_block != "Все" and "block" in filtered_df.columns:
+        filtered_df = filtered_df[
+            filtered_df["block"].astype(str).str.strip() == str(selected_block).strip()
+        ]
+
     try:
         has_plan_month_col = "plan_month" in filtered_df.columns
     except (AttributeError, TypeError):
@@ -667,7 +688,14 @@ def dashboard_reasons_of_deviation(df):
         st.info("Нет данных для выбранных фильтров.")
         return
 
-    # Summary metrics: всего задач, основная причина отклонения, её процент и количество
+    top5_only = st.checkbox(
+        "ТОП 5 причин отклонений",
+        value=False,
+        key="reason_top5",
+        help="Оставить только пять наиболее частых причин на диаграммах.",
+    )
+
+    # Summary metrics: основная причина и доля (метрика «Всего задач» убрана по правкам макета)
     has_reason_col_metric = "reason of deviation" in filtered_df.columns
     main_reason_name = "—"
     main_reason_pct = 0.0
@@ -680,12 +708,10 @@ def dashboard_reasons_of_deviation(df):
             total_tasks = len(filtered_df)
             main_reason_pct = (main_reason_count / total_tasks * 100) if total_tasks else 0.0
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Всего задач с отклонениями", len(filtered_df))
-    with col2:
+    m1, m2 = st.columns(2)
+    with m1:
         st.metric("Основная причина отклонения", main_reason_name[:50] + ("…" if len(main_reason_name) > 50 else ""))
-    with col3:
+    with m2:
         col3_value = f"{main_reason_pct:.1f}% ({main_reason_count})" if (has_reason_col_metric and main_reason_count > 0) else "—"
         st.metric("Доля основной причины", col3_value)
 
@@ -696,9 +722,15 @@ def dashboard_reasons_of_deviation(df):
         has_reason_col_breakdown = False
 
     if has_reason_col_breakdown:
-        st.subheader("Распределение по причинам")
         reason_counts = filtered_df["reason of deviation"].value_counts().reset_index()
         reason_counts.columns = ["Причина", "Количество"]
+        total_rc = float(reason_counts["Количество"].sum()) or 1.0
+        reason_counts["pct"] = (reason_counts["Количество"] / total_rc * 100).round(1)
+        if top5_only:
+            reason_counts = reason_counts.nlargest(5, "Количество").reset_index(drop=True)
+        reason_counts["label_bar"] = reason_counts.apply(
+            lambda r: f"{int(r['Количество'])}\n({r['pct']}%)", axis=1
+        )
 
         fig = px.bar(
             reason_counts,
@@ -707,16 +739,16 @@ def dashboard_reasons_of_deviation(df):
             title=None,
             labels={
                 "Причина": "Причина отклонения",
-                "Количество": "Количество задач",
+                "Количество": "Количество",
             },
-            text="Количество",
+            text="label_bar",
         )
         fig.update_traces(
             textposition="outside", textfont=dict(size=14, color="white")
         )
         fig = apply_chart_background(fig)
         fig.update_layout(
-            yaxis=dict(range=[0, reason_counts["Количество"].max() * 1.2])
+            yaxis=dict(range=[0, reason_counts["Количество"].max() * 1.2], title="Количество")
         )
         n = len(reason_counts)
         if n > 6:
@@ -731,10 +763,11 @@ def dashboard_reasons_of_deviation(df):
                 ticklabelstandoff=12,
                 overwrite=True,
             )
-        render_chart(fig, caption_below="Количество задач по причинам")
+        render_chart(fig, caption_below="")
 
         total = reason_counts["Количество"].sum()
-        reason_counts["pct"] = (reason_counts["Количество"] / total * 100).round(1)
+        if "pct" not in reason_counts.columns:
+            reason_counts["pct"] = (reason_counts["Количество"] / (float(total) or 1.0) * 100).round(1)
 
         n_reasons = len(reason_counts)
         fig = px.pie(
@@ -771,7 +804,18 @@ def dashboard_reasons_of_deviation(df):
             showlegend=True,
         )
         fig = apply_chart_background(fig)
-        render_chart(fig, caption_below="Причины отклонений")
+        render_chart(fig, caption_below="")
+
+    # Подпись текущего проекта (макет правок)
+    proj_lbl = (
+        str(selected_project).strip()
+        if selected_project != "Все"
+        else "Все проекты"
+    )
+    st.markdown(
+        f"<div style='text-align:right;font-size:1.35rem;font-weight:600;color:#b8c0cc;margin:0.75rem 0 0 0'>{html_module.escape(proj_lbl)}</div>",
+        unsafe_allow_html=True,
+    )
 
     # Detailed table — названия колонок на русском, дни: красный если > 0, зелёный если 0
     st.subheader("Детальные данные")
@@ -1988,12 +2032,17 @@ def dashboard_plan_fact_dates(df):
                 project_tasks["task name"].dropna().unique().tolist()
             )
             if available_tasks:
-                # По умолчанию используем "Разрешение на ввод в эксплуатацию", если она есть
-                default_task = (
-                    "Разрешение на ввод в эксплуатацию"
-                    if "Разрешение на ввод в эксплуатацию" in available_tasks
-                    else available_tasks[0]
+                # По умолчанию — задача ЗОС (макет правок), иначе ввод в эксплуатацию
+                default_task = next(
+                    (t for t in available_tasks if "зос" in str(t).lower()),
+                    None,
                 )
+                if default_task is None:
+                    default_task = (
+                        "Разрешение на ввод в эксплуатацию"
+                        if "Разрешение на ввод в эксплуатацию" in available_tasks
+                        else available_tasks[0]
+                    )
                 selected_task_for_metrics = st.selectbox(
                     "Задача для расчета окончания проекта",
                     available_tasks,
@@ -2005,17 +2054,19 @@ def dashboard_plan_fact_dates(df):
                     key="task_for_project_end_metrics",
                 )
 
-    # Найти задачу для метрик (либо выбранную через селектор, либо "Разрешение на ввод в эксплуатацию" по умолчанию)
+    # Найти задачу для метрик (селектор или по умолчанию ЗОС / ввод в эксплуатацию)
     task_name_to_find = (
         selected_task_for_metrics
         if selected_task_for_metrics
-        else "Разрешение на ввод в эксплуатацию"
+        else "ЗОС"
     )
     task_row = None
 
     if "task name" in df.columns:
         # Ищем задачу в исходных данных (не в отфильтрованных)
         task_mask = df["task name"].astype(str).str.strip() == task_name_to_find.strip()
+        if not task_mask.any() and str(task_name_to_find).strip().upper() == "ЗОС":
+            task_mask = df["task name"].astype(str).str.contains("ЗОС", case=False, na=False)
         if task_mask.any():
             # Если выбран конкретный проект, ищем задачу только в этом проекте
             if selected_project != "Все" and "project name" in df.columns:
@@ -2028,6 +2079,12 @@ def dashboard_plan_fact_dates(df):
                     task_row = task_row.iloc[0]
             else:
                 task_row = df[task_mask].iloc[0]
+
+    task_label_for_deviation = (
+        str(task_row.get("task name")).strip()
+        if task_row is not None and hasattr(task_row, "get")
+        else str(task_name_to_find).strip()
+    )
 
     def _fallback_max_deviation_days(task_label: str, project_choice: str, src: pd.DataFrame):
         """Макс. |отклонение| по строкам задачи в отфильтрованных данных, если в строке нет обеих дат конца."""
@@ -2063,7 +2120,7 @@ def dashboard_plan_fact_dates(df):
                 deviation_days = (base_end - plan_end).total_seconds() / 86400
         if deviation_days is None:
             deviation_days = _fallback_max_deviation_days(
-                task_name_to_find, selected_project, filtered_df
+                task_label_for_deviation, selected_project, filtered_df
             )
         if deviation_days is not None:
             deviation_str = f"{int(round(float(deviation_days), 0))}"
@@ -2220,41 +2277,7 @@ def dashboard_plan_fact_dates(df):
         summary_df["Отклонение начала (дней)"], errors="coerce"
     )
 
-    # If "Все" projects selected, add summary column with totals per task
-    if selected_project == "Все" and "Задача" in summary_df.columns:
-        # Calculate totals per task
-        task_totals = (
-            summary_df.groupby("Задача")
-            .agg({"Отклонение начала (дней)": "sum", "Отклонение конца (дней)": "sum"})
-            .reset_index()
-        )
-        task_totals.columns = [
-            "Задача",
-            "Сумма отклонения начала (дней)",
-            "Сумма отклонения конца (дней)",
-        ]
-
-        # Calculate total deviation per task (sum of start and end deviations)
-        task_totals["Суммарное отклонение (дней)"] = task_totals[
-            "Сумма отклонения начала (дней)"
-        ].fillna(0) + task_totals["Сумма отклонения конца (дней)"].fillna(0)
-
-        # Merge totals back to summary_df
-        summary_df = summary_df.merge(task_totals, on="Задача", how="left")
-
-        # Reorder columns to put summary columns after deviation columns
-        cols = summary_df.columns.tolist()
-        # Remove summary columns from their current position
-        cols.remove("Сумма отклонения начала (дней)")
-        cols.remove("Сумма отклонения конца (дней)")
-        cols.remove("Суммарное отклонение (дней)")
-        # Add them after deviation columns
-        start_idx = cols.index("Отклонение начала (дней)")
-        end_idx = cols.index("Отклонение конца (дней)")
-        cols.insert(end_idx + 1, "Сумма отклонения начала (дней)")
-        cols.insert(end_idx + 2, "Сумма отклонения конца (дней)")
-        cols.insert(end_idx + 3, "Суммарное отклонение (дней)")
-        summary_df = summary_df[cols]
+    # По правкам макета: суммарные столбцы по задачам не выводим
 
     # Sort by end date difference (largest first, descending order)
     # Handle NaN values by placing them at the end
@@ -2273,10 +2296,7 @@ def dashboard_plan_fact_dates(df):
     for col in ["Отклонение начала (дней)", "Отклонение конца (дней)"]:
         if col in summary_df.columns:
             summary_df[col] = summary_df[col].apply(_format_int_days)
-    for col in ["Сумма отклонения начала (дней)", "Сумма отклонения конца (дней)", "Суммарное отклонение (дней)"]:
-        if col in summary_df.columns:
-            summary_df[col] = summary_df[col].apply(_format_int_days)
-    st.subheader("Детальные даты задач")
+    st.subheader("Отклонение от базового плана (таблица)")
     st.caption(f"Записей: {len(summary_df)}")
     _render_html_table(summary_df)
     _csv = summary_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
