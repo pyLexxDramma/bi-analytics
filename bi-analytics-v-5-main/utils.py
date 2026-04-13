@@ -217,8 +217,33 @@ def apply_chart_background(fig):
     Применяет единый стиль (тёмная тема) ко всем графикам Plotly.
     Вызывается перед st.plotly_chart() в каждом дашборде.
     """
+    # Если дашборд уже задал вертикальную легенду и/или увеличенные поля — не затираем
+    # (иначе глобальная горизонтальная легенда и margin b=100/r=30 ломают вёрстку).
+    layout = fig.layout
+    prev_leg = getattr(layout, "legend", None) if layout is not None else None
+    prev_m = getattr(layout, "margin", None) if layout is not None else None
+    keep_vertical_legend = (
+        prev_leg is not None and getattr(prev_leg, "orientation", None) == "v"
+    )
+    margin_l = 60
+    margin_r = 30
+    margin_t = 55
+    margin_b = 100
+    if prev_m is not None:
+        for attr, default in (("l", margin_l), ("r", margin_r), ("t", margin_t), ("b", margin_b)):
+            v = getattr(prev_m, attr, None)
+            if v is not None and float(v) > float(default):
+                if attr == "l":
+                    margin_l = float(v)
+                elif attr == "r":
+                    margin_r = float(v)
+                elif attr == "t":
+                    margin_t = float(v)
+                elif attr == "b":
+                    margin_b = float(v)
+
     # Базовый стиль
-    fig.update_layout(
+    layout_kwargs = dict(
         template=None,
         plot_bgcolor=TABLE_BG_COLOR,
         paper_bgcolor=TABLE_BG_COLOR,
@@ -234,19 +259,27 @@ def apply_chart_background(fig):
             font=dict(color=TABLE_TEXT_COLOR, size=15),
             pad=dict(t=4),
         ),
-        legend=dict(
+        # Равномерное уменьшение подписей на барах если не вмещаются
+        uniformtext=dict(minsize=9, mode="hide"),
+        margin=dict(l=margin_l, r=margin_r, t=margin_t, b=margin_b),
+    )
+    if keep_vertical_legend:
+        # Только цвета шрифта/фона легенды; положение x/y/orientation оставляем как в дашборде
+        layout_kwargs["legend"] = dict(
             font=dict(color=TABLE_TEXT_COLOR, size=12),
             bgcolor="rgba(0,0,0,0)",
-            orientation="h",        # горизонтальная легенда — не обрезается на узких экранах
+        )
+    else:
+        layout_kwargs["legend"] = dict(
+            font=dict(color=TABLE_TEXT_COLOR, size=12),
+            bgcolor="rgba(0,0,0,0)",
+            orientation="h",  # горизонтальная легенда — не обрезается на узких экранах
             yanchor="bottom",
             y=-0.25,
             xanchor="center",
             x=0.5,
-        ),
-        # Равномерное уменьшение подписей на барах если не вмещаются
-        uniformtext=dict(minsize=9, mode="hide"),
-        margin=dict(l=60, r=30, t=55, b=100),
-    )
+        )
+    fig.update_layout(**layout_kwargs)
 
     # Оси X
     fig.update_xaxes(
@@ -268,11 +301,6 @@ def apply_chart_background(fig):
         automargin=True,
     )
 
-    # Если у графика уже задан нижний отступ > 100 — не трогаем его
-    # (нужно для горизонтальных bar с длинными подписями)
-    current_margin = getattr(fig.layout, "margin", None)
-    if current_margin and getattr(current_margin, "b", None) and current_margin.b > 100:
-        pass  # сохраняем более крупный отступ, заданный в дашборде
     return fig
 
 

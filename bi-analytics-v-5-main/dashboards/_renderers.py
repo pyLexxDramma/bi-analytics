@@ -1441,21 +1441,41 @@ def dashboard_dynamics_of_deviations(df):
                 y="Всего дней отклонений",
                 color="project name",
                 title=None,
-                labels={"period": "", "Всего дней отклонений": "Дни отклонений"},
+                labels={
+                    "period": "Период",
+                    "Всего дней отклонений": "Дни отклонений",
+                    "project name": "Проект",
+                },
                 text="_дни_текст",
             )
-            # Set barmode to 'group' to group bars by period
-            fig.update_layout(barmode="group")
-            fig.update_xaxes(tickangle=-45, title_text="")
-            # Update traces to ensure horizontal text orientation
-            fig.update_traces(
-                textposition="outside", textfont=dict(size=14, color="white")
+            # Группировка столбцов: легенда справа, как у «По причинам», чтобы не наезжать на ось X
+            fig.update_layout(
+                barmode="group",
+                legend=dict(
+                    title=dict(text="Проект"),
+                    orientation="v",
+                    yanchor="top",
+                    y=1,
+                    x=1.02,
+                    xanchor="left",
+                    font=dict(size=10),
+                    traceorder="normal",
+                    itemsizing="constant",
+                ),
+                margin=dict(l=56, r=280, t=28, b=140),
+                xaxis=dict(
+                    title="",
+                    tickangle=-45,
+                    tickfont=dict(size=10),
+                    automargin=True,
+                ),
+                yaxis=dict(title="Дни отклонений", automargin=True),
+                height=560,
             )
-            # Explicitly set textangle to 0 for all traces to ensure horizontal text
-            # In Plotly, textangle is set per trace
-            for i, trace in enumerate(fig.data):
-                # Update trace with textangle=0 to ensure horizontal text
-                fig.data[i].update(textangle=0)
+            fig.update_traces(
+                textposition="outside",
+                textfont=dict(size=12, color="white"),
+            )
             fig = apply_chart_background(fig)
             render_chart(fig, caption_below="Дни отклонений по периоду")
 
@@ -1481,35 +1501,43 @@ def dashboard_dynamics_of_deviations(df):
             )
 
             reason_data = reason_data.copy()
-            reason_data["_дни_текст"] = reason_data["Всего дней отклонений"].apply(
-                lambda x: f"{int(round(x, 0))}" if pd.notna(x) else ""
-            )
             fig = px.bar(
                 reason_data,
                 x="period",
                 y="Всего дней отклонений",
                 color="reason of deviation",
                 title=None,
-                labels={"period": "", "Всего дней отклонений": "Дни отклонений"},
-                text="_дни_текст",
+                labels={
+                    "period": "Период",
+                    "Всего дней отклонений": "Дни отклонений",
+                    "reason of deviation": "Причина отклонения",
+                },
             )
-            # Используем накопление (stack) для отображения секторов причин в одном столбце
-            fig.update_layout(barmode="stack")
-            fig.update_xaxes(tickangle=-45, title_text="")
-            # Убираем текст внутри столбцов, так как итоговые значения выводятся над столбцами через аннотации
-            # fig.update_traces(
-            #     textposition="none", textfont=dict(size=12, color="white")
-            # )
-            fig.update_traces(
-                textposition="inside",
-                textfont=dict(size=12, color="white"),
-                insidetextanchor="middle",
+            # Накопление: легенда справа + запас по полям, подписи секторов скрыты (итог — аннотации сверху)
+            fig.update_layout(
+                barmode="stack",
+                legend=dict(
+                    title=dict(text="Причина"),
+                    orientation="v",
+                    yanchor="top",
+                    y=1,
+                    x=1.02,
+                    xanchor="left",
+                    font=dict(size=10),
+                    traceorder="normal",
+                    itemsizing="constant",
+                ),
+                margin=dict(l=56, r=280, t=28, b=140),
+                xaxis=dict(
+                    title="",
+                    tickangle=-45,
+                    tickfont=dict(size=10),
+                    automargin=True,
+                ),
+                yaxis=dict(title="Дни отклонений", automargin=True),
+                height=560,
             )
-            # Explicitly set textangle to 0 for all traces to ensure horizontal text
-            # In Plotly, textangle is set per trace
-            for i, trace in enumerate(fig.data):
-                # Update trace with textangle=0 to ensure horizontal text
-                fig.data[i].update(textangle=0)
+            fig.update_traces(textposition="none")
 
             # Добавляем суммарные значения над столбцами
             annotations = []
