@@ -5857,47 +5857,84 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
     resources_df = st.session_state.get("resources_data", None)
     technique_df = st.session_state.get("technique_data", None)
     combined_df = None
+    _gdrs_src_diag = ""
 
-    if combined_df is None or combined_df.empty:
-        if data_source_filter == "Техника":
-            if technique_df is not None and not technique_df.empty:
+    def _cols_lc(pdf):
+        if pdf is None or getattr(pdf, "empty", True):
+            return []
+        return [str(c).lower().strip() for c in pdf.columns]
+
+    def _like_technique(pdf):
+        """Техника в выгрузках: «Среднее за неделю» + недели (см. new_csv/sample_technique_data.csv)."""
+        return any("среднее за недел" in c for c in _cols_lc(pdf))
+
+    def _like_resources(pdf):
+        """Люди: «Среднее за месяц» (sample_resources_data.csv)."""
+        return any(
+            ("среднее за месяц" in c) or ("среднее за мес" in c) for c in _cols_lc(pdf)
+        )
+
+    # load_all_from_web кладёт *resursi*.csv только в resources_data; если по заголовкам это техника — берём оттуда.
+    if data_source_filter == "Техника":
+        if technique_df is not None and not technique_df.empty:
+            combined_df = technique_df.copy()
+            combined_df["data_source"] = "Техника"
+            _gdrs_src_diag = "session_state.technique_data"
+        elif resources_df is not None and not resources_df.empty and _like_technique(resources_df):
+            combined_df = resources_df.copy()
+            combined_df["data_source"] = "Техника"
+            _gdrs_src_diag = (
+                "session_state.resources_data — распознано как техника по колонке «Среднее за неделю» "
+                "(имя файла могло быть *resursi*, данные всё равно техника)"
+            )
+    elif data_source_filter == "Ресурсы":
+        if resources_df is not None and not resources_df.empty:
+            combined_df = resources_df.copy()
+            combined_df["data_source"] = "Ресурсы"
+            _gdrs_src_diag = "session_state.resources_data"
+        elif technique_df is not None and not technique_df.empty and _like_resources(technique_df):
+            combined_df = technique_df.copy()
+            combined_df["data_source"] = "Ресурсы"
+            _gdrs_src_diag = "session_state.technique_data — распознаны как ресурсы по «Среднее за месяц»"
+    else:
+        if resources_df is not None and not resources_df.empty:
+            combined_df = resources_df.copy()
+            combined_df["data_source"] = "Ресурсы"
+            _gdrs_src_diag = "session_state.resources_data"
+        if technique_df is not None and not technique_df.empty:
+            if combined_df is not None:
+                technique_copy = technique_df.copy()
+                technique_copy["data_source"] = "Техника"
+                combined_df = pd.concat(
+                    [combined_df, technique_copy], ignore_index=True, sort=False
+                )
+                _gdrs_src_diag += " + technique_data"
+            else:
                 combined_df = technique_df.copy()
                 combined_df["data_source"] = "Техника"
-        elif data_source_filter == "Ресурсы":
-            if resources_df is not None and not resources_df.empty:
-                combined_df = resources_df.copy()
-                combined_df["data_source"] = "Ресурсы"
-        else:
-            if resources_df is not None and not resources_df.empty:
-                combined_df = resources_df.copy()
-                combined_df["data_source"] = "Ресурсы"
-            if technique_df is not None and not technique_df.empty:
-                if combined_df is not None:
-                    technique_copy = technique_df.copy()
-                    technique_copy["data_source"] = "Техника"
-                    combined_df = pd.concat(
-                        [combined_df, technique_copy], ignore_index=True, sort=False
-                    )
-                else:
-                    combined_df = technique_df.copy()
-                    combined_df["data_source"] = "Техника"
+                _gdrs_src_diag = "session_state.technique_data"
 
-    # Если в сессии нет нужного набора, но главное приложение передало df (например один общий файл),
-    # подставляем его — иначе вкладка «Техника» остаётся без данных, хотя отчёт получил df.
+    # df из главного приложения: только если структура совпадает (не подменяем людей техникой).
     if (combined_df is None or combined_df.empty) and df is not None and not getattr(df, "empty", True):
-        if data_source_filter == "Техника" and (technique_df is None or getattr(technique_df, "empty", True)):
+        if data_source_filter == "Техника" and _like_technique(df):
             combined_df = df.copy()
             combined_df["data_source"] = "Техника"
-        elif data_source_filter == "Ресурсы" and (resources_df is None or getattr(resources_df, "empty", True)):
+            _gdrs_src_diag = "аргумент df (техника по колонкам «Среднее за неделю»)"
+        elif data_source_filter == "Ресурсы" and _like_resources(df):
             combined_df = df.copy()
             combined_df["data_source"] = "Ресурсы"
+            _gdrs_src_diag = "аргумент df (ресурсы по колонкам «Среднее за месяц»)"
 
     if combined_df is None or combined_df.empty:
         st.warning(
             "Для отображения графика движения рабочей силы необходимо загрузить файл с данными о ресурсах или технике."
         )
         st.info(
-            "Ожидаемые колонки: Проект, Контрагент, Период, План, Среднее за месяц (ресурсы) или Среднее за неделю (техника), 1–5 неделя; при необходимости в данных — «Дельта» / «Дельта (%)» (в отчёте отображаются как отклонение и отклонение %)."
+            "Ожидаемые колонки: Проект (или Название), Контрагент, Период, План, "
+            "**Среднее за месяц** (люди) или **Среднее за неделю** (техника), 1–5 неделя; "
+            "при необходимости — «Дельта» / «Дельта (%)». "
+            "Файл техники из web/ с именем *resursi* может оказаться только в «ресурсах» — тогда "
+            "техника определяется по наличию колонки «Среднее за неделю»."
         )
         return
 
@@ -5915,6 +5952,13 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
     st.caption("Данные из загруженных файлов (ресурсы и/или техника).")
 
     work_df = combined_df.copy()
+
+    with st.expander("Диагностика: источник данных и заголовки колонок", expanded=False):
+        st.markdown(
+            f"**Источник:** {_gdrs_src_diag or '—'}  \n"
+            f"**Фильтр вкладки:** `{data_source_filter or 'все'}`"
+        )
+        st.code(", ".join([str(c) for c in work_df.columns]), language="text")
 
     # Правки ГДРС: на вкладке «всё вместе» — фильтр вида ресурсов; по умолчанию «Рабочие (ресурсы)»
     if (
@@ -6227,10 +6271,24 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         project_col = "Проект"
     else:
         project_col = find_column_by_partial(
-            work_df, ["Проект", "проект", "project", "Project"]
+            work_df,
+            [
+                "Проект",
+                "проект",
+                "project",
+                "Project",
+                "Название",
+                "название",
+                "Название проекта",
+                "Наименование проекта",
+            ],
         )
 
     period_col = "Период" if "Период" in work_df.columns else None
+    if period_col is None:
+        period_col = find_column_by_partial(
+            work_df, ["Период", "период", "period", "Месяц", "месяц", "month"]
+        )
 
     col1, col2 = st.columns(2)
 
