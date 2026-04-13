@@ -5863,6 +5863,30 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
 
     work_df = combined_df.copy()
 
+    # Правки ГДРС: на вкладке «всё вместе» — фильтр вида ресурсов; по умолчанию «Рабочие (ресурсы)»
+    if (
+        data_source_filter is None
+        and "data_source" in work_df.columns
+        and work_df["data_source"].astype(str).str.strip().nunique(dropna=True) > 1
+    ):
+        _rk = st.radio(
+            "Вид ресурсов",
+            ["Рабочие (ресурсы)", "Техника", "Все"],
+            index=0,
+            horizontal=True,
+            key=f"{key_prefix}_resource_kind",
+        )
+        _ds = work_df["data_source"].astype(str).str.strip().str.lower()
+        if _rk == "Рабочие (ресурсы)":
+            work_df = work_df[_ds == "ресурсы"].copy()
+        elif _rk == "Техника":
+            work_df = work_df[_ds == "техника"].copy()
+        if work_df.empty:
+            st.warning(
+                "Нет данных для выбранного вида ресурсов. Загрузите файл или выберите «Все»."
+            )
+            return
+
     date_cols_found = [c for c in work_df.columns if re.match(r'^\d{2}\.{1,2}\d{2}\.\d{4}$', str(c))]
     if date_cols_found and "Период" not in work_df.columns:
         id_cols = [c for c in ["Проект", "Контрагент", "тип ресурсов", "data_source"]
@@ -6200,6 +6224,36 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             )
         else:
             projects_to_process = ["Все проекты"]
+
+    # Табличное представление строк (правки: в UI — «Отклонение» / «Отклонение %», градиент по %)
+    with st.expander("Таблица данных (план, факт, отклонение, отклонение %)", expanded=False):
+        t = filtered_df.copy()
+        tbl = pd.DataFrame()
+        if project_col and project_col in t.columns:
+            tbl["Проект"] = t[project_col].astype(str)
+        if "Контрагент" in t.columns:
+            tbl["Контрагент"] = t["Контрагент"].astype(str)
+        if "Период" in t.columns:
+            tbl["Период"] = t["Период"].astype(str)
+        if "data_source" in t.columns:
+            tbl["Источник"] = t["data_source"].astype(str)
+        if "План_numeric" in t.columns:
+            tbl["План"] = pd.to_numeric(t["План_numeric"], errors="coerce").round(1)
+        if "week_sum" in t.columns:
+            tbl["Факт"] = pd.to_numeric(t["week_sum"], errors="coerce").round(1)
+        if "Дельта_numeric" in t.columns:
+            tbl["Отклонение"] = pd.to_numeric(t["Дельта_numeric"], errors="coerce").round(1)
+        if "Дельта_процент_numeric" in t.columns:
+            tbl["Отклонение %"] = pd.to_numeric(t["Дельта_процент_numeric"], errors="coerce").round(1)
+        if not tbl.empty:
+            st.table(
+                style_dataframe_for_dark_theme(
+                    tbl,
+                    percent_deviation_gradient_column="Отклонение %" if "Отклонение %" in tbl.columns else None,
+                )
+            )
+        else:
+            st.info("Нет колонок для таблицы с выбранными фильтрами.")
 
     period_col_hist = period_col
     if period_col_hist is None and "Период" in filtered_df.columns:

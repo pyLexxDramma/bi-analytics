@@ -336,6 +336,7 @@ def style_dataframe_for_dark_theme(
     finance_deviation_column: Optional[str] = None,
     plan_date_column: Optional[str] = None,
     fact_date_column: Optional[str] = None,
+    percent_deviation_gradient_column: Optional[str] = None,
 ):
     """
     Возвращает Styler с фоном hsl(209,67%,12%) и белым текстом для st.table.
@@ -430,6 +431,46 @@ def style_dataframe_for_dark_theme(
             return pd.Series([""] * len(column), index=column.index)
 
         base = base.apply(_apply_plan_fact_style, axis=0)
+
+    # Градиент по числовому % отклонения (светло-зелёный → красный) для колонки вроде «Отклонение %»
+    if percent_deviation_gradient_column and percent_deviation_gradient_column in df.columns:
+
+        def _pct_gradient_style(series):
+            out = []
+            nums = pd.to_numeric(series, errors="coerce")
+            valid = nums.dropna()
+            if valid.empty:
+                vmin, vmax = -100.0, 100.0
+            else:
+                vmin = float(valid.min())
+                vmax = float(valid.max())
+            span = (vmax - vmin) if vmax != vmin else 1.0
+            for v in series:
+                num = pd.to_numeric(v, errors="coerce")
+                if pd.isna(num):
+                    out.append(f"background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}")
+                    continue
+                t = (float(num) - vmin) / span
+                t = max(0.0, min(1.0, t))
+                # зелёный → жёлтый → красный
+                if t <= 0.5:
+                    r = int(46 + (241 - 46) * (t / 0.5))
+                    g = int(204 + (196 - 204) * (t / 0.5))
+                    b = int(113 + (15 - 113) * (t / 0.5))
+                else:
+                    u = (t - 0.5) / 0.5
+                    r = int(241 + (192 - 241) * u)
+                    g = int(196 + (57 - 196) * u)
+                    b = int(15 + (43 - 15) * u)
+                out.append(f"background-color: rgb({r},{g},{b}); color: #ffffff; font-weight: 600")
+            return out
+
+        base = base.apply(
+            lambda c: _pct_gradient_style(c)
+            if c.name == percent_deviation_gradient_column
+            else [""] * len(c),
+            axis=0,
+        )
 
     return base
 
