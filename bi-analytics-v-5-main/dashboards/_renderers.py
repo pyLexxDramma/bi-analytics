@@ -12697,10 +12697,37 @@ def dashboard_control_points(df):
 
 
 def dashboard_project_schedule_chart(df):
-    """График проекта: временная шкала (Gantt) по plan start / plan end из MSP."""
+    """График проекта: временная шкала (Gantt) по «План: начало» / «План: окончание» из MSP."""
+
+    def _sched_col(d, candidates):
+        for name in candidates:
+            for c in d.columns:
+                if str(name).strip().lower() == str(c).strip().lower():
+                    return c
+        return None
+
+    def _sched_wbs_tuple(val):
+        try:
+            if val is None or pd.isna(val):
+                return ()
+        except Exception:
+            if val is None:
+                return ()
+        s = str(val).strip()
+        if not s or s.lower() in ("nan", "none"):
+            return ()
+        parts = [p for p in re.split(r"[.\s/|>\\-]+", s) if p != ""]
+        out = []
+        for p in parts:
+            try:
+                out.append(int(float(p)))
+            except (TypeError, ValueError):
+                continue
+        return tuple(out) if out else ()
+
     st.header("График проекта")
     st.caption(
-        "Диаграмма Ганта по полям «План начало» / «План окончание» (plan start / plan end). "
+        "Диаграмма Ганта по полям «План: начало» и «План: окончание». "
         "При необходимости сузьте выборку фильтром по проекту."
     )
     if df is None or df.empty:
@@ -12708,7 +12735,7 @@ def dashboard_project_schedule_chart(df):
         return
     work = df.copy()
     if "plan start" not in work.columns or "plan end" not in work.columns:
-        st.warning("Нужны колонки plan start и plan end (даты задач).")
+        st.warning("Нужны колонки с датами «План: начало» и «План: окончание» (после загрузки MSP).")
         pref = [c for c in ("project name", "task name", "plan start", "plan end") if c in work.columns]
         st.dataframe(work[pref].head(80) if pref else work.head(80), use_container_width=True, hide_index=True)
         return
@@ -12719,37 +12746,156 @@ def dashboard_project_schedule_chart(df):
         work["plan start"].notna() & work["plan end"].notna()
     ].copy()
     if plot_df.empty:
-        st.info("Нет строк с заполненными plan start и plan end.")
+        st.info("Нет строк с заполненными «План: начало» и «План: окончание».")
         return
 
-    if "project name" in plot_df.columns:
-        projs = ["Все"] + sorted(plot_df["project name"].dropna().astype(str).unique().tolist())
+    proj_col = _sched_col(plot_df, ["project name", "Проект", "проект", "Project"])
+    if proj_col:
+        projs = ["Все"] + sorted(plot_df[proj_col].dropna().astype(str).unique().tolist())
         sel = st.selectbox("Проект", projs, key="gantt_project_filter")
         if sel != "Все":
-            plot_df = plot_df[plot_df["project name"].astype(str).str.strip() == str(sel).strip()]
+            plot_df = plot_df[plot_df[proj_col].astype(str).str.strip() == str(sel).strip()]
 
-    if "task name" not in plot_df.columns:
+    task_col = _sched_col(plot_df, ["task name", "Task Name", "Название"])
+    if not task_col:
+        plot_df = plot_df.copy()
         plot_df["task name"] = plot_df.index.astype(str)
-    plot_df = plot_df.sort_values("plan start").head(400)
-    label_col = "task name"
+        task_col = "task name"
+
+    level_col = _sched_col(
+        plot_df,
+        [
+            "level",
+            "level structure",
+            "Outline Level",
+            "outline level",
+            "Уровень",
+            "уровень структуры",
+        ],
+    )
+    section_col = _sched_col(plot_df, ["section", "Раздел", "БЛОК", "блок"])
+    block_col = _sched_col(
+        plot_df,
+        ["block", "Блок", "Функциональный блок", "Functional block"],
+    )
+
+    plot_df = plot_df.copy()
+    sort_cols = []
+    sort_asc = []
+    if level_col:
+        lvl_num = pd.to_numeric(plot_df[level_col], errors="coerce")
+        if lvl_num.notna().any():
+            plot_df["_gantt_sort_lvl"] = lvl_num
+            sort_cols.append("_gantt_sort_lvl")
+            sort_asc.append(True)
+        else:
+            plot_df["_gantt_wbs"] = plot_df[level_col].map(_sched_wbs_tuple)
+
+            def _sched_wbs_sort_key(t):
+                if not t:
+                    return ""
+                return ".".join(f"{p:010d}" for p in t[:16])
+
+            plot_df["_gantt_wbs_sort"] = plot_df["_gantt_wbs"].map(_sched_wbs_sort_key)
+            if plot_df["_gantt_wbs"].map(len).gt(0).any():
+                sort_cols.append("_gantt_wbs_sort")
+                sort_asc.append(True)
+        if section_col:
+            sort_cols.append(section_col)
+            sort_asc.append(True)
+        if block_col:
+            sort_cols.append(block_col)
+            sort_asc.append(True)
+        sort_cols.append(task_col)
+        sort_asc.append(True)
+        sort_cols.append("plan start")
+        sort_asc.append(True)
+    else:
+        sort_cols = ["plan start"]
+        sort_asc = [True]
+    plot_df = plot_df.sort_values(sort_cols, ascending=sort_asc, na_position="last").head(400)
+
+    lvl_for_indent = None
+    if level_col:
+        lvl_for_indent = pd.to_numeric(plot_df[level_col], errors="coerce")
+    if level_col and (lvl_for_indent is None or not lvl_for_indent.notna().any()):
+        wbs_depth = plot_df[level_col].map(_sched_wbs_tuple).map(lambda t: float(len(t)) if t else np.nan)
+        if wbs_depth.notna().any():
+            lvl_for_indent = wbs_depth
+    if lvl_for_indent is None or not lvl_for_indent.notna().any():
+        lvl_for_indent = pd.Series(np.nan, index=plot_df.index)
+    indents = []
+    for ix in plot_df.index:
+        v = lvl_for_indent.loc[ix] if ix in lvl_for_indent.index else np.nan
+        if pd.notna(v) and np.isfinite(float(v)):
+            d = max(0, int(round(float(v))) - 1)
+        else:
+            d = 0
+        indents.append(d)
+    names = plot_df[task_col].fillna("").astype(str)
+    y_labels = []
+    for name, d in zip(names.tolist(), indents):
+        prefix = ("  " * d) + ("— " if d > 0 else "")
+        y_labels.append(prefix + name)
+    plot_df["_gantt_y_label"] = y_labels
+
+    vis = pd.DataFrame(
+        {
+            "План: начало": plot_df["plan start"].values,
+            "План: окончание": plot_df["plan end"].values,
+            "Задача": plot_df["_gantt_y_label"].values,
+        },
+        index=plot_df.index,
+    )
+    vis["_полное_название"] = names.values
+    vis["_начало_стр"] = pd.to_datetime(plot_df["plan start"], errors="coerce").dt.strftime("%d.%m.%Y")
+    vis["_конец_стр"] = pd.to_datetime(plot_df["plan end"], errors="coerce").dt.strftime("%d.%m.%Y")
+    _tl_kwargs = dict(
+        x_start="План: начало",
+        x_end="План: окончание",
+        y="Задача",
+        custom_data=["_полное_название", "_начало_стр", "_конец_стр"],
+    )
+    if "pct complete" in plot_df.columns:
+        vis["% выполнения"] = pd.to_numeric(plot_df["pct complete"], errors="coerce")
+        _tl_kwargs["color"] = "% выполнения"
     try:
-        _tl_kwargs = dict(
-            x_start="plan start",
-            x_end="plan end",
-            y=label_col,
-        )
-        if "pct complete" in plot_df.columns:
-            _tl_kwargs["color"] = "pct complete"
-        fig = px.timeline(plot_df, **_tl_kwargs)
+        fig = px.timeline(vis, **_tl_kwargs)
     except Exception as e:
         st.warning(f"Не удалось построить диаграмму: {e}")
         st.dataframe(plot_df.head(50), use_container_width=True)
         return
-    fig.update_yaxes(autorange="reversed", title_text="Задача")
-    fig.update_xaxes(title_text="Дата")
-    fig.update_layout(height=min(900, 120 + 28 * len(plot_df)), margin=dict(l=10, r=10, t=30, b=40))
+    try:
+        fig.update_traces(
+            hovertemplate=(
+                "%{customdata[0]}<br>"
+                "План: начало: %{customdata[1]}<br>"
+                "План: окончание: %{customdata[2]}<br>"
+                "<extra></extra>"
+            )
+        )
+    except Exception:
+        pass
+    n = len(plot_df)
+    row_h = 26
+    chart_h = min(2600, max(220, 96 + row_h * n))
+    max_len = int(plot_df["_gantt_y_label"].astype(str).str.len().max() or 12)
+    left_m = int(min(520, max(168, 7 * min(max_len, 72) + 24)))
+    fig.update_yaxes(
+        autorange="reversed",
+        title_text="Задача",
+        tickfont=dict(size=11),
+        categoryorder="array",
+        categoryarray=vis["Задача"].tolist(),
+    )
+    fig.update_xaxes(title_text="Дата", automargin=True)
+    fig.update_layout(
+        height=chart_h,
+        margin=dict(l=left_m, r=28, t=40, b=64),
+        bargap=0.35,
+    )
     fig = apply_chart_background(fig)
-    render_chart(fig, caption_below="Плановые сроки задач (plan start → plan end)")
+    render_chart(fig, caption_below="Плановые сроки задач: «План: начало» — «План: окончание»")
 
     pref = [
         c
@@ -12764,12 +12910,19 @@ def dashboard_project_schedule_chart(df):
         )
         if c in df.columns
     ]
+    _sched_ru_headers = {
+        "project name": "Проект",
+        "task name": "Задача",
+        "plan start": "План: начало",
+        "plan end": "План: окончание",
+        "base start": "База: начало",
+        "base end": "База: окончание",
+        "pct complete": "% выполнения",
+    }
     with st.expander("Таблица (первые строки)", expanded=False):
-        st.dataframe(
-            df[pref].head(80) if pref else df.head(80),
-            use_container_width=True,
-            hide_index=True,
-        )
+        tbl = df[pref].head(80) if pref else df.head(80)
+        tbl_show = tbl.rename(columns={k: v for k, v in _sched_ru_headers.items() if k in tbl.columns})
+        st.dataframe(tbl_show, use_container_width=True, hide_index=True)
 
 
 def dashboard_pd_delay(df):
