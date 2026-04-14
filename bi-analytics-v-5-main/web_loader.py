@@ -18,10 +18,12 @@ import json
 import math
 import re
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import streamlit as st
+
+from utils import norm_partner_join_key
 
 from web_schema import (
     WEB_DB_PATH,
@@ -400,6 +402,87 @@ def _load_1c_json_spravochniki(filepath: Path) -> Optional[pd.DataFrame]:
         return None
 
 
+def _find_dannye_contractor_column(df: pd.DataFrame) -> Optional[str]:
+    """Колонка контрагента в JSON «данные» 1С (обороты): Контрагент, Наименование…"""
+    if df is None or df.empty:
+        return None
+    scored: List[Tuple[int, str]] = []
+    for c in df.columns:
+        s = str(c).strip().lower().replace("_", " ")
+        sc = 0
+        if "инн" in s or "кпп" in s:
+            continue
+        if s in ("контрагент", "контрагенты"):
+            sc += 80
+        if "контрагент" in s and "договор" not in s:
+            sc += 40
+        if "наименование" in s and "контрагент" in s:
+            sc += 60
+        if "организация" in s and "контрагент" not in s:
+            sc += 5
+        if sc > 0:
+            scored.append((sc, str(c)))
+    if not scored:
+        return None
+    scored.sort(key=lambda x: -x[0])
+    return scored[0][1]
+
+
+def _find_dannye_project_column(df: pd.DataFrame) -> Optional[str]:
+    """Колонка проекта в JSON «данные» 1С."""
+    if df is None or df.empty:
+        return None
+    for c in df.columns:
+        sl = str(c).strip().lower().replace("_", " ")
+        if sl == "проект" or sl.endswith(" проект"):
+            return str(c)
+    for c in df.columns:
+        sl = str(c).strip().lower().replace("_", " ")
+        if "проект" in sl and "проектн" not in sl and "подпроект" not in sl:
+            if "id" not in sl or sl == "id проекта":
+                return str(c)
+    return None
+
+
+def _build_partner_project_map_from_dannye(df: pd.DataFrame) -> Dict[str, str]:
+    """
+    Контрагент → наиболее частый Проект по строкам dannye.json (обороты 1С).
+    Ключи — norm_partner_join_key.
+    """
+    from collections import Counter
+
+    if df is None or df.empty:
+        return {}
+    cc = _find_dannye_contractor_column(df)
+    pc = _find_dannye_project_column(df)
+    if not cc or not pc or cc not in df.columns or pc not in df.columns:
+        return {}
+    tmp = df[[cc, pc]].copy()
+    tmp = tmp.dropna(how="any")
+    tmp = tmp[tmp[cc].astype(str).str.strip() != ""]
+    tmp = tmp[tmp[pc].astype(str).str.strip() != ""]
+    if tmp.empty:
+        return {}
+    out: Dict[str, str] = {}
+    for raw_k, g in tmp.groupby(tmp[cc].map(lambda x: norm_partner_join_key(x))):
+        if not raw_k:
+            continue
+        cnt = Counter(g[pc].astype(str).str.strip())
+        out[raw_k] = cnt.most_common(1)[0][0]
+    return out
+
+
+def _merge_partner_project_maps(
+    old: Optional[Dict[str, str]], new: Optional[Dict[str, str]]
+) -> Dict[str, str]:
+    """Объединяет карты; при конфликте оставляет значение из new (свежий файл)."""
+    a = dict(old or {})
+    for k, v in (new or {}).items():
+        if k and v:
+            a[k] = v
+    return a
+
+
 def _load_tessa_file(filepath: Path) -> Optional[pd.DataFrame]:
     encodings = ["utf-8", "utf-8-sig", "windows-1251", "cp1251"]
     for encoding in encodings:
@@ -746,7 +829,33 @@ def load_all_from_web() -> Dict:
                     continue
 
                 if file_type_by_name == "budget_json":
-                    result["skipped"] += 1
+                    ddf = _load_1c_json_spravochniki(filepath)
+                    if ddf is not None and not ddf.empty:
+                        ddf.attrs["data_type"] = "reference_dannye"
+                        if st.session_state.get("reference_1c_dannye") is None:
+                            st.session_state["reference_1c_dannye"] = ddf
+                        else:
+                            st.session_state["reference_1c_dannye"] = pd.concat(
+                                [st.session_state["reference_1c_dannye"], ddf],
+                                ignore_index=True,
+                            )
+                        pmap = _build_partner_project_map_from_dannye(ddf)
+                        st.session_state["reference_partner_to_project"] = (
+                            _merge_partner_project_maps(
+                                st.session_state.get("reference_partner_to_project"),
+                                pmap,
+                            )
+                        )
+                        result["loaded"] += 1
+                        result["diagnostics"].append({
+                            "file": rel_path,
+                            "type": "reference_dannye",
+                            "rows": int(len(ddf)),
+                            "columns": [str(c) for c in ddf.columns[:30]],
+                            "partner_project_keys": int(len(pmap)),
+                        })
+                    else:
+                        result["skipped"] += 1
                     continue
 
                 # ── TESSA файлы ──────────────────────────────────────────────

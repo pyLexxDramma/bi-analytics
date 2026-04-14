@@ -72,6 +72,26 @@ TABLE_TEXT_COLOR = "#ffffff"
 MILLION = 1_000_000
 
 
+def norm_partner_join_key(val: Any) -> str:
+    """
+    Ключ для сопоставления наименований контрагентов между файлами (1С ДтКт, справочник, обороты).
+    Нижний регистр, пробелы, без кавычек «» и лишних хвостов вроде ООО.
+    """
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return ""
+    s = str(val).strip()
+    s = s.replace("«", "").replace("»", "").replace('"', "").replace("'", "")
+    s = s.lower()
+    s = re.sub(r"\s+", " ", s)
+    s = re.sub(
+        r"\s*(\bооо\b|\bзао\b|\bоао\b|\bпао\b|\bип\b)\s*$",
+        "",
+        s,
+        flags=re.IGNORECASE,
+    )
+    return s.strip()
+
+
 def format_russian_datetime(dt_str: str | None, with_seconds: bool = False) -> str:
     """
     Форматирует ISO-строку времени (предположительно в UTC) в русское представление

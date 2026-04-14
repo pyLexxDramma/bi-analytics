@@ -63,6 +63,7 @@ from utils import (
     format_million_rub,
     to_million_rub,
     format_dataframe_as_html,
+    norm_partner_join_key,
 )
 
 import re
@@ -9408,6 +9409,50 @@ def _to_num(series):
     ).fillna(0)
 
 
+def _ref_score_contractor_column(name: str) -> int:
+    """Выбор колонки с наименованием контрагента в справочнике 1С (не ИНН/КПП)."""
+    n = str(name).lower().replace("_", " ").strip()
+    if "инн" in n or "кпп" in n:
+        return -100
+    if "наименование" not in n and n.startswith("id"):
+        return -90
+    sc = 0
+    if "наименование" in n and "контрагент" in n:
+        sc += 60
+    if n in ("контрагент", "контрагенты", "название контрагента", "название контрагента"):
+        sc += 55
+    if "контрагент" in n and "договор" not in n:
+        sc += 25
+    if "организация" in n:
+        sc += 10
+    return sc
+
+
+def _ref_score_project_column(name: str) -> int:
+    n = str(name).lower().replace("_", " ").strip()
+    sc = 0
+    if "номенклатур" in n:
+        sc -= 30
+    if n == "проект":
+        sc += 80
+    if "проект" in n and "проектн" not in n:
+        sc += 40
+    if "id" in n and "проект" in n:
+        sc += 15
+    return sc
+
+
+def _ref_pick_best_column(df: pd.DataFrame, scorer) -> str | None:
+    best_c = None
+    best_s = -10**9
+    for c in df.columns:
+        s = scorer(str(c))
+        if s > best_s:
+            best_s = s
+            best_c = c
+    return best_c if best_s > 0 else None
+
+
 def dashboard_debit_credit(df):
     """Дебиторская и кредиторская задолженность подрядчиков: график и таблица по данным из файла."""
     st.header("Дебиторская и кредиторская задолженность подрядчиков")
@@ -9441,13 +9486,16 @@ def dashboard_debit_credit(df):
     )
     project_from_reference = False
     if (not project_col or project_col not in work.columns) and contractor_col:
+        keymap_from_ref = {}
         ref_df = st.session_state.get("reference_contractors")
         if ref_df is not None and not getattr(ref_df, "empty", True):
             ref_df = ref_df.copy()
             ref_df.columns = [str(c).strip() for c in ref_df.columns]
-            rc = _find_col(
+            rc = _ref_pick_best_column(ref_df, _ref_score_contractor_column) or _find_col(
                 ref_df,
                 [
+                    "Наименование_Контрагента",
+                    "Наименование Контрагента",
                     "Подрядчик",
                     "Контрагент",
                     "контрагент",
@@ -9456,9 +9504,15 @@ def dashboard_debit_credit(df):
                     "Partner",
                     "Название контрагента",
                     "Название организации",
+                    "Наименование контрагента",
+                    "Наименование",
+                    "полное наименование",
+                    "Контрагент (полное наименование)",
+                    "Наименование для печати",
+                    "name",
                 ],
             )
-            rp = _find_col(
+            rp = _ref_pick_best_column(ref_df, _ref_score_project_column) or _find_col(
                 ref_df,
                 [
                     "Проект",
@@ -9467,19 +9521,26 @@ def dashboard_debit_credit(df):
                     "проект",
                     "название проекта",
                     "код проекта",
+                    "проект (id)",
+                    "идентификатор проекта",
                 ],
             )
             if rc and rp and rc in ref_df.columns and rp in ref_df.columns:
-                keymap = {}
                 for _, rr in ref_df.iterrows():
-                    k = str(rr.get(rc, "")).strip().lower()
+                    k = norm_partner_join_key(rr.get(rc, ""))
                     if k:
-                        keymap[k] = str(rr.get(rp, "")).strip()
-                work["_project_mapped"] = work[contractor_col].map(
-                    lambda x: keymap.get(str(x).strip().lower(), "")
-                )
-                project_col = "_project_mapped"
-                project_from_reference = True
+                        keymap_from_ref[k] = str(rr.get(rp, "")).strip()
+
+        pmap = st.session_state.get("reference_partner_to_project") or {}
+        merged = dict(pmap)
+        merged.update(keymap_from_ref)
+
+        if merged:
+            work["_project_mapped"] = work[contractor_col].map(
+                lambda x: merged.get(norm_partner_join_key(x), "")
+            )
+            project_col = "_project_mapped"
+            project_from_reference = True
     type_col = _find_col(work, ["Тип подрядчика", "тип подрядчика", "contractor type"])
     contract_col = _find_col(work, ["Номер договора", "Договор", "договор", "contract"])
     total_col = _find_col(work, ["Сумма в договоре", "сумма в договоре", "Общая сумма", "contract sum"])
@@ -9503,9 +9564,10 @@ def dashboard_debit_credit(df):
     st.subheader("Фильтры")
     if project_from_reference:
         st.caption(
-            "Колонка «Проект» заполнена по **справочнику контрагентов** "
-            "(session `reference_contractors`: пары «организация → проект»). "
-            "Загрузите справочник в блоке справочных файлов или задайте колонку проекта в ДтКт."
+            "Колонка «Проект» подставлена по **справочнику** (`spravochniki.json` — пара контрагент/проект, если обе колонки есть) "
+            "и/или по файлу **данные 1С** (`*dannye*.json` — из оборотов строится карта «контрагент → проект»). "
+            "Совпадение по нормализованному наименованию (регистр, пробелы, ООО). "
+            "Или укажите проект в файле ДтКт."
         )
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -11658,6 +11720,186 @@ def dashboard_budget_old_charts(df):
     st.table(style_dataframe_for_dark_theme(detailed_table))
 
 
+# ── БДДС прогноз: распределение по месяцам (ТЗ PDF: равномерно или % A/B/C) ──
+
+
+def _bdds_month_periods_inclusive(start, end):
+    """Календарные месяцы от месяца даты «Начало» до месяца «Окончание» включительно."""
+    if pd.isna(start) or pd.isna(end):
+        return []
+    ts = pd.to_datetime(start, errors="coerce", dayfirst=True)
+    te = pd.to_datetime(end, errors="coerce", dayfirst=True)
+    if pd.isna(ts) or pd.isna(te) or ts > te:
+        return []
+    cur = pd.Timestamp(ts.year, ts.month, 1)
+    end_m = pd.Timestamp(te.year, te.month, 1)
+    out = []
+    while cur <= end_m:
+        out.append(cur.to_period("M"))
+        if cur.month == 12:
+            cur = pd.Timestamp(cur.year + 1, 1, 1)
+        else:
+            cur = pd.Timestamp(cur.year, cur.month + 1, 1)
+    return out
+
+
+def _bdds_normalize_abc(a, b, c):
+    """A+B+C=100%; при нуле или ошибке — 34/33/33."""
+    try:
+        x, y, z = float(a), float(b), float(c)
+    except (TypeError, ValueError):
+        return 34.0, 33.0, 33.0
+    s = x + y + z
+    if s <= 0:
+        return 34.0, 33.0, 33.0
+    return 100.0 * x / s, 100.0 * y / s, 100.0 * z / s
+
+
+def _bdds_distribute_row_uniform(total: float, start, end) -> dict:
+    """Равномерно по всем месяцам периода [Начало; Окончание]."""
+    months = _bdds_month_periods_inclusive(start, end)
+    if not months or total is None or (isinstance(total, float) and pd.isna(total)):
+        return {}
+    t = float(total)
+    if t == 0:
+        return {m: 0.0 for m in months}
+    per = t / len(months)
+    return {m: per for m in months}
+
+
+def _bdds_distribute_row_abc(total: float, start, end, a, b, c) -> dict:
+    """
+    % A — в месяце даты «Начало»; % C — в месяце «Окончание»;
+    % B — равномерно по месяцам строго между ними; если таких нет — B делится пополам между первым и последним.
+    """
+    months = _bdds_month_periods_inclusive(start, end)
+    if not months or total is None or (isinstance(total, float) and pd.isna(total)):
+        return {}
+    t = float(total)
+    if t == 0:
+        return {m: 0.0 for m in months}
+    ap, bp, cp = _bdds_normalize_abc(a, b, c)
+    ms, me = months[0], months[-1]
+    out = {m: 0.0 for m in months}
+    out[ms] += t * (ap / 100.0)
+    out[me] += t * (cp / 100.0)
+    mid_total = t * (bp / 100.0)
+    interior = [m for m in months if m > ms and m < me]
+    if interior:
+        share = mid_total / len(interior)
+        for m in interior:
+            out[m] += share
+    else:
+        if len(months) == 1:
+            out[ms] += mid_total
+        else:
+            out[ms] += mid_total / 2.0
+            out[me] += mid_total / 2.0
+    return out
+
+
+def _bdds_msp_monthly_plan_activity(work_df: pd.DataFrame) -> dict:
+    """
+    По каждому месяцу — сумма «БДДС план» по строкам, активным в этом месяце (как сводка MSP по пересечению).
+    """
+    if work_df is None or work_df.empty:
+        return {}
+    ws = work_df.copy()
+    if "plan start" not in ws.columns or "plan end" not in ws.columns or "budget plan" not in ws.columns:
+        return {}
+    ws["plan start"] = pd.to_datetime(ws["plan start"], errors="coerce", dayfirst=True)
+    ws["plan end"] = pd.to_datetime(ws["plan end"], errors="coerce", dayfirst=True)
+    ws["budget plan"] = pd.to_numeric(ws["budget plan"], errors="coerce").fillna(0.0)
+    all_months = set()
+    for _, r in ws.iterrows():
+        for m in _bdds_month_periods_inclusive(r["plan start"], r["plan end"]):
+            all_months.add(m)
+    monthly = {m: 0.0 for m in sorted(all_months)}
+    for m in monthly:
+        m_start = m.start_time
+        m_end = m.end_time
+        active = ws[(ws["plan start"] <= m_end) & (ws["plan end"] >= m_start)]
+        monthly[m] = float(active["budget plan"].sum())
+    return monthly
+
+
+def compute_bddcs_forecast_monthly(work_df: pd.DataFrame, distribution_mode: str = "uniform", abc_source=None):
+    """
+    Возвращает DataFrame: month, bdds_plan_msp, bdds_forecast, bdds_fact (в рублях по месяцам).
+    abc_source: DataFrame с колонками A %, B %, C % (или A_, B_, C_) той же длины, что work_df; иначе 34/33/33.
+    """
+    if work_df is None or work_df.empty:
+        return pd.DataFrame(), "Нет данных для расчёта прогноза БДДС"
+    df = work_df.copy().reset_index(drop=True)
+    if abc_source is not None:
+        abc_source = abc_source.reset_index(drop=True)
+    ensure_budget_columns(df)
+    req = ["budget plan", "plan start", "plan end"]
+    miss = [c for c in req if c not in df.columns]
+    if miss:
+        return pd.DataFrame(), f"Отсутствуют колонки: {', '.join(miss)}"
+    df["plan start"] = pd.to_datetime(df["plan start"], errors="coerce", dayfirst=True)
+    df["plan end"] = pd.to_datetime(df["plan end"], errors="coerce", dayfirst=True)
+    df["budget plan"] = pd.to_numeric(df["budget plan"], errors="coerce").fillna(0.0)
+    if "budget fact" in df.columns:
+        df["budget fact"] = pd.to_numeric(df["budget fact"], errors="coerce").fillna(0.0)
+    else:
+        df["budget fact"] = 0.0
+
+    mode = (distribution_mode or "uniform").strip().lower()
+    use_abc = mode in ("abc", "%", "процент", "a/b/c", "a b c")
+
+    fc_totals: dict = {}
+    fact_totals: dict = {}
+    plan_msp = _bdds_msp_monthly_plan_activity(df)
+
+    for pos in range(len(df)):
+        r = df.iloc[pos]
+        plan_amt = float(r["budget plan"])
+        fact_amt = float(r["budget fact"])
+        a, b, c = 34.0, 33.0, 33.0
+        if use_abc and abc_source is not None and len(abc_source) > 0:
+            row_abc = abc_source.iloc[min(pos, len(abc_source) - 1)]
+            for ca, cb, cc in (
+                ("A %", "B %", "C %"),
+                ("A, %", "B, %", "C, %"),
+                ("A_", "B_", "C_"),
+            ):
+                if ca in row_abc.index and cb in row_abc.index and cc in row_abc.index:
+                    a = row_abc[ca]
+                    b = row_abc[cb]
+                    c = row_abc[cc]
+                    break
+
+        if use_abc:
+            dp = _bdds_distribute_row_abc(plan_amt, r["plan start"], r["plan end"], a, b, c)
+            dfact = _bdds_distribute_row_abc(fact_amt, r["plan start"], r["plan end"], a, b, c)
+        else:
+            dp = _bdds_distribute_row_uniform(plan_amt, r["plan start"], r["plan end"])
+            dfact = _bdds_distribute_row_uniform(fact_amt, r["plan start"], r["plan end"])
+        for m, v in dp.items():
+            fc_totals[m] = fc_totals.get(m, 0.0) + float(v)
+        for m, v in dfact.items():
+            fact_totals[m] = fact_totals.get(m, 0.0) + float(v)
+
+    all_m = sorted(set(plan_msp.keys()) | set(fc_totals.keys()) | set(fact_totals.keys()))
+    if not all_m:
+        return pd.DataFrame(), "Нет валидных периодов для распределения БДДС"
+
+    rows = []
+    for m in all_m:
+        rows.append(
+            {
+                "month": m,
+                "bdds_plan_msp": float(plan_msp.get(m, 0.0)),
+                "bdds_forecast": float(fc_totals.get(m, 0.0)),
+                "bdds_fact": float(fact_totals.get(m, 0.0)),
+            }
+        )
+    out = pd.DataFrame(rows).sort_values("month").reset_index(drop=True)
+    return out, None
+
+
 # ==================== DASHBOARD: Approved Budget ====================
 def calculate_approved_budget(df, rule_name="default"):
     """
@@ -12110,36 +12352,15 @@ def dashboard_approved_budget(df):
 
 
 # ==================== DASHBOARD: Forecast Budget ====================
-def calculate_forecast_budget(df, edited_data=None, rule_name="default"):
+def calculate_forecast_budget(df, edited_data=None, distribution_mode="uniform", abc_source=None):
     """
-    Рассчитывает прогнозный бюджет на основе утвержденного бюджета с учетом возможных изменений.
-
-    Args:
-        df: DataFrame с исходными данными проектов
-        edited_data: DataFrame с отредактированными данными (даты, утвержденный бюджет)
-        rule_name: название правила распределения
-
-    Returns:
-        DataFrame с распределением прогнозного бюджета по месяцам
+    Прогноз БДДС по месяцам: «БДДС план» (сводка по MSP), «БДДС прогноз» (распределение),
+    «БДДС факт» (распределение факта по тем же весам).
     """
-    # Используем отредактированные данные, если они есть, иначе исходные
     work_df = edited_data.copy() if edited_data is not None else df.copy()
-
-    # Рассчитываем утвержденный бюджет на основе текущих данных
-    approved_budget_df, error = calculate_approved_budget(work_df, rule_name=rule_name)
-
-    if error:
-        return pd.DataFrame(), error
-
-    # Прогнозный бюджет = утвержденный бюджет (но может быть изменен пользователем)
-    # Если пользователь изменил утвержденный бюджет вручную, используем эти значения
-    forecast_budget_df = approved_budget_df.copy()
-
-    # Переименовываем колонку для ясности
-    if "approved budget" in forecast_budget_df.columns:
-        forecast_budget_df["forecast budget"] = forecast_budget_df["approved budget"]
-
-    return forecast_budget_df, None
+    return compute_bddcs_forecast_monthly(
+        work_df, distribution_mode=distribution_mode, abc_source=abc_source
+    )
 
 
 def dashboard_forecast_budget(df):
@@ -12160,8 +12381,8 @@ def dashboard_forecast_budget(df):
             "Блок редактирования ниже соответствует идее «Формирование БДДС прогноз»."
         )
     st.info(
-        "**Прогнозный бюджет** рассчитывается на основе утверждённого распределения по задачам MSP "
-        "и пересчитывается при изменении дат или сумм."
+        "**БДДС прогноз** по месяцам: распределение суммы лота по датам **Начало/Окончание** из MSP "
+        "(равномерно или доли **A/B/C** по ТЗ). На графике: **БДДС план (сводка MSP)**, **БДДС факт**, **БДДС прогноз**."
     )
 
     # Фильтр по проекту (обязательный для прогнозного бюджета)
@@ -12196,201 +12417,104 @@ def dashboard_forecast_budget(df):
         st.info("Нет данных для выбранного проекта.")
         return
 
-    # Проверяем наличие необходимых колонок
-    required_cols = ["budget plan", "plan start", "plan end", "task name"]
+    ensure_budget_columns(project_df)
+    required_cols = ["budget plan", "plan start", "plan end"]
     missing_cols = [col for col in required_cols if col not in project_df.columns]
     if missing_cols:
         st.warning(f"Отсутствуют необходимые колонки: {', '.join(missing_cols)}")
         return
 
-    # Инициализируем session_state для хранения отредактированных данных
-    if f"forecast_edited_data_{selected_project}" not in st.session_state:
-        st.session_state[f"forecast_edited_data_{selected_project}"] = project_df.copy()
-
-    # Инициализируем session_state для хранения отредактированной таблицы (для отображения)
-    if f"forecast_edit_table_{selected_project}" not in st.session_state:
-        # Подготавливаем данные для редактирования в первый раз
-        current_data = project_df.copy()
-        if "section" not in current_data.columns:
-            current_data["section"] = ""
-        current_data["section"] = current_data["section"].apply(_clean_display_str)
-        edit_df = current_data[
-            ["task name", "section", "plan start", "plan end", "budget plan"]
-        ].copy()
-
-        # Конвертируем даты в datetime для корректного отображения
-        edit_df["plan start"] = pd.to_datetime(
-            edit_df["plan start"], errors="coerce", dayfirst=True
-        )
-        edit_df["plan end"] = pd.to_datetime(
-            edit_df["plan end"], errors="coerce", dayfirst=True
-        )
-
-        # Форматируем для отображения
-        edit_df["plan start"] = edit_df["plan start"].dt.date
-        edit_df["plan end"] = edit_df["plan end"].dt.date
-
-        # Переименовываем колонки; бюджет в млн руб. (по умолчанию 0, если нет значения)
-        bp = pd.to_numeric(edit_df["budget plan"], errors="coerce").fillna(0.0)
-        edit_df["budget plan"] = (bp / 1e6).round(2)
-        edit_df.columns = [
-            "Задача",
-            "Раздел",
-            "План. начало",
-            "План. окончание",
-            "Плановый бюджет, млн руб.",
-        ]
-
-        st.session_state[f"forecast_edit_table_{selected_project}"] = edit_df.copy()
-
-    # Получаем текущую таблицу для редактирования (страховка: пересобрать, если ключа не было)
-    if f"forecast_edit_table_{selected_project}" not in st.session_state:
-        current_data = project_df.copy()
-        if "section" not in current_data.columns:
-            current_data["section"] = ""
-        current_data["section"] = current_data["section"].apply(_clean_display_str)
-        edit_df = current_data[
-            ["task name", "section", "plan start", "plan end", "budget plan"]
-        ].copy()
-        edit_df["plan start"] = pd.to_datetime(
-            edit_df["plan start"], errors="coerce", dayfirst=True
-        )
-        edit_df["plan end"] = pd.to_datetime(
-            edit_df["plan end"], errors="coerce", dayfirst=True
-        )
-        edit_df["plan start"] = edit_df["plan start"].dt.date
-        edit_df["plan end"] = edit_df["plan end"].dt.date
-        bp2 = pd.to_numeric(edit_df["budget plan"], errors="coerce").fillna(0.0)
-        edit_df["budget plan"] = (bp2 / 1e6).round(2)
-        edit_df.columns = [
-            "Задача",
-            "Раздел",
-            "План. начало",
-            "План. окончание",
-            "Плановый бюджет, млн руб.",
-        ]
-        st.session_state[f"forecast_edit_table_{selected_project}"] = edit_df.copy()
-    edit_df = st.session_state[f"forecast_edit_table_{selected_project}"].copy()
-
-    # Нормализация колонок: если в session_state старые имена (budget plan и т.д.), приводим к русским
-    _budget_col = "Плановый бюджет, млн руб."
-    if _budget_col not in edit_df.columns and "budget plan" in edit_df.columns:
-        edit_df = edit_df.rename(columns={"budget plan": _budget_col})
-    if "Задача" not in edit_df.columns and "task name" in edit_df.columns:
-        edit_df = edit_df.rename(columns={"task name": "Задача"})
-    if "Раздел" not in edit_df.columns and "section" in edit_df.columns:
-        edit_df = edit_df.rename(columns={"section": "Раздел"})
-    if "План. начало" not in edit_df.columns and "plan start" in edit_df.columns:
-        edit_df = edit_df.rename(columns={"plan start": "План. начало"})
-    if "План. окончание" not in edit_df.columns and "plan end" in edit_df.columns:
-        edit_df = edit_df.rename(columns={"plan end": "План. окончание"})
-    if "Раздел" in edit_df.columns:
-        edit_df["Раздел"] = edit_df["Раздел"].apply(_clean_display_str)
+    if "section" not in project_df.columns:
+        project_df["section"] = ""
+    project_df["section"] = project_df["section"].apply(_clean_display_str)
+    if "task name" not in project_df.columns:
+        project_df["task name"] = ""
 
     st.subheader("Формирование БДДС прогноз")
-    st.info(
-        "Измените даты начала/окончания или плановый бюджет (в млн руб.). Изменения применяются при нажатии 'Применить изменения'."
+    dist_label = st.radio(
+        "Условие распределения денежных средств (по ТЗ PDF)",
+        ["Равномерно", "% A / B / C"],
+        horizontal=True,
+        key=f"forecast_dist_mode_{selected_project}",
     )
+    dist_key = "abc" if str(dist_label).startswith("%") else "uniform"
 
-    if edit_df.empty:
-        st.info("Нет задач для отображения в таблице редактирования для выбранного проекта.")
-        edited_df = edit_df.copy()
-    else:
-        st.caption(f"Записей: {len(edit_df)}")
-        _render_html_table(edit_df)
-        edited_df = edit_df.copy()
+    def _build_forecast_edit_frame(pdf: pd.DataFrame) -> pd.DataFrame:
+        cur = pdf.copy().reset_index(drop=True)
+        ps = pd.to_datetime(cur["plan start"], errors="coerce", dayfirst=True)
+        pe = pd.to_datetime(cur["plan end"], errors="coerce", dayfirst=True)
+        bp = pd.to_numeric(cur["budget plan"], errors="coerce").fillna(0.0)
+        if "budget fact" in cur.columns:
+            bf = pd.to_numeric(cur["budget fact"], errors="coerce").fillna(0.0)
+        else:
+            bf = pd.Series(0.0, index=cur.index)
+        return pd.DataFrame(
+            {
+                "Лот": cur["section"].astype(str),
+                "План. начало": ps.dt.date,
+                "План. окончание": pe.dt.date,
+                "БДДС план (утверждённый), млн руб.": (bp / 1e6).round(4),
+                "БДДС факт, млн руб.": (bf / 1e6).round(4),
+                "A, %": 34.0,
+                "B, %": 33.0,
+                "C, %": 33.0,
+            }
+        )
 
-    # Кнопка для применения изменений
-    col_apply, col_reset = st.columns(2)
-    with col_apply:
-        apply_changes = st.button(
-            "Применить изменения",
-            key=f"apply_forecast_{selected_project}",
-            type="primary",
-        )
-    with col_reset:
-        reset_changes = st.button(
-            "Сбросить изменения", key=f"reset_forecast_{selected_project}"
-        )
+    _sess_key = f"forecast_edit_v2_{selected_project}"
+    if _sess_key not in st.session_state:
+        st.session_state[_sess_key] = _build_forecast_edit_frame(project_df)
+    elif len(st.session_state[_sess_key]) != len(project_df):
+        st.session_state[_sess_key] = _build_forecast_edit_frame(project_df)
 
-    # Обрабатываем сброс изменений
-    if reset_changes:
-        # Сбрасываем данные
-        st.session_state[f"forecast_edited_data_{selected_project}"] = project_df.copy()
-        project_for_reset = project_df.copy()
-        if "section" not in project_for_reset.columns:
-            project_for_reset["section"] = ""
-        project_for_reset["section"] = project_for_reset["section"].apply(_clean_display_str)
-        edit_df_reset = project_for_reset[
-            ["task name", "section", "plan start", "plan end", "budget plan"]
-        ].copy()
-        edit_df_reset["plan start"] = pd.to_datetime(
-            edit_df_reset["plan start"], errors="coerce", dayfirst=True
-        )
-        edit_df_reset["plan end"] = pd.to_datetime(
-            edit_df_reset["plan end"], errors="coerce", dayfirst=True
-        )
-        edit_df_reset["plan start"] = edit_df_reset["plan start"].dt.date
-        edit_df_reset["plan end"] = edit_df_reset["plan end"].dt.date
-        bp_r = pd.to_numeric(edit_df_reset["budget plan"], errors="coerce").fillna(0.0)
-        edit_df_reset["budget plan"] = (bp_r / 1e6).round(2)
-        edit_df_reset.columns = [
-            "Задача",
-            "Раздел",
-            "План. начало",
-            "План. окончание",
-            "Плановый бюджет, млн руб.",
-        ]
-        st.session_state[f"forecast_edit_table_{selected_project}"] = (
-            edit_df_reset.copy()
-        )
-        st.success("Изменения сброшены!")
+    edit_df = st.session_state[_sess_key].copy()
+    st.caption(
+        "По PDF: столбец «Раздел» заменён на **Лот**; суммы в млн руб.; для режима A/B/C совокупно A+B+C=100% "
+        "(при отклонении значения нормализуются). Редактирование таблицы сразу влияет на расчёт."
+    )
+    if st.button("Сбросить таблицу к данным файла", key=f"forecast_reset_v2_{selected_project}"):
+        st.session_state[_sess_key] = _build_forecast_edit_frame(project_df)
         st.rerun()
 
-    # Сохраняем отредактированную таблицу в session_state
-    st.session_state[f"forecast_edit_table_{selected_project}"] = edited_df.copy()
+    edited_df = st.data_editor(
+        edit_df,
+        num_rows="fixed",
+        key=f"forecast_editor_{selected_project}",
+        use_container_width=True,
+    )
+    st.session_state[_sess_key] = edited_df.copy()
 
-    # Получаем исходные данные проекта
-    current_data = st.session_state[f"forecast_edited_data_{selected_project}"].copy()
+    updated_data = project_df.copy().reset_index(drop=True)
+    ed = edited_df.reset_index(drop=True)
+    if len(updated_data) != len(ed):
+        st.error("Несовпадение числа строк таблицы и данных проекта.")
+        return
+    updated_data["plan start"] = pd.to_datetime(ed["План. начало"], errors="coerce", dayfirst=True)
+    updated_data["plan end"] = pd.to_datetime(ed["План. окончание"], errors="coerce", dayfirst=True)
+    updated_data["section"] = ed["Лот"].map(_clean_display_str)
+    updated_data["budget plan"] = (
+        pd.to_numeric(ed["БДДС план (утверждённый), млн руб."], errors="coerce").fillna(0.0) * 1e6
+    )
+    updated_data["budget fact"] = (
+        pd.to_numeric(ed["БДДС факт, млн руб."], errors="coerce").fillna(0.0) * 1e6
+    )
 
-    # Обновляем исходные данные с учетом изменений из отредактированной таблицы
-    updated_data = current_data.copy().reset_index(drop=True)
-    edited_df_reset = edited_df.reset_index(drop=True)
-
-    # Обновляем даты и бюджет по индексам (бюджет из млн руб. переводим в рубли)
-    if len(updated_data) == len(edited_df_reset):
-        # Обновляем даты - конвертируем из date обратно в datetime
-        if "План. начало" in edited_df_reset.columns:
-            updated_data["plan start"] = pd.to_datetime(
-                edited_df_reset["План. начало"], errors="coerce"
+    abc_src = None
+    if dist_key == "abc":
+        abc_src = ed[["A, %", "B, %", "C, %"]].copy()
+        sums = abc_src.sum(axis=1)
+        if (sums - 100).abs().max() > 0.5:
+            st.warning(
+                "Сумма A+B+C по строкам должна быть **100%** (допуск ±0.5%). "
+                "Значения будут автоматически нормализованы при расчёте."
             )
-        if "План. окончание" in edited_df_reset.columns:
-            updated_data["plan end"] = pd.to_datetime(
-                edited_df_reset["План. окончание"], errors="coerce"
-            )
-        budget_col = "Плановый бюджет, млн руб." if "Плановый бюджет, млн руб." in edited_df_reset.columns else "Плановый бюджет"
-        if budget_col in edited_df_reset.columns:
-            millions = pd.to_numeric(edited_df_reset[budget_col], errors="coerce")
-            updated_data["budget plan"] = (millions * 1e6).round(0)
 
-    # Применяем изменения при нажатии кнопки
-    if apply_changes:
-        # Сохраняем обновленные данные в session_state
-        st.session_state[f"forecast_edited_data_{selected_project}"] = updated_data
-        st.success("Изменения применены! График обновлен.")
-
-    # ВСЕГДА используем актуальные данные из отредактированной таблицы для расчета
-    # Это позволяет видеть изменения сразу после применения
-    current_data = updated_data
-
-    # Рассчитываем прогнозный бюджет с актуальными данными
     forecast_budget_df, error = calculate_forecast_budget(
-        df, edited_data=current_data, rule_name="default"
+        df,
+        edited_data=updated_data,
+        distribution_mode=dist_key,
+        abc_source=abc_src,
     )
-
-    # Перезапускаем только после применения изменений
-    if apply_changes:
-        st.rerun()
 
     if error:
         st.error(error)
@@ -12400,60 +12524,70 @@ def dashboard_forecast_budget(df):
         st.info("Нет данных для построения графика прогнозного бюджета.")
         return
 
-    # Группируем по месяцам для графика
-    monthly_forecast = (
-        forecast_budget_df.groupby("month")
-        .agg({"forecast budget": "sum", "budget plan": "sum"})  # Для сравнения
-        .reset_index()
+    mf = forecast_budget_df.sort_values("month").copy()
+    mf["Месяц"] = mf["month"].apply(format_period_ru)
+    mf["bdds_plan_msp_mln"] = (mf["bdds_plan_msp"] / 1e6).round(4)
+    mf["bdds_forecast_mln"] = (mf["bdds_forecast"] / 1e6).round(4)
+    mf["bdds_fact_mln"] = (mf["bdds_fact"] / 1e6).round(4)
+
+    compare_to = st.radio(
+        "Отклонение от БДДС прогноз считать к",
+        ["БДДС план (сводка MSP)", "БДДС факт"],
+        horizontal=True,
+        key=f"forecast_dev_basis_{selected_project}",
     )
-
-    # Сортируем по месяцам
-    monthly_forecast = monthly_forecast.sort_values("month")
-
-    monthly_forecast["Месяц"] = monthly_forecast["month"].apply(format_period_ru)
-    # Значения в млн руб. с точкой как десятичным разделителем
-    monthly_forecast["forecast budget млн"] = (monthly_forecast["forecast budget"] / 1e6).round(2)
-    monthly_forecast["budget plan млн"] = (monthly_forecast["budget plan"] / 1e6).round(2)
+    base_col = "bdds_plan_msp" if "сводка" in compare_to else "bdds_fact"
+    mf["_dev"] = mf[base_col] - mf["bdds_forecast"]
+    hide_dev = st.checkbox("Скрыть отклонение", value=False, key=f"forecast_hide_dev_{selected_project}")
 
     def _fmt_million_dot(x):
         if x is None or (isinstance(x, float) and pd.isna(x)):
             return ""
         return f"{float(x):.2f}".replace(",", ".")
 
-    # Создаем график (ось Y — млн руб.)
     fig = go.Figure()
-
-    # Добавляем прогнозный бюджет
     fig.add_trace(
         go.Bar(
-            x=monthly_forecast["Месяц"],
-            y=monthly_forecast["forecast budget млн"],
-            name="Прогнозный бюджет",
+            x=mf["Месяц"],
+            y=mf["bdds_forecast_mln"],
+            name="БДДС прогноз",
             marker_color="#06A77D",
-            text=monthly_forecast["forecast budget млн"].apply(
-                lambda x: _fmt_million_dot(x) + " млн руб." if pd.notna(x) else ""
-            ),
+            text=mf["bdds_forecast_mln"].apply(lambda x: _fmt_million_dot(x) if pd.notna(x) else ""),
             textposition="outside",
-            textfont=dict(size=14, color="white"),
+            textfont=dict(size=12, color="white"),
         )
     )
-
-    # Добавляем плановый бюджет для сравнения (линия)
     fig.add_trace(
         go.Scatter(
-            x=monthly_forecast["Месяц"],
-            y=monthly_forecast["budget plan млн"],
-            name="Плановый бюджет (сумма)",
-            mode="lines+markers+text",
-            text=monthly_forecast["budget plan млн"].apply(
-                lambda x: f"{x:.2f}" if pd.notna(x) else ""
-            ),
-            textposition="top center",
-            textfont=dict(size=10),
+            x=mf["Месяц"],
+            y=mf["bdds_plan_msp_mln"],
+            name="БДДС план (сводка MSP)",
+            mode="lines+markers",
             line=dict(color="#F18F01", width=2),
             marker=dict(size=8, color="#F18F01"),
         )
     )
+    fig.add_trace(
+        go.Scatter(
+            x=mf["Месяц"],
+            y=mf["bdds_fact_mln"],
+            name="БДДС факт",
+            mode="lines+markers",
+            line=dict(color="#3498db", width=2),
+            marker=dict(size=8, color="#3498db"),
+        )
+    )
+    if not hide_dev:
+        fig.add_trace(
+            go.Scatter(
+                x=mf["Месяц"],
+                y=(mf["_dev"] / 1e6).round(4),
+                name="Отклонение (база − прогноз), млн руб.",
+                mode="lines+markers",
+                line=dict(color="#e74c3c", width=1, dash="dot"),
+                marker=dict(size=6, color="#e74c3c"),
+            )
+        )
 
     fig.update_layout(
         xaxis_title="Месяц",
@@ -12462,72 +12596,45 @@ def dashboard_forecast_budget(df):
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         height=600,
     )
-
+    fig = _apply_finance_bar_label_layout(fig)
     fig = apply_chart_background(fig)
     render_chart(
         fig,
-        caption_below=f"Прогнозный бюджет по месяцам (проект: {selected_project})",
+        caption_below=f"БДДС: план (сводка MSP) / факт / прогноз — проект: {selected_project}",
     )
 
-    # Сводная таблица — значения в млн руб. (пересчёт из рублей: / 1e6)
-    st.subheader("Сводная таблица прогнозного бюджета по месяцам")
-    summary_table = monthly_forecast[["Месяц", "forecast budget", "budget plan"]].copy()
-    summary_table.columns = ["Месяц", "Прогнозный бюджет, млн руб.", "Плановый бюджет (сумма), млн руб."]
-    summary_table["Прогнозный бюджет, млн руб."] = (
-        pd.to_numeric(summary_table["Прогнозный бюджет, млн руб."], errors="coerce").fillna(0) / 1e6
-    ).round(2)
-    summary_table["Плановый бюджет (сумма), млн руб."] = (
-        pd.to_numeric(summary_table["Плановый бюджет (сумма), млн руб."], errors="coerce").fillna(0) / 1e6
-    ).round(2)
-    summary_table["Прогнозный бюджет, млн руб."] = summary_table["Прогнозный бюджет, млн руб."].apply(
-        lambda x: f"{float(x):.2f}" if pd.notna(x) else "0.00"
-    )
-    summary_table["Плановый бюджет (сумма), млн руб."] = summary_table[
-        "Плановый бюджет (сумма), млн руб."
-    ].apply(lambda x: f"{float(x):.2f}" if pd.notna(x) else "0.00")
+    st.subheader("Сводная таблица по месяцам (млн руб.)")
+    summary_table = mf[
+        ["Месяц", "bdds_plan_msp_mln", "bdds_fact_mln", "bdds_forecast_mln"]
+    ].copy()
+    summary_table.columns = [
+        "Месяц",
+        "БДДС план (сводка MSP)",
+        "БДДС факт",
+        "БДДС прогноз",
+    ]
+    if not hide_dev:
+        summary_table["Отклонение (база − прогноз)"] = (mf["_dev"] / 1e6).round(4)
+    for c in summary_table.columns:
+        if c == "Месяц":
+            continue
+        summary_table[c] = summary_table[c].apply(
+            lambda x: f"{float(x):.2f}" if pd.notna(x) else "0.00"
+        )
     st.markdown(format_dataframe_as_html(summary_table), unsafe_allow_html=True)
     _csv = summary_table.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-    st.download_button("Скачать CSV", _csv, "forecast_budget_summary.csv", "text/csv", key="fcast_summary_csv")
+    st.download_button("Скачать CSV", _csv, "forecast_bddcs_summary.csv", "text/csv", key="fcast_summary_csv")
 
-    st.subheader("Детальная таблица распределения прогнозного бюджета")
-    detail_table = forecast_budget_df[
-        [
-            "project name",
-            "section",
-            "task name",
-            "month",
-            "budget plan",
-            "forecast budget",
-        ]
-    ].copy()
-    detail_table["month"] = detail_table["month"].apply(format_period_ru)
-    # Пересчёт в млн руб.: исходные колонки в рублях
-    detail_table["Плановый бюджет, млн руб."] = (
-        pd.to_numeric(detail_table["budget plan"], errors="coerce").fillna(0) / 1e6
-    ).round(2)
-    detail_table["Прогнозный бюджет, млн руб."] = (
-        pd.to_numeric(detail_table["forecast budget"], errors="coerce").fillna(0) / 1e6
-    ).round(2)
-    detail_table = detail_table.drop(columns=["budget plan", "forecast budget"], errors="ignore")
-    detail_table = detail_table.rename(columns={
-        "project name": "Проект",
-        "section": "Раздел",
-        "task name": "Задача",
-        "month": "Месяц",
-    })
-    if "Раздел" in detail_table.columns:
-        detail_table["Раздел"] = detail_table["Раздел"].apply(_clean_display_str)
-    # Формат отображения с точкой
-    detail_table["Плановый бюджет, млн руб."] = detail_table["Плановый бюджет, млн руб."].apply(
-        lambda x: f"{float(x):.2f}" if pd.notna(x) else "0.00"
+    st.subheader("Детальные строки (лоты) — ввод для расчёта")
+    st.markdown(format_dataframe_as_html(edited_df.head(500)), unsafe_allow_html=True)
+    _csv2 = edited_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+    st.download_button(
+        "Скачать CSV (лоты)",
+        _csv2,
+        "forecast_bddcs_lots.csv",
+        "text/csv",
+        key="fcast_detail_csv",
     )
-    detail_table["Прогнозный бюджет, млн руб."] = detail_table["Прогнозный бюджет, млн руб."].apply(
-        lambda x: f"{float(x):.2f}" if pd.notna(x) else "0.00"
-    )
-    # st.table(style_dataframe_for_dark_theme(detail_table))
-    st.markdown(format_dataframe_as_html(detail_table), unsafe_allow_html=True)
-    _csv = detail_table.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-    st.download_button("Скачать CSV", _csv, "forecast_budget_detail.csv", "text/csv", key="fcast_detail_csv")
 
 
 # ── Предписания: KPI-кружки, легенда и таблица как в Предписания.html (тёмная тема) ──

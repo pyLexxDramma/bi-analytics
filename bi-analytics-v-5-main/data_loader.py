@@ -420,6 +420,10 @@ def ensure_data_session_state() -> None:
         st.session_state.reference_krstates = None
     if "reference_docstates" not in st.session_state:
         st.session_state.reference_docstates = None
+    if "reference_1c_dannye" not in st.session_state:
+        st.session_state.reference_1c_dannye = None
+    if "reference_partner_to_project" not in st.session_state:
+        st.session_state.reference_partner_to_project = None
 
 
 def update_session_with_loaded_file(df: pd.DataFrame, file_id: str) -> None:
