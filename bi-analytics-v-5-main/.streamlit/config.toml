@@ -15,10 +15,63 @@ showSidebarNavigation = false
 [server]
 enableStaticServing = true
 
-# Шрифты: только системный стек (без [[theme.fontFaces]]).
-# Раньше подключались 11 файлов Inter с /static/fonts/ — при сбоях сети/прокси это давало лишние запросы
-# и иногда ERR_CONNECTION_RESET; виджеты и Plotly не зависят от кастомного woff2.
-# При необходимости вернуть Inter — раскомментируйте один [[theme.fontFaces]] на Regular 400.
+# =============================================
+# Определение шрифта Inter (все начертания)
+# =============================================
+
+[[theme.fontFaces]]
+family = "Inter"
+url    = "static/fonts/Inter_Thin.woff2"
+weight = 100
+style  = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url    = "static/fonts/Inter_Extra_Light.woff2"
+weight = 200
+style  = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url    = "static/fonts/Inter_Light.woff2"
+weight = 300
+style  = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url    = "static/fonts/Inter_Regular.woff2"
+weight = 400
+style  = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url    = "static/fonts/Inter_Medium.woff2"
+weight = 500
+style  = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url    = "static/fonts/Inter_Semi_Bold.woff2"
+weight = 600
+style  = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url    = "static/fonts/Inter_Bold.woff2"
+weight = 700
+style  = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url    = "static/fonts/Inter_Extra_Bold.woff2"
+weight = 800
+style  = "normal"
+
+[[theme.fontFaces]]
+family = "Inter"
+url    = "static/fonts/Inter_Black.woff2"
+weight = 900
+style  = "normal"
 
 # =============================================
 # Основные настройки темы
@@ -28,13 +81,15 @@ enableStaticServing = true
 # Базовая тема: light или dark
 base = "dark"
 
-# Шрифты: системные (высокая читаемость без загрузки внешних woff2)
-font = "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
-headingFont = "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+# Шрифты приложения
+font = "Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+headingFont = "Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
 codeFont = "Consolas, 'Courier New', monospace"
 
-# Контраст: светлый текст на тёмно-синем фоне (клиенты Chrome/Yandex, логин, заголовки)
-primaryColor = "#38BDF8"
-backgroundColor = "#0B2238"
-secondaryBackgroundColor = "#102E4A"
-textColor = "#F8FAFC"
+# Явные цвета: совпадают с фоном приложения (#12385C) и дают читаемый текст/ссылки
+# (иначе виджеты Streamlit — навигация, радио, часть заголовков — наследуют низкий контраст)
+primaryColor = "#6CB4EE"
+backgroundColor = "#12385C"
+secondaryBackgroundColor = "#0d2b47"
+textColor = "#E8EEF5"
+linkColor = "#B8D4F0"

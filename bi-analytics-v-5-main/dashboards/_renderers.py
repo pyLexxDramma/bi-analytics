@@ -310,8 +310,6 @@ _PLOTLY_CONFIG = {
     "displaylogo": False,
     "scrollZoom": True,
     "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d"],
-    # Не ждать MathJax с CDN (часть сетей / ERR_CONNECTION_RESET ломала отрисовку)
-    "typesetMath": False,
 }
 
 
@@ -885,106 +883,111 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             else:
                 period_to = "Все"
                 st.selectbox("Период по", ["Все"], key="reason_period_to", disabled=True)
+    else:
+        selected_section = "Все"
+        selected_reason = "Все"
+        selected_block = "Все"
+        selected_building = "Все"
+        period_from = "Все"
+        period_to = "Все"
+        available_months = []
 
-        filtered_df = df.copy()
+    filtered_df = df.copy()
 
-        try:
-            has_project_col = "project name" in filtered_df.columns
-        except (AttributeError, TypeError):
-            has_project_col = False
+    try:
+        has_project_col = "project name" in filtered_df.columns
+    except (AttributeError, TypeError):
+        has_project_col = False
 
-        if selected_project != "Все" and has_project_col:
-            filtered_df = filtered_df[
-                filtered_df["project name"].astype(str).str.strip()
-                == str(selected_project).strip()
-            ]
+    if selected_project != "Все" and has_project_col:
+        filtered_df = filtered_df[
+            filtered_df["project name"].astype(str).str.strip()
+            == str(selected_project).strip()
+        ]
 
-        try:
-            has_reason_col = "reason of deviation" in filtered_df.columns
-        except (AttributeError, TypeError):
-            has_reason_col = False
+    try:
+        has_reason_col = "reason of deviation" in filtered_df.columns
+    except (AttributeError, TypeError):
+        has_reason_col = False
 
-        if selected_reason != "Все" and has_reason_col:
-            filtered_df = filtered_df[
-                filtered_df["reason of deviation"].astype(str).str.strip()
-                == str(selected_reason).strip()
-            ]
+    if selected_reason != "Все" and has_reason_col:
+        filtered_df = filtered_df[
+            filtered_df["reason of deviation"].astype(str).str.strip()
+            == str(selected_reason).strip()
+        ]
 
-        try:
-            has_section_col = "section" in filtered_df.columns
-        except (AttributeError, TypeError):
-            has_section_col = False
+    try:
+        has_section_col = "section" in filtered_df.columns
+    except (AttributeError, TypeError):
+        has_section_col = False
 
-        if selected_section != "Все" and has_section_col:
-            filtered_df = filtered_df[
-                filtered_df["section"].astype(str).str.strip()
-                == str(selected_section).strip()
-            ]
+    if selected_section != "Все" and has_section_col:
+        filtered_df = filtered_df[
+            filtered_df["section"].astype(str).str.strip()
+            == str(selected_section).strip()
+        ]
 
-        if selected_block != "Все" and "block" in filtered_df.columns:
-            filtered_df = filtered_df[
-                filtered_df["block"].astype(str).str.strip() == str(selected_block).strip()
-            ]
+    if selected_block != "Все" and "block" in filtered_df.columns:
+        filtered_df = filtered_df[
+            filtered_df["block"].astype(str).str.strip() == str(selected_block).strip()
+        ]
 
-        if (
-            selected_building != "Все"
-            and building_col
-            and building_col in filtered_df.columns
-        ):
-            filtered_df = filtered_df[
-                filtered_df[building_col].astype(str).str.strip()
-                == str(selected_building).strip()
-            ]
+    if (
+        selected_building != "Все"
+        and building_col
+        and building_col in filtered_df.columns
+    ):
+        filtered_df = filtered_df[
+            filtered_df[building_col].astype(str).str.strip()
+            == str(selected_building).strip()
+        ]
 
-        try:
-            has_plan_month_col = "plan_month" in filtered_df.columns
-        except (AttributeError, TypeError):
-            has_plan_month_col = False
+    try:
+        has_plan_month_col = "plan_month" in filtered_df.columns
+    except (AttributeError, TypeError):
+        has_plan_month_col = False
 
-        if has_plan_month_col and (period_from != "Все" or period_to != "Все"):
-            pf = (
-                _deviations_filter_month_string_to_period(period_from)
-                if period_from != "Все"
-                else None
-            )
-            pt = (
-                _deviations_filter_month_string_to_period(period_to)
-                if period_to != "Все"
-                else None
-            )
+    if has_plan_month_col and (period_from != "Все" or period_to != "Все"):
+        pf = (
+            _deviations_filter_month_string_to_period(period_from)
+            if period_from != "Все"
+            else None
+        )
+        pt = (
+            _deviations_filter_month_string_to_period(period_to)
+            if period_to != "Все"
+            else None
+        )
+        if pf is not None and pt is not None and pf > pt:
+            pf, pt = pt, pf
+        if pf is not None:
+            filtered_df = filtered_df[filtered_df["plan_month"] >= pf]
+        if pt is not None:
+            filtered_df = filtered_df[filtered_df["plan_month"] <= pt]
+    elif not has_plan_month_col and "plan end" in filtered_df.columns:
+        pf = (
+            _deviations_filter_month_string_to_period(period_from)
+            if period_from != "Все"
+            else None
+        )
+        pt = (
+            _deviations_filter_month_string_to_period(period_to)
+            if period_to != "Все"
+            else None
+        )
+        if pf is not None or pt is not None:
             if pf is not None and pt is not None and pf > pt:
                 pf, pt = pt, pf
+            _pe = pd.to_datetime(
+                filtered_df["plan end"], errors="coerce", dayfirst=True
+            )
+            pm = _pe.dt.to_period("M")
+            ok = pd.Series(True, index=filtered_df.index)
             if pf is not None:
-                filtered_df = filtered_df[filtered_df["plan_month"] >= pf]
+                ok &= pm >= pf
             if pt is not None:
-                filtered_df = filtered_df[filtered_df["plan_month"] <= pt]
-        elif not has_plan_month_col and "plan end" in filtered_df.columns:
-            pf = (
-                _deviations_filter_month_string_to_period(period_from)
-                if period_from != "Все"
-                else None
-            )
-            pt = (
-                _deviations_filter_month_string_to_period(period_to)
-                if period_to != "Все"
-                else None
-            )
-            if pf is not None or pt is not None:
-                if pf is not None and pt is not None and pf > pt:
-                    pf, pt = pt, pf
-                _pe = pd.to_datetime(
-                    filtered_df["plan end"], errors="coerce", dayfirst=True
-                )
-                pm = _pe.dt.to_period("M")
-                ok = pd.Series(True, index=filtered_df.index)
-                if pf is not None:
-                    ok &= pm >= pf
-                if pt is not None:
-                    ok &= pm <= pt
-                filtered_df = filtered_df[ok]
-    else:
-        st.subheader("Доли причин отклонений по проекту")
-        filtered_df = df.copy()
+                ok &= pm <= pt
+            filtered_df = filtered_df[ok]
 
     # Filter tasks relevant for "dynamics of deviations": deviation=1/True OR reason of deviation filled
     try:
@@ -2104,6 +2107,24 @@ def dashboard_plan_fact_dates(df):
     if df is None or not hasattr(df, "columns") or df.empty:
         st.warning("Нет данных для отображения. Загрузите файл с задачами MSP.")
         return
+
+    with st.expander("Откуда берутся сроки и почему таблицы могут отличаться", expanded=False):
+        st.markdown(
+            """
+**Таблица «Отклонение от базового плана (таблица)»** строится **по строкам задач** из выгрузки MSP после ваших фильтров
+(проект, этап, блок, строение, уровень и т.д.). В ячейках — **план/факт** из колонок вроде `plan start` / `plan end` /
+`base start` / `base end` (или русских аналогов); отклонения в днях считаются из этих дат.
+
+**Блок метрик сверху** («Максимальное отклонение», «План окончания», «Факт окончания») берётся **по одной выбранной задаче**
+в параметрах отчёта (или по задаче из режима ковенантов) и может смотреть в **полный `df`**, а не только в отфильтрованную таблицу —
+поэтому цифры **не обязаны** совпадать с первой строкой сводной таблицы.
+
+**ЗОС** — отдельная узкая таблица: только задачи, в названии которых есть ЗОС / «заключение о соответствии».
+
+**Режим «Ковенанты»**: узкая таблица ковенантов сортируется по отклонению окончания; **полная таблица по всем задачам** спрятана
+в развёртку ниже, чтобы не дублировать строки ковенантов.
+            """
+        )
 
     # Helper function to find columns by partial match
     def find_column(df, possible_names):
@@ -7372,6 +7393,13 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             _gdrs_src_diag = (
                 "session_state.resources_data — структура как у техники (даты ДД.ММ.ГГГГ / «среднее значение за день» / data_source по строкам)"
             )
+        elif resources_df is not None and not resources_df.empty and "data_source" in resources_df.columns:
+            _rs = resources_df.copy()
+            _ds = _rs["data_source"].astype(str).str.strip().str.lower()
+            _tech_mask = _ds.isin({"техника", "tech", "technique"})
+            if _tech_mask.any():
+                combined_df = _ensure_row_data_source(_rs.loc[_tech_mask].copy(), "Техника")
+                _gdrs_src_diag = "session_state.resources_data — строки с data_source = техника"
     elif data_source_filter == "Ресурсы":
         if resources_df is not None and not resources_df.empty:
             combined_df = _ensure_row_data_source(resources_df.copy(), "Ресурсы")
@@ -7407,13 +7435,20 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         st.warning(
             "Для отображения графика движения рабочей силы необходимо загрузить файл с данными о ресурсах или технике."
         )
-        st.info(
-            "Ожидаемые колонки: Проект (или Название), Контрагент, Период, План, "
-            "**Среднее за месяц** (люди) или **Среднее за неделю** (техника), 1–5 неделя; "
-            "при необходимости — «Дельта» / «Дельта (%)». "
-            "Файл техники из web/ с именем *resursi* может оказаться только в «ресурсах» — тогда "
-            "техника определяется по наличию колонки «Среднее за неделю»."
-        )
+        if data_source_filter == "Техника":
+            st.info(
+                "**Вкладка «Техника»:** загрузите отдельный файл выгрузки техники (в имени часто есть «техника» / technique) "
+                "или общий файл ресурсов, где в колонке **data_source** для строк указано «Техника», "
+                "либо таблицу с колонками **«Среднее за неделю»** / суточными датами ДД.ММ.ГГГГ (см. ТЗ PDF, блок ГДРС)."
+            )
+        else:
+            st.info(
+                "Ожидаемые колонки: Проект (или Название), Контрагент, Период, План, "
+                "**Среднее за месяц** (люди) или **Среднее за неделю** (техника), 1–5 неделя; "
+                "при необходимости — «Дельта» / «Дельта (%)». "
+                "Файл техники из web/ с именем *resursi* может оказаться только в «ресурсах» — тогда "
+                "техника определяется по наличию колонки «Среднее за неделю» или по строкам data_source=техника."
+            )
         return
 
     # При фильтре по вкладке — без учёта регистра в колонке data_source
@@ -9640,7 +9675,24 @@ def dashboard_debit_credit(df):
         return s[: max_len - 1] + "…"
 
     chart_group_col = contractor_col if contractor_col else contract_col
-    if not contractor_col:
+    chart_label = "Подрядчик" if contractor_col else "Договор"
+    # По ТЗ: на графике должен быть виден проект; при наличии маппинга из справочников — ось X: «Проект | Подрядчик»
+    if (
+        project_col
+        and project_col in filtered.columns
+        and contractor_col
+        and contractor_col in filtered.columns
+    ):
+        _fc = filtered.copy()
+        _fc["_chart_x"] = (
+            _fc[project_col].astype(str).str.strip()
+            + " | "
+            + _fc[contractor_col].astype(str).str.strip()
+        )
+        filtered = _fc
+        chart_group_col = "_chart_x"
+        chart_label = "Проект | Подрядчик"
+    if not contractor_col and chart_group_col != "_chart_x":
         st.warning("Колонка подрядчика не найдена — диаграмма сгруппирована по договору.")
 
     built = {}
@@ -9658,7 +9710,6 @@ def dashboard_debit_credit(df):
         return
 
     chart_df = pd.DataFrame(built).reset_index()
-    chart_label = "Подрядчик" if contractor_col else "Договор"
     chart_df = chart_df.rename(columns={chart_group_col: chart_label})
 
     st.subheader("Столбчатая диаграмма по подрядчикам" if contractor_col else "Столбчатая диаграмма по договорам")
@@ -9676,7 +9727,7 @@ def dashboard_debit_credit(df):
                     x=x,
                     y=chart_df[col],
                     marker_color=colors.get(col, None),
-                    text=chart_df[col].apply(lambda v: f"{v:,.0f}".replace(",", " ") if pd.notna(v) else ""),
+                text=chart_df[col].apply(lambda v: f"{v:,.0f}".replace(",", " ") if pd.notna(v) else ""),
                     textposition="outside",
                     textfont=dict(size=10, color="#f0f4f8"),
                 )
@@ -9690,13 +9741,18 @@ def dashboard_debit_credit(df):
         )
         fig = _apply_finance_bar_label_layout(fig)
         fig = apply_chart_background(fig)
-        cap = "Суммы по подрядчику" if contractor_col else "Суммы по договору"
+        if chart_label == "Проект | Подрядчик":
+            cap = "Суммы по проекту и подрядчику (проект из файла или справочника)"
+        else:
+            cap = "Суммы по подрядчику" if contractor_col else "Суммы по договору"
         render_chart(fig, caption_below=cap)
 
     st.subheader("Таблица по подрядчику и договору" if contractor_col else "Таблица по договорам")
     table_group_cols = [contract_col]
     if contractor_col:
         table_group_cols = [contractor_col, contract_col]
+    if contractor_col and project_col and project_col in filtered.columns:
+        table_group_cols = [project_col, contractor_col, contract_col]
     tbl_built = {}
     if total_col and f"_num_{total_col}" in filtered.columns:
         tbl_built["Сумма в договоре"] = filtered.groupby(table_group_cols)[f"_num_{total_col}"].sum()
@@ -9710,12 +9766,22 @@ def dashboard_debit_credit(df):
         st.warning("Нет числовых колонок для таблицы.")
         return
     table_df = pd.DataFrame(tbl_built).reset_index()
+    rename_map = {}
+    if project_col and project_col in table_df.columns:
+        rename_map[project_col] = "Проект"
     if contractor_col and contractor_col in table_df.columns:
-        table_df = table_df.rename(columns={contractor_col: "Подрядчик", contract_col: "Договор"})
-    else:
+        rename_map[contractor_col] = "Подрядчик"
+    if contract_col and contract_col in table_df.columns:
+        rename_map[contract_col] = "Договор"
+    if rename_map:
+        table_df = table_df.rename(columns=rename_map)
+    elif contract_col and contract_col in table_df.columns:
         table_df = table_df.rename(columns={contract_col: "Договор"})
-    value_cols_t = [c for c in table_df.columns if c not in ("Подрядчик", "Договор")]
+    group_dim_cols = [c for c in ("Проект", "Подрядчик", "Договор") if c in table_df.columns]
+    value_cols_t = [c for c in table_df.columns if c not in group_dim_cols]
     total_row = {"Договор": "Итого"}
+    if "Проект" in table_df.columns:
+        total_row["Проект"] = ""
     if "Подрядчик" in table_df.columns:
         total_row["Подрядчик"] = ""
     for col in value_cols_t:
@@ -11072,7 +11138,6 @@ def dashboard_documentation(
         if page_title == "Проектная документация":
             dashboard_pd_delay(df)
         else:
-            # Рабочая документация и объединённый заголовок — блок просрочки РД
             dashboard_rd_delay(df)
 
 
@@ -12609,8 +12674,8 @@ def dashboard_forecast_budget(df):
                 mode="lines+markers",
                 line=dict(color="#e74c3c", width=1, dash="dot"),
                 marker=dict(size=6, color="#e74c3c"),
-            )
         )
+    )
 
     fig.update_layout(
         xaxis_title="Месяц",
@@ -12642,8 +12707,8 @@ def dashboard_forecast_budget(df):
         if c == "Месяц":
             continue
         summary_table[c] = summary_table[c].apply(
-            lambda x: f"{float(x):.2f}" if pd.notna(x) else "0.00"
-        )
+        lambda x: f"{float(x):.2f}" if pd.notna(x) else "0.00"
+    )
     st.markdown(format_dataframe_as_html(summary_table), unsafe_allow_html=True)
     _csv = summary_table.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
     st.download_button("Скачать CSV", _csv, "forecast_bddcs_summary.csv", "text/csv", key="fcast_summary_csv")
@@ -13600,12 +13665,12 @@ def dashboard_developer_projects(df):
         else:
             sel_building = "Все"
 
-    only_lot_rows = st.checkbox(
-        "Отображение в ЛОТАХ",
-        value=False,
-        help="Показывать только строки с заполненным ЛОТ (если в файле есть колонка ЛОТ).",
-        key="dev_only_lots",
-    )
+        only_lot_rows = st.checkbox(
+            "Отображение в ЛОТАХ",
+            value=False,
+            help="Показывать только строки с заполненным ЛОТ (если в файле есть колонка ЛОТ).",
+            key="dev_only_lots",
+        )
 
     filtered = work.copy()
     if sel_proj != "Все" and project_col:
@@ -13941,7 +14006,7 @@ def dashboard_project_schedule_chart(df):
             if len(plot_df) > 80:
                 st.caption(
                     f"Показано 80 из {len(plot_df)} строк на графике (на диаграмме до 400 задач)."
-                )
+        )
 
 
 def dashboard_pd_delay(df):

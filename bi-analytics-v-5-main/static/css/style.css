@@ -6,27 +6,16 @@
 
 :root{
 
-    /* Синхрон с .streamlit/config.toml [theme] backgroundColor / secondaryBackgroundColor */
-    --themeBackgroundColor: #0b2238;
-    --themeDarkBackgroundColor: #102e4a;
+    --themeBackgroundColor: hsl(190,40%,98%);
+    --themeBackgroundColor: hsl(210,67%,96%);
+    --themeBackgroundColor: hsl(216,28%,7%);
+    --themeBackgroundColor: hsl(209,67%,22%);
 
-    --themeFontColor: #f8fafc;
+    --themeDarkBackgroundColor: hsl(209,67%,18%);
 
-    --theColor: 210, 40%, 98%;
-}
+    --themeFontColor: hsl(210,67%,96%);
 
-/* Скролл вниз: у html/body по умолчанию белый фон — под «хвостом» страницы видна белая полоса */
-html,
-body,
-#root,
-[data-testid="stAppViewContainer"],
-[data-testid="stAppViewContainer"] > div,
-section[data-testid="stMain"],
-section.main,
-.stApp > header ~ section,
-.stApp footer,
-[data-testid="stToolbar"] {
-    background-color: var(--themeBackgroundColor) !important;
+    --theColor: 210,67%,96%;
 }
 
 /* ┌────────────────────────────────────────────────────────────────────────┐ */
@@ -47,8 +36,7 @@ div[data-testid="collapsedControl"] {
 .main-header {
     font-size: 2.5rem;
     font-weight: bold;
-    /* Не использовать тёмно-синий на синем (#1f77b4) — низкий контраст; совпадает с темой Streamlit */
-    color: #f8fafc !important;
+    color: #1f77b4;
     margin-bottom: 1rem;
 }
 .metric-card {
@@ -60,8 +48,6 @@ div[data-testid="collapsedControl"] {
 /* Фон основной области — как у меню (sidebar) */
 .stApp {
     background-color: var(--themeBackgroundColor) !important;
-    /* Базовый цвет текста, если тема Streamlit отдаёт слишком тёмный оттенок */
-    color: #f1f5f9 !important;
     /* Яндекс.Браузер / Chromium: единая тёмная схема для нативных контролов и цветов текста */
     color-scheme: dark;
 }
