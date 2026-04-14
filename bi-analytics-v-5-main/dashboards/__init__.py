@@ -57,11 +57,9 @@ REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
         ],
     ),
     (
-        "ГДРС",
+        "График движения рабочей силы",
         [
-            "ГДРС",
             "График движения рабочей силы",
-            "СКУД стройка",
         ],
     ),
     (
@@ -167,7 +165,7 @@ def _get_dashboards() -> Dict[str, Callable]:
     if dashboard_skud_stroyka is None:
 
         def _stub_skud(df):
-            st.header("СКУД стройка")
+            st.header("График движения рабочей силы")
             st.info("Модуль не загружен из dashboards._renderers.")
 
         dashboard_skud_stroyka = _stub_skud
@@ -273,7 +271,7 @@ def _get_dashboards() -> Dict[str, Callable]:
 # Ленивая загрузка, чтобы при импорте dashboards не тянуть project_visualization_app
 # Увеличьте версию при изменении реестра отчётов — иначе долгоживущий процесс Streamlit
 # может держать устаревший словарь в памяти.
-_DASHBOARDS_REGISTRY_VERSION = 8
+_DASHBOARDS_REGISTRY_VERSION = 9
 _dashboards_cache: Dict[str, Callable] = {}
 _dashboards_cache_version: int = 0
 

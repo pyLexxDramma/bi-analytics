@@ -682,7 +682,7 @@ def main():
 
             if (has_resources_data or has_technique_data) and not has_project_data:
 
-                st.session_state.current_dashboard = "ГДРС"
+                st.session_state.current_dashboard = "График движения рабочей силы"
 
             else:
 
@@ -696,7 +696,11 @@ def main():
             # Reset the flag after processing (will be reset after rerun if button clicked)
             st.session_state.dashboard_selected_from_menu = False
 
-            dashboards_using_technique = ("ГДРС",)
+            dashboards_using_technique = (
+                "График движения рабочей силы",
+                "ГДРС",
+                "СКУД стройка",
+            )
 
             if selected_dashboard in dashboards_using_technique:
 
@@ -912,7 +916,11 @@ def main():
                 selected_dashboard = current or reason_dashboard
             st.session_state.current_dashboard = selected_dashboard
 
-        dashboards_using_technique = ("ГДРС",)
+        dashboards_using_technique = (
+            "График движения рабочей силы",
+            "ГДРС",
+            "СКУД стройка",
+        )
 
         if selected_dashboard in dashboards_using_technique:
 
@@ -962,7 +970,7 @@ def main():
         - **БДДС**, **БДР**, **Бюджет план/факт**, **Утверждённый бюджет**, **Прогнозный бюджет**, **ДЗ/КЗ подрядчиков**
 
         **Прочее:**
-        - Девелоперские проекты, предписания, исполнительная документация, ГДРС, проектные работы, здоровье проектов
+        - Девелоперские проекты, предписания, исполнительная документация, график движения рабочей силы, проектные работы, здоровье проектов
 
         **Для начала работы:**
         1. Загрузите файл с данными (CSV или Excel) через боковую панель

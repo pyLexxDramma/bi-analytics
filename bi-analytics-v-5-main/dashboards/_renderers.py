@@ -168,6 +168,57 @@ def _gdrs_resolve_period_column(df: pd.DataFrame):
     return None
 
 
+def _gdrs_is_plan_column_false_positive(col) -> bool:
+    s = str(col).strip().lower()
+    if not s:
+        return True
+    if s.startswith("unnamed"):
+        return True
+    if _gdrs_header_is_dd_mm_yyyy(col):
+        return True
+    if "дельт" in s or "отклон" in s:
+        return True
+    if "бюджет" in s:
+        return True
+    if "старт" in s or "конец" in s or "start" in s or "finish" in s:
+        return True
+    if s.startswith("планов") or s.startswith("планир"):
+        return True
+    return False
+
+
+def _gdrs_resolve_plan_column(df: pd.DataFrame):
+    """
+    Колонка числового плана (чел.-дни и т.п.). Без жёсткого «подстрока план везде» —
+    иначе цепляются «Планета», «плановый», «Старт План» из других отчётов.
+    """
+    if df is None or getattr(df, "empty", True):
+        return None
+    for c in df.columns:
+        if _gdrs_is_plan_column_false_positive(c):
+            continue
+        tl = str(c).strip().lower()
+        if tl in ("план", "plan"):
+            return c
+    for c in df.columns:
+        if _gdrs_is_plan_column_false_positive(c):
+            continue
+        tl = str(c).strip().lower()
+        if tl.startswith("план") and (len(tl) == 4 or tl[4] in " ,.(["):
+            return c
+        if tl.startswith("plan") and (len(tl) == 4 or tl[4] in " ,.(["):
+            return c
+    for c in df.columns:
+        if _gdrs_is_plan_column_false_positive(c):
+            continue
+        tl = str(c).strip().lower()
+        if re.search(r"(?<!\w)план(?!\w)", tl, flags=re.UNICODE):
+            return c
+        if re.search(r"(?<!\w)plan(?!\w)", tl, flags=re.UNICODE):
+            return c
+    return None
+
+
 def _sample_for_chart(df: pd.DataFrame, max_rows: int = _MAX_CHART_ROWS) -> pd.DataFrame:
     """
     Если датафрейм превышает max_rows, равномерно сэмплирует его и показывает уведомление.
@@ -5496,7 +5547,7 @@ def dashboard_rd_delay(df):
 
 # ==================== DASHBOARD 8.6.5: Technique Visualization ====================
 def dashboard_technique(df):
-    st.header("ГДРС")
+    st.header("График движения рабочей силы")
 
     technique_df = st.session_state.get("technique_data", None)
     resources_df = st.session_state.get("resources_data", None)
@@ -5536,6 +5587,13 @@ def dashboard_technique(df):
 
     key_prefix = "gdrs_technique"
     work_df = technique_df.copy()
+    work_df.columns = [
+        str(c).replace("\ufeff", "").replace("\n", " ").replace("\r", " ").strip()
+        for c in work_df.columns
+    ]
+    _plan_src_t = _gdrs_resolve_plan_column(work_df)
+    if _plan_src_t and _plan_src_t != "План":
+        work_df["План"] = work_df[_plan_src_t]
 
     date_cols_found = [c for c in work_df.columns if _gdrs_header_is_dd_mm_yyyy(c)]
     if date_cols_found and "Период" not in work_df.columns:
@@ -5562,9 +5620,14 @@ def dashboard_technique(df):
             work_df[dc] = pd.to_numeric(work_df[dc], errors="coerce")
 
         if id_cols:
-            agg = work_df.groupby(id_cols, dropna=False).agg(
-                **{dc: (dc, "mean") for dc in date_cols_found}
-            ).reset_index()
+            agg_spec = {dc: (dc, "mean") for dc in date_cols_found}
+            if "План" in work_df.columns and "План" not in id_cols:
+                agg_spec["План"] = ("План", "first")
+            for _wk in range(1, 6):
+                wn = f"{_wk} неделя"
+                if wn in work_df.columns and wn not in id_cols:
+                    agg_spec[wn] = (wn, "first")
+            agg = work_df.groupby(id_cols, dropna=False).agg(**agg_spec).reset_index()
             agg["Среднее за месяц"] = agg[date_cols_found].mean(axis=1).round(1)
             if avg_month_col and avg_month_col in work_df.columns:
                 month_avg = work_df.groupby(id_cols, dropna=False)[avg_month_col].first().reset_index()
@@ -6865,8 +6928,15 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
     st.caption("Данные из загруженных файлов (ресурсы и/или техника).")
 
     work_df = combined_df.copy()
+    work_df.columns = [
+        str(c).replace("\ufeff", "").replace("\n", " ").replace("\r", " ").strip()
+        for c in work_df.columns
+    ]
+    _plan_src_w = _gdrs_resolve_plan_column(work_df)
+    if _plan_src_w and _plan_src_w != "План":
+        work_df["План"] = work_df[_plan_src_w]
 
-    # Правки ГДРС: на вкладке «всё вместе» — фильтр вида ресурсов; по умолчанию «Рабочие (ресурсы)»
+    # На вкладке «всё вместе» — фильтр вида ресурсов; по умолчанию «Рабочие (ресурсы)»
     if (
         data_source_filter is None
         and "data_source" in work_df.columns
@@ -6915,9 +6985,14 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             work_df[dc] = pd.to_numeric(work_df[dc], errors="coerce")
 
         if id_cols:
-            agg = work_df.groupby(id_cols, dropna=False).agg(
-                **{dc: (dc, "mean") for dc in date_cols_found}
-            ).reset_index()
+            agg_spec = {dc: (dc, "mean") for dc in date_cols_found}
+            if "План" in work_df.columns and "План" not in id_cols:
+                agg_spec["План"] = ("План", "first")
+            for _wk in range(1, 6):
+                wn = f"{_wk} неделя"
+                if wn in work_df.columns and wn not in id_cols:
+                    agg_spec[wn] = (wn, "first")
+            agg = work_df.groupby(id_cols, dropna=False).agg(**agg_spec).reset_index()
             agg["Среднее за месяц"] = agg[date_cols_found].mean(axis=1).round(1)
             if avg_month_col and avg_month_col in work_df.columns:
                 month_avg = work_df.groupby(id_cols, dropna=False)[avg_month_col].first().reset_index()
@@ -7542,7 +7617,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     caption_below=f"Факт по подрядчикам (нет колонки периода): {lab_wfb}",
                 )
 
-    # --- ГДРС (правки): несколько проектов — круговые «план/факт» в одну строку, сводка справа
+    # Несколько проектов — круговые «план/факт» в одну строку, сводка справа
     def _gdrs_plan_fact_data_slice(pdf: pd.DataFrame) -> pd.DataFrame:
         if pdf is None or pdf.empty:
             return pdf
@@ -8251,12 +8326,12 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
 
 # ==================== DASHBOARD 8.6: SKUD Stroyka ====================
 def dashboard_skud_stroyka(df):
-    st.header("СКУД стройка")
+    st.header("График движения рабочей силы")
 
     resources_df = st.session_state.get("resources_data", None)
     if resources_df is None or resources_df.empty:
         st.warning(
-            "Для отображения графика СКУД стройка необходимо загрузить файл с данными о ресурсах."
+            "Для раздела «Учёт по сменам» необходимо загрузить файл с данными о ресурсах."
         )
         st.info(
             "Ожидаемые колонки в файле: Проект, Контрагент, Период, Среднее за неделю или Среднее за месяц"
@@ -8811,18 +8886,18 @@ def dashboard_skud_stroyka(df):
         st.table(style_dataframe_for_dark_theme(summary_table))
 
 
-# ==================== DASHBOARD: ГДРС (3 таба) ====================
+# ==================== DASHBOARD: график рабочей силы (вкладки) ====================
 def dashboard_technique_tabs(df):
     """
-    ГДРС: 4 вкладки — Рабочая сила, Техника, Динамика, СКУД стройка.
+    График движения рабочей силы: вкладки — рабочая сила, техника, динамика, учёт по сменам.
     """
-    st.header("ГДРС")
+    st.header("График движения рабочей силы")
     st.caption("Данные из загруженных файлов ресурсов и техники. Если данных нет — загрузите соответствующие CSV-файлы.")
     tab1, tab2, tab3, tab4 = st.tabs([
         "Рабочая сила",
         "Техника",
         "Динамика людей и техники",
-        "СКУД стройка",
+        "Учёт по сменам",
     ])
     with tab1:
         st.subheader("График движения рабочей силы")
@@ -9663,13 +9738,13 @@ def dashboard_project_health(df):
         st.table(style_dataframe_for_dark_theme(out, days_column="Отклонение" if "Отклонение" in out.columns else None))
 
 
-# ==================== DASHBOARD: График движения рабочей силы + СКУД стройка (объединённый) ====================
+# ==================== DASHBOARD: график рабочей силы (объединённый) ====================
 def dashboard_workforce_and_skud(df):
     """
-    Объединённый отчёт: «График движения рабочей силы» и «СКУД стройка» в двух вкладках.
+    Объединённый отчёт: основной график и раздел учёта по сменам.
     """
-    st.header("График движения рабочей силы / СКУД стройка")
-    tab1, tab2 = st.tabs(["График движения рабочей силы", "СКУД стройка"])
+    st.header("График движения рабочей силы")
+    tab1, tab2 = st.tabs(["Рабочая сила", "Учёт по сменам"])
     with tab1:
         dashboard_workforce_movement(df)
     with tab2:
