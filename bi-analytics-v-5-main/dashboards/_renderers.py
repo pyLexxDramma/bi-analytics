@@ -3449,13 +3449,34 @@ def dashboard_plan_fact_dates(df):
         _render_html_table(zos_tbl)
         st.markdown("---")
 
-    st.subheader("Отклонение от базового плана (таблица)")
-    st.caption(
-        f"Записей: {len(summary_df)} · тип: {dates_value_type} · сортировка: {dates_sort_order}"
-    )
-    _render_html_table(summary_df)
-    _csv = summary_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-    st.download_button("Скачать CSV", _csv, "detail_dates.csv", "text/csv", key="detail_dates_csv")
+    # В режиме ковенантов узкая таблица «Ковенанты (таблица)» уже даёт сроки/отклонения по ковенантам;
+    # полная таблица по filtered_df дублировала бы те же строки — показываем её только свёрнуто.
+    if not show_covenant_ui:
+        st.subheader("Отклонение от базового плана (таблица)")
+        st.caption(
+            f"Записей: {len(summary_df)} · тип: {dates_value_type} · сортировка: {dates_sort_order}"
+        )
+        _render_html_table(summary_df)
+        _csv = summary_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+        st.download_button("Скачать CSV", _csv, "detail_dates.csv", "text/csv", key="detail_dates_csv")
+    else:
+        st.caption(
+            "Полная таблица по всем задачам фильтра не выводится отдельным блоком, чтобы не дублировать "
+            "таблицу **Ковенанты** выше. Ниже — развёртка со всеми колонками (план/факт, отклонения), если нужен экспорт."
+        )
+        with st.expander("Полная таблица отклонений по всем задачам фильтра", expanded=False):
+            st.caption(
+                f"Записей: {len(summary_df)} · тип: {dates_value_type} · сортировка: {dates_sort_order}"
+            )
+            _render_html_table(summary_df)
+            _csv_all = summary_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+            st.download_button(
+                "Скачать CSV (все задачи фильтра)",
+                _csv_all,
+                "detail_dates.csv",
+                "text/csv",
+                key="detail_dates_csv_all_tasks_cov",
+            )
 
 
 # ==================== DASHBOARD 4: Deviation Amount by Tasks ====================
