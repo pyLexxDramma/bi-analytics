@@ -917,12 +917,54 @@ div[data-testid="stAlert"] [data-testid="stMarkdownContainer"] * {
     color: #f1f5f9 !important;
 }
 
-/* Экспандеры (страница входа и др.) */
+/* Экспандеры: базовый светлый текст (фон задаём отдельно для сайдбара / main ниже) */
 [data-testid="stExpander"] summary,
 [data-testid="stExpander"] summary span,
 [data-testid="stExpander"] [data-testid="stMarkdownContainer"],
 [data-testid="stExpander"] [data-testid="stMarkdownContainer"] * {
     color: #e8eef5 !important;
+}
+
+/* Сайдбар: expander — тёмный фон + светлый текст (иначе светлый фон темы + бледный текст = «невидимка») */
+section[data-testid="stSidebar"] [data-testid="stExpander"] details {
+    background-color: #0d2b47 !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    border-radius: 6px !important;
+}
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+    background-color: #0d2b47 !important;
+    color: #f1f5f9 !important;
+    border-radius: 6px !important;
+}
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {
+    background-color: #12385c !important;
+}
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary *,
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary span,
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary p {
+    color: #f1f5f9 !important;
+}
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary svg {
+    fill: #f1f5f9 !important;
+    color: #f1f5f9 !important;
+}
+
+/* Основная область: заголовок expander на тёмном фоне (FTP, фильтры и т.д.) */
+.main [data-testid="stExpander"] details {
+    background-color: rgba(13, 43, 71, 0.55) !important;
+    border: 1px solid rgba(255, 255, 255, 0.18) !important;
+    border-radius: 6px !important;
+}
+.main [data-testid="stExpander"] summary {
+    background-color: rgba(13, 43, 71, 0.85) !important;
+    color: #f1f5f9 !important;
+}
+.main [data-testid="stExpander"] summary *,
+.main [data-testid="stExpander"] summary span {
+    color: #f1f5f9 !important;
+}
+.main [data-testid="stExpander"] summary svg {
+    fill: #f1f5f9 !important;
 }
 
 /* Таблицы st.dataframe: ячейки glide/grid (новые версии Streamlit) */
@@ -1060,4 +1102,38 @@ div[data-baseweb="menu"] li span {
 .stApp h3,
 .stApp .stSubheader {
     color: #f1f5f9 !important;
+}
+
+/* Метрики st.metric: подпись и значение (иначе primary/secondary из темы дают тёмно-коричневый на синем) */
+[data-testid="stMetricLabel"] {
+    color: #c8d8ec !important;
+}
+[data-testid="stMetricValue"] {
+    color: #ffffff !important;
+}
+/* Дельту (stMetricDelta) не перекрашиваем — остаются зелёный/красный от Streamlit */
+
+/* Ряд колонок: markdown и подписи внутри колонок (плашки над графиком и т.п.) */
+.main [data-testid="column"] [data-testid="stMarkdownContainer"] p,
+.main [data-testid="column"] [data-testid="stMarkdownContainer"] span,
+.main [data-testid="column"] [data-testid="stMarkdownContainer"] li {
+    color: #e8eef5 !important;
+}
+.main [data-testid="stHorizontalBlock"] [data-testid="stMarkdownContainer"] p,
+.main [data-testid="stHorizontalBlock"] [data-testid="stMarkdownContainer"] span {
+    color: #e8eef5 !important;
+}
+
+/* Сегменты / pills / кнопки-переключатели (новые виджеты Streamlit) */
+[data-testid="stPills"] button,
+[data-testid="stPills"] [role="tab"],
+[data-testid="stSegmentedControl"] button {
+    color: #f1f5f9 !important;
+    background-color: #1a2942 !important;
+    border-color: rgba(255, 255, 255, 0.25) !important;
+}
+[data-testid="stPills"] [aria-selected="true"],
+[data-testid="stSegmentedControl"] [aria-selected="true"] {
+    background-color: #12385c !important;
+    color: #ffffff !important;
 }
