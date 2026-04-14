@@ -67,6 +67,9 @@ _MSP_COLUMN_REMAP: Dict[str, str] = {
     "Базовое окончание":    "base end",
     "План начало":          "plan start",
     "План окончание":       "plan end",
+    # Фактическое окончание (если есть в экспорте MSP) — приоритетное «Факт» для дат окончания задачи
+    "Фактическое_окончание": "actual finish",
+    "Фактическое окончание": "actual finish",
 }
 
 
@@ -175,7 +178,7 @@ def _apply_msp_column_mapping(df: pd.DataFrame, project_name: str) -> pd.DataFra
         return None
 
     # ── Даты: явные форматы вместо format='mixed' ────────────────────────────
-    for col in ("plan start", "plan end", "base start", "base end"):
+    for col in ("plan start", "plan end", "base start", "base end", "actual finish"):
         if col in df.columns:
             df[col] = df[col].apply(_parse_msp_date)
 

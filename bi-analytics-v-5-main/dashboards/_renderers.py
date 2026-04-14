@@ -12591,15 +12591,9 @@ def _render_dev_detail_table(df, max_rows=500):
 # ==================== DASHBOARD: Девелоперские проекты ====================
 def dashboard_developer_projects(df):
     """
-    Отчёт «Девелоперские проекты» — сводка по проектам из MSP-данных.
-    Таблица: проект, фазы/разделы, план/факт/отклонение, % выполнения.
+    Отчёт «Девелоперские проекты» — одна таблица: матрица контрольных точек по ТЗ.
     """
     st.header("Девелоперские проекты")
-    st.caption(
-        "По правкам: на вкладке «Сводка» — блок «Выборка ДС» (план/факт из project_data по сценарию и статье); "
-        "счётчик предписаний TESSA — по выгрузке в сессии; в «Детальной таблице» — даты в формате дд.мм.гггг "
-        "или «Н/Д», красная подсветка строк, где % выполнения < 100 (по ТЗ)."
-    )
 
     if df is None or not hasattr(df, "columns") or df.empty:
         st.warning("Загрузите файл с данными проекта (MSP) для отчёта «Девелоперские проекты».")
@@ -12623,18 +12617,7 @@ def dashboard_developer_projects(df):
     )
     building_col = _find(["building", "Строение", "строение", "Сооружение"])
     lot_col = _find(["LOT", "Лот", "лот"])
-    reason_col = _find(
-        ["reason of deviation", "Причина отклонений", "Причина", "reason", "Reason"]
-    )
-    notes_col = _find(["notes", "Заметки", "Комментарий", "Note"])
-    pct_col = _find(["pct complete", "Процент_завершения", "% завершения", "% Complete"])
-    plan_start_col = _find(["plan start", "Начало", "Plan Start"])
-    plan_end_col = _find(["plan end", "Окончание", "Plan End"])
-    base_start_col = _find(["base start", "Базовое_начало", "Base Start"])
-    base_end_col = _find(["base end", "Базовое_окончание", "Base End"])
-    dev_days_col = _find(["deviation in days", "Отклонений в днях", "Отклонение в днях"])
 
-    # Убираем полностью пустые строки (артефакты MSP-экспорта)
     key_col = task_col or project_col
     if key_col:
         work = work[
@@ -12646,7 +12629,6 @@ def dashboard_developer_projects(df):
         st.warning("Не найдены ключевые колонки (проект, задача). Проверьте формат файла.")
         return
 
-    # --- Фильтры (макеты file-010 / file-011): проект, раздел, функциональный блок, уровень, строение; чекбоксы ЛОТ / причины ---
     f1, f2 = st.columns(2)
     with f1:
         if project_col and project_col in work.columns:
@@ -12683,23 +12665,12 @@ def dashboard_developer_projects(df):
         else:
             sel_building = "Все"
 
-    cx, cy, cz = st.columns(3)
-    with cx:
-        only_lot_rows = st.checkbox(
-            "Отображение в ЛОТАХ",
-            value=False,
-            help="Показывать только строки с заполненным ЛОТ (если в файле есть колонка ЛОТ).",
-            key="dev_only_lots",
-        )
-    with cy:
-        show_reason_cols = st.checkbox(
-            "Показать причины отклонений",
-            value=False,
-            help="Добавить колонки причин и заметок в детальной таблице, если они есть в данных.",
-            key="dev_show_reasons",
-        )
-    with cz:
-        st.caption("Уровни 3–5 в интерфейсе не подписываем — только фильтр.")
+    only_lot_rows = st.checkbox(
+        "Отображение в ЛОТАХ",
+        value=False,
+        help="Показывать только строки с заполненным ЛОТ (если в файле есть колонка ЛОТ).",
+        key="dev_only_lots",
+    )
 
     filtered = work.copy()
     if sel_proj != "Все" and project_col:
@@ -12722,7 +12693,6 @@ def dashboard_developer_projects(df):
         st.info("Нет данных при выбранных фильтрах.")
         return
 
-    # Матрица ТЗ — на том же наборе строк, что и отчёт после фильтров
     matrix_df = filtered.copy()
     uniq_proj_n = (
         int(work[project_col].dropna().astype(str).str.strip().nunique())
@@ -12730,285 +12700,38 @@ def dashboard_developer_projects(df):
         else 1
     )
 
-    # --- Метрики ---
-    if pct_col and pct_col in filtered.columns:
-        pct_vals = pd.to_numeric(filtered[pct_col], errors="coerce")
-        avg_pct = pct_vals.mean()
-        done_count = (pct_vals == 100).sum()
-        in_progress = ((pct_vals > 0) & (pct_vals < 100)).sum()
-        not_started = (pct_vals == 0).sum()
-
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Всего задач", len(filtered))
-        m2.metric("Завершено (100%)", int(done_count))
-        m3.metric("В работе", int(in_progress))
-        m4.metric("Не начато (0%)", int(not_started))
-
-        st.caption(f"Средний % выполнения: {avg_pct:.1f}%")
-    else:
-        st.metric("Всего задач", len(filtered))
-
-    tessa_df_dev = st.session_state.get("tessa_data")
-    if tessa_df_dev is not None and not getattr(tessa_df_dev, "empty", True):
-        tk = tessa_df_dev.copy()
-        tk.columns = [str(c).strip() for c in tk.columns]
-        k_kind = _tessa_find_column(tk, ["KindName", "kindname", "Вид"])
-        if k_kind:
-            pr_n = int(
-                tk[k_kind].astype(str).str.contains("Предписан", case=False, na=False).sum()
-            )
-            st.metric("Предписаний в TESSA (по выгрузке)", pr_n)
-        else:
-            st.caption("TESSA загружена; для счётчика предписаний нужна колонка вида (KindName).")
-
-    # --- Вкладки ---
-    tab_tz, tab_overview, tab_deviations, tab_detail = st.tabs(
-        ["Матрица по ТЗ", "Сводка по проектам", "Отклонения", "Детальная таблица"]
-    )
-
-    with tab_tz:
-        st.subheader("Матрица контрольных точек (ТЗ)")
-        if sel_proj == "Все" and project_col and uniq_proj_n > 1:
-            st.info(
-                "Выберите один проект в фильтре «Проект» — матрица строится по одному MSP-проекту "
-                "(иначе смешиваются задачи разных проектов)."
-            )
-        elif matrix_df.empty:
-            st.info("Нет строк MSP для выбранного проекта.")
-        else:
-            rows_tz, cap_tz = build_dev_tz_matrix_rows(
-                matrix_df,
-                st.session_state.get("project_data"),
-                st.session_state,
-            )
-            st.caption(cap_tz)
-            render_dev_tz_matrix(rows_tz, _TABLE_CSS)
-
-    with tab_overview:
-        if project_col and pct_col:
-            st.subheader("Средний % выполнения по проектам")
-            pct_numeric = pd.to_numeric(filtered[pct_col], errors="coerce")
-            proj_summary = filtered.assign(_pct=pct_numeric).groupby(project_col).agg(
-                Задач=("_pct", "size"),
-                Среднее_выполнение=("_pct", "mean"),
-                Завершено=("_pct", lambda x: (x == 100).sum()),
-            ).reset_index()
-            proj_summary["Среднее_выполнение"] = proj_summary["Среднее_выполнение"].round(1)
-            proj_summary = proj_summary.rename(columns={
-                project_col: "Проект",
-                "Среднее_выполнение": "Ср. выполнение, %",
-            })
-            proj_summary = proj_summary.sort_values("Ср. выполнение, %", ascending=True)
-
-            fig1 = px.bar(
-                proj_summary, y="Проект", x="Ср. выполнение, %",
-                orientation="h", text="Ср. выполнение, %",
-                color="Ср. выполнение, %",
-                color_continuous_scale=["#E85D75", "#FFD166", "#06A77D"],
-                range_color=[0, 100],
-            )
-            fig1.update_traces(textposition="outside", textfont=dict(color="white", size=12))
-            fig1 = apply_chart_background(fig1)
-            fig1.update_layout(
-                height=max(350, len(proj_summary) * 40 + 100),
-                yaxis_title="", xaxis_title="% выполнения",
-                coloraxis_showscale=False,
-            )
-            render_chart(fig1, caption_below="Средний процент выполнения задач по проектам", key="dev_pct_bar")
-
-            st.subheader("Сводная таблица")
-            _render_html_table(proj_summary)
-
-        elif section_col and pct_col:
-            st.subheader("Средний % выполнения по разделам")
-            pct_numeric = pd.to_numeric(filtered[pct_col], errors="coerce")
-            sec_summary = filtered.assign(_pct=pct_numeric).groupby(section_col).agg(
-                Задач=("_pct", "size"),
-                Среднее_выполнение=("_pct", "mean"),
-            ).reset_index()
-            sec_summary["Среднее_выполнение"] = sec_summary["Среднее_выполнение"].round(1)
-            sec_summary = sec_summary.rename(columns={section_col: "Раздел", "Среднее_выполнение": "Ср. выполнение, %"})
-            _render_html_table(sec_summary)
-
-        with st.expander("Выборка ДС (обороты по подрядчикам / БДДС)", expanded=False):
-            st.caption(
-                "По правкам: из project_data — строки с «Сценарием»; план = сценарий с «бюджет» "
-                "без статей «БДР» в «Статье оборотов»; факт = сценарий с «факт»."
-            )
-            full_pd = st.session_state.get("project_data")
-            if full_pd is None or full_pd.empty:
-                st.info("Нет строк в project_data (загрузите обороты/БДДС через web/).")
-            else:
-                bd = full_pd.copy()
-                bd.columns = [str(c).strip() for c in bd.columns]
-
-                def _col_ci(names):
-                    for n in names:
-                        n0 = n.strip().lower()
-                        for c in bd.columns:
-                            if str(c).strip().lower() == n0:
-                                return c
-                    for n in names:
-                        n0 = n.strip().lower()
-                        for c in bd.columns:
-                            cl = str(c).strip().lower()
-                            if n0 in cl:
-                                return c
-                    return None
-
-                scen_col = _col_ci(["Сценарий", "Scenario", "сценарий"])
-                sum_col = _col_ci(["Сумма", "Sum", "Amount", "СуммаОборота"])
-                art_col = _col_ci(["Статья оборотов", "СтатьяОборотов", "статья оборотов", "Статья"])
-
-                if not scen_col or not sum_col:
-                    st.info("Не найдены колонки «Сценарий» и/или «Сумма» — выборка ДС недоступна.")
-                else:
-                    b = bd[bd[scen_col].notna()].copy()
-                    b = b[b[scen_col].astype(str).str.strip() != ""]
-                    if b.empty:
-                        st.info("Нет строк с заполненным сценарием.")
-                    else:
-                        scen_s = b[scen_col].astype(str)
-                        art_s = (
-                            b[art_col].astype(str)
-                            if art_col and art_col in b.columns
-                            else pd.Series("", index=b.index)
-                        )
-                        plan_mask = scen_s.str.contains("бюджет", case=False, na=False) & ~art_s.str.contains(
-                            "бдр", case=False, na=False
-                        )
-                        fact_mask = scen_s.str.contains("факт", case=False, na=False)
-                        plan_sum = pd.to_numeric(b.loc[plan_mask, sum_col], errors="coerce").fillna(0).sum()
-                        fact_sum = pd.to_numeric(b.loc[fact_mask, sum_col], errors="coerce").fillna(0).sum()
-                        c1, c2, c3 = st.columns(3)
-                        c1.metric("План (бюджет, без статей БДР), руб.", f"{plan_sum:,.0f}".replace(",", " "))
-                        c2.metric("Факт, руб.", f"{fact_sum:,.0f}".replace(",", " "))
-                        c3.metric("Отклонение (факт − план), руб.", f"{(fact_sum - plan_sum):,.0f}".replace(",", " "))
-                        show_cols = [scen_col, sum_col]
-                        if art_col and art_col in b.columns:
-                            show_cols.insert(1, art_col)
-                        snap = b[show_cols].head(400).copy()
-                        st.caption(f"Пример строк (до 400 из {len(b)}).")
-                        _render_html_table(snap)
-
-    with tab_deviations:
-        if dev_days_col and dev_days_col in filtered.columns:
-            st.subheader("Отклонения текущего срока от базового плана")
-            hide_done_dev = st.checkbox(
-                "Скрыть завершённые (100%)",
-                value=False,
-                key="dev_hide_done_devtab",
-                help="Не показывать задачи с % выполнения = 100 в графике и метриках ниже.",
-            )
-            only_late = st.checkbox(
-                "Только отстающие (отклонение в днях > 0)",
-                value=False,
-                key="dev_only_late",
-                help="По знаку в вашем MSP: положительное значение в колонке отклонения — задержка.",
-            )
-            dev_src = filtered.copy()
-            if hide_done_dev and pct_col and pct_col in dev_src.columns:
-                pv = pd.to_numeric(dev_src[pct_col], errors="coerce")
-                dev_src = dev_src[pv != 100]
-            dev_vals = pd.to_numeric(dev_src[dev_days_col], errors="coerce")
-            has_deviation = dev_vals.notna() & (dev_vals != 0)
-            dev_data = dev_src[has_deviation].copy()
-            dev_data["_dev"] = pd.to_numeric(dev_data[dev_days_col], errors="coerce")
-            if only_late:
-                dev_data = dev_data[dev_data["_dev"] > 0]
-
-            if dev_data.empty:
-                st.info("Нет задач с отклонениями.")
-            else:
-                delayed = (dev_data["_dev"] > 0).sum()
-                ahead = (dev_data["_dev"] < 0).sum()
-                d1, d2, d3 = st.columns(3)
-                d1.metric("Задач с отклонениями", len(dev_data))
-                d2.metric("Отстают (> 0 дней)", int(delayed))
-                d3.metric("Опережают (< 0 дней)", int(ahead))
-
-                group_col = project_col or section_col
-                if group_col and group_col in dev_data.columns:
-                    avg_dev = (dev_data.groupby(group_col)["_dev"].mean()
-                               .reset_index(name="Ср. отклонение, дней")
-                               .sort_values("Ср. отклонение, дней", ascending=True))
-                    avg_dev["Ср. отклонение, дней"] = avg_dev["Ср. отклонение, дней"].round(1)
-                    fig2 = px.bar(
-                        avg_dev, y=group_col, x="Ср. отклонение, дней",
-                        orientation="h", text="Ср. отклонение, дней",
-                        color="Ср. отклонение, дней",
-                        color_continuous_scale=["#06A77D", "#FFD166", "#E85D75"],
-                    )
-                    fig2.update_traces(textposition="outside", textfont=dict(color="white", size=12))
-                    fig2 = apply_chart_background(fig2)
-                    fig2.update_layout(
-                        height=max(350, len(avg_dev) * 40 + 100),
-                        yaxis_title="", xaxis_title="Дней",
-                        coloraxis_showscale=False,
-                    )
-                    render_chart(
-                        fig2,
-                        caption_below="Среднее отклонение от базового плана (текущий срок)",
-                        key="dev_deviation_bar",
-                    )
-        else:
-            st.info("Колонка «Отклонение в днях» не найдена в данных.")
-
-    with tab_detail:
-        st.subheader("Детальная таблица")
-        display_cols = []
-        for c in [project_col, block_col, section_col, building_col, level_col, lot_col, task_col, pct_col, plan_start_col, plan_end_col,
-                   base_end_col, dev_days_col]:
-            if c and c in filtered.columns:
-                display_cols.append(c)
-        if show_reason_cols:
-            if reason_col and reason_col in filtered.columns and reason_col not in display_cols:
-                display_cols.append(reason_col)
-            if notes_col and notes_col in filtered.columns and notes_col not in display_cols:
-                display_cols.append(notes_col)
-        if not display_cols:
-            display_cols = list(filtered.columns[:10])
-        detail = filtered[display_cols].copy()
-        rename = {}
-        if project_col:
-            rename[project_col] = "Проект"
-        if block_col and block_col in detail.columns:
-            rename[block_col] = "Блок"
-        if section_col:
-            rename[section_col] = "Раздел"
-        if building_col and building_col in detail.columns:
-            rename[building_col] = "Строение"
-        if level_col and level_col in detail.columns:
-            rename[level_col] = "Уровень"
-        if lot_col and lot_col in detail.columns:
-            rename[lot_col] = "ЛОТ"
-        if reason_col and reason_col in detail.columns:
-            rename[reason_col] = "Причина отклонений"
-        if notes_col and notes_col in detail.columns:
-            rename[notes_col] = "Заметки"
-        if task_col:
-            rename[task_col] = "Задача"
-        if pct_col:
-            rename[pct_col] = "% выполнения"
-        if plan_start_col:
-            rename[plan_start_col] = "План начало"
-        if plan_end_col:
-            rename[plan_end_col] = "План окончание"
-        if base_end_col:
-            rename[base_end_col] = "Базовое окончание"
-        if dev_days_col:
-            rename[dev_days_col] = "Отклонение, дней"
-        detail = detail.rename(columns=rename)
-
-        if "% выполнения" in detail.columns:
-            detail["% выполнения"] = pd.to_numeric(detail["% выполнения"], errors="coerce")
-
-        st.caption(
-            f"Записей: {len(detail)} · «Н/Д» — нет данных; при % выполнения < 100% — оранжевая подсветка (макет правок)."
+    st.subheader("Матрица контрольных точек")
+    if sel_proj == "Все" and project_col and uniq_proj_n > 1:
+        st.info(
+            "Выберите один проект в фильтре «Проект» — матрица строится по одному MSP-проекту "
+            "(иначе смешиваются задачи разных проектов)."
         )
-        _render_dev_detail_table(detail)
-        csv_bytes = detail.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        st.download_button("Скачать CSV", csv_bytes, "developer_projects.csv", "text/csv", key="dev_proj_csv")
+        return
+    if matrix_df.empty:
+        st.info("Нет строк MSP для выбранного проекта.")
+        return
+
+    rows_tz, _cap = build_dev_tz_matrix_rows(
+        matrix_df,
+        st.session_state.get("project_data"),
+        st.session_state,
+    )
+    render_dev_tz_matrix(rows_tz, _TABLE_CSS)
+
+    try:
+        export_df = pd.DataFrame(rows_tz)
+        if "warn" in export_df.columns:
+            export_df = export_df.rename(columns={"warn": "Подсветка_менее_100pct"})
+        csv_bytes = export_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+        st.download_button(
+            "Скачать матрицу (CSV)",
+            csv_bytes,
+            "developer_projects_matrix.csv",
+            "text/csv",
+            key="dev_matrix_csv_dl",
+        )
+    except Exception:
+        pass
 
 
 # ── Правки заказчика (Правки 1.pdf): скрытые и новые отчёты ─────────────────
@@ -13026,17 +12749,15 @@ def dashboard_control_points(df):
     Админ-маппинг задач и журнал — отдельно.
     """
     st.header("Контрольные точки")
-    st.caption(
-        "План = базовое окончание (base end), Факт = окончание (plan end), Откл. = Факт − План (дни). "
-        "Вехи: ГПЗУ, Экспертиза стадии П, Начало финансирования, Стадия РД — задачи уровня 5 с родителем «Ковенанты»; "
-        "если в данных нет колонки «Раздел»/section, совпадение только по названию задачи."
-    )
     if df is None or df.empty:
         st.warning("Загрузите данные MSP (проект).")
         return
     work = df.copy()
-    if "base end" not in work.columns or "plan end" not in work.columns:
-        st.warning("Нужны колонки «base end» / «plan end» (или русские аналоги после загрузки MSP).")
+    has_fact_col = "plan end" in work.columns or "actual finish" in work.columns
+    if "base end" not in work.columns or not has_fact_col:
+        st.warning(
+            "Нужны колонки базового и фактического окончания (base end и plan end / actual finish после загрузки MSP)."
+        )
         return
     render_control_points_dashboard(st, work, _TABLE_CSS)
 

@@ -97,12 +97,40 @@ def _task_name_col(df: pd.DataFrame) -> Optional[str]:
     return _find_col(df, ["Название задачи", "Название", "Task Name"])
 
 
+def _series_first_value(row: pd.Series, col: str) -> Any:
+    """
+    Скаляр из ячейки: при дублирующихся именах колонок (напр. два «plan end» после
+    ремапа «Окончание» и «План окончание») берётся первое непустое значение.
+    """
+    if col not in row.index:
+        return pd.NaT
+    v = row[col]
+    if isinstance(v, pd.Series):
+        v2 = v.dropna()
+        if v2.empty:
+            return pd.NaT
+        return v2.iloc[0]
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return pd.NaT
+    return v
+
+
 def _msp_plan_fact_pct(row: pd.Series) -> Tuple[Any, Any, Any]:
-    be = row.get("base end") if "base end" in row.index else pd.NaT
-    pe = row.get("plan end") if "plan end" in row.index else pd.NaT
-    pc = row.get("pct complete")
+    """
+    По ТЗ: План = «Базовое окончание» (base end), Факт = «Окончание»;
+    если в выгрузке есть «Фактическое окончание» — используем его как факт.
+    Canonical после web_loader: base end, plan end (из «Окончание»), actual finish.
+    """
+    be = _series_first_value(row, "base end")
+    fe = pd.NaT
+    af = _series_first_value(row, "actual finish")
+    if not (af is None or (isinstance(af, float) and pd.isna(af))):
+        fe = af
+    if pd.isna(fe):
+        fe = _series_first_value(row, "plan end")
+    pc = _series_first_value(row, "pct complete") if "pct complete" in row.index else pd.NaT
     pnum = pd.to_numeric(pc, errors="coerce")
-    return be, pe, pnum
+    return be, fe, pnum
 
 
 def _delta_days_plan_minus_fact(plan_d: Any, fact_d: Any) -> Optional[int]:
@@ -315,7 +343,7 @@ def build_dev_tz_matrix_rows(
 
         add_row("Финансы", "Выборка ДС, млн руб.", _fmtml(pm), _fmtml(fm), _fmtml(om), False)
 
-    tp, tf, to, hint = _tessa_counts(ss)
+    tp, tf, to, _tessa_hint = _tessa_counts(ss)
     warn_t = False
     try:
         warn_t = int(str(to).strip()) > 0
@@ -323,12 +351,7 @@ def build_dev_tz_matrix_rows(
         warn_t = False
     add_row("TESSA", "Предписания", tp, tf, to, warn_t)
 
-    cap = (
-        "По ТЗ: для MSP План = «Базовое окончание» (base end), Факт = «Окончание» (plan end после ремапа), "
-        "Откл. = План − Факт, дни. ДС: млн руб., статья не пустая и без «БДР». Предписания: уник. CardId / подписано / не устранено."
-    )
-    if hint:
-        cap = cap + " " + hint
+    cap = ""
     return rows, cap
 
 
@@ -419,11 +442,11 @@ def _match_milestone_tasks(mdf: pd.DataFrame, kw: dict) -> pd.DataFrame:
 
 def _one_milestone_cell(rows: pd.DataFrame) -> Tuple[str, str, str, bool]:
     """
-    План = базовое окончание (base end), Факт = окончание (plan end).
-    Откл., дн. = Факт − План (календарные дни), как в правках к макету контрольных точек.
+    План = базовое окончание (base end), Факт = окончание / actual finish.
+    Откл. = План − Факт (календарные дни), согласно ТЗ и матрице девелоперских проектов.
     """
     if rows is None or rows.empty:
-        return "Н/Д", "Н/Д", "Н/Д", True
+        return "Н/Д", "Н/Д", "Н/Д", False
     tc = _task_name_col(rows)
     if tc and tc in rows.columns:
         r = rows.sort_values(by=tc).iloc[0]
@@ -433,10 +456,10 @@ def _one_milestone_cell(rows: pd.DataFrame) -> Tuple[str, str, str, bool]:
     pl = _fmt_date_ru(pdt)
     fl = _fmt_date_ru(fdt)
     if pd.isna(pdt) or pd.isna(fdt):
-        return pl, fl, "Н/Д", True
-    dev = int((pd.Timestamp(fdt).normalize() - pd.Timestamp(pdt).normalize()).days)
-    otk = "0 дн." if dev == 0 else f"{dev:+d} дн."
-    ok = dev == 0
+        return pl, fl, "Н/Д", False
+    dev_days = _delta_days_plan_minus_fact(pdt, fdt)
+    otk = _fmt_delta_days(dev_days)
+    ok = bool(dev_days == 0) if dev_days is not None else False
     return pl, fl, otk, ok
 
 
