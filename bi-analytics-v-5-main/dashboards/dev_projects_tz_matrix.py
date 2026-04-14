@@ -29,6 +29,17 @@ def _find_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
     return None
 
 
+def _find_building_column(df: pd.DataFrame) -> Optional[str]:
+    if df is None or not hasattr(df, "columns"):
+        return None
+    for col in df.columns:
+        cn = str(col).lower()
+        for kw in ("building", "строение", "лот", "lot", "bldg"):
+            if str(kw).lower() in cn:
+                return str(col)
+    return None
+
+
 def _krstate_bucket(raw: Any) -> str:
     if raw is None or (isinstance(raw, float) and pd.isna(raw)):
         return "other"
@@ -494,28 +505,86 @@ _CONTROL_POINTS_CSS = """
 .cp-dot-bad { background:#ef4444; box-shadow:0 0 6px rgba(239,68,68,0.45); }
 .rendered-table th.cp-ghead { text-align:center; background:#1f232d; font-size:12px; padding:6px 8px; }
 .rendered-table th.cp-sub { font-size:11px; color:#c9d1d9; font-weight:500; }
+.cp-st { text-align:center; font-size:1.05rem; font-weight:700; white-space:nowrap; }
+.cp-st-ok { color:#22c55e; }
+.cp-st-bad { color:#ef4444; }
 </style>
 """
 
 
+def _apply_control_points_msp_filters(st, mdf: pd.DataFrame) -> pd.DataFrame:
+    if mdf is None or getattr(mdf, "empty", True):
+        return mdf
+    df = mdf.copy()
+    building_col = _find_building_column(df)
+    if building_col:
+        r1a, r1b, r1c, r1d = st.columns(4)
+    else:
+        r1a, r1b, r1c = st.columns(3)
+        r1d = None
+    with r1a:
+        if "project name" in df.columns:
+            opts = ["Все"] + sorted(
+                df["project name"].dropna().astype(str).str.strip().unique().tolist()
+            )
+            sel_proj = st.selectbox("Проект", opts, key="cp_msp_filter_project")
+        else:
+            sel_proj = "Все"
+    with r1b:
+        if "section" in df.columns:
+            secs = ["Все"] + sorted(df["section"].dropna().astype(str).str.strip().unique().tolist())
+            sel_sec = st.selectbox("Этап", secs, key="cp_msp_filter_section")
+        else:
+            sel_sec = "Все"
+    with r1c:
+        if "block" in df.columns:
+            blks = ["Все"] + sorted(df["block"].dropna().astype(str).str.strip().unique().tolist())
+            sel_blk = st.selectbox("Функциональный блок", blks, key="cp_msp_filter_block")
+        else:
+            sel_blk = "Все"
+    sel_bld = "Все"
+    if building_col and r1d is not None:
+        with r1d:
+            bopts = ["Все"] + sorted(
+                df[building_col].dropna().astype(str).str.strip().unique().tolist()
+            )
+            sel_bld = st.selectbox("Строение", bopts, key="cp_msp_filter_building")
+    out = df
+    if sel_proj != "Все" and "project name" in out.columns:
+        out = out[out["project name"].astype(str).str.strip() == str(sel_proj).strip()]
+    if sel_sec != "Все" and "section" in out.columns:
+        out = out[out["section"].astype(str).str.strip() == str(sel_sec).strip()]
+    if sel_blk != "Все" and "block" in out.columns:
+        out = out[out["block"].astype(str).str.strip() == str(sel_blk).strip()]
+    if (
+        sel_bld != "Все"
+        and building_col
+        and building_col in out.columns
+    ):
+        out = out[out[building_col].astype(str).str.strip() == str(sel_bld).strip()]
+    return out
+
+
 def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> None:
-    """Таблица «Контрольные точки проектов» + фильтр проектов + выгрузка CSV."""
+    """Таблица «Контрольные точки проектов» + фильтры MSP + выгрузка CSV."""
     esc = html_module.escape
-    df = build_control_points_df(mdf)
+    if mdf is None or getattr(mdf, "empty", True):
+        st.warning("Нет строк в данных MSP.")
+        return
+    filtered_mdf = _apply_control_points_msp_filters(st, mdf)
+    if filtered_mdf is None or getattr(filtered_mdf, "empty", True):
+        st.info("Нет строк по выбранным фильтрам.")
+        return
+    df = build_control_points_df(filtered_mdf)
     if df.empty:
         st.warning("Нет строк проектов в данных MSP.")
         return
-    projs = sorted(df["project"].astype(str).unique().tolist())
-    sel = st.multiselect("Проект", options=projs, default=projs, key="cp_projects_ms")
-    view = df[df["project"].isin(sel)].copy()
-    if view.empty:
-        st.caption("Выберите хотя бы один проект.")
-        return
+    view = df.copy()
 
     ms_specs = [(t, s) for t, s, _k in CONTROL_POINT_MILESTONES]
     thead1 = ['<th rowspan="2" style="min-width:180px">Проект</th>']
     for title, slug in ms_specs:
-        thead1.append(f'<th colspan="3" class="cp-ghead">{esc(title)}</th>')
+        thead1.append(f'<th colspan="4" class="cp-ghead">{esc(title)}</th>')
     sub_headers: List[str] = []
     for _title, slug in ms_specs:
         sub_headers.extend(
@@ -523,6 +592,7 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
                 f'<th class="cp-sub">{esc("План")}</th>',
                 f'<th class="cp-sub">{esc("Факт")}</th>',
                 f'<th class="cp-sub">{esc("Откл.")}</th>',
+                f'<th class="cp-sub">{esc("Статус")}</th>',
             ]
         )
     thead_html = (
@@ -544,6 +614,13 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
             cells.append(f"<td>{esc(str(r.get(f'{slug}_plan', '')))}</td>")
             cells.append(f"<td>{esc(str(r.get(f'{slug}_fact', '')))}</td>")
             cells.append(f"<td>{esc(str(r.get(f'{slug}_otkl', '')))}</td>")
+            m_ok = bool(r.get(f"{slug}_ok", False))
+            sym = "✓" if m_ok else "✗"
+            st_cls = "cp-st-ok" if m_ok else "cp-st-bad"
+            tip = "План и факт по датам совпадают (0 дн.)" if m_ok else "Есть отклонение или неполные даты"
+            cells.append(
+                f'<td class="cp-st {st_cls}" title="{esc(tip)}">{esc(sym)}</td>'
+            )
         body.append("<tr>" + "".join(cells) + "</tr>")
     body.append("</tbody>")
     html_tbl = (
