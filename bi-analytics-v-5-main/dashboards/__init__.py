@@ -2,7 +2,6 @@
 Регистр дашбордов: имя отчёта -> функция отрисовки.
 Функции отрисовки импортируются из dashboards._renderers.
 """
-from functools import partial
 from typing import Callable, Dict, List, Tuple
 
 from dashboards.export_wrap import run_dashboard_with_auto_export, slug_report_name
@@ -51,29 +50,17 @@ REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
         ],
     ),
     (
-        "Исполнительная документация",
+        "Документация",
         [
             "Исполнительная документация",
+            "Рабочая документация",
+            "Проектная документация",
         ],
     ),
     (
         "График движения рабочей силы",
         [
             "График движения рабочей силы",
-        ],
-    ),
-    (
-        "Рабочая документация",
-        [
-            "Рабочая документация",
-            "Просрочка выдачи РД",
-        ],
-    ),
-    (
-        "Проектная документация",
-        [
-            "Проектная документация",
-            "Просрочка выдачи ПД",
         ],
     ),
     (
@@ -237,12 +224,8 @@ def _get_dashboards() -> Dict[str, Callable]:
         "Рабочая документация": dashboard_working_documentation,
         "Проектная документация": dashboard_project_documentation,
         "ГДРС": dashboard_technique_tabs,
-        "График движения рабочей силы": partial(
-            dashboard_workforce_movement,
-            data_source_filter="Ресурсы",
-            show_header=True,
-            key_prefix="nav_gdrs_workforce",
-        ),
+        # Вкладки: люди, техника, динамика, смены (данные техники — из отдельной загрузки «техника»)
+        "График движения рабочей силы": dashboard_technique_tabs,
         "СКУД стройка": dashboard_skud_stroyka,
         "Дебиторская и кредиторская задолженность подрядчиков": dashboard_debit_credit,
         "Исполнительная документация": dashboard_executive_documentation,
@@ -257,7 +240,7 @@ def _get_dashboards() -> Dict[str, Callable]:
 # Ленивая загрузка, чтобы при импорте dashboards не тянуть project_visualization_app
 # Увеличьте версию при изменении реестра отчётов — иначе долгоживущий процесс Streamlit
 # может держать устаревший словарь в памяти.
-_DASHBOARDS_REGISTRY_VERSION = 17
+_DASHBOARDS_REGISTRY_VERSION = 18
 _dashboards_cache: Dict[str, Callable] = {}
 _dashboards_cache_version: int = 0
 

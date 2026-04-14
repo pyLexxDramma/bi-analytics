@@ -3101,13 +3101,32 @@ def dashboard_plan_fact_dates(df):
             return None
         return float(vals.max())
 
-    # Add comparison metrics
+    covenant_metrics_mode = bool(
+        show_covenant_ui
+        and covenant_rows_df is not None
+        and not getattr(covenant_rows_df, "empty", True)
+    )
+    top_covenant_row = None
+    if covenant_metrics_mode:
+        _cr = covenant_rows_df.copy()
+        if "plan_end_diff" not in _cr.columns:
+            _cr["plan_end_diff"] = np.nan
+        _ped = pd.to_numeric(_cr["plan_end_diff"], errors="coerce")
+        _cr = _cr.assign(_ped=_ped).sort_values(
+            "_ped", ascending=False, na_position="last"
+        )
+        top_covenant_row = _cr.iloc[0]
+
+    # Сводные метрики: в режиме ковенантов — по верхней строке той же таблицы, что ниже (не по ЗОС из другого фильтра)
     col1, col2, col3 = st.columns(3)
 
-    # Максимальное отклонение (дней) - отклонение факта от плана для выбранной задачи
     with col1:
         deviation_days = None
-        if task_row is not None:
+        if covenant_metrics_mode and top_covenant_row is not None:
+            deviation_days = pd.to_numeric(
+                top_covenant_row.get("plan_end_diff"), errors="coerce"
+            )
+        elif task_row is not None:
             plan_end = task_row.get("plan end")
             base_end = task_row.get("base end")
 
@@ -3118,11 +3137,11 @@ def dashboard_plan_fact_dates(df):
 
             if pd.notna(plan_end) and pd.notna(base_end):
                 deviation_days = (base_end - plan_end).total_seconds() / 86400
-        if deviation_days is None:
+        if deviation_days is None and not covenant_metrics_mode:
             deviation_days = _fallback_max_deviation_days(
                 task_label_for_deviation, selected_project, filtered_df
             )
-        if deviation_days is not None:
+        if deviation_days is not None and pd.notna(deviation_days):
             deviation_str = f"{int(round(float(deviation_days), 0))}"
             st.metric(
                 "Максимальное отклонение (дней)",
@@ -3133,100 +3152,110 @@ def dashboard_plan_fact_dates(df):
         else:
             st.metric("Максимальное отклонение (дней)", "—")
 
-    # План окончания проекта - дата из задачи "Разрешение на ввод в эксплуатацию"
     with col2:
         plan_end_str = ""
-        if task_row is not None:
+        if covenant_metrics_mode and top_covenant_row is not None:
+            plan_end = top_covenant_row.get("plan end")
+            if pd.notna(plan_end):
+                plan_end = pd.to_datetime(plan_end, errors="coerce", dayfirst=True)
+                plan_end_str = format_date_display(plan_end)
+        elif task_row is not None:
             plan_end = task_row.get("plan end")
             if pd.notna(plan_end):
                 plan_end = pd.to_datetime(plan_end, errors="coerce", dayfirst=True)
                 plan_end_str = format_date_display(plan_end)
-        st.metric("План окончания проекта", plan_end_str or "—")
+        st.metric("План окончания (базовое)", plan_end_str or "—")
 
-    # Факт окончания проекта - дата из задачи "Разрешение на ввод в эксплуатацию"
     with col3:
         fact_end_str = ""
-        if task_row is not None:
+        if covenant_metrics_mode and top_covenant_row is not None:
+            base_end = top_covenant_row.get("base end")
+            if pd.notna(base_end):
+                base_end = pd.to_datetime(base_end, errors="coerce", dayfirst=True)
+                fact_end_str = format_date_display(base_end)
+        elif task_row is not None:
             base_end = task_row.get("base end")
             if pd.notna(base_end):
                 base_end = pd.to_datetime(base_end, errors="coerce", dayfirst=True)
                 fact_end_str = format_date_display(base_end)
-        st.metric("Факт окончания проекта", fact_end_str or "—")
+        st.metric("Факт окончания", fact_end_str or "—")
 
-    # Добавляем разделитель и аналогичные метрики для задачи "Разрешение на строительство"
-    st.markdown("---")
-    col1_construction, col2_construction, col3_construction = st.columns(3)
-
-    # Найти задачу "Разрешение на строительство"
-    task_name_construction = "Разрешение на строительство"
-    task_row_construction = None
-
-    if "task name" in df.columns:
-        # Ищем задачу в исходных данных (не в отфильтрованных)
-        task_mask_construction = (
-            df["task name"].astype(str).str.strip() == task_name_construction.strip()
+    if covenant_metrics_mode:
+        st.caption(
+            "Показатели соответствуют **первой строке таблицы ковенантов** "
+            "(та же сортировка: по убыванию отклонения окончания)."
         )
-        if task_mask_construction.any():
-            task_row_construction = df[task_mask_construction].iloc[0]
 
-    # Максимальное отклонение (дней) — задача «Разрешение на строительство»
-    with col1_construction:
-        dev_c = None
-        if task_row_construction is not None:
-            plan_end_construction = task_row_construction.get("plan end")
-            base_end_construction = task_row_construction.get("base end")
+    # Доп. блок по задаче «Разрешение на строительство» — только вне режима ковенантов
+    if not covenant_metrics_mode:
+        st.markdown("---")
+        col1_construction, col2_construction, col3_construction = st.columns(3)
 
-            if pd.notna(plan_end_construction):
-                plan_end_construction = pd.to_datetime(
-                    plan_end_construction, errors="coerce", dayfirst=True
-                )
-            if pd.notna(base_end_construction):
-                base_end_construction = pd.to_datetime(
-                    base_end_construction, errors="coerce", dayfirst=True
-                )
+        task_name_construction = "Разрешение на строительство"
+        task_row_construction = None
 
-            if pd.notna(plan_end_construction) and pd.notna(base_end_construction):
-                dev_c = (
-                    base_end_construction - plan_end_construction
-                ).total_seconds() / 86400
-        if dev_c is None:
-            dev_c = _fallback_max_deviation_days(
-                task_name_construction, selected_project, filtered_df
+        if "task name" in df.columns:
+            task_mask_construction = (
+                df["task name"].astype(str).str.strip() == task_name_construction.strip()
             )
-        if dev_c is not None:
-            dstr = f"{int(round(float(dev_c), 0))}"
-            st.metric(
-                "Максимальное отклонение (дней)",
-                dstr,
-                delta=dstr,
-                delta_color="inverse",
-            )
-        else:
-            st.metric("Максимальное отклонение (дней)", "—")
+            if task_mask_construction.any():
+                task_row_construction = df[task_mask_construction].iloc[0]
 
-    # План окончания проекта - дата из задачи "Разрешение на строительство"
-    with col2_construction:
-        plan_end_str_construction = ""
-        if task_row_construction is not None:
-            plan_end_construction = task_row_construction.get("plan end")
-            if pd.notna(plan_end_construction):
-                plan_end_construction = pd.to_datetime(
-                    plan_end_construction, errors="coerce", dayfirst=True
-                )
-                plan_end_str_construction = format_date_display(plan_end_construction)
-        st.metric("План окончания проекта", plan_end_str_construction or "—")
+        with col1_construction:
+            dev_c = None
+            if task_row_construction is not None:
+                plan_end_construction = task_row_construction.get("plan end")
+                base_end_construction = task_row_construction.get("base end")
 
-    # Факт окончания проекта - дата из задачи "Разрешение на строительство"
-    with col3_construction:
-        fact_end_str_construction = ""
-        if task_row_construction is not None:
-            base_end_construction = task_row_construction.get("base end")
-            if pd.notna(base_end_construction):
-                base_end_construction = pd.to_datetime(
-                    base_end_construction, errors="coerce", dayfirst=True
+                if pd.notna(plan_end_construction):
+                    plan_end_construction = pd.to_datetime(
+                        plan_end_construction, errors="coerce", dayfirst=True
+                    )
+                if pd.notna(base_end_construction):
+                    base_end_construction = pd.to_datetime(
+                        base_end_construction, errors="coerce", dayfirst=True
+                    )
+
+                if pd.notna(plan_end_construction) and pd.notna(base_end_construction):
+                    dev_c = (
+                        base_end_construction - plan_end_construction
+                    ).total_seconds() / 86400
+            if dev_c is None:
+                dev_c = _fallback_max_deviation_days(
+                    task_name_construction, selected_project, filtered_df
                 )
-                fact_end_str_construction = format_date_display(base_end_construction)
-        st.metric("Факт окончания проекта", fact_end_str_construction or "—")
+            if dev_c is not None:
+                dstr = f"{int(round(float(dev_c), 0))}"
+                st.metric(
+                    "Макс. отклонение, РС (дней)",
+                    dstr,
+                    delta=dstr,
+                    delta_color="inverse",
+                )
+            else:
+                st.metric("Макс. отклонение, РС (дней)", "—")
+
+        with col2_construction:
+            plan_end_str_construction = ""
+            if task_row_construction is not None:
+                plan_end_construction = task_row_construction.get("plan end")
+                if pd.notna(plan_end_construction):
+                    plan_end_construction = pd.to_datetime(
+                        plan_end_construction, errors="coerce", dayfirst=True
+                    )
+                    plan_end_str_construction = format_date_display(plan_end_construction)
+            st.metric("План окончания, РС", plan_end_str_construction or "—")
+
+        with col3_construction:
+            fact_end_str_construction = ""
+            if task_row_construction is not None:
+                base_end_construction = task_row_construction.get("base end")
+                if pd.notna(base_end_construction):
+                    base_end_construction = pd.to_datetime(
+                        base_end_construction, errors="coerce", dayfirst=True
+                    )
+                    fact_end_str_construction = format_date_display(base_end_construction)
+            st.metric("Факт окончания, РС", fact_end_str_construction or "—")
 
     # Summary table — макет: даты / отклонения, видимые столбцы, сортировка
     summary_data = []
@@ -9410,6 +9439,47 @@ def dashboard_debit_credit(df):
             "код проекта",
         ],
     )
+    project_from_reference = False
+    if (not project_col or project_col not in work.columns) and contractor_col:
+        ref_df = st.session_state.get("reference_contractors")
+        if ref_df is not None and not getattr(ref_df, "empty", True):
+            ref_df = ref_df.copy()
+            ref_df.columns = [str(c).strip() for c in ref_df.columns]
+            rc = _find_col(
+                ref_df,
+                [
+                    "Подрядчик",
+                    "Контрагент",
+                    "контрагент",
+                    "организация",
+                    "партнёр",
+                    "Partner",
+                    "Название контрагента",
+                    "Название организации",
+                ],
+            )
+            rp = _find_col(
+                ref_df,
+                [
+                    "Проект",
+                    "project name",
+                    "ID проекта",
+                    "проект",
+                    "название проекта",
+                    "код проекта",
+                ],
+            )
+            if rc and rp and rc in ref_df.columns and rp in ref_df.columns:
+                keymap = {}
+                for _, rr in ref_df.iterrows():
+                    k = str(rr.get(rc, "")).strip().lower()
+                    if k:
+                        keymap[k] = str(rr.get(rp, "")).strip()
+                work["_project_mapped"] = work[contractor_col].map(
+                    lambda x: keymap.get(str(x).strip().lower(), "")
+                )
+                project_col = "_project_mapped"
+                project_from_reference = True
     type_col = _find_col(work, ["Тип подрядчика", "тип подрядчика", "contractor type"])
     contract_col = _find_col(work, ["Номер договора", "Договор", "договор", "contract"])
     total_col = _find_col(work, ["Сумма в договоре", "сумма в договоре", "Общая сумма", "contract sum"])
@@ -9431,6 +9501,12 @@ def dashboard_debit_credit(df):
             work[f"_num_{c}"] = _to_num(work[c])
 
     st.subheader("Фильтры")
+    if project_from_reference:
+        st.caption(
+            "Колонка «Проект» заполнена по **справочнику контрагентов** "
+            "(session `reference_contractors`: пары «организация → проект»). "
+            "Загрузите справочник в блоке справочных файлов или задайте колонку проекта в ДтКт."
+        )
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         if contractor_col and contractor_col in work.columns:
@@ -10214,7 +10290,12 @@ def dashboard_workforce_and_skud(df):
 
 
 # ==================== DASHBOARD 8.7: Documentation ====================
-def dashboard_documentation(df, page_title: str = "Рабочая/Проектная документация"):
+def dashboard_documentation(
+    df,
+    page_title: str = "Рабочая/Проектная документация",
+    *,
+    embed_delay_at_end: bool = True,
+):
     st.header(page_title)
 
     _doc_fk = (
@@ -10901,21 +10982,35 @@ def dashboard_documentation(df, page_title: str = "Рабочая/Проектн
     except Exception as e:
         st.error(f"Ошибка при построении графика 'Динамика выдачи РД': {str(e)}")
 
-    # Add separator
-    st.divider()
-
-    # Add "Просрочка выдачи РД" chart
-    dashboard_rd_delay(df)
+    if embed_delay_at_end:
+        st.divider()
+        if page_title == "Проектная документация":
+            dashboard_pd_delay(df)
+        else:
+            # Рабочая документация и объединённый заголовок — блок просрочки РД
+            dashboard_rd_delay(df)
 
 
 def dashboard_working_documentation(df):
-    """Проектные работы: Рабочая документация (то же тело отчёта, отдельный пункт меню)."""
-    return dashboard_documentation(df, page_title="Рабочая документация")
+    """Рабочая документация: основной экран + вкладка «Просрочка выдачи РД» (без отдельного пункта меню)."""
+    tab_main, tab_delay = st.tabs(["Рабочая документация", "Просрочка выдачи РД"])
+    with tab_main:
+        dashboard_documentation(
+            df, page_title="Рабочая документация", embed_delay_at_end=False
+        )
+    with tab_delay:
+        dashboard_rd_delay(df)
 
 
 def dashboard_project_documentation(df):
-    """Проектные работы: Проектная документация (п. меню; детализация ПД — в следующих итерациях)."""
-    return dashboard_documentation(df, page_title="Проектная документация")
+    """Проектная документация: основной экран + вкладка «Просрочка выдачи ПД»."""
+    tab_main, tab_delay = st.tabs(["Проектная документация", "Просрочка выдачи ПД"])
+    with tab_main:
+        dashboard_documentation(
+            df, page_title="Проектная документация", embed_delay_at_end=False
+        )
+    with tab_delay:
+        dashboard_pd_delay(df)
 
 
 # ==================== DASHBOARD 8: Budget by Type (Plan/Fact/Reserve) ====================
@@ -11804,6 +11899,12 @@ def dashboard_approved_budget(df):
         При изменении дат начала и окончания этапа бюджет автоматически пересчитывается.
         """
         )
+    with st.expander("Требования ТЗ (PDF): утверждённый бюджет", expanded=False):
+        st.markdown(
+            "Источник данных: CSV **«ОборотыПоБюджетам»**. Детальная таблица: проект; "
+            "утверждённый бюджет (сценарий «Бюджет», статья без «(БДР)»); фактические расходы; "
+            "отклонение с цветом по знаку (см. PDF «Правки»)."
+        )
 
     # Фильтры (две колонки: проект, этап)
     col1, col2 = st.columns(2)
@@ -12051,13 +12152,17 @@ def dashboard_forecast_budget(df):
             "при появлении отдельной загрузки «ОборотыПоБюджетам» логику можно согласовать с файлом оборотов."
         )
 
-    st.info("""
-    **Прогнозный бюджет** рассчитывается на основе утвержденного бюджета и может быть скорректирован:
-    - При изменении плановых дат начала и окончания этапов
-    - При изменении утвержденного бюджета по задачам
-
-    Прогнозный бюджет автоматически пересчитывается при любых изменениях.
-        """)
+    with st.expander("Требования ТЗ (PDF): БДДС утверждённый/прогнозный", expanded=False):
+        st.markdown(
+            "Отчёт **БДДС (утверждённый/прогнозный)** по PDF: визуалы как у «БДДС месяцы/накопительно»; "
+            "столбцы **БДДС план**, **БДДС факт**, **БДДС прогноз**; прогноз считается от дат **Начало/Окончание** "
+            "в MS Project по лоту и правил распределения (равномерно или % A/B/C). "
+            "Блок редактирования ниже соответствует идее «Формирование БДДС прогноз»."
+        )
+    st.info(
+        "**Прогнозный бюджет** рассчитывается на основе утверждённого распределения по задачам MSP "
+        "и пересчитывается при изменении дат или сумм."
+    )
 
     # Фильтр по проекту (обязательный для прогнозного бюджета)
     # Check English name first (alias created in load_data), then Russian

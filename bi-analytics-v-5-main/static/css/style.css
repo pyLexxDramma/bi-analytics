@@ -930,3 +930,23 @@ div[data-testid="stAlert"] [data-testid="stMarkdownContainer"] * {
 [data-testid="stDataFrame"] [role="rowheader"] {
     color: #f1f5f9 !important;
 }
+
+/* Доп. читаемость: подписи виджетов и основной текст (в т.ч. у клиента с «бледной» темой) */
+.main .stMarkdown p,
+.main .stMarkdown li,
+.main [data-testid="stMarkdownContainer"] p,
+.main [data-testid="stMarkdownContainer"] li {
+    color: #e8eef5 !important;
+}
+.stSelectbox label,
+.stMultiSelect label,
+.stDateInput label,
+.stTextInput label,
+.stNumberInput label,
+.stFileUploader label,
+.stRadio > label {
+    color: #e8eef5 !important;
+}
+[data-testid="stWidgetLabel"] {
+    color: #e8eef5 !important;
+}
