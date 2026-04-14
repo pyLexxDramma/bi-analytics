@@ -92,12 +92,6 @@ REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
             "График проекта",
         ],
     ),
-    (
-        "Здоровье проектов",
-        [
-            "Здоровье проектов",
-        ],
-    ),
 ]
 
 
@@ -177,14 +171,6 @@ def _get_dashboards() -> Dict[str, Callable]:
             st.info("Раздел в разработке.")
 
         dashboard_executive_documentation = _stub_executive
-    dashboard_project_health = getattr(_renderers, "dashboard_project_health", None)
-    if dashboard_project_health is None:
-
-        def _stub_health(df):
-            st.header("Здоровье проектов")
-            st.info("Загрузите файл с данными проекта с колонкой «Фаза».")
-
-        dashboard_project_health = _stub_health
     dashboard_debit_credit = getattr(_renderers, "dashboard_debit_credit", None)
     if dashboard_debit_credit is None:
 
@@ -259,7 +245,6 @@ def _get_dashboards() -> Dict[str, Callable]:
         "СКУД стройка": dashboard_skud_stroyka,
         "Дебиторская и кредиторская задолженность подрядчиков": dashboard_debit_credit,
         "Исполнительная документация": dashboard_executive_documentation,
-        "Здоровье проектов": dashboard_project_health,
         "Просрочка выдачи РД": dashboard_rd_delay,
         "Просрочка выдачи ПД": dashboard_pd_delay,
         "Предписания по подрядчикам": dashboard_predpisania,
@@ -271,7 +256,7 @@ def _get_dashboards() -> Dict[str, Callable]:
 # Ленивая загрузка, чтобы при импорте dashboards не тянуть project_visualization_app
 # Увеличьте версию при изменении реестра отчётов — иначе долгоживущий процесс Streamlit
 # может держать устаревший словарь в памяти.
-_DASHBOARDS_REGISTRY_VERSION = 9
+_DASHBOARDS_REGISTRY_VERSION = 10
 _dashboards_cache: Dict[str, Callable] = {}
 _dashboards_cache_version: int = 0
 
