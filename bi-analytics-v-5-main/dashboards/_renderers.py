@@ -9612,6 +9612,9 @@ def dashboard_executive_documentation(df):
     """
     st.header("Исполнительная документация")
     st.caption("Контроль просрочек подрядчика и заказчика")
+    st.caption(
+        "Сводка, детальная таблица и динамика по месяцам собраны в одном отчёте; переключение между разделами — вкладками ниже (эквивалент одной страницы в Streamlit)."
+    )
 
     tessa_df = st.session_state.get("tessa_data", None)
     if tessa_df is None or tessa_df.empty:
@@ -9658,7 +9661,8 @@ def dashboard_executive_documentation(df):
     else:
         work["Статус"] = "Неизвестно"
 
-    contr_col = _tessa_find_column(work, ["CONTR", "Контрагент", "contr"])
+    _contr_candidates = ["CONTR", "Контрагент", "contr"]
+    contr_col = _tessa_find_column(work, _contr_candidates)
     card_col = _tessa_find_column(work, ["CardId", "CardID", "cardId", "DocID", "DocId"])
     creation_col = _tessa_find_column(work, ["CreationDate", "creationdate", "Дата создания"])
     completed_col = _tessa_find_column(work, ["Completed", "completed", "CompletionDate", "Дата завершения"])
@@ -9728,14 +9732,32 @@ def dashboard_executive_documentation(df):
             value=False,
             key="exec_doc_show_signed_table",
         )
+        compare_prev_period = st.checkbox(
+            "Сравнить с предыдущим периодом той же длительности (по дате создания)",
+            value=False,
+            key="exec_doc_compare_prev_period",
+        )
 
-    filtered = work.copy()
+    if contr_col:
+        st.caption(
+            f"Контрагент из выгрузки TESSA: используется колонка «{contr_col}» "
+            f"(поиск по точному или частичному совпадению с: {', '.join(_contr_candidates)})."
+        )
+    else:
+        st.caption(
+            "Колонка контрагента в данных TESSA не найдена — фильтр и столбчатые диаграммы по контрагентам недоступны "
+            f"(ожидаются имена или вхождения подстрок из списка: {', '.join(_contr_candidates)})."
+        )
+
+    filtered_base = work.copy()
     if sel_obj != "Все" and obj_col:
-        filtered = filtered[filtered[obj_col].astype(str).str.strip() == sel_obj]
+        filtered_base = filtered_base[filtered_base[obj_col].astype(str).str.strip() == sel_obj]
     if sel_contr != "Все" and contr_col:
-        filtered = filtered[filtered[contr_col].astype(str).str.strip() == sel_contr]
+        filtered_base = filtered_base[filtered_base[contr_col].astype(str).str.strip() == sel_contr]
     if sel_kind != "Все" and kind_col:
-        filtered = filtered[filtered[kind_col].astype(str).str.strip() == sel_kind]
+        filtered_base = filtered_base[filtered_base[kind_col].astype(str).str.strip() == sel_kind]
+
+    filtered = filtered_base.copy()
     if creation_col and p_start is not None and p_end is not None:
         ts_start = pd.Timestamp(p_start)
         ts_end = pd.Timestamp(p_end) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
@@ -9785,6 +9807,49 @@ def dashboard_executive_documentation(df):
         "+ просрочка заказчика (на согласовании)."
     )
 
+    if compare_prev_period and creation_col and p_start is not None and p_end is not None:
+        span_days = (p_end - p_start).days + 1
+        if span_days < 1:
+            span_days = 1
+        b_end = p_start - timedelta(days=1)
+        b_start = b_end - timedelta(days=span_days - 1)
+        ts_b0 = pd.Timestamp(b_start)
+        ts_b1 = pd.Timestamp(b_end) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+        filt_b = filtered_base[
+            filtered_base["_cd"].notna()
+            & (filtered_base["_cd"] >= ts_b0)
+            & (filtered_base["_cd"] <= ts_b1)
+        ]
+
+        def _exec_n_docs(dfp):
+            if card_col and card_col in dfp.columns:
+                return int(dfp[card_col].nunique())
+            return int(len(dfp))
+
+        n_cur = _exec_n_docs(filtered)
+        n_prev = _exec_n_docs(filt_b)
+        st.caption(
+            f"Сравнение по дате создания: предыдущий интервал {b_start.strftime('%d.%m.%Y')}—{b_end.strftime('%d.%m.%Y')} "
+            f"({span_days} дн., сразу перед выбранным периодом)."
+        )
+        _cmp_notes = []
+        if n_cur + n_prev < 4:
+            _cmp_notes.append("Мало документов в одном или обоих периодах — сравнение ориентировочное.")
+        if n_prev == 0:
+            _cmp_notes.append("В предыдущем периоде по выбранным фильтрам нет документов.")
+        if _cmp_notes:
+            st.info(" ".join(_cmp_notes))
+        cmp_a, cmp_b = st.columns(2)
+        with cmp_a:
+            st.metric(
+                "Документов (выбранный период)",
+                n_cur,
+                delta=int(n_cur - n_prev),
+                delta_color="normal",
+            )
+        with cmp_b:
+            st.metric("Документов (предыдущий период)", n_prev)
+
     oc1, oc2 = st.columns(2)
 
     def _row_days_late_plan(r):
@@ -9829,6 +9894,10 @@ def dashboard_executive_documentation(df):
             render_chart(fig_c, caption_below="Просрочка по подрядчикам (дней)", key="exec_overdue_contractor")
     with oc2:
         st.subheader("Просрочка заказчика (согласование)")
+        st.caption(
+            "Показатель «Просрочка согласования Заказчиком»: документы на согласовании у заказчика; "
+            "сегменты по дням и диаграмма относятся к этапу согласования заказчиком (колонка «Просрочка соглас.» в детальном отчёте)."
+        )
         st.metric("Документов на согласовании у заказчика", cnt_u)
         sub_u = filtered.loc[overdue_mask & is_on_agree].copy()
         if plan_col and not sub_u.empty:
@@ -9847,7 +9916,11 @@ def dashboard_executive_documentation(df):
             fig_u.update_traces(textposition="outside", textfont=dict(color="white"))
             fig_u = apply_chart_background(fig_u)
             fig_u.update_layout(height=max(280, len(by_u) * 32 + 80), yaxis_title="", xaxis_title="")
-            render_chart(fig_u, caption_below="По подрядчикам (на согласовании)", key="exec_overdue_customer")
+            render_chart(
+                fig_u,
+                caption_below="Просрочка согласования заказчиком — количество документов на согласовании по контрагентам",
+                key="exec_overdue_customer",
+            )
 
     tab_sum, tab_detail, tab_dyn = st.tabs(["Накопительным итогом", "Детальный отчёт", "Динамика по месяцам"])
 
@@ -9961,12 +10034,30 @@ def dashboard_executive_documentation(df):
             if dyn.empty:
                 st.info("Недостаточно дат для динамики.")
             else:
-                cnt = dyn.groupby("_m").size().reset_index(name="Новых документов")
-                cnt["_m"] = cnt["_m"].astype(str)
-                fig3 = px.bar(cnt, x="_m", y="Новых документов", text="Новых документов", color_discrete_sequence=["#60a5fa"])
+                cnt = dyn.groupby("_m", sort=True).size().reset_index(name="Новых документов")
+                cnt = cnt.sort_values("_m")
+                cnt["Месяц"] = cnt["_m"].map(
+                    lambda p: (
+                        f"{(RUSSIAN_MONTHS.get(p.month, '') or '')[:3].lower()} {p.year}".strip()
+                        if isinstance(p, pd.Period)
+                        else str(p)
+                    )
+                )
+                fig3 = px.bar(
+                    cnt,
+                    x="Месяц",
+                    y="Новых документов",
+                    text="Новых документов",
+                    color_discrete_sequence=["#60a5fa"],
+                )
                 fig3.update_traces(textposition="outside", textfont=dict(color="white"))
                 fig3 = apply_chart_background(fig3)
-                fig3.update_layout(height=400, xaxis_title="Месяц", yaxis_title="Количество")
+                fig3.update_layout(
+                    height=400,
+                    xaxis_title="Месяц",
+                    yaxis_title="Количество",
+                    xaxis=dict(tickangle=-35, categoryorder="array", categoryarray=list(cnt["Месяц"])),
+                )
                 render_chart(fig3, caption_below="Поступление документов по месяцам", key="exec_month_dyn")
 
 
@@ -13274,32 +13365,46 @@ def dashboard_project_schedule_chart(df):
     fig = apply_chart_background(fig)
     render_chart(fig, caption_below="Плановые сроки задач: «План: начало» — «План: окончание»")
 
-    pref = [
-        c
-        for c in (
-            "project name",
-            "task name",
-            "plan start",
-            "plan end",
-            "base start",
-            "base end",
-            "pct complete",
-        )
-        if c in df.columns
-    ]
-    _sched_ru_headers = {
-        "project name": "Проект",
-        "task name": "Задача",
-        "plan start": "План: начало",
-        "plan end": "План: окончание",
-        "base start": "База: начало",
-        "base end": "База: окончание",
-        "pct complete": "% выполнения",
-    }
+    # Таблица под графиком: те же отфильтрованные/отсортированные строки, что на диаграмме.
+    # st.dataframe в тёмной теме часто даёт пустой «холст» — как в других отчётах используем HTML-таблицу.
     with st.expander("Таблица (первые строки)", expanded=False):
-        tbl = df[pref].head(80) if pref else df.head(80)
-        tbl_show = tbl.rename(columns={k: v for k, v in _sched_ru_headers.items() if k in tbl.columns})
-        st.dataframe(tbl_show, use_container_width=True, hide_index=True)
+        tbl_pairs = []
+        if proj_col and proj_col in plot_df.columns:
+            tbl_pairs.append((proj_col, "Проект"))
+        if task_col and task_col in plot_df.columns:
+            tbl_pairs.append((task_col, "Задача"))
+        for src, ru in (
+            ("plan start", "План: начало"),
+            ("plan end", "План: окончание"),
+            ("base start", "База: начало"),
+            ("base end", "База: окончание"),
+            ("pct complete", "% выполнения"),
+        ):
+            if src in plot_df.columns:
+                tbl_pairs.append((src, ru))
+        cols_src = [c for c, _ in tbl_pairs]
+        if not cols_src:
+            st.info("Нет колонок для таблицы.")
+        else:
+            tbl_view = plot_df[cols_src].copy()
+            for dc in ("plan start", "plan end", "base start", "base end"):
+                if dc in tbl_view.columns:
+                    _ts = pd.to_datetime(tbl_view[dc], errors="coerce")
+                    tbl_view[dc] = [
+                        x.strftime("%d.%m.%Y") if pd.notna(x) else "" for x in _ts
+                    ]
+            if "pct complete" in tbl_view.columns:
+                tbl_view["pct complete"] = pd.to_numeric(
+                    tbl_view["pct complete"], errors="coerce"
+                )
+            tbl_show = tbl_view.rename(
+                columns={c: ru for c, ru in tbl_pairs if c in tbl_view.columns}
+            )
+            _render_html_table(tbl_show.head(80), max_rows=80)
+            if len(plot_df) > 80:
+                st.caption(
+                    f"Показано 80 из {len(plot_df)} строк на графике (на диаграмме до 400 задач)."
+                )
 
 
 def dashboard_pd_delay(df):
