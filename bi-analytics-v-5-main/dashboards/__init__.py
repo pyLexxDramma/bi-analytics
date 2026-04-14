@@ -86,7 +86,6 @@ REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
         "Сроки",
         [
             "Причины отклонений",
-            "Динамика отклонений по месяцам",
             "Отклонение от базового плана",
             "Контрольные точки",
             "График проекта",
@@ -122,8 +121,6 @@ def _get_dashboards() -> Dict[str, Callable]:
         ) from e
 
     dashboard_deviations_combined = _renderers.dashboard_deviations_combined
-    dashboard_reasons_of_deviation = _renderers.dashboard_reasons_of_deviation
-    dashboard_dynamics_of_deviations = _renderers.dashboard_dynamics_of_deviations
     dashboard_plan_fact_dates = _renderers.dashboard_plan_fact_dates
     dashboard_deviation_by_tasks_current_month = _renderers.dashboard_deviation_by_tasks_current_month
     dashboard_dynamics_of_reasons = _renderers.dashboard_dynamics_of_reasons
@@ -217,7 +214,6 @@ def _get_dashboards() -> Dict[str, Callable]:
         # Сроки: каноническое имя «Причины отклонений» + обратная совместимость
         "Причины отклонений": dashboard_deviations_combined,
         "Динамика отклонений": dashboard_deviations_combined,
-        "Динамика отклонений по месяцам": dashboard_dynamics_of_deviations,
         "Динамика причин отклонений": dashboard_deviations_combined,
         "Контрольные точки": dashboard_control_points,
         "График проекта": dashboard_project_schedule_chart,
@@ -256,7 +252,7 @@ def _get_dashboards() -> Dict[str, Callable]:
 # Ленивая загрузка, чтобы при импорте dashboards не тянуть project_visualization_app
 # Увеличьте версию при изменении реестра отчётов — иначе долгоживущий процесс Streamlit
 # может держать устаревший словарь в памяти.
-_DASHBOARDS_REGISTRY_VERSION = 10
+_DASHBOARDS_REGISTRY_VERSION = 12
 _dashboards_cache: Dict[str, Callable] = {}
 _dashboards_cache_version: int = 0
 

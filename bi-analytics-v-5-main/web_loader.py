@@ -926,7 +926,7 @@ def load_all_from_web() -> Dict:
         cur.close()
         conn.close()
 
-    # ── Все снимки до дедупликации — для отчёта «Динамика отклонений по месяцам» (ось по дате файла) ──
+    # ── Все снимки до дедупликации — для «Причины отклонений» → вкладка «Динамика по периодам» (ось по дате файла) ──
     if st.session_state.get("project_data") is not None:
         st.session_state["project_data_all_snapshots"] = st.session_state.project_data.copy()
         st.session_state.project_data = _deduplicate_project_snapshots(

@@ -489,6 +489,211 @@ def render_export_buttons(
                 key=f"{key_prefix}_{fmt}",
             )
 
+
+def _deviations_filter_month_string_to_period(month_str):
+    try:
+        parts = str(month_str).split()
+        if len(parts) == 2:
+            month_name, year = parts
+            month_num = None
+            for num, russian_name in RUSSIAN_MONTHS.items():
+                if russian_name == month_name:
+                    month_num = num
+                    break
+            if month_num:
+                return pd.Period(f"{year}-{month_num:02d}", freq="M")
+    except Exception:
+        pass
+    return None
+
+
+def _render_deviations_combined_shared_filters(df):
+    st.caption(
+        "Общие фильтры для всех вкладок: проект, этап, причина, функциональный блок, строение (если есть в данных), "
+        "период по месяцу плана. Переключение вкладок не сбрасывает выбранные значения."
+    )
+    st.markdown(
+        """
+        <style>
+        div[data-testid="column"] {
+            flex: 1 1 0%;
+            min-width: 0;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    building_col = _find_column_by_keywords(
+        df, ("building", "строение", "лот", "lot", "bldg")
+    )
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        if "project name" in df.columns:
+            projects = ["Все"] + sorted(df["project name"].dropna().unique().tolist())
+            st.selectbox("Проект", projects, key="devcombo_project")
+    with col2:
+        if "section" in df.columns:
+            sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
+            st.selectbox("Этап", sections, key="devcombo_section")
+    with col3:
+        if "reason of deviation" in df.columns:
+            reasons = ["Все"] + sorted(
+                df["reason of deviation"].dropna().unique().tolist()
+            )
+            st.selectbox("Причина", reasons, key="devcombo_reason")
+    with col4:
+        if "block" in df.columns:
+            blocks = ["Все"] + sorted(
+                df["block"].dropna().astype(str).str.strip().unique().tolist()
+            )
+            st.selectbox("Функциональный блок", blocks, key="devcombo_block")
+
+    available_months = []
+    if "plan_month" in df.columns:
+        unique_months = df["plan_month"].dropna().unique()
+        if len(unique_months) > 0:
+            month_dict = {format_period_ru(m): m for m in unique_months}
+            available_months = sorted(month_dict.keys(), key=lambda x: month_dict[x])
+    elif "plan end" in df.columns:
+        mask = df["plan end"].notna()
+        if mask.any():
+            temp_months = df.loc[mask, "plan end"].dt.to_period("M").unique()
+            if len(temp_months) > 0:
+                month_dict = {format_period_ru(m): m for m in temp_months}
+                available_months = sorted(month_dict.keys(), key=lambda x: month_dict[x])
+
+    r2a, r2b, r2c = st.columns(3)
+    with r2a:
+        if building_col:
+            bvals = ["Все"] + sorted(
+                df[building_col].dropna().astype(str).str.strip().unique().tolist()
+            )
+            st.selectbox("Строение", bvals, key="devcombo_building")
+    with r2b:
+        if len(available_months) > 0:
+            months_opts = ["Все"] + available_months
+            st.selectbox("Период с", months_opts, key="devcombo_period_from")
+        else:
+            st.selectbox("Период с", ["Все"], key="devcombo_period_from", disabled=True)
+    with r2c:
+        if len(available_months) > 0:
+            months_opts = ["Все"] + available_months
+            st.selectbox("Период по", months_opts, key="devcombo_period_to")
+        else:
+            st.selectbox("Период по", ["Все"], key="devcombo_period_to", disabled=True)
+
+    filtered_df = df.copy()
+    selected_project = (
+        st.session_state.get("devcombo_project", "Все")
+        if "project name" in filtered_df.columns
+        else "Все"
+    )
+    selected_section = (
+        st.session_state.get("devcombo_section", "Все")
+        if "section" in filtered_df.columns
+        else "Все"
+    )
+    selected_reason = (
+        st.session_state.get("devcombo_reason", "Все")
+        if "reason of deviation" in filtered_df.columns
+        else "Все"
+    )
+    selected_block = (
+        st.session_state.get("devcombo_block", "Все")
+        if "block" in filtered_df.columns
+        else "Все"
+    )
+    selected_building = (
+        st.session_state.get("devcombo_building", "Все")
+        if building_col and building_col in df.columns
+        else "Все"
+    )
+    period_from = (
+        st.session_state.get("devcombo_period_from", "Все")
+        if len(available_months) > 0
+        else "Все"
+    )
+    period_to = (
+        st.session_state.get("devcombo_period_to", "Все")
+        if len(available_months) > 0
+        else "Все"
+    )
+
+    if selected_project != "Все" and "project name" in filtered_df.columns:
+        filtered_df = filtered_df[
+            filtered_df["project name"].astype(str).str.strip()
+            == str(selected_project).strip()
+        ]
+    if selected_reason != "Все" and "reason of deviation" in filtered_df.columns:
+        filtered_df = filtered_df[
+            filtered_df["reason of deviation"].astype(str).str.strip()
+            == str(selected_reason).strip()
+        ]
+    if selected_section != "Все" and "section" in filtered_df.columns:
+        filtered_df = filtered_df[
+            filtered_df["section"].astype(str).str.strip()
+            == str(selected_section).strip()
+        ]
+    if selected_block != "Все" and "block" in filtered_df.columns:
+        filtered_df = filtered_df[
+            filtered_df["block"].astype(str).str.strip() == str(selected_block).strip()
+        ]
+    if (
+        selected_building != "Все"
+        and building_col
+        and building_col in filtered_df.columns
+    ):
+        filtered_df = filtered_df[
+            filtered_df[building_col].astype(str).str.strip()
+            == str(selected_building).strip()
+        ]
+
+    has_plan_month_col = "plan_month" in filtered_df.columns
+    if has_plan_month_col and (period_from != "Все" or period_to != "Все"):
+        pf = (
+            _deviations_filter_month_string_to_period(period_from)
+            if period_from != "Все"
+            else None
+        )
+        pt = (
+            _deviations_filter_month_string_to_period(period_to)
+            if period_to != "Все"
+            else None
+        )
+        if pf is not None and pt is not None and pf > pt:
+            pf, pt = pt, pf
+        if pf is not None:
+            filtered_df = filtered_df[filtered_df["plan_month"] >= pf]
+        if pt is not None:
+            filtered_df = filtered_df[filtered_df["plan_month"] <= pt]
+    elif not has_plan_month_col and "plan end" in filtered_df.columns:
+        pf = (
+            _deviations_filter_month_string_to_period(period_from)
+            if period_from != "Все"
+            else None
+        )
+        pt = (
+            _deviations_filter_month_string_to_period(period_to)
+            if period_to != "Все"
+            else None
+        )
+        if pf is not None or pt is not None:
+            if pf is not None and pt is not None and pf > pt:
+                pf, pt = pt, pf
+            _pe = pd.to_datetime(
+                filtered_df["plan end"], errors="coerce", dayfirst=True
+            )
+            pm = _pe.dt.to_period("M")
+            ok = pd.Series(True, index=filtered_df.index)
+            if pf is not None:
+                ok &= pm >= pf
+            if pt is not None:
+                ok &= pm <= pt
+            filtered_df = filtered_df[ok]
+
+    return filtered_df, building_col
+
+
 def dashboard_deviations_combined(df):
 
     """Единый отчёт по отклонениям с табами (макет правок: общий заголовок «Причины отклонений»)."""
@@ -499,19 +704,21 @@ def dashboard_deviations_combined(df):
         return
 
     st.header("Причины отклонений")
-
+    filtered_shared, building_col = _render_deviations_combined_shared_filters(df)
     tab_by_month, tab_dynamics, tab_reasons = st.tabs(
         ["Доли причин по проекту", "Динамика по периодам", "Динамика причин"]
     )
     with tab_by_month:
-        dashboard_reasons_of_deviation(df)
+        dashboard_reasons_of_deviation(
+            filtered_shared, hide_shared_filters=True, building_col=building_col
+        )
     with tab_dynamics:
-        dashboard_dynamics_of_deviations(df)
+        dashboard_dynamics_of_deviations(filtered_shared, hide_shared_filters=True)
     with tab_reasons:
-        dashboard_dynamics_of_reasons(df)
+        dashboard_dynamics_of_reasons(filtered_shared, hide_shared_filters=True)
 
 
-def dashboard_reasons_of_deviation(df):
+def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=None):
     # Проверка на None или пустой DataFrame
     if df is None:
         st.warning(
@@ -526,239 +733,243 @@ def dashboard_reasons_of_deviation(df):
         )
         return
 
-    st.header("Доли причин отклонений по проекту")
-    st.caption(
-        "По умолчанию — все проекты и доступные периоды. Временной ряд — отчёт "
-        "«Динамика отклонений по месяцам» или объединённый экран «Причины отклонений», вкладка «Динамика по периодам»."
-    )
+    # При hide_shared_filters фильтры задаются в общем блоке; локальные selectbox не рисуются — задаём значения по умолчанию.
+    selected_project = "Все"
 
-    # Add CSS to force filters in one row
-    st.markdown(
-        """
-        <style>
-        div[data-testid="column"] {
-            flex: 1 1 0%;
-            min-width: 0;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    if building_col is None:
+        building_col = _find_column_by_keywords(
+            df, ("building", "строение", "лот", "lot", "bldg")
+        )
 
-    building_col = _find_column_by_keywords(
-        df, ("building", "строение", "лот", "lot", "bldg")
-    )
+    if not hide_shared_filters:
+        st.header("Доли причин отклонений по проекту")
+        st.caption(
+            "По умолчанию — все проекты и доступные периоды. Фильтры совпадают с объединённым отчётом "
+            "«Причины отклонений»; динамику по периодам см. вкладку «Динамика по периодам» в том же отчёте."
+        )
 
-    # Фильтры: проект, этап, причина, функциональный блок
-    col1, col2, col3, col4 = st.columns(4)
+        st.markdown(
+            """
+            <style>
+            div[data-testid="column"] {
+                flex: 1 1 0%;
+                min-width: 0;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
 
-    with col1:
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            try:
+                has_project_column = "project name" in df.columns
+            except (AttributeError, TypeError):
+                has_project_column = False
+
+            if has_project_column:
+                projects = ["Все"] + sorted(df["project name"].dropna().unique().tolist())
+                selected_project = st.selectbox("Проект", projects, key="reason_project")
+            else:
+                selected_project = "Все"
+
+        with col2:
+            try:
+                has_section_column = "section" in df.columns
+            except (AttributeError, TypeError):
+                has_section_column = False
+
+            if has_section_column:
+                sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
+                selected_section = st.selectbox("Этап", sections, key="reason_section")
+            else:
+                selected_section = "Все"
+
+        with col3:
+            try:
+                has_reason_column = "reason of deviation" in df.columns
+            except (AttributeError, TypeError):
+                has_reason_column = False
+
+            if has_reason_column:
+                reasons = ["Все"] + sorted(
+                    df["reason of deviation"].dropna().unique().tolist()
+                )
+                selected_reason = st.selectbox("Причина", reasons, key="reason_filter")
+            else:
+                selected_reason = "Все"
+
+        with col4:
+            try:
+                has_block_column = "block" in df.columns
+            except (AttributeError, TypeError):
+                has_block_column = False
+
+            if has_block_column:
+                blocks = ["Все"] + sorted(df["block"].dropna().astype(str).str.strip().unique().tolist())
+                selected_block = st.selectbox("Функциональный блок", blocks, key="reason_block")
+            else:
+                selected_block = "Все"
+
+        available_months = []
         try:
-            has_project_column = "project name" in df.columns
+            has_plan_month_column = "plan_month" in df.columns
         except (AttributeError, TypeError):
-            has_project_column = False
+            has_plan_month_column = False
 
-        if has_project_column:
-            projects = ["Все"] + sorted(df["project name"].dropna().unique().tolist())
-            selected_project = st.selectbox("Проект", projects, key="reason_project")
+        if has_plan_month_column:
+            unique_months = df["plan_month"].dropna().unique()
+            if len(unique_months) > 0:
+                month_dict = {format_period_ru(m): m for m in unique_months}
+                available_months = sorted(
+                    month_dict.keys(), key=lambda x: month_dict[x]
+                )
         else:
-            selected_project = "Все"
+            try:
+                has_plan_end_column = "plan end" in df.columns
+            except (AttributeError, TypeError):
+                has_plan_end_column = False
 
-    with col2:
+            if has_plan_end_column:
+                mask = df["plan end"].notna()
+                if mask.any():
+                    temp_months = df.loc[mask, "plan end"].dt.to_period("M").unique()
+                    if len(temp_months) > 0:
+                        month_dict = {format_period_ru(m): m for m in temp_months}
+                        available_months = sorted(
+                            month_dict.keys(), key=lambda x: month_dict[x]
+                        )
+
+        r2a, r2b, r2c = st.columns(3)
+        with r2a:
+            if building_col:
+                bvals = ["Все"] + sorted(
+                    df[building_col].dropna().astype(str).str.strip().unique().tolist()
+                )
+                selected_building = st.selectbox(
+                    "Строение", bvals, key="reason_building"
+                )
+            else:
+                selected_building = "Все"
+        with r2b:
+            if len(available_months) > 0:
+                months_opts = ["Все"] + available_months
+                period_from = st.selectbox(
+                    "Период с", months_opts, key="reason_period_from"
+                )
+            else:
+                period_from = "Все"
+                st.selectbox("Период с", ["Все"], key="reason_period_from", disabled=True)
+        with r2c:
+            if len(available_months) > 0:
+                months_opts = ["Все"] + available_months
+                period_to = st.selectbox(
+                    "Период по", months_opts, key="reason_period_to"
+                )
+            else:
+                period_to = "Все"
+                st.selectbox("Период по", ["Все"], key="reason_period_to", disabled=True)
+
+        filtered_df = df.copy()
+
         try:
-            has_section_column = "section" in df.columns
+            has_project_col = "project name" in filtered_df.columns
         except (AttributeError, TypeError):
-            has_section_column = False
+            has_project_col = False
 
-        if has_section_column:
-            sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
-            selected_section = st.selectbox("Этап", sections, key="reason_section")
-        else:
-            selected_section = "Все"
+        if selected_project != "Все" and has_project_col:
+            filtered_df = filtered_df[
+                filtered_df["project name"].astype(str).str.strip()
+                == str(selected_project).strip()
+            ]
 
-    with col3:
         try:
-            has_reason_column = "reason of deviation" in df.columns
+            has_reason_col = "reason of deviation" in filtered_df.columns
         except (AttributeError, TypeError):
-            has_reason_column = False
+            has_reason_col = False
 
-        if has_reason_column:
-            reasons = ["Все"] + sorted(
-                df["reason of deviation"].dropna().unique().tolist()
-            )
-            selected_reason = st.selectbox("Причина", reasons, key="reason_filter")
-        else:
-            selected_reason = "Все"
+        if selected_reason != "Все" and has_reason_col:
+            filtered_df = filtered_df[
+                filtered_df["reason of deviation"].astype(str).str.strip()
+                == str(selected_reason).strip()
+            ]
 
-    with col4:
         try:
-            has_block_column = "block" in df.columns
+            has_section_col = "section" in filtered_df.columns
         except (AttributeError, TypeError):
-            has_block_column = False
+            has_section_col = False
 
-        if has_block_column:
-            blocks = ["Все"] + sorted(df["block"].dropna().astype(str).str.strip().unique().tolist())
-            selected_block = st.selectbox("Функциональный блок", blocks, key="reason_block")
-        else:
-            selected_block = "Все"
+        if selected_section != "Все" and has_section_col:
+            filtered_df = filtered_df[
+                filtered_df["section"].astype(str).str.strip()
+                == str(selected_section).strip()
+            ]
 
-    # Период (с / по), строение — макет правок
-    available_months = []
-    try:
-        has_plan_month_column = "plan_month" in df.columns
-    except (AttributeError, TypeError):
-        has_plan_month_column = False
+        if selected_block != "Все" and "block" in filtered_df.columns:
+            filtered_df = filtered_df[
+                filtered_df["block"].astype(str).str.strip() == str(selected_block).strip()
+            ]
 
-    if has_plan_month_column:
-        unique_months = df["plan_month"].dropna().unique()
-        if len(unique_months) > 0:
-            month_dict = {format_period_ru(m): m for m in unique_months}
-            available_months = sorted(
-                month_dict.keys(), key=lambda x: month_dict[x]
-            )
-    else:
+        if (
+            selected_building != "Все"
+            and building_col
+            and building_col in filtered_df.columns
+        ):
+            filtered_df = filtered_df[
+                filtered_df[building_col].astype(str).str.strip()
+                == str(selected_building).strip()
+            ]
+
         try:
-            has_plan_end_column = "plan end" in df.columns
+            has_plan_month_col = "plan_month" in filtered_df.columns
         except (AttributeError, TypeError):
-            has_plan_end_column = False
+            has_plan_month_col = False
 
-        if has_plan_end_column:
-            mask = df["plan end"].notna()
-            if mask.any():
-                temp_months = df.loc[mask, "plan end"].dt.to_period("M").unique()
-                if len(temp_months) > 0:
-                    month_dict = {format_period_ru(m): m for m in temp_months}
-                    available_months = sorted(
-                        month_dict.keys(), key=lambda x: month_dict[x]
-                    )
-
-    r2a, r2b, r2c = st.columns(3)
-    with r2a:
-        if building_col:
-            bvals = ["Все"] + sorted(
-                df[building_col].dropna().astype(str).str.strip().unique().tolist()
+        if has_plan_month_col and (period_from != "Все" or period_to != "Все"):
+            pf = (
+                _deviations_filter_month_string_to_period(period_from)
+                if period_from != "Все"
+                else None
             )
-            selected_building = st.selectbox(
-                "Строение", bvals, key="reason_building"
+            pt = (
+                _deviations_filter_month_string_to_period(period_to)
+                if period_to != "Все"
+                else None
             )
-        else:
-            selected_building = "Все"
-    with r2b:
-        if len(available_months) > 0:
-            months_opts = ["Все"] + available_months
-            period_from = st.selectbox(
-                "Период с", months_opts, key="reason_period_from"
-            )
-        else:
-            period_from = "Все"
-            st.selectbox("Период с", ["Все"], key="reason_period_from", disabled=True)
-    with r2c:
-        if len(available_months) > 0:
-            months_opts = ["Все"] + available_months
-            period_to = st.selectbox(
-                "Период по", months_opts, key="reason_period_to"
-            )
-        else:
-            period_to = "Все"
-            st.selectbox("Период по", ["Все"], key="reason_period_to", disabled=True)
-
-    # Apply all filters - fix filtering logic
-    filtered_df = df.copy()
-
-    try:
-        has_project_col = "project name" in filtered_df.columns
-    except (AttributeError, TypeError):
-        has_project_col = False
-
-    if selected_project != "Все" and has_project_col:
-        filtered_df = filtered_df[
-            filtered_df["project name"].astype(str).str.strip()
-            == str(selected_project).strip()
-        ]
-
-    try:
-        has_reason_col = "reason of deviation" in filtered_df.columns
-    except (AttributeError, TypeError):
-        has_reason_col = False
-
-    if selected_reason != "Все" and has_reason_col:
-        filtered_df = filtered_df[
-            filtered_df["reason of deviation"].astype(str).str.strip()
-            == str(selected_reason).strip()
-        ]
-
-    try:
-        has_section_col = "section" in filtered_df.columns
-    except (AttributeError, TypeError):
-        has_section_col = False
-
-    if selected_section != "Все" and has_section_col:
-        filtered_df = filtered_df[
-            filtered_df["section"].astype(str).str.strip()
-            == str(selected_section).strip()
-        ]
-
-    if selected_block != "Все" and "block" in filtered_df.columns:
-        filtered_df = filtered_df[
-            filtered_df["block"].astype(str).str.strip() == str(selected_block).strip()
-        ]
-
-    if (
-        selected_building != "Все"
-        and building_col
-        and building_col in filtered_df.columns
-    ):
-        filtered_df = filtered_df[
-            filtered_df[building_col].astype(str).str.strip()
-            == str(selected_building).strip()
-        ]
-
-    try:
-        has_plan_month_col = "plan_month" in filtered_df.columns
-    except (AttributeError, TypeError):
-        has_plan_month_col = False
-
-    def _month_str_to_period(month_str):
-        try:
-            parts = str(month_str).split()
-            if len(parts) == 2:
-                month_name, year = parts
-                month_num = None
-                for num, russian_name in RUSSIAN_MONTHS.items():
-                    if russian_name == month_name:
-                        month_num = num
-                        break
-                if month_num:
-                    return pd.Period(f"{year}-{month_num:02d}", freq="M")
-        except Exception:
-            pass
-        return None
-
-    if has_plan_month_col and (period_from != "Все" or period_to != "Все"):
-        pf = _month_str_to_period(period_from) if period_from != "Все" else None
-        pt = _month_str_to_period(period_to) if period_to != "Все" else None
-        if pf is not None and pt is not None and pf > pt:
-            pf, pt = pt, pf
-        if pf is not None:
-            filtered_df = filtered_df[filtered_df["plan_month"] >= pf]
-        if pt is not None:
-            filtered_df = filtered_df[filtered_df["plan_month"] <= pt]
-    elif not has_plan_month_col and "plan end" in filtered_df.columns:
-        pf = _month_str_to_period(period_from) if period_from != "Все" else None
-        pt = _month_str_to_period(period_to) if period_to != "Все" else None
-        if pf is not None or pt is not None:
             if pf is not None and pt is not None and pf > pt:
                 pf, pt = pt, pf
-            _pe = pd.to_datetime(
-                filtered_df["plan end"], errors="coerce", dayfirst=True
-            )
-            pm = _pe.dt.to_period("M")
-            ok = pd.Series(True, index=filtered_df.index)
             if pf is not None:
-                ok &= pm >= pf
+                filtered_df = filtered_df[filtered_df["plan_month"] >= pf]
             if pt is not None:
-                ok &= pm <= pt
-            filtered_df = filtered_df[ok]
+                filtered_df = filtered_df[filtered_df["plan_month"] <= pt]
+        elif not has_plan_month_col and "plan end" in filtered_df.columns:
+            pf = (
+                _deviations_filter_month_string_to_period(period_from)
+                if period_from != "Все"
+                else None
+            )
+            pt = (
+                _deviations_filter_month_string_to_period(period_to)
+                if period_to != "Все"
+                else None
+            )
+            if pf is not None or pt is not None:
+                if pf is not None and pt is not None and pf > pt:
+                    pf, pt = pt, pf
+                _pe = pd.to_datetime(
+                    filtered_df["plan end"], errors="coerce", dayfirst=True
+                )
+                pm = _pe.dt.to_period("M")
+                ok = pd.Series(True, index=filtered_df.index)
+                if pf is not None:
+                    ok &= pm >= pf
+                if pt is not None:
+                    ok &= pm <= pt
+                filtered_df = filtered_df[ok]
+    else:
+        st.subheader("Доли причин отклонений по проекту")
+        filtered_df = df.copy()
 
     # Filter tasks relevant for "dynamics of deviations": deviation=1/True OR reason of deviation filled
     try:
@@ -852,8 +1063,9 @@ def dashboard_reasons_of_deviation(df):
             textposition="outside", textfont=dict(size=14, color="white")
         )
         fig = apply_chart_background(fig)
+        _ymax = float(reason_counts["Количество"].max() or 0)
         fig.update_layout(
-            yaxis=dict(range=[0, reason_counts["Количество"].max() * 1.2], title="Количество")
+            yaxis=dict(range=[0, max(1.0, _ymax * 1.2)], title="Количество")
         )
         n = len(reason_counts)
         if n > 6:
@@ -1091,47 +1303,48 @@ def dashboard_reasons_of_deviation(df):
         )
 
     st.caption("Полная выгрузка по текущим фильтрам")
-    display_cols = [
-        "project name",
-        "task name",
-        "section",
-        "deviation in days",
-        "reason of deviation",
-    ]
+    display_cols = []
+    for c in ("project name", "task name", "section"):
+        if c in filtered_df.columns:
+            display_cols.append(c)
+    if "block" in filtered_df.columns:
+        display_cols.append("block")
+    if building_col and building_col in filtered_df.columns:
+        display_cols.append(building_col)
+    if "reason of deviation" in filtered_df.columns:
+        display_cols.append("reason of deviation")
+    for c in ("plan start", "plan end", "base start", "base end"):
+        if c in filtered_df.columns:
+            display_cols.append(c)
+    if "deviation in days" in filtered_df.columns:
+        display_cols.append("deviation in days")
+    if "snapshot_date" in filtered_df.columns:
+        display_cols.append("snapshot_date")
 
-    try:
-        has_plan_end_col = "plan end" in filtered_df.columns
-    except (AttributeError, TypeError):
-        has_plan_end_col = False
-
-    if has_plan_end_col:
-        display_cols.insert(-1, "plan end")
-
-    try:
-        has_base_end_col = "base end" in filtered_df.columns
-    except (AttributeError, TypeError):
-        has_base_end_col = False
-
-    if has_base_end_col:
-        display_cols.insert(-1, "base end")
-
-    available_cols = [col for col in display_cols if col in filtered_df.columns]
-    display_df = filtered_df[available_cols].copy()
-    # Русские названия колонок
+    display_df = filtered_df[display_cols].copy() if display_cols else filtered_df.copy()
     col_ru = {
         "project name": "Проект",
         "task name": "Задача",
-        "section": "Раздел",
-        "deviation in days": "Отклонений в днях",
-        "reason of deviation": "Причина отклонений",
-        "plan end": "Конец план",
-        "base end": "Конец факт",
+        "section": "Этап",
+        "block": "Функциональный блок",
+        "reason of deviation": "Причина отклонения",
+        "plan start": "План: начало",
+        "plan end": "План: окончание",
+        "base start": "Факт: начало",
+        "base end": "Факт: окончание",
+        "deviation in days": "Отклонение, дней",
+        "snapshot_date": "Дата снимка",
     }
-    display_df = display_df.rename(columns={c: col_ru[c] for c in display_df.columns if c in col_ru})
-    if "Отклонений в днях" in display_df.columns:
-        display_df["Отклонений в днях"] = display_df["Отклонений в днях"].apply(
+    if building_col and building_col in display_df.columns:
+        col_ru[building_col] = "Строение"
+    display_df = display_df.rename(
+        columns={c: col_ru[c] for c in display_df.columns if c in col_ru}
+    )
+    if "Отклонение, дней" in display_df.columns:
+        display_df["Отклонение, дней"] = display_df["Отклонение, дней"].apply(
             lambda x: int(round(float(x), 0)) if pd.notna(x) and str(x).strip() != "" else x
         )
+
     def _date_only(val):
         if pd.isna(val):
             return "Н/Д"
@@ -1142,9 +1355,18 @@ def dashboard_reasons_of_deviation(df):
             return dt.strftime("%d.%m.%Y") if pd.notna(dt) else str(val)
         except Exception:
             return str(val)
-    for date_col in ("Конец план", "Конец факт"):
+
+    for date_col in (
+        "План: начало",
+        "План: окончание",
+        "Факт: начало",
+        "Факт: окончание",
+        "Дата снимка",
+    ):
         if date_col in display_df.columns:
-            display_df[date_col] = display_df[date_col].apply(_date_only)
+            display_df[date_col] = pd.to_datetime(
+                display_df[date_col], errors="coerce", dayfirst=True
+            ).apply(_date_only)
     st.caption(f"Записей: {len(display_df)}")
     _render_html_table(display_df)
     _csv = display_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
@@ -1152,13 +1374,26 @@ def dashboard_reasons_of_deviation(df):
 
 
 # ==================== DASHBOARD 2: Dynamics of Deviations ====================
-def dashboard_dynamics_of_deviations(df):
+def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
 
-    st.header("Динамика отклонений по месяцам")
-    st.caption(
-        "По правкам: ось времени — по **дате окончания плана** (plan end) или по **дате снимка файла** "
-        "(несколько выгрузок MSP в web/; полный набор снимков хранится до схлопывания по проекту)."
-    )
+    if df is None or not hasattr(df, "columns"):
+        st.warning(
+            "Нет данных для отображения. Пожалуйста, загрузите данные проекта."
+        )
+        return
+
+    if hide_shared_filters:
+        st.subheader("Динамика отклонений по периодам")
+        st.caption(
+            "Проект, этап, причина, блок, строение и период по плану — **общие фильтры выше**. "
+            "Здесь задаются ось времени (plan end или дата снимка) и шаг группировки."
+        )
+    else:
+        st.header("Динамика отклонений по месяцам")
+        st.caption(
+            "По правкам: ось времени — по **дате окончания плана** (plan end) или по **дате снимка файла** "
+            "(несколько выгрузок MSP в web/; полный набор снимков хранится до схлопывания по проекту)."
+        )
 
     _time_axis = st.radio(
         "Ось времени",
@@ -1182,54 +1417,70 @@ def dashboard_dynamics_of_deviations(df):
             source_df = df
             _time_axis = "По дате окончания плана (plan end)"
 
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        period_type = st.selectbox(
-            "Группировать по",
-            ["День", "Месяц", "Квартал", "Год"],
-            key="dynamics_period",
-        )
-        period_map = {
-            "День": "Day",
-            "Месяц": "Month",
-            "Квартал": "Quarter",
-            "Год": "Year",
-        }
-        period_type_en = period_map.get(period_type, "Month")
-
-    with col2:
-        if "project name" in source_df.columns:
-            projects = ["Все"] + sorted(source_df["project name"].dropna().unique().tolist())
-            selected_project = st.selectbox(
-                "Фильтр по проекту", projects, key="dynamics_project"
+    if hide_shared_filters:
+        col1, = st.columns(1)
+        with col1:
+            period_type = st.selectbox(
+                "Группировать по",
+                ["День", "Месяц", "Квартал", "Год"],
+                key="dynamics_period",
             )
-        else:
-            selected_project = "Все"
+            period_map = {
+                "День": "Day",
+                "Месяц": "Month",
+                "Квартал": "Quarter",
+                "Год": "Year",
+            }
+            period_type_en = period_map.get(period_type, "Month")
+    else:
+        col1, col2, col3 = st.columns(3)
 
-    with col3:
-        if "reason of deviation" in source_df.columns:
-            reasons = ["Все"] + sorted(
-                source_df["reason of deviation"].dropna().unique().tolist()
+        with col1:
+            period_type = st.selectbox(
+                "Группировать по",
+                ["День", "Месяц", "Квартал", "Год"],
+                key="dynamics_period",
             )
-            selected_reason = st.selectbox(
-                "Фильтр по причине", reasons, key="dynamics_reason"
-            )
-        else:
-            selected_reason = "Все"
+            period_map = {
+                "День": "Day",
+                "Месяц": "Month",
+                "Квартал": "Quarter",
+                "Год": "Year",
+            }
+            period_type_en = period_map.get(period_type, "Month")
 
-    # Apply filters
+        with col2:
+            if "project name" in source_df.columns:
+                projects = ["Все"] + sorted(source_df["project name"].dropna().unique().tolist())
+                selected_project = st.selectbox(
+                    "Проект", projects, key="dynamics_project"
+                )
+            else:
+                selected_project = "Все"
+
+        with col3:
+            if "reason of deviation" in source_df.columns:
+                reasons = ["Все"] + sorted(
+                    source_df["reason of deviation"].dropna().unique().tolist()
+                )
+                selected_reason = st.selectbox(
+                    "Причина", reasons, key="dynamics_reason"
+                )
+            else:
+                selected_reason = "Все"
+
     filtered_df = source_df.copy()
-    if selected_project != "Все" and "project name" in filtered_df.columns:
-        filtered_df = filtered_df[
-            filtered_df["project name"].astype(str).str.strip()
-            == str(selected_project).strip()
-        ]
-    if selected_reason != "Все" and "reason of deviation" in df.columns:
-        filtered_df = filtered_df[
-            filtered_df["reason of deviation"].astype(str).str.strip()
-            == str(selected_reason).strip()
-        ]
+    if not hide_shared_filters:
+        if selected_project != "Все" and "project name" in filtered_df.columns:
+            filtered_df = filtered_df[
+                filtered_df["project name"].astype(str).str.strip()
+                == str(selected_project).strip()
+            ]
+        if selected_reason != "Все" and "reason of deviation" in filtered_df.columns:
+            filtered_df = filtered_df[
+                filtered_df["reason of deviation"].astype(str).str.strip()
+                == str(selected_reason).strip()
+            ]
 
     # Filter tasks: deviation=1/True OR reason of deviation filled
     if "deviation" in filtered_df.columns:
@@ -1403,10 +1654,14 @@ def dashboard_dynamics_of_deviations(df):
             )
             grouped_data["Всего дней отклонений"] = 0
 
-        # Calculate average: sum / count of tasks
+        # Calculate average: sum / count of tasks (деление на 0 — в 0 дней задач)
+        _cnt = grouped_data["Количество задач"].replace(0, np.nan)
         grouped_data["Среднее дней отклонений"] = (
-            grouped_data["Всего дней отклонений"] / grouped_data["Количество задач"]
+            grouped_data["Всего дней отклонений"] / _cnt
         ).round(0)
+        grouped_data["Среднее дней отклонений"] = grouped_data[
+            "Среднее дней отклонений"
+        ].fillna(0)
     else:
         grouped_data = grouped_data.rename(columns={"deviation": "Количество задач"})
         grouped_data["Всего дней отклонений"] = 0
@@ -3707,7 +3962,7 @@ def dashboard_deviation_by_tasks_current_month(df):
 
 
 # ==================== DASHBOARD 5: Dynamics of Reasons by Month ====================
-def dashboard_dynamics_of_reasons(df):
+def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
     # Проверка на None или пустой DataFrame
     if df is None:
         st.warning(
@@ -3722,62 +3977,79 @@ def dashboard_dynamics_of_reasons(df):
         )
         return
 
-    st.header("Динамика причин отклонений")
+    # При hide_shared_filters проект/этап/причина задаются общими фильтрами выше; без значений по умолчанию — NameError в ветках «По месяцам».
+    selected_project = "Все"
+    selected_reason = "Все"
+    selected_section = "Все"
 
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        period_type = st.selectbox(
-            "Группировать по", ["Месяц", "Квартал", "Год"], key="reasons_period"
+    if hide_shared_filters:
+        st.subheader("Динамика причин отклонений")
+        st.caption(
+            "Проект, этап, причина, функциональный блок, строение и период по плану — **общие фильтры выше**."
         )
-        period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
-        period_type_en = period_map.get(period_type, "Month")
-
-    with col2:
-        try:
-            has_reason_column = "reason of deviation" in df.columns
-        except (AttributeError, TypeError):
-            has_reason_column = False
-
-        if has_reason_column:
-            reasons = ["Все"] + sorted(
-                df["reason of deviation"].dropna().unique().tolist()
+        col1, = st.columns(1)
+        with col1:
+            period_type = st.selectbox(
+                "Группировать по", ["Месяц", "Квартал", "Год"], key="reasons_period"
             )
-            selected_reason = st.selectbox(
-                "Фильтр по причине", reasons, key="reasons_reason"
+            period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
+            period_type_en = period_map.get(period_type, "Month")
+    else:
+        st.header("Динамика причин отклонений")
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            period_type = st.selectbox(
+                "Группировать по", ["Месяц", "Квартал", "Год"], key="reasons_period"
             )
-        else:
-            selected_reason = "Все"
+            period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
+            period_type_en = period_map.get(period_type, "Month")
 
-    with col3:
-        try:
-            has_project_column = "project name" in df.columns
-        except (AttributeError, TypeError):
-            has_project_column = False
+        with col2:
+            try:
+                has_reason_column = "reason of deviation" in df.columns
+            except (AttributeError, TypeError):
+                has_reason_column = False
 
-        if has_project_column:
-            projects = ["Все"] + sorted(df["project name"].dropna().unique().tolist())
-            selected_project = st.selectbox(
-                "Фильтр по проекту", projects, key="reasons_project"
-            )
-        else:
-            selected_project = "Все"
+            if has_reason_column:
+                reasons = ["Все"] + sorted(
+                    df["reason of deviation"].dropna().unique().tolist()
+                )
+                selected_reason = st.selectbox(
+                    "Причина", reasons, key="reasons_reason"
+                )
+            else:
+                selected_reason = "Все"
 
-    with col4:
-        try:
-            has_section_column = "section" in df.columns
-        except (AttributeError, TypeError):
-            has_section_column = False
+        with col3:
+            try:
+                has_project_column = "project name" in df.columns
+            except (AttributeError, TypeError):
+                has_project_column = False
 
-        if has_section_column:
-            sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
-            selected_section = st.selectbox(
-                "Фильтр по этапу", sections, key="reasons_section"
-            )
-        else:
-            selected_section = "Все"
+            if has_project_column:
+                projects = ["Все"] + sorted(df["project name"].dropna().unique().tolist())
+                selected_project = st.selectbox(
+                    "Проект", projects, key="reasons_project"
+                )
+            else:
+                selected_project = "Все"
 
-    # View type selector и чекбокс линии тренда (для вида «По месяцам»)
+        with col4:
+            try:
+                has_section_column = "section" in df.columns
+            except (AttributeError, TypeError):
+                has_section_column = False
+
+            if has_section_column:
+                sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
+                selected_section = st.selectbox(
+                    "Этап", sections, key="reasons_section"
+                )
+            else:
+                selected_section = "Все"
+
     view_type = st.selectbox(
         "Вид отображения", ["По причинам", "По месяцам"], key="reasons_view_type"
     )
@@ -3788,41 +4060,41 @@ def dashboard_dynamics_of_reasons(df):
         help="Применяется к графику «По месяцам»",
     )
 
-    # Apply filters - fix filtering
     filtered_df = df.copy()
 
-    try:
-        has_reason_col = "reason of deviation" in df.columns
-    except (AttributeError, TypeError):
-        has_reason_col = False
+    if not hide_shared_filters:
+        try:
+            has_reason_col = "reason of deviation" in df.columns
+        except (AttributeError, TypeError):
+            has_reason_col = False
 
-    if selected_reason != "Все" and has_reason_col:
-        filtered_df = filtered_df[
-            filtered_df["reason of deviation"].astype(str).str.strip()
-            == str(selected_reason).strip()
-        ]
+        if selected_reason != "Все" and has_reason_col:
+            filtered_df = filtered_df[
+                filtered_df["reason of deviation"].astype(str).str.strip()
+                == str(selected_reason).strip()
+            ]
 
-    try:
-        has_project_col = "project name" in filtered_df.columns
-    except (AttributeError, TypeError):
-        has_project_col = False
+        try:
+            has_project_col = "project name" in filtered_df.columns
+        except (AttributeError, TypeError):
+            has_project_col = False
 
-    if selected_project != "Все" and has_project_col:
-        filtered_df = filtered_df[
-            filtered_df["project name"].astype(str).str.strip()
-            == str(selected_project).strip()
-        ]
+        if selected_project != "Все" and has_project_col:
+            filtered_df = filtered_df[
+                filtered_df["project name"].astype(str).str.strip()
+                == str(selected_project).strip()
+            ]
 
-    try:
-        has_section_col = "section" in filtered_df.columns
-    except (AttributeError, TypeError):
-        has_section_col = False
+        try:
+            has_section_col = "section" in filtered_df.columns
+        except (AttributeError, TypeError):
+            has_section_col = False
 
-    if selected_section != "Все" and has_section_col:
-        filtered_df = filtered_df[
-            filtered_df["section"].astype(str).str.strip()
-            == str(selected_section).strip()
-        ]
+        if selected_section != "Все" and has_section_col:
+            filtered_df = filtered_df[
+                filtered_df["section"].astype(str).str.strip()
+                == str(selected_section).strip()
+            ]
 
     # Filter tasks: deviation=1/True OR reason of deviation filled
     try:
