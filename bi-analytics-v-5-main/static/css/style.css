@@ -48,6 +48,8 @@ div[data-testid="collapsedControl"] {
 /* Фон основной области — как у меню (sidebar) */
 .stApp {
     background-color: var(--themeBackgroundColor) !important;
+    /* Яндекс.Браузер / Chromium: единая тёмная схема для нативных контролов и цветов текста */
+    color-scheme: dark;
 }
 /* Контейнер контента — тот же тон */
 .main .block-container,
@@ -949,6 +951,34 @@ section[data-testid="stSidebar"] [data-testid="stExpander"] summary svg {
     color: #f1f5f9 !important;
 }
 
+/* Сайдбар expander — усиление (Streamlit 1.52+, Яндекс.Браузер: светлая обёртка / markdown в summary) */
+[data-testid="stSidebar"] [data-testid="stExpander"] {
+    background-color: #0d2b47 !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    border-radius: 6px !important;
+    forced-color-adjust: none !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] > div {
+    background-color: #0d2b47 !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] details {
+    background-color: #0d2b47 !important;
+    border-color: rgba(255, 255, 255, 0.2) !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+    background-color: #0d2b47 !important;
+    color: #f1f5f9 !important;
+    -webkit-text-fill-color: #f1f5f9 !important;
+}
+[data-testid="stSidebar"] [data-testid="stExpander"] summary *,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary [data-testid="stMarkdownContainer"],
+[data-testid="stSidebar"] [data-testid="stExpander"] summary [data-testid="stMarkdownContainer"] p,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary [data-testid="stMarkdownContainer"] span,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary [data-testid="stMarkdownContainer"] strong {
+    color: #f1f5f9 !important;
+    -webkit-text-fill-color: #f1f5f9 !important;
+}
+
 /* Основная область: заголовок expander на тёмном фоне (FTP, фильтры и т.д.) */
 .main [data-testid="stExpander"] details {
     background-color: rgba(13, 43, 71, 0.55) !important;
@@ -1105,11 +1135,32 @@ div[data-baseweb="menu"] li span {
 }
 
 /* Метрики st.metric: подпись и значение (иначе primary/secondary из темы дают тёмно-коричневый на синем) */
-[data-testid="stMetricLabel"] {
+[data-testid="stMetricLabel"],
+.main [data-testid="stMetric"] label {
     color: #c8d8ec !important;
+    -webkit-text-fill-color: #c8d8ec !important;
 }
 [data-testid="stMetricValue"] {
     color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+}
+/* Контейнер метрик (обёртка Streamlit) — только подписи/значения по test id */
+[data-testid="metric-container"] [data-testid="stMetricLabel"] {
+    color: #c8d8ec !important;
+    -webkit-text-fill-color: #c8d8ec !important;
+}
+[data-testid="metric-container"] [data-testid="stMetricValue"] {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+}
+/* Абзац без test id (редко): первая строка — подпись, вторая — число */
+.main [data-testid="stMetric"] p:first-of-type {
+    color: #c8d8ec !important;
+    -webkit-text-fill-color: #c8d8ec !important;
+}
+.main [data-testid="stMetric"] p:last-of-type:not(:first-of-type) {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
 }
 /* Дельту (stMetricDelta) не перекрашиваем — остаются зелёный/красный от Streamlit */
 
