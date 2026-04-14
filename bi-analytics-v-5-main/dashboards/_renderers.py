@@ -310,6 +310,8 @@ _PLOTLY_CONFIG = {
     "displaylogo": False,
     "scrollZoom": True,
     "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d"],
+    # Не ждать MathJax с CDN (часть сетей / ERR_CONNECTION_RESET ломала отрисовку)
+    "typesetMath": False,
 }
 
 
