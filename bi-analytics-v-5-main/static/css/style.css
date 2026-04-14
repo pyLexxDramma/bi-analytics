@@ -284,7 +284,8 @@ textarea{
     /* font: 300 normal .884rem/1.4 'Inter', sans-serif;
     letter-spacing: .008em;
     text-indent: 0; */
-    color: hsl(215,41%,8%) !important;
+    /* Как у input: светлый текст на тёмном фоне (иначе в Firefox/Safari нечитаемо) */
+    color: hsl(210,67%,96%) !important;
     background-color: transparent !important;
     overflow: none !important;
     outline: none !important;
@@ -949,4 +950,114 @@ div[data-testid="stAlert"] [data-testid="stMarkdownContainer"] * {
 }
 [data-testid="stWidgetLabel"] {
     color: #e8eef5 !important;
+}
+
+/* ┌────────────────────────────────────────────────────────────────────────┐ */
+/* │ Виджеты Streamlit + Plotly: контраст во всех браузерах (Chrome/FF/Safari/Edge) │ */
+/* └────────────────────────────────────────────────────────────────────────┘ */
+
+/* Поля ввода Base Web (st.text_input, форма входа и др.) */
+[data-baseweb="input"] input,
+[data-testid="stTextInput"] input,
+.stTextInput input,
+[data-baseweb="textarea"] textarea,
+[data-testid="stTextArea"] textarea,
+.stTextArea textarea {
+    color: #f1f5f9 !important;
+    background-color: #1a2942 !important;
+    border: 1px solid rgba(255, 255, 255, 0.28) !important;
+    caret-color: #f1f5f9 !important;
+    -webkit-text-fill-color: #f1f5f9 !important;
+}
+
+[data-baseweb="input"] input::placeholder,
+[data-testid="stTextInput"] input::placeholder,
+.stTextInput input::placeholder,
+[data-baseweb="textarea"] textarea::placeholder,
+[data-testid="stTextArea"] textarea::placeholder {
+    color: rgba(241, 245, 249, 0.55) !important;
+    opacity: 1 !important;
+}
+
+/* Автозаполнение (жёлтый фон в Chrome) — сохраняем читаемый текст */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus {
+    -webkit-text-fill-color: #f1f5f9 !important;
+    caret-color: #f1f5f9 !important;
+    transition: background-color 99999s ease-out 0s;
+    box-shadow: 0 0 0 1000px #1a2942 inset !important;
+}
+
+/* Select / multiselect: видимое значение и контейнер */
+[data-testid="stSelectbox"] [data-baseweb="select"] > div,
+[data-baseweb="select"] > div {
+    background-color: #1a2942 !important;
+    border-color: rgba(255, 255, 255, 0.28) !important;
+    color: #f1f5f9 !important;
+}
+[data-testid="stSelectbox"] [data-baseweb="select"] span,
+[data-baseweb="select"] span {
+    color: #f1f5f9 !important;
+}
+
+[data-testid="stMultiSelect"] [data-baseweb="select"] > div,
+[data-testid="stMultiSelect"] [data-baseweb="input"] input {
+    background-color: #1a2942 !important;
+    border-color: rgba(255, 255, 255, 0.28) !important;
+    color: #f1f5f9 !important;
+}
+
+/* Выпадающие списки (popover) — тёмный фон, светлый текст */
+div[data-baseweb="popover"] ul,
+div[data-baseweb="popover"] li,
+div[data-baseweb="menu"] li,
+div[data-baseweb="menu"] li span {
+    background-color: #0d2b47 !important;
+    color: #f1f5f9 !important;
+}
+
+/* Слайдер: подписи значений */
+[data-testid="stSlider"] [data-testid="stMarkdownContainer"] p,
+[data-testid="stSlider"] label,
+[data-testid="stSlider"] span {
+    color: #e8eef5 !important;
+}
+
+/* Переключатели (toggle) */
+[data-testid="stToggle"] label,
+[data-testid="stToggle"] p,
+[data-testid="stToggle"] span {
+    color: #e8eef5 !important;
+}
+
+/* Код в markdown и подсказки */
+.main [data-testid="stMarkdownContainer"] code,
+.main pre {
+    background-color: rgba(13, 43, 71, 0.85) !important;
+    color: #e8f4ff !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+}
+
+/* Plotly: рамка и минимальная высота — область графика не «сливается» с фоном и не схлопывается */
+[data-testid="stPlotlyChart"] {
+    min-height: 380px !important;
+    background-color: hsl(209, 67%, 12%) !important;
+    border-radius: 8px !important;
+    border: 1px solid rgba(255, 255, 255, 0.14) !important;
+    box-sizing: border-box !important;
+}
+[data-testid="stPlotlyChart"] iframe {
+    min-height: 360px !important;
+    opacity: 1 !important;
+}
+
+/* Подзаголовки на экране входа и вне .main (если есть) */
+.stApp h2,
+.stApp h3,
+.stApp .stSubheader {
+    color: #f1f5f9 !important;
 }

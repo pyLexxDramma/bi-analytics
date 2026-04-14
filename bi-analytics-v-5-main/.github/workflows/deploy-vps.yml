@@ -1,13 +1,21 @@
-# Deploy to VPS on push to main (or master). Configure repository secrets:
-#   VPS_HOST, VPS_USER, VPS_PORT, VPS_SSH_KEY (private key for deploy), VPS_DEPLOY_PATH
+# Deploy to VPS on push to main/master, or manually (Actions → Deploy to VPS → Run workflow).
 #
-# Optional: VPS_SSH_KNOWN_HOSTS output of: ssh-keyscan -p PORT HOST
+# GitHub → Settings → Secrets and variables → Actions → Repository secrets:
+#   VPS_HOST          — IP или hostname (например 94.141.105.174)
+#   VPS_USER          — SSH-пользователь (например dashai)
+#   VPS_PORT          — порт SSH (строка, например 2274)
+#   VPS_SSH_KEY       — приватный ключ, парный к публичному в authorized_keys на сервере
+#   VPS_DEPLOY_PATH   — абсолютный путь к клону репозитория (например /opt/bi-analytics)
+#
+# Optional:
+#   VPS_SSH_KNOWN_HOSTS — вывод: ssh-keyscan -p PORT HOST  (защита от MITM для ssh-action)
 #
 name: Deploy to VPS
 
 on:
   push:
     branches: [main, master]
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -22,11 +30,13 @@ jobs:
           port: ${{ secrets.VPS_PORT }}
           command_timeout: 20m
           script_stop: true
+          # Раскомментируйте, если задали секрет VPS_SSH_KNOWN_HOSTS:
+          # known_hosts: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
           script: |
             set -e
             cd "${{ secrets.VPS_DEPLOY_PATH }}"
             git fetch origin
             git checkout "${{ github.ref_name }}"
-            git pull origin "${{ github.ref_name }}"
+            git reset --hard "origin/${{ github.ref_name }}"
             chmod +x scripts/server_deploy.sh || true
             ./scripts/server_deploy.sh
