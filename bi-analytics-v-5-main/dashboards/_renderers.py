@@ -387,6 +387,18 @@ def _clamp_plotly_scroll_zoom_padding(fig: go.Figure) -> None:
         pass
 
 
+def _apply_finance_bar_label_layout(fig: go.Figure) -> go.Figure:
+    try:
+        fig.update_layout(
+            uniformtext=dict(minsize=7, mode="hide"),
+            margin=dict(l=56, r=36, t=48, b=120),
+        )
+        fig.update_xaxes(automargin=True)
+    except Exception:
+        pass
+    return fig
+
+
 def render_chart(
     fig,
     key: str = None,
@@ -4406,6 +4418,12 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
 def dashboard_budget_by_period(df):
     st.header("БДДС")
     st.caption("Вид отображения: по месяцам или накопительно.")
+    with st.expander("Источник данных", expanded=False):
+        st.caption(
+            "БДДС (денежные потоки): план и факт по оборотам из загруженных бюджетных данных "
+            "(в т.ч. связка с задачами/проектами MSP при наличии колонок). "
+            "Отчёты «Утверждённый бюджет» и «Прогнозный бюджет» — отдельные представления по тем же проектам."
+        )
 
     # Filters row 1: Period, Project, Section
     col1, col2, col3 = st.columns(3)
@@ -4598,7 +4616,7 @@ def dashboard_budget_by_period(df):
                     marker_color="#2E86AB",
                     text=project_data["budget plan"].apply(format_million_rub),
                     textposition="outside",
-                    textfont=dict(size=14, color="white"),
+                    textfont=dict(size=11, color="#f0f4f8"),
                     customdata=project_data["budget plan"].apply(format_million_rub),
                     hovertemplate="<b>%{x}</b><br>Бюджет План: %{customdata}<br><extra></extra>",
                 )
@@ -4611,7 +4629,7 @@ def dashboard_budget_by_period(df):
                     marker_color="#A23B72",
                     text=project_data["budget fact"].apply(format_million_rub),
                     textposition="outside",
-                    textfont=dict(size=14, color="white"),
+                    textfont=dict(size=11, color="#f0f4f8"),
                     customdata=project_data["budget fact"].apply(format_million_rub),
                     hovertemplate="<b>%{x}</b><br>Бюджет Факт: %{customdata}<br><extra></extra>",
                 )
@@ -4627,7 +4645,7 @@ def dashboard_budget_by_period(df):
                         marker_color="#e74c3c",
                         text=project_data["reserve budget"].apply(format_million_rub),
                         textposition="outside",
-                        textfont=dict(size=14, color="white"),
+                        textfont=dict(size=11, color="#f0f4f8"),
                         customdata=project_data["reserve budget"].apply(format_million_rub),
                         hovertemplate="<b>%{x}</b><br>Отклонение: %{customdata}<br><extra></extra>",
                         visible="legendonly",
@@ -4646,7 +4664,7 @@ def dashboard_budget_by_period(df):
                         marker_color="#F18F01",
                         text=project_data[adjusted_budget_col].apply(format_million_rub),
                         textposition="outside",
-                        textfont=dict(size=14, color="white"),
+                        textfont=dict(size=11, color="#f0f4f8"),
                         customdata=project_data[adjusted_budget_col].apply(format_million_rub),
                         hovertemplate="<b>%{x}</b><br>Скорректированный бюджет: %{customdata}<br><extra></extra>",
                     )
@@ -4656,8 +4674,23 @@ def dashboard_budget_by_period(df):
                 xaxis_title=period_label,
                 yaxis_title="млн руб.",
                 barmode="group",
-                xaxis=dict(tickangle=-45),
+                xaxis=dict(tickangle=-45, tickfont=dict(size=10), nticks=18),
             )
+            fig = _apply_finance_bar_label_layout(fig)
+            if not project_data.empty:
+                _ymax = float(
+                    np.nanmax(
+                        np.concatenate(
+                            [
+                                project_data["budget plan"].div(1e6).to_numpy(),
+                                project_data["budget fact"].div(1e6).to_numpy(),
+                                project_data["reserve budget"].div(1e6).to_numpy(),
+                            ]
+                        )
+                    )
+                )
+                if np.isfinite(_ymax) and _ymax > 0:
+                    fig.update_layout(yaxis=dict(range=[0, _ymax * 1.22]))
             fig = apply_chart_background(fig)
             render_chart(fig, caption_below=f"БДДС{title_suffix}")
 
@@ -4735,7 +4768,7 @@ def dashboard_budget_by_period(df):
                     marker_color="#2E86AB",
                     text=lot_chart_data["budget plan"].apply(format_million_rub),
                     textposition="outside",
-                    textfont=dict(size=18, color="white"),
+                    textfont=dict(size=12, color="#f0f4f8"),
                     cliponaxis=False,
                     orientation="h",
                 )
@@ -4748,7 +4781,7 @@ def dashboard_budget_by_period(df):
                     marker_color="#A23B72",
                     text=lot_chart_data["budget fact"].apply(format_million_rub),
                     textposition="outside",
-                    textfont=dict(size=18, color="white"),
+                    textfont=dict(size=12, color="#f0f4f8"),
                     cliponaxis=False,
                     orientation="h",
                 )
@@ -4761,7 +4794,7 @@ def dashboard_budget_by_period(df):
                     marker_color="#e74c3c",
                     text=lot_chart_data["reserve budget"].apply(format_million_rub),
                     textposition="outside",
-                    textfont=dict(size=18, color="white"),
+                    textfont=dict(size=12, color="#f0f4f8"),
                     cliponaxis=False,
                     orientation="h",
                     visible="legendonly",
@@ -4772,11 +4805,12 @@ def dashboard_budget_by_period(df):
                 xaxis_title="млн руб.",
                 yaxis_title="Этапы",
                 barmode="group",
-                xaxis=dict(tickangle=0, tickfont=dict(size=16)),
-                yaxis=dict(tickfont=dict(size=16), categoryorder="trace"),
-                legend=dict(font=dict(size=18)),
+                xaxis=dict(tickangle=0, tickfont=dict(size=12)),
+                yaxis=dict(tickfont=dict(size=12), categoryorder="trace"),
+                legend=dict(font=dict(size=12)),
                 height=max(400, len(lot_chart_data) * 100),
             )
+            fig_lot = _apply_finance_bar_label_layout(fig_lot)
             fig_lot = apply_chart_background(fig_lot)
             max_line_len = max(
                 max(len(line) for line in s.split("<br>"))
@@ -4815,6 +4849,7 @@ def dashboard_budget_by_period(df):
 def dashboard_budget_cumulative(df):
 
     st.header("БДДС накопительно")
+    st.caption("Накопительные суммы по периоду; источник — те же бюджетные колонки, что и в отчёте «БДДС».")
 
     # Filters row 1: Period and Project
     col1, col2 = st.columns(2)
@@ -4958,7 +4993,7 @@ def dashboard_budget_cumulative(df):
             marker_color="#2E86AB",
             text=project_data_sorted["budget plan_cum"].apply(format_million_rub),
             textposition="outside",
-            textfont=dict(size=14, color="white"),
+            textfont=dict(size=11, color="#f0f4f8"),
         )
     )
     fig_cum.add_trace(
@@ -4969,7 +5004,7 @@ def dashboard_budget_cumulative(df):
             marker_color="#A23B72",
             text=project_data_sorted["budget fact_cum"].apply(format_million_rub),
             textposition="outside",
-            textfont=dict(size=14, color="white"),
+            textfont=dict(size=11, color="#f0f4f8"),
         )
     )
 
@@ -4983,7 +5018,7 @@ def dashboard_budget_cumulative(df):
                 marker_color="#F18F01",
                 text=project_data_sorted[f"{adjusted_budget_col}_cum"].apply(format_million_rub),
                 textposition="outside",
-                textfont=dict(size=14, color="white"),
+                textfont=dict(size=11, color="#f0f4f8"),
             )
         )
 
@@ -4992,8 +5027,18 @@ def dashboard_budget_cumulative(df):
         xaxis_title=period_label,
         yaxis_title="млн руб.",
         barmode="group",
-        xaxis=dict(tickangle=-45),
+        xaxis=dict(tickangle=-45, tickfont=dict(size=10), nticks=18),
     )
+    fig_cum = _apply_finance_bar_label_layout(fig_cum)
+    _yc = [
+        project_data_sorted["budget plan_cum"].div(1e6).max(),
+        project_data_sorted["budget fact_cum"].div(1e6).max(),
+    ]
+    if adjusted_budget_col and f"{adjusted_budget_col}_cum" in project_data_sorted.columns:
+        _yc.append(project_data_sorted[f"{adjusted_budget_col}_cum"].div(1e6).max())
+    _ymax = float(np.nanmax(_yc)) if _yc else 0.0
+    if np.isfinite(_ymax) and _ymax > 0:
+        fig_cum.update_layout(yaxis=dict(range=[0, _ymax * 1.22]))
     fig_cum = apply_chart_background(fig_cum)
     render_chart(fig_cum, caption_below="БДДС накопительно")
 
@@ -5279,12 +5324,15 @@ def dashboard_budget_by_section(df):
 # ==================== DASHBOARD: БДР (бюджет доходов и расходов) ====================
 def dashboard_bdr(df):
     """
-    БДР — бюджет доходов и расходов.
-    Доходы и расходы берутся из колонок (доход/доходы/revenue, расход/расходы/expense)
-    или из budget plan / budget fact: план = доходы, факт = расходы.
-    Результат (сальдо) = Доходы - Расходы.
+    БДР — план/факт расходов: колонки ищутся по шаблонам (расходы / budget plan / budget fact).
+    В таблице и на графике: План расходов, Факт расходов, Отклонение (факт − план).
     """
     st.header("БДР. План/факт расходов")
+    with st.expander("Источник данных", expanded=False):
+        st.caption(
+            "По ТЗ: план/факт расходов по статьям БДР (признаки «Бюджет»/«ФАКТ» и «(БДР)» в загрузке). "
+            "Ниже — агрегация по колонкам план/факт в данных MSP после нормализации."
+        )
 
     if df is None or not hasattr(df, "columns") or df.empty:
         st.warning("⚠️ Нет данных для отображения. Загрузите данные проекта.")
@@ -5314,13 +5362,13 @@ def dashboard_bdr(df):
 
     if revenue_col is None or expense_col is None:
         st.warning(
-            "Для отчёта БДР нужны столбцы доходов и расходов "
-            "(например «Доходы»/«Расходы» или «Бюджет План»/«Бюджет Факт»)."
+            "Для отчёта БДР нужны столбцы плана и факта расходов "
+            "(например «Бюджет План» / «Бюджет Факт» или пары колонок по шаблону из ТЗ)."
         )
         return
 
     # Фильтры — в одном стиле с БДДС: строка 1 — Группировать по, Фильтр по проекту; строка 2 — Фильтр по этапу
-    st.caption("Доходы и расходы по периоду.")
+    st.caption("План и факт расходов по периоду.")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -5375,16 +5423,20 @@ def dashboard_bdr(df):
             == str(selected_section).strip()
         ]
 
-    filtered_df["_revenue"] = pd.to_numeric(filtered_df[revenue_col], errors="coerce")
-    filtered_df["_expense"] = pd.to_numeric(filtered_df[expense_col], errors="coerce")
-    filtered_df["_result"] = filtered_df["_revenue"] - filtered_df["_expense"]
+    filtered_df["_plan_exp"] = pd.to_numeric(filtered_df[revenue_col], errors="coerce")
+    filtered_df["_fact_exp"] = pd.to_numeric(filtered_df[expense_col], errors="coerce")
+    filtered_df["_deviation"] = filtered_df["_fact_exp"] - filtered_df["_plan_exp"]
 
-    agg_dict = {"_revenue": "sum", "_expense": "sum", "_result": "sum"}
+    agg_dict = {"_plan_exp": "sum", "_fact_exp": "sum", "_deviation": "sum"}
     bdr_summary = (
         filtered_df.groupby(period_col).agg(agg_dict).reset_index()
     )
     bdr_summary = bdr_summary.rename(
-        columns={"_revenue": "Доходы", "_expense": "Расходы", "_result": "Результат (сальдо)"}
+        columns={
+            "_plan_exp": "План расходов",
+            "_fact_exp": "Факт расходов",
+            "_deviation": "Отклонение",
+        }
     )
 
     bdr_summary["Период"] = bdr_summary[period_col].apply(format_period_ru)
@@ -5396,9 +5448,9 @@ def dashboard_bdr(df):
         )
         chart_df = bdr_summary.copy()
         if view_type == "Накопительно":
-            chart_df["Доходы"] = chart_df["Доходы"].cumsum()
-            chart_df["Расходы"] = chart_df["Расходы"].cumsum()
-            chart_df["Результат (сальдо)"] = chart_df["Результат (сальдо)"].cumsum()
+            chart_df["План расходов"] = chart_df["План расходов"].cumsum()
+            chart_df["Факт расходов"] = chart_df["Факт расходов"].cumsum()
+            chart_df["Отклонение"] = chart_df["Факт расходов"] - chart_df["План расходов"]
             title_suffix = " (накопительно)"
         else:
             title_suffix = ""
@@ -5407,34 +5459,37 @@ def dashboard_bdr(df):
         fig.add_trace(
             go.Bar(
                 x=x_vals,
-                y=chart_df["Доходы"].div(1e6),
-                name="Доходы",
+                y=chart_df["План расходов"].div(1e6),
+                name="План расходов",
                 marker_color="#2E86AB",
-                text=chart_df["Доходы"].apply(format_million_rub),
+                text=chart_df["План расходов"].apply(format_million_rub),
                 textposition="outside",
-                textfont=dict(size=12, color="white"),
+                textfont=dict(size=11, color="#f0f4f8"),
             )
         )
         fig.add_trace(
             go.Bar(
                 x=x_vals,
-                y=chart_df["Расходы"].div(1e6),
-                name="Расходы",
+                y=chart_df["Факт расходов"].div(1e6),
+                name="Факт расходов",
                 marker_color="#A23B72",
-                text=chart_df["Расходы"].apply(format_million_rub),
+                text=chart_df["Факт расходов"].apply(format_million_rub),
                 textposition="outside",
-                textfont=dict(size=12, color="white"),
+                textfont=dict(size=11, color="#f0f4f8"),
             )
         )
+        dev_colors = [
+            "#e74c3c" if v >= 0 else "#27ae60" for v in chart_df["Отклонение"]
+        ]
         fig.add_trace(
             go.Bar(
                 x=x_vals,
-                y=chart_df["Результат (сальдо)"].div(1e6),
-                name="Результат (сальдо)",
-                marker_color="#06A77D",
-                text=chart_df["Результат (сальдо)"].apply(format_million_rub),
+                y=chart_df["Отклонение"].div(1e6),
+                name="Отклонение",
+                marker_color=dev_colors,
+                text=chart_df["Отклонение"].apply(format_million_rub),
                 textposition="outside",
-                textfont=dict(size=12, color="white"),
+                textfont=dict(size=11, color="#f0f4f8"),
             )
         )
         fig.update_layout(
@@ -5442,32 +5497,59 @@ def dashboard_bdr(df):
             xaxis_title=period_label,
             yaxis_title="млн руб.",
             barmode="group",
-            xaxis=dict(tickangle=-60, tickfont=dict(size=8), nticks=24),
+            xaxis=dict(tickangle=-45, tickfont=dict(size=10), nticks=18),
             margin=dict(b=100),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
         )
+        if not chart_df.empty:
+            _ymax = float(
+                np.nanmax(
+                    np.concatenate(
+                        [
+                            chart_df["План расходов"].div(1e6).to_numpy(),
+                            chart_df["Факт расходов"].div(1e6).to_numpy(),
+                            chart_df["Отклонение"].div(1e6).to_numpy(),
+                        ]
+                    )
+                )
+            )
+            _ymin = float(
+                np.nanmin(
+                    np.concatenate(
+                        [
+                            chart_df["План расходов"].div(1e6).to_numpy(),
+                            chart_df["Факт расходов"].div(1e6).to_numpy(),
+                            chart_df["Отклонение"].div(1e6).to_numpy(),
+                        ]
+                    )
+                )
+            )
+            if np.isfinite(_ymax) and np.isfinite(_ymin):
+                pad = max(abs(_ymax), abs(_ymin), 1e-6) * 0.2
+                fig.update_layout(yaxis=dict(range=[_ymin - pad, _ymax + pad]))
+        fig = _apply_finance_bar_label_layout(fig)
         fig = apply_chart_background(fig)
-        render_chart(fig, caption_below=f"БДР — доходы и расходы{title_suffix}")
+        render_chart(fig, caption_below=f"БДР — план/факт расходов{title_suffix}")
 
     _bdr_chart()
 
     st.subheader("Сводка БДР по периоду")
     display_df = bdr_summary[
-        [c for c in ["Период", "Доходы", "Расходы", "Результат (сальдо)"] if c in bdr_summary.columns]
+        [c for c in ["Период", "План расходов", "Факт расходов", "Отклонение"] if c in bdr_summary.columns]
     ].copy()
     display_df = display_df.rename(columns={"Период": period_label})
-    for col in ["Доходы", "Расходы", "Результат (сальдо)"]:
+    for col in ["План расходов", "Факт расходов", "Отклонение"]:
         if col in display_df.columns:
             display_df[col] = (display_df[col] / 1e6).round(2).apply(
                 lambda x: f"{float(x):.2f} млн руб." if pd.notna(x) else ""
             )
     display_df = display_df.rename(columns={
-        "Доходы": "Доходы, млн руб.",
-        "Расходы": "Расходы, млн руб.",
-        "Результат (сальдо)": "Результат (сальдо), млн руб.",
+        "План расходов": "План расходов, млн руб.",
+        "Факт расходов": "Факт расходов, млн руб.",
+        "Отклонение": "Отклонение, млн руб.",
     })
     st.markdown(
-        budget_table_to_html(display_df, finance_deviation_column="Результат (сальдо), млн руб."),
+        budget_table_to_html(display_df, finance_deviation_column="Отклонение, млн руб."),
         unsafe_allow_html=True,
     )
 
@@ -9315,6 +9397,19 @@ def dashboard_debit_credit(df):
     work.columns = [str(c).strip() for c in work.columns]
 
     contractor_col = _find_col(work, ["Название контрагента", "Название организации", "подрядчик", "Подрядчик", "contractor", "Организация"])
+    project_col = _find_col(
+        work,
+        [
+            "project name",
+            "Проект",
+            "проект",
+            "ID проекта",
+            "id проекта",
+            "Project",
+            "название проекта",
+            "код проекта",
+        ],
+    )
     type_col = _find_col(work, ["Тип подрядчика", "тип подрядчика", "contractor type"])
     contract_col = _find_col(work, ["Номер договора", "Договор", "договор", "contract"])
     total_col = _find_col(work, ["Сумма в договоре", "сумма в договоре", "Общая сумма", "contract sum"])
@@ -9335,9 +9430,8 @@ def dashboard_debit_credit(df):
         if c:
             work[f"_num_{c}"] = _to_num(work[c])
 
-    # Фильтры
     st.subheader("Фильтры")
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         if contractor_col and contractor_col in work.columns:
             all_contractors = ["Все"] + sorted(work[contractor_col].dropna().astype(str).unique().tolist())
@@ -9356,6 +9450,13 @@ def dashboard_debit_credit(df):
             sel_contract = st.selectbox("Договор", all_contracts, key="debit_credit_contract")
         else:
             sel_contract = "Все"
+    with c4:
+        if project_col and project_col in work.columns:
+            all_projects = ["Все"] + sorted(work[project_col].dropna().astype(str).unique().tolist())
+            sel_project = st.selectbox("Проект", all_projects, key="debit_credit_project")
+        else:
+            st.info("Фильтр по проекту недоступен: в файле нет колонки проекта.")
+            sel_project = "Все"
 
     filtered = work.copy()
     if sel_contractor != "Все" and contractor_col:
@@ -9364,68 +9465,106 @@ def dashboard_debit_credit(df):
         filtered = filtered[filtered[type_col].astype(str).str.strip() == str(sel_type).strip()]
     if sel_contract != "Все" and contract_col:
         filtered = filtered[filtered[contract_col].astype(str).str.strip() == str(sel_contract).strip()]
+    if sel_project != "Все" and project_col:
+        filtered = filtered[filtered[project_col].astype(str).str.strip() == str(sel_project).strip()]
 
     if filtered.empty:
         st.info("Нет данных при выбранных фильтрах.")
         return
 
-    # Группировка по договору для графика и таблицы
-    group_col = contract_col
+    def _trunc_label(val, max_len: int = 34) -> str:
+        s = str(val).strip()
+        if len(s) <= max_len:
+            return s
+        return s[: max_len - 1] + "…"
+
+    chart_group_col = contractor_col if contractor_col else contract_col
+    if not contractor_col:
+        st.warning("Колонка подрядчика не найдена — диаграмма сгруппирована по договору.")
+
     built = {}
     if total_col and f"_num_{total_col}" in filtered.columns:
-        built["Сумма в договоре"] = filtered.groupby(group_col)[f"_num_{total_col}"].sum()
+        built["Сумма в договоре"] = filtered.groupby(chart_group_col)[f"_num_{total_col}"].sum()
     if paid_col and f"_num_{paid_col}" in filtered.columns:
-        built["Выплачено"] = filtered.groupby(group_col)[f"_num_{paid_col}"].sum()
+        built["Выплачено"] = filtered.groupby(chart_group_col)[f"_num_{paid_col}"].sum()
     if advance_col and f"_num_{advance_col}" in filtered.columns:
-        built["Аванс"] = filtered.groupby(group_col)[f"_num_{advance_col}"].sum()
+        built["Аванс"] = filtered.groupby(chart_group_col)[f"_num_{advance_col}"].sum()
     if balance_col and f"_num_{balance_col}" in filtered.columns:
-        built["Остаток на период"] = filtered.groupby(group_col)[f"_num_{balance_col}"].sum()
+        built["Остаток на период"] = filtered.groupby(chart_group_col)[f"_num_{balance_col}"].sum()
 
     if not built:
         st.warning("Нет числовых колонок для отображения (сумма в договоре, выплачено, аванс, остаток).")
         return
 
     chart_df = pd.DataFrame(built).reset_index()
-    chart_df = chart_df.rename(columns={group_col: "Договор"})
+    chart_label = "Подрядчик" if contractor_col else "Договор"
+    chart_df = chart_df.rename(columns={chart_group_col: chart_label})
 
-    # Столбчатая диаграмма
-    st.subheader("Столбчатая диаграмма по договорам")
-    value_cols = [c for c in chart_df.columns if c != "Договор"]
+    st.subheader("Столбчатая диаграмма по подрядчикам" if contractor_col else "Столбчатая диаграмма по договорам")
+    value_cols = [c for c in chart_df.columns if c != chart_label]
     if not value_cols:
         st.info("Нет данных для графика.")
     else:
         fig = go.Figure()
-        x = chart_df["Договор"].astype(str).apply(lambda s: s[:30] + "…" if len(s) > 30 else s)
+        x = chart_df[chart_label].astype(str).map(_trunc_label)
         colors = {"Сумма в договоре": "#2E86AB", "Выплачено": "#27ae60", "Аванс": "#F39C12", "Остаток на период": "#e74c3c"}
         for col in value_cols:
-            fig.add_trace(go.Bar(
-                name=col, x=x, y=chart_df[col], marker_color=colors.get(col, None),
-                text=chart_df[col].apply(lambda v: f"{v:,.0f}".replace(",", " ") if pd.notna(v) else ""),
-                textposition="none",
-            ))
+            fig.add_trace(
+                go.Bar(
+                    name=col,
+                    x=x,
+                    y=chart_df[col],
+                    marker_color=colors.get(col, None),
+                    text=chart_df[col].apply(lambda v: f"{v:,.0f}".replace(",", " ") if pd.notna(v) else ""),
+                    textposition="outside",
+                    textfont=dict(size=10, color="#f0f4f8"),
+                )
+            )
         fig.update_layout(
             barmode="group",
-            height=600,
+            height=min(900, max(420, len(chart_df) * 28)),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
-            xaxis=dict(tickangle=-90, tickfont=dict(size=7)),
-            margin=dict(b=180),
+            xaxis=dict(tickangle=-55, tickfont=dict(size=9), categoryorder="total descending"),
+            margin=dict(b=140),
         )
+        fig = _apply_finance_bar_label_layout(fig)
         fig = apply_chart_background(fig)
-        render_chart(fig, caption_below="Задолженность по договорам")
+        cap = "Суммы по подрядчику" if contractor_col else "Суммы по договору"
+        render_chart(fig, caption_below=cap)
 
-    # Таблица с группировкой по договору и строкой Итого
-    st.subheader("Таблица по договорам")
-    table_df = chart_df.copy()
-    table_df = table_df.rename(columns={c: c for c in table_df.columns})
-    # Итого
+    st.subheader("Таблица по подрядчику и договору" if contractor_col else "Таблица по договорам")
+    table_group_cols = [contract_col]
+    if contractor_col:
+        table_group_cols = [contractor_col, contract_col]
+    tbl_built = {}
+    if total_col and f"_num_{total_col}" in filtered.columns:
+        tbl_built["Сумма в договоре"] = filtered.groupby(table_group_cols)[f"_num_{total_col}"].sum()
+    if paid_col and f"_num_{paid_col}" in filtered.columns:
+        tbl_built["Выплачено"] = filtered.groupby(table_group_cols)[f"_num_{paid_col}"].sum()
+    if advance_col and f"_num_{advance_col}" in filtered.columns:
+        tbl_built["Аванс"] = filtered.groupby(table_group_cols)[f"_num_{advance_col}"].sum()
+    if balance_col and f"_num_{balance_col}" in filtered.columns:
+        tbl_built["Остаток на период"] = filtered.groupby(table_group_cols)[f"_num_{balance_col}"].sum()
+    if not tbl_built:
+        st.warning("Нет числовых колонок для таблицы.")
+        return
+    table_df = pd.DataFrame(tbl_built).reset_index()
+    if contractor_col and contractor_col in table_df.columns:
+        table_df = table_df.rename(columns={contractor_col: "Подрядчик", contract_col: "Договор"})
+    else:
+        table_df = table_df.rename(columns={contract_col: "Договор"})
+    value_cols_t = [c for c in table_df.columns if c not in ("Подрядчик", "Договор")]
     total_row = {"Договор": "Итого"}
-    for col in value_cols:
+    if "Подрядчик" in table_df.columns:
+        total_row["Подрядчик"] = ""
+    for col in value_cols_t:
         total_row[col] = table_df[col].sum()
     table_df = pd.concat([table_df, pd.DataFrame([total_row])], ignore_index=True)
-    # Форматирование для отображения
     display_df = table_df.copy()
-    for col in value_cols:
-        display_df[col] = display_df[col].apply(lambda x: f"{float(x):,.0f}".replace(",", " ") if pd.notna(x) else "—")
+    for col in value_cols_t:
+        display_df[col] = display_df[col].apply(
+            lambda x: f"{float(x):,.0f}".replace(",", " ") if pd.notna(x) else "—"
+        )
     st.caption(f"Записей: {len(display_df)}")
     _render_html_table(display_df)
     _csv = display_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
@@ -10782,6 +10921,11 @@ def dashboard_project_documentation(df):
 # ==================== DASHBOARD 8: Budget by Type (Plan/Fact/Reserve) ====================
 def dashboard_budget_by_type(df):
     st.header("Бюджет план/факт")
+    with st.expander("Источник данных", expanded=False):
+        st.caption(
+            "Сводный план/факт по бюджету в разрезе проекта и этапа из загруженных данных; "
+            "для сравнения с отчётом «БДДС» (обороты) используйте оба отчёта на одном наборе файлов."
+        )
 
     col1, col2, col3 = st.columns(3)
 
@@ -11642,6 +11786,11 @@ def calculate_approved_budget(df, rule_name="default"):
 def dashboard_approved_budget(df):
     """Панель для отображения утвержденного бюджета"""
     st.header("Утвержденный бюджет")
+    with st.expander("Источник данных", expanded=False):
+        st.caption(
+            "По ТЗ детальный отчёт строится из CSV «ОборотыПоБюджетам» (колонки «сценарий», «Статья оборотов»). "
+            "Блок ниже с распределением по месяцам — из задач и плановых сумм в MSP; при наличии колонок план/факт в данных — дополнительная сводка по проекту."
+        )
 
     # Информация о правилах
     with st.expander("Правила распределения бюджета", expanded=False):
@@ -11697,6 +11846,43 @@ def dashboard_approved_budget(df):
             filtered_df["section"].astype(str).str.strip()
             == str(selected_section).strip()
         ]
+
+    ensure_budget_columns(filtered_df)
+    _proj_key = project_col if project_col and project_col in filtered_df.columns else None
+    if (
+        _proj_key
+        and "budget plan" in filtered_df.columns
+        and "budget fact" in filtered_df.columns
+    ):
+        st.subheader("Сводка по проекту (план / факт / отклонение)")
+        st.caption(
+            "Если в данных нет отдельного файла «ОборотыПоБюджетам», ниже — упрощённо из колонок план/факт по проекту. "
+            "Названия столбцов приведены к формулировкам ТЗ; полный разбор по сценариям и статьям — при отдельной загрузке."
+        )
+        _tz = (
+            filtered_df.groupby(_proj_key)
+            .agg({"budget plan": "sum", "budget fact": "sum"})
+            .reset_index()
+        )
+        _tz["_dev"] = _tz["budget fact"] - _tz["budget plan"]
+        _tz_out = pd.DataFrame(
+            {
+                "Проект": _tz[_proj_key].astype(str),
+                "Утверждённый бюджет (план), млн руб.": (_tz["budget plan"] / 1e6).round(2).apply(
+                    lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
+                ),
+                "Фактические расходы, млн руб.": (_tz["budget fact"] / 1e6).round(2).apply(
+                    lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
+                ),
+                "Отклонение, млн руб.": (_tz["_dev"] / 1e6).round(2).apply(
+                    lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
+                ),
+            }
+        )
+        st.markdown(
+            budget_table_to_html(_tz_out, finance_deviation_column="Отклонение, млн руб."),
+            unsafe_allow_html=True,
+        )
 
     # Рассчитываем утвержденный бюджет
     approved_budget_df, error = calculate_approved_budget(
@@ -11768,8 +11954,9 @@ def dashboard_approved_budget(df):
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         height=600,
-        xaxis=dict(tickangle=-45, tickfont=dict(size=9), nticks=20),
+        xaxis=dict(tickangle=-45, tickfont=dict(size=9), nticks=18),
     )
+    fig = _apply_finance_bar_label_layout(fig)
 
     fig = apply_chart_background(fig)
     render_chart(fig, caption_below="Утвержденный бюджет по месяцам")
@@ -11858,6 +12045,11 @@ def dashboard_forecast_budget(df):
 
     """Панель для отображения и редактирования прогнозного бюджета"""
     st.header("Прогнозный бюджет")
+    with st.expander("Источник данных", expanded=False):
+        st.caption(
+            "Прогноз строится от распределения утверждённого бюджета по задачам MSP; "
+            "при появлении отдельной загрузки «ОборотыПоБюджетам» логику можно согласовать с файлом оборотов."
+        )
 
     st.info("""
     **Прогнозный бюджет** рассчитывается на основе утвержденного бюджета и может быть скорректирован:
