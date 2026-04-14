@@ -10078,6 +10078,12 @@ def dashboard_workforce_and_skud(df):
 def dashboard_documentation(df, page_title: str = "Рабочая/Проектная документация"):
     st.header(page_title)
 
+    _doc_fk = (
+        "rd_work_"
+        if page_title == "Рабочая документация"
+        else ("pd_doc_" if page_title == "Проектная документация" else "doc_")
+    )
+
     if page_title == "Проектная документация":
         st.info(
             "По правкам заказчика ПД строится на задачах MSP (уровень 5, родитель «Проектная документация»). "
@@ -10201,7 +10207,7 @@ def dashboard_documentation(df, page_title: str = "Рабочая/Проектн
         with filter_col1:
             projects = ["Все"] + sorted(df[project_col].dropna().unique().tolist())
             selected_project = st.selectbox(
-                "Фильтр по проекту", projects, key="doc_project_filter"
+                "Фильтр по проекту", projects, key=f"{_doc_fk}project_filter"
             )
 
     # Filter by date period
@@ -10224,7 +10230,7 @@ def dashboard_documentation(df, page_title: str = "Рабочая/Проектн
                     value=min_date,
                     min_value=min_date,
                     max_value=max_date,
-                    key="doc_date_start",
+                    key=f"{_doc_fk}date_start",
                     format="DD.MM.YYYY",
                 )
                 selected_date_end = st.date_input(
@@ -10232,7 +10238,7 @@ def dashboard_documentation(df, page_title: str = "Рабочая/Проектн
                     value=max_date,
                     min_value=min_date,
                     max_value=max_date,
-                    key="doc_date_end",
+                    key=f"{_doc_fk}date_end",
                     format="DD.MM.YYYY",
                 )
 
@@ -10253,11 +10259,16 @@ def dashboard_documentation(df, page_title: str = "Рабочая/Проектн
         if rework_col and rework_col in df.columns:
             rd_status_options.append("На доработке")
 
+        _status_label = (
+            "Фильтр по статусу ПД"
+            if page_title == "Проектная документация"
+            else "Фильтр по статусу РД"
+        )
         selected_statuses = st.multiselect(
-            "Фильтр по статусу РД",
+            _status_label,
             options=rd_status_options,
             default=["Все"],
-            key="doc_status_filter",
+            key=f"{_doc_fk}status_filter",
         )
 
     # Apply filters to data
@@ -10444,6 +10455,35 @@ def dashboard_documentation(df, page_title: str = "Рабочая/Проектн
             )
             return
 
+        max_plan_end_date = None
+        max_fact_end_date = None
+        if plan_end_col and plan_end_col in df.columns:
+            _mpe = pd.to_datetime(
+                df[plan_end_col].astype(str), errors="coerce", dayfirst=True, format="mixed"
+            )
+            if _mpe.notna().any():
+                max_plan_end_date = _mpe.max().date()
+        _fact_end_col_rd = (
+            "actual finish"
+            if "actual finish" in df.columns
+            else find_column(
+                df,
+                [
+                    "actual finish",
+                    "фактическое окончание",
+                    "окончание факт",
+                    "факт окончание",
+                ],
+            )
+        )
+        _fact_end_use = _fact_end_col_rd or base_end_col
+        if _fact_end_use and _fact_end_use in df.columns:
+            _mfe = pd.to_datetime(
+                df[_fact_end_use].astype(str), errors="coerce", dayfirst=True, format="mixed"
+            )
+            if _mfe.notna().any():
+                max_fact_end_date = _mfe.max().date()
+
         # Convert columns to numeric - handle comma as decimal separator
         # Replace comma with dot for numeric conversion
         # Plan: use "РД по Договору"
@@ -10539,7 +10579,6 @@ def dashboard_documentation(df, page_title: str = "Рабочая/Проектн
                 fact_to_date = float(past_fact["Количество"].iloc[-1]) if not past_fact.empty else 0.0
             deviation_to_date = fact_to_date - plan_to_date
 
-            # Прогноз: текущая производительность в неделю и необходимая для выполнения плана
             first_plan_date = plan_df["Дата"].min() if not plan_df.empty else None
             last_plan_date = plan_df["Дата"].max() if not plan_df.empty else None
             if first_plan_date is not None:
@@ -10567,29 +10606,100 @@ def dashboard_documentation(df, page_title: str = "Рабочая/Проектн
             with c4:
                 st.metric("Отклонение на текущую дату", f"{deviation_to_date:+,.0f}".replace(",", " "))
 
-            st.caption("Прогноз производительности (РД в неделю)")
-            p1, p2 = st.columns(2)
-            with p1:
-                st.metric(
-                    "Текущая производительность в неделю",
-                    f"{current_productivity:,.1f}".replace(",", " "),
-                    help="Факт на текущую дату / число недель с начала плана",
-                )
-            with p2:
-                if remaining_weeks <= 0:
-                    st.metric(
-                        "Необходимая для выполнения плана",
-                        "—",
-                        help="Плановый срок завершения уже наступил или прошёл",
-                    )
-                elif required_productivity == float("inf"):
-                    st.metric("Необходимая для выполнения плана", "—", help="Нет оставшегося срока")
+            if page_title == "Рабочая документация":
+                if max_plan_end_date is not None:
+                    plan_end_ref = max_plan_end_date
+                    use_approx_plan_end = False
+                elif last_plan_date is not None:
+                    plan_end_ref = last_d
+                    use_approx_plan_end = True
                 else:
-                    st.metric(
-                        "Необходимая для выполнения плана",
-                        f"{required_productivity:,.1f}".replace(",", " "),
-                        help="(План по проекту − Факт на текущую дату) / оставшиеся недели",
+                    plan_end_ref = None
+                    use_approx_plan_end = False
+                days_to_plan_end = (
+                    (plan_end_ref - today).days if plan_end_ref is not None else None
+                )
+                if days_to_plan_end is not None and days_to_plan_end > 0:
+                    nec_rd = deviation_to_date / days_to_plan_end * 7.0
+                else:
+                    nec_rd = None
+
+                planned_weekly = None
+                if max_plan_end_date is not None and max_fact_end_date is not None:
+                    d12 = (max_plan_end_date - max_fact_end_date).days
+                    if d12 > 0:
+                        planned_weekly = plan_to_date / d12 * 7.0
+
+                fact_weekly = None
+                if max_fact_end_date is not None:
+                    d13 = (today - max_fact_end_date).days
+                    if d13 > 0:
+                        fact_weekly = fact_to_date / d13 * 7.0
+
+                st.caption("Производительность разделов в неделю (п.12–14 ТЗ)")
+                if use_approx_plan_end:
+                    st.caption(
+                        "Дата окончания плановая: в колонке планового окончания нет валидных дат — "
+                        "используется дата по правому краю кривой динамики (приблизительно)."
                     )
+                pw1, pw2, pw3 = st.columns(3)
+                with pw1:
+                    st.metric(
+                        "Плановая производительность",
+                        "—"
+                        if planned_weekly is None
+                        else f"{planned_weekly:,.1f}".replace(",", " "),
+                        help="План на текущую дату / (дата окончания план − дата окончания факт) × 7",
+                    )
+                with pw2:
+                    st.metric(
+                        "Фактическая производительность",
+                        "—"
+                        if fact_weekly is None
+                        else f"{fact_weekly:,.1f}".replace(",", " "),
+                        help="Факт на текущую дату / (сегодня − дата окончания факт) × 7; только если дата окончания факт в прошлом",
+                    )
+                with pw3:
+                    if nec_rd is None:
+                        st.metric(
+                            "Необходимая производительность",
+                            "—",
+                            help="Отклонение на текущую дату / (дата окончания план − сегодня) × 7 при положительном остатке дней до планового окончания",
+                        )
+                    else:
+                        st.metric(
+                            "Необходимая производительность",
+                            f"{nec_rd:,.1f}".replace(",", " "),
+                            help="Отклонение на текущую дату / (дата окончания план − сегодня) × 7",
+                        )
+            else:
+                st.caption("Прогноз производительности (РД в неделю)")
+                p1, p2 = st.columns(2)
+                with p1:
+                    st.metric(
+                        "Текущая производительность в неделю",
+                        f"{current_productivity:,.1f}".replace(",", " "),
+                        help="Факт на текущую дату / число недель с начала плана",
+                    )
+                with p2:
+                    if remaining_weeks <= 0:
+                        st.metric(
+                            "Необходимая для выполнения плана",
+                            "—",
+                            help="Плановый срок завершения уже наступил или прошёл",
+                        )
+                    elif required_productivity == float("inf"):
+                        st.metric(
+                            "Необходимая для выполнения плана",
+                            "—",
+                            help="Нет оставшегося срока",
+                        )
+                    else:
+                        st.metric(
+                            "Необходимая для выполнения плана",
+                            f"{required_productivity:,.1f}".replace(",", " "),
+                            help="(План по проекту − Факт на текущую дату) / оставшиеся недели",
+                        )
 
             # Create line chart with text labels always visible
             # Prepare text labels for each data point
