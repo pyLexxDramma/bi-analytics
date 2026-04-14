@@ -15,6 +15,20 @@
     --theColor: 210, 40%, 98%;
 }
 
+/* Скролл вниз: у html/body по умолчанию белый фон — под «хвостом» страницы видна белая полоса */
+html,
+body,
+#root,
+[data-testid="stAppViewContainer"],
+[data-testid="stAppViewContainer"] > div,
+section[data-testid="stMain"],
+section.main,
+.stApp > header ~ section,
+.stApp footer,
+[data-testid="stToolbar"] {
+    background-color: var(--themeBackgroundColor) !important;
+}
+
 /* ┌────────────────────────────────────────────────────────────────────────┐ */
 /* │ ⊗ СКРЫВАЕМ САЙДБАР ПО УМОЛЧАНИЮ ЧТОБЫ НЕ БЫЛО МЕРЦАНИЯ ¤ Start         │ */
 /* └────────────────────────────────────────────────────────────────────────┘ */
