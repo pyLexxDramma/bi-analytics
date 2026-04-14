@@ -849,3 +849,84 @@ div[data-testid="stMetricDelta"] {
 /* ┌────────────────────────────────────────────────────────────────────────┐ */
 /* │ ⊗ Адаптивность и читаемость графиков/таблиц ¤ End                     │ */
 /* └────────────────────────────────────────────────────────────────────────┘ */
+
+/* ┌────────────────────────────────────────────────────────────────────────┐ */
+/* │ ⊗ Контраст тёмной темы: навигация, радио, алерты, подписи (Streamlit) │ */
+/* └────────────────────────────────────────────────────────────────────────┘ */
+
+/* Multipage: пункты меню в сайдбаре (st.navigation / stSidebarNav) */
+[data-testid="stSidebarNav"] a,
+[data-testid="stSidebarNav"] a span,
+[data-testid="stSidebarNav"] li span,
+[data-testid="stSidebarNavLink"],
+[data-testid="stSidebarNavLink"] span,
+section[data-testid="stSidebar"] nav[data-testid="stSidebarNav"] a {
+    color: #e8eef5 !important;
+}
+[data-testid="stSidebarNav"] a:hover,
+[data-testid="stSidebarNav"] a:focus,
+[data-testid="stSidebarNavLink"]:hover {
+    color: #ffffff !important;
+}
+
+/* Радиокнопки: подписи (Base Web часто перебивает .main label) */
+.stRadio label,
+.stRadio p,
+.stRadio span,
+div[data-baseweb="radio"] label,
+div[data-baseweb="radio"] label span,
+div[data-baseweb="radio"] p,
+[data-testid="stRadio"] label,
+[data-testid="stRadio"] p {
+    color: #e8eef5 !important;
+}
+
+/* Заголовки и markdown в основной области (primary из темы иногда даёт «кирпичный» оттенок) */
+.main [data-testid="stMarkdownContainer"] h1,
+.main [data-testid="stMarkdownContainer"] h2,
+.main [data-testid="stMarkdownContainer"] h3,
+.main [data-testid="stMarkdownContainer"] h4,
+.main [data-testid="stMarkdownContainer"] h5,
+.main [data-testid="stMarkdownContainer"] h6 {
+    color: #f1f5f9 !important;
+}
+
+/* Подписи, мелкий текст, ссылки в основной области */
+.stApp .stCaption,
+[data-testid="stCaption"] {
+    color: #c8d8ec !important;
+}
+.main a {
+    color: #c8d8ec !important;
+}
+.main a:hover {
+    color: #e8f4ff !important;
+}
+
+/* Алерты st.error / st.warning / st.info — светлый текст на тёмном фоне */
+div[data-testid="stAlert"] {
+    background-color: rgba(13, 43, 71, 0.92) !important;
+    border: 1px solid rgba(255, 255, 255, 0.22) !important;
+}
+div[data-testid="stAlert"] p,
+div[data-testid="stAlert"] div,
+div[data-testid="stAlert"] span,
+div[data-testid="stAlert"] [data-testid="stMarkdownContainer"],
+div[data-testid="stAlert"] [data-testid="stMarkdownContainer"] * {
+    color: #f1f5f9 !important;
+}
+
+/* Экспандеры (страница входа и др.) */
+[data-testid="stExpander"] summary,
+[data-testid="stExpander"] summary span,
+[data-testid="stExpander"] [data-testid="stMarkdownContainer"],
+[data-testid="stExpander"] [data-testid="stMarkdownContainer"] * {
+    color: #e8eef5 !important;
+}
+
+/* Таблицы st.dataframe: ячейки glide/grid (новые версии Streamlit) */
+[data-testid="stDataFrame"] [role="gridcell"],
+[data-testid="stDataFrame"] [role="columnheader"],
+[data-testid="stDataFrame"] [role="rowheader"] {
+    color: #f1f5f9 !important;
+}

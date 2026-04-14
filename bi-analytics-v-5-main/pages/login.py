@@ -25,6 +25,7 @@ from auth import (
     get_user_by_username,
 )
 from config import switch_page_app
+from utils import load_custom_css
 
 # Инициализация базы данных
 init_db()
@@ -37,6 +38,9 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
     menu_items={"Get Help": None, "Report a bug": None, "About": None},
 )
+
+# Те же стили, что и на основной панели (контраст текста, алерты, поля ввода)
+load_custom_css()
 
 # Если уже авторизован, перенаправляем
 if st.session_state.get("authenticated", False):
