@@ -2269,21 +2269,99 @@ def dashboard_plan_fact_dates(df):
 
     bar_df = pd.DataFrame(bar_data)
 
-    covenant_block = (
-        selected_section != "Все"
-        and "ковенант" in str(selected_section).lower()
-    )
+    def _text_indicates_covenant(val):
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            return False
+        t = str(val).lower()
+        return "ковенант" in t or "coven" in t
 
-    if covenant_block:
-        st.caption(
-            "Режим «Ковенанты»: нижние диаграммы из общего макета скрыты; показан таймлайн вех "
-            "(базовое окончание и окончание) и таблица ковенантов."
+    def _covenant_row_mask(frame):
+        m = pd.Series(False, index=frame.index)
+        for col in ("section", "block", "task name"):
+            if col in frame.columns:
+                m = m | frame[col].astype(str).map(_text_indicates_covenant)
+        return m
+
+    covenant_filter_selected = (
+        (selected_section != "Все" and _text_indicates_covenant(selected_section))
+        or (
+            selected_block_dates != "Все"
+            and _text_indicates_covenant(selected_block_dates)
         )
+    )
+    covenant_auto_from_data = False
+    if selected_section == "Все":
+        for col in ("section", "block"):
+            if col in filtered_df.columns and filtered_df[col].astype(str).map(
+                _text_indicates_covenant
+            ).any():
+                covenant_auto_from_data = True
+                break
+    show_covenant_ui = covenant_filter_selected or covenant_auto_from_data
+    covenant_rows_df = filtered_df
+    if covenant_auto_from_data and not covenant_filter_selected:
+        covenant_rows_df = filtered_df.loc[_covenant_row_mask(filtered_df)].copy()
+        if covenant_rows_df.empty:
+            show_covenant_ui = False
+
+    def _render_stage_deviation_bar_chart(bar_df_local):
+        if bar_df_local.empty or "Этап" not in bar_df_local.columns:
+            return
+        section_dev = (
+            bar_df_local.drop_duplicates(subset=["Задача"])[["Этап", "Отклонение"]]
+            .groupby("Этап", as_index=False)["Отклонение"]
+            .max()
+        )
+        if section_dev.empty:
+            return
+        fig_section = go.Figure()
+        fig_section.add_trace(
+            go.Bar(
+                x=section_dev["Этап"],
+                y=section_dev["Отклонение"],
+                text=section_dev["Отклонение"].apply(
+                    lambda v: f"{int(round(v, 0))}" if pd.notna(v) else ""
+                ),
+                textposition="inside",
+                textfont=dict(size=12, color="white"),
+                marker_color="#2E86AB",
+                name="Отклонение (дней)",
+            )
+        )
+        fig_section.update_layout(
+            xaxis_title="Этап",
+            yaxis_title="Отклонение (дней)",
+            height=max(400, len(section_dev) * 50),
+            showlegend=False,
+        )
+        fig_section = apply_chart_background(fig_section)
+        fig_section.update_layout(margin=dict(t=30))
+        render_chart(
+            fig_section,
+            caption_below=(
+                "Отклонение текущего срока от базового плана по этапам "
+                "(по этапу — максимум абсолютного отклонения среди задач)"
+            ),
+        )
+
+    _render_stage_deviation_bar_chart(bar_df)
+
+    if show_covenant_ui:
+        if covenant_filter_selected:
+            st.caption(
+                "Режим «Ковенанты»: нижние диаграммы из общего макета скрыты; показан таймлайн вех "
+                "(базовое окончание и окончание) и таблица ковенантов."
+            )
+        else:
+            st.caption(
+                "Обнаружены строки раздела «Ковенанты» в данных: ниже — таймлайн и таблица по ним "
+                "(фильтр этапа «Все»)."
+            )
         pe_col, fe_col = "plan end", "base end"
-        if pe_col not in filtered_df.columns or fe_col not in filtered_df.columns:
+        if pe_col not in covenant_rows_df.columns or fe_col not in covenant_rows_df.columns:
             st.warning("Нет колонок с датами окончания для ковенантов.")
         else:
-            tdf = filtered_df.copy()
+            tdf = covenant_rows_df.copy()
             tdf[pe_col] = pd.to_datetime(tdf[pe_col], errors="coerce", dayfirst=True)
             tdf[fe_col] = pd.to_datetime(tdf[fe_col], errors="coerce", dayfirst=True)
             tdf_vis = tdf[tdf[pe_col].notna() | tdf[fe_col].notna()]
@@ -2373,7 +2451,7 @@ def dashboard_plan_fact_dates(df):
                     return str(val).strip()
 
             cov_rows = []
-            for _, crow in filtered_df.iterrows():
+            for _, crow in covenant_rows_df.iterrows():
                 ped = crow.get("plan_end_diff")
                 ped_num = pd.to_numeric(ped, errors="coerce")
                 pev = crow.get(pe_col)
@@ -2381,7 +2459,7 @@ def dashboard_plan_fact_dates(df):
                 cov_rows.append(
                     {
                         "Проект": _clean_display_str(crow.get("project name"))
-                        if selected_project == "Все" and "project name" in filtered_df.columns
+                        if selected_project == "Все" and "project name" in covenant_rows_df.columns
                         else "",
                         "Задача": _clean_display_str(crow.get("task name")),
                         "Базовое окончание": _cov_fmt_date_cell(pev),
@@ -2390,7 +2468,7 @@ def dashboard_plan_fact_dates(df):
                     }
                 )
             cov_df = pd.DataFrame(cov_rows)
-            if selected_project != "Все" or "project name" not in filtered_df.columns:
+            if selected_project != "Все" or "project name" not in covenant_rows_df.columns:
                 cov_df = cov_df.drop(columns=["Проект"], errors="ignore")
             cov_df = cov_df.sort_values(
                 "Отклонение окончания (дней)", ascending=False, na_position="last"
@@ -2469,41 +2547,6 @@ def dashboard_plan_fact_dates(df):
     elif bar_df.empty:
         st.info("Нет данных для отображения графика.")
     else:
-        # График по этапам: ось X = этап, ось Y = отклонение (дней)
-        if "Этап" in bar_df.columns:
-            section_dev = (
-                bar_df.drop_duplicates(subset=["Задача"])[["Этап", "Отклонение"]]
-                .groupby("Этап", as_index=False)["Отклонение"]
-                .max()
-            )
-            if not section_dev.empty:
-                fig_section = go.Figure()
-                fig_section.add_trace(
-                    go.Bar(
-                        x=section_dev["Этап"],
-                        y=section_dev["Отклонение"],
-                        text=section_dev["Отклонение"].apply(
-                            lambda v: f"{int(round(v, 0))}" if pd.notna(v) else ""
-                        ),
-                        textposition="inside",
-                        textfont=dict(size=12, color="white"),
-                        marker_color="#2E86AB",
-                        name="Отклонение (дней)",
-                    )
-                )
-                fig_section.update_layout(
-                    xaxis_title="Этап",
-                    yaxis_title="Отклонение (дней)",
-                    height=max(400, len(section_dev) * 50),
-                    showlegend=False,
-                )
-                fig_section = apply_chart_background(fig_section)
-                fig_section.update_layout(margin=dict(t=30))
-                render_chart(
-                    fig_section,
-                    caption_below="Отклонение текущего срока от базового плана по этапам",
-                )
-
         # Checkbox to show/hide completion percentage
         show_completion = st.checkbox(
             "Показать процент выполнения",
@@ -3050,6 +3093,64 @@ def dashboard_plan_fact_dates(df):
             "В режиме «Отклонение (дней)» нет столбцов отклонения: включите один из чекбоксов ниже "
             "или переключите тип значения на «Даты (план/факт)»."
         )
+
+    def _is_zos_task_name(name):
+        if name is None or (isinstance(name, float) and pd.isna(name)):
+            return False
+        s = str(name).lower()
+        if "зос" in s:
+            return True
+        return "заключение о соответствии" in s
+
+    if "task name" in filtered_df.columns:
+        zos_subset = filtered_df[
+            filtered_df["task name"].astype(str).map(_is_zos_task_name)
+        ].copy()
+    else:
+        zos_subset = filtered_df.iloc[0:0].copy()
+
+    if not zos_subset.empty:
+        st.subheader("ЗОС")
+        zos_proj_count = (
+            zos_subset["project name"].dropna().astype(str).str.strip().nunique()
+            if "project name" in zos_subset.columns
+            else 0
+        )
+        if selected_project != "Все":
+            st.caption(f"Проект: {selected_project}")
+        elif "project name" in zos_subset.columns and zos_proj_count == 1:
+            _pn = zos_subset["project name"].dropna().astype(str).str.strip().unique().tolist()
+            if _pn:
+                st.caption(f"Проект: {_pn[0]}")
+        zos_show_project_col = (
+            "project name" in zos_subset.columns
+            and selected_project == "Все"
+            and zos_proj_count > 1
+        )
+        if "plan_end_diff" in zos_subset.columns:
+            zos_subset = zos_subset.sort_values(
+                "plan_end_diff", ascending=False, na_position="last"
+            )
+        zos_tbl_rows = []
+        for _, zr in zos_subset.iterrows():
+            row_out = {
+                "Задача": _clean_display_str(zr.get("task name")),
+                "План Конец": format_date_display(zr.get("plan end")),
+                "Факт Конец": format_date_display(zr.get("base end")),
+                "Отклонения": _format_int_days(zr.get("plan_end_diff")),
+            }
+            if zos_show_project_col:
+                row_out = {
+                    "Проект": _clean_display_str(zr.get("project name")),
+                    **row_out,
+                }
+            zos_tbl_rows.append(row_out)
+        zos_tbl = pd.DataFrame(zos_tbl_rows)
+        st.caption(
+            "Сроки окончания и отклонение (дней); знак отклонения: факт − план по дате окончания."
+        )
+        _render_html_table(zos_tbl)
+        st.markdown("---")
 
     st.subheader("Отклонение от базового плана (таблица)")
     st.caption(
