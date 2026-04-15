@@ -4508,7 +4508,7 @@ def dashboard_budget_by_period(df):
             "Отчёты «Утверждённый бюджет» и «Прогнозный бюджет» — отдельные представления по тем же проектам."
         )
 
-    # Filters row 1: Period, Project, Section
+    # Сетка фильтров; чекбоксы — после фильтров (П.9)
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -4536,20 +4536,11 @@ def dashboard_budget_by_period(df):
         else:
             selected_section = "Все"
 
-    # Filters row 2: View type and Hide adjusted budget
-    col7, col8 = st.columns(2)
-    with col8:
-        hide_adjusted = st.checkbox(
-            "Скрыть скорректированный бюджет",
-            value=True,
-            key="budget_period_hide_adjusted",
-        )
-
-    # Filters row 5: Hide deviation
-    col9, col10 = st.columns(2)
-
-    with col9:
-        hide_reserve = False
+    hide_adjusted = st.checkbox(
+        "Скрыть скорректированный бюджет",
+        value=True,
+        key="budget_period_hide_adjusted",
+    )
 
     # Apply filters - fix filtering
     filtered_df = df.copy()
@@ -10793,6 +10784,31 @@ def dashboard_documentation(
         rd_plan_series = df[rd_plan_col].astype(str).str.replace(",", ".", regex=False)
         df["rd_plan_numeric"] = pd.to_numeric(rd_plan_series, errors="coerce").fillna(0)
 
+        # Если «РД по Договору» везде ноль, а есть отдельная колонка «количество разделов РД» с данными — план берём из неё (ТЗ: план не нулевой без причины)
+        rd_sections_for_plan_fallback = find_column(
+            df,
+            [
+                "Количество разделов РД по Договору",
+                "Количество разделов РД",
+                "разделов РД по договору",
+                "Количетсов разделов РД по Договору",
+            ],
+        )
+        if (
+            rd_sections_for_plan_fallback
+            and rd_sections_for_plan_fallback in df.columns
+            and rd_sections_for_plan_fallback != rd_plan_col
+        ):
+            if float(df["rd_plan_numeric"].sum()) == 0.0:
+                cnt_series = (
+                    df[rd_sections_for_plan_fallback]
+                    .astype(str)
+                    .str.replace(",", ".", regex=False)
+                )
+                cnt_num = pd.to_numeric(cnt_series, errors="coerce").fillna(0.0)
+                if float(cnt_num.sum()) > 0.0:
+                    df["rd_plan_numeric"] = cnt_num
+
         # Convert "Выдано в производство работ" to numeric - handle comma as decimal separator
         in_production_series = (
             df[in_production_col].astype(str).str.replace(",", ".", regex=False)
@@ -11818,6 +11834,39 @@ def _bdds_distribute_row_abc(total: float, start, end, a, b, c) -> dict:
     return out
 
 
+def _bdds_distribute_row_abc_components(total: float, start, end, a, b, c):
+    """
+    Те же правила, что и _bdds_distribute_row_abc, но три словаря: доли A, B и C по месяцам (руб.).
+    """
+    months = _bdds_month_periods_inclusive(start, end)
+    if not months or total is None or (isinstance(total, float) and pd.isna(total)):
+        return {}, {}, {}
+    t = float(total)
+    if t == 0:
+        z = {m: 0.0 for m in months}
+        return z.copy(), z.copy(), z.copy()
+    ap, bp, cp = _bdds_normalize_abc(a, b, c)
+    ms, me = months[0], months[-1]
+    da = {m: 0.0 for m in months}
+    db = {m: 0.0 for m in months}
+    dc = {m: 0.0 for m in months}
+    da[ms] += t * (ap / 100.0)
+    dc[me] += t * (cp / 100.0)
+    mid_total = t * (bp / 100.0)
+    interior = [m for m in months if m > ms and m < me]
+    if interior:
+        share = mid_total / len(interior)
+        for m in interior:
+            db[m] += share
+    else:
+        if len(months) == 1:
+            db[ms] += mid_total
+        else:
+            db[ms] += mid_total / 2.0
+            db[me] += mid_total / 2.0
+    return da, db, dc
+
+
 def _bdds_msp_monthly_plan_activity(work_df: pd.DataFrame) -> dict:
     """
     По каждому месяцу — сумма «БДДС план» по строкам, активным в этом месяце (как сводка MSP по пересечению).
@@ -11845,7 +11894,8 @@ def _bdds_msp_monthly_plan_activity(work_df: pd.DataFrame) -> dict:
 
 def compute_bddcs_forecast_monthly(work_df: pd.DataFrame, distribution_mode: str = "uniform", abc_source=None):
     """
-    Возвращает DataFrame: month, bdds_plan_msp, bdds_forecast, bdds_fact (в рублях по месяцам).
+    Возвращает DataFrame: month, bdds_plan_msp, bdds_forecast, bdds_fact;
+    при режиме A/B/C — дополнительно bdds_forecast_a, bdds_forecast_b, bdds_forecast_c (руб. по месяцам).
     abc_source: DataFrame с колонками A %, B %, C % (или A_, B_, C_) той же длины, что work_df; иначе 34/33/33.
     """
     if work_df is None or work_df.empty:
@@ -11870,6 +11920,9 @@ def compute_bddcs_forecast_monthly(work_df: pd.DataFrame, distribution_mode: str
     use_abc = mode in ("abc", "%", "процент", "a/b/c", "a b c")
 
     fc_totals: dict = {}
+    fc_totals_a: dict = {}
+    fc_totals_b: dict = {}
+    fc_totals_c: dict = {}
     fact_totals: dict = {}
     plan_msp = _bdds_msp_monthly_plan_activity(df)
 
@@ -11894,6 +11947,15 @@ def compute_bddcs_forecast_monthly(work_df: pd.DataFrame, distribution_mode: str
         if use_abc:
             dp = _bdds_distribute_row_abc(plan_amt, r["plan start"], r["plan end"], a, b, c)
             dfact = _bdds_distribute_row_abc(fact_amt, r["plan start"], r["plan end"], a, b, c)
+            da, db, dc = _bdds_distribute_row_abc_components(
+                plan_amt, r["plan start"], r["plan end"], a, b, c
+            )
+            for m, v in da.items():
+                fc_totals_a[m] = fc_totals_a.get(m, 0.0) + float(v)
+            for m, v in db.items():
+                fc_totals_b[m] = fc_totals_b.get(m, 0.0) + float(v)
+            for m, v in dc.items():
+                fc_totals_c[m] = fc_totals_c.get(m, 0.0) + float(v)
         else:
             dp = _bdds_distribute_row_uniform(plan_amt, r["plan start"], r["plan end"])
             dfact = _bdds_distribute_row_uniform(fact_amt, r["plan start"], r["plan end"])
@@ -11908,14 +11970,21 @@ def compute_bddcs_forecast_monthly(work_df: pd.DataFrame, distribution_mode: str
 
     rows = []
     for m in all_m:
-        rows.append(
-            {
-                "month": m,
-                "bdds_plan_msp": float(plan_msp.get(m, 0.0)),
-                "bdds_forecast": float(fc_totals.get(m, 0.0)),
-                "bdds_fact": float(fact_totals.get(m, 0.0)),
-            }
-        )
+        row_out = {
+            "month": m,
+            "bdds_plan_msp": float(plan_msp.get(m, 0.0)),
+            "bdds_forecast": float(fc_totals.get(m, 0.0)),
+            "bdds_fact": float(fact_totals.get(m, 0.0)),
+        }
+        if use_abc:
+            row_out["bdds_forecast_a"] = float(fc_totals_a.get(m, 0.0))
+            row_out["bdds_forecast_b"] = float(fc_totals_b.get(m, 0.0))
+            row_out["bdds_forecast_c"] = float(fc_totals_c.get(m, 0.0))
+        else:
+            row_out["bdds_forecast_a"] = 0.0
+            row_out["bdds_forecast_b"] = 0.0
+            row_out["bdds_forecast_c"] = 0.0
+        rows.append(row_out)
     out = pd.DataFrame(rows).sort_values("month").reset_index(drop=True)
     return out, None
 
@@ -12400,10 +12469,7 @@ def dashboard_forecast_budget(df):
             "в MS Project по лоту и правил распределения (равномерно или % A/B/C). "
             "Блок редактирования ниже соответствует идее «Формирование БДДС прогноз»."
         )
-    st.info(
-        "**БДДС прогноз** по месяцам: распределение суммы лота по датам **Начало/Окончание** из MSP "
-        "(равномерно или доли **A/B/C** по ТЗ). На графике: **БДДС план (сводка MSP)**, **БДДС факт**, **БДДС прогноз**."
-    )
+    # Кратко: логика в expander «Требования ТЗ»; без дублирующего серого info (П.9)
 
     # Фильтр по проекту (обязательный для прогнозного бюджета)
     # Check English name first (alias created in load_data), then Russian
@@ -12549,6 +12615,12 @@ def dashboard_forecast_budget(df):
     mf["bdds_plan_msp_mln"] = (mf["bdds_plan_msp"] / 1e6).round(4)
     mf["bdds_forecast_mln"] = (mf["bdds_forecast"] / 1e6).round(4)
     mf["bdds_fact_mln"] = (mf["bdds_fact"] / 1e6).round(4)
+    for _abc in ("bdds_forecast_a", "bdds_forecast_b", "bdds_forecast_c"):
+        if _abc not in mf.columns:
+            mf[_abc] = 0.0
+    mf["bdds_forecast_a_mln"] = (mf["bdds_forecast_a"] / 1e6).round(4)
+    mf["bdds_forecast_b_mln"] = (mf["bdds_forecast_b"] / 1e6).round(4)
+    mf["bdds_forecast_c_mln"] = (mf["bdds_forecast_c"] / 1e6).round(4)
 
     compare_to = st.radio(
         "Отклонение от БДДС прогноз считать к",
@@ -12633,14 +12705,18 @@ def dashboard_forecast_budget(df):
         "БДДС факт",
         "БДДС прогноз",
     ]
+    if dist_key == "abc":
+        summary_table["Прогноз A, млн руб."] = mf["bdds_forecast_a_mln"]
+        summary_table["Прогноз B, млн руб."] = mf["bdds_forecast_b_mln"]
+        summary_table["Прогноз C, млн руб."] = mf["bdds_forecast_c_mln"]
     if not hide_dev:
         summary_table["Отклонение (база − прогноз)"] = (mf["_dev"] / 1e6).round(4)
     for c in summary_table.columns:
         if c == "Месяц":
             continue
         summary_table[c] = summary_table[c].apply(
-        lambda x: f"{float(x):.2f}" if pd.notna(x) else "0.00"
-    )
+            lambda x: f"{float(x):.2f}" if pd.notna(x) else "0.00"
+        )
     st.markdown(format_dataframe_as_html(summary_table), unsafe_allow_html=True)
     _csv = summary_table.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
     st.download_button("Скачать CSV", _csv, "forecast_bddcs_summary.csv", "text/csv", key="fcast_summary_csv")
