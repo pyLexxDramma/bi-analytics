@@ -6541,8 +6541,7 @@ def dashboard_technique(df):
                 df_hist = filtered_df[_gdrs_match_data_source(filtered_df["data_source"], src)].copy()
             if df_hist.empty:
                 with hist_cols[idx]:
-                    st.caption(f"Факт по периодам: {label}")
-                    st.info("Нет данных.")
+                    st.info(f"**{label}** — нет данных для графика «Факт по периодам».")
                 continue
             # Колонки по неделям (1 неделя_numeric, 2 неделя_numeric, ...)
             week_numeric_cols_hist = [
@@ -6692,7 +6691,10 @@ def dashboard_technique(df):
 
     elif "week_sum" in filtered_df.columns:
         # Нет отдельной колонки периода (типично для web-выгрузки только с датами в заголовках): факт по подрядчикам
-        st.caption("В файле нет колонки «Период» — показан суммарный факт по подрядчикам.")
+        with st.expander("Нет колонки «Период» в файле", expanded=False):
+            st.caption(
+                "Показан суммарный факт по подрядчикам (агрегация без оси периода в данных)."
+            )
         sources_fb = []
         if "data_source" in filtered_df.columns:
             sources_fb = filtered_df["data_source"].dropna().unique().tolist()
@@ -6716,8 +6718,7 @@ def dashboard_technique(df):
                 df_fb = filtered_df[_gdrs_match_data_source(filtered_df["data_source"], src_fb)].copy()
             if df_fb.empty or "Контрагент" not in df_fb.columns:
                 with fb_cols[fbi]:
-                    st.caption(f"Факт по подрядчикам: {lab_fb}")
-                    st.info("Нет данных.")
+                    st.info(f"**{lab_fb}** — нет данных для «Факт по подрядчикам».")
                 continue
             by_c = (
                 df_fb.groupby("Контрагент", as_index=False)["week_sum"]
@@ -6727,8 +6728,7 @@ def dashboard_technique(df):
             by_c = by_c[by_c["Факт"].abs() > 0].sort_values("Факт", ascending=False)
             if by_c.empty:
                 with fb_cols[fbi]:
-                    st.caption(f"Факт по подрядчикам: {lab_fb}")
-                    st.info("Нет данных для отображения.")
+                    st.info(f"**{lab_fb}** — нет ненулевых значений по подрядчикам.")
                 continue
             tot = float(by_c["Факт"].sum())
             by_c["pct"] = (by_c["Факт"] / tot * 100.0).round(1) if tot else 0.0
@@ -7952,8 +7952,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 df_hist = filtered_df[_gdrs_match_data_source(filtered_df["data_source"], src)].copy()
             if df_hist.empty:
                 with hist_cols[idx]:
-                    st.caption(f"Факт по периодам: {label}")
-                    st.info("Нет данных.")
+                    st.info(f"**{label}** — нет данных для графика «Факт по периодам».")
                 continue
             # Колонки по неделям (1 неделя_numeric, 2 неделя_numeric, ...)
             week_numeric_cols_hist = [
@@ -8102,7 +8101,10 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     )
 
     elif "week_sum" in filtered_df.columns:
-        st.caption("В файле нет колонки «Период» — показан суммарный факт по подрядчикам.")
+        with st.expander("Нет колонки «Период» в файле", expanded=False):
+            st.caption(
+                "Показан суммарный факт по подрядчикам (агрегация без оси периода в данных)."
+            )
         sources_wfb = []
         if "data_source" in filtered_df.columns:
             sources_wfb = filtered_df["data_source"].dropna().unique().tolist()
@@ -8126,8 +8128,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 df_wfb = filtered_df[_gdrs_match_data_source(filtered_df["data_source"], src_wfb)].copy()
             if df_wfb.empty or "Контрагент" not in df_wfb.columns:
                 with wfb_cols[wfi]:
-                    st.caption(f"Факт по подрядчикам: {lab_wfb}")
-                    st.info("Нет данных.")
+                    st.info(f"**{lab_wfb}** — нет данных для «Факт по подрядчикам».")
                 continue
             by_w = (
                 df_wfb.groupby("Контрагент", as_index=False)["week_sum"]
@@ -8137,8 +8138,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             by_w = by_w[by_w["Факт"].abs() > 0].sort_values("Факт", ascending=False)
             if by_w.empty:
                 with wfb_cols[wfi]:
-                    st.caption(f"Факт по подрядчикам: {lab_wfb}")
-                    st.info("Нет данных для отображения.")
+                    st.info(f"**{lab_wfb}** — нет ненулевых значений по подрядчикам.")
                 continue
             tw = float(by_w["Факт"].sum())
             by_w["pct"] = (by_w["Факт"] / tw * 100.0).round(1) if tw else 0.0
@@ -8364,7 +8364,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                             unsafe_allow_html=True,
                         )
                 else:
-                    st.caption("Нет данных для плана/факта по этому проекту.")
+                    st.markdown("*Нет данных для плана/факта по этому проекту.*")
         plan_fact_row_done = True
         st.markdown("---")
 
@@ -8416,7 +8416,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     unsafe_allow_html=True,
                 )
             else:
-                st.caption("Нет данных по факту подрядчиков по этому проекту.")
+                st.markdown("*Нет данных по факту подрядчиков по этому проекту.*")
             if _ix < len(projects_to_process) - 1:
                 st.markdown("---")
         contractor_fact_row_done = True
