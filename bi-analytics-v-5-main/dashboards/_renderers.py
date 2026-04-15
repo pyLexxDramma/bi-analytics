@@ -5185,6 +5185,10 @@ def dashboard_budget_by_section(df):
     with col3:
         pass
 
+    hide_reserve = st.checkbox(
+        "Скрыть отклонение", value=True, key="budget_section_hide_reserve"
+    )
+
     # Apply filters
     filtered_df = df.copy()
     if selected_section != "Все" and "section" in filtered_df.columns:
@@ -5239,11 +5243,6 @@ def dashboard_budget_by_section(df):
     # Store original period values for sorting before formatting
     budget_summary["period_original"] = budget_summary[period_col]
     budget_summary[period_col] = budget_summary[period_col].apply(format_period_ru)
-
-    # Checkbox to hide/show deviation
-    hide_reserve = st.checkbox(
-        "Скрыть отклонение", value=True, key="budget_section_hide_reserve"
-    )
 
     @st.fragment
     def _budget_section_chart():
@@ -5381,6 +5380,7 @@ def dashboard_budget_by_section(df):
                 height=max(400, len(section_chart_data) * 44),
             )
             _lot_budget_caption = "План/факт/отклонение по лотам"
+        fig = _apply_finance_bar_label_layout(fig)
         fig = apply_chart_background(fig)
         render_chart(fig, caption_below=_lot_budget_caption)
 
@@ -11276,29 +11276,21 @@ def dashboard_budget_by_type(df):
     # ========== Histogram: Budget by Project and Type ==========
     st.subheader("Гистограмма: Бюджет план/факт/корректировка/отклонение по проектам")
 
-    # Check for adjusted budget column in original dataframe
     adjusted_budget_col = None
     if "budget adjusted" in df.columns:
         adjusted_budget_col = "budget adjusted"
     elif "adjusted budget" in df.columns:
         adjusted_budget_col = "adjusted budget"
 
-    # Filters for histogram
-    col_hist1 = st.columns(1)[0]
-
-    with col_hist1:
-        # Checkbox for showing deviation
-        show_reserve = st.checkbox(
-            "Показать отклонение", value=False, key="budget_show_reserve"
-        )
-
-        # Budget types to show (always show Plan and Fact, optionally Deviation)
-        selected_budget_types = ["Бюджет План", "Бюджет Факт"]
-        if adjusted_budget_col:
-            selected_budget_types.append("Бюджет Корректировка")
-        if show_reserve:
-            selected_budget_types.append("Отклонение (перерасход)")
-            selected_budget_types.append("Отклонение (экономия)")
+    show_reserve = st.checkbox(
+        "Показать отклонение", value=False, key="budget_show_reserve"
+    )
+    selected_budget_types = ["Бюджет План", "Бюджет Факт"]
+    if adjusted_budget_col:
+        selected_budget_types.append("Бюджет Корректировка")
+    if show_reserve:
+        selected_budget_types.append("Отклонение (перерасход)")
+        selected_budget_types.append("Отклонение (экономия)")
 
     # Apply filters for histogram - use filtered_df to respect project filter
     hist_df = filtered_df.copy()
@@ -11443,6 +11435,7 @@ def dashboard_budget_by_type(df):
                     textfont=dict(size=12, color="white"),
                 )
 
+                fig_hist = _apply_finance_bar_label_layout(fig_hist)
                 fig_hist = apply_chart_background(fig_hist)
                 render_chart(
                     fig_hist,
@@ -11666,6 +11659,7 @@ def dashboard_budget_old_charts(df):
         )
         fig.update_xaxes(tickangle=-45)
         fig.update_traces(textposition="outside", textfont=dict(size=14, color="white"))
+        fig = _apply_finance_bar_label_layout(fig)
         fig = apply_chart_background(fig)
         render_chart(fig, caption_below="Бюджет по типам по периоду")
 
