@@ -2,5 +2,8 @@
 _visual_check_playwright.py
 _visual_check_out/
 
+# Локальный журнал правок (не публиковать)
+PRAVKI_HOD_RABOT.md
+
 # Корень репозитория
 __pycache__/
