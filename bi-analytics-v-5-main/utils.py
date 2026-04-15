@@ -300,15 +300,31 @@ def apply_chart_background(fig):
             bgcolor="rgba(0,0,0,0)",
         )
     else:
-        layout_kwargs["legend"] = dict(
+        # Дефолт — полоска легенды под графиком. Если дашборд уже задал y/yanchor (напр. y<0, yanchor=top),
+        # не затирать — иначе легенда снова уезжает «вверх»/в центр после этого вызова.
+        legend_base = dict(
             font=dict(color=TABLE_TEXT_COLOR, size=12),
             bgcolor="rgba(0,0,0,0)",
-            orientation="h",  # горизонтальная легенда — не обрезается на узких экранах
+            orientation="h",
             yanchor="bottom",
             y=-0.25,
             xanchor="center",
             x=0.5,
         )
+        if prev_leg is not None:
+            py = getattr(prev_leg, "y", None)
+            ya = getattr(prev_leg, "yanchor", None)
+            try:
+                py_f = float(py) if py is not None else None
+            except (TypeError, ValueError):
+                py_f = None
+            custom_below = (py_f is not None and py_f < 0) or ya == "top"
+            if custom_below:
+                for key in ("x", "y", "xanchor", "yanchor", "xref", "yref", "orientation"):
+                    val = getattr(prev_leg, key, None)
+                    if val is not None:
+                        legend_base[key] = val
+        layout_kwargs["legend"] = legend_base
     fig.update_layout(**layout_kwargs)
 
     # Оси X
@@ -319,6 +335,7 @@ def apply_chart_background(fig):
         title=dict(font=dict(color=TABLE_TEXT_COLOR, size=12)),
         zerolinecolor="rgba(255,255,255,0.2)",
         automargin=True,
+        ticklabelstandoff=8,
     )
 
     # Оси Y

@@ -414,6 +414,34 @@ def _apply_finance_bar_label_layout(fig: go.Figure) -> go.Figure:
     return fig
 
 
+def _plotly_legend_horizontal_below_plot(
+    fig: go.Figure,
+    *,
+    bottom_px: int = 300,
+    top_px: int = 88,
+    legend_y: float = -0.34,
+) -> go.Figure:
+    """
+    Легенда под осью X (в нижнем поле, не над столбцами): отрицательный y + yanchor=top + margin b.
+    У вызова render_chart задавайте height (БДДС: 560), иначе область графика может сжаться.
+    """
+    try:
+        fig.update_layout(
+            legend=dict(
+                orientation="h",
+                x=0.5,
+                xanchor="center",
+                y=legend_y,
+                yanchor="top",
+                font=dict(size=11, color="#e8eef5"),
+            ),
+            margin=dict(l=56, r=36, t=top_px, b=bottom_px),
+        )
+    except Exception:
+        pass
+    return fig
+
+
 def _finance_bar_text_mln_rub(values_rub: pd.Series) -> list:
     """Подписи над столбцами по ТЗ: число и строка «млн руб.» (две строки)."""
     out = []
@@ -4826,14 +4854,19 @@ def dashboard_budget_by_period(df):
                 )
             fig.update_layout(
                 title_text="",
-                xaxis_title=period_label,
                 yaxis_title="млн руб.",
                 barmode="group",
                 bargap=0.18,
                 bargroupgap=0.08,
-                xaxis=dict(tickangle=-45, tickfont=dict(size=10), nticks=18),
+                xaxis=dict(
+                    title=dict(text=period_label, standoff=26),
+                    tickangle=-45,
+                    tickfont=dict(size=10),
+                    nticks=18,
+                ),
             )
             fig = _apply_finance_bar_label_layout(fig)
+            fig = _plotly_legend_horizontal_below_plot(fig)
             if not project_data.empty:
                 _ymax = float(
                     np.nanmax(
@@ -4849,7 +4882,7 @@ def dashboard_budget_by_period(df):
                 if np.isfinite(_ymax) and _ymax > 0:
                     fig.update_layout(yaxis=dict(range=[0, _ymax * 1.22]))
             fig = apply_chart_background(fig)
-            render_chart(fig, caption_below=f"БДДС{title_suffix}")
+            render_chart(fig, caption_below=f"БДДС{title_suffix}", height=600)
 
         _budget_period_chart()
 
@@ -5322,14 +5355,19 @@ def dashboard_budget_cumulative(df):
 
         fig_cum.update_layout(
             title_text="",
-            xaxis_title=period_label,
             yaxis_title="млн руб.",
             barmode="group",
             bargap=0.18,
             bargroupgap=0.08,
-            xaxis=dict(tickangle=-45, tickfont=dict(size=10), nticks=18),
+            xaxis=dict(
+                title=dict(text=period_label, standoff=26),
+                tickangle=-45,
+                tickfont=dict(size=10),
+                nticks=18,
+            ),
         )
         fig_cum = _apply_finance_bar_label_layout(fig_cum)
+        fig_cum = _plotly_legend_horizontal_below_plot(fig_cum)
         _yc = [
             chart_src["budget plan_cum"].div(1e6).max(),
             chart_src["budget fact_cum"].div(1e6).max(),
@@ -5341,7 +5379,7 @@ def dashboard_budget_cumulative(df):
         if np.isfinite(_ymax) and _ymax > 0:
             fig_cum.update_layout(yaxis=dict(range=[0, _ymax * 1.22]))
         fig_cum = apply_chart_background(fig_cum)
-        render_chart(fig_cum, caption_below="БДДС накопительно (подписи — млн руб.)")
+        render_chart(fig_cum, caption_below="БДДС накопительно (подписи — млн руб.)", height=600)
 
     # --- Таблица «накопительно»: по каждому проекту — нарастающий итог по периодам
     st.subheader(f"Сводка бюджета (накопительно) по {period_label.lower()}")
@@ -13097,13 +13135,17 @@ def dashboard_forecast_budget(df):
     )
 
     fig.update_layout(
-        xaxis_title="Месяц",
         yaxis_title="млн руб.",
         hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         height=600,
+        xaxis=dict(
+            title=dict(text="Месяц", standoff=26),
+            tickangle=-45,
+            tickfont=dict(size=10),
+        ),
     )
     fig = _apply_finance_bar_label_layout(fig)
+    fig = _plotly_legend_horizontal_below_plot(fig)
     fig = apply_chart_background(fig)
     try:
         ymax = float(
