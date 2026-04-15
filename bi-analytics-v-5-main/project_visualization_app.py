@@ -671,250 +671,31 @@ def main():
     has_any_data = has_project_data or has_resources_data or has_technique_data
 
     if has_any_data:
-        # Check if dashboard was selected from sidebar menu
-        dashboard_selected_from_menu = st.session_state.get(
-            "dashboard_selected_from_menu", False
-        )
-        current_dashboard = st.session_state.get("current_dashboard", "")
+        # Выбор отчёта только из бокового меню (блок «Выбор панели» в основной области снят).
+        from dashboards import get_dashboards, get_main_panel_report_lists
 
-        # Initialize session state for dashboard selection
-        if "current_dashboard" not in st.session_state:
-
-            if (has_resources_data or has_technique_data) and not has_project_data:
-
-                st.session_state.current_dashboard = "График движения рабочей силы"
-
-            else:
-
-                st.session_state.current_dashboard = "Причины отклонений"
-
-        # If dashboard was selected from sidebar menu, show only the selected dashboard
-        # without the selection panels
-        if dashboard_selected_from_menu and current_dashboard:
-            # Display only the selected dashboard
-            selected_dashboard = current_dashboard
-            # Reset the flag after processing (will be reset after rerun if button clicked)
-            st.session_state.dashboard_selected_from_menu = False
-
-            dashboards_using_technique = (
-                "График движения рабочей силы",
-                "ГДРС",
-                "СКУД стройка",
-            )
-
-            if selected_dashboard in dashboards_using_technique:
-
-                df_for_render = resources_data if has_resources_data else (technique_data if has_technique_data else df)
-
-            else:
-
-                df_for_render = df
-
-            # Route to selected dashboard (локальный словарь, без импорта из dashboards)
-            try:
-                from dashboards import get_dashboards
-                dashboards = get_dashboards()
-                render_fn = dashboards.get(selected_dashboard)
-                if render_fn:
-                    if df_for_render is None or (
-                        isinstance(df_for_render, pd.DataFrame) and df_for_render.empty
-                    ):
-                        st.warning(
-                            f"Нет данных для отчёта «{selected_dashboard}». "
-                            "Загрузите данные (вручную, папка web/ или FTP), "
-                            "либо выберите другой отчёт."
-                        )
-                    else:
-                        render_fn(df_for_render)
-                else:
-                    st.warning(
-                        f"График '{selected_dashboard}' не найден. Пожалуйста, выберите другой график."
-                    )
-            except Exception as e:
-                st.error(
-                    f"Ошибка при отображении графика '{selected_dashboard}': {str(e)}"
-                )
-                st.exception(e)
-
-            # Stop here - don't show selection panels
-            st.stop()
-
-        # Выбор панели - перенесен в основную область
-        st.markdown("### Выбор панели")
-
-        # Три блока радиокнопок: «Сроки», «Финансы», остальные отчёты (см. dashboards.get_main_panel_report_lists)
-        from dashboards import get_main_panel_report_lists
         _role = user.get("role") or "analyst"
         reason_options, budget_options, other_options = get_main_panel_report_lists(_role)
         if not reason_options and not budget_options and not other_options:
             st.error("Для вашей роли нет доступных отчётов. Обратитесь к администратору.")
             st.stop()
 
-        # Determine current selection indices based on current_dashboard
-        # Also sync radio button values in session_state when dashboard is selected from menu
-        dashboard_selected_from_menu = st.session_state.get(
-            "dashboard_selected_from_menu", False
-        )
+        all_allowed = list(reason_options) + list(budget_options) + list(other_options)
+        all_allowed_set = set(all_allowed)
 
-        # Determine indices and sync session_state for radio buttons
-        # When dashboard is selected from menu, we need to ensure radio buttons reflect the selection
-        current_dashboard = st.session_state.get("current_dashboard", "")
-
-        # If dashboard was selected from menu, sync all radio buttons
-        # We need to set the actual option value, not the index, for Streamlit radio buttons
-        if dashboard_selected_from_menu and current_dashboard:
-            # Set the selected radio button to the correct value (not index)
-            if current_dashboard in reason_options:
-                st.session_state.reason_radio = current_dashboard
-                if budget_options:
-                    st.session_state.budget_radio = budget_options[0]
-                if other_options:
-                    st.session_state.other_radio = other_options[0]
-            elif current_dashboard in budget_options:
-                st.session_state.budget_radio = current_dashboard
-                if reason_options:
-                    st.session_state.reason_radio = reason_options[0]
-                if other_options:
-                    st.session_state.other_radio = other_options[0]
-            elif current_dashboard in other_options:
-                st.session_state.other_radio = current_dashboard
-                if reason_options:
-                    st.session_state.reason_radio = reason_options[0]
-                if budget_options:
-                    st.session_state.budget_radio = budget_options[0]
-
-        # Не синхронизируем радио с current_dashboard на каждом прогоне: Streamlit уже
-        # обновил ключи reason_radio / … по клику; перезапись устаревшим current_dashboard
-        # откатывала выбор (например обратно на первый пункт группы «Сроки»).
-
-        # Индексы для st.radio: сначала фактическое значение ключа виджета (уже обновлён по клику),
-        # иначе current_dashboard. Иначе index=… пересчитывался по устаревшему current_dashboard и
-        # сбрасывал выбор (часто на первый пункт группы «Сроки»).
-        reason_index = 0
-        try:
-            if "reason_radio" in st.session_state and st.session_state.reason_radio in reason_options:
-                reason_index = reason_options.index(st.session_state.reason_radio)
-            elif current_dashboard in reason_options:
-                reason_index = reason_options.index(current_dashboard)
-        except (ValueError, TypeError, IndexError):
-            reason_index = 0
-
-        budget_index = 0
-        try:
-            if "budget_radio" in st.session_state and st.session_state.budget_radio in budget_options:
-                budget_index = budget_options.index(st.session_state.budget_radio)
-            elif current_dashboard in budget_options:
-                budget_index = budget_options.index(current_dashboard)
-        except (ValueError, TypeError, IndexError):
-            budget_index = 0
-
-        other_index = 0
-        try:
-            if "other_radio" in st.session_state and st.session_state.other_radio in other_options:
-                other_index = other_options.index(st.session_state.other_radio)
-            elif current_dashboard in other_options:
-                other_index = other_options.index(current_dashboard)
-        except (ValueError, TypeError, IndexError):
-            other_index = 0
-
-        # Определяем, какой expander должен быть развернут при выборе из меню
-        current_dashboard = st.session_state.get("current_dashboard", "")
-
-        # Определяем, какой expander разворачивать
-        expand_reason = True  # По умолчанию разворачиваем первый
-        expand_budget = False
-        expand_other = False
-
-        if dashboard_selected_from_menu and current_dashboard:
-            if current_dashboard in reason_options:
-                expand_reason = True
-                expand_budget = False
-                expand_other = False
-            elif current_dashboard in budget_options:
-                expand_reason = False
-                expand_budget = True
-                expand_other = False
-            elif current_dashboard in other_options:
-                expand_reason = False
-                expand_budget = False
-                expand_other = True
-
-        # Section 1: Причины отклонений
-        with st.expander("Причины отклонений", expanded=expand_reason):
-            reason_dashboard = st.radio(
-                "Причины отклонений",
-                reason_options,
-                key="reason_radio",
-                label_visibility="collapsed",
-                index=reason_index,
-            )
-
-        # Section 2: Аналитика по финансам
-        with st.expander("Аналитика по финансам", expanded=expand_budget):
-            budget_dashboard = st.radio(
-                "Аналитика по финансам",
-                budget_options,
-                key="budget_radio",
-                label_visibility="collapsed",
-                index=budget_index,
-            )
-
-        # Section 3: Прочее
-        with st.expander("Прочее", expanded=expand_other):
-            other_dashboard = st.radio(
-                "Прочее",
-                other_options,
-                key="other_radio",
-                label_visibility="collapsed",
-                index=other_index,
-            )
-
-        # Выбор отчёта по радио — после всех трёх виджетов (не внутри expander «Прочее»),
-        # чтобы логика не выглядела привязанной только к третьей группе.
-        # Выбор из бокового меню обрабатывается выше и завершается st.stop().
-        if reason_dashboard != st.session_state.get(
-            "prev_reason", reason_options[0]
-        ):
-            selected_dashboard = reason_dashboard
-            st.session_state.current_dashboard = reason_dashboard
-            st.session_state.prev_reason = reason_dashboard
-            st.session_state.prev_budget = budget_options[0]
-            st.session_state.prev_other = other_options[0]
-        elif budget_dashboard != st.session_state.get(
-            "prev_budget", budget_options[0]
-        ):
-            selected_dashboard = budget_dashboard
-            st.session_state.current_dashboard = budget_dashboard
-            st.session_state.prev_budget = budget_dashboard
-            st.session_state.prev_reason = reason_options[0]
-            st.session_state.prev_other = other_options[0]
-        elif other_dashboard != st.session_state.get(
-            "prev_other", other_options[0]
-        ):
-            selected_dashboard = other_dashboard
-            st.session_state.current_dashboard = other_dashboard
-            st.session_state.prev_other = other_dashboard
-            st.session_state.prev_reason = reason_options[0]
-            st.session_state.prev_budget = budget_options[0]
-        else:
-            # Сохраняем текущий выбор из меню/радио: приоритет у current_dashboard,
-            # чтобы после выбора из бокового меню (например БДДС) не переключалось на первый пункт «Причины отклонений»
-            current = st.session_state.current_dashboard
-            if current and (
-                current in reason_options
-                or current in budget_options
-                or current in other_options
-            ):
-                selected_dashboard = current
-            elif reason_dashboard in reason_options:
-                selected_dashboard = reason_dashboard
-            elif budget_dashboard in budget_options:
-                selected_dashboard = budget_dashboard
-            elif other_dashboard in other_options:
-                selected_dashboard = other_dashboard
+        if "current_dashboard" not in st.session_state:
+            if (has_resources_data or has_technique_data) and not has_project_data:
+                st.session_state.current_dashboard = "График движения рабочей силы"
             else:
-                selected_dashboard = current or reason_dashboard
-            st.session_state.current_dashboard = selected_dashboard
+                st.session_state.current_dashboard = "Причины отклонений"
+
+        cur = st.session_state.get("current_dashboard", "")
+        if cur not in all_allowed_set:
+            st.session_state.current_dashboard = all_allowed[0]
+
+        st.session_state.dashboard_selected_from_menu = False
+
+        selected_dashboard = st.session_state.current_dashboard
 
         dashboards_using_technique = (
             "График движения рабочей силы",
@@ -923,16 +704,13 @@ def main():
         )
 
         if selected_dashboard in dashboards_using_technique:
-
-            df_for_render = resources_data if has_resources_data else (technique_data if has_technique_data else df)
-
+            df_for_render = resources_data if has_resources_data else (
+                technique_data if has_technique_data else df
+            )
         else:
-
             df_for_render = df
 
-        # Route to selected dashboard via registry
         try:
-            from dashboards import get_dashboards
             dashboards = get_dashboards()
             render_fn = dashboards.get(selected_dashboard)
             if render_fn:
@@ -941,13 +719,14 @@ def main():
                 ):
                     st.warning(
                         f"Нет данных для отчёта «{selected_dashboard}». "
-                        "Загрузите данные (вручную, web/ или FTP) или выберите другой отчёт."
+                        "Загрузите данные (вручную, web/ или FTP) или выберите другой отчёт "
+                        "в боковом меню."
                     )
                 else:
                     render_fn(df_for_render)
             else:
                 st.warning(
-                    f"График '{selected_dashboard}' не найден. Пожалуйста, выберите другой график."
+                    f"График '{selected_dashboard}' не найден. Выберите другой отчёт в боковом меню."
                 )
                 st.info(f"Текущий выбор: {selected_dashboard}")
         except Exception as e:

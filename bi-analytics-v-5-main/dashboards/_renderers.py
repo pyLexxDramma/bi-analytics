@@ -209,6 +209,15 @@ def _gdrs_resolve_plan_column(df: pd.DataFrame):
             return c
         if re.search(r"(?<!\w)plan(?!\w)", tl, flags=re.UNICODE):
             return c
+    # Выгрузки договора: явное количество по ТЗ (ГДРС)
+    for c in df.columns:
+        if _gdrs_is_plan_column_false_positive(c):
+            continue
+        tl = str(c).strip().lower()
+        if "количество" in tl and (
+            "работник" in tl or "спецтех" in tl or "техник" in tl or "ресурс" in tl
+        ):
+            return c
     return None
 
 
@@ -7241,54 +7250,9 @@ def dashboard_technique(df):
         if contractor_plan_avg.empty:
             st.info("Нет данных для отображения.")
         else:
-            # Sort by sum value for better visualization
-            contractor_plan_avg = contractor_plan_avg.sort_values(
-                "Сумма", ascending=False
-            )
+            contractor_plan_avg.sort_values("Сумма", ascending=False, inplace=True)
+            # Круговая «план + среднее по контрагентам» скрыта по макету — используйте сводную таблицу ниже.
 
-            # Create pie chart
-            fig_pie_plan_avg = px.pie(
-                contractor_plan_avg,
-                values="Сумма",
-                names="Контрагент",
-                title=None,
-                color_discrete_sequence=px.colors.qualitative.Set2,
-            )
-
-            fig_pie_plan_avg.update_layout(
-                height=600,
-                showlegend=True,
-                legend=dict(
-                    orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.1, font=dict(size=10),
-                ),
-                title_font_size=16,
-                uniformtext=dict(minsize=8, mode="hide"),
-            )
-
-            fig_pie_plan_avg.update_traces(
-                textinfo="label+percent",
-                textposition="auto",
-                textfont_size=10,
-                insidetextorientation="radial",
-            )
-            # Долю факта и отклонения оставляем в hover
-            fig_pie_plan_avg.update_traces(
-                customdata=list(
-                    zip(
-                        contractor_plan_avg["Доля факта (%)"],
-                        contractor_plan_avg["Доля отклонения (%)"],
-                    )
-                ),
-                hovertemplate="<b>%{label}</b><br>Сумма: %{value:,.0f}<br>Процент: %{percent}<br>Доля факта: %{customdata[0]:.0f}%<br>Доля отклонения: %{customdata[1]:.0f}%<br><extra></extra>",
-            )
-
-            fig_pie_plan_avg = apply_chart_background(fig_pie_plan_avg)
-            render_chart(
-                fig_pie_plan_avg,
-                caption_below="Распределение суммы Плана и Среднего за месяц по контрагентам",
-            )
-
-        # ========== Summary Table ==========
         st.subheader("Сводная таблица по контрагентам")
 
         # Format numbers for display
@@ -8184,35 +8148,33 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             return None, None
         plan_sum = float(pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0).sum())
         fact_sum = float(pd.to_numeric(d["week_sum"], errors="coerce").fillna(0).sum())
-        total_pf = plan_sum + fact_sum
-        if total_pf <= 0:
+        if plan_sum <= 0 and fact_sum <= 0:
             return None, None
         dev = plan_sum - fact_sum
         fp_pct = (fact_sum / plan_sum * 100.0) if plan_sum else 0.0
-        pie_plan_fact = pd.DataFrame(
-            {"Тип": ["План", "Факт"], "Значение": [plan_sum, fact_sum]}
-        )
-        fig_pie_pf = px.pie(
-            pie_plan_fact,
-            values="Значение",
-            names="Тип",
-            title=None,
-            color_discrete_sequence=["#3498db", "#2ecc71"],
-        )
-        fig_pie_pf.update_traces(
-            textinfo="label+percent",
-            textposition="auto",
-            textfont_size=10,
-            insidetextorientation="radial",
-            hovertemplate="%{label}: %{value:,.0f} (%{percent:.0%})<extra></extra>",
+        # Столбчатая план/факт: подписи над столбцами, нули видны (круговая скрывает нулевой сегмент)
+        fig_pie_pf = go.Figure(
+            data=[
+                go.Bar(
+                    x=["План", "Факт"],
+                    y=[plan_sum, fact_sum],
+                    marker_color=["#3498db", "#2ecc71"],
+                    text=[
+                        f"{int(round(plan_sum))}",
+                        f"{int(round(fact_sum))}",
+                    ],
+                    textposition="outside",
+                    textfont=dict(size=13, color="#ffffff"),
+                    hovertemplate="%{x}: %{y:,.0f}<extra></extra>",
+                )
+            ]
         )
         fig_pie_pf.update_layout(
             height=420,
-            showlegend=True,
+            showlegend=False,
             title_font_size=14,
-            uniformtext=dict(minsize=8, mode="hide"),
-            legend=dict(orientation="v", font=dict(size=10)),
-            margin=dict(l=10, r=10, t=10, b=10),
+            margin=dict(l=48, r=24, t=24, b=48),
+            yaxis=dict(title=""),
         )
         fig_pie_pf = apply_chart_background(fig_pie_pf)
         return fig_pie_pf, {
@@ -8779,49 +8741,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         if contractor_plan_avg.empty:
             st.info("Нет данных для отображения.")
         else:
-            # Sort by sum value for better visualization
-            contractor_plan_avg = contractor_plan_avg.sort_values("Сумма", ascending=False)
-
-            # Create pie chart
-            fig_pie_plan_avg = px.pie(
-                contractor_plan_avg,
-                values="Сумма",
-                names="Контрагент",
-                title=None,
-                color_discrete_sequence=px.colors.qualitative.Set2,
-            )
-
-            fig_pie_plan_avg.update_layout(
-                height=600,
-                showlegend=True,
-                legend=dict(
-                    orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.1, font=dict(size=10),
-                ),
-                title_font_size=16,
-                uniformtext=dict(minsize=8, mode="hide"),
-            )
-
-            fig_pie_plan_avg.update_traces(
-                textinfo="label+percent",
-                textposition="auto",
-                textfont_size=10,
-                insidetextorientation="radial",
-            )
-            fig_pie_plan_avg.update_traces(
-                customdata=list(
-                    zip(
-                        contractor_plan_avg["Доля факта (%)"],
-                        contractor_plan_avg["Доля отклонения (%)"],
-                    )
-                ),
-                hovertemplate="<b>%{label}</b><br>Сумма: %{value:,.0f}<br>Процент: %{percent}<br>Доля факта: %{customdata[0]:.0f}%<br>Доля отклонения: %{customdata[1]:.0f}%<br><extra></extra>",
-            )
-
-            fig_pie_plan_avg = apply_chart_background(fig_pie_plan_avg)
-            render_chart(
-                fig_pie_plan_avg,
-                caption_below="Распределение суммы Плана и Среднего за месяц по контрагентам",
-            )
+            contractor_plan_avg.sort_values("Сумма", ascending=False, inplace=True)
+            # Круговая «план + среднее по контрагентам» скрыта по макету — используйте сводную таблицу ниже.
 
             # ========== Summary Table ==========
             st.subheader("Сводная таблица по контрагентам")
@@ -8861,12 +8782,12 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
 
 # ==================== DASHBOARD 8.6: SKUD Stroyka ====================
 def dashboard_skud_stroyka(df):
-    st.header("График движения рабочей силы")
+    st.subheader("СКУД по неделям")
 
     resources_df = st.session_state.get("resources_data", None)
     if resources_df is None or resources_df.empty:
         st.warning(
-            "Для раздела «Учёт по сменам» необходимо загрузить файл с данными о ресурсах."
+            "Для раздела «СКУД по неделям» необходимо загрузить файл с данными о ресурсах."
         )
         st.info(
             "Ожидаемые колонки в файле: Проект, Контрагент, Период, Среднее за неделю или Среднее за месяц"
@@ -9109,24 +9030,23 @@ def dashboard_skud_stroyka(df):
         )
         filtered_df = filtered_df[contractor_mask]
 
-    # Apply period filters
+    # Apply period filters (подписи в selectbox — «месяц год» из format_period_ru, не ISO)
     if (
         "period_month" in filtered_df.columns
         and filtered_df["period_month"].notna().any()
     ):
+        _avail_pm = sorted(
+            work_df[work_df["period_month"].notna()]["period_month"].unique()
+        )
+        _pm_by_label = {format_period_ru(m): m for m in _avail_pm}
         if selected_period_from != "Все":
-            try:
-                period_from = pd.Period(selected_period_from, freq="M")
+            period_from = _pm_by_label.get(selected_period_from)
+            if period_from is not None:
                 filtered_df = filtered_df[filtered_df["period_month"] >= period_from]
-            except Exception as e:
-                st.warning(f"Ошибка при фильтрации по периоду от: {e}")
-
         if selected_period_to != "Все":
-            try:
-                period_to = pd.Period(selected_period_to, freq="M")
+            period_to = _pm_by_label.get(selected_period_to)
+            if period_to is not None:
                 filtered_df = filtered_df[filtered_df["period_month"] <= period_to]
-            except Exception as e:
-                st.warning(f"Ошибка при фильтрации по периоду до: {e}")
 
     if filtered_df.empty:
         st.warning("⚠️ Нет данных для отображения с выбранными фильтрами.")
@@ -9201,7 +9121,9 @@ def dashboard_skud_stroyka(df):
             grouped_data = pd.DataFrame({"Среднее за месяц": [mean_value]})
 
     if "Среднее за месяц" in grouped_data.columns:
-        grouped_data["Среднее за месяц"] = grouped_data["Среднее за месяц"].round(1)
+        grouped_data["Среднее за месяц"] = pd.to_numeric(
+            grouped_data["Среднее за месяц"], errors="coerce"
+        ).round(0)
 
     if "period_month" in grouped_data.columns:
         grouped_data["Период"] = grouped_data["period_month"].apply(
@@ -9416,7 +9338,7 @@ def dashboard_skud_stroyka(df):
 
         summary_table = grouped_data[display_cols].copy()
         summary_table["Среднее за месяц"] = summary_table["Среднее за месяц"].apply(
-            lambda x: f"{x:.2f}" if pd.notna(x) else "0"
+            lambda x: f"{int(round(float(x)))}" if pd.notna(x) else "0"
         )
         st.table(style_dataframe_for_dark_theme(summary_table))
 
@@ -9424,7 +9346,7 @@ def dashboard_skud_stroyka(df):
 # ==================== DASHBOARD: график рабочей силы (вкладки) ====================
 def dashboard_technique_tabs(df):
     """
-    График движения рабочей силы: вкладки — рабочая сила, техника, динамика, учёт по сменам.
+    График движения рабочей силы: вкладки — рабочая сила, техника, динамика, СКУД по неделям.
     """
     st.header("График движения рабочей силы")
     st.caption("Данные из загруженных файлов ресурсов и техники. Если данных нет — загрузите соответствующие CSV-файлы.")
@@ -9432,7 +9354,7 @@ def dashboard_technique_tabs(df):
         "Рабочая сила",
         "Техника",
         "Динамика людей и техники",
-        "Учёт по сменам",
+        "СКУД по неделям",
     ])
     with tab1:
         st.subheader("График движения рабочей силы")
@@ -10430,10 +10352,10 @@ def dashboard_executive_documentation(df):
 # ==================== DASHBOARD: график рабочей силы (объединённый) ====================
 def dashboard_workforce_and_skud(df):
     """
-    Объединённый отчёт: основной график и раздел учёта по сменам.
+    Объединённый отчёт: основной график и факт СКУД по неделям (данные ресурсов).
     """
     st.header("График движения рабочей силы")
-    tab1, tab2 = st.tabs(["Рабочая сила", "Учёт по сменам"])
+    tab1, tab2 = st.tabs(["Рабочая сила", "СКУД по неделям"])
     with tab1:
         dashboard_workforce_movement(df)
     with tab2:

@@ -578,7 +578,6 @@ def render_sidebar_menu(current_page: str = "reports"):
                             type=button_type,
                         ):
                             st.session_state.current_dashboard = report
-                            st.session_state.dashboard_selected_from_menu = True
                             st.rerun()
 
         # 2. Настройки

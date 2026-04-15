@@ -64,8 +64,10 @@ def ru_column_header(col: Any) -> str:
             return ru
     return s
 
-# Цвет фона таблиц (как у графиков)
+# Фон HTML-таблиц (чуть темнее карточки контента для контраста)
 TABLE_BG_COLOR = "hsl(209,67%,12%)"
+# Фон области графиков Plotly — как основной фон панели (style.css --themeBackgroundColor)
+CHART_BG_COLOR = "hsl(209,67%,22%)"
 TABLE_TEXT_COLOR = "#ffffff"
 
 # Размерность сумм: млн рублей
@@ -199,6 +201,11 @@ def format_period_ru(period_val) -> str:
     if period_val is None or (isinstance(period_val, float) and pd.isna(period_val)):
         return "Н/Д"
     try:
+        if pd.isna(period_val):
+            return "Н/Д"
+    except (TypeError, ValueError):
+        pass
+    try:
         if isinstance(period_val, pd.Period):
             month_num = period_val.month
             year = period_val.year
@@ -229,7 +236,10 @@ def format_period_ru(period_val) -> str:
             return f"{RUSSIAN_MONTHS.get(period_val.month, 'Н/Д')} {period_val.year}"
     except Exception:
         pass
-    return str(period_val) if period_val is not None else "Н/Д"
+    out = str(period_val) if period_val is not None else "Н/Д"
+    if isinstance(out, str) and out.strip().lower() in ("nan", "nat", "none"):
+        return "Н/Д"
+    return out
 
 
 def apply_chart_background(fig):
@@ -265,8 +275,8 @@ def apply_chart_background(fig):
     # Базовый стиль
     layout_kwargs = dict(
         template=None,
-        plot_bgcolor=TABLE_BG_COLOR,
-        paper_bgcolor=TABLE_BG_COLOR,
+        plot_bgcolor=CHART_BG_COLOR,
+        paper_bgcolor=CHART_BG_COLOR,
         autosize=True,
         font=dict(
             family="Inter, system-ui, sans-serif",
