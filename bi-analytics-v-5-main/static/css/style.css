@@ -61,6 +61,10 @@ div[data-testid="collapsedControl"] {
 .main .block-container {
     background-color: rgba(18, 56, 92, 0.8) !important;
 }
+/* По ТЗ: убрать серые поясняющие подписи под виджетами (подсказки в тултипах Plotly не затрагиваются) */
+.main [data-testid="stCaption"] {
+    display: none !important;
+}
 /* Хедер — такой же цвет, как фон */
 header[data-testid="stHeader"],
 [data-testid="stHeader"],

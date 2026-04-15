@@ -66,8 +66,8 @@ def ru_column_header(col: Any) -> str:
 
 # Фон HTML-таблиц (чуть темнее карточки контента для контраста)
 TABLE_BG_COLOR = "hsl(209,67%,12%)"
-# Фон области графиков Plotly — как основной фон панели (style.css --themeBackgroundColor)
-CHART_BG_COLOR = "hsl(209,67%,22%)"
+# Фон области графиков Plotly — как карточка контента (.main .block-container: rgba(18,56,92,0.8))
+CHART_BG_COLOR = "rgba(18, 56, 92, 0.88)"
 TABLE_TEXT_COLOR = "#ffffff"
 
 # Размерность сумм: млн рублей
@@ -559,14 +559,18 @@ def budget_table_to_html(
     finance_deviation_column: Optional[str] = None,
     *,
     deviation_red_if_positive_only: bool = False,
+    deviation_red_if_negative: bool = False,
 ) -> str:
     """
     Строит HTML таблицы бюджета с раскраской колонки отклонения.
 
-    По умолчанию (финансы бюджета): значение ≥ 0 — красный шрифт, < 0 — зелёный.
+    По умолчанию (финансы бюджета, отклонение = факт − план): значение ≥ 0 — красный шрифт, < 0 — зелёный.
 
     Если ``deviation_red_if_positive_only=True`` (например, отклонение = план − факт в графике рабочей силы):
     значение > 0 — красный, ≤ 0 — зелёный.
+
+    Если ``deviation_red_if_negative=True`` (ТЗ «Утверждённый бюджет»: отклонение = план − факт):
+    значение < 0 — красный, ≥ 0 — зелёный.
     """
     if df is None or df.empty:
         return "<p>Нет данных для отображения.</p>"
@@ -596,7 +600,9 @@ def budget_table_to_html(
             if finance_deviation_column and col == finance_deviation_column:
                 num = _parse_finance_value(val)
                 if num is not None:
-                    if deviation_red_if_positive_only:
+                    if deviation_red_if_negative:
+                        cell_class = "bd-cell-red" if num < 0 else "bd-cell-green"
+                    elif deviation_red_if_positive_only:
                         cell_class = "bd-cell-red" if num > 0 else "bd-cell-green"
                     else:
                         cell_class = "bd-cell-red" if num >= 0 else "bd-cell-green"
@@ -610,7 +616,13 @@ def budget_table_to_html(
                             f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 8px; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
                         )
                     else:
-                        cell_class = "bd-cell-green" if (s.startswith("-") or re.search(r"^-\d", s)) else "bd-cell-red"
+                        is_neg = s.startswith("-") or bool(re.search(r"^-\d", s))
+                        if deviation_red_if_negative:
+                            cell_class = "bd-cell-red" if is_neg else "bd-cell-green"
+                        elif deviation_red_if_positive_only:
+                            cell_class = "bd-cell-red" if not is_neg else "bd-cell-green"
+                        else:
+                            cell_class = "bd-cell-green" if is_neg else "bd-cell-red"
                         parts.append(
                             f'<td class="{cell_class}" style="padding: 8px; font-weight: bold;"><span>{val_esc}</span></td>'
                         )
