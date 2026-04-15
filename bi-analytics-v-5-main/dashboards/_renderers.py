@@ -12891,6 +12891,7 @@ def dashboard_forecast_budget(df):
         return
 
     ensure_budget_columns(project_df)
+    ensure_date_columns(project_df)
     required_cols = ["budget plan", "plan start", "plan end"]
     missing_cols = [col for col in required_cols if col not in project_df.columns]
     if missing_cols:
@@ -12899,6 +12900,8 @@ def dashboard_forecast_budget(df):
 
     if "section" not in project_df.columns:
         project_df["section"] = ""
+    if "Название" in project_df.columns and "task name" not in project_df.columns:
+        project_df["task name"] = project_df["Название"]
     project_df["section"] = project_df["section"].apply(_clean_display_str)
     if "task name" not in project_df.columns:
         project_df["task name"] = ""
@@ -13077,6 +13080,31 @@ def dashboard_forecast_budget(df):
     )
     fig = _apply_finance_bar_label_layout(fig)
     fig = apply_chart_background(fig)
+    try:
+        ymax = float(
+            max(
+                mf["bdds_forecast_mln"].fillna(0).max(),
+                mf["bdds_plan_msp_mln"].fillna(0).max(),
+                mf["bdds_fact_mln"].fillna(0).max(),
+            )
+        )
+    except Exception:
+        ymax = 0.0
+    if not hide_dev:
+        try:
+            ymax = max(ymax, float((mf["_dev"].abs() / 1e6).fillna(0).max()))
+        except Exception:
+            pass
+    if not np.isfinite(ymax) or ymax <= 0:
+        st.warning(
+            "На графике **все значения нулевые** (или суммы/периоды не сходятся): проверьте **БДДС план/факт** "
+            "и даты **План. начало / План. окончание** в таблице выше. При нулях столбцы и линии лежат на оси 0 и "
+            "визуально «пропадают»."
+        )
+        try:
+            fig.update_yaxes(range=[0, 1], rangemode="tozero")
+        except Exception:
+            pass
     render_chart(
         fig,
         caption_below=f"БДДС: план (сводка MSP) / факт / прогноз — проект: {selected_project}",
@@ -13123,9 +13151,9 @@ def dashboard_forecast_budget(df):
 # ── Предписания: KPI-кружки, легенда и таблица как в Предписания.html (тёмная тема) ──
 _PRED_DASH_MOCK_CSS = """
 <style>
-.pred-kpi-wrap { background:#13151c; border:1px solid #333; border-radius:12px; padding:16px; margin:0; }
+.pred-kpi-wrap { background:#13151c; border:1px solid #333; border-radius:12px; padding:8px 16px 16px 16px; margin:0; }
 .pred-kpi-wrap.pred-kpi-wrap--body { padding-top:14px; }
-.pred-kpi-title { font-size:1rem; font-weight:600; color:#fafafa; margin:0 0 14px 0; border-bottom:1px solid #444; padding-bottom:10px; }
+.pred-kpi-title { font-size:1rem; font-weight:600; color:#fafafa; margin:0 0 12px 0; border-bottom:1px solid #444; padding-bottom:8px; }
 .pred-kpi-circles { display:flex; flex-direction:column; gap:14px; }
 .pred-kpi-item { display:flex; align-items:center; gap:12px; }
 .pred-kpi-circle { width:72px; height:72px; border-radius:50%; display:flex; flex-direction:column; justify-content:center; align-items:center; color:#fff; font-weight:600; flex-shrink:0; box-shadow:0 2px 8px rgba(0,0,0,.35); }
@@ -13730,12 +13758,8 @@ def dashboard_predpisania(df):
     n_critical = int((unres_mask & filtered["_critical"]).sum())
 
     fu = filtered.loc[unres_mask]
-    # Одна строка заголовков 2:1 — выравнивание с левым «Предписания…» и правым «Ключевые показатели»
-    pred_h_left, pred_h_right = st.columns([2, 1])
-    with pred_h_left:
-        st.subheader("Предписания по подрядчикам")
-    with pred_h_right:
-        st.subheader("Ключевые показатели")
+    # Заголовок секции на всю ширину; ниже легенда и KPI в одной строке — верх легенды и блока «Ключевые показатели» совпадают
+    st.subheader("Предписания по подрядчикам")
 
     col_chart, col_kpi = st.columns([2, 1])
 
@@ -13744,7 +13768,7 @@ def dashboard_predpisania(df):
             _PRED_DASH_MOCK_CSS
             + '<div class="pred-leg"><span style="color:#3498db;font-weight:600;">■</span> Неустраненные (всего) '
             "&nbsp;·&nbsp; <span style=\"color:#e67e22;font-weight:600;\">■</span> Просроченные "
-            "&nbsp;·&nbsp; Числа у синих столбцов — всего неустранённых по подрядчику (как «пузыри» в макете).</div>",
+            "&nbsp;·&nbsp; Числа у синих столбцов — всего неустранённых по подрядчику.</div>",
             unsafe_allow_html=True,
         )
         if contr_col and contr_col in fu.columns and not fu.empty:
@@ -13807,7 +13831,7 @@ def dashboard_predpisania(df):
 
     with col_kpi:
         st.markdown(
-            _pred_kpi_circles_html(n_unresolved, n_overdue, n_critical, with_heading=False),
+            _pred_kpi_circles_html(n_unresolved, n_overdue, n_critical, with_heading=True),
             unsafe_allow_html=True,
         )
 

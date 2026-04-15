@@ -314,6 +314,40 @@ def load_data(uploaded_file, file_name: Optional[str] = None) -> Optional[pd.Dat
         for russian_name, english_name in column_mapping.items():
             if russian_name in df.columns and english_name not in df.columns:
                 df[english_name] = df[russian_name]
+        # Выгрузки MS Project (CSV): «Начало»/«Окончание» вместо «Старт План»/«Конец План»;
+        # «Название», «ЛОТ», «ID_проекта» — задача, лот, проект.
+        if "plan start" not in df.columns:
+            for alt in ("Начало", "начало", "Start"):
+                if alt in df.columns:
+                    df["plan start"] = df[alt]
+                    break
+            if "plan start" not in df.columns:
+                for alt in ("Базовое_начало", "Базовое начало"):
+                    if alt in df.columns:
+                        df["plan start"] = df[alt]
+                        break
+        if "plan end" not in df.columns:
+            for alt in ("Окончание", "окончание", "Finish"):
+                if alt in df.columns:
+                    df["plan end"] = df[alt]
+                    break
+            if "plan end" not in df.columns:
+                for alt in ("Базовое_окончание", "Базовое окончание"):
+                    if alt in df.columns:
+                        df["plan end"] = df[alt]
+                        break
+        if "task name" not in df.columns and "Название" in df.columns:
+            df["task name"] = df["Название"]
+        if "section" not in df.columns:
+            for alt in ("ЛОТ", "Лот", "лот"):
+                if alt in df.columns:
+                    df["section"] = df[alt]
+                    break
+        if "project name" not in df.columns:
+            for alt in ("Проект", "ID_проекта"):
+                if alt in df.columns:
+                    df["project name"] = df[alt]
+                    break
         # Нормализация колонок РД: приводим к виду из sample_project_data_fixed.csv (регистр РД/Договору)
         rd_columns_normalize = {
             "РД по договору": "РД по Договору",
