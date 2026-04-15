@@ -55,11 +55,6 @@ Thumbs.db
 *.tmp
 *.bak
 
-# Загруженные пользователем данные и снимки (runtime) — хранятся только локально
-# Сохраняем пустую структуру каталога через .gitkeep
-bi-analytics-v-5-main/web/**
-!bi-analytics-v-5-main/web/.gitkeep
-
 # Локальные БД приложения (создаются при работе)
 bi-analytics-v-5-main/data/*.db
 bi-analytics-v-5-main/*.db

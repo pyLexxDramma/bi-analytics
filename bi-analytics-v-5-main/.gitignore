@@ -50,6 +50,7 @@ downloads/
 # OS-specific files
 # =====================================
 .DS_Store
+**/.DS_Store
 Thumbs.db
 ehthumbs.db
 
@@ -67,9 +68,7 @@ ehthumbs.db
 data/web_data.db
 users.db
 
-# Загрузки из UI в web/ — только локально (в репозитории — .gitkeep)
-web/**
-!web/.gitkeep
+# Рабочие выгрузки в web/ могут коммититься в репозиторий (CSV/JSON для демо и CI).
 
 # =====================================
 # Data files (большие / тестовые файлы)
