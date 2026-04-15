@@ -544,10 +544,11 @@ def _deviations_filter_month_string_to_period(month_str):
 
 
 def _render_deviations_combined_shared_filters(df):
-    st.caption(
-        "Общие фильтры для всех вкладок: проект, этап, причина, функциональный блок, строение (если есть в данных), "
-        "период по месяцу плана. Переключение вкладок не сбрасывает выбранные значения."
-    )
+    with st.expander("Подсказка по общим фильтрам", expanded=False):
+        st.caption(
+            "Общие фильтры для всех вкладок: проект, этап, причина, функциональный блок, строение (если есть в данных), "
+            "период по месяцу плана. Переключение вкладок не сбрасывает выбранные значения."
+        )
     st.markdown(
         """
         <style>
@@ -779,10 +780,11 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
 
     if not hide_shared_filters:
         st.header("Доли причин отклонений по проекту")
-        st.caption(
-            "По умолчанию — все проекты и доступные периоды. Фильтры совпадают с объединённым отчётом "
-            "«Причины отклонений»; динамику по периодам см. вкладку «Динамика по периодам» в том же отчёте."
-        )
+        with st.expander("Подсказка", expanded=False):
+            st.caption(
+                "По умолчанию — все проекты и доступные периоды. Фильтры совпадают с объединённым отчётом "
+                "«Причины отклонений»; динамику по периодам см. вкладку «Динамика по периодам» в том же отчёте."
+            )
 
         st.markdown(
             """
@@ -1218,10 +1220,11 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             "Ниже — полная выгрузка по текущим фильтрам."
         )
     else:
-        st.caption(
-            "По макету: уровень 5 MSP, причина отклонения заполнена, отклонение окончания < 0. "
-            "Сортировка: по возрастанию отклонения (худшее сверху)."
-        )
+        with st.expander("Условия отбора по макету", expanded=False):
+            st.caption(
+                "По макету: уровень 5 MSP, причина отклонения заполнена, отклонение окончания < 0. "
+                "Сортировка: по возрастанию отклонения (худшее сверху)."
+            )
         _date_bg_m = "rgba(46, 134, 171, 0.22)"
         _tbl_m = [
             '<div class="rendered-table-wrap" style="margin-top:0.5rem">',
@@ -1306,7 +1309,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
 
         _tbl_m.append("</tbody></table></div>")
         st.markdown(_TABLE_CSS + "".join(_tbl_m), unsafe_allow_html=True)
-        st.caption(f"Записей (по макету): {len(maket_df)}")
+        st.markdown(f"**Записей (по макету):** {len(maket_df)}")
         _maket_out = []
         for i, (_, rr) in enumerate(maket_df.iterrows(), start=1):
             row = {"№": i, "Проект": _clean_display_str(rr.get("project name"))}
@@ -1344,7 +1347,8 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             key="devtable_csv_maket",
         )
 
-    st.caption("Полная выгрузка по текущим фильтрам")
+    with st.expander("Полная выгрузка по фильтрам", expanded=False):
+        st.caption("Ниже — полная таблица по текущим фильтрам (не только строки «по макету»).")
     display_cols = []
     for c in ("project name", "task name", "section"):
         if c in filtered_df.columns:
@@ -1409,7 +1413,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             display_df[date_col] = pd.to_datetime(
                 display_df[date_col], errors="coerce", dayfirst=True
             ).apply(_date_only)
-    st.caption(f"Записей: {len(display_df)}")
+    st.markdown(f"**Записей:** {len(display_df)}")
     _render_html_table(display_df)
     _csv = display_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
     st.download_button("Скачать CSV", _csv, "deviations_detail.csv", "text/csv", key="devtable_csv_1")
@@ -1426,16 +1430,18 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
 
     if hide_shared_filters:
         st.subheader("Динамика отклонений по периодам")
-        st.caption(
-            "Проект, этап, причина, блок, строение и период по плану — **общие фильтры выше**. "
-            "Здесь задаются ось времени (plan end или дата снимка) и шаг группировки."
-        )
+        with st.expander("Подсказка", expanded=False):
+            st.markdown(
+                "Проект, этап, причина, блок, строение и период по плану — **общие фильтры выше**. "
+                "Здесь задаются ось времени (plan end или дата снимка) и шаг группировки."
+            )
     else:
         st.header("Динамика отклонений по месяцам")
-        st.caption(
-            "По правкам: ось времени — по **дате окончания плана** (plan end) или по **дате снимка файла** "
-            "(несколько выгрузок MSP в web/; полный набор снимков хранится до схлопывания по проекту)."
-        )
+        with st.expander("Подсказка", expanded=False):
+            st.markdown(
+                "По правкам: ось времени — по **дате окончания плана** (plan end) или по **дате снимка файла** "
+                "(несколько выгрузок MSP в web/; полный набор снимков хранится до схлопывания по проекту)."
+            )
 
     _time_axis = st.radio(
         "Ось времени",
@@ -2666,16 +2672,17 @@ def dashboard_plan_fact_dates(df):
     _render_stage_deviation_bar_chart(bar_df)
 
     if show_covenant_ui:
-        if covenant_filter_selected:
-            st.caption(
-                "Режим «Ковенанты»: нижние диаграммы из общего макета скрыты; показан таймлайн вех "
-                "(базовое окончание и окончание) и таблица ковенантов."
-            )
-        else:
-            st.caption(
-                "Обнаружены строки раздела «Ковенанты» в данных: ниже — таймлайн и таблица по ним "
-                "(фильтр этапа «Все»)."
-            )
+        with st.expander("Режим «Ковенанты»", expanded=False):
+            if covenant_filter_selected:
+                st.caption(
+                    "Нижние диаграммы из общего макета скрыты; показан таймлайн вех "
+                    "(базовое окончание и окончание) и таблица ковенантов."
+                )
+            else:
+                st.caption(
+                    "Обнаружены строки раздела «Ковенанты» в данных: ниже — таймлайн и таблица по ним "
+                    "(фильтр этапа «Все»)."
+                )
         pe_col, fe_col = "plan end", "base end"
         if pe_col not in covenant_rows_df.columns or fe_col not in covenant_rows_df.columns:
             st.warning("Нет колонок с датами окончания для ковенантов.")
@@ -2804,10 +2811,11 @@ def dashboard_plan_fact_dates(df):
                 )
 
                 st.subheader("Ковенанты (таблица)")
-                st.caption(
-                    "Сортировка: по убыванию отклонения окончания. "
-                    "Красный — отклонение > 0, зелёный — ≤ 0."
-                )
+                with st.expander("Примечание к таблице ковенантов", expanded=False):
+                    st.caption(
+                        "Сортировка: по убыванию отклонения окончания. "
+                        "Красный — отклонение > 0, зелёный — ≤ 0."
+                    )
                 _date_bg = "rgba(46, 134, 171, 0.22)"
                 _tbl_parts = [
                     '<div class="rendered-table-wrap" style="margin-top:0.5rem">',
@@ -3234,10 +3242,11 @@ def dashboard_plan_fact_dates(df):
         st.metric("Факт окончания", fact_end_str or "—")
 
     if covenant_metrics_mode:
-        st.caption(
-            "Показатели соответствуют **первой строке таблицы ковенантов** "
-            "(та же сортировка: по убыванию отклонения окончания)."
-        )
+        with st.expander("О метриках в режиме ковенантов", expanded=False):
+            st.markdown(
+                "Показатели соответствуют **первой строке таблицы ковенантов** "
+                "(та же сортировка: по убыванию отклонения окончания)."
+            )
 
     # Доп. блок по задаче «Разрешение на строительство» — только вне режима ковенантов
     if not covenant_metrics_mode:
@@ -3465,12 +3474,16 @@ def dashboard_plan_fact_dates(df):
             if "project name" in zos_subset.columns
             else 0
         )
-        if selected_project != "Все":
-            st.caption(f"Проект: {selected_project}")
-        elif "project name" in zos_subset.columns and zos_proj_count == 1:
-            _pn = zos_subset["project name"].dropna().astype(str).str.strip().unique().tolist()
-            if _pn:
-                st.caption(f"Проект: {_pn[0]}")
+        with st.expander("Контекст ЗОС", expanded=False):
+            if selected_project != "Все":
+                st.caption(f"Проект: {selected_project}")
+            elif "project name" in zos_subset.columns and zos_proj_count == 1:
+                _pn = zos_subset["project name"].dropna().astype(str).str.strip().unique().tolist()
+                if _pn:
+                    st.caption(f"Проект: {_pn[0]}")
+            st.caption(
+                "Сроки окончания и отклонение (дней); знак отклонения: факт − план по дате окончания."
+            )
         zos_show_project_col = (
             "project name" in zos_subset.columns
             and selected_project == "Все"
@@ -3495,9 +3508,6 @@ def dashboard_plan_fact_dates(df):
                 }
             zos_tbl_rows.append(row_out)
         zos_tbl = pd.DataFrame(zos_tbl_rows)
-        st.caption(
-            "Сроки окончания и отклонение (дней); знак отклонения: факт − план по дате окончания."
-        )
         _render_html_table(zos_tbl)
         st.markdown("---")
 
@@ -3505,18 +3515,19 @@ def dashboard_plan_fact_dates(df):
     # полная таблица по filtered_df дублировала бы те же строки — показываем её только свёрнуто.
     if not show_covenant_ui:
         st.subheader("Отклонение от базового плана (таблица)")
-        st.caption(
-            f"Записей: {len(summary_df)} · тип: {dates_value_type} · сортировка: {dates_sort_order}"
-        )
+        with st.expander("Сводка по таблице", expanded=False):
+            st.caption(
+                f"Записей: {len(summary_df)} · тип: {dates_value_type} · сортировка: {dates_sort_order}"
+            )
         _render_html_table(summary_df)
         _csv = summary_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
         st.download_button("Скачать CSV", _csv, "detail_dates.csv", "text/csv", key="detail_dates_csv")
     else:
-        st.caption(
-            "Полная таблица по всем задачам фильтра не выводится отдельным блоком, чтобы не дублировать "
-            "таблицу **Ковенанты** выше. Ниже — развёртка со всеми колонками (план/факт, отклонения), если нужен экспорт."
-        )
         with st.expander("Полная таблица отклонений по всем задачам фильтра", expanded=False):
+            st.markdown(
+                "Полная таблица по всем задачам фильтра не выводится отдельным блоком, чтобы не дублировать "
+                "таблицу **Ковенанты** выше. Ниже — развёртка со всеми колонками (план/факт, отклонения), если нужен экспорт."
+            )
             st.caption(
                 f"Записей: {len(summary_df)} · тип: {dates_value_type} · сортировка: {dates_sort_order}"
             )
@@ -4101,9 +4112,10 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
 
     if hide_shared_filters:
         st.subheader("Динамика причин отклонений")
-        st.caption(
-            "Проект, этап, причина, функциональный блок, строение и период по плану — **общие фильтры выше**."
-        )
+        with st.expander("Подсказка", expanded=False):
+            st.markdown(
+                "Проект, этап, причина, функциональный блок, строение и период по плану — **общие фильтры выше**."
+            )
         col1, = st.columns(1)
         with col1:
             period_type = st.selectbox(
@@ -4512,7 +4524,7 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
         )
 
         st.subheader(f"Сводная таблица по {period_label.lower()}")
-        st.caption(f"Записей: {len(summary_by_reason)}")
+        st.markdown(f"**Записей:** {len(summary_by_reason)}")
         _render_html_table(summary_by_reason)
         _csv = summary_by_reason.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
         st.download_button("Скачать CSV", _csv, "reasons_summary.csv", "text/csv", key="reasons_csv")
@@ -4523,7 +4535,8 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
 # ==================== DASHBOARD 6: Budget Plan/Fact/Reserve by Project by Period ====================
 def dashboard_budget_by_period(df):
     st.header("БДДС")
-    st.caption("Вид отображения: по месяцам или накопительно.")
+    with st.expander("Вид отображения", expanded=False):
+        st.caption("По месяцам или накопительно — переключатель в блоке графика ниже.")
     with st.expander("Источник данных", expanded=False):
         st.caption(
             "БДДС (денежные потоки): план и факт по оборотам из загруженных бюджетных данных "
@@ -4956,7 +4969,10 @@ def dashboard_budget_by_period(df):
 def dashboard_budget_cumulative(df):
 
     st.header("БДДС накопительно")
-    st.caption("Накопительные суммы по периоду; источник — те же бюджетные колонки, что и в отчёте «БДДС».")
+    with st.expander("Подсказка", expanded=False):
+        st.caption(
+            "Накопительные суммы по периоду; источник — те же бюджетные колонки, что и в отчёте «БДДС»."
+        )
 
     # Filters row 1: Period and Project
     col1, col2 = st.columns(2)
@@ -5185,7 +5201,8 @@ def dashboard_budget_cumulative(df):
 # ==================== DASHBOARD 7: Budget Plan/Fact/Reserve by Section by Period ====================
 def dashboard_budget_by_section(df):
     st.header("💰 БДДС по лотам")
-    st.caption("Вид отображения: по месяцам или накопительно.")
+    with st.expander("Вид отображения", expanded=False):
+        st.caption("По месяцам или накопительно — переключатель в блоке графика ниже.")
 
     col1, col2, col3 = st.columns(3)
 
@@ -5475,7 +5492,8 @@ def dashboard_bdr(df):
         return
 
     # Фильтры — в одном стиле с БДДС: строка 1 — Группировать по, Фильтр по проекту; строка 2 — Фильтр по этапу
-    st.caption("План и факт расходов по периоду.")
+    with st.expander("Подсказка", expanded=False):
+        st.caption("План и факт расходов по периоду.")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -5829,7 +5847,10 @@ def dashboard_rd_delay(df):
         elif "Проектная документация (ПД)" in selected_doc_type or selected_doc_type == "ПД":
             filtered_df = filtered_df[doc_str.str.contains("ПД", na=False) | doc_str.str.contains("ПРОЕКТНАЯ", na=False)]
     elif selected_doc_type != "Все" and (not doc_type_col or doc_type_col not in df.columns):
-        st.caption("В данных нет колонки для фильтра по виду документации (например, «Вид документации» или «ПД/РД»).")
+        with st.expander("Ограничение фильтра ПД/РД", expanded=False):
+            st.caption(
+                "В данных нет колонки для фильтра по виду документации (например, «Вид документации» или «ПД/РД»)."
+            )
 
     if filtered_df.empty:
         st.info("Нет данных для выбранных фильтров.")
@@ -6138,7 +6159,8 @@ def dashboard_technique(df):
         )
         return
 
-    st.caption("Данные из загруженного файла с данными о технике.")
+    with st.expander("Источник данных", expanded=False):
+        st.caption("Данные из загруженного файла с данными о технике.")
 
     key_prefix = "gdrs_technique"
     work_df = technique_df.copy()
@@ -7049,9 +7071,10 @@ def dashboard_technique(df):
                 if by_contractor.empty:
                     continue
                 by_contractor = by_contractor.sort_values("План", ascending=False)
-                st.caption(
-                    f"{type_label}: план, факт, «%» = факт/план×100%, отклонение = план − факт по подрядчикам"
-                )
+                with st.expander(f"Формулы столбцов ({type_label})", expanded=False):
+                    st.caption(
+                        "План, факт, «%» = факт/план×100%, отклонение = план − факт по подрядчикам."
+                    )
                 display_df = by_contractor[
                     ["Контрагент", "План", "Факт", "%", "Отклонение"]
                 ].copy()
@@ -7452,7 +7475,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             )
             return
 
-    st.caption("Данные из загруженных файлов (ресурсы и/или техника).")
+    with st.expander("Источник данных", expanded=False):
+        st.caption("Данные из загруженных файлов (ресурсы и/или техника).")
 
     work_df = combined_df.copy()
     work_df.columns = [
@@ -8567,9 +8591,10 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 if by_contractor.empty:
                     continue
                 by_contractor = by_contractor.sort_values("План", ascending=False)
-                st.caption(
-                    f"{type_label}: план, факт, «%» = факт/план×100%, отклонение = план − факт по подрядчикам"
-                )
+                with st.expander(f"Формулы столбцов ({type_label})", expanded=False):
+                    st.caption(
+                        "План, факт, «%» = факт/план×100%, отклонение = план − факт по подрядчикам."
+                    )
                 display_df = by_contractor[
                     ["Контрагент", "План", "Факт", "%", "Отклонение"]
                 ].copy()
@@ -9939,10 +9964,11 @@ def dashboard_executive_documentation(df):
     Исключаются строки KindName «Предписание» (отдельный отчёт «Предписания»).
     """
     st.header("Исполнительная документация")
-    st.caption("Контроль просрочек подрядчика и заказчика")
-    st.caption(
-        "Сводка, детальная таблица и динамика по месяцам собраны в одном отчёте; переключение между разделами — вкладками ниже (эквивалент одной страницы в Streamlit)."
-    )
+    with st.expander("О отчёте", expanded=False):
+        st.caption("Контроль просрочек подрядчика и заказчика.")
+        st.caption(
+            "Сводка, детальная таблица и динамика по месяцам собраны в одном отчёте; переключение между разделами — вкладками ниже."
+        )
 
     tessa_df = st.session_state.get("tessa_data", None)
     if tessa_df is None or tessa_df.empty:
@@ -10048,7 +10074,8 @@ def dashboard_executive_documentation(df):
                 p_start, p_end = dr, dr
         else:
             p_start = p_end = None
-            st.caption("В данных нет распознанной колонки даты создания — период не применяется.")
+            with st.expander("Период по дате создания", expanded=False):
+                st.caption("В данных нет распознанной колонки даты создания — период не применяется.")
     with fp2:
         hide_overdue_if_done = st.checkbox(
             "Не отображать просрочку, если ИД сдана (подписана/согласована)",
@@ -10066,16 +10093,17 @@ def dashboard_executive_documentation(df):
             key="exec_doc_compare_prev_period",
         )
 
-    if contr_col:
-        st.caption(
-            f"Контрагент из выгрузки TESSA: используется колонка «{contr_col}» "
-            f"(поиск по точному или частичному совпадению с: {', '.join(_contr_candidates)})."
-        )
-    else:
-        st.caption(
-            "Колонка контрагента в данных TESSA не найдена — фильтр и столбчатые диаграммы по контрагентам недоступны "
-            f"(ожидаются имена или вхождения подстрок из списка: {', '.join(_contr_candidates)})."
-        )
+    with st.expander("Колонка контрагента в TESSA", expanded=False):
+        if contr_col:
+            st.caption(
+                f"Для контрагента используется колонка «{contr_col}» "
+                f"(поиск по точному или частичному совпадению с: {', '.join(_contr_candidates)})."
+            )
+        else:
+            st.caption(
+                "Колонка контрагента в данных TESSA не найдена — фильтр и столбчатые диаграммы по контрагентам недоступны "
+                f"(ожидаются имена или вхождения подстрок из списка: {', '.join(_contr_candidates)})."
+            )
 
     filtered_base = work.copy()
     if sel_obj != "Все" and obj_col:
@@ -10207,10 +10235,20 @@ def dashboard_executive_documentation(df):
             bc1.metric("До 7 дней", b1)
             bc2.metric("7–30 дней", b2)
             bc3.metric("> 30 дней", b3)
-            if sub_c["_late_days"].notna().any():
-                st.caption(f"Средняя просрочка (дней): {sub_c['_late_days'].mean():.1f}")
+            with st.expander("Подсказка по сегментам (подрядчик)", expanded=False):
+                if sub_c["_late_days"].notna().any():
+                    st.caption(f"Средняя просрочка (дней): {sub_c['_late_days'].mean():.1f}")
+                elif cnt_c > 0:
+                    st.caption(
+                        "Для сегментации 0–7 / 7–30 / >30 дней укажите в TESSA плановую дату "
+                        "(PlanDate / DueDate / Срок)."
+                    )
         elif cnt_c > 0:
-            st.caption("Для сегментации 0–7 / 7–30 / >30 дней укажите в TESSA плановую дату (PlanDate / DueDate / Срок).")
+            with st.expander("Подсказка по сегментам (подрядчик)", expanded=False):
+                st.caption(
+                    "Для сегментации 0–7 / 7–30 / >30 дней укажите в TESSA плановую дату "
+                    "(PlanDate / DueDate / Срок)."
+                )
 
         if contr_col and contr_col in filtered.columns and cnt_c > 0:
             sub = filtered[overdue_mask & is_rework]
@@ -10238,7 +10276,8 @@ def dashboard_executive_documentation(df):
             u2.metric("7–30 дней", int(((sub_u["_late_days"] > 7) & (sub_u["_late_days"] <= 30)).sum()))
             u3.metric("> 30 дней", int((sub_u["_late_days"] > 30).sum()))
         elif cnt_u > 0:
-            st.caption("Для сегментации по дням укажите плановую дату в данных.")
+            with st.expander("Подсказка по сегментам (заказчик)", expanded=False):
+                st.caption("Для сегментации по дням укажите плановую дату в данных.")
 
         if contr_col and contr_col in filtered.columns and cnt_u > 0:
             sub = filtered[overdue_mask & is_on_agree]
@@ -10291,11 +10330,11 @@ def dashboard_executive_documentation(df):
         if creation_col and filtered["_cd"].notna().any():
             rmin = filtered["_cd"].min()
             rmax = filtered["_cd"].max()
-            st.caption(
-                f"Диапазон дат создания в выборке: "
-                f"{rmin.strftime('%d.%m.%Y') if pd.notna(rmin) else '—'} — "
-                f"{rmax.strftime('%d.%m.%Y') if pd.notna(rmax) else '—'}"
-            )
+            with st.expander("Диапазон дат создания в выборке", expanded=False):
+                st.caption(
+                    f"{rmin.strftime('%d.%m.%Y') if pd.notna(rmin) else '—'} — "
+                    f"{rmax.strftime('%d.%m.%Y') if pd.notna(rmax) else '—'}"
+                )
 
     with tab_detail:
         st.subheader("Детальный отчёт по сдаче и согласованию ИД")
@@ -10348,13 +10387,14 @@ def dashboard_executive_documentation(df):
             }
             rows_out.append(row_dict)
         table_df = pd.DataFrame(rows_out)
-        st.caption(f"Записей: {len(table_df)}")
+        st.markdown(f"**Записей:** {len(table_df)}")
         st.markdown(
             _EXEC_DOC_DETAIL_CSS + _exec_detail_table_html(table_df),
             unsafe_allow_html=True,
         )
         if len(table_df) > 500:
-            st.caption("Показано 500 из записей — скачайте CSV для полного списка.")
+            with st.expander("Ограничение отображения в браузере", expanded=False):
+                st.caption("Показано 500 из записей — скачайте CSV для полного списка.")
         csv_bytes = table_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
         st.download_button("Скачать CSV", csv_bytes, "executive_docs.csv", "text/csv", key="exec_doc_csv")
 
