@@ -4051,6 +4051,7 @@ def dashboard_deviation_by_tasks_current_month(df):
                         cliponaxis=False,
                     )
 
+                    fig_detail = _apply_bar_uniformtext(fig_detail)
                     fig_detail = apply_chart_background(fig_detail)
                     max_line_len = max(
                         max(len(line) for line in s.split("<br>"))
@@ -6004,6 +6005,7 @@ def dashboard_rd_delay(df):
             bargap=0.1,  # Reduce gap between bars to make them appear larger
         )
 
+        fig = _apply_bar_uniformtext(fig)
         fig = apply_chart_background(fig)
         render_chart(fig, caption_below="Просрочка выдачи РД")
 
@@ -6772,6 +6774,7 @@ def dashboard_technique(df):
                 _pslug = str(project_name).replace(" ", "_")[:20]
                 fig_avg.update_traces(textposition="outside", textfont=dict(size=12, color="white"))
                 fig_avg.update_layout(height=500, xaxis=dict(tickangle=-45), yaxis_title="Среднее за месяц")
+                fig_avg = _apply_finance_bar_label_layout(fig_avg)
                 fig_avg = apply_chart_background(fig_avg)
                 render_chart(fig_avg, key=f"{key_prefix}_avg_bar_{_pslug}", caption_below=f"Среднее количество ресурсов — {project_name}")
 
@@ -8429,6 +8432,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 )
                 fig_avg.update_traces(textposition="outside", textfont=dict(size=12, color="white"))
                 fig_avg.update_layout(height=500, xaxis=dict(tickangle=-45), yaxis_title="Среднее за месяц")
+                fig_avg = _apply_finance_bar_label_layout(fig_avg)
                 fig_avg = apply_chart_background(fig_avg)
                 render_chart(fig_avg, key=f"{key_prefix}_avg_bar_{_pslug}", caption_below=f"Среднее количество ресурсов — {project_name}")
 
@@ -10219,10 +10223,12 @@ def dashboard_executive_documentation(df):
             render_chart(fig_c, caption_below="Просрочка по подрядчикам (дней)", key="exec_overdue_contractor")
     with oc2:
         st.subheader("Просрочка заказчика (согласование)")
-        st.caption(
-            "Показатель «Просрочка согласования Заказчиком»: документы на согласовании у заказчика; "
-            "сегменты по дням и диаграмма относятся к этапу согласования заказчиком (колонка «Просрочка соглас.» в детальном отчёте)."
-        )
+        with st.expander("Пояснение по показателю", expanded=False):
+            st.markdown(
+                "Показатель «Просрочка согласования Заказчиком»: документы на согласовании у заказчика; "
+                "сегменты по дням и диаграмма относятся к этапу согласования заказчиком "
+                "(колонка «Просрочка соглас.» в детальном отчёте)."
+            )
         st.metric("Документов на согласовании у заказчика", cnt_u)
         sub_u = filtered.loc[overdue_mask & is_on_agree].copy()
         if plan_col and not sub_u.empty:
@@ -13476,7 +13482,8 @@ def dashboard_predpisania(df):
     st.markdown(_pred_overdue_mock_table_html(mock_blocks, n_overdue), unsafe_allow_html=True)
 
     st.subheader("Все неустраненные предписания — детальная таблица")
-    st.caption("Сортировка: критические и просрочка сверху.")
+    with st.expander("Примечание к таблице", expanded=False):
+        st.caption("Сортировка: критические и просрочка сверху.")
     show = filtered.loc[unres_mask].copy()
     show = show.sort_values(["_critical", "_overdue_days"], ascending=[False, False])
 
