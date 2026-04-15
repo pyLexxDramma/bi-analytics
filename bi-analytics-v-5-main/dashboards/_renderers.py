@@ -6655,6 +6655,7 @@ def dashboard_technique(df):
                         showlegend=False,
                         xaxis=dict(tickangle=-45),
                     )
+                    fig_hist = _apply_finance_bar_label_layout(fig_hist)
                     fig_hist = apply_chart_background(fig_hist)
                     render_chart(
                         fig_hist,
@@ -7215,6 +7216,7 @@ def dashboard_technique(df):
             xaxis=dict(tickangle=-45),
         )
 
+        fig_bar = _apply_finance_bar_label_layout(fig_bar)
         fig_bar = apply_chart_background(fig_bar)
         render_chart(
             fig_bar,
@@ -8061,6 +8063,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                         showlegend=False,
                         xaxis=dict(tickangle=-45),
                     )
+                    fig_hist = _apply_finance_bar_label_layout(fig_hist)
                     fig_hist = apply_chart_background(fig_hist)
                     render_chart(
                         fig_hist,
@@ -8131,6 +8134,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 showlegend=False,
                 xaxis=dict(tickangle=-45),
             )
+            fig_wfb = _apply_finance_bar_label_layout(fig_wfb)
             fig_wfb = apply_chart_background(fig_wfb)
             with wfb_cols[wfi]:
                 render_chart(
@@ -8199,6 +8203,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             margin=dict(l=48, r=24, t=24, b=48),
             yaxis=dict(title=""),
         )
+        fig_pie_pf = _apply_bar_uniformtext(fig_pie_pf)
         fig_pie_pf = apply_chart_background(fig_pie_pf)
         return fig_pie_pf, {
             "plan": plan_sum,
@@ -8713,6 +8718,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             xaxis=dict(tickangle=-45),
         )
 
+        fig_bar = _apply_finance_bar_label_layout(fig_bar)
         fig_bar = apply_chart_background(fig_bar)
         render_chart(
             fig_bar,
@@ -9236,6 +9242,7 @@ def dashboard_skud_stroyka(df):
             fig.update_traces(
                 textposition="outside", textfont=dict(size=12, color="white")
             )
+            fig = _apply_finance_bar_label_layout(fig)
             fig = apply_chart_background(fig)
             render_chart(fig, caption_below="Среднее за месяц по людям")
     else:
@@ -9269,6 +9276,7 @@ def dashboard_skud_stroyka(df):
                 fig.update_traces(
                     textposition="outside", textfont=dict(size=12, color="white")
                 )
+                fig = _apply_finance_bar_label_layout(fig)
                 fig = apply_chart_background(fig)
                 render_chart(fig, caption_below="Среднее за месяц по людям в динамике")
             elif len(grouping_cols) > 1:
@@ -9291,6 +9299,7 @@ def dashboard_skud_stroyka(df):
                 fig.update_traces(
                     textposition="outside", textfont=dict(size=12, color="white")
                 )
+                fig = _apply_finance_bar_label_layout(fig)
                 fig = apply_chart_background(fig)
                 render_chart(fig, caption_below="Среднее за месяц по людям в динамике")
             else:
@@ -9325,6 +9334,7 @@ def dashboard_skud_stroyka(df):
                     textposition="outside", textfont=dict(size=12, color="white")
                 )
                 fig.update_xaxes(tickangle=-45)
+                fig = _apply_finance_bar_label_layout(fig)
                 fig = apply_chart_background(fig)
                 render_chart(fig, caption_below="Среднее за месяц по людям")
             else:
@@ -9372,7 +9382,10 @@ def dashboard_technique_tabs(df):
     График движения рабочей силы: вкладки — рабочая сила, техника, динамика, СКУД по неделям.
     """
     st.header("График движения рабочей силы")
-    st.caption("Данные из загруженных файлов ресурсов и техники. Если данных нет — загрузите соответствующие CSV-файлы.")
+    with st.expander("Источник данных", expanded=False):
+        st.caption(
+            "Данные из загруженных файлов ресурсов и техники. Если данных нет — загрузите соответствующие CSV-файлы."
+        )
     tab1, tab2, tab3, tab4 = st.tabs([
         "Рабочая сила",
         "Техника",
@@ -10200,6 +10213,7 @@ def dashboard_executive_documentation(df):
             by_c = sub.groupby(contr_col).size().reset_index(name="Количество").sort_values("Количество", ascending=True)
             fig_c = px.bar(by_c, y=contr_col, x="Количество", orientation="h", text="Количество", color_discrete_sequence=["#f87171"])
             fig_c.update_traces(textposition="outside", textfont=dict(color="white"))
+            fig_c = _apply_bar_uniformtext(fig_c)
             fig_c = apply_chart_background(fig_c)
             fig_c.update_layout(height=max(280, len(by_c) * 32 + 80), yaxis_title="", xaxis_title="")
             render_chart(fig_c, caption_below="Просрочка по подрядчикам (дней)", key="exec_overdue_contractor")
@@ -10225,6 +10239,7 @@ def dashboard_executive_documentation(df):
             by_u = sub.groupby(contr_col).size().reset_index(name="Количество").sort_values("Количество", ascending=True)
             fig_u = px.bar(by_u, y=contr_col, x="Количество", orientation="h", text="Количество", color_discrete_sequence=["#fbbf24"])
             fig_u.update_traces(textposition="outside", textfont=dict(color="white"))
+            fig_u = _apply_bar_uniformtext(fig_u)
             fig_u = apply_chart_background(fig_u)
             fig_u.update_layout(height=max(280, len(by_u) * 32 + 80), yaxis_title="", xaxis_title="")
             render_chart(
@@ -10247,6 +10262,7 @@ def dashboard_executive_documentation(df):
         )
         fig.update_traces(textposition="outside", textfont=dict(size=13, color="white"))
         fig.update_layout(xaxis_tickangle=-35)
+        fig = _apply_finance_bar_label_layout(fig)
         fig = apply_chart_background(fig)
         fig.update_layout(height=450, xaxis_title="Статус", yaxis_title="Количество")
         render_chart(fig, caption_below="Документы по статусам", key="exec_status_bar")
@@ -10261,6 +10277,7 @@ def dashboard_executive_documentation(df):
                 color_discrete_sequence=["#06A77D"],
             )
             fig2.update_traces(textposition="outside", textfont=dict(size=13, color="white"))
+            fig2 = _apply_finance_bar_label_layout(fig2)
             fig2 = apply_chart_background(fig2)
             fig2.update_layout(height=450, xaxis_title="Объект", yaxis_title="Количество", xaxis_tickangle=-45)
             render_chart(fig2, caption_below="Количество документов по объектам", key="exec_obj_bar")
@@ -10362,6 +10379,7 @@ def dashboard_executive_documentation(df):
                     color_discrete_sequence=["#60a5fa"],
                 )
                 fig3.update_traces(textposition="outside", textfont=dict(color="white"))
+                fig3 = _apply_finance_bar_label_layout(fig3)
                 fig3 = apply_chart_background(fig3)
                 fig3.update_layout(
                     height=400,
@@ -13495,6 +13513,7 @@ def dashboard_predpisania(df):
                 color_discrete_sequence=["#06A77D"],
             )
             fig3.update_traces(textposition="outside", textfont=dict(size=13, color="white"))
+            fig3 = _apply_finance_bar_label_layout(fig3)
             fig3 = apply_chart_background(fig3)
             fig3.update_layout(height=450, xaxis_title="Объект", yaxis_title="Количество", xaxis_tickangle=-45)
             render_chart(fig3, key="pred_by_obj", caption_below="Количество предписаний по объектам")
