@@ -4757,6 +4757,8 @@ def dashboard_budget_by_period(df):
                 xaxis_title=period_label,
                 yaxis_title="млн руб.",
                 barmode="group",
+                bargap=0.18,
+                bargroupgap=0.08,
                 xaxis=dict(tickangle=-45, tickfont=dict(size=10), nticks=18),
             )
             fig = _apply_finance_bar_label_layout(fig)
@@ -4888,10 +4890,12 @@ def dashboard_budget_by_period(df):
                 xaxis_title="млн руб.",
                 yaxis_title="Этапы",
                 barmode="group",
-                xaxis=dict(tickangle=0, tickfont=dict(size=12)),
+                bargap=0.22,
+                bargroupgap=0.05,
+                xaxis=dict(tickangle=0, tickfont=dict(size=12), rangemode="tozero"),
                 yaxis=dict(tickfont=dict(size=12), categoryorder="trace"),
                 legend=dict(font=dict(size=12)),
-                height=max(400, len(lot_chart_data) * 100),
+                height=max(400, len(lot_chart_data) * 92),
             )
             fig_lot = _apply_finance_bar_label_layout(fig_lot)
             fig_lot = apply_chart_background(fig_lot)
@@ -4900,10 +4904,16 @@ def dashboard_budget_by_period(df):
                 for s in lot_chart_data[lot_col].tolist()
             ) if not lot_chart_data.empty else 20
             left_margin = min(max_line_len * 8.2, 400)
-            max_val = lot_chart_data[["budget plan", "budget fact"]].max().max() / 1e6
+            max_val = float(
+                lot_chart_data[["budget plan", "budget fact"]].max().max() / 1e6
+            )
+            if not np.isfinite(max_val) or max_val <= 0:
+                max_val = 0.0
+            # Умеренный запас справа для подписей «outside», без лишнего «воздуха» на оси
+            _x_hi = max_val * (1.18 if max_val > 0 else 1.0)
             fig_lot.update_layout(
-                margin=dict(l=left_margin, r=200, t=80, b=50),
-                xaxis=dict(range=[0, max_val * 1.31])
+                margin=dict(l=left_margin, r=130, t=80, b=50),
+                xaxis=dict(range=[0, _x_hi], rangemode="tozero"),
             )
             render_chart(fig_lot, caption_below="План/факт/отклонение по лотам")
 

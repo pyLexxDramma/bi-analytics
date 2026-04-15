@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import html as html_module
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -88,6 +89,24 @@ def _fmt_date_ru(v: Any) -> str:
         return v.strftime("%d.%m.%Y")
     if isinstance(v, date):
         return v.strftime("%d.%m.%Y")
+    # Чистое число без календарного контекста — не показываем как дату (частая ошибка маппинга)
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        if pd.isna(v):
+            return "Н/Д"
+        fv = float(v)
+        if 1900 <= fv <= 2100 and fv == int(fv):
+            return "Н/Д"
+    if isinstance(v, str):
+        s = v.strip()
+        if not s or s.lower() in ("nan", "nat", "none", ""):
+            return "Н/Д"
+        if re.fullmatch(r"[-+]?\d+([.,]\d+)?", s.replace(" ", "").replace("\u00a0", "")):
+            return "Н/Д"
+        s2 = s.replace("/", ".").replace("\\", ".")
+        ts = pd.to_datetime(s2, errors="coerce", dayfirst=True)
+        if pd.isna(ts):
+            return "Н/Д"
+        return ts.strftime("%d.%m.%Y")
     ts = pd.to_datetime(v, errors="coerce", dayfirst=True)
     if pd.isna(ts):
         return "Н/Д"
