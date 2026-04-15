@@ -338,10 +338,10 @@ def load_data(uploaded_file, file_name: Optional[str] = None) -> Optional[pd.Dat
                         break
         if "task name" not in df.columns and "Название" in df.columns:
             df["task name"] = df["Название"]
-        if "section" not in df.columns:
+        if "lot" not in df.columns:
             for alt in ("ЛОТ", "Лот", "лот"):
                 if alt in df.columns:
-                    df["section"] = df[alt]
+                    df["lot"] = df[alt]
                     break
         if "project name" not in df.columns:
             for alt in ("Проект", "ID_проекта"):

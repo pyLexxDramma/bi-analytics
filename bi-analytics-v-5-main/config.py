@@ -90,6 +90,9 @@ DATA_MODE: str = os.environ.get("DATA_MODE", "auto").strip().lower()
 MSP_PROJECT_NAME_MAP: Dict[str, str] = {
     "dmitrovsky1": "Дмитровский 1",
     "dmitrovsky": "Дмитровский",
+    # 1С и смежные выгрузки: «Дмитровский-1», лат. I вместо 1
+    "дмитровский-1": "Дмитровский 1",
+    "дмитровскийi": "Дмитровский 1",
     "esipovo5": "Есипово V",
     "esipovo": "Есипово",
     "leninsky": "Ленинский",

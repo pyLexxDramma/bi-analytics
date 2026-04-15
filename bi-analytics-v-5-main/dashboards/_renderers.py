@@ -14103,11 +14103,8 @@ def dashboard_developer_projects(df):
     task_col = _find(["task name", "Название", "Task Name"])
     section_col = _find(["section", "Раздел", "БЛОК"])
     block_col = _find(["block", "Блок", "Функциональный блок", "Functional block"])
-    level_col = _find(
-        ["level", "level structure", "Outline Level", "Уровень", "уровень структуры"]
-    )
     building_col = _find(["building", "Строение", "строение", "Сооружение"])
-    lot_col = _find(["LOT", "Лот", "лот"])
+    lot_col = _find(["lot", "LOT", "Лот", "лот"])
 
     key_col = task_col or project_col
     if key_col:
@@ -14134,7 +14131,7 @@ def dashboard_developer_projects(df):
         else:
             sel_section = "Все"
 
-    f3, f4, f5 = st.columns(3)
+    f3, f4 = st.columns(2)
     with f3:
         if block_col and block_col in work.columns:
             blocks = ["Все"] + sorted(work[block_col].dropna().astype(str).str.strip().unique().tolist())
@@ -14142,26 +14139,20 @@ def dashboard_developer_projects(df):
         else:
             sel_block = "Все"
     with f4:
-        if level_col and level_col in work.columns:
-            lvl_num = pd.to_numeric(work[level_col], errors="coerce")
-            lvls = sorted({float(x) for x in lvl_num.dropna().unique().tolist()})
-            lvl_opts = ["Все"] + [str(int(x)) if x == int(x) else str(x) for x in lvls]
-            sel_lvl = st.selectbox("Уровень задачи (MSP)", lvl_opts, key="dev_level")
-        else:
-            sel_lvl = "Все"
-    with f5:
         if building_col and building_col in work.columns:
             bopts = ["Все"] + sorted(work[building_col].dropna().astype(str).str.strip().unique().tolist())
             sel_building = st.selectbox("Строение", bopts, key="dev_building")
         else:
             sel_building = "Все"
 
-        only_lot_rows = st.checkbox(
-            "Отображение в ЛОТАХ",
-            value=False,
-            help="Показывать только строки с заполненным ЛОТ (если в файле есть колонка ЛОТ).",
-            key="dev_only_lots",
-        )
+    only_lot_rows = st.checkbox(
+        "Отображение в ЛОТАХ",
+        value=False,
+        help="Показывать только строки с заполненным ЛОТ (если в файле есть колонка ЛОТ).",
+        key="dev_only_lots",
+    )
+    # Не фильтруем по «Уровень» в UI: в MSP это не outline; выбор не «Все» оставлял только часть строк —
+    # матрица ТЗ (вехи ур. 5 и т.д.) превращалась в сплошные Н/Д. Уровни отбора встроены в матрицу.
 
     filtered = work.copy()
     if sel_proj != "Все" and project_col:
@@ -14170,10 +14161,6 @@ def dashboard_developer_projects(df):
         filtered = filtered[filtered[section_col].astype(str).str.strip() == sel_section]
     if sel_block != "Все" and block_col:
         filtered = filtered[filtered[block_col].astype(str).str.strip() == sel_block]
-    if sel_lvl != "Все" and level_col:
-        target = float(sel_lvl.replace(",", "."))
-        lv = pd.to_numeric(filtered[level_col], errors="coerce")
-        filtered = filtered[lv == target]
     if sel_building != "Все" and building_col:
         filtered = filtered[filtered[building_col].astype(str).str.strip() == sel_building]
     if only_lot_rows and lot_col and lot_col in filtered.columns:
@@ -14210,14 +14197,26 @@ def dashboard_developer_projects(df):
     render_dev_tz_matrix(rows_tz, _TABLE_CSS)
 
     try:
+        p_export = ""
+        if project_col and project_col in matrix_df.columns and matrix_df[project_col].notna().any():
+            p_export = str(
+                matrix_df[project_col].dropna().astype(str).str.strip().iloc[0]
+            ).strip()
+        elif sel_proj and str(sel_proj).strip() != "Все":
+            p_export = str(sel_proj).strip()
         export_df = pd.DataFrame(rows_tz)
         if "warn" in export_df.columns:
             export_df = export_df.rename(columns={"warn": "Подсветка_менее_100pct"})
+        csv_name = "developer_projects_matrix.csv"
+        if p_export:
+            export_df.insert(0, "проект", p_export)
+            slug = re.sub(r"[\s<>:\"/\\|?*]+", "_", p_export).strip("_")[:120] or "project"
+            csv_name = f"developer_projects_matrix_{slug}.csv"
         csv_bytes = export_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
         st.download_button(
             "Скачать матрицу (CSV)",
             csv_bytes,
-            "developer_projects_matrix.csv",
+            csv_name,
             "text/csv",
             key="dev_matrix_csv_dl",
         )

@@ -47,7 +47,8 @@ _MSP_COLUMN_REMAP: Dict[str, str] = {
     "Базовое_окончание":     "base end",
     "Причины_отклонений":    "reason of deviation",
     "БЛОК":                  "block",
-    "ЛОТ":                   "section",
+    # Лот — отдельная колонка; «section» заполняется из иерархии (родитель ур. 2) в _postprocess_msp_df
+    "ЛОТ":                   "lot",
     "Уровень_структуры":     "level structure",
     "Процент_завершения":    "pct complete",
     "Отклонение_окончания":  "deviation in days",
@@ -125,6 +126,71 @@ def _deduplicate_project_snapshots(df: pd.DataFrame) -> pd.DataFrame:
 
     result = pd.concat([no_snap_part, snap_part], ignore_index=True)
     return result
+
+
+def _fill_section_from_task_tree(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Заполняет колонку section именем родительской задачи уровня 2 (для маппинга «Ковенанты»).
+    Раньше колонка «ЛОТ» попадала в section — иерархия не считалась; при чтении из БД пересчитываем.
+    Для каждого проекта обход в порядке строк в выгрузке (как в MSP).
+
+    В MSP CSV «Уровень» и «Уровень_структуры» часто различаются; иерархия дерева — по outline
+    (после ремапа: level structure), иначе родитель ур.2 и ветки «Ковенанты» считаются неверно.
+    """
+    if df is None or df.empty or "task name" not in df.columns:
+        return df
+    if "level" not in df.columns and "level structure" not in df.columns:
+        return df
+    df = df.copy()
+    if "level" in df.columns:
+        df["level"] = pd.to_numeric(df["level"], errors="coerce")
+    if "level structure" in df.columns:
+        df["level structure"] = pd.to_numeric(df["level structure"], errors="coerce")
+    if "section" not in df.columns:
+        df["section"] = ""
+
+    def _outline_col(g: pd.DataFrame) -> Optional[str]:
+        if "level structure" in g.columns and pd.to_numeric(g["level structure"], errors="coerce").notna().any():
+            return "level structure"
+        if "level" in g.columns:
+            return "level"
+        return None
+
+    def _walk_one(g: pd.DataFrame) -> pd.DataFrame:
+        g = g.sort_index()
+        ocol = _outline_col(g)
+        if ocol is None:
+            return g
+        current_sections: Dict[int, str] = {}
+        proj_name = ""
+        if "project name" in g.columns and len(g) > 0:
+            v0 = g["project name"].iloc[0]
+            proj_name = str(v0).strip() if pd.notna(v0) else ""
+        for idx in g.index:
+            lvl = pd.to_numeric(g.at[idx, ocol], errors="coerce")
+            task = str(g.at[idx, "task name"]).strip() if pd.notna(g.at[idx, "task name"]) else ""
+            if pd.notna(lvl):
+                lvl_int = int(lvl)
+                if lvl_int == 1:
+                    current_sections[lvl_int] = str(proj_name) if proj_name else task
+                else:
+                    current_sections[lvl_int] = task
+                for k in list(current_sections.keys()):
+                    if k > lvl_int:
+                        del current_sections[k]
+                if lvl_int >= 3 and 2 in current_sections:
+                    g.at[idx, "section"] = current_sections[2]
+                elif lvl_int >= 2 and 1 in current_sections:
+                    g.at[idx, "section"] = current_sections[1]
+        return g
+
+    if "project name" in df.columns:
+        parts = []
+        for _, g in df.groupby("project name", sort=False):
+            parts.append(_walk_one(g))
+        out = pd.concat(parts)
+        return out.sort_index()
+    return _walk_one(df)
 
 
 def _apply_msp_column_mapping(df: pd.DataFrame, project_name: str) -> pd.DataFrame:
@@ -249,27 +315,7 @@ def _apply_msp_column_mapping(df: pd.DataFrame, project_name: str) -> pd.DataFra
             df.loc[mask, "actual_year"] = df.loc[mask, "base end"].dt.to_period("Y")
 
     if "level" in df.columns and "task name" in df.columns:
-        df["level"] = pd.to_numeric(df["level"], errors="coerce")
-        if "section" not in df.columns:
-            df["section"] = ""
-        current_sections = {}
-        proj_name = df["project name"].iloc[0] if "project name" in df.columns and len(df) > 0 else ""
-        for idx in df.index:
-            lvl = df.at[idx, "level"]
-            task = str(df.at[idx, "task name"]).strip() if pd.notna(df.at[idx, "task name"]) else ""
-            if pd.notna(lvl):
-                lvl_int = int(lvl)
-                if lvl_int == 1:
-                    current_sections[lvl_int] = str(proj_name) if proj_name else task
-                else:
-                    current_sections[lvl_int] = task
-                for k in list(current_sections.keys()):
-                    if k > lvl_int:
-                        del current_sections[k]
-                if lvl_int >= 3 and 2 in current_sections:
-                    df.at[idx, "section"] = current_sections[2]
-                elif lvl_int >= 2 and 1 in current_sections:
-                    df.at[idx, "section"] = current_sections[1]
+        df = _fill_section_from_task_tree(df)
 
     df.attrs["data_type"] = "project"
     return df
@@ -601,6 +647,34 @@ def scan_web_files(extensions: tuple = (".csv", ".json")) -> List[Dict]:
     return files
 
 
+def _dedupe_scan_files_by_identity(files: List[Dict]) -> Tuple[List[Dict], List[str]]:
+    """
+    Убирает повторную загрузку одного и того же файла, если он попал в список
+    из нескольких корней (локальный web/, Analitics/web/, BI_ANALYTICS_WEB_EXTRA_PATHS):
+    одинаковое имя и размер на диске считаем дубликатом, оставляем первый путь.
+
+    Без этого concat в session_state даёт удвоение строк MSP и «лишние» записи в БД.
+    """
+    seen: Dict[Tuple[str, int], str] = {}
+    out: List[Dict] = []
+    warns: List[str] = []
+    for f in files:
+        try:
+            sz = int(f["path"].stat().st_size)
+        except OSError:
+            out.append(f)
+            continue
+        key = (str(f["name"]).lower(), sz)
+        if key in seen:
+            warns.append(
+                f"Пропуск дубликата (уже как «{seen[key]}»): {f['rel_path']}"
+            )
+            continue
+        seen[key] = f["rel_path"]
+        out.append(f)
+    return out, warns
+
+
 def scan_new_csv_demo_files(extensions: tuple = (".csv",)) -> List[Dict]:
     """
     Демо-файлы из new_csv/ — подмешиваются к загрузке из web/, чтобы локально
@@ -770,6 +844,8 @@ def load_all_from_web() -> Dict:
     }
 
     files = scan_web_files(extensions=(".csv", ".json")) + scan_new_csv_demo_files()
+    files, dedupe_warns = _dedupe_scan_files_by_identity(files)
+    result["warnings"].extend(dedupe_warns)
     if not files:
         result["errors"].append("Папка web/ пуста или не найдена, и new_csv/ без демо-файлов.")
         return result
@@ -1209,9 +1285,11 @@ def _load_version_data(version_id: int, file_type: str) -> Optional[pd.DataFrame
     import sqlite3
     try:
         conn = sqlite3.connect(WEB_DB_PATH)
+        # Порядок строк = порядок вставки при загрузке (= порядок строк в CSV). Без ORDER BY
+        # порядок не определён — ломается обход дерева и колонка section (родитель ур.2, «Ковенанты»).
         rows = conn.execute(
-            "SELECT row_data FROM web_data WHERE version_id=? AND file_type=?",
-            (version_id, file_type)
+            "SELECT row_data FROM web_data WHERE version_id=? AND file_type=? ORDER BY id ASC",
+            (version_id, file_type),
         ).fetchall()
         conn.close()
         if not rows:
@@ -1230,7 +1308,7 @@ def _restore_date_columns(df: pd.DataFrame) -> pd.DataFrame:
     - _day-колонки → datetime.date
     """
     # Основные datetime-колонки
-    for col in ("plan start", "plan end", "base start", "base end", "snapshot_date"):
+    for col in ("plan start", "plan end", "base start", "base end", "actual finish", "snapshot_date"):
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce")
 
@@ -1283,6 +1361,9 @@ def read_version_to_session(version_id: int):
         df = _load_version_data(version_id, ftype)
         if df is not None and not df.empty:
             df = _restore_date_columns(df)
+            # Старые версии в БД могли иметь «ЛОТ» в section — пересчитываем родителя ур.2 при каждом чтении
+            if ftype == "project":
+                df = _fill_section_from_task_tree(df)
             dfs.append(df)
 
     combined = pd.concat(dfs, ignore_index=True) if dfs else None
