@@ -12924,11 +12924,14 @@ def dashboard_forecast_budget(df):
             bf = pd.to_numeric(cur["budget fact"], errors="coerce").fillna(0.0)
         else:
             bf = pd.Series(0.0, index=cur.index)
+        # Даты как строки YYYY-MM-DD: `datetime.date` / NaT в Glide (st.data_editor) давали пустой блок без сетки.
+        plan_start_str = ps.dt.strftime("%Y-%m-%d").fillna("")
+        plan_end_str = pe.dt.strftime("%Y-%m-%d").fillna("")
         return pd.DataFrame(
             {
                 "Лот": cur["section"].astype(str),
-                "План. начало": ps.dt.date,
-                "План. окончание": pe.dt.date,
+                "План. начало": plan_start_str,
+                "План. окончание": plan_end_str,
                 "БДДС план (утверждённый), млн руб.": (bp / 1e6).round(4),
                 "БДДС факт, млн руб.": (bf / 1e6).round(4),
                 "A, %": 34.0,
@@ -12937,7 +12940,7 @@ def dashboard_forecast_budget(df):
             }
         )
 
-    _sess_key = f"forecast_edit_v2_{selected_project}"
+    _sess_key = f"forecast_edit_v4_{selected_project}"
     if _sess_key not in st.session_state:
         st.session_state[_sess_key] = _build_forecast_edit_frame(project_df)
     elif len(st.session_state[_sess_key]) != len(project_df):
@@ -12948,15 +12951,37 @@ def dashboard_forecast_budget(df):
         "По PDF: столбец «Раздел» заменён на **Лот**; суммы в млн руб.; для режима A/B/C совокупно A+B+C=100% "
         "(при отклонении значения нормализуются). Редактирование таблицы сразу влияет на расчёт."
     )
-    if st.button("Сбросить таблицу к данным файла", key=f"forecast_reset_v2_{selected_project}"):
+    if st.button("Сбросить таблицу к данным файла", key=f"forecast_reset_v4_{selected_project}"):
         st.session_state[_sess_key] = _build_forecast_edit_frame(project_df)
         st.rerun()
 
+    _row_px = 44
+    _editor_h = max(220, min(560, _row_px * (max(1, len(edit_df)) + 2)))
+    # Без min/max на числах — жёсткие ограничения иногда ломают отрисовку Glide при странных значениях.
+    _fc = {
+        "Лот": st.column_config.TextColumn("Лот", width="medium"),
+        "План. начало": st.column_config.TextColumn(
+            "План. начало", help="Формат ГГГГ-ММ-ДД; пусто — дата не задана."
+        ),
+        "План. окончание": st.column_config.TextColumn(
+            "План. окончание", help="Формат ГГГГ-ММ-ДД; пусто — дата не задана."
+        ),
+        "БДДС план (утверждённый), млн руб.": st.column_config.NumberColumn(
+            "БДДС план, млн", format="%.4f"
+        ),
+        "БДДС факт, млн руб.": st.column_config.NumberColumn("БДДС факт, млн", format="%.4f"),
+        "A, %": st.column_config.NumberColumn("A, %", format="%.2f"),
+        "B, %": st.column_config.NumberColumn("B, %", format="%.2f"),
+        "C, %": st.column_config.NumberColumn("C, %", format="%.2f"),
+    }
     edited_df = st.data_editor(
         edit_df,
         num_rows="fixed",
-        key=f"forecast_editor_{selected_project}",
+        key=f"forecast_editor_v4_{selected_project}",
         use_container_width=True,
+        height=_editor_h,
+        column_config=_fc,
+        hide_index=True,
     )
     st.session_state[_sess_key] = edited_df.copy()
 

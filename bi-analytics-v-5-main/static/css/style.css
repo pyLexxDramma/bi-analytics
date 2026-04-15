@@ -208,13 +208,16 @@ table th *,
 table td * {
     color: #ffffff !important;
 }
-/* st.dataframe и st.table — контейнер и все ячейки */
+/* st.dataframe / st.data_editor (Glide): НЕ использовать селектор «*» на все вложенные узлы —
+   иначе ломается внутренняя вёрстка/холст и виден только пустой тёмный прямоугольник. */
 [data-testid="stDataFrame"],
-[data-testid="stDataFrame"] *,
-.stDataFrame,
-.stDataFrame *,
+.stDataFrame {
+    min-height: 12rem !important;
+}
 div[data-testid="stDataFrame"] [role="cell"],
 div[data-testid="stDataFrame"] [role="columnheader"],
+div[data-testid="stDataFrame"] [role="gridcell"],
+div[data-testid="stDataFrame"] [role="rowheader"],
 [data-testid="stDataFrame"] td,
 [data-testid="stDataFrame"] th,
 [data-testid="stDataFrame"] .cell,
@@ -223,10 +226,9 @@ div[data-testid="stDataFrame"] [role="columnheader"],
     color: #ffffff !important;
     font-size: 14px !important;
 }
-[data-testid="stDataFrame"] span,
-[data-testid="stDataFrame"] div,
-.stDataFrame span,
-.stDataFrame div {
+div[data-testid="stDataFrame"] [role="cell"] span,
+div[data-testid="stDataFrame"] [role="columnheader"] span,
+div[data-testid="stDataFrame"] [role="gridcell"] span {
     color: #ffffff !important;
 }
 /* Таблица редактирования (st.data_editor) — видимый текст */
