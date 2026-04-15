@@ -409,6 +409,20 @@ def _apply_finance_bar_label_layout(fig: go.Figure) -> go.Figure:
     return fig
 
 
+def _apply_bar_uniformtext(fig: go.Figure) -> go.Figure:
+    """
+    Подписи bar: uniformtext + automargin по осям без перезаписи margin
+    (для графиков с кастомными l/r/t/b).
+    """
+    try:
+        fig.update_layout(uniformtext=dict(minsize=7, mode="hide"))
+        fig.update_xaxes(automargin=True)
+        fig.update_yaxes(automargin=True)
+    except Exception:
+        pass
+    return fig
+
+
 def render_chart(
     fig,
     key: str = None,
@@ -1089,6 +1103,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         fig.update_traces(
             textposition="outside", textfont=dict(size=14, color="white")
         )
+        fig = _apply_finance_bar_label_layout(fig)
         fig = apply_chart_background(fig)
         _ymax = float(reason_counts["Количество"].max() or 0)
         fig.update_layout(
@@ -1713,6 +1728,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             fig.update_traces(
                 textposition="outside", textfont=dict(size=14, color="white")
             )
+            fig = _apply_finance_bar_label_layout(fig)
             fig = apply_chart_background(fig)
             render_chart(
                 fig,
@@ -1801,6 +1817,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 textposition="outside",
                 textfont=dict(size=12, color="white"),
             )
+            fig = _apply_bar_uniformtext(fig)
             fig = apply_chart_background(fig)
             render_chart(fig, caption_below="Дни отклонений по периоду")
 
@@ -1901,6 +1918,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 )
             fig.update_layout(annotations=annotations)
 
+            fig = _apply_bar_uniformtext(fig)
             fig = apply_chart_background(fig)
             render_chart(fig, caption_below="Дни отклонений по периоду и причинам")
 
@@ -2634,6 +2652,7 @@ def dashboard_plan_fact_dates(df):
             height=max(400, len(section_dev) * 50),
             showlegend=False,
         )
+        fig_section = _apply_finance_bar_label_layout(fig_section)
         fig_section = apply_chart_background(fig_section)
         fig_section.update_layout(margin=dict(t=30))
         render_chart(
@@ -3032,6 +3051,7 @@ def dashboard_plan_fact_dates(df):
         left_margin = min(max_line_len * 8, 400)
         fig_gantt.update_layout(margin=dict(l=left_margin, r=30, t=50, b=150))
         fig_gantt.update_yaxes(tickfont=dict(size=12))
+        fig_gantt = _apply_bar_uniformtext(fig_gantt)
         render_chart(fig_gantt, caption_below="План/факт по этапам")
 
     # Форматирование даты для отображения (без «Н/Д» — пустая ячейка, если даты нет)
@@ -3888,6 +3908,7 @@ def dashboard_deviation_by_tasks_current_month(df):
             margin=dict(l=left_margin, r=10, t=40, b=80),
             xaxis=dict(range=_xaxis_range_positive(deviations["Суммарно дней отклонений"])),
         )
+        fig = _apply_bar_uniformtext(fig)
         render_chart(fig, caption_below="Отклонения от базового плана")
 
         # Additional histogram with detail by section and task
@@ -4324,7 +4345,7 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
             fig.update_traces(
                 textposition="outside", textfont=dict(size=12, color="white")
             )
-            fig = apply_chart_background(fig)
+            fig = _apply_finance_bar_label_layout(fig)
             fig.update_layout(
                 yaxis=dict(range=[0, reason_summary["Количество"].max() * 1.2])
             )
@@ -4468,6 +4489,7 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
                         )
                     )
 
+        fig = _apply_bar_uniformtext(fig)
         fig = apply_chart_background(fig)
         _reasons_chart_caption = (
             "Динамика причин отклонений по причинам"
@@ -13751,10 +13773,11 @@ def dashboard_control_points(df):
     Админ-маппинг задач и журнал — отдельно.
     """
     st.header("Контрольные точки")
-    st.caption(
-        "Фильтры по выгрузке MSP (как в «Отклонение от базового плана»): проект, этап, блок, "
-        "при наличии колонки — строение. Таблица строится по отфильтрованным строкам задач."
-    )
+    with st.expander("Подсказка по фильтрам", expanded=False):
+        st.caption(
+            "Фильтры по выгрузке MSP (как в «Отклонение от базового плана»): проект, этап, блок, "
+            "при наличии колонки — строение. Таблица строится по отфильтрованным строкам задач."
+        )
     if df is None or df.empty:
         st.warning("Загрузите данные MSP (проект).")
         return
