@@ -2,6 +2,8 @@
 web_loader.py — парсинг файлов из папки web/ и сохранение в SQLite (data/web_data.db).
 
 Основная функция: load_all_from_web()
+- Сканирует локальный web/, при наличии — каталог «Analitics/web» (см. config.get_analytics_sibling_web_dir),
+  и дополнительные пути из BI_ANALYTICS_WEB_EXTRA_PATHS
 - Сканирует web/ рекурсивно
 - Определяет тип файла через ETL-парсер (etl/parser.py)
 - Для MSP-файлов применяет маппинг колонок → формат дашбордов
@@ -533,24 +535,69 @@ def get_web_dir() -> Path:
     return Path(__file__).resolve().parent / "web"
 
 
+def _iter_web_scan_roots() -> List[Tuple[Path, str]]:
+    """
+    Корни для CSV/JSON: локальный web/, при наличии .../Analitics/web, пути из BI_ANALYTICS_WEB_EXTRA_PATHS.
+    Второй элемент кортежа — префикс для rel_path (уникальность при одинаковых именах в разных корнях).
+    """
+    from config import get_analytics_sibling_web_dir, get_extra_web_dirs_from_env
+
+    roots: List[Tuple[Path, str]] = []
+    seen: set = set()
+
+    def _add(root: Path, prefix: str) -> None:
+        try:
+            key = str(root.resolve())
+        except OSError:
+            return
+        if key in seen:
+            return
+        seen.add(key)
+        roots.append((root, prefix))
+
+    _add(get_web_dir(), "")
+
+    sib = get_analytics_sibling_web_dir()
+    if sib is not None:
+        try:
+            if sib.resolve() != get_web_dir().resolve():
+                _add(sib, "Analitics_web")
+        except OSError:
+            _add(sib, "Analitics_web")
+
+    for ex in get_extra_web_dirs_from_env():
+        label = ex.name.replace(" ", "_") or "extra_web"
+        _add(ex, label)
+
+    return roots
+
+
 def web_dir_exists() -> bool:
-    return get_web_dir().exists()
+    """True, если есть хотя бы один из каталогов данных (локальный web/, Analitics/web, extra из env)."""
+    for root, _ in _iter_web_scan_roots():
+        if root.is_dir():
+            return True
+    return False
 
 
 def scan_web_files(extensions: tuple = (".csv", ".json")) -> List[Dict]:
-    """Рекурсивно сканирует web/ и возвращает список файлов."""
-    web_dir = get_web_dir()
-    if not web_dir.exists():
-        return []
-    files = []
-    for ext in extensions:
-        for filepath in sorted(web_dir.rglob(f"*{ext}")):
-            if filepath.is_file():
-                files.append({
-                    "path": filepath,
-                    "name": filepath.name,
-                    "rel_path": str(filepath.relative_to(web_dir)),
-                })
+    """Рекурсивно сканирует все настроенные корни данных и возвращает список файлов."""
+    files: List[Dict] = []
+    for root, prefix in _iter_web_scan_roots():
+        if not root.exists():
+            continue
+        for ext in extensions:
+            for filepath in sorted(root.rglob(f"*{ext}")):
+                if filepath.is_file():
+                    rel = filepath.relative_to(root)
+                    rel_path = str(rel).replace("\\", "/")
+                    if prefix:
+                        rel_path = f"{prefix}/{rel_path}"
+                    files.append({
+                        "path": filepath,
+                        "name": filepath.name,
+                        "rel_path": rel_path,
+                    })
     return files
 
 

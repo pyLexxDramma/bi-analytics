@@ -62,7 +62,10 @@ from web_loader import load_all_from_web, web_dir_exists  # noqa: E402
 def main() -> int:
     init_web_schema()
     if not web_dir_exists():
-        print("Папка web/ не найдена рядом с приложением.", file=sys.stderr)
+        print(
+            "Нет каталога данных: локальный web/, Analitics/web или BI_ANALYTICS_WEB_EXTRA_PATHS.",
+            file=sys.stderr,
+        )
         return 1
     result = load_all_from_web()
     print(

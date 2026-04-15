@@ -538,7 +538,11 @@ def main():
 
                 if not web_dir_exists():
 
-                    st.error("Папка web/ не найдена в корне проекта.")
+                    st.error(
+                        "Не найден ни локальный каталог web/ рядом с приложением, "
+                        "ни папка Analitics/web (уровнем выше репозитория), "
+                        "ни пути из переменной BI_ANALYTICS_WEB_EXTRA_PATHS."
+                    )
 
                 else:
 
