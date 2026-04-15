@@ -648,9 +648,12 @@ def render_sidebar_menu(current_page: str = "reports"):
                         for f, info in loaded_files_info.items()
                         if info["type"] == "project"
                     ]
-                    for file_name in project_files:
-                        st.caption(
-                            f"  • {file_name} ({loaded_files_info[file_name]['rows']} строк)"
+                    if project_files:
+                        st.markdown(
+                            "\n".join(
+                                f"- `{file_name}` — {loaded_files_info[file_name]['rows']} строк"
+                                for file_name in project_files
+                            )
                         )
 
                 resources_data = st.session_state.get("resources_data")
@@ -662,9 +665,12 @@ def render_sidebar_menu(current_page: str = "reports"):
                         for f, info in loaded_files_info.items()
                         if info["type"] == "resources"
                     ]
-                    for file_name in resources_files:
-                        st.caption(
-                            f"  • {file_name} ({loaded_files_info[file_name]['rows']} строк)"
+                    if resources_files:
+                        st.markdown(
+                            "\n".join(
+                                f"- `{file_name}` — {loaded_files_info[file_name]['rows']} строк"
+                                for file_name in resources_files
+                            )
                         )
 
                 technique_data = st.session_state.get("technique_data")
@@ -676,9 +682,12 @@ def render_sidebar_menu(current_page: str = "reports"):
                         for f, info in loaded_files_info.items()
                         if info["type"] == "technique"
                     ]
-                    for file_name in technique_files:
-                        st.caption(
-                            f"  • {file_name} ({loaded_files_info[file_name]['rows']} строк)"
+                    if technique_files:
+                        st.markdown(
+                            "\n".join(
+                                f"- `{file_name}` — {loaded_files_info[file_name]['rows']} строк"
+                                for file_name in technique_files
+                            )
                         )
 
                 st.markdown("---")
@@ -704,4 +713,4 @@ def render_sidebar_menu(current_page: str = "reports"):
         # Информация о пользователе
         st.markdown("### Пользователь")
         st.write(f"**{user['username']}**")
-        st.caption(f"Роль: {get_user_role_display(user['role'])}")
+        st.markdown(f"*Роль: {get_user_role_display(user['role'])}*")

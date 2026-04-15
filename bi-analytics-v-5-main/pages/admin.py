@@ -293,7 +293,8 @@ def _render_benchmark_tab(user):
             for pid in selected:
                 label, text = _BENCH_PROMPTS[pid]
                 st.markdown(f"**{pid}** — {label}")
-                st.caption(text[:120] + ("..." if len(text) > 120 else ""))
+                _prev = text[:120] + ("…" if len(text) > 120 else "")
+                st.markdown(f"*{_prev}*")
 
     # --- Шаг 3: запуск ---
     st.markdown("### 3. Запуск")

@@ -399,9 +399,10 @@ _DEV_TZ_MATRIX_CSS = """
 def render_dev_tz_matrix(rows: List[Dict[str, Any]], table_css: str) -> None:
     import streamlit as st
 
-    st.caption(
-        "В строке «Проект» в колонках План и Факт выводятся идентификатор и название проекта (не даты)."
-    )
+    with st.expander("Примечание к строке «Проект»", expanded=False):
+        st.caption(
+            "В строке «Проект» в колонках План и Факт выводятся идентификатор и название проекта (не даты)."
+        )
     esc = html_module.escape
     thead = (
         "<thead><tr>"

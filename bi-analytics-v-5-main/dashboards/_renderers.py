@@ -47,7 +47,10 @@ def _render_html_table(df, max_rows=500):
     st.markdown(_TABLE_CSS + '<div class="rendered-table-wrap">' + html + "</div>",
                 unsafe_allow_html=True)
     if len(df) > max_rows:
-        st.caption(f"Показано {max_rows} из {len(df)} записей. Скачайте CSV для полных данных.")
+        with st.expander("Ограничение отображения таблицы", expanded=False):
+            st.caption(
+                f"Показано {max_rows} из {len(df)} записей. Скачайте CSV для полных данных."
+            )
 from utils import (
     get_russian_month_name,
     format_period_ru,
@@ -13686,7 +13689,10 @@ def _render_dev_detail_table(df, max_rows=500):
         unsafe_allow_html=True,
     )
     if len(df) > max_rows:
-        st.caption(f"Показано {max_rows} из {len(df)} записей. Скачайте CSV для полных данных.")
+        with st.expander("Ограничение отображения таблицы", expanded=False):
+            st.caption(
+                f"Показано {max_rows} из {len(df)} записей. Скачайте CSV для полных данных."
+            )
 
 
 # ==================== DASHBOARD: Девелоперские проекты ====================
