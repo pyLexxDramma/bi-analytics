@@ -498,6 +498,34 @@ def _render_control_points_msp_tab(user: dict) -> None:
             "Пустое сохранение JSON сбрасывает на встроенный список из кода."
         )
 
+    st.markdown("---")
+    st.markdown("### Отчёт «Отклонение от базового плана»")
+    st.caption(
+        "Название задачи MSP для расчёта метрик «окончание проекта» в отчёте (вместо выбора на странице отчёта). "
+        "Оставьте пустым — будет использоваться эвристика (ЗОС / ввод в эксплуатацию)."
+    )
+    _cur_task = (get_setting("baseline_plan_task_for_metrics") or "").strip()
+    _tf_task = st.text_input(
+        "Задача для расчёта окончания проекта (MSP)",
+        value=_cur_task,
+        key="admin_baseline_task_for_metrics",
+        help="Точное имя задачи из колонки task name в выгрузке MSP.",
+    )
+    if st.button("Сохранить задачу для метрик", type="primary", key="admin_save_baseline_task"):
+        set_setting(
+            "baseline_plan_task_for_metrics",
+            str(_tf_task).strip(),
+            description=SETTING_KEYS.get("baseline_plan_task_for_metrics", ""),
+            updated_by=user.get("username"),
+        )
+        log_action(
+            user.get("username") or "admin",
+            "admin_setting",
+            "baseline_plan_task_for_metrics",
+        )
+        st.success("Сохранено.")
+        st.rerun()
+
 
 # ┌──────────────────────────────────────────────────────────────────────────┐ #
 # │ ⊗ Красивый формат даты ¤ Start                                           │ #
