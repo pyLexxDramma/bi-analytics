@@ -14621,10 +14621,6 @@ def dashboard_developer_projects(df):
 
     project_col = _find(["project name", "Проект", "проект", "Project"])
     task_col = _find(["task name", "Название", "Task Name"])
-    section_col = _find(["section", "Раздел", "БЛОК"])
-    block_col = _find(["block", "Блок", "Функциональный блок", "Functional block"])
-    building_col = _find(["building", "Строение", "строение", "Сооружение"])
-    lot_col = _find(["lot", "LOT", "Лот", "лот"])
 
     key_col = task_col or project_col
     if key_col:
@@ -14637,55 +14633,23 @@ def dashboard_developer_projects(df):
         st.warning("Не найдены ключевые колонки (проект, задача). Проверьте формат файла.")
         return
 
-    f1, f2 = st.columns(2)
-    with f1:
-        if project_col and project_col in work.columns:
-            projects = ["Все"] + sorted(work[project_col].dropna().astype(str).str.strip().unique().tolist())
-            sel_proj = st.selectbox("Проект", projects, key="dev_proj")
-        else:
-            sel_proj = "Все"
-    with f2:
-        if section_col and section_col in work.columns:
-            sections = ["Все"] + sorted(work[section_col].dropna().astype(str).str.strip().unique().tolist())
-            sel_section = st.selectbox("Раздел / верхний уровень (по колонке раздела)", sections, key="dev_section")
-        else:
-            sel_section = "Все"
-
-    f3, f4 = st.columns(2)
-    with f3:
-        if block_col and block_col in work.columns:
-            blocks = ["Все"] + sorted(work[block_col].dropna().astype(str).str.strip().unique().tolist())
-            sel_block = st.selectbox("Функциональный блок", blocks, key="dev_block")
-        else:
-            sel_block = "Все"
-    with f4:
-        if building_col and building_col in work.columns:
-            bopts = ["Все"] + sorted(work[building_col].dropna().astype(str).str.strip().unique().tolist())
-            sel_building = st.selectbox("Строение", bopts, key="dev_building")
-        else:
-            sel_building = "Все"
-
-    only_lot_rows = st.checkbox(
-        "Отображение в ЛОТАХ",
-        value=False,
-        help="Показывать только строки с заполненным ЛОТ (если в файле есть колонка ЛОТ).",
-        key="dev_only_lots",
-    )
+    # По правкам ТЗ: в фильтрах только проект
+    if project_col and project_col in work.columns:
+        projects = ["Все"] + sorted(work[project_col].dropna().astype(str).str.strip().unique().tolist())
+        sel_proj = st.selectbox(
+            "Проект",
+            projects,
+            key="dev_proj",
+            help="Единственный фильтр отчёта: проект из выгрузки MSP.",
+        )
+    else:
+        sel_proj = "Все"
     # Не фильтруем по «Уровень» в UI: в MSP это не outline; выбор не «Все» оставлял только часть строк —
     # матрица ТЗ (вехи ур. 5 и т.д.) превращалась в сплошные Н/Д. Уровни отбора встроены в матрицу.
 
     filtered = work.copy()
     if sel_proj != "Все" and project_col:
         filtered = filtered[filtered[project_col].astype(str).str.strip() == sel_proj]
-    if sel_section != "Все" and section_col:
-        filtered = filtered[filtered[section_col].astype(str).str.strip() == sel_section]
-    if sel_block != "Все" and block_col:
-        filtered = filtered[filtered[block_col].astype(str).str.strip() == sel_block]
-    if sel_building != "Все" and building_col:
-        filtered = filtered[filtered[building_col].astype(str).str.strip() == sel_building]
-    if only_lot_rows and lot_col and lot_col in filtered.columns:
-        s = filtered[lot_col].astype(str).str.strip()
-        filtered = filtered[s.ne("") & ~s.str.lower().isin(["nan", "none", "н/д"])]
 
     if filtered.empty:
         st.info("Нет данных при выбранных фильтрах.")
