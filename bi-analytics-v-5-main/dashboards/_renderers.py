@@ -2288,7 +2288,52 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         grouped_data["Всего дней отклонений"] = 0
         grouped_data["Среднее дней отклонений"] = 0
 
-    grouped_data["period"] = grouped_data["period"].apply(format_period_ru)
+    def _dynamics_period_sort_key(p):
+        """Ключ для хронологической сортировки периода (до format_period_ru)."""
+        if p is None:
+            return (2, 0)
+        try:
+            if isinstance(p, float) and pd.isna(p):
+                return (2, 0)
+        except Exception:
+            pass
+        if isinstance(p, pd.Period):
+            return (0, p.ordinal)
+        if isinstance(p, pd.Timestamp):
+            try:
+                return (0, p.to_period("D").ordinal)
+            except Exception:
+                return (1, str(p))
+        if isinstance(p, date):
+            try:
+                return (0, pd.Timestamp(p).to_period("D").ordinal)
+            except Exception:
+                return (1, str(p))
+        try:
+            ts = pd.Timestamp(p)
+            if pd.notna(ts):
+                return (0, ts.to_period("D").ordinal)
+        except Exception:
+            pass
+        return (1, str(p))
+
+    grouped_data = grouped_data.sort_values(
+        "period", key=lambda s: s.map(_dynamics_period_sort_key)
+    ).reset_index(drop=True)
+    _period_uniq_sorted = sorted(
+        grouped_data["period"].dropna().unique(),
+        key=_dynamics_period_sort_key,
+    )
+    _period_cat_labels = [format_period_ru(x) for x in _period_uniq_sorted]
+    grouped_data["period"] = grouped_data["period"].map(format_period_ru)
+    try:
+        grouped_data["period"] = pd.Categorical(
+            grouped_data["period"],
+            categories=_period_cat_labels,
+            ordered=True,
+        )
+    except (ValueError, TypeError):
+        pass
 
     # Visualizations
     if len(group_cols) == 1:  # Only period
@@ -2414,13 +2459,6 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             else:
                 reason_data = grouped_data
 
-            # Вычисляем суммарные значения по каждому периоду для отображения над столбцами
-            period_totals = (
-                reason_data.groupby("period")["Всего дней отклонений"]
-                .sum()
-                .reset_index()
-            )
-
             reason_data = reason_data.copy()
             reason_data["_seg_lbl"] = reason_data["Всего дней отклонений"].apply(
                 lambda x: f"{int(round(float(x), 0))}" if pd.notna(x) else ""
@@ -2468,20 +2506,6 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 textfont=dict(size=11, color="white"),
             )
 
-            # Красная линия тренда по сумме дней отклонений по периоду (поверх stacked bar)
-            _pt = period_totals.sort_values("period").reset_index(drop=True)
-            fig.add_trace(
-                go.Scatter(
-                    x=_pt["period"],
-                    y=_pt["Всего дней отклонений"],
-                    mode="lines+markers",
-                    name="Итого (тренд)",
-                    line=dict(color="#e74c3c", width=3),
-                    marker=dict(color="#e74c3c", size=8),
-                    hovertemplate="Итого: %{y}<extra></extra>",
-                )
-            )
-
             fig = _apply_bar_uniformtext(fig)
             fig = apply_chart_background(fig)
             render_chart(fig, caption_below="Дни отклонений по периоду и причинам")
@@ -2494,12 +2518,17 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         if "reason of deviation" in group_cols:
             project_summary_cols.append("reason of deviation")
 
-        # Получаем доступные периоды из grouped_data для фильтра
+        # Периоды для фильтра — в календарном порядке (как на графике), не по алфавиту строки
         available_periods = []
         if "period" in grouped_data.columns:
-            available_periods = sorted(
-                grouped_data["period"].dropna().unique().tolist()
-            )
+            _per_ser = grouped_data["period"]
+            if pd.api.types.is_categorical_dtype(_per_ser) and len(_per_ser.dtype.categories):
+                available_periods = [str(x) for x in _per_ser.dtype.categories]
+            else:
+                _present = set(_per_ser.astype(str).dropna().unique().tolist())
+                available_periods = [
+                    lb for lb in _period_cat_labels if lb in _present
+                ]
 
         st.subheader(
             f"Сводная таблица (группировка: {', '.join(project_summary_cols)})"
