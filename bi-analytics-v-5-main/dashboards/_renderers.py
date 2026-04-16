@@ -865,11 +865,84 @@ def _deviations_filter_month_string_to_period(month_str):
     return None
 
 
+def _drop_deviation_hierarchy_artifacts(d: pd.DataFrame) -> pd.DataFrame:
+    """Удаляет служебные колонки _dt_* после фильтрации по иерархии MSP."""
+    if d is None or getattr(d, "empty", True):
+        return d
+    drop = [c for c in d.columns if str(c).startswith("_dt_")]
+    if not drop:
+        return d
+    return d.drop(columns=drop, errors="ignore")
+
+
+def _deviations_apply_block_building_filters(
+    filtered_df: pd.DataFrame,
+    selected_block: str,
+    selected_building: str,
+    building_col,
+):
+    """
+    Функциональный блок — задачи уровня 2; строение — уровень 3 (иерархия по порядку строк MSP).
+    Если колонки уровня нет — fallback на колонки block и строения в файле.
+    """
+    if filtered_df is None or getattr(filtered_df, "empty", True):
+        return filtered_df
+    level_col = _dev_tasks_resolve_level_column(filtered_df)
+    task_col = (
+        "task name"
+        if "task name" in filtered_df.columns
+        else _dev_tasks_find_column(
+            filtered_df, ["Задача", "task", "Task Name", "Название"]
+        )
+    )
+    use_hierarchy = bool(level_col and task_col and task_col in filtered_df.columns)
+    if use_hierarchy:
+        wh = _dev_tasks_build_ancestor_keys(filtered_df, level_col, task_col)
+        if selected_block != "Все":
+            wh = wh[
+                wh["_dt_lvl2_key"].astype(str).str.strip()
+                == str(selected_block).strip()
+            ]
+        if selected_building != "Все":
+            wh = wh[
+                wh["_dt_lvl3_key"].astype(str).str.strip()
+                == str(selected_building).strip()
+            ]
+        return _drop_deviation_hierarchy_artifacts(wh)
+    out = filtered_df
+    if selected_block != "Все" and "block" in out.columns:
+        out = out[
+            out["block"].astype(str).str.strip() == str(selected_block).strip()
+        ]
+    if (
+        selected_building != "Все"
+        and building_col
+        and building_col in out.columns
+    ):
+        out = out[
+            out[building_col].astype(str).str.strip()
+            == str(selected_building).strip()
+        ]
+    return out
+
+
+def _deviations_project_slice_by_key(df: pd.DataFrame, state_key: str) -> pd.DataFrame:
+    """Срез по выбранному проекту (ключ session_state) — для списков блока/строения."""
+    pr = st.session_state.get(state_key, "Все")
+    if pr != "Все" and df is not None and "project name" in df.columns:
+        return df[
+            df["project name"].astype(str).str.strip() == str(pr).strip()
+        ].copy()
+    return df.copy() if df is not None else df
+
+
 def _render_deviations_combined_shared_filters(df):
     with st.expander("Подсказка по общим фильтрам", expanded=False):
         st.caption(
-            "Общие фильтры для всех вкладок: проект, этап, причина, функциональный блок, строение (если есть в данных), "
-            "период по месяцу плана. Переключение вкладок не сбрасывает выбранные значения."
+            "Общие фильтры для всех вкладок: проект; функциональный блок (уровень 2) и строение (уровень 3) "
+            "по иерархии MSP — либо колонки block/строение, если уровня нет; период по месяцу плана. "
+            "Фильтр «Причина» задаётся только у таблицы «Детальные данные» на первой вкладке. "
+            "Переключение вкладок не сбрасывает выбранные значения."
         )
     st.markdown(
         """
@@ -885,28 +958,74 @@ def _render_deviations_combined_shared_filters(df):
     building_col = _find_column_by_keywords(
         df, ("building", "строение", "лот", "lot", "bldg")
     )
-    col1, col2, col3, col4 = st.columns(4)
+    level_col = _dev_tasks_resolve_level_column(df)
+    task_col = (
+        "task name"
+        if "task name" in df.columns
+        else _dev_tasks_find_column(df, ["Задача", "task", "Task Name", "Название"])
+    )
+    use_hierarchy = bool(level_col and task_col and task_col in df.columns)
+
+    col1, col2, col3 = st.columns(3)
     with col1:
         if "project name" in df.columns:
             _session_reset_project_if_excluded("devcombo_project")
             projects = ["Все"] + _project_name_select_options(df["project name"])
             st.selectbox("Проект", projects, key="devcombo_project")
     with col2:
-        if "section" in df.columns:
-            sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
-            st.selectbox("Этап", sections, key="devcombo_section")
-    with col3:
-        if "reason of deviation" in df.columns:
-            reasons = ["Все"] + sorted(
-                df["reason of deviation"].dropna().unique().tolist()
+        df_opts = _deviations_project_slice_by_key(df, "devcombo_project")
+        if use_hierarchy:
+            wh = _dev_tasks_build_ancestor_keys(df_opts.copy(), level_col, task_col)
+            ln = pd.to_numeric(wh[level_col], errors="coerce")
+            block_opts = ["Все"] + sorted(
+                wh.loc[ln == 2, task_col]
+                .dropna()
+                .astype(str)
+                .str.strip()
+                .unique()
+                .tolist()
             )
-            st.selectbox("Причина", reasons, key="devcombo_reason")
-    with col4:
-        if "block" in df.columns:
+            st.selectbox(
+                "Функциональный блок",
+                block_opts,
+                key="devcombo_block",
+                help="Задачи уровня 2 (иерархия MSP по колонке уровня).",
+            )
+        elif "block" in df.columns:
             blocks = ["Все"] + sorted(
                 df["block"].dropna().astype(str).str.strip().unique().tolist()
             )
             st.selectbox("Функциональный блок", blocks, key="devcombo_block")
+        else:
+            st.caption("Нет колонки блока")
+    with col3:
+        df_opts = _deviations_project_slice_by_key(df, "devcombo_project")
+        if use_hierarchy:
+            wh = _dev_tasks_build_ancestor_keys(df_opts.copy(), level_col, task_col)
+            ln = pd.to_numeric(wh[level_col], errors="coerce")
+            sb = st.session_state.get("devcombo_block", "Все")
+            w3 = wh[ln == 3]
+            if sb != "Все":
+                w3 = w3[
+                    w3["_dt_lvl2_key"].astype(str).str.strip()
+                    == str(sb).strip()
+                ]
+            build_opts = ["Все"] + sorted(
+                w3[task_col].dropna().astype(str).str.strip().unique().tolist()
+            )
+            st.selectbox(
+                "Строение",
+                build_opts,
+                key="devcombo_building",
+                help="Задачи уровня 3 в выбранном функциональном блоке.",
+            )
+        elif building_col and building_col in df.columns:
+            bvals = ["Все"] + sorted(
+                df[building_col].dropna().astype(str).str.strip().unique().tolist()
+            )
+            st.selectbox("Строение", bvals, key="devcombo_building")
+        else:
+            st.caption("Нет строения")
 
     available_months = []
     if "plan_month" in df.columns:
@@ -922,13 +1041,7 @@ def _render_deviations_combined_shared_filters(df):
                 month_dict = {format_period_ru(m): m for m in temp_months}
                 available_months = sorted(month_dict.keys(), key=lambda x: month_dict[x])
 
-    r2a, r2b, r2c = st.columns(3)
-    with r2a:
-        if building_col:
-            bvals = ["Все"] + sorted(
-                df[building_col].dropna().astype(str).str.strip().unique().tolist()
-            )
-            st.selectbox("Строение", bvals, key="devcombo_building")
+    r2b, r2c = st.columns(2)
     with r2b:
         if len(available_months) > 0:
             months_opts = ["Все"] + available_months
@@ -948,26 +1061,8 @@ def _render_deviations_combined_shared_filters(df):
         if "project name" in filtered_df.columns
         else "Все"
     )
-    selected_section = (
-        st.session_state.get("devcombo_section", "Все")
-        if "section" in filtered_df.columns
-        else "Все"
-    )
-    selected_reason = (
-        st.session_state.get("devcombo_reason", "Все")
-        if "reason of deviation" in filtered_df.columns
-        else "Все"
-    )
-    selected_block = (
-        st.session_state.get("devcombo_block", "Все")
-        if "block" in filtered_df.columns
-        else "Все"
-    )
-    selected_building = (
-        st.session_state.get("devcombo_building", "Все")
-        if building_col and building_col in df.columns
-        else "Все"
-    )
+    selected_block = st.session_state.get("devcombo_block", "Все")
+    selected_building = st.session_state.get("devcombo_building", "Все")
     period_from = (
         st.session_state.get("devcombo_period_from", "Все")
         if len(available_months) > 0
@@ -984,29 +1079,9 @@ def _render_deviations_combined_shared_filters(df):
             filtered_df["project name"].astype(str).str.strip()
             == str(selected_project).strip()
         ]
-    if selected_reason != "Все" and "reason of deviation" in filtered_df.columns:
-        filtered_df = filtered_df[
-            filtered_df["reason of deviation"].astype(str).str.strip()
-            == str(selected_reason).strip()
-        ]
-    if selected_section != "Все" and "section" in filtered_df.columns:
-        filtered_df = filtered_df[
-            filtered_df["section"].astype(str).str.strip()
-            == str(selected_section).strip()
-        ]
-    if selected_block != "Все" and "block" in filtered_df.columns:
-        filtered_df = filtered_df[
-            filtered_df["block"].astype(str).str.strip() == str(selected_block).strip()
-        ]
-    if (
-        selected_building != "Все"
-        and building_col
-        and building_col in filtered_df.columns
-    ):
-        filtered_df = filtered_df[
-            filtered_df[building_col].astype(str).str.strip()
-            == str(selected_building).strip()
-        ]
+    filtered_df = _deviations_apply_block_building_filters(
+        filtered_df, selected_block, selected_building, building_col
+    )
 
     has_plan_month_col = "plan_month" in filtered_df.columns
     if has_plan_month_col and (period_from != "Все" or period_to != "Все"):
@@ -1066,7 +1141,11 @@ def dashboard_deviations_combined(df):
     st.header("Причины отклонений")
     filtered_shared, building_col = _render_deviations_combined_shared_filters(df)
     tab_by_month, tab_dynamics, tab_reasons = st.tabs(
-        ["Доли причин по проекту", "Динамика по периодам", "Динамика причин"]
+        [
+            "Доли причин по проекту",
+            "Динамика отклонений по месяцам",
+            "Динамика причин",
+        ]
     )
     with tab_by_month:
         dashboard_reasons_of_deviation(
@@ -1106,7 +1185,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         with st.expander("Подсказка", expanded=False):
             st.caption(
                 "По умолчанию — все проекты и доступные периоды. Фильтры совпадают с объединённым отчётом "
-                "«Причины отклонений»; динамику по периодам см. вкладку «Динамика по периодам» в том же отчёте."
+                "«Причины отклонений»; динамику по месяцам см. вкладку «Динамика отклонений по месяцам»."
             )
 
         st.markdown(
@@ -1121,7 +1200,17 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             unsafe_allow_html=True,
         )
 
-        col1, col2, col3, col4 = st.columns(4)
+        _lvl_rs = _dev_tasks_resolve_level_column(df)
+        _task_rs = (
+            "task name"
+            if "task name" in df.columns
+            else _dev_tasks_find_column(
+                df, ["Задача", "task", "Task Name", "Название"]
+            )
+        )
+        _use_hi_rs = bool(_lvl_rs and _task_rs and _task_rs in df.columns)
+
+        col1, col2, col3 = st.columns(3)
 
         with col1:
             try:
@@ -1137,42 +1226,60 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                 selected_project = "Все"
 
         with col2:
-            try:
-                has_section_column = "section" in df.columns
-            except (AttributeError, TypeError):
-                has_section_column = False
-
-            if has_section_column:
-                sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
-                selected_section = st.selectbox("Этап", sections, key="reason_section")
+            df_opts = _deviations_project_slice_by_key(df, "reason_project")
+            if _use_hi_rs:
+                wh = _dev_tasks_build_ancestor_keys(df_opts.copy(), _lvl_rs, _task_rs)
+                ln = pd.to_numeric(wh[_lvl_rs], errors="coerce")
+                block_opts = ["Все"] + sorted(
+                    wh.loc[ln == 2, _task_rs]
+                    .dropna()
+                    .astype(str)
+                    .str.strip()
+                    .unique()
+                    .tolist()
+                )
+                st.selectbox(
+                    "Функциональный блок",
+                    block_opts,
+                    key="reason_block",
+                    help="Задачи уровня 2 (иерархия MSP по колонке уровня).",
+                )
+            elif "block" in df.columns:
+                blocks = ["Все"] + sorted(
+                    df["block"].dropna().astype(str).str.strip().unique().tolist()
+                )
+                st.selectbox("Функциональный блок", blocks, key="reason_block")
             else:
-                selected_section = "Все"
+                st.caption("Нет колонки блока")
 
         with col3:
-            try:
-                has_reason_column = "reason of deviation" in df.columns
-            except (AttributeError, TypeError):
-                has_reason_column = False
-
-            if has_reason_column:
-                reasons = ["Все"] + sorted(
-                    df["reason of deviation"].dropna().unique().tolist()
+            df_opts = _deviations_project_slice_by_key(df, "reason_project")
+            if _use_hi_rs:
+                wh = _dev_tasks_build_ancestor_keys(df_opts.copy(), _lvl_rs, _task_rs)
+                ln = pd.to_numeric(wh[_lvl_rs], errors="coerce")
+                sb = st.session_state.get("reason_block", "Все")
+                w3 = wh[ln == 3]
+                if sb != "Все":
+                    w3 = w3[
+                        w3["_dt_lvl2_key"].astype(str).str.strip()
+                        == str(sb).strip()
+                    ]
+                build_opts = ["Все"] + sorted(
+                    w3[_task_rs].dropna().astype(str).str.strip().unique().tolist()
                 )
-                selected_reason = st.selectbox("Причина", reasons, key="reason_filter")
+                st.selectbox(
+                    "Строение",
+                    build_opts,
+                    key="reason_building",
+                    help="Задачи уровня 3 в выбранном функциональном блоке.",
+                )
+            elif building_col and building_col in df.columns:
+                bvals = ["Все"] + sorted(
+                    df[building_col].dropna().astype(str).str.strip().unique().tolist()
+                )
+                st.selectbox("Строение", bvals, key="reason_building")
             else:
-                selected_reason = "Все"
-
-        with col4:
-            try:
-                has_block_column = "block" in df.columns
-            except (AttributeError, TypeError):
-                has_block_column = False
-
-            if has_block_column:
-                blocks = ["Все"] + sorted(df["block"].dropna().astype(str).str.strip().unique().tolist())
-                selected_block = st.selectbox("Функциональный блок", blocks, key="reason_block")
-            else:
-                selected_block = "Все"
+                st.caption("Нет строения")
 
         available_months = []
         try:
@@ -1203,17 +1310,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                             month_dict.keys(), key=lambda x: month_dict[x]
                         )
 
-        r2a, r2b, r2c = st.columns(3)
-        with r2a:
-            if building_col:
-                bvals = ["Все"] + sorted(
-                    df[building_col].dropna().astype(str).str.strip().unique().tolist()
-                )
-                selected_building = st.selectbox(
-                    "Строение", bvals, key="reason_building"
-                )
-            else:
-                selected_building = "Все"
+        r2b, r2c = st.columns(2)
         with r2b:
             if len(available_months) > 0:
                 months_opts = ["Все"] + available_months
@@ -1233,10 +1330,6 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                 period_to = "Все"
                 st.selectbox("Период по", ["Все"], key="reason_period_to", disabled=True)
     else:
-        selected_section = "Все"
-        selected_reason = "Все"
-        selected_block = "Все"
-        selected_building = "Все"
         period_from = "Все"
         period_to = "Все"
         available_months = []
@@ -1248,48 +1341,23 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
     except (AttributeError, TypeError):
         has_project_col = False
 
-    if selected_project != "Все" and has_project_col:
-        filtered_df = filtered_df[
-            filtered_df["project name"].astype(str).str.strip()
-            == str(selected_project).strip()
-        ]
+    if not hide_shared_filters:
+        if selected_project != "Все" and has_project_col:
+            filtered_df = filtered_df[
+                filtered_df["project name"].astype(str).str.strip()
+                == str(selected_project).strip()
+            ]
+        filtered_df = _deviations_apply_block_building_filters(
+            filtered_df,
+            st.session_state.get("reason_block", "Все"),
+            st.session_state.get("reason_building", "Все"),
+            building_col,
+        )
 
     try:
         has_reason_col = "reason of deviation" in filtered_df.columns
     except (AttributeError, TypeError):
         has_reason_col = False
-
-    if selected_reason != "Все" and has_reason_col:
-        filtered_df = filtered_df[
-            filtered_df["reason of deviation"].astype(str).str.strip()
-            == str(selected_reason).strip()
-        ]
-
-    try:
-        has_section_col = "section" in filtered_df.columns
-    except (AttributeError, TypeError):
-        has_section_col = False
-
-    if selected_section != "Все" and has_section_col:
-        filtered_df = filtered_df[
-            filtered_df["section"].astype(str).str.strip()
-            == str(selected_section).strip()
-        ]
-
-    if selected_block != "Все" and "block" in filtered_df.columns:
-        filtered_df = filtered_df[
-            filtered_df["block"].astype(str).str.strip() == str(selected_block).strip()
-        ]
-
-    if (
-        selected_building != "Все"
-        and building_col
-        and building_col in filtered_df.columns
-    ):
-        filtered_df = filtered_df[
-            filtered_df[building_col].astype(str).str.strip()
-            == str(selected_building).strip()
-        ]
 
     try:
         has_plan_month_col = "plan_month" in filtered_df.columns
@@ -1500,10 +1568,27 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
 
     # Детальная таблица по макету (п. 11): уровень 5, причина заполнена, отклонение окончания < 0
     st.subheader("Детальные данные")
+    table_reason_df = filtered_df
+    selected_reason_table = "Все"
+    if has_reason_col:
+        _reason_opts_tbl = ["Все"] + sorted(
+            filtered_df["reason of deviation"].dropna().astype(str).str.strip().unique().tolist()
+        )
+        selected_reason_table = st.selectbox(
+            "Причина",
+            _reason_opts_tbl,
+            key="reason_filter_table_only",
+            help="Влияет только на таблицы ниже (не на диаграммы и метрики выше).",
+        )
+        if selected_reason_table != "Все":
+            table_reason_df = filtered_df[
+                filtered_df["reason of deviation"].astype(str).str.strip()
+                == str(selected_reason_table).strip()
+            ]
     notes_col_m = _find_column_by_keywords(
         filtered_df, ("note", "заметк", "comment", "remark", "notes")
     )
-    work_m = filtered_df.copy()
+    work_m = table_reason_df.copy()
     try:
         ensure_date_columns(work_m)
     except Exception:
@@ -1672,26 +1757,29 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         )
 
     with st.expander("Полная выгрузка по фильтрам", expanded=False):
-        st.caption("Ниже — полная таблица по текущим фильтрам (не только строки «по макету»).")
+        st.caption(
+            "Ниже — полная таблица по текущим фильтрам и выбранной причине в блоке «Детальные данные» "
+            "(не только строки «по макету»)."
+        )
     display_cols = []
     for c in ("project name", "task name", "section"):
-        if c in filtered_df.columns:
+        if c in table_reason_df.columns:
             display_cols.append(c)
-    if "block" in filtered_df.columns:
+    if "block" in table_reason_df.columns:
         display_cols.append("block")
-    if building_col and building_col in filtered_df.columns:
+    if building_col and building_col in table_reason_df.columns:
         display_cols.append(building_col)
-    if "reason of deviation" in filtered_df.columns:
+    if "reason of deviation" in table_reason_df.columns:
         display_cols.append("reason of deviation")
     for c in ("plan start", "plan end", "base start", "base end"):
-        if c in filtered_df.columns:
+        if c in table_reason_df.columns:
             display_cols.append(c)
-    if "deviation in days" in filtered_df.columns:
+    if "deviation in days" in table_reason_df.columns:
         display_cols.append("deviation in days")
-    if "snapshot_date" in filtered_df.columns:
+    if "snapshot_date" in table_reason_df.columns:
         display_cols.append("snapshot_date")
 
-    display_df = filtered_df[display_cols].copy() if display_cols else filtered_df.copy()
+    display_df = table_reason_df[display_cols].copy() if display_cols else table_reason_df.copy()
     col_ru = {
         "project name": "Проект",
         "task name": "Задача",
@@ -1753,10 +1841,10 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         return
 
     if hide_shared_filters:
-        st.subheader("Динамика отклонений по периодам")
+        st.subheader("Динамика отклонений по месяцам")
         with st.expander("Подсказка", expanded=False):
             st.markdown(
-                "Проект, этап, причина, блок, строение и период по плану — **общие фильтры выше**. "
+                "Проект, функциональный блок (ур. 2), строение (ур. 3) и период по плану — **общие фильтры выше**. "
                 "Здесь задаются ось времени (plan end или дата снимка) и шаг группировки."
             )
     else:
@@ -2173,6 +2261,9 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             )
 
             reason_data = reason_data.copy()
+            reason_data["_seg_lbl"] = reason_data["Всего дней отклонений"].apply(
+                lambda x: f"{int(round(float(x), 0))}" if pd.notna(x) else ""
+            )
             fig = px.bar(
                 reason_data,
                 x="period",
@@ -2184,8 +2275,9 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     "Всего дней отклонений": "Дни отклонений",
                     "reason of deviation": "Причина отклонения",
                 },
+                text="_seg_lbl",
             )
-            # Накопление: легенда справа + запас по полям, подписи секторов скрыты (итог — аннотации сверху)
+            # Накопление: легенда справа; промежуточные значения — внутри сегментов столбца
             fig.update_layout(
                 barmode="stack",
                 legend=dict(
@@ -2209,7 +2301,11 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 yaxis=dict(title="Дни отклонений", automargin=True),
                 height=560,
             )
-            fig.update_traces(textposition="none")
+            fig.update_traces(
+                textposition="inside",
+                insidetextanchor="middle",
+                textfont=dict(size=11, color="white"),
+            )
 
             # Добавляем суммарные значения над столбцами
             annotations = []
@@ -4447,7 +4543,7 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
         st.subheader("Динамика причин отклонений")
         with st.expander("Подсказка", expanded=False):
             st.markdown(
-                "Проект, этап, причина, функциональный блок, строение и период по плану — **общие фильтры выше**."
+                "Проект, функциональный блок (ур. 2), строение (ур. 3) и период по плану — **общие фильтры выше**."
             )
         col1, = st.columns(1)
         with col1:
