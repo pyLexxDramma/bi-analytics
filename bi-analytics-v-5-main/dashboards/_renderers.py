@@ -553,6 +553,233 @@ def _clean_display_str(val, empty: str = "") -> str:
     return s
 
 
+_DEV_REASONS_FULL_TABLE_CSS = """
+<style>
+.dev-reasons-wrap { overflow-x:auto; margin:0.5rem 0 1rem 0; }
+.dev-reasons-table {
+  width:100%; border-collapse:collapse; font-size:13px;
+  font-family:Inter,system-ui,sans-serif;
+}
+.dev-reasons-table th {
+  position:sticky; top:0; background:#1a1c23; color:#fafafa;
+  padding:8px 10px; text-align:left; border-bottom:2px solid #444;
+  font-weight:600; white-space:nowrap;
+}
+.dev-reasons-table td {
+  padding:6px 10px; border-bottom:1px solid #333; color:#e0e0e0;
+  white-space:nowrap; max-width:360px; overflow:hidden; text-overflow:ellipsis;
+}
+.dev-reasons-table tr:hover td { background:#262833; }
+.dev-bg-turq { background:rgba(72,202,228,0.18) !important; }
+.dev-bg-blue { background:rgba(52,152,219,0.22) !important; }
+.dev-bg-dblue { background:rgba(26,82,118,0.38) !important; }
+.dev-bg-lblue { background:rgba(214,234,248,0.14) !important; }
+.dev-txt-ok { color:#27ae60 !important; font-weight:600; }
+.dev-txt-bad { color:#c0392b !important; font-weight:600; }
+</style>
+"""
+
+
+def _dev_days_diff(a, b):
+    """Разница (a − b) в днях; NaN если нет дат."""
+    if a is None or b is None:
+        return np.nan
+    try:
+        if isinstance(a, float) and pd.isna(a):
+            return np.nan
+        if isinstance(b, float) and pd.isna(b):
+            return np.nan
+    except Exception:
+        pass
+    try:
+        ta = pd.Timestamp(a)
+        tb = pd.Timestamp(b)
+        if pd.isna(ta) or pd.isna(tb):
+            return np.nan
+        return (ta - tb).total_seconds() / 86400.0
+    except Exception:
+        return np.nan
+
+
+def _fmt_date_cell(v):
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return ""
+    try:
+        t = pd.Timestamp(v)
+        if pd.isna(t):
+            return ""
+        return t.strftime("%d.%m.%Y")
+    except Exception:
+        return str(v).strip() if v is not None else ""
+
+
+def _fmt_int_days(v):
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return ""
+    try:
+        return str(int(round(float(v), 0)))
+    except (TypeError, ValueError):
+        return ""
+
+
+def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_col):
+    """
+    Полная таблица отчёта «Причины отклонений» по правкам ТЗ: порядок колонок, подписи,
+    отклонения начала/окончания и длительности, цветовые группы.
+    """
+    if table_reason_df is None or getattr(table_reason_df, "empty", True):
+        st.info("Нет строк для полной таблицы.")
+        return
+    d = table_reason_df.copy()
+    for c in ("plan start", "plan end", "base start", "base end"):
+        if c in d.columns:
+            d[c] = pd.to_datetime(d[c], errors="coerce", dayfirst=True)
+
+    headers = ["Проект", "Задача"]
+    if "block" in d.columns:
+        headers.append("Функциональный блок")
+    if building_col and building_col in d.columns:
+        headers.append("Строение")
+    headers.extend(
+        [
+            "Начало",
+            "Базовое начало",
+            "Отклонение начала",
+            "Окончание",
+            "Базовое окончание",
+            "Отклонение окончания",
+            "Базовая длительность",
+            "Длительность",
+            "Причина отклонений",
+            "Заметки",
+        ]
+    )
+    if "snapshot_date" in d.columns:
+        headers.append("Дата снимка")
+
+    rows_out = []
+    parts = [
+        '<div class="dev-reasons-wrap">',
+        '<table class="dev-reasons-table">',
+        "<thead><tr>",
+    ]
+    for h in headers:
+        parts.append(f"<th>{html_module.escape(h)}</th>")
+    parts.append("</tr></thead><tbody>")
+
+    for _, row in d.iterrows():
+        ps = row.get("plan start")
+        pe = row.get("plan end")
+        bs = row.get("base start")
+        be = row.get("base end")
+        # ТЗ: отклонение начала = базовое(план) начало − фактическое начало (дни)
+        start_dev = _dev_days_diff(ps, bs)
+        # отклонение окончания: факт − план (дни); красный шрифт если > 0
+        end_dev = _dev_days_diff(be, pe)
+        dur_b = _dev_days_diff(pe, ps)
+        dur_f = _dev_days_diff(be, bs)
+
+        pr = _clean_display_str(row.get("project name"))
+        tn = _clean_display_str(row.get("task name"))
+        cells = [
+            ("", pr),
+            ("", tn),
+        ]
+        if "block" in d.columns:
+            cells.append(("", _clean_display_str(row.get("block"))))
+        if building_col and building_col in d.columns:
+            cells.append(("", _clean_display_str(row.get(building_col))))
+        cells.extend(
+            [
+                ("dev-bg-turq", _fmt_date_cell(bs)),
+                ("dev-bg-turq", _fmt_date_cell(ps)),
+                (
+                    "dev-bg-lblue",
+                    _fmt_int_days(start_dev),
+                    "start_dev",
+                    start_dev,
+                ),
+                ("dev-bg-blue", _fmt_date_cell(be)),
+                ("dev-bg-blue", _fmt_date_cell(pe)),
+                (
+                    "dev-bg-lblue",
+                    _fmt_int_days(end_dev),
+                    "end_dev",
+                    end_dev,
+                ),
+                ("dev-bg-dblue", _fmt_int_days(dur_b)),
+                ("dev-bg-dblue", _fmt_int_days(dur_f)),
+                (
+                    "",
+                    _clean_display_str(row.get("reason of deviation"))
+                    if "reason of deviation" in d.columns
+                    else "",
+                ),
+                (
+                    "",
+                    _clean_display_str(row.get(notes_col))
+                    if notes_col and notes_col in d.columns
+                    else "",
+                ),
+            ]
+        )
+        if "snapshot_date" in d.columns:
+            sd = row.get("snapshot_date")
+            try:
+                sds = (
+                    pd.Timestamp(sd).strftime("%d.%m.%Y")
+                    if pd.notna(pd.to_datetime(sd, errors="coerce"))
+                    else str(sd) if sd is not None else ""
+                )
+            except Exception:
+                sds = str(sd) if sd is not None else ""
+            cells.append(("", sds))
+
+        row_csv = {}
+        for i, h in enumerate(headers):
+            if i < len(cells):
+                ent = cells[i]
+                if len(ent) == 4:
+                    row_csv[h] = ent[1]
+                elif len(ent) == 2:
+                    row_csv[h] = ent[1]
+                else:
+                    row_csv[h] = ent[1] if len(ent) > 1 else ""
+        rows_out.append(row_csv)
+
+        parts.append("<tr>")
+        for ent in cells:
+            if len(ent) == 4:
+                cls, txt, _kind, raw = ent
+                fg = ""
+                if _kind == "start_dev" and not (raw is None or (isinstance(raw, float) and pd.isna(raw))):
+                    fg = " dev-txt-bad" if float(raw) < 0 else " dev-txt-ok"
+                elif _kind == "end_dev" and not (raw is None or (isinstance(raw, float) and pd.isna(raw))):
+                    fg = " dev-txt-bad" if float(raw) > 0 else " dev-txt-ok"
+                esc = html_module.escape(txt) if str(txt).strip() != "" else ""
+                parts.append(
+                    f'<td class="{cls.strip()}{fg}">{esc}</td>'
+                )
+            else:
+                cls, txt = ent[0], ent[1]
+                esc = html_module.escape(txt) if str(txt).strip() != "" else ""
+                parts.append(f'<td class="{cls.strip()}">{esc}</td>')
+        parts.append("</tr>")
+
+    parts.append("</tbody></table></div>")
+    st.markdown(f"**Записей:** {len(d)}")
+    st.markdown(_DEV_REASONS_FULL_TABLE_CSS + "".join(parts), unsafe_allow_html=True)
+
+    out_df = pd.DataFrame(rows_out, columns=headers)
+    st.download_button(
+        "Скачать CSV",
+        out_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"),
+        "deviations_detail.csv",
+        "text/csv",
+        key="devtable_csv_1",
+    )
+
+
 def _find_column_by_keywords(df, keywords: tuple):
     """Первое имя колонки, в котором встречается любое из ключевых слов (без учёта регистра)."""
     if df is None or not hasattr(df, "columns"):
@@ -1759,76 +1986,10 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
     with st.expander("Полная выгрузка по фильтрам", expanded=False):
         st.caption(
             "Ниже — полная таблица по текущим фильтрам и выбранной причине в блоке «Детальные данные» "
-            "(не только строки «по макету»)."
+            "(не только строки «по макету»). Колонки и цвета — по макету правок (базовые/фактические даты, "
+            "отклонения начала и окончания в днях, длительности)."
         )
-    display_cols = []
-    for c in ("project name", "task name", "section"):
-        if c in table_reason_df.columns:
-            display_cols.append(c)
-    if "block" in table_reason_df.columns:
-        display_cols.append("block")
-    if building_col and building_col in table_reason_df.columns:
-        display_cols.append(building_col)
-    if "reason of deviation" in table_reason_df.columns:
-        display_cols.append("reason of deviation")
-    for c in ("plan start", "plan end", "base start", "base end"):
-        if c in table_reason_df.columns:
-            display_cols.append(c)
-    if "deviation in days" in table_reason_df.columns:
-        display_cols.append("deviation in days")
-    if "snapshot_date" in table_reason_df.columns:
-        display_cols.append("snapshot_date")
-
-    display_df = table_reason_df[display_cols].copy() if display_cols else table_reason_df.copy()
-    col_ru = {
-        "project name": "Проект",
-        "task name": "Задача",
-        "section": "Этап",
-        "block": "Функциональный блок",
-        "reason of deviation": "Причина отклонения",
-        "plan start": "План: начало",
-        "plan end": "План: окончание",
-        "base start": "Факт: начало",
-        "base end": "Факт: окончание",
-        "deviation in days": "Отклонение, дней",
-        "snapshot_date": "Дата снимка",
-    }
-    if building_col and building_col in display_df.columns:
-        col_ru[building_col] = "Строение"
-    display_df = display_df.rename(
-        columns={c: col_ru[c] for c in display_df.columns if c in col_ru}
-    )
-    if "Отклонение, дней" in display_df.columns:
-        display_df["Отклонение, дней"] = display_df["Отклонение, дней"].apply(
-            lambda x: int(round(float(x), 0)) if pd.notna(x) and str(x).strip() != "" else x
-        )
-
-    def _date_only(val):
-        if pd.isna(val):
-            return "Н/Д"
-        if hasattr(val, "strftime"):
-            return val.strftime("%d.%m.%Y")
-        try:
-            dt = pd.to_datetime(val, errors="coerce", dayfirst=True)
-            return dt.strftime("%d.%m.%Y") if pd.notna(dt) else str(val)
-        except Exception:
-            return str(val)
-
-    for date_col in (
-        "План: начало",
-        "План: окончание",
-        "Факт: начало",
-        "Факт: окончание",
-        "Дата снимка",
-    ):
-        if date_col in display_df.columns:
-            display_df[date_col] = pd.to_datetime(
-                display_df[date_col], errors="coerce", dayfirst=True
-            ).apply(_date_only)
-    st.markdown(f"**Записей:** {len(display_df)}")
-    _render_html_table(display_df)
-    _csv = display_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-    st.download_button("Скачать CSV", _csv, "deviations_detail.csv", "text/csv", key="devtable_csv_1")
+    _render_deviations_reasons_full_table(table_reason_df, building_col, notes_col_m)
 
 
 # ==================== DASHBOARD 2: Dynamics of Deviations ====================
@@ -2307,42 +2468,19 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 textfont=dict(size=11, color="white"),
             )
 
-            # Добавляем суммарные значения над столбцами
-            annotations = []
-            for idx, row in period_totals.iterrows():
-                period = row["period"]
-                total = row["Всего дней отклонений"]
-                # Для положительных значений - над столбцом (от верхней точки)
-                # Для отрицательных значений - над столбцом (от верхней точки, которая находится внизу на y=0)
-                if total >= 0:
-                    # Положительное значение: аннотация над столбцом
-                    y_coord = total
-                    y_anchor = "bottom"
-                    y_shift = (
-                        20  # Фиксированное расстояние 20px от верхней точки столбца
-                    )
-                else:
-                    # Отрицательное значение: аннотация над столбцом (который идет вниз)
-                    # Верхняя точка отрицательного столбца находится на y=0, нижняя - на y=total
-                    y_coord = 0  # Позиционируем относительно верхней точки (y=0)
-                    y_anchor = "bottom"
-                    y_shift = (
-                        20  # Фиксированное расстояние 20px от верхней точки столбца
-                    )
-
-                annotations.append(
-                    dict(
-                        x=period,
-                        y=y_coord,
-                        text=f"{int(round(total, 0))}",
-                        showarrow=False,
-                        xanchor="center",
-                        yanchor=y_anchor,
-                        yshift=y_shift,
-                        font=dict(size=14, color="white", weight="bold"),
-                    )
+            # Красная линия тренда по сумме дней отклонений по периоду (поверх stacked bar)
+            _pt = period_totals.sort_values("period").reset_index(drop=True)
+            fig.add_trace(
+                go.Scatter(
+                    x=_pt["period"],
+                    y=_pt["Всего дней отклонений"],
+                    mode="lines+markers",
+                    name="Итого (тренд)",
+                    line=dict(color="#e74c3c", width=3),
+                    marker=dict(color="#e74c3c", size=8),
+                    hovertemplate="Итого: %{y}<extra></extra>",
                 )
-            fig.update_layout(annotations=annotations)
+            )
 
             fig = _apply_bar_uniformtext(fig)
             fig = apply_chart_background(fig)
