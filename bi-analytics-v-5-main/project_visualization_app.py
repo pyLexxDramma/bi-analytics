@@ -77,6 +77,16 @@ st.set_page_config(
     menu_items={"Get Help": None, "Report a bug": None, "About": None},
 )
 
+# Скрываем стандартный Streamlit-список страниц, чтобы навигация шла только через меню приложения.
+st.markdown(
+    """
+    <style>
+    [data-testid="stSidebarNav"] { display: none !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # Скрываем сайдбар полностью если не авторизован
 if not st.session_state.get("authenticated"):
     st.markdown("""
