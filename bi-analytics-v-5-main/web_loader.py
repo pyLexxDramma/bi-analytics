@@ -25,7 +25,7 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import streamlit as st
 
-from utils import norm_partner_join_key
+from utils import norm_partner_join_key, ensure_msp_hierarchy_columns
 
 from web_schema import (
     WEB_DB_PATH,
@@ -1360,9 +1360,11 @@ def read_version_to_session(version_id: int):
     for ftype in ("project", "budget"):
         df = _load_version_data(version_id, ftype)
         if df is not None and not df.empty:
+            df = df.copy()
             df = _restore_date_columns(df)
             # Старые версии в БД могли иметь «ЛОТ» в section — пересчитываем родителя ур.2 при каждом чтении
             if ftype == "project":
+                ensure_msp_hierarchy_columns(df)
                 df = _fill_section_from_task_tree(df)
             dfs.append(df)
 

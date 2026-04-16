@@ -443,7 +443,8 @@ def _render_control_points_msp_tab(user: dict) -> None:
     st.caption(
         "Задаются **названия столбцов** (поле `title`) и **соответствие строкам MSP** (объект `match`: "
         "`level`, `names_any`, `name_contains`, `parent_l2_contains`, `block_contains`, "
-        "`phase_needles`, `phase_exclude_needles` — как во встроенном коде). Хранится в настройках БД."
+        "`phase_needles`, `phase_exclude_needles` — как во встроенном коде). Хранится в настройках БД. "
+        "То же редактирование доступно **на дашборде** отчёта «Контрольные точки» (блок для администратора)."
     )
     cur = get_control_point_milestones_effective()
     st.info(f"Сейчас активно вех: **{len(cur)}**.")

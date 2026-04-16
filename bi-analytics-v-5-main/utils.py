@@ -171,6 +171,73 @@ def ensure_date_columns(df: Optional[pd.DataFrame]) -> None:
                     break
 
 
+def ensure_msp_hierarchy_columns(df: Optional[pd.DataFrame]) -> None:
+    """
+    Добавляет canonical-колонки MSP для дерева задач: task name, level structure, level.
+
+    Ручная загрузка через data_loader не применяет web_loader._MSP_COLUMN_REMAP — без этого
+    нет «Уровень_структуры» → level structure, и фильтры «Функциональный блок»/«Строение»
+    остаются на колонке block («Блок 1»…).
+    """
+    if df is None or not hasattr(df, "columns") or getattr(df, "empty", True):
+        return
+
+    def _col_by_exact(names: tuple[str, ...]):
+        lower_map = {str(c).strip().lower(): c for c in df.columns}
+        for n in names:
+            key = str(n).strip().lower()
+            if key in lower_map:
+                return lower_map[key]
+        return None
+
+    if "task name" not in df.columns:
+        src = _col_by_exact(
+            (
+                "Название задачи",
+                "Название",
+                "Task Name",
+                "Имя",
+                "Имя задачи",
+                "Задача",
+            )
+        )
+        if src is not None:
+            df["task name"] = df[src]
+
+    src_outline = _col_by_exact(
+        (
+            "Уровень_структуры",
+            "Уровень структуры",
+            "Outline Level",
+            "outline level",
+            "WBS Level",
+            "Исходный уровень",
+        )
+    )
+    if src_outline is None:
+        for c in df.columns:
+            sl = re.sub(r"\s+", " ", str(c).replace("\ufeff", "").strip().lower())
+            sl = sl.replace("_", " ")
+            if re.search(r"(уровень.*структ|структ.*уровень|outline\s*level|wbs\s*level)", sl):
+                if "приоритет" in sl or "риск" in sl:
+                    continue
+                src_outline = c
+                break
+    src_level = _col_by_exact(("Уровень", "Level"))
+
+    if "level structure" not in df.columns:
+        if src_outline is not None:
+            df["level structure"] = pd.to_numeric(df[src_outline], errors="coerce")
+        elif src_level is not None:
+            df["level structure"] = pd.to_numeric(df[src_level], errors="coerce")
+
+    if "level" not in df.columns:
+        if src_level is not None:
+            df["level"] = pd.to_numeric(df[src_level], errors="coerce")
+        elif "level structure" in df.columns:
+            df["level"] = df["level structure"]
+
+
 def get_russian_month_name(period_val: Any) -> str:
     """Возвращает русское название месяца для Period, Timestamp или строки."""
     if isinstance(period_val, pd.Period):
@@ -419,6 +486,8 @@ def style_dataframe_for_dark_theme(
     plan_date_column: Optional[str] = None,
     fact_date_column: Optional[str] = None,
     percent_deviation_gradient_column: Optional[str] = None,
+    *,
+    extra_days_columns: Optional[tuple] = None,
 ):
     """
     Возвращает Styler с фоном hsl(209,67%,12%) и белым текстом для st.table.
@@ -444,20 +513,31 @@ def style_dataframe_for_dark_theme(
         ]
     )
 
-    # Подсветка по дням отклонения
+    # Подсветка по дням отклонения (одна или несколько колонок «дней»)
+    def _days_cell_color(series):
+        result = []
+        for v in series:
+            num = pd.to_numeric(v, errors="coerce")
+            if pd.isna(num):
+                result.append(f"background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}")
+            elif num > 0:
+                result.append("background-color: #c0392b; color: #ffffff")
+            else:
+                result.append("background-color: #27ae60; color: #ffffff")
+        return result
+
+    _dev_day_cols = []
     if days_column and days_column in df.columns:
-        def _days_cell_color(series):
-            result = []
-            for v in series:
-                num = pd.to_numeric(v, errors="coerce")
-                if pd.isna(num):
-                    result.append(f"background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}")
-                elif num > 0:
-                    result.append("background-color: #c0392b; color: #ffffff")
-                else:
-                    result.append("background-color: #27ae60; color: #ffffff")
-            return result
-        base = base.apply(lambda c: _days_cell_color(c) if c.name == days_column else [""] * len(c), axis=0)
+        _dev_day_cols.append(days_column)
+    if extra_days_columns:
+        for _c in extra_days_columns:
+            if _c and _c in df.columns and _c not in _dev_day_cols:
+                _dev_day_cols.append(_c)
+    for _dc in _dev_day_cols:
+        base = base.apply(
+            lambda c, _name=_dc: _days_cell_color(c) if c.name == _name else [""] * len(c),
+            axis=0,
+        )
 
     # Подсветка финансовых отклонений
     if finance_deviation_column and finance_deviation_column in df.columns:

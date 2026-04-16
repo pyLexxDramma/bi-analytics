@@ -9,6 +9,8 @@ from typing import Optional, Tuple
 import pandas as pd
 import streamlit as st
 
+from utils import ensure_msp_hierarchy_columns
+
 
 def detect_data_type(df: pd.DataFrame, file_name: Optional[str] = None) -> str:
     """Определение типа данных по структуре колонок и имени файла."""
@@ -417,6 +419,7 @@ def load_data(uploaded_file, file_name: Optional[str] = None) -> Optional[pd.Dat
                 )
                 df.loc[mask, "actual_year"] = df.loc[mask, "base end"].dt.to_period("Y")
 
+        ensure_msp_hierarchy_columns(df)
         data_type = detect_data_type(df, original_name)
         df.attrs["data_type"] = data_type
         df.attrs["file_name"] = original_name
