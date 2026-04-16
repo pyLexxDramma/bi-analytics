@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import html as html_module
 import re
+from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -393,6 +394,41 @@ def _norm_dev_project_key(val: Any) -> str:
     if len(s) >= 2 and s.endswith("i") and s[-2].isalpha():
         s = s[:-1] + "1"
     return s
+
+
+def _control_points_project_group_key(raw: Any) -> str:
+    """
+    Группировка строк в «Контрольные точки»: один логический проект (дубли «Дмитровский» / «Дмитровский-1»).
+    """
+    try:
+        from config import MSP_PROJECT_NAME_MAP as M
+    except Exception:
+        M = {}
+    s = str(raw).strip()
+    lk = s.lower().replace(" ", "")
+    if lk in M:
+        nk = _norm_dev_project_key(M[lk])
+    else:
+        nk = _norm_dev_project_key(s)
+    # После маппинга: «Дмитровский» и «Дмитровский 1» не должны жить в разных строках
+    if nk in ("дмитровский", "дмитровский1") or nk == "дмитровскийi":
+        return "unified_dmitrovsky1"
+    return nk
+
+
+def _control_points_project_label(group_key: str, raw_names: List[str]) -> str:
+    """Подпись столбца «Проект» после группировки."""
+    try:
+        from config import MSP_PROJECT_NAME_MAP as M
+    except Exception:
+        M = {}
+    for r in raw_names:
+        lk = str(r).strip().lower().replace(" ", "")
+        if lk in M:
+            return str(M[lk]).strip()
+    if group_key == "unified_dmitrovsky1":
+        return "Дмитровский 1"
+    return str(raw_names[0]).strip() if raw_names else ""
 
 
 def _bddds_df_for_dev_matrix(
@@ -1137,6 +1173,9 @@ def render_dev_tz_matrix(rows: List[Dict[str, Any]], table_css: str) -> None:
 
 # ── Контрольные точки (Сроки / макет file-009): проекты × вехи ───────────────
 
+# Вехи «Контрольные точки»: оранжевая подсветка План/Факт/Откл. при % выполнения ≠ 100% (ТЗ, правки 1).
+CONTROL_POINTS_ORANGE_PCT_SLUGS: frozenset = frozenset({"gpzu", "exp_pd"})
+
 # Контрольные точки: те же kwargs, что и строки матрицы «Девелоперские проекты» (порядок как в матрице).
 CONTROL_POINT_MILESTONES: List[Tuple[str, str, dict]] = [
     (
@@ -1510,6 +1549,108 @@ CONTROL_POINT_MILESTONES: List[Tuple[str, str, dict]] = [
     ),
 ]
 
+_CP_MILESTONES_JSON_KEY = "control_points_milestones_json"
+
+
+def get_control_point_milestones_effective() -> List[Tuple[str, str, dict]]:
+    """
+    Вехи для отчёта «Контрольные точки»: из настроек БД (JSON) или встроенный список CONTROL_POINT_MILESTONES.
+    Админ задаёт title (заголовок столбца), slug (ключ колонок), match (правила сопоставления с MSP).
+    """
+    try:
+        from settings import get_setting
+
+        raw = (get_setting(_CP_MILESTONES_JSON_KEY) or "").strip()
+        if not raw:
+            return CONTROL_POINT_MILESTONES
+        import json
+
+        data = json.loads(raw)
+        if not isinstance(data, list):
+            return CONTROL_POINT_MILESTONES
+        out: List[Tuple[str, str, dict]] = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title", "")).strip()
+            slug = str(item.get("slug", "")).strip()
+            match = item.get("match")
+            if not title or not slug or not isinstance(match, dict):
+                continue
+            out.append((title, slug, match))
+        return out if out else CONTROL_POINT_MILESTONES
+    except Exception:
+        return CONTROL_POINT_MILESTONES
+
+
+def control_point_milestones_default_json() -> str:
+    """JSON по умолчанию (как в коде) — для админки и сброса."""
+    import json
+
+    data = [{"title": t, "slug": s, "match": m} for t, s, m in CONTROL_POINT_MILESTONES]
+    return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+def save_control_point_milestones_json(json_str: str, updated_by: str) -> Tuple[bool, str]:
+    """Сохранение JSON величин вех; пустая строка = сброс на встроенные правила."""
+    try:
+        import json
+
+        from settings import set_setting
+
+        s = (json_str or "").strip()
+        if not s:
+            set_setting(
+                _CP_MILESTONES_JSON_KEY,
+                "",
+                description="Вехи «Контрольные точки» (JSON); пусто = код по умолчанию",
+                updated_by=updated_by,
+            )
+            return True, "Сброшено на встроенные правила из кода."
+        parsed = json.loads(s)
+        if not isinstance(parsed, list):
+            return False, "Ожидается JSON-массив объектов с полями title, slug, match."
+        out: List[Tuple[str, str, dict]] = []
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title", "")).strip()
+            slug = str(item.get("slug", "")).strip()
+            match = item.get("match")
+            if not title or not slug or not isinstance(match, dict):
+                return False, "Каждый элемент: { \"title\", \"slug\", \"match\": { ... } }."
+            out.append((title, slug, match))
+        if not out:
+            return False, "Нет ни одной валидной вехи."
+        set_setting(
+            _CP_MILESTONES_JSON_KEY,
+            s,
+            description="Вехи «Контрольные точки» (JSON): заголовки и match к MSP",
+            updated_by=updated_by,
+        )
+        return True, f"Сохранено вех: {len(out)}."
+    except Exception as e:
+        return False, str(e)[:500]
+
+
+def _control_points_project_filter_options(
+    df: pd.DataFrame,
+) -> Tuple[List[str], Dict[str, List[str]]]:
+    """Подписи для фильтра «Проект» и карта подпись → список сырых project name (без дублей логического проекта)."""
+    if df is None or df.empty or "project name" not in df.columns:
+        return [], {}
+    raws = df["project name"].dropna().astype(str).str.strip().unique().tolist()
+    groups: Dict[str, List[str]] = defaultdict(list)
+    for p in raws:
+        groups[_control_points_project_group_key(p)].append(str(p).strip())
+    labels_map: Dict[str, List[str]] = {}
+    for gk, rlist in groups.items():
+        rlist = sorted(set(rlist))
+        lab = _control_points_project_label(gk, rlist)
+        labels_map[lab] = rlist
+    ordered = sorted(labels_map.keys(), key=lambda x: x.lower())
+    return ordered, labels_map
+
 
 def _project_name_column(df: pd.DataFrame) -> Optional[str]:
     if "project name" in df.columns:
@@ -1522,47 +1663,60 @@ def _match_milestone_tasks(mdf: pd.DataFrame, kw: dict) -> pd.DataFrame:
     return _match_tasks_like_msp_row(mdf, kw)
 
 
-def _one_milestone_cell(rows: pd.DataFrame) -> Tuple[str, str, str, bool]:
+def _one_milestone_cell(rows: pd.DataFrame) -> Tuple[str, str, str, bool, bool]:
     """
     План = базовое окончание (base end), Факт = «Окончание» (plan end после загрузки MSP).
     Откл. = План − Факт (календарные дни), как в матрице девелоперских проектов.
+    Пятый элемент — подсветка по % выполнения (не 100% при известном %).
     """
     if rows is None or rows.empty:
-        return "Н/Д", "Н/Д", "Н/Д", False
+        return "Н/Д", "Н/Д", "Н/Д", False, False
     tc = _task_name_col(rows)
     if tc and tc in rows.columns:
         r = rows.sort_values(by=tc).iloc[0]
     else:
         r = rows.iloc[0]
-    pdt, fdt, _pct = _msp_plan_fact_pct(r)
+    pdt, fdt, pct = _msp_plan_fact_pct(r)
+    warn_pct = _is_pct_complete_not_100(pct)
     pl = _fmt_date_ru(pdt)
     fl = _fmt_date_ru(fdt)
     if pd.isna(pdt) or pd.isna(fdt):
-        return pl, fl, "Н/Д", False
+        return pl, fl, "Н/Д", False, warn_pct
     dev_days = _delta_days_plan_minus_fact(pdt, fdt)
     otk = _fmt_delta_days(dev_days)
     ok = bool(dev_days == 0) if dev_days is not None else False
-    return pl, fl, otk, ok
+    return pl, fl, otk, ok, warn_pct
 
 
 def build_control_points_df(mdf: pd.DataFrame) -> pd.DataFrame:
-    """Одна строка на проект; столбцы project, row_ok, {slug}_plan|_fact|_otkl."""
+    """Одна строка на проект; столбцы project, row_ok, {slug}_plan|_fact|_otkl|_warn_pct."""
     pcol = _project_name_column(mdf)
     if pcol is None or mdf is None or mdf.empty:
         return pd.DataFrame()
     work = mdf.copy()
-    projects = sorted(work[pcol].dropna().astype(str).str.strip().unique())
+    raw_vals = work[pcol].dropna().astype(str).str.strip().unique().tolist()
+    key_to_raws: Dict[str, List[str]] = defaultdict(list)
+    for p in raw_vals:
+        key_to_raws[_control_points_project_group_key(p)].append(str(p).strip())
+    for gk in key_to_raws:
+        key_to_raws[gk] = sorted(set(key_to_raws[gk]))
+
     rows_out: List[Dict[str, Any]] = []
-    for proj in projects:
-        sub = work[work[pcol].astype(str).str.strip() == proj]
-        rec: Dict[str, Any] = {"project": proj, "row_ok": True}
-        for title, slug, kw in CONTROL_POINT_MILESTONES:
+    for gk, raws in sorted(
+        key_to_raws.items(),
+        key=lambda it: _control_points_project_label(it[0], it[1]).lower(),
+    ):
+        sub = work[work[pcol].astype(str).str.strip().isin(raws)]
+        display = _control_points_project_label(gk, raws)
+        rec: Dict[str, Any] = {"project": display, "row_ok": True}
+        for title, slug, kw in get_control_point_milestones_effective():
             m = _match_milestone_tasks(sub, kw)
-            pl, fl, otk, ok = _one_milestone_cell(m)
+            pl, fl, otk, ok, warn_pct = _one_milestone_cell(m)
             rec[f"{slug}_plan"] = pl
             rec[f"{slug}_fact"] = fl
             rec[f"{slug}_otkl"] = otk
             rec[f"{slug}_ok"] = ok
+            rec[f"{slug}_warn_pct"] = bool(warn_pct)
             if not ok:
                 rec["row_ok"] = False
         rows_out.append(rec)
@@ -1572,62 +1726,50 @@ def build_control_points_df(mdf: pd.DataFrame) -> pd.DataFrame:
 _CONTROL_POINTS_CSS = """
 <style>
 .cp-table-wrap { overflow-x: auto; max-width: 100%; }
-.cp-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:8px; vertical-align:middle; }
-.cp-dot-ok { background:#22c55e; box-shadow:0 0 6px rgba(34,197,94,0.45); }
-.cp-dot-bad { background:#ef4444; box-shadow:0 0 6px rgba(239,68,68,0.45); }
 .rendered-table th.cp-ghead { text-align:center; background:#1f232d; font-size:12px; padding:6px 8px; }
 .rendered-table th.cp-sub { font-size:11px; color:#c9d1d9; font-weight:500; }
-.cp-st { text-align:center; font-size:1.05rem; font-weight:700; white-space:nowrap; }
-.cp-st-ok { color:#22c55e; }
-.cp-st-bad { color:#ef4444; }
+/* Правки 1: % выполнения ≠ 100% — оранжевый фон (ГПЗУ, Экспертиза стадии П) */
+.cp-td-warn { background: rgba(255, 140, 0, 0.38) !important; color: #1a1a1a; }
+.cp-status-cell { text-align: center; vertical-align: middle; }
+.cp-status-dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; vertical-align: middle; }
+.cp-status-ok { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,0.45); }
+.cp-status-bad { background: #ef4444; box-shadow: 0 0 6px rgba(239,68,68,0.45); }
 </style>
 """
 
 
 def _apply_control_points_msp_filters(st, mdf: pd.DataFrame) -> pd.DataFrame:
+    """
+    Фильтры по правкам: только «Проект» и при наличии — «Строение» (без «Этап» и «Функциональный блок»).
+    """
     if mdf is None or getattr(mdf, "empty", True):
         return mdf
     df = mdf.copy()
     building_col = _find_building_column(df)
     if building_col:
-        r1a, r1b, r1c, r1d = st.columns(4)
+        r1a, r1b = st.columns(2)
     else:
-        r1a, r1b, r1c = st.columns(3)
-        r1d = None
+        r1a = st.columns(1)[0]
+        r1b = None
+    labels_map: Dict[str, List[str]] = {}
     with r1a:
         if "project name" in df.columns:
-            opts = ["Все"] + sorted(
-                df["project name"].dropna().astype(str).str.strip().unique().tolist()
-            )
+            ordered, labels_map = _control_points_project_filter_options(df)
+            opts = ["Все"] + ordered
             sel_proj = st.selectbox("Проект", opts, key="cp_msp_filter_project")
         else:
             sel_proj = "Все"
-    with r1b:
-        if "section" in df.columns:
-            secs = ["Все"] + sorted(df["section"].dropna().astype(str).str.strip().unique().tolist())
-            sel_sec = st.selectbox("Этап", secs, key="cp_msp_filter_section")
-        else:
-            sel_sec = "Все"
-    with r1c:
-        if "block" in df.columns:
-            blks = ["Все"] + sorted(df["block"].dropna().astype(str).str.strip().unique().tolist())
-            sel_blk = st.selectbox("Функциональный блок", blks, key="cp_msp_filter_block")
-        else:
-            sel_blk = "Все"
     sel_bld = "Все"
-    if building_col and r1d is not None:
-        with r1d:
+    if building_col and r1b is not None:
+        with r1b:
             bopts = ["Все"] + sorted(
                 df[building_col].dropna().astype(str).str.strip().unique().tolist()
             )
             sel_bld = st.selectbox("Строение", bopts, key="cp_msp_filter_building")
     out = df
     if sel_proj != "Все" and "project name" in out.columns:
-        out = out[out["project name"].astype(str).str.strip() == str(sel_proj).strip()]
-    if sel_sec != "Все" and "section" in out.columns:
-        out = out[out["section"].astype(str).str.strip() == str(sel_sec).strip()]
-    if sel_blk != "Все" and "block" in out.columns:
-        out = out[out["block"].astype(str).str.strip() == str(sel_blk).strip()]
+        raws = labels_map.get(str(sel_proj).strip(), [str(sel_proj).strip()])
+        out = out[out["project name"].astype(str).str.strip().isin(raws)]
     if (
         sel_bld != "Все"
         and building_col
@@ -1653,7 +1795,7 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
         return
     view = df.copy()
 
-    ms_specs = [(t, s) for t, s, _k in CONTROL_POINT_MILESTONES]
+    ms_specs = [(t, s) for t, s, _k in get_control_point_milestones_effective()]
     thead1 = ['<th rowspan="2" style="min-width:180px">Проект</th>']
     for title, slug in ms_specs:
         thead1.append(f'<th colspan="4" class="cp-ghead">{esc(title)}</th>')
@@ -1676,22 +1818,20 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
     )
     body: List[str] = ["<tbody>"]
     for _, r in view.iterrows():
-        ok_row = bool(r.get("row_ok", True))
-        dot = "cp-dot-ok" if ok_row else "cp-dot-bad"
-        cells = [
-            f'<td><span class="cp-dot {dot}" title="{"OK" if ok_row else "Есть отклонения"}"></span>'
-            f"{esc(str(r.get('project', '')))}</td>"
-        ]
+        cells = [f'<td>{esc(str(r.get("project", "")))}</td>']
         for _t, slug in ms_specs:
-            cells.append(f"<td>{esc(str(r.get(f'{slug}_plan', '')))}</td>")
-            cells.append(f"<td>{esc(str(r.get(f'{slug}_fact', '')))}</td>")
-            cells.append(f"<td>{esc(str(r.get(f'{slug}_otkl', '')))}</td>")
+            owarn = slug in CONTROL_POINTS_ORANGE_PCT_SLUGS and bool(r.get(f"{slug}_warn_pct"))
+            wc = ' class="cp-td-warn"' if owarn else ""
+            cells.append(f"<td{wc}>{esc(str(r.get(f'{slug}_plan', '')))}</td>")
+            cells.append(f"<td{wc}>{esc(str(r.get(f'{slug}_fact', '')))}</td>")
+            cells.append(f"<td{wc}>{esc(str(r.get(f'{slug}_otkl', '')))}</td>")
             m_ok = bool(r.get(f"{slug}_ok", False))
-            sym = "✓" if m_ok else "✗"
-            st_cls = "cp-st-ok" if m_ok else "cp-st-bad"
+            st_cls = "cp-status-ok" if m_ok else "cp-status-bad"
             tip = "План и факт по датам совпадают (0 дн.)" if m_ok else "Есть отклонение или неполные даты"
+            al = "OK" if m_ok else "Отклонение"
             cells.append(
-                f'<td class="cp-st {st_cls}" title="{esc(tip)}">{esc(sym)}</td>'
+                f'<td class="cp-status-cell" title="{esc(tip)}">'
+                f'<span class="cp-status-dot {st_cls}" role="img" aria-label="{esc(al)}"></span></td>'
             )
         body.append("<tr>" + "".join(cells) + "</tr>")
     body.append("</tbody>")
@@ -1706,7 +1846,11 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
         unsafe_allow_html=True,
     )
 
-    drop_ok = [c for c in view.columns if str(c).endswith("_ok")]
+    drop_ok = [
+        c
+        for c in view.columns
+        if str(c).endswith("_ok") or str(c).endswith("_warn_pct")
+    ]
     export = view.drop(columns=drop_ok, errors="ignore")
     csv_bytes = export.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
     st.download_button(

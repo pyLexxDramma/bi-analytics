@@ -429,6 +429,76 @@ def _show_saved_results():
         st.rerun()
 
 
+def _render_control_points_msp_tab(user: dict) -> None:
+    """
+    Администратор: заголовки столбцов отчёта «Контрольные точки» и правила сопоставления с MSP (JSON).
+    """
+    from dashboards.dev_projects_tz_matrix import (
+        control_point_milestones_default_json,
+        get_control_point_milestones_effective,
+        save_control_point_milestones_json,
+    )
+
+    st.markdown("<h2 class='Duquhununee'>Контрольные точки (MSP)</h2>", unsafe_allow_html=True)
+    st.caption(
+        "Задаются **названия столбцов** (поле `title`) и **соответствие строкам MSP** (объект `match`: "
+        "`level`, `names_any`, `name_contains`, `parent_l2_contains`, `block_contains`, "
+        "`phase_needles`, `phase_exclude_needles` — как во встроенном коде). Хранится в настройках БД."
+    )
+    cur = get_control_point_milestones_effective()
+    st.info(f"Сейчас активно вех: **{len(cur)}**.")
+    raw = (get_setting("control_points_milestones_json") or "").strip()
+    default_js = control_point_milestones_default_json()
+    initial = raw if raw else default_js
+    txt = st.text_area(
+        "JSON: массив объектов `{ \"title\", \"slug\", \"match\": { ... } }`",
+        value=initial,
+        height=420,
+        key="cp_milestones_json_area",
+        help="slug — стабильный ключ колонок в данных; title — заголовок в отчёте.",
+    )
+    b1, b2, b3 = st.columns(3)
+    uname = str(user.get("username") or user.get("name") or "admin")
+    with b1:
+        if st.button("Сохранить", type="primary", key="cp_ms_save"):
+            ok, msg = save_control_point_milestones_json(txt, uname)
+            if ok:
+                if "cp_milestones_json_area" in st.session_state:
+                    del st.session_state["cp_milestones_json_area"]
+                st.success(msg)
+                st.rerun()
+            else:
+                st.error(msg)
+    with b2:
+        if st.button("Сбросить на встроенные правила", key="cp_ms_reset"):
+            ok, msg = save_control_point_milestones_json("", uname)
+            if ok:
+                if "cp_milestones_json_area" in st.session_state:
+                    del st.session_state["cp_milestones_json_area"]
+                st.success(msg)
+                st.rerun()
+            else:
+                st.error(msg)
+    with b3:
+        st.download_button(
+            "Скачать шаблон по умолчанию",
+            default_js.encode("utf-8-sig"),
+            "control_points_milestones_default.json",
+            "application/json",
+            key="cp_dl_tpl",
+        )
+    with st.expander("Подсказка по полю match", expanded=False):
+        st.markdown(
+            "- **level** — уровень задачи MSP (число, например 5.0).\n"
+            "- **names_any** — список подстрок для колонки «Название».\n"
+            "- **name_contains** — одна подстрока.\n"
+            "- **parent_l2_contains** — родитель ур.2 (часто «Ковенанты»).\n"
+            "- **block_contains** — подстрока функционального блока.\n"
+            "- **phase_needles** / **phase_exclude_needles** — для файлов с колонкой «Фаза».\n\n"
+            "Пустое сохранение JSON сбрасывает на встроенный список из кода."
+        )
+
+
 # ┌──────────────────────────────────────────────────────────────────────────┐ #
 # │ ⊗ Красивый формат даты ¤ Start                                           │ #
 # └──────────────────────────────────────────────────────────────────────────┘ #
@@ -648,13 +718,14 @@ if user is not None:
     )
 
     # Вкладки административной панели
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
         [
             "Пользователи",
             "Статистика",
             "Логи",
             "Права доступа",
             "Benchmark LLM",
+            "Контрольные точки (MSP)",
         ]
     )
 
@@ -1194,3 +1265,10 @@ if user is not None:
     # ┌──────────────────────────────────────────────────────────────────────┐ #
     # │ ⊗ TAB 5: Benchmark LLM ¤ End                                         │ #
     # └──────────────────────────────────────────────────────────────────────┘ #
+
+    # ┌──────────────────────────────────────────────────────────────────────┐ #
+    # │ ⊗ TAB 6: Контрольные точки (MSP) — вехи и маппинг к CSV MS Project     │ #
+    # └──────────────────────────────────────────────────────────────────────┘ #
+
+    with tab6:
+        _render_control_points_msp_tab(user)

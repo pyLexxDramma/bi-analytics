@@ -9,21 +9,19 @@ from typing import Dict, List, Optional
 
 def switch_page_app(path: str) -> None:
     """
-    Переход на страницу приложения. ``path`` — относительно каталога приложения
-    (например ``project_visualization_app.py``, ``pages/admin.py``).
+    Переход на страницу multipage. ``path`` — как в ``st.switch_page``, относительно
+    каталога **главного скрипта** Streamlit.
 
-    Если задана переменная ``BI_ANALYTICS_SWITCH_PAGE_PREFIX`` (корневой
-    ``streamlit_app.py`` на Streamlit Cloud), к пути добавляется префикс папки
-    приложения, иначе ``st.switch_page`` не находит файлы.
+    - Запуск ``bi-analytics-v-5-main/project_visualization_app.py`` — страницы во
+      вложенном приложении, путь ``pages/admin.py`` валиден.
+
+    - Запуск ``streamlit_app.py`` из корня репозитория: Streamlit регистрирует только
+      ``<корень>/pages/*.py``. Рядом с ``streamlit_app.py`` добавлены прокси-файлы,
+      делегирующие во ``bi-analytics-v-5-main/pages/`` (см. корневой каталог ``pages/``).
     """
     import streamlit as st
 
     path = path.replace("\\", "/").lstrip("/")
-    prefix = (
-        os.environ.get("BI_ANALYTICS_SWITCH_PAGE_PREFIX", "").strip().replace("\\", "/").rstrip("/")
-    )
-    if prefix:
-        path = f"{prefix}/{path}"
     st.switch_page(path)
 
 # Пути
