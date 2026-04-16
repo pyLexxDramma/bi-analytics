@@ -11,13 +11,33 @@ import re
 import textwrap
 import html as html_module
 
-from config import RUSSIAN_MONTHS
+from config import MSP_PROJECT_FILTER_EXCLUDE_NAMES, RUSSIAN_MONTHS
 
 from dashboards.dev_projects_tz_matrix import (
     build_dev_tz_matrix_rows,
     render_dev_tz_matrix,
     render_control_points_dashboard,
 )
+
+
+def _project_name_select_options(series: pd.Series) -> list:
+    """Уникальные значения project name для фильтров; без меток из MSP_PROJECT_FILTER_EXCLUDE_NAMES."""
+    raw = (
+        series.dropna()
+        .astype(str)
+        .map(str.strip)
+    )
+    uniq = sorted({p for p in raw if p and p.lower() not in ("nan", "none")})
+    return [p for p in uniq if p not in MSP_PROJECT_FILTER_EXCLUDE_NAMES]
+
+
+def _session_reset_project_if_excluded(state_key: str) -> None:
+    """Если в session_state сохранён исключённый проект — сброс на «Все»."""
+    try:
+        if state_key in st.session_state and st.session_state[state_key] in MSP_PROJECT_FILTER_EXCLUDE_NAMES:
+            st.session_state[state_key] = "Все"
+    except Exception:
+        pass
 
 
 _TABLE_CSS = """
@@ -153,6 +173,114 @@ from utils import (
 # Максимальное число строк, передаваемых в Plotly для scatter/line-графиков.
 # Для агрегированных (bar, pie) ограничение не нужно — там строк обычно немного.
 _MAX_CHART_ROWS = 5_000
+
+
+def _dev_tasks_find_column(df, possible_names):
+    """Поиск колонки по списку имён (без учёта регистра, с частичным совпадением)."""
+    if df is None or not hasattr(df, "columns"):
+        return None
+    for col in df.columns:
+        col_normalized = str(col).replace("\n", " ").replace("\r", " ").strip()
+        col_lower = col_normalized.lower()
+        for name in possible_names:
+            name_lower = name.lower().strip()
+            if name_lower == col_lower:
+                return col
+            if name_lower in col_lower or col_lower in name_lower:
+                return col
+            name_words = [w for w in name_lower.split() if len(w) > 2]
+            if name_words and all(word in col_lower for word in name_words):
+                return col
+    return None
+
+
+def _dev_tasks_resolve_level_column(d: pd.DataFrame):
+    """Колонка числового уровня иерархии MSP (Outline Level и т.п.)."""
+    if d is None or getattr(d, "empty", True):
+        return None
+    preferred = (
+        "level",
+        "outline level",
+        "outline_level",
+        "Outline Level",
+        "исходный уровень",
+        "исходный_уровень",
+        "уровень структуры",
+        "Уровень_структуры",
+        "уровень иерархии",
+        "Исходный уровень",
+        "wbs level",
+        "WBS Level",
+    )
+    cols_lower = {str(c).strip().lower(): c for c in d.columns}
+    for w in preferred:
+        wn = w.lower()
+        if wn in cols_lower:
+            return cols_lower[wn]
+    for c in d.columns:
+        sl = str(c).strip().lower()
+        if "outline" in sl and "level" in sl.replace(" ", "") and "number" not in sl:
+            return c
+        if "wbs" in sl and "level" in sl.replace(" ", ""):
+            return c
+        if "уровень" in sl and "приоритет" not in sl and "риск" not in sl:
+            return c
+    return None
+
+
+def _dev_tasks_build_ancestor_keys(df: pd.DataFrame, level_col, task_col) -> pd.DataFrame:
+    """
+    По порядку строк MSP и колонке уровня строит ключи для фильтров:
+    задача ур. 2 (функциональный блок) и ур. 3 (строение) как предки текущей строки.
+    """
+    work = df.copy().reset_index(drop=True)
+    if (
+        not level_col
+        or level_col not in work.columns
+        or not task_col
+        or task_col not in work.columns
+    ):
+        work["_dt_lvl2_key"] = ""
+        work["_dt_lvl3_key"] = ""
+        work["_dt_lvl_num"] = np.nan
+        return work
+    lvl = pd.to_numeric(work[level_col], errors="coerce")
+    names = work[task_col].map(lambda x: str(x).strip() if pd.notna(x) else "")
+    stack = []
+    r2, r3, lvn = [], [], []
+    for i in range(len(work)):
+        L_raw = lvl.iloc[i] if i < len(lvl) else np.nan
+        if pd.isna(L_raw):
+            L = None
+        else:
+            try:
+                L = int(round(float(L_raw)))
+            except (TypeError, ValueError):
+                L = None
+        nm = names.iloc[i] if i < len(names) else ""
+        lvn.append(float(L) if L is not None else np.nan)
+        if L is None:
+            r2.append("")
+            r3.append("")
+            continue
+        while stack and stack[-1][0] >= L:
+            stack.pop()
+        a2 = ""
+        a3 = ""
+        for le, nn in stack:
+            if le == 2:
+                a2 = nn
+            if le == 3:
+                a3 = nn
+        k2 = nm if L == 2 else a2
+        k3 = nm if L == 3 else a3
+        r2.append(k2)
+        r3.append(k3)
+        stack.append((L, nm))
+    work["_dt_lvl2_key"] = r2
+    work["_dt_lvl3_key"] = r3
+    work["_dt_lvl_num"] = lvn
+    return work
 
 
 def _gdrs_header_is_dd_mm_yyyy(name) -> bool:
@@ -696,7 +824,8 @@ def _render_deviations_combined_shared_filters(df):
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         if "project name" in df.columns:
-            projects = ["Все"] + sorted(df["project name"].dropna().unique().tolist())
+            _session_reset_project_if_excluded("devcombo_project")
+            projects = ["Все"] + _project_name_select_options(df["project name"])
             st.selectbox("Проект", projects, key="devcombo_project")
     with col2:
         if "section" in df.columns:
@@ -937,7 +1066,8 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                 has_project_column = False
 
             if has_project_column:
-                projects = ["Все"] + sorted(df["project name"].dropna().unique().tolist())
+                _session_reset_project_if_excluded("reason_project")
+                projects = ["Все"] + _project_name_select_options(df["project name"])
                 selected_project = st.selectbox("Проект", projects, key="reason_project")
             else:
                 selected_project = "Все"
@@ -3690,91 +3820,164 @@ def dashboard_deviation_by_tasks_current_month(df):
 
     st.header("Значения отклонений от базового плана")
 
-    # Helper function to find columns by partial match
-    def find_column(df, possible_names):
-        """Find column by possible names"""
-        for col in df.columns:
-            # Normalize column name: remove newlines, extra spaces, normalize case
-            col_normalized = str(col).replace("\n", " ").replace("\r", " ").strip()
-            col_lower = col_normalized.lower()
+    find_column = _dev_tasks_find_column
 
-            for name in possible_names:
-                name_lower = name.lower().strip()
-                # Exact match (case insensitive)
-                if name_lower == col_lower:
-                    return col
-                # Substring match
-                if name_lower in col_lower or col_lower in name_lower:
-                    return col
-                # Check if all key words from name are in column
-                name_words = [w for w in name_lower.split() if len(w) > 2]
-                if name_words and all(word in col_lower for word in name_words):
-                    return col
-        return None
+    project_col = (
+        "project name"
+        if "project name" in df.columns
+        else find_column(df, ["Проект", "project"])
+    )
+    if not project_col:
+        st.warning("Поле 'project name' / 'Проект' не найдено в данных.")
+        return
 
-    # Start with full dataset (all periods, not just current month)
-    filtered_df = df.copy()
+    all_projects = sorted(df[project_col].dropna().unique().tolist())
+    if not all_projects:
+        st.warning("Проекты не найдены в данных.")
+        return
 
-    # Filters: Project, Section
-    col1, col2 = st.columns(2)
-
-    with col1:
-        # Project filter - show all projects from full dataset
-        selected_project = "Все"  # Initialize default value
-        # Find project column
-        project_col = (
-            "project name"
-            if "project name" in df.columns
-            else find_column(df, ["Проект", "project"])
+    f_proj, f_block, f_build, f_det = st.columns(4)
+    with f_proj:
+        projects = ["Все"] + all_projects
+        selected_project = st.selectbox(
+            "Фильтр по проекту", projects, key="deviation_tasks_project"
         )
 
-        if project_col:
-            # Get all unique projects from the full dataset
-            all_projects = sorted(df[project_col].dropna().unique().tolist())
-            if all_projects:
-                projects = ["Все"] + all_projects
-                selected_project = st.selectbox(
-                    "Фильтр по проекту", projects, key="deviation_tasks_project"
+    base = df.copy()
+    if selected_project != "Все" and project_col in base.columns:
+        base = base[
+            base[project_col].astype(str).str.strip() == str(selected_project).strip()
+        ]
+
+    level_col = _dev_tasks_resolve_level_column(base)
+    task_col = (
+        "task name"
+        if "task name" in base.columns
+        else find_column(base, ["Задача", "task", "Task Name", "Название"])
+    )
+    if not task_col:
+        st.warning("Поле 'task name' / «Задача» не найдено в данных.")
+        return
+
+    work_h = _dev_tasks_build_ancestor_keys(base, level_col, task_col)
+
+    selected_block = "Все"
+    selected_building = "Все"
+    target_lvl = None
+
+    if level_col and level_col in work_h.columns:
+        ln = pd.to_numeric(work_h[level_col], errors="coerce")
+        block_opts = ["Все"] + sorted(
+            work_h.loc[ln == 2, task_col].dropna().astype(str).str.strip().unique().tolist()
+        )
+        with f_block:
+            selected_block = st.selectbox(
+                "Функциональный блок",
+                block_opts,
+                key="deviation_tasks_block_l2",
+                help="Задачи уровня 2 (иерархия MSP по колонке уровня).",
+            )
+        w3 = work_h[ln == 3]
+        if selected_block != "Все":
+            w3 = w3[
+                w3["_dt_lvl2_key"].astype(str).str.strip()
+                == str(selected_block).strip()
+            ]
+        build_opts = ["Все"] + sorted(
+            w3[task_col].dropna().astype(str).str.strip().unique().tolist()
+        )
+        with f_build:
+            selected_building = st.selectbox(
+                "Строение",
+                build_opts,
+                key="deviation_tasks_building_l3",
+                help="Задачи уровня 3 в выбранном функциональном блоке.",
+            )
+        detail_opts = ("Укрупнённо (уровень 4)", "Детально (уровень 5)")
+        with f_det:
+            detail_label = st.selectbox(
+                "Детализация",
+                detail_opts,
+                index=0,
+                key="deviation_tasks_detail_lvl",
+                help="Показать строки MSP с уровнем структуры 4 или 5.",
+            )
+        target_lvl = 5 if "5" in str(detail_label) else 4
+    else:
+        with f_block:
+            st.caption("Нет колонки уровня MSP")
+        block_col_fb = find_column(
+            base,
+            ["block", "Блок", "Функциональный блок", "Functional block"],
+        )
+        with f_block:
+            if block_col_fb and block_col_fb in base.columns:
+                bopts = ["Все"] + sorted(
+                    base[block_col_fb].dropna().astype(str).str.strip().unique().tolist()
+                )
+                selected_block = st.selectbox(
+                    "Функциональный блок",
+                    bopts,
+                    key="deviation_tasks_block_col",
                 )
             else:
-                st.warning("Проекты не найдены в данных.")
-                return
-        else:
-            st.warning("Поле 'project name' / 'Проект' не найдено в данных.")
-            return
+                selected_block = "Все"
+        building_col_fb = find_column(
+            base,
+            ["building", "Строение", "строение", "Сооружение"],
+        )
+        with f_build:
+            if building_col_fb and building_col_fb in base.columns:
+                gopts = ["Все"] + sorted(
+                    base[building_col_fb].dropna().astype(str).str.strip().unique().tolist()
+                )
+                selected_building = st.selectbox(
+                    "Строение",
+                    gopts,
+                    key="deviation_tasks_building_col",
+                )
+            else:
+                selected_building = "Все"
+        with f_det:
+            st.caption("—")
+        st.caption(
+            "Колонка уровня MSP не найдена — блок/строение из отдельных колонок (если есть); "
+            "режим «уровень 4 / 5» недоступен."
+        )
 
-    with col2:
-        # Section filter - use original df to show all available sections
-        try:
-            has_section_column = "section" in df.columns
-        except (AttributeError, TypeError):
-            has_section_column = False
-
-        if has_section_column:
-            sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
-            selected_section = st.selectbox(
-                "Фильтр по этапу", sections, key="deviation_tasks_section"
-            )
-        else:
-            selected_section = "Все"
-
-    # Apply project filter
-    if selected_project != "Все" and project_col and project_col in filtered_df.columns:
-        filtered_df = filtered_df[
-            filtered_df[project_col].astype(str).str.strip()
-            == str(selected_project).strip()
-        ]
-
-    try:
-        has_section_col = "section" in filtered_df.columns
-    except (AttributeError, TypeError):
-        has_section_col = False
-
-    if selected_section != "Все" and has_section_col:
-        filtered_df = filtered_df[
-            filtered_df["section"].astype(str).str.strip()
-            == str(selected_section).strip()
-        ]
+    filtered_df = work_h.copy()
+    if level_col and level_col in filtered_df.columns and target_lvl is not None:
+        if selected_block != "Все":
+            filtered_df = filtered_df[
+                filtered_df["_dt_lvl2_key"].astype(str).str.strip()
+                == str(selected_block).strip()
+            ]
+        if selected_building != "Все":
+            filtered_df = filtered_df[
+                filtered_df["_dt_lvl3_key"].astype(str).str.strip()
+                == str(selected_building).strip()
+            ]
+        ln_f = pd.to_numeric(filtered_df["_dt_lvl_num"], errors="coerce")
+        filtered_df = filtered_df[ln_f == float(target_lvl)]
+    else:
+        block_col_fb = find_column(
+            filtered_df,
+            ["block", "Блок", "Функциональный блок", "Functional block"],
+        )
+        building_col_fb = find_column(
+            filtered_df,
+            ["building", "Строение", "строение", "Сооружение"],
+        )
+        if selected_block != "Все" and block_col_fb and block_col_fb in filtered_df.columns:
+            filtered_df = filtered_df[
+                filtered_df[block_col_fb].astype(str).str.strip()
+                == str(selected_block).strip()
+            ]
+        if selected_building != "Все" and building_col_fb and building_col_fb in filtered_df.columns:
+            filtered_df = filtered_df[
+                filtered_df[building_col_fb].astype(str).str.strip()
+                == str(selected_building).strip()
+            ]
 
     # Filter tasks: deviation=1/True OR reason of deviation filled
     try:
@@ -3810,15 +4013,8 @@ def dashboard_deviation_by_tasks_current_month(df):
         st.info("Отклонения не найдены для выбранных фильтров.")
         return
 
-    # Group by project and task - aggregate across all periods
-    # Find task column
-    task_col = (
-        "task name"
-        if "task name" in filtered_df.columns
-        else find_column(filtered_df, ["Задача", "task"])
-    )
-
-    has_task_col = task_col is not None
+    # Колонка задачи уже определена выше (по выборке проекта)
+    has_task_col = task_col is not None and task_col in filtered_df.columns
 
     if project_col and has_task_col:
         # Convert deviation in days to numeric
@@ -3876,20 +4072,9 @@ def dashboard_deviation_by_tasks_current_month(df):
         else:
             filtered_df["completion_percent"] = None
 
-        # Determine grouping level based on applied filters
-        # Priority: section > project
-        if selected_section != "Все":
-            # If section is selected but not task, group by section
-            group_by_cols = ["section"]
-            y_column = "Раздел"
-        elif selected_project != "Все":
-            # If project is selected but not task/section, group by project
-            group_by_cols = [project_col]
-            y_column = "Проект"
-        else:
-            # If nothing is selected, group by project
-            group_by_cols = [project_col]
-            y_column = "Проект"
+        # Группировка по проекту (фильтр по этапу/section убран по ТЗ)
+        group_by_cols = [project_col]
+        y_column = "Проект"
 
         # Group data based on determined grouping level
         deviations = (
@@ -3910,8 +4095,8 @@ def dashboard_deviation_by_tasks_current_month(df):
             .reset_index()
         )
 
-        # Set column names based on grouping level
-        if len(group_by_cols) == 2:  # project + task
+        # Set column names based on grouping level (только проект)
+        if len(group_by_cols) == 2:
             deviations.columns = [
                 "Проект",
                 "Задача",
@@ -3921,14 +4106,7 @@ def dashboard_deviation_by_tasks_current_month(df):
             deviations["Отображение"] = (
                 deviations["Задача"] + " (" + deviations["Проект"] + ")"
             )
-        elif "section" in group_by_cols:
-            deviations.columns = [
-                "Раздел",
-                "Суммарно дней отклонений",
-                "Процент выполнения",
-            ]
-            deviations["Отображение"] = deviations["Раздел"]
-        else:  # project only
+        else:
             deviations.columns = [
                 "Проект",
                 "Суммарно дней отклонений",
@@ -4052,28 +4230,10 @@ def dashboard_deviation_by_tasks_current_month(df):
         fig = _apply_bar_uniformtext(fig)
         render_chart(fig, caption_below="Отклонения от базового плана")
 
-        # Additional histogram with detail by section and task
-        st.subheader("Детализация отклонений по разделам и задачам")
+        # Детализация: те же фильтры, что у основного графика (проект / блок / строение / уровень 4–5)
+        st.subheader("Детализация отклонений по задачам")
 
-        # Filter for detail histogram - only by project
-        detail_df = df.copy()
-
-        # Apply project filter if selected
-        if selected_project != "Все" and project_col and project_col in detail_df.columns:
-            detail_df = detail_df[
-                detail_df[project_col].astype(str).str.strip()
-                == str(selected_project).strip()
-            ]
-
-        # Filter only tasks with deviations
-        if "deviation" in detail_df.columns:
-            deviation_mask = (
-                (detail_df["deviation"] == True)
-                | (detail_df["deviation"] == 1)
-                | (detail_df["deviation"].astype(str).str.lower() == "true")
-                | (detail_df["deviation"].astype(str).str.strip() == "1")
-            )
-            detail_df = detail_df[deviation_mask]
+        detail_df = filtered_df.copy()
 
         if detail_df.empty:
             st.info("Нет данных для отображения детализации.")
@@ -4084,10 +4244,9 @@ def dashboard_deviation_by_tasks_current_month(df):
                     detail_df["deviation in days"], errors="coerce"
                 )
 
-            # Group by section and task
-            if "section" in detail_df.columns and "task name" in detail_df.columns:
+            if "task name" in detail_df.columns:
                 detail_deviations = (
-                    detail_df.groupby(["section", "task name"])
+                    detail_df.groupby(["task name"])
                     .agg(
                         {
                             "deviation in days": (
@@ -4101,16 +4260,10 @@ def dashboard_deviation_by_tasks_current_month(df):
                 )
 
                 detail_deviations.columns = [
-                    "Раздел",
                     "Задача",
                     "Суммарно дней отклонений",
                 ]
-                detail_deviations["Отображение"] = (
-                    detail_deviations["Задача"]
-                    + " ("
-                    + detail_deviations["Раздел"]
-                    + ")"
-                )
+                detail_deviations["Отображение"] = detail_deviations["Задача"]
 
                 def _wrap_label(text, max_len=30, max_total=60):
                     s = str(text)
@@ -4147,7 +4300,7 @@ def dashboard_deviation_by_tasks_current_month(df):
                     detail_deviations["Суммарно дней отклонений"] = pd.to_numeric(
                         detail_deviations["Суммарно дней отклонений"], errors="coerce"
                     ).fillna(0)
-                    table_display = detail_deviations[["Раздел", "Задача", "Суммарно дней отклонений"]].copy()
+                    table_display = detail_deviations[["Задача", "Суммарно дней отклонений"]].copy()
                     table_display["Суммарно дней отклонений"] = table_display["Суммарно дней отклонений"].apply(
                         lambda x: int(round(x, 0)) if pd.notna(x) else 0
                     )
@@ -4170,7 +4323,7 @@ def dashboard_deviation_by_tasks_current_month(df):
                         title=None,
                         labels={
                             "Суммарно дней отклонений": "Суммарно дней отклонений",
-                            "Отображение": "Задача (Раздел)",
+                            "Отображение": "Задача",
                         },
                         text=detail_deviations["Суммарно дней отклонений"].apply(
                             lambda x: f"{int(round(x, 0))}" if pd.notna(x) else ""
@@ -4209,10 +4362,10 @@ def dashboard_deviation_by_tasks_current_month(df):
                     )
                     render_chart(
                         fig_detail,
-                        caption_below="Детализация отклонений по разделам и задачам",
+                        caption_below="Детализация отклонений по задачам",
                     )
             else:
-                st.warning("Поля 'section' или 'task name' не найдены для детализации.")
+                st.warning("Поле 'task name' не найдено для детализации.")
     else:
         st.warning(
             "Необходимые поля 'project name' или 'task name' не найдены в данных."
@@ -4288,7 +4441,8 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
                 has_project_column = False
 
             if has_project_column:
-                projects = ["Все"] + sorted(df["project name"].dropna().unique().tolist())
+                _session_reset_project_if_excluded("reasons_project")
+                projects = ["Все"] + _project_name_select_options(df["project name"])
                 selected_project = st.selectbox(
                     "Проект", projects, key="reasons_project"
                 )

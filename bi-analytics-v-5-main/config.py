@@ -4,7 +4,7 @@
 """
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, FrozenSet, List, Optional
 
 
 def switch_page_app(path: str) -> None:
@@ -84,6 +84,9 @@ ETL_SQLITE_DB_PATH: str = os.environ.get(
     os.path.join(BASE_DIR, "data", "etl.db"),
 )
 DATA_MODE: str = os.environ.get("DATA_MODE", "auto").strip().lower()
+
+# Подписи «project name», которые не показываем в фильтрах (дубликаты/устаревшие метки без строк в данных).
+MSP_PROJECT_FILTER_EXCLUDE_NAMES: FrozenSet[str] = frozenset({"Дмитровский-1"})
 
 MSP_PROJECT_NAME_MAP: Dict[str, str] = {
     "dmitrovsky1": "Дмитровский 1",
