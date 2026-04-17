@@ -3,6 +3,7 @@
 Общие утилиты для дашбордов и приложения.
 """
 import html as html_module
+import io
 import re
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -951,3 +952,122 @@ def load_custom_css() -> None:
     if css_path.exists():
         with open(css_path, encoding="utf-8") as f:
             st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+
+def dataframe_to_csv_bytes_for_excel(
+    df: pd.DataFrame,
+    *,
+    sep: str = ";",
+) -> bytes:
+    """
+    CSV для открытия в Microsoft Excel: UTF-8 с BOM и разделитель «;»
+    (типичные региональные настройки RU — запятая как десятичный разделитель).
+    """
+    buf = io.BytesIO()
+    df.to_csv(buf, index=False, sep=sep, encoding="utf-8-sig")
+    return buf.getvalue()
+
+
+def _excel_safe_sheet_name(name: str) -> str:
+    """Имя листа Excel ≤31 символа, без символов []:*?/\\."""
+    s = str(name or "Данные").strip() or "Данные"
+    for ch in r"[]:*?/\ ":
+        s = s.replace(ch, "_")
+    s = "".join(c for c in s if ord(c) >= 32)[:31]
+    return s or "Data"
+
+
+def dataframe_to_xlsx_bytes(df: pd.DataFrame, *, sheet_name: str = "Данные") -> bytes:
+    """Таблица в формате .xlsx (движок openpyxl из зависимостей проекта)."""
+    buf = io.BytesIO()
+    safe = _excel_safe_sheet_name(sheet_name)
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=safe)
+    return buf.getvalue()
+
+
+def _export_file_stem(name: str) -> str:
+    """Имя файла без пути и без расширения .csv/.xlsx (для пары выгрузок)."""
+    from pathlib import Path
+
+    s = str(name or "export").strip()
+    s = Path(s).name
+    for suf in (".csv", ".xlsx", ".xls"):
+        if s.lower().endswith(suf):
+            s = s[: -len(suf)]
+            break
+    return s or "export"
+
+
+def _download_button_compat(
+    *,
+    label: str,
+    data: bytes,
+    file_name: str,
+    mime: str,
+    key: str,
+    help: Optional[str] = None,
+    on_click=None,
+) -> None:
+    """st.download_button с опциональным on_click; без on_click на старых Streamlit."""
+    kw: Dict[str, Any] = {
+        "label": label,
+        "data": data,
+        "file_name": file_name,
+        "mime": mime,
+        "key": key,
+    }
+    if help is not None:
+        kw["help"] = help
+    if on_click is not None:
+        try:
+            st.download_button(**kw, on_click=on_click)
+        except TypeError:
+            st.download_button(**kw)
+    else:
+        st.download_button(**kw)
+
+
+def render_dataframe_excel_csv_downloads(
+    df: pd.DataFrame,
+    *,
+    file_stem: str,
+    key_prefix: str,
+    csv_label: str = "Скачать CSV (для Excel)",
+    popover_label: str = "Скачать таблицу",
+    on_csv_click=None,
+    on_xlsx_click=None,
+) -> None:
+    """
+    Одна кнопка-поповер «Скачать таблицу»: внутри — выбор формата (CSV для Excel или .xlsx).
+    CSV: UTF-8 BOM и разделитель «;» (типичные региональные настройки RU).
+    """
+    if df is None or not hasattr(df, "columns"):
+        return
+    try:
+        if df.empty:
+            return
+    except Exception:
+        return
+    stem = _export_file_stem(file_stem)
+    csv_bytes = dataframe_to_csv_bytes_for_excel(df)
+    xlsx_bytes = dataframe_to_xlsx_bytes(df, sheet_name="Данные")
+    with st.popover(popover_label):
+        _download_button_compat(
+            label=csv_label,
+            data=csv_bytes,
+            file_name=f"{stem}.csv",
+            mime="text/csv",
+            key=f"{key_prefix}_csv",
+            help="Разделитель «;» и UTF-8 с BOM — в Excel (RU) колонки и кириллица без сбоев.",
+            on_click=on_csv_click,
+        )
+        _download_button_compat(
+            label="Скачать Excel (.xlsx)",
+            data=xlsx_bytes,
+            file_name=f"{stem}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"{key_prefix}_xlsx",
+            help="Нативный Excel; не зависит от регионального разделителя в CSV.",
+            on_click=on_xlsx_click,
+        )

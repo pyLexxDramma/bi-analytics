@@ -131,7 +131,7 @@ def _render_html_table(
     if len(df) > max_rows:
         with st.expander("Ограничение отображения таблицы", expanded=False):
             st.caption(
-                f"Показано {max_rows} из {len(df)} записей. Скачайте CSV для полных данных."
+                f"Показано {max_rows} из {len(df)} записей. Скачайте CSV или Excel для полных данных."
             )
 
 
@@ -205,7 +205,7 @@ def _render_gantt_schedule_html_table(df: pd.DataFrame, max_rows: int = 80):
     if len(df) > max_rows:
         with st.expander("Ограничение отображения таблицы", expanded=False):
             st.caption(
-                f"Показано {max_rows} из {len(df)} записей. Скачайте CSV для полных данных."
+                f"Показано {max_rows} из {len(df)} записей. Скачайте CSV или Excel для полных данных."
             )
 
 
@@ -228,6 +228,9 @@ from utils import (
     to_million_rub,
     format_dataframe_as_html,
     norm_partner_join_key,
+    render_dataframe_excel_csv_downloads,
+    dataframe_to_csv_bytes_for_excel,
+    dataframe_to_xlsx_bytes,
 )
 
 # Максимальное число строк, передаваемых в Plotly для scatter/line-графиков.
@@ -780,12 +783,10 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
     st.markdown(_DEV_REASONS_FULL_TABLE_CSS + "".join(parts), unsafe_allow_html=True)
 
     out_df = pd.DataFrame(rows_out, columns=headers)
-    st.download_button(
-        "Скачать CSV",
-        out_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"),
-        "deviations_detail.csv",
-        "text/csv",
-        key="devtable_csv_1",
+    render_dataframe_excel_csv_downloads(
+        out_df,
+        file_stem="deviations_detail",
+        key_prefix="devtable_detail",
     )
 
 
@@ -1022,28 +1023,26 @@ def render_export_buttons(
     key_prefix: str = "export",
 ) -> None:
     """
-    Рисует кнопки экспорта CSV и/или PNG под графиком.
+    Рисует экспорт таблицы (один поповер: CSV или Excel) и/или PNG под графиком.
 
     Args:
-        df:           DataFrame для скачивания в CSV (опционально)
+        df:           DataFrame для скачивания (опционально)
         fig:          Plotly-фигура для скачивания в PNG (опционально)
-        csv_filename: Имя CSV-файла
+        csv_filename: Имя CSV-файла (для стема имени пары CSV/XLSX)
         png_filename: Имя PNG-файла
         key_prefix:   Уникальный префикс для ключей виджетов
     """
-    buttons = []
-    if df is not None and not df.empty:
-        csv_bytes = df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        buttons.append(("csv", csv_bytes, csv_filename))
+    from pathlib import Path
 
+    has_df = df is not None and not df.empty
+    png_bytes = None
     if fig is not None:
         try:
             png_bytes = fig.to_image(format="png", width=1400, height=700, scale=2)
-            buttons.append(("png", png_bytes, png_filename))
         except Exception:
-            pass  # kaleido не установлен — PNG недоступен
+            png_bytes = None
 
-    if not buttons:
+    if not has_df and png_bytes is None:
         return
 
     def _log_export(fmt_name: str, file_name: str):
@@ -1061,26 +1060,64 @@ def render_export_buttons(
         except Exception:
             pass
 
-    cols = st.columns(len(buttons))
-    for col, (fmt, data, name) in zip(cols, buttons):
-        mime = "text/csv" if fmt == "csv" else "image/png"
-        label = f"Скачать {fmt.upper()}"
+    stem = Path(csv_filename).stem if csv_filename else "export"
+
+    if has_df and png_bytes is not None:
+        c1, c2 = st.columns(2)
+        with c1:
+            render_dataframe_excel_csv_downloads(
+                df,
+                file_stem=stem,
+                key_prefix=key_prefix,
+                csv_label="Скачать CSV (для Excel)",
+                popover_label="Скачать таблицу",
+                on_csv_click=lambda: _log_export("csv", f"{stem}.csv"),
+                on_xlsx_click=lambda: _log_export("xlsx", f"{stem}.xlsx"),
+            )
+        with c2:
+            try:
+                st.download_button(
+                    label="Скачать PNG",
+                    data=png_bytes,
+                    file_name=png_filename,
+                    mime="image/png",
+                    key=f"{key_prefix}_png",
+                    on_click=lambda: _log_export("png", png_filename),
+                )
+            except TypeError:
+                st.download_button(
+                    label="Скачать PNG",
+                    data=png_bytes,
+                    file_name=png_filename,
+                    mime="image/png",
+                    key=f"{key_prefix}_png",
+                )
+        return
+
+    if has_df:
+        render_dataframe_excel_csv_downloads(
+            df,
+            file_stem=stem,
+            key_prefix=key_prefix,
+        )
+
+    if png_bytes is not None:
         try:
-            col.download_button(
-                label=label,
-                data=data,
-                file_name=name,
-                mime=mime,
-                key=f"{key_prefix}_{fmt}",
-                on_click=lambda fn=name, ft=fmt: _log_export(ft, fn),
+            st.download_button(
+                label="Скачать PNG",
+                data=png_bytes,
+                file_name=png_filename,
+                mime="image/png",
+                key=f"{key_prefix}_png",
+                on_click=lambda: _log_export("png", png_filename),
             )
         except TypeError:
-            col.download_button(
-                label=label,
-                data=data,
-                file_name=name,
-                mime=mime,
-                key=f"{key_prefix}_{fmt}",
+            st.download_button(
+                label="Скачать PNG",
+                data=png_bytes,
+                file_name=png_filename,
+                mime="image/png",
+                key=f"{key_prefix}_png",
             )
 
 
@@ -1981,15 +2018,11 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                 else ""
             )
             _maket_out.append(row)
-        _maket_csv = pd.DataFrame(_maket_out).to_csv(
-            index=False, encoding="utf-8-sig"
-        ).encode("utf-8-sig")
-        st.download_button(
-            "Скачать CSV (по макету)",
-            _maket_csv,
-            "deviations_detail_maket.csv",
-            "text/csv",
-            key="devtable_csv_maket",
+        render_dataframe_excel_csv_downloads(
+            pd.DataFrame(_maket_out),
+            file_stem="deviations_detail_maket",
+            key_prefix="devtable_maket",
+            csv_label="Скачать CSV (по макету, для Excel)",
         )
 
     with st.expander("Полная выгрузка по фильтрам", expanded=False):
@@ -2710,8 +2743,11 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
 
         st.caption(f"Записей: {len(project_summary)}")
         _render_html_table(project_summary)
-        _csv = project_summary.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        st.download_button("Скачать CSV", _csv, "project_summary.csv", "text/csv", key="proj_summary_csv")
+        render_dataframe_excel_csv_downloads(
+            project_summary,
+            file_stem="project_summary",
+            key_prefix="proj_summary",
+        )
     else:
         # No project in group, show regular summary by period (только количество, без дней)
         group_desc = [period_label] + [c for c in group_cols if c != "period"]
@@ -2726,8 +2762,11 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         })
         st.caption(f"Записей: {len(display_grouped)}")
         _render_html_table(display_grouped)
-        _csv = display_grouped.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        st.download_button("Скачать CSV", _csv, "grouped_summary.csv", "text/csv", key="grouped_csv")
+        render_dataframe_excel_csv_downloads(
+            display_grouped,
+            file_stem="grouped_summary",
+            key_prefix="grouped_summary",
+        )
 
 
 # ==================== DASHBOARD 3: Plan/Fact Dates for Tasks ====================
@@ -3787,15 +3826,11 @@ def dashboard_plan_fact_dates(df):
                 _tbl_parts.append("</tbody></table></div>")
                 st.markdown(_TABLE_CSS + "".join(_tbl_parts), unsafe_allow_html=True)
                 st.caption(f"Записей: {len(cov_display)}")
-                _cov_csv = cov_display.to_csv(
-                    index=False, encoding="utf-8-sig"
-                ).encode("utf-8-sig")
-                st.download_button(
-                    "Скачать CSV (ковенанты)",
-                    _cov_csv,
-                    "covenant_plan_fact.csv",
-                    "text/csv",
-                    key="covenant_table_csv",
+                render_dataframe_excel_csv_downloads(
+                    cov_display,
+                    file_stem="covenant_plan_fact",
+                    key_prefix="covenant_table",
+                    csv_label="Скачать CSV (ковенанты, для Excel)",
                 )
     elif bar_df.empty:
         st.info("Нет данных для отображения графика.")
@@ -4349,8 +4384,11 @@ def dashboard_plan_fact_dates(df):
                 "Сортировка по столбцам — кликом по заголовку в таблице."
             )
         _render_dates_main_table()
-        _csv = summary_display.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        st.download_button("Скачать CSV", _csv, "detail_dates.csv", "text/csv", key="detail_dates_csv")
+        render_dataframe_excel_csv_downloads(
+            summary_display,
+            file_stem="detail_dates",
+            key_prefix="detail_dates",
+        )
     else:
         with st.expander("Полная таблица отклонений по всем задачам фильтра", expanded=False):
             st.markdown(
@@ -4361,13 +4399,11 @@ def dashboard_plan_fact_dates(df):
                 f"Записей: {len(summary_df)} · тип: {dates_value_type} · сортировка: {dates_sort_order}"
             )
             _render_dates_main_table()
-            _csv_all = summary_display.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-            st.download_button(
-                "Скачать CSV (все задачи фильтра)",
-                _csv_all,
-                "detail_dates.csv",
-                "text/csv",
-                key="detail_dates_csv_all_tasks_cov",
+            render_dataframe_excel_csv_downloads(
+                summary_display,
+                file_stem="detail_dates",
+                key_prefix="detail_dates_cov_all",
+                csv_label="Скачать CSV (все задачи фильтра, для Excel)",
             )
 
 
@@ -4878,13 +4914,10 @@ def dashboard_deviation_by_tasks_current_month(df):
                     table_display = table_display.sort_values("Суммарно дней отклонений", ascending=False)
                     st.caption(f"Записей: {len(table_display)}")
                     _render_html_table(table_display)
-                    csv_data = table_display.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-                    st.download_button(
-                        label="Скачать CSV",
-                        data=csv_data,
-                        file_name="deviation_details.csv",
-                        mime="text/csv",
-                        key="deviation_detail_csv_export",
+                    render_dataframe_excel_csv_downloads(
+                        table_display,
+                        file_stem="deviation_details",
+                        key_prefix="deviation_detail_export",
                     )
                     fig_detail = px.bar(
                         detail_deviations,
@@ -5381,8 +5414,11 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
         st.subheader(f"Сводная таблица по {period_label.lower()}")
         st.markdown(f"**Записей:** {len(summary_by_reason)}")
         _render_html_table(summary_by_reason)
-        _csv = summary_by_reason.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        st.download_button("Скачать CSV", _csv, "reasons_summary.csv", "text/csv", key="reasons_csv")
+        render_dataframe_excel_csv_downloads(
+            summary_by_reason,
+            file_stem="reasons_summary",
+            key_prefix="reasons_summary",
+        )
     else:
         st.warning("Столбец 'reason of deviation' не найден в данных.")
 
@@ -7140,8 +7176,11 @@ def dashboard_rd_delay(df):
         #     days_column="Отклонение разделов РД",
         # ))
         st.markdown(format_dataframe_as_html(summary_table), unsafe_allow_html=True)
-        _csv = summary_table.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        st.download_button("Скачать CSV", _csv, "rd_delay_summary.csv", "text/csv", key="rd_delay_csv")
+        render_dataframe_excel_csv_downloads(
+            summary_table,
+            file_stem="rd_delay_summary",
+            key_prefix="rd_delay_summary",
+        )
 
         # Таблица: План окончания ПД/РД и Факт окончания ПД/РД
         if (plan_end_col and plan_end_col in filtered_df.columns) or (fact_end_col and fact_end_col in filtered_df.columns):
@@ -10931,8 +10970,11 @@ def dashboard_debit_credit(df):
         )
     st.caption(f"Записей: {len(display_df)}")
     _render_html_table(display_df)
-    _csv = display_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-    st.download_button("Скачать CSV", _csv, "debit_credit.csv", "text/csv", key="debit_credit_csv")
+    render_dataframe_excel_csv_downloads(
+        display_df,
+        file_stem="debit_credit",
+        key_prefix="debit_credit",
+    )
 
 
 # ── TESSA: поиск колонок и дат (Исполнительная документация / Предписания) ──
@@ -11544,9 +11586,12 @@ def dashboard_executive_documentation(df):
         )
         if len(table_df) > 500:
             with st.expander("Ограничение отображения в браузере", expanded=False):
-                st.caption("Показано 500 из записей — скачайте CSV для полного списка.")
-        csv_bytes = table_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        st.download_button("Скачать CSV", csv_bytes, "executive_docs.csv", "text/csv", key="exec_doc_csv")
+                st.caption("Показано 500 из записей — скачайте CSV или Excel для полного списка.")
+        render_dataframe_excel_csv_downloads(
+            table_df,
+            file_stem="executive_docs",
+            key_prefix="exec_doc",
+        )
 
     with tab_dyn:
         st.subheader("Динамика по месяцам (по дате создания)")
@@ -12511,8 +12556,11 @@ def dashboard_budget_by_type(df):
     #     finance_deviation_column="Отклонение, млн руб.",
     # ))
     st.markdown(format_dataframe_as_html(budget_table_display), unsafe_allow_html=True)
-    _csv = budget_table_display.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-    st.download_button("Скачать CSV", _csv, "budget_plan_fact.csv", "text/csv", key="budget_type_csv")
+    render_dataframe_excel_csv_downloads(
+        budget_table_display,
+        file_stem="budget_plan_fact",
+        key_prefix="budget_type",
+    )
 
     # ========== Histogram: Budget by Project and Type ==========
     st.subheader("Гистограмма: Бюджет план/факт/корректировка/отклонение по проектам")
@@ -12711,8 +12759,11 @@ def dashboard_budget_by_type(df):
 
                 # st.table(style_dataframe_for_dark_theme(summary_hist))
                 st.markdown(format_dataframe_as_html(summary_hist), unsafe_allow_html=True)
-                _csv = summary_hist.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-                st.download_button("Скачать CSV", _csv, "budget_summary.csv", "text/csv", key="budget_summary_csv")
+                render_dataframe_excel_csv_downloads(
+                    summary_hist,
+                    file_stem="budget_summary",
+                    key_prefix="budget_summary",
+                )
         else:
             st.warning(
                 "Колонка 'project name' не найдена в данных для построения гистограммы."
@@ -13663,9 +13714,10 @@ def dashboard_approved_budget(df):
         ),
         unsafe_allow_html=True,
     )
-    _csv = summary_table.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-    st.download_button(
-        "Скачать CSV", _csv, "approved_budget_by_month.csv", "text/csv", key="appr_budget_summary_csv"
+    render_dataframe_excel_csv_downloads(
+        summary_table,
+        file_stem="approved_budget_by_month",
+        key_prefix="appr_budget_summary",
     )
 
 
@@ -14007,18 +14059,19 @@ def dashboard_forecast_budget(df):
             lambda x: f"{float(x):.2f}" if pd.notna(x) else "0.00"
         )
     st.markdown(format_dataframe_as_html(summary_table), unsafe_allow_html=True)
-    _csv = summary_table.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-    st.download_button("Скачать CSV", _csv, "forecast_bddcs_summary.csv", "text/csv", key="fcast_summary_csv")
+    render_dataframe_excel_csv_downloads(
+        summary_table,
+        file_stem="forecast_bddcs_summary",
+        key_prefix="fcast_summary",
+    )
 
     st.subheader("Детальные строки (лоты) — ввод для расчёта")
     st.markdown(format_dataframe_as_html(edited_df.head(500)), unsafe_allow_html=True)
-    _csv2 = edited_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-    st.download_button(
-        "Скачать CSV (лоты)",
-        _csv2,
-        "forecast_bddcs_lots.csv",
-        "text/csv",
-        key="fcast_detail_csv",
+    render_dataframe_excel_csv_downloads(
+        edited_df,
+        file_stem="forecast_bddcs_lots",
+        key_prefix="fcast_detail",
+        csv_label="Скачать CSV (лоты, для Excel)",
     )
 
 
@@ -14729,8 +14782,11 @@ def dashboard_predpisania(df):
     overdue_cnt = int((show["_overdue_days"] > 0).sum())
     st.caption(f"Записей: {len(table_df)} · просроченных: {overdue_cnt}")
     _render_html_table(table_df)
-    csv_bytes = table_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-    st.download_button("Скачать CSV", csv_bytes, "predpisania.csv", "text/csv", key="pred_csv")
+    render_dataframe_excel_csv_downloads(
+        table_df,
+        file_stem="predpisania",
+        key_prefix="predpisania",
+    )
 
     with st.expander("По статусам и объектам", expanded=False):
         status_counts = filtered["Статус"].value_counts()
@@ -14882,7 +14938,7 @@ def _render_dev_detail_table(df, max_rows=500):
     if len(df) > max_rows:
         with st.expander("Ограничение отображения таблицы", expanded=False):
             st.caption(
-                f"Показано {max_rows} из {len(df)} записей. Скачайте CSV для полных данных."
+                f"Показано {max_rows} из {len(df)} записей. Скачайте CSV или Excel для полных данных."
             )
 
 
@@ -14983,13 +15039,11 @@ def dashboard_developer_projects(df):
             export_df.insert(0, "проект", p_export)
             slug = re.sub(r"[\s<>:\"/\\|?*]+", "_", p_export).strip("_")[:120] or "project"
             csv_name = f"developer_projects_matrix_{slug}.csv"
-        csv_bytes = export_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        st.download_button(
-            "Скачать матрицу (CSV)",
-            csv_bytes,
-            csv_name,
-            "text/csv",
-            key="dev_matrix_csv_dl",
+        render_dataframe_excel_csv_downloads(
+            export_df,
+            file_stem=csv_name,
+            key_prefix="dev_matrix",
+            csv_label="Скачать матрицу (CSV, для Excel)",
         )
     except Exception:
         pass
