@@ -8783,7 +8783,11 @@ def dashboard_technique(df):
                 _agg = {"week_sum": "sum"}
                 if "План_numeric" in df_type.columns:
                     _agg["План_numeric"] = "sum"
-                by_contractor = df_type.groupby("Контрагент", as_index=False).agg(_agg)
+                _group_cols = []
+                if project_col and project_col in df_type.columns:
+                    _group_cols.append(project_col)
+                _group_cols.append("Контрагент")
+                by_contractor = df_type.groupby(_group_cols, as_index=False).agg(_agg)
                 by_contractor = by_contractor.rename(
                     columns={"week_sum": "Факт", "План_numeric": "План"}
                 )
@@ -8795,7 +8799,7 @@ def dashboard_technique(df):
                 by_contractor["План"] = pd.to_numeric(
                     by_contractor["План"], errors="coerce"
                 ).fillna(0.0)
-                by_contractor["Отклонение"] = by_contractor["План"] - by_contractor["Факт"]
+                by_contractor["Отклонение"] = by_contractor["Факт"] - by_contractor["План"]
                 by_contractor["%"] = by_contractor.apply(
                     lambda r: (
                         round(float(r["Факт"]) / float(r["План"]) * 100.0, 1)
@@ -8812,11 +8816,13 @@ def dashboard_technique(df):
                 by_contractor = by_contractor.sort_values("План", ascending=False)
                 with st.expander(f"Формулы столбцов ({type_label})", expanded=False):
                     st.caption(
-                        "План, факт, «%» = факт/план×100%, отклонение = план − факт по подрядчикам."
+                        "План (из договора), СКУД (из выгрузки ресурсов), «%» = факт/план×100%, отклонение = СКУД − план."
                     )
-                display_df = by_contractor[
-                    ["Контрагент", "План", "Факт", "%", "Отклонение"]
-                ].copy()
+                _display_cols = ["Контрагент", "План", "Факт", "%", "Отклонение"]
+                if project_col and project_col in by_contractor.columns:
+                    by_contractor = by_contractor.rename(columns={project_col: "Проект"})
+                    _display_cols = ["Проект"] + _display_cols
+                display_df = by_contractor[_display_cols].copy()
                 display_df["План"] = display_df["План"].apply(
                     lambda x: int(round(x, 0)) if pd.notna(x) else 0
                 )
@@ -9475,6 +9481,18 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             errors="coerce",
         ).fillna(0)
 
+    def _period_weeks_series(pdf: pd.DataFrame, fallback_weeks: int) -> pd.Series:
+        """Число недель в месяце по периоду строки: ceil(days_in_month / 7)."""
+        out = pd.Series(float(fallback_weeks), index=pdf.index, dtype="float64")
+        if not period_col or period_col not in pdf.columns:
+            return out
+        parsed_period = pd.to_datetime(pdf[period_col], errors="coerce", dayfirst=True)
+        if parsed_period.notna().any():
+            out.loc[parsed_period.notna()] = np.ceil(
+                parsed_period.loc[parsed_period.notna()].dt.days_in_month / 7.0
+            ).astype(float)
+        return out
+
     # Факт: приоритет — явная сумма 1..5 недели; средние используем только как fallback.
     if week_columns:
         week_numeric_cols = [f"{col}_numeric" for col in week_columns]
@@ -9498,7 +9516,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             work_df["week_sum"] / num_weeks if num_weeks > 0 else 0
         )
     elif "Среднее за неделю" in work_df.columns:
-        # Если есть только среднее за неделю — приводим к факту периода умножением на число недель
+        # Если есть только среднее за неделю — приводим к факту периода умножением
+        # на число недель месяца.
         work_df["Среднее_за_неделю_numeric"] = pd.to_numeric(
             work_df["Среднее за неделю"]
             .astype(str)
@@ -9507,7 +9526,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             errors="coerce",
         ).fillna(0)
         num_weeks = len(week_columns) if week_columns else 4
-        work_df["week_sum"] = work_df["Среднее_за_неделю_numeric"] * num_weeks
+        work_df["week_sum"] = work_df["Среднее_за_неделю_numeric"] * _period_weeks_series(
+            work_df, num_weeks
+        )
     else:
         work_df["week_sum"] = 0
         work_df["Среднее_за_неделю_numeric"] = 0
@@ -9540,7 +9561,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 errors="coerce",
             ).fillna(0.0)
             _nw = len(week_columns) if week_columns else 4
-            work_df["week_sum"] = work_df["Среднее_за_неделю_numeric"] * _nw
+            work_df["week_sum"] = work_df["Среднее_за_неделю_numeric"] * _period_weeks_series(
+                work_df, _nw
+            )
 
     # Process Дельта (Delta) if available - try to find column by partial match
     delta_col = None
@@ -9557,8 +9580,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             errors="coerce",
         ).fillna(0)
     else:
-        # Calculate delta as plan - fact (week_sum)
-        work_df["Дельта_numeric"] = work_df["План_numeric"] - work_df["week_sum"]
+        # Отклонение по ТЗ: СКУД (факт) - план
+        work_df["Дельта_numeric"] = work_df["week_sum"] - work_df["План_numeric"]
 
     # Process Дельта (%) (Delta %) if available - extract numeric value from percentage string
     # Try to find column by partial match
@@ -9799,7 +9822,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 pd.to_numeric(filtered_df["План_numeric"], errors="coerce").fillna(0.0) * day_ratio
             )
         if "Дельта_numeric" in filtered_df.columns:
-            filtered_df["Дельта_numeric"] = filtered_df["План_numeric"] - filtered_df["week_sum"]
+            filtered_df["Дельта_numeric"] = filtered_df["week_sum"] - filtered_df["План_numeric"]
     if period_col and period_col in filtered_df.columns and selected_periods:
         filtered_df = filtered_df[
             filtered_df[period_col].astype(str).str.strip().isin(
@@ -10633,7 +10656,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             ]
         if "Дельта_numeric" not in bar_df.columns and "План_numeric" in bar_df.columns and "week_sum" in bar_df.columns:
             bar_df = bar_df.copy()
-            bar_df["Дельта_numeric"] = bar_df["План_numeric"] - bar_df["week_sum"]
+            bar_df["Дельта_numeric"] = bar_df["week_sum"] - bar_df["План_numeric"]
         elif "Дельта_numeric" not in bar_df.columns:
             bar_df = bar_df.copy()
             bar_df["Дельта_numeric"] = 0
@@ -11422,17 +11445,16 @@ def dashboard_skud_stroyka(df):
 # ==================== DASHBOARD: график рабочей силы (вкладки) ====================
 def dashboard_technique_tabs(df):
     """
-    График движения рабочей силы: вкладки — рабочая сила, техника, динамика, СКУД по неделям.
+    График движения рабочей силы: вкладки — рабочая сила, техника.
     """
     st.header("График движения рабочей силы")
     with st.expander("Источник данных", expanded=False):
         st.caption(
             "Данные из загруженных файлов ресурсов и техники. Если данных нет — загрузите соответствующие CSV-файлы."
         )
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2 = st.tabs([
         "Рабочая сила",
         "Техника",
-        "СКУД по неделям",
     ])
     with tab1:
         st.subheader("График движения рабочей силы")
@@ -11440,10 +11462,6 @@ def dashboard_technique_tabs(df):
     with tab2:
         st.subheader("График движения техники")
         dashboard_workforce_movement(df, data_source_filter="Техника", show_header=False, key_prefix="gdrs_technique")
-    with tab3:
-        dashboard_skud_stroyka(df)
-
-
 # ==================== DASHBOARD: Дебиторская и кредиторская задолженность подрядчиков ====================
 def _find_col(df, names):
     """Поиск колонки по частичному совпадению (без учёта регистра)."""
@@ -12455,18 +12473,12 @@ def dashboard_executive_documentation(df):
 # ==================== DASHBOARD: график рабочей силы (объединённый) ====================
 def dashboard_workforce_and_skud(df):
     """
-    Объединённый отчёт: основной график и факт СКУД по неделям (данные ресурсов).
+    Объединённый отчёт: основной график движения рабочей силы.
     """
     st.header("График движения рабочей силы")
     with st.expander("Источник данных", expanded=False):
-        st.caption(
-            "Вкладки: ресурсы (рабочая сила) и СКУД по неделям. Данные — из загруженных в приложении файлов."
-        )
-    tab1, tab2 = st.tabs(["Рабочая сила", "СКУД по неделям"])
-    with tab1:
-        dashboard_workforce_movement(df)
-    with tab2:
-        dashboard_skud_stroyka(df)
+        st.caption("Данные — из загруженных в приложении файлов ресурсов/техники.")
+    dashboard_workforce_movement(df)
 
 
 # ==================== DASHBOARD 8.7: Documentation ====================
