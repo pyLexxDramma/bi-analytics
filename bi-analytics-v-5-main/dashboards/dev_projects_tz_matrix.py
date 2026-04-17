@@ -8,7 +8,7 @@ from __future__ import annotations
 import html as html_module
 import re
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -1104,25 +1104,44 @@ _DEV_TZ_MATRIX_CSS = """
 """
 
 
-def render_dev_tz_matrix(rows: List[Dict[str, Any]], table_css: str) -> None:
+def _dev_tz_matrix_row_key(r: Dict[str, Any]) -> Tuple[str, str]:
+    """Стабильный ключ строки матрицы для сопоставления блоков разных проектов."""
+    return (str(r.get("group") or ""), str(r.get("label") or ""))
+
+
+def render_dev_tz_matrix(
+    rows: Union[List[Dict[str, Any]], List[List[Dict[str, Any]]]],
+    table_css: str,
+) -> None:
     """
     Макет по референсу клиента: две группы столбцов «Инвестиционная фаза» / «Жизнь проекта»,
-    под каждой вехой — План / Факт / Откл. (одна строка данных).
+    под каждой вехой — План / Факт / Откл.
+
+    - Один проект: ``rows`` — плоский список словарей (как раньше) — одна строка данных в таблице.
+    - Несколько проектов: ``rows`` — список списков словарей (по одному списку на проект, тот же порядок
+      вех, что у первого проекта) — в tbody по одной строке на проект.
     """
     import streamlit as st
+
+    blocks: List[List[Dict[str, Any]]]
+    if rows and isinstance(rows[0], dict):
+        blocks = [rows]  # type: ignore[list-item]
+    else:
+        blocks = [b for b in (rows or []) if isinstance(b, list)]  # type: ignore[assignment]
 
     with st.expander("Примечание к колонке «Проект»", expanded=False):
         st.caption(
             "В группе «Проект» в колонках План и Факт выводятся идентификатор и название проекта "
             "(не даты). Пустые ячейки и «Н/Д» — по данным выгрузки (ТЗ)."
         )
-    if not rows:
+    if not blocks or not blocks[0]:
         st.info("Нет строк матрицы.")
         return
 
+    template = blocks[0]
     esc = html_module.escape
-    invest_labels = [r["label"] for r in rows if r.get("phase") == "invest"]
-    life_labels = [r["label"] for r in rows if r.get("phase") == "life"]
+    invest_labels = [r["label"] for r in template if r.get("phase") == "invest"]
+    life_labels = [r["label"] for r in template if r.get("phase") == "life"]
     n_inv = max(1, len(invest_labels))
     n_life = max(0, len(life_labels))
     col_span_inv = n_inv * 3
@@ -1136,7 +1155,7 @@ def render_dev_tz_matrix(rows: List[Dict[str, Any]], table_css: str) -> None:
     ]
     mline: List[str] = []
     subline: List[str] = []
-    for r in rows:
+    for r in template:
         lab = r.get("label") or ""
         mline.append(f'<th colspan="3" class="dev-tz-milestone" title="{esc(str(lab))}">{esc(str(lab))}</th>')
         subline.extend(
@@ -1150,20 +1169,30 @@ def render_dev_tz_matrix(rows: List[Dict[str, Any]], table_css: str) -> None:
     head_rows.append("<tr>" + "".join(subline) + "</tr>")
     thead = "<thead>" + "".join(head_rows) + "</thead>"
 
-    body_cells: List[str] = []
-    for r in rows:
-        warn_row = bool(r.get("warn"))
-        for key in ("plan", "fact", "otkl"):
-            v = r.get(key) or ""
-            oc = ' class="dev-tz-warn"' if warn_row else ""
-            body_cells.append(f"<td{oc}>{esc(str(v))}</td>")
+    body_trs: List[str] = []
+    tmpl_keys: List[Tuple[str, str]] = [_dev_tz_matrix_row_key(r) for r in template]
+    for block in blocks:
+        row_by_key = {_dev_tz_matrix_row_key(r): r for r in block}
+        body_cells: List[str] = []
+        for k in tmpl_keys:
+            r = row_by_key.get(k)
+            if r is None:
+                for _ in ("plan", "fact", "otkl"):
+                    body_cells.append("<td>Н/Д</td>")
+                continue
+            warn_row = bool(r.get("warn"))
+            for key in ("plan", "fact", "otkl"):
+                v = r.get(key) or ""
+                oc = ' class="dev-tz-warn"' if warn_row else ""
+                body_cells.append(f"<td{oc}>{esc(str(v))}</td>")
+        body_trs.append("<tr>" + "".join(body_cells) + "</tr>")
 
     html_tbl = (
         '<table class="rendered-table dev-tz-wide" border="0">'
         + thead
-        + "<tbody><tr>"
-        + "".join(body_cells)
-        + "</tr></tbody></table>"
+        + "<tbody>"
+        + "".join(body_trs)
+        + "</tbody></table>"
     )
     st.markdown(
         table_css + _DEV_TZ_MATRIX_CSS + '<div class="dev-tz-matrix-wrap">' + html_tbl + "</div>",
@@ -1728,12 +1757,17 @@ _CONTROL_POINTS_CSS = """
 .cp-table-wrap { overflow-x: auto; max-width: 100%; }
 .rendered-table th.cp-ghead { text-align:center; background:#1f232d; font-size:12px; padding:6px 8px; }
 .rendered-table th.cp-sub { font-size:11px; color:#c9d1d9; font-weight:500; }
-/* Правки 1: % выполнения ≠ 100% — оранжевый фон (ГПЗУ, Экспертиза стадии П) */
-.cp-td-warn { background: rgba(255, 140, 0, 0.38) !important; color: #1a1a1a; }
+/* ГПЗУ / Экспертиза стадии П: % выполнения в MSP ≠ 100% — «рыжая» подсветка значения */
+.cp-td-warn {
+  background: rgba(234, 88, 12, 0.32) !important;
+  color: #7c2d12 !important;
+  font-weight: 600;
+}
 .cp-status-cell { text-align: center; vertical-align: middle; }
 .cp-status-dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; vertical-align: middle; }
 .cp-status-ok { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,0.45); }
 .cp-status-bad { background: #ef4444; box-shadow: 0 0 6px rgba(239,68,68,0.45); }
+.cp-status-warn { background: #ea580c; box-shadow: 0 0 6px rgba(234,88,12,0.55); }
 </style>
 """
 
@@ -1826,9 +1860,18 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
             cells.append(f"<td{wc}>{esc(str(r.get(f'{slug}_fact', '')))}</td>")
             cells.append(f"<td{wc}>{esc(str(r.get(f'{slug}_otkl', '')))}</td>")
             m_ok = bool(r.get(f"{slug}_ok", False))
-            st_cls = "cp-status-ok" if m_ok else "cp-status-bad"
-            tip = "План и факт по датам совпадают (0 дн.)" if m_ok else "Есть отклонение или неполные даты"
-            al = "OK" if m_ok else "Отклонение"
+            if not m_ok:
+                st_cls = "cp-status-bad"
+                tip = "Отклонение по датам (План/Факт) или неполные даты"
+                al = "Отклонение по датам"
+            elif owarn:
+                st_cls = "cp-status-warn"
+                tip = "В MSP для задачи «% выполнения» указано не 100% (вехи ГПЗУ / Экспертиза стадии П)"
+                al = "Незавершено по %"
+            else:
+                st_cls = "cp-status-ok"
+                tip = "План и факт по датам совпадают (0 дн.), % выполнения — 100% или н/д"
+                al = "Норма"
             cells.append(
                 f'<td class="cp-status-cell" title="{esc(tip)}">'
                 f'<span class="cp-status-dot {st_cls}" role="img" aria-label="{esc(al)}"></span></td>'
@@ -1844,6 +1887,11 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
     st.markdown(
         table_css + _CONTROL_POINTS_CSS + '<div class="rendered-table-wrap cp-table-wrap">' + html_tbl + "</div>",
         unsafe_allow_html=True,
+    )
+    st.caption(
+        "Статус (цветной индикатор): **зелёный** — даты План/Факт совпадают; "
+        "**оранжевый** — для вех «ГПЗУ» и «Экспертиза стадии П» в MSP «% выполнения» ≠ 100%; "
+        "**красный** — отклонение по датам или неполные даты."
     )
 
     drop_ok = [

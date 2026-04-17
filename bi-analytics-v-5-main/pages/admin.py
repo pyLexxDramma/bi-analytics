@@ -431,75 +431,16 @@ def _show_saved_results():
 
 def _render_control_points_msp_tab(user: dict) -> None:
     """
-    Администратор: заголовки столбцов отчёта «Контрольные точки» и правила сопоставления с MSP (JSON).
+    Администратор: задача MSP для метрик в отчёте «Отклонение от базового плана».
+    Настройка вех отчёта «Контрольные точки» перенесена на страницу этого отчёта.
     """
-    from dashboards.dev_projects_tz_matrix import (
-        control_point_milestones_default_json,
-        get_control_point_milestones_effective,
-        save_control_point_milestones_json,
+    st.markdown("<h2 class='Duquhununee'>MSP: задача для метрик</h2>", unsafe_allow_html=True)
+    st.info(
+        "Заголовки столбцов и соответствие вех выгрузке MS Project для отчёта "
+        "**«Контрольные точки»** настраиваются **только на странице этого отчёта** "
+        "(блок «Настройка вех…» для администратора). Здесь в админ-панели этот блок **убран**."
     )
 
-    st.markdown("<h2 class='Duquhununee'>Контрольные точки (MSP)</h2>", unsafe_allow_html=True)
-    st.caption(
-        "Задаются **названия столбцов** (поле `title`) и **соответствие строкам MSP** (объект `match`: "
-        "`level`, `names_any`, `name_contains`, `parent_l2_contains`, `block_contains`, "
-        "`phase_needles`, `phase_exclude_needles` — как во встроенном коде). Хранится в настройках БД. "
-        "То же редактирование доступно **на дашборде** отчёта «Контрольные точки» (блок для администратора)."
-    )
-    cur = get_control_point_milestones_effective()
-    st.info(f"Сейчас активно вех: **{len(cur)}**.")
-    raw = (get_setting("control_points_milestones_json") or "").strip()
-    default_js = control_point_milestones_default_json()
-    initial = raw if raw else default_js
-    txt = st.text_area(
-        "JSON: массив объектов `{ \"title\", \"slug\", \"match\": { ... } }`",
-        value=initial,
-        height=420,
-        key="cp_milestones_json_area",
-        help="slug — стабильный ключ колонок в данных; title — заголовок в отчёте.",
-    )
-    b1, b2, b3 = st.columns(3)
-    uname = str(user.get("username") or user.get("name") or "admin")
-    with b1:
-        if st.button("Сохранить", type="primary", key="cp_ms_save"):
-            ok, msg = save_control_point_milestones_json(txt, uname)
-            if ok:
-                if "cp_milestones_json_area" in st.session_state:
-                    del st.session_state["cp_milestones_json_area"]
-                st.success(msg)
-                st.rerun()
-            else:
-                st.error(msg)
-    with b2:
-        if st.button("Сбросить на встроенные правила", key="cp_ms_reset"):
-            ok, msg = save_control_point_milestones_json("", uname)
-            if ok:
-                if "cp_milestones_json_area" in st.session_state:
-                    del st.session_state["cp_milestones_json_area"]
-                st.success(msg)
-                st.rerun()
-            else:
-                st.error(msg)
-    with b3:
-        st.download_button(
-            "Скачать шаблон по умолчанию",
-            default_js.encode("utf-8-sig"),
-            "control_points_milestones_default.json",
-            "application/json",
-            key="cp_dl_tpl",
-        )
-    with st.expander("Подсказка по полю match", expanded=False):
-        st.markdown(
-            "- **level** — уровень задачи MSP (число, например 5.0).\n"
-            "- **names_any** — список подстрок для колонки «Название».\n"
-            "- **name_contains** — одна подстрока.\n"
-            "- **parent_l2_contains** — родитель ур.2 (часто «Ковенанты»).\n"
-            "- **block_contains** — подстрока функционального блока.\n"
-            "- **phase_needles** / **phase_exclude_needles** — для файлов с колонкой «Фаза».\n\n"
-            "Пустое сохранение JSON сбрасывает на встроенный список из кода."
-        )
-
-    st.markdown("---")
     st.markdown("### Отчёт «Отклонение от базового плана»")
     st.caption(
         "Название задачи MSP для расчёта метрик «окончание проекта» в отчёте (вместо выбора на странице отчёта). "
@@ -754,7 +695,7 @@ if user is not None:
             "Логи",
             "Права доступа",
             "Benchmark LLM",
-            "Контрольные точки (MSP)",
+            "MSP: задача для метрик",
         ]
     )
 
@@ -1296,7 +1237,7 @@ if user is not None:
     # └──────────────────────────────────────────────────────────────────────┘ #
 
     # ┌──────────────────────────────────────────────────────────────────────┐ #
-    # │ ⊗ TAB 6: Контрольные точки (MSP) — вехи и маппинг к CSV MS Project     │ #
+    # │ ⊗ TAB 6: MSP — задача для метрик отчёта «Отклонение от базового плана»│ #
     # └──────────────────────────────────────────────────────────────────────┘ #
 
     with tab6:
