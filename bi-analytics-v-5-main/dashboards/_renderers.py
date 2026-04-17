@@ -2261,37 +2261,70 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
     _render_deviations_reasons_full_table(table_reason_df, building_col, notes_col_m)
 
 
-def _deviations_reason_color_map(reasons: list) -> dict:
-    """Стабильные цвета сегментов по тексту причины (частичное совпадение, lower)."""
-    rules = (
-        ("изменение объем", "#8bc34a"),
-        ("изменение расцен", "#ffeb3b"),
-        ("не передан фронт", "#26c6da"),
-        ("переделка", "#1b5e20"),
-        ("увеличение сроков по вине подрядчика", "#e91e63"),
-        ("проч", "#ab47bc"),
-        ("иное", "#ab47bc"),
-    )
-    out: dict[str, str] = {}
-    palette = px.colors.qualitative.Set2 + px.colors.qualitative.Pastel
-    pi = 0
-    for r in reasons:
-        if r is None or (isinstance(r, float) and pd.isna(r)):
-            continue
-        key = str(r).strip()
-        if not key or key in out:
-            continue
-        low = key.lower()
-        col = None
-        for sub, c in rules:
-            if sub in low:
-                col = c
-                break
-        if col is None:
-            col = palette[pi % len(palette)]
-            pi += 1
-        out[key] = col
-    return out
+def _deviations_contrast_text_on_fill(fill_hex: str | None) -> str:
+    """Цвет подписи внутри сегмента столбца: тёмный на светлой заливке, белый на тёмной."""
+    if not fill_hex or not isinstance(fill_hex, str):
+        return "#f5f5f5"
+    h = fill_hex.strip()
+    if not h.startswith("#"):
+        return "#f5f5f5"
+    h = h[1:]
+    try:
+        if len(h) == 3:
+            r = int(h[0] + h[0], 16)
+            g = int(h[1] + h[1], 16)
+            b = int(h[2] + h[2], 16)
+        elif len(h) == 6:
+            r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        else:
+            return "#f5f5f5"
+    except ValueError:
+        return "#f5f5f5"
+    lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
+    return "#141414" if lum > 0.62 else "#f5f5f5"
+
+
+# Порядок снизу вверх в стеке (первая категория — нижний сегмент), как в референсе отчёта.
+DEVIATIONS_REASON_BUCKET_ORDER: tuple[str, ...] = (
+    "Изменение объемов",
+    "Изменение расценки",
+    "Не передан фронт работ",
+    "Переделка за предыдущим подрядчиком",
+    "Увеличение сроков по вине подрядчика",
+    "Прочее",
+)
+
+
+def _deviations_reason_bucket_colors() -> dict[str, str]:
+    """Фиксированные цвета категорий причин (как в референсе отчёта)."""
+    return {
+        "Изменение объемов": "#cddc39",
+        "Изменение расценки": "#fbc02d",
+        "Не передан фронт работ": "#26c6da",
+        "Переделка за предыдущим подрядчиком": "#8bc34a",
+        "Увеличение сроков по вине подрядчика": "#9e9e9e",
+        "Прочее": "#e91e63",
+    }
+
+
+def _deviations_reason_bucket_label(raw_reason) -> str:
+    """Нормализация свободного текста причины в фиксированные категории легенды."""
+    if raw_reason is None or (isinstance(raw_reason, float) and pd.isna(raw_reason)):
+        return "Прочее"
+    s = str(raw_reason).strip().lower()
+    if not s:
+        return "Прочее"
+    if "измен" in s and "объем" in s:
+        return "Изменение объемов"
+    if "измен" in s and ("расцен" in s or "стоим" in s or "цен" in s):
+        return "Изменение расценки"
+    if "не передан фронт" in s or ("фронт" in s and "не передан" in s):
+        return "Не передан фронт работ"
+    if "переделк" in s:
+        return "Переделка за предыдущим подрядчиком"
+    if "увеличение срок" in s and "подрядчик" in s:
+        return "Увеличение сроков по вине подрядчика"
+    return "Прочее"
 
 
 # ==================== DASHBOARD 2: Dynamics of Deviations ====================
@@ -2763,41 +2796,78 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 reason_data = grouped_data
 
             reason_data = reason_data.copy()
-            reason_data["_seg_lbl"] = reason_data["Всего дней отклонений"].apply(
-                lambda x: (
-                    f"{int(round(float(x), 0))}"
-                    if pd.notna(x) and abs(float(x)) >= 0.5
-                    else ""
+            reason_data["_reason_bucket"] = reason_data["reason of deviation"].map(
+                _deviations_reason_bucket_label
+            )
+            reason_data = (
+                reason_data.groupby(["period", "_reason_bucket"], observed=False)
+                .agg({"Всего дней отклонений": "sum", "Количество задач": "sum"})
+                .reset_index()
+            )
+
+            _reason_order = list(DEVIATIONS_REASON_BUCKET_ORDER)
+            _clr_map = _deviations_reason_bucket_colors()
+            # Полная сетка «период × категория» с нулями — чтобы в легенде всегда были все строки, как в референсе.
+            _periods_grid = (
+                list(_period_cat_labels)
+                if _period_cat_labels
+                else reason_data["period"].drop_duplicates().tolist()
+            )
+            _grid_idx = pd.MultiIndex.from_product(
+                [_periods_grid, _reason_order],
+                names=["period", "_reason_bucket"],
+            )
+            reason_data = (
+                reason_data.set_index(["period", "_reason_bucket"])
+                .reindex(_grid_idx)
+                .reset_index()
+            )
+            reason_data["Всего дней отклонений"] = reason_data[
+                "Всего дней отклонений"
+            ].fillna(0.0)
+            reason_data["Количество задач"] = reason_data["Количество задач"].fillna(
+                0.0
+            )
+
+            def _seg_days_lbl(v) -> str:
+                if pd.isna(v):
+                    return ""
+                n = int(round(float(v), 0))
+                return str(n) if n != 0 else ""
+
+            reason_data["_seg_lbl"] = reason_data["Всего дней отклонений"].map(
+                _seg_days_lbl
+            )
+            try:
+                reason_data["period"] = pd.Categorical(
+                    reason_data["period"],
+                    categories=_periods_grid,
+                    ordered=True,
                 )
-            )
-            _r_uniq = (
-                reason_data["reason of deviation"]
-                .dropna()
-                .astype(str)
-                .str.strip()
-                .unique()
-                .tolist()
-            )
-            _clr_map = _deviations_reason_color_map(_r_uniq)
+            except (ValueError, TypeError):
+                pass
+
+            _period_x_title = f"Период ({str(period_label).lower()})"
             fig = px.bar(
                 reason_data,
                 x="period",
                 y="Всего дней отклонений",
-                color="reason of deviation",
+                color="_reason_bucket",
                 title=None,
                 color_discrete_map=_clr_map or None,
+                category_orders={"_reason_bucket": _reason_order},
                 labels={
-                    "period": "Период (по плану)",
-                    "Всего дней отклонений": "Сумма дней отклонений",
-                    "reason of deviation": "Причина отклонения",
+                    "period": _period_x_title,
+                    "Всего дней отклонений": "Дней отклонения (сумма по задачам)",
+                    "_reason_bucket": "Причина отклонения",
                 },
                 text="_seg_lbl",
             )
-            # Накопление: легенда справа; значения внутри сегментов; итог над столбцом
+            # Стек по причинам: подписи внутри сегментов + итог над/под столбцом (без линии тренда)
             fig.update_layout(
                 barmode="stack",
                 legend=dict(
-                    title=dict(text="Причина"),
+                    title=dict(text="Причина отклонения"),
                     orientation="v",
                     yanchor="top",
                     y=1,
@@ -2809,47 +2879,83 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 ),
                 margin=dict(l=56, r=280, t=40, b=140),
                 xaxis=dict(
-                    title="",
+                    title=_period_x_title,
                     tickangle=-45,
                     tickfont=dict(size=10),
                     automargin=True,
                 ),
-                yaxis=dict(title="Сумма дней отклонений", automargin=True),
+                yaxis=dict(
+                    title="Дней отклонения (сумма по задачам)", automargin=True
+                ),
                 height=580,
             )
             fig.update_traces(
                 textposition="inside",
                 insidetextanchor="middle",
-                textfont=dict(size=11, color="white"),
+                textangle=0,
+                cliponaxis=False,
             )
+            for tr in fig.data:
+                if getattr(tr, "type", None) != "bar":
+                    continue
+                mc = getattr(tr.marker, "color", None)
+                if isinstance(mc, str):
+                    tc = _deviations_contrast_text_on_fill(mc)
+                    tr.update(
+                        textfont=dict(color=tc, size=11),
+                        insidetextfont=dict(color=tc, size=11),
+                    )
 
             tot_period = (
                 reason_data.groupby("period", observed=False)["Всего дней отклонений"]
                 .sum()
                 .reset_index()
             )
-            tot_period["_tot_lbl"] = tot_period["Всего дней отклонений"].apply(
-                lambda v: str(int(round(float(v), 0))) if pd.notna(v) else ""
-            )
-            fig.add_trace(
-                go.Scatter(
-                    x=tot_period["period"],
-                    y=tot_period["Всего дней отклонений"],
-                    mode="text",
-                    text=tot_period["_tot_lbl"],
-                    textposition="top center",
-                    textfont=dict(color="#ffffff", size=12),
-                    showlegend=False,
-                    hoverinfo="skip",
-                )
-            )
+            for _, row in tot_period.iterrows():
+                v = row["Всего дней отклонений"]
+                if pd.isna(v):
+                    continue
+                txt = str(int(round(float(v), 0)))
+                x_pos = row["period"]
+                fv = float(v)
+                if fv >= 0:
+                    fig.add_annotation(
+                        x=x_pos,
+                        y=fv,
+                        text=f"<b>{txt}</b>",
+                        showarrow=False,
+                        xref="x",
+                        yref="y",
+                        xanchor="center",
+                        yanchor="bottom",
+                        yshift=8,
+                        font=dict(color="#f5f5f5", size=12),
+                    )
+                else:
+                    fig.add_annotation(
+                        x=x_pos,
+                        y=fv,
+                        text=f"<b>{txt}</b>",
+                        showarrow=False,
+                        xref="x",
+                        yref="y",
+                        xanchor="center",
+                        yanchor="top",
+                        yshift=-8,
+                        font=dict(color="#f5f5f5", size=12),
+                    )
 
             fig = _apply_bar_uniformtext(fig)
+            try:
+                fig.update_layout(uniformtext=dict(minsize=4, mode="show"))
+            except Exception:
+                pass
             fig = apply_chart_background(fig)
             render_chart(
                 fig,
-                caption_below="Накопительные дни отклонений по периоду и причинам: внутри сегментов — дни по причине, "
-                "над столбцом — итог по периоду.",
+                caption_below="Каждый столбец — один период; цвет сегмента — причина отклонения. "
+                "Внутри сегмента — сумма дней отклонения по этой причине за период; над столбцом (или под ним при отрицательной сумме) — "
+                "итог по всем причинам за период.",
             )
 
     # Summary table
