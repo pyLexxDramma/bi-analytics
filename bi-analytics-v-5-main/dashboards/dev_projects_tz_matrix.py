@@ -1852,11 +1852,11 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
         if str(c).endswith("_ok") or str(c).endswith("_warn_pct")
     ]
     export = view.drop(columns=drop_ok, errors="ignore")
-    csv_bytes = export.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-    st.download_button(
-        "Скачать таблицу (CSV)",
-        csv_bytes,
-        "control_points.csv",
-        "text/csv",
-        key="cp_csv_dl",
+    from utils import render_dataframe_excel_csv_downloads
+
+    render_dataframe_excel_csv_downloads(
+        export,
+        file_stem="control_points",
+        key_prefix="cp_msp_table",
+        csv_label="Скачать таблицу (CSV, для Excel)",
     )

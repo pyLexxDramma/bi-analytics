@@ -220,6 +220,7 @@ from utils import (
     ensure_budget_columns,
     ensure_date_columns,
     ensure_msp_hierarchy_columns,
+    outline_level_numeric,
     style_dataframe_for_dark_theme,
     plan_fact_dates_table_to_html,
     render_styled_table_to_html,
@@ -236,6 +237,8 @@ from utils import (
 # Максимальное число строк, передаваемых в Plotly для scatter/line-графиков.
 # Для агрегированных (bar, pie) ограничение не нужно — там строк обычно немного.
 _MAX_CHART_ROWS = 5_000
+
+_dev_outline_level_numeric = outline_level_numeric
 
 
 def _dev_tasks_find_column(df, possible_names):
@@ -258,51 +261,91 @@ def _dev_tasks_find_column(df, possible_names):
 
 
 def _dev_tasks_resolve_level_column(d: pd.DataFrame):
-    """Колонка числового уровня иерархии MSP (Outline Level и т.п.)."""
+    """Колонка числового уровня иерархии MSP (Outline / level structure / Уровень)."""
     if d is None or getattr(d, "empty", True):
         return None
-    # Как в web_loader._fill_section_from_task_tree: для дерева MSP нужен outline
-    # («Уровень_структуры» → level structure), а не обязательно колонка «Уровень».
+    candidates: list = []
+    seen = set()
+
+    def _add(col) -> None:
+        if col is None or col not in d.columns:
+            return
+        key = str(col).strip().lower()
+        if key in seen:
+            return
+        seen.add(key)
+        candidates.append(col)
+
     for c in d.columns:
         if str(c).strip().lower() == "level structure":
-            ls = pd.to_numeric(d[c], errors="coerce")
-            if ls.notna().any():
-                return c
-            break
-    preferred = (
+            _add(c)
+    for name in (
+        "level",
         "outline level",
         "outline_level",
-        "Outline Level",
+        "wbs level",
+        "wbs_level",
         "исходный уровень",
         "исходный_уровень",
-        "уровень структуры",
-        "Уровень_структуры",
-        "уровень иерархии",
-        "Исходный уровень",
-        "wbs level",
-        "WBS Level",
-        "level",
-    )
-    cols_lower = {str(c).strip().lower(): c for c in d.columns}
-    for w in preferred:
-        wn = w.lower()
-        if wn in cols_lower:
-            return cols_lower[wn]
+    ):
+        cols_lower = {str(x).strip().lower(): x for x in d.columns}
+        if name in cols_lower:
+            _add(cols_lower[name])
     for c in d.columns:
         sl = str(c).strip().lower()
         if "outline" in sl and "level" in sl.replace(" ", "") and "number" not in sl:
-            return c
-        if "wbs" in sl and "level" in sl.replace(" ", ""):
-            return c
+            _add(c)
+        if "wbs" in sl and "level" in sl.replace(" ", "") and "number" not in sl:
+            _add(c)
         if "уровень" in sl and "приоритет" not in sl and "риск" not in sl:
+            _add(c)
+
+    for c in candidates:
+        coerced = _dev_outline_level_numeric(d[c])
+        if coerced.notna().any():
             return c
     return None
 
 
-def _dev_tasks_build_ancestor_keys(df: pd.DataFrame, level_col, task_col) -> pd.DataFrame:
+def _deviations_msp_tier_levels(ln: pd.Series) -> tuple[int, int]:
+    """
+    Уровни MSP для фильтров «функциональный блок» и «строение».
+    Если в данных есть классические 2 и 3 — используем их; иначе — вторая и третья
+    уникальные величины уровня (экспорты, где нумерация начинается не с 2).
+    """
+    s = _dev_outline_level_numeric(ln).dropna()
+    us: list[int] = []
+    for x in s:
+        try:
+            v = int(round(float(x)))
+        except (TypeError, ValueError):
+            continue
+        if v not in us:
+            us.append(v)
+    us.sort()
+    if not us:
+        return 2, 3
+    if 2 in us and 3 in us:
+        return 2, 3
+    if len(us) >= 3:
+        return us[1], us[2]
+    if len(us) == 2:
+        return us[0], us[1]
+    return us[0], us[0]
+
+
+def _dev_tasks_build_ancestor_keys(
+    df: pd.DataFrame,
+    level_col,
+    task_col,
+    *,
+    block_outline_level: int = 2,
+    building_outline_level: int = 3,
+) -> pd.DataFrame:
     """
     По порядку строк MSP и колонке уровня строит ключи для фильтров:
-    задача ур. 2 (функциональный блок) и ур. 3 (строение) как предки текущей строки.
+    задача ур. block_outline_level (функциональный блок) и ур. building_outline_level (строение)
+    как предки текущей строки.
     """
     work = df.copy().reset_index(drop=True)
     if (
@@ -315,7 +358,7 @@ def _dev_tasks_build_ancestor_keys(df: pd.DataFrame, level_col, task_col) -> pd.
         work["_dt_lvl3_key"] = ""
         work["_dt_lvl_num"] = np.nan
         return work
-    lvl = pd.to_numeric(work[level_col], errors="coerce")
+    lvl = _dev_outline_level_numeric(work[level_col])
     names = work[task_col].map(lambda x: str(x).strip() if pd.notna(x) else "")
     stack = []
     r2, r3, lvn = [], [], []
@@ -339,12 +382,12 @@ def _dev_tasks_build_ancestor_keys(df: pd.DataFrame, level_col, task_col) -> pd.
         a2 = ""
         a3 = ""
         for le, nn in stack:
-            if le == 2:
+            if le == block_outline_level:
                 a2 = nn
-            if le == 3:
+            if le == building_outline_level:
                 a3 = nn
-        k2 = nm if L == 2 else a2
-        k3 = nm if L == 3 else a3
+        k2 = nm if L == block_outline_level else a2
+        k3 = nm if L == building_outline_level else a3
         r2.append(k2)
         r3.append(k3)
         stack.append((L, nm))
@@ -1148,6 +1191,75 @@ def _drop_deviation_hierarchy_artifacts(d: pd.DataFrame) -> pd.DataFrame:
     return d.drop(columns=drop, errors="ignore")
 
 
+# Разделитель для плоской модели «Блок · Раздел» (нет колонок уровня MSP в CSV/Excel)
+_DEVIATIONS_FLAT_FB_SEP = " · "
+
+
+def _deviations_resolve_task_col(df: pd.DataFrame):
+    if df is None or not hasattr(df, "columns"):
+        return None
+    if "task name" in df.columns:
+        return "task name"
+    return _dev_tasks_find_column(df, ["Задача", "task", "Task Name", "Название"])
+
+
+def _deviations_flat_fb_label(block_val, section_val) -> str:
+    b = (
+        str(block_val).strip()
+        if block_val is not None and not (isinstance(block_val, float) and pd.isna(block_val))
+        else ""
+    )
+    s = (
+        str(section_val).strip()
+        if section_val is not None and not (isinstance(section_val, float) and pd.isna(section_val))
+        else ""
+    )
+    if b and s:
+        return f"{b}{_DEVIATIONS_FLAT_FB_SEP}{s}"
+    return b or s or ""
+
+
+def _deviations_use_flat_block_section_task(df: pd.DataFrame) -> bool:
+    """Excel/фиксированный макет: Блок + Раздел + Задача без колонок outline MSP."""
+    if df is None or getattr(df, "empty", True):
+        return False
+    tc = _deviations_resolve_task_col(df)
+    if not tc or tc not in df.columns:
+        return False
+    if "block" not in df.columns or "section" not in df.columns:
+        return False
+    return _dev_tasks_resolve_level_column(df) is None
+
+
+def _deviations_flat_functional_block_options(df_slice: pd.DataFrame) -> list:
+    if df_slice is None or getattr(df_slice, "empty", True):
+        return ["Все"]
+    if "block" not in df_slice.columns or "section" not in df_slice.columns:
+        return ["Все"]
+    w = df_slice[["block", "section"]].copy()
+    w["_lbl"] = w.apply(lambda r: _deviations_flat_fb_label(r["block"], r["section"]), axis=1)
+    u = sorted({x for x in w["_lbl"].dropna().astype(str).str.strip().tolist() if x})
+    return ["Все"] + u
+
+
+def _deviations_flat_building_options(
+    df_slice: pd.DataFrame, selected_fb: str, task_col: str
+) -> list:
+    if df_slice is None or getattr(df_slice, "empty", True):
+        return ["Все"]
+    if not task_col or task_col not in df_slice.columns:
+        return ["Все"]
+    sub = df_slice
+    if selected_fb != "Все" and _DEVIATIONS_FLAT_FB_SEP in str(selected_fb):
+        parts = str(selected_fb).split(_DEVIATIONS_FLAT_FB_SEP, 1)
+        if len(parts) == 2:
+            blk, sec = parts[0].strip(), parts[1].strip()
+            sub = sub[sub["block"].astype(str).str.strip() == blk]
+            sub = sub[sub["section"].astype(str).str.strip() == sec]
+    u = sorted(sub[task_col].dropna().astype(str).str.strip().unique().tolist())
+    return ["Все"] + u
+
+
 def _deviations_apply_block_building_filters(
     filtered_df: pd.DataFrame,
     selected_block: str,
@@ -1155,7 +1267,7 @@ def _deviations_apply_block_building_filters(
     building_col,
 ):
     """
-    Функциональный блок — задачи уровня 2; строение — уровень 3 (иерархия по порядку строк MSP).
+    Функциональный блок и строение — по уровням MSP (2 и 3, если есть в данных; иначе вторая и третья ступени).
     Если колонки уровня нет — fallback на колонки block и строения в файле.
     """
     if filtered_df is None or getattr(filtered_df, "empty", True):
@@ -1170,7 +1282,15 @@ def _deviations_apply_block_building_filters(
     )
     use_hierarchy = bool(level_col and task_col and task_col in filtered_df.columns)
     if use_hierarchy:
-        wh = _dev_tasks_build_ancestor_keys(filtered_df, level_col, task_col)
+        _ln_fb = _dev_outline_level_numeric(filtered_df[level_col])
+        _blv, _bdv = _deviations_msp_tier_levels(_ln_fb)
+        wh = _dev_tasks_build_ancestor_keys(
+            filtered_df,
+            level_col,
+            task_col,
+            block_outline_level=_blv,
+            building_outline_level=_bdv,
+        )
         if selected_block != "Все":
             wh = wh[
                 wh["_dt_lvl2_key"].astype(str).str.strip()
@@ -1183,6 +1303,27 @@ def _deviations_apply_block_building_filters(
             ]
         return _drop_deviation_hierarchy_artifacts(wh)
     out = filtered_df
+    use_flat = (
+        task_col
+        and task_col in out.columns
+        and "block" in out.columns
+        and "section" in out.columns
+        and not use_hierarchy
+    )
+    if use_flat:
+        if selected_block != "Все":
+            sb = str(selected_block).strip()
+            if _DEVIATIONS_FLAT_FB_SEP in sb:
+                parts = sb.split(_DEVIATIONS_FLAT_FB_SEP, 1)
+                if len(parts) == 2:
+                    blk, sec = parts[0].strip(), parts[1].strip()
+                    out = out[out["block"].astype(str).str.strip() == blk]
+                    out = out[out["section"].astype(str).str.strip() == sec]
+            elif "block" in out.columns:
+                out = out[out["block"].astype(str).str.strip() == sb]
+        if selected_building != "Все":
+            out = out[out[task_col].astype(str).str.strip() == str(selected_building).strip()]
+        return out
     if selected_block != "Все" and "block" in out.columns:
         out = out[
             out["block"].astype(str).str.strip() == str(selected_block).strip()
@@ -1210,11 +1351,13 @@ def _deviations_project_slice_by_key(df: pd.DataFrame, state_key: str) -> pd.Dat
 
 
 def _render_deviations_combined_shared_filters(df):
+    ensure_msp_hierarchy_columns(df)
     with st.expander("Подсказка по общим фильтрам", expanded=False):
         st.caption(
-            "Общие фильтры для всех вкладок: проект; функциональный блок (уровень 2) и строение (уровень 3) "
-            "по иерархии MSP — либо колонки block/строение, если уровня нет; период по месяцу плана. "
-            "Фильтр «Причина» задаётся только у таблицы «Детальные данные» на первой вкладке. "
+            "Общие фильтры для всех вкладок: проект; функциональный блок и строение по иерархии MSP "
+            "(уровни 2 и 3, если они есть в файле; иначе вторая и третья ступень дерева) — либо колонки block/строение, "
+            "если уровня нет; период по месяцу плана; ТОП 5 — для диаграмм первой вкладки. "
+            "Фильтр «Причина» — только у таблицы «Детальные данные» на первой вкладке. "
             "Переключение вкладок не сбрасывает выбранные значения."
         )
     st.markdown(
@@ -1238,6 +1381,7 @@ def _render_deviations_combined_shared_filters(df):
         else _dev_tasks_find_column(df, ["Задача", "task", "Task Name", "Название"])
     )
     use_hierarchy = bool(level_col and task_col and task_col in df.columns)
+    use_flat_bs = _deviations_use_flat_block_section_task(df)
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -1248,10 +1392,18 @@ def _render_deviations_combined_shared_filters(df):
     with col2:
         df_opts = _deviations_project_slice_by_key(df, "devcombo_project")
         if use_hierarchy:
-            wh = _dev_tasks_build_ancestor_keys(df_opts.copy(), level_col, task_col)
-            ln = pd.to_numeric(wh[level_col], errors="coerce")
+            _ln_opts = _dev_outline_level_numeric(df_opts[level_col])
+            _blv, _bdv = _deviations_msp_tier_levels(_ln_opts)
+            wh = _dev_tasks_build_ancestor_keys(
+                df_opts.copy(),
+                level_col,
+                task_col,
+                block_outline_level=_blv,
+                building_outline_level=_bdv,
+            )
+            ln = _dev_outline_level_numeric(wh[level_col])
             block_opts = ["Все"] + sorted(
-                wh.loc[ln == 2, task_col]
+                wh.loc[ln == _blv, task_col]
                 .dropna()
                 .astype(str)
                 .str.strip()
@@ -1262,7 +1414,16 @@ def _render_deviations_combined_shared_filters(df):
                 "Функциональный блок",
                 block_opts,
                 key="devcombo_block",
-                help="Задачи уровня 2 (иерархия MSP по колонке уровня).",
+                help=f"Задачи уровня {_blv} (иерархия MSP по колонке уровня).",
+            )
+        elif use_flat_bs:
+            fb_opts = _deviations_flat_functional_block_options(df_opts)
+            st.selectbox(
+                "Функциональный блок",
+                fb_opts,
+                key="devcombo_block",
+                help="Нет колонки уровня MSP в файле: «Блок · Раздел» (аналог функционального блока). "
+                "Для списка задач уровня 2 по MSP загрузите выгрузку с «Уровень_структуры» / Outline Level.",
             )
         elif "block" in df.columns:
             blocks = ["Все"] + sorted(
@@ -1274,10 +1435,18 @@ def _render_deviations_combined_shared_filters(df):
     with col3:
         df_opts = _deviations_project_slice_by_key(df, "devcombo_project")
         if use_hierarchy:
-            wh = _dev_tasks_build_ancestor_keys(df_opts.copy(), level_col, task_col)
-            ln = pd.to_numeric(wh[level_col], errors="coerce")
+            _ln_opts_b = _dev_outline_level_numeric(df_opts[level_col])
+            _blv_b, _bdv_b = _deviations_msp_tier_levels(_ln_opts_b)
+            wh = _dev_tasks_build_ancestor_keys(
+                df_opts.copy(),
+                level_col,
+                task_col,
+                block_outline_level=_blv_b,
+                building_outline_level=_bdv_b,
+            )
+            ln = _dev_outline_level_numeric(wh[level_col])
             sb = st.session_state.get("devcombo_block", "Все")
-            w3 = wh[ln == 3]
+            w3 = wh[ln == _bdv_b]
             if sb != "Все":
                 w3 = w3[
                     w3["_dt_lvl2_key"].astype(str).str.strip()
@@ -1290,7 +1459,17 @@ def _render_deviations_combined_shared_filters(df):
                 "Строение",
                 build_opts,
                 key="devcombo_building",
-                help="Задачи уровня 3 в выбранном функциональном блоке.",
+                help=f"Задачи уровня {_bdv_b} в выбранном функциональном блоке (ур. {_blv_b}).",
+            )
+        elif use_flat_bs:
+            _tc_fb = _deviations_resolve_task_col(df_opts)
+            _sb_fb = st.session_state.get("devcombo_block", "Все")
+            _bld_opts = _deviations_flat_building_options(df_opts, _sb_fb, _tc_fb)
+            st.selectbox(
+                "Строение",
+                _bld_opts,
+                key="devcombo_building",
+                help="Задачи в выбранном «Блок · Раздел» (аналог строения / уровень 3 без MSP).",
             )
         elif building_col and building_col in df.columns:
             bvals = ["Все"] + sorted(
@@ -1327,6 +1506,13 @@ def _render_deviations_combined_shared_filters(df):
             st.selectbox("Период по", months_opts, key="devcombo_period_to")
         else:
             st.selectbox("Период по", ["Все"], key="devcombo_period_to", disabled=True)
+
+    st.checkbox(
+        "ТОП 5 причин отклонений",
+        value=False,
+        key="reason_top5",
+        help="На первой вкладке оставить только пять наиболее частых причин на диаграммах.",
+    )
 
     filtered_df = df.copy()
     selected_project = (
@@ -1445,6 +1631,8 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         )
         return
 
+    ensure_msp_hierarchy_columns(df)
+
     # При hide_shared_filters фильтры задаются в общем блоке; локальные selectbox не рисуются — задаём значения по умолчанию.
     selected_project = "Все"
 
@@ -1482,6 +1670,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             )
         )
         _use_hi_rs = bool(_lvl_rs and _task_rs and _task_rs in df.columns)
+        _use_flat_rs = _deviations_use_flat_block_section_task(df)
 
         col1, col2, col3 = st.columns(3)
 
@@ -1501,10 +1690,18 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         with col2:
             df_opts = _deviations_project_slice_by_key(df, "reason_project")
             if _use_hi_rs:
-                wh = _dev_tasks_build_ancestor_keys(df_opts.copy(), _lvl_rs, _task_rs)
-                ln = pd.to_numeric(wh[_lvl_rs], errors="coerce")
+                _ln_rs = _dev_outline_level_numeric(df_opts[_lvl_rs])
+                _blv_rs, _bdv_rs = _deviations_msp_tier_levels(_ln_rs)
+                wh = _dev_tasks_build_ancestor_keys(
+                    df_opts.copy(),
+                    _lvl_rs,
+                    _task_rs,
+                    block_outline_level=_blv_rs,
+                    building_outline_level=_bdv_rs,
+                )
+                ln = _dev_outline_level_numeric(wh[_lvl_rs])
                 block_opts = ["Все"] + sorted(
-                    wh.loc[ln == 2, _task_rs]
+                    wh.loc[ln == _blv_rs, _task_rs]
                     .dropna()
                     .astype(str)
                     .str.strip()
@@ -1515,7 +1712,16 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                     "Функциональный блок",
                     block_opts,
                     key="reason_block",
-                    help="Задачи уровня 2 (иерархия MSP по колонке уровня).",
+                    help=f"Задачи уровня {_blv_rs} (иерархия MSP по колонке уровня).",
+                )
+            elif _use_flat_rs:
+                fb_opts_rs = _deviations_flat_functional_block_options(df_opts)
+                st.selectbox(
+                    "Функциональный блок",
+                    fb_opts_rs,
+                    key="reason_block",
+                    help="Нет колонки уровня MSP в файле: «Блок · Раздел» (аналог функционального блока). "
+                    "Для списка задач уровня 2 по MSP загрузите выгрузку с «Уровень_структуры» / Outline Level.",
                 )
             elif "block" in df.columns:
                 blocks = ["Все"] + sorted(
@@ -1528,10 +1734,18 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         with col3:
             df_opts = _deviations_project_slice_by_key(df, "reason_project")
             if _use_hi_rs:
-                wh = _dev_tasks_build_ancestor_keys(df_opts.copy(), _lvl_rs, _task_rs)
-                ln = pd.to_numeric(wh[_lvl_rs], errors="coerce")
+                _ln_rs_b = _dev_outline_level_numeric(df_opts[_lvl_rs])
+                _blv_rsb, _bdv_rsb = _deviations_msp_tier_levels(_ln_rs_b)
+                wh = _dev_tasks_build_ancestor_keys(
+                    df_opts.copy(),
+                    _lvl_rs,
+                    _task_rs,
+                    block_outline_level=_blv_rsb,
+                    building_outline_level=_bdv_rsb,
+                )
+                ln = _dev_outline_level_numeric(wh[_lvl_rs])
                 sb = st.session_state.get("reason_block", "Все")
-                w3 = wh[ln == 3]
+                w3 = wh[ln == _bdv_rsb]
                 if sb != "Все":
                     w3 = w3[
                         w3["_dt_lvl2_key"].astype(str).str.strip()
@@ -1544,7 +1758,17 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                     "Строение",
                     build_opts,
                     key="reason_building",
-                    help="Задачи уровня 3 в выбранном функциональном блоке.",
+                    help=f"Задачи уровня {_bdv_rsb} в выбранном функциональном блоке (ур. {_blv_rsb}).",
+                )
+            elif _use_flat_rs:
+                _tc_rs = _deviations_resolve_task_col(df_opts)
+                _sb_rs = st.session_state.get("reason_block", "Все")
+                _bld_rs = _deviations_flat_building_options(df_opts, _sb_rs, _tc_rs)
+                st.selectbox(
+                    "Строение",
+                    _bld_rs,
+                    key="reason_building",
+                    help="Задачи в выбранном «Блок · Раздел» (аналог строения / уровень 3 без MSP).",
                 )
             elif building_col and building_col in df.columns:
                 bvals = ["Все"] + sorted(
@@ -1712,12 +1936,15 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         st.info("Нет данных для выбранных фильтров.")
         return
 
-    top5_only = st.checkbox(
-        "ТОП 5 причин отклонений",
-        value=False,
-        key="reason_top5",
-        help="Оставить только пять наиболее частых причин на диаграммах.",
-    )
+    if hide_shared_filters:
+        top5_only = bool(st.session_state.get("reason_top5", False))
+    else:
+        top5_only = st.checkbox(
+            "ТОП 5 причин отклонений",
+            value=False,
+            key="reason_top5",
+            help="Оставить только пять наиболее частых причин на диаграммах.",
+        )
 
     # Summary metrics: основная причина и доля (метрика «Всего задач» убрана по правкам макета)
     has_reason_col_metric = "reason of deviation" in filtered_df.columns
@@ -2034,6 +2261,39 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
     _render_deviations_reasons_full_table(table_reason_df, building_col, notes_col_m)
 
 
+def _deviations_reason_color_map(reasons: list) -> dict:
+    """Стабильные цвета сегментов по тексту причины (частичное совпадение, lower)."""
+    rules = (
+        ("изменение объем", "#8bc34a"),
+        ("изменение расцен", "#ffeb3b"),
+        ("не передан фронт", "#26c6da"),
+        ("переделка", "#1b5e20"),
+        ("увеличение сроков по вине подрядчика", "#e91e63"),
+        ("проч", "#ab47bc"),
+        ("иное", "#ab47bc"),
+    )
+    out: dict[str, str] = {}
+    palette = px.colors.qualitative.Set2 + px.colors.qualitative.Pastel
+    pi = 0
+    for r in reasons:
+        if r is None or (isinstance(r, float) and pd.isna(r)):
+            continue
+        key = str(r).strip()
+        if not key or key in out:
+            continue
+        low = key.lower()
+        col = None
+        for sub, c in rules:
+            if sub in low:
+                col = c
+                break
+        if col is None:
+            col = palette[pi % len(palette)]
+            pi += 1
+        out[key] = col
+    return out
+
+
 # ==================== DASHBOARD 2: Dynamics of Deviations ====================
 def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
 
@@ -2047,8 +2307,9 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         st.subheader("Динамика отклонений по месяцам")
         with st.expander("Подсказка", expanded=False):
             st.markdown(
-                "Проект, функциональный блок (ур. 2), строение (ур. 3) и период по плану — **общие фильтры выше**. "
-                "Здесь задаются ось времени (plan end или дата снимка) и шаг группировки."
+                "Проект, функциональный блок, строение и период по плану — **общие фильтры выше** "
+                "(уровни иерархии MSP подбираются по данным). Чекбокс **«ТОП 5 причин отклонений»** — над вкладками, "
+                "влияет на диаграммы первой вкладки. Здесь задаются ось времени (plan end или дата снимка) и шаг группировки."
             )
     else:
         st.header("Динамика отклонений по месяцам")
@@ -2503,22 +2764,36 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
 
             reason_data = reason_data.copy()
             reason_data["_seg_lbl"] = reason_data["Всего дней отклонений"].apply(
-                lambda x: f"{int(round(float(x), 0))}" if pd.notna(x) else ""
+                lambda x: (
+                    f"{int(round(float(x), 0))}"
+                    if pd.notna(x) and abs(float(x)) >= 0.5
+                    else ""
+                )
             )
+            _r_uniq = (
+                reason_data["reason of deviation"]
+                .dropna()
+                .astype(str)
+                .str.strip()
+                .unique()
+                .tolist()
+            )
+            _clr_map = _deviations_reason_color_map(_r_uniq)
             fig = px.bar(
                 reason_data,
                 x="period",
                 y="Всего дней отклонений",
                 color="reason of deviation",
                 title=None,
+                color_discrete_map=_clr_map or None,
                 labels={
-                    "period": "Период",
-                    "Всего дней отклонений": "Дни отклонений",
+                    "period": "Период (по плану)",
+                    "Всего дней отклонений": "Сумма дней отклонений",
                     "reason of deviation": "Причина отклонения",
                 },
                 text="_seg_lbl",
             )
-            # Накопление: легенда справа; промежуточные значения — внутри сегментов столбца
+            # Накопление: легенда справа; значения внутри сегментов; итог над столбцом
             fig.update_layout(
                 barmode="stack",
                 legend=dict(
@@ -2532,15 +2807,15 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     traceorder="normal",
                     itemsizing="constant",
                 ),
-                margin=dict(l=56, r=280, t=28, b=140),
+                margin=dict(l=56, r=280, t=40, b=140),
                 xaxis=dict(
                     title="",
                     tickangle=-45,
                     tickfont=dict(size=10),
                     automargin=True,
                 ),
-                yaxis=dict(title="Дни отклонений", automargin=True),
-                height=560,
+                yaxis=dict(title="Сумма дней отклонений", automargin=True),
+                height=580,
             )
             fig.update_traces(
                 textposition="inside",
@@ -2548,9 +2823,34 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 textfont=dict(size=11, color="white"),
             )
 
+            tot_period = (
+                reason_data.groupby("period", observed=False)["Всего дней отклонений"]
+                .sum()
+                .reset_index()
+            )
+            tot_period["_tot_lbl"] = tot_period["Всего дней отклонений"].apply(
+                lambda v: str(int(round(float(v), 0))) if pd.notna(v) else ""
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=tot_period["period"],
+                    y=tot_period["Всего дней отклонений"],
+                    mode="text",
+                    text=tot_period["_tot_lbl"],
+                    textposition="top center",
+                    textfont=dict(color="#ffffff", size=12),
+                    showlegend=False,
+                    hoverinfo="skip",
+                )
+            )
+
             fig = _apply_bar_uniformtext(fig)
             fig = apply_chart_background(fig)
-            render_chart(fig, caption_below="Дни отклонений по периоду и причинам")
+            render_chart(
+                fig,
+                caption_below="Накопительные дни отклонений по периоду и причинам: внутри сегментов — дни по причине, "
+                "над столбцом — итог по периоду.",
+            )
 
     # Summary table
     # If project is in group, show summary grouped by project overall (aggregate across all periods)

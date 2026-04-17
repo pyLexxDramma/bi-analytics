@@ -692,20 +692,17 @@ def render_sidebar_menu(current_page: str = "reports"):
 
                 st.markdown("---")
 
-        # Экспорт данных (CSV)
+        # Экспорт данных (CSV для Excel + Excel)
         if has_report_access(user["role"]):
             project_data = st.session_state.get("project_data")
             if project_data is not None and not project_data.empty:
-                csv_bytes = project_data.to_csv(
-                    index=False, encoding="utf-8-sig"
-                ).encode("utf-8-sig")
-                st.download_button(
-                    label="Экспорт данных CSV",
-                    data=csv_bytes,
-                    file_name="project_data_export.csv",
-                    mime="text/csv",
-                    width="stretch",
-                    key="sidebar_csv_export",
+                from utils import render_dataframe_excel_csv_downloads
+
+                render_dataframe_excel_csv_downloads(
+                    project_data,
+                    file_stem="project_data_export",
+                    key_prefix="sidebar_project_data",
+                    csv_label="Экспорт данных (CSV для Excel)",
                 )
 
         st.markdown("---")

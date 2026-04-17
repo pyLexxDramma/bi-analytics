@@ -68,7 +68,7 @@ from auth import (
 from config import DB_PATH, switch_page_app
 from logger import log_action, get_logs, get_logs_count
 from settings import get_setting, set_setting, get_all_settings, SETTING_KEYS
-from utils import format_dataframe_as_html, load_custom_css
+from utils import format_dataframe_as_html, load_custom_css, render_dataframe_excel_csv_downloads
 from permissions import (
     grant_project_access,
     revoke_project_access,
@@ -1141,12 +1141,12 @@ if user is not None:
             st.markdown(html_table, unsafe_allow_html=True)
 
             # Экспорт
-            csv = df_logs.to_csv(index=False, encoding="utf-8-sig")
-            st.download_button(
-                label="Скачать логи (CSV)",
-                data=csv,
-                file_name=f"logs_{datetime.now():%Y%m%d_%H%M%S}.csv",
-                mime="text/csv",
+            _logs_stem = f"logs_{datetime.now():%Y%m%d_%H%M%S}"
+            render_dataframe_excel_csv_downloads(
+                df_logs,
+                file_stem=_logs_stem,
+                key_prefix="admin_action_logs",
+                csv_label="Скачать логи (CSV для Excel)",
             )
 
         else:

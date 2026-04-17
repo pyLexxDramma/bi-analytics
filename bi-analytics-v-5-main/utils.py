@@ -151,6 +151,25 @@ def ensure_budget_columns(df: Optional[pd.DataFrame]) -> None:
                 break
 
 
+def outline_level_numeric(series: pd.Series) -> pd.Series:
+    """
+    Числовой уровень иерархии MSP (outline): 2, «2», «Уровень 2».
+    Используется в фильтрах «Функциональный блок»/«Строение» и при заполнении level structure.
+    """
+    if series is None or len(series) == 0:
+        return pd.Series(dtype=float)
+    num = pd.to_numeric(series, errors="coerce")
+    mask_na = num.isna()
+    if not mask_na.any():
+        return num
+    s_rest = series[mask_na].astype(str).str.strip()
+    ext = s_rest.str.extract(r"(-?\d+)", expand=False)
+    num2 = pd.to_numeric(ext, errors="coerce")
+    out = num.copy()
+    out.loc[mask_na] = num2.values
+    return out
+
+
 def ensure_date_columns(df: Optional[pd.DataFrame]) -> None:
     """
     Добавляет plan start, plan end, base start, base end из русских названий,
@@ -228,15 +247,23 @@ def ensure_msp_hierarchy_columns(df: Optional[pd.DataFrame]) -> None:
 
     if "level structure" not in df.columns:
         if src_outline is not None:
-            df["level structure"] = pd.to_numeric(df[src_outline], errors="coerce")
+            df["level structure"] = outline_level_numeric(df[src_outline])
         elif src_level is not None:
-            df["level structure"] = pd.to_numeric(df[src_level], errors="coerce")
+            df["level structure"] = outline_level_numeric(df[src_level])
+    elif src_outline is not None and df["level structure"].notna().sum() == 0:
+        df["level structure"] = outline_level_numeric(df[src_outline])
 
     if "level" not in df.columns:
         if src_level is not None:
-            df["level"] = pd.to_numeric(df[src_level], errors="coerce")
+            df["level"] = outline_level_numeric(df[src_level])
         elif "level structure" in df.columns:
             df["level"] = df["level structure"]
+    elif src_level is not None and df["level"].notna().sum() == 0:
+        df["level"] = outline_level_numeric(df[src_level])
+
+    for _col in ("level structure", "level"):
+        if _col in df.columns:
+            df[_col] = outline_level_numeric(df[_col])
 
 
 def get_russian_month_name(period_val: Any) -> str:

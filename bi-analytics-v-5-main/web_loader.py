@@ -314,6 +314,7 @@ def _apply_msp_column_mapping(df: pd.DataFrame, project_name: str) -> pd.DataFra
             df.loc[mask, "actual_quarter"] = df.loc[mask, "base end"].dt.to_period("Q")
             df.loc[mask, "actual_year"] = df.loc[mask, "base end"].dt.to_period("Y")
 
+    ensure_msp_hierarchy_columns(df)
     if "level" in df.columns and "task name" in df.columns:
         df = _fill_section_from_task_tree(df)
 
