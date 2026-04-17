@@ -1111,6 +1111,16 @@ def load_all_from_web() -> Dict:
                     if snapshot_date is not None:
                         df["snapshot_date"] = pd.Timestamp(snapshot_date)
                     file_type = "project"
+                elif file_type in ("resources", "technique"):
+                    # Для ГДРС/техники: дата снимка из имени файла (other_01-02-2026_resursi.csv и т.п.)
+                    _parts = name.replace(".csv", "").replace(".CSV", "").split("_")
+                    _snap = None
+                    for _p in reversed(_parts):
+                        _snap = _parse_snapshot_date(_p)
+                        if _snap is not None:
+                            break
+                    if _snap is not None and "snapshot_date" not in df.columns:
+                        df["snapshot_date"] = pd.Timestamp(_snap)
 
                 file_id = _register_file(cur, version_id, file_info, file_type, len(df))
                 _save_rows(cur, version_id, file_id, file_type, name, df)
@@ -1289,13 +1299,32 @@ def _load_version_data(version_id: int, file_type: str) -> Optional[pd.DataFrame
         # Порядок строк = порядок вставки при загрузке (= порядок строк в CSV). Без ORDER BY
         # порядок не определён — ломается обход дерева и колонка section (родитель ур.2, «Ковенанты»).
         rows = conn.execute(
-            "SELECT row_data FROM web_data WHERE version_id=? AND file_type=? ORDER BY id ASC",
+            "SELECT row_data, source_file FROM web_data WHERE version_id=? AND file_type=? ORDER BY id ASC",
             (version_id, file_type),
         ).fetchall()
         conn.close()
         if not rows:
             return None
-        records = [json.loads(r[0]) for r in rows]
+        records = []
+        for row_json, src_file in rows:
+            rec = json.loads(row_json)
+            if src_file:
+                rec["__source_file"] = str(src_file)
+            # Для старых версий БД: если snapshot_date не сохранён в row_data,
+            # восстанавливаем его из имени source_file (other_01-02-2026_resursi.csv и т.п.).
+            if "snapshot_date" not in rec and src_file:
+                try:
+                    parts = str(src_file).replace("\\", "/").split("/")[-1].replace(".csv", "").replace(".CSV", "").split("_")
+                    snap = None
+                    for p in reversed(parts):
+                        snap = _parse_snapshot_date(p)
+                        if snap is not None:
+                            break
+                    if snap is not None:
+                        rec["snapshot_date"] = pd.Timestamp(snap)
+                except Exception:
+                    pass
+            records.append(rec)
         return pd.DataFrame(records)
     except Exception:
         return None

@@ -411,9 +411,11 @@ def _gdrs_header_is_dd_mm_yyyy(name) -> bool:
     if isinstance(name, (pd.Timestamp, datetime, date)):
         return True
     t = str(name).strip()
-    if re.match(r"^\d{1,2}\.\d{1,2}\.\d{4}", t):
+    # 01.02.2026 / 1.2.26
+    if re.match(r"^\d{1,2}\.\d{1,2}\.\d{2,4}$", t):
         return True
-    if re.match(r"^\d{1,2}\.{2,3}\d{1,2}\.\d{4}", t):
+    # "грязные" заголовки вида 02..01.2026 / 02...01.26
+    if re.match(r"^\d{1,2}\.{2,3}\d{1,2}\.\d{2,4}$", t):
         return True
     return False
 
@@ -495,6 +497,11 @@ def _gdrs_is_plan_column_false_positive(col) -> bool:
         return True
     if "бюджет" in s:
         return True
+    # Метрики факта/средних и недельные поля не должны попадать в «План»
+    if "среднее" in s or "average" in s:
+        return True
+    if "недел" in s or "week" in s:
+        return True
     if "старт" in s or "конец" in s or "start" in s or "finish" in s:
         return True
     if s.startswith("планов") or s.startswith("планир"):
@@ -530,15 +537,6 @@ def _gdrs_resolve_plan_column(df: pd.DataFrame):
         if re.search(r"(?<!\w)план(?!\w)", tl, flags=re.UNICODE):
             return c
         if re.search(r"(?<!\w)plan(?!\w)", tl, flags=re.UNICODE):
-            return c
-    # Выгрузки договора: явное количество по ТЗ (ГДРС)
-    for c in df.columns:
-        if _gdrs_is_plan_column_false_positive(c):
-            continue
-        tl = str(c).strip().lower()
-        if "количество" in tl and (
-            "работник" in tl or "спецтех" in tl or "техник" in tl or "ресурс" in tl
-        ):
             return c
     return None
 
@@ -689,12 +687,21 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
     for c in ("plan start", "plan end", "base start", "base end"):
         if c in d.columns:
             d[c] = pd.to_datetime(d[c], errors="coerce", dayfirst=True)
+    # MSP-совместимость: причина/заметки могут приходить в русских колонках без ремапа.
+    reason_col = (
+        "reason of deviation"
+        if "reason of deviation" in d.columns
+        else _find_column_by_keywords(d, ("причина отклон", "reason of deviation", "reason"))
+    )
+    notes_col_eff = (
+        notes_col
+        if notes_col and notes_col in d.columns
+        else _find_column_by_keywords(d, ("заметк", "note", "comment", "remark", "notes"))
+    )
 
     headers = ["Проект", "Задача"]
     if "block" in d.columns:
         headers.append("Функциональный блок")
-    if building_col and building_col in d.columns:
-        headers.append("Строение")
     headers.extend(
         [
             "Начало",
@@ -727,9 +734,9 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
         pe = row.get("plan end")
         bs = row.get("base start")
         be = row.get("base end")
-        # ТЗ: отклонение начала = базовое(план) начало − фактическое начало (дни)
+        # ТЗ: отклонение начала = Базовое начало − Начало (дни)
         start_dev = _dev_days_diff(ps, bs)
-        # отклонение окончания: факт − план (дни); красный шрифт если > 0
+        # ТЗ: отклонение окончания = Окончание − Базовое окончание (дни); красный шрифт если > 0
         end_dev = _dev_days_diff(be, pe)
         dur_b = _dev_days_diff(pe, ps)
         dur_f = _dev_days_diff(be, bs)
@@ -742,8 +749,6 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
         ]
         if "block" in d.columns:
             cells.append(("", _clean_display_str(row.get("block"))))
-        if building_col and building_col in d.columns:
-            cells.append(("", _clean_display_str(row.get(building_col))))
         cells.extend(
             [
                 ("dev-bg-turq", _fmt_date_cell(bs)),
@@ -766,14 +771,14 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
                 ("dev-bg-dblue", _fmt_int_days(dur_f)),
                 (
                     "",
-                    _clean_display_str(row.get("reason of deviation"))
-                    if "reason of deviation" in d.columns
+                    _clean_display_str(row.get(reason_col))
+                    if reason_col and reason_col in d.columns
                     else "",
                 ),
                 (
                     "",
-                    _clean_display_str(row.get(notes_col))
-                    if notes_col and notes_col in d.columns
+                    _clean_display_str(row.get(notes_col_eff))
+                    if notes_col_eff and notes_col_eff in d.columns
                     else "",
                 ),
             ]
@@ -6339,7 +6344,7 @@ def dashboard_budget_cumulative(df):
             "Накопительные суммы по периоду; таблицы и подписи — в том же стиле, что отчёт «БДДС» (ТЗ, правки)."
         )
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         period_type = st.selectbox(
@@ -7709,7 +7714,47 @@ def dashboard_technique(df):
         work_df["План"] = work_df[_plan_src_t]
 
     date_cols_found = [c for c in work_df.columns if _gdrs_header_is_dd_mm_yyyy(c)]
-    if date_cols_found and "Период" not in work_df.columns:
+    _daily_dates: list[pd.Timestamp] = []
+    if date_cols_found:
+        _hdr_norm = (
+            pd.Series(date_cols_found)
+            .astype(str)
+            .str.replace(r"\.{2,3}", ".", regex=True)
+            .str.strip()
+        )
+        _parsed = pd.to_datetime(_hdr_norm, errors="coerce", dayfirst=True).dropna()
+        if not _parsed.empty:
+            _daily_dates = sorted(
+                list({pd.Timestamp(d).normalize() for d in _parsed.tolist()})
+            )
+    # Даты из заголовков (ДД.ММ.ГГГГ / DD.MM.YY) — для фильтра периода по дням.
+    _daily_dates: list[pd.Timestamp] = []
+    if date_cols_found:
+        _hdr_norm = (
+            pd.Series(date_cols_found)
+            .astype(str)
+            .str.replace(r"\.{2,3}", ".", regex=True)
+            .str.strip()
+        )
+        _daily_dates = [
+            pd.Timestamp(x).normalize()
+            for x in pd.to_datetime(_hdr_norm, errors="coerce", dayfirst=True).dropna().tolist()
+        ]
+        _daily_dates = sorted(list({d for d in _daily_dates}))
+    _period_missing_or_empty = (
+        "Период" not in work_df.columns
+        or work_df["Период"].astype(str).str.strip().replace({"nan": "", "None": ""}).eq("").all()
+    )
+    if date_cols_found and _period_missing_or_empty:
+        # Формируем период по датам заголовков (для файлов, где период не задан отдельной колонкой).
+        _hdr_ser = pd.Series(date_cols_found).astype(str).str.replace(r"\.{2,3}", ".", regex=True)
+        _parsed_header_dates = pd.to_datetime(
+            _hdr_ser, errors="coerce", dayfirst=True
+        ).dropna()
+        _period_from_headers = None
+        if not _parsed_header_dates.empty:
+            _period_from_headers = _parsed_header_dates.iloc[0].to_period("M")
+
         id_cols = [c for c in ["Проект", "Контрагент", "тип ресурсов", "data_source"]
                    if c in work_df.columns]
         avg_month_col = None
@@ -7742,6 +7787,8 @@ def dashboard_technique(df):
                     agg_spec[wn] = (wn, "first")
             agg = work_df.groupby(id_cols, dropna=False).agg(**agg_spec).reset_index()
             agg["Среднее за месяц"] = agg[date_cols_found].mean(axis=1).round(1)
+            if _period_from_headers is not None:
+                agg["Период"] = _period_from_headers
             if avg_month_col and avg_month_col in work_df.columns:
                 month_avg = work_df.groupby(id_cols, dropna=False)[avg_month_col].first().reset_index()
                 month_avg["_avg_num"] = pd.to_numeric(month_avg[avg_month_col], errors="coerce")
@@ -7751,6 +7798,8 @@ def dashboard_technique(df):
             work_df = agg
         else:
             work_df["Среднее за месяц"] = work_df[date_cols_found].mean(axis=1).round(1)
+            if _period_from_headers is not None:
+                work_df["Период"] = _period_from_headers
             work_df = work_df.drop(columns=date_cols_found, errors="ignore")
 
     def find_column_by_partial(df, possible_names):
@@ -7836,8 +7885,11 @@ def dashboard_technique(df):
             errors="coerce",
         ).fillna(0)
 
-    # Факт: sample_resources_data.csv — «Среднее за месяц»; sample_technique_data.csv — «Среднее за неделю»
-    if "Среднее за месяц" in work_df.columns:
+    # Факт: при наличии недельных колонок берём сумму 1..5 недели (приоритетнее средних).
+    if week_columns:
+        week_numeric_cols = [f"{col}_numeric" for col in week_columns]
+        work_df["week_sum"] = work_df[week_numeric_cols].sum(axis=1)
+    elif "Среднее за месяц" in work_df.columns:
         work_df["Среднее_за_месяц_numeric"] = pd.to_numeric(
             work_df["Среднее за месяц"]
             .astype(str)
@@ -7854,10 +7906,8 @@ def dashboard_technique(df):
             .str.replace(" ", ""),
             errors="coerce",
         ).fillna(0)
-        work_df["week_sum"] = work_df["Среднее_за_неделю_numeric"]
-    elif week_columns:
-        week_numeric_cols = [f"{col}_numeric" for col in week_columns]
-        work_df["week_sum"] = work_df[week_numeric_cols].sum(axis=1)
+        _nw = len(week_columns) if week_columns else 4
+        work_df["week_sum"] = work_df["Среднее_за_неделю_numeric"] * _nw
     else:
         work_df["week_sum"] = 0
 
@@ -7969,8 +8019,18 @@ def dashboard_technique(df):
         )
 
     period_col = _gdrs_resolve_period_column(work_df)
+    # Жёсткий fallback: если «Период» не найден, восстанавливаем его из датовых заголовков.
+    if period_col is None:
+        _date_cols_fb = [c for c in work_df.columns if _gdrs_header_is_dd_mm_yyyy(c)]
+        if _date_cols_fb:
+            _hdr_fb = pd.Series(_date_cols_fb).astype(str).str.replace(r"\.{2,3}", ".", regex=True)
+            _dt_fb = pd.to_datetime(_hdr_fb, errors="coerce", dayfirst=True).dropna()
+            if not _dt_fb.empty:
+                work_df = work_df.copy()
+                work_df["Период"] = _dt_fb.iloc[0].to_period("M")
+                period_col = "Период"
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         if project_col and project_col in work_df.columns:
@@ -7998,6 +8058,141 @@ def dashboard_technique(df):
             st.info("Колонка 'Контрагент' не найдена")
 
     selected_periods = []
+    selected_period_from = "Все"
+    selected_period_to = "Все"
+    period_value_by_label = {}
+    period_labels_sorted = []
+
+    def _gdrs_period_value_to_ts(v):
+        if v is None:
+            return pd.NaT
+        try:
+            ts = pd.to_datetime(v, errors="coerce", dayfirst=True)
+            if pd.notna(ts):
+                return ts.normalize()
+        except Exception:
+            pass
+        s = str(v).strip().lower()
+        if not s:
+            return pd.NaT
+        # "ноя.25" / "ноя 25" / "ноябрь 2025" -> 01.MM.YYYY
+        m = re.match(r"^([а-яa-z\.]+)[\s\.\-_/]*(\d{2,4})$", s, flags=re.IGNORECASE)
+        if m:
+            mon_raw, yy_raw = m.group(1), m.group(2)
+            mon_raw = mon_raw.replace(".", "")
+            mon_map = {
+                "янв": 1, "январь": 1,
+                "фев": 2, "февраль": 2,
+                "мар": 3, "март": 3,
+                "апр": 4, "апрель": 4,
+                "май": 5, "мая": 5,
+                "июн": 6, "июнь": 6,
+                "июл": 7, "июль": 7,
+                "авг": 8, "август": 8,
+                "сен": 9, "сент": 9, "сентябрь": 9,
+                "окт": 10, "октябрь": 10,
+                "ноя": 11, "ноябрь": 11,
+                "дек": 12, "декабрь": 12,
+                "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+                "jul": 7, "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
+            }
+            mm = mon_map.get(mon_raw)
+            if mm:
+                y = int(yy_raw)
+                if y < 100:
+                    y = 2000 + y
+                try:
+                    return pd.Timestamp(year=y, month=mm, day=1)
+                except Exception:
+                    return pd.NaT
+        return pd.NaT
+
+    with col3:
+        if period_col and period_col in work_df.columns:
+            raw_vals = (
+                work_df[period_col].dropna().astype(str).str.strip().tolist()
+            )
+            raw_vals = [v for v in raw_vals if v]
+            uniq_vals = sorted(set(raw_vals))
+            if uniq_vals:
+                parsed = [(v, _gdrs_period_value_to_ts(v)) for v in uniq_vals]
+                has_any_ts = any(pd.notna(ts) for _, ts in parsed)
+                if has_any_ts:
+                    parsed.sort(key=lambda it: (0, it[1]) if pd.notna(it[1]) else (1, str(it[0])))
+                    for v, ts in parsed:
+                        label = ts.strftime("%d.%m.%Y") if pd.notna(ts) else str(v)
+                        if label not in period_value_by_label:
+                            period_value_by_label[label] = v
+                            period_labels_sorted.append(label)
+                else:
+                    period_labels_sorted = sorted(uniq_vals)
+                    period_value_by_label = {v: v for v in period_labels_sorted}
+
+                selected_period_from = st.selectbox(
+                    "Период с (дата)",
+                    ["Все"] + period_labels_sorted,
+                    key=f"{key_prefix}_period_from",
+                )
+                selected_period_to = st.selectbox(
+                    "Период по (дата)",
+                    ["Все"] + period_labels_sorted,
+                    key=f"{key_prefix}_period_to",
+                )
+                if period_labels_sorted:
+                    i_from = period_labels_sorted.index(selected_period_from) if selected_period_from in period_labels_sorted else 0
+                    i_to = period_labels_sorted.index(selected_period_to) if selected_period_to in period_labels_sorted else (len(period_labels_sorted) - 1)
+                    if i_from > i_to:
+                        i_from, i_to = i_to, i_from
+                    selected_periods = [
+                        period_value_by_label[lbl]
+                        for lbl in period_labels_sorted[i_from : i_to + 1]
+                    ]
+            else:
+                st.info("Нет значений периода")
+        else:
+            st.info("Колонка 'Период' не найдена")
+    selected_period_from = "Все"
+    selected_period_to = "Все"
+    with col3:
+        if period_col and period_col in work_df.columns:
+            period_values = work_df[period_col].dropna().astype(str).str.strip()
+            period_values = [p for p in period_values.unique().tolist() if p]
+            if period_values:
+                # Сортировка: сначала по распознанной дате/периоду, затем лексикографически.
+                def _gdrs_period_sort_key(v):
+                    try:
+                        p = pd.Period(v, freq="M")
+                        return (0, p.ordinal)
+                    except Exception:
+                        pass
+                    try:
+                        ts = pd.to_datetime(v, errors="coerce", dayfirst=True)
+                        if pd.notna(ts):
+                            return (0, ts.to_period("M").ordinal)
+                    except Exception:
+                        pass
+                    return (1, str(v))
+
+                period_values = sorted(period_values, key=_gdrs_period_sort_key)
+                selected_period_from = st.selectbox(
+                    "Период с",
+                    ["Все"] + period_values,
+                    key=f"{key_prefix}_period_from",
+                )
+                selected_period_to = st.selectbox(
+                    "Период по",
+                    ["Все"] + period_values,
+                    key=f"{key_prefix}_period_to",
+                )
+                p_start = period_values.index(selected_period_from) if selected_period_from in period_values else 0
+                p_end = period_values.index(selected_period_to) if selected_period_to in period_values else len(period_values) - 1
+                if p_start > p_end:
+                    p_start, p_end = p_end, p_start
+                selected_periods = period_values[p_start : p_end + 1]
+            else:
+                st.info("Нет значений периода")
+        else:
+            st.info("Колонка 'Период' не найдена")
 
     # Apply filters
     filtered_df = work_df.copy()
@@ -9082,6 +9277,15 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
 
     date_cols_found = [c for c in work_df.columns if _gdrs_header_is_dd_mm_yyyy(c)]
     if date_cols_found and "Период" not in work_df.columns:
+        # Определяем период (месяц) по КАЖДОЙ строке на основе датовых колонок,
+        # чтобы строки из нескольких файлов (янв/фев) не схлопывались в один месяц.
+        _dc_to_period: dict[str, pd.Period] = {}
+        for dc in date_cols_found:
+            _dc_norm = re.sub(r"\.{2,3}", ".", str(dc).strip())
+            _dc_ts = pd.to_datetime(_dc_norm, errors="coerce", dayfirst=True)
+            if pd.notna(_dc_ts):
+                _dc_to_period[dc] = _dc_ts.to_period("M")
+
         id_cols = [c for c in ["Проект", "Контрагент", "тип ресурсов", "data_source"]
                    if c in work_df.columns]
         avg_month_col = None
@@ -9104,6 +9308,60 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         for dc in date_cols_found:
             work_df[dc] = pd.to_numeric(work_df[dc], errors="coerce")
 
+        _row_period_col = "__gdrs_row_period"
+        if _dc_to_period:
+            _masks = []
+            _vals = []
+            for _dc, _pr in _dc_to_period.items():
+                if _dc in work_df.columns:
+                    _masks.append(work_df[_dc].notna())
+                    _vals.append(_pr)
+            if _masks:
+                _row_period = pd.Series(pd.Period("1970-01", freq="M"), index=work_df.index)
+                _has_any = pd.Series(False, index=work_df.index)
+                for _mk, _pr in zip(_masks, _vals):
+                    _set_now = _mk & (~_has_any)
+                    if _set_now.any():
+                        _row_period.loc[_set_now] = _pr
+                        _has_any |= _set_now
+                # fallback-1: если строка без датовых значений — пробуем период из source_file (дата в имени файла).
+                _fallback_mask = ~_has_any
+                if _fallback_mask.any() and "__source_file" in work_df.columns:
+                    def _parse_snapshot_date_local(date_str: str):
+                        if not date_str:
+                            return None
+                        for _fmt in ("%d-%m-%Y", "%d.%m.%Y", "%Y-%m-%d"):
+                            try:
+                                return datetime.strptime(str(date_str).strip(), _fmt).date()
+                            except ValueError:
+                                continue
+                        return None
+
+                    def _src_to_period(v):
+                        if v is None:
+                            return None
+                        parts = str(v).replace("\\", "/").split("/")[-1].replace(".csv", "").replace(".CSV", "").split("_")
+                        for p in reversed(parts):
+                            sd = _parse_snapshot_date_local(p)
+                            if sd is not None:
+                                try:
+                                    return pd.Timestamp(sd).to_period("M")
+                                except Exception:
+                                    return None
+                        return None
+                    _src_period = work_df["__source_file"].map(_src_to_period)
+                    _src_ok = _src_period.notna() & _fallback_mask
+                    if _src_ok.any():
+                        _row_period.loc[_src_ok] = _src_period.loc[_src_ok]
+                        _has_any |= _src_ok
+
+                # fallback-2: если совсем нечего — используем первый доступный период.
+                if _vals:
+                    _row_period.loc[~_has_any] = _vals[0]
+                work_df[_row_period_col] = _row_period
+                if _row_period_col not in id_cols:
+                    id_cols.append(_row_period_col)
+
         if id_cols:
             agg_spec = {dc: (dc, "mean") for dc in date_cols_found}
             if "План" in work_df.columns and "План" not in id_cols:
@@ -9114,6 +9372,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     agg_spec[wn] = (wn, "first")
             agg = work_df.groupby(id_cols, dropna=False).agg(**agg_spec).reset_index()
             agg["Среднее за месяц"] = agg[date_cols_found].mean(axis=1).round(1)
+            if _row_period_col in agg.columns:
+                agg["Период"] = agg[_row_period_col]
+                agg = agg.drop(columns=[_row_period_col], errors="ignore")
             if avg_month_col and avg_month_col in work_df.columns:
                 month_avg = work_df.groupby(id_cols, dropna=False)[avg_month_col].first().reset_index()
                 month_avg["_avg_num"] = pd.to_numeric(month_avg[avg_month_col], errors="coerce")
@@ -9214,22 +9475,16 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             errors="coerce",
         ).fillna(0)
 
-    # Calculate sum of weeks (fact for the month = среднее за месяц)
-    # Handle both "Среднее за неделю" (resources) and "Среднее за месяц" (technique)
-    if "Среднее за неделю" in work_df.columns:
-        # If we have Среднее за неделю (resources), multiply by number of weeks (typically 4-5)
-        work_df["Среднее_за_неделю_numeric"] = pd.to_numeric(
-            work_df["Среднее за неделю"]
-            .astype(str)
-            .str.replace(",", ".")
-            .str.replace(" ", ""),
-            errors="coerce",
-        ).fillna(0)
-        # Calculate week_sum as Среднее за неделю * number of weeks
+    # Факт: приоритет — явная сумма 1..5 недели; средние используем только как fallback.
+    if week_columns:
+        week_numeric_cols = [f"{col}_numeric" for col in week_columns]
+        work_df["week_sum"] = work_df[week_numeric_cols].sum(axis=1)
         num_weeks = len(week_columns) if week_columns else 4
-        work_df["week_sum"] = work_df["Среднее_за_неделю_numeric"] * num_weeks
+        work_df["Среднее_за_неделю_numeric"] = (
+            work_df["week_sum"] / num_weeks if num_weeks > 0 else 0
+        )
     elif "Среднее за месяц" in work_df.columns:
-        # If we have Среднее за месяц (technique), use it directly as week_sum
+        # Если есть среднее за месяц — это fallback для факта за период
         work_df["Среднее_за_месяц_numeric"] = pd.to_numeric(
             work_df["Среднее за месяц"]
             .astype(str)
@@ -9238,20 +9493,21 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             errors="coerce",
         ).fillna(0)
         work_df["week_sum"] = work_df["Среднее_за_месяц_numeric"]
-        # Also create Среднее_за_неделю_numeric for consistency (divide by number of weeks)
         num_weeks = len(week_columns) if week_columns else 4
         work_df["Среднее_за_неделю_numeric"] = (
             work_df["week_sum"] / num_weeks if num_weeks > 0 else 0
         )
-    elif week_columns:
-        # Calculate from week columns if available
-        week_numeric_cols = [f"{col}_numeric" for col in week_columns]
-        work_df["week_sum"] = work_df[week_numeric_cols].sum(axis=1)
-        # Calculate average per week
+    elif "Среднее за неделю" in work_df.columns:
+        # Если есть только среднее за неделю — приводим к факту периода умножением на число недель
+        work_df["Среднее_за_неделю_numeric"] = pd.to_numeric(
+            work_df["Среднее за неделю"]
+            .astype(str)
+            .str.replace(",", ".")
+            .str.replace(" ", ""),
+            errors="coerce",
+        ).fillna(0)
         num_weeks = len(week_columns) if week_columns else 4
-        work_df["Среднее_за_неделю_numeric"] = (
-            work_df["week_sum"] / num_weeks if num_weeks > 0 else 0
-        )
+        work_df["week_sum"] = work_df["Среднее_за_неделю_numeric"] * num_weeks
     else:
         work_df["week_sum"] = 0
         work_df["Среднее_за_неделю_numeric"] = 0
@@ -9386,8 +9642,38 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         )
 
     period_col = _gdrs_resolve_period_column(work_df)
+    if period_col is None:
+        work_df = work_df.copy()
+        # 1) По заголовкам-датам (самый частый кейс web/AI resources).
+        _date_cols_fb = [c for c in work_df.columns if _gdrs_header_is_dd_mm_yyyy(c)]
+        _dt_fb = pd.Series(dtype="datetime64[ns]")
+        if _date_cols_fb:
+            _hdr_fb = (
+                pd.Series(_date_cols_fb)
+                .astype(str)
+                .str.replace(r"\.{2,3}", ".", regex=True)
+                .str.strip()
+            )
+            _dt_fb = pd.to_datetime(_hdr_fb, errors="coerce", dayfirst=True).dropna()
+        # 2) Из snapshot_date, если есть.
+        if _dt_fb.empty and "snapshot_date" in work_df.columns:
+            _sdt = pd.to_datetime(work_df["snapshot_date"], errors="coerce").dropna()
+            if not _sdt.empty:
+                # Берём по строкам из snapshot_date, чтобы в фильтре был выбор месяцев.
+                work_df["Период"] = pd.to_datetime(
+                    work_df["snapshot_date"], errors="coerce"
+                ).dt.to_period("M")
+                period_col = "Период"
+        if period_col is None and not _dt_fb.empty:
+            work_df["Период"] = _dt_fb.iloc[0].to_period("M")
+            period_col = "Период"
+        if period_col is None:
+            # Последний fallback для уже загруженных/старых версий без period/snapshot:
+            # не даём фильтру периода пропасть из UI.
+            work_df["Период"] = pd.Timestamp.today().to_period("M")
+            period_col = "Период"
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         if project_col and project_col in work_df.columns:
@@ -9415,6 +9701,73 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             st.info("Колонка 'Контрагент' не найдена")
 
     selected_periods = []
+    selected_daily_dates: list[pd.Timestamp] = []
+    # Локально вычисляем даты из заголовков, чтобы исключить NameError при любых рефакторах выше.
+    _daily_dates: list[pd.Timestamp] = []
+    _date_cols_local = [c for c in work_df.columns if _gdrs_header_is_dd_mm_yyyy(c)]
+    if _date_cols_local:
+        _hdr_local = (
+            pd.Series(_date_cols_local)
+            .astype(str)
+            .str.replace(r"\.{2,3}", ".", regex=True)
+            .str.strip()
+        )
+        _parsed_local = pd.to_datetime(_hdr_local, errors="coerce", dayfirst=True).dropna()
+        if not _parsed_local.empty:
+            _daily_dates = sorted(
+                list({pd.Timestamp(d).normalize() for d in _parsed_local.tolist()})
+            )
+    with col3:
+        if len(_daily_dates) > 1:
+            _labels = [d.strftime("%d.%m.%Y") for d in _daily_dates]
+            _from = st.selectbox("Период с (дата)", ["Все"] + _labels, key=f"{key_prefix}_period_from")
+            _to = st.selectbox("Период по (дата)", ["Все"] + _labels, key=f"{key_prefix}_period_to")
+            i_from = _labels.index(_from) if _from in _labels else 0
+            i_to = _labels.index(_to) if _to in _labels else len(_labels) - 1
+            if i_from > i_to:
+                i_from, i_to = i_to, i_from
+            selected_daily_dates = _daily_dates[i_from:i_to + 1]
+        elif period_col and period_col in work_df.columns:
+            _ser = work_df[period_col].dropna()
+            _labels = []
+            _vals = []
+            for v in _ser.tolist():
+                s = str(v).strip()
+                if not s:
+                    continue
+                # label для UI в формате даты/месяца
+                try:
+                    pv = pd.Period(s, freq="M")
+                    lbl = f"01.{pv.month:02d}.{pv.year}"
+                except Exception:
+                    ts = pd.to_datetime(s, errors="coerce", dayfirst=True)
+                    if pd.notna(ts):
+                        lbl = ts.strftime("%d.%m.%Y")
+                    else:
+                        lbl = s
+                if lbl not in _labels:
+                    _labels.append(lbl)
+                    _vals.append(s)
+            if _labels:
+                selected_period_from = st.selectbox(
+                    "Период с (дата)",
+                    ["Все"] + _labels,
+                    key=f"{key_prefix}_period_from",
+                )
+                selected_period_to = st.selectbox(
+                    "Период по (дата)",
+                    ["Все"] + _labels,
+                    key=f"{key_prefix}_period_to",
+                )
+                i_from = _labels.index(selected_period_from) if selected_period_from in _labels else 0
+                i_to = _labels.index(selected_period_to) if selected_period_to in _labels else (len(_labels) - 1)
+                if i_from > i_to:
+                    i_from, i_to = i_to, i_from
+                selected_periods = _vals[i_from:i_to + 1]
+            else:
+                st.info("Нет значений периода")
+        else:
+            st.info("Колонка 'Период' не найдена")
 
     # Apply filters
     filtered_df = work_df.copy()
@@ -9430,6 +9783,28 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         filtered_df = filtered_df[
             filtered_df["Контрагент"].astype(str).str.strip()
             == str(selected_contractor).strip()
+        ]
+    # Для файлов с суточными колонками: пересчёт План/Факт пропорционально выбранному диапазону дат.
+    if len(_daily_dates) > 1:
+        total_days = len(_daily_dates)
+        picked_days = len(selected_daily_dates) if selected_daily_dates else total_days
+        day_ratio = (float(picked_days) / float(total_days)) if total_days else 1.0
+        filtered_df = filtered_df.copy()
+        if "week_sum" in filtered_df.columns:
+            filtered_df["week_sum"] = (
+                pd.to_numeric(filtered_df["week_sum"], errors="coerce").fillna(0.0) * day_ratio
+            )
+        if "План_numeric" in filtered_df.columns:
+            filtered_df["План_numeric"] = (
+                pd.to_numeric(filtered_df["План_numeric"], errors="coerce").fillna(0.0) * day_ratio
+            )
+        if "Дельта_numeric" in filtered_df.columns:
+            filtered_df["Дельта_numeric"] = filtered_df["План_numeric"] - filtered_df["week_sum"]
+    if period_col and period_col in filtered_df.columns and selected_periods:
+        filtered_df = filtered_df[
+            filtered_df[period_col].astype(str).str.strip().isin(
+                [str(p).strip() for p in selected_periods]
+            )
         ]
 
     if filtered_df.empty:
@@ -9793,20 +10168,53 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             return None, None
         dev = plan_sum - fact_sum
         fp_pct = (fact_sum / plan_sum * 100.0) if plan_sum else 0.0
+        proj_col_local = "project name" if "project name" in d.columns else ("Проект" if "Проект" in d.columns else None)
+        proj_name = "Все проекты"
+        if proj_col_local and proj_col_local in d.columns:
+            _u = d[proj_col_local].dropna().astype(str).str.strip().unique().tolist()
+            if len(_u) == 1:
+                proj_name = _u[0]
+
+        def _fact_bar_color(plan_v: float, fact_v: float) -> str:
+            # По ТЗ: выполнен план — салатовый; иначе градиент от жёлтого к красному по степени просадки.
+            if plan_v <= 0:
+                return "#2ecc71"
+            if fact_v >= plan_v:
+                return "#9acd32"
+            miss_ratio = max(0.0, min(1.0, (plan_v - fact_v) / plan_v))
+            # Interpolate RGB: yellow(241,196,15) -> red(231,76,60)
+            y = (241, 196, 15)
+            r = (231, 76, 60)
+            rr = int(round(y[0] + (r[0] - y[0]) * miss_ratio))
+            gg = int(round(y[1] + (r[1] - y[1]) * miss_ratio))
+            bb = int(round(y[2] + (r[2] - y[2]) * miss_ratio))
+            return f"#{rr:02x}{gg:02x}{bb:02x}"
+
+        fact_color = _fact_bar_color(plan_sum, fact_sum)
         # Столбчатая план/факт: подписи над столбцами, нули видны (круговая скрывает нулевой сегмент)
         fig_pie_pf = go.Figure(
             data=[
                 go.Bar(
                     x=["План", "Факт"],
                     y=[plan_sum, fact_sum],
-                    marker_color=["#3498db", "#2ecc71"],
+                    marker_color=["#3498db", fact_color],
                     text=[
                         f"{int(round(plan_sum))}",
                         f"{int(round(fact_sum))}",
                     ],
                     textposition="outside",
                     textfont=dict(size=13, color="#ffffff"),
-                    hovertemplate="%{x}: %{y:,.0f}<extra></extra>",
+                    customdata=[
+                        [proj_name, int(round(plan_sum)), int(round(fact_sum)), int(round(dev))],
+                        [proj_name, int(round(plan_sum)), int(round(fact_sum)), int(round(dev))],
+                    ],
+                    hovertemplate=(
+                        "<b>%{x}</b><br>"
+                        "Проект: %{customdata[0]}<br>"
+                        "План: %{customdata[1]}<br>"
+                        "Факт: %{customdata[2]}<br>"
+                        "Отклонение: %{customdata[3]}<extra></extra>"
+                    ),
                 )
             ]
         )
@@ -9918,7 +10326,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         if (data_source_filter or "").strip().lower() == "техника":
             st.subheader("Техника (план/факт)")
         else:
-            st.subheader("Рабочие (план/факт)")
+            st.subheader("План/факт рабочие")
         pf_cols = st.columns(len(projects_to_process))
         for _ix, _pname in enumerate(projects_to_process):
             _pdf = filtered_df.copy()
@@ -10139,8 +10547,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                         f"**План:** {_pl_disp}\n\n"
                         f"**Факт:** {int(round(met_cf['fact']))}\n\n"
                         f"**Отклонение:** <span style='color:{_cfc};font-size:1.15em'>●</span> "
-                        f"{int(round(met_cf['dev']))}\n\n"
-                        + _gdrs_fp_pct_caption_line(met_cf),
+                        f"{int(round(met_cf['dev']))}",
                         unsafe_allow_html=True,
                     )
             else:
@@ -10251,10 +10658,22 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
 
         contractor_data = contractor_data.sort_values("План", ascending=False)
 
-        total_plan = contractor_data["План"].sum() or 1
-        total_fact = contractor_data["Среднее за месяц"].sum() or 1
-        plan_text = [f"{int(x)} ({x / total_plan * 100:.0f}%)" if pd.notna(x) else "0" for x in contractor_data["План"]]
-        fact_text = [f"{int(x)} ({x / total_fact * 100:.0f}%)" if pd.notna(x) else "0" for x in contractor_data["Среднее за месяц"]]
+        plan_base = contractor_data["План"].replace(0, np.nan)
+        fact_pct = (
+            (contractor_data["Среднее за месяц"] / plan_base * 100.0)
+            .round(0)
+            .fillna(0)
+        )
+        plan_text = [
+            f"{int(round(v, 0))} (100%)" if pd.notna(v) and float(v) > 0 else "0"
+            for v in contractor_data["План"]
+        ]
+        fact_text = [
+            f"{int(round(v, 0))} ({int(p)}%)"
+            if pd.notna(v)
+            else "0"
+            for v, p in zip(contractor_data["Среднее за месяц"], fact_pct)
+        ]
 
         fig_bar = go.Figure()
         fig_bar.add_trace(
@@ -10273,7 +10692,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 name="Среднее за месяц",
                 x=contractor_data["Контрагент"],
                 y=contractor_data["Среднее за месяц"],
-                marker_color="#2ecc71",
+                marker_color="#e67e22",
                 text=fact_text,
                 textposition="outside",
                 textfont=dict(size=12, color="white"),
@@ -11010,10 +11429,9 @@ def dashboard_technique_tabs(df):
         st.caption(
             "Данные из загруженных файлов ресурсов и техники. Если данных нет — загрузите соответствующие CSV-файлы."
         )
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3 = st.tabs([
         "Рабочая сила",
         "Техника",
-        "Динамика людей и техники",
         "СКУД по неделям",
     ])
     with tab1:
@@ -11023,9 +11441,6 @@ def dashboard_technique_tabs(df):
         st.subheader("График движения техники")
         dashboard_workforce_movement(df, data_source_filter="Техника", show_header=False, key_prefix="gdrs_technique")
     with tab3:
-        st.subheader("Динамика людей и техники")
-        dashboard_workforce_movement(df, data_source_filter=None, show_header=False, key_prefix="gdrs_dynamics")
-    with tab4:
         dashboard_skud_stroyka(df)
 
 
