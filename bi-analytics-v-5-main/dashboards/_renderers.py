@@ -32,6 +32,48 @@ def _project_name_select_options(series: pd.Series) -> list:
     return [p for p in uniq if p not in MSP_PROJECT_FILTER_EXCLUDE_NAMES]
 
 
+def _project_filter_norm_key(val) -> str:
+    """Ключ для сравнения названий проекта (скрытые дубли в фильтре, совпадение с выбором)."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return ""
+    s = (
+        str(val)
+        .replace("\xa0", " ")
+        .replace("\u200b", "")
+        .replace("\ufeff", "")
+        .strip()
+    )
+    while "  " in s:
+        s = s.replace("  ", " ")
+    sl = s.casefold()
+    if sl in ("", "nan", "none", "nat"):
+        return ""
+    return sl
+
+
+def _unique_project_labels_for_select(series: pd.Series) -> list[str]:
+    """Уникальные подписи для selectbox: один пункт на один нормализованный ключ (короче имя — приоритет)."""
+    if series is None or getattr(series, "empty", True):
+        return []
+    by_key: dict[str, str] = {}
+    for raw in series.dropna().unique():
+        s = (
+            str(raw)
+            .replace("\xa0", " ")
+            .replace("\u200b", "")
+            .replace("\ufeff", "")
+            .strip()
+        )
+        while "  " in s:
+            s = s.replace("  ", " ")
+        k = s.casefold()
+        if not k or k in ("nan", "none", "nat"):
+            continue
+        if k not in by_key or len(s) < len(by_key[k]):
+            by_key[k] = s
+    return sorted(by_key.values(), key=lambda x: x.casefold())
+
+
 def _session_reset_project_if_excluded(state_key: str) -> None:
     """Если в session_state сохранён исключённый проект — сброс на «Все»."""
     try:
@@ -7145,7 +7187,23 @@ def dashboard_rd_delay(df):
         ],
     )
     plan_end_col = "plan end" if "plan end" in df.columns else find_column(df, ["Конец План", "План Конец", "План окончания ПД/РД"])
-    fact_end_col = "base end" if "base end" in df.columns else find_column(df, ["Конец Факт", "Факт Конец", "Факт окончания ПД/РД"])
+    actual_finish_col = (
+        "actual finish"
+        if "actual finish" in df.columns
+        else find_column(
+            df,
+            ["actual finish", "Фактическое окончание", "Окончание факт", "Факт окончание"],
+        )
+    )
+    fact_end_col = (
+        actual_finish_col
+        if actual_finish_col and actual_finish_col in df.columns
+        else (
+            "base end"
+            if "base end" in df.columns
+            else find_column(df, ["Конец Факт", "Факт Конец", "Факт окончания ПД/РД"])
+        )
+    )
 
     # Check if required columns exist (section optional — заменён фильтром по виду документации)
     missing_cols = []
@@ -7159,20 +7217,25 @@ def dashboard_rd_delay(df):
         st.info("Пожалуйста, убедитесь, что файл содержит все необходимые колонки.")
         return
 
-    # Колонка для фильтра по виду документации (ПД/РД)
-    doc_type_col = find_column(
-        df,
-        ["Вид документации", "Тип документации", "ПД/РД", "Вид док", "Document type", "document type"],
-    )
+    def _to_numeric_series(series):
+        return pd.to_numeric(
+            series.astype(str)
+            .str.replace(" ", "", regex=False)
+            .str.replace(",", ".", regex=False),
+            errors="coerce",
+        ).fillna(0.0)
+
+    def _to_datetime_series(series):
+        return pd.to_datetime(series.astype(str), errors="coerce", dayfirst=True, format="mixed")
 
     # Add filters
     st.subheader("Фильтры")
-    filter_col1, filter_col2, filter_col3 = st.columns(3)
+    filter_col1, filter_col2 = st.columns(2)
 
     # Project filter
     with filter_col1:
         try:
-            projects = ["Все"] + sorted(df[project_col].dropna().unique().tolist())
+            projects = ["Все"] + _unique_project_labels_for_select(df[project_col])
             selected_project = st.selectbox(
                 "Фильтр по проекту", projects, key="rd_delay_project"
             )
@@ -7180,35 +7243,39 @@ def dashboard_rd_delay(df):
             st.error(f"Ошибка при загрузке списка проектов: {str(e)}")
             return
 
-    # Filter by documentation type (ПД / РД) — вместо фильтра по разделу
+    # Filter by RD section kind
+    selected_section = "Все"
     with filter_col2:
-        doc_type_options = ["Все", "Рабочая документация (РД)", "Проектная документация (ПД)"]
-        selected_doc_type = st.selectbox(
-            "Фильтр по виду документации",
-            doc_type_options,
-            key="rd_delay_doc_type",
-        )
+        if section_col and section_col in df.columns:
+            section_options = sorted(
+                {
+                    str(v).strip()
+                    for v in df[section_col].dropna().tolist()
+                    if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
+                },
+                key=lambda x: x.casefold(),
+            )
+            selected_section = st.selectbox(
+                "Фильтр по виду раздела РД",
+                ["Все"] + section_options,
+                key="rd_delay_section",
+            )
+        else:
+            st.caption("Колонка раздела РД не найдена.")
 
     # Apply filters
     filtered_df = df.copy()
 
     if selected_project != "Все":
+        _pk = _project_filter_norm_key(selected_project)
         filtered_df = filtered_df[
-            filtered_df[project_col].astype(str).str.strip()
-            == str(selected_project).strip()
+            filtered_df[project_col].map(_project_filter_norm_key) == _pk
         ]
 
-    if selected_doc_type != "Все" and doc_type_col and doc_type_col in filtered_df.columns:
-        doc_str = filtered_df[doc_type_col].astype(str).str.strip().str.upper()
-        if "Рабочая документация (РД)" in selected_doc_type or selected_doc_type == "РД":
-            filtered_df = filtered_df[doc_str.str.contains("РД", na=False) | doc_str.str.contains("РАБОЧАЯ", na=False)]
-        elif "Проектная документация (ПД)" in selected_doc_type or selected_doc_type == "ПД":
-            filtered_df = filtered_df[doc_str.str.contains("ПД", na=False) | doc_str.str.contains("ПРОЕКТНАЯ", na=False)]
-    elif selected_doc_type != "Все" and (not doc_type_col or doc_type_col not in df.columns):
-        with st.expander("Ограничение фильтра ПД/РД", expanded=False):
-            st.caption(
-                "В данных нет колонки для фильтра по виду документации (например, «Вид документации» или «ПД/РД»)."
-            )
+    if selected_section != "Все" and section_col and section_col in filtered_df.columns:
+        filtered_df = filtered_df[
+            filtered_df[section_col].astype(str).str.strip() == selected_section
+        ]
 
     if filtered_df.empty:
         st.info("Нет данных для выбранных фильтров.")
@@ -7228,47 +7295,37 @@ def dashboard_rd_delay(df):
     # X-axis: "Задача" (each task is a separate bar)
     # Y-axis: "Отклонение разделов РД" (deviation values)
     try:
-        # Convert "Отклонение разделов РД" to numeric - handle comma as decimal separator
-        # First, get the raw column values
         rd_deviation_raw = filtered_df[rd_deviation_col].copy()
-
-        # Convert to string, handling NaN properly
         rd_deviation_str = rd_deviation_raw.astype(str)
-
-        # Replace various representations of empty/NaN values with empty string
         rd_deviation_str = rd_deviation_str.replace(
             ["nan", "None", "NaN", "NaT", "<NA>", "None"], ""
         )
-
-        # Strip whitespace
         rd_deviation_str = rd_deviation_str.str.strip()
-
-        # Replace comma with dot for decimal separator FIRST (European format: 6,00 -> 6.00)
         rd_deviation_str = rd_deviation_str.str.replace(",", ".", regex=False)
-
-        # Now replace empty strings with '0' AFTER comma replacement
         rd_deviation_str = rd_deviation_str.replace("", "0")
-
-        # Convert to numeric - this handles most cases
         filtered_df["rd_deviation_numeric"] = pd.to_numeric(
             rd_deviation_str, errors="coerce"
         ).fillna(0)
 
         # Числовые колонки для % выполнения РД/ПД
         if rd_plan_col and rd_plan_col in filtered_df.columns:
-            filtered_df["_rd_plan_n"] = pd.to_numeric(
-                filtered_df[rd_plan_col].astype(str).str.replace(",", ".").str.replace(" ", ""),
-                errors="coerce",
-            ).fillna(0)
+            filtered_df["_rd_plan_n"] = _to_numeric_series(filtered_df[rd_plan_col])
         else:
             filtered_df["_rd_plan_n"] = 0
         if rd_fact_col and rd_fact_col in filtered_df.columns:
-            filtered_df["_rd_fact_n"] = pd.to_numeric(
-                filtered_df[rd_fact_col].astype(str).str.replace(",", ".").str.replace(" ", ""),
-                errors="coerce",
-            ).fillna(0)
+            filtered_df["_rd_fact_n"] = _to_numeric_series(filtered_df[rd_fact_col])
         else:
             filtered_df["_rd_fact_n"] = 0
+        filtered_df["_plan_end_dt"] = (
+            _to_datetime_series(filtered_df[plan_end_col])
+            if plan_end_col and plan_end_col in filtered_df.columns
+            else pd.NaT
+        )
+        filtered_df["_fact_end_dt"] = (
+            _to_datetime_series(filtered_df[fact_end_col])
+            if fact_end_col and fact_end_col in filtered_df.columns
+            else pd.NaT
+        )
 
         # Группировка: по проекту (фильтр по разделу заменён на вид документации)
         show_by_tasks = False
@@ -7349,6 +7406,9 @@ def dashboard_rd_delay(df):
                 text_values.append(pct if pct else "")
 
         # Create horizontal bar chart
+        chart_data["_severity"] = chart_data["Отклонение разделов РД"].clip(lower=0)
+        severity_max = float(chart_data["_severity"].max()) if not chart_data.empty else 0.0
+        severity_max = max(severity_max, 1.0)
         fig = px.bar(
             chart_data,
             x="Отклонение разделов РД",
@@ -7360,7 +7420,13 @@ def dashboard_rd_delay(df):
                 "Отклонение разделов РД": "Отклонение разделов РД",
             },
             text=text_values,
-            color_discrete_sequence=["#2E86AB"],  # Single color for all bars
+            color="_severity",
+            color_continuous_scale=[
+                (0.0, "#27AE60"),
+                (0.5, "#F1C40F"),
+                (1.0, "#C0392B"),
+            ],
+            range_color=(0.0, severity_max),
         )
 
         # Format text labels (same as "Отклонение от базового плана")
@@ -7384,6 +7450,7 @@ def dashboard_rd_delay(df):
                 600, len(chart_data) * 40
             ),  # Adjust height based on number of items
             showlegend=False,
+            coloraxis_showscale=False,
             yaxis=dict(
                 tickangle=0,  # Horizontal labels
                 categoryorder="array",
@@ -7397,6 +7464,94 @@ def dashboard_rd_delay(df):
         fig = _apply_bar_uniformtext(fig)
         fig = apply_chart_background(fig)
         render_chart(fig, caption_below="Просрочка выдачи РД")
+
+        if plan_end_col and plan_end_col in filtered_df.columns:
+            month_df = filtered_df[filtered_df["_plan_end_dt"].notna()].copy()
+            if not month_df.empty:
+                today_ts = pd.Timestamp(date.today())
+                month_df["_month"] = month_df["_plan_end_dt"].dt.to_period("M")
+                month_df["_done_n"] = np.where(
+                    month_df["_rd_fact_n"] > 0,
+                    np.minimum(month_df["_rd_plan_n"], month_df["_rd_fact_n"]),
+                    0.0,
+                )
+                month_df["_remaining_n"] = (
+                    month_df["_rd_plan_n"] - month_df["_done_n"]
+                ).clip(lower=0.0)
+                month_df["_overdue_n"] = np.where(
+                    (month_df["_remaining_n"] > 0)
+                    & (month_df["_plan_end_dt"] < today_ts),
+                    month_df["_remaining_n"],
+                    0.0,
+                )
+                month_df["_delta_n"] = (
+                    month_df["_remaining_n"] - month_df["_overdue_n"]
+                ).clip(lower=0.0)
+
+                monthly = (
+                    month_df.groupby("_month", as_index=False)
+                    .agg(
+                        plan=("_rd_plan_n", "sum"),
+                        done=("_done_n", "sum"),
+                        delta=("_delta_n", "sum"),
+                        overdue=("_overdue_n", "sum"),
+                    )
+                    .sort_values("_month")
+                )
+                monthly = monthly[monthly["plan"] > 0].copy()
+                if not monthly.empty:
+                    monthly["Месяц"] = monthly["_month"].apply(
+                        lambda p: f"{RUSSIAN_MONTHS.get(p.month, str(p.month))} {p.year}"
+                    )
+                    monthly["Выполнено"] = (monthly["done"] / monthly["plan"] * 100).round(1)
+                    monthly["Разница план/факт"] = (
+                        monthly["delta"] / monthly["plan"] * 100
+                    ).round(1)
+                    monthly["Просрочено"] = (
+                        monthly["overdue"] / monthly["plan"] * 100
+                    ).round(1)
+
+                    monthly_plot_df = monthly.melt(
+                        id_vars=["Месяц"],
+                        value_vars=["Выполнено", "Разница план/факт", "Просрочено"],
+                        var_name="Статус",
+                        value_name="Процент",
+                    )
+                    monthly_plot_df["Подпись"] = monthly_plot_df["Процент"].apply(
+                        lambda v: f"{v:.0f}%" if pd.notna(v) and float(v) > 0 else ""
+                    )
+
+                    st.subheader("Динамика по месяцам")
+                    fig_months = px.bar(
+                        monthly_plot_df,
+                        x="Месяц",
+                        y="Процент",
+                        color="Статус",
+                        barmode="stack",
+                        text="Подпись",
+                        color_discrete_map={
+                            "Выполнено": "#27AE60",
+                            "Разница план/факт": "#F39C12",
+                            "Просрочено": "#C0392B",
+                        },
+                    )
+                    fig_months.update_layout(
+                        xaxis_title="Месяц",
+                        yaxis_title="% РД",
+                        yaxis=dict(range=[0, 100], ticksuffix="%"),
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.02,
+                            xanchor="left",
+                            x=0,
+                            title_text="",
+                        ),
+                        height=520,
+                    )
+                    fig_months.update_traces(textposition="inside", textfont=dict(size=10))
+                    fig_months = apply_chart_background(fig_months)
+                    render_chart(fig_months, caption_below="Динамика по месяцам")
 
         # Summary table (с % выполнения РД/ПД и раскраской отклонения: >0 красный, <=0 зелёный)
         st.subheader("Сводка по просрочке")
@@ -7428,12 +7583,12 @@ def dashboard_rd_delay(df):
             st.subheader("План и факт окончания ПД/РД")
             date_df = filtered_df.copy()
             if plan_end_col and plan_end_col in date_df.columns:
-                date_df["План окончания ПД/РД"] = pd.to_datetime(date_df[plan_end_col], errors="coerce")
+                date_df["План окончания ПД/РД"] = _to_datetime_series(date_df[plan_end_col])
                 date_df["План окончания ПД/РД"] = date_df["План окончания ПД/РД"].dt.strftime("%d.%m.%Y")
             else:
                 date_df["План окончания ПД/РД"] = ""
             if fact_end_col and fact_end_col in date_df.columns:
-                date_df["Факт окончания ПД/РД"] = pd.to_datetime(date_df[fact_end_col], errors="coerce")
+                date_df["Факт окончания ПД/РД"] = _to_datetime_series(date_df[fact_end_col])
                 date_df["Факт окончания ПД/РД"] = date_df["Факт окончания ПД/РД"].dt.strftime("%d.%m.%Y")
             else:
                 date_df["Факт окончания ПД/РД"] = ""
@@ -7442,22 +7597,13 @@ def dashboard_rd_delay(df):
                 tab_cols.append(project_col)
             if section_col and section_col in date_df.columns:
                 tab_cols.append(section_col)
-            _task_disp = (
-                "_task_display_tessa"
-                if "_task_display_tessa" in date_df.columns
-                else task_col
-            )
-            if _task_disp and _task_disp in date_df.columns:
-                tab_cols.append(_task_disp)
             tab_cols.extend(["План окончания ПД/РД", "Факт окончания ПД/РД"])
             date_table = date_df[[c for c in tab_cols if c in date_df.columns]].drop_duplicates()
             rename_map = {}
             if project_col and project_col in date_table.columns:
                 rename_map[project_col] = "Проект"
             if section_col and section_col in date_table.columns:
-                rename_map[section_col] = "Раздел"
-            if _task_disp and _task_disp in date_table.columns:
-                rename_map[_task_disp] = "Задача"
+                rename_map[section_col] = "Направление раздела РД"
             date_table = date_table.rename(columns=rename_map)
             st.markdown(
                 plan_fact_dates_table_to_html(
@@ -12666,8 +12812,8 @@ def dashboard_documentation(
     if page_title == "Проектная документация":
         with st.expander("Примечание по проектной документации", expanded=False):
             st.markdown(
-                "По правкам заказчика ПД строится на задачах MSP (уровень 5, родитель «Проектная документация»). "
-                "Ниже — текущий экран РД/выдачи; отдельная логика и графики ПД будут уточнены на следующих шагах."
+                "ПД строится на задачах MSP уровня 5 с родителем «Проектная документация». "
+                "Фильтры, динамика и блок просрочки ниже рассчитываются по этому набору задач."
             )
 
     if df is None or not hasattr(df, "columns") or df.empty:
@@ -12770,6 +12916,26 @@ def dashboard_documentation(
         st.info("Пожалуйста, убедитесь, что файл содержит все необходимые колонки.")
         return
 
+    section_col = (
+        "section" if "section" in df.columns else find_column(df, ["Раздел", "section"])
+    )
+    contractor_col = find_column(df, ["Выдана подрядчику", "подрядчику"])
+    rework_col = find_column(df, ["На доработке", "доработке"])
+    period_source_col = (
+        plan_end_col if plan_end_col and plan_end_col in df.columns else plan_start_col
+    )
+
+    def _to_numeric_series(series):
+        return pd.to_numeric(
+            series.astype(str)
+            .str.replace(" ", "", regex=False)
+            .str.replace(",", ".", regex=False),
+            errors="coerce",
+        ).fillna(0.0)
+
+    def _to_datetime_series(series):
+        return pd.to_datetime(series.astype(str), errors="coerce", dayfirst=True, format="mixed")
+
     # Find project column for filtering
     project_col = (
         "project name"
@@ -12779,13 +12945,13 @@ def dashboard_documentation(
 
     # Add filters
     st.subheader("Фильтры")
-    filter_col1, filter_col2, filter_col3 = st.columns(3)
+    filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
 
     # Filter by project
     selected_project = "Все"
     if project_col and project_col in df.columns:
         with filter_col1:
-            projects = ["Все"] + sorted(df[project_col].dropna().unique().tolist())
+            projects = ["Все"] + _unique_project_labels_for_select(df[project_col])
             selected_project = st.selectbox(
                 "Фильтр по проекту", projects, key=f"{_doc_fk}project_filter"
             )
@@ -12793,42 +12959,61 @@ def dashboard_documentation(
     # Filter by date period
     selected_date_start = None
     selected_date_end = None
-    if plan_start_col and plan_start_col in df.columns:
+    if period_source_col and period_source_col in df.columns:
         with filter_col2:
-            # Convert dates for filtering
-            plan_start_str = df[plan_start_col].astype(str)
-            df_dates = pd.to_datetime(
-                plan_start_str, errors="coerce", dayfirst=True, format="mixed"
-            )
+            df_dates = _to_datetime_series(df[period_source_col])
             valid_dates = df_dates[df_dates.notna()]
 
             if not valid_dates.empty:
                 min_date = valid_dates.min().date()
                 max_date = valid_dates.max().date()
-                selected_date_start = st.date_input(
-                    "Дата начала периода",
-                    value=min_date,
-                    min_value=min_date,
-                    max_value=max_date,
-                    key=f"{_doc_fk}date_start",
-                    format="DD.MM.YYYY",
+                selected_period_mode = st.selectbox(
+                    "Период",
+                    ["За всё время", "Диапазон дат"],
+                    index=0,
+                    key=f"{_doc_fk}period_mode",
                 )
-                selected_date_end = st.date_input(
-                    "Дата окончания периода",
-                    value=max_date,
-                    min_value=min_date,
-                    max_value=max_date,
-                    key=f"{_doc_fk}date_end",
-                    format="DD.MM.YYYY",
-                )
+                if selected_period_mode == "Диапазон дат":
+                    selected_period = st.date_input(
+                        "Диапазон дат",
+                        value=(min_date, max_date),
+                        min_value=min_date,
+                        max_value=max_date,
+                        key=f"{_doc_fk}date_range",
+                        format="DD.MM.YYYY",
+                    )
+                    if isinstance(selected_period, tuple) and len(selected_period) == 2:
+                        selected_date_start, selected_date_end = selected_period
+                    else:
+                        selected_date_start = selected_period
+                        selected_date_end = selected_period
+                else:
+                    st.caption(f"Весь период: {min_date:%d.%m.%Y} - {max_date:%d.%m.%Y}")
+
+    # Filter by RD section kind
+    selected_section = "Все"
+    with filter_col3:
+        if section_col and section_col in df.columns:
+            section_options = sorted(
+                {
+                    str(v).strip()
+                    for v in df[section_col].dropna().tolist()
+                    if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
+                },
+                key=lambda x: x.casefold(),
+            )
+            selected_section = st.selectbox(
+                "Фильтр по виду раздела РД",
+                ["Все"] + section_options,
+                key=f"{_doc_fk}section_filter",
+            )
+        else:
+            st.caption("Колонка раздела РД не найдена.")
 
     # Filter by RD status (pills вместо multiselect — без англ. «Select all»; все метки / пусто = без фильтра)
     selected_statuses: list[str] = []
     rd_status_options: list[str] = []
-    with filter_col3:
-        contractor_col = find_column(df, ["Выдана подрядчику", "подрядчику"])
-        rework_col = find_column(df, ["На доработке", "доработке"])
-
+    with filter_col4:
         rd_status_options = []
         if on_approval_col and on_approval_col in df.columns:
             rd_status_options.append("На согласовании")
@@ -12866,26 +13051,30 @@ def dashboard_documentation(
 
     # Apply project filter
     if selected_project != "Все" and project_col and project_col in df.columns:
+        _pk = _project_filter_norm_key(selected_project)
         filtered_df = filtered_df[
-            filtered_df[project_col].astype(str).str.strip()
-            == str(selected_project).strip()
+            filtered_df[project_col].map(_project_filter_norm_key) == _pk
+        ]
+
+    if selected_section != "Все" and section_col and section_col in filtered_df.columns:
+        filtered_df = filtered_df[
+            filtered_df[section_col].astype(str).str.strip() == selected_section
         ]
 
     # Apply date filter
     if (
         selected_date_start
         and selected_date_end
-        and plan_start_col
-        and plan_start_col in df.columns
+        and period_source_col
+        and period_source_col in df.columns
     ):
-        plan_start_str = filtered_df[plan_start_col].astype(str)
-        filtered_df[plan_start_col + "_parsed"] = pd.to_datetime(
-            plan_start_str, errors="coerce", dayfirst=True, format="mixed"
+        filtered_df[period_source_col + "_parsed"] = _to_datetime_series(
+            filtered_df[period_source_col]
         )
         date_mask = (
-            filtered_df[plan_start_col + "_parsed"].notna()
-            & (filtered_df[plan_start_col + "_parsed"].dt.date >= selected_date_start)
-            & (filtered_df[plan_start_col + "_parsed"].dt.date <= selected_date_end)
+            filtered_df[period_source_col + "_parsed"].notna()
+            & (filtered_df[period_source_col + "_parsed"].dt.date >= selected_date_start)
+            & (filtered_df[period_source_col + "_parsed"].dt.date <= selected_date_end)
         )
         filtered_df = filtered_df[date_mask].copy()
 
@@ -12993,58 +13182,55 @@ def dashboard_documentation(
     df = filtered_df
 
     # Prepare data for pie chart "Исполнение РД"
-    # Sum values for "На согласовании" and "Выдано в производство работ"
     try:
-        # Convert to numeric, handling comma as decimal separator
-        on_approval_series = (
-            df[on_approval_col].astype(str).str.replace(",", ".", regex=False)
+        total_sections = (
+            float(_to_numeric_series(df[rd_count_col]).sum())
+            if rd_count_col and rd_count_col in df.columns
+            else 0.0
         )
-        on_approval_sum = (
-            pd.to_numeric(on_approval_series, errors="coerce").fillna(0).sum()
-        )
+        issued_sum = float(_to_numeric_series(df[in_production_col]).sum())
+        not_accepted_sum = float(_to_numeric_series(df[on_approval_col]).sum())
+        if rework_col and rework_col in df.columns:
+            not_accepted_sum += float(_to_numeric_series(df[rework_col]).sum())
+        not_issued_sum = max(total_sections - issued_sum - not_accepted_sum, 0.0)
 
-        in_production_series = (
-            df[in_production_col].astype(str).str.replace(",", ".", regex=False)
-        )
-        in_production_sum = (
-            pd.to_numeric(in_production_series, errors="coerce").fillna(0).sum()
-        )
-
-        # Create pie chart
-        if on_approval_sum > 0 or in_production_sum > 0:
+        if total_sections > 0 or issued_sum > 0 or not_accepted_sum > 0:
             st.subheader("Исполнение РД")
-            # Округляем значения до целых
             pie_data = {
-                "На согласовании": int(round(on_approval_sum)),
-                "Выдано в производство работ": int(round(in_production_sum)),
+                "Выдано": int(round(max(issued_sum, 0.0))),
+                "Не принято": int(round(max(not_accepted_sum, 0.0))),
+                "Не выдано": int(round(max(not_issued_sum, 0.0))),
             }
+            pie_data = {k: v for k, v in pie_data.items() if v > 0}
 
-            fig_pie = px.pie(
-                values=list(pie_data.values()),
-                names=list(pie_data.keys()),
-                title=None,
-                color_discrete_map={
-                    "На согласовании": "#2E86AB",
-                    "Выдано в производство работ": "#06A77D",
-                },
-            )
-            # На круговой диаграмме: абсолютное значение и процент в подписи (без наведения)
-            fig_pie.update_traces(
-                textinfo="label+percent",
-                textposition="auto",
-                textfont_size=10,
-                insidetextorientation="radial",
-                hovertemplate="<b>%{label}</b><br>Значение: %{value}<br>Процент: %{percent}<br><extra></extra>",
-            )
-            fig_pie.update_layout(
-                height=500,
-                showlegend=True,
-                uniformtext=dict(minsize=8, mode="hide"),
-                legend=dict(orientation="v", font=dict(size=10)),
-            )
-
-            fig_pie = apply_chart_background(fig_pie)
-            render_chart(fig_pie, caption_below="Исполнение РД")
+            if pie_data:
+                fig_pie = px.pie(
+                    values=list(pie_data.values()),
+                    names=list(pie_data.keys()),
+                    title=None,
+                    color_discrete_map={
+                        "Выдано": "#2E86AB",
+                        "Не принято": "#F39C12",
+                        "Не выдано": "#E74C3C",
+                    },
+                )
+                fig_pie.update_traces(
+                    textinfo="label+percent",
+                    textposition="auto",
+                    textfont_size=10,
+                    insidetextorientation="radial",
+                    hovertemplate="<b>%{label}</b><br>Значение: %{value}<br>Доля: %{percent}<br><extra></extra>",
+                )
+                fig_pie.update_layout(
+                    height=500,
+                    showlegend=True,
+                    uniformtext=dict(minsize=8, mode="hide"),
+                    legend=dict(orientation="v", font=dict(size=10), title_text=""),
+                )
+                fig_pie = apply_chart_background(fig_pie)
+                render_chart(fig_pie, caption_below="Исполнение РД")
+            else:
+                st.info("Нет данных для построения графика 'Исполнение РД'.")
         else:
             st.info("Нет данных для построения графика 'Исполнение РД'.")
     except Exception as e:
@@ -13060,10 +13246,29 @@ def dashboard_documentation(
             df, ["РД по Договору", "РД по договору", "рд по договору", "РД по Договору"]
         )
 
+        plan_date_col = (
+            plan_end_col if plan_end_col and plan_end_col in df.columns else plan_start_col
+        )
+        fact_date_col = (
+            "actual finish"
+            if "actual finish" in df.columns
+            else find_column(
+                df,
+                [
+                    "actual finish",
+                    "фактическое окончание",
+                    "окончание факт",
+                    "факт окончание",
+                ],
+            )
+        )
+        if not fact_date_col or fact_date_col not in df.columns:
+            fact_date_col = base_end_col
+
         # Check if required columns exist
-        if not plan_start_col or plan_start_col not in df.columns:
+        if not plan_date_col or plan_date_col not in df.columns:
             st.warning(
-                "Для построения графика 'Динамика выдачи РД' необходима колонка 'Старт План' (plan start)."
+                "Для построения графика 'Динамика выдачи РД' необходима колонка плановой даты (plan end / plan start)."
             )
             return
 
@@ -13081,38 +13286,8 @@ def dashboard_documentation(
 
         max_plan_end_date = None
         max_fact_end_date = None
-        if plan_end_col and plan_end_col in df.columns:
-            _mpe = pd.to_datetime(
-                df[plan_end_col].astype(str), errors="coerce", dayfirst=True, format="mixed"
-            )
-            if _mpe.notna().any():
-                max_plan_end_date = _mpe.max().date()
-        _fact_end_col_rd = (
-            "actual finish"
-            if "actual finish" in df.columns
-            else find_column(
-                df,
-                [
-                    "actual finish",
-                    "фактическое окончание",
-                    "окончание факт",
-                    "факт окончание",
-                ],
-            )
-        )
-        _fact_end_use = _fact_end_col_rd or base_end_col
-        if _fact_end_use and _fact_end_use in df.columns:
-            _mfe = pd.to_datetime(
-                df[_fact_end_use].astype(str), errors="coerce", dayfirst=True, format="mixed"
-            )
-            if _mfe.notna().any():
-                max_fact_end_date = _mfe.max().date()
 
-        # Convert columns to numeric - handle comma as decimal separator
-        # Replace comma with dot for numeric conversion
-        # Plan: use "РД по Договору"
-        rd_plan_series = df[rd_plan_col].astype(str).str.replace(",", ".", regex=False)
-        df["rd_plan_numeric"] = pd.to_numeric(rd_plan_series, errors="coerce").fillna(0)
+        df["rd_plan_numeric"] = _to_numeric_series(df[rd_plan_col])
 
         # Если «РД по Договору» везде ноль, а есть отдельная колонка «количество разделов РД» с данными — план берём из неё (ТЗ: план не нулевой без причины)
         rd_sections_for_plan_fallback = find_column(
@@ -13130,41 +13305,31 @@ def dashboard_documentation(
             and rd_sections_for_plan_fallback != rd_plan_col
         ):
             if float(df["rd_plan_numeric"].sum()) == 0.0:
-                cnt_series = (
-                    df[rd_sections_for_plan_fallback]
-                    .astype(str)
-                    .str.replace(",", ".", regex=False)
-                )
-                cnt_num = pd.to_numeric(cnt_series, errors="coerce").fillna(0.0)
+                cnt_num = _to_numeric_series(df[rd_sections_for_plan_fallback])
                 if float(cnt_num.sum()) > 0.0:
                     df["rd_plan_numeric"] = cnt_num
 
-        # Convert "Выдано в производство работ" to numeric - handle comma as decimal separator
-        in_production_series = (
-            df[in_production_col].astype(str).str.replace(",", ".", regex=False)
+        df["in_production_numeric"] = _to_numeric_series(df[in_production_col])
+        df["_doc_plan_date"] = _to_datetime_series(df[plan_date_col])
+        df["_doc_fact_date"] = (
+            _to_datetime_series(df[fact_date_col])
+            if fact_date_col and fact_date_col in df.columns
+            else pd.Series(pd.NaT, index=df.index)
         )
-        df["in_production_numeric"] = pd.to_numeric(
-            in_production_series, errors="coerce"
-        ).fillna(0)
-
-        # Convert dates - handle DD.MM.YYYY format
-        # First convert to string, then parse with dayfirst=True
-        plan_start_str = df[plan_start_col].astype(str)
-        df[plan_start_col] = pd.to_datetime(
-            plan_start_str, errors="coerce", dayfirst=True, format="mixed"
-        )
+        if df["_doc_plan_date"].notna().any():
+            max_plan_end_date = df["_doc_plan_date"].max().date()
+        if isinstance(df["_doc_fact_date"], pd.Series) and df["_doc_fact_date"].notna().any():
+            max_fact_end_date = df["_doc_fact_date"].max().date()
 
         # Prepare data
-        # Both Plan and Fact are grouped by plan_start_col (Старт план)
         dynamics_data = []
 
-        # Plan data: group by plan start date, sum "РД по Договору"
-        # Always include plan data, even if some values are 0
-        plan_mask = df[plan_start_col].notna()
+        # Plan data: group by planned issue date
+        plan_mask = df["_doc_plan_date"].notna()
         if plan_mask.any():
             plan_grouped = (
                 df[plan_mask]
-                .groupby(df[plan_mask][plan_start_col].dt.date)
+                .groupby(df[plan_mask]["_doc_plan_date"].dt.normalize())
                 .agg({"rd_plan_numeric": "sum"})
                 .reset_index()
             )
@@ -13175,12 +13340,12 @@ def dashboard_documentation(
             # Always add plan data, even if all values are 0
             dynamics_data.append(plan_grouped)
 
-        # Fact data: group by plan start date (same as Plan!), sum "Выдано в производство работ"
-        fact_mask = df[plan_start_col].notna()  # Use plan_start_col for both!
+        # Fact data: group by actual issue date
+        fact_mask = df["_doc_fact_date"].notna() & (df["in_production_numeric"] > 0)
         if fact_mask.any():
             fact_grouped = (
                 df[fact_mask]
-                .groupby(df[fact_mask][plan_start_col].dt.date)
+                .groupby(df[fact_mask]["_doc_fact_date"].dt.normalize())
                 .agg({"in_production_numeric": "sum"})
                 .reset_index()
             )
@@ -13193,13 +13358,22 @@ def dashboard_documentation(
             if not fact_grouped.empty:
                 dynamics_data.append(fact_grouped)
 
-        # Always show graph if we have plan data, even if fact data is empty
         if dynamics_data:
             st.subheader("Динамика выдачи РД")
             dynamics_df = pd.concat(dynamics_data, ignore_index=True)
-            dynamics_df = dynamics_df.sort_values("Дата")
+            all_dates = pd.to_datetime(dynamics_df["Дата"], errors="coerce").dropna()
+            if not all_dates.empty:
+                start_anchor = (all_dates.min() - pd.Timedelta(days=1)).normalize()
+                zero_rows = pd.DataFrame(
+                    {
+                        "Дата": [start_anchor, start_anchor],
+                        "Количество": [0.0, 0.0],
+                        "Тип": ["План", "Факт"],
+                    }
+                )
+                dynamics_df = pd.concat([zero_rows, dynamics_df], ignore_index=True)
+            dynamics_df = dynamics_df.sort_values(["Тип", "Дата"])
 
-            # Вычисляем накопительные значения для каждого типа отдельно
             dynamics_df["Накопительное_значение"] = 0.0
             for typ in dynamics_df["Тип"].unique():
                 mask = dynamics_df["Тип"] == typ
@@ -13350,10 +13524,8 @@ def dashboard_documentation(
                             help="(План по проекту − Факт на текущую дату) / оставшиеся недели",
                         )
 
-            # Create line chart with text labels always visible
-            # Prepare text labels for each data point
             dynamics_df["Текст"] = dynamics_df["Количество"].apply(
-                lambda x: f"{x:.0f}" if pd.notna(x) else ""
+                lambda x: f"{x:.0f}" if pd.notna(x) and float(x) != 0.0 else ""
             )
 
             fig_dynamics = px.line(
@@ -13363,8 +13535,9 @@ def dashboard_documentation(
                 color="Тип",
                 title=None,
                 markers=True,
-                labels={"Количество": "Количество", "Дата": "Дата (Старт План)"},
+                labels={"Количество": "Количество", "Дата": "Дата"},
                 text="Текст",
+                color_discrete_map={"План": "#2E86AB", "Факт": "#F39C12"},
             )
 
             fig_dynamics.update_layout(
@@ -13373,6 +13546,7 @@ def dashboard_documentation(
                 hovermode="x unified",
                 height=550,
                 xaxis=dict(tickangle=-45, tickfont=dict(size=10)),
+                yaxis=dict(rangemode="tozero"),
                 legend=dict(
                     orientation="h",
                     yanchor="bottom",
@@ -13386,10 +13560,10 @@ def dashboard_documentation(
             fig_dynamics.for_each_trace(
                 lambda t: t.update(
                     name=(
-                        "План (РД по Договору)"
+                        "План"
                         if t.name == "План"
                         else (
-                            "Факт (Выдано в производство работ)"
+                            "Факт"
                             if t.name == "Факт"
                             else t.name
                         )
@@ -13431,8 +13605,8 @@ def dashboard_working_documentation(df):
 
 
 def dashboard_project_documentation(df):
-    """Проектная документация: основной экран + вкладка «Просрочка выдачи ПД»."""
-    tab_main, tab_delay = st.tabs(["Проектная документация", "Просрочка выдачи ПД"])
+    """Проектная документация: основной экран + вкладка «Просрочка выдачи РД»."""
+    tab_main, tab_delay = st.tabs(["Проектная документация", "Просрочка выдачи РД"])
     with tab_main:
         dashboard_documentation(
             df, page_title="Проектная документация", embed_delay_at_end=False
@@ -17962,9 +18136,9 @@ def dashboard_project_schedule_chart(df):
 
 
 def dashboard_pd_delay(df):
-    """Просрочка выдачи ПД — по правкам на базе MSP (временно общий каркас с РД)."""
+    """Просрочка выдачи РД внутри раздела ПД."""
     st.caption(
-        "По правкам: источник — MSP; фильтры «Проект», «Разделы ПД»; замена РД→ПД в подписях. "
-        "Ниже — тот же расчёт просрочки, что и для РД, пока не выделен отдельный набор колонок ПД."
+        "Источник данных — MSP по разделу «Проектная документация». "
+        "Ниже показана просрочка выдачи РД и помесячная динамика по разделам."
     )
     dashboard_rd_delay(df)
