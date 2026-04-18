@@ -7214,6 +7214,16 @@ def dashboard_rd_delay(df):
         st.info("Нет данных для выбранных фильтров.")
         return
 
+    # TESSA: наименование задачи для колонки «Задача» (если загружен tessa_tasks_data)
+    if task_col and task_col in filtered_df.columns:
+        try:
+            _td = _rd_tessa_task_display_series(filtered_df, task_col)
+            if _td is not None:
+                filtered_df = filtered_df.copy()
+                filtered_df["_task_display_tessa"] = _td
+        except Exception:
+            pass
+
     # Prepare data for "Просрочка выдачи РД"
     # X-axis: "Задача" (each task is a separate bar)
     # Y-axis: "Отклонение разделов РД" (deviation values)
@@ -7432,8 +7442,13 @@ def dashboard_rd_delay(df):
                 tab_cols.append(project_col)
             if section_col and section_col in date_df.columns:
                 tab_cols.append(section_col)
-            if task_col and task_col in date_df.columns:
-                tab_cols.append(task_col)
+            _task_disp = (
+                "_task_display_tessa"
+                if "_task_display_tessa" in date_df.columns
+                else task_col
+            )
+            if _task_disp and _task_disp in date_df.columns:
+                tab_cols.append(_task_disp)
             tab_cols.extend(["План окончания ПД/РД", "Факт окончания ПД/РД"])
             date_table = date_df[[c for c in tab_cols if c in date_df.columns]].drop_duplicates()
             rename_map = {}
@@ -7441,8 +7456,8 @@ def dashboard_rd_delay(df):
                 rename_map[project_col] = "Проект"
             if section_col and section_col in date_table.columns:
                 rename_map[section_col] = "Раздел"
-            if task_col and task_col in date_table.columns:
-                rename_map[task_col] = "Задача"
+            if _task_disp and _task_disp in date_table.columns:
+                rename_map[_task_disp] = "Задача"
             date_table = date_table.rename(columns=rename_map)
             st.markdown(
                 plan_fact_dates_table_to_html(
@@ -12807,34 +12822,44 @@ def dashboard_documentation(
                     format="DD.MM.YYYY",
                 )
 
-    # Filter by RD status
+    # Filter by RD status (pills вместо multiselect — без англ. «Select all»; все метки / пусто = без фильтра)
+    selected_statuses: list[str] = []
+    rd_status_options: list[str] = []
     with filter_col3:
-        rd_status_options = ["Все"]
+        contractor_col = find_column(df, ["Выдана подрядчику", "подрядчику"])
+        rework_col = find_column(df, ["На доработке", "доработке"])
+
+        rd_status_options = []
         if on_approval_col and on_approval_col in df.columns:
             rd_status_options.append("На согласовании")
         if in_production_col and in_production_col in df.columns:
             rd_status_options.append("Выдано в производство работ")
-
-        # Find other status columns
-        contractor_col = find_column(df, ["Выдана подрядчику", "подрядчику"])
-        rework_col = find_column(df, ["На доработке", "доработке"])
-
         if contractor_col and contractor_col in df.columns:
             rd_status_options.append("Выдана подрядчику")
         if rework_col and rework_col in df.columns:
             rd_status_options.append("На доработке")
+        if page_title == "Рабочая документация":
+            if "Просрочено подрядчиком" not in rd_status_options:
+                rd_status_options.append("Просрочено подрядчиком")
 
         _status_label = (
             "Фильтр по статусу ПД"
             if page_title == "Проектная документация"
             else "Фильтр по статусу РД"
         )
-        selected_statuses = st.multiselect(
-            _status_label,
-            options=rd_status_options,
-            default=["Все"],
-            key=f"{_doc_fk}status_filter",
-        )
+        if rd_status_options:
+            selected_statuses = st.pills(
+                _status_label,
+                rd_status_options,
+                selection_mode="multi",
+                default=rd_status_options,
+                key=f"{_doc_fk}status_filter",
+                help="Пустой выбор означает все статусы.",
+            )
+            if selected_statuses is None:
+                selected_statuses = []
+        else:
+            st.caption("Нет колонок статусов РД/ПД для фильтра.")
 
     # Apply filters to data
     filtered_df = df.copy()
@@ -12864,8 +12889,8 @@ def dashboard_documentation(
         )
         filtered_df = filtered_df[date_mask].copy()
 
-    # Apply status filter
-    if "Все" not in selected_statuses and selected_statuses:
+    # Apply status filter: только если выбрано не «все метки» и не пусто (пусто = все)
+    if selected_statuses and set(selected_statuses) != set(rd_status_options):
         status_mask = pd.Series([False] * len(filtered_df), index=filtered_df.index)
 
         if (
@@ -12923,6 +12948,40 @@ def dashboard_documentation(
             )
             rework_numeric = pd.to_numeric(rework_series, errors="coerce").fillna(0)
             status_mask = status_mask | (rework_numeric > 0)
+
+        if "Просрочено подрядчиком" in selected_statuses and page_title == "Рабочая документация":
+            today_d = date.today()
+            pe = pd.Series(pd.NaT, index=filtered_df.index)
+            if plan_end_col and plan_end_col in filtered_df.columns:
+                pe = pd.to_datetime(
+                    filtered_df[plan_end_col].astype(str),
+                    errors="coerce",
+                    dayfirst=True,
+                    format="mixed",
+                )
+            fe = pd.Series(pd.NaT, index=filtered_df.index)
+            if base_end_col and base_end_col in filtered_df.columns:
+                fe = pd.to_datetime(
+                    filtered_df[base_end_col].astype(str),
+                    errors="coerce",
+                    dayfirst=True,
+                    format="mixed",
+                )
+            issued = pd.Series(False, index=filtered_df.index)
+            if contractor_col and contractor_col in filtered_df.columns:
+                issued = (
+                    pd.to_numeric(
+                        filtered_df[contractor_col]
+                        .astype(str)
+                        .str.replace(",", ".", regex=False),
+                        errors="coerce",
+                    ).fillna(0)
+                    > 0
+                )
+            done_on_time = fe.notna() & pe.notna() & (fe.dt.normalize() <= pe.dt.normalize())
+            overdue_plan = pe.notna() & (pe.dt.date < today_d)
+            oc_mask = issued & overdue_plan & (~done_on_time)
+            status_mask = status_mask | oc_mask
 
         filtered_df = filtered_df[status_mask].copy()
 
@@ -15443,6 +15502,83 @@ def _tessa_fill_card_from_doc_lookup(df: pd.DataFrame) -> pd.DataFrame:
             out.at[idx, doc_col] = k
     out = out.drop(columns=["_join_key_tmp"], errors="ignore")
     return out
+
+
+def _rd_tessa_task_display_series(msp_df: pd.DataFrame, task_col: str | None) -> pd.Series | None:
+    """
+    Подпись задачи для РД: при наличии `tessa_tasks_data` в session_state подставляет наименование из TESSA
+    (совпадение по CardId / Task ID / точному названию).
+    """
+    if msp_df is None or getattr(msp_df, "empty", True) or not task_col or task_col not in msp_df.columns:
+        return None
+    try:
+        tdf = st.session_state.get("tessa_tasks_data")
+    except Exception:
+        tdf = None
+    if tdf is None or getattr(tdf, "empty", True):
+        return None
+    t = tdf.copy()
+    t.columns = [str(c).strip() for c in t.columns]
+    try:
+        t = _tessa_fill_card_from_doc_lookup(t)
+    except Exception:
+        pass
+    name_col = _tessa_find_column(
+        t,
+        [
+            "TaskName",
+            "Task Name",
+            "Name",
+            "Название",
+            "Наименование",
+            "Title",
+            "Задача",
+            "Subject",
+            "Тема",
+        ],
+    )
+    if not name_col or name_col not in t.columns:
+        return None
+    card_col = _tessa_find_column(
+        t, ["CardId", "CardID", "ИдЗадачи", "ИдКарточки", "TaskCardId"]
+    )
+    lk: dict[str, str] = {}
+    for _, r in t.iterrows():
+        nm = str(r[name_col]).strip() if _tessa_cell_has_value(r.get(name_col)) else ""
+        if not nm:
+            continue
+        keys = set()
+        keys.add(nm.casefold())
+        if card_col and card_col in t.columns and _tessa_cell_has_value(r.get(card_col)):
+            keys.add(_tessa_norm_join_key(r[card_col]).casefold())
+        for k in keys:
+            if k and k not in lk:
+                lk[k] = nm
+    tid_col = _tessa_find_column(
+        msp_df,
+        ["Task ID", "task id", "TaskID", "ИдЗадачи", "CardId", "External Task Id", "ExternalTaskId"],
+    )
+    out: list[str] = []
+    for _, row in msp_df.iterrows():
+        base = str(row[task_col]).strip() if pd.notna(row.get(task_col)) else ""
+        hit = ""
+        alt_keys: list[str] = []
+        if base:
+            alt_keys.append(base.casefold())
+        if tid_col and tid_col in msp_df.columns and _tessa_cell_has_value(row.get(tid_col)):
+            alt_keys.append(_tessa_norm_join_key(row[tid_col]).casefold())
+        for ck in alt_keys:
+            if ck and ck in lk:
+                hit = lk[ck]
+                break
+        if not hit and base:
+            bf = base.casefold()
+            for k, v in lk.items():
+                if bf == k or (len(bf) > 6 and (bf in k or k in bf)):
+                    hit = v
+                    break
+        out.append(hit if hit else base)
+    return pd.Series(out, index=msp_df.index, dtype=object)
 
 
 # ==================== DASHBOARD: Предписания по подрядчикам ====================
