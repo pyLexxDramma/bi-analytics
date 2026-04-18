@@ -1389,7 +1389,7 @@ def _render_deviations_combined_shared_filters(df):
     use_hierarchy = bool(level_col and task_col and task_col in df.columns)
     use_flat_bs = _deviations_use_flat_block_section_task(df)
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     with col1:
         if "project name" in df.columns:
             _session_reset_project_if_excluded("devcombo_project")
@@ -1499,26 +1499,26 @@ def _render_deviations_combined_shared_filters(df):
                 month_dict = {format_period_ru(m): m for m in temp_months}
                 available_months = sorted(month_dict.keys(), key=lambda x: month_dict[x])
 
-    r2b, r2c = st.columns(2)
-    with r2b:
+    with col4:
         if len(available_months) > 0:
             months_opts = ["Все"] + available_months
             st.selectbox("Период с", months_opts, key="devcombo_period_from")
         else:
             st.selectbox("Период с", ["Все"], key="devcombo_period_from", disabled=True)
-    with r2c:
+    with col5:
         if len(available_months) > 0:
             months_opts = ["Все"] + available_months
             st.selectbox("Период по", months_opts, key="devcombo_period_to")
         else:
             st.selectbox("Период по", ["Все"], key="devcombo_period_to", disabled=True)
 
-    st.checkbox(
-        "ТОП 5 причин отклонений",
-        value=False,
-        key="reason_top5",
-        help="На первой вкладке оставить только пять наиболее частых причин на диаграммах.",
-    )
+    with col6:
+        st.checkbox(
+            "ТОП‑5",
+            value=False,
+            key="reason_top5",
+            help="Оставить только пять наиболее частых причин на диаграммах первой вкладки.",
+        )
 
     filtered_df = df.copy()
     selected_project = (
@@ -2835,15 +2835,14 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 0.0
             )
 
-            def _seg_days_lbl(v) -> str:
+            def _seg_cnt_lbl(v) -> str:
                 if pd.isna(v):
                     return ""
                 n = int(round(float(v), 0))
                 return str(n) if n != 0 else ""
 
-            reason_data["_seg_lbl"] = reason_data["Всего дней отклонений"].map(
-                _seg_days_lbl
-            )
+            # В референсе — количество отклонений внутри сегментов (не дни).
+            reason_data["_seg_lbl"] = reason_data["Количество задач"].map(_seg_cnt_lbl)
             try:
                 reason_data["period"] = pd.Categorical(
                     reason_data["period"],
@@ -2857,19 +2856,19 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             fig = px.bar(
                 reason_data,
                 x="period",
-                y="Всего дней отклонений",
+                y="Количество задач",
                 color="_reason_bucket",
                 title=None,
                 color_discrete_map=_clr_map or None,
                 category_orders={"_reason_bucket": _reason_order},
                 labels={
                     "period": _period_x_title,
-                    "Всего дней отклонений": "Дней отклонения (сумма по задачам)",
+                    "Количество задач": "Количество отклонений",
                     "_reason_bucket": "Причина отклонения",
                 },
                 text="_seg_lbl",
             )
-            # Стек по причинам: подписи внутри сегментов + итог над/под столбцом (без линии тренда)
+            # Стек по причинам: подписи внутри сегментов + итог над столбцом (линия тренда не выводится по ТЗ)
             fig.update_layout(
                 barmode="stack",
                 legend=dict(
@@ -2891,7 +2890,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     automargin=True,
                 ),
                 yaxis=dict(
-                    title="Дней отклонения (сумма по задачам)", automargin=True
+                    title="Количество отклонений", automargin=True
                 ),
                 height=580,
             )
@@ -2913,12 +2912,12 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     )
 
             tot_period = (
-                reason_data.groupby("period", observed=False)["Всего дней отклонений"]
+                reason_data.groupby("period", observed=False)["Количество задач"]
                 .sum()
                 .reset_index()
             )
             for _, row in tot_period.iterrows():
-                v = row["Всего дней отклонений"]
+                v = row["Количество задач"]
                 if pd.isna(v):
                     continue
                 txt = str(int(round(float(v), 0)))
@@ -2960,8 +2959,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             render_chart(
                 fig,
                 caption_below="Каждый столбец — один период; цвет сегмента — причина отклонения. "
-                "Внутри сегмента — сумма дней отклонения по этой причине за период; над столбцом (или под ним при отрицательной сумме) — "
-                "итог по всем причинам за период.",
+                "Внутри сегмента — количество отклонений по этой причине за период; над столбцом — итог за период.",
             )
 
     # Summary table
