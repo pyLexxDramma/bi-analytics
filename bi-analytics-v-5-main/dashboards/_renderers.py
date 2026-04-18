@@ -3495,22 +3495,28 @@ def dashboard_plan_fact_dates(df):
             help="Добавить в таблицу колонки «Причина отклонения» и «Заметки», если они есть в выгрузке.",
         )
     with cb_c2:
+        _hide_done_help = (
+            "Скрыть задачи со 100% выполнения по числовой колонке процента из MSP "
+            f"({dates_pct_col_resolved or 'не найдена'})."
+        )
+        if not _pct_ok:
+            _hide_done_help += " Колонка процента не найдена — при включении фильтр не применится."
         hide_completed_dates = st.checkbox(
             "Скрыть завершённые (100%)",
             value=False,
             key="dates_hide_done",
-            disabled=not _pct_ok,
-            help=(
-                "Скрыть задачи со 100% выполнения по числовой колонке процента из MSP "
-                f"({dates_pct_col_resolved or 'не найдена'})."
-            ),
+            disabled=False,
+            help=_hide_done_help,
         )
     with cb_c3:
         only_negative_dev_dates = st.checkbox(
-            "Только диаграммы с отклонением окончания < 0",
+            "Показывать только диаграммы, где отклонение окончания < 0",
             value=False,
             key="dates_only_neg_end",
-            help="Оставить строки, где отклонение окончания (факт − план по дате окончания) < 0.",
+            help=(
+                "Для графиков ниже: оставить только строки, где отклонение окончания "
+                "(base end − plan end) < 0. На основную таблицу не распространяется."
+            ),
         )
     with cb_c4:
         if dates_lot_col:
@@ -3600,11 +3606,12 @@ def dashboard_plan_fact_dates(df):
 
     tbl_only_pos_end_dev = st.checkbox(
         "Таблица: только строки с отклонением окончания > 0",
-        value=True,
+        value=False,
         key="dates_tbl_pos_end",
         help=(
-            "Оставить строки, где отклонение окончания в днях > 0. "
-            "Считается как base end − plan end (в выгрузке MSP: фактическое окончание минус плановое)."
+            "Только для таблицы ниже: оставить строки, где отклонение окончания в днях > 0. "
+            "Считается как base end − plan end (в выгрузке MSP: фактическое окончание минус плановое). "
+            "На графики не распространяется."
         ),
     )
 
@@ -3776,27 +3783,34 @@ def dashboard_plan_fact_dates(df):
         _pct = pd.to_numeric(filtered_df[pct_col_live], errors="coerce")
         filtered_df = filtered_df[_pct.isna() | (_pct < 100.0001)]
 
+    df_after_hide = filtered_df.copy()
+    if df_after_hide.empty:
+        st.info("Нет данных после фильтра «Скрыть завершённые».")
+        return
+
+    chart_df = df_after_hide.copy()
     if only_negative_dev_dates:
-        filtered_df = filtered_df[
-            filtered_df["plan_end_diff"].notna()
-            & (filtered_df["plan_end_diff"] < 0)
+        chart_df = chart_df[
+            chart_df["plan_end_diff"].notna()
+            & (chart_df["plan_end_diff"] < 0)
         ]
 
+    table_df = df_after_hide.copy()
     if tbl_only_pos_end_dev:
-        filtered_df = filtered_df[
-            filtered_df["plan_end_diff"].notna()
-            & (pd.to_numeric(filtered_df["plan_end_diff"], errors="coerce") > 0)
+        table_df = table_df[
+            table_df["plan_end_diff"].notna()
+            & (pd.to_numeric(table_df["plan_end_diff"], errors="coerce") > 0)
         ]
 
-    if filtered_df.empty:
+    if chart_df.empty and table_df.empty:
         st.info(
-            "Нет данных после фильтров «Скрыть завершённые» / «Только отрицательное отклонение» "
-            "/ «Только отклонение окончания > 0»."
+            "Нет данных после фильтров «Только отрицательное отклонение» на графике "
+            "и «Только отклонение окончания > 0» в таблице."
         )
         return
 
-    # Sort by task name (alphabetically) for consistent display
-    filtered_df = filtered_df.sort_values("task name", ascending=True)
+    # filtered_df — выборка для графиков (учитывает «< 0»); основная таблица — из table_df.
+    filtered_df = chart_df.sort_values("task name", ascending=True)
 
     def _sanitize_eng_networks(s):
         if s is None or (isinstance(s, float) and pd.isna(s)):
@@ -4007,15 +4021,15 @@ def dashboard_plan_fact_dates(df):
     )
     covenant_auto_from_data = False
     for col in ("section", "block"):
-        if col in filtered_df.columns and filtered_df[col].astype(str).map(
+        if col in df_after_hide.columns and df_after_hide[col].astype(str).map(
             _text_indicates_covenant
         ).any():
             covenant_auto_from_data = True
             break
     show_covenant_ui = covenant_filter_selected or covenant_auto_from_data
-    covenant_rows_df = filtered_df
+    covenant_rows_df = table_df
     if covenant_auto_from_data and not covenant_filter_selected:
-        covenant_rows_df = filtered_df.loc[_covenant_row_mask(filtered_df)].copy()
+        covenant_rows_df = table_df.loc[_covenant_row_mask(table_df)].copy()
         if covenant_rows_df.empty:
             show_covenant_ui = False
 
@@ -4537,7 +4551,7 @@ def dashboard_plan_fact_dates(df):
         "identifier",
         "id",
     ):
-        if k in filtered_df.columns:
+        if k in table_df.columns:
             _task_id_col = k
             break
 
@@ -4555,7 +4569,7 @@ def dashboard_plan_fact_dates(df):
         s = str(date_val).strip() if date_val else ""
         return s if s and s.lower() not in ("nan", "nat", "none") else ""
 
-    for idx, row in filtered_df.iterrows():
+    for idx, row in table_df.iterrows():
         plan_start = row.get("plan start", pd.NaT)
         plan_end = row.get("plan end", pd.NaT)
         base_start = row.get("base start", pd.NaT)
@@ -4601,11 +4615,11 @@ def dashboard_plan_fact_dates(df):
             rec["ID задачи (MSP)"] = (
                 str(_tid).strip() if pd.notna(_tid) and str(_tid).strip() not in ("", "nan") else ""
             )
-        if "reason of deviation" in filtered_df.columns:
+        if "reason of deviation" in table_df.columns:
             rec["Причина отклонения"] = _clean_display_str(
                 row.get("reason of deviation")
             )
-        if dates_notes_col and dates_notes_col in filtered_df.columns:
+        if dates_notes_col and dates_notes_col in table_df.columns:
             rec["Заметки"] = _clean_display_str(row.get(dates_notes_col))
         summary_data.append(rec)
 
@@ -4730,12 +4744,12 @@ def dashboard_plan_fact_dates(df):
             return True
         return "заключение о соответствии" in s
 
-    if "task name" in filtered_df.columns:
-        zos_subset = filtered_df[
-            filtered_df["task name"].astype(str).map(_is_zos_task_name)
+    if "task name" in table_df.columns:
+        zos_subset = table_df[
+            table_df["task name"].astype(str).map(_is_zos_task_name)
         ].copy()
     else:
-        zos_subset = filtered_df.iloc[0:0].copy()
+        zos_subset = table_df.iloc[0:0].copy()
 
     if not zos_subset.empty:
         st.subheader("ЗОС")
