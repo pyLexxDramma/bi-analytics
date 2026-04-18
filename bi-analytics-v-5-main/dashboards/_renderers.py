@@ -3270,49 +3270,29 @@ def dashboard_plan_fact_dates(df):
         plan_fact_dates_outline_col = "level"
 
     st.markdown("**Фильтры**")
-    fl_r1c1, fl_r1c2, fl_r1c3, fl_r1c4 = st.columns(4)
-    with fl_r1c1:
+    _flt_css = """
+        <style>
+        div[data-testid="column"] {
+            flex: 1 1 0% !important;
+            min-width: 0 !important;
+        }
+        </style>
+    """
+    st.markdown(_flt_css, unsafe_allow_html=True)
+
+    fl_main1, fl_main2, fl_main3, fl_main4 = st.columns(4)
+    with fl_main1:
         if "project name" in df.columns:
             _session_reset_project_if_excluded("dates_project")
             projects = ["Все"] + _project_name_select_options(df["project name"])
             selected_project = st.selectbox(
-                "Фильтр по проекту", projects, key="dates_project"
+                "Проект",
+                projects,
+                key="dates_project",
+                help="Фильтр по проекту из выгрузки MSP.",
             )
         else:
             selected_project = "Все"
-
-    with fl_r1c2:
-        level_options = [
-            "Сводные (1–3 ур.)",
-            "Укрупнённо (уровень 4)",
-            "Детально (уровень 5)",
-            "Все уровни",
-        ]
-        if plan_fact_dates_outline_col and plan_fact_dates_outline_col in df.columns:
-            selected_level = st.selectbox(
-                "Детализация",
-                level_options,
-                index=0,
-                key="dates_level",
-                help=(
-                    "Укрупнённо — только задачи уровня 4 MSP; детально — уровень 5. "
-                    f"Колонка уровня: {plan_fact_dates_outline_col} (порядок строк выгрузки)."
-                ),
-            )
-        else:
-            selected_level = st.selectbox(
-                "Детализация",
-                ["Все уровни"],
-                index=0,
-                key="dates_level",
-                disabled=True,
-                help="Нет колонки уровня MSP в выгрузке — фильтр по уровню 4/5 недоступен.",
-            )
-
-    with fl_r1c3:
-        st.empty()
-    with fl_r1c4:
-        st.empty()
 
     pf_dates_proj_df = df.copy()
     if selected_project != "Все" and "project name" in pf_dates_proj_df.columns:
@@ -3337,8 +3317,7 @@ def dashboard_plan_fact_dates(df):
     selected_block_dates = "Все"
     selected_building_dates = "Все"
     pf_dates_block_filter_mode = "none"  # l2 | section | block
-    fl_r2c1, fl_r2c2, fl_r2c3, fl_r2c4 = st.columns(4)
-    with fl_r2c1:
+    with fl_main2:
         hierarchy_ok = (
             bool(pf_dates_level_col)
             and bool(pf_dates_task_col)
@@ -3418,7 +3397,7 @@ def dashboard_plan_fact_dates(df):
             )
         else:
             selected_block_dates = "Все"
-    with fl_r2c2:
+    with fl_main3:
         if (
             pf_dates_level_col
             and pf_dates_task_col
@@ -3464,15 +3443,49 @@ def dashboard_plan_fact_dates(df):
             )
         else:
             selected_building_dates = "Все"
-    with fl_r2c3:
-        st.empty()
-    with fl_r2c4:
-        st.empty()
+    with fl_main4:
+        _lvl_opts_tz = [
+            "Уровень 4 (укрупнённо)",
+            "Уровень 5 (детально)",
+        ]
+        if plan_fact_dates_outline_col and plan_fact_dates_outline_col in df.columns:
+            _legacy_lvl = st.session_state.get("dates_level")
+            if _legacy_lvl in (
+                "Сводные (1–3 ур.)",
+                "Все уровни",
+                "Укрупнённо (уровень 4)",
+            ):
+                st.session_state["dates_level"] = _lvl_opts_tz[0]
+            elif _legacy_lvl in ("Детально (уровень 5)", "Уровень 5 (детально)"):
+                st.session_state["dates_level"] = _lvl_opts_tz[1]
+            elif _legacy_lvl not in _lvl_opts_tz:
+                st.session_state["dates_level"] = _lvl_opts_tz[0]
+            selected_level = st.selectbox(
+                "Детализация",
+                _lvl_opts_tz,
+                index=0,
+                key="dates_level",
+                help=(
+                    "Укрупнённо — задачи уровня 4 MSP; детально — уровень 5. "
+                    f"Колонка уровня: {plan_fact_dates_outline_col}."
+                ),
+            )
+        else:
+            selected_level = st.selectbox(
+                "Детализация",
+                _lvl_opts_tz,
+                index=0,
+                key="dates_level",
+                disabled=True,
+                help="Нет колонки уровня MSP в выгрузке — фильтр по уровню 4/5 недоступен.",
+            )
 
     st.markdown("**Параметры отображения**")
     _pct_ok = bool(
         dates_pct_col_resolved and str(dates_pct_col_resolved).strip() in df.columns
     )
+    if not _pct_ok and dates_pct_col:
+        _pct_ok = bool(str(dates_pct_col).strip() in df.columns)
     cb_c1, cb_c2, cb_c3, cb_c4 = st.columns(4)
     with cb_c1:
         dates_show_reason_notes = st.checkbox(
@@ -3668,9 +3681,17 @@ def dashboard_plan_fact_dates(df):
             mask_level = level_num.notna() & (level_num <= 3)
             if mask_level.any():
                 filtered_df = filtered_df[mask_level]
-        elif selected_level in ("Уровень 4 (верхний)", "Укрупнённо (уровень 4)"):
+        elif selected_level in (
+            "Уровень 4 (верхний)",
+            "Укрупнённо (уровень 4)",
+            "Уровень 4 (укрупнённо)",
+        ):
             filtered_df = filtered_df[level_num == 4]
-        elif selected_level in ("Уровень 5 (детальный)", "Детально (уровень 5)"):
+        elif selected_level in (
+            "Уровень 5 (детальный)",
+            "Детально (уровень 5)",
+            "Уровень 5 (детально)",
+        ):
             filtered_df = filtered_df[level_num == 5]
 
     if filtered_df.empty:
