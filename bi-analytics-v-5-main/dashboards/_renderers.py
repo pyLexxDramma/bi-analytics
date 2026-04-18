@@ -542,6 +542,48 @@ def _gdrs_resolve_plan_column(df: pd.DataFrame):
     return None
 
 
+def _gdrs_point_pct_of_period_plan(
+    by_frame: pd.DataFrame,
+    df_src: pd.DataFrame,
+    period_col: str,
+    fact_col: str = "Факт",
+) -> pd.DataFrame:
+    """
+    Доля для подписей точек «факт по неделям» / «факт по периоду»:
+    **факт / сумма(План_numeric) по тому же периоду** × 100.
+    Если колонки плана нет или сумма плана по периоду = 0 — fallback: доля факта в сумме факта по всем точкам (как раньше).
+    Добавляет/перезаписывает колонки: «%», «План_период» (сумма плана по периоду или NaN).
+    """
+    out = by_frame.copy()
+    if period_col not in out.columns or fact_col not in out.columns or out.empty:
+        out["%"] = 0.0
+        if "План_период" not in out.columns:
+            out["План_период"] = np.nan
+        return out
+    fac = pd.to_numeric(out[fact_col], errors="coerce").fillna(0.0)
+    total_fact = float(fac.sum())
+    out["План_период"] = np.nan
+    if df_src is not None and "План_numeric" in getattr(df_src, "columns", []):
+        plan_sum = (
+            df_src.groupby(period_col, dropna=False)["План_numeric"]
+            .apply(lambda s: float(pd.to_numeric(s, errors="coerce").fillna(0.0).sum()))
+            .reset_index(name="_psum")
+        )
+        out = out.merge(plan_sum, on=period_col, how="left")
+        psum = pd.to_numeric(out["_psum"], errors="coerce").fillna(0.0)
+        out["План_период"] = psum
+        out.drop(columns=["_psum"], inplace=True, errors="ignore")
+        out["%"] = 0.0
+        mask = psum > 0
+        out.loc[mask, "%"] = (fac.loc[mask] / psum.loc[mask] * 100.0).clip(lower=0.0)
+        rem = ~mask
+        if rem.any() and total_fact > 0:
+            out.loc[rem, "%"] = (fac.loc[rem] / total_fact * 100.0).round(1)
+    else:
+        out["%"] = ((fac / total_fact * 100.0).round(1) if total_fact else 0.0)
+    return out
+
+
 def _sample_for_chart(df: pd.DataFrame, max_rows: int = _MAX_CHART_ROWS) -> pd.DataFrame:
     """
     Если датафрейм превышает max_rows, равномерно сэмплирует его и показывает уведомление.
@@ -8161,10 +8203,8 @@ def dashboard_technique(df):
                         .sum()
                     )
                     by_period_week["Период_стр"] = by_period_week[period_col_hist].astype(str).str.strip()
-                    total_fact = by_period_week["Факт"].sum()
-                    by_period_week["%"] = (
-                        (by_period_week["Факт"] / total_fact * 100).round(1)
-                        if total_fact and total_fact != 0 else 0
+                    by_period_week = _gdrs_point_pct_of_period_plan(
+                        by_period_week, df_hist, period_col_hist, "Факт"
                     )
                 else:
                     by_period_week = None
@@ -8184,6 +8224,14 @@ def dashboard_technique(df):
                 )
                 by_period_week = by_period_week.sort_values([period_col_hist, "Неделя"])
                 x_order = by_period_week["x_label"].tolist()
+                _mk_week_lbl = lambda r: (
+                    f"{int(r['Факт'])} ({int(np.ceil(float(r['%'])))}%)"
+                )
+                _mk_week_hover = lambda r: (
+                    f"Факт: {int(r['Факт'])}<br>"
+                    f"План (период): {int(np.ceil(float(r['План_период']))) if pd.notna(r.get('План_период')) and float(r.get('План_период') or 0) > 0 else '—'}<br>"
+                    f"К плану: {int(np.ceil(float(r['%'])))}%"
+                )
                 fig_hist.add_trace(
                     go.Scatter(
                         x=by_period_week["x_label"],
@@ -8192,10 +8240,11 @@ def dashboard_technique(df):
                         mode="lines+markers+text",
                         line=dict(color=base_color, width=2),
                         marker=dict(size=10, color=base_color, line=dict(width=1, color="white")),
-                            text=[f"{int(r['Факт'])}" for _, r in by_period_week.iterrows()],
+                        text=[_mk_week_lbl(r) for _, r in by_period_week.iterrows()],
                         textposition="top center",
                         textfont=dict(size=9, color="white"),
-                        hovertemplate="%{x}<br>Факт: %{y}<extra></extra>",
+                        hovertext=[_mk_week_hover(r) for _, r in by_period_week.iterrows()],
+                        hovertemplate="%{x}<br>%{hovertext}<extra></extra>",
                         connectgaps=False,
                         cliponaxis=False,
                     )
@@ -8221,7 +8270,9 @@ def dashboard_technique(df):
                     render_chart(
                         fig_hist,
                         key=f"{key_prefix}_hist_period_{idx}",
-                        caption_below=f"Фактическое количество по периодам (точки — недели): {label}",
+                        caption_below=(
+                            f"Факт по периодам (недели), % к сумме плана периода (округление вверх): {label}"
+                        ),
                     )
             else:
                 # Нет колонок по неделям — один столбец/точка на период (сумма)
@@ -8231,10 +8282,8 @@ def dashboard_technique(df):
                     .rename(columns={"week_sum": "Факт"})
                 )
                 by_period["Период_стр"] = by_period[period_col_hist].astype(str).str.strip()
-                total_fact = by_period["Факт"].sum()
-                by_period["%"] = (
-                    (by_period["Факт"] / total_fact * 100).round(1)
-                    if total_fact and total_fact != 0 else 0
+                by_period = _gdrs_point_pct_of_period_plan(
+                    by_period, df_hist, period_col_hist, "Факт"
                 )
                 by_period = by_period.sort_values(period_col_hist)
                 with hist_cols[idx]:
@@ -8248,7 +8297,10 @@ def dashboard_technique(df):
                                 mode="markers+text",
                                 name="Факт",
                                 marker=dict(size=14, color="#3498db", line=dict(width=1, color="white")),
-                                text=[f"{int(row['Факт'])} ({row['%']}%)" for _, row in by_period.iterrows()],
+                                text=[
+                                    f"{int(row['Факт'])} ({int(np.ceil(float(row['%'])))}%)"
+                                    for _, row in by_period.iterrows()
+                                ],
                                 textposition="top center",
                                 textfont=dict(size=11, color="white"),
                                 cliponaxis=False,
@@ -8259,7 +8311,10 @@ def dashboard_technique(df):
                             go.Bar(
                                 x=by_period["Период_стр"],
                                 y=by_period["Факт"],
-                                text=[f"{int(row['Факт'])} ({row['%']}%)" for _, row in by_period.iterrows()],
+                                text=[
+                                    f"{int(row['Факт'])} ({int(np.ceil(float(row['%'])))}%)"
+                                    for _, row in by_period.iterrows()
+                                ],
                                 textposition="outside",
                                 textfont=dict(size=11, color="white"),
                                 marker_color="#e67e22",
@@ -8290,7 +8345,7 @@ def dashboard_technique(df):
                     render_chart(
                         fig_hist,
                         key=f"{key_prefix}_hist_period_fallback_{idx}",
-                        caption_below=f"Фактическое количество по периодам: {label}",
+                        caption_below=f"Факт по периодам, % к сумме плана периода (округление вверх): {label}",
                     )
 
     elif "week_sum" in filtered_df.columns:
@@ -10017,10 +10072,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                         .sum()
                     )
                     by_period_week["Период_стр"] = by_period_week[period_col_hist].astype(str).str.strip()
-                    total_fact = by_period_week["Факт"].sum()
-                    by_period_week["%"] = (
-                        (by_period_week["Факт"] / total_fact * 100).round(1)
-                        if total_fact and total_fact != 0 else 0
+                    by_period_week = _gdrs_point_pct_of_period_plan(
+                        by_period_week, df_hist, period_col_hist, "Факт"
                     )
                 else:
                     by_period_week = None
@@ -10040,6 +10093,14 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 )
                 by_period_week = by_period_week.sort_values([period_col_hist, "Неделя"])
                 x_order = by_period_week["x_label"].tolist()
+                _mk_week_lbl_w = lambda r: (
+                    f"{int(r['Факт'])} ({int(np.ceil(float(r['%'])))}%)"
+                )
+                _mk_week_hover_w = lambda r: (
+                    f"Факт: {int(r['Факт'])}<br>"
+                    f"План (период): {int(np.ceil(float(r['План_период']))) if pd.notna(r.get('План_период')) and float(r.get('План_период') or 0) > 0 else '—'}<br>"
+                    f"К плану: {int(np.ceil(float(r['%'])))}%"
+                )
                 fig_hist.add_trace(
                     go.Scatter(
                         x=by_period_week["x_label"],
@@ -10048,10 +10109,11 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                         mode="lines+markers+text",
                         line=dict(color=base_color, width=2),
                         marker=dict(size=10, color=base_color, line=dict(width=1, color="white")),
-                        text=[f"{int(r['Факт'])} ({r['%']}%)" for _, r in by_period_week.iterrows()],
+                        text=[_mk_week_lbl_w(r) for _, r in by_period_week.iterrows()],
                         textposition="top center",
                         textfont=dict(size=9, color="white"),
-                        hovertemplate="%{x}<br>Факт: %{y}<extra></extra>",
+                        hovertext=[_mk_week_hover_w(r) for _, r in by_period_week.iterrows()],
+                        hovertemplate="%{x}<br>%{hovertext}<extra></extra>",
                         connectgaps=False,
                         cliponaxis=False,
                     )
@@ -10077,7 +10139,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     render_chart(
                         fig_hist,
                         key=f"{key_prefix}_hist_period_{idx}",
-                        caption_below=f"Фактическое количество по периодам (точки — недели): {label}",
+                        caption_below=(
+                            f"Факт по периодам (недели), % к сумме плана периода (округление вверх): {label}"
+                        ),
                     )
             else:
                 # Нет колонок по неделям — один столбец/точка на период (сумма)
@@ -10087,10 +10151,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     .rename(columns={"week_sum": "Факт"})
                 )
                 by_period["Период_стр"] = by_period[period_col_hist].astype(str).str.strip()
-                total_fact = by_period["Факт"].sum()
-                by_period["%"] = (
-                    (by_period["Факт"] / total_fact * 100).round(1)
-                    if total_fact and total_fact != 0 else 0
+                by_period = _gdrs_point_pct_of_period_plan(
+                    by_period, df_hist, period_col_hist, "Факт"
                 )
                 by_period = by_period.sort_values(period_col_hist)
                 with hist_cols[idx]:
@@ -10104,7 +10166,10 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                                 mode="markers+text",
                                 name="Факт",
                                 marker=dict(size=14, color="#3498db", line=dict(width=1, color="white")),
-                                text=[f"{int(row['Факт'])} ({row['%']}%)" for _, row in by_period.iterrows()],
+                                text=[
+                                    f"{int(row['Факт'])} ({int(np.ceil(float(row['%'])))}%)"
+                                    for _, row in by_period.iterrows()
+                                ],
                                 textposition="top center",
                                 textfont=dict(size=11, color="white"),
                                 cliponaxis=False,
@@ -10115,7 +10180,10 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                             go.Bar(
                                 x=by_period["Период_стр"],
                                 y=by_period["Факт"],
-                                text=[f"{int(row['Факт'])} ({row['%']}%)" for _, row in by_period.iterrows()],
+                                text=[
+                                    f"{int(row['Факт'])} ({int(np.ceil(float(row['%'])))}%)"
+                                    for _, row in by_period.iterrows()
+                                ],
                                 textposition="outside",
                                 textfont=dict(size=11, color="white"),
                                 marker_color="#e67e22",
@@ -10146,7 +10214,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     render_chart(
                         fig_hist,
                         key=f"{key_prefix}_hist_period_fallback_{idx}",
-                        caption_below=f"Фактическое количество по периодам: {label}",
+                        caption_below=f"Факт по периодам, % к сумме плана периода (округление вверх): {label}",
                     )
 
     elif "week_sum" in filtered_df.columns:
