@@ -15512,6 +15512,7 @@ _PRED_DASH_MOCK_CSS = """
 .pred-kpi-circle .n { font-size:22px; line-height:1.1; }
 .pred-kpi-circle .s { font-size:9px; opacity:.92; text-transform:uppercase; letter-spacing:.35px; }
 .pred-kpi-circle.blue { background:linear-gradient(135deg,#3498db,#2980b9); }
+.pred-kpi-circle.green { background:linear-gradient(135deg,#2ecc71,#27ae60); }
 .pred-kpi-circle.orange { background:linear-gradient(135deg,#e67e22,#d35400); }
 .pred-kpi-circle.red { background:linear-gradient(135deg,#e74c3c,#c0392b); }
 .pred-kpi-info h4 { margin:0 0 4px 0; font-size:14px; font-weight:600; color:#fafafa; }
@@ -15532,8 +15533,36 @@ _PRED_DASH_MOCK_CSS = """
 .pred-mock-title { font-size:1.05rem; font-weight:600; color:#fafafa; }
 .pred-mock-sort { font-size:12px; color:#a0a0a0; }
 .pred-mock-badge { background:#c0392b; color:#fff; padding:4px 14px; border-radius:20px; font-size:13px; font-weight:500; }
+.pred-detail-wrap { overflow-x:auto; border:1px solid #444; border-radius:10px; margin-top:8px; }
+.pred-detail-wrap table { width:100%; border-collapse:collapse; min-width:1200px; }
+.pred-detail-wrap th { text-align:left; padding:10px 12px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:11px; text-transform:uppercase; }
+.pred-detail-wrap th a { color:#fafafa; text-decoration:none; display:inline-flex; gap:6px; align-items:center; }
+.pred-detail-wrap th a:hover { color:#93c5fd; }
+.pred-sort-icon { color:#8fb4da; font-size:10px; }
+.pred-detail-wrap td { padding:9px 12px; border-bottom:1px solid #333; color:#e0e0e0; }
+.pred-detail-wrap tr.pred-row-overdue td { background:rgba(255, 111, 145, 0.12); }
+.pred-detail-wrap tr.pred-row-resolved td { background:rgba(158, 255, 158, 0.11); }
+.pred-detail-wrap tr:hover td { background:rgba(255,255,255,0.04); }
+.pred-chip { display:inline-block; padding:3px 8px; border-radius:999px; font-size:12px; font-weight:600; border:1px solid rgba(255,255,255,0.12); }
+.pred-chip-overdue { background:rgba(230,126,34,0.18); color:#fdba74; }
+.pred-chip-ok { background:rgba(46,204,113,0.18); color:#86efac; }
+.pred-chip-neutral { background:rgba(52,152,219,0.18); color:#93c5fd; }
 </style>
 """
+
+_PRED_DETAIL_TABLE_COLUMNS = (
+    "Статус предписания",
+    "Подрядчик",
+    "Проект",
+    "№ договора",
+    "№ предписания",
+    "Дата выдачи предписания",
+    "Блок выдачи предписания",
+    "Срок устранения",
+    "Фактическая дата устранения",
+    "Дней просрочки",
+    "Критические предписания",
+)
 
 # Заголовки таблицы «Неустраненные предписания» (единые для HTML и полной таблицы)
 _PRED_MOCK_TABLE_COLUMNS = (
@@ -15571,7 +15600,7 @@ def _pred_fmt_due(val) -> str:
 
 def _pred_fmt_num(val) -> str:
     if val is None or (isinstance(val, float) and pd.isna(val)) or str(val).strip() == "":
-        return "—"
+        return "Без номера"
     try:
         nf = float(val)
         return str(int(nf)) if nf == int(nf) else str(nf).strip()
@@ -15672,6 +15701,57 @@ def _pred_build_seven_column_df(
     return pd.DataFrame(rows, columns=cols)
 
 
+def _pred_build_detail_table_df(
+    show: pd.DataFrame,
+    contr_col,
+    obj_col,
+    contract_col,
+    doc_num_col,
+    issue_date_col,
+    block_col,
+    due_col,
+    completion_col,
+) -> pd.DataFrame:
+    if show is None or show.empty:
+        return pd.DataFrame(columns=_PRED_DETAIL_TABLE_COLUMNS)
+    rows = []
+    for _, row in show.iterrows():
+        due_raw = row.get(due_col) if due_col and due_col in show.columns else None
+        comp_raw = row.get(completion_col) if completion_col and completion_col in show.columns else None
+        issue_raw = row.get(issue_date_col) if issue_date_col and issue_date_col in show.columns else None
+        block_raw = row.get(block_col) if block_col and block_col in show.columns else None
+        critical_raw = row.get("_critical")
+        overdue_raw = row.get("_overdue_days")
+        resolved_raw = bool(row.get("_resolved", False))
+        critical_text = "Да" if bool(critical_raw) else "0"
+        try:
+            overdue_num = int(round(float(overdue_raw)))
+        except (TypeError, ValueError):
+            overdue_num = 0
+        rows.append(
+            {
+                "Статус предписания": _clean_display_str(row.get("Статус"), empty="Неизвестно"),
+                "Подрядчик": _clean_display_str(row.get(contr_col), empty="—") if contr_col and contr_col in show.columns else "—",
+                "Проект": _clean_display_str(row.get(obj_col), empty="—") if obj_col and obj_col in show.columns else "—",
+                "№ договора": _pred_fmt_num(row.get(contract_col)) if contract_col and contract_col in show.columns else "Без номера",
+                "№ предписания": _pred_fmt_num(row.get(doc_num_col)) if doc_num_col and doc_num_col in show.columns else "Без номера",
+                "Дата выдачи предписания": _pred_fmt_due(issue_raw),
+                "Блок выдачи предписания": _clean_display_str(block_raw, empty="—"),
+                "Срок устранения": _pred_fmt_due(due_raw),
+                "Фактическая дата устранения": _pred_fmt_due(comp_raw),
+                "Дней просрочки": str(max(overdue_num, 0)),
+                "Критические предписания": critical_text,
+                "_resolved_flag": "1" if resolved_raw else "",
+            }
+        )
+    df_out = pd.DataFrame(rows)
+    ordered = list(_PRED_DETAIL_TABLE_COLUMNS) + ["_resolved_flag"]
+    for c in ordered:
+        if c not in df_out.columns:
+            df_out[c] = ""
+    return df_out[ordered]
+
+
 def _pred_overdue_mock_table_html(rows: list, overdue_total: int) -> str:
     """Таблица просроченных как в макете: rowspan по подрядчику, бейджи «Критическое», дни со знаком −."""
     esc = html_module.escape
@@ -15719,7 +15799,9 @@ def _pred_overdue_mock_table_html(rows: list, overdue_total: int) -> str:
 
 
 def _pred_kpi_circles_html(
+    total_count: int,
     n_unresolved: int,
+    n_resolved: int,
     n_overdue: int,
     n_critical: int,
     *,
@@ -15739,8 +15821,14 @@ def _pred_kpi_circles_html(
         + title_html
         + '<div class="pred-kpi-circles">'
         + '<div class="pred-kpi-item"><div class="pred-kpi-circle blue"><span class="n">'
+        + e(str(total_count))
+        + '</span><span class="s">всего</span></div><div class="pred-kpi-info"><h4>Всего предписаний</h4><p>Все записи в выборке</p></div></div>'
+        + '<div class="pred-kpi-item"><div class="pred-kpi-circle blue"><span class="n">'
         + e(str(n_unresolved))
         + '</span><span class="s">всего</span></div><div class="pred-kpi-info"><h4>Неустраненные предписания</h4><p>Общее количество</p></div></div>'
+        + '<div class="pred-kpi-item"><div class="pred-kpi-circle green"><span class="n">'
+        + e(str(n_resolved))
+        + '</span><span class="s">всего</span></div><div class="pred-kpi-info"><h4>Устраненные предписания</h4><p>Закрыты или устранены</p></div></div>'
         + '<div class="pred-kpi-item"><div class="pred-kpi-circle orange"><span class="n">'
         + e(str(n_overdue))
         + '</span><span class="s">всего</span></div><div class="pred-kpi-info"><h4>Просроченные предписания</h4><p>Требуют немедленного внимания</p></div></div>'
@@ -15749,6 +15837,113 @@ def _pred_kpi_circles_html(
         + '</span><span class="s">всего</span></div><div class="pred-kpi-info"><h4>Критические предписания</h4><p>Просрочка более 30 дней</p></div></div>'
         + "</div></div>"
     )
+
+
+def _pred_query_param_value(name: str, default: str = "") -> str:
+    try:
+        val = st.query_params.get(name, default)
+    except Exception:
+        return default
+    if isinstance(val, list):
+        return str(val[0]) if val else default
+    return str(val)
+
+
+def _pred_sort_link(column: str, current_sort: str, current_order: str) -> str:
+    next_order = "desc" if current_sort == column and current_order == "asc" else "asc"
+    params = {}
+    try:
+        params.update(st.query_params.to_dict())
+    except Exception:
+        pass
+    params["pred_sort"] = column
+    params["pred_order"] = next_order
+    return "?" + urlencode(params, doseq=True)
+
+
+def _pred_sort_series(df: pd.DataFrame, column: str) -> pd.Series:
+    if column not in df.columns:
+        return pd.Series(range(len(df)), index=df.index)
+    if column in {
+        "Дата выдачи предписания",
+        "Срок устранения",
+        "Фактическая дата устранения",
+    }:
+        return pd.to_datetime(df[column], errors="coerce", dayfirst=True)
+    if column in {"Дней просрочки"}:
+        return (
+            df[column]
+            .astype(str)
+            .str.extract(r"(-?\d+)", expand=False)
+            .pipe(pd.to_numeric, errors="coerce")
+        )
+    return df[column].astype(str).str.casefold()
+
+
+def _pred_sort_table_df(df: pd.DataFrame, sort_col: str, sort_order: str) -> pd.DataFrame:
+    if df is None or df.empty or sort_col not in df.columns:
+        return df
+    work = df.copy()
+    work["_pred_sort_key"] = _pred_sort_series(work, sort_col)
+    asc = str(sort_order).lower() != "desc"
+    work = work.sort_values(
+        by=["_pred_sort_key", sort_col],
+        ascending=[asc, asc],
+        na_position="last",
+        kind="mergesort",
+    )
+    return work.drop(columns=["_pred_sort_key"], errors="ignore")
+
+
+def _pred_status_chip_html(status: str, overdue_days, resolved: bool) -> str:
+    esc = html_module.escape
+    s = str(status or "").strip() or "Неизвестно"
+    if resolved:
+        return f'<span class="pred-chip pred-chip-ok">{esc(s)}</span>'
+    if pd.notna(pd.to_numeric(overdue_days, errors="coerce")) and float(pd.to_numeric(overdue_days, errors="coerce")) > 0:
+        return f'<span class="pred-chip pred-chip-overdue">{esc(s)}</span>'
+    return f'<span class="pred-chip pred-chip-neutral">{esc(s)}</span>'
+
+
+def _pred_detail_table_html(
+    df: pd.DataFrame,
+    *,
+    sort_col: str = "",
+    sort_order: str = "asc",
+    max_rows: int = 700,
+) -> str:
+    esc = html_module.escape
+    if df is None or df.empty:
+        return f'<p style="color:#a0a0a0;padding:16px;">{esc("Нет строк для отображения.")}</p>'
+    show = df.head(max_rows)
+    render_cols = [c for c in show.columns if c != "_resolved_flag"]
+    parts = ['<div class="pred-detail-wrap"><table><thead><tr>']
+    for col in render_cols:
+        marker = "↕"
+        if sort_col == col:
+            marker = "↑" if str(sort_order).lower() == "asc" else "↓"
+        link = _pred_sort_link(col, sort_col, sort_order)
+        parts.append(
+            f'<th><a href="{esc(link, quote=True)}">{esc(col)} <span class="pred-sort-icon">{esc(marker)}</span></a></th>'
+        )
+    parts.append("</tr></thead><tbody>")
+    for _, row in show.iterrows():
+        is_resolved = str(row.get("_resolved_flag", "")).strip() == "1"
+        overdue_days = pd.to_numeric(row.get("Дней просрочки"), errors="coerce")
+        tr_cls = "pred-row-resolved" if is_resolved else ("pred-row-overdue" if pd.notna(overdue_days) and float(overdue_days) > 0 else "")
+        parts.append(f'<tr class="{tr_cls}">')
+        for col in render_cols:
+            val = row.get(col, "")
+            if pd.isna(val):
+                val = ""
+            if col == "Статус предписания":
+                inner = _pred_status_chip_html(str(val), row.get("Дней просрочки"), is_resolved)
+            else:
+                inner = esc(str(val))
+            parts.append(f"<td>{inner}</td>")
+        parts.append("</tr>")
+    parts.append("</tbody></table></div>")
+    return "".join(parts)
 
 
 def _pred_build_overdue_mock_blocks(
@@ -16087,6 +16282,18 @@ def dashboard_predpisania(df):
                 doc_num_col = col
                 break
     creation_col_pred = _tessa_find_column(pred, ["CreationDate", "creationdate", "Дата создания"])
+    issue_block_col = _tessa_find_column(
+        pred,
+        [
+            "BlockName",
+            "IssueBlock",
+            "Блок выдачи предписания",
+            "Блок выдачи",
+            "Блок",
+            "Подразделение",
+            "Department",
+        ],
+    )
 
     _excl_guess = [kind_col, contr_col, obj_col, doc_num_col, creation_col_pred, completion_col]
     if not contract_col:
@@ -16095,19 +16302,22 @@ def dashboard_predpisania(df):
         due_col = _pred_guess_due_column(pred, exclude=_excl_guess + [contract_col])
 
     st_l = pred["Статус"].astype(str)
+    pred["_issue_date"] = _tessa_to_datetime(pred[creation_col_pred]) if creation_col_pred else pd.Series(pd.NaT, index=pred.index)
+    pred["_completion_dt"] = _tessa_to_datetime(pred[completion_col]) if completion_col else pd.Series(pd.NaT, index=pred.index)
     pred["_signed"] = st_l.str.contains("Подписан", case=False, na=False) | st_l.str.contains("Согласован", case=False, na=False)
+    pred["_resolved"] = (
+        pred["_signed"]
+        | st_l.str.contains("устран", case=False, na=False)
+        | pred["_completion_dt"].notna()
+    )
     if due_col:
         pred["_due"] = _tessa_to_datetime(pred[due_col])
     else:
         pred["_due"] = pd.NaT
 
     def _overdue_days_row(r):
-        if r["_signed"]:
+        if r["_resolved"]:
             return 0
-        if completion_col:
-            cd = _tessa_to_datetime(pd.Series([r.get(completion_col)])).iloc[0]
-            if pd.notna(cd):
-                return 0
         if pd.notna(r["_due"]):
             d = r["_due"]
             if hasattr(d, "date"):
@@ -16123,7 +16333,7 @@ def dashboard_predpisania(df):
     pred["_critical"] = pred["_overdue_days"] > 30
 
     st.markdown("**Фильтры**")
-    fc1, fc2, fc3, fb1, fb2 = st.columns([2, 2, 2, 1, 1])
+    fc1, fc2, fc3, fc4, fb1, fb2 = st.columns([2, 2, 2, 2, 1, 1])
     if obj_col:
         projects = ["Все проекты"] + sorted(pred[obj_col].dropna().astype(str).str.strip().unique().tolist())
     else:
@@ -16148,6 +16358,26 @@ def dashboard_predpisania(df):
             sel_contr = "Все подрядчики"
     with fc3:
         contract_q = st.text_input("№ договора (частичный поиск)", "", key="pred_m_contract")
+    with fc4:
+        if pred["_issue_date"].notna().any():
+            min_issue = pred["_issue_date"].min().date()
+            max_issue = pred["_issue_date"].max().date()
+            issue_period = st.date_input(
+                "Период выдачи предписаний",
+                value=(min_issue, max_issue),
+                min_value=min_issue,
+                max_value=max_issue,
+                key="pred_issue_period",
+                format="DD.MM.YYYY",
+            )
+            if isinstance(issue_period, tuple) and len(issue_period) == 2:
+                issue_start, issue_end = issue_period
+            else:
+                issue_start = issue_period
+                issue_end = issue_period
+        else:
+            issue_start = issue_end = None
+            st.caption("Нет даты выдачи в данных.")
     with fb1:
         st.markdown("<br>", unsafe_allow_html=True)
         st.button("Применить", key="pred_m_apply", type="primary", use_container_width=True)
@@ -16159,7 +16389,14 @@ def dashboard_predpisania(df):
             if contr_col:
                 st.session_state.pred_m_c = "Все подрядчики"
             st.session_state.pred_m_contract = ""
+            if pred["_issue_date"].notna().any():
+                st.session_state.pred_issue_period = (min_issue, max_issue)
             st.rerun()
+    hide_resolved = st.checkbox(
+        "Не отображать устраненные предписания",
+        value=True,
+        key="pred_hide_resolved",
+    )
 
     filtered = pred.copy()
     if sel_obj != "Все проекты" and obj_col:
@@ -16169,6 +16406,12 @@ def dashboard_predpisania(df):
     if contract_q.strip() and contract_col:
         filtered = filtered[
             filtered[contract_col].astype(str).str.lower().str.contains(contract_q.strip().lower(), na=False)
+        ]
+    if issue_start is not None and issue_end is not None:
+        filtered = filtered[
+            filtered["_issue_date"].notna()
+            & (filtered["_issue_date"].dt.date >= issue_start)
+            & (filtered["_issue_date"].dt.date <= issue_end)
         ]
 
     if filtered.empty:
@@ -16181,47 +16424,44 @@ def dashboard_predpisania(df):
             "Укажите DueDate или «Срок устранения» в TESSA."
         )
 
-    unres_mask = ~filtered["_signed"]
+    unres_mask = ~filtered["_resolved"]
+    resolved_mask = filtered["_resolved"]
+    n_total = int(len(filtered))
     n_unresolved = int(unres_mask.sum())
+    n_resolved = int(resolved_mask.sum())
     n_overdue = int((unres_mask & (filtered["_overdue_days"] > 0)).sum())
     n_critical = int((unres_mask & filtered["_critical"]).sum())
 
-    fu = filtered.loc[unres_mask]
+    fu = filtered.loc[unres_mask].copy()
     # Заголовок секции на всю ширину; ниже легенда и KPI в одной строке — верх легенды и блока «Ключевые показатели» совпадают
     st.subheader("Предписания по подрядчикам")
+    if issue_start is not None and issue_end is not None:
+        st.caption(
+            f"Период выдачи предписаний: {issue_start.strftime('%d.%m.%Y')} - {issue_end.strftime('%d.%m.%Y')}"
+        )
 
     col_chart, col_kpi = st.columns([2, 1])
 
     with col_chart:
         st.markdown(
             _PRED_DASH_MOCK_CSS
-            + '<div class="pred-leg"><span style="color:#3498db;font-weight:600;">■</span> Неустраненные (всего) '
-            "&nbsp;·&nbsp; <span style=\"color:#e67e22;font-weight:600;\">■</span> Просроченные "
-            "&nbsp;·&nbsp; Числа у синих столбцов — всего неустранённых по подрядчику.</div>",
+            + '<div class="pred-leg"><span style="color:#e67e22;font-weight:600;">■</span> Просроченные '
+            "&nbsp;·&nbsp; <span style=\"color:#3498db;font-weight:600;\">●</span> Всего неустранённых "
+            "&nbsp;·&nbsp; Синие круги показывают общее число неустранённых предписаний по подрядчику.</div>",
             unsafe_allow_html=True,
         )
         if contr_col and contr_col in fu.columns and not fu.empty:
             grp = (
                 fu.groupby(contr_col, as_index=False)
                 .agg(
-                    Всего=(contr_col, "size"),
+                    Неустранено=(contr_col, "size"),
                     Просрочено=("_overdue_days", lambda x: int((x > 0).sum())),
+                    Мин_дата=("_issue_date", "min"),
+                    Макс_дата=("_issue_date", "max"),
                 )
-                .sort_values("Всего", ascending=False)
+                .sort_values("Неустранено", ascending=False)
             )
             fig1 = go.Figure()
-            fig1.add_trace(
-                go.Bar(
-                    y=grp[contr_col],
-                    x=grp["Всего"],
-                    name="Неустраненные",
-                    orientation="h",
-                    marker_color="#3498db",
-                    text=grp["Всего"],
-                    textposition="outside",
-                    textfont=dict(color="#ffffff", size=14),
-                )
-            )
             fig1.add_trace(
                 go.Bar(
                     y=grp[contr_col],
@@ -16229,27 +16469,47 @@ def dashboard_predpisania(df):
                     name="Просроченные",
                     orientation="h",
                     marker_color="#e67e22",
-                    text=grp["Просрочено"],
+                    text=grp["Просрочено"].apply(lambda x: str(int(x)) if int(x) > 0 else ""),
                     textposition="outside",
                     textfont=dict(color="#ffffff", size=14),
+                    hovertemplate="<b>%{y}</b><br>Просроченные: %{x}<extra></extra>",
+                )
+            )
+            fig1.add_trace(
+                go.Scatter(
+                    y=grp[contr_col],
+                    x=grp["Неустранено"],
+                    name="Всего неустранённых",
+                    mode="markers+text",
+                    marker=dict(color="#3498db", size=18, symbol="circle"),
+                    text=grp["Неустранено"].astype(int).astype(str),
+                    textposition="middle center",
+                    textfont=dict(color="#ffffff", size=11),
+                    customdata=np.stack(
+                        [
+                            grp["Мин_дата"].dt.strftime("%d.%m.%Y").fillna("—"),
+                            grp["Макс_дата"].dt.strftime("%d.%m.%Y").fillna("—"),
+                        ],
+                        axis=1,
+                    ),
+                    hovertemplate="<b>%{y}</b><br>Неустранённых: %{x}<br>Выдано: %{customdata[0]} - %{customdata[1]}<extra></extra>",
                 )
             )
             fig1.update_layout(
-                barmode="group",
-                bargap=0.28,
+                bargap=0.22,
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
             )
             xmax = max(
-                float(pd.to_numeric(grp["Всего"], errors="coerce").fillna(0).max()),
+                float(pd.to_numeric(grp["Неустранено"], errors="coerce").fillna(0).max()),
                 float(pd.to_numeric(grp["Просрочено"], errors="coerce").fillna(0).max()),
                 1.0,
             )
             fig1.update_layout(
-                height=max(320, len(grp) * 36 + 100),
+                height=max(420, len(grp) * 52 + 120),
                 yaxis_title="",
                 xaxis_title="Количество",
-                margin=dict(l=8, r=48, t=40, b=8),
-                xaxis=dict(range=[0, xmax * 1.35]),
+                margin=dict(l=8, r=90, t=40, b=16),
+                xaxis=dict(range=[0, xmax * 1.5]),
                 uniformtext=dict(minsize=9, mode="show"),
             )
             fig1 = apply_chart_background(fig1)
@@ -16260,8 +16520,12 @@ def dashboard_predpisania(df):
 
     with col_kpi:
         st.markdown(
-            _pred_kpi_circles_html(n_unresolved, n_overdue, n_critical, with_heading=True),
+            _pred_kpi_circles_html(n_total, n_unresolved, n_resolved, n_overdue, n_critical, with_heading=True),
             unsafe_allow_html=True,
+        )
+        st.caption(
+            "Маппинг KPI: «Всего предписаний» = все записи, «Устраненные» = закрытые/устраненные, "
+            "«Неустраненные» = открытые, «Просроченные» = открытые с просроченным сроком."
         )
 
     overdue_only = filtered.loc[unres_mask & (filtered["_overdue_days"] > 0)].copy()
@@ -16270,22 +16534,41 @@ def dashboard_predpisania(df):
     )
     st.markdown(_pred_overdue_mock_table_html(mock_blocks, n_overdue), unsafe_allow_html=True)
 
-    st.subheader("Все неустраненные предписания — детальная таблица")
+    st.subheader("Детальная таблица предписаний")
     with st.expander("Примечание к таблице", expanded=False):
-        st.caption("Сортировка: критические и просрочка сверху.")
-    show = filtered.loc[unres_mask].copy()
+        st.caption("Клик по заголовку сортирует таблицу. Просроченные строки выделены розовым, устраненные — салатовым.")
+    show = filtered.copy()
+    if hide_resolved:
+        show = show.loc[unres_mask].copy()
     show = show.sort_values(["_critical", "_overdue_days"], ascending=[False, False])
 
-    # Ровно 7 колонок в фиксированном порядке (как макет)
-    table_df = _pred_build_seven_column_df(
-        show, contr_col, obj_col, contract_col, doc_num_col, due_col
+    table_df = _pred_build_detail_table_df(
+        show,
+        contr_col,
+        obj_col,
+        contract_col,
+        doc_num_col,
+        creation_col_pred,
+        issue_block_col,
+        due_col,
+        completion_col,
     )
+    sort_col = _pred_query_param_value("pred_sort", "Дней просрочки")
+    sort_order = _pred_query_param_value("pred_order", "desc")
+    if sort_col in table_df.columns:
+        table_df = _pred_sort_table_df(table_df, sort_col, sort_order)
 
     overdue_cnt = int((show["_overdue_days"] > 0).sum())
-    st.caption(f"Записей: {len(table_df)} · просроченных: {overdue_cnt}")
-    _render_html_table(table_df)
+    st.caption(
+        f"Записей: {len(table_df)} · просроченных: {overdue_cnt} · устраненных: {int(show['_resolved'].sum())}"
+    )
+    st.markdown(
+        _PRED_DASH_MOCK_CSS
+        + _pred_detail_table_html(table_df, sort_col=sort_col, sort_order=sort_order),
+        unsafe_allow_html=True,
+    )
     render_dataframe_excel_csv_downloads(
-        table_df,
+        table_df.drop(columns=["_resolved_flag"], errors="ignore"),
         file_stem="predpisania",
         key_prefix="predpisania",
     )
