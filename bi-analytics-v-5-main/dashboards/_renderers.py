@@ -8050,6 +8050,7 @@ def dashboard_technique(df):
                             textposition="top center",
                             textfont=dict(color="white", size=10),
                             hovertemplate="Период: %{x}<br>План: 100%<extra></extra>",
+                            cliponaxis=False,
                         )
                     )
                     fig_pct.add_trace(
@@ -8071,17 +8072,35 @@ def dashboard_technique(df):
                                 axis=-1,
                             ),
                             hovertemplate="Период: %{x}<br>План: %{customdata[0]}<br>Факт: %{customdata[1]}<br>Факт/план: %{y}%<extra></extra>",
+                            cliponaxis=False,
                         )
                     )
                     fig_pct.update_layout(
-                        height=420,
+                        height=460,
                         showlegend=True,
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                        legend=dict(
+                            orientation="v",
+                            yanchor="top",
+                            y=1,
+                            xanchor="left",
+                            x=1.02,
+                            font=dict(size=11, color="#e8eef5"),
+                        ),
                         xaxis_title="Период",
                         yaxis_title="Факт к плану, %",
-                        margin=dict(l=56, r=24, t=24, b=90),
+                        margin=dict(l=56, r=140, t=72, b=120),
+                        xaxis=dict(automargin=True),
+                        yaxis=dict(automargin=True),
+                        uniformtext=dict(minsize=7, mode="show"),
                     )
                     fig_pct = apply_chart_background(fig_pct, skip_uniformtext=True)
+                    try:
+                        fig_pct.update_layout(
+                            margin=dict(l=56, r=150, t=88, b=140),
+                            uniformtext=dict(minsize=6, mode="show"),
+                        )
+                    except Exception:
+                        pass
                     render_chart(fig_pct, key=f"{key_prefix}_planfact_pct_line", caption_below="Динамика: план = 100%, факт = % от плана (округление вверх).")
         except Exception:
             pass
