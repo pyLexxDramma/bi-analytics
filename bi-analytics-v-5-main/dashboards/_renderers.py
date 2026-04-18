@@ -17,6 +17,7 @@ from dashboards.dev_projects_tz_matrix import (
     build_dev_tz_matrix_rows,
     render_dev_tz_matrix,
     render_control_points_dashboard,
+    _control_points_prepare_msp_dates,
 )
 
 
@@ -16173,12 +16174,36 @@ def dashboard_control_points(df):
     if df is None or df.empty:
         st.warning("Загрузите данные MSP (проект).")
         return
-    work = df.copy()
+    work = _control_points_prepare_msp_dates(df.copy())
     has_fact_col = "plan end" in work.columns or "actual finish" in work.columns
     if "base end" not in work.columns or not has_fact_col:
         st.warning(
-            "Нужны колонки базового и фактического окончания (base end и plan end / actual finish после загрузки MSP)."
+            "Нужны колонки базового и фактического окончания задачи: **base end** и **plan end** "
+            "(или **actual finish**). После загрузки через web/ они обычно уже переименованы; "
+            "для «сырого» CSV см. список колонок ниже."
         )
+        with st.expander("Диагностика колонок (если таблица не строится)", expanded=False):
+            st.caption("Имена колонок в текущем наборе данных:")
+            st.code(", ".join(str(c) for c in work.columns))
+            hints = [
+                c
+                for c in work.columns
+                if any(
+                    k in str(c).lower()
+                    for k in (
+                        "нач",
+                        "окон",
+                        "finish",
+                        "base",
+                        "план",
+                        "факт",
+                        "baseline",
+                    )
+                )
+            ]
+            if hints:
+                st.caption("Колонки, похожие на даты окончания:")
+                st.code(", ".join(str(c) for c in hints))
         return
     render_control_points_dashboard(st, work, _TABLE_CSS)
 

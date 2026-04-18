@@ -383,6 +383,14 @@ def _agg_plan_fact_otkl(rows: pd.DataFrame) -> Tuple[str, str, str, bool]:
     return sep.join(plan_parts), sep.join(fact_parts), sep.join(otkl_parts), any(warns)
 
 
+def _unicode_dash_fold(s: str) -> str:
+    """Единый дефис: длинное/короткое тире из MSP/Excel → '-', чтобы ключи группировки совпадали."""
+    t = str(s)
+    for ch in ("\u2013", "\u2014", "\u2212", "\u00ad"):
+        t = t.replace(ch, "-")
+    return t
+
+
 def _norm_dev_project_key(val: Any) -> str:
     """
     Сопоставление подписи проекта MSP / 1С / TESSA: регистр, пробелы, «-», лат. I / 1.
@@ -404,7 +412,12 @@ def _control_points_project_group_key(raw: Any) -> str:
         from config import MSP_PROJECT_NAME_MAP as M
     except Exception:
         M = {}
-    s = str(raw).strip()
+    s = _unicode_dash_fold(str(raw).strip())
+    # «Имя-1» / «Имя – 1» после фолда тире — тот же логический проект, что «Имя» (типовой дубль выгрузок)
+    if re.search(r"-\s*1\s*$", s):
+        s_alt = re.sub(r"-\s*1\s*$", "", s).strip()
+        if len(s_alt) >= 3:
+            s = s_alt
     lk = s.lower().replace(" ", "")
     if lk in M:
         nk = _norm_dev_project_key(M[lk])
@@ -1676,9 +1689,58 @@ def _control_points_project_filter_options(
     for gk, rlist in groups.items():
         rlist = sorted(set(rlist))
         lab = _control_points_project_label(gk, rlist)
-        labels_map[lab] = rlist
+        if lab in labels_map:
+            labels_map[lab] = sorted(set(labels_map[lab] + rlist))
+        else:
+            labels_map[lab] = rlist
     ordered = sorted(labels_map.keys(), key=lambda x: x.lower())
     return ordered, labels_map
+
+
+def _control_points_prepare_msp_dates(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Для «Контрольные точки»: гарантировать canonical-колонки base end / plan end (и при наличии actual finish),
+    если в файле русские/альтернативные заголовки без прохода через web_loader.
+    """
+    if df is None or getattr(df, "empty", True):
+        return df
+    out = df.copy()
+    if "base end" not in out.columns:
+        be = _find_col(
+            out,
+            ["base end", "Baseline Finish", "Базовое окончание", "Базовое_окончание"],
+        )
+        if be:
+            out["base end"] = out[be]
+    if "plan end" not in out.columns:
+        pe = _find_col(
+            out,
+            ["plan end", "План окончание", "План_окончание", "Окончание"],
+        )
+        if pe:
+            out["plan end"] = out[pe]
+    if "actual finish" not in out.columns:
+        af = _find_col(
+            out,
+            ["actual finish", "Фактическое окончание", "Фактическое_окончание"],
+        )
+        if af:
+            out["actual finish"] = out[af]
+    if "pct complete" not in out.columns:
+        pc = _find_col(
+            out,
+            [
+                "pct complete",
+                "percent complete",
+                "% complete",
+                "Процент_завершения",
+                "Процент завершения",
+                "процент выполнения",
+            ],
+        )
+        if pc:
+            out["pct complete"] = out[pc]
+    return out
 
 
 def _project_name_column(df: pd.DataFrame) -> Optional[str]:
