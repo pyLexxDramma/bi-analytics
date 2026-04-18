@@ -10,6 +10,7 @@ import numpy as np
 import re
 import textwrap
 import html as html_module
+from urllib.parse import urlencode
 
 from config import MSP_PROJECT_FILTER_EXCLUDE_NAMES, RUSSIAN_MONTHS
 
@@ -12207,34 +12208,64 @@ def _krstate_bucket(raw) -> str:
 # ── Исполнительная документация: детальная таблица (тёмная тема, как остальной дашборд) ──
 _EXEC_DOC_DETAIL_CSS = """
 <style>
-.exec-doc-table-wrap { overflow-x:auto; margin:0.75rem 0 1rem; border-radius:8px; border:1px solid #333; }
-.exec-doc-table { width:100%; border-collapse:collapse; font-size:13px; font-family:Inter,system-ui,sans-serif; }
+.exec-doc-panel {
+  background:linear-gradient(180deg, rgba(12,24,38,0.96), rgba(16,37,58,0.94));
+  border:1px solid rgba(101,163,255,0.16);
+  border-radius:16px;
+  padding:16px 18px;
+  margin:0.75rem 0 1rem;
+  box-shadow:0 10px 24px rgba(0,0,0,0.18);
+}
+.exec-doc-caption {
+  color:#9fb3c8; font-size:13px; margin-top:10px; line-height:1.45;
+}
+.exec-doc-table-wrap { overflow-x:auto; margin:0.75rem 0 0.5rem; border-radius:14px; border:1px solid rgba(82,104,130,0.45); }
+.exec-doc-table { width:100%; border-collapse:collapse; font-size:14px; font-family:Inter,system-ui,sans-serif; }
 .exec-doc-table th {
-  text-align:left; padding:10px 12px; background:#1a1c23; color:#fafafa;
-  border-bottom:2px solid #444; font-size:11px; font-weight:600;
-  text-transform:uppercase; letter-spacing:0.04em; white-space:nowrap;
+  text-align:left; padding:12px 14px; background:#16283a; color:#f8fbff;
+  border-bottom:1px solid rgba(138,160,184,0.28); font-size:11px; font-weight:700;
+  text-transform:uppercase; letter-spacing:0.05em; white-space:nowrap;
 }
 .exec-doc-table td {
-  padding:8px 12px; border-bottom:1px solid #333; color:#e8eef5;
+  padding:10px 14px; border-bottom:1px solid rgba(82,104,130,0.28); color:#e8eef5;
   vertical-align:middle; max-width:340px;
 }
-.exec-doc-table tr:nth-child(even) td { background:rgba(255,255,255,0.02); }
-.exec-doc-table tr:hover td { background:#262833; }
+.exec-doc-table tr:nth-child(even) td { background:rgba(255,255,255,0.025); }
+.exec-doc-table tr:hover td { background:rgba(48,72,99,0.72); }
+.exec-doc-table th a { color:#f8fbff; text-decoration:none; display:inline-flex; gap:6px; align-items:center; }
+.exec-doc-table th a:hover { color:#93c5fd; }
+.exec-doc-th-sort { color:#8fb4da; font-size:10px; }
 .exec-delay-val { color:#5eead4; font-weight:600; font-variant-numeric:tabular-nums; }
 .exec-dash { color:#8892a0; }
-.exec-pill { display:inline-block; padding:4px 12px; border-radius:999px; font-size:12px; font-weight:600; white-space:nowrap; }
-.exec-pill-signed { background:rgba(34,197,94,0.18); color:#86efac; border:1px solid rgba(34,197,94,0.45); }
-.exec-pill-customer { background:rgba(251,191,36,0.15); color:#fcd34d; border:1px solid rgba(251,191,36,0.45); }
-.exec-pill-contractor { background:rgba(248,113,113,0.14); color:#fca5a5; border:1px solid rgba(248,113,113,0.45); }
-.exec-pill-declined { background:rgba(148,163,184,0.12); color:#cbd5e1; border:1px solid #64748b; }
+.exec-pill { display:inline-block; padding:5px 12px; border-radius:999px; font-size:12px; font-weight:700; white-space:nowrap; }
+.exec-pill-signed { background:rgba(34,197,94,0.20); color:#bbf7d0; border:1px solid rgba(34,197,94,0.52); }
+.exec-pill-customer { background:rgba(251,191,36,0.17); color:#fde68a; border:1px solid rgba(251,191,36,0.42); }
+.exec-pill-contractor { background:rgba(56,189,248,0.18); color:#bae6fd; border:1px solid rgba(56,189,248,0.46); }
+.exec-pill-declined { background:rgba(239,68,68,0.16); color:#fecaca; border:1px solid rgba(239,68,68,0.48); }
 .exec-pill-default { background:#262833; color:#e0e0e0; border:1px solid #444; }
 .exec-pill-muted { color:#64748b; border:1px dashed #444; padding:3px 10px; border-radius:8px; font-size:12px; }
+.exec-kpi-grid {
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+  gap:12px; margin:0.5rem 0 1rem;
+}
+.exec-kpi-card {
+  background:rgba(20,35,52,0.92); border:1px solid rgba(104,128,157,0.24);
+  border-radius:14px; padding:14px 16px;
+}
+.exec-kpi-card.exec-kpi-alert { border-color:rgba(239,68,68,0.35); }
+.exec-kpi-card.exec-kpi-warn { border-color:rgba(245,158,11,0.35); }
+.exec-kpi-card.exec-kpi-ok { border-color:rgba(34,197,94,0.35); }
+.exec-kpi-title { color:#8fa7bf; font-size:12px; margin-bottom:8px; }
+.exec-kpi-value { color:#f8fbff; font-size:28px; font-weight:800; line-height:1.05; }
+.exec-kpi-subtitle { color:#97a9bc; font-size:12px; margin-top:8px; line-height:1.4; }
+.exec-kpi-delta-pos { color:#4ade80; font-size:12px; font-weight:700; margin-top:8px; }
+.exec-kpi-delta-neg { color:#f87171; font-size:12px; font-weight:700; margin-top:8px; }
 </style>
 """
 
 
 def _exec_status_pill_html(status: str) -> str:
-    """Бейджи статуса как на макете: Подписано / У Заказчика / У Подрядчика."""
+    """Бейджи статуса как на макете: Принят / У Заказчика / У Подрядчика / Отказ."""
     esc = html_module.escape
     s = str(status or "").strip()
     if not s:
@@ -12245,9 +12276,9 @@ def _exec_status_pill_html(status: str) -> str:
     if "доработ" in sl:
         return f'<span class="exec-pill exec-pill-contractor">{esc("У Подрядчика")}</span>'
     if "подписан" in sl or ("согласован" in sl and "на согласован" not in sl) or "утвержд" in sl:
-        return f'<span class="exec-pill exec-pill-signed">{esc("Подписано")}</span>'
+        return f'<span class="exec-pill exec-pill-signed">{esc("Принят")}</span>'
     if "отказ" in sl or "declined" in sl:
-        return f'<span class="exec-pill exec-pill-declined">{esc(s)}</span>'
+        return f'<span class="exec-pill exec-pill-declined">{esc("Отказ")}</span>'
     if "заказчик" in sl and "подряд" not in sl:
         return f'<span class="exec-pill exec-pill-customer">{esc("У Заказчика")}</span>'
     if "подряд" in sl and "заказ" not in sl and ("сдач" in sl or "возврат" in sl or "исправ" in sl):
@@ -12266,14 +12297,114 @@ def _exec_delay_cell_html(val: str) -> str:
     return esc(s)
 
 
-def _exec_detail_table_html(df: pd.DataFrame, max_rows: int = 500) -> str:
+def _exec_query_param_value(name: str, default: str = "") -> str:
+    try:
+        val = st.query_params.get(name, default)
+    except Exception:
+        return default
+    if isinstance(val, list):
+        return str(val[0]) if val else default
+    return str(val)
+
+
+def _exec_sort_link(column: str, current_sort: str, current_order: str) -> str:
+    next_order = "desc" if current_sort == column and current_order == "asc" else "asc"
+    params = {}
+    try:
+        params.update(st.query_params.to_dict())
+    except Exception:
+        pass
+    params["exec_sort"] = column
+    params["exec_order"] = next_order
+    return "?" + urlencode(params, doseq=True)
+
+
+def _exec_sort_series(df: pd.DataFrame, column: str) -> pd.Series:
+    if column not in df.columns:
+        return pd.Series(range(len(df)), index=df.index)
+    if column in {
+        "Плановая дата сдачи",
+        "Факт сдачи",
+        "Дата передачи заказчику",
+        "Дата согласования",
+        "Дата создания",
+    }:
+        return pd.to_datetime(df[column], errors="coerce", dayfirst=True)
+    if column in {"Просрочка сдачи", "Просрочка соглас."}:
+        return (
+            df[column]
+            .astype(str)
+            .str.extract(r"(-?\d+)", expand=False)
+            .pipe(pd.to_numeric, errors="coerce")
+        )
+    return df[column].astype(str).str.casefold()
+
+
+def _exec_sort_table_df(df: pd.DataFrame, sort_col: str, sort_order: str) -> pd.DataFrame:
+    if df is None or df.empty or sort_col not in df.columns:
+        return df
+    work = df.copy()
+    work["_exec_sort_key"] = _exec_sort_series(work, sort_col)
+    ascending = str(sort_order).lower() != "desc"
+    work = work.sort_values(
+        by=["_exec_sort_key", sort_col],
+        ascending=[ascending, ascending],
+        na_position="last",
+        kind="mergesort",
+    )
+    return work.drop(columns=["_exec_sort_key"], errors="ignore")
+
+
+def _exec_metric_cards_html(cards: list[dict], *, caption: str | None = None) -> str:
+    esc = html_module.escape
+    parts = ['<div class="exec-kpi-grid">']
+    for card in cards:
+        tone = str(card.get("tone") or "").strip()
+        title = esc(str(card.get("title", "")))
+        value = esc(str(card.get("value", "—")))
+        subtitle = esc(str(card.get("subtitle", "")).strip())
+        delta = str(card.get("delta") or "").strip()
+        delta_cls = ""
+        if delta:
+            delta_cls = "exec-kpi-delta-pos" if not delta.startswith("-") else "exec-kpi-delta-neg"
+        parts.append(f'<div class="exec-kpi-card {"exec-kpi-" + tone if tone else ""}">')
+        parts.append(f'<div class="exec-kpi-title">{title}</div>')
+        parts.append(f'<div class="exec-kpi-value">{value}</div>')
+        if delta:
+            parts.append(f'<div class="{delta_cls}">{esc(delta)}</div>')
+        if subtitle:
+            parts.append(f'<div class="exec-kpi-subtitle">{subtitle}</div>')
+        parts.append("</div>")
+    parts.append("</div>")
+    if caption:
+        parts.append(f'<div class="exec-doc-caption">{esc(caption)}</div>')
+    return "".join(parts)
+
+
+def _exec_detail_table_html(
+    df: pd.DataFrame,
+    max_rows: int = 500,
+    *,
+    sort_col: str = "",
+    sort_order: str = "asc",
+) -> str:
     """HTML-таблица детального отчёта ИД: CAPS-заголовки, циан для просрочек, пилюли статусов."""
     esc = html_module.escape
     if df is None or df.empty:
         return f'<p style="color:#8892a0;padding:12px;">{esc("Нет строк для отображения.")}</p>'
     show = df.head(max_rows)
     cols = list(show.columns)
-    thead = "<thead><tr>" + "".join(f"<th>{esc(c)}</th>" for c in cols) + "</tr></thead>"
+    head_parts = ["<thead><tr>"]
+    for c in cols:
+        marker = "↕"
+        if sort_col == c:
+            marker = "↑" if str(sort_order).lower() == "asc" else "↓"
+        link = _exec_sort_link(c, sort_col, sort_order)
+        head_parts.append(
+            f'<th><a href="{esc(link, quote=True)}">{esc(c)} <span class="exec-doc-th-sort">{esc(marker)}</span></a></th>'
+        )
+    head_parts.append("</tr></thead>")
+    thead = "".join(head_parts)
     delay_cols = {"Просрочка сдачи", "Просрочка соглас."}
     status_col = "Статус"
     body_parts = ["<tbody>"]
@@ -12426,16 +12557,7 @@ def dashboard_executive_documentation(df):
             value=True,
             key="exec_doc_hide_overdue_signed",
         )
-        show_signed_in_table = st.checkbox(
-            "Отображать сданную ИД в детальной таблице",
-            value=False,
-            key="exec_doc_show_signed_table",
-        )
-        compare_prev_period = st.checkbox(
-            "Сравнить с предыдущим периодом той же длительности (по дате создания)",
-            value=False,
-            key="exec_doc_compare_prev_period",
-        )
+        st.caption("Остальные дополнительные флаги из старого макета убраны.")
 
     with st.expander("Колонка контрагента в TESSA", expanded=False):
         if contr_col:
@@ -12467,6 +12589,8 @@ def dashboard_executive_documentation(df):
         st.info("Нет данных при выбранных фильтрах.")
         return
 
+    st.markdown('<div class="exec-doc-panel">', unsafe_allow_html=True)
+
     stu = filtered["Статус"].astype(str)
 
     def _has_status(s, *parts):
@@ -12496,59 +12620,127 @@ def dashboard_executive_documentation(df):
         total_docs = len(filtered)
 
     st.subheader("Накопительным итогом")
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Всего документов", int(total_docs))
-    m2.metric("Отказы", int(is_declined.sum()))
-    m3.metric("На согласовании", int(is_on_agree.sum()))
-    m4.metric("Подписано", int(is_signed.sum()))
-    m5.metric("Всего просрочек (два типа)", total_overdue_two)
-    st.caption(
-        "Показатель «Всего просрочек» = просрочка подрядчика (доработка) "
-        "+ просрочка заказчика (на согласовании)."
+    summary_cards = [
+        {"title": "Всего документов", "value": int(total_docs), "subtitle": "Уникальные документы в текущей выборке"},
+        {"title": "Отказы", "value": int(is_declined.sum()), "subtitle": "Документы со статусом отказа", "tone": "alert"},
+        {"title": "На согласовании", "value": int(is_on_agree.sum()), "subtitle": "Документы у заказчика", "tone": "warn"},
+        {"title": "Принято", "value": int(is_signed.sum()), "subtitle": "Подписано / согласовано", "tone": "ok"},
+        {"title": "У подрядчика", "value": int(is_rework.sum()), "subtitle": "Документы на доработке"},
+        {"title": "Всего просрочек", "value": int(total_overdue_two), "subtitle": "Подрядчик + заказчик", "tone": "alert"},
+    ]
+    st.markdown(
+        _exec_metric_cards_html(
+            summary_cards,
+            caption="Показатель «Всего просрочек» = просрочка подрядчика (доработка) + просрочка заказчика (на согласовании).",
+        ),
+        unsafe_allow_html=True,
     )
 
-    if compare_prev_period and creation_col and p_start is not None and p_end is not None:
-        span_days = (p_end - p_start).days + 1
-        if span_days < 1:
-            span_days = 1
-        b_end = p_start - timedelta(days=1)
-        b_start = b_end - timedelta(days=span_days - 1)
-        ts_b0 = pd.Timestamp(b_start)
-        ts_b1 = pd.Timestamp(b_end) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-        filt_b = filtered_base[
-            filtered_base["_cd"].notna()
-            & (filtered_base["_cd"] >= ts_b0)
-            & (filtered_base["_cd"] <= ts_b1)
-        ]
+    def _exec_n_docs(dfp):
+        if card_col and card_col in dfp.columns:
+            return int(dfp[card_col].nunique())
+        return int(len(dfp))
 
-        def _exec_n_docs(dfp):
-            if card_col and card_col in dfp.columns:
-                return int(dfp[card_col].nunique())
-            return int(len(dfp))
+    def _exec_metrics_snapshot(dfp: pd.DataFrame) -> dict[str, int]:
+        if dfp is None or dfp.empty:
+            return {
+                "Всего документов": 0,
+                "Отказы": 0,
+                "На согласовании": 0,
+                "Принято": 0,
+                "У подрядчика": 0,
+                "Просрочка подрядчика": 0,
+                "Просрочка заказчика": 0,
+            }
+        stu_loc = dfp["Статус"].astype(str)
+        signed_loc = stu_loc.map(lambda s: _has_status(s, "Подписан", "Согласован"))
+        declined_loc = stu_loc.map(lambda s: _has_status(s, "Отказ"))
+        on_agree_loc = stu_loc.str.lower().str.contains("на согласовании", na=False)
+        rework_loc = stu_loc.str.lower().str.contains("доработ", na=False)
+        if "KrState" in dfp.columns:
+            kb_loc = dfp["KrState"].map(_krstate_bucket)
+            signed_loc = signed_loc | (kb_loc == "signed")
+            declined_loc = declined_loc | (kb_loc == "declined")
+            on_agree_loc = on_agree_loc | (kb_loc == "active")
+        overdue_loc = (~signed_loc) & (~declined_loc)
+        return {
+            "Всего документов": _exec_n_docs(dfp),
+            "Отказы": int(declined_loc.sum()),
+            "На согласовании": int(on_agree_loc.sum()),
+            "Принято": int(signed_loc.sum()),
+            "У подрядчика": int(rework_loc.sum()),
+            "Просрочка подрядчика": int((overdue_loc & rework_loc).sum()),
+            "Просрочка заказчика": int((overdue_loc & on_agree_loc).sum()),
+        }
 
-        n_cur = _exec_n_docs(filtered)
-        n_prev = _exec_n_docs(filt_b)
-        st.caption(
-            f"Сравнение по дате создания: предыдущий интервал {b_start.strftime('%d.%m.%Y')}—{b_end.strftime('%d.%m.%Y')} "
-            f"({span_days} дн., сразу перед выбранным периодом)."
-        )
-        _cmp_notes = []
-        if n_cur + n_prev < 4:
-            _cmp_notes.append("Мало документов в одном или обоих периодах — сравнение ориентировочное.")
-        if n_prev == 0:
-            _cmp_notes.append("В предыдущем периоде по выбранным фильтрам нет документов.")
-        if _cmp_notes:
-            st.info(" ".join(_cmp_notes))
-        cmp_a, cmp_b = st.columns(2)
-        with cmp_a:
-            st.metric(
-                "Документов (выбранный период)",
-                n_cur,
-                delta=int(n_cur - n_prev),
-                delta_color="normal",
+    if creation_col and filtered_base["_cd"].notna().any():
+        cmp_source = filtered_base[filtered_base["_cd"].notna()].copy()
+        cmp_source["_cmp_month"] = cmp_source["_cd"].dt.to_period("M")
+        cmp_months = sorted(cmp_source["_cmp_month"].dropna().unique().tolist())
+        if cmp_months:
+            cmp_labels = {
+                f"{RUSSIAN_MONTHS.get(m.month, str(m.month))} {m.year}": m for m in cmp_months
+            }
+            cmp_col1, cmp_col2 = st.columns([3, 1])
+            with cmp_col1:
+                st.subheader("Изменения за месяц к предыдущему")
+            with cmp_col2:
+                selected_cmp_label = st.selectbox(
+                    "Выберите месяц",
+                    list(cmp_labels.keys()),
+                    index=len(cmp_labels) - 1,
+                    key="exec_doc_compare_month",
+                )
+            selected_cmp_month = cmp_labels[selected_cmp_label]
+            prev_cmp_month = selected_cmp_month - 1
+            cur_cmp_df = cmp_source[cmp_source["_cmp_month"] == selected_cmp_month]
+            prev_cmp_df = cmp_source[cmp_source["_cmp_month"] == prev_cmp_month]
+            cur_metrics = _exec_metrics_snapshot(cur_cmp_df)
+            prev_metrics = _exec_metrics_snapshot(prev_cmp_df)
+
+            compare_cards = []
+            tone_map = {
+                "Отказы": "alert",
+                "Просрочка подрядчика": "alert",
+                "Просрочка заказчика": "warn",
+                "Принято": "ok",
+            }
+            for title in (
+                "Всего документов",
+                "Отказы",
+                "На согласовании",
+                "Принято",
+                "Просрочка подрядчика",
+                "Просрочка заказчика",
+            ):
+                cur_val = int(cur_metrics.get(title, 0))
+                prev_val = int(prev_metrics.get(title, 0))
+                diff = cur_val - prev_val
+                pct = None
+                if prev_val != 0:
+                    pct = diff / prev_val * 100.0
+                delta_txt = f"{diff:+d}"
+                if pct is not None:
+                    delta_txt = f"{delta_txt} ({pct:+.1f}%)"
+                compare_cards.append(
+                    {
+                        "title": title,
+                        "value": cur_val,
+                        "delta": delta_txt,
+                        "subtitle": f"Было: {prev_val}",
+                        "tone": tone_map.get(title, ""),
+                    }
+                )
+            st.markdown(
+                _exec_metric_cards_html(
+                    compare_cards,
+                    caption=(
+                        f"Сравнение {selected_cmp_label} с предыдущим месяцем. "
+                        "Показывает абсолютное изменение и процент к предыдущему месяцу."
+                    ),
+                ),
+                unsafe_allow_html=True,
             )
-        with cmp_b:
-            st.metric("Документов (предыдущий период)", n_prev)
 
     oc1, oc2 = st.columns(2)
 
@@ -12603,6 +12795,7 @@ def dashboard_executive_documentation(df):
             fig_c = apply_chart_background(fig_c)
             fig_c.update_layout(height=max(280, len(by_c) * 32 + 80), yaxis_title="", xaxis_title="")
             render_chart(fig_c, caption_below="Просрочка по подрядчикам (дней)", key="exec_overdue_contractor")
+        st.caption("Блок показывает просрочку сдачи исполнительной документации со стороны подрядчика.")
     with oc2:
         st.subheader("Просрочка заказчика (согласование)")
         with st.expander("Пояснение по показателю", expanded=False):
@@ -12636,6 +12829,7 @@ def dashboard_executive_documentation(df):
                 caption_below="Просрочка согласования заказчиком — количество документов на согласовании по контрагентам",
                 key="exec_overdue_customer",
             )
+        st.caption("Блок показывает документы, зависшие на согласовании у заказчика.")
 
     tab_sum, tab_detail, tab_dyn = st.tabs(["Накопительным итогом", "Детальный отчёт", "Динамика по месяцам"])
 
@@ -12682,9 +12876,7 @@ def dashboard_executive_documentation(df):
 
     with tab_detail:
         st.subheader("Детальный отчёт по сдаче и согласованию ИД")
-        disp = filtered.copy()
-        if not show_signed_in_table:
-            disp = disp.loc[~is_signed].copy()
+        disp = filtered.loc[~is_signed].copy()
         rows_out = []
         for _, row in disp.iterrows():
             st_l = str(row.get("Статус", ""))
@@ -12692,48 +12884,62 @@ def dashboard_executive_documentation(df):
             hide_ov = hide_overdue_if_done and signed_row
             plan_d = row.get(plan_col) if plan_col else None
             fact_d = row.get(completed_col) if completed_col else None
+            plan_dt = _tessa_to_datetime(pd.Series([plan_d])).iloc[0] if plan_col else pd.NaT
+            fact_dt = _tessa_to_datetime(pd.Series([fact_d])).iloc[0] if completed_col else pd.NaT
             pr_sub = ""
             pr_cust = ""
-            if not hide_ov and plan_col and pd.notna(_tessa_to_datetime(pd.Series([plan_d])).iloc[0]):
-                pdt = _tessa_to_datetime(pd.Series([plan_d])).iloc[0]
-                if pd.notna(pdt):
-                    if completed_col and pd.notna(_tessa_to_datetime(pd.Series([fact_d])).iloc[0]):
-                        fdt = _tessa_to_datetime(pd.Series([fact_d])).iloc[0]
-                        if pd.notna(fdt):
-                            pr_sub = f"{max(0, (fdt.date() - pdt.date()).days)} дн."
-                    elif pd.notna(pdt):
-                        pr_sub = f"{max(0, (today - pdt.date()).days)} дн." if hasattr(pdt, "date") else ""
+            if not hide_ov and pd.notna(plan_dt):
+                if pd.notna(fact_dt):
+                    pr_sub = f"{max(0, (fact_dt.date() - plan_dt.date()).days)} дн."
+                else:
+                    pr_sub = f"{max(0, (today - plan_dt.date()).days)} дн." if hasattr(plan_dt, "date") else ""
             if hide_ov:
                 pr_sub = "—"
                 pr_cust = "—"
             tr = row.get(transfer_col) if transfer_col else None
             ag = row.get(agree_col) if agree_col else None
-            if not hide_ov and transfer_col and agree_col and pd.notna(_tessa_to_datetime(pd.Series([tr])).iloc[0]) and pd.notna(_tessa_to_datetime(pd.Series([ag])).iloc[0]):
-                t1 = _tessa_to_datetime(pd.Series([tr])).iloc[0]
-                t2 = _tessa_to_datetime(pd.Series([ag])).iloc[0]
-                if pd.notna(t1) and pd.notna(t2):
+            t1 = _tessa_to_datetime(pd.Series([tr])).iloc[0] if transfer_col else pd.NaT
+            t2 = _tessa_to_datetime(pd.Series([ag])).iloc[0] if agree_col else pd.NaT
+            if not hide_ov and pd.notna(t1):
+                if pd.notna(t2):
                     pr_cust = f"{max(0, (t2.date() - t1.date()).days)} дн."
-            elif hide_ov:
-                pr_cust = "—"
+                else:
+                    pr_cust = f"{max(0, (today - t1.date()).days)} дн."
             row_dict = {
                 "Контрагент": row.get(contr_col, "") if contr_col else "",
                 "Объект": row.get(obj_col, "") if obj_col else "",
                 "№ документа": row.get("DocNumber", row.get("DocID", "")),
                 "Тип": row.get(kind_col, "") if kind_col else "",
-                "Плановая дата сдачи": plan_d if plan_col else "",
-                "Факт сдачи": fact_d if completed_col else "",
+                "Плановая дата сдачи": plan_dt.strftime("%d.%m.%Y") if pd.notna(plan_dt) else "",
+                "Факт сдачи": fact_dt.strftime("%d.%m.%Y") if pd.notna(fact_dt) else "",
                 "Просрочка сдачи": pr_sub if not hide_ov else "—",
-                "Дата передачи заказчику": row.get(transfer_col, "") if transfer_col else "",
-                "Дата согласования": row.get(agree_col, "") if agree_col else "",
+                "Дата передачи заказчику": t1.strftime("%d.%m.%Y") if pd.notna(t1) else "",
+                "Дата согласования": t2.strftime("%d.%m.%Y") if pd.notna(t2) else "",
                 "Просрочка соглас.": pr_cust if not hide_ov else "—",
                 "Статус": st_l,
-                "Дата создания": row.get(creation_col, "") if creation_col else "",
+                "Дата создания": (
+                    _tessa_to_datetime(pd.Series([row.get(creation_col)])).iloc[0].strftime("%d.%m.%Y")
+                    if creation_col and pd.notna(_tessa_to_datetime(pd.Series([row.get(creation_col)])).iloc[0])
+                    else ""
+                ),
             }
             rows_out.append(row_dict)
         table_df = pd.DataFrame(rows_out)
+        sort_col = _exec_query_param_value("exec_sort", "Дата создания")
+        sort_order = _exec_query_param_value("exec_order", "desc")
+        if sort_col in table_df.columns:
+            table_df = _exec_sort_table_df(table_df, sort_col, sort_order)
         st.markdown(f"**Записей:** {len(table_df)}")
         st.markdown(
-            _EXEC_DOC_DETAIL_CSS + _exec_detail_table_html(table_df),
+            _EXEC_DOC_DETAIL_CSS
+            + '<div class="exec-doc-panel">'
+            + _exec_detail_table_html(
+                table_df,
+                sort_col=sort_col,
+                sort_order=sort_order,
+            )
+            + '<div class="exec-doc-caption">Клик по заголовку сортирует таблицу. '
+            + 'Просрочки показываются в днях, а дата создания выводится без времени.</div></div>',
             unsafe_allow_html=True,
         )
         if len(table_df) > 500:
@@ -12781,6 +12987,7 @@ def dashboard_executive_documentation(df):
                     xaxis=dict(tickangle=-35, categoryorder="array", categoryarray=list(cnt["Месяц"])),
                 )
                 render_chart(fig3, caption_below="Поступление документов по месяцам", key="exec_month_dyn")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ==================== DASHBOARD: график рабочей силы (объединённый) ====================
