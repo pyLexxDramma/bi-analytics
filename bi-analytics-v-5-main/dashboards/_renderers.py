@@ -17749,23 +17749,75 @@ def dashboard_project_schedule_chart(df):
     plot_df = plot_df.sort_values(sort_cols, ascending=sort_asc, na_position="last").head(400)
 
     _gantt_pct_col_used = None
+    plot_df = plot_df.copy()
+
+    def _pick_best_pct_series(d: pd.DataFrame, col_name) -> pd.Series:
+        """Если колонка дублируется (после rename/merge), берём первую с непустыми значениями."""
+        sub = d[col_name]
+        if isinstance(sub, pd.DataFrame):
+            best = None
+            best_cnt = -1
+            for i in range(sub.shape[1]):
+                s = _gantt_coerce_pct_series(sub.iloc[:, i])
+                cnt = int(s.notna().sum())
+                if cnt > best_cnt:
+                    best_cnt = cnt
+                    best = s
+            return best if best is not None else pd.Series(np.nan, index=d.index)
+        return _gantt_coerce_pct_series(sub)
+
     # Поиск колонки % через _sched_col (регистронезависимый) — охватывает "Pct Complete", "PCT COMPLETE" и т.д.
     _pc_raw = _sched_col(plot_df, ["pct complete"]) or _gantt_find_percent_column(plot_df)
     if _pc_raw:
-        plot_df = plot_df.copy()
-        plot_df["pct complete"] = _gantt_coerce_pct_series(plot_df[_pc_raw])
+        plot_df["pct complete"] = _pick_best_pct_series(plot_df, _pc_raw)
         _gantt_pct_col_used = _pc_raw
     else:
         plot_df["pct complete"] = np.nan
-    if label_pct and _gantt_pct_col_used is None:
-        _avail_cols = [c for c in plot_df.columns if "%" in str(c) or any(
-            w in str(c).lower() for w in ("percent", "complete", "процент", "выполн", "заверш", "готовн")
-        )]
-        _hint = (f" Похожие колонки в файле: **{', '.join(_avail_cols[:8])}**." if _avail_cols else
-                 f" Колонки файла: {', '.join(str(c) for c in plot_df.columns[:15])}…")
-        st.warning("Не найдена колонка процента выполнения — у концов полос будет «н/д»." + _hint)
-    elif label_pct and _gantt_pct_col_used and not plot_df["pct complete"].notna().any():
-        st.caption("Процент выполнения в данных везде пустой — у концов полос будет «н/д».")
+
+    if label_pct:
+        _pct_series = plot_df["pct complete"]
+        if isinstance(_pct_series, pd.DataFrame):
+            _pct_series = _pct_series.iloc[:, 0]
+        _has_data = bool(_pct_series.notna().any())
+        if _gantt_pct_col_used is None:
+            _avail_cols = [c for c in plot_df.columns if "%" in str(c) or any(
+                w in str(c).lower() for w in ("percent", "complete", "процент", "выполн", "заверш", "готовн")
+            )]
+            _hint = (f" Похожие колонки в файле: **{', '.join(_avail_cols[:8])}**." if _avail_cols else
+                     f" Колонки файла: {', '.join(str(c) for c in plot_df.columns[:15])}…")
+            st.warning("Не найдена колонка процента выполнения — у концов полос будет «н/д»." + _hint)
+        elif not _has_data:
+            st.caption(
+                f"Колонка процента выполнения найдена («{_gantt_pct_col_used}»), "
+                "но все значения пустые — у концов полос будет «н/д»."
+            )
+        # Диагностический блок (открытый по умолчанию только при отсутствии данных).
+        with st.expander("Диагностика: колонка % выполнения", expanded=(not _has_data)):
+            _all_pct_like = [
+                c for c in plot_df.columns
+                if "%" in str(c)
+                or any(w in str(c).lower() for w in ("percent", "complete", "процент", "выполн", "заверш", "готовн"))
+            ]
+            st.write(f"Использованная колонка: **{_gantt_pct_col_used or '— не найдена —'}**")
+            st.write(f"Не-пустых значений после парсинга: **{int(_pct_series.notna().sum())}** из {len(_pct_series)}")
+            st.write(f"Все колонки с признаками %: {_all_pct_like or '—'}")
+            # Подсказка про дубликаты после ремапа MSP-колонок.
+            _dups = [c for c in set(map(str, plot_df.columns)) if list(plot_df.columns).count(c) > 1]
+            if _dups:
+                st.warning(
+                    f"Найдены **дублирующиеся колонки** после загрузки: {_dups}. "
+                    "Это типично, когда исходный файл уже содержит «pct complete», "
+                    "а маппинг MSP добавляет вторую копию из «Процент_завершения». "
+                    "Сейчас берётся колонка с большим числом непустых значений."
+                )
+            if _gantt_pct_col_used and _pc_raw:
+                _src = plot_df[_pc_raw]
+                if isinstance(_src, pd.DataFrame):
+                    _src = _src.iloc[:, 0]
+                st.dataframe(
+                    _src.dropna().astype(str).head(10).to_frame(name="первые 10 непустых значений"),
+                    use_container_width=True,
+                )
 
     lvl_for_indent = None
     if level_col:
@@ -18158,10 +18210,19 @@ def dashboard_project_schedule_chart(df):
     plan_texts = []
     base_tasks, base_starts, base_ends = [], [], []
 
-    for _idx, row in plot_df.iterrows():
+    # Подготовим pct complete как гарантированную Series (на случай дубликатов колонок).
+    if "pct complete" in plot_df.columns:
+        _pc_obj = plot_df["pct complete"]
+        if isinstance(_pc_obj, pd.DataFrame):
+            _pc_obj = _pc_obj.iloc[:, 0]
+        _pct_values = _pc_obj.tolist()
+    else:
+        _pct_values = [np.nan] * len(plot_df)
+
+    for _i, (_idx, row) in enumerate(plot_df.iterrows()):
         ps, pe = row["plan start"], row["plan end"]
         pe_d = pe.strftime(_readability["date_fmt"]) if hasattr(pe, "strftime") else str(pe)
-        pv = row["pct complete"] if "pct complete" in plot_df.columns else np.nan
+        pv = _pct_values[_i] if _i < len(_pct_values) else np.nan
         if label_pct:
             if pd.notna(pv):
                 try:
