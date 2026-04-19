@@ -17234,11 +17234,18 @@ def dashboard_control_points(df):
 def dashboard_project_schedule_chart(df):
     """График проекта: Гант по плану и базе MSP, фильтры, таблица с отклонениями."""
 
+    def _norm_colname(s) -> str:
+        """Жёсткая нормализация: BOM, NBSP, узкие пробелы, табы/переносы → один пробел; нижний регистр; trim."""
+        t = str(s).replace("\ufeff", "").replace("\u00a0", " ").replace("\u202f", " ").replace("\u2007", " ")
+        t = re.sub(r"[\s\t\n\r]+", " ", t).strip().lower()
+        return t
+
     def _sched_col(d, candidates):
+        cols_norm = {_norm_colname(c): c for c in d.columns}
         for name in candidates:
-            for c in d.columns:
-                if str(name).strip().lower() == str(c).strip().lower():
-                    return c
+            n = _norm_colname(name)
+            if n in cols_norm:
+                return cols_norm[n]
         return None
 
     def _sched_wbs_tuple(val):
@@ -17337,10 +17344,13 @@ def dashboard_project_schedule_chart(df):
                 return float(v)
             if isinstance(v, float) and not pd.isna(v):
                 return float(v)
-            t = str(v).strip().replace("\u00a0", " ")
+            t = str(v)
+            # BOM, NBSP, узкий неразрывный, цифровой пробел, обычные пробелы → ничего
+            for ch in ("\ufeff", "\u00a0", "\u202f", "\u2007", " ", "\t", "\r", "\n"):
+                t = t.replace(ch, "")
             if not t or t.lower() in ("nan", "nat", "none", "-", "—", ""):
                 return np.nan
-            tl = t.replace("%", "").strip().replace(",", ".")
+            tl = t.replace("%", "").replace(",", ".")
             try:
                 return float(tl)
             except (TypeError, ValueError):
@@ -17801,6 +17811,15 @@ def dashboard_project_schedule_chart(df):
             st.write(f"Использованная колонка: **{_gantt_pct_col_used or '— не найдена —'}**")
             st.write(f"Не-пустых значений после парсинга: **{int(_pct_series.notna().sum())}** из {len(_pct_series)}")
             st.write(f"Все колонки с признаками %: {_all_pct_like or '—'}")
+            # Диагностика скрытых символов в именах: показываем repr() — будет видно \xa0, \ufeff и пр.
+            _hidden = []
+            for c in _all_pct_like:
+                raw = str(c)
+                if any(ch in raw for ch in ("\xa0", "\ufeff", "\u202f", "\u2007")) or raw != raw.strip():
+                    _hidden.append({"имя (repr)": repr(raw), "коды": [hex(ord(ch)) for ch in raw]})
+            if _hidden:
+                st.warning("В именах колонок-кандидатов найдены скрытые символы:")
+                st.json(_hidden)
             # Подсказка про дубликаты после ремапа MSP-колонок.
             _dups = [c for c in set(map(str, plot_df.columns)) if list(plot_df.columns).count(c) > 1]
             if _dups:
