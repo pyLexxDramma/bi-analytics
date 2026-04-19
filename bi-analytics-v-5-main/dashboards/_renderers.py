@@ -17274,6 +17274,7 @@ def dashboard_project_schedule_chart(df):
         if d is None or getattr(d, "empty", True):
             return None
         exact = [
+            # Английские (MSP, Primavera, стандарт)
             "pct complete",
             "percent complete",
             "% complete",
@@ -17281,22 +17282,48 @@ def dashboard_project_schedule_chart(df):
             "physical % complete",
             "physical percent complete",
             "Physical % Complete",
+            "complete",
+            "% done",
+            "done %",
+            "completion %",
+            "completion percentage",
+            "work complete",
+            "% work complete",
+            "actual % complete",
+            "actual percent complete",
+            # Русские (MSP, русская локаль)
             "Процент выполнения",
             "% завершения",
             "процент выполнения",
             "Процент_выполнения",
+            "физический % завершения",
+            "Физический % завершения",
+            "физический процент завершения",
+            "% выполнения",
+            "Выполнение %",
+            "выполнено %",
+            "% завершён",
+            "готовность %",
         ]
         hit = _sched_col(d, exact)
         if hit:
             return hit
+        # Расширенный поиск по подстрокам (нижний регистр)
         for c in d.columns:
             sl = str(c).strip().lower().replace("_", " ")
             if any(x in sl for x in ("приоритет", "priority", "severity", "риск", "baseline")):
                 continue
-            has_pct = "%" in sl or "percent" in sl or "процент" in sl
-            has_done = "complete" in sl or "выполн" in sl or "заверш" in sl
+            has_pct = "%" in sl or "percent" in sl or "процент" in sl or "выполн" in sl or "заверш" in sl or "готовн" in sl
+            has_done = "complete" in sl or "выполн" in sl or "заверш" in sl or "done" in sl or "готовн" in sl
             if has_pct and has_done:
                 return c
+        # Последний шанс: любая колонка с "%" в имени с числовыми данными
+        for c in d.columns:
+            sl = str(c).strip().lower()
+            if "%" in sl and not any(x in sl for x in ("приоритет", "priority", "риск", "baseline", "бюджет", "budget")):
+                vals = pd.to_numeric(d[c], errors="coerce")
+                if vals.notna().sum() >= max(1, len(d) * 0.1):
+                    return c
         return None
 
     def _gantt_coerce_pct_series(raw: pd.Series) -> pd.Series:
@@ -17722,22 +17749,22 @@ def dashboard_project_schedule_chart(df):
     plot_df = plot_df.sort_values(sort_cols, ascending=sort_asc, na_position="last").head(400)
 
     _gantt_pct_col_used = None
-    if "pct complete" in plot_df.columns:
-        plot_df["pct complete"] = _gantt_coerce_pct_series(plot_df["pct complete"])
-        _gantt_pct_col_used = "pct complete"
+    # Поиск колонки % через _sched_col (регистронезависимый) — охватывает "Pct Complete", "PCT COMPLETE" и т.д.
+    _pc_raw = _sched_col(plot_df, ["pct complete"]) or _gantt_find_percent_column(plot_df)
+    if _pc_raw:
+        plot_df = plot_df.copy()
+        plot_df["pct complete"] = _gantt_coerce_pct_series(plot_df[_pc_raw])
+        _gantt_pct_col_used = _pc_raw
     else:
-        _pc = _gantt_find_percent_column(plot_df)
-        if _pc:
-            plot_df["pct complete"] = _gantt_coerce_pct_series(plot_df[_pc])
-            _gantt_pct_col_used = _pc
-        else:
-            plot_df["pct complete"] = np.nan
+        plot_df["pct complete"] = np.nan
     if label_pct and _gantt_pct_col_used is None:
-        st.caption(
-            "Не найдена колонка процента выполнения — в режиме «% выполнения» у концов полос будет «н/д». "
-            "Ожидаются имена вроде «% complete», «Percent complete», «Physical % Complete», «Процент выполнения»."
-        )
-    elif label_pct and "pct complete" in plot_df.columns and not plot_df["pct complete"].notna().any():
+        _avail_cols = [c for c in plot_df.columns if "%" in str(c) or any(
+            w in str(c).lower() for w in ("percent", "complete", "процент", "выполн", "заверш", "готовн")
+        )]
+        _hint = (f" Похожие колонки в файле: **{', '.join(_avail_cols[:8])}**." if _avail_cols else
+                 f" Колонки файла: {', '.join(str(c) for c in plot_df.columns[:15])}…")
+        st.warning("Не найдена колонка процента выполнения — у концов полос будет «н/д»." + _hint)
+    elif label_pct and _gantt_pct_col_used and not plot_df["pct complete"].notna().any():
         st.caption("Процент выполнения в данных везде пустой — у концов полос будет «н/д».")
 
     lvl_for_indent = None
@@ -18173,11 +18200,12 @@ def dashboard_project_schedule_chart(df):
 
     _rl_lens = [len(str(s).replace("\n", " ")) for s in right_labels if str(s).strip()]
     _max_rl = max(_rl_lens, default=0)
-    # Запас справа под подписи у концов полос (дата / % и при наличии — база).
+    # Запас справа под подписи у концов полос (дата / %).
+    # При 15-16px шрифте нужно больше пространства.
     right_m = int(
         min(
-            int(_readability.get("right_pad_max", 680)),
-            max(int(_readability.get("right_pad_min", 320)), 100 + min(_max_rl, 110) * 5),
+            300,
+            max(110, 80 + min(_max_rl, 20) * 9),
         )
     )
 
@@ -18243,32 +18271,67 @@ def dashboard_project_schedule_chart(df):
         fig_gantt.update_layout(barmode="group")
 
     n = len(plot_df)
-    row_h = 34 if _readability.get("is_dense") else 30
-    chart_h = min(2600, max(220, 96 + row_h * n))
+    row_h = 40 if _readability.get("is_dense") else 36
+    chart_h = min(3200, max(300, 100 + row_h * n))
     max_len = int(plot_df["_gantt_y_label"].astype(str).str.len().max() or 12)
-    # Слева от полос — «пустая» доля subplot (domain), подписи в xref x domain с отрицательным x; margin.l умеренный.
-    _gantt_x_domain_lo = float(min(0.40, max(0.20, 0.145 + min(max_len, 150) * 0.00155)))
-    left_m = int(max(100, min(380, 92 + int(min(max_len, 130) * 2.35))))
 
+    # Доля ширины под левую панель с названиями задач (xaxis2).
+    # Scatter-trace рендерится на xaxis2 (anchor="y") — стабильно при прокрутке/зуме дат.
+    _x_lo = float(min(0.44, max(0.24, 0.16 + min(max_len, 140) * 0.00175)))
+    left_m = 6   # margin слева маленький: метки внутри xaxis2, не в margin
+
+    _task_font_size = max(12, _readability.get("task_font", 11) + 1)
+
+    # Y-ось: категории без нативных подписей (заменяем Scatter-trace на xaxis2).
     fig_gantt.update_yaxes(
         autorange="reversed",
         title=dict(text=""),
-        tickfont=dict(size=11, color=TABLE_TEXT_COLOR),
         side="left",
         showticklabels=False,
-        ticklabelposition="outside",
-        ticklabeloverflow="allow",
-        ticklabelstandoff=12,
         categoryorder="array",
         categoryarray=vis["Название"].tolist(),
         automargin=False,
         fixedrange=True,
     )
-    fig_gantt.update_xaxes(title_text="Дата", automargin=True, showgrid=True)
-    try:
-        fig_gantt.update_layout(xaxis=dict(domain=[_gantt_x_domain_lo, 1.0]))
-    except Exception:
-        pass
+    fig_gantt.update_layout(xaxis=dict(
+        domain=[_x_lo, 1.0],
+        title_text="",
+        automargin=False,
+        showgrid=True,
+    ))
+
+    # Левовыровненные названия задач: Scatter на xaxis2 (домен [0, x_lo], anchor="y").
+    # Позиции по Y совпадают с барами, т.к. оба trace делят один yaxis.
+    # Позиции по X (xaxis2, fixedrange=True) не сдвигаются при панировании дат.
+    fig_gantt.add_trace(
+        go.Scatter(
+            x=[0.018] * len(plot_df),
+            y=plot_df["_gantt_y_label"].tolist(),
+            mode="text",
+            text=[_gantt_trunc_label(s, 55) for s in plot_df["_gantt_y_label"].tolist()],
+            textposition="middle right",
+            textfont=dict(size=_task_font_size, color=TABLE_TEXT_COLOR, family="Arial"),
+            xaxis="x2",
+            yaxis="y",
+            showlegend=False,
+            hoverinfo="skip",
+            cliponaxis=False,
+        )
+    )
+    fig_gantt.update_layout(
+        xaxis2=dict(
+            domain=[0.0, _x_lo],
+            range=[0, 1],
+            fixedrange=True,
+            showticklabels=False,
+            showgrid=False,
+            zeroline=False,
+            showline=False,
+            visible=False,
+            anchor="y",          # ключевой параметр: делит yaxis с xaxis
+        ),
+    )
+
     _lo_pad = _hi_pad = None
     # Подписи у концов полос — отдельный Scatter(mode=text): на date-оси надёжнее, чем layout.annotations.
     end_label_x: list = []
@@ -18276,8 +18339,8 @@ def dashboard_project_schedule_chart(df):
     end_label_text: list = []
     fig_gantt.update_layout(
         height=chart_h,
-        margin=dict(l=left_m, r=right_m, t=48, b=96),
-        bargap=0.28,
+        margin=dict(l=left_m, r=right_m, t=48, b=48),
+        bargap=0.32,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
     # Запас по оси X + подписи сразу справа от конца полос этой строки (не одна общая колонка по max(hi)).
@@ -18293,10 +18356,11 @@ def dashboard_project_schedule_chart(df):
             hi = pd.concat([pd.Series([hi]), be]).max()
         if pd.notna(lo) and pd.notna(hi):
             span_days = max((hi - lo).total_seconds() / 86400.0, 1.0)
-            pad = timedelta(days=max(35.0, span_days * 0.08))
-            off_ann = timedelta(days=max(1.5, span_days * 0.012))
-            tail = timedelta(days=max(10.0, span_days * 0.07))
-            _step = 1 if _effective_force_all else int(max(1, _readability.get("text_step", 1)))
+            pad = timedelta(days=max(45.0, span_days * 0.09))
+            off_ann = timedelta(days=max(4.0, span_days * 0.018))  # отступ увеличен: метка правее баров
+            tail = timedelta(days=max(18.0, span_days * 0.09))
+            # В режиме % выполнения — всегда показываем все строки (иначе % теряется).
+            _step = 1 if (_effective_force_all or label_pct) else int(max(1, _readability.get("text_step", 1)))
             for i, (_, row) in enumerate(plot_df.iterrows()):
                 if i % _step != 0:
                     continue
@@ -18325,17 +18389,29 @@ def dashboard_project_schedule_chart(df):
                 _hi_pad = max(hi + pad, ann_x_max + tail)
             else:
                 _hi_pad = hi + pad
-            fig_gantt.update_xaxes(range=[_lo_pad, _hi_pad], autorange=False)
+            fig_gantt.update_layout(xaxis=dict(range=[_lo_pad, _hi_pad], autorange=False))
     except Exception:
         pass
     # skip_uniformtext: глобальный apply_chart_background задаёт uniformtext mode=hide —
     # из‑за этого подписи у горизонтальных полос могут не отображаться.
     fig_gantt = apply_chart_background(fig_gantt, skip_uniformtext=True)
     try:
-        fig_gantt.update_yaxes(automargin=False, fixedrange=True)
+        fig_gantt.update_yaxes(automargin=False, fixedrange=True, showticklabels=False)
         fig_gantt.update_layout(
-            margin=dict(l=left_m, r=right_m, t=48, b=96),
+            margin=dict(l=left_m, r=right_m, t=48, b=48),
             uirevision="gantt_project_schedule",
+            xaxis=dict(domain=[_x_lo, 1.0]),
+            xaxis2=dict(
+                domain=[0.0, _x_lo],
+                range=[0, 1],
+                fixedrange=True,
+                showticklabels=False,
+                showgrid=False,
+                zeroline=False,
+                showline=False,
+                visible=False,
+                anchor="y",
+            ),
         )
     except Exception:
         pass
@@ -18354,48 +18430,31 @@ def dashboard_project_schedule_chart(df):
             )
             if tvals and ttext and len(tvals) == len(ttext):
                 tickvals_iso = [pd.Timestamp(t).strftime("%Y-%m-%d") for t in tvals]
-                fig_gantt.update_xaxes(
+                fig_gantt.update_layout(xaxis=dict(
                     type="date",
                     tickmode="array",
                     tickvals=tickvals_iso,
                     ticktext=ttext,
                     tickangle=0,
                     tickformat="",
-                )
-    except Exception:
-        pass
-    try:
-        fig_gantt.update_layout(xaxis=dict(domain=[_gantt_x_domain_lo, 1.0]))
-    except Exception:
-        pass
-    try:
-        fig_gantt.update_yaxes(
-            title=dict(text=""),
-            showticklabels=False,
-            automargin=False,
-            fixedrange=True,
-        )
+                ))
     except Exception:
         pass
     if _lo_pad is not None and _hi_pad is not None:
         try:
-            fig_gantt.update_xaxes(range=[_lo_pad, _hi_pad], autorange=False)
+            fig_gantt.update_layout(xaxis=dict(range=[_lo_pad, _hi_pad], autorange=False))
         except Exception:
             pass
-    try:
-        fig_gantt.update_layout(xaxis=dict(domain=[_gantt_x_domain_lo, 1.0]))
-    except Exception:
-        pass
     if end_label_x:
         try:
+            _lbl_size = max(15, _readability.get("label_font", 11) + 4)
             fig_gantt.add_trace(
                 go.Scatter(
                     x=end_label_x,
                     y=end_label_y,
                     mode="text",
                     text=end_label_text,
-                    textfont=dict(size=_readability.get("label_font", 11), color="#f8fafc"),
-                    # Текст правее якоря — якорь чуть правее конца полосы (см. x_mark).
+                    textfont=dict(size=_lbl_size, color="#ffffff", family="Arial"),
                     textposition="middle right",
                     showlegend=False,
                     hoverinfo="skip",
@@ -18407,41 +18466,8 @@ def dashboard_project_schedule_chart(df):
                 pass
         except Exception as e:
             st.warning(f"Подписи у концов полос: {e}")
-    # Названия: xref x domain, x < 0 — слева от области дат (см. xaxis.domain), выравнивание по левому краю.
-    _gantt_task_label_w = int(
-        max(
-            180,
-            min(
-                500 if _readability.get("is_dense") else 460,
-                8.2 * min(max_len, 56),
-            ),
-        )
-    )
-    _task_x = float(-_gantt_x_domain_lo + 0.01)
-    task_label_anns = []
-    for _, row in plot_df.iterrows():
-        y = row["_gantt_y_label"]
-        task_label_anns.append(
-            dict(
-                xref="x domain",
-                x=_task_x,
-                xanchor="left",
-                yref="y",
-                y=y,
-                text=str(y),
-                showarrow=False,
-                align="left",
-                width=_gantt_task_label_w,
-                font=dict(size=_readability.get("task_font", 11), color=TABLE_TEXT_COLOR),
-                captureevents=False,
-                hovertext="",
-            )
-        )
-    if task_label_anns:
-        try:
-            fig_gantt.update_layout(annotations=task_label_anns)
-        except Exception as e:
-            st.warning(f"Названия задач (аннотации): {e}")
+    # Названия задач отображаются нативными tick labels Y-оси (showticklabels=True),
+    # что гарантирует корректное позиционирование при любом масштабе страницы.
 
     if is_covenants:
         if "base end" not in plot_df.columns or not pd.to_datetime(plot_df["base end"], errors="coerce").notna().any():
