@@ -7206,6 +7206,28 @@ def dashboard_rd_delay(df):
         )
     )
 
+    on_approval_col_rd = find_column(df, ["На согласовании", "согласовании"])
+    in_production_col_rd = find_column(
+        df,
+        [
+            "Выдано в производство работ",
+            "Разработано",
+            "В работе",
+            "производство работ",
+            "в производство",
+        ],
+    )
+    contractor_transfer_col_rd = find_column(
+        df,
+        [
+            "Выдана подрядчику",
+            "Передано подрядчику",
+            "подрядчику",
+            "TransferToCustomer",
+        ],
+    )
+    rework_col_rd = find_column(df, ["На доработке", "доработке"])
+
     # Check if required columns exist (section optional — заменён фильтром по виду документации)
     missing_cols = []
     if not project_col or project_col not in df.columns:
@@ -7231,14 +7253,19 @@ def dashboard_rd_delay(df):
 
     # Add filters
     st.subheader("Фильтры")
-    filter_col1, filter_col2 = st.columns(2)
+    filter_col1, filter_col2, filter_col3 = st.columns(3)
 
-    # Project filter
+    # Project filter (несколько проектов)
+    selected_projects: list[str] = []
     with filter_col1:
         try:
-            projects = ["Все"] + _unique_project_labels_for_select(df[project_col])
-            selected_project = st.selectbox(
-                "Фильтр по проекту", projects, key="rd_delay_project"
+            projects = _unique_project_labels_for_select(df[project_col])
+            selected_projects = st.multiselect(
+                "Фильтр по проектам",
+                options=projects,
+                default=projects,
+                key="rd_delay_projects",
+                help="Ничего не выбрано — показываются все проекты.",
             )
         except Exception as e:
             st.error(f"Ошибка при загрузке списка проектов: {str(e)}")
@@ -7264,19 +7291,104 @@ def dashboard_rd_delay(df):
         else:
             st.caption("Колонка раздела РД не найдена.")
 
+    selected_statuses_rd: list[str] = []
+    rd_status_options_rd: list[str] = []
+    with filter_col3:
+        if on_approval_col_rd and on_approval_col_rd in df.columns:
+            rd_status_options_rd.append("На согласовании")
+        if in_production_col_rd and in_production_col_rd in df.columns:
+            rd_status_options_rd.append("Выдано в производство работ")
+        if contractor_transfer_col_rd and contractor_transfer_col_rd in df.columns:
+            rd_status_options_rd.append("Передано подрядчику")
+        if rework_col_rd and rework_col_rd in df.columns:
+            rd_status_options_rd.append("На доработке")
+        if rd_status_options_rd:
+            selected_statuses_rd = st.pills(
+                "Фильтр по статусу РД",
+                rd_status_options_rd,
+                selection_mode="multi",
+                default=rd_status_options_rd,
+                key="rd_delay_status_filter",
+                help="Пустой выбор — все статусы.",
+            )
+            if selected_statuses_rd is None:
+                selected_statuses_rd = []
+        else:
+            st.caption("Нет колонок статусов РД для фильтра.")
+
     # Apply filters
     filtered_df = df.copy()
 
-    if selected_project != "Все":
-        _pk = _project_filter_norm_key(selected_project)
+    if selected_projects:
+        _pk_set = {_project_filter_norm_key(p) for p in selected_projects}
         filtered_df = filtered_df[
-            filtered_df[project_col].map(_project_filter_norm_key) == _pk
+            filtered_df[project_col].map(_project_filter_norm_key).isin(_pk_set)
         ]
 
     if selected_section != "Все" and section_col and section_col in filtered_df.columns:
         filtered_df = filtered_df[
             filtered_df[section_col].astype(str).str.strip() == selected_section
         ]
+
+    if (
+        selected_statuses_rd
+        and rd_status_options_rd
+        and set(selected_statuses_rd) != set(rd_status_options_rd)
+    ):
+        status_mask = pd.Series([False] * len(filtered_df), index=filtered_df.index)
+        if (
+            "На согласовании" in selected_statuses_rd
+            and on_approval_col_rd
+            and on_approval_col_rd in filtered_df.columns
+        ):
+            on_approval_series = (
+                filtered_df[on_approval_col_rd]
+                .astype(str)
+                .str.replace(",", ".", regex=False)
+            )
+            on_approval_numeric = pd.to_numeric(
+                on_approval_series, errors="coerce"
+            ).fillna(0)
+            status_mask = status_mask | (on_approval_numeric > 0)
+        if (
+            "Выдано в производство работ" in selected_statuses_rd
+            and in_production_col_rd
+            and in_production_col_rd in filtered_df.columns
+        ):
+            in_production_series = (
+                filtered_df[in_production_col_rd]
+                .astype(str)
+                .str.replace(",", ".", regex=False)
+            )
+            in_production_numeric = pd.to_numeric(
+                in_production_series, errors="coerce"
+            ).fillna(0)
+            status_mask = status_mask | (in_production_numeric > 0)
+        if (
+            "Передано подрядчику" in selected_statuses_rd
+            and contractor_transfer_col_rd
+            and contractor_transfer_col_rd in filtered_df.columns
+        ):
+            contractor_series = (
+                filtered_df[contractor_transfer_col_rd]
+                .astype(str)
+                .str.replace(",", ".", regex=False)
+            )
+            contractor_numeric = pd.to_numeric(
+                contractor_series, errors="coerce"
+            ).fillna(0)
+            status_mask = status_mask | (contractor_numeric > 0)
+        if (
+            "На доработке" in selected_statuses_rd
+            and rework_col_rd
+            and rework_col_rd in filtered_df.columns
+        ):
+            rework_series = (
+                filtered_df[rework_col_rd].astype(str).str.replace(",", ".", regex=False)
+            )
+            rework_numeric = pd.to_numeric(rework_series, errors="coerce").fillna(0)
+            status_mask = status_mask | (rework_numeric > 0)
+        filtered_df = filtered_df[status_mask].copy()
 
     if filtered_df.empty:
         st.info("Нет данных для выбранных фильтров.")
@@ -11759,23 +11871,17 @@ def dashboard_skud_stroyka(df):
 # ==================== DASHBOARD: график рабочей силы (вкладки) ====================
 def dashboard_technique_tabs(df):
     """
-    График движения рабочей силы: вкладки — рабочая сила, техника.
+    ГДРС: только рабочая сила (без техники и без отдельного отчёта «СКУД по неделям» в меню).
     """
     st.header("График движения рабочей силы")
     with st.expander("Источник данных", expanded=False):
         st.caption(
-            "Данные из загруженных файлов ресурсов и техники. Если данных нет — загрузите соответствующие CSV-файлы."
+            "Данные из загруженного файла ресурсов. Если данных нет — загрузите CSV с показателями по рабочей силе."
         )
-    tab1, tab2 = st.tabs([
-        "Рабочая сила",
-        "Техника",
-    ])
-    with tab1:
-        st.subheader("График движения рабочей силы")
-        dashboard_workforce_movement(df, data_source_filter="Ресурсы", show_header=False, key_prefix="gdrs_people")
-    with tab2:
-        st.subheader("График движения техники")
-        dashboard_workforce_movement(df, data_source_filter="Техника", show_header=False, key_prefix="gdrs_technique")
+    st.subheader("График движения рабочей силы")
+    dashboard_workforce_movement(
+        df, data_source_filter="Ресурсы", show_header=False, key_prefix="gdrs_people"
+    )
 # ==================== DASHBOARD: Дебиторская и кредиторская задолженность подрядчиков ====================
 def _find_col(df, names):
     """Поиск колонки по частичному совпадению (без учёта регистра)."""
@@ -13227,7 +13333,11 @@ def dashboard_documentation(
         if in_production_col and in_production_col in df.columns:
             rd_status_options.append("Выдано в производство работ")
         if contractor_col and contractor_col in df.columns:
-            rd_status_options.append("Выдана подрядчику")
+            rd_status_options.append(
+                "Передано подрядчику"
+                if page_title == "Рабочая документация"
+                else "Выдана подрядчику"
+            )
         if rework_col and rework_col in df.columns:
             rd_status_options.append("На доработке")
         if page_title == "Рабочая документация":
@@ -13320,7 +13430,10 @@ def dashboard_documentation(
             status_mask = status_mask | (in_production_numeric > 0)
 
         if (
-            "Выдана подрядчику" in selected_statuses
+            (
+                "Выдана подрядчику" in selected_statuses
+                or "Передано подрядчику" in selected_statuses
+            )
             and contractor_col
             and contractor_col in filtered_df.columns
         ):
