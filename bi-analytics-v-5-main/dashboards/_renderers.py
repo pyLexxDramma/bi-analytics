@@ -12754,6 +12754,12 @@ def dashboard_executive_documentation(df):
 
     work = tessa_df.copy()
     work.columns = [str(c).strip() for c in work.columns]
+    try:
+        # Дополняем строки ИД данными карточки/задачи TESSA по ключам DocID/CardId.
+        # Это выравнивает поля сроков, передачи заказчику и согласования с фактическими данными TESSA.
+        work = _tessa_fill_card_from_doc_lookup(work)
+    except Exception:
+        pass
 
     kind_col = _tessa_find_column(work, ["KindName", "kindname", "Вид"])
     if kind_col:
@@ -12972,6 +12978,7 @@ def dashboard_executive_documentation(df):
             "Просрочка заказчика": int((overdue_loc & on_agree_loc).sum()),
         }
 
+    compare_panel_payload: tuple[str, str] | None = None
     if creation_col and filtered_base["_cd"].notna().any():
         cmp_source = filtered_base[filtered_base["_cd"].notna()].copy()
         cmp_source["_cmp_month"] = cmp_source["_cd"].dt.to_period("M")
@@ -13030,15 +13037,20 @@ def dashboard_executive_documentation(df):
                         "tone": tone_map.get(title, ""),
                     }
                 )
-            st.markdown(
+            prev_cmp_label = (
+                f"{RUSSIAN_MONTHS.get(prev_cmp_month.month, str(prev_cmp_month.month))} {prev_cmp_month.year}"
+                if prev_cmp_month in cmp_months
+                else "предыдущим месяцем"
+            )
+            compare_panel_payload = (
+                f"Изменения за {selected_cmp_label} по сравнению с {prev_cmp_label}",
                 _exec_metric_cards_html(
                     compare_cards,
                     caption=(
-                        f"Сравнение {selected_cmp_label} с предыдущим месяцем. "
-                        "Показывает абсолютное изменение и процент к предыдущему месяцу."
+                        "Показывает абсолютное изменение и процент относительно предыдущего месяца "
+                        "в текущей выборке по фильтрам."
                     ),
                 ),
-                unsafe_allow_html=True,
             )
 
     oc1, oc2 = st.columns(2)
@@ -13129,6 +13141,11 @@ def dashboard_executive_documentation(df):
                 key="exec_overdue_customer",
             )
         st.caption("Блок показывает документы, зависшие на согласовании у заказчика.")
+
+    if compare_panel_payload is not None:
+        compare_title, compare_html = compare_panel_payload
+        st.subheader(compare_title)
+        st.markdown(compare_html, unsafe_allow_html=True)
 
     tab_sum, tab_detail, tab_dyn = st.tabs(["Накопительным итогом", "Детальный отчёт", "Динамика по месяцам"])
 
