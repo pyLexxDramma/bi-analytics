@@ -16542,6 +16542,12 @@ def dashboard_predpisania(df):
 
     # Повторно объединяем по ключу уже внутри выборки «предписания» (договор/срок могли быть только в других строках)
     pred = _tessa_fill_card_from_doc_lookup(pred)
+    pred_doc_col = _tessa_find_column(
+        pred, ["DocID", "DocId", "DocumentID", "DocumentId", "Id", "ID"]
+    )
+    pred_card_col = _tessa_find_column(
+        pred, ["CardId", "CardID", "cardId", "TaskCardId", "ИдКарточки"]
+    )
 
     krstates_df = st.session_state.get("reference_krstates", None)
     status_map = {}
@@ -16557,6 +16563,7 @@ def dashboard_predpisania(df):
         )
     else:
         pred["Статус"] = "Неизвестно"
+    pred = pred[~pred["Статус"].astype(str).str.fullmatch(r"\s*Проект\s*", case=False, na=False)].copy()
 
     contr_col = _tessa_find_column(pred, ["CONTR", "Контрагент", "contr"])
     contract_col = _tessa_find_column(
@@ -16634,6 +16641,26 @@ def dashboard_predpisania(df):
             "Department",
         ],
     )
+    dedupe_subset = [
+        c
+        for c in [
+            pred_doc_col,
+            pred_card_col,
+            creation_col_pred,
+            doc_num_col,
+            contr_col,
+            kind_col,
+            obj_col,
+            "Name" if "Name" in pred.columns else None,
+            "KrState" if "KrState" in pred.columns else None,
+            "KrStateID" if "KrStateID" in pred.columns else None,
+        ]
+        if c and c in pred.columns
+    ]
+    if dedupe_subset:
+        pred = pred.drop_duplicates(subset=dedupe_subset, keep="first").copy()
+    else:
+        pred = pred.drop_duplicates().copy()
 
     _excl_guess = [kind_col, contr_col, obj_col, doc_num_col, creation_col_pred, completion_col]
     if not contract_col:
@@ -16645,11 +16672,18 @@ def dashboard_predpisania(df):
     pred["_issue_date"] = _tessa_to_datetime(pred[creation_col_pred]) if creation_col_pred else pd.Series(pd.NaT, index=pred.index)
     pred["_completion_dt"] = _tessa_to_datetime(pred[completion_col]) if completion_col else pd.Series(pd.NaT, index=pred.index)
     pred["_signed"] = st_l.str.contains("Подписан", case=False, na=False) | st_l.str.contains("Согласован", case=False, na=False)
+    pred["_resolved"] = False
+    if "KrStateID" in pred.columns:
+        _krstate_num = pd.to_numeric(pred["KrStateID"], errors="coerce")
+        pred["_resolved"] = pred["_resolved"] | (_krstate_num == 13)
     pred["_resolved"] = (
-        pred["_signed"]
+        pred["_resolved"]
         | st_l.str.contains("устран", case=False, na=False)
-        | pred["_completion_dt"].notna()
+        | st_l.str.contains("выполн", case=False, na=False)
+        | st_l.str.contains("закрыт", case=False, na=False)
     )
+    if completion_col and completion_col in pred.columns:
+        pred["_resolved"] = pred["_resolved"] | pred["_completion_dt"].notna()
     if due_col:
         pred["_due"] = _tessa_to_datetime(pred[due_col])
     else:
@@ -16675,9 +16709,9 @@ def dashboard_predpisania(df):
     st.markdown("**Фильтры**")
     fc1, fc2, fc3, fc4, fb1, fb2 = st.columns([2, 2, 2, 2, 1, 1])
     if obj_col:
-        projects = ["Все проекты"] + sorted(pred[obj_col].dropna().astype(str).str.strip().unique().tolist())
+        projects = sorted(pred[obj_col].dropna().astype(str).str.strip().unique().tolist())
     else:
-        projects = ["Все проекты"]
+        projects = []
     if contr_col:
         contractors = ["Все подрядчики"] + sorted(
             pred[contr_col].dropna().astype(str).str.strip().unique().tolist(),
@@ -16688,9 +16722,15 @@ def dashboard_predpisania(df):
 
     with fc1:
         if obj_col:
-            sel_obj = st.selectbox("Проект", projects, key="pred_m_p")
+            sel_obj = st.multiselect(
+                "Проект",
+                projects,
+                default=st.session_state.get("pred_m_p", []),
+                key="pred_m_p",
+                help="Пустой выбор = все проекты.",
+            )
         else:
-            sel_obj = "Все проекты"
+            sel_obj = []
     with fc2:
         if contr_col:
             sel_contr = st.selectbox("Подрядчик", contractors, key="pred_m_c")
@@ -16725,7 +16765,7 @@ def dashboard_predpisania(df):
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("Сбросить", key="pred_m_reset", use_container_width=True):
             if obj_col:
-                st.session_state.pred_m_p = "Все проекты"
+                st.session_state.pred_m_p = []
             if contr_col:
                 st.session_state.pred_m_c = "Все подрядчики"
             st.session_state.pred_m_contract = ""
@@ -16739,8 +16779,10 @@ def dashboard_predpisania(df):
     )
 
     filtered = pred.copy()
-    if sel_obj != "Все проекты" and obj_col:
-        filtered = filtered[filtered[obj_col].astype(str).str.strip() == sel_obj]
+    if obj_col and sel_obj:
+        _proj_set = {str(x).strip() for x in sel_obj if str(x).strip()}
+        if _proj_set and len(_proj_set) != len(projects):
+            filtered = filtered[filtered[obj_col].astype(str).str.strip().isin(_proj_set)]
     if sel_contr != "Все подрядчики" and contr_col:
         filtered = filtered[filtered[contr_col].astype(str).str.strip() == sel_contr]
     if contract_q.strip() and contract_col:
@@ -16773,6 +16815,14 @@ def dashboard_predpisania(df):
     n_critical = int((unres_mask & filtered["_critical"]).sum())
 
     fu = filtered.loc[unres_mask].copy()
+    chart_group_col = None
+    chart_group_label = ""
+    if contr_col and contr_col in fu.columns and fu[contr_col].astype(str).str.strip().ne("").any():
+        chart_group_col = contr_col
+        chart_group_label = "подрядчикам"
+    elif obj_col and obj_col in fu.columns and fu[obj_col].astype(str).str.strip().ne("").any():
+        chart_group_col = obj_col
+        chart_group_label = "проектам"
     # Заголовок секции на всю ширину; ниже легенда и KPI в одной строке — верх легенды и блока «Ключевые показатели» совпадают
     st.subheader("Предписания по подрядчикам")
     if issue_start is not None and issue_end is not None:
@@ -16787,14 +16837,14 @@ def dashboard_predpisania(df):
             _PRED_DASH_MOCK_CSS
             + '<div class="pred-leg"><span style="color:#e67e22;font-weight:600;">■</span> Просроченные '
             "&nbsp;·&nbsp; <span style=\"color:#3498db;font-weight:600;\">●</span> Всего неустранённых "
-            "&nbsp;·&nbsp; Синие круги показывают общее число неустранённых предписаний по подрядчику.</div>",
+            "&nbsp;·&nbsp; Синие круги показывают общее число неустранённых предписаний в группе.</div>",
             unsafe_allow_html=True,
         )
-        if contr_col and contr_col in fu.columns and not fu.empty:
+        if chart_group_col and not fu.empty:
             grp = (
-                fu.groupby(contr_col, as_index=False)
+                fu.groupby(chart_group_col, as_index=False)
                 .agg(
-                    Неустранено=(contr_col, "size"),
+                    Неустранено=(chart_group_col, "size"),
                     Просрочено=("_overdue_days", lambda x: int((x > 0).sum())),
                     Мин_дата=("_issue_date", "min"),
                     Макс_дата=("_issue_date", "max"),
@@ -16804,7 +16854,7 @@ def dashboard_predpisania(df):
             fig1 = go.Figure()
             fig1.add_trace(
                 go.Bar(
-                    y=grp[contr_col],
+                    y=grp[chart_group_col],
                     x=grp["Просрочено"],
                     name="Просроченные",
                     orientation="h",
@@ -16817,7 +16867,7 @@ def dashboard_predpisania(df):
             )
             fig1.add_trace(
                 go.Scatter(
-                    y=grp[contr_col],
+                    y=grp[chart_group_col],
                     x=grp["Неустранено"],
                     name="Всего неустранённых",
                     mode="markers+text",
@@ -16854,9 +16904,16 @@ def dashboard_predpisania(df):
             )
             fig1 = apply_chart_background(fig1)
             fig1.update_layout(uniformtext=dict(minsize=9, mode="show"))
-            render_chart(fig1, key="pred_bar_main", caption_below="По подрядчикам: неустраненные и просроченные")
+            render_chart(
+                fig1,
+                key="pred_bar_main",
+                caption_below=f"По {chart_group_label}: неустраненные и просроченные",
+            )
         else:
-            st.info("Нет данных для диаграммы (нужна колонка подрядчика и неустраненные строки).")
+            if hide_resolved and filtered.loc[~filtered["_resolved"]].empty:
+                st.info("Нет данных для диаграммы: по текущим фильтрам все предписания устранены.")
+            else:
+                st.info("Нет данных для диаграммы.")
 
     with col_kpi:
         st.markdown(
@@ -16870,7 +16927,7 @@ def dashboard_predpisania(df):
 
     overdue_only = filtered.loc[unres_mask & (filtered["_overdue_days"] > 0)].copy()
     mock_blocks = _pred_build_overdue_mock_blocks(
-        overdue_only, contr_col, obj_col, contract_col, doc_num_col, due_col
+        overdue_only, chart_group_col or contr_col or obj_col, obj_col, contract_col, doc_num_col, due_col
     )
     st.markdown(_pred_overdue_mock_table_html(mock_blocks, n_overdue), unsafe_allow_html=True)
 
