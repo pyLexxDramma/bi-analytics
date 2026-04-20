@@ -17529,6 +17529,12 @@ def dashboard_pravki_report_hidden(df):
     )
 
 
+def dashboard_id_tessa_placeholder(df):
+    """Заглушка для будущего раздела ИД/TESSA."""
+    st.header("ИД/TESSA")
+    st.info("Раздел в разработке.")
+
+
 def _render_control_points_admin_on_dashboard():
     """
     Администратор: редактирование названий столбцов (title) и сопоставления с MSP (match)

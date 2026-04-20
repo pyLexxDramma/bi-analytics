@@ -83,6 +83,12 @@ REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
         ],
     ),
     (
+        "ИД/TESSA",
+        [
+            "ИД/TESSA",
+        ],
+    ),
+    (
         "Предписания по подрядчикам",
         [
             "Предписания по подрядчикам",
@@ -165,6 +171,14 @@ def _get_dashboards() -> Dict[str, Callable]:
             st.info("Раздел в разработке.")
 
         dashboard_executive_documentation = _stub_executive
+    dashboard_id_tessa_placeholder = getattr(_renderers, "dashboard_id_tessa_placeholder", None)
+    if dashboard_id_tessa_placeholder is None:
+
+        def _stub_id_tessa(df):
+            st.header("ИД/TESSA")
+            st.info("Раздел в разработке.")
+
+        dashboard_id_tessa_placeholder = _stub_id_tessa
     dashboard_debit_credit = getattr(_renderers, "dashboard_debit_credit", None)
     if dashboard_debit_credit is None:
 
@@ -234,6 +248,7 @@ def _get_dashboards() -> Dict[str, Callable]:
         "СКУД стройка": dashboard_skud_stroyka,
         "Дебиторская и кредиторская задолженность подрядчиков": dashboard_debit_credit,
         "Исполнительная документация": dashboard_executive_documentation,
+        "ИД/TESSA": dashboard_id_tessa_placeholder,
         "Просрочка выдачи РД": dashboard_rd_delay,
         "Просрочка выдачи ПД": dashboard_pd_delay,
         "Предписания по подрядчикам": dashboard_predpisania,
@@ -245,7 +260,7 @@ def _get_dashboards() -> Dict[str, Callable]:
 # Ленивая загрузка, чтобы при импорте dashboards не тянуть project_visualization_app
 # Увеличьте версию при изменении реестра отчётов — иначе долгоживущий процесс Streamlit
 # может держать устаревший словарь в памяти.
-_DASHBOARDS_REGISTRY_VERSION = 22
+_DASHBOARDS_REGISTRY_VERSION = 23
 _dashboards_cache: Dict[str, Callable] = {}
 _dashboards_cache_version: int = 0
 
