@@ -7666,6 +7666,187 @@ def dashboard_rd_delay(df):
                     fig_months = apply_chart_background(fig_months)
                     render_chart(fig_months, caption_below="Динамика по месяцам")
 
+        st.subheader("Детальная таблица")
+        detail_cipher_col = find_column(
+            filtered_df,
+            ["Шифр полный", "Полный шифр", "DivisionCipher", "Cipher", "Аббревиатура"],
+        )
+        forecast_date_col = find_column(
+            filtered_df,
+            [
+                "Прогнозная дата выдачи разделов",
+                "Прогнозная дата выдачи РД",
+                "Прогнозная дата",
+                "ForecastDate",
+                "Forecast date",
+            ],
+        )
+        upload_date_col = find_column(
+            filtered_df,
+            [
+                "Дата загрузки раздела РД",
+                "Дата загрузки",
+                "Completed",
+                "CompletedDate",
+                "UploadDate",
+                "Upload date",
+            ],
+        )
+        production_issue_date_col = find_column(
+            filtered_df,
+            [
+                "Дата выдачи РД в производство работ",
+                "Дата выдачи в производство работ",
+                "Дата выдачи в производство",
+                "Дата выдачи РД",
+                "Дата выдачи",
+            ],
+        )
+
+        detail_df = filtered_df.copy()
+        detail_df["_detail_section_name"] = (
+            detail_df[section_col].astype(str).str.strip()
+            if section_col and section_col in detail_df.columns
+            else (
+                detail_df[task_col].astype(str).str.strip()
+                if task_col and task_col in detail_df.columns
+                else ""
+            )
+        )
+        detail_df["_detail_cipher"] = (
+            detail_df[detail_cipher_col].astype(str).str.strip()
+            if detail_cipher_col and detail_cipher_col in detail_df.columns
+            else ""
+        )
+        detail_df["_detail_plan_date"] = (
+            _to_datetime_series(detail_df[plan_end_col])
+            if plan_end_col and plan_end_col in detail_df.columns
+            else pd.Series(pd.NaT, index=detail_df.index)
+        )
+        detail_df["_detail_forecast_date"] = (
+            _to_datetime_series(detail_df[forecast_date_col])
+            if forecast_date_col and forecast_date_col in detail_df.columns
+            else detail_df["_detail_plan_date"].copy()
+        )
+        detail_df["_detail_upload_date"] = (
+            _to_datetime_series(detail_df[upload_date_col])
+            if upload_date_col and upload_date_col in detail_df.columns
+            else pd.Series(pd.NaT, index=detail_df.index)
+        )
+        detail_df["_detail_production_issue_date"] = (
+            _to_datetime_series(detail_df[production_issue_date_col])
+            if production_issue_date_col and production_issue_date_col in detail_df.columns
+            else detail_df["_fact_end_dt"].copy()
+        )
+
+        def _resolve_rd_status_label(row) -> str:
+            if contractor_transfer_col_rd and contractor_transfer_col_rd in row.index:
+                if float(_to_numeric_series(pd.Series([row[contractor_transfer_col_rd]])).iloc[0]) > 0:
+                    return "Передано подрядчику"
+            if in_production_col_rd and in_production_col_rd in row.index:
+                if float(_to_numeric_series(pd.Series([row[in_production_col_rd]])).iloc[0]) > 0:
+                    return "Выдано в производство работ"
+            if on_approval_col_rd and on_approval_col_rd in row.index:
+                if float(_to_numeric_series(pd.Series([row[on_approval_col_rd]])).iloc[0]) > 0:
+                    return "На согласовании"
+            if rework_col_rd and rework_col_rd in row.index:
+                if float(_to_numeric_series(pd.Series([row[rework_col_rd]])).iloc[0]) > 0:
+                    return "На доработке"
+            return "Не выдано"
+
+        detail_df["_detail_status"] = detail_df.apply(_resolve_rd_status_label, axis=1)
+        detail_df["_detail_actual_issue_date"] = detail_df["_detail_production_issue_date"].where(
+            detail_df["_detail_production_issue_date"].notna(),
+            detail_df["_detail_upload_date"],
+        )
+        detail_df["_detail_actual_issue_date"] = detail_df["_detail_actual_issue_date"].where(
+            detail_df["_detail_actual_issue_date"].notna(),
+            detail_df["_detail_plan_date"],
+        )
+        detail_df["_detail_delta_vs_contract"] = (
+            detail_df["_detail_actual_issue_date"] - detail_df["_detail_plan_date"]
+        ).dt.days
+        detail_df["_detail_delta_vs_contract"] = detail_df["_detail_delta_vs_contract"].fillna(0)
+        detail_df["_detail_delta_vs_forecast"] = (
+            detail_df["_detail_actual_issue_date"] - detail_df["_detail_forecast_date"]
+        ).dt.days
+
+        def _fmt_date_or_blank(series: pd.Series) -> pd.Series:
+            parsed = pd.to_datetime(series, errors="coerce")
+            return parsed.dt.strftime("%d.%m.%Y").fillna("")
+
+        detail_table = pd.DataFrame(
+            {
+                "Наименование разделов работ": detail_df["_detail_section_name"],
+                "Шифр полный": detail_df["_detail_cipher"],
+                "Дата выдачи разделов по договору": _fmt_date_or_blank(
+                    detail_df["_detail_plan_date"]
+                ),
+                "Прогнозная дата выдачи разделов": _fmt_date_or_blank(
+                    detail_df["_detail_forecast_date"]
+                ),
+                "Статус": detail_df["_detail_status"],
+                "Дата загрузки раздела РД": _fmt_date_or_blank(detail_df["_detail_upload_date"]),
+                "Дата выдачи РД в производство работ": _fmt_date_or_blank(
+                    detail_df["_detail_production_issue_date"]
+                ),
+                "Отклонение от даты по договору, дн.": detail_df[
+                    "_detail_delta_vs_contract"
+                ].apply(lambda x: int(round(float(x), 0)) if pd.notna(x) else ""),
+                "Отклонение от прогнозной даты, дн.": detail_df[
+                    "_detail_delta_vs_forecast"
+                ].apply(lambda x: int(round(float(x), 0)) if pd.notna(x) else ""),
+            }
+        )
+
+        if project_col and project_col in detail_df.columns:
+            detail_table.insert(0, "Проект", detail_df[project_col].astype(str).str.strip())
+
+        sort_col1, sort_col2 = st.columns([3, 1])
+        with sort_col1:
+            detail_sort_column = st.selectbox(
+                "Сортировка по колонке",
+                options=list(detail_table.columns),
+                index=0,
+                key="rd_delay_detail_sort_col",
+            )
+        with sort_col2:
+            detail_sort_desc = st.checkbox(
+                "Отображать в порядке убывания",
+                value=False,
+                key="rd_delay_detail_sort_desc",
+            )
+
+        def _detail_sort_series(table: pd.DataFrame, column: str) -> pd.Series:
+            if "дата" in column.lower():
+                return pd.to_datetime(table[column], format="%d.%m.%Y", errors="coerce")
+            if "дн." in column.lower():
+                return pd.to_numeric(table[column], errors="coerce")
+            return table[column].astype(str).str.casefold()
+
+        detail_table = detail_table.assign(
+            _sort_key=_detail_sort_series(detail_table, detail_sort_column)
+        ).sort_values(
+            by=["_sort_key", "Наименование разделов работ"],
+            ascending=[not detail_sort_desc, True],
+            na_position="last",
+        )
+        detail_table = detail_table.drop(columns=["_sort_key"], errors="ignore").reset_index(
+            drop=True
+        )
+
+        if detail_table.empty and not filtered_df.empty:
+            st.info("Детальная таблица не собрана, хотя строки в источнике есть.")
+        elif detail_table.empty:
+            st.info("Нет данных для детальной таблицы.")
+        else:
+            st.markdown(format_dataframe_as_html(detail_table), unsafe_allow_html=True)
+            render_dataframe_excel_csv_downloads(
+                detail_table,
+                file_stem="rd_delay_detail",
+                key_prefix="rd_delay_detail",
+            )
+
         # Summary table (с % выполнения РД/ПД и раскраской отклонения: >0 красный, <=0 зелёный)
         st.subheader("Сводка по просрочке")
         if show_by_tasks:
@@ -10233,14 +10414,19 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             _rows = []
             for _proj in sorted(_ref["_Проект"].unique(), key=lambda x: str(x)):
                 _p = _ref[_ref["_Проект"] == _proj]
-                _rows.append({"Контрагент": str(_proj), "Вид работ": "", **_agg_block(_p)})
+                _rows.append(
+                    {"Проект": str(_proj), "Контрагент": "", "Вид работ": "", **_agg_block(_p)}
+                )
                 for _ctr in sorted(_p["Контрагент"].dropna().unique(), key=lambda x: str(x)):
                     _c = _p[_p["Контрагент"].astype(str) == str(_ctr)]
-                    _rows.append({"Контрагент": f"  {_ctr}", "Вид работ": "", **_agg_block(_c)})
+                    _rows.append(
+                        {"Проект": "", "Контрагент": str(_ctr), "Вид работ": "", **_agg_block(_c)}
+                    )
                     _d = _c.sort_values("Вид работ", na_position="last")
                     for _, _r in _d.iterrows():
                         _rows.append(
                             {
+                                "Проект": "",
                                 "Контрагент": "",
                                 "Вид работ": _r.get("Вид работ", ""),
                                 "План": _r["План"],
@@ -10256,7 +10442,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             _view = pd.concat(
                 [
                     _view,
-                    pd.DataFrame([{"Контрагент": "Итого", "Вид работ": "", **_grand}]),
+                    pd.DataFrame(
+                        [{"Проект": "Итого", "Контрагент": "", "Вид работ": "", **_grand}]
+                    ),
                 ],
                 ignore_index=True,
             )
@@ -10278,7 +10466,12 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             except Exception:
                 pass
 
-            _show_cols = ["Контрагент", "Вид работ", "План", "СКУД", "Отклонение"] + _week_cols_out + ["Дельта (%)"]
+            _show_cols = (
+                ["Проект", "Контрагент", "Вид работ", "План", "СКУД", "Отклонение"]
+                + _week_cols_out
+                + ["Дельта (%)"]
+            )
+            st.caption("Иерархия строк: **проект** → **контрагент** → **вид работ**.")
             st.markdown(
                 budget_table_to_html(
                     _view[_show_cols],
