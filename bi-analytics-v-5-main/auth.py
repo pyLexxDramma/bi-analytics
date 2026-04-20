@@ -589,21 +589,6 @@ def render_sidebar_menu(current_page: str = "reports"):
                             st.session_state.current_dashboard = report
                             st.rerun()
 
-        # 2. Настройки
-        if has_admin_access(user["role"]):
-            # Для администраторов: общие настройки и профиль
-            if current_page == "admin":
-                st.button(
-                    "Общие настройки",
-                    width="stretch",
-                    type="primary",
-                    disabled=True,
-                    help="Текущая страница",
-                )
-            else:
-                if st.button("Общие настройки", width="stretch"):
-                    switch_page_app("pages/admin.py")
-
         # Настройки профиля (для всех ролей)
         if current_page == "profile":
             st.button(
@@ -616,20 +601,6 @@ def render_sidebar_menu(current_page: str = "reports"):
         else:
             if st.button("Настройки профиля", width="stretch"):
                 switch_page_app("pages/profile.py")
-
-        # Параметры отчетов (фильтры) - доступны аналитикам и администраторам (не менеджерам)
-        if user["role"] in ["analyst", "admin", "superadmin"]:
-            if current_page == "analyst_params":
-                st.button(
-                    "Параметры отчетов",
-                    width="stretch",
-                    type="primary",
-                    disabled=True,
-                    help="Текущая страница",
-                )
-            else:
-                if st.button("Параметры отчетов", width="stretch"):
-                    switch_page_app("pages/analyst_params.py")
 
         # 3. Выход (для всех ролей)
         st.markdown("---")
