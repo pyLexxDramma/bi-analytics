@@ -1442,14 +1442,6 @@ def _deviations_project_slice_by_key(df: pd.DataFrame, state_key: str) -> pd.Dat
 
 def _render_deviations_combined_shared_filters(df):
     ensure_msp_hierarchy_columns(df)
-    with st.expander("Подсказка по общим фильтрам", expanded=False):
-        st.caption(
-            "Общие фильтры для всех вкладок: проект; функциональный блок и строение по иерархии MSP "
-            "(уровни 2 и 3, если они есть в файле; иначе вторая и третья ступень дерева) — либо колонки block/строение, "
-            "если уровня нет; период по месяцу плана; ТОП 5 — для диаграмм первой вкладки. "
-            "Фильтр «Причина» — только у таблицы «Детальные данные» на первой вкладке. "
-            "Переключение вкладок не сбрасывает выбранные значения."
-        )
     st.markdown(
         """
         <style>
@@ -1733,11 +1725,6 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
 
     if not hide_shared_filters:
         st.header("Доли причин отклонений по проекту")
-        with st.expander("Подсказка", expanded=False):
-            st.caption(
-                "По умолчанию — все проекты и доступные периоды. Фильтры совпадают с объединённым отчётом "
-                "«Причины отклонений»; динамику по месяцам см. вкладку «Динамика отклонений по месяцам»."
-            )
 
         st.markdown(
             """
@@ -2428,19 +2415,8 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
 
     if hide_shared_filters:
         st.subheader("Динамика отклонений по месяцам")
-        with st.expander("Подсказка", expanded=False):
-            st.markdown(
-                "Проект, функциональный блок, строение и период по плану — **общие фильтры выше** "
-                "(уровни иерархии MSP подбираются по данным). Чекбокс **«ТОП 5 причин отклонений»** — над вкладками, "
-                "влияет на диаграммы первой вкладки. Здесь задаются ось времени (plan end или дата снимка) и шаг группировки."
-            )
     else:
         st.header("Динамика отклонений по месяцам")
-        with st.expander("Подсказка", expanded=False):
-            st.markdown(
-                "По правкам: ось времени — по **дате окончания плана** (plan end) или по **дате снимка файла** "
-                "(несколько выгрузок MSP в web/; полный набор снимков хранится до схлопывания по проекту)."
-            )
 
     _time_axis = st.radio(
         "Ось времени",
@@ -5273,10 +5249,6 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
 
     if hide_shared_filters:
         st.subheader("Динамика причин отклонений")
-        with st.expander("Подсказка", expanded=False):
-            st.markdown(
-                "Проект, функциональный блок (ур. 2), строение (ур. 3) и период по плану — **общие фильтры выше**."
-            )
         col1, = st.columns(1)
         with col1:
             period_type = st.selectbox(
@@ -5700,14 +5672,6 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
 # ==================== DASHBOARD 6: Budget Plan/Fact/Reserve by Project by Period ====================
 def dashboard_budget_by_period(df):
     st.header("БДДС")
-    with st.expander("Вид отображения", expanded=False):
-        st.caption("По месяцам или накопительно — переключатель в блоке графика ниже.")
-    with st.expander("Источник данных", expanded=False):
-        st.caption(
-            "БДДС (денежные потоки): план и факт по оборотам из загруженных бюджетных данных "
-            "(в т.ч. связка с задачами/проектами MSP при наличии колонок). "
-            "Отчёты «Утверждённый бюджет» и «Прогнозный бюджет» — отдельные представления по тем же проектам."
-        )
 
     # Сетка фильтров; чекбоксы — после фильтров (П.9)
     col1, col2, col3 = st.columns(3)
@@ -6202,10 +6166,6 @@ def dashboard_budget_by_period(df):
 def dashboard_budget_cumulative(df):
 
     st.header("БДДС накопительно")
-    with st.expander("Подсказка", expanded=False):
-        st.caption(
-            "Накопительные суммы по периоду; таблицы и подписи — в том же стиле, что отчёт «БДДС» (ТЗ, правки)."
-        )
 
     col1, col2, col3 = st.columns(3)
 
@@ -6826,11 +6786,6 @@ def dashboard_bdr(df):
     В таблице и на графике: План расходов, Факт расходов, Отклонение (факт − план).
     """
     st.header("БДР. План/факт расходов")
-    with st.expander("Источник данных", expanded=False):
-        st.caption(
-            "По ТЗ: план/факт расходов по статьям БДР (признаки «Бюджет»/«ФАКТ» и «(БДР)» в загрузке). "
-            "Ниже — агрегация по колонкам план/факт в данных MSP после нормализации."
-        )
 
     if df is None or not hasattr(df, "columns") or df.empty:
         st.warning("⚠️ Нет данных для отображения. Загрузите данные проекта.")
@@ -6866,9 +6821,6 @@ def dashboard_bdr(df):
         return
 
     # Фильтры — в одном стиле с БДДС: строка 1 — Группировать по, Фильтр по проекту; строка 2 — Фильтр по этапу
-    with st.expander("Подсказка", expanded=False):
-        st.caption("План и факт расходов по периоду.")
-
     col1, col2, col3 = st.columns(3)
     with col1:
         period_type = st.selectbox(
@@ -12230,13 +12182,6 @@ def dashboard_debit_credit(df):
             work[f"_num_{c}"] = _to_num(work[c])
 
     st.subheader("Фильтры")
-    if project_from_reference:
-        st.caption(
-            "Колонка «Проект» подставлена по **справочнику** (`spravochniki.json` — пара контрагент/проект, если обе колонки есть) "
-            "и/или по файлу **данные 1С** (`*dannye*.json` — из оборотов строится карта «контрагент → проект»). "
-            "Совпадение по нормализованному наименованию (регистр, пробелы, ООО). "
-            "Или укажите проект в файле ДтКт."
-        )
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         if contractor_col and contractor_col in work.columns:
