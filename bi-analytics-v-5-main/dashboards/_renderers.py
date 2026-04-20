@@ -14300,6 +14300,73 @@ def dashboard_budget_by_type(df):
     else:
         filtered_df["_contract_numeric"] = 0
 
+    plan_total_abs = float(filtered_df["budget plan"].fillna(0).sum())
+    fact_total_abs = float(filtered_df["budget fact"].fillna(0).sum())
+    plan_total_mld = plan_total_abs / 1e9
+    fact_total_mld = fact_total_abs / 1e9
+    plan_total_mln = plan_total_abs / 1e6
+    fact_total_mln = fact_total_abs / 1e6
+    fact_share_pct = (fact_total_abs / plan_total_abs * 100.0) if plan_total_abs > 0 else 0.0
+    overrun_pct = ((fact_total_abs - plan_total_abs) / plan_total_abs * 100.0) if plan_total_abs > 0 else 0.0
+    if overrun_pct > 0:
+        fact_tone = "#e74c3c"
+    elif overrun_pct >= -20:
+        fact_tone = "#f39c12"
+    else:
+        fact_tone = "#27ae60"
+
+    gauge_max_mld = max(plan_total_mld, fact_total_mld, 0.01)
+    gauge_number_format = ".3f" if gauge_max_mld < 0.1 else ".2f"
+    metric_unit = "млн" if gauge_max_mld < 0.1 else "млрд"
+    plan_metric_value = plan_total_mln if metric_unit == "млн" else plan_total_mld
+    fact_metric_value = fact_total_mln if metric_unit == "млн" else fact_total_mld
+    metric_decimals = 2 if metric_unit == "млн" else 2
+
+    st.subheader("Сводный дашборд план/факт")
+    kpi_gauge_col, kpi_plan_col, kpi_fact_col = st.columns([1.3, 1, 1])
+    with kpi_gauge_col:
+        fig_kpi = go.Figure(
+            go.Indicator(
+                mode="gauge+number",
+                value=fact_total_mld,
+                number={
+                    "suffix": " млрд",
+                    "valueformat": gauge_number_format,
+                    "font": {"size": 26, "color": "#f8fbff"},
+                },
+                gauge={
+                    "axis": {"range": [0, gauge_max_mld]},
+                    "bar": {"color": fact_tone},
+                    "bgcolor": "#d8dde6",
+                    "steps": [
+                        {
+                            "range": [0, gauge_max_mld],
+                            "color": "rgba(255,255,255,0.08)",
+                        }
+                    ],
+                },
+                title={"text": "Исполнение бюджета"},
+            )
+        )
+        fig_kpi.update_layout(height=220, margin=dict(l=16, r=16, t=48, b=16))
+        fig_kpi = apply_chart_background(fig_kpi)
+        render_chart(fig_kpi, caption_below="План/факт по бюджету")
+    with kpi_plan_col:
+        st.metric(
+            "Расходы план",
+            f"{plan_metric_value:,.{metric_decimals}f} {metric_unit}".replace(",", " "),
+        )
+        st.caption("Сумма планового бюджета по текущим фильтрам.")
+    with kpi_fact_col:
+        st.metric(
+            "Расходы факт",
+            f"{fact_metric_value:,.{metric_decimals}f} {metric_unit}".replace(",", " "),
+            delta=f"{overrun_pct:+.1f}%"
+        )
+        st.caption(
+            f"Факт составляет {fact_share_pct:.1f}% от плана. Цвет: зеленый < 80%, оранжевый до +20%, красный выше плана."
+        )
+
     # ========== Таблица: План, Факт, Остаток, Отклонение, % выполнения, % покрытия контрактами ==========
     st.subheader("Таблица: План / Факт / Остаток / Отклонение / % выполнения / % покрытия контрактами")
     if "project name" in filtered_df.columns:
@@ -15847,10 +15914,7 @@ def dashboard_forecast_budget(df):
             fig.update_yaxes(range=[0, 1], rangemode="tozero")
         except Exception:
             pass
-    render_chart(
-        fig,
-        caption_below=f"БДДС: план (сводка MSP) / факт / прогноз — проект: {selected_project}",
-    )
+    st.caption("Нижний график прогнозного бюджета скрыт по согласованной правке.")
 
     st.subheader("Сводная таблица по месяцам (млн руб.)")
     summary_table = mf[
