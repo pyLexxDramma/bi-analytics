@@ -668,28 +668,6 @@ def main():
     # Use project data as main df for backward compatibility
     df = st.session_state.project_data
 
-    # ── Ролевая фильтрация проектов ────────────────────────────────────────────
-    # manager видит только проекты, к которым ему явно выдан доступ
-    if user.get("role") == "manager":
-        from permissions import get_user_projects
-        allowed = get_user_projects(user["id"])
-        if not allowed:
-            st.warning(
-                "У вас нет доступа ни к одному проекту. "
-                "Обратитесь к администратору."
-            )
-            st.stop()
-        proj_col = "project name"
-        if df is not None and not df.empty and proj_col in df.columns:
-            df = df[df[proj_col].isin(allowed)].copy()
-            if df.empty:
-                st.warning(
-                    "У вас нет доступа ни к одному из загруженных проектов. "
-                    "Обратитесь к администратору."
-                )
-                st.stop()
-    # ── Конец ролевой фильтрации ───────────────────────────────────────────────
-
     # Dashboard selection - allow access if any data is loaded (project, resources, or technique)
     has_project_data = df is not None and not df.empty
     resources_data = st.session_state.get("resources_data")

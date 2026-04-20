@@ -69,16 +69,6 @@ from config import DB_PATH, switch_page_app
 from logger import log_action, get_logs, get_logs_count
 from settings import get_setting, set_setting, get_all_settings, SETTING_KEYS
 from utils import format_dataframe_as_html, load_custom_css, render_dataframe_excel_csv_downloads
-from permissions import (
-    grant_project_access,
-    revoke_project_access,
-    get_user_projects,
-    get_project_users,
-    get_all_project_permissions,
-    has_project_access,
-    get_all_projects,
-)
-
 try:
     from filters import (
         get_default_filters,
@@ -434,6 +424,40 @@ def _render_control_points_msp_tab(user: dict) -> None:
     Администратор: задача MSP для метрик в отчёте «Отклонение от базового плана».
     Настройка вех отчёта «Контрольные точки» перенесена на страницу этого отчёта.
     """
+    def _find_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
+        if df is None or getattr(df, "empty", True):
+            return None
+        for cand in candidates:
+            for col in df.columns:
+                if str(col).strip().lower() == cand.lower():
+                    return col
+        for cand in candidates:
+            for col in df.columns:
+                if cand.lower() in str(col).strip().lower():
+                    return col
+        return None
+
+    def _msp_metric_task_options() -> tuple[list[tuple[int, str]], str | None, str | None]:
+        df = st.session_state.get("project_data")
+        if df is None or getattr(df, "empty", True):
+            return [], None, "MSP-данные еще не загружены в текущую сессию."
+        task_col = _find_col(df, ["task name", "Task Name", "Название", "Задача"])
+        level_col = _find_col(df, ["level structure", "outline level", "level", "Уровень"])
+        if not task_col or not level_col:
+            return [], task_col, "Не найдены колонки MSP с названием задачи и уровнем."
+        levels = pd.to_numeric(df[level_col], errors="coerce")
+        sub = df.loc[levels.isin([2, 3]), [task_col, level_col]].copy()
+        if sub.empty:
+            return [], task_col, "В текущей выгрузке MSP нет задач уровней 2 и 3."
+        sub[task_col] = sub[task_col].astype(str).str.strip()
+        sub = sub[sub[task_col].ne("") & sub[task_col].str.lower().ne("nan")]
+        sub[level_col] = pd.to_numeric(sub[level_col], errors="coerce").fillna(0).astype(int)
+        sub = sub.drop_duplicates(subset=[task_col, level_col]).sort_values([level_col, task_col], kind="stable")
+        options = [(int(row[level_col]), str(row[task_col])) for _, row in sub.iterrows()]
+        if not options:
+            return [], task_col, "В MSP не найдено ни одной валидной задачи уровней 2 и 3."
+        return options, task_col, None
+
     st.markdown("<h2 class='Duquhununee'>MSP: задача для метрик</h2>", unsafe_allow_html=True)
     st.info(
         "Заголовки столбцов и соответствие вех выгрузке MS Project для отчёта "
@@ -447,12 +471,33 @@ def _render_control_points_msp_tab(user: dict) -> None:
         "Оставьте пустым — будет использоваться эвристика (ЗОС / ввод в эксплуатацию)."
     )
     _cur_task = (get_setting("baseline_plan_task_for_metrics") or "").strip()
-    _tf_task = st.text_input(
-        "Задача для расчёта окончания проекта (MSP)",
-        value=_cur_task,
-        key="admin_baseline_task_for_metrics",
-        help="Точное имя задачи из колонки task name в выгрузке MSP.",
-    )
+    task_options, task_col, task_options_hint = _msp_metric_task_options()
+    if task_options:
+        option_values = [("", "")] + task_options
+        selected_option = ("", "")
+        if _cur_task:
+            for opt in task_options:
+                if opt[1] == _cur_task:
+                    selected_option = opt
+                    break
+        _selected_task = st.selectbox(
+            "Задача для расчёта окончания проекта (MSP)",
+            option_values,
+            index=option_values.index(selected_option),
+            key="admin_baseline_task_for_metrics_select",
+            format_func=lambda opt: "Автовыбор" if not opt[1] else f"Уровень {opt[0]} - {opt[1]}",
+            help="Список из загруженного MSP: только уровни 2 и 3. Длинный список прокручивается внутри селектора.",
+        )
+        _tf_task = _selected_task[1]
+    else:
+        _tf_task = st.text_input(
+            "Задача для расчёта окончания проекта (MSP)",
+            value=_cur_task,
+            key="admin_baseline_task_for_metrics",
+            help="Если MSP не загружен, введите точное имя задачи вручную.",
+        )
+        if task_options_hint:
+            st.warning(task_options_hint)
     if st.button("Сохранить задачу для метрик", type="primary", key="admin_save_baseline_task"):
         set_setting(
             "baseline_plan_task_for_metrics",
@@ -851,6 +896,11 @@ if user is not None:
                             "change_role",
                             f"Изменена роль пользователя {selected_username} с {get_user_role_display(current_role)} на {get_user_role_display(new_role)}",
                         )
+                        if selected_username == user["username"]:
+                            session_user = st.session_state.get("user") or {}
+                            session_user["role"] = new_role
+                            st.session_state["user"] = session_user
+                            user["role"] = new_role
                         st.success(
                             # f"✅ Роль пользователя {selected_username} успешно изменена на {get_user_role_display(new_role)}!"
                             f"Роль пользователя {selected_username} успешно изменена на {get_user_role_display(new_role)}!"
@@ -1102,124 +1152,18 @@ if user is not None:
     # └──────────────────────────────────────────────────────────────────────┘ #
 
     with tab4:
-
-        st.markdown("<h2 class='Duquhununee'>Управление правами доступа к проектам</h2>", unsafe_allow_html=True)
-
+        st.markdown("<h2 class='Duquhununee'>Права доступа</h2>", unsafe_allow_html=True)
         st.info(
-            """
-        Здесь можно управлять правами доступа пользователей к определенным проектам в отчетах.
-        """
+            "Разрезка прав по отдельным проектам отключена. "
+            "Доступ определяется только ролью пользователя."
         )
-
-        st.markdown("---")
-
-        # Выдача прав доступа
-        st.markdown("### Выдать права доступа к проекту")
-
-        with st.form("grant_permission_form"):
-
-            col1, col2 = st.columns(2)
-
-            with col1:
-                conn = sqlite3.connect(DB_PATH)
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT id, username FROM users WHERE is_active = 1 ORDER BY username"
-                )
-                active_users_list = cursor.fetchall()
-                conn.close()
-
-                user_options = {f"{u[1]}": u[0] for u in active_users_list}
-                selected_user_display = st.selectbox(
-                    "Выберите пользователя", options=list(user_options.keys())
-                )
-                selected_user_id = user_options[selected_user_display]
-
-            with col2:
-                project_name = st.text_input(
-                    "Название проекта *", help="Введите название проекта"
-                )
-
-            submitted = st.form_submit_button("Выдать права", type="primary")
-
-            if submitted:
-                if project_name:
-                    if grant_project_access(
-                        selected_user_id, project_name, user["username"]
-                    ):
-                        log_action(
-                            user["username"],
-                            "grant_project_access",
-                            f"Выданы права доступа пользователю {selected_user_display} к проекту {project_name}",
-                        )
-                        st.success(
-                            f"Пользователю {selected_user_display} выданы права доступа к проекту {project_name}!"
-                        )
-                        st.rerun()
-                    else:
-                        st.warning(
-                            "Права доступа уже существуют или произошла ошибка"
-                        )
-                else:
-                    st.warning("Введите название проекта")
-
-        st.markdown("---")
-
-        # Список прав доступа
-        st.markdown("### Текущие права доступа к проектам")
-
-        permissions = get_all_project_permissions()
-
-        if permissions:
-            # Группировка по проектам
-            projects_dict = {}
-            for perm in permissions:
-                project = perm["project_name"]
-                if project not in projects_dict:
-                    projects_dict[project] = []
-                projects_dict[project].append(perm)
-
-            # Отображение по проектам
-            for project_name, project_perms in sorted(projects_dict.items()):
-                with st.expander(
-                    f"{project_name} ({len(project_perms)} пользователей)"
-                ):
-                    perms_data = []
-                    for perm in project_perms:
-                        perms_data.append(
-                            {
-                                "Пользователь": perm["username"],
-                                "Роль": get_user_role_display(perm["role"]),
-                                "Выдано": (
-                                    perm["granted_at"] if perm["granted_at"] else "-"
-                                ),
-                                "Выдал": perm["granted_by"] or "-",
-                                "Действие": f"revoke_{perm['user_id']}_{project_name}",
-                            }
-                        )
-
-                    df_perms = pd.DataFrame(perms_data)
-                    _html_table(df_perms[["Пользователь", "Роль", "Выдано", "Выдал"]])
-
-                    # Кнопки отзыва прав
-                    for perm in project_perms:
-                        col1, col2 = st.columns([3, 1])
-                        with col1:
-                            st.text(f"Пользователь: {perm['username']}")
-                        with col2:
-                            if st.button("Отозвать", key=f"revoke_{perm['id']}"):
-                                if revoke_project_access(perm["user_id"], project_name):
-                                    log_action(
-                                        user["username"],
-                                        "revoke_project_access",
-                                        f'Отозваны права доступа пользователя {perm["username"]} к проекту {project_name}',
-                                    )
-                                    st.success(
-                                        f"Права доступа пользователя {perm['username']} к проекту {project_name} отозваны!"
-                                    )
-                                    st.rerun()
-        else:
-            st.info("Права доступа к проектам не выданы")
+        roles_df = pd.DataFrame(
+            [
+                {"Код роли": code, "Роль": title}
+                for code, title in ROLES.items()
+            ]
+        )
+        _html_table(roles_df)
 
     # ┌──────────────────────────────────────────────────────────────────────┐ #
     # │ ⊗ TAB 4: Права доступа к проектам ¤ End                              │ #

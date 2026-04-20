@@ -23,6 +23,9 @@ from config import DB_PATH, switch_page_app
 ROLES = {
     "superadmin": "Суперадминистратор",
     "admin": "Администратор",
+    "rp": "РП",
+    "financier": "Финансист",
+    "gip": "ГИП",
     "manager": "Менеджер",
     "analyst": "Аналитик",
 }
@@ -31,7 +34,7 @@ ROLES = {
 ADMIN_ROLES = ["superadmin", "admin"]
 
 # Роли с доступом к отчетам
-REPORT_ROLES = ["manager", "analyst", "admin", "superadmin"]
+REPORT_ROLES = ["manager", "analyst", "rp", "financier", "gip", "admin", "superadmin"]
 
 # RBAC: для роли перечислите отчёты (имена как в меню), которые скрыть.
 # Администраторы и суперадмины всегда видят все отчёты.
@@ -39,6 +42,9 @@ REPORT_ROLES = ["manager", "analyst", "admin", "superadmin"]
 _ROLE_REPORT_DENYLIST: Dict[str, frozenset] = {
     "manager": frozenset(),
     "analyst": frozenset(),
+    "rp": frozenset(),
+    "financier": frozenset(),
+    "gip": frozenset(),
 }
 
 # Если для отчёта задан allowlist — отчёт виден только перечисленным ролям (плюс admin/superadmin).
@@ -602,6 +608,20 @@ def render_sidebar_menu(current_page: str = "reports"):
             if st.button("Настройки профиля", width="stretch"):
                 switch_page_app("pages/profile.py")
 
+        # Админ панель
+        if has_admin_access(user["role"]):
+            if current_page == "admin":
+                st.button(
+                    "Админ панель",
+                    width="stretch",
+                    type="primary",
+                    disabled=True,
+                    help="Текущая страница",
+                )
+            else:
+                if st.button("Админ панель", width="stretch"):
+                    switch_page_app("pages/admin.py")
+
         # 3. Выход (для всех ролей)
         st.markdown("---")
 
@@ -671,19 +691,6 @@ def render_sidebar_menu(current_page: str = "reports"):
                         )
 
                 st.markdown("---")
-
-        # Экспорт данных (CSV для Excel + Excel)
-        if has_report_access(user["role"]):
-            project_data = st.session_state.get("project_data")
-            if project_data is not None and not project_data.empty:
-                from utils import render_dataframe_excel_csv_downloads
-
-                render_dataframe_excel_csv_downloads(
-                    project_data,
-                    file_stem="project_data_export",
-                    key_prefix="sidebar_project_data",
-                    csv_label="Экспорт данных (CSV для Excel)",
-                )
 
         st.markdown("---")
 

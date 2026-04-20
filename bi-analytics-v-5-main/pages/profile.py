@@ -120,12 +120,8 @@ if is_streamlit_context():
     with col3:
 
         if st.button("Выйти"):
-
-            log_action(user['username'], 'logout', 'Выход из системы')
-
             logout()
-
-            switch_page_app("project_visualization_app.py")
+            st.rerun()
 
     st.markdown("---")
 
