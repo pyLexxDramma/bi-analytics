@@ -7471,7 +7471,12 @@ def dashboard_rd_delay(df):
                 .str.replace(r"\.0$", "", regex=True)
             ) + "%"
             chart_data.loc[~mask_plan, "% выполнения РД/ПД"] = "—"
-            chart_data = chart_data.drop(columns=["_rd_plan_n", "_rd_fact_n"], errors="ignore")
+            chart_data["_overdue_share_pct"] = 0.0
+            chart_data.loc[mask_plan, "_overdue_share_pct"] = (
+                chart_data.loc[mask_plan, "Отклонение разделов РД"]
+                / chart_data.loc[mask_plan, "_rd_plan_n"]
+                * 100.0
+            ).round(1)
 
             chart_data = chart_data.sort_values("Отклонение разделов РД", ascending=False)
             y_column = "Задача_полная"
@@ -7495,7 +7500,12 @@ def dashboard_rd_delay(df):
                     .str.replace(r"\.0$", "", regex=True)
                 ) + "%"
                 chart_data.loc[~mask_plan, "% выполнения РД/ПД"] = "—"
-                chart_data = chart_data.drop(columns=["_rd_plan_n", "_rd_fact_n"], errors="ignore")
+                chart_data["_overdue_share_pct"] = 0.0
+                chart_data.loc[mask_plan, "_overdue_share_pct"] = (
+                    chart_data.loc[mask_plan, "Отклонение разделов РД"]
+                    / chart_data.loc[mask_plan, "_rd_plan_n"]
+                    * 100.0
+                ).round(1)
                 chart_data = chart_data.sort_values("Отклонение разделов РД", ascending=False)
                 y_column = "Проект"
                 y_title = "Проект"
@@ -7512,9 +7522,16 @@ def dashboard_rd_delay(df):
         for _, row in chart_data.iterrows():
             val = row["Отклонение разделов РД"]
             pct = row.get("% выполнения РД/ПД", "") or ""
+            overdue_pct = row.get("_overdue_share_pct", 0)
+            plan_total = row.get("_rd_plan_n", 0)
             if pd.notna(val):
                 dev_str = f"{int(round(val, 0))}"
-                text_values.append(f"{dev_str}  ({pct})" if pct and str(pct).strip() != "—" else dev_str)
+                if pd.notna(plan_total) and float(plan_total) > 0:
+                    plan_str = f"{int(round(float(plan_total), 0))}"
+                    pct_str = f"{float(overdue_pct):.0f}%"
+                    text_values.append(f"{dev_str} из {plan_str} ({pct_str})")
+                else:
+                    text_values.append(f"{dev_str} ({pct})" if pct and str(pct).strip() != "—" else dev_str)
             else:
                 text_values.append(pct if pct else "")
 
