@@ -15639,6 +15639,11 @@ def dashboard_forecast_budget(df):
         "B, %": st.column_config.NumberColumn("B, %", format="%.2f"),
         "C, %": st.column_config.NumberColumn("C, %", format="%.2f"),
     }
+    from auth import get_current_user
+    _cur_user = get_current_user() or {}
+    _can_edit_finance = (_cur_user.get("role") or "") in {"superadmin", "admin", "rp", "financier"}
+    if not _can_edit_finance:
+        st.info("Редактирование финансовых таблиц доступно только ролям РП, финансист и администраторам.")
     edited_df = st.data_editor(
         edit_df,
         num_rows="fixed",
@@ -15647,6 +15652,7 @@ def dashboard_forecast_budget(df):
         height=_editor_h,
         column_config=_fc,
         hide_index=True,
+        disabled=not _can_edit_finance,
     )
     st.session_state[_sess_key] = edited_df.copy()
 

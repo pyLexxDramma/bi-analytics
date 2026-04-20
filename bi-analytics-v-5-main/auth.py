@@ -40,7 +40,16 @@ REPORT_ROLES = ["manager", "analyst", "rp", "financier", "gip", "admin", "supera
 # Администраторы и суперадмины всегда видят все отчёты.
 # typing.FrozenSet не используем — на части окружений (Streamlit Cloud) импорт падает.
 _ROLE_REPORT_DENYLIST: Dict[str, frozenset] = {
-    "manager": frozenset(),
+    "manager": frozenset(
+        {
+            "БДДС",
+            "БДР",
+            "Бюджет план/факт",
+            "Утвержденный бюджет",
+            "Прогнозный бюджет",
+            "Дебиторская и кредиторская задолженность подрядчиков",
+        }
+    ),
     "analyst": frozenset(),
     "rp": frozenset(),
     "financier": frozenset(),
@@ -48,7 +57,25 @@ _ROLE_REPORT_DENYLIST: Dict[str, frozenset] = {
 }
 
 # Если для отчёта задан allowlist — отчёт виден только перечисленным ролям (плюс admin/superadmin).
-_REPORT_ROLE_ALLOWLIST: Dict[str, frozenset] = {}
+_REPORT_ROLE_ALLOWLIST: Dict[str, frozenset] = {
+    "Девелоперские проекты": frozenset({"manager", "analyst", "rp", "financier", "admin", "superadmin"}),
+    "БДДС": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
+    "БДР": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
+    "Бюджет план/факт": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
+    "Утвержденный бюджет": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
+    "Прогнозный бюджет": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
+    "Дебиторская и кредиторская задолженность подрядчиков": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
+    "Причины отклонений": frozenset({"manager", "analyst", "rp", "gip", "admin", "superadmin"}),
+    "Отклонение от базового плана": frozenset({"manager", "analyst", "rp", "gip", "admin", "superadmin"}),
+    "Контрольные точки": frozenset({"manager", "analyst", "rp", "gip", "admin", "superadmin"}),
+    "График проекта": frozenset({"manager", "analyst", "rp", "gip", "admin", "superadmin"}),
+    "Рабочая документация": frozenset({"manager", "analyst", "rp", "gip", "admin", "superadmin"}),
+    "Проектная документация": frozenset({"manager", "analyst", "rp", "gip", "admin", "superadmin"}),
+    "ГДРС": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
+    "Исполнительная документация": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
+    "ИД/TESSA": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
+    "Предписания по подрядчикам": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
+}
 
 
 def user_can_open_report(role: str, report_name: str) -> bool:

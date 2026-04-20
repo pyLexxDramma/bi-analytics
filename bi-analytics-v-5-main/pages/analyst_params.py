@@ -62,6 +62,7 @@ from auth import (
     check_authentication,
     get_current_user,
     require_auth,
+    has_admin_access,
     get_user_role_display,
     ROLES,
     init_db,
@@ -173,12 +174,12 @@ if is_streamlit_context():
 
         st.stop()
 
-    # Проверка прав доступа - менеджеры не имеют доступа к параметрам отчетов
-    if user['role'] == 'manager':
+    # Проверка прав доступа - параметры отчетов доступны только администраторам
+    if not has_admin_access(user['role']):
 
         st.error("У вас нет доступа к этой странице")
 
-        st.info("Доступ к параметрам отчетов имеют только аналитики и администраторы.")
+        st.info("Доступ к параметрам отчетов имеют только администраторы и суперадминистраторы.")
 
         if st.button("Вернуться к отчетам"):
 
