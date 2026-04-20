@@ -101,6 +101,14 @@ def create_user(
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
 
+        if role == "superadmin":
+            cursor.execute(
+                "SELECT COUNT(*) FROM users WHERE role = 'superadmin' AND is_active = 1"
+            )
+            if cursor.fetchone()[0] >= 1:
+                conn.close()
+                return False
+
         password_hash = hash_password(password)
         cursor.execute(
             """
@@ -343,10 +351,8 @@ def delete_user(user_id: int, deleted_by: str) -> Tuple[bool, str]:
         return False, "Нельзя удалить самого себя"
 
     if target_role == "superadmin":
-        cursor.execute("SELECT COUNT(*) FROM users WHERE role = 'superadmin' AND is_active = 1")
-        if cursor.fetchone()[0] <= 1:
-            conn.close()
-            return False, "Нельзя удалить последнего суперадминистратора"
+        conn.close()
+        return False, "Нельзя удалить суперадминистратора"
 
     try:
         cursor.execute("DELETE FROM project_permissions WHERE user_id = ?", (user_id,))

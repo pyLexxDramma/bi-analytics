@@ -821,6 +821,17 @@ if user is not None:
 
             if submitted:
                 if new_username and new_password:
+                    if new_role == "superadmin":
+                        conn = sqlite3.connect(DB_PATH)
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            "SELECT COUNT(*) FROM users WHERE role = 'superadmin' AND is_active = 1"
+                        )
+                        superadmin_count = cursor.fetchone()[0]
+                        conn.close()
+                        if superadmin_count >= 1:
+                            st.error("В системе уже есть суперадминистратор. Допускается только один.")
+                            st.stop()
                     from auth import create_user
 
                     if create_user(
@@ -885,6 +896,19 @@ if user is not None:
                         conn = sqlite3.connect(DB_PATH)
                         cursor = conn.cursor()
                         cursor.execute(
+                            "SELECT COUNT(*) FROM users WHERE role = 'superadmin' AND is_active = 1"
+                        )
+                        superadmin_count = cursor.fetchone()[0]
+                        conn.close()
+                        if new_role == "superadmin" and current_role != "superadmin" and superadmin_count >= 1:
+                            st.error("В системе уже есть суперадминистратор. Допускается только один.")
+                            st.stop()
+                        if current_role == "superadmin" and new_role != "superadmin" and superadmin_count <= 1:
+                            st.error("Нельзя снять роль у единственного суперадминистратора.")
+                            st.stop()
+                        conn = sqlite3.connect(DB_PATH)
+                        cursor = conn.cursor()
+                        cursor.execute(
                             "UPDATE users SET role = ? WHERE id = ?",
                             (new_role, selected_user_id),
                         )
@@ -919,7 +943,7 @@ if user is not None:
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, username, role FROM users WHERE username != ? ORDER BY username",
+                "SELECT id, username, role FROM users WHERE username != ? AND role != 'superadmin' ORDER BY username",
                 (user["username"],),
             )
             deletable_users = cursor.fetchall()
