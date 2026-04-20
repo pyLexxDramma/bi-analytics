@@ -82,6 +82,19 @@ st.markdown(
     """
     <style>
     [data-testid="stSidebarNav"] { display: none !important; }
+    .stPlotlyChart {
+        overflow-x: auto;
+        overflow-y: hidden;
+    }
+    .stPlotlyChart > div {
+        min-width: 960px;
+    }
+    [data-testid="stDataFrame"] {
+        overflow-x: auto;
+    }
+    [data-testid="stDataFrame"] > div {
+        min-width: max-content;
+    }
     </style>
     """,
     unsafe_allow_html=True,

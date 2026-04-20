@@ -6397,7 +6397,10 @@ def dashboard_budget_cumulative(df):
     # --- Накопительные ряды для графика (по выбранному проекту или сумма по всем)
     bs = _sort_period_df(budget_summary.copy())
     if selected_project != "Все":
-        chart_src = bs[bs["project name"].astype(str).str.strip() == str(selected_project).strip()].copy()
+        chart_src = bs[
+            bs["project name"].map(_project_filter_norm_key)
+            == _project_filter_norm_key(selected_project)
+        ].copy()
     else:
         agg_c = {"budget plan": "sum", "budget fact": "sum", "reserve budget": "sum"}
         if adjusted_budget_col:
@@ -6502,7 +6505,10 @@ def dashboard_budget_cumulative(df):
     st.subheader(f"Сводка бюджета (накопительно) по {period_label.lower()}")
     bs2 = _sort_period_df(budget_summary.copy())
     if selected_project != "Все":
-        bs2 = bs2[bs2["project name"].astype(str).str.strip() == str(selected_project).strip()].copy()
+        bs2 = bs2[
+            bs2["project name"].map(_project_filter_norm_key)
+            == _project_filter_norm_key(selected_project)
+        ].copy()
         bs2 = _sort_period_df(bs2)
     bs2["budget plan_cum"] = bs2.groupby("project name", dropna=False)["budget plan"].cumsum()
     bs2["budget fact_cum"] = bs2.groupby("project name", dropna=False)["budget fact"].cumsum()
@@ -12383,9 +12389,15 @@ def dashboard_debit_credit(df):
         fig.update_layout(
             barmode="group",
             height=min(900, max(420, len(chart_df) * 28)),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+            legend=dict(
+                orientation="v",
+                yanchor="top",
+                y=1,
+                xanchor="left",
+                x=1.02,
+            ),
             xaxis=dict(tickangle=-55, tickfont=dict(size=9), categoryorder="total descending"),
-            margin=dict(b=140),
+            margin=dict(r=230, b=140),
         )
         fig = _apply_finance_bar_label_layout(fig)
         fig = apply_chart_background(fig)
@@ -14585,9 +14597,6 @@ def dashboard_budget_by_type(df):
                     xaxis_title="Проект",
                     yaxis_title="Сумма бюджета (руб.)",
                     height=600,
-                    legend=dict(
-                        orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
-                    ),
                     xaxis=dict(tickangle=-45, tickfont=dict(size=12)),
                 )
 
@@ -14599,6 +14608,16 @@ def dashboard_budget_by_type(df):
                 )
 
                 fig_hist = _apply_finance_bar_label_layout(fig_hist)
+                fig_hist.update_layout(
+                    legend=dict(
+                        orientation="v",
+                        yanchor="top",
+                        y=1,
+                        xanchor="left",
+                        x=1.02,
+                    ),
+                    margin=dict(l=56, r=220, t=72, b=120),
+                )
                 fig_hist = apply_chart_background(fig_hist)
                 render_chart(
                     fig_hist,
@@ -15522,9 +15541,16 @@ def dashboard_approved_budget(df):
         bargap=0.18,
         bargroupgap=0.08,
         hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=1,
+            xanchor="left",
+            x=1.02,
+        ),
         height=600,
         xaxis=dict(tickangle=-45, tickfont=dict(size=9), nticks=18),
+        margin=dict(l=56, r=220, t=72, b=120),
     )
     fig = _apply_finance_bar_label_layout(fig)
     if not monthly_rows.empty:

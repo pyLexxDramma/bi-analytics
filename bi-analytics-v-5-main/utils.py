@@ -889,9 +889,28 @@ def format_dataframe_as_html(
     if df is None or df.empty:
         return "<p>Нет данных для отображения.</p>"
 
+    def _is_finance_like_column(col_name: Any) -> bool:
+        s = str(col_name).lower()
+        return any(
+            token in s
+            for token in (
+                "млн",
+                "руб",
+                "бюджет",
+                "budget",
+                "%",
+                "процент",
+                "стоим",
+                "сумм",
+                "bdds",
+                "бддс",
+                "бдр",
+            )
+        )
+
     html_table = (
         "<div class='bd-table-wrap' style='width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch;'>"
-        "<table style='width:100%; border-collapse: collapse; background-color: hsl(209,67%,12%); color: #ffffff; font-size: clamp(12px, 1.1vw, 14px);'>"
+        "<table style='width:100%; min-width:max-content; border-collapse: collapse; background-color: hsl(209,67%,12%); color: #ffffff; font-size: clamp(12px, 1.1vw, 14px);'>"
     )
     html_table += "<thead><tr>"
     for col in df.columns:
@@ -940,15 +959,10 @@ def format_dataframe_as_html(
                     # Сначала «в днях» — иначе «отклонения» попадут под денежное .2f
                     if _ru_column_is_integer_days(col):
                         formatted_value = f"{int(round(float(value), 0))}"
-                    elif (
-                        "млн" in col_lower
-                        or "руб" in col_lower
-                        or "бюджет" in col_lower
-                        or "%" in col_lower
-                    ):
+                    elif _is_finance_like_column(col_lower):
                         formatted_value = f"{float(value):.2f}"
                     elif "отклонен" in col_lower or "deviation" in col_lower:
-                        formatted_value = f"{float(value):.2f}"
+                        formatted_value = f"{int(round(float(value), 0))}"
                     elif isinstance(value, float) and (value % 1 != 0 or abs(value) < 1):
                         formatted_value = f"{value:.2f}"
                     else:
