@@ -16506,7 +16506,7 @@ def dashboard_predpisania(df):
     Отчёт «Предписания по подрядчикам» — TESSA, KindName содержит «Предписан».
     Оформление в общей тёмной теме дашборда (как остальные отчёты).
     """
-    st.header("Предписания по подрядчикам")
+    st.header("Неустраненные предписания")
     st.caption(
         "Данные TESSA, виды «Предписание». Поля «№ договора» и «Срок устранения» ищутся по типовым именам "
         "(ContractNumber, DueDate и др.); при раздельных файлах Id (DocID) и Tasks (CardId) строки задач "
@@ -16834,7 +16834,7 @@ def dashboard_predpisania(df):
         chart_group_col = obj_col
         chart_group_label = "проектам"
     # Заголовок секции на всю ширину; ниже легенда и KPI в одной строке — верх легенды и блока «Ключевые показатели» совпадают
-    st.subheader("Предписания по подрядчикам")
+    st.subheader("Неустраненные предписания")
     if issue_start is not None and issue_end is not None:
         st.caption(
             f"Период выдачи предписаний: {issue_start.strftime('%d.%m.%Y')} - {issue_end.strftime('%d.%m.%Y')}"
@@ -16941,7 +16941,7 @@ def dashboard_predpisania(df):
     )
     st.markdown(_pred_overdue_mock_table_html(mock_blocks, n_overdue), unsafe_allow_html=True)
 
-    st.subheader("Детальная таблица предписаний")
+    st.subheader("Детальная таблица по предписаниям")
     with st.expander("Примечание к таблице", expanded=False):
         st.caption("Клик по заголовку сортирует таблицу. Просроченные строки выделены розовым, устраненные — салатовым.")
     show = filtered.copy()
