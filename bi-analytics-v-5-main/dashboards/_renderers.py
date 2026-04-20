@@ -7266,6 +7266,7 @@ def dashboard_rd_delay(df):
                 default=projects,
                 key="rd_delay_projects",
                 help="Ничего не выбрано — показываются все проекты.",
+                placeholder="Выберите проекты",
             )
         except Exception as e:
             st.error(f"Ошибка при загрузке списка проектов: {str(e)}")
@@ -8332,6 +8333,7 @@ def dashboard_technique(df):
                 all_projects,
                 default=all_projects if len(all_projects) <= 3 else all_projects[:3],
                 key="technique_projects",
+                placeholder="Выберите проекты",
             )
         else:
             selected_projects = []
@@ -10115,6 +10117,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 all_projects,
                 default=all_projects if len(all_projects) <= 3 else all_projects[:3],
                 key=f"{key_prefix}_projects",
+                placeholder="Выберите проекты",
             )
         else:
             selected_projects = []
@@ -16521,7 +16524,12 @@ def dashboard_predpisania(df):
 
     kind_col = _tessa_find_column(work, ["KindName", "kindname", "Вид"])
     if kind_col:
-        pred = work[work[kind_col].astype(str).str.contains("Предписан", case=False, na=False)].copy()
+        _kind_series = work[kind_col].astype(str).str.strip().str.casefold()
+        pred = work[
+            _kind_series.eq("предписания")
+            | _kind_series.eq("предписание")
+            | _kind_series.str.startswith("предпис")
+        ].copy()
     else:
         pred = pd.DataFrame()
 
@@ -16539,6 +16547,12 @@ def dashboard_predpisania(df):
     if pred.empty:
         st.info("Нет предписаний с заполненным объектом/проектом.")
         return
+
+    pred_project_options = (
+        sorted(pred[obj_col].dropna().astype(str).str.strip().unique().tolist())
+        if obj_col and obj_col in pred.columns
+        else []
+    )
 
     # Повторно объединяем по ключу уже внутри выборки «предписания» (договор/срок могли быть только в других строках)
     pred = _tessa_fill_card_from_doc_lookup(pred)
@@ -16682,8 +16696,6 @@ def dashboard_predpisania(df):
         | st_l.str.contains("выполн", case=False, na=False)
         | st_l.str.contains("закрыт", case=False, na=False)
     )
-    if completion_col and completion_col in pred.columns:
-        pred["_resolved"] = pred["_resolved"] | pred["_completion_dt"].notna()
     if due_col:
         pred["_due"] = _tessa_to_datetime(pred[due_col])
     else:
@@ -16708,10 +16720,7 @@ def dashboard_predpisania(df):
 
     st.markdown("**Фильтры**")
     fc1, fc2, fc3, fc4, fb1, fb2 = st.columns([2, 2, 2, 2, 1, 1])
-    if obj_col:
-        projects = sorted(pred[obj_col].dropna().astype(str).str.strip().unique().tolist())
-    else:
-        projects = []
+    projects = pred_project_options
     if contr_col:
         contractors = ["Все подрядчики"] + sorted(
             pred[contr_col].dropna().astype(str).str.strip().unique().tolist(),
@@ -16728,6 +16737,7 @@ def dashboard_predpisania(df):
                 default=st.session_state.get("pred_m_p", []),
                 key="pred_m_p",
                 help="Пустой выбор = все проекты.",
+                placeholder="Выберите проекты",
             )
         else:
             sel_obj = []
