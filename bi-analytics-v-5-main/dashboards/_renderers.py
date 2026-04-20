@@ -16546,7 +16546,7 @@ def dashboard_predpisania(df):
         return
 
     pred_project_options = (
-        sorted(pred[obj_col].dropna().astype(str).str.strip().unique().tolist())
+        _unique_project_labels_for_select(pred[obj_col])
         if obj_col and obj_col in pred.columns
         else []
     )
@@ -16652,22 +16652,33 @@ def dashboard_predpisania(df):
             "Department",
         ],
     )
-    dedupe_subset = [
+    doc_identity_cols = [
         c
         for c in [
             pred_doc_col,
-            pred_card_col,
-            creation_col_pred,
             doc_num_col,
+            contract_col,
+        ]
+        if c and c in pred.columns
+    ]
+    dedupe_subset = [
+        c
+        for c in [
+            *doc_identity_cols,
+            creation_col_pred,
             contr_col,
             kind_col,
             obj_col,
-            "Name" if "Name" in pred.columns else None,
             "KrState" if "KrState" in pred.columns else None,
             "KrStateID" if "KrStateID" in pred.columns else None,
         ]
         if c and c in pred.columns
     ]
+    if not doc_identity_cols and pred_card_col and pred_card_col in pred.columns:
+        dedupe_subset.insert(0, pred_card_col)
+    stable_sort_cols = [c for c in [pred_doc_col, doc_num_col, pred_card_col, creation_col_pred] if c and c in pred.columns]
+    if stable_sort_cols:
+        pred = pred.sort_values(stable_sort_cols, kind="stable", na_position="last").reset_index(drop=True)
     if dedupe_subset:
         pred = pred.drop_duplicates(subset=dedupe_subset, keep="first").copy()
     else:
@@ -16714,6 +16725,23 @@ def dashboard_predpisania(df):
 
     pred["_overdue_days"] = pred.apply(_overdue_days_row, axis=1)
     pred["_critical"] = pred["_overdue_days"] > 30
+
+    def _pred_axis_upper_bound(xmax: float) -> float:
+        try:
+            val = float(xmax)
+        except (TypeError, ValueError):
+            return 5.0
+        if not np.isfinite(val) or val <= 0:
+            return 5.0
+        if val <= 5:
+            return 5.0
+        if val <= 10:
+            return 10.0
+        if val <= 25:
+            return float(int(np.ceil(val / 5.0)) * 5)
+        if val <= 100:
+            return float(int(np.ceil(val / 10.0)) * 10)
+        return float(int(np.ceil(val / 25.0)) * 25)
 
     st.markdown("**Фильтры**")
     fc1, fc2, fc3, fc4, fb1, fb2 = st.columns([2, 2, 2, 2, 1, 1])
@@ -16901,13 +16929,15 @@ def dashboard_predpisania(df):
                 float(pd.to_numeric(grp["Просрочено"], errors="coerce").fillna(0).max()),
                 1.0,
             )
+            axis_upper = _pred_axis_upper_bound(xmax)
             fig1.update_layout(
                 height=max(420, len(grp) * 52 + 120),
                 yaxis_title="",
                 xaxis_title="Количество",
                 margin=dict(l=8, r=90, t=40, b=16),
-                xaxis=dict(range=[0, xmax * 1.5]),
+                xaxis=dict(range=[0, axis_upper]),
                 uniformtext=dict(minsize=9, mode="show"),
+                uirevision="pred_main_chart",
             )
             fig1 = apply_chart_background(fig1)
             fig1.update_layout(uniformtext=dict(minsize=9, mode="show"))
