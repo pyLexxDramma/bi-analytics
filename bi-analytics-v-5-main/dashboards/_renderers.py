@@ -2498,7 +2498,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
 
         with col2:
             if "project name" in source_df.columns:
-                projects = ["Все"] + sorted(source_df["project name"].dropna().unique().tolist())
+                projects = ["Все"] + _project_name_select_options(source_df["project name"])
                 selected_project = st.selectbox(
                     "Проект", projects, key="dynamics_project"
                 )
@@ -2520,8 +2520,8 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
     if not hide_shared_filters:
         if selected_project != "Все" and "project name" in filtered_df.columns:
             filtered_df = filtered_df[
-                filtered_df["project name"].astype(str).str.strip()
-                == str(selected_project).strip()
+                filtered_df["project name"].map(_project_filter_norm_key)
+                == _project_filter_norm_key(selected_project)
             ]
         if selected_reason != "Все" and "reason of deviation" in filtered_df.columns:
             filtered_df = filtered_df[
@@ -3379,8 +3379,8 @@ def dashboard_plan_fact_dates(df):
     pf_dates_proj_df = df.copy()
     if selected_project != "Все" and "project name" in pf_dates_proj_df.columns:
         pf_dates_proj_df = pf_dates_proj_df[
-            pf_dates_proj_df["project name"].astype(str).str.strip()
-            == str(selected_project).strip()
+            pf_dates_proj_df["project name"].map(_project_filter_norm_key)
+            == _project_filter_norm_key(selected_project)
         ]
     pf_dates_proj_df = pf_dates_proj_df.reset_index(drop=True)
     pf_dates_level_col = _dev_tasks_resolve_level_column(pf_dates_proj_df)
@@ -6869,7 +6869,7 @@ def dashboard_bdr(df):
     with st.expander("Подсказка", expanded=False):
         st.caption("План и факт расходов по периоду.")
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         period_type = st.selectbox(
             "Группировать по", ["Месяц", "Квартал", "Год"], key="bdr_period"
@@ -8333,7 +8333,7 @@ def dashboard_technique(df):
 
     with col1:
         if project_col and project_col in work_df.columns:
-            all_projects = sorted(work_df[project_col].dropna().unique().tolist())
+            all_projects = _unique_project_labels_for_select(work_df[project_col])
             selected_projects = st.multiselect(
                 "Фильтр по проектам (можно выбрать несколько)",
                 all_projects,
@@ -8451,59 +8451,15 @@ def dashboard_technique(df):
                 st.info("Нет значений периода")
         else:
             st.info("Колонка 'Период' не найдена")
-    selected_period_from = "Все"
-    selected_period_to = "Все"
-    with col3:
-        if period_col and period_col in work_df.columns:
-            period_values = work_df[period_col].dropna().astype(str).str.strip()
-            period_values = [p for p in period_values.unique().tolist() if p]
-            if period_values:
-                # Сортировка: сначала по распознанной дате/периоду, затем лексикографически.
-                def _gdrs_period_sort_key(v):
-                    try:
-                        p = pd.Period(v, freq="M")
-                        return (0, p.ordinal)
-                    except Exception:
-                        pass
-                    try:
-                        ts = pd.to_datetime(v, errors="coerce", dayfirst=True)
-                        if pd.notna(ts):
-                            return (0, ts.to_period("M").ordinal)
-                    except Exception:
-                        pass
-                    return (1, str(v))
-
-                period_values = sorted(period_values, key=_gdrs_period_sort_key)
-                selected_period_from = st.selectbox(
-                    "Период с",
-                    ["Все"] + period_values,
-                    key=f"{key_prefix}_period_from",
-                )
-                selected_period_to = st.selectbox(
-                    "Период по",
-                    ["Все"] + period_values,
-                    key=f"{key_prefix}_period_to",
-                )
-                p_start = period_values.index(selected_period_from) if selected_period_from in period_values else 0
-                p_end = period_values.index(selected_period_to) if selected_period_to in period_values else len(period_values) - 1
-                if p_start > p_end:
-                    p_start, p_end = p_end, p_start
-                selected_periods = period_values[p_start : p_end + 1]
-            else:
-                st.info("Нет значений периода")
-        else:
-            st.info("Колонка 'Период' не найдена")
-
     # Apply filters
     filtered_df = work_df.copy()
     if selected_projects and project_col and project_col in filtered_df.columns:
-        # Фильтруем по выбранным проектам
-        project_mask = (
-            filtered_df[project_col]
-            .astype(str)
-            .str.strip()
-            .isin([str(p).strip() for p in selected_projects])
-        )
+        selected_project_keys = {
+            _project_filter_norm_key(p)
+            for p in selected_projects
+            if _project_filter_norm_key(p)
+        }
+        project_mask = filtered_df[project_col].map(_project_filter_norm_key).isin(selected_project_keys)
         filtered_df = filtered_df[project_mask]
     if selected_contractor != "Все" and "Контрагент" in filtered_df.columns:
         # Use string comparison with strip to handle whitespace
@@ -12302,7 +12258,7 @@ def dashboard_debit_credit(df):
             sel_contract = "Все"
     with c4:
         if project_col and project_col in work.columns:
-            all_projects = ["Все"] + sorted(work[project_col].dropna().astype(str).unique().tolist())
+            all_projects = ["Все"] + _unique_project_labels_for_select(work[project_col])
             sel_project = st.selectbox("Проект", all_projects, key="debit_credit_project")
         else:
             st.info("Фильтр по проекту недоступен: в файле нет колонки проекта.")
@@ -12316,7 +12272,10 @@ def dashboard_debit_credit(df):
     if sel_contract != "Все" and contract_col:
         filtered = filtered[filtered[contract_col].astype(str).str.strip() == str(sel_contract).strip()]
     if sel_project != "Все" and project_col:
-        filtered = filtered[filtered[project_col].astype(str).str.strip() == str(sel_project).strip()]
+        filtered = filtered[
+            filtered[project_col].map(_project_filter_norm_key)
+            == _project_filter_norm_key(sel_project)
+        ]
 
     if filtered.empty:
         st.info("Нет данных при выбранных фильтрах.")
