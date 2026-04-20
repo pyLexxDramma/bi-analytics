@@ -81,13 +81,25 @@ st.set_page_config(
 st.markdown(
     """
     <style>
+    [data-testid="stAppViewContainer"] {
+        overflow-x: auto;
+    }
+    [data-testid="stMain"] {
+        overflow-x: auto;
+    }
+    [data-testid="stMainBlockContainer"] {
+        min-width: 1180px;
+    }
     [data-testid="stSidebarNav"] { display: none !important; }
-    .stPlotlyChart {
+    .stPlotlyChart,
+    [data-testid="stPlotlyChart"] {
         overflow-x: auto;
         overflow-y: hidden;
+        max-width: 100%;
     }
-    .stPlotlyChart > div {
-        min-width: 960px;
+    .stPlotlyChart > div,
+    [data-testid="stPlotlyChart"] > div {
+        min-width: 1180px;
     }
     [data-testid="stDataFrame"] {
         overflow-x: auto;
