@@ -559,14 +559,23 @@ def render_sidebar_menu(current_page: str = "reports"):
             st.markdown("#### Отчеты")
             st.markdown("---")
             current_dashboard = st.session_state.get("current_dashboard", "")
-            # Иконки: Причины отклонений, Аналитика по финансам, Прочее (3 категории)
-            icons = ["", "", ""]
-            for i, (cat_name, reports) in enumerate(REPORT_CATEGORIES):
-                icon = icons[i] if i < len(icons) else ""
+            for cat_name, reports in REPORT_CATEGORIES:
                 visible = filter_reports_for_role(user["role"], list(reports))
                 if not visible:
                     continue
-                with st.expander(f"{icon} {cat_name}", expanded=False):
+                if len(visible) == 1:
+                    report = visible[0]
+                    button_type = "primary" if current_dashboard == report else "secondary"
+                    if st.button(
+                        report,
+                        width="stretch",
+                        key=f"menu_report_{report}",
+                        type=button_type,
+                    ):
+                        st.session_state.current_dashboard = report
+                        st.rerun()
+                    continue
+                with st.expander(cat_name, expanded=False):
                     for report in visible:
                         button_type = (
                             "primary" if current_dashboard == report else "secondary"

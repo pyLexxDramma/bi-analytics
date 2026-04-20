@@ -24,13 +24,7 @@ from dashboards.dev_projects_tz_matrix import (
 
 def _project_name_select_options(series: pd.Series) -> list:
     """Уникальные значения project name для фильтров; без меток из MSP_PROJECT_FILTER_EXCLUDE_NAMES."""
-    raw = (
-        series.dropna()
-        .astype(str)
-        .map(str.strip)
-    )
-    uniq = sorted({p for p in raw if p and p.lower() not in ("nan", "none")})
-    return [p for p in uniq if p not in MSP_PROJECT_FILTER_EXCLUDE_NAMES]
+    return _unique_project_labels_for_select(series)
 
 
 def _project_filter_norm_key(val) -> str:
@@ -56,6 +50,11 @@ def _unique_project_labels_for_select(series: pd.Series) -> list[str]:
     """Уникальные подписи для selectbox: один пункт на один нормализованный ключ (короче имя — приоритет)."""
     if series is None or getattr(series, "empty", True):
         return []
+    excluded_keys = {
+        _project_filter_norm_key(p)
+        for p in MSP_PROJECT_FILTER_EXCLUDE_NAMES
+        if _project_filter_norm_key(p)
+    }
     by_key: dict[str, str] = {}
     for raw in series.dropna().unique():
         s = (
@@ -67,8 +66,8 @@ def _unique_project_labels_for_select(series: pd.Series) -> list[str]:
         )
         while "  " in s:
             s = s.replace("  ", " ")
-        k = s.casefold()
-        if not k or k in ("nan", "none", "nat"):
+        k = _project_filter_norm_key(s)
+        if not k or k in excluded_keys:
             continue
         if k not in by_key or len(s) < len(by_key[k]):
             by_key[k] = s
@@ -4712,7 +4711,7 @@ def dashboard_deviation_by_tasks_current_month(df):
         st.warning("Поле 'project name' / 'Проект' не найдено в данных.")
         return
 
-    all_projects = sorted(df[project_col].dropna().unique().tolist())
+    all_projects = _unique_project_labels_for_select(df[project_col])
     if not all_projects:
         st.warning("Проекты не найдены в данных.")
         return
@@ -4727,7 +4726,8 @@ def dashboard_deviation_by_tasks_current_month(df):
     base = df.copy()
     if selected_project != "Все" and project_col in base.columns:
         base = base[
-            base[project_col].astype(str).str.strip() == str(selected_project).strip()
+            base[project_col].map(_project_filter_norm_key)
+            == _project_filter_norm_key(selected_project)
         ]
 
     level_col = _dev_tasks_resolve_level_column(base)
@@ -5721,7 +5721,7 @@ def dashboard_budget_by_period(df):
 
     with col2:
         if "project name" in df.columns:
-            projects = ["Все"] + sorted(df["project name"].dropna().unique().tolist())
+            projects = ["Все"] + _unique_project_labels_for_select(df["project name"])
             selected_project = st.selectbox(
                 "Фильтр по проекту", projects, key="budget_project"
             )
@@ -5752,8 +5752,8 @@ def dashboard_budget_by_period(df):
     filtered_df = df.copy()
     if selected_project != "Все" and "project name" in filtered_df.columns:
         filtered_df = filtered_df[
-            filtered_df["project name"].astype(str).str.strip()
-            == str(selected_project).strip()
+            filtered_df["project name"].map(_project_filter_norm_key)
+            == _project_filter_norm_key(selected_project)
         ]
     if selected_section != "Все" and "section" in filtered_df.columns:
         filtered_df = filtered_df[
@@ -6218,7 +6218,7 @@ def dashboard_budget_cumulative(df):
 
     with col2:
         if "project name" in df.columns:
-            projects = ["Все"] + sorted(df["project name"].dropna().unique().tolist())
+            projects = ["Все"] + _unique_project_labels_for_select(df["project name"])
             selected_project = st.selectbox(
                 "Фильтр по проекту", projects, key="budget_cum_project"
             )
@@ -6244,8 +6244,8 @@ def dashboard_budget_cumulative(df):
     filtered_df = df.copy()
     if selected_project != "Все" and "project name" in filtered_df.columns:
         filtered_df = filtered_df[
-            filtered_df["project name"].astype(str).str.strip()
-            == str(selected_project).strip()
+            filtered_df["project name"].map(_project_filter_norm_key)
+            == _project_filter_norm_key(selected_project)
         ]
     if selected_section != "Все" and "section" in filtered_df.columns:
         filtered_df = filtered_df[
@@ -6872,7 +6872,7 @@ def dashboard_bdr(df):
         period_type_en = period_map.get(period_type, "Month")
     with col2:
         if "project name" in df.columns:
-            projects = ["Все"] + sorted(df["project name"].dropna().unique().tolist())
+            projects = ["Все"] + _unique_project_labels_for_select(df["project name"])
             selected_project = st.selectbox(
                 "Фильтр по проекту", projects, key="bdr_project"
             )
@@ -6907,8 +6907,8 @@ def dashboard_bdr(df):
     filtered_df = df.copy()
     if selected_project != "Все" and "project name" in filtered_df.columns:
         filtered_df = filtered_df[
-            filtered_df["project name"].astype(str).str.strip()
-            == str(selected_project).strip()
+            filtered_df["project name"].map(_project_filter_norm_key)
+            == _project_filter_norm_key(selected_project)
         ]
     if selected_section != "Все" and "section" in filtered_df.columns:
         filtered_df = filtered_df[
@@ -8323,7 +8323,7 @@ def dashboard_technique(df):
                 work_df["Период"] = _dt_fb.iloc[0].to_period("M")
                 period_col = "Период"
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
 
     with col1:
         if project_col and project_col in work_df.columns:
@@ -14216,17 +14216,11 @@ def dashboard_project_documentation(df):
 # ==================== DASHBOARD 8: Budget by Type (Plan/Fact/Reserve) ====================
 def dashboard_budget_by_type(df):
     st.header("Бюджет план/факт")
-    with st.expander("Источник данных", expanded=False):
-        st.caption(
-            "Сводный план/факт по бюджету в разрезе проекта и этапа из загруженных данных; "
-            "для сравнения с отчётом «БДДС» (обороты) используйте оба отчёта на одном наборе файлов."
-        )
-
     col1, col2, col3 = st.columns(3)
 
     with col1:
         if "project name" in df.columns:
-            projects = ["Все"] + sorted(df["project name"].dropna().unique().tolist())
+            projects = ["Все"] + _unique_project_labels_for_select(df["project name"])
             selected_project = st.selectbox(
                 "Фильтр по проекту", projects, key="budget_type_project"
             )
@@ -14243,15 +14237,12 @@ def dashboard_budget_by_type(df):
         else:
             selected_section = "Все"
 
-    with col3:
-        pass
-
     # Apply filters
     filtered_df = df.copy()
     if selected_project != "Все" and "project name" in filtered_df.columns:
         filtered_df = filtered_df[
-            filtered_df["project name"].astype(str).str.strip()
-            == str(selected_project).strip()
+            filtered_df["project name"].map(_project_filter_norm_key)
+            == _project_filter_norm_key(selected_project)
         ]
     if selected_section != "Все" and "section" in filtered_df.columns:
         filtered_df = filtered_df[
@@ -15381,26 +15372,6 @@ def calculate_approved_budget(df, rule_name="default"):
 def dashboard_approved_budget(df):
     """Панель для отображения утвержденного бюджета"""
     st.header("Утвержденный бюджет")
-    with st.expander("Источник данных", expanded=False):
-        st.caption(
-            "По ТЗ детальный отчёт строится из CSV «ОборотыПоБюджетам» (колонки «сценарий», «Статья оборотов»). "
-            "Блок ниже с распределением по месяцам — из задач и плановых сумм в MSP; при наличии колонок план/факт в данных — дополнительная сводка по проекту."
-        )
-        st.caption(
-            "**Единицы:** график и таблицы ниже — **млн руб.** (внутренние суммы в рублях переводятся при отображении)."
-        )
-
-    with st.expander("Правила отображения", expanded=False):
-        st.markdown(
-            "Основной график — **план/факт по месяцам** в том же стиле, что отчёт «БДДС» (ТЗ, правки). "
-            "Таблица по проекту: отклонение = **план − факт**."
-        )
-    with st.expander("Требования ТЗ (PDF): утверждённый бюджет", expanded=False):
-        st.markdown(
-            "Источник данных: CSV **«ОборотыПоБюджетам»**. Детальная таблица: проект; "
-            "утверждённый бюджет (сценарий «Бюджет», статья без «(БДР)»); фактические расходы; "
-            "отклонение с цветом по знаку (см. PDF «Правки»)."
-        )
 
     # Фильтры (две колонки: проект, этап)
     col1, col2 = st.columns(2)
@@ -15414,7 +15385,7 @@ def dashboard_approved_budget(df):
             project_col = "Проект"
 
         if project_col:
-            projects = ["Все"] + sorted(df[project_col].dropna().unique().tolist())
+            projects = ["Все"] + _unique_project_labels_for_select(df[project_col])
             selected_project = st.selectbox(
                 "Фильтр по проекту", projects, key="approved_budget_project"
             )
@@ -15435,8 +15406,8 @@ def dashboard_approved_budget(df):
     filtered_df = df.copy()
     if selected_project != "Все" and project_col and project_col in filtered_df.columns:
         filtered_df = filtered_df[
-            filtered_df[project_col].astype(str).str.strip()
-            == str(selected_project).strip()
+            filtered_df[project_col].map(_project_filter_norm_key)
+            == _project_filter_norm_key(selected_project)
         ]
     if selected_section != "Все" and "section" in filtered_df.columns:
         filtered_df = filtered_df[
@@ -15620,23 +15591,6 @@ def dashboard_forecast_budget(df):
 
     """Панель для отображения и редактирования прогнозного бюджета"""
     st.header("Прогнозный бюджет")
-    with st.expander("Источник данных", expanded=False):
-        st.caption(
-            "Прогноз строится от распределения утверждённого бюджета по задачам MSP; "
-            "при появлении отдельной загрузки «ОборотыПоБюджетам» логику можно согласовать с файлом оборотов."
-        )
-        st.caption(
-            "**Единицы:** график и сводная таблица — **млн руб.**; в редакторе лотов суммы тоже в млн руб."
-        )
-
-    with st.expander("Требования ТЗ (PDF): БДДС утверждённый/прогнозный", expanded=False):
-        st.markdown(
-            "Отчёт **БДДС (утверждённый/прогнозный)** по PDF: визуалы как у «БДДС месяцы/накопительно»; "
-            "столбцы **БДДС план**, **БДДС факт**, **БДДС прогноз**; прогноз считается от дат **Начало/Окончание** "
-            "в MS Project по лоту и правил распределения (равномерно или % A/B/C). "
-            "Блок редактирования ниже соответствует идее «Формирование БДДС прогноз»."
-        )
-    # Кратко: логика в expander «Требования ТЗ»; без дублирующего серого info (П.9)
 
     # Фильтр по проекту (обязательный для прогнозного бюджета)
     # Check English name first (alias created in load_data), then Russian
@@ -15652,7 +15606,7 @@ def dashboard_forecast_budget(df):
         )
         return
 
-    projects = sorted(df[project_col].dropna().unique().tolist())
+    projects = _unique_project_labels_for_select(df[project_col])
     if not projects:
         st.warning("Проекты не найдены в данных.")
         return
@@ -15663,7 +15617,8 @@ def dashboard_forecast_budget(df):
 
     # Фильтруем данные по выбранному проекту
     project_df = df[
-        df[project_col].astype(str).str.strip() == str(selected_project).strip()
+        df[project_col].map(_project_filter_norm_key)
+        == _project_filter_norm_key(selected_project)
     ].copy()
 
     if project_df.empty:
