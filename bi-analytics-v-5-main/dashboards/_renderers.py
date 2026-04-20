@@ -12863,10 +12863,58 @@ def dashboard_executive_documentation(df):
     fp1, fp2 = st.columns(2)
     with fp1:
         if pd.notna(dmin) and pd.notna(dmax):
+            preset_options = [
+                "Без пресета",
+                "Прошлая неделя",
+                "Прошлый месяц",
+                "Последние 3 месяца",
+                "Последние 6 месяцев",
+                "Последний год",
+                "Последние 2 года",
+            ]
+            selected_preset = st.selectbox(
+                "Быстрый период",
+                preset_options,
+                index=0,
+                key="exec_doc_period_preset",
+            )
+            preset_start = dmin.date() if hasattr(dmin, "date") else dmin
+            preset_end = dmax.date() if hasattr(dmax, "date") else dmax
+            today_ts = pd.Timestamp(today)
+            if selected_preset == "Прошлая неделя":
+                week_start = today_ts - pd.Timedelta(days=today_ts.weekday() + 7)
+                week_end = week_start + pd.Timedelta(days=6)
+                preset_start = week_start.date()
+                preset_end = week_end.date()
+            elif selected_preset == "Прошлый месяц":
+                prev_month = (today_ts.to_period("M") - 1).to_timestamp()
+                preset_start = prev_month.date()
+                preset_end = (prev_month + pd.offsets.MonthEnd(0)).date()
+            elif selected_preset == "Последние 3 месяца":
+                preset_start = (today_ts - pd.DateOffset(months=3)).date()
+                preset_end = today
+            elif selected_preset == "Последние 6 месяцев":
+                preset_start = (today_ts - pd.DateOffset(months=6)).date()
+                preset_end = today
+            elif selected_preset == "Последний год":
+                preset_start = (today_ts - pd.DateOffset(years=1)).date()
+                preset_end = today
+            elif selected_preset == "Последние 2 года":
+                preset_start = (today_ts - pd.DateOffset(years=2)).date()
+                preset_end = today
+            min_date = dmin.date() if hasattr(dmin, "date") else dmin
+            max_date = dmax.date() if hasattr(dmax, "date") else dmax
+            if preset_start < min_date:
+                preset_start = min_date
+            if preset_end > max_date:
+                preset_end = max_date
             dr = st.date_input(
                 "Период (по дате создания в TESSA)",
-                value=(dmin.date() if hasattr(dmin, "date") else dmin, dmax.date() if hasattr(dmax, "date") else dmax),
+                value=(preset_start, preset_end),
+                min_value=min_date,
+                max_value=max_date,
                 key="exec_doc_period",
+                format="DD.MM.YYYY",
             )
             if isinstance(dr, tuple) and len(dr) == 2:
                 p_start, p_end = dr
