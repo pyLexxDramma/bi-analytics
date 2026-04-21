@@ -147,8 +147,11 @@ def init_all_tables(st_callback=None):
 
     conn.commit()
 
-    # Дефолтный суперадминистратор
-    cursor.execute("SELECT COUNT(*) FROM users WHERE role = ?", ("superadmin",))
+    # Дефолтный суперадминистратор (учитываем только активных — как в create_user).
+    cursor.execute(
+        "SELECT COUNT(*) FROM users WHERE role = ? AND is_active = 1",
+        ("superadmin",),
+    )
     if cursor.fetchone()[0] == 0:
         default_password = _hash_password("admin123")
         cursor.execute(
@@ -158,5 +161,22 @@ def init_all_tables(st_callback=None):
         conn.commit()
         if st_callback:
             st_callback("⚠️ Создан дефолтный пользователь: admin / admin123")
+
+    # В БД может остаться более одного superadmin после старых правок — оставляем одного (минимальный id).
+    cursor.execute(
+        """
+        SELECT id FROM users
+        WHERE role = 'superadmin' AND is_active = 1
+        ORDER BY id ASC
+        """
+    )
+    sa_ids = [r[0] for r in cursor.fetchall()]
+    if len(sa_ids) > 1:
+        for uid in sa_ids[1:]:
+            cursor.execute(
+                "UPDATE users SET role = 'admin' WHERE id = ?",
+                (uid,),
+            )
+        conn.commit()
 
     conn.close()

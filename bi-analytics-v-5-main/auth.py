@@ -23,11 +23,11 @@ from config import DB_PATH, switch_page_app
 ROLES = {
     "superadmin": "Суперадминистратор",
     "admin": "Администратор",
-    "rp": "РП",
-    "financier": "Финансист",
-    "gip": "ГИП",
-    "manager": "Менеджер",
     "analyst": "Аналитик",
+    "rp": "Руководитель проекта (РП)",
+    "financier": "Финансист",
+    "gip": "Главный инженер проекта (ГИП)",
+    "manager": "Менеджер",
 }
 
 # Роли с доступом к настройкам
@@ -65,15 +65,17 @@ _REPORT_ROLE_ALLOWLIST: Dict[str, frozenset] = {
     "Утвержденный бюджет": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "Прогнозный бюджет": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "Дебиторская и кредиторская задолженность подрядчиков": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
-    "Причины отклонений": frozenset({"manager", "analyst", "rp", "gip", "admin", "superadmin"}),
-    "Отклонение от базового плана": frozenset({"manager", "analyst", "rp", "gip", "admin", "superadmin"}),
-    "Контрольные точки": frozenset({"manager", "analyst", "rp", "gip", "admin", "superadmin"}),
-    "График проекта": frozenset({"manager", "analyst", "rp", "gip", "admin", "superadmin"}),
+    "Причины отклонений": frozenset({"manager", "analyst", "rp", "gip", "financier", "admin", "superadmin"}),
+    "Отклонение от базового плана": frozenset({"manager", "analyst", "rp", "gip", "financier", "admin", "superadmin"}),
+    "Контрольные точки": frozenset({"manager", "analyst", "rp", "gip", "financier", "admin", "superadmin"}),
+    "График проекта": frozenset({"manager", "analyst", "rp", "gip", "financier", "admin", "superadmin"}),
     "Рабочая документация": frozenset({"manager", "analyst", "rp", "gip", "admin", "superadmin"}),
     "Проектная документация": frozenset({"manager", "analyst", "rp", "gip", "admin", "superadmin"}),
     "ГДРС": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
+    "График движения рабочей силы": frozenset(
+        {"manager", "analyst", "rp", "admin", "superadmin"}
+    ),
     "Исполнительная документация": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
-    "ИД/TESSA": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "Предписания по подрядчикам": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
 }
 
@@ -433,20 +435,20 @@ def get_current_user() -> Optional[dict]:
 def logout():
     """Выход из системы"""
 
-    # Логируем выход ДО очистки сессии, пока знаем username
     try:
         user = st.session_state.get("user")
-        if user:
-            from logger import log_action
-            log_action(user["username"], "logout", "Выход из системы")
+        if user and user.get("username"):
+            try:
+                from logger import log_action
+
+                log_action(str(user["username"]), "logout", "Выход из системы")
+            except Exception:
+                pass
     except Exception:
         pass
 
-    if "authenticated" in st.session_state:
-        del st.session_state["authenticated"]
-    if "user" in st.session_state:
-        del st.session_state["user"]
-    # Явно помечаем, что сайдбар должен быть скрыт
+    st.session_state.pop("authenticated", None)
+    st.session_state.pop("user", None)
     st.session_state["hide_sidebar"] = True
 
 
@@ -591,11 +593,11 @@ def render_sidebar_menu(current_page: str = "reports"):
         # Меню навигации
         st.markdown("### Меню")
 
-        # 1. Отчеты (если есть доступ) — заголовок раздела, без перехода по клику
+        # 1. Отчёты (отдельный визуальный блок от настроек)
         if has_report_access(user["role"]) and current_page == "reports":
             from dashboards import REPORT_CATEGORIES
 
-            st.markdown("#### Отчеты")
+            st.markdown('<p class="sidebar-section-title">Отчёты</p>', unsafe_allow_html=True)
             st.markdown("---")
             current_dashboard = st.session_state.get("current_dashboard", "")
             for cat_name, reports in REPORT_CATEGORIES:
@@ -627,6 +629,9 @@ def render_sidebar_menu(current_page: str = "reports"):
                         ):
                             st.session_state.current_dashboard = report
                             st.rerun()
+            st.markdown("---")
+
+        st.markdown('<p class="sidebar-section-title">Настройки</p>', unsafe_allow_html=True)
 
         # Настройки профиля (для всех ролей)
         if current_page == "profile":
@@ -641,7 +646,7 @@ def render_sidebar_menu(current_page: str = "reports"):
             if st.button("Настройки профиля", width="stretch"):
                 switch_page_app("pages/profile.py")
 
-        # Админ панель
+        # Админ панель и параметры отчётов (страницы с префиксом _ не показываются в авто-меню Streamlit)
         if has_admin_access(user["role"]):
             if current_page == "admin":
                 st.button(
@@ -653,7 +658,19 @@ def render_sidebar_menu(current_page: str = "reports"):
                 )
             else:
                 if st.button("Админ панель", width="stretch"):
-                    switch_page_app("pages/admin.py")
+                    switch_page_app("pages/_admin.py")
+
+            if current_page == "analyst_params":
+                st.button(
+                    "Параметры отчётов",
+                    width="stretch",
+                    type="primary",
+                    disabled=True,
+                    help="Текущая страница",
+                )
+            else:
+                if st.button("Параметры отчётов", width="stretch"):
+                    switch_page_app("pages/_analyst_params.py")
 
         # 3. Выход (для всех ролей)
         st.markdown("---")

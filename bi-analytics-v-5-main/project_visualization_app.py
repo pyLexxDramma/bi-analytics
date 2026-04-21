@@ -77,7 +77,8 @@ st.set_page_config(
     menu_items={"Get Help": None, "Report a bug": None, "About": None},
 )
 
-# Скрываем стандартный Streamlit-список страниц, чтобы навигация шла только через меню приложения.
+# Главная страница в списке Streamlit скрывается через static/css/style.css (п. «Главная»).
+# Админ и параметры отчётов — страницы ``pages/_*.py`` (не в авто-меню); переходы — из бокового меню приложения.
 st.markdown(
     """
     <style>
@@ -89,8 +90,12 @@ st.markdown(
     }
     [data-testid="stMainBlockContainer"] {
         min-width: 1180px;
+        max-width: none;
+        overflow-x: auto;
     }
-    [data-testid="stSidebarNav"] { display: none !important; }
+    section.main, [data-testid="stMain"] {
+        overflow-x: auto !important;
+    }
     .stPlotlyChart,
     [data-testid="stPlotlyChart"] {
         overflow-x: auto;

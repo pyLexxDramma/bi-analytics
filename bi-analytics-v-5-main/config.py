@@ -13,7 +13,7 @@ def switch_page_app(path: str) -> None:
     каталога **главного скрипта** Streamlit.
 
     - Запуск ``bi-analytics-v-5-main/project_visualization_app.py`` — страницы во
-      вложенном приложении, путь ``pages/admin.py`` валиден.
+      вложенном приложении, путь ``pages/_admin.py`` / ``pages/_analyst_params.py`` валиден.
 
     - Запуск ``streamlit_app.py`` из корня репозитория: Streamlit регистрирует только
       ``<корень>/pages/*.py``. Рядом с ``streamlit_app.py`` добавлены прокси-файлы,

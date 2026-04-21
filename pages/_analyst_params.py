@@ -1,5 +1,5 @@
 """
-Прокси-страница (см. pages/admin.py в этом каталоге).
+Прокси-страница (см. pages/_admin.py в этом каталоге).
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ _INNER = (
     Path(__file__).resolve().parent.parent
     / "bi-analytics-v-5-main"
     / "pages"
-    / "analyst_params.py"
+    / "_analyst_params.py"
 )
 if not _INNER.is_file():
     import streamlit as st

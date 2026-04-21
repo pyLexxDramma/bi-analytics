@@ -11,7 +11,7 @@ _INNER = (
     Path(__file__).resolve().parent.parent
     / "bi-analytics-v-5-main"
     / "pages"
-    / "admin.py"
+    / "_admin.py"
 )
 if not _INNER.is_file():
     import streamlit as st

@@ -1194,3 +1194,48 @@ div[data-baseweb="menu"] li span {
     background-color: #12385c !important;
     color: #ffffff !important;
 }
+
+/* Автосписок страниц Streamlit: скрыть «Главная» / основной скрипт (первый пункт) */
+[data-testid="stSidebarNav"] li:first-child,
+[data-testid="stSidebarNav"] > ul > li:first-child {
+    display: none !important;
+}
+
+/* Заголовки секций кастомного меню (Отчёты / Настройки) */
+p.sidebar-section-title {
+    margin: 0.35rem 0 0.2rem 0;
+    padding: 0;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: rgba(232, 238, 245, 0.72);
+}
+section[data-testid="stSidebar"] div[data-testid="stMarkdownContainer"] p.sidebar-section-title {
+    color: rgba(232, 238, 245, 0.72) !important;
+}
+
+/* Горизонтальная прокрутка при масштабировании страницы/узком окне (все отчёты) */
+section.main,
+[data-testid="stMain"] {
+    overflow-x: auto !important;
+}
+.stApp,
+[data-testid="stAppViewContainer"] {
+    overflow-x: auto !important;
+}
+.main .block-container {
+    max-width: 100% !important;
+}
+/* HTML-таблицы отчётов и обёртки широких блоков */
+.rendered-table-wrap,
+[data-testid="stVerticalBlock"] div[class*="table"] {
+    overflow-x: auto !important;
+    max-width: 100%;
+}
+
+/* Фильтры в строке: равная ширина колонок, без пустого flex-места между selectbox’ами */
+section.main [data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+    flex: 1 1 0% !important;
+    min-width: 0 !important;
+}

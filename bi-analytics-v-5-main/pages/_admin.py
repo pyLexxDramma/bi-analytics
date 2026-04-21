@@ -68,7 +68,12 @@ from auth import (
 from config import DB_PATH, switch_page_app
 from logger import log_action, get_logs, get_logs_count
 from settings import get_setting, set_setting, get_all_settings, SETTING_KEYS
-from utils import format_dataframe_as_html, load_custom_css, render_dataframe_excel_csv_downloads
+from utils import (
+    format_dataframe_as_html,
+    load_custom_css,
+    outline_level_numeric,
+    render_dataframe_excel_csv_downloads,
+)
 try:
     from filters import (
         get_default_filters,
@@ -445,15 +450,19 @@ def _render_control_points_msp_tab(user: dict) -> None:
         level_col = _find_col(df, ["level structure", "outline level", "level", "Уровень"])
         if not task_col or not level_col:
             return [], task_col, "Не найдены колонки MSP с названием задачи и уровнем."
-        levels = pd.to_numeric(df[level_col], errors="coerce")
-        sub = df.loc[levels.isin([2, 3]), [task_col, level_col]].copy()
+        levels = outline_level_numeric(df[level_col])
+        li = pd.to_numeric(levels, errors="coerce").round()
+        mask = li.isin([2, 3])
+        sub = df.loc[mask, [task_col, level_col]].copy()
+        sub["_msp_lvl"] = li.loc[sub.index].astype(float).round().astype(int)
         if sub.empty:
             return [], task_col, "В текущей выгрузке MSP нет задач уровней 2 и 3."
         sub[task_col] = sub[task_col].astype(str).str.strip()
         sub = sub[sub[task_col].ne("") & sub[task_col].str.lower().ne("nan")]
-        sub[level_col] = pd.to_numeric(sub[level_col], errors="coerce").fillna(0).astype(int)
-        sub = sub.drop_duplicates(subset=[task_col, level_col]).sort_values([level_col, task_col], kind="stable")
-        options = [(int(row[level_col]), str(row[task_col])) for _, row in sub.iterrows()]
+        sub = sub.drop_duplicates(subset=[task_col, "_msp_lvl"]).sort_values(
+            ["_msp_lvl", task_col], kind="stable"
+        )
+        options = [(int(row["_msp_lvl"]), str(row[task_col])) for _, row in sub.iterrows()]
         if not options:
             return [], task_col, "В MSP не найдено ни одной валидной задачи уровней 2 и 3."
         return options, task_col, None
@@ -480,10 +489,14 @@ def _render_control_points_msp_tab(user: dict) -> None:
                 if opt[1] == _cur_task:
                     selected_option = opt
                     break
+        try:
+            _sel_idx = option_values.index(selected_option)
+        except ValueError:
+            _sel_idx = 0
         _selected_task = st.selectbox(
             "Задача для расчёта окончания проекта (MSP)",
             option_values,
-            index=option_values.index(selected_option),
+            index=_sel_idx,
             key="admin_baseline_task_for_metrics_select",
             format_func=lambda opt: "Автовыбор" if not opt[1] else f"Уровень {opt[0]} - {opt[1]}",
             help="Список из загруженного MSP: только уровни 2 и 3. Длинный список прокручивается внутри селектора.",

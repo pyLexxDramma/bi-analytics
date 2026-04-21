@@ -265,6 +265,60 @@ def ensure_msp_hierarchy_columns(df: Optional[pd.DataFrame]) -> None:
         if _col in df.columns:
             df[_col] = outline_level_numeric(df[_col])
 
+    normalize_plan_month_column(df)
+
+
+def normalize_plan_month_column(df: Optional[pd.DataFrame]) -> None:
+    """
+    Приводит колонку plan_month к месячным Period (избегает TypeError str vs Period при фильтрах).
+    """
+    if df is None or not hasattr(df, "columns") or getattr(df, "empty", True):
+        return
+    if "plan_month" not in df.columns:
+        return
+    s = df["plan_month"]
+    try:
+        if isinstance(s.dtype, pd.PeriodDtype):
+            return
+    except Exception:
+        pass
+    if str(getattr(s, "dtype", "")).startswith("period"):
+        return
+
+    def _one(v: Any) -> Any:
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return pd.NaT
+        if isinstance(v, pd.Period):
+            fs = getattr(v, "freqstr", None) or ""
+            if fs == "M" or str(fs).startswith("M"):
+                return v
+            try:
+                return v.asfreq("M")
+            except Exception:
+                return v
+        if isinstance(v, pd.Timestamp):
+            return v.to_period("M")
+        vs = str(v).strip()
+        if not vs or vs.lower() in ("nan", "nat", "none"):
+            return pd.NaT
+        try:
+            if re.match(r"^\d{4}-\d{2}", vs):
+                return pd.Period(vs[:7], freq="M")
+        except Exception:
+            pass
+        try:
+            ts = pd.to_datetime(vs, errors="coerce", dayfirst=True)
+            if pd.notna(ts):
+                return ts.to_period("M")
+        except Exception:
+            pass
+        return pd.NaT
+
+    try:
+        df["plan_month"] = s.map(_one)
+    except Exception:
+        return
+
 
 def get_russian_month_name(period_val: Any) -> str:
     """Возвращает русское название месяца для Period, Timestamp или строки."""
@@ -869,6 +923,10 @@ def apply_default_filters(report_name: str, user_role: str, filter_widgets: dict
 def _ru_column_is_integer_days(col) -> bool:
     """Колонки с длительностью/отклонением в днях или разделах — целые, без .00."""
     col_lower = str(col).lower()
+    if col_lower.startswith("отклонение ") and any(
+        w in col_lower for w in ("начала", "окончания", "длительности")
+    ):
+        return True
     if "дней" in col_lower or "в днях" in col_lower:
         return True
     if "днях" in col_lower and "отклон" in col_lower:
@@ -884,6 +942,7 @@ def format_dataframe_as_html(
     df: Optional[pd.DataFrame],
     conditional_cols: Optional[Dict[str, Dict[str, str]]] = None,
     column_colors: Optional[Dict[str, str]] = None,
+    cell_color: Optional[pd.DataFrame] = None,
 ) -> str:
     """Форматирует DataFrame в HTML-таблицу для отображения в Streamlit."""
     if df is None or df.empty:
@@ -981,6 +1040,13 @@ def format_dataframe_as_html(
                 cell_style = "padding: 8px; border: 1px solid rgba(255,255,255,0.15);"
                 if column_colors and col in column_colors:
                     cell_style += f" color: {column_colors[col]};"
+                if cell_color is not None and col in cell_color.columns:
+                    try:
+                        _cc = cell_color.at[idx, col]
+                        if isinstance(_cc, str) and _cc.startswith("#"):
+                            cell_style += f" color: {_cc}; font-weight: 600;"
+                    except Exception:
+                        pass
                 html_table += f"<td style='{cell_style}'>{formatted_value}</td>"
         html_table += "</tr>"
     html_table += "</tbody></table></div>"
