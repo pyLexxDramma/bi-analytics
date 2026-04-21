@@ -1195,9 +1195,8 @@ div[data-baseweb="menu"] li span {
     color: #ffffff !important;
 }
 
-/* Автосписок страниц Streamlit: скрыть «Главная» / основной скрипт (первый пункт) */
-[data-testid="stSidebarNav"] li:first-child,
-[data-testid="stSidebarNav"] > ul > li:first-child {
+/* Автосписок страниц Streamlit: скрыть целиком — навигация только через кастомное меню (кнопки). */
+[data-testid="stSidebarNav"] {
     display: none !important;
 }
 
