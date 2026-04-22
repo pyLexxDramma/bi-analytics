@@ -7575,9 +7575,9 @@ def dashboard_bdr(df):
 
 
 # ==================== DASHBOARD 8.6: RD Delay Chart ====================
-def dashboard_rd_delay(df):
+def dashboard_rd_delay(df, is_pd: bool = False):
     # st.subheader("⏱️ Просрочка выдачи РД")
-    st.subheader("Просрочка выдачи РД")
+    st.subheader("Просрочка выдачи ПД" if is_pd else "Просрочка выдачи РД")
 
     # Find column names (they might have different formats)
     # Try to find columns by partial name matching
@@ -7795,7 +7795,7 @@ def dashboard_rd_delay(df):
                 key="rd_delay_section",
             )
         else:
-            st.caption("Колонка раздела РД не найдена.")
+            st.caption("Колонка раздела ПД не найдена." if is_pd else "Колонка раздела РД не найдена.")
 
     selected_statuses_rd: list[str] = []
     rd_status_options_rd: list[str] = []
@@ -20807,4 +20807,4 @@ def dashboard_pd_delay(df):
         "Источник данных — MSP по разделу «Проектная документация». "
         "Ниже показана просрочка выдачи РД и помесячная динамика по разделам."
     )
-    dashboard_rd_delay(df)
+    dashboard_rd_delay(df, is_pd=True)
