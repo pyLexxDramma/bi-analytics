@@ -165,10 +165,16 @@ def _is_pct_complete_not_100(pct: Any) -> bool:
             return False
     except (TypeError, ValueError):
         return False
+    s = str(pct).strip().replace("%", "").replace(" ", "").replace(",", ".")
+    if not s or s.lower() in ("nan", "none", "nat"):
+        return False
     try:
-        v = float(pct)
+        v = float(s)
     except (TypeError, ValueError):
         return False
+    # Некоторые выгрузки дают долю 0..1 вместо процентов 0..100.
+    if 0.0 <= v <= 1.0:
+        v = v * 100.0
     return abs(v - 100.0) > 1e-3
 
 
@@ -183,8 +189,7 @@ def _msp_plan_fact_pct(row: pd.Series) -> Tuple[Any, Any, Any]:
         be = _series_first_value(row, "plan end")
     fe = _series_first_value(row, "plan end")
     pc = _series_first_value(row, "pct complete") if "pct complete" in row.index else pd.NaT
-    pnum = pd.to_numeric(pc, errors="coerce")
-    return be, fe, pnum
+    return be, fe, pc
 
 
 def _delta_days_plan_minus_fact(plan_d: Any, fact_d: Any) -> Optional[int]:
@@ -1225,6 +1230,15 @@ def render_dev_tz_matrix(
 # Вехи «Контрольные точки»: оранжевая подсветка План/Факт/Откл. при % выполнения ≠ 100% (ТЗ, правки 1).
 CONTROL_POINTS_ORANGE_PCT_SLUGS: frozenset = frozenset({"gpzu", "exp_pd"})
 
+
+def _is_orange_pct_milestone(slug: str, title: str) -> bool:
+    """Определить, что веха относится к ГПЗУ/Экспертизе стадии П (в т.ч. при кастомном slug)."""
+    s_slug = str(slug or "").strip().lower()
+    if s_slug in CONTROL_POINTS_ORANGE_PCT_SLUGS:
+        return True
+    s_title = str(title or "").strip().lower().replace("ё", "е")
+    return ("гпзу" in s_title) or ("экспертиз" in s_title)
+
 # Контрольные точки: те же kwargs, что и строки матрицы «Девелоперские проекты» (порядок как в матрице).
 CONTROL_POINT_MILESTONES: List[Tuple[str, str, dict]] = [
     (
@@ -1745,6 +1759,19 @@ def _control_points_prepare_msp_dates(df: pd.DataFrame) -> pd.DataFrame:
                 "процент выполнения",
             ],
         )
+        if not pc:
+            # Fallback для выгрузок с нестандартными заголовками колонки процента.
+            for c in out.columns:
+                cl = str(c).strip().lower().replace("_", " ")
+                if (
+                    "%" in cl
+                    or "percent" in cl
+                    or "процент" in cl
+                    or "выполн" in cl
+                    or "готов" in cl
+                ):
+                    pc = c
+                    break
         if pc:
             out["pct complete"] = out[pc]
     return out
@@ -1775,7 +1802,26 @@ def _one_milestone_cell(rows: pd.DataFrame) -> Tuple[str, str, str, bool, bool]:
     else:
         r = rows.iloc[0]
     pdt, fdt, pct = _msp_plan_fact_pct(r)
-    warn_pct = _is_pct_complete_not_100(pct)
+    # Для оранжевого статуса достаточно, чтобы в любой строке вехи % был задан и < 100.
+    def _row_has_pct_lt_100(rr: pd.Series) -> bool:
+        if "pct complete" not in rr.index:
+            return False
+        v = rr["pct complete"]
+        if isinstance(v, pd.Series):
+            for _x in v.tolist():
+                if _is_pct_complete_not_100(_x):
+                    return True
+            return False
+        return _is_pct_complete_not_100(v)
+
+    warn_pct = False
+    try:
+        for _, _rr in rows.iterrows():
+            if _row_has_pct_lt_100(_rr):
+                warn_pct = True
+                break
+    except Exception:
+        warn_pct = _is_pct_complete_not_100(pct)
     pl = _fmt_date_ru(pdt)
     fl = _fmt_date_ru(fdt)
     if pd.isna(pdt) or pd.isna(fdt):
@@ -1836,7 +1882,7 @@ _CONTROL_POINTS_CSS = """
 .cp-status-dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; vertical-align: middle; }
 .cp-status-ok { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,0.45); }
 .cp-status-bad { background: #ef4444; box-shadow: 0 0 6px rgba(239,68,68,0.45); }
-.cp-status-warn { background: #ea580c; box-shadow: 0 0 6px rgba(234,88,12,0.55); }
+.cp-status-warn { background: #f59e0b; box-shadow: 0 0 7px rgba(245,158,11,0.7); }
 </style>
 """
 
@@ -1923,20 +1969,22 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
     for _, r in view.iterrows():
         cells = [f'<td>{esc(str(r.get("project", "")))}</td>']
         for _t, slug in ms_specs:
-            owarn = slug in CONTROL_POINTS_ORANGE_PCT_SLUGS and bool(r.get(f"{slug}_warn_pct"))
+            _is_orange_milestone = _is_orange_pct_milestone(slug, _t)
+            owarn = _is_orange_milestone and bool(r.get(f"{slug}_warn_pct"))
             wc = ' class="cp-td-warn"' if owarn else ""
             cells.append(f"<td{wc}>{esc(str(r.get(f'{slug}_plan', '')))}</td>")
             cells.append(f"<td{wc}>{esc(str(r.get(f'{slug}_fact', '')))}</td>")
             cells.append(f"<td{wc}>{esc(str(r.get(f'{slug}_otkl', '')))}</td>")
             m_ok = bool(r.get(f"{slug}_ok", False))
-            if not m_ok:
-                st_cls = "cp-status-bad"
-                tip = "Отклонение по датам (План/Факт) или неполные даты"
-                al = "Отклонение по датам"
-            elif owarn:
+            # A1: для ГПЗУ/Экспертизы стадии П при % < 100 статус должен быть оранжевым.
+            if owarn:
                 st_cls = "cp-status-warn"
                 tip = "В MSP для задачи «% выполнения» указано не 100% (вехи ГПЗУ / Экспертиза стадии П)"
                 al = "Незавершено по %"
+            elif not m_ok:
+                st_cls = "cp-status-bad"
+                tip = "Отклонение по датам (План/Факт) или неполные даты"
+                al = "Отклонение по датам"
             else:
                 st_cls = "cp-status-ok"
                 tip = "План и факт по датам совпадают (0 дн.), % выполнения — 100% или н/д"
