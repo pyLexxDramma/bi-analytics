@@ -3824,13 +3824,9 @@ def dashboard_plan_fact_dates(df):
                 ),
             )
         else:
-            selected_level = st.selectbox(
-                "Детализация",
-                _lvl_opts_tz,
-                index=0,
-                key="dates_level",
-                disabled=True,
-                help="Нет колонки уровня MSP в выгрузке — фильтр по уровню 4/5 недоступен.",
+            selected_level = _lvl_opts_tz[0]
+            st.caption(
+                "Детализация недоступна: нет колонки уровня MSP в выгрузке."
             )
 
     st.markdown("**Параметры отображения**")
@@ -4356,7 +4352,7 @@ def dashboard_plan_fact_dates(df):
         and _text_indicates_covenant(selected_block_dates)
     )
     covenant_auto_from_data = False
-    for col in ("section", "block"):
+    for col in ("section", "block", "task name"):
         if col in df_after_hide.columns and df_after_hide[col].astype(str).map(
             _text_indicates_covenant
         ).any():
