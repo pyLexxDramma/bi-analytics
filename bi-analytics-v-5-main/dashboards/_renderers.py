@@ -19564,15 +19564,12 @@ def dashboard_project_schedule_chart(df):
         plot_df = plot_df[lc.ne("") & lc.str.lower().ne("nan") & plot_df[lot_col].notna()]
     elif show_lots and not lot_col:
         st.caption("Колонка лота не найдена — фильтр «в лотах» недоступен.")
-    label_mode = st.radio(
-        "Подписи у конца задач",
-        ("Дата окончания", "% выполнения"),
-        horizontal=True,
-        index=0,
-        key="gantt_bar_label_mode",
-        help="Что показывать у правого края задачи: дату окончания или % выполнения из MSP.",
+    label_pct = st.checkbox(
+        "Подписи у конца задач: показывать % выполнения (вместо даты окончания)",
+        value=False,
+        key="gantt_bar_label_pct",
+        help="Если включено — у правого края задачи показывается % выполнения из MSP, иначе дата окончания.",
     )
-    label_pct = label_mode == "% выполнения"
     label_density_mode = st.radio(
         "Плотность подписей",
         ("Умная плотность", "Показывать все подписи"),
