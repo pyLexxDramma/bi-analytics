@@ -1422,6 +1422,32 @@ def _deviations_resolve_task_col(df: pd.DataFrame):
     return _dev_tasks_find_column(df, ["Задача", "task", "Task Name", "Название"])
 
 
+def _deviations_effective_level_col(df: pd.DataFrame):
+    """
+    Колонка уровня иерархии MSP для фильтров отклонений.
+
+    ``_dev_tasks_resolve_level_column`` иногда не видит уровень, хотя после
+    ``ensure_msp_hierarchy_columns`` уже есть непустой ``level structure``/``level``
+    — тогда не падаем в сырой ``block`` («Блок U1…») в селекте «Функциональный блок».
+    """
+    if df is None or getattr(df, "empty", True):
+        return None
+    c = _dev_tasks_resolve_level_column(df)
+    if c and c in df.columns:
+        s = _dev_outline_level_numeric(df[c])
+        if s.notna().any():
+            return c
+    if "level structure" in df.columns:
+        s = _dev_outline_level_numeric(df["level structure"])
+        if s.notna().any():
+            return "level structure"
+    if "level" in df.columns:
+        s = _dev_outline_level_numeric(df["level"])
+        if s.notna().any():
+            return "level"
+    return None
+
+
 def _deviations_flat_fb_label(block_val, section_val) -> str:
     b = (
         str(block_val).strip()
@@ -1442,12 +1468,14 @@ def _deviations_use_flat_block_section_task(df: pd.DataFrame) -> bool:
     """Excel/фиксированный макет: Блок + Раздел + Задача без колонок outline MSP."""
     if df is None or getattr(df, "empty", True):
         return False
+    if _deviations_effective_level_col(df) is not None:
+        return False
     tc = _deviations_resolve_task_col(df)
     if not tc or tc not in df.columns:
         return False
     if "block" not in df.columns or "section" not in df.columns:
         return False
-    return _dev_tasks_resolve_level_column(df) is None
+    return True
 
 
 def _deviations_flat_functional_block_options(df_slice: pd.DataFrame) -> list:
@@ -1491,7 +1519,7 @@ def _deviations_apply_block_building_filters(
     """
     if filtered_df is None or getattr(filtered_df, "empty", True):
         return filtered_df
-    level_col = _dev_tasks_resolve_level_column(filtered_df)
+    level_col = _deviations_effective_level_col(filtered_df)
     task_col = (
         "task name"
         if "task name" in filtered_df.columns
@@ -1585,7 +1613,7 @@ def _render_deviations_combined_shared_filters(df):
     building_col = _find_column_by_keywords(
         df, ("building", "строение", "лот", "lot", "bldg")
     )
-    level_col = _dev_tasks_resolve_level_column(df)
+    level_col = _deviations_effective_level_col(df)
     task_col = (
         "task name"
         if "task name" in df.columns
@@ -1881,7 +1909,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             unsafe_allow_html=True,
         )
 
-        _lvl_rs = _dev_tasks_resolve_level_column(df)
+        _lvl_rs = _deviations_effective_level_col(df)
         _task_rs = (
             "task name"
             if "task name" in df.columns
@@ -2230,10 +2258,18 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         fig = _apply_finance_bar_label_layout(fig)
         fig = apply_chart_background(fig)
         _ymax = float(reason_counts["Количество"].max() or 0)
-        fig.update_layout(
-            yaxis=dict(range=[0, max(1.0, _ymax * 1.2)], title="Количество")
-        )
         n = len(reason_counts)
+        _bar_h = max(480, int(140 + n * 56))
+        _y_top = max(1.0, _ymax * 1.42 + 8.0)
+        fig.update_layout(
+            height=_bar_h,
+            margin=dict(l=24, r=24, t=96, b=140 if n > 6 else 100),
+            yaxis=dict(
+                range=[0, _y_top],
+                title="Количество",
+                automargin=True,
+            ),
+        )
         if n > 6:
             fig.update_xaxes(tickangle=-45)
         else:
@@ -5794,8 +5830,20 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
                 textposition="outside", textfont=dict(size=12, color="white")
             )
             fig = _apply_finance_bar_label_layout(fig)
+            n_rs = int(len(reason_summary))
+            _ymax_rs = float(
+                pd.to_numeric(reason_summary["Количество"], errors="coerce").max() or 0.0
+            )
+            _y_top_rs = max(1.0, _ymax_rs * 1.45 + 12.0)
             fig.update_layout(
-                yaxis=dict(range=[0, reason_summary["Количество"].max() * 1.2])
+                height=max(520, int(180 + n_rs * 52)),
+                margin=dict(l=28, r=28, t=110, b=200),
+                yaxis=dict(
+                    range=[0, _y_top_rs],
+                    title="Количество отклонений",
+                    automargin=True,
+                ),
+                xaxis=dict(automargin=True),
             )
         else:
             # View 2: By months - month on X-axis, count on Y-axis, reasons as colors (stacked)
