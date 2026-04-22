@@ -17872,11 +17872,21 @@ def dashboard_predpisania(df):
     )
 
     tessa_df = st.session_state.get("tessa_data", None)
-    if tessa_df is None or tessa_df.empty:
+    work = None
+    _source_label = ""
+    if tessa_df is not None and not tessa_df.empty:
+        work = tessa_df.copy()
+        _source_label = "TESSA (session_state: tessa_data)"
+    elif df is not None and not getattr(df, "empty", True):
+        _tessa_like = _tessa_find_column(df, ["KindName", "ObjectName", "CardId", "DocID", "KrStateID"])
+        if _tessa_like:
+            work = df.copy()
+            _source_label = "TESSA (текущий загруженный файл)"
+    if work is None or work.empty:
         st.warning("Для отчёта необходимы данные из TESSA. Загрузите файлы tessa_*.csv.")
         return
 
-    work = tessa_df.copy()
+    st.caption(f"Источник данных отчёта: **{_source_label}**.")
     work.columns = [str(c).strip() for c in work.columns]
     work = _tessa_fill_card_from_doc_lookup(work)
 
@@ -18981,9 +18991,28 @@ def dashboard_pravki_report_hidden(df):
 
 
 def dashboard_id_tessa_placeholder(df):
-    """Заглушка для будущего раздела ИД/TESSA."""
+    """Служебный экран ИД/TESSA: показывает источник и наличие данных, без пустой заглушки."""
     st.header("ИД/TESSA")
-    st.info("Раздел в разработке.")
+    tessa_df = st.session_state.get("tessa_data", None)
+    work = None
+    _source_label = ""
+    if tessa_df is not None and not tessa_df.empty:
+        work = tessa_df.copy()
+        _source_label = "TESSA (session_state: tessa_data)"
+    elif df is not None and not getattr(df, "empty", True):
+        _tessa_like = _tessa_find_column(df, ["KindName", "ObjectName", "CardId", "DocID", "KrStateID"])
+        if _tessa_like:
+            work = df.copy()
+            _source_label = "TESSA (текущий загруженный файл)"
+    if work is None or work.empty:
+        st.info("Данные TESSA не обнаружены. Загрузите tessa_*.csv через web/.")
+        return
+
+    st.caption(f"Источник данных: **{_source_label}**.")
+    st.metric("Строк в наборе TESSA", int(len(work)))
+    with st.expander("Колонки текущего набора TESSA", expanded=False):
+        st.code(", ".join(str(c) for c in work.columns))
+    st.success("Источник TESSA доступен. Основная аналитика находится в отчётах «Исполнительная документация» и «Неустраненные предписания».")
 
 
 def _render_control_points_admin_on_dashboard():
