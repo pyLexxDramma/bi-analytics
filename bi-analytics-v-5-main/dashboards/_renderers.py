@@ -3921,12 +3921,9 @@ def dashboard_plan_fact_dates(df):
     st.markdown("**Таблица**")
     d3a = st.columns(1)[0]
     with d3a:
-        dates_value_type = st.selectbox(
-            "Тип значения",
-            ["Даты (план/факт)", "Отклонение (дней)"],
-            index=0,
-            key="dates_value_type",
-            help="Макет: даты или акцент на отклонениях в днях в итоговой таблице.",
+        dates_value_type = "Даты (план/факт)"
+        st.caption(
+            "Режим таблицы: даты (базовое окончание / окончание) и отклонение окончания."
         )
 
     tbl_opt1, tbl_opt2 = st.columns(2)
@@ -5002,19 +4999,6 @@ def dashboard_plan_fact_dates(df):
         "Отклонение начала": "dev",
         "Отклонение длительности": "dev",
     }
-    if dates_value_type == "Отклонение (дней)" and not any(
-        c in summary_df.columns
-        for c in (
-            "Отклонение начала",
-            "Отклонение окончания",
-            "Отклонение длительности",
-        )
-    ):
-        st.warning(
-            "В режиме «Отклонение (дней)» нет столбцов отклонения: включите один из чекбоксов ниже "
-            "или переключите тип значения на «Даты (план/факт)»."
-        )
-
     def _is_zos_task_name(name):
         if name is None or (isinstance(name, float) and pd.isna(name)):
             return False
