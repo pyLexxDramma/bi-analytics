@@ -3854,7 +3854,7 @@ def dashboard_plan_fact_dates(df):
             "Скрыть завершённые (100%)",
             value=False,
             key="dates_hide_done",
-            disabled=False,
+            disabled=not _pct_ok,
             help=_hide_done_help,
         )
     with cb_c3:
