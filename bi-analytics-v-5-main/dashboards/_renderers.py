@@ -4242,6 +4242,14 @@ def dashboard_plan_fact_dates(df):
     # Gantt chart - use proper timeline visualization with plotly express
     # Prepare data for bar chart - plan and fact side by side for each task
     # Порядок строк: по убыванию |отклонение окончания| (ТЗ: крупные отклонения сверху на графике)
+    def _resolve_dev_group_name(row) -> str:
+        if pf_dates_block_filter_mode == "l2" and "_dt_lvl2_key" in row.index:
+            g = _clean_display_str(row.get("_dt_lvl2_key"))
+            if g:
+                return g
+        section_name = _clean_display_str(row.get("section"))
+        return section_name if section_name else "-"
+
     bar_data = []
     _ord = filtered_df.copy()
     _ord["_abs_end_dev"] = pd.to_numeric(_ord["plan_end_diff"], errors="coerce").abs()
@@ -4268,17 +4276,14 @@ def dashboard_plan_fact_dates(df):
                 base_start = row.get("base start")
                 base_end = row.get("base end")
 
-                # Этап (section) для оси X
-                section_name = row.get("section", "—")
-                if pd.isna(section_name) or str(section_name).strip() == "":
-                    section_name = "—"
+                group_name = _resolve_dev_group_name(row)
 
                 # Add plan entry
                 if pd.notna(plan_start) and pd.notna(plan_end):
                     bar_data.append(
                         {
                             "Задача": display_name,
-                            "Группа": section_name,
+                            "Группа": group_name,
                             "Тип": "План",
                             "Дата начала": plan_start,
                             "Дата окончания": plan_end,
@@ -4292,7 +4297,7 @@ def dashboard_plan_fact_dates(df):
                     bar_data.append(
                         {
                             "Задача": display_name,
-                            "Группа": section_name,
+                            "Группа": group_name,
                             "Тип": "Факт",
                             "Дата начала": base_start,
                             "Дата окончания": base_end,
@@ -4307,9 +4312,7 @@ def dashboard_plan_fact_dates(df):
             _tl = _bar_task_label_from_row(row, task_name)
             display_name = f"{_tl} ({project_name})"
             diff_days = row.get("total_diff_days", 0)
-            section_name = row.get("section", "—")
-            if pd.isna(section_name) or str(section_name).strip() == "":
-                section_name = "—"
+            group_name = _resolve_dev_group_name(row)
 
             plan_start = row.get("plan start")
             plan_end = row.get("plan end")
@@ -4321,7 +4324,7 @@ def dashboard_plan_fact_dates(df):
                 bar_data.append(
                     {
                         "Задача": display_name,
-                        "Группа": section_name,
+                        "Группа": group_name,
                         "Тип": "План",
                         "Дата начала": plan_start,
                         "Дата окончания": plan_end,
@@ -4335,7 +4338,7 @@ def dashboard_plan_fact_dates(df):
                 bar_data.append(
                     {
                         "Задача": display_name,
-                        "Группа": section_name,
+                        "Группа": group_name,
                         "Тип": "Факт",
                         "Дата начала": base_start,
                         "Дата окончания": base_end,
@@ -4797,11 +4800,7 @@ def dashboard_plan_fact_dates(df):
         "Базовое окончание",
         "Окончание",
     ]
-    if dates_value_type == "Даты (план/факт)":
-        out_cols += [
-            "Базовое начало",
-            "Начало (факт)",
-        ]
+    # По page_7 в таблице фокус на окончании: базовое окончание, окончание, отклонение окончания.
     if tbl_show_start:
         out_cols.append("Отклонение начала")
     if tbl_show_end:
