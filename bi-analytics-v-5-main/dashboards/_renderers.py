@@ -17650,12 +17650,26 @@ def _pred_build_overdue_mock_blocks(
 _KIND_ID_CRITICAL = "347986da-8964-4307-8973-28c22842005c"
 
 
-def _pred_dedupe_by_docid(pred: pd.DataFrame, pred_doc_col: str | None, creation_col_pred: str | None) -> pd.DataFrame:
-    """Одна строка на DocID — убирает дубли от нескольких выгрузок в сессию (берём самую свежую)."""
-    if pred is None or getattr(pred, "empty", True) or not pred_doc_col or pred_doc_col not in pred.columns:
+def _pred_dedupe_by_docid(
+    pred: pd.DataFrame,
+    pred_doc_col: str | None,
+    creation_col_pred: str | None,
+    pred_card_col: str | None = None,
+) -> pd.DataFrame:
+    """Одна строка на ключ предписания (DocID, fallback CardId) — берём самую свежую запись."""
+    if pred is None or getattr(pred, "empty", True):
         return pred
     p = pred.copy()
-    m = p[pred_doc_col].notna() & (p[pred_doc_col].astype(str).str.strip() != "")
+    dedupe_key = pd.Series("", index=p.index, dtype=object)
+    if pred_doc_col and pred_doc_col in p.columns:
+        dedupe_key = p[pred_doc_col].astype(str).str.strip()
+        dedupe_key = dedupe_key.where(p[pred_doc_col].notna(), "")
+    if pred_card_col and pred_card_col in p.columns:
+        card_key = p[pred_card_col].astype(str).str.strip()
+        card_key = card_key.where(p[pred_card_col].notna(), "")
+        dedupe_key = dedupe_key.mask(dedupe_key.eq(""), card_key)
+    p = p.assign(_dedupe_key=dedupe_key)
+    m = p["_dedupe_key"].notna() & (p["_dedupe_key"].astype(str).str.strip() != "")
     p_ok = p.loc[m]
     p_bad = p.loc[~m]
     if not p_ok.empty:
@@ -17673,8 +17687,8 @@ def _pred_dedupe_by_docid(pred: pd.DataFrame, pred_doc_col: str | None, creation
                 na_position="last",
                 kind="stable",
             )
-            p_ok = p_ok.drop_duplicates(subset=[pred_doc_col], keep="last").drop(
-                columns=["_meta_dt", "_created_dt"], errors="ignore"
+            p_ok = p_ok.drop_duplicates(subset=["_dedupe_key"], keep="last").drop(
+                columns=["_meta_dt", "_created_dt", "_dedupe_key"], errors="ignore"
             )
         else:
             if _meta_dt.notna().any():
@@ -17683,11 +17697,15 @@ def _pred_dedupe_by_docid(pred: pd.DataFrame, pred_doc_col: str | None, creation
                     na_position="last",
                     kind="stable",
                 )
-                p_ok = p_ok.drop_duplicates(subset=[pred_doc_col], keep="last").drop(
-                    columns=["_meta_dt"], errors="ignore"
+                p_ok = p_ok.drop_duplicates(subset=["_dedupe_key"], keep="last").drop(
+                    columns=["_meta_dt", "_dedupe_key"], errors="ignore"
                 )
             else:
-                p_ok = p_ok.drop_duplicates(subset=[pred_doc_col], keep="last")
+                p_ok = p_ok.drop_duplicates(subset=["_dedupe_key"], keep="last").drop(
+                    columns=["_dedupe_key"], errors="ignore"
+                )
+    if "_dedupe_key" in p_bad.columns:
+        p_bad = p_bad.drop(columns=["_dedupe_key"], errors="ignore")
     out = pd.concat([p_ok, p_bad], ignore_index=True)
     return out
 
@@ -18107,7 +18125,7 @@ def dashboard_predpisania(df):
     if stable_sort_cols:
         pred = pred.sort_values(stable_sort_cols, kind="stable", na_position="last").reset_index(drop=True)
 
-    pred = _pred_dedupe_by_docid(pred, (pred_doc_col or pred_card_col), creation_col_pred)
+    pred = _pred_dedupe_by_docid(pred, pred_doc_col, creation_col_pred, pred_card_col=pred_card_col)
     pred = _pred_merge_completion_from_tasks(pred, pred_card_col, pred_doc_col)
 
     _excl_guess = [kind_col, contr_col, obj_col, doc_num_col, creation_col_pred, completion_col]
