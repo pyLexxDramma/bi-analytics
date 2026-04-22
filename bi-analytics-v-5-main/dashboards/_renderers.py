@@ -17651,7 +17651,7 @@ _KIND_ID_CRITICAL = "347986da-8964-4307-8973-28c22842005c"
 
 
 def _pred_dedupe_by_docid(pred: pd.DataFrame, pred_doc_col: str | None, creation_col_pred: str | None) -> pd.DataFrame:
-    """Одна строка на DocID — убирает дубли от нескольких выгрузок в сессию."""
+    """Одна строка на DocID — убирает дубли от нескольких выгрузок в сессию (берём самую свежую)."""
     if pred is None or getattr(pred, "empty", True) or not pred_doc_col or pred_doc_col not in pred.columns:
         return pred
     p = pred.copy()
@@ -17660,8 +17660,17 @@ def _pred_dedupe_by_docid(pred: pd.DataFrame, pred_doc_col: str | None, creation
     p_bad = p.loc[~m]
     if not p_ok.empty:
         if creation_col_pred and creation_col_pred in p_ok.columns:
-            p_ok = p_ok.sort_values(creation_col_pred, na_position="last", kind="stable")
-        p_ok = p_ok.drop_duplicates(subset=[pred_doc_col], keep="first")
+            _created_dt = pd.to_datetime(p_ok[creation_col_pred], errors="coerce", dayfirst=True)
+            p_ok = p_ok.assign(_created_dt=_created_dt).sort_values(
+                ["_created_dt", creation_col_pred],
+                na_position="last",
+                kind="stable",
+            )
+            p_ok = p_ok.drop_duplicates(subset=[pred_doc_col], keep="last").drop(
+                columns=["_created_dt"], errors="ignore"
+            )
+        else:
+            p_ok = p_ok.drop_duplicates(subset=[pred_doc_col], keep="last")
     out = pd.concat([p_ok, p_bad], ignore_index=True)
     return out
 
