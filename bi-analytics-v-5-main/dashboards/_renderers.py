@@ -17662,11 +17662,11 @@ def _pred_dedupe_by_docid(
     p = pred.copy()
     dedupe_key = pd.Series("", index=p.index, dtype=object)
     if pred_doc_col and pred_doc_col in p.columns:
-        dedupe_key = p[pred_doc_col].astype(str).str.strip()
-        dedupe_key = dedupe_key.where(p[pred_doc_col].notna(), "")
+        dedupe_key = p[pred_doc_col].apply(_tessa_norm_join_key)
+        dedupe_key = dedupe_key.where(p[pred_doc_col].notna(), "").astype(str).str.strip()
     if pred_card_col and pred_card_col in p.columns:
-        card_key = p[pred_card_col].astype(str).str.strip()
-        card_key = card_key.where(p[pred_card_col].notna(), "")
+        card_key = p[pred_card_col].apply(_tessa_norm_join_key)
+        card_key = card_key.where(p[pred_card_col].notna(), "").astype(str).str.strip()
         dedupe_key = dedupe_key.mask(dedupe_key.eq(""), card_key)
     p = p.assign(_dedupe_key=dedupe_key)
     m = p["_dedupe_key"].notna() & (p["_dedupe_key"].astype(str).str.strip() != "")
