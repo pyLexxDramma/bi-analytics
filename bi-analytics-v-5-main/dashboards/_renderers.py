@@ -11331,8 +11331,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 frac = float(val) / total_v
                 if 0 < frac < 0.03:
                     slice_text.append(f"{frac * 100:.1f}%")
-                    # Сильный pull выталкивает сегменты за круг; держим минимальный зазор.
-                    slice_pull.append(0.03)
+                    # Для крошечных долей pull отключен: иначе визуально «вылезают» за круг.
+                    slice_pull.append(0.0)
                 else:
                     slice_text.append(f"{frac * 100:.0f}%")
                     slice_pull.append(0.0)
