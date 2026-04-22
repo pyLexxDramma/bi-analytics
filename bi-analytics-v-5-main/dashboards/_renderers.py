@@ -2321,12 +2321,16 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         fig = apply_chart_background(fig)
         render_chart(fig, caption_below="")
 
-    # Подпись текущего проекта (макет правок)
-    proj_lbl = (
-        str(selected_project).strip()
-        if selected_project != "Все"
-        else "Все проекты"
-    )
+    # Подпись текущего проекта (макет правок); в комбинированном отчёте — из общих фильтров
+    if hide_shared_filters:
+        _pl = st.session_state.get("devcombo_project", "Все")
+        proj_lbl = str(_pl).strip() if _pl != "Все" else "Все проекты"
+    else:
+        proj_lbl = (
+            str(selected_project).strip()
+            if selected_project != "Все"
+            else "Все проекты"
+        )
     st.markdown(
         f"<div style='text-align:right;font-size:1.35rem;font-weight:600;color:#b8c0cc;margin:0.75rem 0 0 0'>{html_module.escape(proj_lbl)}</div>",
         unsafe_allow_html=True,
@@ -5797,6 +5801,13 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
             .reset_index()
         )
 
+        # В комбинированном отчёте selected_project не заполняется — для веток графика «По месяцам» берём devcombo_project
+        chart_project_scope = (
+            st.session_state.get("devcombo_project", "Все")
+            if hide_shared_filters
+            else selected_project
+        )
+
         # Build visualization based on view type
         if view_type == "По причинам":
             # View 1: By reasons - reason on X-axis, count on Y-axis
@@ -5848,7 +5859,7 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
         else:
             # View 2: By months - month on X-axis, count on Y-axis, reasons as colors (stacked)
             # If "Все" projects selected, show aggregated view (one column per period)
-            if selected_project == "Все":
+            if chart_project_scope == "Все":
                 # For chart: group only by period (sum all reasons)
                 chart_data = (
                     reason_dynamics.groupby(period_col)["Количество"]
@@ -5906,7 +5917,7 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
                 fig.data[i].update(textangle=0)
 
             # Add total values above bars and trend line
-            if selected_project == "Все":
+            if chart_project_scope == "Все":
                 # For "Все проекты": use chart_data for annotations and trend
                 total_by_period = (
                     chart_data.groupby(period_col)["Количество"].sum().reset_index()
