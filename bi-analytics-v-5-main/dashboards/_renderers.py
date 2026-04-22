@@ -3942,7 +3942,7 @@ def dashboard_plan_fact_dates(df):
             key="dates_tbl_dur",
         )
     selected_reason_bucket_dates = "Все"
-    if dates_show_reason_notes and "reason of deviation" in df.columns:
+    if (not force_covenant_ui) and dates_show_reason_notes and "reason of deviation" in df.columns:
         _rvals = (
             df["reason of deviation"]
             .dropna()
