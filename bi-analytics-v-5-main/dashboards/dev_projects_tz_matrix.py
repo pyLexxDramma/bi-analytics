@@ -412,7 +412,13 @@ def _control_points_project_group_key(raw: Any) -> str:
         from config import MSP_PROJECT_NAME_MAP as M
     except Exception:
         M = {}
-    s = _unicode_dash_fold(str(raw).strip())
+    s = (
+        _unicode_dash_fold(str(raw))
+        .replace("\u00a0", " ")
+        .replace("\u200b", "")
+        .replace("\ufeff", "")
+        .strip()
+    )
     # «Имя-1» / «Имя – 1» после фолда тире — тот же логический проект, что «Имя» (типовой дубль выгрузок)
     if re.search(r"-\s*1\s*$", s):
         s_alt = re.sub(r"-\s*1\s*$", "", s).strip()
@@ -423,8 +429,9 @@ def _control_points_project_group_key(raw: Any) -> str:
         nk = _norm_dev_project_key(M[lk])
     else:
         nk = _norm_dev_project_key(s)
-    # После маппинга: «Дмитровский» и «Дмитровский 1» не должны жить в разных строках
-    if nk in ("дмитровский", "дмитровский1") or nk == "дмитровскийi":
+    # После маппинга: «Дмитровский», «Дмитровский 1», «Дмитровский I» — один проект.
+    nk_base = re.sub(r"(?:1|i)$", "", nk)
+    if nk in ("дмитровский", "дмитровский1", "дмитровскийi") or nk_base == "дмитровский":
         return "unified_dmitrovsky1"
     return nk
 
