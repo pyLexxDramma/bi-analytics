@@ -19365,9 +19365,11 @@ def dashboard_project_schedule_chart(df):
         return None
 
     proj_col = _sched_col(plot_df, ["project name", "Проект", "проект", "Project"])
-    block_col = _sched_col(
+    # B2: приоритетно берём MSP-поле «БЛОК», а не производные/альтернативные колонки.
+    block_col_msp = _sched_col(plot_df, ["БЛОК", "Блок"])
+    block_col = block_col_msp or _sched_col(
         plot_df,
-        ["block", "Блок", "Функциональный блок", "Functional block"],
+        ["block", "Функциональный блок", "Functional block"],
     )
     level_col = _sched_col(
         plot_df,
@@ -19482,6 +19484,8 @@ def dashboard_project_schedule_chart(df):
             sel_block = st.selectbox("Функциональный блок (ур. 2)", blocks, key="gantt_block_filter")
             if sel_block != "Все":
                 plot_df = plot_df[plot_df[block_col].astype(str).str.strip() == str(sel_block).strip()]
+            if not block_col_msp:
+                st.caption(f"Список блоков берётся из поля «{block_col}» (резервный режим).")
         else:
             st.caption("Нет колонки функционального блока.")
     if f_building is not None:
