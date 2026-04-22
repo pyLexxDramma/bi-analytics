@@ -3811,6 +3811,7 @@ def dashboard_plan_fact_dates(df):
             )
         else:
             selected_building_dates = "Все"
+    _detail_unavailable_note = ""
     with fl_main4:
         _lvl_opts_tz = [
             "Уровень 4 (укрупнённо)",
@@ -3840,7 +3841,7 @@ def dashboard_plan_fact_dates(df):
             )
         else:
             selected_level = _lvl_opts_tz[0]
-            st.caption(
+            _detail_unavailable_note = (
                 "Детализация недоступна: нет колонки уровня MSP в выгрузке."
             )
 
@@ -3914,6 +3915,8 @@ def dashboard_plan_fact_dates(df):
         st.caption(
             "Колонка уровня MSP или имя задачи не найдены — «Строение» заполняется из колонок выгрузки (если есть)."
         )
+    if _detail_unavailable_note:
+        st.caption(_detail_unavailable_note)
 
     st.markdown("**Таблица**")
     d3a = st.columns(1)[0]
