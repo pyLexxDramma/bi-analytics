@@ -3642,6 +3642,12 @@ def dashboard_plan_fact_dates(df):
     selected_block_dates = "Все"
     selected_building_dates = "Все"
     pf_dates_block_filter_mode = "none"  # l2 | section | block
+    def _pf_is_generic_block_name(v) -> bool:
+        s = str(v).strip().lower()
+        if not s:
+            return True
+        return bool(re.match(r"^(блок|block)\s*[-_a-zа-я]*\d+$", s))
+
     with fl_main2:
         hierarchy_ok = (
             bool(pf_dates_level_col)
@@ -3664,6 +3670,9 @@ def dashboard_plan_fact_dates(df):
                 .tolist()
             )
             l2_names = [x for x in l2_names if x]
+            _l2_non_generic = [x for x in l2_names if not _pf_is_generic_block_name(x)]
+            if _l2_non_generic:
+                l2_names = _l2_non_generic
             # Если в строках с номинальным ур. «блока» нет имён (часто у суммарных),
             # берём ключи предка ур.2 из обхода дерева — по ним же фильтруется таблица.
             if not l2_names and "_dt_lvl2_key" in pf_dates_work_proj.columns:
@@ -3693,6 +3702,9 @@ def dashboard_plan_fact_dates(df):
             _sec = pf_dates_proj_df["section"].dropna().astype(str).map(str.strip)
             _sec = _sec[_sec.ne("") & _sec.str.lower().ne("nan")]
             _uniq = sorted(pd.unique(_sec)) if len(_sec) else []
+            _uniq_non_generic = [x for x in _uniq if not _pf_is_generic_block_name(x)]
+            if _uniq_non_generic:
+                _uniq = _uniq_non_generic
             if _uniq:
                 pf_dates_block_filter_mode = "section"
                 blks = ["Все"] + list(_uniq)
