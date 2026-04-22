@@ -3891,6 +3891,12 @@ def dashboard_plan_fact_dates(df):
         else:
             task_label_mode = "По наименованию MSP"
             st.caption("Колонка лота не найдена — подписи только по наименованию MSP.")
+    force_covenant_ui = st.checkbox(
+        "Показывать только ковенанты",
+        value=False,
+        key="dates_only_covenants",
+        help="Показать только ковенантные строки в диаграмме и таблице.",
+    )
 
     if pf_dates_block_filter_mode == "section":
         st.caption(
@@ -4142,6 +4148,19 @@ def dashboard_plan_fact_dates(df):
                 _pct.isna() | (_pct < 99.9995)
             ].copy()
 
+    def _text_indicates_covenant(val):
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            return False
+        t = str(val).lower()
+        return "ковенант" in t or "coven" in t
+
+    def _covenant_row_mask(frame):
+        m = pd.Series(False, index=frame.index)
+        for col in ("section", "block", "task name"):
+            if col in frame.columns:
+                m = m | frame[col].astype(str).map(_text_indicates_covenant)
+        return m
+
     df_after_hide = filtered_df.copy()
     if df_after_hide.empty:
         st.info("Нет данных после фильтра «Скрыть завершённые».")
@@ -4162,6 +4181,11 @@ def dashboard_plan_fact_dates(df):
         ].copy()
         if df_after_hide.empty:
             st.info("Нет данных после фильтра «Причина отклонения (категория)».")
+            return
+    if force_covenant_ui:
+        df_after_hide = df_after_hide.loc[_covenant_row_mask(df_after_hide)].copy()
+        if df_after_hide.empty:
+            st.info("Нет ковенантных строк для отображения.")
             return
 
     if task_label_mode == "По лоту" and dates_lot_col and dates_lot_col in df_after_hide.columns:
@@ -4388,28 +4412,9 @@ def dashboard_plan_fact_dates(df):
 
     bar_df = pd.DataFrame(bar_data)
 
-    def _text_indicates_covenant(val):
-        if val is None or (isinstance(val, float) and pd.isna(val)):
-            return False
-        t = str(val).lower()
-        return "ковенант" in t or "coven" in t
-
-    def _covenant_row_mask(frame):
-        m = pd.Series(False, index=frame.index)
-        for col in ("section", "block", "task name"):
-            if col in frame.columns:
-                m = m | frame[col].astype(str).map(_text_indicates_covenant)
-        return m
-
     covenant_filter_selected = (
         selected_block_dates != "Все"
         and _text_indicates_covenant(selected_block_dates)
-    )
-    force_covenant_ui = st.checkbox(
-        "Показывать только ковенанты",
-        value=False,
-        key="dates_only_covenants",
-        help="Показать блок ковенантов (маркеры + таблица) и отобрать только ковенантные строки.",
     )
     covenant_auto_from_data = False
     for col in ("section", "block", "task name"):
