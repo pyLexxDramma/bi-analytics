@@ -4774,7 +4774,7 @@ def dashboard_plan_fact_dates(df):
     except Exception:
         pass
 
-    out_cols = ["Проект", "Задача"]
+    out_cols = ["Задача"] if selected_project != "Все" else ["Проект", "Задача"]
     if "UID задачи (MSP)" in summary_df.columns:
         out_cols.append("UID задачи (MSP)")
     if "ID задачи (MSP)" in summary_df.columns:
