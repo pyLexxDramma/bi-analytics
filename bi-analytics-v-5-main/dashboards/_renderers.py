@@ -20292,7 +20292,7 @@ def dashboard_project_schedule_chart(df):
     end_label_text: list = []
     fig_gantt.update_layout(
         height=chart_h,
-        margin=dict(l=left_m, r=right_m, t=48, b=48),
+        margin=dict(l=left_m, r=right_m, t=48, b=78),
         bargap=0.32,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
@@ -20379,7 +20379,7 @@ def dashboard_project_schedule_chart(df):
             tvals, ttext = _gantt_ru_date_ticks(
                 _lo_pad,
                 _hi_pad,
-                max_ticks=int(_readability.get("max_ticks", 26)),
+                max_ticks=int(min(_readability.get("max_ticks", 26), 18)),
             )
             if tvals and ttext and len(tvals) == len(ttext):
                 tickvals_iso = [pd.Timestamp(t).strftime("%Y-%m-%d") for t in tvals]
@@ -20388,7 +20388,7 @@ def dashboard_project_schedule_chart(df):
                     tickmode="array",
                     tickvals=tickvals_iso,
                     ticktext=ttext,
-                    tickangle=0,
+                    tickangle=-30,
                     tickformat="",
                 ))
     except Exception:
