@@ -4278,7 +4278,7 @@ def dashboard_plan_fact_dates(df):
                     bar_data.append(
                         {
                             "Задача": display_name,
-                            "Этап": section_name,
+                            "Группа": section_name,
                             "Тип": "План",
                             "Дата начала": plan_start,
                             "Дата окончания": plan_end,
@@ -4292,7 +4292,7 @@ def dashboard_plan_fact_dates(df):
                     bar_data.append(
                         {
                             "Задача": display_name,
-                            "Этап": section_name,
+                            "Группа": section_name,
                             "Тип": "Факт",
                             "Дата начала": base_start,
                             "Дата окончания": base_end,
@@ -4321,7 +4321,7 @@ def dashboard_plan_fact_dates(df):
                 bar_data.append(
                     {
                         "Задача": display_name,
-                        "Этап": section_name,
+                        "Группа": section_name,
                         "Тип": "План",
                         "Дата начала": plan_start,
                         "Дата окончания": plan_end,
@@ -4335,7 +4335,7 @@ def dashboard_plan_fact_dates(df):
                 bar_data.append(
                     {
                         "Задача": display_name,
-                        "Этап": section_name,
+                        "Группа": section_name,
                         "Тип": "Факт",
                         "Дата начала": base_start,
                         "Дата окончания": base_end,
@@ -4389,11 +4389,11 @@ def dashboard_plan_fact_dates(df):
     )
 
     def _render_stage_deviation_bar_chart(bar_df_local):
-        if bar_df_local.empty or "Этап" not in bar_df_local.columns:
+        if bar_df_local.empty or "Группа" not in bar_df_local.columns:
             return
         section_dev = (
-            bar_df_local.drop_duplicates(subset=["Задача"])[["Этап", "Отклонение"]]
-            .groupby("Этап", as_index=False)["Отклонение"]
+            bar_df_local.drop_duplicates(subset=["Задача"])[["Группа", "Отклонение"]]
+            .groupby("Группа", as_index=False)["Отклонение"]
             .max()
         )
         if section_dev.empty:
@@ -4403,7 +4403,7 @@ def dashboard_plan_fact_dates(df):
         fig_section.add_trace(
             go.Bar(
                 x=section_dev["Отклонение"],
-                y=section_dev["Этап"],
+                y=section_dev["Группа"],
                 orientation="h",
                 text=section_dev["Отклонение"].apply(
                     lambda v: f"{int(round(v, 0))}" if pd.notna(v) else ""
@@ -4424,7 +4424,7 @@ def dashboard_plan_fact_dates(df):
         fig_section.update_yaxes(
             categoryorder="array",
             categoryarray=section_dev.sort_values("Отклонение", ascending=True)[
-                "Этап"
+                "Группа"
             ].tolist(),
         )
         fig_section = _apply_finance_bar_label_layout(fig_section)
