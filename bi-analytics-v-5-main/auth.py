@@ -596,6 +596,7 @@ def render_sidebar_menu(current_page: str = "reports"):
             """
             <style>
             [data-testid="stSidebarNav"] { display: none !important; }
+            section[data-testid="stSidebar"] [data-testid="stPopover"] { display: none !important; }
             </style>
             """,
             unsafe_allow_html=True,
