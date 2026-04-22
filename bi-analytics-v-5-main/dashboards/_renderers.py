@@ -3909,7 +3909,7 @@ def dashboard_plan_fact_dates(df):
             help="Макет: даты или акцент на отклонениях в днях в итоговой таблице.",
         )
 
-    tbl_opt1, tbl_opt2, tbl_opt3 = st.columns(3)
+    tbl_opt1, tbl_opt2 = st.columns(2)
     with tbl_opt1:
         tbl_show_end = st.checkbox(
             "Таблица: отклонение окончания",
@@ -3917,13 +3917,9 @@ def dashboard_plan_fact_dates(df):
             key="dates_tbl_end",
             help="Столбец «Отклонение окончания» (дней): фактическое окончание минус плановое.",
         )
+    # По ТЗ выводим акцент на отклонении окончания; отклонение начала в таблице не показываем.
+    tbl_show_start = False
     with tbl_opt2:
-        tbl_show_start = st.checkbox(
-            "Таблица: отклонение начала",
-            value=True,
-            key="dates_tbl_start",
-        )
-    with tbl_opt3:
         tbl_show_dur = st.checkbox(
             "Таблица: отклонение длительности",
             value=False,
@@ -4142,13 +4138,13 @@ def dashboard_plan_fact_dates(df):
 
     table_df = df_after_hide.copy()
     _end = pd.to_numeric(table_df.get("plan_end_diff"), errors="coerce")
-    _start = pd.to_numeric(table_df.get("plan_start_diff"), errors="coerce")
-    _has_dev = (_end.notna() & (_end.abs() > 1e-9)) | (_start.notna() & (_start.abs() > 1e-9))
+    # По ТЗ: в таблице оставляем только задачи с положительным отклонением окончания.
+    _has_dev = _end.notna() & (_end > 1e-9)
     table_df = table_df[_has_dev].copy()
 
     if chart_df.empty and table_df.empty:
         st.info(
-            "Нет строк с отклонением (|Δ| > 0 по началу или окончанию) для таблицы "
+            "Нет строк с положительным отклонением окончания для таблицы "
             "или нет данных для графика при включённом фильтре «только отрицательное отклонение»."
         )
         return
