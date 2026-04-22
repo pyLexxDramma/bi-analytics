@@ -19008,6 +19008,30 @@ def _render_control_points_admin_on_dashboard():
         )
         cur = get_control_point_milestones_effective()
         st.caption(f"Сейчас активно вех: **{len(cur)}**.")
+        st.markdown("**Быстрое редактирование заголовков вех**")
+        st.caption("Изменяет только `title`; `slug` и `match` остаются без изменений.")
+        _title_inputs = []
+        for i, (t, s, m) in enumerate(cur):
+            _new_title = st.text_input(
+                f"Заголовок #{i + 1} (slug: {s})",
+                value=str(t),
+                key=f"cp_dash_title_{i}_{s}",
+            )
+            _title_inputs.append((_new_title, s, m))
+        if st.button("Сохранить заголовки", key="cp_dash_save_titles_only"):
+            try:
+                import json
+                _payload = [{"title": tt, "slug": ss, "match": mm} for tt, ss, mm in _title_inputs]
+                _json_txt = json.dumps(_payload, ensure_ascii=False, indent=2)
+                ok, msg = save_control_point_milestones_json(_json_txt, str(user.get("username") or "admin"))
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+            except Exception as e:
+                st.error(f"Ошибка сохранения заголовков: {e}")
+        st.markdown("---")
         raw = (get_setting("control_points_milestones_json") or "").strip()
         default_js = control_point_milestones_default_json()
         initial = raw if raw else default_js
