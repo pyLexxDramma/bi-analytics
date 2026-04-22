@@ -3929,6 +3929,28 @@ def dashboard_plan_fact_dates(df):
             value=False,
             key="dates_tbl_dur",
         )
+    selected_reason_bucket_dates = "Все"
+    if dates_show_reason_notes and "reason of deviation" in df.columns:
+        _rvals = (
+            df["reason of deviation"]
+            .dropna()
+            .astype(str)
+            .str.strip()
+        )
+        _rvals = _rvals[_rvals.ne("") & _rvals.str.lower().ne("nan")]
+        _rbuckets = sorted(
+            {
+                _deviations_reason_bucket_label(v)
+                for v in _rvals.tolist()
+                if _deviations_reason_bucket_label(v)
+            }
+        )
+        if _rbuckets:
+            selected_reason_bucket_dates = st.selectbox(
+                "Причина отклонения (категория)",
+                ["Все"] + _rbuckets,
+                key="dates_reason_bucket_filter",
+            )
 
     # По ТЗ в таблице показываем только строки, где есть отклонение (|дней| > 0) по началу или окончанию.
 
@@ -4124,6 +4146,23 @@ def dashboard_plan_fact_dates(df):
     if df_after_hide.empty:
         st.info("Нет данных после фильтра «Скрыть завершённые».")
         return
+
+    if (
+        selected_reason_bucket_dates != "Все"
+        and "reason of deviation" in df_after_hide.columns
+    ):
+        _rnorm_all = (
+            df_after_hide["reason of deviation"]
+            .map(lambda x: _deviations_reason_bucket_label(_clean_display_str(x)))
+            .astype(str)
+            .str.strip()
+        )
+        df_after_hide = df_after_hide[
+            _rnorm_all == str(selected_reason_bucket_dates).strip()
+        ].copy()
+        if df_after_hide.empty:
+            st.info("Нет данных после фильтра «Причина отклонения (категория)».")
+            return
 
     if task_label_mode == "По лоту" and dates_lot_col and dates_lot_col in df_after_hide.columns:
         _lc = df_after_hide[dates_lot_col].astype(str).str.strip()
@@ -4822,9 +4861,12 @@ def dashboard_plan_fact_dates(df):
             summary_display[col] = summary_display[col].apply(_format_int_days)
     for col in ("Отклонение начала", "Отклонение окончания", "Отклонение длительности"):
         if col in summary_numeric.columns:
-            summary_numeric[col] = summary_numeric[col].apply(
-                lambda x: pd.NA if pd.isna(x) else int(round(float(x)))
-            ).astype("Int64")
+            # В styled st.dataframe nullable Int64 может визуально «прятать» значения.
+            # Держим стандартный numeric dtype с NaN для стабильного рендера.
+            summary_numeric[col] = (
+                pd.to_numeric(summary_numeric[col], errors="coerce")
+                .round(0)
+            )
 
     _dates_table_tooltips = {
         "Проект": "Название проекта из выгрузки MSP.",
@@ -4946,11 +4988,16 @@ def dashboard_plan_fact_dates(df):
                 "Окончание" if "Окончание" in summary_numeric.columns else None
             ),
         )
+        _num_cfg = {}
+        for _c in ("Отклонение начала", "Отклонение окончания", "Отклонение длительности"):
+            if _c in summary_numeric.columns:
+                _num_cfg[_c] = st.column_config.NumberColumn(format="%.0f")
         st.dataframe(
             _styled,
             hide_index=True,
             use_container_width=True,
             height=min(700, 50 + max(1, len(summary_numeric)) * 35),
+            column_config=_num_cfg if _num_cfg else None,
         )
 
     if not show_covenant_ui:
