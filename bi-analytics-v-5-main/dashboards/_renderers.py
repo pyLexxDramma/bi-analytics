@@ -4218,12 +4218,23 @@ def dashboard_plan_fact_dates(df):
                 else ("task name" if "task name" in _manual_base_df.columns else None)
             )
             if _manual_task_col:
+                _manual_work = _manual_base_df.copy()
+                _task_s = _manual_work[_manual_task_col].astype(str).str.strip()
+                _manual_work = _manual_work[_task_s.ne("") & _task_s.str.lower().ne("nan")]
+                if (
+                    selected_project == "Все"
+                    and "project name" in _manual_work.columns
+                ):
+                    _proj_s = (
+                        _manual_work["project name"].astype(str).str.strip().replace("", "—")
+                    )
+                    _manual_work["_cov_pick"] = (
+                        _task_s.loc[_manual_work.index] + " (" + _proj_s + ")"
+                    )
+                else:
+                    _manual_work["_cov_pick"] = _task_s.loc[_manual_work.index]
                 _manual_opts = sorted(
-                    {
-                        str(v).strip()
-                        for v in _manual_base_df[_manual_task_col].dropna().tolist()
-                        if str(v).strip()
-                    }
+                    _manual_work["_cov_pick"].dropna().astype(str).str.strip().unique().tolist()
                 )
                 _manual_sel = st.multiselect(
                     "Ковенанты: выбрать задачи вручную",
@@ -4232,13 +4243,10 @@ def dashboard_plan_fact_dates(df):
                     help="Автопоиск не нашёл маркеры ковенантов. Выберите нужные задачи вручную.",
                 )
                 if _manual_sel:
-                    _sel_set = {str(x).strip() for x in _manual_sel}
-                    df_after_hide = _manual_base_df[
-                        _manual_base_df[_manual_task_col]
-                        .astype(str)
-                        .str.strip()
-                        .isin(_sel_set)
-                    ].copy()
+                    _sel_set = {str(x).strip() for x in _manual_sel if str(x).strip()}
+                    df_after_hide = _manual_work[
+                        _manual_work["_cov_pick"].astype(str).str.strip().isin(_sel_set)
+                    ].drop(columns=["_cov_pick"], errors="ignore").copy()
             if df_after_hide.empty:
                 st.info("Нет ковенантных строк для отображения.")
                 return
