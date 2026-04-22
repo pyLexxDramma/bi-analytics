@@ -8987,6 +8987,16 @@ def dashboard_technique(df):
                     + " — "
                     + by_period_week["Неделя"].astype(str).str.replace(" неделя", "н", regex=False)
                 )
+                # Короткая подпись оси X: длинный вариант оставляем в hover.
+                _week_num = (
+                    by_period_week["Неделя"]
+                    .astype(str)
+                    .str.extract(r"(\d+)", expand=False)
+                    .fillna("?")
+                )
+                by_period_week["x_tick"] = (
+                    by_period_week["Период_стр"].astype(str) + " · н" + _week_num
+                )
                 by_period_week = by_period_week.sort_values([period_col_hist, "Неделя"])
                 x_order = by_period_week["x_label"].tolist()
                 _mk_week_lbl = lambda r: (
@@ -9018,17 +9028,20 @@ def dashboard_technique(df):
                     title_text="",
                     xaxis_title="Период — неделя",
                     yaxis_title="Количество",
-                    height=440,
+                    height=520,
                     showlegend=False,
-                    margin=dict(l=56, r=28, t=56, b=168),
+                    margin=dict(l=56, r=28, t=88, b=230),
                     uniformtext=dict(minsize=7, mode="show"),
                     xaxis=dict(
-                        tickangle=-45,
+                        tickangle=-35,
                         categoryorder="array",
                         categoryarray=x_order,
+                        tickmode="array",
+                        tickvals=by_period_week["x_label"].tolist(),
+                        ticktext=by_period_week["x_tick"].tolist(),
                         automargin=True,
                     ),
-                    yaxis=dict(automargin=True),
+                    yaxis=dict(automargin=True, rangemode="tozero"),
                 )
                 fig_hist = apply_chart_background(fig_hist)
                 with hist_cols[idx]:
@@ -11330,7 +11343,12 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             for val in values:
                 frac = float(val) / total_v
                 if 0 < frac < 0.03:
-                    slice_text.append(f"{frac * 100:.1f}%")
+                    # Очень маленькие доли подписываем только в hover/легенде,
+                    # чтобы текст не ломал контур круга и не слипался у вершины.
+                    if frac < 0.02:
+                        slice_text.append("")
+                    else:
+                        slice_text.append(f"{frac * 100:.1f}%")
                     # Для крошечных долей pull отключен: иначе визуально «вылезают» за круг.
                     slice_pull.append(0.0)
                 else:
