@@ -5782,21 +5782,22 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
         st.warning(f"Столбец периода '{period_col}' не найден.")
         return
 
-    # Group by period and reason - ensure we have both project name and reason
+    # Group by period and категория причины (как «Доли причин» / «Динамика отклонений» — _deviations_reason_bucket_label)
     if "reason of deviation" in filtered_df.columns:
-        # Filter out rows without period data
+        _rd_slice = filtered_df[filtered_df[period_col].notna()].copy()
+        _rd_slice["_reason_bucket"] = _rd_slice["reason of deviation"].map(
+            _deviations_reason_bucket_label
+        )
         reason_dynamics = (
-            filtered_df[filtered_df[period_col].notna()]
-            .groupby([period_col, "reason of deviation"])
+            _rd_slice.groupby([period_col, "_reason_bucket"])
             .size()
             .reset_index(name="Количество")
         )
 
         reason_dynamics[period_col] = reason_dynamics[period_col].apply(format_period_ru)
 
-        # Aggregate again after formatting to handle potential duplicates from formatting
         reason_dynamics = (
-            reason_dynamics.groupby([period_col, "reason of deviation"])["Количество"]
+            reason_dynamics.groupby([period_col, "_reason_bucket"])["Количество"]
             .sum()
             .reset_index()
         )
@@ -5808,12 +5809,15 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
             else selected_project
         )
 
+        _reason_clr = _deviations_reason_bucket_colors()
+        _reason_ord = list(DEVIATIONS_REASON_BUCKET_ORDER)
+
         # Build visualization based on view type
         if view_type == "По причинам":
             # View 1: By reasons - reason on X-axis, count on Y-axis
             # Group by reason and sum across all periods
             reason_summary = (
-                reason_dynamics.groupby("reason of deviation")["Количество"]
+                reason_dynamics.groupby("_reason_bucket")["Количество"]
                 .sum()
                 .reset_index()
             )
@@ -5822,15 +5826,16 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
             # Visualization - vertical bar chart with reasons on X-axis
             fig = px.bar(
                 reason_summary,
-                x="reason of deviation",
+                x="_reason_bucket",
                 y="Количество",
                 title=None,
                 labels={
-                    "reason of deviation": "Причина отклонения",
+                    "_reason_bucket": "Причина отклонения",
                     "Количество": "Количество отклонений",
                 },
                 text="Количество",
-                color_discrete_sequence=["#1f77b4"],
+                color="_reason_bucket",
+                color_discrete_map=_reason_clr or None,
             )
             # fig.update_xaxes(tickangle=-45)
             # fig.update_traces(
@@ -5891,14 +5896,16 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
                     reason_dynamics,
                     x=period_col,
                     y="Количество",
-                    color="reason of deviation",
+                    color="_reason_bucket",
                     title=None,
                     labels={
                         period_col: period_label,
-                        "reason of deviation": "Причина отклонения",
+                        "_reason_bucket": "Причина отклонения",
                         "Количество": "Количество отклонений",
                     },
                     text="Количество",
+                    color_discrete_map=_reason_clr or None,
+                    category_orders={"_reason_bucket": _reason_ord},
                     barmode="stack",  # Stacked bars: all reasons in one column per period
                 )
         # Update layout based on view type
@@ -6008,7 +6015,7 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
         # Summary table - always show by reason (summarized values)
         # Group by reason and sum across all periods
         summary_by_reason = (
-            reason_dynamics.groupby("reason of deviation")["Количество"]
+            reason_dynamics.groupby("_reason_bucket")["Количество"]
             .sum()
             .reset_index()
         )
