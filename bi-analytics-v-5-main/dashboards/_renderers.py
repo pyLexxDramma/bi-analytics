@@ -4405,6 +4405,12 @@ def dashboard_plan_fact_dates(df):
         selected_block_dates != "Все"
         and _text_indicates_covenant(selected_block_dates)
     )
+    force_covenant_ui = st.checkbox(
+        "Показывать только ковенанты",
+        value=False,
+        key="dates_only_covenants",
+        help="Показать блок ковенантов (маркеры + таблица) и отобрать только ковенантные строки.",
+    )
     covenant_auto_from_data = False
     for col in ("section", "block", "task name"):
         if col in df_after_hide.columns and df_after_hide[col].astype(str).map(
@@ -4412,9 +4418,14 @@ def dashboard_plan_fact_dates(df):
         ).any():
             covenant_auto_from_data = True
             break
-    show_covenant_ui = covenant_filter_selected or covenant_auto_from_data
+    show_covenant_ui = force_covenant_ui or covenant_filter_selected or covenant_auto_from_data
     covenant_rows_df = table_df
-    if covenant_auto_from_data and not covenant_filter_selected:
+    if force_covenant_ui:
+        covenant_rows_df = table_df.loc[_covenant_row_mask(table_df)].copy()
+        if covenant_rows_df.empty:
+            show_covenant_ui = False
+            st.info("Нет ковенантных строк для отображения.")
+    elif covenant_auto_from_data and not covenant_filter_selected:
         covenant_rows_df = table_df.loc[_covenant_row_mask(table_df)].copy()
         if covenant_rows_df.empty:
             show_covenant_ui = False
