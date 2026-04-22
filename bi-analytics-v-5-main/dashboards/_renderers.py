@@ -1621,6 +1621,11 @@ def _render_deviations_combined_shared_filters(df):
                 .unique()
                 .tolist()
             )
+            if len(block_opts) <= 1 and "_dt_lvl2_key" in wh.columns:
+                _k2c = wh["_dt_lvl2_key"].astype(str).str.strip()
+                _k2c = _k2c[_k2c.ne("") & _k2c.str.lower().ne("nan")]
+                if len(_k2c):
+                    block_opts = ["Все"] + sorted(pd.unique(_k2c).tolist())
             st.selectbox(
                 "Функциональный блок",
                 block_opts,
@@ -1666,6 +1671,11 @@ def _render_deviations_combined_shared_filters(df):
             build_opts = ["Все"] + sorted(
                 w3[task_col].dropna().astype(str).str.strip().unique().tolist()
             )
+            if len(build_opts) <= 1 and sb != "Все" and "_dt_lvl3_key" in w3.columns:
+                _k3b = w3["_dt_lvl3_key"].astype(str).str.strip()
+                _k3b = _k3b[_k3b.ne("") & _k3b.str.lower().ne("nan")]
+                if len(_k3b):
+                    build_opts = ["Все"] + sorted(pd.unique(_k3b).tolist())
             st.selectbox(
                 "Строение",
                 build_opts,
@@ -1918,6 +1928,11 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                     .unique()
                     .tolist()
                 )
+                if len(block_opts) <= 1 and "_dt_lvl2_key" in wh.columns:
+                    _k2r = wh["_dt_lvl2_key"].astype(str).str.strip()
+                    _k2r = _k2r[_k2r.ne("") & _k2r.str.lower().ne("nan")]
+                    if len(_k2r):
+                        block_opts = ["Все"] + sorted(pd.unique(_k2r).tolist())
                 st.selectbox(
                     "Функциональный блок",
                     block_opts,
@@ -1964,6 +1979,11 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                 build_opts = ["Все"] + sorted(
                     w3[_task_rs].dropna().astype(str).str.strip().unique().tolist()
                 )
+                if len(build_opts) <= 1 and sb != "Все" and "_dt_lvl3_key" in w3.columns:
+                    _k3r = w3["_dt_lvl3_key"].astype(str).str.strip()
+                    _k3r = _k3r[_k3r.ne("") & _k3r.str.lower().ne("nan")]
+                    if len(_k3r):
+                        build_opts = ["Все"] + sorted(pd.unique(_k3r).tolist())
                 st.selectbox(
                     "Строение",
                     build_opts,
@@ -3604,6 +3624,17 @@ def dashboard_plan_fact_dates(df):
                 .tolist()
             )
             l2_names = [x for x in l2_names if x]
+            # Если в строках с номинальным ур. «блока» нет имён (часто у суммарных),
+            # берём ключи предка ур.2 из обхода дерева — по ним же фильтруется таблица.
+            if not l2_names and "_dt_lvl2_key" in pf_dates_work_proj.columns:
+                _k2 = (
+                    pf_dates_work_proj["_dt_lvl2_key"]
+                    .astype(str)
+                    .str.strip()
+                )
+                _k2 = _k2[_k2.ne("") & _k2.str.lower().ne("nan")]
+                if len(_k2):
+                    l2_names = sorted(pd.unique(_k2).tolist())
 
         if l2_names:
             pf_dates_block_filter_mode = "l2"
@@ -3696,6 +3727,11 @@ def dashboard_plan_fact_dates(df):
                 .tolist()
             )
             _go = [x for x in _go if x]
+            if not _go and selected_block_dates != "Все" and "_dt_lvl3_key" in w3_pf.columns:
+                _k3pf = w3_pf["_dt_lvl3_key"].astype(str).str.strip()
+                _k3pf = _k3pf[_k3pf.ne("") & _k3pf.str.lower().ne("nan")]
+                if len(_k3pf):
+                    _go = sorted(pd.unique(_k3pf).tolist())
             bopts = ["Все"] + _go
             selected_building_dates = st.selectbox(
                 "Строение",
@@ -4968,17 +5004,31 @@ def dashboard_deviation_by_tasks_current_month(df):
 
     if level_col and level_col in work_h.columns:
         ln = pd.to_numeric(work_h[level_col], errors="coerce")
+        _blk_tier_d, _bld_tier_d = _deviations_msp_tier_levels(ln)
         block_opts = ["Все"] + sorted(
-            work_h.loc[ln == 2, task_col].dropna().astype(str).str.strip().unique().tolist()
+            work_h.loc[ln == float(_blk_tier_d), task_col]
+            .dropna()
+            .astype(str)
+            .str.strip()
+            .unique()
+            .tolist()
         )
+        if len(block_opts) <= 1 and "_dt_lvl2_key" in work_h.columns:
+            _k2d = work_h["_dt_lvl2_key"].astype(str).str.strip()
+            _k2d = _k2d[_k2d.ne("") & _k2d.str.lower().ne("nan")]
+            if len(_k2d):
+                block_opts = ["Все"] + sorted(pd.unique(_k2d).tolist())
         with f_block:
             selected_block = st.selectbox(
                 "Функциональный блок",
                 block_opts,
                 key="deviation_tasks_block_l2",
-                help="Задачи уровня 2 (иерархия MSP по колонке уровня).",
+                help=(
+                    f"Задачи яруса «функциональный блок» (ур. {_blk_tier_d} по колонке уровня MSP). "
+                    "Если в строках этого уровня нет имён — список из ключа предка ур.2 по дереву выгрузки."
+                ),
             )
-        w3 = work_h[ln == 3]
+        w3 = work_h[ln == float(_bld_tier_d)]
         if selected_block != "Все":
             w3 = w3[
                 w3["_dt_lvl2_key"].astype(str).str.strip()
@@ -4987,12 +5037,19 @@ def dashboard_deviation_by_tasks_current_month(df):
         build_opts = ["Все"] + sorted(
             w3[task_col].dropna().astype(str).str.strip().unique().tolist()
         )
+        if len(build_opts) <= 1 and selected_block != "Все" and "_dt_lvl3_key" in w3.columns:
+            _k3d = w3["_dt_lvl3_key"].astype(str).str.strip()
+            _k3d = _k3d[_k3d.ne("") & _k3d.str.lower().ne("nan")]
+            if len(_k3d):
+                build_opts = ["Все"] + sorted(pd.unique(_k3d).tolist())
         with f_build:
             selected_building = st.selectbox(
                 "Строение",
                 build_opts,
                 key="deviation_tasks_building_l3",
-                help="Задачи уровня 3 в выбранном функциональном блоке.",
+                help=(
+                    f"Задачи яруса «строение» (ур. {_bld_tier_d}) в выбранном функциональном блоке."
+                ),
             )
         detail_opts = ("Укрупнённо (уровень 4)", "Детально (уровень 5)")
         with f_det:
