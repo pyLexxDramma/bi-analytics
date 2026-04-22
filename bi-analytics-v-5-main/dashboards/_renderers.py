@@ -8978,7 +8978,7 @@ def dashboard_technique(df):
             if by_period_week is not None and not by_period_week.empty:
                 fig_hist = go.Figure()
                 is_resources = "Ресурсы" in label or "Люди" in label
-                base_color = "#3498db" if is_resources else "#e67e22"
+                base_color = "#2E86AB" if is_resources else "#F39C12"
                 weeks = by_period_week["Неделя"].unique().tolist()
                 # Люди и техника: точечная диаграмма — одна линия через все точки по порядку (период → неделя)
                 by_period_week = by_period_week.copy()
@@ -9061,7 +9061,7 @@ def dashboard_technique(df):
                                 y=by_period["Факт"],
                                 mode="markers+text",
                                 name="Факт",
-                                marker=dict(size=14, color="#3498db", line=dict(width=1, color="white")),
+                                marker=dict(size=14, color="#2E86AB", line=dict(width=1, color="white")),
                                 text=[
                                     f"{int(row['Факт'])} ({int(np.ceil(float(row['%'])))}%)"
                                     for _, row in by_period.iterrows()
@@ -9082,7 +9082,7 @@ def dashboard_technique(df):
                                 ],
                                 textposition="outside",
                                 textfont=dict(size=11, color="white"),
-                                marker_color="#e67e22",
+                                marker_color="#F39C12",
                                 name="Факт",
                                 cliponaxis=False,
                             )
@@ -9329,16 +9329,25 @@ def dashboard_technique(df):
                     )
                     fig_pie_avg.update_traces(
                         textinfo="text",
-                        texttemplate="%{label}<br>%{value:,.0f} (%{percent:.0%})",
+                        texttemplate="%{label}<br>%{value:,.0f}<br>(%{percent:.1%})",
                         textposition="inside",
                         textfont_size=11,
                         insidetextorientation="horizontal",
-                        hovertemplate="<b>%{label}</b><br>%{value:,.0f} (%{percent:.0%})<extra></extra>",
+                        hovertemplate="<b>%{label}</b><br>%{value:,.0f} (%{percent:.1%})<extra></extra>",
                     )
                     fig_pie_avg.update_layout(
-                        height=500, showlegend=True,
-                        legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.05, font=dict(size=10)),
-                        uniformtext=dict(minsize=8, mode="hide"),
+                        height=500,
+                        showlegend=True,
+                        legend=dict(
+                            orientation="h",
+                            yanchor="top",
+                            y=-0.2,
+                            x=0.5,
+                            xanchor="center",
+                            font=dict(size=10),
+                        ),
+                        margin=dict(t=40, b=140, l=24, r=24),
+                        uniformtext=dict(minsize=7, mode="show"),
                     )
                     fig_pie_avg = apply_chart_background(fig_pie_avg)
                     render_chart(fig_pie_avg, key=f"{key_prefix}_avg_pie_{_pslug}", caption_below=f"Распределение ресурсов — {project_name}")
@@ -10949,7 +10958,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             if by_period_week is not None and not by_period_week.empty:
                 fig_hist = go.Figure()
                 is_resources = "Ресурсы" in label or "Люди" in label
-                base_color = "#3498db" if is_resources else "#e67e22"
+                base_color = "#2E86AB" if is_resources else "#F39C12"
                 weeks = by_period_week["Неделя"].unique().tolist()
                 # Люди и техника: точечная диаграмма — одна линия через все точки по порядку (период → неделя)
                 by_period_week = by_period_week.copy()
@@ -11032,7 +11041,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                                 y=by_period["Факт"],
                                 mode="markers+text",
                                 name="Факт",
-                                marker=dict(size=14, color="#3498db", line=dict(width=1, color="white")),
+                                marker=dict(size=14, color="#2E86AB", line=dict(width=1, color="white")),
                                 text=[
                                     f"{int(row['Факт'])} ({int(np.ceil(float(row['%'])))}%)"
                                     for _, row in by_period.iterrows()
@@ -11053,7 +11062,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                                 ],
                                 textposition="outside",
                                 textfont=dict(size=11, color="white"),
-                                marker_color="#e67e22",
+                                marker_color="#F39C12",
                                 name="Факт",
                                 cliponaxis=False,
                             )
@@ -11127,7 +11136,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             tw = float(by_w["Факт"].sum())
             by_w["pct"] = (by_w["Факт"] / tw * 100.0).round(1) if tw else 0.0
             is_rw = "ресурс" in lab_wfb.lower() or "люди" in lab_wfb.lower()
-            cbar = "#3498db" if is_rw else "#e67e22"
+            cbar = "#2E86AB" if is_rw else "#F39C12"
             fig_wfb = go.Figure(
                 data=[
                     go.Bar(
@@ -11210,8 +11219,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 proj_name = _u[0]
 
         def _fact_bar_color(plan_v: float, fact_v: float) -> str:
-            # План — отдельный столбец; факт — рыжий при норме; просадка — красный градиент; 0 — ярко-красный.
-            _orange = "#e67e22"
+            # План — отдельный столбец; факт — оранжевый (ТЗ 20.04); просадка — красный градиент; 0 — ярко-красный.
+            _orange = "#F39C12"
             if plan_v <= 0:
                 return _orange
             if float(fact_v) <= 0:
@@ -11246,7 +11255,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 go.Bar(
                     x=["План", "Факт"],
                     y=[plan_sum, fact_sum],
-                    marker_color=["#5dade2", fact_color],
+                    marker_color=["#2E86AB", fact_color],
                     text=[
                         f"{plan_i}",
                         f"{fact_i}<br>Δ {dev_i}",
@@ -11314,7 +11323,21 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
 
         labels = pie_df["Контрагент"].astype(str).tolist()
         values = pie_df["Факт"].astype(float).tolist()
-        colors = (px.colors.qualitative.Set3 or [])[:]
+        total_v = float(sum(values)) if values else 0.0
+        slice_text: list[str] = []
+        slice_pull: list[float] = []
+        if total_v > 0:
+            for val in values:
+                frac = float(val) / total_v
+                if 0 < frac < 0.03:
+                    slice_text.append(f"{frac * 100:.1f}%")
+                    slice_pull.append(0.1)
+                else:
+                    slice_text.append(f"{frac * 100:.0f}%")
+                    slice_pull.append(0.0)
+        else:
+            slice_text = [""] * len(values)
+            slice_pull = [0.0] * len(values)
 
         fig_cf = go.Figure(
             data=[
@@ -11323,12 +11346,14 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     values=values,
                     sort=False,
                     direction="clockwise",
-                    textinfo="percent",
-                    texttemplate="%{percent:.0%}",
+                    text=slice_text,
+                    textinfo="text",
                     textposition="inside",
+                    pull=slice_pull,
                     hoverinfo="skip",
                     showlegend=False,
                     marker=dict(line=dict(color="rgba(255,255,255,0.45)", width=1)),
+                    textfont=dict(size=10, color="#f5f5f5"),
                 )
             ]
         )
@@ -11378,8 +11403,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
 
         fig_cf.update_layout(
             height=560,
-            margin=dict(l=24, r=24, t=24, b=24),
-            uniformtext=dict(minsize=9, mode="hide"),
+            margin=dict(l=24, r=24, t=24, b=40),
+            uniformtext=dict(minsize=7, mode="show"),
         )
         fig_cf = apply_chart_background(fig_cf, skip_uniformtext=True)
 
@@ -11547,16 +11572,25 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     )
                     fig_pie_avg.update_traces(
                         textinfo="text",
-                        texttemplate="%{label}<br>%{value:,.0f} (%{percent:.0%})",
+                        texttemplate="%{label}<br>%{value:,.0f}<br>(%{percent:.1%})",
                         textposition="inside",
                         textfont_size=11,
                         insidetextorientation="horizontal",
-                        hovertemplate="<b>%{label}</b><br>%{value:,.0f} (%{percent:.0%})<extra></extra>",
+                        hovertemplate="<b>%{label}</b><br>%{value:,.0f} (%{percent:.1%})<extra></extra>",
                     )
                     fig_pie_avg.update_layout(
-                        height=500, showlegend=True,
-                        legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.05, font=dict(size=10)),
-                        uniformtext=dict(minsize=8, mode="hide"),
+                        height=500,
+                        showlegend=True,
+                        legend=dict(
+                            orientation="h",
+                            yanchor="top",
+                            y=-0.2,
+                            x=0.5,
+                            xanchor="center",
+                            font=dict(size=10),
+                        ),
+                        margin=dict(t=40, b=140, l=24, r=24),
+                        uniformtext=dict(minsize=7, mode="show"),
                     )
                     fig_pie_avg = apply_chart_background(fig_pie_avg)
                     render_chart(fig_pie_avg, key=f"{key_prefix}_avg_pie_{_pslug}", caption_below=f"Распределение ресурсов — {project_name}")
