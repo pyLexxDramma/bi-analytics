@@ -13359,14 +13359,25 @@ def dashboard_executive_documentation(df):
         )
 
     tessa_df = st.session_state.get("tessa_data", None)
-    if tessa_df is None or tessa_df.empty:
+    work = None
+    _source_label = ""
+    if tessa_df is not None and not tessa_df.empty:
+        work = tessa_df.copy()
+        _source_label = "TESSA (session_state: tessa_data)"
+    elif df is not None and not getattr(df, "empty", True):
+        # F1: fallback — если TESSA не попала в session_state, но текущий датасет уже TESSA-выгрузка.
+        _tessa_like = _tessa_find_column(df, ["KindName", "ObjectName", "CardId", "DocID", "KrStateID"])
+        if _tessa_like:
+            work = df.copy()
+            _source_label = "TESSA (текущий загруженный файл)"
+    if work is None or work.empty:
         st.warning(
             "Для отчёта «Исполнительная документация» необходимы данные из TESSA. "
             "Загрузите файлы tessa_*.csv через папку web/."
         )
         return
 
-    work = tessa_df.copy()
+    st.caption(f"Источник данных отчёта: **{_source_label}**.")
     work.columns = [str(c).strip() for c in work.columns]
     try:
         # Дополняем строки ИД данными карточки/задачи TESSA по ключам DocID/CardId.
