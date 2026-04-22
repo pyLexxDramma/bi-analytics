@@ -3911,12 +3911,8 @@ def dashboard_plan_fact_dates(df):
 
     tbl_opt1, tbl_opt2 = st.columns(2)
     with tbl_opt1:
-        tbl_show_end = st.checkbox(
-            "Таблица: отклонение окончания",
-            value=True,
-            key="dates_tbl_end",
-            help="Столбец «Отклонение окончания» (дней): фактическое окончание минус плановое.",
-        )
+        st.caption("Таблица всегда включает: базовое окончание, окончание, отклонение окончания.")
+        tbl_show_end = True
     # По ТЗ выводим акцент на отклонении окончания; отклонение начала в таблице не показываем.
     tbl_show_start = False
     with tbl_opt2:
@@ -4775,12 +4771,15 @@ def dashboard_plan_fact_dates(df):
         out_cols.append("UID задачи (MSP)")
     if "ID задачи (MSP)" in summary_df.columns:
         out_cols.append("ID задачи (MSP)")
+    # По ТЗ page_7 эти три поля обязательны в таблице.
+    out_cols += [
+        "Базовое окончание",
+        "Окончание",
+    ]
     if dates_value_type == "Даты (план/факт)":
         out_cols += [
             "Базовое начало",
-            "Базовое окончание",
             "Начало (факт)",
-            "Окончание",
         ]
     if tbl_show_start:
         out_cols.append("Отклонение начала")
