@@ -11331,7 +11331,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 frac = float(val) / total_v
                 if 0 < frac < 0.03:
                     slice_text.append(f"{frac * 100:.1f}%")
-                    slice_pull.append(0.1)
+                    # Сильный pull выталкивает сегменты за круг; держим минимальный зазор.
+                    slice_pull.append(0.03)
                 else:
                     slice_text.append(f"{frac * 100:.0f}%")
                     slice_pull.append(0.0)
@@ -11339,73 +11340,66 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             slice_text = [""] * len(values)
             slice_pull = [0.0] * len(values)
 
+        # План/факт/откл. в подсказке; без ручных paper-аннотаций (они съезжали относительно круга).
+        _cd = []
+        for i in range(len(pie_df)):
+            _dev = float(pie_df.iloc[i]["Отклонение"])
+            _dv = int(np.ceil(_dev)) if _dev >= 0 else -int(np.ceil(abs(_dev)))
+            _cd.append(
+                (
+                    int(np.ceil(float(pie_df.iloc[i]["План"]))),
+                    int(np.ceil(float(pie_df.iloc[i]["Факт"]))),
+                    _dv,
+                )
+            )
+
         fig_cf = go.Figure(
             data=[
                 go.Pie(
                     labels=labels,
                     values=values,
+                    customdata=_cd,
                     sort=False,
                     direction="clockwise",
                     text=slice_text,
                     textinfo="text",
                     textposition="inside",
+                    insidetextorientation="horizontal",
                     pull=slice_pull,
-                    hoverinfo="skip",
-                    showlegend=False,
+                    hole=0.0,
+                    hovertemplate=(
+                        "<b>%{label}</b><br>"
+                        "План: %{customdata[0]}<br>"
+                        "Факт: %{customdata[1]}<br>"
+                        "Откл.: %{customdata[2]}<extra></extra>"
+                    ),
+                    showlegend=True,
                     marker=dict(line=dict(color="rgba(255,255,255,0.45)", width=1)),
                     textfont=dict(size=10, color="#f5f5f5"),
                 )
             ]
         )
-
-        # Внешние выноски: план/факт/откл (без %), рядом с сектором; без легенды и hover.
-        try:
-            total = float(sum(values)) if values else 0.0
-            if total > 0:
-                cum = 0.0
-                anns = []
-                cx, cy = 0.5, 0.52
-                r = 0.46
-                r_txt = 0.78
-                for i, (lab, val) in enumerate(zip(labels, values)):
-                    frac = float(val) / total if total else 0.0
-                    mid = cum + frac / 2.0
-                    cum += frac
-                    ang = (0.25 - mid) * 2.0 * np.pi  # старт сверху
-                    x_txt = cx + r_txt * np.cos(ang)
-                    y_txt = cy + r_txt * np.sin(ang)
-                    x_anch = "left" if np.cos(ang) >= 0 else "right"
-                    plan_v = float(pie_df.iloc[i]["План"])
-                    fact_v = float(pie_df.iloc[i]["Факт"])
-                    dev_v = float(pie_df.iloc[i]["Отклонение"])
-                    txt = (
-                        f"{html_module.escape(str(lab))}<br>"
-                        f"План: {int(np.ceil(plan_v))}<br>"
-                        f"Факт: {int(np.ceil(fact_v))}<br>"
-                        f"Откл.: {int(np.ceil(dev_v)) if dev_v >= 0 else -int(np.ceil(abs(dev_v)))}"
-                    )
-                    anns.append(
-                        dict(
-                            xref="paper",
-                            yref="paper",
-                            x=float(x_txt),
-                            y=float(y_txt),
-                            text=txt,
-                            showarrow=False,
-                            align="left",
-                            xanchor=x_anch,
-                            font=dict(size=11, color="#f5f5f5"),
-                        )
-                    )
-                fig_cf.update_layout(annotations=anns)
-        except Exception:
-            pass
-
+        # Легенда в зоне полей figure (как в px.pie), а не в «бумажных» углах круга
         fig_cf.update_layout(
-            height=560,
-            margin=dict(l=24, r=24, t=24, b=40),
+            height=520,
+            margin=dict(l=24, r=24, t=32, b=200),
+            legend=dict(
+                orientation="h",
+                yanchor="top",
+                y=-0.08,
+                x=0.5,
+                xanchor="center",
+                font=dict(size=9, color="#e0e0e0"),
+            ),
             uniformtext=dict(minsize=7, mode="show"),
         )
+        # Круг в верхней части области, чтобы легенда не наезжала
+        try:
+            fig_cf.update_traces(
+                domain=dict(x=[0.04, 0.96], y=[0.18, 0.95]),
+            )
+        except Exception:
+            pass
         fig_cf = apply_chart_background(fig_cf, skip_uniformtext=True)
 
         plan_sum = float(pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0).sum()) if "План_numeric" in d.columns else 0.0
