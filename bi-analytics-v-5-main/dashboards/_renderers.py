@@ -3579,6 +3579,9 @@ def dashboard_plan_fact_dates(df):
     dates_notes_col = _find_column_by_keywords(
         df, ("note", "заметк", "comment", "remark", "notes")
     )
+    dates_milestone_col = _find_column_by_keywords(
+        df, ("milestone", "веха", "контрольная точка", "кп")
+    )
     dates_lot_col = _find_column_by_keywords(df, ("lot", "лот", "LOT"))
     # Иерархия MSP: предпочтительно outline (level structure), см. web_loader._fill_section_from_task_tree
     plan_fact_dates_outline_col = _dev_tasks_resolve_level_column(df)
@@ -4148,15 +4151,30 @@ def dashboard_plan_fact_dates(df):
                 _pct.isna() | (_pct < 99.9995)
             ].copy()
 
+    _covenant_tokens = (
+        "ковенант",
+        "ковенанты",
+        "ковен",
+        "финковенант",
+        "covenant",
+        "covenants",
+        "coven",
+    )
+
     def _text_indicates_covenant(val):
         if val is None or (isinstance(val, float) and pd.isna(val)):
             return False
         t = str(val).lower()
-        return "ковенант" in t or "coven" in t
+        return any(tok in t for tok in _covenant_tokens)
 
     def _covenant_row_mask(frame):
         m = pd.Series(False, index=frame.index)
-        for col in ("section", "block", "task name"):
+        _cov_cols = ["section", "block", "task name", "reason of deviation"]
+        if dates_notes_col:
+            _cov_cols.append(dates_notes_col)
+        if dates_milestone_col:
+            _cov_cols.append(dates_milestone_col)
+        for col in _cov_cols:
             if col in frame.columns:
                 m = m | frame[col].astype(str).map(_text_indicates_covenant)
         return m
@@ -4183,10 +4201,39 @@ def dashboard_plan_fact_dates(df):
             st.info("Нет данных после фильтра «Причина отклонения (категория)».")
             return
     if force_covenant_ui:
-        df_after_hide = df_after_hide.loc[_covenant_row_mask(df_after_hide)].copy()
+        _cov_mask_all = _covenant_row_mask(df_after_hide)
+        df_after_hide = df_after_hide.loc[_cov_mask_all].copy()
         if df_after_hide.empty:
-            st.info("Нет ковенантных строк для отображения.")
-            return
+            _manual_task_col = (
+                _pf_task_col
+                if _pf_task_col and _pf_task_col in filtered_df.columns
+                else ("task name" if "task name" in filtered_df.columns else None)
+            )
+            if _manual_task_col:
+                _manual_opts = sorted(
+                    {
+                        str(v).strip()
+                        for v in filtered_df[_manual_task_col].dropna().tolist()
+                        if str(v).strip()
+                    }
+                )
+                _manual_sel = st.multiselect(
+                    "Ковенанты: выбрать задачи вручную",
+                    options=_manual_opts,
+                    key="dates_manual_covenant_tasks",
+                    help="Автопоиск не нашёл маркеры ковенантов. Выберите нужные задачи вручную.",
+                )
+                if _manual_sel:
+                    _sel_set = {str(x).strip() for x in _manual_sel}
+                    df_after_hide = filtered_df[
+                        filtered_df[_manual_task_col]
+                        .astype(str)
+                        .str.strip()
+                        .isin(_sel_set)
+                    ].copy()
+            if df_after_hide.empty:
+                st.info("Нет ковенантных строк для отображения.")
+                return
 
     if task_label_mode == "По лоту" and dates_lot_col and dates_lot_col in df_after_hide.columns:
         _lc = df_after_hide[dates_lot_col].astype(str).str.strip()
