@@ -4204,19 +4204,20 @@ def dashboard_plan_fact_dates(df):
             st.info("Нет данных после фильтра «Причина отклонения (категория)».")
             return
     if force_covenant_ui:
+        _manual_base_df = df_after_hide.copy()
         _cov_mask_all = _covenant_row_mask(df_after_hide)
         df_after_hide = df_after_hide.loc[_cov_mask_all].copy()
         if df_after_hide.empty:
             _manual_task_col = (
                 _pf_task_col
-                if _pf_task_col and _pf_task_col in filtered_df.columns
-                else ("task name" if "task name" in filtered_df.columns else None)
+                if _pf_task_col and _pf_task_col in _manual_base_df.columns
+                else ("task name" if "task name" in _manual_base_df.columns else None)
             )
             if _manual_task_col:
                 _manual_opts = sorted(
                     {
                         str(v).strip()
-                        for v in filtered_df[_manual_task_col].dropna().tolist()
+                        for v in _manual_base_df[_manual_task_col].dropna().tolist()
                         if str(v).strip()
                     }
                 )
@@ -4228,8 +4229,8 @@ def dashboard_plan_fact_dates(df):
                 )
                 if _manual_sel:
                     _sel_set = {str(x).strip() for x in _manual_sel}
-                    df_after_hide = filtered_df[
-                        filtered_df[_manual_task_col]
+                    df_after_hide = _manual_base_df[
+                        _manual_base_df[_manual_task_col]
                         .astype(str)
                         .str.strip()
                         .isin(_sel_set)
