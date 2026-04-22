@@ -670,62 +670,64 @@ def render_sidebar_menu(current_page: str = "reports"):
 
         st.markdown("---")
 
+        st.markdown("### Служебная информация")
+
         # Информация о загруженных файлах
         if has_report_access(user["role"]):
             loaded_files_info = st.session_state.get("loaded_files_info", {})
             if loaded_files_info:
-                st.markdown("### Загруженные файлы")
+                with st.expander("Загруженные файлы", expanded=False):
 
-                project_data = st.session_state.get("project_data")
-                if project_data is not None:
-                    total_rows = len(project_data)
-                    st.success(f"Проекты: {total_rows} строк")
-                    project_files = [
-                        f
-                        for f, info in loaded_files_info.items()
-                        if info["type"] == "project"
-                    ]
-                    if project_files:
-                        st.markdown(
-                            "\n".join(
-                                f"- `{file_name}` — {loaded_files_info[file_name]['rows']} строк"
-                                for file_name in project_files
+                    project_data = st.session_state.get("project_data")
+                    if project_data is not None:
+                        total_rows = len(project_data)
+                        st.success(f"Проекты: {total_rows} строк")
+                        project_files = [
+                            f
+                            for f, info in loaded_files_info.items()
+                            if info["type"] == "project"
+                        ]
+                        if project_files:
+                            st.markdown(
+                                "\n".join(
+                                    f"- `{file_name}` — {loaded_files_info[file_name]['rows']} строк"
+                                    for file_name in project_files
+                                )
                             )
-                        )
 
-                resources_data = st.session_state.get("resources_data")
-                if resources_data is not None:
-                    total_rows = len(resources_data)
-                    st.success(f"Ресурсы: {total_rows} строк")
-                    resources_files = [
-                        f
-                        for f, info in loaded_files_info.items()
-                        if info["type"] == "resources"
-                    ]
-                    if resources_files:
-                        st.markdown(
-                            "\n".join(
-                                f"- `{file_name}` — {loaded_files_info[file_name]['rows']} строк"
-                                for file_name in resources_files
+                    resources_data = st.session_state.get("resources_data")
+                    if resources_data is not None:
+                        total_rows = len(resources_data)
+                        st.success(f"Ресурсы: {total_rows} строк")
+                        resources_files = [
+                            f
+                            for f, info in loaded_files_info.items()
+                            if info["type"] == "resources"
+                        ]
+                        if resources_files:
+                            st.markdown(
+                                "\n".join(
+                                    f"- `{file_name}` — {loaded_files_info[file_name]['rows']} строк"
+                                    for file_name in resources_files
+                                )
                             )
-                        )
 
-                technique_data = st.session_state.get("technique_data")
-                if technique_data is not None:
-                    total_rows = len(technique_data)
-                    st.success(f"Техника: {total_rows} строк")
-                    technique_files = [
-                        f
-                        for f, info in loaded_files_info.items()
-                        if info["type"] == "technique"
-                    ]
-                    if technique_files:
-                        st.markdown(
-                            "\n".join(
-                                f"- `{file_name}` — {loaded_files_info[file_name]['rows']} строк"
-                                for file_name in technique_files
+                    technique_data = st.session_state.get("technique_data")
+                    if technique_data is not None:
+                        total_rows = len(technique_data)
+                        st.success(f"Техника: {total_rows} строк")
+                        technique_files = [
+                            f
+                            for f, info in loaded_files_info.items()
+                            if info["type"] == "technique"
+                        ]
+                        if technique_files:
+                            st.markdown(
+                                "\n".join(
+                                    f"- `{file_name}` — {loaded_files_info[file_name]['rows']} строк"
+                                    for file_name in technique_files
+                                )
                             )
-                        )
 
                 st.markdown("---")
 
