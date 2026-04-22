@@ -19121,6 +19121,12 @@ def dashboard_project_schedule_chart(df):
                 return cols_norm[n]
         return None
 
+    def _is_generic_block_value(v) -> bool:
+        s = str(v).strip().lower()
+        if not s:
+            return True
+        return bool(re.match(r"^(блок|block)\s*[-_a-zа-я]*\d+$", s))
+
     def _sched_wbs_tuple(val):
         try:
             if val is None or pd.isna(val):
@@ -19364,12 +19370,38 @@ def dashboard_project_schedule_chart(df):
                 return c
         return None
 
+    def _gantt_resolve_wbs_column(d: pd.DataFrame):
+        """Колонка с WBS/Outline Number для fallback-определения уровня задач."""
+        if d is None or getattr(d, "empty", True):
+            return None
+        preferred = (
+            "outline number",
+            "outline_number",
+            "wbs",
+            "wbs code",
+            "код wbs",
+            "иерархический номер",
+            "номер структуры",
+        )
+        cols_lower = {str(c).strip().lower(): c for c in d.columns}
+        for w in preferred:
+            if w in cols_lower:
+                return cols_lower[w]
+        for c in d.columns:
+            sl = str(c).strip().lower()
+            if "outline" in sl and "number" in sl:
+                return c
+            if "wbs" in sl:
+                return c
+        return None
+
     proj_col = _sched_col(plot_df, ["project name", "Проект", "проект", "Project"])
     # B2: приоритетно берём MSP-поле «БЛОК», а не производные/альтернативные колонки.
     block_col_msp = _sched_col(plot_df, ["БЛОК", "Блок"])
-    block_col = block_col_msp or _sched_col(
-        plot_df,
-        ["block", "Функциональный блок", "Functional block"],
+    block_col = (
+        block_col_msp
+        or _sched_col(plot_df, ["block", "Функциональный блок", "Functional block"])
+        or _sched_col(plot_df, ["section", "Раздел"])
     )
     level_col = _sched_col(
         plot_df,
@@ -19388,6 +19420,7 @@ def dashboard_project_schedule_chart(df):
             "Исходный уровень",
         ],
     ) or _gantt_resolve_level_column(plot_df)
+    wbs_col = _gantt_resolve_wbs_column(plot_df)
 
     def _sched_col_contains(d, needles, exclude=()):
         """Первая колонка, в имени которой есть любая из подстрок (нижний регистр)."""
@@ -19480,7 +19513,62 @@ def dashboard_project_schedule_chart(df):
             st.caption("Колонка проекта не найдена.")
     with f2:
         if block_col:
-            blocks = ["Все"] + sorted(plot_df[block_col].dropna().astype(str).unique().tolist())
+            _raw_blocks = sorted(plot_df[block_col].dropna().astype(str).map(str.strip).unique().tolist())
+            _raw_blocks = [b for b in _raw_blocks if b and b.lower() != "nan"]
+            _non_generic_blocks = [b for b in _raw_blocks if not _is_generic_block_value(b)]
+            _block_values = _non_generic_blocks if _non_generic_blocks else _raw_blocks
+
+            # Если поле блока содержит только «Блок N», сначала пробуем «Раздел».
+            if (not _non_generic_blocks) and section_col and section_col in plot_df.columns:
+                _sec_vals = (
+                    plot_df[section_col].dropna().astype(str).map(str.strip).unique().tolist()
+                )
+                _sec_vals = [s for s in _sec_vals if s and s.lower() != "nan"]
+                _sec_non_generic = [s for s in _sec_vals if not _is_generic_block_value(s)]
+                if _sec_non_generic:
+                    _block_values = sorted(_sec_non_generic)
+                    block_col = section_col
+
+            # Если и там нет, подставляем имена задач уровня 2.
+            if (not _non_generic_blocks) and level_col and block_col != section_col:
+                try:
+                    _lvl_num = pd.to_numeric(plot_df[level_col], errors="coerce")
+                    _task_name_col = _sched_col(plot_df, ["task name", "Task Name", "Название"])
+                    if _task_name_col and _lvl_num.notna().any():
+                        _l2_names = (
+                            plot_df.loc[_lvl_num == 2, _task_name_col]
+                            .dropna()
+                            .astype(str)
+                            .map(lambda x: _gantt_clean_task_label(x).strip())
+                        )
+                        _l2_values = sorted({x for x in _l2_names.tolist() if x and x.lower() != "nan"})
+                        if _l2_values:
+                            _block_values = _l2_values
+                            block_col = _task_name_col
+                except Exception:
+                    pass
+            # Если колонки уровня нет, пробуем определить L2 по WBS/Outline Number (глубина = 2).
+            if (not _non_generic_blocks) and (not level_col) and wbs_col:
+                try:
+                    _task_name_col = _sched_col(plot_df, ["task name", "Task Name", "Название"])
+                    if _task_name_col:
+                        _wbs_depth = plot_df[wbs_col].map(_sched_wbs_tuple).map(
+                            lambda t: int(len(t)) if t else np.nan
+                        )
+                        if _wbs_depth.notna().any():
+                            _l2_names = (
+                                plot_df.loc[_wbs_depth == 2, _task_name_col]
+                                .dropna()
+                                .astype(str)
+                                .map(lambda x: _gantt_clean_task_label(x).strip())
+                            )
+                            _l2_values = sorted({x for x in _l2_names.tolist() if x and x.lower() != "nan"})
+                            if _l2_values:
+                                _block_values = _l2_values
+                                block_col = _task_name_col
+                except Exception:
+                    pass
+            blocks = ["Все"] + _block_values
             sel_block = st.selectbox("Функциональный блок (ур. 2)", blocks, key="gantt_block_filter")
             if sel_block != "Все":
                 plot_df = plot_df[plot_df[block_col].astype(str).str.strip() == str(sel_block).strip()]
