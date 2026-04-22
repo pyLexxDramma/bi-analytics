@@ -4747,8 +4747,9 @@ def dashboard_plan_fact_dates(df):
                 else ""
             )
         if "reason of deviation" in table_df.columns:
-            rec["Причина отклонения"] = _clean_display_str(
-                row.get("reason of deviation")
+            _raw_reason = _clean_display_str(row.get("reason of deviation"))
+            rec["Причина отклонения"] = (
+                _deviations_reason_bucket_label(_raw_reason) if _raw_reason else ""
             )
         if dates_notes_col and dates_notes_col in table_df.columns:
             rec["Заметки"] = _clean_display_str(row.get(dates_notes_col))
@@ -4925,9 +4926,29 @@ def dashboard_plan_fact_dates(df):
     # В режиме ковенантов узкая таблица «Ковенанты (таблица)» уже даёт сроки/отклонения по ковенантам;
     # полная таблица по filtered_df дублировала бы те же строки — показываем её только свёрнуто.
     def _render_dates_main_table():
-        # Для стабильной сортировки по клику используем нативную таблицу с числовыми типами.
-        st.dataframe(
+        # Оставляем числовые типы для сортировки и возвращаем цветовую подсветку отклонений.
+        _extra_dev = tuple(
+            c for c in ("Отклонение начала",) if c in summary_numeric.columns
+        )
+        _styled = style_dataframe_for_dark_theme(
             summary_numeric,
+            days_column=(
+                "Отклонение окончания"
+                if "Отклонение окончания" in summary_numeric.columns
+                else None
+            ),
+            extra_days_columns=_extra_dev if _extra_dev else None,
+            plan_date_column=(
+                "Базовое окончание"
+                if "Базовое окончание" in summary_numeric.columns
+                else None
+            ),
+            fact_date_column=(
+                "Окончание" if "Окончание" in summary_numeric.columns else None
+            ),
+        )
+        st.dataframe(
+            _styled,
             hide_index=True,
             use_container_width=True,
             height=min(700, 50 + max(1, len(summary_numeric)) * 35),
