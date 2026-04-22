@@ -4177,6 +4177,13 @@ def dashboard_plan_fact_dates(df):
             _cov_cols.append(dates_notes_col)
         if dates_milestone_col:
             _cov_cols.append(dates_milestone_col)
+        # Дополнительно: любые колонки, по названию похожие на reason/notes/comments/milestone.
+        _kw = ("reason", "причин", "note", "notes", "comment", "remark", "milestone", "вех")
+        for _c in frame.columns:
+            _lc = str(_c).strip().lower()
+            if any(k in _lc for k in _kw):
+                _cov_cols.append(_c)
+        _cov_cols = list(dict.fromkeys(_cov_cols))
         for col in _cov_cols:
             if col in frame.columns:
                 m = m | frame[col].astype(str).map(_text_indicates_covenant)
