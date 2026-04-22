@@ -334,5 +334,6 @@
 
 - **Файлы в коммите:** `dashboards/_renderers.py`, `docs/PRAVKI_STEPS_LOG.md`.
 - **Сообщение коммита:** `fix(deviations): шаг 13 — динамика причин по категориям причин`
+- **Короткий SHA на `origin/main`:** `f052b83`
 
 
