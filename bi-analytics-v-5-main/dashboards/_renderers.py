@@ -4218,6 +4218,10 @@ def dashboard_plan_fact_dates(df):
                 else ("task name" if "task name" in _manual_base_df.columns else None)
             )
             if _manual_task_col:
+                st.caption(
+                    "Автопоиск ковенантов не нашёл совпадений по маркерам. "
+                    "Выберите нужные задачи вручную."
+                )
                 _manual_work = _manual_base_df.copy()
                 _task_s = _manual_work[_manual_task_col].astype(str).str.strip()
                 _manual_work = _manual_work[_task_s.ne("") & _task_s.str.lower().ne("nan")]
