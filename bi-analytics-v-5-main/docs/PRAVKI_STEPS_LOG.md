@@ -308,6 +308,6 @@
 
 - **Файлы в коммите:** `dashboards/_renderers.py`, `docs/PRAVKI_STEPS_LOG.md`.
 - **Сообщение коммита:** `fix(deviations-combined): шаг 12 — подпись проекта и динамика причин (devcombo)`
-- **Короткий SHA коммита:** `c9ca077`
+- **Короткий SHA коммита на `origin/main`:** `f095d95`
 
 
