@@ -4954,7 +4954,7 @@ def dashboard_plan_fact_dates(df):
     )
     _sort_col = _sort_default_col
     _sort_desc = True
-    if _sort_col and len(summary_numeric) > 1:
+    if _sort_col and len(summary_numeric) > 1 and not force_covenant_ui:
         _s1, _s2 = st.columns([3, 2])
         with _s1:
             _sort_col = st.selectbox(
