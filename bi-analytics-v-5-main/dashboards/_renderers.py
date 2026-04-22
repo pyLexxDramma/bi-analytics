@@ -18107,7 +18107,7 @@ def dashboard_predpisania(df):
     if stable_sort_cols:
         pred = pred.sort_values(stable_sort_cols, kind="stable", na_position="last").reset_index(drop=True)
 
-    pred = _pred_dedupe_by_docid(pred, pred_doc_col, creation_col_pred)
+    pred = _pred_dedupe_by_docid(pred, (pred_doc_col or pred_card_col), creation_col_pred)
     pred = _pred_merge_completion_from_tasks(pred, pred_card_col, pred_doc_col)
 
     _excl_guess = [kind_col, contr_col, obj_col, doc_num_col, creation_col_pred, completion_col]
