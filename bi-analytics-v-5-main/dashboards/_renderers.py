@@ -4879,6 +4879,42 @@ def dashboard_plan_fact_dates(df):
                 .round(0)
             )
 
+    _sort_default_col = (
+        "Отклонение окончания"
+        if "Отклонение окончания" in summary_numeric.columns
+        else (summary_numeric.columns[0] if len(summary_numeric.columns) else None)
+    )
+    _sort_col = _sort_default_col
+    _sort_desc = True
+    if _sort_col:
+        _s1, _s2 = st.columns([3, 2])
+        with _s1:
+            _sort_col = st.selectbox(
+                "Сортировка таблицы: колонка",
+                options=list(summary_numeric.columns),
+                index=list(summary_numeric.columns).index(_sort_col)
+                if _sort_col in summary_numeric.columns
+                else 0,
+                key="dates_table_sort_col",
+            )
+        with _s2:
+            _sort_desc = st.selectbox(
+                "Направление",
+                options=["По убыванию", "По возрастанию"],
+                index=0,
+                key="dates_table_sort_dir",
+            ) == "По убыванию"
+        try:
+            _order_idx = summary_numeric.sort_values(
+                by=_sort_col,
+                ascending=not _sort_desc,
+                na_position="last",
+            ).index
+            summary_numeric = summary_numeric.loc[_order_idx].reset_index(drop=True)
+            summary_display = summary_display.loc[_order_idx].reset_index(drop=True)
+        except Exception:
+            pass
+
     _dates_table_tooltips = {
         "Проект": "Название проекта из выгрузки MSP.",
         "Задача": "Наименование задачи MSP или лот (режим «По лоту» — см. блок «Подписи на графике и в таблице»).",
