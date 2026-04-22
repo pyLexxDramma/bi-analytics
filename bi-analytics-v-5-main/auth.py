@@ -590,6 +590,16 @@ def render_sidebar_menu(current_page: str = "reports"):
         return
 
     with st.sidebar:
+        # F2: скрываем системную мульти-страничную навигацию Streamlit
+        # (streamlit app / admin / analyst params), оставляем только наше меню.
+        st.markdown(
+            """
+            <style>
+            [data-testid="stSidebarNav"] { display: none !important; }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
         # Меню навигации
         st.markdown("### Меню")
 
@@ -646,31 +656,7 @@ def render_sidebar_menu(current_page: str = "reports"):
             if st.button("Настройки профиля", width="stretch"):
                 switch_page_app("pages/profile.py")
 
-        # Админ панель и параметры отчётов (страницы с префиксом _ не показываются в авто-меню Streamlit)
-        if has_admin_access(user["role"]):
-            if current_page == "admin":
-                st.button(
-                    "Админ панель",
-                    width="stretch",
-                    type="primary",
-                    disabled=True,
-                    help="Текущая страница",
-                )
-            else:
-                if st.button("Админ панель", width="stretch"):
-                    switch_page_app("pages/_admin.py")
-
-            if current_page == "analyst_params":
-                st.button(
-                    "Параметры отчётов",
-                    width="stretch",
-                    type="primary",
-                    disabled=True,
-                    help="Текущая страница",
-                )
-            else:
-                if st.button("Параметры отчётов", width="stretch"):
-                    switch_page_app("pages/_analyst_params.py")
+        # F2: пункты «Админ панель» и «Параметры отчётов» убраны из бокового меню.
 
         # 3. Выход (для всех ролей)
         st.markdown("---")
