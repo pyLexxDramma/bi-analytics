@@ -83,9 +83,9 @@ REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
         ],
     ),
     (
-        "Предписания по подрядчикам",
+        "Неустраненные предписания",
         [
-            "Предписания по подрядчикам",
+            "Неустраненные предписания",
         ],
     ),
 ]
@@ -236,6 +236,8 @@ def _get_dashboards() -> Dict[str, Callable]:
         "Исполнительная документация": dashboard_executive_documentation,
         "Просрочка выдачи РД": dashboard_rd_delay,
         "Просрочка выдачи ПД": dashboard_pd_delay,
+        "Неустраненные предписания": dashboard_predpisania,
+        # Обратная совместимость со старым именем отчёта.
         "Предписания по подрядчикам": dashboard_predpisania,
         "Девелоперские проекты": dashboard_developer_projects,
     }
