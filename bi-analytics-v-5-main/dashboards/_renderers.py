@@ -17659,18 +17659,35 @@ def _pred_dedupe_by_docid(pred: pd.DataFrame, pred_doc_col: str | None, creation
     p_ok = p.loc[m]
     p_bad = p.loc[~m]
     if not p_ok.empty:
+        _meta_dt = pd.Series(pd.NaT, index=p_ok.index)
+        for _mc in ("snapshot_date", "loaded_at", "__loaded_at", "upload_date"):
+            if _mc in p_ok.columns:
+                _cand = pd.to_datetime(p_ok[_mc], errors="coerce", dayfirst=True)
+                if _cand.notna().any():
+                    _meta_dt = _cand
+                    break
         if creation_col_pred and creation_col_pred in p_ok.columns:
             _created_dt = pd.to_datetime(p_ok[creation_col_pred], errors="coerce", dayfirst=True)
-            p_ok = p_ok.assign(_created_dt=_created_dt).sort_values(
-                ["_created_dt", creation_col_pred],
+            p_ok = p_ok.assign(_meta_dt=_meta_dt, _created_dt=_created_dt).sort_values(
+                ["_meta_dt", "_created_dt", creation_col_pred],
                 na_position="last",
                 kind="stable",
             )
             p_ok = p_ok.drop_duplicates(subset=[pred_doc_col], keep="last").drop(
-                columns=["_created_dt"], errors="ignore"
+                columns=["_meta_dt", "_created_dt"], errors="ignore"
             )
         else:
-            p_ok = p_ok.drop_duplicates(subset=[pred_doc_col], keep="last")
+            if _meta_dt.notna().any():
+                p_ok = p_ok.assign(_meta_dt=_meta_dt).sort_values(
+                    ["_meta_dt"],
+                    na_position="last",
+                    kind="stable",
+                )
+                p_ok = p_ok.drop_duplicates(subset=[pred_doc_col], keep="last").drop(
+                    columns=["_meta_dt"], errors="ignore"
+                )
+            else:
+                p_ok = p_ok.drop_duplicates(subset=[pred_doc_col], keep="last")
     out = pd.concat([p_ok, p_bad], ignore_index=True)
     return out
 
