@@ -5081,15 +5081,23 @@ def dashboard_plan_fact_dates(df):
                 else None
             ),
             extra_days_columns=_extra_dev if _extra_dev else None,
-            plan_date_column=(
-                "Базовое окончание"
-                if "Базовое окончание" in summary_numeric.columns
-                else None
-            ),
-            fact_date_column=(
-                "Окончание" if "Окончание" in summary_numeric.columns else None
-            ),
         )
+        # По ТЗ: визуально разводим план/факт отдельными цветами колонок.
+        _baseline_cols = [c for c in ("Базовое окончание",) if c in summary_numeric.columns]
+        _fact_cols = [c for c in ("Окончание",) if c in summary_numeric.columns]
+        try:
+            if _baseline_cols:
+                _styled = _styled.set_properties(
+                    subset=_baseline_cols,
+                    **{"background-color": "rgba(59, 130, 246, 0.22)", "color": "#ffffff"},
+                )
+            if _fact_cols:
+                _styled = _styled.set_properties(
+                    subset=_fact_cols,
+                    **{"background-color": "rgba(243, 156, 18, 0.24)", "color": "#ffffff"},
+                )
+        except Exception:
+            pass
         _num_cfg = {}
         for _c in ("Отклонение начала", "Отклонение окончания", "Отклонение длительности"):
             if _c in summary_numeric.columns:
