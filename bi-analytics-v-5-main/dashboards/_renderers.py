@@ -4377,6 +4377,17 @@ def dashboard_plan_fact_dates(df):
         if covenant_rows_df.empty:
             show_covenant_ui = False
 
+    _dev_group_label = (
+        "Функциональный блок"
+        if pf_dates_block_filter_mode == "l2"
+        else "Раздел"
+    )
+    _dev_group_label_gen = (
+        "функциональным блокам"
+        if _dev_group_label == "Функциональный блок"
+        else "разделам"
+    )
+
     def _render_stage_deviation_bar_chart(bar_df_local):
         if bar_df_local.empty or "Этап" not in bar_df_local.columns:
             return
@@ -4405,7 +4416,7 @@ def dashboard_plan_fact_dates(df):
         )
         fig_section.update_layout(
             xaxis_title="Отклонение (дней)",
-            yaxis_title="Этап",
+            yaxis_title=_dev_group_label,
             height=max(440, len(section_dev) * 52),
             showlegend=False,
         )
@@ -4422,7 +4433,8 @@ def dashboard_plan_fact_dates(df):
         render_chart(
             fig_section,
             caption_below=(
-                "Отклонение от базового плана по этапам (горизонтально; по убыванию величины отклонения)"
+                f"Отклонение от базового плана по {_dev_group_label_gen} "
+                "(горизонтально; по убыванию величины отклонения)"
             ),
         )
 
