@@ -98,17 +98,34 @@ def init_web_schema():
 
 
 def get_active_version_id() -> int | None:
-    """Возвращает id активной версии или None."""
+    """Возвращает id активной версии.
+
+    Политика:
+    1) явно помеченная `is_active=1` — но только если её статус `success`
+       (чтобы случайно оставшаяся активной `partial`-версия не блокировала
+        показ последней корректной загрузки);
+    2) иначе — последняя `status='success'`;
+    3) в крайнем случае — последняя любая (включая `partial`).
+    """
     with get_web_connection() as conn:
         cur = conn.cursor()
         row = cur.execute(
-            "SELECT id FROM web_versions WHERE is_active = 1 ORDER BY id DESC LIMIT 1"
+            "SELECT id, status FROM web_versions WHERE is_active = 1 "
+            "ORDER BY id DESC LIMIT 1"
         ).fetchone()
-        if row:
+        if row and row["status"] == "success":
             return row["id"]
-        # Если нет явно активной — берём последнюю успешную
+        last_success = cur.execute(
+            "SELECT id FROM web_versions WHERE status='success' "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if last_success:
+            return last_success["id"]
+        if row:  # активная partial — лучше, чем ничего
+            return row["id"]
         row = cur.execute(
-            "SELECT id FROM web_versions WHERE status IN ('success','partial') ORDER BY id DESC LIMIT 1"
+            "SELECT id FROM web_versions WHERE status IN ('success','partial') "
+            "ORDER BY id DESC LIMIT 1"
         ).fetchone()
         return row["id"] if row else None
 

@@ -186,8 +186,10 @@ def _fill_section_from_task_tree(df: pd.DataFrame) -> pd.DataFrame:
 
     if "project name" in df.columns:
         parts = []
-        for _, g in df.groupby("project name", sort=False):
+        for _, g in df.groupby("project name", sort=False, dropna=False):
             parts.append(_walk_one(g))
+        if not parts:
+            return _walk_one(df)
         out = pd.concat(parts)
         return out.sort_index()
     return _walk_one(df)
@@ -202,18 +204,55 @@ def _apply_msp_column_mapping(df: pd.DataFrame, project_name: str) -> pd.DataFra
     Добавляет Period-колонки для группировки по месяцу/кварталу/году.
     """
     # ── Переименование колонок ───────────────────────────────────────────────
-    remap = {k: v for k, v in _MSP_COLUMN_REMAP.items() if k in df.columns}
+    # data_loader.load_data() уже мог частично переименовать MSP-колонки в canonical-имена
+    # (plan start, plan end, task name, lot, level structure, level). Пропускаем те
+    # переименования, которые создадут дубликат с уже существующей canonical-колонкой,
+    # иначе далее df[col] возвращает DataFrame и df[col] = df[col].apply(...) падает KeyError.
+    _existing = set(df.columns)
+    remap = {
+        k: v for k, v in _MSP_COLUMN_REMAP.items()
+        if k in _existing and v not in _existing
+    }
     df = df.rename(columns=remap)
+    # Страховка: если дубликаты всё-таки появились (разные исходные имена → один canonical),
+    # оставляем копию с бо́льшим числом непустых значений.
+    if df.columns.duplicated().any():
+        _cols = list(df.columns)
+        _keep = [True] * len(_cols)
+        _seen: Dict[str, int] = {}
+        for _i, _c in enumerate(_cols):
+            if _cols.count(_c) <= 1:
+                continue
+            _idxs = [j for j, cc in enumerate(_cols) if cc == _c]
+            if _c in _seen:
+                continue
+            _best = max(_idxs, key=lambda j: int(df.iloc[:, j].notna().sum()))
+            for j in _idxs:
+                if j != _best:
+                    _keep[j] = False
+            _seen[_c] = _best
+        df = df.iloc[:, _keep].copy()
+
+    from config import MSP_PROJECT_NAME_MAP
+
+    # Нормализованное имя проекта из имени файла (msp_<project_name>_<date>.csv).
+    # Используется и как заполнитель пустых ячеек, и как fallback для непокрытых ключей.
+    _file_key = (project_name or "").strip().lower()
+    ru_from_file = MSP_PROJECT_NAME_MAP.get(_file_key, project_name or "")
+
+    def _normalize_project_cell(x):
+        if pd.isna(x):
+            return ru_from_file
+        s = str(x).strip()
+        if not s or s.lower() in ("nan", "none", "<na>"):
+            return ru_from_file
+        # Пробуем маппинг (с учётом регистра и варианта lower).
+        return MSP_PROJECT_NAME_MAP.get(s, MSP_PROJECT_NAME_MAP.get(s.lower(), ru_from_file or s))
 
     if "project name" not in df.columns:
-        from config import MSP_PROJECT_NAME_MAP
-        ru_name = MSP_PROJECT_NAME_MAP.get(project_name, project_name) if project_name else ""
-        df["project name"] = ru_name
+        df["project name"] = ru_from_file
     else:
-        from config import MSP_PROJECT_NAME_MAP
-        df["project name"] = df["project name"].apply(
-            lambda x: MSP_PROJECT_NAME_MAP.get(str(x).strip(), x) if pd.notna(x) else x
-        )
+        df["project name"] = df["project name"].apply(_normalize_project_cell)
 
     # ── Вспомогательные функции ──────────────────────────────────────────────
     def _parse_msp_date(val):
@@ -1156,9 +1195,37 @@ def load_all_from_web() -> Dict:
             "UPDATE web_versions SET status=?, rows_count=? WHERE id=?",
             (status, total_rows, version_id)
         )
-        # Деактивируем старые, активируем новую
-        cur.execute("UPDATE web_versions SET is_active=0")
-        cur.execute("UPDATE web_versions SET is_active=1 WHERE id=?", (version_id,))
+        # Политика активации:
+        # - `success`: становится активной, старые деактивируются.
+        # - `partial`: активируется только если нет ни одной прежней `success`-версии
+        #   (иначе оставляем активной последнюю корректную, чтобы неполная загрузка
+        #   не ломала рабочий дашборд).
+        if status == "success":
+            cur.execute("UPDATE web_versions SET is_active=0")
+            cur.execute(
+                "UPDATE web_versions SET is_active=1 WHERE id=?", (version_id,)
+            )
+        else:
+            prev_success = cur.execute(
+                "SELECT id FROM web_versions "
+                "WHERE status='success' AND id<>? ORDER BY id DESC LIMIT 1",
+                (version_id,),
+            ).fetchone()
+            if prev_success:
+                cur.execute("UPDATE web_versions SET is_active=0")
+                cur.execute(
+                    "UPDATE web_versions SET is_active=1 WHERE id=?",
+                    (prev_success[0],),
+                )
+                result.setdefault("warnings", []).append(
+                    f"Версия {version_id} сохранена как partial — активной оставлена "
+                    f"последняя success-версия (id={prev_success[0]})."
+                )
+            else:
+                cur.execute("UPDATE web_versions SET is_active=0")
+                cur.execute(
+                    "UPDATE web_versions SET is_active=1 WHERE id=?", (version_id,)
+                )
 
         conn.commit()
 

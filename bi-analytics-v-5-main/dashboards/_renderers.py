@@ -19430,6 +19430,22 @@ def dashboard_project_schedule_chart(df):
         st.warning("Загрузите данные MSP.")
         return
     work = df.copy()
+    # B2: в «График проекта» должны попадать только настоящие MSP-выгрузки (msp_*.csv).
+    # Демо-файл `sample_project_data_fixed.csv` и справочники разделов `other_*_rd.csv`
+    # по ошибке подмешиваются из `new_csv/` и `web/AI/` в общий project_data — оттуда и
+    # брались «Блок 1 / Блок 2 / Блок 3 / Блок 4» в фильтре «Функциональный блок».
+    if "__source_file" in work.columns:
+        _src_low = work["__source_file"].astype(str).str.lower()
+        _is_msp = _src_low.str.startswith("msp_") | _src_low.str.contains("/msp_", na=False) | _src_low.str.contains(r"\\msp_", na=False, regex=True)
+        if bool(_is_msp.any()):
+            _before_rows = len(work)
+            work = work[_is_msp].copy()
+            _dropped = _before_rows - len(work)
+            if _dropped > 0:
+                st.caption(
+                    f"В отчёт «График проекта» оставлены только MSP-выгрузки "
+                    f"(`msp_*.csv`). Исключено строк из других источников: {_dropped}."
+                )
     if "plan start" not in work.columns or "plan end" not in work.columns:
         st.warning("Нужны колонки «План: начало» и «План: окончание» (после загрузки MSP: plan start / plan end).")
         pref = [c for c in ("project name", "task name", "plan start", "plan end") if c in work.columns]
@@ -19504,11 +19520,14 @@ def dashboard_project_schedule_chart(df):
         return None
 
     proj_col = _sched_col(plot_df, ["project name", "Проект", "проект", "Project"])
-    # B2: приоритетно берём MSP-поле «БЛОК», а не производные/альтернативные колонки.
-    block_col_msp = _sched_col(plot_df, ["БЛОК", "Блок"])
+    # B2: приоритетно берём MSP-поле «БЛОК» / canonical-колонку "block" (после ремапа в web_loader).
+    # Canonical "block" ставим первым — иначе _sched_col, нормализуя имена в нижний регистр,
+    # может вернуть одноимённую колонку «Блок» из sample_project_data_fixed.csv
+    # (со значениями «Блок 1/2/3/4»), а не настоящие MSP-блоки (СМР/ИРД/ПД/Продукт/…).
+    block_col_msp = _sched_col(plot_df, ["block", "БЛОК", "Блок"])
     block_col = (
         block_col_msp
-        or _sched_col(plot_df, ["block", "Функциональный блок", "Functional block"])
+        or _sched_col(plot_df, ["Функциональный блок", "Functional block"])
         or _sched_col(plot_df, ["section", "Раздел"])
     )
     level_col = _sched_col(
@@ -19626,46 +19645,32 @@ def dashboard_project_schedule_chart(df):
             _non_generic_blocks = [b for b in _raw_blocks if not _is_generic_block_value(b)]
             _block_values = _non_generic_blocks if _non_generic_blocks else _raw_blocks
 
-            # Если поле блока содержит только «Блок N», сначала пробуем «Раздел».
-            if (not _non_generic_blocks) and section_col and section_col in plot_df.columns:
-                _sec_vals = (
-                    plot_df[section_col].dropna().astype(str).map(str.strip).unique().tolist()
-                )
-                _sec_vals = [s for s in _sec_vals if s and s.lower() != "nan"]
-                _sec_non_generic = [s for s in _sec_vals if not _is_generic_block_value(s)]
-                if _sec_non_generic:
-                    _block_values = sorted(_sec_non_generic)
-                    block_col = section_col
+            # R23-02: если найдено MSP-поле «БЛОК», список фильтра берётся из него как есть
+            # (включая значения вида «Блок 1/2/3/4»). Никаких фолбэков на «Раздел» или
+            # имена задач L2 («Продукт», «Суммарная задача» и т.п.) — это было источником
+            # «некорректных блоков» по правкам клиента.
+            if block_col_msp:
+                _block_values = _raw_blocks
+            else:
+                # Если поле блока не из MSP и содержит только «Блок N», пробуем «Раздел».
+                if (not _non_generic_blocks) and section_col and section_col in plot_df.columns:
+                    _sec_vals = (
+                        plot_df[section_col].dropna().astype(str).map(str.strip).unique().tolist()
+                    )
+                    _sec_vals = [s for s in _sec_vals if s and s.lower() != "nan"]
+                    _sec_non_generic = [s for s in _sec_vals if not _is_generic_block_value(s)]
+                    if _sec_non_generic:
+                        _block_values = sorted(_sec_non_generic)
+                        block_col = section_col
 
-            # Если и там нет, подставляем имена задач уровня 2.
-            if (not _non_generic_blocks) and level_col and block_col != section_col:
-                try:
-                    _lvl_num = pd.to_numeric(plot_df[level_col], errors="coerce")
-                    _task_name_col = _sched_col(plot_df, ["task name", "Task Name", "Название"])
-                    if _task_name_col and _lvl_num.notna().any():
-                        _l2_names = (
-                            plot_df.loc[_lvl_num == 2, _task_name_col]
-                            .dropna()
-                            .astype(str)
-                            .map(lambda x: _gantt_clean_task_label(x).strip())
-                        )
-                        _l2_values = sorted({x for x in _l2_names.tolist() if x and x.lower() != "nan"})
-                        if _l2_values:
-                            _block_values = _l2_values
-                            block_col = _task_name_col
-                except Exception:
-                    pass
-            # Если колонки уровня нет, пробуем определить L2 по WBS/Outline Number (глубина = 2).
-            if (not _non_generic_blocks) and (not level_col) and wbs_col:
-                try:
-                    _task_name_col = _sched_col(plot_df, ["task name", "Task Name", "Название"])
-                    if _task_name_col:
-                        _wbs_depth = plot_df[wbs_col].map(_sched_wbs_tuple).map(
-                            lambda t: int(len(t)) if t else np.nan
-                        )
-                        if _wbs_depth.notna().any():
+                # Если и там нет, подставляем имена задач уровня 2.
+                if (not _non_generic_blocks) and level_col and block_col != section_col:
+                    try:
+                        _lvl_num = pd.to_numeric(plot_df[level_col], errors="coerce")
+                        _task_name_col = _sched_col(plot_df, ["task name", "Task Name", "Название"])
+                        if _task_name_col and _lvl_num.notna().any():
                             _l2_names = (
-                                plot_df.loc[_wbs_depth == 2, _task_name_col]
+                                plot_df.loc[_lvl_num == 2, _task_name_col]
                                 .dropna()
                                 .astype(str)
                                 .map(lambda x: _gantt_clean_task_label(x).strip())
@@ -19674,8 +19679,29 @@ def dashboard_project_schedule_chart(df):
                             if _l2_values:
                                 _block_values = _l2_values
                                 block_col = _task_name_col
-                except Exception:
-                    pass
+                    except Exception:
+                        pass
+                # Если колонки уровня нет, пробуем определить L2 по WBS/Outline Number (глубина = 2).
+                if (not _non_generic_blocks) and (not level_col) and wbs_col:
+                    try:
+                        _task_name_col = _sched_col(plot_df, ["task name", "Task Name", "Название"])
+                        if _task_name_col:
+                            _wbs_depth = plot_df[wbs_col].map(_sched_wbs_tuple).map(
+                                lambda t: int(len(t)) if t else np.nan
+                            )
+                            if _wbs_depth.notna().any():
+                                _l2_names = (
+                                    plot_df.loc[_wbs_depth == 2, _task_name_col]
+                                    .dropna()
+                                    .astype(str)
+                                    .map(lambda x: _gantt_clean_task_label(x).strip())
+                                )
+                                _l2_values = sorted({x for x in _l2_names.tolist() if x and x.lower() != "nan"})
+                                if _l2_values:
+                                    _block_values = _l2_values
+                                    block_col = _task_name_col
+                    except Exception:
+                        pass
             blocks = ["Все"] + _block_values
             sel_block = st.selectbox("Функциональный блок (ур. 2)", blocks, key="gantt_block_filter")
             if sel_block != "Все":
@@ -19756,8 +19782,31 @@ def dashboard_project_schedule_chart(df):
             help="Только строки с заполненным лотом (если в данных есть колонка лота).",
         )
     if show_lots and lot_col and lot_col in plot_df.columns:
-        lc = plot_df[lot_col].astype(str).str.strip()
-        plot_df = plot_df[lc.ne("") & lc.str.lower().ne("nan") & plot_df[lot_col].notna()]
+        # Вытягиваем Series, даже если в df случайно оказались две одноимённые колонки.
+        _lot_src = plot_df[lot_col]
+        if isinstance(_lot_src, pd.DataFrame):
+            _lot_src = _lot_src.iloc[:, 0]
+        lc = _lot_src.astype(str).str.strip().str.lower()
+        _blank_tokens = {"", "nan", "none", "null", "<na>", "-", "—"}
+        mask = (~lc.isin(_blank_tokens)) & _lot_src.notna()
+        _before = len(plot_df)
+        plot_df = plot_df[mask.values]
+        _after = len(plot_df)
+        if _after == 0:
+            st.warning(
+                f"Фильтр «в лотах» отсеял все строки: в колонке «{lot_col}» нет ни одного "
+                "заполненного значения лота у текущей выборки."
+            )
+        elif _after == _before:
+            st.caption(
+                f"Фильтр «в лотах»: в выборке все строки уже с заполненным лотом «{lot_col}» "
+                "(ничего не отсеяно)."
+            )
+        else:
+            st.caption(
+                f"Фильтр «в лотах»: оставлено {_after} из {_before} строк "
+                f"(колонка «{lot_col}»)."
+            )
     elif show_lots and not lot_col:
         st.caption("Колонка лота не найдена — фильтр «в лотах» недоступен.")
     label_pct = st.checkbox(
@@ -19768,13 +19817,27 @@ def dashboard_project_schedule_chart(df):
     )
     label_density_mode = st.radio(
         "Плотность подписей",
-        ("Умная плотность", "Показывать все подписи"),
+        (
+            "Умная плотность",
+            "Только сводные задачи",
+            "Только при наведении",
+            "Показывать все подписи",
+        ),
         horizontal=True,
         index=0,
         key="gantt_label_density_mode",
-        help="Умная плотность уменьшает наложение текста на плотных графиках.",
+        help=(
+            "• «Умная плотность» — авто-режим: на плотных графиках подписи у концов полос "
+            "остаются только у сводных задач (уровень ≤ 2), чтобы текст не сливался.\n"
+            "• «Только сводные задачи» — принудительно показывать подписи лишь у "
+            "суммарных задач.\n"
+            "• «Только при наведении» — убрать все inline-подписи; даты и % видны при наведении.\n"
+            "• «Показывать все подписи» — принудительный режим 1:1 (может сливаться)."
+        ),
     )
     force_all_labels = label_density_mode == "Показывать все подписи"
+    labels_hover_only = label_density_mode == "Только при наведении"
+    labels_summary_only = label_density_mode == "Только сводные задачи"
     auto_compact_on_zoom = st.toggle(
         "Авто: защита от наложения при масштабировании страницы",
         value=True,
@@ -19848,6 +19911,9 @@ def dashboard_project_schedule_chart(df):
 
     # Поиск колонки % через _sched_col (регистронезависимый) — охватывает "Pct Complete", "PCT COMPLETE" и т.д.
     _pc_raw = _sched_col(plot_df, ["pct complete"]) or _gantt_find_percent_column(plot_df)
+    # Снимок исходных колонок — чтобы в диагностике ниже не «находить» пустую pct complete,
+    # которую мы создаём дальше для совместимости.
+    _orig_cols_pct_diag = list(plot_df.columns)
     if _pc_raw:
         plot_df["pct complete"] = _pick_best_pct_series(plot_df, _pc_raw)
         _gantt_pct_col_used = _pc_raw
@@ -19860,11 +19926,12 @@ def dashboard_project_schedule_chart(df):
             _pct_series = _pct_series.iloc[:, 0]
         _has_data = bool(_pct_series.notna().any())
         if _gantt_pct_col_used is None:
-            _avail_cols = [c for c in plot_df.columns if "%" in str(c) or any(
+            # Берём только ИСХОДНЫЕ колонки файла, без создаваемой нами pct complete.
+            _avail_cols = [c for c in _orig_cols_pct_diag if "%" in str(c) or any(
                 w in str(c).lower() for w in ("percent", "complete", "процент", "выполн", "заверш", "готовн")
             )]
             _hint = (f" Похожие колонки в файле: **{', '.join(_avail_cols[:8])}**." if _avail_cols else
-                     f" Колонки файла: {', '.join(str(c) for c in plot_df.columns[:15])}…")
+                     f" Колонки файла: {', '.join(str(c) for c in _orig_cols_pct_diag[:15])}…")
             st.warning("Не найдена колонка процента выполнения — у концов полос будет «н/д»." + _hint)
         elif not _has_data:
             st.caption(
@@ -19874,13 +19941,45 @@ def dashboard_project_schedule_chart(df):
         # Диагностический блок (открытый по умолчанию только при отсутствии данных).
         with st.expander("Диагностика: колонка % выполнения", expanded=(not _has_data)):
             _all_pct_like = [
-                c for c in plot_df.columns
+                c for c in _orig_cols_pct_diag
                 if "%" in str(c)
                 or any(w in str(c).lower() for w in ("percent", "complete", "процент", "выполн", "заверш", "готовн"))
             ]
             st.write(f"Использованная колонка: **{_gantt_pct_col_used or '— не найдена —'}**")
             st.write(f"Не-пустых значений после парсинга: **{int(_pct_series.notna().sum())}** из {len(_pct_series)}")
             st.write(f"Все колонки с признаками %: {_all_pct_like or '—'}")
+            # B2: какой источник реально попал в отчёт — уникальные __source_file и их доля.
+            try:
+                if "__source_file" in plot_df.columns:
+                    _src_counts = (
+                        plot_df["__source_file"].astype(str).replace({"nan": "—"}).value_counts(dropna=False)
+                    )
+                    st.write("**Источники строк (`__source_file`):**")
+                    st.dataframe(
+                        _src_counts.rename("строк").to_frame(),
+                        use_container_width=True,
+                    )
+                else:
+                    st.write("Колонка `__source_file` отсутствует — невозможно определить исходный файл.")
+            except Exception as _src_err:
+                st.write(f"Не удалось прочитать список исходных файлов: {_src_err}")
+            # B2: какая колонка «Блок» фактически используется и первые её значения.
+            try:
+                st.write(f"Колонка «Блок» (использ.): **{block_col or '— не найдена —'}**  "
+                         f"· MSP-«БЛОК»: **{block_col_msp or '—'}**")
+                if block_col and block_col in plot_df.columns:
+                    _blk_uniq = (
+                        plot_df[block_col].astype(str).map(str.strip)
+                        .replace({"": None, "nan": None}).dropna()
+                        .value_counts().head(15)
+                    )
+                    if not _blk_uniq.empty:
+                        st.dataframe(
+                            _blk_uniq.rename("строк").to_frame(),
+                            use_container_width=True,
+                        )
+            except Exception as _blk_err:
+                st.write(f"Не удалось прочитать значения колонки «Блок»: {_blk_err}")
             # Диагностика скрытых символов в именах: показываем repr() — будет видно \xa0, \ufeff и пр.
             _hidden = []
             for c in _all_pct_like:
@@ -20315,7 +20414,7 @@ def dashboard_project_schedule_chart(df):
         if label_pct:
             if pd.notna(pv):
                 try:
-                    plan_texts.append(f"{float(pv):.0f} %")
+                    plan_texts.append(f"{int(round(float(pv)))}%")
                 except (TypeError, ValueError):
                     plan_texts.append("н/д")
             else:
@@ -20509,11 +20608,86 @@ def dashboard_project_schedule_chart(df):
             pad = timedelta(days=max(45.0, span_days * 0.09))
             off_ann = timedelta(days=max(4.0, span_days * 0.018))  # отступ увеличен: метка правее баров
             tail = timedelta(days=max(18.0, span_days * 0.09))
-            # В режиме % выполнения — всегда показываем все строки (иначе % теряется).
-            _step = 1 if (_effective_force_all or label_pct) else int(max(1, _readability.get("text_step", 1)))
+            # Политика подписей у концов полос.
+            # Приоритеты:
+            #  1) «Только при наведении»  — никаких inline-подписей, даты/% в hover.
+            #  2) «Показывать все подписи» — принудительно step=1 (возможны наложения).
+            #  3) «Только сводные задачи» — подписи только у строк с level ≤ 2
+            #     (суммарных задач), независимо от плотности.
+            #  4) «Умная плотность» (по умолчанию) — step по пикселям +
+            #     авто-ограничение до сводных задач, если даже с макс. step
+            #     подписи физически не умещаются (row_px < label_px).
+            _n_rows_here = max(1, int(len(plot_df)))
+            _row_h = 40 if _readability.get("is_dense") else 36
+            _chart_h = min(3200, max(300, 100 + _row_h * _n_rows_here))
+            _row_px = float(_chart_h) / float(_n_rows_here)
+            _label_px = 15.0 if label_pct else 17.0
+
+            _summary_only = labels_summary_only
+            if labels_hover_only:
+                _step = 10**9  # ничего не показывать
+            elif _effective_force_all:
+                _step = 1
+            else:
+                _step = int(max(1, _readability.get("text_step", 1)))
+                if _row_px > 0:
+                    _need_step = int(-(-int(_label_px * 1000) // max(1, int(_row_px * 1000))))
+                    _step = max(_step, _need_step)
+                if _readability.get("is_dense") and not label_pct:
+                    _step = max(_step, 2)
+                if not label_pct and len(plot_df) > 120:
+                    _step = max(_step, 3)
+                # Авто-переключение в «сводные» режим, когда даже с пропусками
+                # подписи всё равно будут накладываться (строк > полос высоты/шрифт).
+                if _row_px > 0 and (_label_px / _row_px) > 6:
+                    _summary_only = True
+
+            # Серия значений уровня иерархии (для summary-режима).
+            _lvl_series_for_labels = None
+            if _summary_only and level_col and level_col in plot_df.columns:
+                _lvl_series_for_labels = pd.to_numeric(
+                    plot_df[level_col], errors="coerce"
+                ).to_numpy()
+
+            # Если summary-режим включён, но уровней нет — подстрахуемся по WBS
+            # (глубина ≤ 2 ⇒ сводная).
+            _wbs_depth_arr = None
+            if (
+                _summary_only
+                and _lvl_series_for_labels is None
+                and wbs_col
+                and wbs_col in plot_df.columns
+            ):
+                try:
+                    _wbs_depth_arr = (
+                        plot_df[wbs_col]
+                        .map(_sched_wbs_tuple)
+                        .map(lambda t: int(len(t)) if t else np.nan)
+                        .to_numpy()
+                    )
+                except Exception:
+                    _wbs_depth_arr = None
+
+            _labels_drawn = 0
             for i, (_, row) in enumerate(plot_df.iterrows()):
-                if i % _step != 0:
-                    continue
+                if _summary_only:
+                    # Подписываем только сводные/корневые задачи.
+                    _lvl = None
+                    if _lvl_series_for_labels is not None and i < len(_lvl_series_for_labels):
+                        _lvl = _lvl_series_for_labels[i]
+                    elif _wbs_depth_arr is not None and i < len(_wbs_depth_arr):
+                        _lvl = _wbs_depth_arr[i]
+                    if _lvl is None or (isinstance(_lvl, float) and np.isnan(_lvl)):
+                        # Нет уровня — пропускаем, чтобы не засорять график.
+                        continue
+                    try:
+                        if int(_lvl) > 2:
+                            continue
+                    except (TypeError, ValueError):
+                        continue
+                else:
+                    if i % _step != 0:
+                        continue
                 y = row["_gantt_y_label"]
                 ends = []
                 pev = row.get("plan end")
@@ -20528,11 +20702,28 @@ def dashboard_project_schedule_chart(df):
                 txt = right_labels[i] if i < len(right_labels) else ""
                 if not str(txt).strip():
                     continue
-                # Точка чуть правее конца полосы; подпись — textposition middle right (текст правее точки).
                 x_mark = max(ends) + off_ann
                 end_label_x.append(x_mark)
                 end_label_y.append(y)
                 end_label_text.append(str(txt))
+                _labels_drawn += 1
+
+            # Человекочитаемый caption: что именно нарисовано.
+            if labels_hover_only:
+                st.caption(
+                    "Подписи у концов полос отключены — значения доступны при наведении на полосу."
+                )
+            elif _summary_only:
+                _why_auto = (
+                    " (авто: график слишком плотный для построчных подписей)"
+                    if (not labels_summary_only and not _effective_force_all)
+                    else ""
+                )
+                st.caption(
+                    f"Подписи у концов полос: только сводные задачи (L≤2){_why_auto}. "
+                    f"Нарисовано меток: {_labels_drawn} из {_n_rows_here} строк. "
+                    "Полные даты/% — при наведении."
+                )
             _lo_pad = lo - pad
             if end_label_x:
                 ann_x_max = max(pd.Timestamp(x) for x in end_label_x)
@@ -20597,7 +20788,22 @@ def dashboard_project_schedule_chart(df):
             pass
     if end_label_x:
         try:
-            _lbl_size = max(15, _readability.get("label_font", 11) + 4)
+            # Базовый размер шрифта подписи у конца полосы.
+            # В плотном графике (is_dense) — уменьшаем, иначе подписи лепятся друг к другу.
+            _base_font = int(_readability.get("label_font", 11))
+            if label_pct:
+                # «5%» / «100%» — короткий текст, можно безопасно уменьшить в плотных графиках.
+                if _readability.get("is_dense"):
+                    _lbl_size = max(10, _base_font)
+                else:
+                    _lbl_size = max(13, _base_font + 2)
+            else:
+                # Даты вроде «30.10.26» — длинный текст, при плотном Ганте сильнее
+                # наезжают на соседние строки, поэтому уменьшаем чуть агрессивнее.
+                if _readability.get("is_dense"):
+                    _lbl_size = max(10, _base_font)
+                else:
+                    _lbl_size = max(12, _base_font + 1)
             fig_gantt.add_trace(
                 go.Scatter(
                     x=end_label_x,
