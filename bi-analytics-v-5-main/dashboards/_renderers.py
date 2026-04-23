@@ -13225,11 +13225,22 @@ def dashboard_skud_stroyka(df):
 # ==================== DASHBOARD: график рабочей силы (вкладки) ====================
 def dashboard_technique_tabs(df):
     """
-    ГДРС: только рабочая сила (без техники и без отдельного отчёта «СКУД по неделям» в меню).
+    ГДРС → «Рабочие»: график движения рабочей силы.
+    R23-05 стр.14: отдельный пункт меню «ГДРС Техника» вынесен в dashboard_gdrs_equipment.
     """
     st.header("График движения рабочей силы")
     dashboard_workforce_movement(
         df, data_source_filter="Ресурсы", show_header=False, key_prefix="gdrs_people"
+    )
+
+
+def dashboard_gdrs_equipment(df):
+    """
+    R23-05 стр.14: восстановленный отчёт «Техника» (параллельно с «Рабочие»).
+    """
+    st.header("График движения техники")
+    dashboard_workforce_movement(
+        df, data_source_filter="Техника", show_header=False, key_prefix="gdrs_tech"
     )
 # ==================== DASHBOARD: Дебиторская и кредиторская задолженность подрядчиков ====================
 def _find_col(df, names):

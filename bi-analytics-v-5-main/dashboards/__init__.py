@@ -73,7 +73,8 @@ REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
     (
         "ГДРС",
         [
-            "График движения рабочей силы",
+            "ГДРС",
+            "ГДРС Техника",
         ],
     ),
     (
@@ -149,6 +150,10 @@ def _get_dashboards() -> Dict[str, Callable]:
     if dashboard_technique_tabs is None:
         dashboard_technique_tabs = _renderers.dashboard_technique
     dashboard_workforce_movement = _renderers.dashboard_workforce_movement
+    # R23-05 стр.14: восстановленный отчёт «Техника».
+    dashboard_gdrs_equipment = getattr(_renderers, "dashboard_gdrs_equipment", None)
+    if dashboard_gdrs_equipment is None:
+        dashboard_gdrs_equipment = dashboard_technique_tabs
     dashboard_skud_stroyka = getattr(_renderers, "dashboard_skud_stroyka", None)
     if dashboard_skud_stroyka is None:
 
@@ -228,10 +233,10 @@ def _get_dashboards() -> Dict[str, Callable]:
         "Рабочая/Проектная документация": dashboard_documentation,
         "Рабочая документация": dashboard_working_documentation,
         "Проектная документация": dashboard_project_documentation,
+        # R23-05 стр.14: «ГДРС» — рабочие; восстановили отдельный пункт «ГДРС Техника»;
+        # убрали дубль «График движения рабочей силы» и пункт «СКУД стройка» (вкладку «СКУД по неделям»).
         "ГДРС": dashboard_technique_tabs,
-        # Вкладки: люди, техника, динамика, смены (данные техники — из отдельной загрузки «техника»)
-        "График движения рабочей силы": dashboard_technique_tabs,
-        "СКУД стройка": dashboard_skud_stroyka,
+        "ГДРС Техника": dashboard_gdrs_equipment,
         "Дебиторская и кредиторская задолженность подрядчиков": dashboard_debit_credit,
         "Исполнительная документация": dashboard_executive_documentation,
         "Просрочка выдачи РД": dashboard_rd_delay,
