@@ -3104,7 +3104,15 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 n = int(round(float(v), 0))
                 return str(n) if n != 0 else ""
 
+            # R23-04 page_10: проект важен в hover и при одном проекте — сохраняем
+            # единственное имя проекта в буферной переменной, чтобы добавить в hover.
+            _single_proj_name = None
             if not _multi_proj and "project name" in reason_data.columns:
+                _vals = (
+                    reason_data["project name"].dropna().astype(str).str.strip().unique().tolist()
+                )
+                _vals = [x for x in _vals if x]
+                _single_proj_name = _vals[0] if _vals else None
                 reason_data = reason_data.drop(columns=["project name"], errors="ignore")
 
             if not _multi_proj:
@@ -3219,6 +3227,25 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 textangle=0,
                 cliponaxis=False,
             )
+            # R23-04 page_10: hover включает проект (даже для одного проекта),
+            # чтобы было очевидно, из какого проекта данные.
+            _proj_hover_line = (
+                f"<br>Проект: {html_module.escape(_single_proj_name)}"
+                if (not _multi_proj and _single_proj_name)
+                else ""
+            )
+            _hover_tpl_single = (
+                "<b>Причина: %{fullData.name}</b>"
+                + _proj_hover_line
+                + "<br>Период: %{x}"
+                "<br>Количество задач: %{y}<extra></extra>"
+            )
+            _hover_tpl_multi = (
+                "<b>Причина: %{fullData.name}</b>"
+                "<br>Проект: %{customdata[0]}"
+                "<br>Период: %{x}"
+                "<br>Количество задач: %{y}<extra></extra>"
+            )
             for tr in fig.data:
                 if getattr(tr, "type", None) != "bar":
                     continue
@@ -3229,13 +3256,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         textfont=dict(color=tc, size=11),
                         insidetextfont=dict(color=tc, size=11),
                     )
-                tr.update(
-                    hovertemplate=(
-                        "<b>%{fullData.name}</b><br>"
-                        "%{x}<br>"
-                        "Количество: %{y}<extra></extra>"
-                    )
-                )
+                tr.update(hovertemplate=_hover_tpl_single)
 
             if not _multi_proj:
                 tot_period = (
@@ -3278,14 +3299,17 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         )
 
             fig = _apply_bar_uniformtext(fig)
+            # R23-04 page_10: промежуточные значения должны быть видимыми всегда;
+            # поднимаем минимальный размер шрифта и оставляем mode=show.
             try:
-                fig.update_layout(uniformtext=dict(minsize=4, mode="show"))
+                fig.update_layout(uniformtext=dict(minsize=9, mode="show"))
             except Exception:
                 pass
             fig = apply_chart_background(fig)
             _cap_dyn = (
                 "Каждый столбец — период; стек по причинам; при нескольких проектах — отдельная панель на проект. "
-                "В сегменте — число отклонений по причине; над столбцом — итог за период (один проект в данных)."
+                "В сегменте — число отклонений по причине; над столбцом — итог за период. "
+                "В подсказке (hover) — проект, причина, период, количество задач."
             )
             render_chart(fig, caption_below=_cap_dyn)
 
