@@ -11868,47 +11868,116 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         plan_i = _ceil_int(plan_sum)
         fact_i = _ceil_int(fact_sum)
         dev_i = _ceil_int(dev)
-        # Столбчатая план/факт: подписи над столбцами, нули видны (круговая скрывает нулевой сегмент)
-        fig_pie_pf = go.Figure(
-            data=[
-                go.Bar(
-                    x=["План", "Факт"],
-                    y=[plan_sum, fact_sum],
-                    marker_color=["#2E86AB", fact_color],
-                    text=[
-                        f"{plan_i}",
-                        f"{fact_i}<br>Δ {dev_i}",
-                    ],
-                    textposition="outside",
-                    textfont=dict(size=13, color="#ffffff"),
-                    cliponaxis=False,
-                    customdata=[
-                        [proj_name, plan_i, fact_i, dev_i],
-                        [proj_name, plan_i, fact_i, dev_i],
-                    ],
-                    hovertemplate=(
-                        "<b>%{x}</b><br>"
-                        "Проект: %{customdata[0]}<br>"
-                        "План: %{customdata[1]}<br>"
-                        "Факт: %{customdata[2]}<br>"
-                        "Отклонение: %{customdata[3]}<extra></extra>"
-                    ),
-                )
+        # R23-05 стр.12: круговая «План / Факт» — наружу: название, значение, отклонение;
+        # внутри сектора — процент. Fallback на столбчатую только если оба значения нулевые.
+        _use_pie = plan_sum > 0 and fact_sum > 0
+        if _use_pie:
+            import math as _math
+            _total_pf = plan_sum + fact_sum
+            plan_pct = plan_sum / _total_pf * 100.0
+            fact_pct = fact_sum / _total_pf * 100.0
+            _plan_outside = f"<b>План</b><br>{plan_i}"
+            _fact_outside = f"<b>Факт</b><br>{fact_i}<br>Δ {dev_i}"
+            fig_pie_pf = go.Figure(
+                data=[
+                    go.Pie(
+                        labels=["План", "Факт"],
+                        values=[plan_sum, fact_sum],
+                        sort=False,
+                        direction="clockwise",
+                        text=[_plan_outside, _fact_outside],
+                        textinfo="text",
+                        textposition="outside",
+                        insidetextorientation="horizontal",
+                        hole=0.35,
+                        marker=dict(
+                            colors=["#2E86AB", fact_color],
+                            line=dict(color="#0f1724", width=2),
+                        ),
+                        customdata=[
+                            [proj_name, plan_i, fact_i, dev_i],
+                            [proj_name, plan_i, fact_i, dev_i],
+                        ],
+                        hovertemplate=(
+                            "<b>%{label}</b><br>"
+                            "Проект: %{customdata[0]}<br>"
+                            "План: %{customdata[1]}<br>"
+                            "Факт: %{customdata[2]}<br>"
+                            "Отклонение: %{customdata[3]}<extra></extra>"
+                        ),
+                        showlegend=False,
+                        textfont=dict(size=12, color="#ffffff"),
+                    )
+                ]
+            )
+            # Проценты внутри сектора — через annotations на paper-координатах.
+            # Plotly Pie: начало с 12 часов, direction=clockwise.
+            _r_in = 0.22  # радиус для размещения процента внутри сектора
+            _ang_plan = _math.radians(360.0 * (plan_pct / 100.0) / 2.0)
+            _ang_fact = _math.radians(360.0 * ((plan_pct + fact_pct / 2.0) / 100.0))
+            _annots = [
+                dict(
+                    x=0.5 + _r_in * _math.sin(_ang_plan),
+                    y=0.5 + _r_in * _math.cos(_ang_plan),
+                    xref="paper", yref="paper",
+                    text=f"<b>{plan_pct:.0f}%</b>",
+                    showarrow=False,
+                    font=dict(color="#ffffff", size=14),
+                ),
+                dict(
+                    x=0.5 + _r_in * _math.sin(_ang_fact),
+                    y=0.5 + _r_in * _math.cos(_ang_fact),
+                    xref="paper", yref="paper",
+                    text=f"<b>{fact_pct:.0f}%</b>",
+                    showarrow=False,
+                    font=dict(color="#ffffff", size=14),
+                ),
             ]
-        )
-        fig_pie_pf.update_layout(
-            height=420,
-            showlegend=False,
-            title_font_size=14,
-            margin=dict(l=48, r=28, t=56, b=72),
-            yaxis=dict(title=""),
-            uniformtext=dict(minsize=7, mode="show"),
-        )
-        fig_pie_pf = _apply_bar_uniformtext(fig_pie_pf)
-        try:
-            fig_pie_pf.update_layout(uniformtext=dict(minsize=6, mode="show"))
-        except Exception:
-            pass
+            fig_pie_pf.update_layout(
+                height=420,
+                showlegend=False,
+                margin=dict(l=56, r=56, t=72, b=72),
+                uniformtext=dict(minsize=8, mode="show"),
+                annotations=_annots,
+            )
+        else:
+            # Fallback: столбчатая (план=0 или факт=0).
+            fig_pie_pf = go.Figure(
+                data=[
+                    go.Bar(
+                        x=["План", "Факт"],
+                        y=[plan_sum, fact_sum],
+                        marker_color=["#2E86AB", fact_color],
+                        text=[f"{plan_i}", f"{fact_i}<br>Δ {dev_i}"],
+                        textposition="outside",
+                        textfont=dict(size=13, color="#ffffff"),
+                        cliponaxis=False,
+                        customdata=[
+                            [proj_name, plan_i, fact_i, dev_i],
+                            [proj_name, plan_i, fact_i, dev_i],
+                        ],
+                        hovertemplate=(
+                            "<b>%{x}</b><br>"
+                            "Проект: %{customdata[0]}<br>"
+                            "План: %{customdata[1]}<br>"
+                            "Факт: %{customdata[2]}<br>"
+                            "Отклонение: %{customdata[3]}<extra></extra>"
+                        ),
+                    )
+                ]
+            )
+            fig_pie_pf.update_layout(
+                height=420,
+                showlegend=False,
+                margin=dict(l=48, r=28, t=56, b=72),
+                yaxis=dict(title=""),
+                uniformtext=dict(minsize=7, mode="show"),
+            )
+            fig_pie_pf = _apply_bar_uniformtext(fig_pie_pf)
+            try:
+                fig_pie_pf.update_layout(uniformtext=dict(minsize=6, mode="show"))
+            except Exception:
+                pass
         fig_pie_pf = apply_chart_background(fig_pie_pf)
         return fig_pie_pf, {
             "plan": plan_sum,
