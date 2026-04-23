@@ -8803,6 +8803,65 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 unsafe_allow_html=True,
             )
 
+            # R23-06 (стр.18): динамика накопительного плана/факта окончания ПД/РД.
+            try:
+                _dyn_plan = (
+                    _to_datetime_series(filtered_df[plan_end_col])
+                    if plan_end_col and plan_end_col in filtered_df.columns
+                    else pd.Series(pd.NaT, index=filtered_df.index)
+                )
+                _dyn_fact = (
+                    _to_datetime_series(filtered_df[fact_end_col])
+                    if fact_end_col and fact_end_col in filtered_df.columns
+                    else pd.Series(pd.NaT, index=filtered_df.index)
+                )
+                _dyn_plan_m = _dyn_plan.dropna().dt.to_period("M").dt.to_timestamp()
+                _dyn_fact_m = _dyn_fact.dropna().dt.to_period("M").dt.to_timestamp()
+                if not _dyn_plan_m.empty or not _dyn_fact_m.empty:
+                    _start = min(
+                        [s.min() for s in [_dyn_plan_m, _dyn_fact_m] if not s.empty]
+                    )
+                    _end = max(
+                        [s.max() for s in [_dyn_plan_m, _dyn_fact_m] if not s.empty]
+                    )
+                    _today_m = pd.Timestamp(date.today()).to_period("M").to_timestamp()
+                    _end = max(_end, _today_m)
+                    _months = pd.date_range(_start, _end, freq="MS")
+                    _plan_by = _dyn_plan_m.value_counts().reindex(_months, fill_value=0).sort_index()
+                    _fact_by = _dyn_fact_m.value_counts().reindex(_months, fill_value=0).sort_index()
+                    _plan_cum = _plan_by.cumsum()
+                    _fact_cum = _fact_by.cumsum()
+                    _fig_dyn = go.Figure()
+                    _fig_dyn.add_trace(go.Scatter(
+                        x=_months, y=_plan_cum.values, mode="lines+markers",
+                        name="План (накопительно)",
+                        line=dict(color="#5DADE2", width=2, dash="dash"),
+                        hovertemplate="%{x|%m.%Y}<br>План: %{y}<extra></extra>",
+                    ))
+                    _fact_for_plot = _fact_cum.copy()
+                    _fact_for_plot[_months > _today_m] = None
+                    _fig_dyn.add_trace(go.Scatter(
+                        x=_months, y=_fact_for_plot.values, mode="lines+markers",
+                        name="Факт (накопительно)",
+                        line=dict(color="#F39C12", width=2),
+                        hovertemplate="%{x|%m.%Y}<br>Факт: %{y}<extra></extra>",
+                    ))
+                    _fig_dyn.add_vline(
+                        x=_today_m, line_dash="dot", line_color="#7F8C8D",
+                        annotation_text="Сегодня", annotation_position="top",
+                    )
+                    _fig_dyn.update_layout(
+                        title="Динамика окончания ПД/РД (накопительно по месяцам)",
+                        xaxis_title="Месяц", yaxis_title="Количество разделов",
+                        hovermode="x unified",
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                        height=420, margin=dict(l=10, r=10, t=60, b=40),
+                    )
+                    _fig_dyn.update_xaxes(tickformat="%m.%Y")
+                    st.plotly_chart(_fig_dyn, use_container_width=True)
+            except Exception as _e_dyn:
+                st.caption(f"Не удалось построить динамику окончания ПД/РД: {_e_dyn}")
+
         # Summary metrics
         col1, col2, col3 = st.columns(3)
         with col1:
