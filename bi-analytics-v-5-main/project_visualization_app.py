@@ -112,10 +112,65 @@ st.markdown(
     [data-testid="stDataFrame"] > div {
         min-width: max-content;
     }
+    /* R23-08: скрыть встроенные англоязычные пресеты (Past Week/Month/Year/...) */
+    /* в попапе st.date_input — внутри попапа используется вложенный select,       */
+    /* который мы прячем, чтобы не смешивался с нашим русским селектором.           */
+    [data-baseweb="popover"] [data-baseweb="calendar"] ~ div [data-baseweb="select"],
+    [data-baseweb="popover"] [data-baseweb="calendar"] + div [data-baseweb="select"],
+    [data-baseweb="popover"] [aria-label="Choose a date range"],
+    [data-baseweb="popover"] label[for^="range-calendar"],
+    [data-baseweb="popover"] [data-baseweb="calendar"] ~ label {
+        display: none !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
+
+# R23-08: перевод подписей встроенных пресетов st.date_input на русский.
+# Streamlit вырезает <script> из st.markdown, поэтому используем components.html
+# с height=0 — невидимый iframe, внутри которого скрипт меняет текст у родителя.
+try:
+    import streamlit.components.v1 as _components
+    _components.html(
+        """
+        <script>
+        (function() {
+            try {
+                const root = window.parent && window.parent.document ? window.parent.document : document;
+                const map = {
+                    'Choose a date range': 'Выберите период',
+                    'Past Week': 'Прошлая неделя',
+                    'Past Month': 'Прошлый месяц',
+                    'Past 3 Months': 'Последние 3 месяца',
+                    'Past 6 Months': 'Последние 6 месяцев',
+                    'Past Year': 'Последний год',
+                    'Past 2 Years': 'Последние 2 года'
+                };
+                const translate = (r) => {
+                    if (!r || !r.body) return;
+                    const walker = r.createTreeWalker(r.body, NodeFilter.SHOW_TEXT, null);
+                    let node;
+                    while ((node = walker.nextNode())) {
+                        const val = (node.nodeValue || '').trim();
+                        if (val && Object.prototype.hasOwnProperty.call(map, val)) {
+                            node.nodeValue = node.nodeValue.replace(val, map[val]);
+                        }
+                    }
+                };
+                translate(root);
+                if (window._ruDateObs) { try { window._ruDateObs.disconnect(); } catch (e) {} }
+                const obs = new MutationObserver(() => translate(root));
+                obs.observe(root.body, { childList: true, subtree: true });
+                window._ruDateObs = obs;
+            } catch (e) { /* cross-origin or unsupported */ }
+        })();
+        </script>
+        """,
+        height=0,
+    )
+except Exception:
+    pass
 
 # Скрываем сайдбар полностью если не авторизован
 if not st.session_state.get("authenticated"):
