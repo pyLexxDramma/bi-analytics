@@ -17631,6 +17631,32 @@ def dashboard_approved_budget(df):
     monthly_rows["Месяц"] = monthly_rows["plan_month"].apply(format_period_ru)
     monthly_rows["reserve budget"] = monthly_rows["budget fact"] - monthly_rows["budget plan"]
 
+    # R23-11 (стр.28): цвет бара «БДДС факт» по месяцу — зелёный, если факт
+    # меньше 80% плана; оранжевый в диапазоне 80–100% («приближается к
+    # плану за 10–20%»); красный при превышении плана. При нулевом плане —
+    # нейтральный бордовый.
+    def _fact_bar_color(plan: float, fact: float) -> str:
+        try:
+            p = float(plan or 0.0)
+            f = float(fact or 0.0)
+        except (TypeError, ValueError):
+            return "#A23B72"
+        if p <= 0:
+            return "#A23B72"
+        if f > p:
+            return "#E74C3C"
+        if f >= 0.8 * p:
+            return "#E67E22"
+        return "#27AE60"
+
+    _fact_colors = [
+        _fact_bar_color(p, f)
+        for p, f in zip(
+            monthly_rows["budget plan"].fillna(0.0).tolist(),
+            monthly_rows["budget fact"].fillna(0.0).tolist(),
+        )
+    ]
+
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
@@ -17650,7 +17676,7 @@ def dashboard_approved_budget(df):
             x=monthly_rows["Месяц"],
             y=monthly_rows["budget fact"].div(1e6),
             name="БДДС факт",
-            marker_color="#A23B72",
+            marker_color=_fact_colors,
             text=_finance_bar_text_mln_rub(monthly_rows["budget fact"]),
             textposition="outside",
             textfont=dict(size=11, color="#f0f4f8"),
@@ -17694,7 +17720,11 @@ def dashboard_approved_budget(df):
     fig = apply_chart_background(fig)
     render_chart(
         fig,
-        caption_below="Как в отчёте БДДС: план и факт по месяцам; подписи — сумма и млн руб.",
+        caption_below=(
+            "Как в отчёте БДДС: план и факт по месяцам; подписи — сумма в млн руб. "
+            "Цвет бара факта: зелёный — факт ниже 80% плана; оранжевый — от 80% до 100% "
+            "(приближение к плану за 10–20%); красный — превышение плана."
+        ),
     )
 
     st.subheader("Сводная таблица по месяцам")
