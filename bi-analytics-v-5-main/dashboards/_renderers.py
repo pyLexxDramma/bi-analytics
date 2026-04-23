@@ -1879,14 +1879,51 @@ def dashboard_deviations_combined(df):
             "Динамика причин",
         ]
     )
+
+    # R23-04 add-on (стр.11): при выборе узкого диапазона «Период с / Период по»
+    # (например, январь–сентябрь) в подвкладках иногда падал traceback — если данных
+    # за период нет совсем или они частичные. По ТЗ: «нет совсем — написать об этом;
+    # есть частично — показать то, что есть». Оборачиваем каждую подвкладку в общий
+    # обработчик: пустой срез → дружелюбное info, иначе — штатная логика, а любые
+    # непредвиденные исключения ловим и печатаем аккуратно, без сырого traceback.
+    def _render_tab_safe(render_func, frame, *, tab_label: str, **kwargs):
+        if frame is None or getattr(frame, "empty", True):
+            st.info(
+                "За выбранный период нет данных по отклонениям. "
+                "Поменяйте «Период с / Период по» или фильтры «Проект / Функциональный блок / Строение»."
+            )
+            return
+        try:
+            render_func(frame, **kwargs)
+        except Exception as _e:  # noqa: BLE001
+            st.warning(
+                f"Не удалось построить подвкладку «{tab_label}» для выбранного периода: {_e}. "
+                "Если данных за часть диапазона нет — расширьте «Период с / Период по», "
+                "или снимите сужающие фильтры."
+            )
+
     with tab_by_month:
-        dashboard_reasons_of_deviation(
-            filtered_shared, hide_shared_filters=True, building_col=building_col
+        _render_tab_safe(
+            dashboard_reasons_of_deviation,
+            filtered_shared,
+            tab_label="Доли причин по проекту",
+            hide_shared_filters=True,
+            building_col=building_col,
         )
     with tab_dynamics:
-        dashboard_dynamics_of_deviations(filtered_shared, hide_shared_filters=True)
+        _render_tab_safe(
+            dashboard_dynamics_of_deviations,
+            filtered_shared,
+            tab_label="Динамика отклонений по месяцам",
+            hide_shared_filters=True,
+        )
     with tab_reasons:
-        dashboard_dynamics_of_reasons(filtered_shared, hide_shared_filters=True)
+        _render_tab_safe(
+            dashboard_dynamics_of_reasons,
+            filtered_shared,
+            tab_label="Динамика причин",
+            hide_shared_filters=True,
+        )
 
 
 def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=None):
