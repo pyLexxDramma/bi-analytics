@@ -3872,12 +3872,16 @@ def dashboard_plan_fact_dates(df):
                 "Детализация недоступна: нет колонки уровня MSP в выгрузке."
             )
 
+    # R23-03: чекбоксы — отдельным блоком ниже фильтров; равномерный ряд,
+    # без «висящих» одиночных чекбоксов и без серых fallback-подсказок между
+    # элементами управления.
     st.markdown("**Параметры отображения**")
     _pct_ok = bool(
         dates_pct_col_resolved and str(dates_pct_col_resolved).strip() in df.columns
     )
     if not _pct_ok and dates_pct_col:
         _pct_ok = bool(str(dates_pct_col).strip() in df.columns)
+
     cb_c1, cb_c2, cb_c3, cb_c4 = st.columns(4)
     with cb_c1:
         dates_show_reason_notes = st.checkbox(
@@ -3887,22 +3891,26 @@ def dashboard_plan_fact_dates(df):
             help="Добавить в таблицу колонки «Причина отклонения» и «Заметки», если они есть в выгрузке.",
         )
     with cb_c2:
+        # R23-03: галочка больше не блокируется из-за отсутствующей колонки —
+        # при включении без %-колонки просто не применит фильтр (не ломает UI).
         _hide_done_help = (
             "Скрыть задачи со 100% выполнения по числовой колонке процента из MSP "
             f"({dates_pct_col_resolved or 'не найдена'})."
         )
         if not _pct_ok:
-            _hide_done_help += " Колонка процента не найдена — при включении фильтр не применится."
+            _hide_done_help += (
+                " Колонка процента сейчас не найдена — фильтр включится, "
+                "но при отсутствии данных останется неактивным."
+            )
         hide_completed_dates = st.checkbox(
             "Скрыть завершённые (100%)",
             value=False,
             key="dates_hide_done",
-            disabled=not _pct_ok,
             help=_hide_done_help,
         )
     with cb_c3:
         only_negative_dev_dates = st.checkbox(
-            "Показывать только диаграммы, где отклонение окончания < 0",
+            "Только отклонение окончания < 0",
             value=False,
             key="dates_only_neg_end",
             help=(
@@ -3911,39 +3919,49 @@ def dashboard_plan_fact_dates(df):
             ),
         )
     with cb_c4:
-        if dates_lot_col:
-            task_label_mode = st.radio(
-                "Подписи на графике и в таблице",
-                ("По наименованию MSP", "По лоту"),
-                horizontal=True,
-                key="dates_task_label_mode",
-                help="«По лоту» — в графике и в колонке «Задача» таблицы показывается лот (если заполнен в выгрузке).",
-            )
-        else:
-            task_label_mode = "По наименованию MSP"
-            st.caption("Колонка лота не найдена — подписи только по наименованию MSP.")
-    force_covenant_ui = st.checkbox(
-        "Показывать только ковенанты",
-        value=False,
-        key="dates_only_covenants",
-        help="Показать только ковенантные строки в диаграмме и таблице.",
-    )
+        force_covenant_ui = st.checkbox(
+            "Только ковенанты",
+            value=False,
+            key="dates_only_covenants",
+            help="Показать только ковенантные строки в диаграмме и таблице.",
+        )
 
+    # Radio с подписью — отдельной строкой, чтобы не ломал сетку чекбоксов.
+    if dates_lot_col:
+        task_label_mode = st.radio(
+            "Подписи на графике и в таблице",
+            ("По наименованию MSP", "По лоту"),
+            horizontal=True,
+            key="dates_task_label_mode",
+            help="«По лоту» — в графике и в колонке «Задача» таблицы показывается лот (если заполнен в выгрузке).",
+        )
+    else:
+        task_label_mode = "По наименованию MSP"
+
+    # R23-03: все серые fallback-подсказки убраны из основного потока и
+    # собраны в один свёрнутый expander, чтобы не «лезли» между фильтрами.
+    _diag_msgs = []
     if pf_dates_block_filter_mode == "section":
-        st.caption(
+        _diag_msgs.append(
             "Иерархия MSP не дала списка задач ур.2 — «Функциональный блок» фильтрует по полю «Раздел»."
         )
     elif pf_dates_block_filter_mode == "block":
-        st.caption(
-            "В данных нет пригодной иерархии MSP для ур.2 — список берется из поля «Блок». "
+        _diag_msgs.append(
+            "В данных нет пригодной иерархии MSP для ур.2 — список берётся из поля «Блок». "
             "Для настоящих задач ур.2 добавьте в файл «Уровень_структуры»/«Уровень» и «Название задачи»."
         )
     elif not (pf_dates_level_col and pf_dates_task_col):
-        st.caption(
+        _diag_msgs.append(
             "Колонка уровня MSP или имя задачи не найдены — «Строение» заполняется из колонок выгрузки (если есть)."
         )
     if _detail_unavailable_note:
-        st.caption(_detail_unavailable_note)
+        _diag_msgs.append(_detail_unavailable_note)
+    if not dates_lot_col:
+        _diag_msgs.append("Колонка лота не найдена — подписи только по наименованию MSP.")
+    if _diag_msgs:
+        with st.expander("Диагностика фильтров и подписей", expanded=False):
+            for _m in _diag_msgs:
+                st.write(f"• {_m}")
 
     st.markdown("**Таблица**")
     d3a = st.columns(1)[0]
