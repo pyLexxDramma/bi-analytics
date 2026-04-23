@@ -10378,10 +10378,12 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
     """
     if show_header:
         _dst = (data_source_filter or "").strip().lower()
+        # R23-05 стр.12: «Переименовать отчёт в "План-факт рабочие" из "Рабочие (план/факт)"»
+        # (заголовок теперь через дефис, а не через косую черту).
         if _dst == "техника":
-            st.header("План/факт техника")
+            st.header("План-факт техника")
         elif _dst == "ресурсы":
-            st.header("План/факт рабочие")
+            st.header("План-факт рабочие")
         else:
             st.header("ГДРС")
 
@@ -11906,10 +11908,11 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
     )
     plan_fact_row_done = False
     if show_plan_fact_row:
+        # R23-05 стр.12: «Переименовать отчёт в "План-факт рабочие" из "Рабочие (план/факт)"».
         if (data_source_filter or "").strip().lower() == "техника":
-            st.subheader("План/факт техника")
+            st.subheader("План-факт техника")
         else:
-            st.subheader("План/факт рабочие")
+            st.subheader("План-факт рабочие")
         pf_cols = st.columns(len(projects_to_process))
         for _ix, _pname in enumerate(projects_to_process):
             _pdf = filtered_df.copy()
@@ -12091,7 +12094,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             if not df_people.empty and "План_numeric" in df_people.columns and "week_sum" in df_people.columns:
                 fig_pf, met_pf = _gdrs_plan_fact_fig_and_metrics(df_people)
                 if fig_pf is not None and met_pf is not None:
-                    st.subheader("План/факт рабочие")
+                    st.subheader("План-факт рабочие")
                     render_chart(fig_pf, key=f"{key_prefix}_planfact_single_{_pslug}", caption_below="")
 
         # ========== Chart 1: круговая — доля факта по подрядчикам ==========
