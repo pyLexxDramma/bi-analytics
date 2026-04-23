@@ -559,6 +559,36 @@ def _gdrs_header_is_dd_mm_yyyy(name) -> bool:
     return False
 
 
+def _gdrs_fact_bar_color(plan_v: float, fact_v: float) -> str:
+    """R23-05 стр.12: градиентная окраска факта относительно плана.
+
+    - План выполнен (fact >= plan) → салатовый #2ECC71.
+    - Факт меньше плана → красный градиент: чем больше просадка, тем темнее/краснее.
+    - Факт ≤ 0 → ярко-красный.
+    - План не задан (plan <= 0) → оранжевый (нечего сравнивать).
+    """
+    _light_green = "#2ECC71"
+    _orange = "#F39C12"
+    try:
+        plan_v = float(plan_v)
+        fact_v = float(fact_v)
+    except Exception:  # noqa: BLE001
+        return _orange
+    if plan_v <= 0:
+        return _orange
+    if fact_v <= 0:
+        return "#c0392b"
+    if fact_v >= plan_v:
+        return _light_green
+    miss_ratio = max(0.0, min(1.0, (plan_v - fact_v) / plan_v))
+    lo = (255, 179, 179)
+    hi = (192, 57, 43)
+    rr = int(round(lo[0] + (hi[0] - lo[0]) * miss_ratio))
+    gg = int(round(lo[1] + (hi[1] - lo[1]) * miss_ratio))
+    bb = int(round(lo[2] + (hi[2] - lo[2]) * miss_ratio))
+    return f"#{rr:02x}{gg:02x}{bb:02x}"
+
+
 def _gdrs_match_data_source(series: pd.Series, wanted) -> pd.Series:
     """Фильтр по data_source без учёта регистра."""
     s = series.astype(str).str.strip().str.lower()
@@ -9698,13 +9728,36 @@ def dashboard_technique(df):
                         ),
                     )
                 )
+            # R23-05 стр.12: градиент красный при отставании факта от плана, салатовый при выполнении.
+            if show_plan:
+                _fact_colors = [
+                    _gdrs_fact_bar_color(float(p), float(f))
+                    for p, f in zip(_plan_vals, _fact_vals)
+                ]
+            else:
+                _fact_colors = col_bar
+            # Проект для hover (если в df_fb есть колонка).
+            _proj_col_fb = None
+            for _pc in ("project name", "Проект", "project_name"):
+                if _pc in df_fb.columns:
+                    _proj_col_fb = _pc
+                    break
+            if _proj_col_fb:
+                _proj_by_ka = (
+                    df_fb.groupby("Контрагент")[_proj_col_fb]
+                    .apply(lambda s: ", ".join(sorted({str(x) for x in s.dropna() if str(x).strip()}))[:120])
+                    .to_dict()
+                )
+                _proj_list = [_proj_by_ka.get(k, "—") for k in by_c["Контрагент"].astype(str).tolist()]
+            else:
+                _proj_list = ["—"] * len(by_c)
             fig_fb.add_trace(
                 go.Bar(
                     y=by_c["Контрагент"].astype(str),
                     x=by_c["Факт"],
                     name="Факт",
                     orientation="h",
-                    marker=dict(color=col_bar, line=dict(width=1, color="white")),
+                    marker=dict(color=_fact_colors, line=dict(width=1, color="white")),
                     text=[
                         f"{int(r['Факт'])} ({r['pct']}%)" for _, r in by_c.iterrows()
                     ],
@@ -9718,11 +9771,16 @@ def dashboard_technique(df):
                                 (by_c["Факт"] - by_c["План"]) / by_c["План"] * 100.0,
                                 np.nan,
                             ),
+                            np.array(_proj_list, dtype=object),
+                            (by_c["Факт"] - by_c["План"]).values,
                         ],
                         axis=-1,
                     ),
                     hovertemplate=(
-                        "<b>%{y}</b><br>Факт: %{x:,.0f}<br>План (договор): %{customdata[0]:,.0f}"
+                        "<b>%{y}</b><br>Проект: %{customdata[2]}"
+                        "<br>План (договор): %{customdata[0]:,.0f}"
+                        "<br>Факт: %{x:,.0f}"
+                        "<br>Δ (факт−план): %{customdata[3]:,.0f}"
                         "<br>Отклонение к плану: %{customdata[1]:.1f}%<extra></extra>"
                     ),
                 )
@@ -11580,11 +11638,10 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                         caption_below=f"Факт по периодам, % к сумме плана периода (округление вверх): {label}",
                     )
 
-    elif "week_sum" in filtered_df.columns:
-        with st.expander("Нет колонки «Период» в файле", expanded=False):
-            st.caption(
-                "Показан суммарный факт по подрядчикам (агрегация без оси периода в данных)."
-            )
+    # R23-05 стр.12: «Факт по подрядчикам» показываем всегда при наличии week_sum
+    # (раньше это был elif и при наличии колонки «Период» диаграмма пропадала).
+    if "week_sum" in filtered_df.columns:
+        st.subheader("План-факт по подрядчикам")
         sources_wfb = []
         if "data_source" in filtered_df.columns:
             sources_wfb = filtered_df["data_source"].dropna().unique().tolist()
@@ -11610,56 +11667,129 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 with wfb_cols[wfi]:
                     st.info(f"**{lab_wfb}** — нет данных для «Факт по подрядчикам».")
                 continue
-            by_w = (
-                df_wfb.groupby("Контрагент", as_index=False)["week_sum"]
-                .sum()
-                .assign(Факт=lambda x: pd.to_numeric(x["week_sum"], errors="coerce").fillna(0))
-            )
-            by_w = by_w[by_w["Факт"].abs() > 0].sort_values("Факт", ascending=False)
+            _agg_dict = {"week_sum": "sum"}
+            if "План_numeric" in df_wfb.columns:
+                _agg_dict["План_numeric"] = "sum"
+            by_w = df_wfb.groupby("Контрагент", as_index=False).agg(_agg_dict)
+            by_w["Факт"] = pd.to_numeric(by_w["week_sum"], errors="coerce").fillna(0)
+            if "План_numeric" in by_w.columns:
+                by_w["План"] = pd.to_numeric(by_w["План_numeric"], errors="coerce").fillna(0)
+            else:
+                by_w["План"] = 0.0
+            # Округление вверх до целого (R23-05): факт/план должны быть целыми.
+            import math as _math
+            by_w["Факт"] = by_w["Факт"].apply(lambda v: int(_math.ceil(float(v))) if float(v) > 0 else int(v))
+            by_w["План"] = by_w["План"].apply(lambda v: int(_math.ceil(float(v))) if float(v) > 0 else int(v))
+            by_w["Отклонение"] = by_w["Факт"] - by_w["План"]
+            by_w = by_w[(by_w["Факт"].abs() > 0) | (by_w["План"].abs() > 0)].sort_values("Факт", ascending=False)
             if by_w.empty:
                 with wfb_cols[wfi]:
                     st.info(f"**{lab_wfb}** — нет ненулевых значений по подрядчикам.")
                 continue
             tw = float(by_w["Факт"].sum())
             by_w["pct"] = (by_w["Факт"] / tw * 100.0).round(1) if tw else 0.0
+            # Проект — для hover (если в df_wfb есть «Проект»/«project name», собираем список).
+            _proj_col_wfb = None
+            for _pc in ("project name", "Проект", "project_name"):
+                if _pc in df_wfb.columns:
+                    _proj_col_wfb = _pc
+                    break
+            if _proj_col_wfb:
+                _proj_by_ka = (
+                    df_wfb.groupby("Контрагент")[_proj_col_wfb]
+                    .apply(lambda s: ", ".join(sorted({str(x) for x in s.dropna() if str(x).strip()}))[:120])
+                    .to_dict()
+                )
+                by_w["__project"] = by_w["Контрагент"].map(_proj_by_ka).fillna("—")
+            else:
+                by_w["__project"] = "—"
+            # R23-05 стр.12: горизонтальная «План + Факт» по подрядчикам, факт — градиент.
+            by_w = by_w.sort_values("Факт", ascending=True)
+            _has_any_plan = bool((by_w["План"] > 0).any())
             is_rw = "ресурс" in lab_wfb.lower() or "люди" in lab_wfb.lower()
-            cbar = "#2E86AB" if is_rw else "#F39C12"
-            fig_wfb = go.Figure(
-                data=[
-                    go.Bar(
-                        x=by_w["Контрагент"],
-                        y=by_w["Факт"],
-                        marker_color=cbar,
-                        text=[f"{int(r['Факт'])} ({r['pct']}%)" for _, r in by_w.iterrows()],
-                        textposition="outside",
-                        textfont=dict(size=11, color="white"),
-                        cliponaxis=False,
-                    )
+            _plan_color = "#5dade2" if is_rw else "#af7ac5"
+            # Нейтральный цвет (когда нет плана) — синий, чтобы не путать с салатовым «план выполнен».
+            _fact_neutral = "#3498db"
+            if _has_any_plan:
+                _fact_colors = [
+                    _gdrs_fact_bar_color(float(r["План"]), float(r["Факт"]))
+                    for _, r in by_w.iterrows()
                 ]
+            else:
+                _fact_colors = _fact_neutral
+            _customdata_wfb = list(zip(
+                by_w["__project"].astype(str).tolist(),
+                by_w["План"].astype(int).tolist(),
+                by_w["Факт"].astype(int).tolist(),
+                by_w["Отклонение"].astype(int).tolist(),
+            ))
+            _h_wfb = max(420, int(34 * max(6, len(by_w))))
+            fig_wfb = go.Figure()
+            if _has_any_plan:
+                fig_wfb.add_trace(
+                    go.Bar(
+                        y=by_w["Контрагент"].astype(str),
+                        x=by_w["План"],
+                        name="План (договор)",
+                        orientation="h",
+                        marker=dict(color=_plan_color, line=dict(width=1, color="#aed6f1")),
+                        text=[f"{int(p)}" for p in by_w["План"]],
+                        textposition="outside",
+                        textfont=dict(size=10, color="white"),
+                        customdata=_customdata_wfb,
+                        hovertemplate=(
+                            "<b>%{y}</b><br>Проект: %{customdata[0]}"
+                            "<br>План: %{customdata[1]}"
+                            "<br>Факт: %{customdata[2]}"
+                            "<br>Отклонение: %{customdata[3]}"
+                            "<extra></extra>"
+                        ),
+                    )
+                )
+            fig_wfb.add_trace(
+                go.Bar(
+                    y=by_w["Контрагент"].astype(str),
+                    x=by_w["Факт"],
+                    name="Факт",
+                    orientation="h",
+                    marker=dict(color=_fact_colors, line=dict(width=1, color="white")),
+                    text=[f"{int(r['Факт'])} ({r['pct']}%)" for _, r in by_w.iterrows()],
+                    textposition="outside",
+                    textfont=dict(size=11, color="white"),
+                    customdata=_customdata_wfb,
+                    hovertemplate=(
+                        "<b>%{y}</b><br>Проект: %{customdata[0]}"
+                        "<br>План: %{customdata[1]}"
+                        "<br>Факт: %{customdata[2]}"
+                        "<br>Отклонение: %{customdata[3]}"
+                        "<extra></extra>"
+                    ),
+                )
             )
             fig_wfb.update_layout(
                 title_text="",
-                xaxis_title="Контрагент",
-                yaxis_title="Факт (сумма)",
-                height=440,
-                showlegend=False,
-                xaxis=dict(tickangle=-45, automargin=True),
+                xaxis_title="Количество",
+                yaxis_title="Контрагент",
+                barmode="group" if _has_any_plan else "relative",
+                height=_h_wfb,
+                showlegend=bool(_has_any_plan),
+                legend=dict(orientation="h", x=0.5, xanchor="center", y=1.08, yanchor="bottom"),
+                xaxis=dict(automargin=True),
                 yaxis=dict(automargin=True),
+                margin=dict(l=120, r=36, t=72, b=56),
+                uniformtext=dict(minsize=6, mode="show"),
             )
-            fig_wfb = _apply_finance_bar_label_layout(fig_wfb)
-            try:
-                fig_wfb.update_layout(
-                    uniformtext=dict(minsize=6, mode="show"),
-                    margin=dict(l=56, r=36, t=88, b=168),
-                )
-            except Exception:
-                pass
             fig_wfb = apply_chart_background(fig_wfb)
             with wfb_cols[wfi]:
+                if not _has_any_plan:
+                    st.caption(
+                        f"**{lab_wfb}** — план по подрядчикам не заполнен в исходных данных. "
+                        "Столбцы нейтрального цвета (план/факт не сравнивается)."
+                    )
                 render_chart(
                     fig_wfb,
                     key=f"{key_prefix}_hist_noperiod_{wfi}",
-                    caption_below=f"Факт по подрядчикам (нет колонки периода): {lab_wfb}",
+                    caption_below=f"План и факт по подрядчикам: {lab_wfb}",
                 )
 
     # Несколько проектов — круговые «план/факт» в одну строку, сводка справа
@@ -11706,14 +11836,16 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 proj_name = _u[0]
 
         def _fact_bar_color(plan_v: float, fact_v: float) -> str:
-            # План — отдельный столбец; факт — оранжевый (ТЗ 20.04); просадка — красный градиент; 0 — ярко-красный.
-            _orange = "#F39C12"
+            # R23-05 стр.12: «Если факт меньше плана — столбец красный по градиенту
+            # (чем больше просрочка, тем краснее). Если план выполнен — столбец салатовый».
+            _light_green = "#2ECC71"  # салатовый (план выполнен / перевыполнен)
+            _orange = "#F39C12"       # когда плана нет вообще (нечего сравнивать)
             if plan_v <= 0:
                 return _orange
             if float(fact_v) <= 0:
                 return "#c0392b"
             if fact_v >= plan_v:
-                return _orange
+                return _light_green
             miss_ratio = max(0.0, min(1.0, (plan_v - fact_v) / plan_v))
             lo = (255, 179, 179)
             hi = (192, 57, 43)
