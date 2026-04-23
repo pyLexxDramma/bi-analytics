@@ -7909,8 +7909,10 @@ def dashboard_bdr(df):
 
 # ==================== DASHBOARD 8.6: RD Delay Chart ====================
 def dashboard_rd_delay(df, is_pd: bool = False):
-    # st.subheader("⏱️ Просрочка выдачи РД")
-    st.subheader("Просрочка выдачи ПД" if is_pd else "Просрочка выдачи РД")
+    # R23-07 (стр.19): в контексте ПД все видимые лейблы используют «ПД».
+    doc_code = "ПД" if is_pd else "РД"
+    # st.subheader(f"⏱️ Просрочка выдачи {doc_code}")
+    st.subheader(f"Просрочка выдачи {doc_code}")
 
     # Find column names (they might have different formats)
     # Try to find columns by partial name matching
@@ -7948,25 +7950,23 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         return None
 
     # Find required columns
-    # Column for Y-axis: "Отклонение разделов РД" (exact match from CSV file)
-    # This is column 17 in the CSV file (after header row)
+    # Имя колонки в CSV может быть «Отклонение разделов РД» (также для ПД-MSP — как есть).
+    _rd_dev_csv_name = "Отклонение разделов " + "РД"
     rd_deviation_col = None
 
-    # First try exact match
-    if "Отклонение разделов РД" in df.columns:
-        rd_deviation_col = "Отклонение разделов РД"
+    if _rd_dev_csv_name in df.columns:
+        rd_deviation_col = _rd_dev_csv_name
     else:
-        # Try with find_column function for variations
         rd_deviation_col = find_column(
             df,
             [
-                "Отклонение разделов РД",
+                _rd_dev_csv_name,
                 "Отклонение разделов рд",
                 "отклонение разделов рд",
                 "Отклон. Количества разделов РД",
                 "Отклонение количества разделов РД",
                 "Отклон. разделов РД",
-                "Отклонение разделов РД по Договору",
+                _rd_dev_csv_name + " по Договору",
             ],
         )
 
@@ -7979,8 +7979,11 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     rd_deviation_col = col
                     break
 
+    # Видимый лейбл в графиках/таблицах/легендах: "Отклонение разделов ПД" или dev_col.
+    dev_col = f"Отклонение разделов {doc_code}"
+
     if not rd_deviation_col:
-        st.warning("⚠️ Колонка 'Отклонение разделов РД' не найдена.")
+        st.warning(f"⚠️ Колонка 'Отклонение разделов {doc_code}' не найдена.")
         return
 
     # Find required columns
@@ -8284,7 +8287,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
 
     # Prepare data for "Просрочка выдачи РД"
     # X-axis: "Задача" (each task is a separate bar)
-    # Y-axis: "Отклонение разделов РД" (deviation values)
+    # Y-axis: dev_col (deviation values)
     try:
         rd_deviation_raw = filtered_df[rd_deviation_col].copy()
         rd_deviation_str = rd_deviation_raw.astype(str)
@@ -8336,7 +8339,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             chart_data = (
                 filtered_df.groupby("Задача_полная", as_index=False).agg(agg_map)
             )
-            chart_data = chart_data.rename(columns={"rd_deviation_numeric": "Отклонение разделов РД"})
+            chart_data = chart_data.rename(columns={"rd_deviation_numeric": dev_col})
             chart_data["Задача"] = chart_data["Задача_полная"]
 
             # % выполнения РД/ПД = факт / план * 100
@@ -8351,12 +8354,12 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             chart_data.loc[~mask_plan, "% выполнения РД/ПД"] = "—"
             chart_data["_overdue_share_pct"] = 0.0
             chart_data.loc[mask_plan, "_overdue_share_pct"] = (
-                chart_data.loc[mask_plan, "Отклонение разделов РД"]
+                chart_data.loc[mask_plan, dev_col]
                 / chart_data.loc[mask_plan, "_rd_plan_n"]
                 * 100.0
             ).round(1)
 
-            chart_data = chart_data.sort_values("Отклонение разделов РД", ascending=False)
+            chart_data = chart_data.sort_values(dev_col, ascending=False)
             y_column = "Задача_полная"
             y_title = "Задача"
         else:
@@ -8367,7 +8370,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     filtered_df.groupby(project_col, as_index=False).agg(agg_map)
                 )
                 chart_data = chart_data.rename(
-                    columns={"rd_deviation_numeric": "Отклонение разделов РД", project_col: "Проект"}
+                    columns={"rd_deviation_numeric": dev_col, project_col: "Проект"}
                 )
                 chart_data["% выполнения РД/ПД"] = ""
                 mask_plan = chart_data["_rd_plan_n"] > 0
@@ -8380,11 +8383,11 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 chart_data.loc[~mask_plan, "% выполнения РД/ПД"] = "—"
                 chart_data["_overdue_share_pct"] = 0.0
                 chart_data.loc[mask_plan, "_overdue_share_pct"] = (
-                    chart_data.loc[mask_plan, "Отклонение разделов РД"]
+                    chart_data.loc[mask_plan, dev_col]
                     / chart_data.loc[mask_plan, "_rd_plan_n"]
                     * 100.0
                 ).round(1)
-                chart_data = chart_data.sort_values("Отклонение разделов РД", ascending=False)
+                chart_data = chart_data.sort_values(dev_col, ascending=False)
                 y_column = "Проект"
                 y_title = "Проект"
             else:
@@ -8398,7 +8401,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         # Текст на столбцах: отклонение и % выполнения РД/ПД
         text_values = []
         for _, row in chart_data.iterrows():
-            val = row["Отклонение разделов РД"]
+            val = row[dev_col]
             pct = row.get("% выполнения РД/ПД", "") or ""
             overdue_pct = row.get("_overdue_share_pct", 0)
             plan_total = row.get("_rd_plan_n", 0)
@@ -8414,18 +8417,18 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 text_values.append(pct if pct else "")
 
         # Create horizontal bar chart
-        chart_data["_severity"] = chart_data["Отклонение разделов РД"].clip(lower=0)
+        chart_data["_severity"] = chart_data[dev_col].clip(lower=0)
         severity_max = float(chart_data["_severity"].max()) if not chart_data.empty else 0.0
         severity_max = max(severity_max, 1.0)
         fig = px.bar(
             chart_data,
-            x="Отклонение разделов РД",
+            x=dev_col,
             y=y_column,
             orientation="h",
             title=None,
             labels={
                 y_column: y_title,
-                "Отклонение разделов РД": "Отклонение разделов РД",
+                dev_col: dev_col,
             },
             text=text_values,
             color="_severity",
@@ -8452,7 +8455,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         # For horizontal bars, reverse the list so largest is at top
         category_list = chart_data[y_column].tolist()
         fig.update_layout(
-            xaxis_title="Отклонение разделов РД",
+            xaxis_title=dev_col,
             yaxis_title=y_title,
             height=max(
                 600, len(chart_data) * 40
@@ -8471,7 +8474,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
 
         fig = _apply_bar_uniformtext(fig)
         fig = apply_chart_background(fig)
-        render_chart(fig, caption_below="Просрочка выдачи РД")
+        render_chart(fig, caption_below=f"Просрочка выдачи {doc_code}")
 
         if plan_end_col and plan_end_col in filtered_df.columns:
             month_df = filtered_df[filtered_df["_plan_end_dt"].notna()].copy()
@@ -8746,19 +8749,19 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         st.subheader("Сводка по просрочке")
         if show_by_tasks:
             summary_table = chart_data[
-                ["Задача_полная", "Отклонение разделов РД", "% выполнения РД/ПД"]
+                ["Задача_полная", dev_col, "% выполнения РД/ПД"]
             ].copy()
             summary_table = summary_table.rename(columns={"Задача_полная": "Задача"})
         else:
-            summary_table = chart_data[["Проект", "Отклонение разделов РД", "% выполнения РД/ПД"]].copy()
-        if "Отклонение разделов РД" in summary_table.columns:
-            summary_table["Отклонение разделов РД"] = summary_table["Отклонение разделов РД"].apply(
+            summary_table = chart_data[["Проект", dev_col, "% выполнения РД/ПД"]].copy()
+        if dev_col in summary_table.columns:
+            summary_table[dev_col] = summary_table[dev_col].apply(
                 lambda x: int(round(float(x), 0)) if pd.notna(x) else ""
             )
         # Раскраска: отклонение > 0 — красный, <= 0 — зелёный
         # st.table(style_dataframe_for_dark_theme(
         #     summary_table,
-        #     days_column="Отклонение разделов РД",
+        #     days_column=dev_col,
         # ))
         st.markdown(format_dataframe_as_html(summary_table), unsafe_allow_html=True)
         render_dataframe_excel_csv_downloads(
@@ -8865,22 +8868,22 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         # Summary metrics
         col1, col2, col3 = st.columns(3)
         with col1:
-            total_deviation = chart_data["Отклонение разделов РД"].sum()
+            total_deviation = chart_data[dev_col].sum()
             st.metric(
                 "Сумма отклонений",
                 f"{total_deviation:,.0f}" if pd.notna(total_deviation) else "Н/Д",
             )
         with col2:
-            positive_deviation = chart_data[chart_data["Отклонение разделов РД"] > 0][
-                "Отклонение разделов РД"
+            positive_deviation = chart_data[chart_data[dev_col] > 0][
+                dev_col
             ].sum()
             st.metric(
                 "Положительные отклонения",
                 f"{positive_deviation:,.0f}" if pd.notna(positive_deviation) else "0",
             )
         with col3:
-            negative_deviation = chart_data[chart_data["Отклонение разделов РД"] < 0][
-                "Отклонение разделов РД"
+            negative_deviation = chart_data[chart_data[dev_col] < 0][
+                dev_col
             ].sum()
             st.metric(
                 "Отрицательные отклонения",
@@ -8888,7 +8891,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             )
 
     except Exception as e:
-        st.error(f"Ошибка при построении графика 'Просрочка выдачи РД': {str(e)}")
+        st.error(f"Ошибка при построении графика 'Просрочка выдачи {doc_code}': {str(e)}")
 
 
 # ==================== DASHBOARD 8.6.5: Technique Visualization ====================
@@ -15869,8 +15872,8 @@ def dashboard_working_documentation(df):
 
 
 def dashboard_project_documentation(df):
-    """Проектная документация: основной экран + вкладка «Просрочка выдачи РД»."""
-    tab_main, tab_delay = st.tabs(["Проектная документация", "Просрочка выдачи РД"])
+    """Проектная документация: основной экран + вкладка «Просрочка выдачи ПД»."""
+    tab_main, tab_delay = st.tabs(["Проектная документация", "Просрочка выдачи ПД"])
     with tab_main:
         dashboard_documentation(
             df, page_title="Проектная документация", embed_delay_at_end=False
@@ -21712,9 +21715,9 @@ def dashboard_project_schedule_chart(df):
 
 
 def dashboard_pd_delay(df):
-    """Просрочка выдачи РД внутри раздела ПД."""
+    """Просрочка выдачи ПД — раздел «Проектная документация»."""
     st.caption(
         "Источник данных — MSP по разделу «Проектная документация». "
-        "Ниже показана просрочка выдачи РД и помесячная динамика по разделам."
+        "Ниже показана просрочка выдачи ПД и помесячная динамика по разделам."
     )
     dashboard_rd_delay(df, is_pd=True)
