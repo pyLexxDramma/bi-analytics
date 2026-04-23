@@ -8476,6 +8476,67 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         fig = apply_chart_background(fig)
         render_chart(fig, caption_below=f"Просрочка выдачи {doc_code}")
 
+        # R23-07 (стр.22): индикаторы просрочки по проектам — карточки с градиентом зелёный→красный.
+        try:
+            if (
+                y_title == "Проект"
+                and not chart_data.empty
+                and project_col
+                and project_col in filtered_df.columns
+            ):
+                st.markdown(f"**Индикаторы просрочки {doc_code} по проектам**")
+                _dev_series = chart_data[dev_col].astype(float).clip(lower=0.0)
+                _dev_max = float(_dev_series.max()) if not _dev_series.empty else 0.0
+
+                def _proj_indicator_color(val: float) -> str:
+                    if _dev_max <= 0 or val <= 0:
+                        return "#1E8449"
+                    r = min(max(val / _dev_max, 0.0), 1.0)
+                    if r < 0.5:
+                        t = r / 0.5
+                        r1, g1, b1 = 0x27, 0xAE, 0x60
+                        r2, g2, b2 = 0xF1, 0xC4, 0x0F
+                    else:
+                        t = (r - 0.5) / 0.5
+                        r1, g1, b1 = 0xF1, 0xC4, 0x0F
+                        r2, g2, b2 = 0xC0, 0x39, 0x2B
+                    rr = int(r1 + (r2 - r1) * t)
+                    gg = int(g1 + (g2 - g1) * t)
+                    bb = int(b1 + (b2 - b1) * t)
+                    return f"#{rr:02X}{gg:02X}{bb:02X}"
+
+                _ind_df = (
+                    chart_data[["Проект", dev_col]]
+                    .rename(columns={dev_col: "_dev"})
+                    .sort_values("_dev", ascending=False)
+                    .reset_index(drop=True)
+                )
+                _n = len(_ind_df)
+                _cols_n = min(4, max(1, _n))
+                _cols_row = st.columns(_cols_n)
+                for _i, (_idx, _row) in enumerate(_ind_df.iterrows()):
+                    _proj = str(_row["Проект"])
+                    _dev = float(_row["_dev"]) if pd.notna(_row["_dev"]) else 0.0
+                    _bg = _proj_indicator_color(_dev)
+                    _label = (
+                        "Без просрочки"
+                        if _dev <= 0
+                        else f"Просрочка: {int(round(_dev))}"
+                    )
+                    with _cols_row[_i % _cols_n]:
+                        st.markdown(
+                            (
+                                f"<div style='background:{_bg}; color:white; padding:10px 14px; "
+                                f"border-radius:8px; margin-bottom:8px;'>"
+                                f"<div style='font-size:13px; opacity:0.9;'>{_proj}</div>"
+                                f"<div style='font-size:18px; font-weight:600;'>{_label}</div>"
+                                f"</div>"
+                            ),
+                            unsafe_allow_html=True,
+                        )
+        except Exception as _ind_err:
+            st.caption(f"Не удалось построить индикаторы просрочки: {_ind_err}")
+
         if plan_end_col and plan_end_col in filtered_df.columns:
             month_df = filtered_df[filtered_df["_plan_end_dt"].notna()].copy()
             if not month_df.empty:
