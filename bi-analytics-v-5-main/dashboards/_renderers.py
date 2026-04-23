@@ -1597,6 +1597,15 @@ def _deviations_project_slice_by_key(df: pd.DataFrame, state_key: str) -> pd.Dat
     return df.copy() if df is not None else df
 
 
+def _is_generic_block_name(v) -> bool:
+    """Шаблонные имена вроде «Блок 1», «Блок 2», «Block 3» — удаляются из селектов
+    «Функциональный блок», чтобы не мешать задачам уровня 2 из MSP (R23-03/R23-04)."""
+    s = str(v).strip().lower()
+    if not s:
+        return True
+    return bool(re.match(r"^(блок|block)\s*[-_a-zа-я]*\d+$", s))
+
+
 def _render_deviations_combined_shared_filters(df):
     ensure_msp_hierarchy_columns(df)
     st.markdown(
@@ -1641,7 +1650,7 @@ def _render_deviations_combined_shared_filters(df):
                 building_outline_level=_bdv,
             )
             ln = _dev_outline_level_numeric(wh[level_col])
-            block_opts = ["Все"] + sorted(
+            _raw_l2 = (
                 wh.loc[ln == _blv, task_col]
                 .dropna()
                 .astype(str)
@@ -1649,11 +1658,17 @@ def _render_deviations_combined_shared_filters(df):
                 .unique()
                 .tolist()
             )
+            _raw_l2 = [x for x in _raw_l2 if x and not _is_generic_block_name(x)]
+            block_opts = ["Все"] + sorted(_raw_l2)
             if len(block_opts) <= 1 and "_dt_lvl2_key" in wh.columns:
                 _k2c = wh["_dt_lvl2_key"].astype(str).str.strip()
                 _k2c = _k2c[_k2c.ne("") & _k2c.str.lower().ne("nan")]
                 if len(_k2c):
-                    block_opts = ["Все"] + sorted(pd.unique(_k2c).tolist())
+                    _k2c_list = [
+                        x for x in pd.unique(_k2c).tolist()
+                        if not _is_generic_block_name(x)
+                    ]
+                    block_opts = ["Все"] + sorted(_k2c_list)
             st.selectbox(
                 "Функциональный блок",
                 block_opts,
@@ -1662,6 +1677,9 @@ def _render_deviations_combined_shared_filters(df):
             )
         elif use_flat_bs:
             fb_opts = _deviations_flat_functional_block_options(df_opts)
+            fb_opts = [
+                x for x in fb_opts if x == "Все" or not _is_generic_block_name(x)
+            ]
             st.selectbox(
                 "Функциональный блок",
                 fb_opts,
@@ -1670,9 +1688,11 @@ def _render_deviations_combined_shared_filters(df):
                 "Для списка задач уровня 2 по MSP загрузите выгрузку с «Уровень_структуры» / Outline Level.",
             )
         elif "block" in df.columns:
-            blocks = ["Все"] + sorted(
+            blocks_raw = sorted(
                 df["block"].dropna().astype(str).str.strip().unique().tolist()
             )
+            blocks_raw = [x for x in blocks_raw if not _is_generic_block_name(x)]
+            blocks = ["Все"] + blocks_raw
             st.selectbox("Функциональный блок", blocks, key="devcombo_block")
         else:
             st.caption("Нет колонки блока")
@@ -4633,89 +4653,61 @@ def dashboard_plan_fact_dates(df):
             if not tdf_vis.empty:
                 tdf_vis = tdf_vis.copy()
                 tdf_vis["_y"] = tdf_vis.apply(_cov_y, axis=1)
-                # Сортировка ковенантов по убыванию отклонения окончания (верх — самые поздние).
-                if "plan_end_diff" in tdf_vis.columns:
-                    _ped_sort = pd.to_numeric(tdf_vis["plan_end_diff"], errors="coerce")
-                    tdf_vis = tdf_vis.assign(_ped_sort=_ped_sort).sort_values(
-                        "_ped_sort", ascending=True, na_position="first"
-                    ).drop(columns=["_ped_sort"])
+                # R23-03 page_7/8 (референс): ковенанты — точечная диаграмма на временной оси.
+                # Сортировка по базовому окончанию (сверху — ранние, снизу — поздние).
+                if pe_col in tdf_vis.columns:
+                    tdf_vis = tdf_vis.sort_values(
+                        pe_col, ascending=False, na_position="last"
+                    )
                 else:
                     tdf_vis = tdf_vis.sort_values("_y")
 
-                # Бар-диаграмма: на каждую строку ковенанта две горизонтальные полоски —
-                # «Базовое окончание» и «Окончание». Ось X — даты; полоса идёт от минимальной
-                # даты по набору (origin) до значения соответствующей даты. Отсутствующие даты
-                # пропускаются (строка без полосы). Макет: page_5 правок — «отобразить базовое
-                # окончание и окончание из MSP, столбец идёт от 0 до значения».
-                _dates_combined = pd.concat(
-                    [tdf_vis[pe_col], tdf_vis[fe_col]], ignore_index=True
-                ).dropna()
-                if len(_dates_combined):
-                    _origin = _dates_combined.min() - pd.Timedelta(days=1)
-                else:
-                    _origin = pd.Timestamp.today().normalize()
-                _pe_days = (tdf_vis[pe_col] - _origin).dt.days.astype("Float64")
-                _fe_days = (tdf_vis[fe_col] - _origin).dt.days.astype("Float64")
-
                 fig_cov = go.Figure()
                 fig_cov.add_trace(
-                    go.Bar(
-                        x=_pe_days.astype(float).tolist(),
-                        y=tdf_vis["_y"].tolist(),
-                        orientation="h",
+                    go.Scatter(
+                        x=tdf_vis[pe_col],
+                        y=tdf_vis["_y"],
+                        mode="markers+text",
                         name="Базовое окончание",
-                        marker=dict(color="#3B82F6"),
+                        marker=dict(
+                            symbol="diamond",
+                            size=12,
+                            color="#3B82F6",
+                            line=dict(width=1, color="#ffffff"),
+                        ),
                         text=tdf_vis[pe_col].apply(
                             lambda d: d.strftime("%d.%m.%Y") if pd.notna(d) else ""
-                        ).tolist(),
-                        textposition="outside",
+                        ),
+                        textposition="middle right",
                         textfont=dict(size=11, color="white"),
-                        hovertemplate="%{y}<br>Базовое окончание: %{text}<extra></extra>",
-                        cliponaxis=False,
+                        hovertemplate="%{y}<br>Базовое окончание: %{x|%d.%m.%Y}<extra></extra>",
                     )
                 )
                 fig_cov.add_trace(
-                    go.Bar(
-                        x=_fe_days.astype(float).tolist(),
-                        y=tdf_vis["_y"].tolist(),
-                        orientation="h",
+                    go.Scatter(
+                        x=tdf_vis[fe_col],
+                        y=tdf_vis["_y"],
+                        mode="markers+text",
                         name="Окончание",
-                        marker=dict(color="#EF4444"),
+                        marker=dict(
+                            symbol="diamond",
+                            size=12,
+                            color="#EF4444",
+                            line=dict(width=1, color="#ffffff"),
+                        ),
                         text=tdf_vis[fe_col].apply(
                             lambda d: d.strftime("%d.%m.%Y") if pd.notna(d) else ""
-                        ).tolist(),
-                        textposition="outside",
+                        ),
+                        textposition="middle right",
                         textfont=dict(size=11, color="white"),
-                        hovertemplate="%{y}<br>Окончание: %{text}<extra></extra>",
-                        cliponaxis=False,
+                        hovertemplate="%{y}<br>Окончание: %{x|%d.%m.%Y}<extra></extra>",
                     )
                 )
-
-                # Переводим числовые дни обратно в подписи-даты на оси X.
-                _max_day = 1
-                try:
-                    _all_days = [v for v in list(_pe_days) + list(_fe_days) if pd.notna(v)]
-                    if _all_days:
-                        _max_day = int(max(float(v) for v in _all_days))
-                        _max_day = max(_max_day, 1)
-                except Exception:
-                    _max_day = 1
-                _tick_count = 6
-                _tick_step = max(1, _max_day // _tick_count)
-                _tick_days = list(range(0, _max_day + _tick_step, _tick_step))
-                _tick_labels = [
-                    (_origin + pd.Timedelta(days=int(d))).strftime("%d.%m.%Y")
-                    for d in _tick_days
-                ]
-
                 nuniq = tdf_vis["_y"].nunique()
                 fig_cov.update_layout(
-                    barmode="group",
-                    bargap=0.25,
-                    bargroupgap=0.1,
                     xaxis_title="Дата",
                     yaxis_title="Ковенант",
-                    height=max(440, int(nuniq) * 48),
+                    height=max(420, int(nuniq) * 40),
                     legend=dict(
                         orientation="h",
                         yanchor="bottom",
@@ -4723,13 +4715,8 @@ def dashboard_plan_fact_dates(df):
                         xanchor="right",
                         x=1,
                     ),
-                    xaxis=dict(
-                        tickmode="array",
-                        tickvals=_tick_days,
-                        ticktext=_tick_labels,
-                        range=[0, _max_day * 1.08 if _max_day > 0 else 1],
-                    ),
-                    margin=dict(l=10, r=40, t=50, b=60),
+                    xaxis=dict(type="date", tickformat="%d.%m.%Y"),
+                    margin=dict(l=10, r=80, t=50, b=60),
                 )
                 fig_cov.update_yaxes(
                     categoryorder="array",
@@ -4739,8 +4726,8 @@ def dashboard_plan_fact_dates(df):
                 render_chart(
                     fig_cov,
                     caption_below=(
-                        f"Ковенанты: базовое окончание (синий) и окончание (красный). "
-                        f"Ось X — от {_origin.strftime('%d.%m.%Y')} до крайней даты выбранных ковенантов."
+                        "Ковенанты: ромб — базовое окончание (синий) и окончание (красный); "
+                        "подпись — дата рядом с точкой."
                     ),
                 )
             else:
@@ -5898,19 +5885,29 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
             else:
                 selected_project = "Все"
 
+        # R23-04 page_9 item 2: фильтр «Этап» заменён на «Строение» — берём колонку
+        # «building / строение / лот / lot / bldg». Если её нет, селект просто не рисуем
+        # (старый ключ session-state reasons_section больше не учитывается).
         with col4:
-            try:
-                has_section_column = "section" in df.columns
-            except (AttributeError, TypeError):
-                has_section_column = False
-
-            if has_section_column:
-                sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
-                selected_section = st.selectbox(
-                    "Этап", sections, key="reasons_section"
+            _bld_col = _find_column_by_keywords(
+                df, ("building", "строение", "лот", "lot", "bldg")
+            )
+            if _bld_col and _bld_col in df.columns:
+                _bld_opts = ["Все"] + sorted(
+                    df[_bld_col]
+                    .dropna()
+                    .astype(str)
+                    .str.strip()
+                    .unique()
+                    .tolist()
+                )
+                selected_building_r = st.selectbox(
+                    "Строение", _bld_opts, key="reasons_building"
                 )
             else:
-                selected_section = "Все"
+                _bld_col = None
+                selected_building_r = "Все"
+        selected_section = "Все"
 
     view_type = st.selectbox(
         "Вид отображения", ["По причинам", "По месяцам"], key="reasons_view_type"
@@ -5947,15 +5944,15 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
                 == str(selected_project).strip()
             ]
 
-        try:
-            has_section_col = "section" in filtered_df.columns
-        except (AttributeError, TypeError):
-            has_section_col = False
-
-        if selected_section != "Все" and has_section_col:
+        # «Строение» вместо «Этап» (R23-04 page_9 item 2).
+        if (
+            selected_building_r != "Все"
+            and _bld_col
+            and _bld_col in filtered_df.columns
+        ):
             filtered_df = filtered_df[
-                filtered_df["section"].astype(str).str.strip()
-                == str(selected_section).strip()
+                filtered_df[_bld_col].astype(str).str.strip()
+                == str(selected_building_r).strip()
             ]
 
     # Filter tasks: deviation=1/True OR reason of deviation filled
