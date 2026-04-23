@@ -140,3 +140,7 @@ qa_pravki_nav_check/
 scripts/playwright_smoke_ui.py
 scripts/streamlit_visual_audit.py
 scripts/requirements-visual-audit.txt
+
+# Локальные одноразовые скрипты / черновики (не в репозиторий)
+_scan_bddcs.py
+dashboards/patch_pd_phase1.py
