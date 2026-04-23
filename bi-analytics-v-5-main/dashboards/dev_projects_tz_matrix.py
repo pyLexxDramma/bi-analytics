@@ -398,14 +398,22 @@ def _unicode_dash_fold(s: str) -> str:
 
 def _norm_dev_project_key(val: Any) -> str:
     """
-    Сопоставление подписи проекта MSP / 1С / TESSA: регистр, пробелы, «-», лат. I / 1.
+    Сопоставление подписи проекта MSP / 1С / TESSA: регистр, пробелы, «-», хвостовые
+    римские цифры I..X → арабские 1..10 (чтобы «Есипово V» и «Есипово-5»,
+    «Дмитровский I» и «Дмитровский-1» имели один ключ группировки).
     """
     if val is None or (isinstance(val, float) and pd.isna(val)):
         return ""
     s = str(val).strip().lower().replace("ё", "е")
     s = re.sub(r"[\s\-_]+", "", s)
-    if len(s) >= 2 and s.endswith("i") and s[-2].isalpha():
-        s = s[:-1] + "1"
+    _roman_tail = {
+        "iii": 3, "ii": 2, "iv": 4, "ix": 9, "viii": 8, "vii": 7, "vi": 6,
+        "v": 5, "i": 1, "x": 10,
+    }
+    for _rom in ("viii", "iii", "vii", "iv", "ix", "vi", "ii", "v", "x", "i"):
+        if s.endswith(_rom) and len(s) > len(_rom) and s[-len(_rom) - 1].isalpha():
+            s = s[: -len(_rom)] + str(_roman_tail[_rom])
+            break
     return s
 
 
@@ -447,10 +455,16 @@ def _control_points_project_label(group_key: str, raw_names: List[str]) -> str:
         from config import MSP_PROJECT_NAME_MAP as M
     except Exception:
         M = {}
+    # Сначала точный ключ из карты (без нормализации римских), чтобы не потерять имена вида
+    # «Дмитровский-1». Далее — по нормализованному ключу (римские хвосты тоже сводятся).
     for r in raw_names:
         lk = str(r).strip().lower().replace(" ", "")
         if lk in M:
             return str(M[lk]).strip()
+    for r in raw_names:
+        nk = _norm_dev_project_key(r)
+        if nk and nk in M:
+            return str(M[nk]).strip()
     if group_key == "unified_dmitrovsky1":
         return "Дмитровский 1"
     return str(raw_names[0]).strip() if raw_names else ""
