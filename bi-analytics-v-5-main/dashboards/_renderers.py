@@ -19929,12 +19929,13 @@ def dashboard_predpisania(df):
                 (f"проср.: {int(o)}" if int(o) > 0 else "")
                 for o in grp["Просрочено"]
             ]
+            _total_overdue_all = int(grp["Просрочено"].sum())
             fig1 = go.Figure()
             fig1.add_trace(
                 go.Bar(
                     y=grp[chart_group_col],
                     x=grp["Неустранено"],
-                    name="Неустраненные предписания",
+                    name=f"Неустраненные предписания (просроченных всего: {_total_overdue_all})",
                     orientation="h",
                     marker=dict(color="#3498db", line=dict(color="rgba(255,255,255,0.12)", width=1)),
                     text=_txt,
@@ -19957,6 +19958,23 @@ def dashboard_predpisania(df):
                     ),
                 )
             )
+            # R23-10: отдельный невидимый трейс в легенде — число просроченных по каждой группе.
+            # Даёт требование стр. 24 п.5: «в легенду — число просроченных по подрядчику».
+            if _total_overdue_all > 0:
+                for _y, _o in zip(grp[chart_group_col].tolist(), grp["Просрочено"].astype(int).tolist()):
+                    if _o <= 0:
+                        continue
+                    fig1.add_trace(
+                        go.Scatter(
+                            x=[None],
+                            y=[None],
+                            mode="markers",
+                            marker=dict(size=10, color="#E67E22", symbol="square"),
+                            name=f"{_y} · просроченных: {_o}",
+                            hoverinfo="skip",
+                            showlegend=True,
+                        )
+                    )
             fig1.update_layout(
                 bargap=0.26,
                 showlegend=True,
@@ -19998,6 +20016,78 @@ def dashboard_predpisania(df):
                 key="pred_bar_main",
                 caption_below="",
             )
+
+            # R23-10 стр.27: второй график — разбивка по проектам. Даёт требование
+            # «должно быть 2 графика с разделением по подрядчикам и по неустранённым
+            # предписаниям». Если основной график уже по проектам — второй не нужен.
+            second_group_col = None
+            second_label = ""
+            if chart_group_col is contr_col and obj_col and obj_col in fu.columns:
+                second_group_col = obj_col
+                second_label = "проектам"
+            elif chart_group_col is obj_col and contr_col and contr_col in fu.columns:
+                second_group_col = contr_col
+                second_label = "подрядчикам"
+            if second_group_col and fu[second_group_col].astype(str).str.strip().ne("").any():
+                grp2 = (
+                    fu.groupby(second_group_col, as_index=False)
+                    .agg(
+                        Неустранено=(second_group_col, "size"),
+                        Просрочено=("_overdue_days", lambda x: int((x > 0).sum())),
+                    )
+                )
+                grp2["_sort_name"] = grp2[second_group_col].astype(str).str.casefold()
+                grp2 = grp2.sort_values(
+                    ["Неустранено", "_sort_name"],
+                    ascending=[False, True],
+                    kind="mergesort",
+                ).drop(columns=["_sort_name"]).reset_index(drop=True)
+                _txt2 = [
+                    (f"проср.: {int(o)}" if int(o) > 0 else "")
+                    for o in grp2["Просрочено"]
+                ]
+                fig1b = go.Figure()
+                fig1b.add_trace(
+                    go.Bar(
+                        y=grp2[second_group_col],
+                        x=grp2["Неустранено"],
+                        name=f"Неустраненные предписания — по {second_label}",
+                        orientation="h",
+                        marker=dict(color="#06A77D", line=dict(color="rgba(255,255,255,0.12)", width=1)),
+                        text=_txt2,
+                        textposition="inside",
+                        insidetextanchor="middle",
+                        textfont=dict(color="#ffffff", size=max(12, min(15, 200 // max(1, len(grp2))))),
+                        hovertemplate=(
+                            "<b>%{y}</b><br>"
+                            "Неустраненных: %{x}<br>"
+                            "Просроченных: %{customdata[0]}<extra></extra>"
+                        ),
+                        customdata=np.stack([grp2["Просрочено"].astype(int)], axis=1),
+                    )
+                )
+                xmax2 = max(float(pd.to_numeric(grp2["Неустранено"], errors="coerce").fillna(0).max()), 1.0)
+                axis_upper2 = _pred_axis_upper_bound(xmax2)
+                fig1b.update_layout(
+                    bargap=0.26,
+                    showlegend=False,
+                    height=max(360, len(grp2) * 56 + 160),
+                    yaxis_title="",
+                    xaxis_title=f"Количество неустраненных предписаний — по {second_label}",
+                    margin=dict(l=12, r=140, t=56, b=64),
+                    xaxis=dict(range=[0, axis_upper2], title=dict(standoff=14), automargin=True, fixedrange=True),
+                    yaxis=dict(automargin=True, tickfont=dict(size=13), fixedrange=True),
+                    uirevision="pred_bar_by_projects",
+                    title=dict(
+                        text=f"Неустраненные предписания — по {second_label}",
+                        font=dict(size=14),
+                        x=0.5,
+                        xanchor="center",
+                    ),
+                    uniformtext=dict(minsize=11, mode="show"),
+                )
+                fig1b = apply_chart_background(fig1b)
+                render_chart(fig1b, key="pred_bar_by_projects", caption_below="")
         else:
             if hide_resolved and filtered.loc[~filtered["_resolved"]].empty:
                 st.info("Нет данных для диаграммы: по текущим фильтрам все предписания устранены.")
