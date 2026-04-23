@@ -8140,9 +8140,12 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         rd_status_options_rd.append("Передано подрядчику")
     if rework_col_rd and rework_col_rd in df.columns:
         rd_status_options_rd.append("На доработке")
+    # R23-06 (стр.17): добавить статус «Просрочено подрядчиком» и в «Просрочке выдачи РД/ПД».
+    if "Просрочено подрядчиком" not in rd_status_options_rd:
+        rd_status_options_rd.append("Просрочено подрядчиком")
     if rd_status_options_rd:
         selected_statuses_rd = st.pills(
-            "Фильтр по статусу РД",
+            "Фильтр по статусу ПД" if is_pd else "Фильтр по статусу РД",
             rd_status_options_rd,
             selection_mode="multi",
             default=rd_status_options_rd,
@@ -8226,6 +8229,40 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             )
             rework_numeric = pd.to_numeric(rework_series, errors="coerce").fillna(0)
             status_mask = status_mask | (rework_numeric > 0)
+        # R23-06 (стр.17): просрочено подрядчиком = выдано подрядчику И plan_end в прошлом,
+        # при этом (facторовое окончание не попадает в план).
+        if "Просрочено подрядчиком" in selected_statuses_rd:
+            _today_d = date.today()
+            _pe = pd.Series(pd.NaT, index=filtered_df.index)
+            if plan_end_col and plan_end_col in filtered_df.columns:
+                _pe = pd.to_datetime(
+                    filtered_df[plan_end_col].astype(str),
+                    errors="coerce",
+                    dayfirst=True,
+                    format="mixed",
+                )
+            _fe = pd.Series(pd.NaT, index=filtered_df.index)
+            if fact_end_col and fact_end_col in filtered_df.columns:
+                _fe = pd.to_datetime(
+                    filtered_df[fact_end_col].astype(str),
+                    errors="coerce",
+                    dayfirst=True,
+                    format="mixed",
+                )
+            _issued = pd.Series(False, index=filtered_df.index)
+            if contractor_transfer_col_rd and contractor_transfer_col_rd in filtered_df.columns:
+                _issued = (
+                    pd.to_numeric(
+                        filtered_df[contractor_transfer_col_rd]
+                        .astype(str)
+                        .str.replace(",", ".", regex=False),
+                        errors="coerce",
+                    ).fillna(0)
+                    > 0
+                )
+            _done_on_time = _fe.notna() & _pe.notna() & (_fe.dt.normalize() <= _pe.dt.normalize())
+            _overdue_plan = _pe.notna() & (_pe.dt.date < _today_d)
+            status_mask = status_mask | (_issued & _overdue_plan & (~_done_on_time))
         filtered_df = filtered_df[status_mask].copy()
 
     if project_col and project_col in filtered_df.columns:
@@ -14794,16 +14831,21 @@ def dashboard_documentation(
     filter_col1, filter_col2, filter_col3 = st.columns(3, gap="small")
 
     # Filter by project (несколько проектов; пусто = все)
+    # R23-06 (стр.17): в ПД по умолчанию выбраны все проекты («Все» вместо «Select all»).
     selected_projects_doc: list[str] = []
     if project_col and project_col in df.columns:
         with filter_col1:
             _proj_opts = _unique_project_labels_for_select(df[project_col])
+            _proj_default = st.session_state.get(
+                f"{_doc_fk}project_filter_ms",
+                _proj_opts if is_pd else [],
+            )
             selected_projects_doc = st.multiselect(
                 "Фильтр по проекту",
                 options=_proj_opts,
-                default=st.session_state.get(f"{_doc_fk}project_filter_ms", []),
+                default=_proj_default,
                 key=f"{_doc_fk}project_filter_ms",
-                help="Пустой выбор — все проекты.",
+                help="Все проекты выбраны по умолчанию; снимайте отметки, чтобы сузить выборку.",
                 placeholder="Все проекты",
             )
 
@@ -14853,12 +14895,16 @@ def dashboard_documentation(
                 },
                 key=lambda x: x.casefold(),
             )
+            _sec_default = st.session_state.get(
+                f"{_doc_fk}section_filter_ms",
+                section_options if is_pd else [],
+            )
             selected_sections_doc = st.multiselect(
-                "Фильтр по виду раздела РД",
+                "Фильтр по виду раздела ПД" if is_pd else "Фильтр по виду раздела РД",
                 options=section_options,
-                default=st.session_state.get(f"{_doc_fk}section_filter_ms", []),
+                default=_sec_default,
                 key=f"{_doc_fk}section_filter_ms",
-                help="Пустой выбор — все виды разделов.",
+                help="Все виды разделов выбраны по умолчанию; снимайте отметки, чтобы сузить выборку.",
                 placeholder="Все разделы",
             )
         else:
@@ -14879,9 +14925,9 @@ def dashboard_documentation(
         )
     if rework_col and rework_col in df.columns:
         rd_status_options.append("На доработке")
-    if page_title == "Рабочая документация":
-        if "Просрочено подрядчиком" not in rd_status_options:
-            rd_status_options.append("Просрочено подрядчиком")
+    # R23-06 (стр.17): статус «Просрочено подрядчиком» — и для РД, и для ПД.
+    if "Просрочено подрядчиком" not in rd_status_options:
+        rd_status_options.append("Просрочено подрядчиком")
 
     _status_label = (
         "Фильтр по статусу ПД"
@@ -14906,11 +14952,24 @@ def dashboard_documentation(
     filtered_df = df.copy()
 
     # Apply project filter
-    if selected_projects_doc and project_col and project_col in df.columns:
-        _pk_set_doc = {_project_filter_norm_key(p) for p in selected_projects_doc}
-        filtered_df = filtered_df[
-            filtered_df[project_col].map(_project_filter_norm_key).isin(_pk_set_doc)
-        ]
+    # R23-06 (стр.17): если выбраны все опции — фильтр не сужает выборку (эквивалент «Все»).
+    # Это корректно обрабатывает default=all и избавляет ПД-задачи MSP (где section_col
+    # часто пуст) от ложного выпадения из выборки при default=all по разделам.
+    if (
+        selected_projects_doc
+        and project_col
+        and project_col in df.columns
+        and project_col in df.columns
+    ):
+        try:
+            _all_proj_opts = set(_unique_project_labels_for_select(df[project_col]))
+        except Exception:
+            _all_proj_opts = set()
+        if set(selected_projects_doc) != _all_proj_opts:
+            _pk_set_doc = {_project_filter_norm_key(p) for p in selected_projects_doc}
+            filtered_df = filtered_df[
+                filtered_df[project_col].map(_project_filter_norm_key).isin(_pk_set_doc)
+            ]
 
     if (
         selected_sections_doc
@@ -14918,7 +14977,15 @@ def dashboard_documentation(
         and section_col in filtered_df.columns
     ):
         _sset = {str(x).strip() for x in selected_sections_doc if str(x).strip()}
-        if _sset:
+        try:
+            _all_sec_opts = {
+                str(v).strip()
+                for v in df[section_col].dropna().tolist()
+                if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
+            }
+        except Exception:
+            _all_sec_opts = set()
+        if _sset and _sset != _all_sec_opts:
             filtered_df = filtered_df[
                 filtered_df[section_col].astype(str).str.strip().isin(_sset)
             ]
@@ -15003,7 +15070,7 @@ def dashboard_documentation(
             rework_numeric = pd.to_numeric(rework_series, errors="coerce").fillna(0)
             status_mask = status_mask | (rework_numeric > 0)
 
-        if "Просрочено подрядчиком" in selected_statuses and page_title == "Рабочая документация":
+        if "Просрочено подрядчиком" in selected_statuses:
             today_d = date.today()
             pe = pd.Series(pd.NaT, index=filtered_df.index)
             if plan_end_col and plan_end_col in filtered_df.columns:
@@ -15123,10 +15190,18 @@ def dashboard_documentation(
 
     else:
         try:
-            level_col = (
+            # R23-06 (стр.18): для поиска родителя берём колонку глубины дерева
+            # («Уровень_структуры» → level structure), для проверки outline-уровня «5»
+            # (ТЗ п.1: «задачи уровня 5») — колонку outline («Уровень» → level).
+            hier_col = (
                 "level structure"
                 if "level structure" in df.columns
                 else ("level" if "level" in df.columns else None)
+            )
+            outline_col = (
+                "level"
+                if "level" in df.columns
+                else ("level structure" if "level structure" in df.columns else None)
             )
             name_col = (
                 "task name"
@@ -15134,15 +15209,17 @@ def dashboard_documentation(
                 else find_column(df, ["Название задачи", "Задача", "Task Name", "Имя задачи"])
             )
             if (
-                not level_col
+                not hier_col
+                or not outline_col
                 or not name_col
-                or level_col not in df.columns
+                or hier_col not in df.columns
+                or outline_col not in df.columns
                 or name_col not in df.columns
             ):
                 st.warning("Для ПД нужны колонки уровня иерархии MSP и наименование задачи.")
             else:
-                parents = _pd_msp_immediate_parent_names(df, level_col, name_col)
-                lv = outline_level_numeric(df[level_col])
+                parents = _pd_msp_immediate_parent_names(df, hier_col, name_col)
+                lv = outline_level_numeric(df[outline_col])
                 tn = df[name_col].astype(str)
                 sec_mask = (
                     lv.eq(5)
@@ -15554,21 +15631,34 @@ def dashboard_documentation(
 
     else:
         try:
-            level_col = (
+            # См. комментарий выше: hier — для стека родителей, outline — для «уровень 5».
+            hier_col = (
                 "level structure"
                 if "level structure" in df.columns
                 else ("level" if "level" in df.columns else None)
+            )
+            outline_col = (
+                "level"
+                if "level" in df.columns
+                else ("level structure" if "level structure" in df.columns else None)
             )
             name_col = (
                 "task name"
                 if "task name" in df.columns
                 else find_column(df, ["Название задачи", "Задача", "Task Name", "Имя задачи"])
             )
-            if not level_col or not name_col or level_col not in df.columns or name_col not in df.columns:
+            if (
+                not hier_col
+                or not outline_col
+                or not name_col
+                or hier_col not in df.columns
+                or outline_col not in df.columns
+                or name_col not in df.columns
+            ):
                 st.warning("Для графика ПД нужны колонки уровня и наименования задач MSP.")
             else:
-                parents = _pd_msp_immediate_parent_names(df, level_col, name_col)
-                lv = outline_level_numeric(df[level_col])
+                parents = _pd_msp_immediate_parent_names(df, hier_col, name_col)
+                lv = outline_level_numeric(df[outline_col])
                 tn = df[name_col].astype(str)
                 sec_mask = (
                     lv.eq(5)
