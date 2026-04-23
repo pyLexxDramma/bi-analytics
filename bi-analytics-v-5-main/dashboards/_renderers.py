@@ -6595,25 +6595,34 @@ def dashboard_budget_by_period(df):
         ]
 
     ensure_date_columns(filtered_df)
+    # R23-13.1 (стр.34): фильтр «Год» заменён на фильтр-календарь «Период»
+    # (диапазон дат по «plan end»); селектор гранулярности (месяц/квартал/год)
+    # уже присутствует выше ("Группировать по").
     if "plan end" in filtered_df.columns:
-        pe_y = pd.to_datetime(filtered_df["plan end"], errors="coerce")
-        if pe_y.notna().any():
-            filtered_df["_filter_year_bdd"] = pe_y.dt.year
-            _years = sorted(
-                {int(y) for y in filtered_df["_filter_year_bdd"].dropna().unique().tolist()}
-            )
-            selected_year = st.selectbox(
-                "Год",
-                ["Все"] + [str(y) for y in _years],
-                key="budget_period_year",
-            )
-            if selected_year != "Все":
-                try:
+        _pe_series = pd.to_datetime(filtered_df["plan end"], errors="coerce")
+        if _pe_series.notna().any():
+            _pe_min = _pe_series.min()
+            _pe_max = _pe_series.max()
+            _def_start = _pe_min.date() if pd.notna(_pe_min) else None
+            _def_end = _pe_max.date() if pd.notna(_pe_max) else None
+            _range_kw = {
+                "label": "Период",
+                "key": "budget_period_range",
+                "help": "Фильтр по диапазону дат (поле «Конец план» / plan end).",
+            }
+            if _def_start and _def_end and _def_start <= _def_end:
+                _range_kw["value"] = (_def_start, _def_end)
+                _range_kw["min_value"] = _def_start
+                _range_kw["max_value"] = _def_end
+            _period_range = st.date_input(**_range_kw)
+            if isinstance(_period_range, (list, tuple)) and len(_period_range) == 2:
+                _start_dt = pd.to_datetime(_period_range[0], errors="coerce")
+                _end_dt = pd.to_datetime(_period_range[1], errors="coerce")
+                if pd.notna(_start_dt) and pd.notna(_end_dt):
                     filtered_df = filtered_df[
-                        filtered_df["_filter_year_bdd"] == int(selected_year)
+                        (_pe_series >= _start_dt)
+                        & (_pe_series <= (_end_dt + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)))
                     ].copy()
-                except (TypeError, ValueError):
-                    pass
 
     # Check for budget columns (нормализуем русские названия)
     ensure_budget_columns(filtered_df)
@@ -6873,6 +6882,52 @@ def dashboard_budget_by_period(df):
             ),
             unsafe_allow_html=True,
         )
+
+        # R23-13.2 (стр.35): в БДДС дополнительно вывести таблицу
+        # «Сводка бюджета по проекту» (как в БДР) с итоговой строкой «ИТОГО».
+        if "project name" in filtered_df.columns:
+            st.subheader("Сводка бюджета по проекту")
+            _bp = (
+                filtered_df.groupby("project name", dropna=False)
+                .agg({"budget plan": "sum", "budget fact": "sum"})
+                .reset_index()
+            )
+            _bp["_dev"] = _bp["budget fact"] - _bp["budget plan"]
+            _proj_tbl = pd.DataFrame(
+                {
+                    "Проект": _bp["project name"].astype(str),
+                    "План, млн руб.": (_bp["budget plan"] / 1e6).round(2).apply(
+                        lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
+                    ),
+                    "Факт, млн руб.": (_bp["budget fact"] / 1e6).round(2).apply(
+                        lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
+                    ),
+                    "Отклонение (факт − план), млн руб.": (_bp["_dev"] / 1e6).round(2).apply(
+                        lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
+                    ),
+                }
+            )
+            if not _proj_tbl.empty:
+                _plan_sum = float(_bp["budget plan"].fillna(0.0).sum())
+                _fact_sum = float(_bp["budget fact"].fillna(0.0).sum())
+                _total_row = pd.DataFrame(
+                    [
+                        {
+                            "Проект": "ИТОГО",
+                            "План, млн руб.": f"{_plan_sum / 1e6:.2f}",
+                            "Факт, млн руб.": f"{_fact_sum / 1e6:.2f}",
+                            "Отклонение (факт − план), млн руб.": f"{(_fact_sum - _plan_sum) / 1e6:.2f}",
+                        }
+                    ]
+                )
+                _proj_tbl = pd.concat([_proj_tbl, _total_row], ignore_index=True)
+            st.markdown(
+                budget_table_to_html(
+                    _proj_tbl,
+                    finance_deviation_column="Отклонение (факт − план), млн руб.",
+                ),
+                unsafe_allow_html=True,
+            )
 
     with tab_lot:
         # По лотам: группировка по периоду и лоту (section / лот / lot)
@@ -16386,19 +16441,16 @@ def dashboard_budget_by_type(df):
             "Расходы план",
             f"{plan_metric_value:,.{metric_decimals}f} {metric_unit}".replace(",", " "),
         )
-        st.caption("Сумма планового бюджета по текущим фильтрам.")
     with kpi_fact_col:
         st.metric(
             "Расходы факт",
             f"{fact_metric_value:,.{metric_decimals}f} {metric_unit}".replace(",", " "),
             delta=f"{overrun_pct:+.1f}%"
         )
-        st.caption(
-            f"Факт составляет {fact_share_pct:.1f}% от плана. Цвет: зеленый < 80%, оранжевый до +20%, красный выше плана."
-        )
 
-    # ========== Таблица: План, Факт, Остаток, Отклонение, % выполнения, % покрытия контрактами ==========
-    st.subheader("Таблица: План / Факт / Остаток / Отклонение / % выполнения / % покрытия контрактами")
+    # R23-13.3/4: в таблице оставлены «План / Факт / Отклонение»
+    # (столбцы «Остаток», «% выполнения», «% покрытия контрактами» убраны по ТЗ).
+    st.subheader("Таблица")
     if "project name" in filtered_df.columns:
         agg_dict = {
             "budget plan": "sum",
@@ -16419,56 +16471,51 @@ def dashboard_budget_by_type(df):
                 "_contract_numeric": filtered_df["_contract_numeric"].sum(),
             }]
         )
-    table_agg["План, млн руб."] = (table_agg["budget plan"] / 1e6).round(2)
-    table_agg["Факт, млн руб."] = (table_agg["budget fact"] / 1e6).round(2)
-    table_agg["Остаток, млн руб."] = (table_agg["Остаток"] / 1e6).round(2)
-    table_agg["Отклонение, млн руб."] = (table_agg["reserve budget"] / 1e6).round(2)
-    # % выполнения = факт/план * 100%
-    plan_nonzero = table_agg["budget plan"] != 0
-    table_agg["% выполнения"] = ""
-    table_agg.loc[plan_nonzero, "% выполнения"] = (
-        (table_agg.loc[plan_nonzero, "budget fact"] / table_agg.loc[plan_nonzero, "budget plan"] * 100)
-        .round(1)
-        .astype(str)
-        .str.replace(r"\.0$", "", regex=True)
-    ) + "%"
-    table_agg.loc[~plan_nonzero, "% выполнения"] = "—"
-    # % покрытия контрактами = контрактация / план * 100 (всегда выводим колонку)
-    table_agg["% покрытия контрактами"] = "—"
-    if "_contract_numeric" in table_agg.columns:
-        mask = plan_nonzero & (table_agg["_contract_numeric"].notna())
-        table_agg.loc[mask, "% покрытия контрактами"] = (
-            (table_agg.loc[mask, "_contract_numeric"] / table_agg.loc[mask, "budget plan"] * 100)
-            .round(1)
-            .astype(str)
-            .str.replace(r"\.0$", "", regex=True)
-        ) + "%"
-    display_cols = ["project name", "План, млн руб.", "Факт, млн руб.", "Остаток, млн руб.", "Отклонение, млн руб.", "% выполнения", "% покрытия контрактами"]
+    table_agg["План, млн руб."] = (
+        (table_agg["budget plan"] / 1e6).round(2).apply(
+            lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
+        )
+    )
+    table_agg["Факт, млн руб."] = (
+        (table_agg["budget fact"] / 1e6).round(2).apply(
+            lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
+        )
+    )
+    table_agg["Отклонение, млн руб."] = (
+        (table_agg["reserve budget"] / 1e6).round(2).apply(
+            lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
+        )
+    )
+    display_cols = [
+        "project name",
+        "План, млн руб.",
+        "Факт, млн руб.",
+        "Отклонение, млн руб.",
+    ]
     budget_table_display = table_agg[display_cols].copy()
     budget_table_display = budget_table_display.rename(columns={"project name": "Проект"})
     # Строка «Итого» при группировке по проектам
     if "project name" in table_agg.columns and len(table_agg) > 1:
-        plan_total = table_agg["budget plan"].sum()
-        fact_total = table_agg["budget fact"].sum()
-        contract_total = table_agg["_contract_numeric"].sum() if "_contract_numeric" in table_agg.columns else 0
+        plan_total = float(table_agg["budget plan"].sum())
+        fact_total = float(table_agg["budget fact"].sum())
         total_row = {
             "Проект": "Итого",
-            "План, млн руб.": round(plan_total / 1e6, 2),
-            "Факт, млн руб.": round(fact_total / 1e6, 2),
-            "Остаток, млн руб.": round((plan_total - fact_total) / 1e6, 2),
-            "Отклонение, млн руб.": round((fact_total - plan_total) / 1e6, 2),
-            "% выполнения": f"{(fact_total / plan_total * 100):.1f}%".replace(".0%", "%") if plan_total != 0 else "—",
-            "% покрытия контрактами": f"{(contract_total / plan_total * 100):.1f}%".replace(".0%", "%") if plan_total != 0 else "—",
+            "План, млн руб.": f"{plan_total / 1e6:.2f}",
+            "Факт, млн руб.": f"{fact_total / 1e6:.2f}",
+            "Отклонение, млн руб.": f"{(fact_total - plan_total) / 1e6:.2f}",
         }
         budget_table_display = pd.concat([
             budget_table_display,
             pd.DataFrame([total_row]),
         ], ignore_index=True)
-    # st.table(style_dataframe_for_dark_theme(
-    #     budget_table_display,
-    #     finance_deviation_column="Отклонение, млн руб.",
-    # ))
-    st.markdown(format_dataframe_as_html(budget_table_display), unsafe_allow_html=True)
+    # R23-13.3: окраска отклонения (<0 — зелёный, >0 — красный) через budget_table_to_html.
+    st.markdown(
+        budget_table_to_html(
+            budget_table_display,
+            finance_deviation_column="Отклонение, млн руб.",
+        ),
+        unsafe_allow_html=True,
+    )
     render_dataframe_excel_csv_downloads(
         budget_table_display,
         file_stem="budget_plan_fact",
@@ -17589,18 +17636,17 @@ def dashboard_approved_budget(df):
                 key=f"approved_budget_gauge_{_project_filter_norm_key(str(selected_project))}",
             )
         with _gc2:
-            st.markdown("**Расходы план (все выбранные строки)**")
-            st.caption(f"{_pb:.2f} млрд руб. ({_plan_tot/1e6:.2f} млн руб.) — 100%")
+            # R23-13.5: без серых пояснительных подписей под gauge — оставляем
+            # только ключевые значения (план / факт в млн и млрд руб.).
+            st.markdown("**Расходы план**")
+            st.markdown(f"{_pb:.2f} млрд руб. ({_plan_tot/1e6:.2f} млн руб.)")
             st.markdown("**Расходы факт**")
             if _plan_tot > 0 and np.isfinite(_pct_of_plan):
-                st.caption(
+                st.markdown(
                     f"{_fb:.2f} млрд руб. ({_fact_tot/1e6:.2f} млн руб.) — **{_pct_of_plan:.1f}%** от плана"
                 )
             else:
-                st.caption(f"{_fb:.2f} млрд руб. ({_fact_tot/1e6:.2f} млн руб.)")
-            st.caption(
-                "Цвет столбца: зелёный — факт ниже 80% плана; оранжевый — от 80% до 100%; красный — выше плана."
-            )
+                st.markdown(f"{_fb:.2f} млрд руб. ({_fact_tot/1e6:.2f} млн руб.)")
 
     ensure_date_columns(filtered_df)
     if "plan end" in filtered_df.columns:
