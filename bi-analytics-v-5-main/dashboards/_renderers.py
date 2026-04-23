@@ -3496,6 +3496,33 @@ def dashboard_plan_fact_dates(df):
     # Ручная загрузка (data_loader) раньше не создавала level structure — без этого L2/L3 не работают.
     ensure_msp_hierarchy_columns(df)
 
+    # R23-03: если в выгрузке есть MSP-файлы (`msp_*.csv`) — оставляем только их.
+    # Без этого в фильтр «Функциональный блок» и в таблицу утекают строки из
+    # синтетических примеров (`sample_project_data_fixed.csv`) c задачами
+    # «Блок 1/2/3/4», которые клиент отдельно отмечает как «не должны быть».
+    if "__source_file" in df.columns:
+        _src_low = df["__source_file"].astype(str).str.lower()
+        _is_msp = (
+            _src_low.str.startswith("msp_")
+            | _src_low.str.contains("/msp_", na=False)
+            | _src_low.str.contains(r"\\msp_", na=False, regex=True)
+        )
+        if bool(_is_msp.any()):
+            _before_rows = len(df)
+            df = df[_is_msp].copy()
+            _dropped = _before_rows - len(df)
+            if _dropped > 0:
+                st.caption(
+                    f"В отчёт «Отклонение от базового плана» оставлены только MSP-выгрузки "
+                    f"(`msp_*.csv`). Исключено строк из других источников: {_dropped}."
+                )
+            if df.empty:
+                st.warning(
+                    "После фильтра MSP-источников не осталось строк. "
+                    "Проверьте наличие файлов `msp_*.csv` в активной загрузке."
+                )
+                return
+
     with st.expander("Откуда берутся сроки и почему таблицы могут отличаться", expanded=False):
         st.markdown(
             """
@@ -3673,9 +3700,10 @@ def dashboard_plan_fact_dates(df):
                 .tolist()
             )
             l2_names = [x for x in l2_names if x]
-            _l2_non_generic = [x for x in l2_names if not _pf_is_generic_block_name(x)]
-            if _l2_non_generic:
-                l2_names = _l2_non_generic
+            # Всегда отсекаем generic-имена вида «Блок 1/2/3/4» — они не являются
+            # реальными функциональными блоками MSP и появляются только из
+            # синтетических примеров (клиентская правка R23-03).
+            l2_names = [x for x in l2_names if not _pf_is_generic_block_name(x)]
             # Если в строках с номинальным ур. «блока» нет имён (часто у суммарных),
             # берём ключи предка ур.2 из обхода дерева — по ним же фильтруется таблица.
             if not l2_names and "_dt_lvl2_key" in pf_dates_work_proj.columns:
@@ -3705,9 +3733,8 @@ def dashboard_plan_fact_dates(df):
             _sec = pf_dates_proj_df["section"].dropna().astype(str).map(str.strip)
             _sec = _sec[_sec.ne("") & _sec.str.lower().ne("nan")]
             _uniq = sorted(pd.unique(_sec)) if len(_sec) else []
-            _uniq_non_generic = [x for x in _uniq if not _pf_is_generic_block_name(x)]
-            if _uniq_non_generic:
-                _uniq = _uniq_non_generic
+            # R23-03: безусловно убираем generic-«Блок N».
+            _uniq = [x for x in _uniq if not _pf_is_generic_block_name(x)]
             if _uniq:
                 pf_dates_block_filter_mode = "section"
                 blks = ["Все"] + list(_uniq)
