@@ -8113,10 +8113,52 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             st.error(f"Ошибка при загрузке списка проектов: {str(e)}")
             return
 
+    # R23-07/TESSA: join карточек РД (tessa_*_rd.csv) по «Шифр полный ↔ InternalID».
+    # Для фильтра раздела используем Шифр (DivisionCipher) + наименование раздела из MSP.
+    _cipher_full_col = find_column(
+        df,
+        ["Шифр полный", "Полный шифр", "Cipher полный", "Аббревиатура полная"],
+    )
+    _df_with_tessa = _augment_df_with_tessa_rd(df, _cipher_full_col) if _cipher_full_col else df
+    _has_tessa_rd = (
+        _df_with_tessa is not None
+        and "_tessa_division_cipher" in getattr(_df_with_tessa, "columns", [])
+        and _df_with_tessa["_tessa_division_cipher"].astype(str).str.strip().ne("").any()
+    )
+    if _has_tessa_rd:
+        df = _df_with_tessa.copy()
+
     # Filter by RD section kind
     selected_section = "Все"
     with filter_col2:
-        if section_col and section_col in df.columns:
+        if _has_tessa_rd:
+            # R23-07 (стр.17/21): значения фильтра = «Шифр + Наименование раздела».
+            # Наименование берём из MSP (section_col → task_col/name).
+            _name_series = None
+            if section_col and section_col in _df_with_tessa.columns:
+                _name_series = _df_with_tessa[section_col].astype(str).str.strip()
+            elif task_col and task_col in _df_with_tessa.columns:
+                _name_series = _df_with_tessa[task_col].astype(str).str.strip()
+            else:
+                _name_series = pd.Series([""] * len(_df_with_tessa), index=_df_with_tessa.index)
+            _cip = _df_with_tessa["_tessa_division_cipher"].astype(str).str.strip()
+            _lbl = _cip.where(_cip.ne(""), other="")
+            _nm = _name_series.where(_name_series.astype(str).str.strip().ne(""), other="")
+            _combined = _lbl.where(_nm.eq(""), other=(_lbl + " — " + _nm)).where(
+                _lbl.ne(""), other=_nm
+            )
+            section_options = sorted(
+                {v for v in _combined.tolist() if v and v.strip().lower() not in ("nan", "none")},
+                key=lambda x: x.casefold(),
+            )
+            selected_section = st.selectbox(
+                ("Фильтр по виду раздела ПД" if is_pd else "Фильтр по виду раздела РД"),
+                ["Все"] + section_options,
+                key="rd_delay_section",
+                help="Формат: «Шифр — Наименование раздела» (из TESSA RD и MSP).",
+            )
+            df["_tessa_section_label"] = _combined
+        elif section_col and section_col in df.columns:
             section_options = sorted(
                 {
                     str(v).strip()
@@ -8169,10 +8211,15 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             filtered_df[project_col].map(_project_filter_norm_key).isin(_pk_set)
         ]
 
-    if selected_section != "Все" and section_col and section_col in filtered_df.columns:
-        filtered_df = filtered_df[
-            filtered_df[section_col].astype(str).str.strip() == selected_section
-        ]
+    if selected_section != "Все":
+        if "_tessa_section_label" in filtered_df.columns:
+            filtered_df = filtered_df[
+                filtered_df["_tessa_section_label"].astype(str).str.strip() == selected_section
+            ]
+        elif section_col and section_col in filtered_df.columns:
+            filtered_df = filtered_df[
+                filtered_df[section_col].astype(str).str.strip() == selected_section
+            ]
 
     if (
         selected_statuses_rd
@@ -8765,10 +8812,26 @@ def dashboard_rd_delay(df, is_pd: bool = False):
 
         _col_series["Наименование разделов работ"] = detail_df["_detail_section_name"]
         _col_series["Номер договора"] = _safe_str_col(contract_no_col)
-        _col_series["Шифр"] = _safe_str_col(cipher_col)
+        # R23-07/TESSA: «Шифр» берём из TESSA (DivisionCipher) если доступен,
+        # иначе — из MSP-колонки.
+        if "_tessa_division_cipher" in detail_df.columns and detail_df[
+            "_tessa_division_cipher"
+        ].astype(str).str.strip().ne("").any():
+            _col_series["Шифр"] = (
+                detail_df["_tessa_division_cipher"].astype(str).str.strip()
+            )
+        else:
+            _col_series["Шифр"] = _safe_str_col(cipher_col)
         _col_series["Номер шифра"] = _safe_str_col(cipher_no_col)
         _col_series["Блок"] = _safe_str_col(block_col)
         _col_series["Шифр полный"] = detail_df["_detail_cipher"]
+        # R23-07/TESSA: колонка «Задача» = DocDescription (tessa_*_rd.csv).
+        if "_tessa_doc_description" in detail_df.columns:
+            _col_series["Задача"] = (
+                detail_df["_tessa_doc_description"].astype(str).str.strip()
+            )
+        else:
+            _col_series["Задача"] = pd.Series([""] * len(detail_df), index=detail_df.index)
         _col_series["Дата выдачи разделов по договору"] = _fmt_date_or_blank(
             detail_df["_detail_plan_date"]
         )
@@ -8792,7 +8855,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         detail_table = pd.DataFrame(_col_series)
 
         # Убираем пустые доп.колонки (если их нет в источнике — не засоряем таблицу).
-        for _optional in ("Номер договора", "Шифр", "Номер шифра", "Блок"):
+        for _optional in ("Номер договора", "Шифр", "Номер шифра", "Блок", "Задача"):
             if _optional in detail_table.columns and (
                 detail_table[_optional].astype(str).str.strip().eq("").all()
             ):
@@ -18708,6 +18771,85 @@ def _rd_tessa_task_display_series(msp_df: pd.DataFrame, task_col: str | None) ->
                     break
         out.append(hit if hit else base)
     return pd.Series(out, index=msp_df.index, dtype=object)
+
+
+# ── TESSA RD карточки: lookup по «Шифр полный» (= InternalID) ─────────────
+def _build_tessa_rd_card_lookup() -> dict:
+    """
+    Строит справочник карточек РД из `st.session_state["tessa_data"]`:
+    ключ = нормализованный InternalID (= «Шифр полный» в MSP), значение —
+    словарь с полями карточки. Работает только для записей, похожих на РД
+    (есть DivisionCipher). Если tessa_data отсутствует — возвращает {}.
+    """
+    try:
+        tdf = st.session_state.get("tessa_data")
+    except Exception:
+        tdf = None
+    if tdf is None or getattr(tdf, "empty", True):
+        return {}
+    try:
+        t = tdf.copy()
+    except Exception:
+        return {}
+    t.columns = [str(c).strip() for c in t.columns]
+    internal_col = _tessa_find_column(t, ["InternalID", "Internal Id", "InternalId"])
+    cipher_col = _tessa_find_column(t, ["DivisionCipher", "Cipher"])
+    if not internal_col:
+        return {}
+    if cipher_col and cipher_col in t.columns:
+        mask = t[cipher_col].map(_tessa_cell_has_value).fillna(False)
+        t = t[mask]
+    if t.empty:
+        return {}
+    doc_id_col = _tessa_find_column(t, ["DocID", "DocId"])
+    doc_descr_col = _tessa_find_column(t, ["DocDescription", "DocDescr"])
+    kr_state_col = _tessa_find_column(t, ["KrState"])
+    ver_col = _tessa_find_column(t, ["SubDivisionVersionName"])
+    doc_num_col = _tessa_find_column(t, ["DocNumber"])
+    lk: dict[str, dict] = {}
+    for _, r in t.iterrows():
+        key = _tessa_norm_join_key(r.get(internal_col)).strip().casefold()
+        if not key:
+            continue
+        entry = {
+            "DocID": str(r.get(doc_id_col, "")).strip() if doc_id_col else "",
+            "DocDescription": str(r.get(doc_descr_col, "")).strip() if doc_descr_col else "",
+            "DivisionCipher": str(r.get(cipher_col, "")).strip() if cipher_col else "",
+            "KrState": str(r.get(kr_state_col, "")).strip() if kr_state_col else "",
+            "SubDivisionVersionName": str(r.get(ver_col, "")).strip() if ver_col else "",
+            "DocNumber": str(r.get(doc_num_col, "")).strip() if doc_num_col else "",
+        }
+        for _k, _v in list(entry.items()):
+            if _v.lower() in ("nan", "none", "<na>", "nat"):
+                entry[_k] = ""
+        if key in lk and entry.get("DocDescription") and not lk[key].get("DocDescription"):
+            lk[key] = entry
+        elif key not in lk:
+            lk[key] = entry
+    return lk
+
+
+def _augment_df_with_tessa_rd(df: pd.DataFrame, cipher_full_col: str | None) -> pd.DataFrame:
+    """
+    Добавляет к df колонки `_tessa_doc_description`, `_tessa_division_cipher`,
+    `_tessa_kr_state`, `_tessa_sub_version` по join `Шифр полный ↔ InternalID`
+    из tessa_*_rd.csv. Если lookup пуст или ключевой колонки нет — оставляет df.
+    """
+    if df is None or getattr(df, "empty", True):
+        return df
+    if not cipher_full_col or cipher_full_col not in df.columns:
+        return df
+    lk = _build_tessa_rd_card_lookup()
+    if not lk:
+        return df
+    keys = df[cipher_full_col].map(lambda v: _tessa_norm_join_key(v).strip().casefold())
+    out = df.copy()
+    out["_tessa_doc_description"] = keys.map(lambda k: lk.get(k, {}).get("DocDescription", ""))
+    out["_tessa_division_cipher"] = keys.map(lambda k: lk.get(k, {}).get("DivisionCipher", ""))
+    out["_tessa_kr_state"] = keys.map(lambda k: lk.get(k, {}).get("KrState", ""))
+    out["_tessa_sub_version"] = keys.map(lambda k: lk.get(k, {}).get("SubDivisionVersionName", ""))
+    out["_tessa_doc_id"] = keys.map(lambda k: lk.get(k, {}).get("DocID", ""))
+    return out
 
 
 # ==================== DASHBOARD: Неустраненные предписания (TESSA) ====================
