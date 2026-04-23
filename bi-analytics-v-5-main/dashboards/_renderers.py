@@ -4011,25 +4011,18 @@ def dashboard_plan_fact_dates(df):
                 st.write(f"• {_m}")
 
     st.markdown("**Таблица**")
-    d3a = st.columns(1)[0]
-    with d3a:
-        dates_value_type = "Даты (план/факт)"
-        st.caption(
-            "Режим таблицы: даты (базовое окончание / окончание) и отклонение окончания."
-        )
-
-    tbl_opt1, tbl_opt2 = st.columns(2)
-    with tbl_opt1:
-        st.caption("Таблица всегда включает: базовое окончание, окончание, отклонение окончания.")
-        tbl_show_end = True
-    # По ТЗ выводим акцент на отклонении окончания; отклонение начала в таблице не показываем.
-    tbl_show_start = False
-    with tbl_opt2:
-        tbl_show_dur = st.checkbox(
-            "Таблица: отклонение длительности",
-            value=False,
-            key="dates_tbl_dur",
-        )
+    dates_value_type = "Даты (план/факт)"
+    # R23-03 add-on (стр.10-11): обе пары «отклонений» показываем по умолчанию,
+    # «отклонение длительности» — опционально (чекбокс), как и раньше.
+    tbl_show_start = True
+    tbl_show_end = True
+    tbl_show_dur = st.checkbox(
+        "Показать «Отклонение длительности» в таблице",
+        value=False,
+        key="dates_tbl_dur",
+        help="Столбцы «Базовая длительность» и «Длительность» и так всегда в таблице; "
+        "чекбокс добавляет отдельную колонку с разницей длительностей в днях.",
+    )
     selected_reason_bucket_dates = "Все"
     if (not force_covenant_ui) and dates_show_reason_notes and "reason of deviation" in df.columns:
         _rvals = (
@@ -4934,15 +4927,22 @@ def dashboard_plan_fact_dates(df):
         start_diff = row.get("plan_start_diff", np.nan)
         end_diff = row.get("plan_end_diff", np.nan)
         dur_diff = np.nan
-        if (
-            pd.notna(plan_start)
-            and pd.notna(plan_end)
-            and pd.notna(base_start)
-            and pd.notna(base_end)
-        ):
+        pdur = np.nan
+        fdur = np.nan
+        # R23-03 add-on (стр.10-11): длительности нужны как отдельные столбцы таблицы,
+        # а не только для расчёта Δ длительности. Считаем по каждой паре дат независимо.
+        if pd.notna(plan_start) and pd.notna(plan_end):
             try:
                 pdur = (plan_end - plan_start).total_seconds() / 86400.0
+            except Exception:
+                pdur = np.nan
+        if pd.notna(base_start) and pd.notna(base_end):
+            try:
                 fdur = (base_end - base_start).total_seconds() / 86400.0
+            except Exception:
+                fdur = np.nan
+        if not pd.isna(pdur) and not pd.isna(fdur):
+            try:
                 dur_diff = fdur - pdur
             except Exception:
                 dur_diff = np.nan
@@ -4959,12 +4959,19 @@ def dashboard_plan_fact_dates(df):
         rec = {
             "Проект": _clean_display_str(row.get("project name")),
             "Задача": task_show,
+            # R23-03 add-on (стр.10 п.2): переименования по макету —
+            # «План начало» → «Базовое начало», «Факт начало» → «Начало»,
+            # «План окончание» → «Базовое окончание», «Факт окончание» → «Окончание».
             "Базовое начало": _format_date_cell(plan_start),
             "Базовое окончание": _format_date_cell(plan_end),
-            "Начало (факт)": _format_date_cell(base_start),
+            "Начало": _format_date_cell(base_start),
             "Окончание": _format_date_cell(base_end),
             "Отклонение начала": start_diff,
             "Отклонение окончания": end_diff,
+            # R23-03 add-on (стр.11 п.c): «Базовая длительность» / «Длительность» —
+            # отдельные столбцы с синей заливкой.
+            "Базовая длительность": pdur,
+            "Длительность": fdur,
             "Отклонение длительности": dur_diff,
         }
         for disp, src in _msp_id_cols.items():
@@ -4988,6 +4995,8 @@ def dashboard_plan_fact_dates(df):
         "Отклонение начала",
         "Отклонение окончания",
         "Отклонение длительности",
+        "Базовая длительность",
+        "Длительность",
     ):
         if col in summary_df.columns:
             summary_df[col] = pd.to_numeric(summary_df[col], errors="coerce")
@@ -5015,19 +5024,26 @@ def dashboard_plan_fact_dates(df):
     except Exception:
         pass
 
+    # R23-03 add-on (стр.10 п.5): порядок столбцов по макету —
+    # Начало, Базовое начало, Отклонение начала, Окончание, Базовое окончание,
+    # Отклонение окончания, Базовая длительность, Длительность. Чекбоксы «Показывать
+    # отклонение начала/окончания/длительности» оставлены как раньше.
     out_cols = ["Задача"] if selected_project != "Все" else ["Проект", "Задача"]
     if "ID задачи" in summary_df.columns:
         out_cols.append("ID задачи")
-    # По ТЗ page_7 эти три поля обязательны в таблице.
-    out_cols += [
-        "Базовое окончание",
-        "Окончание",
-    ]
-    # По page_7 в таблице фокус на окончании: базовое окончание, окончание, отклонение окончания.
+    # Блок «Начало»: факт → базовое → отклонение.
+    out_cols.append("Начало")
+    out_cols.append("Базовое начало")
     if tbl_show_start:
         out_cols.append("Отклонение начала")
+    # Блок «Окончание»: факт → базовое → отклонение.
+    out_cols.append("Окончание")
+    out_cols.append("Базовое окончание")
     if tbl_show_end:
         out_cols.append("Отклонение окончания")
+    # Блок «Длительность»: базовая → факт → отклонение (по чекбоксу).
+    out_cols.append("Базовая длительность")
+    out_cols.append("Длительность")
     if tbl_show_dur:
         out_cols.append("Отклонение длительности")
     if dates_show_reason_notes:
@@ -5040,10 +5056,17 @@ def dashboard_plan_fact_dates(df):
 
     summary_numeric = summary_df.copy()
     summary_display = summary_df.copy()
-    for col in ("Отклонение начала", "Отклонение окончания", "Отклонение длительности"):
+    _int_day_cols = (
+        "Отклонение начала",
+        "Отклонение окончания",
+        "Отклонение длительности",
+        "Базовая длительность",
+        "Длительность",
+    )
+    for col in _int_day_cols:
         if col in summary_display.columns:
             summary_display[col] = summary_display[col].apply(_format_int_days)
-    for col in ("Отклонение начала", "Отклонение окончания", "Отклонение длительности"):
+    for col in _int_day_cols:
         if col in summary_numeric.columns:
             # В styled st.dataframe nullable Int64 может визуально «прятать» значения.
             # Держим стандартный numeric dtype с NaN для стабильного рендера.
@@ -5094,19 +5117,23 @@ def dashboard_plan_fact_dates(df):
         "ID задачи": "Идентификатор задачи из выгрузки MSP (Task ID / Identifier / UID — что найдено в файле).",
         "Базовое начало": "Плановая дата начала из MSP (колонка plan start / аналог).",
         "Базовое окончание": "Плановая дата окончания из MSP (колонка plan end / аналог).",
-        "Начало (факт)": "Фактическая дата начала (base start / аналог).",
+        "Начало": "Фактическая дата начала (base start / аналог).",
         "Окончание": "Фактическая дата окончания (base end / аналог).",
         "Отклонение начала": "В днях: base start − plan start (при наличии обеих дат).",
         "Отклонение окончания": "В днях: base end − plan end (при наличии обеих дат).",
+        "Базовая длительность": "Плановая длительность задачи в днях (plan end − plan start).",
+        "Длительность": "Фактическая длительность задачи в днях (base end − base start).",
         "Отклонение длительности": "Разница длительностей факт vs план (в днях).",
-        "Причина отклонения": "Поле причины отклонения из выгрузки (если есть).",
-        "Заметки": "Заметки / комментарии из выгрузки (если есть).",
+        "Причина отклонения": "Поле причины отклонения из выгрузки MSP (если есть).",
+        "Заметки": "Заметки / комментарии из выгрузки MSP (если есть).",
     }
     _dates_column_role = {
         "Базовое начало": "baseline",
         "Базовое окончание": "baseline",
-        "Начало (факт)": "fact",
+        "Начало": "fact",
         "Окончание": "fact",
+        "Базовая длительность": "duration",
+        "Длительность": "duration",
         "Отклонение окончания": "dev",
         "Отклонение начала": "dev",
         "Отклонение длительности": "dev",
@@ -5173,45 +5200,131 @@ def dashboard_plan_fact_dates(df):
     # В режиме ковенантов узкая таблица «Ковенанты (таблица)» уже даёт сроки/отклонения по ковенантам;
     # полная таблица по filtered_df дублировала бы те же строки — показываем её только свёрнуто.
     def _render_dates_main_table():
-        # Оставляем числовые типы для сортировки и возвращаем цветовую подсветку отклонений.
-        _extra_dev = tuple(
-            c for c in ("Отклонение начала",) if c in summary_numeric.columns
-        )
-        _styled = style_dataframe_for_dark_theme(
-            summary_numeric,
-            days_column=(
-                "Отклонение окончания"
-                if "Отклонение окончания" in summary_numeric.columns
-                else None
-            ),
-            extra_days_columns=_extra_dev if _extra_dev else None,
-        )
-        # По ТЗ: визуально разводим план/факт отдельными цветами колонок.
-        _baseline_cols = [c for c in ("Базовое окончание",) if c in summary_numeric.columns]
-        _fact_cols = [c for c in ("Окончание",) if c in summary_numeric.columns]
+        # R23-03 add-on (стр.10-11): заливка столбцов по группам и цвет ТЕКСТА отклонений
+        # (не фон — фон занят под «паспорт» колонки по ТЗ).
+        #   • «Начало» + «Базовое начало»      — бирюзовая заливка
+        #   • «Окончание» + «Базовое окончание» — голубая заливка
+        #   • «Базовая длительность» + «Длительность» — синяя заливка
+        #   • «Отклонение начала»: шрифт красный при <0, иначе зелёный
+        #   • «Отклонение окончания»: шрифт красный при >0, иначе зелёный
+        #   • «Отклонение длительности»: шрифт красный при >0, иначе зелёный
+        # Поэтому style_dataframe_for_dark_theme вызываем БЕЗ days_column, чтобы не
+        # затирал ячейки красным/зелёным фоном поверх наших заливок.
+        _styled = style_dataframe_for_dark_theme(summary_numeric)
+
+        _teal_cols = [
+            c for c in ("Начало", "Базовое начало") if c in summary_numeric.columns
+        ]
+        _cyan_cols = [
+            c for c in ("Окончание", "Базовое окончание") if c in summary_numeric.columns
+        ]
+        _blue_cols = [
+            c for c in ("Базовая длительность", "Длительность") if c in summary_numeric.columns
+        ]
         try:
-            if _baseline_cols:
+            if _teal_cols:
                 _styled = _styled.set_properties(
-                    subset=_baseline_cols,
-                    **{"background-color": "rgba(59, 130, 246, 0.22)", "color": "#ffffff"},
+                    subset=_teal_cols,
+                    **{
+                        "background-color": "rgba(20, 184, 166, 0.28)",
+                        "color": "#ffffff",
+                    },
                 )
-            if _fact_cols:
+            if _cyan_cols:
                 _styled = _styled.set_properties(
-                    subset=_fact_cols,
-                    **{"background-color": "rgba(243, 156, 18, 0.24)", "color": "#ffffff"},
+                    subset=_cyan_cols,
+                    **{
+                        "background-color": "rgba(56, 189, 248, 0.28)",
+                        "color": "#ffffff",
+                    },
+                )
+            if _blue_cols:
+                _styled = _styled.set_properties(
+                    subset=_blue_cols,
+                    **{
+                        "background-color": "rgba(59, 130, 246, 0.32)",
+                        "color": "#ffffff",
+                    },
                 )
         except Exception:
             pass
-        _num_cfg = {}
-        for _c in ("Отклонение начала", "Отклонение окончания", "Отклонение длительности"):
-            if _c in summary_numeric.columns:
-                _num_cfg[_c] = st.column_config.NumberColumn(format="%.0f")
+
+        _DEV_RED = "#ff6b6b"
+        _DEV_GREEN = "#00e676"
+
+        def _dev_font_color(series: pd.Series, *, bad_positive: bool) -> list:
+            out = []
+            for v in series:
+                num = pd.to_numeric(v, errors="coerce")
+                if pd.isna(num):
+                    out.append("")
+                    continue
+                bad = (num > 0) if bad_positive else (num < 0)
+                out.append(
+                    f"color: {_DEV_RED}; font-weight: 700"
+                    if bad
+                    else f"color: {_DEV_GREEN}; font-weight: 600"
+                )
+            return out
+
+        try:
+            if "Отклонение начала" in summary_numeric.columns:
+                _styled = _styled.apply(
+                    lambda c: _dev_font_color(c, bad_positive=False)
+                    if c.name == "Отклонение начала"
+                    else [""] * len(c),
+                    axis=0,
+                )
+            if "Отклонение окончания" in summary_numeric.columns:
+                _styled = _styled.apply(
+                    lambda c: _dev_font_color(c, bad_positive=True)
+                    if c.name == "Отклонение окончания"
+                    else [""] * len(c),
+                    axis=0,
+                )
+            if "Отклонение длительности" in summary_numeric.columns:
+                _styled = _styled.apply(
+                    lambda c: _dev_font_color(c, bad_positive=True)
+                    if c.name == "Отклонение длительности"
+                    else [""] * len(c),
+                    axis=0,
+                )
+        except Exception:
+            pass
+
+        # R23-03 add-on: форматирование целых дней переносим в Styler.format,
+        # а НЕ в st.column_config.NumberColumn — column_config заставляет Streamlit
+        # рендерить колонку встроенным виджетом, который игнорирует background-color
+        # из Pandas Styler (именно поэтому заливки «не было видно»).
+        _int_day_fmt_cols = [
+            _c for _c in (
+                "Отклонение начала",
+                "Отклонение окончания",
+                "Отклонение длительности",
+                "Базовая длительность",
+                "Длительность",
+            ) if _c in summary_numeric.columns
+        ]
+        def _fmt_int_days(v):
+            try:
+                num = pd.to_numeric(v, errors="coerce")
+            except Exception:
+                num = None
+            if num is None or pd.isna(num):
+                return ""
+            return f"{int(round(float(num), 0))}"
+        try:
+            if _int_day_fmt_cols:
+                _styled = _styled.format(
+                    {c: _fmt_int_days for c in _int_day_fmt_cols}
+                )
+        except Exception:
+            pass
         st.dataframe(
             _styled,
             hide_index=True,
             use_container_width=True,
             height=min(700, 50 + max(1, len(summary_numeric)) * 35),
-            column_config=_num_cfg if _num_cfg else None,
         )
 
     if not show_covenant_ui:
