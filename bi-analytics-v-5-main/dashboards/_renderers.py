@@ -18449,7 +18449,7 @@ def _pred_build_detail_table_df(
         critical_raw = row.get("_critical")
         overdue_raw = row.get("_overdue_days")
         resolved_raw = bool(row.get("_resolved", False))
-        critical_text = "Да" if bool(critical_raw) else "0"
+        critical_text = "Да" if bool(critical_raw) else "—"
         try:
             overdue_num = int(round(float(overdue_raw)))
         except (TypeError, ValueError):
@@ -19915,8 +19915,16 @@ def dashboard_predpisania(df):
                     Мин_дата=("_issue_date", "min"),
                     Макс_дата=("_issue_date", "max"),
                 )
-                .sort_values("Неустранено", ascending=False)
             )
+            # R23-10: устойчивый порядок групп — сперва по убыванию кол-ва неустранённых,
+            # при равенстве — по алфавиту (lower), стабильная сортировка. Это убирает
+            # «скачки порядка строк на одних и тех же данных после refresh».
+            grp["_sort_name"] = grp[chart_group_col].astype(str).str.casefold()
+            grp = grp.sort_values(
+                ["Неустранено", "_sort_name"],
+                ascending=[False, True],
+                kind="mergesort",
+            ).drop(columns=["_sort_name"]).reset_index(drop=True)
             _txt = [
                 (f"проср.: {int(o)}" if int(o) > 0 else "")
                 for o in grp["Просрочено"]
@@ -19965,8 +19973,16 @@ def dashboard_predpisania(df):
                 yaxis_title="",
                 xaxis_title="Количество неустраненных предписаний",
                 margin=dict(l=12, r=140, t=72, b=88),
-                xaxis=dict(range=[0, axis_upper], title=dict(standoff=18), automargin=True),
-                yaxis=dict(automargin=True, tickfont=dict(size=13)),
+                # R23-10 стр.26: детерминированная ось X — фиксируем диапазон и запрещаем
+                # пользовательский zoom; uirevision стабильный, чтобы zoom/pan/reset
+                # не менялись при повторном рендере (refresh страницы).
+                xaxis=dict(
+                    range=[0, axis_upper],
+                    title=dict(standoff=18),
+                    automargin=True,
+                    fixedrange=True,
+                ),
+                yaxis=dict(automargin=True, tickfont=dict(size=13), fixedrange=True),
                 uirevision="pred_main_chart",
                 title=dict(
                     text="Неустраненные предписания по группе (даты выдачи — в подсказке)",
@@ -20051,7 +20067,7 @@ def dashboard_predpisania(df):
         )
         fig2.update_traces(textinfo="label+percent+value", textfont_size=12)
         fig2 = apply_chart_background(fig2)
-        fig2.update_layout(height=420)
+        fig2.update_layout(height=420, uirevision="pred_status_pie")
         render_chart(fig2, key="pred_status_pie", caption_below="Распределение предписаний по статусам")
 
         if obj_col and obj_col in filtered.columns:
@@ -20060,8 +20076,14 @@ def dashboard_predpisania(df):
                 filtered.groupby(obj_col)
                 .size()
                 .reset_index(name="Количество")
-                .sort_values("Количество", ascending=False)
             )
+            # R23-10: детерминированная сортировка объектов (убывание количества, затем алфавит).
+            by_obj["_sort_name"] = by_obj[obj_col].astype(str).str.casefold()
+            by_obj = by_obj.sort_values(
+                ["Количество", "_sort_name"],
+                ascending=[False, True],
+                kind="mergesort",
+            ).drop(columns=["_sort_name"]).reset_index(drop=True)
             fig3 = px.bar(
                 by_obj,
                 x=obj_col,
@@ -20073,7 +20095,15 @@ def dashboard_predpisania(df):
             fig3.update_traces(textposition="outside", textfont=dict(size=13, color="white"))
             fig3 = _apply_finance_bar_label_layout(fig3)
             fig3 = apply_chart_background(fig3)
-            fig3.update_layout(height=450, xaxis_title="Объект", yaxis_title="Количество", xaxis_tickangle=-45)
+            fig3.update_layout(
+                height=450,
+                xaxis_title="Объект",
+                yaxis_title="Количество",
+                xaxis_tickangle=-45,
+                uirevision="pred_by_obj",
+                xaxis=dict(fixedrange=True, categoryorder="array", categoryarray=by_obj[obj_col].tolist()),
+                yaxis=dict(fixedrange=True),
+            )
             render_chart(fig3, key="pred_by_obj", caption_below="Количество предписаний по объектам")
 
 
