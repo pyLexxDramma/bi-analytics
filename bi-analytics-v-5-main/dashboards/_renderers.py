@@ -11105,9 +11105,11 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             _max_dt = date.today()
 
         _rng = st.date_input(
-            "Период (диапазон дат)",
+            "Период с / по",
             value=(_min_dt, _max_dt),
             key=f"{key_prefix}_period_range",
+            help="R23-05 стр.13: фильтр диапазона дат. "
+                 "Данные (план/факт) пересчитываются пропорционально выбранному интервалу.",
         )
         _d_from = None
         _d_to = None
@@ -11502,8 +11504,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 by_period_week = None
             if by_period_week is not None and not by_period_week.empty:
                 fig_hist = go.Figure()
-                is_resources = "Ресурсы" in label or "Люди" in label
-                base_color = "#2E86AB" if is_resources else "#F39C12"
+                # R23-05 стр.14: «Динамика» — цвета линий: план — голубой, факт — оранжевый.
+                _plan_color = "#5DADE2"
+                _fact_color = "#F39C12"
                 weeks = by_period_week["Неделя"].unique().tolist()
                 # Люди и техника: точечная диаграмма — одна линия через все точки по порядку (период → неделя)
                 by_period_week = by_period_week.copy()
@@ -11513,6 +11516,22 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     + by_period_week["Неделя"].astype(str).str.replace(" неделя", "н", regex=False)
                 )
                 by_period_week = by_period_week.sort_values([period_col_hist, "Неделя"])
+                # План по неделям: «План_период» распределяем на число недель в периоде.
+                _weeks_per_period = (
+                    by_period_week.groupby("Период_стр")["Неделя"].nunique().to_dict()
+                )
+                def _plan_per_week(_row):
+                    _pp = _row.get("План_период")
+                    try:
+                        _pp_f = float(_pp) if pd.notna(_pp) else float("nan")
+                    except Exception:  # noqa: BLE001
+                        return float("nan")
+                    _nw = int(_weeks_per_period.get(_row["Период_стр"], 0) or 0)
+                    if _nw <= 0 or not np.isfinite(_pp_f):
+                        return float("nan")
+                    return _pp_f / _nw
+                by_period_week["План_нед"] = by_period_week.apply(_plan_per_week, axis=1)
+                _has_plan_line = bool(by_period_week["План_нед"].notna().any() and (by_period_week["План_нед"].fillna(0) > 0).any())
                 x_order = by_period_week["x_label"].tolist()
                 _mk_week_lbl_w = lambda r: (
                     f"{int(r['Факт'])} ({int(np.ceil(float(r['%'])))}%)"
@@ -11522,14 +11541,31 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     f"План (период): {int(np.ceil(float(r['План_период']))) if pd.notna(r.get('План_период')) and float(r.get('План_период') or 0) > 0 else '—'}<br>"
                     f"К плану: {int(np.ceil(float(r['%'])))}%"
                 )
+                if _has_plan_line:
+                    fig_hist.add_trace(
+                        go.Scatter(
+                            x=by_period_week["x_label"],
+                            y=by_period_week["План_нед"],
+                            name="План",
+                            mode="lines+markers",
+                            line=dict(color=_plan_color, width=2, dash="dash"),
+                            marker=dict(size=8, color=_plan_color, line=dict(width=1, color="white")),
+                            hovertemplate=(
+                                "%{x}<br>"
+                                "План (на неделю): %{y:.0f}<extra></extra>"
+                            ),
+                            connectgaps=False,
+                            cliponaxis=False,
+                        )
+                    )
                 fig_hist.add_trace(
                     go.Scatter(
                         x=by_period_week["x_label"],
                         y=by_period_week["Факт"],
                         name="Факт",
                         mode="lines+markers+text",
-                        line=dict(color=base_color, width=2),
-                        marker=dict(size=10, color=base_color, line=dict(width=1, color="white")),
+                        line=dict(color=_fact_color, width=2),
+                        marker=dict(size=10, color=_fact_color, line=dict(width=1, color="white")),
                         text=[_mk_week_lbl_w(r) for _, r in by_period_week.iterrows()],
                         textposition="top center",
                         textfont=dict(size=9, color="white"),
@@ -11544,8 +11580,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     xaxis_title="Период — неделя",
                     yaxis_title="Количество",
                     height=440,
-                    showlegend=False,
-                    margin=dict(l=56, r=28, t=56, b=168),
+                    showlegend=bool(_has_plan_line),
+                    legend=dict(orientation="h", x=0.5, xanchor="center", y=1.08, yanchor="bottom"),
+                    margin=dict(l=56, r=28, t=72, b=168),
                     uniformtext=dict(minsize=7, mode="show"),
                     xaxis=dict(
                         tickangle=-45,
