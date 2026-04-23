@@ -8662,6 +8662,24 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             ],
         )
 
+        # R23-07 (стр.20): доп. колонки для таблицы РД/ПД — Номер договора / Шифр / Номер шифра / Блок.
+        contract_no_col = find_column(
+            filtered_df,
+            ["Номер договора", "№ договора", "Номер контракта", "Договор", "Contract Number", "ContractNo"],
+        )
+        cipher_col = find_column(
+            filtered_df,
+            ["Шифр", "Cipher", "DivisionCipher"],
+        )
+        cipher_no_col = find_column(
+            filtered_df,
+            ["Номер шифра", "№ шифра", "CipherNo", "CipherNumber"],
+        )
+        block_col = find_column(
+            filtered_df,
+            ["Блок", "БЛОК", "block", "Block", "Наименование блока"],
+        )
+
         detail_df = filtered_df.copy()
         detail_df["_detail_section_name"] = (
             detail_df[section_col].astype(str).str.strip()
@@ -8734,29 +8752,51 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             parsed = pd.to_datetime(series, errors="coerce")
             return parsed.dt.strftime("%d.%m.%Y").fillna("")
 
-        detail_table = pd.DataFrame(
-            {
-                "Наименование разделов работ": detail_df["_detail_section_name"],
-                "Шифр полный": detail_df["_detail_cipher"],
-                "Дата выдачи разделов по договору": _fmt_date_or_blank(
-                    detail_df["_detail_plan_date"]
-                ),
-                "Прогнозная дата выдачи разделов": _fmt_date_or_blank(
-                    detail_df["_detail_forecast_date"]
-                ),
-                "Статус": detail_df["_detail_status"],
-                "Дата загрузки раздела РД": _fmt_date_or_blank(detail_df["_detail_upload_date"]),
-                "Дата выдачи РД в производство работ": _fmt_date_or_blank(
-                    detail_df["_detail_production_issue_date"]
-                ),
-                "Отклонение от даты по договору, дн.": detail_df[
-                    "_detail_delta_vs_contract"
-                ].apply(lambda x: int(round(float(x), 0)) if pd.notna(x) else ""),
-                "Отклонение от прогнозной даты, дн.": detail_df[
-                    "_detail_delta_vs_forecast"
-                ].apply(lambda x: int(round(float(x), 0)) if pd.notna(x) else ""),
-            }
+        # R23-07 (стр.20): порядок колонок — Проект, Название разделов работ, Номер договора, Шифр,
+        # Номер шифра, Блок, Шифр полный, даты, статус, отклонения.
+        _col_series = {}
+
+        def _safe_str_col(col_name):
+            if col_name and col_name in detail_df.columns:
+                return detail_df[col_name].astype(str).str.strip().replace(
+                    {"nan": "", "None": "", "<NA>": "", "NaT": ""}
+                )
+            return pd.Series([""] * len(detail_df), index=detail_df.index)
+
+        _col_series["Наименование разделов работ"] = detail_df["_detail_section_name"]
+        _col_series["Номер договора"] = _safe_str_col(contract_no_col)
+        _col_series["Шифр"] = _safe_str_col(cipher_col)
+        _col_series["Номер шифра"] = _safe_str_col(cipher_no_col)
+        _col_series["Блок"] = _safe_str_col(block_col)
+        _col_series["Шифр полный"] = detail_df["_detail_cipher"]
+        _col_series["Дата выдачи разделов по договору"] = _fmt_date_or_blank(
+            detail_df["_detail_plan_date"]
         )
+        _col_series["Прогнозная дата выдачи разделов"] = _fmt_date_or_blank(
+            detail_df["_detail_forecast_date"]
+        )
+        _col_series["Статус"] = detail_df["_detail_status"]
+        _col_series["Дата загрузки раздела РД"] = _fmt_date_or_blank(
+            detail_df["_detail_upload_date"]
+        )
+        _col_series["Дата выдачи РД в производство работ"] = _fmt_date_or_blank(
+            detail_df["_detail_production_issue_date"]
+        )
+        _col_series["Отклонение от даты по договору, дн."] = detail_df[
+            "_detail_delta_vs_contract"
+        ].apply(lambda x: int(round(float(x), 0)) if pd.notna(x) else "")
+        _col_series["Отклонение от прогнозной даты, дн."] = detail_df[
+            "_detail_delta_vs_forecast"
+        ].apply(lambda x: int(round(float(x), 0)) if pd.notna(x) else "")
+
+        detail_table = pd.DataFrame(_col_series)
+
+        # Убираем пустые доп.колонки (если их нет в источнике — не засоряем таблицу).
+        for _optional in ("Номер договора", "Шифр", "Номер шифра", "Блок"):
+            if _optional in detail_table.columns and (
+                detail_table[_optional].astype(str).str.strip().eq("").all()
+            ):
+                detail_table = detail_table.drop(columns=[_optional])
 
         if project_col and project_col in detail_df.columns:
             detail_table.insert(0, "Проект", detail_df[project_col].astype(str).str.strip())
