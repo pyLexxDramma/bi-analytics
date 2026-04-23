@@ -8727,6 +8727,8 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                         "Номер шифра",
                         "Блок",
                         "Шифр полный",
+                        "Дата выдачи разделов по Договору",
+                        "Прогнозная дата выдачи разделов",
                         "Задача",
                         "Статус",
                     ):
@@ -19335,6 +19337,182 @@ def _count_tessa_rd_krstates(selected_projects: list[str] | None = None) -> dict
 # берутся из TESSA + 1С (номер договора по ID), без попыток построчно
 # связать с MSP.
 
+
+# R23-12: примитивная транслитерация рус→лат для сопоставления имени проекта
+# со slug'ом файла `other_<slug>_*_rd.csv` (например, «Ленинский» ↔ leninsky).
+_R23_12_RU2LAT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+    "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "h", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "sch",
+    "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+}
+
+
+def _r23_12_project_slug_norm(name: str) -> str:
+    """Нормализует имя проекта до латиницы+цифр для сопоставления со slug'ом файла."""
+    if not name:
+        return ""
+    s = str(name).strip().lower()
+    # Римские → арабские в конце слова (V → 5, IV → 4, III → 3, II → 2, I → 1).
+    for roman, arab in (
+        ("viii", "8"), ("vii", "7"), ("vi", "6"), ("iv", "4"),
+        ("iii", "3"), ("ii", "2"), ("ix", "9"), ("v", "5"), ("x", "10"), ("i", "1"),
+    ):
+        s = re.sub(rf"\b{roman}\b", arab, s)
+    out = []
+    for ch in s:
+        if ch in _R23_12_RU2LAT:
+            out.append(_R23_12_RU2LAT[ch])
+        elif ch.isalnum():
+            out.append(ch)
+    return "".join(out)
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _r23_12_load_rd_plan_lookup() -> dict:
+    """
+    Сканирует `web/AI/other_*_rd.csv` во всех известных корнях и собирает lookup:
+    {slug: {(cipher_casefold, section_casefold): "ДД.ММ.ГГГГ"}}.
+    slug — подстрока имени файла между «other_» и следующим «_».
+    """
+    import os
+    from pathlib import Path as _Path
+    roots: list[_Path] = []
+    try:
+        from config import BASE_PATH as _BP, get_analytics_sibling_web_dir as _gsw, get_extra_web_dirs_from_env as _gextra
+        if _BP is not None:
+            roots.append(_Path(_BP) / "web")
+        _sib = _gsw()
+        if _sib:
+            roots.append(_Path(_sib))
+        for _ex in (_gextra() or []):
+            roots.append(_Path(_ex))
+    except Exception:
+        pass
+    result: dict[str, dict[tuple[str, str], str]] = {}
+    seen_files: set[str] = set()
+    for root in roots:
+        try:
+            ai_dir = root / "AI"
+            if not ai_dir.is_dir():
+                continue
+            for f in ai_dir.glob("other_*_rd.csv"):
+                key = str(f.resolve()).lower()
+                if key in seen_files:
+                    continue
+                seen_files.add(key)
+                stem = f.stem  # "other_leninsky_01.04.2025_rd"
+                parts = stem.split("_")
+                if len(parts) < 3 or parts[0] != "other" or parts[-1] != "rd":
+                    continue
+                slug = parts[1].lower()
+                try:
+                    dfp = pd.read_csv(f, sep=";", encoding="utf-8", dtype=str)
+                except UnicodeDecodeError:
+                    try:
+                        dfp = pd.read_csv(f, sep=";", encoding="cp1251", dtype=str)
+                    except Exception:
+                        continue
+                except Exception:
+                    continue
+                dfp.columns = [str(c).replace("\n", " ").replace("\r", " ").strip() for c in dfp.columns]
+                c_cipher = None
+                c_sect = None
+                c_date = None
+                for col in dfp.columns:
+                    lc = col.casefold()
+                    if c_cipher is None and "шифр" in lc and "полный" not in lc and "номер" not in lc:
+                        c_cipher = col
+                    if c_sect is None and "наименование" in lc and "раздел" in lc:
+                        c_sect = col
+                    if c_date is None and "дата" in lc and "выдач" in lc and "договор" in lc:
+                        c_date = col
+                if not c_cipher or not c_sect or not c_date:
+                    continue
+                lookup: dict[tuple[str, str], str] = {}
+                for _i, row in dfp.iterrows():
+                    ci = str(row.get(c_cipher, "") or "").strip()
+                    se = str(row.get(c_sect, "") or "").strip()
+                    dt = str(row.get(c_date, "") or "").strip()
+                    if not ci or not se or not dt or dt.lower() in ("nan", "none"):
+                        continue
+                    lookup[(ci.casefold(), se.casefold())] = dt
+                if lookup:
+                    result.setdefault(slug, {}).update(lookup)
+        except Exception:
+            continue
+    return result
+
+
+def _r23_12_match_slug_for_project(project_name: str, lookup: dict) -> str:
+    """Возвращает slug из lookup, наиболее похожий на имя проекта."""
+    if not project_name or not lookup:
+        return ""
+    norm = _r23_12_project_slug_norm(project_name)
+    if not norm:
+        return ""
+    # Прямое попадание: slug целиком содержится в норме.
+    best = ""
+    best_len = 0
+    for slug in lookup.keys():
+        if not slug:
+            continue
+        if slug in norm and len(slug) > best_len:
+            best = slug
+            best_len = len(slug)
+    if best:
+        return best
+    # Фолбэк: без цифрового хвоста — в начале нормализованного имени.
+    for slug in lookup.keys():
+        base = re.sub(r"\d+$", "", slug)
+        if base and len(base) >= 5 and norm.startswith(base[:6]):
+            return slug
+    return ""
+
+
+def _r23_12_build_forecast_date_lookup() -> dict[str, str]:
+    """
+    По `tessa_tasks_data` строит словарь {DocID (CardID): мин. Completed},
+    где OptionCaption содержит «Подписан» AND RoleName содержит «Проектировщик».
+    Значения — строки «ДД.ММ.ГГГГ».
+    """
+    try:
+        tt = st.session_state.get("tessa_tasks_data")
+    except Exception:
+        tt = None
+    if tt is None or getattr(tt, "empty", True):
+        return {}
+    try:
+        t = tt.copy()
+    except Exception:
+        return {}
+    t.columns = [str(c).strip() for c in t.columns]
+    card_col = _tessa_find_column(t, ["CardID", "CardId", "DocID"])
+    opt_col = _tessa_find_column(t, ["OptionCaption"])
+    role_col = _tessa_find_column(t, ["RoleName"])
+    done_col = _tessa_find_column(t, ["Completed", "CompletedDate"])
+    if not card_col or not opt_col or not role_col or not done_col:
+        return {}
+
+    def _match_designer(opt: str, role: str) -> bool:
+        o = str(opt or "").strip().casefold()
+        r = str(role or "").strip().casefold()
+        return ("подписан" in o) and ("проектировщ" in r)
+
+    ts = pd.to_datetime(t[done_col], errors="coerce", dayfirst=True)
+    ok = t[[card_col, opt_col, role_col]].apply(
+        lambda row: _match_designer(row[opt_col], row[role_col]), axis=1
+    )
+    sub = t.loc[ok, [card_col]].copy()
+    sub["_ts"] = ts[ok]
+    sub = sub.dropna(subset=["_ts"])
+    if sub.empty:
+        return {}
+    grp = sub.groupby(card_col)["_ts"].min()
+    return {str(k): v.strftime("%d.%m.%Y") for k, v in grp.items() if pd.notna(v)}
+
+
 def _build_tessa_rd_detail_table(
     selected_projects: list[str] | None = None,
     selected_section: str | None = None,
@@ -19361,6 +19539,7 @@ def _build_tessa_rd_detail_table(
     internal_col = _tessa_find_column(t, ["InternalID", "InternalId", "Internal Id"])
     kr_state_col = _tessa_find_column(t, ["KrState"])
     id_dog_col = _tessa_find_column(t, ["1C_ID_DOG", "1C_ID_Dog"])
+    doc_id_col = _tessa_find_column(t, ["DocID", "DocId", "CardID", "CardId"])
 
     if not project_col or not cipher_col:
         return pd.DataFrame()
@@ -19372,6 +19551,18 @@ def _build_tessa_rd_detail_table(
         t = t[mask]
     if t.empty:
         return pd.DataFrame()
+
+    # R23-12: lookup «Дата выдачи разделов по Договору» из other_<slug>_*_rd.csv
+    # и «Прогнозная дата выдачи» из tessa_tasks (OptionCaption=Подписан, Role=Проектировщик).
+    try:
+        _rd_plan_by_slug = _r23_12_load_rd_plan_lookup() or {}
+    except Exception:
+        _rd_plan_by_slug = {}
+    try:
+        _forecast_by_docid = _r23_12_build_forecast_date_lookup() or {}
+    except Exception:
+        _forecast_by_docid = {}
+    _project_slug_cache: dict[str, str] = {}
 
     # Номер договора по `1C_ID_DOG` ↔ DK.`ID_Договора`.
     id_to_num: dict[str, str] = {}
@@ -19418,6 +19609,28 @@ def _build_tessa_rd_detail_table(
             continue
         id_dog = _safe(id_dog_col, r) if id_dog_col else ""
         contract_no = id_to_num.get(id_dog, "") if id_dog else ""
+        # R23-12: дата выдачи разделов по Договору из other_<slug>_*_rd.csv по (Шифр, Наименование).
+        contract_due_date = ""
+        if _rd_plan_by_slug and project and cipher:
+            slug = _project_slug_cache.get(project)
+            if slug is None:
+                slug = _r23_12_match_slug_for_project(project, _rd_plan_by_slug)
+                _project_slug_cache[project] = slug
+            if slug:
+                _tbl = _rd_plan_by_slug.get(slug) or {}
+                contract_due_date = _tbl.get((cipher.casefold(), section.casefold()), "")
+                if not contract_due_date:
+                    # Фолбэк: только по шифру (первое совпадение).
+                    for (ci, _se), _dt in _tbl.items():
+                        if ci == cipher.casefold():
+                            contract_due_date = _dt
+                            break
+        # R23-12: прогнозная дата — из tessa_tasks по DocID.
+        forecast_date = ""
+        if _forecast_by_docid and doc_id_col:
+            _doc_id = _safe(doc_id_col, r)
+            if _doc_id:
+                forecast_date = _forecast_by_docid.get(str(_doc_id), "")
         rows.append(
             {
                 "Проект": project,
@@ -19427,6 +19640,8 @@ def _build_tessa_rd_detail_table(
                 "Номер шифра": _safe(doc_number_col, r) if doc_number_col else "",
                 "Блок": "РД",
                 "Шифр полный": _safe(internal_col, r) if internal_col else "",
+                "Дата выдачи разделов по Договору": contract_due_date,
+                "Прогнозная дата выдачи разделов": forecast_date,
                 "Задача": task,
                 "Статус": _safe(kr_state_col, r) if kr_state_col else "",
             }
