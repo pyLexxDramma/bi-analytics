@@ -3882,7 +3882,9 @@ def dashboard_plan_fact_dates(df):
     if not _pct_ok and dates_pct_col:
         _pct_ok = bool(str(dates_pct_col).strip() in df.columns)
 
-    cb_c1, cb_c2, cb_c3, cb_c4 = st.columns(4)
+    # R23-03 page_5.4: чекбокс «только отклонение < 0» вынесен ОТДЕЛЬНОЙ строкой
+    # ниже (влияет только на графики); в основном ряду — фильтры, общие для таблицы и графиков.
+    cb_c1, cb_c2, cb_c3 = st.columns(3)
     with cb_c1:
         dates_show_reason_notes = st.checkbox(
             "Показать причины отклонений",
@@ -3909,22 +3911,23 @@ def dashboard_plan_fact_dates(df):
             help=_hide_done_help,
         )
     with cb_c3:
-        only_negative_dev_dates = st.checkbox(
-            "Только отклонение окончания < 0",
-            value=False,
-            key="dates_only_neg_end",
-            help=(
-                "Для графиков ниже: оставить только строки, где отклонение окончания "
-                "(base end − plan end) < 0. На основную таблицу не распространяется."
-            ),
-        )
-    with cb_c4:
         force_covenant_ui = st.checkbox(
             "Только ковенанты",
             value=False,
             key="dates_only_covenants",
             help="Показать только ковенантные строки в диаграмме и таблице.",
         )
+
+    # Отдельный ряд под общими чекбоксами: влияет только на графики.
+    only_negative_dev_dates = st.checkbox(
+        "Отображать только диаграммы, где отклонение окончания < 0",
+        value=False,
+        key="dates_only_neg_end",
+        help=(
+            "Для графиков ниже: оставить только строки, где отклонение окончания "
+            "(base end − plan end) < 0. На основную таблицу не распространяется."
+        ),
+    )
 
     # Radio с подписью — отдельной строкой, чтобы не ломал сетку чекбоксов.
     if dates_lot_col:
@@ -4630,53 +4633,89 @@ def dashboard_plan_fact_dates(df):
             if not tdf_vis.empty:
                 tdf_vis = tdf_vis.copy()
                 tdf_vis["_y"] = tdf_vis.apply(_cov_y, axis=1)
-                tdf_vis = tdf_vis.sort_values("_y")
+                # Сортировка ковенантов по убыванию отклонения окончания (верх — самые поздние).
+                if "plan_end_diff" in tdf_vis.columns:
+                    _ped_sort = pd.to_numeric(tdf_vis["plan_end_diff"], errors="coerce")
+                    tdf_vis = tdf_vis.assign(_ped_sort=_ped_sort).sort_values(
+                        "_ped_sort", ascending=True, na_position="first"
+                    ).drop(columns=["_ped_sort"])
+                else:
+                    tdf_vis = tdf_vis.sort_values("_y")
+
+                # Бар-диаграмма: на каждую строку ковенанта две горизонтальные полоски —
+                # «Базовое окончание» и «Окончание». Ось X — даты; полоса идёт от минимальной
+                # даты по набору (origin) до значения соответствующей даты. Отсутствующие даты
+                # пропускаются (строка без полосы). Макет: page_5 правок — «отобразить базовое
+                # окончание и окончание из MSP, столбец идёт от 0 до значения».
+                _dates_combined = pd.concat(
+                    [tdf_vis[pe_col], tdf_vis[fe_col]], ignore_index=True
+                ).dropna()
+                if len(_dates_combined):
+                    _origin = _dates_combined.min() - pd.Timedelta(days=1)
+                else:
+                    _origin = pd.Timestamp.today().normalize()
+                _pe_days = (tdf_vis[pe_col] - _origin).dt.days.astype("Float64")
+                _fe_days = (tdf_vis[fe_col] - _origin).dt.days.astype("Float64")
+
                 fig_cov = go.Figure()
                 fig_cov.add_trace(
-                    go.Scatter(
-                        x=tdf_vis[pe_col],
-                        y=tdf_vis["_y"],
-                        mode="markers+text",
+                    go.Bar(
+                        x=_pe_days.astype(float).tolist(),
+                        y=tdf_vis["_y"].tolist(),
+                        orientation="h",
                         name="Базовое окончание",
-                        marker=dict(
-                            symbol="circle",
-                            size=10,
-                            color="#3B82F6",
-                            line=dict(width=1, color="#ffffff"),
-                        ),
+                        marker=dict(color="#3B82F6"),
                         text=tdf_vis[pe_col].apply(
                             lambda d: d.strftime("%d.%m.%Y") if pd.notna(d) else ""
-                        ),
-                        textposition="middle right",
+                        ).tolist(),
+                        textposition="outside",
                         textfont=dict(size=11, color="white"),
-                        hovertemplate="%{y}<br>Базовое окончание: %{x|%d.%m.%Y}<extra></extra>",
+                        hovertemplate="%{y}<br>Базовое окончание: %{text}<extra></extra>",
+                        cliponaxis=False,
                     )
                 )
                 fig_cov.add_trace(
-                    go.Scatter(
-                        x=tdf_vis[fe_col],
-                        y=tdf_vis["_y"],
-                        mode="markers+text",
+                    go.Bar(
+                        x=_fe_days.astype(float).tolist(),
+                        y=tdf_vis["_y"].tolist(),
+                        orientation="h",
                         name="Окончание",
-                        marker=dict(
-                            symbol="circle",
-                            size=10,
-                            color="#EF4444",
-                            line=dict(width=1, color="#ffffff"),
-                        ),
+                        marker=dict(color="#EF4444"),
                         text=tdf_vis[fe_col].apply(
                             lambda d: d.strftime("%d.%m.%Y") if pd.notna(d) else ""
-                        ),
-                        textposition="middle right",
+                        ).tolist(),
+                        textposition="outside",
                         textfont=dict(size=11, color="white"),
-                        hovertemplate="%{y}<br>Окончание: %{x|%d.%m.%Y}<extra></extra>",
+                        hovertemplate="%{y}<br>Окончание: %{text}<extra></extra>",
+                        cliponaxis=False,
                     )
                 )
+
+                # Переводим числовые дни обратно в подписи-даты на оси X.
+                _max_day = 1
+                try:
+                    _all_days = [v for v in list(_pe_days) + list(_fe_days) if pd.notna(v)]
+                    if _all_days:
+                        _max_day = int(max(float(v) for v in _all_days))
+                        _max_day = max(_max_day, 1)
+                except Exception:
+                    _max_day = 1
+                _tick_count = 6
+                _tick_step = max(1, _max_day // _tick_count)
+                _tick_days = list(range(0, _max_day + _tick_step, _tick_step))
+                _tick_labels = [
+                    (_origin + pd.Timedelta(days=int(d))).strftime("%d.%m.%Y")
+                    for d in _tick_days
+                ]
+
                 nuniq = tdf_vis["_y"].nunique()
                 fig_cov.update_layout(
+                    barmode="group",
+                    bargap=0.25,
+                    bargroupgap=0.1,
                     xaxis_title="Дата",
                     yaxis_title="Ковенант",
-                    height=max(420, int(nuniq) * 36),
+                    height=max(440, int(nuniq) * 48),
                     legend=dict(
                         orientation="h",
                         yanchor="bottom",
@@ -4684,11 +4723,26 @@ def dashboard_plan_fact_dates(df):
                         xanchor="right",
                         x=1,
                     ),
-                    xaxis=dict(type="date", tickformat="%d.%m.%Y"),
-                    margin=dict(l=10, r=20, t=50, b=60),
+                    xaxis=dict(
+                        tickmode="array",
+                        tickvals=_tick_days,
+                        ticktext=_tick_labels,
+                        range=[0, _max_day * 1.08 if _max_day > 0 else 1],
+                    ),
+                    margin=dict(l=10, r=40, t=50, b=60),
+                )
+                fig_cov.update_yaxes(
+                    categoryorder="array",
+                    categoryarray=tdf_vis["_y"].tolist(),
                 )
                 fig_cov = apply_chart_background(fig_cov, skip_uniformtext=True)
-                render_chart(fig_cov, caption_below="Ковенанты: базовое окончание и окончание (точки)")
+                render_chart(
+                    fig_cov,
+                    caption_below=(
+                        f"Ковенанты: базовое окончание (синий) и окончание (красный). "
+                        f"Ось X — от {_origin.strftime('%d.%m.%Y')} до крайней даты выбранных ковенантов."
+                    ),
+                )
             else:
                 st.info("Нет дат для отображения ковенантов.")
 
@@ -4837,19 +4891,12 @@ def dashboard_plan_fact_dates(df):
                 continue
 
         out = {}
-        # Приоритет: unique id / uid
-        for key in ("unique id", "uid"):
+        # Единый заголовок «ID задачи» (по макету правок) — выбираем первый доступный
+        # источник в порядке приоритета: task id → task id seq → identifier → unique id → uid.
+        for key in ("task id", "task id seq", "identifier", "unique id", "uid"):
             if key in lower_map:
-                out["UID задачи (MSP)"] = lower_map[key]
+                out["ID задачи"] = lower_map[key]
                 break
-        # Приоритет: task id / task id seq
-        for key in ("task id", "task id seq"):
-            if key in lower_map:
-                out["ID задачи (MSP)"] = lower_map[key]
-                break
-        # Фоллбек: identifier (не берём просто "id", чтобы не поймать чужие ID)
-        if "ID задачи (MSP)" not in out and "identifier" in lower_map:
-            out["ID задачи (MSP)"] = lower_map["identifier"]
         return out
 
     _msp_id_cols = _resolve_msp_id_columns(table_df)
@@ -4958,10 +5005,8 @@ def dashboard_plan_fact_dates(df):
         pass
 
     out_cols = ["Задача"] if selected_project != "Все" else ["Проект", "Задача"]
-    if "UID задачи (MSP)" in summary_df.columns:
-        out_cols.append("UID задачи (MSP)")
-    if "ID задачи (MSP)" in summary_df.columns:
-        out_cols.append("ID задачи (MSP)")
+    if "ID задачи" in summary_df.columns:
+        out_cols.append("ID задачи")
     # По ТЗ page_7 эти три поля обязательны в таблице.
     out_cols += [
         "Базовое окончание",
@@ -5035,8 +5080,7 @@ def dashboard_plan_fact_dates(df):
     _dates_table_tooltips = {
         "Проект": "Название проекта из выгрузки MSP.",
         "Задача": "Наименование задачи MSP или лот (режим «По лоту» — см. блок «Подписи на графике и в таблице»).",
-        "UID задачи (MSP)": "Уникальный идентификатор задачи в MSP (если есть в выгрузке).",
-        "ID задачи (MSP)": "Идентификатор задачи в MSP (если есть в файле).",
+        "ID задачи": "Идентификатор задачи из выгрузки MSP (Task ID / Identifier / UID — что найдено в файле).",
         "Базовое начало": "Плановая дата начала из MSP (колонка plan start / аналог).",
         "Базовое окончание": "Плановая дата окончания из MSP (колонка plan end / аналог).",
         "Начало (факт)": "Фактическая дата начала (base start / аналог).",
