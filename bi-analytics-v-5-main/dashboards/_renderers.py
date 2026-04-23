@@ -8137,14 +8137,12 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         if _msp_section_name_col and _msp_section_name_col in df.columns
         else (section_col if section_col and section_col in df.columns else task_col)
     )
-    _df_with_tessa = _augment_df_with_tessa_rd(df, project_col, _msp_cipher_col)
-    _has_tessa_rd = (
-        _df_with_tessa is not None
-        and "_tessa_doc_description" in getattr(_df_with_tessa, "columns", [])
-        and _df_with_tessa["_tessa_doc_description"].astype(str).str.strip().ne("").any()
-    )
-    if _has_tessa_rd:
-        df = _df_with_tessa.copy()
+    # R23-07: «иной путь». В текущих MSP-файлах РД-шифры не задаются (только ПД: АР/КР/ПЗ…),
+    # а в TESSA — только РД (АС/КЖ/КМ…). Прямой join MSP↔TESSA по (Проект, Шифр) не даёт
+    # совпадений → колонки «Задача»/«Шифр» оставались пустыми, а попутные обращения к
+    # TESSA могли ронять построение графика. Поэтому для «Просрочки выдачи РД/ПД»
+    # берём всё из MSP, а TESSA-карточки используются в отдельных отчётах
+    # («Исполнение РД», круговая статусов) там, где они применимы.
 
     # Filter by RD section kind
     selected_section = "Все"
@@ -8162,11 +8160,18 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             _both = _cip.ne("") & _nm.ne("")
             _only_cip = _cip.ne("") & ~_both
             _only_nm = _nm.ne("") & ~_both
-            _combined[_both] = _cip[_both] + " — " + _nm[_both]
-            _combined[_only_cip] = _cip[_only_cip]
-            _combined[_only_nm] = _nm[_only_nm]
+            _combined.loc[_both] = _cip[_both] + " — " + _nm[_both]
+            _combined.loc[_only_cip] = _cip[_only_cip]
+            _combined.loc[_only_nm] = _nm[_only_nm]
+            _combined = _combined.astype(str).replace(
+                {"nan": "", "None": "", "<NA>": "", "NaT": ""}
+            )
             section_options = sorted(
-                {v for v in _combined.tolist() if v},
+                {
+                    v.strip()
+                    for v in _combined.tolist()
+                    if isinstance(v, str) and v.strip()
+                },
                 key=lambda x: x.casefold(),
             )
             selected_section = st.selectbox(
@@ -8691,6 +8696,75 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     render_chart(fig_months, caption_below="Динамика по месяцам")
 
         st.subheader("Детальная таблица")
+
+        # R23-07 part 8: для РД, если загружены карточки TESSA `tessa_*_rd.csv`, —
+        # строим детальную таблицу из TESSA (все нужные поля: Шифр, Раздел,
+        # Задача, Номер шифра, Шифр полный, Статус, а Номер договора —
+        # построчно через `1C_ID_DOG` ↔ DK.json). Для ПД остаётся MSP-источник.
+        _tessa_rd_detail_active = False
+        if not is_pd:
+            try:
+                _t_src = st.session_state.get("tessa_data")
+            except Exception:
+                _t_src = None
+            if _t_src is not None and not getattr(_t_src, "empty", True):
+                _t_section_selected = (
+                    selected_section if selected_section and selected_section != "Все" else None
+                )
+                _tessa_detail_table = _build_tessa_rd_detail_table(
+                    selected_projects=selected_projects or None,
+                    selected_section=_t_section_selected,
+                )
+                if not _tessa_detail_table.empty:
+                    _tessa_rd_detail_active = True
+                    st.caption(
+                        "Источник: карточки TESSA (`tessa_*_rd.csv`). «Номер договора» — по связке "
+                        "`1C_ID_DOG` ↔ `ID_Договора` из 1С (`DK.json`)."
+                    )
+                    for _optional in (
+                        "Номер договора",
+                        "Шифр",
+                        "Номер шифра",
+                        "Блок",
+                        "Шифр полный",
+                        "Задача",
+                        "Статус",
+                    ):
+                        if _optional in _tessa_detail_table.columns and (
+                            _tessa_detail_table[_optional].astype(str).str.strip().eq("").all()
+                        ):
+                            _tessa_detail_table = _tessa_detail_table.drop(columns=[_optional])
+                    sort_col1, sort_col2 = st.columns([3, 1])
+                    with sort_col1:
+                        _t_sort_col = st.selectbox(
+                            "Сортировка по колонке",
+                            options=list(_tessa_detail_table.columns),
+                            index=0,
+                            key="rd_delay_tessa_sort_col",
+                        )
+                    with sort_col2:
+                        _t_sort_desc = st.checkbox(
+                            "Отображать в порядке убывания",
+                            value=False,
+                            key="rd_delay_tessa_sort_desc",
+                        )
+                    _tessa_detail_table = _tessa_detail_table.sort_values(
+                        by=_t_sort_col,
+                        ascending=not _t_sort_desc,
+                        na_position="last",
+                        kind="mergesort",
+                    ).reset_index(drop=True)
+                    st.dataframe(
+                        _tessa_detail_table,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+        # Если TESSA-детальная отрисована выше — MSP-ветку детальной таблицы
+        # пропускаем, но последующие блоки «Сводка по просрочке», «План и факт
+        # окончания ПД/РД» и KPI-метрики продолжают строиться как обычно.
+        _msp_detail_disabled = _tessa_rd_detail_active
+
         detail_cipher_col = find_column(
             filtered_df,
             ["Шифр полный", "Полный шифр", "DivisionCipher", "Cipher", "Аббревиатура"],
@@ -8829,7 +8903,42 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             return pd.Series([""] * len(detail_df), index=detail_df.index)
 
         _col_series["Наименование разделов работ"] = detail_df["_detail_section_name"]
-        _col_series["Номер договора"] = _safe_str_col(contract_no_col)
+        # «Номер договора»: приоритет MSP-колонке, если она есть; иначе —
+        # агрегированно по проекту из 1С (DK.json + dannye.json).
+        _contract_source_note = ""
+        if contract_no_col and contract_no_col in detail_df.columns:
+            _col_series["Номер договора"] = _safe_str_col(contract_no_col)
+        elif project_col and project_col in detail_df.columns:
+            _1c_lookup = _build_project_to_contract_numbers_lookup()
+            _col_series["Номер договора"] = _project_contract_numbers_series(
+                detail_df[project_col]
+            )
+            if not _1c_lookup:
+                _contract_source_note = (
+                    "⚠ Колонка «Номер договора» заполняется из 1С "
+                    "(`1с_*_DK.json` + `1с_*_dannye.json`) агрегированно по проекту — "
+                    "сейчас эти файлы не подгружены в сессию. "
+                    "Подгрузите их через «Источник данных → Из папки web»."
+                )
+            else:
+                _matched = sum(
+                    1
+                    for pk in detail_df[project_col].map(_project_filter_norm_key).unique()
+                    if pk and _1c_lookup.get(pk)
+                )
+                _total = len(
+                    [
+                        pk
+                        for pk in detail_df[project_col].map(_project_filter_norm_key).unique()
+                        if pk
+                    ]
+                )
+                _contract_source_note = (
+                    f"Источник «Номер договора»: 1С (`DK.json` + `dannye.json`), "
+                    f"найдено по {_matched}/{_total} проектам выборки."
+                )
+        else:
+            _col_series["Номер договора"] = _safe_str_col(contract_no_col)
         # R23-07: «Шифр» — из MSP (Шифр_ПД_и_РД/Шифр) приоритетно, fallback на
         # общий cipher_col (find_column(["Шифр","Cipher","DivisionCipher"])).
         _cipher_for_detail = None
@@ -8841,11 +8950,21 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         _col_series["Номер шифра"] = _safe_str_col(cipher_no_col)
         _col_series["Блок"] = _safe_str_col(block_col)
         _col_series["Шифр полный"] = detail_df["_detail_cipher"]
-        # R23-07/TESSA: колонка «Задача» = DocDescription последней карточки по
-        # (Проект, Шифр раздела). Пусто, если соответствий нет.
-        if "_tessa_doc_description" in detail_df.columns:
+        # R23-07: «Задача» = название задачи из MSP-графика (task_col / «Название»).
+        # Это надёжный источник по имеющимся файлам: прямого ключа MSP↔TESSA
+        # (DocID/InternalID) в MSP нет, а пересечение Шифр_ПД_и_РД vs DivisionCipher
+        # пустое (ПД-шифры vs РД-шифры), поэтому join TESSA по (Проект, Шифр) даёт 0
+        # совпадений. Название задачи MSP всегда заполнено и даёт осмысленный текст.
+        _task_for_detail = None
+        if task_col and task_col in detail_df.columns:
+            _task_for_detail = task_col
+        else:
+            _task_for_detail = find_column(detail_df, ["Название", "task name", "Задача"])
+        if _task_for_detail and _task_for_detail in detail_df.columns:
             _col_series["Задача"] = (
-                detail_df["_tessa_doc_description"].astype(str).str.strip()
+                detail_df[_task_for_detail].astype(str).str.strip().replace(
+                    {"nan": "", "None": "", "<NA>": "", "NaT": ""}
+                )
             )
         else:
             _col_series["Задача"] = pd.Series([""] * len(detail_df), index=detail_df.index)
@@ -8872,7 +8991,14 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         detail_table = pd.DataFrame(_col_series)
 
         # Убираем пустые доп.колонки (если их нет в источнике — не засоряем таблицу).
-        for _optional in ("Номер договора", "Шифр", "Номер шифра", "Блок", "Задача"):
+        for _optional in (
+            "Номер договора",
+            "Шифр",
+            "Номер шифра",
+            "Блок",
+            "Шифр полный",
+            "Задача",
+        ):
             if _optional in detail_table.columns and (
                 detail_table[_optional].astype(str).str.strip().eq("").all()
             ):
@@ -8881,50 +9007,53 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         if project_col and project_col in detail_df.columns:
             detail_table.insert(0, "Проект", detail_df[project_col].astype(str).str.strip())
 
-        sort_col1, sort_col2 = st.columns([3, 1])
-        with sort_col1:
-            detail_sort_column = st.selectbox(
-                "Сортировка по колонке",
-                options=list(detail_table.columns),
-                index=0,
-                key="rd_delay_detail_sort_col",
+        if not _msp_detail_disabled:
+            sort_col1, sort_col2 = st.columns([3, 1])
+            with sort_col1:
+                detail_sort_column = st.selectbox(
+                    "Сортировка по колонке",
+                    options=list(detail_table.columns),
+                    index=0,
+                    key="rd_delay_detail_sort_col",
+                )
+            with sort_col2:
+                detail_sort_desc = st.checkbox(
+                    "Отображать в порядке убывания",
+                    value=False,
+                    key="rd_delay_detail_sort_desc",
+                )
+
+            def _detail_sort_series(table: pd.DataFrame, column: str) -> pd.Series:
+                if "дата" in column.lower():
+                    return pd.to_datetime(table[column], format="%d.%m.%Y", errors="coerce")
+                if "дн." in column.lower():
+                    return pd.to_numeric(table[column], errors="coerce")
+                return table[column].astype(str).str.casefold()
+
+            detail_table = detail_table.assign(
+                _sort_key=_detail_sort_series(detail_table, detail_sort_column)
+            ).sort_values(
+                by=["_sort_key", "Наименование разделов работ"],
+                ascending=[not detail_sort_desc, True],
+                na_position="last",
             )
-        with sort_col2:
-            detail_sort_desc = st.checkbox(
-                "Отображать в порядке убывания",
-                value=False,
-                key="rd_delay_detail_sort_desc",
+            detail_table = detail_table.drop(columns=["_sort_key"], errors="ignore").reset_index(
+                drop=True
             )
 
-        def _detail_sort_series(table: pd.DataFrame, column: str) -> pd.Series:
-            if "дата" in column.lower():
-                return pd.to_datetime(table[column], format="%d.%m.%Y", errors="coerce")
-            if "дн." in column.lower():
-                return pd.to_numeric(table[column], errors="coerce")
-            return table[column].astype(str).str.casefold()
-
-        detail_table = detail_table.assign(
-            _sort_key=_detail_sort_series(detail_table, detail_sort_column)
-        ).sort_values(
-            by=["_sort_key", "Наименование разделов работ"],
-            ascending=[not detail_sort_desc, True],
-            na_position="last",
-        )
-        detail_table = detail_table.drop(columns=["_sort_key"], errors="ignore").reset_index(
-            drop=True
-        )
-
-        if detail_table.empty and not filtered_df.empty:
-            st.info("Детальная таблица не собрана, хотя строки в источнике есть.")
-        elif detail_table.empty:
-            st.info("Нет данных для детальной таблицы.")
-        else:
-            st.markdown(format_dataframe_as_html(detail_table), unsafe_allow_html=True)
-            render_dataframe_excel_csv_downloads(
-                detail_table,
-                file_stem="rd_delay_detail",
-                key_prefix="rd_delay_detail",
-            )
+            if _contract_source_note:
+                st.caption(_contract_source_note)
+            if detail_table.empty and not filtered_df.empty:
+                st.info("Детальная таблица не собрана, хотя строки в источнике есть.")
+            elif detail_table.empty:
+                st.info("Нет данных для детальной таблицы.")
+            else:
+                st.markdown(format_dataframe_as_html(detail_table), unsafe_allow_html=True)
+                render_dataframe_excel_csv_downloads(
+                    detail_table,
+                    file_stem="rd_delay_detail",
+                    key_prefix="rd_delay_detail",
+                )
 
         # Summary table (с % выполнения РД/ПД и раскраской отклонения: >0 красный, <=0 зелёный)
         st.subheader("Сводка по просрочке")
@@ -15365,6 +15494,11 @@ def dashboard_documentation(
 
     if not is_pd:
         # Prepare data for pie chart "Исполнение РД"
+        # R23-07 (стр.20): категории круговой — Принято / На рассм. / Возвр. /
+        # Не принято / Не выдано. «Принято/На рассм./Возвр./Не принято»
+        # берутся из TESSA (KrState карточек `tessa_*_rd.csv`), если данные
+        # загружены; иначе — fallback на MSP-агрегаты (Выдано→Принято,
+        # На согласовании→На рассм., На доработке→Возвр., Не принято=0).
         try:
             total_sections = (
                 float(_to_numeric_series(df[rd_count_col]).sum())
@@ -15378,20 +15512,43 @@ def dashboard_documentation(
                 if rework_col and rework_col in df.columns
                 else 0.0
             )
-            not_accepted_sum = on_ap_sum + rework_sum
-            not_issued_sum = max(total_sections - issued_sum - not_accepted_sum, 0.0)
+
+            _tessa_counts = _count_tessa_rd_krstates(selected_projects_doc or None)
+            _tessa_has_any = any(v > 0 for v in _tessa_counts.values())
+            _used_tessa_source = False
+            if _tessa_has_any:
+                accepted_sum = float(_tessa_counts.get("Принято", 0))
+                review_sum = float(_tessa_counts.get("На рассм.", 0))
+                return_sum = float(_tessa_counts.get("Возвр.", 0))
+                not_accepted_cat_sum = float(_tessa_counts.get("Не принято", 0))
+                _used_tessa_source = True
+            else:
+                accepted_sum = issued_sum
+                review_sum = on_ap_sum
+                return_sum = rework_sum
+                not_accepted_cat_sum = 0.0
+
+            _active_sum = (
+                accepted_sum + review_sum + return_sum + not_accepted_cat_sum
+            )
+            not_issued_sum = max(total_sections - _active_sum, 0.0)
 
             if (
                 total_sections > 0
-                or issued_sum > 0
-                or not_accepted_sum > 0
+                or _active_sum > 0
                 or not_issued_sum > 0
             ):
                 st.subheader("Исполнение РД")
+                if _used_tessa_source:
+                    st.caption(
+                        "Статусы Принято/На рассм./Возвр./Не принято — из карточек "
+                        "TESSA (KrState)."
+                    )
                 pie_data = {
-                    "Выдано в производство": int(round(max(issued_sum, 0.0))),
-                    "На согласовании": int(round(max(on_ap_sum, 0.0))),
-                    "На доработке": int(round(max(rework_sum, 0.0))),
+                    "Принято": int(round(max(accepted_sum, 0.0))),
+                    "На рассм.": int(round(max(review_sum, 0.0))),
+                    "Возвр.": int(round(max(return_sum, 0.0))),
+                    "Не принято": int(round(max(not_accepted_cat_sum, 0.0))),
                     "Не выдано": int(round(max(not_issued_sum, 0.0))),
                 }
                 pie_data = {k: v for k, v in pie_data.items() if v > 0}
@@ -15402,10 +15559,11 @@ def dashboard_documentation(
                         names=list(pie_data.keys()),
                         title=None,
                         color_discrete_map={
-                            "Выдано в производство": "#2E86AB",
-                            "На согласовании": "#F39C12",
-                            "На доработке": "#E67E22",
-                            "Не выдано": "#E74C3C",
+                            "Принято": "#27AE60",
+                            "На рассм.": "#F1C40F",
+                            "Возвр.": "#E67E22",
+                            "Не принято": "#C0392B",
+                            "Не выдано": "#7F8C8D",
                         },
                     )
                     fig_pie.update_traces(
@@ -15551,23 +15709,39 @@ def dashboard_documentation(
             if not fact_date_col or fact_date_col not in df.columns:
                 fact_date_col = base_end_col
 
-            # Check if required columns exist
+            # Подсказка пользователю: график строится из отчётного файла по
+            # РД (CSV/XLSX), а не из MSP-графика или TESSA. Нужны колонки:
+            # «РД по Договору» (план, шт.), «Выдано в производство работ»
+            # (факт, шт.), «plan end»/«Конец План» (дата плана),
+            # «actual finish»/«Конец Факт» (дата факта). Если одна из колонок
+            # отсутствует — подгрузите отчётный XLS/CSV по РД, и график
+            # построится без правок кода.
+            _rd_dyn_hint = (
+                "Подсказка: график «Динамика выдачи РД» строится из отчётного "
+                "файла по РД (CSV/XLSX) с колонками «РД по Договору», "
+                "«Выдано в производство работ», «plan end»/«Конец План», "
+                "«actual finish»/«Конец Факт». Подгрузите его — график "
+                "оживёт без правок кода."
+            )
             if not plan_date_col or plan_date_col not in df.columns:
                 st.warning(
                     "Для построения графика 'Динамика выдачи РД' необходима колонка плановой даты (plan end / plan start)."
                 )
+                st.info(_rd_dyn_hint)
                 return
 
             if not rd_plan_col or rd_plan_col not in df.columns:
                 st.warning(
                     "Для построения графика 'Динамика выдачи РД' необходима колонка 'РД по Договору'."
                 )
+                st.info(_rd_dyn_hint)
                 return
 
             if not in_production_col or in_production_col not in df.columns:
                 st.warning(
                     "Для построения графика 'Динамика выдачи РД' необходима колонка 'Выдано в производство работ'."
                 )
+                st.info(_rd_dyn_hint)
                 return
 
             max_plan_end_date = None
@@ -15814,6 +15988,11 @@ def dashboard_documentation(
                     lambda x: f"{x:.0f}" if pd.notna(x) and float(x) != 0.0 else ""
                 )
 
+                # R23-07 (стр.19): факт-линия «Прогноз по проекту» для РД —
+                # оранжевый `#F39C12`, если все разделы выданы (факт ≥ план);
+                # иначе — голубой `#5DADE2`. План — всегда синий.
+                _rd_all_done = plan_total > 0 and fact_to_date >= plan_total
+                _rd_fact_color = "#F39C12" if _rd_all_done else "#5DADE2"
                 fig_dynamics = px.line(
                     dynamics_df,
                     x="Дата",
@@ -15823,7 +16002,7 @@ def dashboard_documentation(
                     markers=True,
                     labels={"Количество": "Количество", "Дата": "Дата"},
                     text="Текст",
-                    color_discrete_map={"План": "#2E86AB", "Факт": "#F39C12"},
+                    color_discrete_map={"План": "#2E86AB", "Факт": _rd_fact_color},
                 )
 
                 fig_dynamics.update_layout(
@@ -15868,6 +16047,7 @@ def dashboard_documentation(
                 render_chart(fig_dynamics, caption_below="Динамика выдачи РД")
             else:
                 st.warning("Нет данных для построения графика 'Динамика выдачи РД'.")
+                st.info(_rd_dyn_hint)
         except Exception as e:
             st.error(f"Ошибка при построении графика 'Динамика выдачи РД': {str(e)}")
 
@@ -15998,6 +16178,13 @@ def dashboard_documentation(
                     dynamics_df['Текст'] = dynamics_df['Количество'].apply(
                         lambda x: f"{x:.0f}" if pd.notna(x) and float(x) != 0.0 else ""
                     )
+                    # R23-07 (стр.19): цвет линии «Прогноз по проекту» —
+                    # оранжевый `#F39C12`, если все задачи 5-го уровня
+                    # выполнены на 100%; иначе — нейтральный голубой `#5DADE2`.
+                    _all_done_5lvl = bool(m.any()) and bool(
+                        (pc[m] >= 99.99).all()
+                    )
+                    _fcst_color = "#F39C12" if _all_done_5lvl else "#5DADE2"
                     fig_dynamics = px.line(
                         dynamics_df,
                         x='Дата',
@@ -16009,7 +16196,7 @@ def dashboard_documentation(
                         text='Текст',
                         color_discrete_map={
                             "План (базовый план)": "#2E86AB",
-                            "Прогноз по проекту": "#F39C12",
+                            "Прогноз по проекту": _fcst_color,
                         },
                     )
                     fig_dynamics.update_layout(
@@ -18940,6 +19127,281 @@ def _augment_df_with_tessa_rd(
     ]
     out["_tessa_card_count"] = [_count(p, c) for p, c in zip(proj_keys, ciph_keys)]
     return out
+
+
+# ── 1С (DK + dannye): номера договоров по проекту ────────────────────────
+# Строит `{norm(Проект): ["Номер договора", ...]}` через
+#   dannye.json → st.session_state["reference_partner_to_project"] (Контрагент → Проект)
+# и
+#   DK.json → st.session_state.debit_credit_data (Контрагент ↔ Номер договора)
+# Показываем построчной связи MSP-строка↔договор у нас нет — используем
+# агрегированный список всех договоров проекта (через «; »).
+
+def _build_project_to_contract_numbers_lookup() -> dict[str, list[str]]:
+    try:
+        partner_to_project = st.session_state.get("reference_partner_to_project") or {}
+    except Exception:
+        partner_to_project = {}
+    try:
+        dk_df = st.session_state.get("debit_credit_data")
+    except Exception:
+        dk_df = None
+    if (
+        not isinstance(partner_to_project, dict)
+        or not partner_to_project
+        or dk_df is None
+        or getattr(dk_df, "empty", True)
+    ):
+        return {}
+    contr_col = _tessa_find_column(
+        dk_df, ["Название контрагента", "Контрагент", "НаименованиеКонтрагента"]
+    )
+    num_col = _tessa_find_column(
+        dk_df, ["Номер договора", "НомерДоговора", "Номер", "ContractNumber"]
+    )
+    if not contr_col or not num_col:
+        return {}
+    out: dict[str, list[str]] = {}
+    seen: dict[str, set[str]] = {}
+    for _idx, row in dk_df[[contr_col, num_col]].iterrows():
+        contr = str(row.get(contr_col, "") or "").strip()
+        num = str(row.get(num_col, "") or "").strip()
+        if not contr or not num:
+            continue
+        project = partner_to_project.get(contr)
+        if not project:
+            # попробуем case-insensitive ключ
+            for k, v in partner_to_project.items():
+                if str(k).strip().casefold() == contr.casefold():
+                    project = v
+                    break
+        if not project:
+            continue
+        pk = _project_filter_norm_key(project)
+        if not pk:
+            continue
+        seen.setdefault(pk, set())
+        if num in seen[pk]:
+            continue
+        seen[pk].add(num)
+        out.setdefault(pk, []).append(num)
+    for pk in list(out.keys()):
+        out[pk] = sorted(out[pk], key=lambda s: s.casefold())
+    return out
+
+
+def _project_contract_numbers_series(
+    project_series: pd.Series, max_items: int = 3
+) -> pd.Series:
+    """
+    Для каждой строки df возвращает «Номер1; Номер2; …» (до `max_items`) по
+    проекту из 1С. Если проекту соответствует больше `max_items` договоров —
+    добавляет суффикс ` (+N ещё)`. Пусто, если 1С-данные не подгружены.
+    """
+    lk = _build_project_to_contract_numbers_lookup()
+    if not lk:
+        return pd.Series([""] * len(project_series), index=project_series.index)
+
+    def _fmt(val) -> str:
+        pk = _project_filter_norm_key(val)
+        nums = lk.get(pk) or []
+        if not nums:
+            return ""
+        if len(nums) <= max_items:
+            return "; ".join(nums)
+        return "; ".join(nums[:max_items]) + f" (+{len(nums) - max_items} ещё)"
+
+    return project_series.map(_fmt)
+
+
+# ── TESSA KrState → категории круговой «Исполнение РД» (R23-07, стр.20) ─
+# Соответствие статусов KrState (см. web/KrStates.csv) пяти категориям
+# пирога: Принято / На рассм. / Возвр. / Не принято. «Не выдано»
+# рассчитывается как остаток от общего количества разделов (MSP).
+_TESSA_KRSTATE_TO_PIE = {
+    # Принято — документ согласован / подписан / зарегистрирован.
+    "согласован": "Принято",
+    "approved": "Принято",
+    "подписан": "Принято",
+    "signed": "Принято",
+    "зарегистрирован": "Принято",
+    "registered": "Принято",
+    # На рассм. — идёт согласование / подписание / регистрация.
+    "на согласовании": "На рассм.",
+    "approving": "На рассм.",
+    "на подписании": "На рассм.",
+    "signing": "На рассм.",
+    "на регистрации": "На рассм.",
+    "registration": "На рассм.",
+    # Возвр. — на доработке.
+    "на доработке": "Возвр.",
+    "amending": "Возвр.",
+    # Не принято — отказ / не согласован / отмена.
+    "отказ": "Не принято",
+    "declined": "Не принято",
+    "не согласован": "Не принято",
+    "not approved": "Не принято",
+    "disapproved": "Не принято",
+    "отмена": "Не принято",
+    "cancelled": "Не принято",
+    "canceled": "Не принято",
+}
+
+
+def _count_tessa_rd_krstates(selected_projects: list[str] | None = None) -> dict[str, int]:
+    """
+    Возвращает счётчики карточек TESSA (tessa_*_rd.csv) по четырём
+    категориям круговой «Исполнение РД»: Принято / На рассм. / Возвр. /
+    Не принято. Если TESSA-данных нет или `tessa_data` пуст — возвращает
+    словарь с нулями. Фильтр по `selected_projects` — как в
+    `_build_tessa_rd_detail_table` (через `_project_filter_norm_key`).
+    """
+    result = {"Принято": 0, "На рассм.": 0, "Возвр.": 0, "Не принято": 0}
+    try:
+        tdf = st.session_state.get("tessa_data")
+    except Exception:
+        tdf = None
+    if tdf is None or getattr(tdf, "empty", True):
+        return result
+    try:
+        t = tdf.copy()
+    except Exception:
+        return result
+    t.columns = [str(c).strip() for c in t.columns]
+    project_col = _tessa_find_column(
+        t, ["ObjectProjectName", "ProjectName", "ObjectName"]
+    )
+    cipher_col = _tessa_find_column(t, ["DivisionCipher", "Cipher"])
+    kr_state_col = _tessa_find_column(t, ["KrState"])
+    if not project_col or not cipher_col or not kr_state_col:
+        return result
+    # Считаем только строки-карточки РД (где задан шифр раздела).
+    mask_card = t[cipher_col].map(_tessa_cell_has_value).fillna(False)
+    t = t[mask_card]
+    if t.empty:
+        return result
+    if selected_projects:
+        _pk_set = {_project_filter_norm_key(p) for p in selected_projects}
+        t = t[t[project_col].map(_project_filter_norm_key).isin(_pk_set)]
+    if t.empty:
+        return result
+    for _v in t[kr_state_col].tolist():
+        if _v is None or (isinstance(_v, float) and pd.isna(_v)):
+            continue
+        key = str(_v).strip().casefold()
+        if not key or key in ("nan", "none", "<na>", "nat"):
+            continue
+        bucket = _TESSA_KRSTATE_TO_PIE.get(key)
+        if bucket:
+            result[bucket] += 1
+    return result
+
+
+# ── TESSA-RD detail table (для «Просрочки выдачи РД» в TESSA-источнике) ───
+# Используется, когда `dashboard_rd_delay(..., is_pd=False)` и в сессии есть
+# TESSA-данные `tessa_*_rd.csv`. Возвращает готовый DataFrame с колонками
+# Проект / Наименование разделов работ / Номер договора / Шифр / Номер шифра /
+# Блок / Шифр полный / Задача / Статус. Это честный источник: все поля
+# берутся из TESSA + 1С (номер договора по ID), без попыток построчно
+# связать с MSP.
+
+def _build_tessa_rd_detail_table(
+    selected_projects: list[str] | None = None,
+    selected_section: str | None = None,
+) -> pd.DataFrame:
+    try:
+        tdf = st.session_state.get("tessa_data")
+    except Exception:
+        tdf = None
+    if tdf is None or getattr(tdf, "empty", True):
+        return pd.DataFrame()
+    try:
+        t = tdf.copy()
+    except Exception:
+        return pd.DataFrame()
+    t.columns = [str(c).strip() for c in t.columns]
+
+    project_col = _tessa_find_column(t, ["ObjectProjectName", "ProjectName", "ObjectName"])
+    cipher_col = _tessa_find_column(t, ["DivisionCipher", "Cipher"])
+    section_col = _tessa_find_column(
+        t, ["SubDivisionVersionName", "SectionName", "DivisionName"]
+    )
+    task_col = _tessa_find_column(t, ["DocDescription", "DocDescr"])
+    doc_number_col = _tessa_find_column(t, ["DocNumber"])
+    internal_col = _tessa_find_column(t, ["InternalID", "InternalId", "Internal Id"])
+    kr_state_col = _tessa_find_column(t, ["KrState"])
+    id_dog_col = _tessa_find_column(t, ["1C_ID_DOG", "1C_ID_Dog"])
+
+    if not project_col or not cipher_col:
+        return pd.DataFrame()
+
+    # Фильтр по выбранным проектам (если передан список — иначе берём все).
+    if selected_projects:
+        _pk_set = {_project_filter_norm_key(p) for p in selected_projects}
+        mask = t[project_col].map(_project_filter_norm_key).isin(_pk_set)
+        t = t[mask]
+    if t.empty:
+        return pd.DataFrame()
+
+    # Номер договора по `1C_ID_DOG` ↔ DK.`ID_Договора`.
+    id_to_num: dict[str, str] = {}
+    try:
+        dk_df = st.session_state.get("debit_credit_data")
+    except Exception:
+        dk_df = None
+    if dk_df is not None and not getattr(dk_df, "empty", True):
+        _id_col = _tessa_find_column(dk_df, ["ID_Договора", "ID_Dogovor", "ДоговорID"])
+        _num_col = _tessa_find_column(dk_df, ["Номер договора", "НомерДоговора"])
+        if _id_col and _num_col:
+            for _idx, row in dk_df[[_id_col, _num_col]].iterrows():
+                k = str(row.get(_id_col, "") or "").strip()
+                v = str(row.get(_num_col, "") or "").strip()
+                if k and v:
+                    id_to_num[k] = v
+
+    def _safe(col_name: str, row) -> str:
+        if not col_name or col_name not in row.index:
+            return ""
+        v = row.get(col_name, "")
+        if pd.isna(v):
+            return ""
+        s = str(v).strip()
+        if s.lower() in ("nan", "none", "<na>", "nat"):
+            return ""
+        return s
+
+    rows = []
+    for _i, r in t.iterrows():
+        cipher = _safe(cipher_col, r)
+        section = _safe(section_col, r) if section_col else ""
+        task = _safe(task_col, r) if task_col else ""
+        project = _safe(project_col, r)
+        combined_section = (
+            (cipher + " — " + section) if cipher and section else (section or cipher)
+        )
+        # Фильтр по выбранной секции «Шифр — Наименование раздела».
+        if (
+            selected_section
+            and selected_section != "Все"
+            and combined_section != selected_section
+        ):
+            continue
+        id_dog = _safe(id_dog_col, r) if id_dog_col else ""
+        contract_no = id_to_num.get(id_dog, "") if id_dog else ""
+        rows.append(
+            {
+                "Проект": project,
+                "Наименование разделов работ": section,
+                "Номер договора": contract_no,
+                "Шифр": cipher,
+                "Номер шифра": _safe(doc_number_col, r) if doc_number_col else "",
+                "Блок": "РД",
+                "Шифр полный": _safe(internal_col, r) if internal_col else "",
+                "Задача": task,
+                "Статус": _safe(kr_state_col, r) if kr_state_col else "",
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 # ==================== DASHBOARD: Неустраненные предписания (TESSA) ====================
