@@ -15677,7 +15677,7 @@ def dashboard_documentation(
                             "Плановая производительность",
                             "—"
                             if planned_weekly is None
-                            else f"{planned_weekly:,.1f}".replace(",", " "),
+                            else f"{round(planned_weekly):,.0f}".replace(",", " "),
                             help="План на текущую дату / (дата окончания план − дата окончания факт) × 7",
                         )
                     with pw2:
@@ -15685,7 +15685,7 @@ def dashboard_documentation(
                             "Фактическая производительность",
                             "—"
                             if fact_weekly is None
-                            else f"{fact_weekly:,.1f}".replace(",", " "),
+                            else f"{round(fact_weekly):,.0f}".replace(",", " "),
                             help="Факт на текущую дату / (сегодня − дата окончания факт) × 7; только если дата окончания факт в прошлом",
                         )
                     with pw3:
@@ -15698,7 +15698,7 @@ def dashboard_documentation(
                         else:
                             st.metric(
                                 "Необходимая производительность",
-                                f"{nec_rd:,.1f}".replace(",", " "),
+                                f"{round(nec_rd):,.0f}".replace(",", " "),
                                 help="Отклонение на текущую дату / (дата окончания план − сегодня) × 7",
                             )
                 else:
@@ -15707,7 +15707,7 @@ def dashboard_documentation(
                     with p1:
                         st.metric(
                             "Текущая производительность в неделю",
-                            f"{current_productivity:,.1f}".replace(",", " "),
+                            f"{round(current_productivity):,.0f}".replace(",", " "),
                             help="Факт на текущую дату / число недель с начала плана",
                         )
                     with p2:
@@ -15726,7 +15726,7 @@ def dashboard_documentation(
                         else:
                             st.metric(
                                 "Необходимая для выполнения плана",
-                                f"{required_productivity:,.1f}".replace(",", " "),
+                                f"{round(required_productivity):,.0f}".replace(",", " "),
                                 help="(План по проекту − Факт на текущую дату) / оставшиеся недели",
                             )
 
