@@ -5936,11 +5936,17 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
     view_type = st.selectbox(
         "Вид отображения", ["По причинам", "По месяцам"], key="reasons_view_type"
     )
+    # R23-04 follow-up: тренд-линия имеет смысл только для «По месяцам»;
+    # в «По причинам» — X-ось это не временной ряд, поэтому чекбокс блокируем.
     show_trend_line = st.checkbox(
         "Показывать линию тренда",
         value=False,
         key="reasons_dynamics_show_trend_line",
-        help="Применяется к графику «По месяцам»",
+        help=(
+            "Линия тренда строится только в режиме «По месяцам» — это временной ряд. "
+            "В режиме «По причинам» по оси X — категории, тренд не применим."
+        ),
+        disabled=(view_type == "По причинам"),
     )
 
     filtered_df = df.copy()
@@ -6130,6 +6136,9 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
                 pd.to_numeric(reason_summary["Количество"], errors="coerce").max() or 0.0
             )
             _y_top_rs = max(1.0, _ymax_rs * 1.45 + 12.0)
+            # R23-04 follow-up (user screenshot): легенда в «По причинам» избыточна —
+            # каждая категория уже есть на оси X; горизонтальная легенда снизу накладывается
+            # с подписями оси. Скрываем легенду полностью в этом режиме.
             fig.update_layout(
                 height=max(520, int(180 + n_rs * 52)),
                 margin=dict(l=28, r=28, t=110, b=200),
@@ -6139,6 +6148,8 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
                     automargin=True,
                 ),
                 xaxis=dict(automargin=True),
+                showlegend=False,
+                legend=dict(orientation="v"),
             )
         else:
             # View 2: By months - month on X-axis, count on Y-axis, reasons as colors (stacked)
@@ -6167,6 +6178,16 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
                     text="Количество",
                     color_discrete_sequence=["#1f77b4"],  # Single color for all bars
                 )
+                # R23-04 follow-up (user screenshot): при одной синей серии имя трейса
+                # (period_col, напр. «Месяц») висит в горизонтальной легенде снизу и
+                # накладывается на «Линия тренда». Убираем его из легенды —
+                # остаётся только подпись линии тренда, когда она включена.
+                try:
+                    fig.update_traces(
+                        selector=dict(type="bar"), showlegend=False
+                    )
+                except Exception:
+                    pass
             else:
                 # Visualization - vertical bar chart with stacked reasons
                 # Use period_col for x-axis and reason for color (legend)
@@ -6194,6 +6215,28 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
         else:
             # For "По месяцам" view, add annotations and trend line
             fig.update_xaxes(tickangle=-45)
+            # R23-04 follow-up (user screenshot): подпись оси X («Месяц»/«Квартал»/«Год»)
+            # ложилась вплотную к горизонтальной легенде снизу и визуально сливалась с
+            # «— Линия тренда». Сами значения оси X и так самоописывающие («Август 2026»…),
+            # поэтому отдельная подпись оси X здесь не нужна — убираем.
+            try:
+                fig.update_xaxes(title_text="")
+                # Отодвигаем легенду ещё ниже оси X и увеличиваем нижнее поле,
+                # чтобы «Линия тренда» и подписи месяцев гарантированно не пересекались.
+                fig.update_layout(
+                    margin=dict(l=56, r=36, t=72, b=160),
+                    legend=dict(
+                        orientation="h",
+                        x=0.5,
+                        xanchor="center",
+                        y=-0.45,
+                        yanchor="top",
+                        font=dict(size=11, color="#e8eef5"),
+                        bgcolor="rgba(0,0,0,0)",
+                    ),
+                )
+            except Exception:
+                pass
             # Show values inside bars for each reason - horizontal text (same as other charts)
             fig.update_traces(
                 textposition="inside", textfont=dict(size=12, color="white")
