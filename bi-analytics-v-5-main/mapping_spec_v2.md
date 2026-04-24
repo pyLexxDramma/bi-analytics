@@ -205,8 +205,8 @@
 ## 5.1 ETL: распознавание/маппинг источников
 - [x] `etl/parser.py` — [x] `detect_file` / [x] `group_by_snapshot` (см. `loader`).
 - [x] `etl/loader.py` — [x] `load_from_web_dir` + `__unknown__`; [x] порядок: справочники → версии по дате; [x] `_resolve_kr_states` — `lower(trim(...))` для сопоставления с `kr_states`.
-- [ ] `etl/mapper.py`
-  - [x] `map_msp()` — даты/отклонения, `_MSP_COL_MAP` (сверка с новыми колонками при смене выгрузки — [ ]).
+- [x] `etl/mapper.py`
+  - [x] `map_msp()` — даты/отклонения, `_MSP_COL_MAP` + алиасы **пробел** / **англ.** (MS Project); при появлении новых имён в выгрузке — сверка/добавление — [ ].
   - [x] `map_tessa_id()` / `map_tessa_rd()` / `map_tessa_task()` — DocID, KrState(±ID для id), ObjectProjectID `project_id`; [x] `map_tessa_task` — алиасы `Import_date` / `import_data` / `imort_data`.
   - [x] `map_resources()` — колонка **`resource_kind`** (`рабочие` / `техника` / `прочее`) + `schema` миграция; сырой текст в `resource_type`.
   - [x] `map_rd_plan()` — [x] пустая/битая **плановая дата** при найденной колонке — строка не грузится (**§3.3**); [x] поиск колонок вне `iterrows` + ключевые «дата выдачи…».
@@ -216,14 +216,14 @@
 - [x] `dashboards/__init__.py`
   - [x] убрать/скрыть дублирующие пункты в ГДРС/СКУД (отдельный пункт «СКУД стройка» / экран «СКУД по неделям» убран из реестра).
   - [x] алиасы `get_dashboards()` / меню: **«Просрочка выдачи РД/ПД»** добавлены в `REPORT_CATEGORIES` (раньше только в словаре рендереров); **`auth._REPORT_ROLE_ALLOWLIST`:** «Неустраненные предписания» + Просрочка РД/ПД (синхрон с пунктами меню).
-  - [x] обновить `_DASHBOARDS_REGISTRY_VERSION` (44 — §4.8 `format_dataframe_as_html` / `plan_fact_dates_table_to_html`; v43: §5.2 меню+RBAC; v42: `st.dataframe`; …). Правки только текста **mapping_spec** реестр не меняют.
+  - [x] обновить `_DASHBOARDS_REGISTRY_VERSION` (45 — `utils.render_dataframe_excel_csv_downloads` без `help` у кнопок; v44: §4.8 HTML; v43: §5.2 меню+RBAC; …). Правки только текста **mapping_spec** реестр не меняют.
 - [x] `dashboards/ui_quiet.py` — `suppress_caption` (без `st.caption` в дашбордах, см. 4.9).
 - [x] `dashboards/_renderers.py` / `dev_projects_tz_matrix.py` — в отчётах **нет** «серых» `st.caption` (п. **4.9**; `ui_quiet.suppress_caption` при необходимости).
-- [x] `dashboards/_renderers.py` — **снятие `help=`** по п. **4.10** (все `help=` в файле убраны; админ/профиль/главная при необходимости отдельно).
+- [x] `dashboards/_renderers.py` — **снятие `help=`** по п. **4.10** (все `help=` в файле убраны); **`pages/*`** — сняты; **`utils.render_dataframe_excel_csv_downloads`** — без `help` у `download_button` в поповере экспорта.
 - [x] Все графики/диаграммы — подписи и раскладка по п. **4.11** (центрально: `render_chart` / `_apply_plotly_spec_411_labels`, `apply_chart_background`; приёмка **ok** 2026-04-24).
 
 ## 5.3 Сроки / причины / контрольные точки / график проекта
-- [ ] `dashboards/_renderers.py`
+- [x] `dashboards/_renderers.py`
   - [x] `dashboard_control_points()` — [x] канонизация `project name` (§**3.1**).
   - [x] `dashboard_project_schedule_chart()` — [x] то же.
   - [x] `dashboard_plan_fact_dates()` — [x] то же.
@@ -241,7 +241,7 @@
   - [x] `dashboard_gdrs_equipment()` — отдельный пункт меню; см. 4.3.
 
 ## 5.5 РД/ПД
-- [ ] `dashboards/_renderers.py` (сверка Excel / приёмка — [ ])
+- [x] `dashboards/_renderers.py` (сверка Excel / приёмка — [ ])
   - [x] `dashboard_rd_delay()` / `dashboard_pd_delay()` — [x] **§3.1**, мультивыбор, TESSA-«Задача» в детализации, линия «Просрочка»/см. `dashboard_documentation` для план/факт линий
   - [x] `dashboard_working_documentation()` / `dashboard_project_documentation()` / `dashboard_documentation()` — [x] **§4.4** (круг «Исполнение РД», динамика, колонка «Передано подрядчику» в find_column)
   - [x] `_rd_tessa_task_display_series()` + колонка «Задача» в детальной таблице — **§4.4**
@@ -255,7 +255,7 @@
   - [ ] `_pred_merge_completion_from_tasks()`
 
 ## 5.7 Финансы
-- [ ] `dashboards/_renderers.py`
+- [x] `dashboards/_renderers.py`
   - [x] `dashboard_budget_by_period()` — [x] читаемость графика (нулевые месяцы, отступы, подписи) — 2026-04-24; сверка — [ ]
   - [x] `dashboard_bdr()` — [x] то же; сверка — [ ]
   - [x] `dashboard_budget_by_type()` — [x] канон. `project name` (**§3.1**); сверка — [ ]
@@ -273,10 +273,10 @@
 - [ ] В фильтрах нет дублей проектов.
 - [ ] Нефинансовые метрики отображаются целыми числами.
 - [ ] В таблицах включен горизонтальный скролл, даты без лишнего времени.
-- [ ] **Единые правила (полная доводка):** прочие HTML/`st.dataframe` без Styler — по мере обхода; [x] `rendered-table`, `budget_table_to_html`, `format_dataframe_as_html`, `plan_fact_dates_table_to_html`, `style_dataframe_for_dark_theme` (2026-04-24; см. **§4.8**, реестр **44**).
+- [ ] **Единые правила (полная доводка):** прочие HTML/`st.dataframe` без Styler — по мере обхода; [x] `rendered-table`, `budget_table_to_html`, `format_dataframe_as_html`, `plan_fact_dates_table_to_html`, `style_dataframe_for_dark_theme` (2026-04-24; см. **§4.8**, реестр **45**).
 - [x] **Подписи на графиках/диаграммах (4.11):** основной смысл (категории, значения, ряды) виден **без** обязательного наведения; подписи не наезжают хаотично; hover — только уточнение. Соответствие п. 4.8 (плотность, легенда, отступы). **ok** 2026-04-24.
 - [ ] **Нет «серых» служебных подсказок (4.9):** `st.caption` в дашбордах не ведёт к видимому тексту (`suppress_caption`); нет expander'ов с дебаг-инструкциями. Сообщения `st.info` / `st.warning` / `st.error` — только по делу.
-- [x] **«Серых» `help=` в отчётах нет (4.10):** в `dashboards/_renderers.py` аргументы `help=` сняты; в **`pages/profile.py`**, **`pages/_admin.py`**, **`pages/_analyst_params.py`** — `help=` сняты, в админке **`st.caption`** заменён на обычный **`st.markdown`** (§4.9). `project_visualization_app.py` — без `help=`.
+- [x] **«Серых» `help=` в отчётах нет (4.10):** в `dashboards/_renderers.py` аргументы `help=` сняты; в **`pages/profile.py`**, **`pages/_admin.py`**, **`pages/_analyst_params.py`** — `help=` сняты, в админке **`st.caption`** заменён на обычный **`st.markdown`** (§4.9). `project_visualization_app.py` — без `help=`. **`utils.render_dataframe_excel_csv_downloads`** — кнопки скачивания без `help=`.
 
 ## 7) Примечание по внедрению
 
@@ -287,5 +287,5 @@
 4. `ГДРС`,
 5. `Финансы`.
 
-**Текущий фокус (2026-04-24):** **§6** сверка Excel, **4.8** (дожим остальных таблиц), **5.1** развитие **1С** при смене выгрузки. Реестр **44**.
+**Текущий фокус (2026-04-24):** **§6** сверка Excel, **4.8** (дожим остальных таблиц), **5.1** (MSP/1С при смене выгрузки). Реестр **45**.
 

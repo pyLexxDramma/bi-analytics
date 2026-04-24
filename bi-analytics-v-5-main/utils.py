@@ -1198,7 +1198,6 @@ def render_dataframe_excel_csv_downloads(
             file_name=f"{stem}.csv",
             mime="text/csv",
             key=f"{key_prefix}_csv",
-            help="Разделитель «;» и UTF-8 с BOM — в Excel (RU) колонки и кириллица без сбоев.",
             on_click=on_csv_click,
         )
         _download_button_compat(
@@ -1207,6 +1206,5 @@ def render_dataframe_excel_csv_downloads(
             file_name=f"{stem}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key=f"{key_prefix}_xlsx",
-            help="Нативный Excel; не зависит от регионального разделителя в CSV.",
             on_click=on_xlsx_click,
         )
