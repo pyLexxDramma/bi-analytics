@@ -1112,10 +1112,10 @@ def build_dev_tz_matrix_rows(
 
 _DEV_TZ_MATRIX_CSS = """
 <style>
-.dev-tz-matrix-wrap { overflow-x: auto; max-width: 100%; margin-bottom: 0.75rem; }
+.dev-tz-matrix-wrap { overflow-x: auto; min-width: 0; max-width: 100%; margin-bottom: 0.75rem; }
 .rendered-table.dev-tz-wide { border-collapse: collapse; min-width: 720px; }
 .rendered-table.dev-tz-wide th.dev-tz-ghead {
-  text-align: center; font-weight: 700; font-size: 13px; padding: 10px 6px;
+  text-align: center; font-weight: 700; font-size: 13px; padding: 6px 8px;
   background: linear-gradient(180deg, rgba(34, 139, 34, 0.35) 0%, rgba(25, 90, 25, 0.25) 100%);
   color: #e8f5e9; border: 1px solid rgba(255,255,255,0.12);
 }
@@ -1124,14 +1124,14 @@ _DEV_TZ_MATRIX_CSS = """
 }
 .rendered-table.dev-tz-wide th.dev-tz-milestone {
   text-align: center; vertical-align: bottom; font-size: 11px; font-weight: 600; line-height: 1.25;
-  max-width: 140px; padding: 8px 4px; color: #c9d1d9; border: 1px solid rgba(255,255,255,0.08);
+  max-width: 9em; padding: 5px 6px; color: #c9d1d9; border: 1px solid rgba(255,255,255,0.08);
 }
 .rendered-table.dev-tz-wide th.dev-tz-sub {
-  font-size: 11px; font-weight: 500; color: #9aa4b2; padding: 6px 4px;
+  font-size: 11px; font-weight: 500; color: #9aa4b2; padding: 5px 6px;
   border: 1px solid rgba(255,255,255,0.06);
 }
 .rendered-table.dev-tz-wide td {
-  font-size: 12px; padding: 8px 6px; text-align: center; vertical-align: middle;
+  font-size: 12px; padding: 5px 8px; text-align: center; vertical-align: middle;
   border: 1px solid rgba(255,255,255,0.06);
 }
 /* ТЗ: при «% выполнения» ≠ 100% — подсветка ячеек оранжевым */
@@ -1878,7 +1878,7 @@ def build_control_points_df(mdf: pd.DataFrame) -> pd.DataFrame:
 
 _CONTROL_POINTS_CSS = """
 <style>
-.cp-table-wrap { overflow-x: auto; max-width: 100%; }
+.cp-table-wrap { overflow-x: auto; min-width: 0; max-width: 100%; }
 .rendered-table th.cp-ghead { text-align:center; background:#1f232d; font-size:12px; padding:6px 8px; }
 .rendered-table th.cp-sub { font-size:11px; color:#c9d1d9; font-weight:500; }
 /* ГПЗУ / Экспертиза стадии П: % выполнения в MSP ≠ 100% — «рыжая» подсветка значения */
