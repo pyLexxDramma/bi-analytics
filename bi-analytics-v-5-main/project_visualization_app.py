@@ -84,9 +84,11 @@ st.markdown(
     <style>
     [data-testid="stAppViewContainer"] {
         overflow-x: auto;
+        min-width: 0;
     }
     [data-testid="stMain"] {
         overflow-x: auto;
+        min-width: 0;
     }
     [data-testid="stMainBlockContainer"] {
         min-width: 1180px;
@@ -95,12 +97,14 @@ st.markdown(
     }
     section.main, [data-testid="stMain"] {
         overflow-x: auto !important;
+        min-width: 0;
     }
     .stPlotlyChart,
     [data-testid="stPlotlyChart"] {
         overflow-x: auto;
         overflow-y: hidden;
         max-width: 100%;
+        min-width: 0;
     }
     .stPlotlyChart > div,
     [data-testid="stPlotlyChart"] > div {
@@ -108,6 +112,7 @@ st.markdown(
     }
     [data-testid="stDataFrame"] {
         overflow-x: auto;
+        min-width: 0;
     }
     [data-testid="stDataFrame"] > div {
         min-width: max-content;
