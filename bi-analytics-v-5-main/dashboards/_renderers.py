@@ -1621,10 +1621,39 @@ def _deviations_project_slice_by_key(df: pd.DataFrame, state_key: str) -> pd.Dat
     """Срез по выбранному проекту (ключ session_state) — для списков блока/строения."""
     pr = st.session_state.get(state_key, "Все")
     if pr != "Все" and df is not None and "project name" in df.columns:
+        sel_k = _project_filter_norm_key(pr)
+        if not sel_k:
+            return df.copy()
         return df[
-            df["project name"].astype(str).str.strip() == str(pr).strip()
+            df["project name"].map(_project_filter_norm_key) == sel_k
         ].copy()
     return df.copy() if df is not None else df
+
+
+def _deviations_filter_df_by_project_name(
+    df: pd.DataFrame, selected_label
+) -> pd.DataFrame:
+    """Фильтр по колонке `project name` с тем же нормализованным ключом, что и в селектах."""
+    if df is None or getattr(df, "empty", True) or "project name" not in df.columns:
+        return df
+    if selected_label is None or str(selected_label).strip() in ("", "Все"):
+        return df
+    sel_k = _project_filter_norm_key(selected_label)
+    if not sel_k:
+        return df
+    return df[df["project name"].map(_project_filter_norm_key) == sel_k].copy()
+
+
+def _filter_df_by_norm_key_col(df: pd.DataFrame, col: str, selected_label) -> pd.DataFrame:
+    """Сравнение по `_project_filter_norm_key` для произвольной строковой колонки (проект/и т.п.)."""
+    if not col or col not in getattr(df, "columns", []):
+        return df
+    if selected_label is None or str(selected_label).strip() in ("", "Все"):
+        return df
+    sel_k = _project_filter_norm_key(selected_label)
+    if not sel_k:
+        return df
+    return df[df[col].map(_project_filter_norm_key) == sel_k].copy()
 
 
 def _is_generic_block_name(v) -> bool:
@@ -1833,10 +1862,9 @@ def _render_deviations_combined_shared_filters(df):
     )
 
     if selected_project != "Все" and "project name" in filtered_df.columns:
-        filtered_df = filtered_df[
-            filtered_df["project name"].astype(str).str.strip()
-            == str(selected_project).strip()
-        ]
+        filtered_df = _deviations_filter_df_by_project_name(
+            filtered_df, selected_project
+        )
     filtered_df = _deviations_apply_block_building_filters(
         filtered_df, selected_block, selected_building, building_col
     )
@@ -2185,10 +2213,11 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
 
     if not hide_shared_filters:
         if selected_project != "Все" and has_project_col:
-            filtered_df = filtered_df[
-                filtered_df["project name"].astype(str).str.strip()
-                == str(selected_project).strip()
-            ]
+            _sel_k = _project_filter_norm_key(selected_project)
+            if _sel_k:
+                filtered_df = filtered_df[
+                    filtered_df["project name"].map(_project_filter_norm_key) == _sel_k
+                ]
         filtered_df = _deviations_apply_block_building_filters(
             filtered_df,
             st.session_state.get("reason_block", "Все"),
@@ -4118,10 +4147,11 @@ def dashboard_plan_fact_dates(df):
     # Apply filters
     filtered_df = df.copy()
     if selected_project != "Все" and "project name" in filtered_df.columns:
-        filtered_df = filtered_df[
-            filtered_df["project name"].astype(str).str.strip()
-            == str(selected_project).strip()
-        ]
+        _sel_k = _project_filter_norm_key(selected_project)
+        if _sel_k:
+            filtered_df = filtered_df[
+                filtered_df["project name"].map(_project_filter_norm_key) == _sel_k
+            ]
     filtered_df = filtered_df.reset_index(drop=True)
     _pf_lvl_col = _dev_tasks_resolve_level_column(filtered_df)
     _pf_task_col = (
@@ -5399,7 +5429,7 @@ def dashboard_plan_fact_dates(df):
         with st.expander("Сводка по таблице", expanded=False):
             st.caption(
                 f"Записей: {len(summary_df)} · тип: {dates_value_type}. "
-                "Сортировка по столбцам — кликом по заголовку в таблице."
+                "Сортировка — блоком «Сортировка таблицы» выше (через `st.dataframe` клик по заголовку отключён)."
             )
         _render_dates_main_table()
         render_dataframe_excel_csv_downloads(
@@ -6149,10 +6179,9 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
             has_project_col = False
 
         if selected_project != "Все" and has_project_col:
-            filtered_df = filtered_df[
-                filtered_df["project name"].astype(str).str.strip()
-                == str(selected_project).strip()
-            ]
+            filtered_df = _deviations_filter_df_by_project_name(
+                filtered_df, selected_project
+            )
 
         # «Строение» вместо «Этап» (R23-04 page_9 item 2).
         if (
@@ -13352,12 +13381,9 @@ def dashboard_skud_stroyka(df):
     filtered_df = work_df.copy()
 
     if selected_project != "Все" and project_col and project_col in filtered_df.columns:
-        # More robust filtering - handle NaN values and case-insensitive comparison
-        project_mask = (
-            filtered_df[project_col].astype(str).str.strip().str.lower()
-            == str(selected_project).strip().lower()
+        filtered_df = _filter_df_by_norm_key_col(
+            filtered_df, project_col, selected_project
         )
-        filtered_df = filtered_df[project_mask]
 
     if (
         selected_contractor != "Все"
@@ -16766,7 +16792,7 @@ def dashboard_budget_old_charts(df):
 
     with col2:
         if "project name" in df.columns:
-            projects = ["Все"] + sorted(df["project name"].dropna().unique().tolist())
+            projects = ["Все"] + _project_name_select_options(df["project name"])
             selected_project = st.selectbox(
                 "Фильтр по проекту", projects, key="budget_old_project"
             )
@@ -16785,10 +16811,7 @@ def dashboard_budget_old_charts(df):
     # Apply filters
     filtered_df = df.copy()
     if selected_project != "Все" and "project name" in filtered_df.columns:
-        filtered_df = filtered_df[
-            filtered_df["project name"].astype(str).str.strip()
-            == str(selected_project).strip()
-        ]
+        filtered_df = _deviations_filter_df_by_project_name(filtered_df, selected_project)
     if selected_section != "Все" and "section" in filtered_df.columns:
         filtered_df = filtered_df[
             filtered_df["section"].astype(str).str.strip()
