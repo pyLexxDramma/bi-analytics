@@ -13801,6 +13801,44 @@ def dashboard_debit_credit(df):
     paid_col = _find_col(work, ["Выплачено", "выплачено", "Выплаченная сумма", "ВсегоОплат", "paid"])
     advance_col = _find_col(work, ["Аванс", "аванс", "Авансированная сумма", "ВсегоОплат_Аванс", "advance"])
     balance_col = _find_col(work, ["Остаток на конец периода", "Остаток на период", "ОстатокНаКонецПериода", "остаток", "balance"])
+    # §4.7 / выгрузка DK: нетто-остатки из компонент (если колонки есть)
+    _dk_start_gross = _find_col(
+        work,
+        ["ОстатокНаНачалоПериода", "Остаток на начало периода", "остаток на начало периода"],
+    )
+    _dk_start_adv = _find_col(
+        work,
+        [
+            "ОстатокНаНачалоПериодаПоАвансам",
+            "Остаток на начало периода по авансам",
+            "остаток на начало периода по авансам",
+        ],
+    )
+    _dk_end_gross = _find_col(
+        work,
+        [
+            "ОстатокНаКонецПериода",
+            "Остаток на конец периода",
+            "остаток на конец периода",
+            "ОстатокНаКонец",
+        ],
+    )
+    _dk_end_adv = _find_col(
+        work,
+        [
+            "ОстатокНаКонецПериодаПоАвансам",
+            "Остаток на конец периода по авансам",
+            "остаток на конец периода по авансам",
+        ],
+    )
+    _dk_col_net_start = None
+    _dk_col_net_end = None
+    if _dk_start_gross and _dk_start_adv and _dk_start_gross in work.columns and _dk_start_adv in work.columns:
+        work["_dk_net_начало"] = _to_num(work[_dk_start_gross]) - _to_num(work[_dk_start_adv])
+        _dk_col_net_start = "_dk_net_начало"
+    if _dk_end_gross and _dk_end_adv and _dk_end_gross in work.columns and _dk_end_adv in work.columns:
+        work["_dk_net_конец"] = _to_num(work[_dk_end_gross]) - _to_num(work[_dk_end_adv])
+        _dk_col_net_end = "_dk_net_конец"
 
     if not contract_col:
         st.error("Не найдена колонка «Договор». Проверьте заголовки файла.")
@@ -13894,7 +13932,11 @@ def dashboard_debit_credit(df):
         built["Выплачено"] = filtered.groupby(chart_group_col)[f"_num_{paid_col}"].sum()
     if advance_col and f"_num_{advance_col}" in filtered.columns:
         built["Аванс"] = filtered.groupby(chart_group_col)[f"_num_{advance_col}"].sum()
-    if balance_col and f"_num_{balance_col}" in filtered.columns:
+    if _dk_col_net_start and _dk_col_net_start in filtered.columns:
+        built["Остаток на начало (нетто)"] = filtered.groupby(chart_group_col)[_dk_col_net_start].sum()
+    if _dk_col_net_end and _dk_col_net_end in filtered.columns:
+        built["Остаток на конец (нетто)"] = filtered.groupby(chart_group_col)[_dk_col_net_end].sum()
+    elif balance_col and f"_num_{balance_col}" in filtered.columns:
         built["Остаток на период"] = filtered.groupby(chart_group_col)[f"_num_{balance_col}"].sum()
 
     if not built:
@@ -13911,7 +13953,14 @@ def dashboard_debit_credit(df):
     else:
         fig = go.Figure()
         x = chart_df[chart_label].astype(str).map(_trunc_label)
-        colors = {"Сумма в договоре": "#2E86AB", "Выплачено": "#27ae60", "Аванс": "#F39C12", "Остаток на период": "#e74c3c"}
+        colors = {
+            "Сумма в договоре": "#2E86AB",
+            "Выплачено": "#27ae60",
+            "Аванс": "#F39C12",
+            "Остаток на период": "#e74c3c",
+            "Остаток на начало (нетто)": "#8e44ad",
+            "Остаток на конец (нетто)": "#e74c3c",
+        }
         for col in value_cols:
             fig.add_trace(
                 go.Bar(
@@ -13958,7 +14007,11 @@ def dashboard_debit_credit(df):
         tbl_built["Выплачено"] = filtered.groupby(table_group_cols)[f"_num_{paid_col}"].sum()
     if advance_col and f"_num_{advance_col}" in filtered.columns:
         tbl_built["Аванс"] = filtered.groupby(table_group_cols)[f"_num_{advance_col}"].sum()
-    if balance_col and f"_num_{balance_col}" in filtered.columns:
+    if _dk_col_net_start and _dk_col_net_start in filtered.columns:
+        tbl_built["Остаток на начало (нетто)"] = filtered.groupby(table_group_cols)[_dk_col_net_start].sum()
+    if _dk_col_net_end and _dk_col_net_end in filtered.columns:
+        tbl_built["Остаток на конец (нетто)"] = filtered.groupby(table_group_cols)[_dk_col_net_end].sum()
+    elif balance_col and f"_num_{balance_col}" in filtered.columns:
         tbl_built["Остаток на период"] = filtered.groupby(table_group_cols)[f"_num_{balance_col}"].sum()
     if not tbl_built:
         st.warning("Нет числовых колонок для таблицы.")
