@@ -214,7 +214,6 @@ def _render_benchmark_tab(user):
         provider_names,
         index=0,
         key="bench_provider",
-        help="Выберите готовый пресет или «Свой сервер» для локального vLLM / Ollama",
     )
     preset = _PROVIDER_PRESETS[provider]
 
@@ -224,14 +223,12 @@ def _render_benchmark_tab(user):
             "Base URL (OpenAI-compatible)",
             value=st.session_state.get("bench_base_url", preset["url"]),
             key="bench_base_url_input",
-            help="URL API-сервера",
         )
     with col_model:
         model_name = st.text_input(
             "Имя модели",
             value=st.session_state.get("bench_model", preset["model"]),
             key="bench_model_input",
-            help="Имя модели как в /v1/models (зависит от провайдера)",
         )
 
     api_key = ""
@@ -241,7 +238,6 @@ def _render_benchmark_tab(user):
             type="password",
             value=st.session_state.get("bench_api_key", ""),
             key="bench_api_key_input",
-            help=f"Ключ для {provider}. Не сохраняется на сервере.",
         )
         if not api_key:
             st.warning(f"Для {provider} нужен API-ключ. Получите его на сайте провайдера.")
@@ -475,9 +471,10 @@ def _render_control_points_msp_tab(user: dict) -> None:
     )
 
     st.markdown("### Отчёт «Отклонение от базового плана»")
-    st.caption(
-        "Название задачи MSP для расчёта метрик «окончание проекта» в отчёте (вместо выбора на странице отчёта). "
-        "Оставьте пустым — будет использоваться эвристика (ЗОС / ввод в эксплуатацию)."
+    st.markdown(
+        "Название задачи MSP для метрик **«окончание проекта»** в отчёте «Отклонение от базового плана» "
+        "(здесь — запасной выбор, если на странице отчёта не задано). "
+        "Оставьте пустым — эвристика (ЗОС / ввод в эксплуатацию)."
     )
     _cur_task = (get_setting("baseline_plan_task_for_metrics") or "").strip()
     task_options, task_col, task_options_hint = _msp_metric_task_options()
@@ -499,7 +496,6 @@ def _render_control_points_msp_tab(user: dict) -> None:
             index=_sel_idx,
             key="admin_baseline_task_for_metrics_select",
             format_func=lambda opt: "Автовыбор" if not opt[1] else f"Уровень {opt[0]} - {opt[1]}",
-            help="Список из загруженного MSP: только уровни 2 и 3. Длинный список прокручивается внутри селектора.",
         )
         _tf_task = _selected_task[1]
     else:
@@ -507,7 +503,6 @@ def _render_control_points_msp_tab(user: dict) -> None:
             "Задача для расчёта окончания проекта (MSP)",
             value=_cur_task,
             key="admin_baseline_task_for_metrics",
-            help="Если MSP не загружен, введите точное имя задачи вручную.",
         )
         if task_options_hint:
             st.warning(task_options_hint)

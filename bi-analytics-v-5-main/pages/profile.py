@@ -140,11 +140,11 @@ if is_streamlit_context():
 
         with st.form("change_password_form"):
 
-            old_password = st.text_input("Текущий пароль", type="password", help="Введите ваш текущий пароль")
+            old_password = st.text_input("Текущий пароль", type="password")
 
-            new_password = st.text_input("Новый пароль", type="password", help="Введите новый пароль (минимум 6 символов)")
+            new_password = st.text_input("Новый пароль", type="password")
 
-            confirm_password = st.text_input("Подтвердите новый пароль", type="password", help="Повторите новый пароль")
+            confirm_password = st.text_input("Подтвердите новый пароль", type="password")
 
             submitted = st.form_submit_button("Изменить пароль", type="primary")
 
@@ -212,7 +212,6 @@ if is_streamlit_context():
 
                 value=current_email if current_email and current_email != 'Не указан' else "",
 
-                help="Введите новый email адрес или оставьте пустым для удаления"
             )
 
             submitted = st.form_submit_button("Изменить email", type="primary")

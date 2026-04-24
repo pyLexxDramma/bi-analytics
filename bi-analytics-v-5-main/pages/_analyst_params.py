@@ -264,7 +264,6 @@ if is_streamlit_context():
 
                 filter_key = st.text_input(
                     "Ключ фильтра *",
-                    help="Например: selected_project, date_range, etc.",
                     key="setup_key"
                 )
                 filter_type = st.selectbox(
@@ -276,7 +275,6 @@ if is_streamlit_context():
 
             filter_value = st.text_input(
                 "Значение фильтра",
-                help="Для select/multiselect — JSON: [\"значение1\", \"значение2\"]",
                 key="setup_value"
             )
 

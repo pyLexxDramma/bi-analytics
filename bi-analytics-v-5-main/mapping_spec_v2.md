@@ -276,7 +276,7 @@
 - [ ] **Единые правила (полная доводка):** прочие HTML/`st.dataframe` без Styler — по мере обхода; [x] `rendered-table`, `budget_table_to_html`, `format_dataframe_as_html`, `plan_fact_dates_table_to_html`, `style_dataframe_for_dark_theme` (2026-04-24; см. **§4.8**, реестр **44**).
 - [x] **Подписи на графиках/диаграммах (4.11):** основной смысл (категории, значения, ряды) виден **без** обязательного наведения; подписи не наезжают хаотично; hover — только уточнение. Соответствие п. 4.8 (плотность, легенда, отступы). **ok** 2026-04-24.
 - [ ] **Нет «серых» служебных подсказок (4.9):** `st.caption` в дашбордах не ведёт к видимому тексту (`suppress_caption`); нет expander'ов с дебаг-инструкциями. Сообщения `st.info` / `st.warning` / `st.error` — только по делу.
-- [x] **«Серых» `help=` в отчётах нет (4.10):** в `dashboards/_renderers.py` аргументы `help=` сняты. При необходимости — снять в `pages/*`, `project_visualization_app.py`.
+- [x] **«Серых» `help=` в отчётах нет (4.10):** в `dashboards/_renderers.py` аргументы `help=` сняты; в **`pages/profile.py`**, **`pages/_admin.py`**, **`pages/_analyst_params.py`** — `help=` сняты, в админке **`st.caption`** заменён на обычный **`st.markdown`** (§4.9). `project_visualization_app.py` — без `help=`.
 
 ## 7) Примечание по внедрению
 
