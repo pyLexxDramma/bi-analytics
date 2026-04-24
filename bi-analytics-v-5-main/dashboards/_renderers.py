@@ -1734,7 +1734,6 @@ def _render_deviations_combined_shared_filters(df):
                 "Функциональный блок",
                 block_opts,
                 key="devcombo_block",
-                help=f"Задачи уровня {_blv} (иерархия MSP по колонке уровня).",
             )
         elif use_flat_bs:
             fb_opts = _deviations_flat_functional_block_options(df_opts)
@@ -1745,8 +1744,6 @@ def _render_deviations_combined_shared_filters(df):
                 "Функциональный блок",
                 fb_opts,
                 key="devcombo_block",
-                help="Нет колонки уровня MSP в файле: «Блок · Раздел» (аналог функционального блока). "
-                "Для списка задач уровня 2 по MSP загрузите выгрузку с «Уровень_структуры» / Outline Level.",
             )
         elif "block" in df.columns:
             blocks_raw = sorted(
@@ -1789,7 +1786,6 @@ def _render_deviations_combined_shared_filters(df):
                 "Строение",
                 build_opts,
                 key="devcombo_building",
-                help=f"Задачи уровня {_bdv_b} в выбранном функциональном блоке (ур. {_blv_b}).",
             )
         elif use_flat_bs:
             _tc_fb = _deviations_resolve_task_col(df_opts)
@@ -1799,7 +1795,6 @@ def _render_deviations_combined_shared_filters(df):
                 "Строение",
                 _bld_opts,
                 key="devcombo_building",
-                help="Задачи в выбранном «Блок · Раздел» (аналог строения / уровень 3 без MSP).",
             )
         elif building_col and building_col in df.columns:
             bvals = ["Все"] + sorted(
@@ -1841,7 +1836,6 @@ def _render_deviations_combined_shared_filters(df):
             "ТОП‑5",
             value=False,
             key="reason_top5",
-            help="Оставить только пять наиболее частых причин на диаграммах первой вкладки.",
         )
 
     filtered_df = df.copy()
@@ -2082,7 +2076,6 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                     "Функциональный блок",
                     block_opts,
                     key="reason_block",
-                    help=f"Задачи уровня {_blv_rs} (иерархия MSP по колонке уровня).",
                 )
             elif _use_flat_rs:
                 fb_opts_rs = _deviations_flat_functional_block_options(df_opts)
@@ -2090,8 +2083,6 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                     "Функциональный блок",
                     fb_opts_rs,
                     key="reason_block",
-                    help="Нет колонки уровня MSP в файле: «Блок · Раздел» (аналог функционального блока). "
-                    "Для списка задач уровня 2 по MSP загрузите выгрузку с «Уровень_структуры» / Outline Level.",
                 )
             elif "block" in df.columns:
                 blocks = ["Все"] + sorted(
@@ -2133,7 +2124,6 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                     "Строение",
                     build_opts,
                     key="reason_building",
-                    help=f"Задачи уровня {_bdv_rsb} в выбранном функциональном блоке (ур. {_blv_rsb}).",
                 )
             elif _use_flat_rs:
                 _tc_rs = _deviations_resolve_task_col(df_opts)
@@ -2143,7 +2133,6 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                     "Строение",
                     _bld_rs,
                     key="reason_building",
-                    help="Задачи в выбранном «Блок · Раздел» (аналог строения / уровень 3 без MSP).",
                 )
             elif building_col and building_col in df.columns:
                 bvals = ["Все"] + sorted(
@@ -2319,7 +2308,6 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             "ТОП 5 причин отклонений",
             value=False,
             key="reason_top5",
-            help="Оставить только пять наиболее частых причин на диаграммах.",
         )
 
     # Summary metrics: основная причина и доля (метрика «Всего задач» убрана по правкам макета)
@@ -2466,7 +2454,6 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             "Причина",
             _reason_opts_tbl,
             key="reason_filter_table_only",
-            help="Влияет только на таблицы ниже (не на диаграммы и метрики выше).",
         )
         if selected_reason_table != "Все":
             table_reason_df = filtered_df[
@@ -3779,7 +3766,6 @@ def dashboard_plan_fact_dates(df):
                 "Проект",
                 projects,
                 key="dates_project",
-                help="Фильтр по проекту из выгрузки MSP.",
             )
         else:
             selected_project = "Все"
@@ -3865,11 +3851,6 @@ def dashboard_plan_fact_dates(df):
                 "Функциональный блок",
                 blks,
                 key="dates_block_l2",
-                help=(
-                    "Список — названия задач яруса «функциональный блок» (в типичной выгрузке MSP это уровень 2). "
-                    f"В текущем файле этот ярус по колонке уровня: {pf_dates_blk_tier}. "
-                    "Порядок строк в выгрузке задаёт иерархию."
-                ),
             )
         elif "section" in pf_dates_proj_df.columns:
             _sec = pf_dates_proj_df["section"].dropna().astype(str).map(str.strip)
@@ -3884,10 +3865,6 @@ def dashboard_plan_fact_dates(df):
                     "Функциональный блок",
                     blks,
                     key="dates_block_section",
-                    help=(
-                        "В выгрузке нет непустого списка задач ур.2 по иерархии — фильтр по колонке «Раздел» (section). "
-                        "Для MSP из web/ после обхода дерева section обычно совпадает с родителем ур.2."
-                    ),
                 )
             elif "block" in pf_dates_proj_df.columns:
                 pf_dates_block_filter_mode = "block"
@@ -3903,7 +3880,6 @@ def dashboard_plan_fact_dates(df):
                     "Функциональный блок",
                     blks,
                     key="dates_block",
-                    help="Колонка block в выгрузке (иерархия MSP и раздел не дали списка).",
                 )
             else:
                 selected_block_dates = "Все"
@@ -3921,7 +3897,6 @@ def dashboard_plan_fact_dates(df):
                 "Функциональный блок",
                 blks,
                 key="dates_block",
-                help="Колонка block в выгрузке (колонка уровня MSP не найдена или нет задач ур.2).",
             )
         else:
             selected_block_dates = "Все"
@@ -3961,7 +3936,6 @@ def dashboard_plan_fact_dates(df):
                 "Строение",
                 bopts,
                 key="dates_building_l3",
-                help="Задачи уровня 3 в выбранном функциональном блоке.",
             )
         elif dates_building_col and dates_building_col in pf_dates_proj_df.columns:
             bopts = ["Все"] + sorted(
@@ -3976,7 +3950,6 @@ def dashboard_plan_fact_dates(df):
                 "Строение",
                 bopts,
                 key="dates_building",
-                help="Колонка строения в выгрузке (иерархия ур. 3 недоступна).",
             )
         else:
             selected_building_dates = "Все"
@@ -4003,10 +3976,6 @@ def dashboard_plan_fact_dates(df):
                 _lvl_opts_tz,
                 index=0,
                 key="dates_level",
-                help=(
-                    "Укрупнённо — задачи уровня 4 MSP; детально — уровень 5. "
-                    f"Колонка уровня: {plan_fact_dates_outline_col}."
-                ),
             )
         else:
             selected_level = _lvl_opts_tz[0]
@@ -4032,7 +4001,6 @@ def dashboard_plan_fact_dates(df):
             "Показать причины отклонений",
             value=True,
             key="dates_show_reason_notes",
-            help="Добавить в таблицу колонки «Причина отклонения» и «Заметки», если они есть в выгрузке.",
         )
     with cb_c2:
         # R23-03: галочка больше не блокируется из-за отсутствующей колонки —
@@ -4050,14 +4018,12 @@ def dashboard_plan_fact_dates(df):
             "Скрыть завершённые (100%)",
             value=False,
             key="dates_hide_done",
-            help=_hide_done_help,
         )
     with cb_c3:
         force_covenant_ui = st.checkbox(
             "Только ковенанты",
             value=False,
             key="dates_only_covenants",
-            help="Показать только ковенантные строки в диаграмме и таблице.",
         )
 
     # Отдельный ряд под общими чекбоксами: влияет только на графики.
@@ -4065,10 +4031,6 @@ def dashboard_plan_fact_dates(df):
         "Отображать только диаграммы, где отклонение окончания < 0",
         value=False,
         key="dates_only_neg_end",
-        help=(
-            "Для графиков ниже: оставить только строки, где отклонение окончания "
-            "(base end − plan end) < 0. На основную таблицу не распространяется."
-        ),
     )
 
     # Radio с подписью — отдельной строкой, чтобы не ломал сетку чекбоксов.
@@ -4078,7 +4040,6 @@ def dashboard_plan_fact_dates(df):
             ("По наименованию MSP", "По лоту"),
             horizontal=True,
             key="dates_task_label_mode",
-            help="«По лоту» — в графике и в колонке «Задача» таблицы показывается лот (если заполнен в выгрузке).",
         )
     else:
         task_label_mode = "По наименованию MSP"
@@ -4118,8 +4079,6 @@ def dashboard_plan_fact_dates(df):
         "Показать «Отклонение длительности» в таблице",
         value=False,
         key="dates_tbl_dur",
-        help="Столбцы «Базовая длительность» и «Длительность» и так всегда в таблице; "
-        "чекбокс добавляет отдельную колонку с разницей длительностей в днях.",
     )
     selected_reason_bucket_dates = "Все"
     if (not force_covenant_ui) and dates_show_reason_notes and "reason of deviation" in df.columns:
@@ -4428,7 +4387,6 @@ def dashboard_plan_fact_dates(df):
                     "Ковенанты: выбрать задачи вручную",
                     options=_manual_opts,
                     key="dates_manual_covenant_tasks",
-                    help="Автопоиск не нашёл маркеры ковенантов. Выберите нужные задачи вручную.",
                 )
                 if _manual_sel:
                     _sel_set = {str(x).strip() for x in _manual_sel if str(x).strip()}
@@ -5544,10 +5502,6 @@ def dashboard_deviation_by_tasks_current_month(df):
                 "Функциональный блок",
                 block_opts,
                 key="deviation_tasks_block_l2",
-                help=(
-                    f"Задачи яруса «функциональный блок» (ур. {_blk_tier_d} по колонке уровня MSP). "
-                    "Если в строках этого уровня нет имён — список из ключа предка ур.2 по дереву выгрузки."
-                ),
             )
         w3 = work_h[ln == float(_bld_tier_d)]
         if selected_block != "Все":
@@ -5568,9 +5522,6 @@ def dashboard_deviation_by_tasks_current_month(df):
                 "Строение",
                 build_opts,
                 key="deviation_tasks_building_l3",
-                help=(
-                    f"Задачи яруса «строение» (ур. {_bld_tier_d}) в выбранном функциональном блоке."
-                ),
             )
         detail_opts = ("Укрупнённо (уровень 4)", "Детально (уровень 5)")
         with f_det:
@@ -5579,7 +5530,6 @@ def dashboard_deviation_by_tasks_current_month(df):
                 detail_opts,
                 index=0,
                 key="deviation_tasks_detail_lvl",
-                help="Показать строки MSP с уровнем структуры 4 или 5.",
             )
         target_lvl = 5 if "5" in str(detail_label) else 4
     else:
@@ -6154,10 +6104,6 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
         "Показывать линию тренда",
         value=False,
         key="reasons_dynamics_show_trend_line",
-        help=(
-            "Линия тренда строится только в режиме «По месяцам» — это временной ряд. "
-            "В режиме «По причинам» по оси X — категории, тренд не применим."
-        ),
         disabled=(view_type == "По причинам"),
     )
 
@@ -8192,7 +8138,6 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 options=projects,
                 default=projects,
                 key="rd_delay_projects",
-                help="Ничего не выбрано — показываются все проекты.",
                 placeholder="Выберите проекты",
             )
         except Exception as e:
@@ -8264,7 +8209,6 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 ("Фильтр по виду раздела ПД" if is_pd else "Фильтр по виду раздела РД"),
                 ["Все"] + section_options,
                 key="rd_delay_section",
-                help="Формат: «Шифр — Наименование раздела» (из MSP: Шифр_ПД_и_РД + Наименование разделов работ).",
             )
             df["_tessa_section_label"] = _combined
         elif section_col and section_col in df.columns:
@@ -8304,7 +8248,6 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             selection_mode="multi",
             default=rd_status_options_rd,
             key="rd_delay_status_filter",
-            help="Пустой выбор — все статусы.",
         )
         if selected_statuses_rd is None:
             selected_statuses_rd = []
@@ -11605,8 +11548,6 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             "Период с / по",
             value=(_min_dt, _max_dt),
             key=f"{key_prefix}_period_range",
-            help="R23-05 стр.13: фильтр диапазона дат. "
-                 "Данные (план/факт) пересчитываются пропорционально выбранному интервалу.",
         )
         _d_from = None
         _d_to = None
@@ -15316,7 +15257,6 @@ def dashboard_documentation(
                 options=_proj_opts,
                 default=_proj_default,
                 key=f"{_doc_fk}project_filter_ms",
-                help="Все проекты выбраны по умолчанию; снимайте отметки, чтобы сузить выборку.",
                 placeholder="Все проекты",
             )
 
@@ -15375,7 +15315,6 @@ def dashboard_documentation(
                 options=section_options,
                 default=_sec_default,
                 key=f"{_doc_fk}section_filter_ms",
-                help="Все виды разделов выбраны по умолчанию; снимайте отметки, чтобы сузить выборку.",
                 placeholder="Все разделы",
             )
         else:
@@ -15412,7 +15351,6 @@ def dashboard_documentation(
             selection_mode="multi",
             default=rd_status_options,
             key=f"{_doc_fk}status_filter",
-            help="Пустой выбор означает все статусы.",
         )
         if selected_statuses is None:
             selected_statuses = []
@@ -16031,7 +15969,6 @@ def dashboard_documentation(
                             "—"
                             if planned_weekly is None
                             else f"{round(planned_weekly):,.0f}".replace(",", " "),
-                            help="План на текущую дату / (дата окончания план − дата окончания факт) × 7",
                         )
                     with pw2:
                         st.metric(
@@ -16039,20 +15976,17 @@ def dashboard_documentation(
                             "—"
                             if fact_weekly is None
                             else f"{round(fact_weekly):,.0f}".replace(",", " "),
-                            help="Факт на текущую дату / (сегодня − дата окончания факт) × 7; только если дата окончания факт в прошлом",
                         )
                     with pw3:
                         if nec_rd is None:
                             st.metric(
                                 "Необходимая производительность",
                                 "—",
-                                help="Отклонение на текущую дату / (дата окончания план − сегодня) × 7 при положительном остатке дней до планового окончания",
                             )
                         else:
                             st.metric(
                                 "Необходимая производительность",
                                 f"{round(nec_rd):,.0f}".replace(",", " "),
-                                help="Отклонение на текущую дату / (дата окончания план − сегодня) × 7",
                             )
                 else:
                     suppress_caption("Прогноз производительности (РД в неделю)")
@@ -16061,26 +15995,22 @@ def dashboard_documentation(
                         st.metric(
                             "Текущая производительность в неделю",
                             f"{round(current_productivity):,.0f}".replace(",", " "),
-                            help="Факт на текущую дату / число недель с начала плана",
                         )
                     with p2:
                         if remaining_weeks <= 0:
                             st.metric(
                                 "Необходимая для выполнения плана",
                                 "—",
-                                help="Плановый срок завершения уже наступил или прошёл",
                             )
                         elif required_productivity == float("inf"):
                             st.metric(
                                 "Необходимая для выполнения плана",
                                 "—",
-                                help="Нет оставшегося срока",
                             )
                         else:
                             st.metric(
                                 "Необходимая для выполнения плана",
                                 f"{round(required_productivity):,.0f}".replace(",", " "),
-                                help="(План по проекту − Факт на текущую дату) / оставшиеся недели",
                             )
 
                 dynamics_df["Текст"] = dynamics_df["Количество"].apply(
@@ -18096,10 +18026,10 @@ def dashboard_forecast_budget(df):
             required=True,
         ),
         "План. начало": st.column_config.TextColumn(
-            "План, начало (MSP)", help="Формат ГГГГ-ММ-ДД — дата начала лота в MSP."
+            "План, начало (MSP)"
         ),
         "План. окончание": st.column_config.TextColumn(
-            "План, окончание (MSP)", help="Формат ГГГГ-ММ-ДД — дата окончания лота в MSP."
+            "План, окончание (MSP)"
         ),
         "БДДС план (утверждённый), млн руб.": st.column_config.NumberColumn(
             "БДДС план (утверждённый), млн", format="%.4f"
@@ -20091,7 +20021,6 @@ def dashboard_predpisania(df):
                 projects,
                 default=st.session_state.get("pred_m_p", []),
                 key="pred_m_p",
-                help="Пустой выбор = все проекты.",
                 placeholder="Выберите проекты",
             )
         else:
@@ -20103,7 +20032,6 @@ def dashboard_predpisania(df):
                 contractors_ms,
                 default=st.session_state.get("pred_m_c_ms", []),
                 key="pred_m_c_ms",
-                help="Пустой выбор = все подрядчики.",
                 placeholder="Все подрядчики",
             )
         else:
@@ -20680,7 +20608,6 @@ def dashboard_developer_projects(df):
             projects,
             index=0,
             key="dev_proj",
-            help="Единственный фильтр отчёта: проект из выгрузки MSP. По умолчанию «Все» — в таблице по одной строке на каждый проект.",
         )
     else:
         sel_proj = "Все"
@@ -21102,7 +21029,6 @@ def _render_control_points_admin_on_dashboard():
             value=initial,
             height=380,
             key="cp_dash_milestones_json",
-            help="После сохранения таблица ниже обновится. Пустой сброс — кнопка «Сбросить на встроенные правила».",
         )
         b1, b2, b3 = st.columns(3)
         uname = str(user.get("username") or "admin")
@@ -21708,7 +21634,6 @@ def dashboard_project_schedule_chart(df):
             level_opts,
             index=0,
             key="gantt_level_display",
-            help="По умолчанию — все уровни. Узкий фильтр по числу в колонке уровня MSP.",
         )
         if level_col and level_sel != "Все уровни":
             lvl_map = {
@@ -21734,7 +21659,6 @@ def dashboard_project_schedule_chart(df):
             ("Гантт (полосы)", "Линии дат"),
             index=0,
             key="gantt_view_mode",
-            help="Режим визуализации: интервалы Гантта или отдельные точки дат начала/окончания.",
         )
 
     is_covenants = False
@@ -21750,14 +21674,12 @@ def dashboard_project_schedule_chart(df):
             "Показать причины отклонений",
             value=False,
             key="gantt_show_deviation_cols",
-            help="В таблице под графиком — колонки «Причины отклонений» и «Заметки», если они есть в выгрузке MSP.",
         )
     with lot_row_r:
         show_lots = st.checkbox(
             "Отображать в лотах",
             value=False,
             key="gantt_show_lots",
-            help="Только строки с заполненным лотом (если в данных есть колонка лота).",
         )
     if show_lots and lot_col and lot_col in plot_df.columns:
         # Вытягиваем Series, даже если в df случайно оказались две одноимённые колонки.
@@ -21791,7 +21713,6 @@ def dashboard_project_schedule_chart(df):
         "Подписи у конца задач: показывать % выполнения (вместо даты окончания)",
         value=False,
         key="gantt_bar_label_pct",
-        help="Если включено — у правого края задачи показывается % выполнения из MSP, иначе дата окончания.",
     )
     label_density_mode = st.radio(
         "Плотность подписей",
@@ -21804,14 +21725,6 @@ def dashboard_project_schedule_chart(df):
         horizontal=True,
         index=0,
         key="gantt_label_density_mode",
-        help=(
-            "• «Умная плотность» — авто-режим: на плотных графиках подписи у концов полос "
-            "остаются только у сводных задач (уровень ≤ 2), чтобы текст не сливался.\n"
-            "• «Только сводные задачи» — принудительно показывать подписи лишь у "
-            "суммарных задач.\n"
-            "• «Только при наведении» — убрать все inline-подписи; даты и % видны при наведении.\n"
-            "• «Показывать все подписи» — принудительный режим 1:1 (может сливаться)."
-        ),
     )
     force_all_labels = label_density_mode == "Показывать все подписи"
     labels_hover_only = label_density_mode == "Только при наведении"
@@ -21820,7 +21733,6 @@ def dashboard_project_schedule_chart(df):
         "Авто: защита от наложения при масштабировании страницы",
         value=True,
         key="gantt_auto_compact_on_zoom",
-        help="Если график становится плотным (часто при zoom страницы), включается безопасная плотность подписей.",
     )
 
     if plot_df.empty:
