@@ -396,9 +396,9 @@ def apply_chart_background(fig, *, skip_uniformtext: bool = False):
     Применяет единый стиль (тёмная тема) ко всем графикам Plotly.
     Вызывается перед st.plotly_chart() в каждом дашборде.
 
-    skip_uniformtext: если True — не задаётся uniformtext (по умолчанию mode=hide).
-    Нужно для Ганта с подписями textposition='outside' у концов полос: иначе Plotly
-    может скрывать эти подписи.
+    skip_uniformtext: если True — не задаётся uniformtext (по умолчанию mode=show).
+    Нужно для Ганта с подписями textposition='outside' у концов полос, если
+    внешние настройки не подходят.
     """
     # Если дашборд уже задал вертикальную легенду и/или увеличенные поля — не затираем
     # (иначе глобальная горизонтальная легенда и margin b=100/r=30 ломают вёрстку).
@@ -445,8 +445,7 @@ def apply_chart_background(fig, *, skip_uniformtext: bool = False):
         margin=dict(l=margin_l, r=margin_r, t=margin_t, b=margin_b),
     )
     if not skip_uniformtext:
-        # Равномерное уменьшение подписей на барах если не вмещаются
-        layout_kwargs["uniformtext"] = dict(minsize=9, mode="hide")
+        layout_kwargs["uniformtext"] = dict(minsize=8, mode="show")
     if keep_vertical_legend:
         # Только цвета шрифта/фона легенды; положение x/y/orientation оставляем как в дашборде
         layout_kwargs["legend"] = dict(

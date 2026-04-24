@@ -1206,7 +1206,7 @@ def _clamp_plotly_scroll_zoom_padding(fig: go.Figure) -> None:
 def _apply_finance_bar_label_layout(fig: go.Figure) -> go.Figure:
     try:
         fig.update_layout(
-            uniformtext=dict(minsize=8, mode="hide"),
+            uniformtext=dict(minsize=8, mode="show"),
             # Верхний отступ — чтобы подписи «outside» над столбцами не обрезались и реже наезжали
             margin=dict(l=56, r=36, t=72, b=120),
         )
@@ -1279,11 +1279,152 @@ def _apply_bar_uniformtext(fig: go.Figure) -> go.Figure:
     (для графиков с кастомными l/r/t/b).
     """
     try:
-        fig.update_layout(uniformtext=dict(minsize=7, mode="hide"))
+        fig.update_layout(uniformtext=dict(minsize=8, mode="show"))
         fig.update_xaxes(automargin=True)
         fig.update_yaxes(automargin=True)
     except Exception:
         pass
+    return fig
+
+
+def _plotly_text_all_empty(text) -> bool:
+    if text is None:
+        return True
+    if isinstance(text, (list, tuple)):
+        for t in text:
+            if t is None:
+                continue
+            if str(t).strip():
+                return False
+        return True
+    if isinstance(text, np.ndarray):
+        for t in text:
+            if t is None or (isinstance(t, float) and np.isnan(t)):
+                continue
+            if str(t).strip():
+                return False
+        return True
+    if isinstance(text, (str, bytes)) and str(text).strip():
+        return False
+    return True
+
+
+def _bar_values_axis_datelike_gantt(tr) -> bool:
+    if type(tr).__name__ != "Bar":
+        return False
+    orient = getattr(tr, "orientation", None) or "v"
+    base = getattr(tr, "base", None)
+    if base is not None:
+        s = pd.to_datetime(pd.Series(list(base)), errors="coerce", utc=False)
+        if s.notna().any():
+            return True
+    if orient == "h":
+        x = getattr(tr, "x", None)
+        if x is not None:
+            s = pd.to_datetime(pd.Series(list(x)), errors="coerce", utc=False)
+            n = len(s)
+            if n and int(s.notna().sum()) >= max(1, n // 2 + n % 2):
+                return True
+    return False
+
+
+def _bar_scalar_is_negative(v) -> bool:
+    if v is None:
+        return False
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        if isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
+            return False
+        return v < 0
+    if hasattr(v, "toordinal") or hasattr(v, "to_pydatetime"):
+        return False
+    try:
+        return float(v) < 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _format_plotly_bar_scalar(v) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, (float, int)) and not isinstance(v, bool):
+        if isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
+            return ""
+        if isinstance(v, float) and float(v) == int(v) and abs(v) < 1e12:
+            return str(int(v))
+        if isinstance(v, float):
+            a = abs(v)
+            if a >= 1000:
+                return f"{v:,.0f}".replace(",", " ")
+            if a >= 1:
+                return f"{v:.2f}"
+            if a >= 0.01:
+                return f"{v:.2f}"
+            return f"{v:.2g}"
+        return str(int(v)) if v == int(v) else str(v)
+    if hasattr(v, "strftime"):
+        try:
+            return v.strftime("%d.%m.%Y")
+        except Exception:
+            return str(v)
+    try:
+        t = pd.Timestamp(v)
+        if pd.notna(t):
+            return t.strftime("%d.%m.%Y")
+    except Exception:
+        pass
+    s = str(v).strip()
+    if s.lower() in ("nan", "none", "nat", ""):
+        return ""
+    return s
+
+
+def _apply_plotly_spec_411_labels(fig: go.Figure) -> go.Figure:
+    if fig is None:
+        return fig
+    try:
+        traces = list(fig.data or [])
+    except Exception:
+        return fig
+    for tr in traces:
+        try:
+            tname = type(tr).__name__
+            if tname == "Bar":
+                if getattr(tr, "texttemplate", None):
+                    continue
+                if not _plotly_text_all_empty(getattr(tr, "text", None)):
+                    continue
+                if _bar_values_axis_datelike_gantt(tr):
+                    continue
+                orient = getattr(tr, "orientation", None) or "v"
+                if orient == "h":
+                    values = list(getattr(tr, "x", None) or [])
+                else:
+                    values = list(getattr(tr, "y", None) or [])
+                if not values:
+                    continue
+                out = []
+                tpos = []
+                for v in values:
+                    out.append(_format_plotly_bar_scalar(v))
+                    if _bar_scalar_is_negative(v):
+                        tpos.append("auto")
+                    else:
+                        tpos.append("outside")
+                tr.update(
+                    text=out,
+                    textposition=(tpos[0] if len(tpos) == 1 else tpos),
+                    cliponaxis=False,
+                )
+            elif tname == "Pie":
+                if not _plotly_text_all_empty(getattr(tr, "text", None)):
+                    continue
+                ti0 = getattr(tr, "textinfo", None) or "percent"
+                tis = str(ti0).lower()
+                if "label" in tis or tis in ("", "none"):
+                    continue
+                tr.update(textinfo="label+percent")
+        except Exception:
+            continue
     return fig
 
 
@@ -1325,6 +1466,7 @@ def render_chart(
             pass
     if not skip_clamp_zoom:
         _clamp_plotly_scroll_zoom_padding(fig)
+    _apply_plotly_spec_411_labels(fig)
     st.plotly_chart(fig, **kwargs)
     if caption_below:
         _chart_caption_below(caption_below)
