@@ -4227,7 +4227,7 @@ def dashboard_plan_fact_dates(df):
     if not dates_lot_col:
         _diag_msgs.append("Колонка лота не найдена — подписи только по наименованию MSP.")
     if _diag_msgs:
-        with st.expander("Диагностика фильтров и подписей", expanded=False):
+        with st.expander("Пояснения к фильтрам и подписям", expanded=False):
             for _m in _diag_msgs:
                 st.write(f"• {_m}")
 
@@ -12187,7 +12187,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 lambda v: f"{float(v):.1f}%" if v is not None and pd.notna(v) else "—"
             )
 
-            # Диагностика кейса «План = Факт»: в референсе это считается подозрительным.
+            # Проверка кейса «План = Факт»: в референсе это считается подозрительным.
             try:
                 _pl_sum = float(pd.to_numeric(_ref["План"], errors="coerce").fillna(0.0).sum())
                 _sk_sum = float(pd.to_numeric(_ref["СКУД"], errors="coerce").fillna(0.0).sum())
@@ -21354,7 +21354,7 @@ def dashboard_control_points(df):
             "(или **actual finish**). После загрузки через web/ они обычно уже переименованы; "
             "для «сырого» CSV см. список колонок ниже."
         )
-        with st.expander("Диагностика колонок (если таблица не строится)", expanded=False):
+        with st.expander("Справка: колонки в загруженных данных", expanded=False):
             suppress_caption("Имена колонок в текущем наборе данных:")
             st.code(", ".join(str(c) for c in work.columns))
             hints = [
@@ -22099,7 +22099,7 @@ def dashboard_project_schedule_chart(df):
                 "но все значения пустые — у концов полос будет «н/д»."
             )
         # Диагностический блок (открытый по умолчанию только при отсутствии данных).
-        with st.expander("Диагностика: колонка % выполнения", expanded=(not _has_data)):
+        with st.expander("Справка по колонке «% выполнения»", expanded=(not _has_data)):
             _all_pct_like = [
                 c for c in _orig_cols_pct_diag
                 if "%" in str(c)
@@ -22144,7 +22144,7 @@ def dashboard_project_schedule_chart(df):
                         )
             except Exception as _blk_err:
                 st.write(f"Не удалось прочитать значения колонки «Блок»: {_blk_err}")
-            # Диагностика скрытых символов в именах: показываем repr() — будет видно \xa0, \ufeff и пр.
+            # Скрытые символы в именах колонок: repr() — видно \xa0, \ufeff и пр.
             _hidden = []
             for c in _all_pct_like:
                 raw = str(c)
