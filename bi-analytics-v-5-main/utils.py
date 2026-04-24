@@ -760,18 +760,20 @@ def budget_table_to_html(
 
     wrap_id = "bdt_" + str(id(df))
     parts = [
-        f'<div id="{wrap_id}" class="budget-deviation-table-wrap" style="overflow-x: auto; margin: 1em 0;">',
+        f'<div id="{wrap_id}" class="budget-deviation-table-wrap" style="overflow-x: auto; min-width: 0; margin: 0.75em 0;">',
         f'<style>'
+        f'#{wrap_id} table {{ table-layout: auto; font-size: 13px; }}'
+        f'#{wrap_id} th, #{wrap_id} td {{ max-width: 16em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}'
         f'#{wrap_id} td.bd-cell-red, #{wrap_id} td.bd-cell-red * {{ color: hsl(348,100%,63%) !important; }} '
         f'#{wrap_id} td.bd-cell-green, #{wrap_id} td.bd-cell-green * {{ color: hsl(148,100%,63%) !important; }}'
         f'</style>',
-        f'<table style="width:100%; border-collapse: collapse; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; font-size: 14px;">',
+        f'<table style="width:100%; border-collapse: collapse; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; font-size: 13px;">',
         "<thead><tr>",
     ]
     for col in df.columns:
         col_esc = html_module.escape(str(col))
         parts.append(
-            f'<th style="border: 1px solid rgba(255,255,255,0.3); padding: 8px; background-color: {TABLE_BG_COLOR};">{col_esc}</th>'
+            f'<th style="border: 1px solid rgba(255,255,255,0.3); padding: 6px 8px; background-color: {TABLE_BG_COLOR};">{col_esc}</th>'
         )
     parts.append("</tr></thead><tbody>")
     for _, row in df.iterrows():
@@ -790,13 +792,13 @@ def budget_table_to_html(
                     else:
                         cell_class = "bd-cell-red" if num >= 0 else "bd-cell-green"
                     parts.append(
-                        f'<td class="{cell_class}" style="padding: 8px; font-weight: bold;"><span>{val_esc}</span></td>'
+                        f'<td class="{cell_class}" style="padding: 6px 8px; font-weight: bold;"><span>{val_esc}</span></td>'
                     )
                 else:
                     s = val_str.strip()
                     if not s:
                         parts.append(
-                            f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 8px; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
+                            f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 6px 8px; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
                         )
                     else:
                         is_neg = s.startswith("-") or bool(re.search(r"^-\d", s))
@@ -807,11 +809,11 @@ def budget_table_to_html(
                         else:
                             cell_class = "bd-cell-green" if is_neg else "bd-cell-red"
                         parts.append(
-                            f'<td class="{cell_class}" style="padding: 8px; font-weight: bold;"><span>{val_esc}</span></td>'
+                            f'<td class="{cell_class}" style="padding: 6px 8px; font-weight: bold;"><span>{val_esc}</span></td>'
                         )
             else:
                 parts.append(
-                    f'<td style="padding: 8px; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
+                    f'<td style="padding: 6px 8px; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
                 )
         parts.append("</tr>")
     parts.append("</tbody></table></div>")

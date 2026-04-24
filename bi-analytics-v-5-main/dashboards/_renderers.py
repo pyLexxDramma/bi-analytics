@@ -178,19 +178,20 @@ def _session_reset_project_if_excluded(state_key: str) -> None:
 
 _TABLE_CSS = """
 <style>
-.rendered-table-wrap {overflow-x:auto; margin:0.5rem 0 1rem 0}
+/* §4.8: плотная сетка — без лишней «пустой» ширины ячеек; скролл по горизонтали */
+.rendered-table-wrap {overflow-x:auto; min-width:0; margin:0.5rem 0 1rem 0}
 .rendered-table {
   width:100%; border-collapse:collapse; font-size:13px;
-  font-family:Inter,system-ui,sans-serif;
+  font-family:Inter,system-ui,sans-serif; table-layout:auto;
 }
 .rendered-table th {
   position:sticky; top:0; background:#1a1c23; color:#fafafa;
-  padding:8px 12px; text-align:left; border-bottom:2px solid #444;
-  font-weight:600; white-space:nowrap;
+  padding:6px 10px; text-align:left; border-bottom:2px solid #444;
+  font-weight:600; white-space:nowrap; max-width:18em; overflow:hidden; text-overflow:ellipsis;
 }
 .rendered-table td {
-  padding:6px 12px; border-bottom:1px solid #333; color:#e0e0e0;
-  white-space:nowrap; max-width:400px; overflow:hidden; text-overflow:ellipsis;
+  padding:5px 10px; border-bottom:1px solid #333; color:#e0e0e0;
+  white-space:nowrap; max-width:16em; overflow:hidden; text-overflow:ellipsis;
 }
 .rendered-table tr:hover td {background:#262833}
 .rendered-table tr:nth-child(even) td {background:rgba(255,255,255,0.02)}
