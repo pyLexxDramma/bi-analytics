@@ -698,11 +698,10 @@ def main():
     else:
 
         # Ручная загрузка файлов (существующая логика)
-        uploaded_files = st.file_uploader(
+        uploaded_files =         st.file_uploader(
             "Загрузите файлы с данными (можно несколько)",
             type=["csv", "xlsx", "xls"],
             accept_multiple_files=True,
-            help="Загрузите CSV или Excel файлы с данными проекта, ресурсов или техники",
         )
 
         current_file_names = [f.name for f in uploaded_files] if uploaded_files else []
@@ -757,7 +756,12 @@ def main():
 
         if "current_dashboard" not in st.session_state:
             if (has_resources_data or has_technique_data) and not has_project_data:
-                st.session_state.current_dashboard = "График движения рабочей силы"
+                if "ГДРС" in all_allowed_set:
+                    st.session_state.current_dashboard = "ГДРС"
+                elif "ГДРС Техника" in all_allowed_set and has_technique_data:
+                    st.session_state.current_dashboard = "ГДРС Техника"
+                else:
+                    st.session_state.current_dashboard = all_allowed[0]
             else:
                 st.session_state.current_dashboard = "Причины отклонений"
 
@@ -770,9 +774,8 @@ def main():
         selected_dashboard = st.session_state.current_dashboard
 
         dashboards_using_technique = (
-            "График движения рабочей силы",
             "ГДРС",
-            "СКУД стройка",
+            "ГДРС Техника",
         )
 
         if selected_dashboard in dashboards_using_technique:

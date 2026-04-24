@@ -154,14 +154,6 @@ def _get_dashboards() -> Dict[str, Callable]:
     dashboard_gdrs_equipment = getattr(_renderers, "dashboard_gdrs_equipment", None)
     if dashboard_gdrs_equipment is None:
         dashboard_gdrs_equipment = dashboard_technique_tabs
-    dashboard_skud_stroyka = getattr(_renderers, "dashboard_skud_stroyka", None)
-    if dashboard_skud_stroyka is None:
-
-        def _stub_skud(df):
-            st.header("График движения рабочей силы")
-            st.info("Модуль не загружен из dashboards._renderers.")
-
-        dashboard_skud_stroyka = _stub_skud
     dashboard_executive_documentation = getattr(_renderers, "dashboard_executive_documentation", None)
     if dashboard_executive_documentation is None:
 
@@ -233,8 +225,7 @@ def _get_dashboards() -> Dict[str, Callable]:
         "Рабочая/Проектная документация": dashboard_documentation,
         "Рабочая документация": dashboard_working_documentation,
         "Проектная документация": dashboard_project_documentation,
-        # R23-05 стр.14: «ГДРС» — рабочие; восстановили отдельный пункт «ГДРС Техника»;
-        # убрали дубль «График движения рабочей силы» и пункт «СКУД стройка» (вкладку «СКУД по неделям»).
+        # R23-05 стр.14: «ГДРС» — рабочие; отдельный пункт «ГДРС Техника»; отдельный экран «СКУД по неделям» удалён (4.3).
         "ГДРС": dashboard_technique_tabs,
         "ГДРС Техника": dashboard_gdrs_equipment,
         "Дебиторская и кредиторская задолженность подрядчиков": dashboard_debit_credit,
@@ -252,7 +243,7 @@ def _get_dashboards() -> Dict[str, Callable]:
 # Ленивая загрузка, чтобы при импорте dashboards не тянуть project_visualization_app
 # Увеличьте версию при изменении реестра отчётов — иначе долгоживущий процесс Streamlit
 # может держать устаревший словарь в памяти.
-_DASHBOARDS_REGISTRY_VERSION = 26
+_DASHBOARDS_REGISTRY_VERSION = 27
 _dashboards_cache: Dict[str, Callable] = {}
 _dashboards_cache_version: int = 0
 

@@ -72,9 +72,7 @@ _REPORT_ROLE_ALLOWLIST: Dict[str, frozenset] = {
     "Рабочая документация": frozenset({"manager", "analyst", "rp", "gip", "admin", "superadmin"}),
     "Проектная документация": frozenset({"manager", "analyst", "rp", "gip", "admin", "superadmin"}),
     "ГДРС": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
-    "График движения рабочей силы": frozenset(
-        {"manager", "analyst", "rp", "admin", "superadmin"}
-    ),
+    "ГДРС Техника": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "Исполнительная документация": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "Предписания по подрядчикам": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
 }
@@ -651,7 +649,6 @@ def render_sidebar_menu(current_page: str = "reports"):
                 width="stretch",
                 type="primary",
                 disabled=True,
-                help="Текущая страница",
             )
         else:
             if st.button("Настройки профиля", width="stretch"):
