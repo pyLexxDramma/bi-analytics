@@ -11402,6 +11402,10 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
     else:
         work_df["План_numeric"] = 0
 
+    work_df = _gdrs_merge_plan_from_1c_spravochniki(
+        work_df, st.session_state.get("reference_contractors")
+    )
+
     # Process week columns - convert to numeric, handle empty strings
     for week_col in week_columns:
         work_df[f"{week_col}_numeric"] = pd.to_numeric(
@@ -13353,6 +13357,150 @@ def _ref_pick_best_column(df: pd.DataFrame, scorer) -> str | None:
             best_s = s
             best_c = c
     return best_c if best_s > 0 else None
+
+
+def _gdrs_score_spravochnik_plan_column(name: str) -> int:
+    """Приоритизация колонки плановых показателей ГДРС в выгрузке 1С `spravochniki`."""
+    n = str(name).lower().replace("_", " ").strip()
+    if "инн" in n or "кпп" in n or "огрн" in n:
+        return -100
+    if n.startswith("id") and "план" not in n and "проект" not in n:
+        return -20
+    sc = 0
+    if "план" in n:
+        sc += 80
+    for frag in ("гдр", "гдрс", "ресурс", "чел", "рабоч", "средн", "сутк"):
+        if frag in n:
+            sc += 20
+    if "факт" in n or "отклон" in n or "дельт" in n:
+        sc -= 45
+    return sc
+
+
+def _gdrs_pick_spravochnik_plan_column(ref: pd.DataFrame) -> str | None:
+    if ref is None or getattr(ref, "empty", True):
+        return None
+    nrows = len(ref)
+    best: str | None = None
+    best_s = 0
+    for c in ref.columns:
+        s = _gdrs_score_spravochnik_plan_column(str(c))
+        if s < 1:
+            continue
+        v = pd.to_numeric(ref[c], errors="coerce")
+        if int(v.notna().sum()) < max(1, min(3, nrows // 20 if nrows else 1)):
+            continue
+        if s > best_s:
+            best_s = s
+            best = str(c)
+    if best:
+        return best
+    for c in ref.columns:
+        tl = str(c).strip().casefold()
+        if tl in ("план", "plan", "плангдрс", "план_гдрс", "план гдрс"):
+            v = pd.to_numeric(ref[c], errors="coerce")
+            if v.notna().any():
+                return str(c)
+    return None
+
+
+def _gdrs_merge_plan_from_1c_spravochniki(
+    work_df: pd.DataFrame, ref_df: Optional[pd.DataFrame]
+) -> pd.DataFrame:
+    """
+    Подставляет план в «План_numeric»/«План» из `st.session_state['reference_contractors']`
+    (файл `1c_*_spravochniki.json`), если в resursi план 0. Ключ: норм. имя подрядчика;
+    при совпадении колонок проекта в справочнике и в факте — уточнение (контрагент+проект).
+    """
+    from utils import norm_partner_join_key
+
+    out = work_df.copy()
+    if ref_df is None or getattr(ref_df, "empty", True) or out is None or out.empty:
+        return out
+    if "Контрагент" not in out.columns or "План_numeric" not in out.columns:
+        return out
+    ref = ref_df.copy()
+    ref.columns = [str(c).strip() for c in ref.columns]
+    plan_c = _gdrs_pick_spravochnik_plan_column(ref)
+    if not plan_c or plan_c not in ref.columns:
+        return out
+    cont_c = _ref_pick_best_column(ref, _ref_score_contractor_column)
+    if not cont_c:
+        for nm in (
+            "Наименование_Контрагента",
+            "Наименование Контрагента",
+            "Контрагент",
+            "Подрядчик",
+            "подрядчик",
+        ):
+            if nm in ref.columns:
+                cont_c = nm
+                break
+    if not cont_c or cont_c not in ref.columns:
+        return out
+    proj_c_r = _ref_pick_best_column(ref, _ref_score_project_column)
+    proj_c_w = None
+    for nm in ("Проект", "проект", "project name"):
+        if nm in out.columns:
+            proj_c_w = nm
+            break
+    if proj_c_w is None:
+        for c in out.columns:
+            if str(c).lower().replace("_", " ").strip() == "проект":
+                proj_c_w = c
+                break
+    by_cp: dict[tuple[str, str], float] = {}
+    by_c: dict[str, float] = {}
+    for _, r in ref.iterrows():
+        k = norm_partner_join_key(r.get(cont_c, ""))
+        if not k:
+            continue
+        val = pd.to_numeric(r.get(plan_c, np.nan), errors="coerce")
+        if pd.isna(val):
+            continue
+        v = float(val)
+        if (
+            proj_c_r
+            and str(proj_c_r) in ref.columns
+            and proj_c_w
+            and str(proj_c_w) in out.columns
+        ):
+            pk = _project_filter_norm_key(r.get(proj_c_r, ""))
+            if pk:
+                by_cp[(k, pk)] = v
+        by_c[k] = v
+    n_fill = 0
+    for i in out.index:
+        try:
+            cur = float(out.at[i, "План_numeric"])
+        except (TypeError, ValueError):
+            cur = 0.0
+        if cur > 0:
+            continue
+        k = norm_partner_join_key(out.at[i, "Контрагент"])
+        if not k:
+            continue
+        pick = None
+        if (
+            proj_c_r
+            and str(proj_c_r) in ref.columns
+            and proj_c_w
+            and str(proj_c_w) in out.columns
+        ):
+            pk = _project_filter_norm_key(out.at[i, proj_c_w])
+            if pk and (k, pk) in by_cp:
+                pick = by_cp[(k, pk)]
+        if pick is None and k in by_c:
+            pick = by_c[k]
+        if pick is not None and pick > 0:
+            out.at[i, "План_numeric"] = pick
+            n_fill += 1
+    if n_fill:
+        if "План" in out.columns:
+            out["План"] = out["План_numeric"]
+        else:
+            out["План"] = out["План_numeric"]
+    return out
 
 
 def dashboard_debit_credit(df):
