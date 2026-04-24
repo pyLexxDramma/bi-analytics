@@ -11610,6 +11610,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             ],
         )
 
+    if project_col and project_col in work_df.columns:
+        work_df = _project_column_apply_canonical(work_df, project_col)
+
     period_col = _gdrs_resolve_period_column(work_df)
     if period_col is None:
         work_df = work_df.copy()
@@ -11837,6 +11840,20 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             "tech",
             "technique",
         )
+        _ref_df = st.session_state.get("reference_contractors")
+        _ref_empty = _ref_df is None or getattr(_ref_df, "empty", True)
+        _fact_sum = float(
+            pd.to_numeric(filtered_df.get("week_sum"), errors="coerce").fillna(0.0).abs().sum()
+        )
+        _plan_sum_f = float(
+            pd.to_numeric(filtered_df.get("План_numeric"), errors="coerce").fillna(0.0).abs().sum()
+        )
+        if _fact_sum > 1e-6 and _plan_sum_f < 1e-6 and _ref_empty:
+            st.info(
+                "План по ГДРС не подставлен: нет загруженного справочника 1С (`1c_*_spravochniki.json`) "
+                "или в нём нет подходящих полей для сопоставления с фактом. "
+                "Без этого «План» и «Дельта (%)» не заполняются. См. **mapping_spec_v2 §4.3.1**."
+            )
         _ref_h4 = (
             "График движения техники"
             if _gdrs_tab_is_tech
