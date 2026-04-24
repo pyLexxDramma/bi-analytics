@@ -250,16 +250,16 @@ def _load_references(file_metas: list, result: dict):
 
 
 def _resolve_kr_states(conn, version_id: int):
-    """Заполняет kr_state_ru в tessa_rd и tessa_id по справочнику kr_states."""
+    """Заполняет kr_state_ru в tessa_rd и tessa_id по справочнику kr_states (без учёта регистра)."""
     for table in ("tessa_rd", "tessa_id"):
         conn.execute(f"""
             UPDATE {table}
             SET kr_state_ru = (
                 SELECT COALESCE(ks.ru, {table}.kr_state)
                 FROM kr_states ks
-                WHERE ks.en = {table}.kr_state
-                   OR ks.ru = {table}.kr_state
-                   OR ks.name = {table}.kr_state
+                WHERE lower(trim(COALESCE(ks.en, ''))) = lower(trim(COALESCE({table}.kr_state, '')))
+                   OR lower(trim(COALESCE(ks.ru, ''))) = lower(trim(COALESCE({table}.kr_state, '')))
+                   OR lower(trim(COALESCE(ks.name, ''))) = lower(trim(COALESCE({table}.kr_state, '')))
                 LIMIT 1
             )
             WHERE version_id = ?

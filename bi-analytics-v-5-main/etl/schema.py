@@ -43,6 +43,14 @@ def get_etl_connection():
         conn.close()
 
 
+def _ensure_resources_migrated(cur) -> None:
+    """Старые БД: колонка `resource_kind` в `resources` (нормализация рабочие/техника)."""
+    rows = cur.execute("PRAGMA table_info(resources)").fetchall()
+    names = {r[1] for r in rows}
+    if "resource_kind" not in names:
+        cur.execute("ALTER TABLE resources ADD COLUMN resource_kind TEXT")
+
+
 def init_etl_schema():
     """Создаёт все таблицы. Безопасно вызывать при каждом старте."""
     Path(ETL_DB_PATH).parent.mkdir(parents=True, exist_ok=True)
@@ -278,7 +286,8 @@ def init_etl_schema():
                 date_col        TEXT,            -- конкретная дата из шапки (ISO)
                 project         TEXT,            -- Проект
                 contractor      TEXT,            -- Подрядчик
-                resource_type   TEXT,            -- тип ресурсов (рабочие / техника)
+                resource_type   TEXT,            -- как в выгрузке («тип ресурсов»)
+                resource_kind   TEXT,            -- 'рабочие' | 'техника' | 'прочее' (норм., mapping §2.6)
                 value           REAL,            -- числовое значение
                 col_type        TEXT,            -- 'daily' / 'avg' / 'plan'
                 source_file     TEXT
@@ -301,6 +310,8 @@ def init_etl_schema():
                 source_file         TEXT
             );
         """)
+
+        _ensure_resources_migrated(cur)
 
         # KrStates — заполняем один раз (статический справочник)
         cur.execute("SELECT COUNT(*) FROM kr_states")

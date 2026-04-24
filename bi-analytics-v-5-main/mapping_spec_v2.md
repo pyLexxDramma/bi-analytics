@@ -202,11 +202,11 @@
 
 ## 5.1 ETL: распознавание/маппинг источников
 - [x] `etl/parser.py` — [x] `detect_file` / [x] `group_by_snapshot` (см. `loader`).
-- [x] `etl/loader.py` — [x] `load_from_web_dir` + `__unknown__`; [x] порядок: справочники → версии по дате; [ ] углублённый аудит `_resolve_kr_states`.
+- [x] `etl/loader.py` — [x] `load_from_web_dir` + `__unknown__`; [x] порядок: справочники → версии по дате; [x] `_resolve_kr_states` — `lower(trim(...))` для сопоставления с `kr_states`.
 - [ ] `etl/mapper.py`
   - [x] `map_msp()` — даты/отклонения, `_MSP_COL_MAP` (сверка с новыми колонками при смене выгрузки — [ ]).
   - [x] `map_tessa_id()` / `map_tessa_rd()` / `map_tessa_task()` — DocID, KrState(±ID для id), ObjectProjectID `project_id`; [x] `map_tessa_task` — алиасы `Import_date` / `import_data` / `imort_data`.
-  - [ ] `map_resources()` — разделение `рабочие/техника` (в слое приложения/отчёта; в ETL — `resource_type` + `col_type`) — [ ].
+  - [x] `map_resources()` — колонка **`resource_kind`** (`рабочие` / `техника` / `прочее`) + `schema` миграция; сырой текст в `resource_type`.
   - [x] `map_rd_plan()` — [x] пустая/битая **плановая дата** при найденной колонке — строка не грузится (**§3.3**); [x] поиск колонок вне `iterrows` + ключевые «дата выдачи…».
   - [x] `map_1c_budget()` / `map_1c_dk()` / `map_1c_sprav()` — как в `schema` (суммы/остатки); расширение полей 1С — [ ].
 

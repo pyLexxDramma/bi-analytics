@@ -430,6 +430,48 @@ def map_tessa_task(path: Path, meta: dict) -> list[dict]:
 
 # ── Ресурсы (ГДРС) ────────────────────────────────────────────────────────────
 
+def _gdrs_resource_kind(res_raw: str) -> str:
+    """
+    Нормализация «тип ресурсов» → 'рабочие' | 'техника' | 'прочее' (mapping §2.6).
+    Согласовано с отчётами: рабочие / техника по подстрокам в ячейке.
+    """
+    t = (res_raw or "").strip().casefold().replace("ё", "е")
+    if not t or t in ("nan", "none", "nat", "<na>"):
+        return "прочее"
+    if any(
+        x in t
+        for x in (
+            "тех",
+            "спецтех",
+            "машин",
+            "самосвал",
+            "кран",
+            "погруз",
+            "бульдоз",
+            "экскав",
+            "автокран",
+        )
+    ):
+        return "техника"
+    if any(
+        x in t
+        for x in (
+            "рабоч",
+            "люд",
+            "персонал",
+            "сотруд",
+            "каменщ",
+            "монтаж",
+            "штукат",
+            "маляр",
+        )
+    ):
+        return "рабочие"
+    if "ресурс" in t and "тех" not in t:
+        return "рабочие"
+    return "прочее"
+
+
 def map_resources(path: Path, meta: dict) -> list[dict]:
     """
     Читает other_*_resursi.csv — файл с двухуровневой шапкой.
@@ -492,6 +534,7 @@ def map_resources(path: Path, meta: dict) -> list[dict]:
                 "project":        project,
                 "contractor":     contractor,
                 "resource_type":  res_type,
+                "resource_kind":  _gdrs_resource_kind(res_type),
                 "value":          val_clean,
                 "col_type":       col_type,   # 'daily' / 'avg'
                 "source_file":    source_file,
