@@ -107,7 +107,7 @@
 ## 4) Маппинг по отчетам (что исправить по видео)
 
 ## 4.1 Контрольные точки / График проекта / Сроки
-- Исправить маппинг проекта (убрать дубли `Дмитровский*` в фильтрах и агрегатах).
+- [x] Маппинг проекта: канонизация `project name` (§**3.1**) в **«Контрольные точки»**, **«График проекта»**, **«Отклонение от базового плана»** — без дублей в фильтрах/агрегатах; прочие правки (даты, сортировка, уровни) — по плану.
 - Для дат использовать только пары:
   - План: `Базовое_начало`, `Базовое_окончание`
   - Факт: `Начало`, `Окончание`
@@ -207,7 +207,7 @@
 - [x] `dashboards/__init__.py`
   - [x] убрать/скрыть дублирующие пункты в ГДРС/СКУД (отдельный пункт «СКУД стройка» / экран «СКУД по неделям» убран из реестра).
   - [ ] проверить алиасы названий отчетов.
-  - [x] обновить `_DASHBOARDS_REGISTRY_VERSION` (32 — сроки/причины: project name в 3 дашбордах, см. 5.3).
+  - [x] обновить `_DASHBOARDS_REGISTRY_VERSION` (33 — сроки: project name в «Контрольные точки» / «График проекта» / «Отклонение от базового плана», см. 5.3).
 - [x] `dashboards/ui_quiet.py` — `suppress_caption` (без `st.caption` в дашбордах, см. 4.9).
 - [ ] `dashboards/_renderers.py` / `dev_projects_tz_matrix.py` — капшены/подсказки: только п. 4.9.
 - [x] `dashboards/_renderers.py` — **снятие `help=`** по п. **4.10** (все `help=` в файле убраны; админ/профиль/главная при необходимости отдельно).
@@ -215,9 +215,9 @@
 
 ## 5.3 Сроки / причины / контрольные точки / график проекта
 - [ ] `dashboards/_renderers.py`
-  - [ ] `dashboard_control_points()`
-  - [ ] `dashboard_project_schedule_chart()`
-  - [ ] `dashboard_plan_fact_dates()`
+  - [x] `dashboard_control_points()` — [x] канонизация `project name` (§**3.1**).
+  - [x] `dashboard_project_schedule_chart()` — [x] то же.
+  - [x] `dashboard_plan_fact_dates()` — [x] то же.
   - [x] `dashboard_deviations_combined()` — [x] в `_render_deviations_combined_shared_filters` канонизация колонки `project name` для таб/графиков.
   - [x] `dashboard_reasons_of_deviation()` — [x] канонизация `project name` (§**3.1**), в т.ч. вне общего отчёта.
   - [x] `dashboard_dynamics_of_deviations()` — [x] то же.

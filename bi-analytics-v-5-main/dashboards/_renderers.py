@@ -3801,6 +3801,9 @@ def dashboard_plan_fact_dates(df):
                 )
                 return
 
+    if "project name" in df.columns:
+        df = _project_column_apply_canonical(df.copy(), "project name")
+
     with st.expander("Откуда берутся сроки и почему таблицы могут отличаться", expanded=False):
         st.markdown(
             """
@@ -20980,7 +20983,10 @@ def dashboard_control_points(df):
     if df is None or df.empty:
         st.warning("Загрузите данные MSP (проект).")
         return
-    work = _control_points_prepare_msp_dates(df.copy())
+    _cp_df = df.copy()
+    if "project name" in _cp_df.columns:
+        _cp_df = _project_column_apply_canonical(_cp_df, "project name")
+    work = _control_points_prepare_msp_dates(_cp_df)
     has_fact_col = "plan end" in work.columns or "actual finish" in work.columns
     if "base end" not in work.columns or not has_fact_col:
         st.warning(
@@ -21248,6 +21254,8 @@ def dashboard_project_schedule_chart(df):
                     f"В отчёт «График проекта» оставлены только MSP-выгрузки "
                     f"(`msp_*.csv`). Исключено строк из других источников: {_dropped}."
                 )
+    if "project name" in work.columns:
+        work = _project_column_apply_canonical(work.copy(), "project name")
     if "plan start" not in work.columns or "plan end" not in work.columns:
         st.warning("Нужны колонки «План: начало» и «План: окончание» (после загрузки MSP: plan start / plan end).")
         pref = [c for c in ("project name", "task name", "plan start", "plan end") if c in work.columns]
