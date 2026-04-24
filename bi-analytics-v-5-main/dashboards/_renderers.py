@@ -9256,24 +9256,26 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         _col_series["Номер шифра"] = _safe_str_col(cipher_no_col)
         _col_series["Блок"] = _safe_str_col(block_col)
         _col_series["Шифр полный"] = detail_df["_detail_cipher"]
-        # R23-07: «Задача» = название задачи из MSP-графика (task_col / «Название»).
-        # Это надёжный источник по имеющимся файлам: прямого ключа MSP↔TESSA
-        # (DocID/InternalID) в MSP нет, а пересечение Шифр_ПД_и_РД vs DivisionCipher
-        # пустое (ПД-шифры vs РД-шифры), поэтому join TESSA по (Проект, Шифр) даёт 0
-        # совпадений. Название задачи MSP всегда заполнено и даёт осмысленный текст.
+        # §4.4 / R23-07: «Задача» — при наличии `_rd_tessa_task_display_series` из
+        # TESSA (разделы RD), иначе MSP task_col / «Название».
         _task_for_detail = None
         if task_col and task_col in detail_df.columns:
             _task_for_detail = task_col
         else:
             _task_for_detail = find_column(detail_df, ["Название", "task name", "Задача"])
-        if _task_for_detail and _task_for_detail in detail_df.columns:
-            _col_series["Задача"] = (
-                detail_df[_task_for_detail].astype(str).str.strip().replace(
-                    {"nan": "", "None": "", "<NA>": "", "NaT": ""}
-                )
+        _msp_task_s = (
+            detail_df[_task_for_detail].astype(str).str.strip().replace(
+                {"nan": "", "None": "", "<NA>": "", "NaT": ""}
             )
+            if _task_for_detail and _task_for_detail in detail_df.columns
+            else pd.Series([""] * len(detail_df), index=detail_df.index)
+        )
+        if "_task_display_tessa" in detail_df.columns:
+            _tessa_t = detail_df["_task_display_tessa"].astype(str).str.strip()
+            _tessa_t = _tessa_t.replace({"nan": "", "None": "", "<NA>": ""})
+            _col_series["Задача"] = _tessa_t.where(_tessa_t.ne(""), _msp_task_s)
         else:
-            _col_series["Задача"] = pd.Series([""] * len(detail_df), index=detail_df.index)
+            _col_series["Задача"] = _msp_task_s
         _col_series["Дата выдачи разделов по договору"] = _fmt_date_or_blank(
             detail_df["_detail_plan_date"]
         )
@@ -15333,7 +15335,10 @@ def dashboard_documentation(
     section_col = (
         "section" if "section" in df.columns else find_column(df, ["Раздел", "section"])
     )
-    contractor_col = find_column(df, ["Выдана подрядчику", "подрядчику"])
+    contractor_col = find_column(
+        df,
+        ["Передано подрядчику", "Выдана подрядчику", "подрядчику", "TransferToCustomer"],
+    )
     rework_col = find_column(df, ["На доработке", "доработке"])
     period_source_col = (
         plan_end_col if plan_end_col and plan_end_col in df.columns else plan_start_col
@@ -15685,20 +15690,28 @@ def dashboard_documentation(
             _tessa_counts = _count_tessa_rd_krstates(selected_projects_doc or None)
             _tessa_has_any = any(v > 0 for v in _tessa_counts.values())
             _used_tessa_source = False
+            transferred_sum = 0.0
             if _tessa_has_any:
                 accepted_sum = float(_tessa_counts.get("Принято", 0))
                 review_sum = float(_tessa_counts.get("На рассм.", 0))
                 return_sum = float(_tessa_counts.get("Возвр.", 0))
                 not_accepted_cat_sum = float(_tessa_counts.get("Не принято", 0))
+                transferred_sum = float(_tessa_counts.get("Передано подрядчику", 0))
                 _used_tessa_source = True
             else:
                 accepted_sum = issued_sum
                 review_sum = on_ap_sum
                 return_sum = rework_sum
                 not_accepted_cat_sum = 0.0
+                if contractor_col and contractor_col in df.columns:
+                    transferred_sum = float(_to_numeric_series(df[contractor_col]).sum())
 
             _active_sum = (
-                accepted_sum + review_sum + return_sum + not_accepted_cat_sum
+                accepted_sum
+                + review_sum
+                + return_sum
+                + not_accepted_cat_sum
+                + transferred_sum
             )
             not_issued_sum = max(total_sections - _active_sum, 0.0)
 
@@ -15718,6 +15731,7 @@ def dashboard_documentation(
                     "На рассм.": int(round(max(review_sum, 0.0))),
                     "Возвр.": int(round(max(return_sum, 0.0))),
                     "Не принято": int(round(max(not_accepted_cat_sum, 0.0))),
+                    "Передано подрядчику": int(round(max(transferred_sum, 0.0))),
                     "Не выдано": int(round(max(not_issued_sum, 0.0))),
                 }
                 pie_data = {k: v for k, v in pie_data.items() if v > 0}
@@ -15732,6 +15746,7 @@ def dashboard_documentation(
                             "На рассм.": "#F1C40F",
                             "Возвр.": "#E67E22",
                             "Не принято": "#C0392B",
+                            "Передано подрядчику": "#8E44AD",
                             "Не выдано": "#7F8C8D",
                         },
                     )
@@ -16145,15 +16160,42 @@ def dashboard_documentation(
                                 f"{round(required_productivity):,.0f}".replace(",", " "),
                             )
 
-                dynamics_df["Текст"] = dynamics_df["Количество"].apply(
-                    lambda x: f"{x:.0f}" if pd.notna(x) and float(x) != 0.0 else ""
-                )
+                pl_sorted = plan_df.sort_values("Дата")
+                fc_sorted = fact_df.sort_values("Дата")
 
-                # R23-07 (стр.19): факт-линия «Прогноз по проекту» для РД —
-                # оранжевый `#F39C12`, если все разделы выданы (факт ≥ план);
-                # иначе — голубой `#5DADE2`. План — всегда синий.
-                _rd_all_done = plan_total > 0 and fact_to_date >= plan_total
-                _rd_fact_color = "#F39C12" if _rd_all_done else "#5DADE2"
+                def _rd_last_cum_on_or_before(sdf: pd.DataFrame, dt) -> float:
+                    if sdf is None or getattr(sdf, "empty", True):
+                        return 0.0
+                    d = pd.to_datetime(dt, errors="coerce")
+                    if pd.isna(d):
+                        return 0.0
+                    sub = sdf[sdf["Дата"] <= d]
+                    if sub.empty:
+                        return 0.0
+                    return float(sub["Количество"].iloc[-1])
+
+                def _rd_line_point_text(row) -> str:
+                    v = float(row["Количество"]) if pd.notna(row.get("Количество")) else 0.0
+                    if abs(v) < 0.5:
+                        return ""
+                    t = str(row.get("Тип", ""))
+                    d = row["Дата"]
+                    dts = pd.to_datetime(d, errors="coerce")
+                    den = float(plan_total) if plan_total and plan_total > 0 else 0.0
+                    pct = (v / den * 100.0) if den > 0 else 0.0
+                    if t == "План":
+                        return f"{v:.0f} ({pct:.0f}%)" if den > 0 else f"{v:.0f}"
+                    p_at = _rd_last_cum_on_or_before(pl_sorted, dts)
+                    f_at = _rd_last_cum_on_or_before(fc_sorted, dts)
+                    ovd = max(0.0, p_at - f_at)
+                    if den > 0:
+                        return f"{v:.0f} ({pct:.0f}%)<br>пр. {int(round(ovd))}"
+                    return f"{v:.0f}<br>пр. {int(round(ovd))}"
+
+                dynamics_df["Текст"] = dynamics_df.apply(_rd_line_point_text, axis=1)
+
+                # §4.4: план — синий, факт — оранжевый; нулевой старт (якорь) + rangemode tozero.
+                _rd_fact_color = "#F39C12"
                 fig_dynamics = px.line(
                     dynamics_df,
                     x="Дата",
@@ -19502,18 +19544,27 @@ _TESSA_KRSTATE_TO_PIE = {
     "отмена": "Не принято",
     "cancelled": "Не принято",
     "canceled": "Не принято",
+    # Передано подрядчику (§4.4) — отдельная доля пирога
+    "передано подрядчику": "Передано подрядчику",
+    "выдана подрядчику": "Передано подрядчику",
+    "transfer to contractor": "Передано подрядчику",
 }
 
 
 def _count_tessa_rd_krstates(selected_projects: list[str] | None = None) -> dict[str, int]:
     """
-    Возвращает счётчики карточек TESSA (tessa_*_rd.csv) по четырём
-    категориям круговой «Исполнение РД»: Принято / На рассм. / Возвр. /
-    Не принято. Если TESSA-данных нет или `tessa_data` пуст — возвращает
-    словарь с нулями. Фильтр по `selected_projects` — как в
-    `_build_tessa_rd_detail_table` (через `_project_filter_norm_key`).
+    Счётчики TESSA (tessa_*_rd.csv) для круговой «Исполнение РД»:
+    Принято / На рассм. / Возвр. / Не принято / Передано подрядчику.
+    Без данных — нули. Фильтр проектов — как в `_build_tessa_rd_detail_table`
+    (`_project_filter_norm_key`).
     """
-    result = {"Принято": 0, "На рассм.": 0, "Возвр.": 0, "Не принято": 0}
+    result = {
+        "Принято": 0,
+        "На рассм.": 0,
+        "Возвр.": 0,
+        "Не принято": 0,
+        "Передано подрядчику": 0,
+    }
     try:
         tdf = st.session_state.get("tessa_data")
     except Exception:
