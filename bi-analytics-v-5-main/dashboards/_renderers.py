@@ -2141,6 +2141,8 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         return
 
     ensure_msp_hierarchy_columns(df)
+    if "project name" in df.columns:
+        df = _project_column_apply_canonical(df.copy(), "project name")
 
     # При hide_shared_filters фильтры задаются в общем блоке; локальные selectbox не рисуются — задаём значения по умолчанию.
     selected_project = "Все"
@@ -2882,6 +2884,8 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             )
             source_df = df
             _time_axis = "По дате окончания плана (plan end)"
+    if "project name" in source_df.columns:
+        source_df = _project_column_apply_canonical(source_df.copy(), "project name")
 
     if hide_shared_filters:
         col1, = st.columns(1)
@@ -6158,6 +6162,9 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
             "Нет данных для отображения. Пожалуйста, загрузите данные проекта."
         )
         return
+
+    if "project name" in df.columns:
+        df = _project_column_apply_canonical(df.copy(), "project name")
 
     # При hide_shared_filters проект/этап/причина задаются общими фильтрами выше; без значений по умолчанию — NameError в ветках «По месяцам».
     selected_project = "Все"
