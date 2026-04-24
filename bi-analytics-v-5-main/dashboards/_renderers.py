@@ -11833,6 +11833,28 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             if _res_mask.any():
                 _tbl = _tbl.loc[_res_mask].copy()
 
+        # mapping_spec 4.3: вкладка «Ресурсы» — только рабочие; техника — в «ГДРС Техника».
+        if (not _gdrs_tab_is_tech) and (not _tbl.empty):
+            _tr_col = find_column_by_partial(
+                _tbl,
+                [
+                    "тип ресурсов",
+                    "тип ресурса",
+                    "вид ресурсов",
+                    "Вид работ",
+                    "вид работ",
+                    "Вид работы",
+                ],
+            )
+            if _tr_col and _tr_col in _tbl.columns:
+                _tv = _tbl[_tr_col].astype(str).str.strip().str.lower()
+                _only_workers = _tv.str.contains("рабоч", na=False) & ~_tv.str.contains(
+                    "техник",
+                    na=False,
+                )
+                if _only_workers.any():
+                    _tbl = _tbl.loc[_only_workers].copy()
+
         if not _tbl.empty:
             _work_type_col = find_column_by_partial(
                 _tbl,
