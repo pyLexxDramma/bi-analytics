@@ -210,7 +210,7 @@
   - [x] `map_tessa_id()` / `map_tessa_rd()` / `map_tessa_task()` — DocID, KrState(±ID для id), ObjectProjectID `project_id`; [x] `map_tessa_task` — алиасы `Import_date` / `import_data` / `imort_data`.
   - [x] `map_resources()` — колонка **`resource_kind`** (`рабочие` / `техника` / `прочее`) + `schema` миграция; сырой текст в `resource_type`.
   - [x] `map_rd_plan()` — [x] пустая/битая **плановая дата** при найденной колонке — строка не грузится (**§3.3**); [x] поиск колонок вне `iterrows` + ключевые «дата выдачи…».
-  - [x] `map_1c_budget()` / `map_1c_sprav()` — **`_dict_get_any`**: алиасы имён полей в плоском JSON (рус/англ. варианты, типовые альтернативы 1С); `map_1c_dk()` — как в `schema` (вложенные `Организация`/`Контрагент`/`Договор`); новые узлы/поля выгрузки — [ ].
+  - [x] `map_1c_budget()` / `map_1c_sprav()` / `map_1c_dk()` — **`_dict_get_any`**: алиасы полей (плоский JSON и вложенные `Организация` / `Контрагент` / `Договор`, остатки/оплаты на верхнем уровне); новые узлы/структура выгрузки — [ ].
 
 ## 5.2 Реестр дашбордов и меню
 - [x] `dashboards/__init__.py`
@@ -218,7 +218,7 @@
   - [x] алиасы `get_dashboards()` / меню: **«Просрочка выдачи РД/ПД»** добавлены в `REPORT_CATEGORIES` (раньше только в словаре рендереров); **`auth._REPORT_ROLE_ALLOWLIST`:** «Неустраненные предписания» + Просрочка РД/ПД (синхрон с пунктами меню).
   - [x] обновить `_DASHBOARDS_REGISTRY_VERSION` (44 — §4.8 `format_dataframe_as_html` / `plan_fact_dates_table_to_html`; v43: §5.2 меню+RBAC; v42: `st.dataframe`; …). Правки только текста **mapping_spec** реестр не меняют.
 - [x] `dashboards/ui_quiet.py` — `suppress_caption` (без `st.caption` в дашбордах, см. 4.9).
-- [ ] `dashboards/_renderers.py` / `dev_projects_tz_matrix.py` — капшены/подсказки: только п. 4.9.
+- [x] `dashboards/_renderers.py` / `dev_projects_tz_matrix.py` — в отчётах **нет** «серых» `st.caption` (п. **4.9**; `ui_quiet.suppress_caption` при необходимости).
 - [x] `dashboards/_renderers.py` — **снятие `help=`** по п. **4.10** (все `help=` в файле убраны; админ/профиль/главная при необходимости отдельно).
 - [x] Все графики/диаграммы — подписи и раскладка по п. **4.11** (центрально: `render_chart` / `_apply_plotly_spec_411_labels`, `apply_chart_background`; приёмка **ok** 2026-04-24).
 

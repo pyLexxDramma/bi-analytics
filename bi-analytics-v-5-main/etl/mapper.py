@@ -346,29 +346,103 @@ def map_1c_dk(path: Path, meta: dict) -> list[dict]:
     for item in records_raw:
         if not isinstance(item, dict):
             continue
-        org = item.get("Организация", {}) or {}
-        contr = item.get("Контрагент", {}) or {}
-        dog = item.get("Договор", {}) or {}
-        amount_str = str(dog.get("СуммаДоговора", "") or "")
+        _org = _dict_get_any(
+            item, "Организация", "Organization", "Орг", "org", "Org", default={},
+        )
+        org = _org if isinstance(_org, dict) else {}
+        _contr = _dict_get_any(
+            item, "Контрагент", "Contractor", "Client", "Counterparty", default={},
+        )
+        contr = _contr if isinstance(_contr, dict) else {}
+        _dog = _dict_get_any(
+            item, "Договор", "Contract", "ДоговорСКонтрагентом", "Agreement", default={},
+        )
+        dog = _dog if isinstance(_dog, dict) else {}
+        amount_raw = _dict_get_any(
+            dog, "СуммаДоговора", "Сумма", "Sum", "Amount", "ContractAmount", default="",
+        )
+        amount_str = str(amount_raw or "")
         records.append({
             "snapshot_date":             snapshot_date,
-            "org_id":                    str(org.get("ID_Организации", "") or "").strip(),
-            "org_name":                  str(org.get("НаименованиеОрганизации", "") or "").strip(),
-            "contractor_id":             str(contr.get("ID_Контрагента", "") or "").strip(),
-            "contractor_name":           str(contr.get("НаименованиеКонтрагента", "") or "").strip(),
-            "contract_id":               str(dog.get("ID_Договора", "") or "").strip(),
-            "contract_number":           str(dog.get("НомерДоговора", "") or "").strip(),
-            "contract_date":             _parse_date(dog.get("ДатаДоговора")),
+            "org_id":                    str(
+                _dict_get_any(
+                    org, "ID_Организации", "ИдОрганизации", "IdОрганизации", "OrganizationId", default="",
+                )
+                or ""
+            ).strip(),
+            "org_name":                  str(
+                _dict_get_any(
+                    org, "НаименованиеОрганизации", "Наименование", "Name", "Description", default="",
+                )
+                or ""
+            ).strip(),
+            "contractor_id":             str(
+                _dict_get_any(contr, "ID_Контрагента", "ИдКонтрагента", "IdКонтрагента", "ContractorId", default="")
+                or ""
+            ).strip(),
+            "contractor_name":           str(
+                _dict_get_any(
+                    contr, "НаименованиеКонтрагента", "Контрагент", "Name", "Наименование", "ContractorName", default="",
+                )
+                or ""
+            ).strip(),
+            "contract_id":               str(
+                _dict_get_any(dog, "ID_Договора", "ИдДоговора", "IdДоговора", "ContractId", default="") or ""
+            ).strip(),
+            "contract_number":           str(
+                _dict_get_any(dog, "НомерДоговора", "Номер", "Number", "ContractNumber", default="") or ""
+            ).strip(),
+            "contract_date":             _parse_date(
+                _dict_get_any(dog, "ДатаДоговора", "Date", "Дата", "ContractDate", default="")
+            ),
             "contract_amount":           amount_str.strip(),
             "contract_amount_clean":     _clean_amount(amount_str),
-            "balance_start":             _safe_float(item.get("ОстатокНаНачало")),
-            "balance_start_period":      _safe_float(item.get("ОстатокНаНачалоПериода")),
-            "balance_start_period_adv":  _safe_float(item.get("ОстатокНаНачалоПериодаПоАвансам")),
-            "total_payments":            _safe_float(item.get("ВсегоОплат")),
-            "total_payments_adv":        _safe_float(item.get("ВсегоОплат_Аванс")),
-            "balance_end":               _safe_float(item.get("ОстатокНаКонец")),
-            "balance_end_period":        _safe_float(item.get("ОстатокНаКонецПериода")),
-            "balance_end_period_adv":    _safe_float(item.get("ОстатокНаКонецПериодаПоАвансам")),
+            "balance_start": _safe_float(
+                _dict_get_any(item, "ОстатокНаНачало", "BalanceStart", "OpeningBalance", default=None)
+            ),
+            "balance_start_period": _safe_float(
+                _dict_get_any(
+                    item,
+                    "ОстатокНаНачалоПериода",
+                    "PeriodOpeningBalance",
+                    "ОстатокНаНачало_Период",
+                    default=None,
+                )
+            ),
+            "balance_start_period_adv": _safe_float(
+                _dict_get_any(
+                    item,
+                    "ОстатокНаНачалоПериодаПоАвансам",
+                    "OpeningAdvanceBalance",
+                    default=None,
+                )
+            ),
+            "total_payments": _safe_float(
+                _dict_get_any(item, "ВсегоОплат", "TotalPayments", "Платежи", default=None)
+            ),
+            "total_payments_adv": _safe_float(
+                _dict_get_any(item, "ВсегоОплат_Аванс", "ВсегоОплатАванс", "TotalAdvance", default=None)
+            ),
+            "balance_end": _safe_float(
+                _dict_get_any(item, "ОстатокНаКонец", "BalanceEnd", "ClosingBalance", default=None)
+            ),
+            "balance_end_period": _safe_float(
+                _dict_get_any(
+                    item,
+                    "ОстатокНаКонецПериода",
+                    "PeriodClosingBalance",
+                    "ОстатокНаКонец_Период",
+                    default=None,
+                )
+            ),
+            "balance_end_period_adv": _safe_float(
+                _dict_get_any(
+                    item,
+                    "ОстатокНаКонецПериодаПоАвансам",
+                    "ClosingAdvanceBalance",
+                    default=None,
+                )
+            ),
             "source_file":               source_file,
         })
     return records
