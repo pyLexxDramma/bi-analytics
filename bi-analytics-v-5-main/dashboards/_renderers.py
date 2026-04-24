@@ -11403,7 +11403,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         work_df["План_numeric"] = 0
 
     work_df = _gdrs_merge_plan_from_1c_spravochniki(
-        work_df, st.session_state.get("reference_contractors")
+        work_df, st.session_state.get("reference_contractors"), data_source_filter
     )
 
     # Process week columns - convert to numeric, handle empty strings
@@ -13362,6 +13362,10 @@ def _ref_pick_best_column(df: pd.DataFrame, scorer) -> str | None:
 def _gdrs_score_spravochnik_plan_column(name: str) -> int:
     """Приоритизация колонки плановых показателей ГДРС в выгрузке 1С `spravochniki`."""
     n = str(name).lower().replace("_", " ").strip()
+    if n in ("количествоработников", "количество работников"):
+        return 95
+    if n in ("количествоспецтехники", "количество спецтехники"):
+        return 95
     if "инн" in n or "кпп" in n or "огрн" in n:
         return -100
     if n.startswith("id") and "план" not in n and "проект" not in n:
@@ -13404,13 +13408,38 @@ def _gdrs_pick_spravochnik_plan_column(ref: pd.DataFrame) -> str | None:
     return None
 
 
+def _gdrs_work_row_uses_tech(
+    out: pd.DataFrame, i, data_source_filter: Optional[str]
+) -> bool:
+    """Строка факта — техника (иначе рабочие/люди) для выбора плановой колонки 1С."""
+    if "тип ресурсов" in out.columns:
+        t = str(out.at[i, "тип ресурсов"] or "").lower()
+        if "тех" in t:
+            return True
+        if "рабоч" in t:
+            return False
+    dsf = (data_source_filter or "").strip().casefold()
+    if dsf == "техника":
+        return True
+    if dsf == "ресурсы":
+        return False
+    if "data_source" in out.columns:
+        ds = str(out.at[i, "data_source"] or "").strip().casefold()
+        if ds in ("техника", "tech", "technique"):
+            return True
+    return False
+
+
 def _gdrs_merge_plan_from_1c_spravochniki(
-    work_df: pd.DataFrame, ref_df: Optional[pd.DataFrame]
+    work_df: pd.DataFrame,
+    ref_df: Optional[pd.DataFrame],
+    data_source_filter: Optional[str] = None,
 ) -> pd.DataFrame:
     """
     Подставляет план в «План_numeric»/«План» из `st.session_state['reference_contractors']`
-    (файл `1c_*_spravochniki.json`), если в resursi план 0. Ключ: норм. имя подрядчика;
-    при совпадении колонок проекта в справочнике и в факте — уточнение (контрагент+проект).
+    (файл `1c_*_spravochniki.json`), если в resursi план 0. В выгрузке 1С: `КоличествоРаботников`
+    (план на период для людей) и `КоличествоСпецТехники` (для техники) при наличии в JSON.
+    Ключ: норм. имя подрядчика; при `Наименование_Проекта` (справочник) и «Проект» (факт) — пара (контрагент+проект).
     """
     from utils import norm_partner_join_key
 
@@ -13421,9 +13450,13 @@ def _gdrs_merge_plan_from_1c_spravochniki(
         return out
     ref = ref_df.copy()
     ref.columns = [str(c).strip() for c in ref.columns]
-    plan_c = _gdrs_pick_spravochnik_plan_column(ref)
-    if not plan_c or plan_c not in ref.columns:
-        return out
+    col_people = "КоличествоРаботников" if "КоличествоРаботников" in ref.columns else None
+    col_tech = "КоличествоСпецТехники" if "КоличествоСпецТехники" in ref.columns else None
+    plan_c_generic = None
+    if not col_people and not col_tech:
+        plan_c_generic = _gdrs_pick_spravochnik_plan_column(ref)
+        if not plan_c_generic or plan_c_generic not in ref.columns:
+            return out
     cont_c = _ref_pick_best_column(ref, _ref_score_contractor_column)
     if not cont_c:
         for nm in (
@@ -13439,6 +13472,10 @@ def _gdrs_merge_plan_from_1c_spravochniki(
     if not cont_c or cont_c not in ref.columns:
         return out
     proj_c_r = _ref_pick_best_column(ref, _ref_score_project_column)
+    for nm in ("Наименование_Проекта", "ID_Проекта"):
+        if not proj_c_r and nm in ref.columns:
+            proj_c_r = nm
+            break
     proj_c_w = None
     for nm in ("Проект", "проект", "project name"):
         if nm in out.columns:
@@ -13449,26 +13486,73 @@ def _gdrs_merge_plan_from_1c_spravochniki(
             if str(c).lower().replace("_", " ").strip() == "проект":
                 proj_c_w = c
                 break
-    by_cp: dict[tuple[str, str], float] = {}
-    by_c: dict[str, float] = {}
-    for _, r in ref.iterrows():
-        k = norm_partner_join_key(r.get(cont_c, ""))
-        if not k:
-            continue
-        val = pd.to_numeric(r.get(plan_c, np.nan), errors="coerce")
-        if pd.isna(val):
-            continue
-        v = float(val)
-        if (
-            proj_c_r
-            and str(proj_c_r) in ref.columns
-            and proj_c_w
-            and str(proj_c_w) in out.columns
-        ):
-            pk = _project_filter_norm_key(r.get(proj_c_r, ""))
-            if pk:
-                by_cp[(k, pk)] = v
-        by_c[k] = v
+
+    def _gdrs_scalar_ref_float(cell) -> float | None:
+        if cell is None:
+            return None
+        if isinstance(cell, (list, dict, np.ndarray)):
+            return None
+        v = float(pd.to_numeric(cell, errors="coerce"))
+        if not np.isfinite(v):
+            return None
+        return v
+
+    def _gdrs_plan_metric_from_spravochnik_cell(cell) -> float | None:
+        """
+        План ГДРС в 1С: либо число, либо массив вида [{Дата, Количество}, ...] — берём max(Количество)
+        как согласованный план за период (по срезу выгрузки).
+        """
+        if cell is None:
+            return None
+        if isinstance(cell, (list, tuple)) and len(cell) > 0:
+            nums: list[float] = []
+            for it in cell:
+                if isinstance(it, dict):
+                    q = it.get("Количество")
+                    if q is None:
+                        q = it.get("количество")
+                    w = float(pd.to_numeric(q, errors="coerce"))
+                else:
+                    w = float(pd.to_numeric(it, errors="coerce"))
+                if np.isfinite(w):
+                    nums.append(w)
+            if not nums:
+                return None
+            return float(max(nums))
+        if isinstance(cell, dict):
+            q = cell.get("Количество") or cell.get("количество")
+            w = float(pd.to_numeric(q, errors="coerce"))
+            return w if np.isfinite(w) else None
+        return _gdrs_scalar_ref_float(cell)
+
+    def _one_map(plan_col: str) -> tuple[dict[tuple[str, str], float], dict[str, float]]:
+        by_cp: dict[tuple[str, str], float] = {}
+        by_c: dict[str, float] = {}
+        for _, r in ref.iterrows():
+            k = norm_partner_join_key(r.get(cont_c, ""))
+            if not k:
+                continue
+            raw = r.get(plan_col, np.nan)
+            v = _gdrs_plan_metric_from_spravochnik_cell(raw)
+            if v is None:
+                v = _gdrs_scalar_ref_float(raw)
+            if v is None:
+                continue
+            if proj_c_r and str(proj_c_r) in ref.columns and proj_c_w and str(proj_c_w) in out.columns:
+                pk = _project_filter_norm_key(r.get(proj_c_r, ""))
+                if pk:
+                    by_cp[(k, pk)] = v
+            by_c[k] = v
+        return by_cp, by_c
+
+    maps: dict[str, tuple[dict, dict] | None] = {}
+    if col_people:
+        maps["people"] = _one_map(col_people)
+    if col_tech:
+        maps["tech"] = _one_map(col_tech)
+    if plan_c_generic:
+        maps["generic"] = _one_map(plan_c_generic)
+
     n_fill = 0
     for i in out.index:
         try:
@@ -13480,6 +13564,13 @@ def _gdrs_merge_plan_from_1c_spravochniki(
         k = norm_partner_join_key(out.at[i, "Контрагент"])
         if not k:
             continue
+        use_tech = _gdrs_work_row_uses_tech(out, i, data_source_filter)
+        mkey = "tech" if use_tech else "people"
+        if mkey not in maps and "generic" in maps:
+            mkey = "generic"
+        if mkey not in maps or maps[mkey] is None:
+            continue
+        by_cp, by_c = maps[mkey]
         pick = None
         if (
             proj_c_r
@@ -13496,10 +13587,7 @@ def _gdrs_merge_plan_from_1c_spravochniki(
             out.at[i, "План_numeric"] = pick
             n_fill += 1
     if n_fill:
-        if "План" in out.columns:
-            out["План"] = out["План_numeric"]
-        else:
-            out["План"] = out["План_numeric"]
+        out["План"] = out["План_numeric"]
     return out
 
 
