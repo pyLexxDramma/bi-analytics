@@ -571,7 +571,7 @@ def style_dataframe_for_dark_theme(
     extra_days_columns: Optional[tuple] = None,
 ):
     """
-    Возвращает Styler с фоном hsl(209,67%,12%) и белым текстом для st.table.
+    Styler для тёмной темы (`st.dataframe` / `st.table`): фон, контраст, **§4.8** — плотные ячейки.
     """
     if df is None or df.empty:
         return df.style
@@ -580,16 +580,32 @@ def style_dataframe_for_dark_theme(
     rename_map = {c: TABLE_COLUMN_EN_TO_RU.get(c, c) for c in df.columns}
     df = df.rename(columns=rename_map)
 
-    base = df.style.set_properties(
-        **{
-            "background-color": TABLE_BG_COLOR,
-            "color": TABLE_TEXT_COLOR,
-            "font-size": "14px",
-        }
-    ).set_table_styles(
+    _cell_dense = {
+        "background-color": TABLE_BG_COLOR,
+        "color": TABLE_TEXT_COLOR,
+        "font-size": "13px",
+        "padding": "5px 8px",
+        "max-width": "16em",
+        "white-space": "nowrap",
+        "overflow": "hidden",
+        "text-overflow": "ellipsis",
+    }
+    base = df.style.set_properties(**_cell_dense).set_table_styles(
         [
-            {"selector": "th", "props": [("background-color", TABLE_BG_COLOR), ("color", TABLE_TEXT_COLOR), ("border", "0")]},
-            {"selector": "td", "props": [("background-color", TABLE_BG_COLOR), ("color", TABLE_TEXT_COLOR), ("border", "0")]},
+            {
+                "selector": "th",
+                "props": [
+                    ("background-color", TABLE_BG_COLOR),
+                    ("color", TABLE_TEXT_COLOR),
+                    ("border", "0"),
+                    ("font-size", "13px"),
+                    ("padding", "6px 8px"),
+                    ("max-width", "18em"),
+                    ("white-space", "nowrap"),
+                    ("overflow", "hidden"),
+                    ("text-overflow", "ellipsis"),
+                ],
+            },
             {"selector": "th *, td *", "props": [("color", TABLE_TEXT_COLOR)]},
         ]
     )
