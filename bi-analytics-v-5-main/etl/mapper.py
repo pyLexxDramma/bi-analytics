@@ -121,6 +121,30 @@ def _clean_amount(value) -> Optional[float]:
         return None
 
 
+def _dict_get_any(d: dict, *names: str, default=None):
+    """
+    Первое непустое значение по списку возможных ключей
+    (варианты имён полей в выгрузках 1С JSON, **§5.1**).
+    """
+    if not isinstance(d, dict):
+        return default
+    for name in names:
+        if name not in d:
+            continue
+        val = d.get(name)
+        if val is None:
+            continue
+        if isinstance(val, str) and not val.strip():
+            continue
+        if isinstance(val, (dict, list)) and len(val) == 0:
+            continue
+        return val
+    for name in names:
+        if name in d:
+            return d.get(name)
+    return default
+
+
 # ── MSP ──────────────────────────────────────────────────────────────────────
 
 # Маппинг колонок MSP → canonical name
@@ -230,25 +254,81 @@ def map_1c_budget(path: Path, meta: dict) -> list[dict]:
     for item in records_raw:
         if not isinstance(item, dict):
             continue
-        amount_raw = item.get("Сумма", "") or ""
+        amount_raw = _dict_get_any(
+            item, "Сумма", "Sum", "Amount", "sum", "СуммаОборот", default="",
+        )
         records.append({
             "snapshot_date":       snapshot_date,
-            "period":              _parse_date(item.get("Период")),
-            "registrar":           str(item.get("Регистратор", "") or "").strip(),
-            "scenario":            str(item.get("Сценарий", "") or "").strip(),
-            "cfo":                 str(item.get("ЦФО", "") or "").strip(),
-            "article":             str(item.get("СтатьяОборотов", "") or "").strip(),
-            "currency":            str(item.get("Валюта", "") or "").strip(),
-            "contractor":          str(item.get("Контрагент", "") or "").strip(),
-            "contractor_contract": str(item.get("ДоговорКонтрагента", "") or "").strip(),
-            "project":             str(item.get("Проект", "") or "").strip(),
-            "nomenclature_group":  str(item.get("НоменклатурнаяГруппа", "") or "").strip(),
-            "bank_account":        str(item.get("БанковскийСчет", "") or "").strip(),
-            "analytics_1":         str(item.get("Аналитика_1", "") or "").strip(),
-            "organization":        str(item.get("Организация", "") or "").strip(),
+            "period":              _parse_date(
+                _dict_get_any(item, "Период", "Period", "period", "Дата", "Date")
+            ),
+            "registrar":           str(
+                _dict_get_any(item, "Регистратор", "Registrar", "РегистраторДокумента", default="")
+                or ""
+            ).strip(),
+            "scenario":            str(
+                _dict_get_any(item, "Сценарий", "Scenario", "СценарийУчета", default="") or ""
+            ).strip(),
+            "cfo":                 str(
+                _dict_get_any(item, "ЦФО", "CFO", "Подразделение", default="") or ""
+            ).strip(),
+            "article":             str(
+                _dict_get_any(
+                    item,
+                    "СтатьяОборотов",
+                    "Статья_оборотов",
+                    "СтатьяОборот",
+                    "TurnoverItem",
+                    default="",
+                )
+                or ""
+            ).strip(),
+            "currency":            str(
+                _dict_get_any(item, "Валюта", "Currency", "ВалютаДокумента", default="") or ""
+            ).strip(),
+            "contractor":          str(
+                _dict_get_any(
+                    item, "Контрагент", "Contractor", "КонтрагентТекст", "Counterparty", default="",
+                )
+                or ""
+            ).strip(),
+            "contractor_contract": str(
+                _dict_get_any(
+                    item,
+                    "ДоговорКонтрагента",
+                    "Договор",
+                    "Contract",
+                    "ДоговорСКонтрагентом",
+                    default="",
+                )
+                or ""
+            ).strip(),
+            "project":             str(
+                _dict_get_any(item, "Проект", "Project", "НаименованиеПроекта", default="") or ""
+            ).strip(),
+            "nomenclature_group":  str(
+                _dict_get_any(
+                    item, "НоменклатурнаяГруппа", "NomenclatureGroup", "Номенклатурная_группа", default="",
+                )
+                or ""
+            ).strip(),
+            "bank_account":        str(
+                _dict_get_any(item, "БанковскийСчет", "BankAccount", "Счет", default="") or ""
+            ).strip(),
+            "analytics_1":         str(
+                _dict_get_any(item, "Аналитика_1", "Аналитика1", "Аналитика", default="") or ""
+            ).strip(),
+            "organization":        str(
+                _dict_get_any(item, "Организация", "Organization", "Орг", default="") or ""
+            ).strip(),
             "amount":              _clean_amount(amount_raw),
-            "flow_type":           str(item.get("РасходДоход", "") or "").strip(),
-            "article_type":        str(item.get("ТипСтатьи", "") or "").strip(),
+            "flow_type":           str(
+                _dict_get_any(item, "РасходДоход", "Расход_доход", "ExpenseIncome", default="")
+                or ""
+            ).strip(),
+            "article_type":        str(
+                _dict_get_any(item, "ТипСтатьи", "Тип_статьи", "ItemType", default="") or ""
+            ).strip(),
             "source_file":         source_file,
         })
     return records
@@ -306,10 +386,34 @@ def map_1c_sprav(path: Path, meta: dict) -> list[dict]:
         if not isinstance(item, dict):
             continue
         records.append({
-            "contractor_id":   str(item.get("ID_Контрагента", "") or "").strip(),
-            "contractor_name": str(item.get("Наименование_Контрагента", "") or "").strip(),
-            "inn":             str(item.get("ИНН_Контрагента", "") or "").strip(),
-            "kpp":             str(item.get("КПП_Контрагента", "") or "").strip(),
+            "contractor_id":   str(
+                _dict_get_any(
+                    item,
+                    "ID_Контрагента",
+                    "ИдКонтрагента",
+                    "IdКонтрагента",
+                    "ContractorId",
+                    default="",
+                )
+                or ""
+            ).strip(),
+            "contractor_name": str(
+                _dict_get_any(
+                    item,
+                    "Наименование_Контрагента",
+                    "НаименованиеКонтрагента",
+                    "Контрагент",
+                    "ContractorName",
+                    default="",
+                )
+                or ""
+            ).strip(),
+            "inn":             str(
+                _dict_get_any(item, "ИНН_Контрагента", "ИНН", "INN", default="") or ""
+            ).strip(),
+            "kpp":             str(
+                _dict_get_any(item, "КПП_Контрагента", "КПП", "KPP", default="") or ""
+            ).strip(),
             "source_file":     source_file,
         })
     return records

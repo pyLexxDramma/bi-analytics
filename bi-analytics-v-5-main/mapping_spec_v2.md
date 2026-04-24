@@ -210,7 +210,7 @@
   - [x] `map_tessa_id()` / `map_tessa_rd()` / `map_tessa_task()` — DocID, KrState(±ID для id), ObjectProjectID `project_id`; [x] `map_tessa_task` — алиасы `Import_date` / `import_data` / `imort_data`.
   - [x] `map_resources()` — колонка **`resource_kind`** (`рабочие` / `техника` / `прочее`) + `schema` миграция; сырой текст в `resource_type`.
   - [x] `map_rd_plan()` — [x] пустая/битая **плановая дата** при найденной колонке — строка не грузится (**§3.3**); [x] поиск колонок вне `iterrows` + ключевые «дата выдачи…».
-  - [x] `map_1c_budget()` / `map_1c_dk()` / `map_1c_sprav()` — как в `schema` (суммы/остатки); расширение полей 1С — [ ].
+  - [x] `map_1c_budget()` / `map_1c_sprav()` — **`_dict_get_any`**: алиасы имён полей в плоском JSON (рус/англ. варианты, типовые альтернативы 1С); `map_1c_dk()` — как в `schema` (вложенные `Организация`/`Контрагент`/`Договор`); новые узлы/поля выгрузки — [ ].
 
 ## 5.2 Реестр дашбордов и меню
 - [x] `dashboards/__init__.py`
