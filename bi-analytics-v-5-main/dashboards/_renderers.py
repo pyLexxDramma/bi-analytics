@@ -19684,12 +19684,39 @@ def dashboard_predpisania(df):
             st.session_state.pred_m_contract = ""
             if pred["_issue_date"].notna().any():
                 st.session_state.pred_issue_period = (min_issue, max_issue)
+            if due_col and pred["_due"].notna().any():
+                _dmn = pd.to_datetime(pred["_due"], errors="coerce").min()
+                _dmx = pd.to_datetime(pred["_due"], errors="coerce").max()
+                if pd.notna(_dmn) and pd.notna(_dmx):
+                    st.session_state.pred_due_period = (_dmn.date(), _dmx.date())
             st.rerun()
     hide_resolved = st.checkbox(
         "Не отображать устраненные предписания",
         value=True,
         key="pred_hide_resolved",
     )
+
+    # §4.6 mapping_spec: диапазон дат по сроку устранения (в дополнение к периоду выдачи).
+    due_start, due_end = None, None
+    if due_col and pred["_due"].notna().any():
+        _due_series = pred["_due"]
+        _dmin = pd.to_datetime(_due_series, errors="coerce").min()
+        _dmax = pd.to_datetime(_due_series, errors="coerce").max()
+        if pd.notna(_dmin) and pd.notna(_dmax):
+            min_due = _dmin.date() if hasattr(_dmin, "date") else _dmin
+            max_due = _dmax.date() if hasattr(_dmax, "date") else _dmax
+            due_period = st.date_input(
+                "Период по сроку устранения",
+                value=(min_due, max_due),
+                min_value=min_due,
+                max_value=max_due,
+                key="pred_due_period",
+                format="DD.MM.YYYY",
+            )
+            if isinstance(due_period, tuple) and len(due_period) == 2:
+                due_start, due_end = due_period
+            else:
+                due_start = due_end = due_period
 
     filtered = pred.copy()
     if obj_col and sel_obj:
@@ -19711,6 +19738,11 @@ def dashboard_predpisania(df):
             filtered["_issue_date"].notna()
             & (filtered["_issue_date"].dt.date >= issue_start)
             & (filtered["_issue_date"].dt.date <= issue_end)
+        ]
+    if due_start is not None and due_end is not None and due_col:
+        _dd = pd.to_datetime(filtered["_due"], errors="coerce")
+        filtered = filtered[
+            _dd.notna() & (_dd.dt.date >= due_start) & (_dd.dt.date <= due_end)
         ]
 
     if filtered.empty:
