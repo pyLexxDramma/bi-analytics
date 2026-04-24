@@ -49,7 +49,17 @@ def load_custom_css():
 import streamlit as st
 import pandas as pd
 
-_TABLE_CSS = '<style>.ht-wrap{overflow-x:auto;margin:.5rem 0 1rem}.ht{width:100%;border-collapse:collapse;font-size:13px;font-family:Inter,system-ui,sans-serif}.ht th{position:sticky;top:0;background:#1a1c23;color:#fafafa;padding:8px 12px;text-align:left;border-bottom:2px solid #444;font-weight:600;white-space:nowrap}.ht td{padding:6px 12px;border-bottom:1px solid #333;color:#e0e0e0;white-space:nowrap;max-width:400px;overflow:hidden;text-overflow:ellipsis}.ht tr:hover td{background:#262833}</style>'
+_TABLE_CSS = (
+    "<style>"
+    ".ht-wrap{overflow-x:auto;min-width:0;margin:.5rem 0 1rem}"
+    ".ht{width:100%;border-collapse:collapse;font-size:13px;font-family:Inter,system-ui,sans-serif}"
+    ".ht th{position:sticky;top:0;background:#1a1c23;color:#fafafa;padding:6px 8px;text-align:left;"
+    "border-bottom:2px solid #444;font-weight:600;white-space:nowrap;max-width:18em;overflow:hidden;text-overflow:ellipsis}"
+    ".ht td{padding:5px 8px;border-bottom:1px solid #333;color:#e0e0e0;white-space:nowrap;"
+    "max-width:16em;overflow:hidden;text-overflow:ellipsis}"
+    ".ht tr:hover td{background:#262833}"
+    "</style>"
+)
 
 def _html_table(df, max_rows=300):
     show = df.head(max_rows).copy()
