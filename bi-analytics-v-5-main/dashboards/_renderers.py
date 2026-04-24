@@ -11890,24 +11890,11 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 ["Вид работ", "Вид работы", "вид работ", "вид работы", "тип ресурсов", "тип работ", "work type"],
             )
 
-            # План из договора (приоритетно), fallback — План_numeric/План.
-            _tbl["_plan_ref_numeric"] = pd.Series(0.0, index=_tbl.index, dtype="float64")
-            _plan_candidate = None
-            for _c in _tbl.columns:
-                _cl = str(_c).lower()
-                if "договор" in _cl and ("план" in _cl or "колич" in _cl):
-                    _plan_candidate = _c
-                    break
-            if _plan_candidate is None:
-                _plan_candidate = _gdrs_resolve_plan_column(_tbl)
-            if _plan_candidate and _plan_candidate in _tbl.columns:
-                _tbl["_plan_ref_numeric"] = _to_num_safe(_tbl[_plan_candidate])
-            elif "План_numeric" in _tbl.columns:
-                _tbl["_plan_ref_numeric"] = pd.to_numeric(
-                    _tbl["План_numeric"], errors="coerce"
-                ).fillna(0.0)
-            elif "План" in _tbl.columns:
-                _tbl["_plan_ref_numeric"] = _to_num_safe(_tbl["План"])
+            # План: договор (если в resursi есть) → «План» в файле → План_numeric (merge 1С),
+            # иначе пустой столбец «План» в выгрузке затирал план из справочника 1С.
+            _tbl["_plan_ref_numeric"] = _gdrs_coalesce_plan_for_gdrs_table(
+                _tbl, _to_num_safe
+            )
 
             _daily_hdr_cols = [c for c in _tbl.columns if _gdrs_header_is_dd_mm_yyyy(c)]
             _weeks_in_month = 4
@@ -13436,6 +13423,73 @@ def _gdrs_pick_spravochnik_plan_column(ref: pd.DataFrame) -> str | None:
     return None
 
 
+def _gdrs_spravochnik_ref_column(
+    ref: pd.DataFrame, candidates: tuple[str, ...] | list[str]
+) -> str | None:
+    """
+    Находит колонку в выгрузке 1С по точному имени, регистру или без подчёркиваний/пробелов
+    (например, «КоличествоРаботники» / «количество_работников»).
+    """
+    if ref is None or getattr(ref, "empty", True):
+        return None
+
+    def _norm_name(s: str) -> str:
+        return re.sub(r"[_\s]+", "", str(s).strip().casefold())
+
+    want = {_norm_name(x) for x in candidates}
+    for c in ref.columns:
+        if _norm_name(c) in want:
+            return str(c)
+    for c in ref.columns:
+        if str(c).strip() in candidates:
+            return str(c)
+    return None
+
+
+def _gdrs_coalesce_plan_for_gdrs_table(pdf: pd.DataFrame, _to_num_fn) -> pd.Series:
+    """
+    План для референс-таблицы ГДРС: (1) колонка плана/кол-ва в договоре из resursi; (2) колонка «План»
+    в выгрузке; (3) `План_numeric` после merge с 1С. Иначе пустой «План»/лишняя договорная колонка
+    перетирали подставленный из `1c_*_spravochniki.json` план (по «технике» часто не воспроизводилось).
+    """
+    if pdf is None or pdf.empty:
+        return pd.Series(dtype="float64")
+    idx = pdf.index
+    pn = (
+        pd.to_numeric(pdf.get("План_numeric"), errors="coerce").fillna(0.0)
+        if "План_numeric" in pdf.columns
+        else pd.Series(0.0, index=idx)
+    )
+    c_contract = None
+    for c in pdf.columns:
+        cl = str(c).lower()
+        if "договор" in cl and ("план" in cl or "колич" in cl):
+            c_contract = c
+            break
+    c_plan = _gdrs_resolve_plan_column(pdf)
+    fc = (
+        _to_num_fn(pdf[c_contract])
+        if c_contract and c_contract in pdf.columns
+        else pd.Series(0.0, index=idx)
+    )
+    if c_plan and c_plan in pdf.columns:
+        fp = _to_num_fn(pdf[c_plan])
+    else:
+        fp = pd.Series(0.0, index=idx)
+    fcv = fc.to_numpy(dtype="float64", copy=False)
+    fpv = fp.to_numpy(dtype="float64", copy=False)
+    pnv = pn.to_numpy(dtype="float64", copy=False)
+    out = np.zeros(len(pdf), dtype="float64")
+    for i in range(len(pdf)):
+        if abs(fcv[i]) > 1e-9:
+            out[i] = fcv[i]
+        elif abs(fpv[i]) > 1e-9:
+            out[i] = fpv[i]
+        else:
+            out[i] = pnv[i]
+    return pd.Series(out, index=idx)
+
+
 def _gdrs_work_row_uses_tech(
     out: pd.DataFrame, i, data_source_filter: Optional[str]
 ) -> bool:
@@ -13478,8 +13532,23 @@ def _gdrs_merge_plan_from_1c_spravochniki(
         return out
     ref = ref_df.copy()
     ref.columns = [str(c).strip() for c in ref.columns]
-    col_people = "КоличествоРаботников" if "КоличествоРаботников" in ref.columns else None
-    col_tech = "КоличествоСпецТехники" if "КоличествоСпецТехники" in ref.columns else None
+    col_people = _gdrs_spravochnik_ref_column(
+        ref,
+        (
+            "КоличествоРаботников",
+            "Количество_Работников",
+            "Количество работников",
+        ),
+    )
+    col_tech = _gdrs_spravochnik_ref_column(
+        ref,
+        (
+            "КоличествоСпецТехники",
+            "Количество_СпецТехники",
+            "Количество спецтехники",
+            "Количество спец. техники",
+        ),
+    )
     plan_c_generic = None
     if not col_people and not col_tech:
         plan_c_generic = _gdrs_pick_spravochnik_plan_column(ref)
