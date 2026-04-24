@@ -866,14 +866,15 @@ def plan_fact_dates_table_to_html(
     red_color = "#c0392b"
     green_color = "#27ae60"
     parts = [
-        '<div style="overflow-x: auto; margin: 1em 0;">',
-        f'<table style="width:100%; border-collapse: collapse; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; font-size: 14px;">',
+        '<div style="overflow-x: auto; min-width: 0; margin: 1em 0;">',
+        f'<table style="width:100%; border-collapse: collapse; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; font-size: 13px;">',
         "<thead><tr>",
     ]
     for col in df.columns:
         col_esc = html_module.escape(str(col))
         parts.append(
-            f'<th style="border: 1px solid rgba(255,255,255,0.3); padding: 8px; background-color: {TABLE_BG_COLOR};">{col_esc}</th>'
+            f'<th style="border: 1px solid rgba(255,255,255,0.3); padding: 6px 8px; max-width: 18em; overflow: hidden; '
+            f'text-overflow: ellipsis; white-space: nowrap; background-color: {TABLE_BG_COLOR};">{col_esc}</th>'
         )
     parts.append("</tr></thead><tbody>")
     for i, (_, row) in enumerate(df.iterrows()):
@@ -886,11 +887,13 @@ def plan_fact_dates_table_to_html(
             if col == fact_date_column and row_style:
                 text_color = red_color if row_style == "red" else green_color
                 parts.append(
-                    f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 8px; background-color: {TABLE_BG_COLOR}; color: {text_color}; font-weight: bold;">{val_esc}</td>'
+                    f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 5px 8px; max-width: 16em; overflow: hidden; '
+                    f'text-overflow: ellipsis; white-space: nowrap; background-color: {TABLE_BG_COLOR}; color: {text_color}; font-weight: bold;">{val_esc}</td>'
                 )
             else:
                 parts.append(
-                    f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 8px; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
+                    f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 5px 8px; max-width: 16em; overflow: hidden; '
+                    f'text-overflow: ellipsis; white-space: nowrap; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
                 )
         parts.append("</tr>")
     parts.append("</tbody></table></div>")
@@ -984,14 +987,24 @@ def format_dataframe_as_html(
             )
         )
 
+    # §4.8: плотные ячейки — как `budget_table_to_html` / `style_dataframe_for_dark_theme`
+    _th = (
+        f"padding:6px 8px;background-color:rgba(18,56,92,0.95);color:{TABLE_TEXT_COLOR};"
+        "font-size:13px;max-width:18em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+    )
+    _td_base = (
+        f"padding:5px 8px;border:1px solid rgba(255,255,255,0.15);background-color:{TABLE_BG_COLOR};"
+        f"color:{TABLE_TEXT_COLOR};font-size:13px;max-width:16em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+    )
     html_table = (
-        "<div class='bd-table-wrap' style='width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch;'>"
-        "<table style='width:100%; min-width:max-content; border-collapse: collapse; background-color: hsl(209,67%,12%); color: #ffffff; font-size: clamp(12px, 1.1vw, 14px);'>"
+        "<div class='bd-table-wrap' style='width:100%;overflow-x:auto;min-width:0;-webkit-overflow-scrolling:touch;'>"
+        f"<table style='width:100%;min-width:max-content;border-collapse:collapse;background-color:{TABLE_BG_COLOR};"
+        f"color:{TABLE_TEXT_COLOR};font-size:13px;'>"
     )
     html_table += "<thead><tr>"
     for col in df.columns:
         col_escaped = html_module.escape(ru_column_header(col))
-        html_table += f"<th style='padding: 8px; background-color: rgba(18, 56, 92, 0.95);'>{col_escaped}</th>"
+        html_table += f"<th style='{_th}'>{col_escaped}</th>"
     html_table += "</tr></thead><tbody>"
     for idx, row in df.iterrows():
         html_table += "<tr>"
@@ -1028,7 +1041,9 @@ def format_dataframe_as_html(
                     formatted_value = "0" if (is_scalar and pd.isna(value)) else str(value)
                     color = neg_color
                 formatted_value = html_module.escape(str(formatted_value))
-                html_table += f"<td style='padding: 8px; border: 1px solid rgba(255,255,255,0.15); color: {color}; font-weight: bold;'>{formatted_value}</td>"
+                html_table += (
+                    f"<td style='{_td_base}color:{color};font-weight:bold;'>{formatted_value}</td>"
+                )
             else:
                 if isinstance(value, (int, float)) and is_scalar and not pd.isna(value):
                     col_lower = str(col).lower()
@@ -1054,14 +1069,14 @@ def format_dataframe_as_html(
                 else:
                     formatted_value = "" if (is_scalar and pd.isna(value)) else str(value)
                 formatted_value = html_module.escape(str(formatted_value))
-                cell_style = "padding: 8px; border: 1px solid rgba(255,255,255,0.15);"
+                cell_style = _td_base
                 if column_colors and col in column_colors:
-                    cell_style += f" color: {column_colors[col]};"
+                    cell_style += f"color:{column_colors[col]};"
                 if cell_color is not None and col in cell_color.columns:
                     try:
                         _cc = cell_color.at[idx, col]
                         if isinstance(_cc, str) and _cc.startswith("#"):
-                            cell_style += f" color: {_cc}; font-weight: 600;"
+                            cell_style += f"color:{_cc};font-weight:600;"
                     except Exception:
                         pass
                 html_table += f"<td style='{cell_style}'>{formatted_value}</td>"
