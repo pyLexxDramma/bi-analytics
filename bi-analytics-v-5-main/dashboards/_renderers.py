@@ -9062,7 +9062,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                         kind="mergesort",
                     ).reset_index(drop=True)
                     st.dataframe(
-                        _tessa_detail_table,
+                        style_dataframe_for_dark_theme(_tessa_detail_table),
                         use_container_width=True,
                         hide_index=True,
                     )
@@ -21619,7 +21619,11 @@ def dashboard_project_schedule_chart(df):
     if "plan start" not in work.columns or "plan end" not in work.columns:
         st.warning("Нужны колонки «План: начало» и «План: окончание» (после загрузки MSP: plan start / plan end).")
         pref = [c for c in ("project name", "task name", "plan start", "plan end") if c in work.columns]
-        st.dataframe(work[pref].head(80) if pref else work.head(80), use_container_width=True, hide_index=True)
+        st.dataframe(
+            style_dataframe_for_dark_theme(work[pref].head(80) if pref else work.head(80)),
+            use_container_width=True,
+            hide_index=True,
+        )
         return
 
     work["plan start"] = pd.to_datetime(work["plan start"], errors="coerce")
@@ -22112,7 +22116,9 @@ def dashboard_project_schedule_chart(df):
                     )
                     st.write("**Источники строк (`__source_file`):**")
                     st.dataframe(
-                        _src_counts.rename("строк").to_frame(),
+                        style_dataframe_for_dark_theme(
+                            _src_counts.rename("строк").to_frame()
+                        ),
                         use_container_width=True,
                     )
                 else:
@@ -22131,7 +22137,9 @@ def dashboard_project_schedule_chart(df):
                     )
                     if not _blk_uniq.empty:
                         st.dataframe(
-                            _blk_uniq.rename("строк").to_frame(),
+                            style_dataframe_for_dark_theme(
+                                _blk_uniq.rename("строк").to_frame()
+                            ),
                             use_container_width=True,
                         )
             except Exception as _blk_err:
@@ -22159,7 +22167,12 @@ def dashboard_project_schedule_chart(df):
                 if isinstance(_src, pd.DataFrame):
                     _src = _src.iloc[:, 0]
                 st.dataframe(
-                    _src.dropna().astype(str).head(10).to_frame(name="первые 10 непустых значений"),
+                    style_dataframe_for_dark_theme(
+                        _src.dropna()
+                        .astype(str)
+                        .head(10)
+                        .to_frame(name="первые 10 непустых значений")
+                    ),
                     use_container_width=True,
                 )
 
@@ -22637,7 +22650,10 @@ def dashboard_project_schedule_chart(df):
         fig_gantt = px.timeline(vis, **_tl_kwargs)
     except Exception as e:
         st.warning(f"Не удалось построить диаграмму: {e}")
-        st.dataframe(plot_df.head(50), use_container_width=True)
+        st.dataframe(
+            style_dataframe_for_dark_theme(plot_df.head(50)),
+            use_container_width=True,
+        )
         return
     # Явно обновляем только trace плана (data[0]): подписи даты/% — отдельным текстовым trace справа (см. ниже),
     # т.к. text на Bar часто не виден при group/barmode и длинной оси X.
