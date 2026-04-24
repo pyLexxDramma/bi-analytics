@@ -68,6 +68,8 @@ REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
         [
             "Рабочая документация",
             "Проектная документация",
+            "Просрочка выдачи РД",
+            "Просрочка выдачи ПД",
         ],
     ),
     (
@@ -243,7 +245,7 @@ def _get_dashboards() -> Dict[str, Callable]:
 # Ленивая загрузка, чтобы при импорте dashboards не тянуть project_visualization_app
 # Увеличьте версию при изменении реестра отчётов — иначе долгоживущий процесс Streamlit
 # может держать устаревший словарь в памяти.
-_DASHBOARDS_REGISTRY_VERSION = 42
+_DASHBOARDS_REGISTRY_VERSION = 43
 _dashboards_cache: Dict[str, Callable] = {}
 _dashboards_cache_version: int = 0
 

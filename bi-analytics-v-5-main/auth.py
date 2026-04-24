@@ -75,6 +75,9 @@ _REPORT_ROLE_ALLOWLIST: Dict[str, frozenset] = {
     "ГДРС Техника": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "Исполнительная документация": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "Предписания по подрядчикам": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
+    "Неустраненные предписания": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
+    "Просрочка выдачи РД": frozenset({"manager", "analyst", "rp", "gip", "financier", "admin", "superadmin"}),
+    "Просрочка выдачи ПД": frozenset({"manager", "analyst", "rp", "gip", "financier", "admin", "superadmin"}),
 }
 
 
