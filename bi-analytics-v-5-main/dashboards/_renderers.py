@@ -8645,9 +8645,6 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             status_mask = status_mask | (_issued & _overdue_plan & (~_done_on_time))
         filtered_df = filtered_df[status_mask].copy()
 
-    if project_col and project_col in filtered_df.columns:
-        filtered_df = _project_column_apply_canonical(filtered_df, project_col)
-
     if filtered_df.empty:
         st.info("Нет данных для выбранных фильтров.")
         return
@@ -19130,7 +19127,8 @@ def _tessa_fill_card_from_doc_lookup(df: pd.DataFrame) -> pd.DataFrame:
 def _rd_tessa_task_display_series(msp_df: pd.DataFrame, task_col: str | None) -> pd.Series | None:
     """
     Подпись задачи для РД: при наличии `tessa_tasks_data` в session_state подставляет наименование из TESSA
-    (совпадение по CardId / Task ID / точному названию).
+    (совпадение по CardId / Task ID / точному названию; при наличии проекта в TESSA — сначала в рамках
+    нормализованного ключа проекта, §3.1 / `_tessa_norm_project_key`).
     """
     if msp_df is None or getattr(msp_df, "empty", True) or not task_col or task_col not in msp_df.columns:
         return None
@@ -19165,7 +19163,11 @@ def _rd_tessa_task_display_series(msp_df: pd.DataFrame, task_col: str | None) ->
     card_col = _tessa_find_column(
         t, ["CardId", "CardID", "ИдЗадачи", "ИдКарточки", "TaskCardId"]
     )
+    t_proj_col = _tessa_find_column(
+        t, ["ObjectProjectName", "ObjectName", "ProjectName", "Проект", "project name"]
+    )
     lk: dict[str, str] = {}
+    lk_by_project: dict[str, dict[str, str]] = {}
     for _, r in t.iterrows():
         nm = str(r[name_col]).strip() if _tessa_cell_has_value(r.get(name_col)) else ""
         if not nm:
@@ -19174,13 +19176,25 @@ def _rd_tessa_task_display_series(msp_df: pd.DataFrame, task_col: str | None) ->
         keys.add(nm.casefold())
         if card_col and card_col in t.columns and _tessa_cell_has_value(r.get(card_col)):
             keys.add(_tessa_norm_join_key(r[card_col]).casefold())
+        t_pk = ""
+        if t_proj_col and t_proj_col in t.columns and _tessa_cell_has_value(r.get(t_proj_col)):
+            t_pk = _tessa_norm_project_key(r[t_proj_col])
         for k in keys:
-            if k and k not in lk:
+            if not k:
+                continue
+            if k not in lk:
                 lk[k] = nm
+            if t_pk:
+                lk_by_project.setdefault(t_pk, {})[k] = nm
     tid_col = _tessa_find_column(
         msp_df,
         ["Task ID", "task id", "TaskID", "ИдЗадачи", "CardId", "External Task Id", "ExternalTaskId"],
     )
+    msp_proj_col: str | None = None
+    for _c in ("project name", "Проект", "ProjectName"):
+        if _c in msp_df.columns:
+            msp_proj_col = _c
+            break
     out: list[str] = []
     for _, row in msp_df.iterrows():
         base = str(row[task_col]).strip() if pd.notna(row.get(task_col)) else ""
@@ -19190,10 +19204,26 @@ def _rd_tessa_task_display_series(msp_df: pd.DataFrame, task_col: str | None) ->
             alt_keys.append(base.casefold())
         if tid_col and tid_col in msp_df.columns and _tessa_cell_has_value(row.get(tid_col)):
             alt_keys.append(_tessa_norm_join_key(row[tid_col]).casefold())
-        for ck in alt_keys:
-            if ck and ck in lk:
-                hit = lk[ck]
-                break
+        msp_pk = ""
+        if msp_proj_col and _tessa_cell_has_value(row.get(msp_proj_col)):
+            msp_pk = _tessa_norm_project_key(row[msp_proj_col])
+        if msp_pk and msp_pk in lk_by_project:
+            sub = lk_by_project[msp_pk]
+            for ck in alt_keys:
+                if ck and ck in sub:
+                    hit = sub[ck]
+                    break
+            if not hit and base:
+                bf = base.casefold()
+                for k, v in sub.items():
+                    if bf == k or (len(bf) > 6 and (bf in k or k in bf)):
+                        hit = v
+                        break
+        if not hit:
+            for ck in alt_keys:
+                if ck and ck in lk:
+                    hit = lk[ck]
+                    break
         if not hit and base:
             bf = base.casefold()
             for k, v in lk.items():

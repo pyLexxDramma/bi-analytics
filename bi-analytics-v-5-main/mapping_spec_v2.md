@@ -222,7 +222,7 @@
 - [x] `dashboards/__init__.py`
   - [x] убрать/скрыть дублирующие пункты в ГДРС/СКУД (отдельный пункт «СКУД стройка» / экран «СКУД по неделям» убран из реестра).
   - [ ] проверить алиасы названий отчетов.
-  - [x] обновить `_DASHBOARDS_REGISTRY_VERSION` (37 — `dashboard_documentation` / **Бюджет план/факт** канон. проект; v36: прогноз/реестр; v35: ДтКт нетто; v34: ГДРС). Правки только текста **mapping_spec** реестр не меняют.
+  - [x] обновить `_DASHBOARDS_REGISTRY_VERSION` (38 — `_rd_tessa_task_display_series` + проект; v37: документация/план-факт; v36: прогноз; v35: ДтКт; v34: ГДРС). Правки только текста **mapping_spec** реестр не меняют.
 - [x] `dashboards/ui_quiet.py` — `suppress_caption` (без `st.caption` в дашбордах, см. 4.9).
 - [ ] `dashboards/_renderers.py` / `dev_projects_tz_matrix.py` — капшены/подсказки: только п. 4.9.
 - [x] `dashboards/_renderers.py` — **снятие `help=`** по п. **4.10** (все `help=` в файле убраны; админ/профиль/главная при необходимости отдельно).
@@ -250,7 +250,7 @@
 - [ ] `dashboards/_renderers.py`
   - [x] `dashboard_rd_delay()` / `dashboard_pd_delay()` — канонизация колонки проекта (**§3.1**), как в п. 5.3; остальное (статусы, TESSA, мультипроекты) — [ ] **§4.4**
   - [x] `dashboard_working_documentation()` / `dashboard_project_documentation()` / `dashboard_documentation()` — [x] канон. колонка проекта (**§3.1**) до фильтров/таблиц; TESSA/статусы — [ ] **§4.4**
-  - [ ] `_rd_tessa_task_display_series()`
+  - [x] `_rd_tessa_task_display_series()` — [x] подстановка наименования из TESSA с приоритетом ключа **проект** (MSP `project name` / `Проект` ↔ TESSA `ObjectName` / …; **§3.1**); полнота §4.4 — [ ]
 
 ## 5.6 ИД и предписания
 - [ ] `dashboards/_renderers.py`
@@ -293,5 +293,5 @@
 4. `ГДРС`,
 5. `Финансы`.
 
-**Текущий фокус (2026-04-24):** [x] **5.5** `dashboard_documentation` / **5.7** `dashboard_budget_by_type` — канон. проект (**реестр 37**). Далее: **§4.4** (TESSA/статусы РД/ПД), `_rd_tessa_task_display_series`, **5.1** ETL, **§6** сверка.
+**Текущий фокус (2026-04-24):** [x] **5.5** `_rd_tessa_task_display_series` (TESSA + проект; **реестр 38**). Далее: **§4.4** (статусы, мультипроекты, круг/линия РД), **5.1** ETL, **§6** сверка.
 
