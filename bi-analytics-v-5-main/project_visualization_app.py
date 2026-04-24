@@ -614,7 +614,7 @@ def main():
                             )
                     except Exception:
                         pass
-                    with st.expander("Диагностика колонок (первые файлы)", expanded=False):
+                    with st.expander("Справка: колонки загрузки (первые файлы)", expanded=False):
                         for row in result.get("diagnostics", [])[:40]:
                             st.json(row)
                     st.rerun()
@@ -666,7 +666,7 @@ def main():
                             )
                     except Exception:
                         pass
-                    with st.expander("Диагностика колонок", expanded=False):
+                    with st.expander("Справка: колонки загрузки из web/", expanded=False):
                         for row in result.get("diagnostics", [])[:40]:
                             st.json(row)
 
