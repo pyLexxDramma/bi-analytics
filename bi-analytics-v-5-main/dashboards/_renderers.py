@@ -11840,7 +11840,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         _ref_h4 = (
             "График движения техники"
             if _gdrs_tab_is_tech
-            else "График движения рабочей силы (люди)"
+            else "График движения рабочей силы"
         )
         st.markdown(f"#### {_ref_h4}")
         _tbl = filtered_df.copy()
@@ -11988,7 +11988,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             if _work_type_col and _work_type_col in _ref.columns:
                 _ref = _ref.rename(columns={_work_type_col: "Вид работ"})
             else:
-                _ref["Вид работ"] = "—"
+                _ref["Вид работ"] = "Рабочие" if not _gdrs_tab_is_tech else "—"
+            if (not _gdrs_tab_is_tech) and "Вид работ" in _ref.columns:
+                _ref["Вид работ"] = "Рабочие"
             if project_col and project_col in _ref.columns:
                 _ref["_Проект"] = _ref[project_col].fillna("Без проекта").astype(str).str.strip()
             else:
@@ -12042,7 +12044,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             for _c in ["План", "СКУД", "Отклонение"] + _week_cols_out:
                 _view[_c] = pd.to_numeric(_view[_c], errors="coerce").fillna(0).round(0).astype(int)
             _view["Дельта (%)"] = _view["Дельта (%)"].apply(
-                lambda v: f"{float(v):.1f}%" if v is not None and pd.notna(v) else ""
+                lambda v: f"{float(v):.1f}%" if v is not None and pd.notna(v) else "—"
             )
 
             # Диагностика кейса «План = Факт»: в референсе это считается подозрительным.
