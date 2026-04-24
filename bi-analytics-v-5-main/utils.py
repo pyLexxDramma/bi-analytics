@@ -908,7 +908,10 @@ def render_styled_table_to_html(styler, hide_index: bool = True) -> str:
         return "<p>Нет данных для отображения.</p>"
     try:
         html = styler.to_html(index=not hide_index)
-        return f'<div style="overflow-x: auto; margin: 1em 0;">{html}</div>'
+        return (
+            '<div style="overflow-x:auto;min-width:0;margin:1em 0;-webkit-overflow-scrolling:touch;">'
+            f"{html}</div>"
+        )
     except Exception:
         return ""
 
