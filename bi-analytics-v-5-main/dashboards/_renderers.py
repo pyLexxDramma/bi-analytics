@@ -14154,16 +14154,28 @@ _EXEC_DOC_DETAIL_CSS = """
   color:#9fb3c8; font-size:13px; margin-top:10px; line-height:1.45;
 }
 .exec-doc-table-wrap { overflow-x:auto; margin:0.75rem 0 0.5rem; border-radius:14px; border:1px solid rgba(82,104,130,0.45); }
-.exec-doc-table { width:100%; border-collapse:collapse; font-size:14px; font-family:Inter,system-ui,sans-serif; }
+.exec-doc-table { width:100%; table-layout:fixed; border-collapse:collapse; font-size:14px; font-family:Inter,system-ui,sans-serif; }
 .exec-doc-table th {
-  text-align:left; padding:12px 14px; background:#16283a; color:#f8fbff;
+  text-align:left; padding:10px 10px; background:#16283a; color:#f8fbff;
   border-bottom:1px solid rgba(138,160,184,0.28); font-size:11px; font-weight:700;
-  text-transform:uppercase; letter-spacing:0.05em; white-space:nowrap;
+  text-transform:uppercase; letter-spacing:0.05em; white-space:normal; line-height:1.1; word-break:keep-all; hyphens:none;
+  vertical-align:bottom;
 }
+.exec-doc-table th.exec-col-num,
+.exec-doc-table th.exec-col-date,
+.exec-doc-table th.exec-col-dly,
+.exec-doc-table th.exec-col-st { white-space:nowrap; }
 .exec-doc-table td {
-  padding:10px 14px; border-bottom:1px solid rgba(82,104,130,0.28); color:#e8eef5;
-  vertical-align:middle; max-width:340px;
+  padding:8px 10px; border-bottom:1px solid rgba(82,104,130,0.28); color:#e8eef5;
+  vertical-align:top;
 }
+/* Компактные «технические» колонки, чтобы даты/сроки/дни визуально «привязались» к цифрам, а широкие поля — не съедали весь макет */
+.exec-col-num { width:7.5ch; min-width:7.5ch; max-width:10ch; text-align:left; }
+.exec-col-dly { width:9ch; min-width:9ch; max-width:10ch; text-align:left; }
+.exec-col-st { width:12ch; min-width:12ch; max-width:16ch; text-align:left; }
+.exec-col-date { width:11ch; min-width:10ch; max-width:12ch; text-align:left; }
+.exec-col-text { width:auto; min-width:14ch; max-width:none; }
+.exec-doc-table td { word-break:normal; overflow-wrap:anywhere; }
 .exec-doc-table tr:nth-child(even) td { background:rgba(255,255,255,0.025); }
 .exec-doc-table tr:hover td { background:rgba(48,72,99,0.72); }
 .exec-doc-table th a { color:#f8fbff; text-decoration:none; display:inline-flex; gap:6px; align-items:center; }
@@ -14289,6 +14301,25 @@ def _exec_sort_table_df(df: pd.DataFrame, sort_col: str, sort_order: str) -> pd.
     return work.drop(columns=["_exec_sort_key"], errors="ignore")
 
 
+def _exec_detail_col_class(col_name: str) -> str:
+    """Класс колонки для фиксированного layout (узкие даты/цифры, шире — текст/объекты)."""
+    c = str(col_name or "").strip()
+    cl = c.casefold()
+    if c == "№" or c.startswith("№") or c.startswith("No") or c.startswith("NO"):
+        return "exec-col-num"
+    if "дата" in cl or "date" in cl:
+        return "exec-col-date"
+    if "просроч" in cl or "срок" in cl or "delay" in cl or "overdue" in cl:
+        return "exec-col-dly"
+    if c == "Статус" or "статус" in cl or "state" in cl:
+        return "exec-col-st"
+    if any(k in cl for k in ("объект", "контрагент", "подряд", "документ", "наимен", "тем", "соглас", "переда", "выпуск")):
+        return "exec-col-text"
+    if any(k in cl for k in ("id", "ид", "карточ", "номер", "кол-во", "сумм")):
+        return "exec-col-num"
+    return "exec-col-text"
+
+
 def _exec_metric_cards_html(cards: list[dict], *, caption: str | None = None) -> str:
     esc = html_module.escape
     parts = ['<div class="exec-kpi-grid">']
@@ -14330,12 +14361,14 @@ def _exec_detail_table_html(
     cols = list(show.columns)
     head_parts = ["<thead><tr>"]
     for c in cols:
+        c_cls = _exec_detail_col_class(c)
         marker = "↕"
         if sort_col == c:
             marker = "↑" if str(sort_order).lower() == "asc" else "↓"
         link = _exec_sort_link(c, sort_col, sort_order)
         head_parts.append(
-            f'<th><a href="{esc(link, quote=True)}">{esc(c)} <span class="exec-doc-th-sort">{esc(marker)}</span></a></th>'
+            f'<th class="{esc(c_cls, quote=True)}">'
+            f'<a href="{esc(link, quote=True)}">{esc(c)} <span class="exec-doc-th-sort">{esc(marker)}</span></a></th>'
         )
     head_parts.append("</tr></thead>")
     thead = "".join(head_parts)
@@ -14355,7 +14388,8 @@ def _exec_detail_table_html(
                 inner = _exec_delay_cell_html(raw)
             else:
                 inner = esc(raw)
-            body_parts.append(f"<td>{inner}</td>")
+            c_cls = _exec_detail_col_class(c)
+            body_parts.append(f'<td class="{esc(c_cls, quote=True)}">{inner}</td>')
         body_parts.append("</tr>")
     body_parts.append("</tbody>")
     return (
@@ -18261,9 +18295,9 @@ _PRED_DASH_MOCK_CSS = """
 .pred-kpi-info p { margin:0; font-size:12px; color:#a0a0a0; }
 .pred-leg { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:8px; padding:8px 12px; background:#1a1c23; border-radius:12px; border:1px solid #444; font-size:13px; color:#e0e0e0; }
 .pred-mock-table-wrap { margin-top:4px; overflow-x:auto; border-radius:8px; border:1px solid #444; }
-.pred-mock-table-wrap table { width:100%; border-collapse:collapse; font-size:13px; min-width:900px; }
-.pred-mock-table-wrap th { text-align:left; padding:10px 12px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:11px; letter-spacing:0.02em; }
-.pred-mock-table-wrap td { padding:8px 12px; border-bottom:1px solid #333; color:#e0e0e0; vertical-align:top; }
+.pred-mock-table-wrap table { width:100%; table-layout:fixed; border-collapse:collapse; font-size:13px; }
+.pred-mock-table-wrap th { text-align:left; padding:8px 10px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:11px; letter-spacing:0.02em; }
+.pred-mock-table-wrap td { padding:7px 10px; border-bottom:1px solid #333; color:#e0e0e0; vertical-align:top; }
 .pred-mock-table-wrap tr.pred-crit td { background:rgba(231,76,60,0.07); }
 .pred-td-contr { font-weight:600; color:#fafafa; background:#1a1c23; }
 .pred-td-sub { font-size:11px; color:#8892a0; margin-top:4px; }
@@ -18276,12 +18310,21 @@ _PRED_DASH_MOCK_CSS = """
 .pred-mock-sort { font-size:12px; color:#a0a0a0; }
 .pred-mock-badge { background:#c0392b; color:#fff; padding:4px 14px; border-radius:20px; font-size:13px; font-weight:500; }
 .pred-detail-wrap { overflow-x:auto; border:1px solid #444; border-radius:10px; margin-top:8px; }
-.pred-detail-wrap table { width:100%; border-collapse:collapse; min-width:1200px; }
-.pred-detail-wrap th { text-align:left; padding:10px 12px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:11px; text-transform:uppercase; }
+.pred-detail-wrap table { width:100%; table-layout:fixed; border-collapse:collapse; }
+.pred-detail-wrap th { text-align:left; padding:8px 10px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:11px; text-transform:uppercase; white-space:normal; line-height:1.1; word-break:keep-all; }
+.pred-detail-wrap th.pred-col-st,
+.pred-detail-wrap th.pred-col-num,
+.pred-detail-wrap th.pred-col-dly { white-space:nowrap; }
 .pred-detail-wrap th a { color:#fafafa; text-decoration:none; display:inline-flex; gap:6px; align-items:center; }
 .pred-detail-wrap th a:hover { color:#93c5fd; }
 .pred-sort-icon { color:#8fb4da; font-size:10px; }
-.pred-detail-wrap td { padding:9px 12px; border-bottom:1px solid #333; color:#e0e0e0; }
+.pred-detail-wrap td { padding:7px 10px; border-bottom:1px solid #333; color:#e0e0e0; vertical-align:top; word-break:normal; overflow-wrap:anywhere; }
+.pred-detail-wrap .pred-col-num { width:7.5ch; min-width:7.5ch; max-width:10ch; }
+.pred-detail-wrap .pred-col-dly { width:9ch; min-width:9ch; max-width:10ch; font-variant-numeric:tabular-nums; }
+.pred-detail-wrap .pred-col-st { width:12ch; min-width:12ch; max-width:16ch; }
+.pred-detail-wrap .pred-col-date { width:11ch; min-width:10ch; max-width:12ch; }
+.pred-detail-wrap .pred-col-mid { width:14ch; min-width:12ch; max-width:20ch; }
+.pred-detail-wrap .pred-col-text { width:auto; min-width:12ch; }
 .pred-detail-wrap tr.pred-row-overdue td { background:rgba(255, 111, 145, 0.12); }
 .pred-detail-wrap tr.pred-row-resolved td { background:rgba(158, 255, 158, 0.11); }
 .pred-detail-wrap tr:hover td { background:rgba(255,255,255,0.04); }
@@ -18666,6 +18709,27 @@ def _pred_status_chip_html(status: str, overdue_days, resolved: bool) -> str:
     return f'<span class="pred-chip pred-chip-neutral">{esc(s)}</span>'
 
 
+def _pred_detail_col_class(col_name: str) -> str:
+    """Классы ширин для детальной таблицы предписаний (даты/цифры — уже, длинные поля — шире)."""
+    c = str(col_name or "").strip()
+    cl = c.casefold()
+    if c == "Статус предписания":
+        return "pred-col-st"
+    if c in {"№ договора", "№ предписания"} or c.startswith("№ "):
+        return "pred-col-mid"
+    if c == "№ документа":
+        return "pred-col-mid"
+    if c in {"Дата выдачи предписания", "Срок устранения", "Фактическая дата устранения предписания"} or "дата" in cl:
+        return "pred-col-date"
+    if c == "Дней просрочки" or "дней" in cl:
+        return "pred-col-dly"
+    if c == "Критические предписания" or c.startswith("критич"):
+        return "pred-col-num"
+    if c in {"Подрядчик", "Проект", "Блок выдачи предписания"}:
+        return "pred-col-text"
+    return "pred-col-text"
+
+
 def _pred_detail_table_html(
     df: pd.DataFrame,
     *,
@@ -18680,12 +18744,14 @@ def _pred_detail_table_html(
     render_cols = [c for c in show.columns if c != "_resolved_flag"]
     parts = ['<div class="pred-detail-wrap"><table><thead><tr>']
     for col in render_cols:
+        c_cls = _pred_detail_col_class(col)
         marker = "↕"
         if sort_col == col:
             marker = "↑" if str(sort_order).lower() == "asc" else "↓"
         link = _pred_sort_link(col, sort_col, sort_order)
         parts.append(
-            f'<th><a href="{esc(link, quote=True)}">{esc(col)} <span class="pred-sort-icon">{esc(marker)}</span></a></th>'
+            f'<th class="{esc(c_cls, quote=True)}">'
+            f'<a href="{esc(link, quote=True)}">{esc(col)} <span class="pred-sort-icon">{esc(marker)}</span></a></th>'
         )
     parts.append("</tr></thead><tbody>")
     for _, row in show.iterrows():
@@ -18701,7 +18767,8 @@ def _pred_detail_table_html(
                 inner = _pred_status_chip_html(str(val), row.get("Дней просрочки"), is_resolved)
             else:
                 inner = esc(str(val))
-            parts.append(f"<td>{inner}</td>")
+            c_cls = _pred_detail_col_class(col)
+            parts.append(f'<td class="{esc(c_cls, quote=True)}">{inner}</td>')
         parts.append("</tr>")
     parts.append("</tbody></table></div>")
     return "".join(parts)
