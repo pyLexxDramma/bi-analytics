@@ -186,11 +186,11 @@ _TABLE_CSS = """
 }
 .rendered-table th {
   position:sticky; top:0; background:#1a1c23; color:#fafafa;
-  padding:6px 10px; text-align:left; border-bottom:2px solid #444;
+  padding:6px 8px; text-align:left; border-bottom:2px solid #444;
   font-weight:600; white-space:nowrap; max-width:18em; overflow:hidden; text-overflow:ellipsis;
 }
 .rendered-table td {
-  padding:5px 10px; border-bottom:1px solid #333; color:#e0e0e0;
+  padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0;
   white-space:nowrap; max-width:16em; overflow:hidden; text-overflow:ellipsis;
 }
 .rendered-table tr:hover td {background:#262833}
@@ -822,19 +822,19 @@ def _clean_display_str(val, empty: str = "") -> str:
 
 _DEV_REASONS_FULL_TABLE_CSS = """
 <style>
-.dev-reasons-wrap { overflow-x:auto; margin:0.5rem 0 1rem 0; }
+.dev-reasons-wrap { overflow-x:auto; min-width:0; margin:0.5rem 0 1rem 0; }
 .dev-reasons-table {
   width:100%; border-collapse:collapse; font-size:13px;
   font-family:Inter,system-ui,sans-serif;
 }
 .dev-reasons-table th {
   position:sticky; top:0; background:#1a1c23; color:#fafafa;
-  padding:8px 10px; text-align:left; border-bottom:2px solid #444;
-  font-weight:600; white-space:nowrap;
+  padding:6px 8px; text-align:left; border-bottom:2px solid #444;
+  font-weight:600; white-space:nowrap; max-width:18em; overflow:hidden; text-overflow:ellipsis;
 }
 .dev-reasons-table td {
-  padding:6px 10px; border-bottom:1px solid #333; color:#e0e0e0;
-  white-space:nowrap; max-width:360px; overflow:hidden; text-overflow:ellipsis;
+  padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0;
+  white-space:nowrap; max-width:16em; overflow:hidden; text-overflow:ellipsis;
 }
 .dev-reasons-table tr:hover td { background:#262833; }
 .dev-bg-turq { background:rgba(72,202,228,0.18) !important; }
