@@ -324,11 +324,11 @@ def _render_gantt_schedule_html_table(df: pd.DataFrame, max_rows: int = 80):
                     ("color", TABLE_TEXT_COLOR),
                     ("font-weight", "600"),
                     ("border-bottom", "2px solid #444"),
-                    ("padding", "8px 12px"),
+                    ("padding", "6px 8px"),
                     ("text-align", "left"),
                 ],
             },
-            {"selector": "td", "props": [("border-bottom", "1px solid #333"), ("padding", "6px 12px")]},
+            {"selector": "td", "props": [("border-bottom", "1px solid #333"), ("padding", "5px 8px")]},
         ]
     )
     if dev_names:
@@ -21220,7 +21220,7 @@ def dashboard_id_tessa_placeholder(df):
 
     suppress_caption(f"Источник данных: **{_source_label}**.")
     st.metric("Строк в наборе TESSA", int(len(work)))
-    with st.expander("Колонки текущего набора TESSA", expanded=False):
+    with st.expander("Справка: колонки набора TESSA", expanded=False):
         st.code(", ".join(str(c) for c in work.columns))
     st.success("Источник TESSA доступен. Основная аналитика находится в отчётах «Исполнительная документация» и «Неустраненные предписания».")
 
