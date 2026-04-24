@@ -1258,18 +1258,27 @@ def _plotly_legend_horizontal_below_plot(
     return fig
 
 
-def _finance_bar_text_mln_rub(values_rub: pd.Series) -> list:
+def _finance_bar_text_mln_rub(
+    values_rub: pd.Series,
+    *,
+    min_abs_mln: float = 0.0,
+) -> list:
     """Подписи над столбцами по ТЗ: число и строка «млн руб.» (две строки)."""
     out = []
+    _floor = float(min_abs_mln) if min_abs_mln else 0.0
     for v in values_rub:
         if v is None or (isinstance(v, float) and pd.isna(v)):
             out.append("")
             continue
         try:
             x = float(v) / 1e6
-            out.append(f"{x:.2f}<br>млн руб.")
         except (TypeError, ValueError):
             out.append("")
+            continue
+        if _floor > 0.0 and abs(x) < _floor:
+            out.append("")
+            continue
+        out.append(f"{x:.2f}<br>млн руб.")
     return out
 
 
@@ -6881,6 +6890,51 @@ def dashboard_budget_by_period(df):
                 title_suffix = " (накопительно)"
             else:
                 title_suffix = ""
+
+            # Узкие столбцы при длинной шкале: убираем «пустые» месяцы (иначе каждая колонка — тонкая).
+            _hide_zero_months = False
+            if period_type_en == "Month" and view_type == "По месяцам":
+                _hide_zero_months = st.checkbox(
+                    "Скрывать месяцы, где план и факт равны 0",
+                    value=True,
+                    key="budget_period_hide_zero_months",
+                )
+            if (
+                _hide_zero_months
+                and period_type_en == "Month"
+                and view_type == "По месяцам"
+                and not project_data.empty
+            ):
+                _pl = project_data["budget plan"].fillna(0.0)
+                _fc = project_data["budget fact"].fillna(0.0)
+                _keep = _pl.abs() + _fc.abs() > 0.5
+                if (
+                    adjusted_budget_col
+                    and adjusted_budget_col in project_data.columns
+                    and not hide_adjusted
+                ):
+                    _keep = _keep | (project_data[adjusted_budget_col].fillna(0.0).abs() > 0.5)
+                project_data = project_data.loc[_keep].copy()
+            if project_data.empty:
+                st.info(
+                    "Нет периодов для графика. Снимите «Скрывать месяцы, где план и факт равны 0» "
+                    "или расширьте период/фильтры."
+                )
+                return
+
+            _n = len(project_data)
+            _tlbl = 0.005
+            _tfs = 8 if _n > 32 else 9 if _n > 20 else 10 if _n > 12 else 11
+            # Меньше «воздуха» между группами/столбцами — визуально шире бары.
+            if _n > 32:
+                _bg, _bgg = 0.04, 0.01
+            elif _n > 18:
+                _bg, _bgg = 0.06, 0.02
+            else:
+                _bg, _bgg = 0.1, 0.04
+            _ch = 600 if _n <= 20 else int(min(900, 520 + int(_n * 1.4)))
+            _xangle = -45 if _n <= 18 else -50 if _n <= 36 else -55
+
             fig = go.Figure()
             fig.add_trace(
                 go.Bar(
@@ -6888,9 +6942,11 @@ def dashboard_budget_by_period(df):
                     y=project_data["budget plan"].div(1e6),
                     name="БДДС план",
                     marker_color="#2E86AB",
-                    text=_finance_bar_text_mln_rub(project_data["budget plan"]),
+                    text=_finance_bar_text_mln_rub(
+                        project_data["budget plan"], min_abs_mln=_tlbl
+                    ),
                     textposition="outside",
-                    textfont=dict(size=11, color="#f0f4f8"),
+                    textfont=dict(size=_tfs, color="#f0f4f8"),
                     customdata=project_data["budget plan"].apply(format_million_rub),
                     hovertemplate="<b>%{x}</b><br>БДДС план: %{customdata}<br><extra></extra>",
                 )
@@ -6901,9 +6957,11 @@ def dashboard_budget_by_period(df):
                     y=project_data["budget fact"].div(1e6),
                     name="БДДС факт",
                     marker_color="#A23B72",
-                    text=_finance_bar_text_mln_rub(project_data["budget fact"]),
+                    text=_finance_bar_text_mln_rub(
+                        project_data["budget fact"], min_abs_mln=_tlbl
+                    ),
                     textposition="outside",
-                    textfont=dict(size=11, color="#f0f4f8"),
+                    textfont=dict(size=_tfs, color="#f0f4f8"),
                     customdata=project_data["budget fact"].apply(format_million_rub),
                     hovertemplate="<b>%{x}</b><br>БДДС факт: %{customdata}<br><extra></extra>",
                 )
@@ -6919,7 +6977,7 @@ def dashboard_budget_by_period(df):
                         marker_color="#e74c3c",
                         text=project_data["reserve budget"].apply(format_million_rub),
                         textposition="outside",
-                        textfont=dict(size=11, color="#f0f4f8"),
+                        textfont=dict(size=_tfs, color="#f0f4f8"),
                         customdata=project_data["reserve budget"].apply(format_million_rub),
                         hovertemplate="<b>%{x}</b><br>Отклонение: %{customdata}<br><extra></extra>",
                         visible="legendonly",
@@ -6938,7 +6996,7 @@ def dashboard_budget_by_period(df):
                         marker_color="#F18F01",
                         text=project_data[adjusted_budget_col].apply(format_million_rub),
                         textposition="outside",
-                        textfont=dict(size=11, color="#f0f4f8"),
+                        textfont=dict(size=_tfs, color="#f0f4f8"),
                         customdata=project_data[adjusted_budget_col].apply(format_million_rub),
                         hovertemplate="<b>%{x}</b><br>Скорректированный бюджет: %{customdata}<br><extra></extra>",
                     )
@@ -6947,16 +7005,21 @@ def dashboard_budget_by_period(df):
                 title_text="",
                 yaxis_title="млн руб.",
                 barmode="group",
-                bargap=0.18,
-                bargroupgap=0.08,
+                bargap=_bg,
+                bargroupgap=_bgg,
                 xaxis=dict(
                     title=dict(text=period_label, standoff=26),
-                    tickangle=-45,
-                    tickfont=dict(size=10),
-                    nticks=18,
+                    tickangle=_xangle,
+                    tickfont=dict(size=8 if _n > 28 else 9 if _n > 18 else 10),
+                    nticks=min(64, max(12, _n)),
                 ),
             )
             fig = _apply_finance_bar_label_layout(fig)
+            if _n > 10:
+                try:
+                    fig.update_layout(uniformtext=dict(minsize=5, mode="hide"))
+                except Exception:
+                    pass
             fig = _plotly_legend_horizontal_below_plot(fig)
             if not project_data.empty:
                 _ymax = float(
@@ -6973,7 +7036,7 @@ def dashboard_budget_by_period(df):
                 if np.isfinite(_ymax) and _ymax > 0:
                     fig.update_layout(yaxis=dict(range=[0, _ymax * 1.22]))
             fig = apply_chart_background(fig)
-            render_chart(fig, caption_below=f"БДДС{title_suffix}", height=600)
+            render_chart(fig, caption_below=f"БДДС{title_suffix}", height=_ch)
 
         _budget_period_chart()
 
@@ -7961,6 +8024,42 @@ def dashboard_bdr(df):
             title_suffix = " (накопительно)"
         else:
             title_suffix = ""
+
+        _bdr_hide_zero = False
+        if period_type_en == "Month" and view_type == "По месяцам":
+            _bdr_hide_zero = st.checkbox(
+                "Скрывать месяцы, где план и факт равны 0",
+                value=True,
+                key="bdr_hide_zero_months",
+            )
+        if (
+            _bdr_hide_zero
+            and period_type_en == "Month"
+            and view_type == "По месяцам"
+            and not chart_df.empty
+        ):
+            _p0 = chart_df["План расходов"].fillna(0.0)
+            _f0 = chart_df["Факт расходов"].fillna(0.0)
+            chart_df = chart_df.loc[_p0.abs() + _f0.abs() > 0.5].copy()
+        if chart_df.empty:
+            st.info(
+                "Нет периодов для графика. Снимите «Скрывать месяцы, где план и факт равны 0» "
+                "или расширьте фильтры."
+            )
+            return
+
+        _nb = len(chart_df)
+        _tlbl_b = 0.005
+        _tfs_b = 8 if _nb > 32 else 9 if _nb > 20 else 10 if _nb > 12 else 11
+        if _nb > 32:
+            _bgb, _bggb = 0.04, 0.01
+        elif _nb > 18:
+            _bgb, _bggb = 0.06, 0.02
+        else:
+            _bgb, _bggb = 0.1, 0.04
+        _bdr_h = 600 if _nb <= 20 else int(min(900, 520 + int(_nb * 1.4)))
+        _xb = -45 if _nb <= 18 else -50 if _nb <= 36 else -55
+
         fig = go.Figure()
         x_vals = chart_df["Период"]
         fig.add_trace(
@@ -7969,9 +8068,11 @@ def dashboard_bdr(df):
                 y=chart_df["План расходов"].div(1e6),
                 name="План расходов",
                 marker_color="#2E86AB",
-                text=_finance_bar_text_mln_rub(chart_df["План расходов"]),
+                text=_finance_bar_text_mln_rub(
+                    chart_df["План расходов"], min_abs_mln=_tlbl_b
+                ),
                 textposition="outside",
-                textfont=dict(size=11, color="#f0f4f8"),
+                textfont=dict(size=_tfs_b, color="#f0f4f8"),
             )
         )
         fig.add_trace(
@@ -7980,9 +8081,11 @@ def dashboard_bdr(df):
                 y=chart_df["Факт расходов"].div(1e6),
                 name="Факт расходов",
                 marker_color="#A23B72",
-                text=_finance_bar_text_mln_rub(chart_df["Факт расходов"]),
+                text=_finance_bar_text_mln_rub(
+                    chart_df["Факт расходов"], min_abs_mln=_tlbl_b
+                ),
                 textposition="outside",
-                textfont=dict(size=11, color="#f0f4f8"),
+                textfont=dict(size=_tfs_b, color="#f0f4f8"),
             )
         )
         dev_colors = [
@@ -7994,9 +8097,11 @@ def dashboard_bdr(df):
                 y=chart_df["Отклонение"].div(1e6),
                 name="Отклонение",
                 marker_color=dev_colors,
-                text=_finance_bar_text_mln_rub(chart_df["Отклонение"]),
+                text=_finance_bar_text_mln_rub(
+                    chart_df["Отклонение"], min_abs_mln=_tlbl_b
+                ),
                 textposition="outside",
-                textfont=dict(size=11, color="#f0f4f8"),
+                textfont=dict(size=_tfs_b, color="#f0f4f8"),
             )
         )
         fig.update_layout(
@@ -8004,10 +8109,21 @@ def dashboard_bdr(df):
             xaxis_title=period_label,
             yaxis_title="млн руб.",
             barmode="group",
-            xaxis=dict(tickangle=-45, tickfont=dict(size=10), nticks=18),
+            bargap=_bgb,
+            bargroupgap=_bggb,
+            xaxis=dict(
+                tickangle=_xb,
+                tickfont=dict(size=8 if _nb > 28 else 9 if _nb > 18 else 10),
+                nticks=min(64, max(12, _nb)),
+            ),
             margin=dict(b=100),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
         )
+        if _nb > 10:
+            try:
+                fig.update_layout(uniformtext=dict(minsize=5, mode="hide"))
+            except Exception:
+                pass
         if not chart_df.empty:
             _ymax = float(
                 np.nanmax(
@@ -8036,7 +8152,11 @@ def dashboard_bdr(df):
                 fig.update_layout(yaxis=dict(range=[_ymin - pad, _ymax + pad]))
         fig = _apply_finance_bar_label_layout(fig)
         fig = apply_chart_background(fig)
-        render_chart(fig, caption_below=f"БДР — план/факт расходов{title_suffix}")
+        render_chart(
+            fig,
+            caption_below=f"БДР — план/факт расходов{title_suffix}",
+            height=_bdr_h,
+        )
 
     _bdr_chart()
 
@@ -8256,6 +8376,9 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         st.warning(f"⚠️ Отсутствуют необходимые колонки: {', '.join(missing_cols)}")
         st.info("Пожалуйста, убедитесь, что файл содержит все необходимые колонки.")
         return
+
+    if project_col and project_col in df.columns:
+        df = _project_column_apply_canonical(df, project_col)
 
     def _to_numeric_series(series):
         return pd.to_numeric(
@@ -17645,6 +17768,11 @@ def dashboard_approved_budget(df):
         return
 
     st.subheader("Утверждённый бюджет (план/факт) по месяцам")
+    _appr_hide_zero = st.checkbox(
+        "Скрывать месяцы, где план и факт равны 0",
+        value=True,
+        key="approved_budget_hide_zero_months",
+    )
     monthly_rows = (
         filtered_df.groupby("plan_month")
         .agg({"budget plan": "sum", "budget fact": "sum"})
@@ -17658,42 +17786,43 @@ def dashboard_approved_budget(df):
     monthly_rows["Месяц"] = monthly_rows["plan_month"].apply(format_period_ru)
     monthly_rows["reserve budget"] = monthly_rows["budget fact"] - monthly_rows["budget plan"]
 
-    # R23-11 (стр.28): цвет бара «БДДС факт» по месяцу — зелёный, если факт
-    # меньше 80% плана; оранжевый в диапазоне 80–100% («приближается к
-    # плану за 10–20%»); красный при превышении плана. При нулевом плане —
-    # нейтральный бордовый.
-    def _fact_bar_color(plan: float, fact: float) -> str:
-        try:
-            p = float(plan or 0.0)
-            f = float(fact or 0.0)
-        except (TypeError, ValueError):
-            return "#A23B72"
-        if p <= 0:
-            return "#A23B72"
-        if f > p:
-            return "#E74C3C"
-        if f >= 0.8 * p:
-            return "#E67E22"
-        return "#27AE60"
-
-    _fact_colors = [
-        _fact_bar_color(p, f)
-        for p, f in zip(
-            monthly_rows["budget plan"].fillna(0.0).tolist(),
-            monthly_rows["budget fact"].fillna(0.0).tolist(),
+    if _appr_hide_zero:
+        _pl0 = monthly_rows["budget plan"].fillna(0.0)
+        _fc0 = monthly_rows["budget fact"].fillna(0.0)
+        monthly_rows = monthly_rows.loc[_pl0.abs() + _fc0.abs() > 0.5].copy()
+    if monthly_rows.empty:
+        st.info(
+            "Нет месяцев с данными для графика. Снимите «Скрывать месяцы, где план и факт равны 0»."
         )
-    ]
+        return
 
+    # Как на БДДС: план/факт — фиксированные цвета, без «светофора» (читаемость + единый стиль).
     fig = go.Figure()
+    _n_m = len(monthly_rows)
+    # Не дублировать «0.00 млн»; подписи — как в БДДС (min_abs_mln).
+    _text_min_mln = 0.005
+    _tf_size = 8 if _n_m > 32 else 9 if _n_m > 20 else 10 if _n_m > 12 else 11
+    if _n_m > 32:
+        _bg, _bgg = 0.04, 0.01
+    elif _n_m > 18:
+        _bg, _bgg = 0.06, 0.02
+    else:
+        _bg, _bgg = 0.1, 0.04
+    _chart_h = 600 if _n_m <= 20 else int(min(900, 520 + int(_n_m * 1.4)))
+    _tick_angle = -45 if _n_m <= 18 else -50 if _n_m <= 36 else -55
+    _tick_fs = 8 if _n_m > 28 else 9 if _n_m > 18 else 10
+
     fig.add_trace(
         go.Bar(
             x=monthly_rows["Месяц"],
             y=monthly_rows["budget plan"].div(1e6),
             name="БДДС план",
             marker_color="#2E86AB",
-            text=_finance_bar_text_mln_rub(monthly_rows["budget plan"]),
+            text=_finance_bar_text_mln_rub(
+                monthly_rows["budget plan"], min_abs_mln=_text_min_mln
+            ),
             textposition="outside",
-            textfont=dict(size=11, color="#f0f4f8"),
+            textfont=dict(size=_tf_size, color="#f0f4f8"),
             hovertemplate="<b>%{x}</b><br>БДДС план: %{customdata}<extra></extra>",
             customdata=monthly_rows["budget plan"].apply(format_million_rub),
         )
@@ -17703,34 +17832,38 @@ def dashboard_approved_budget(df):
             x=monthly_rows["Месяц"],
             y=monthly_rows["budget fact"].div(1e6),
             name="БДДС факт",
-            marker_color=_fact_colors,
-            text=_finance_bar_text_mln_rub(monthly_rows["budget fact"]),
+            marker_color="#A23B72",
+            text=_finance_bar_text_mln_rub(
+                monthly_rows["budget fact"], min_abs_mln=_text_min_mln
+            ),
             textposition="outside",
-            textfont=dict(size=11, color="#f0f4f8"),
+            textfont=dict(size=_tf_size, color="#f0f4f8"),
             hovertemplate="<b>%{x}</b><br>БДДС факт: %{customdata}<extra></extra>",
             customdata=monthly_rows["budget fact"].apply(format_million_rub),
         )
     )
     fig.update_layout(
         title_text="",
-        xaxis_title="Месяц",
         yaxis_title="млн руб.",
         barmode="group",
-        bargap=0.18,
-        bargroupgap=0.08,
+        bargap=_bg,
+        bargroupgap=_bgg,
         hovermode="x unified",
-        legend=dict(
-            orientation="v",
-            yanchor="top",
-            y=1,
-            xanchor="left",
-            x=1.02,
+        height=_chart_h,
+        xaxis=dict(
+            title=dict(text="Месяц", standoff=26),
+            tickangle=_tick_angle,
+            tickfont=dict(size=_tick_fs),
+            nticks=min(64, max(12, _n_m)),
         ),
-        height=600,
-        xaxis=dict(tickangle=-45, tickfont=dict(size=9), nticks=18),
-        margin=dict(l=56, r=220, t=72, b=120),
     )
     fig = _apply_finance_bar_label_layout(fig)
+    if _n_m > 10:
+        try:
+            fig.update_layout(uniformtext=dict(minsize=5, mode="hide"))
+        except Exception:
+            pass
+    fig = _plotly_legend_horizontal_below_plot(fig)
     if not monthly_rows.empty:
         _ymax = float(
             np.nanmax(
@@ -17748,10 +17881,10 @@ def dashboard_approved_budget(df):
     render_chart(
         fig,
         caption_below=(
-            "Как в отчёте БДДС: план и факт по месяцам; подписи — сумма в млн руб. "
-            "Цвет бара факта: зелёный — факт ниже 80% плана; оранжевый — от 80% до 100% "
-            "(приближение к плану за 10–20%); красный — превышение плана."
+            "Как в отчёте БДДС: план/факт по месяцам; нулевые/мелкие суммы — в подсказке. "
+            "Скрытие пустых месяцев — как в БДДС, чтобы не сжимать столбцы."
         ),
+        height=_chart_h,
     )
 
     st.subheader("Сводная таблица по месяцам")
@@ -17927,6 +18060,8 @@ def dashboard_forecast_budget(df):
             "Колонка 'project name' не найдена. Необходима для работы с прогнозным бюджетом."
         )
         return
+
+    df = _project_column_apply_canonical(df, project_col)
 
     projects = _unique_project_labels_for_select(df[project_col])
     if not projects:
@@ -18216,14 +18351,11 @@ def dashboard_forecast_budget(df):
         file_stem="forecast_bddcs_summary",
         key_prefix="fcast_summary",
     )
-
-    st.subheader("Детальные строки (лоты) — ввод для расчёта")
-    st.markdown(format_dataframe_as_html(edited_df.head(500)), unsafe_allow_html=True)
     render_dataframe_excel_csv_downloads(
         edited_df,
         file_stem="forecast_bddcs_lots",
         key_prefix="fcast_detail",
-        csv_label="Скачать CSV (лоты, для Excel)",
+        csv_label="Скачать CSV (лоты, ввод для расчёта)",
     )
 
     with st.expander(
