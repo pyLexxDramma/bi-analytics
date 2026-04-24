@@ -14264,10 +14264,10 @@ _EXEC_DOC_DETAIL_CSS = """
 .exec-doc-caption {
   color:#9fb3c8; font-size:13px; margin-top:10px; line-height:1.45;
 }
-.exec-doc-table-wrap { overflow-x:auto; margin:0.75rem 0 0.5rem; border-radius:14px; border:1px solid rgba(82,104,130,0.45); }
-.exec-doc-table { width:100%; table-layout:fixed; border-collapse:collapse; font-size:14px; font-family:Inter,system-ui,sans-serif; }
+.exec-doc-table-wrap { overflow-x:auto; min-width:0; margin:0.75rem 0 0.5rem; border-radius:14px; border:1px solid rgba(82,104,130,0.45); }
+.exec-doc-table { width:100%; table-layout:fixed; border-collapse:collapse; font-size:13px; font-family:Inter,system-ui,sans-serif; }
 .exec-doc-table th {
-  text-align:left; padding:10px 10px; background:#16283a; color:#f8fbff;
+  text-align:left; padding:6px 8px; background:#16283a; color:#f8fbff;
   border-bottom:1px solid rgba(138,160,184,0.28); font-size:11px; font-weight:700;
   text-transform:uppercase; letter-spacing:0.05em; white-space:normal; line-height:1.1; word-break:keep-all; hyphens:none;
   vertical-align:bottom;
@@ -14277,7 +14277,7 @@ _EXEC_DOC_DETAIL_CSS = """
 .exec-doc-table th.exec-col-dly,
 .exec-doc-table th.exec-col-st { white-space:nowrap; }
 .exec-doc-table td {
-  padding:8px 10px; border-bottom:1px solid rgba(82,104,130,0.28); color:#e8eef5;
+  padding:5px 8px; border-bottom:1px solid rgba(82,104,130,0.28); color:#e8eef5;
   vertical-align:top;
 }
 /* Компактные «технические» колонки, чтобы даты/сроки/дни визуально «привязались» к цифрам, а широкие поля — не съедали весь макет */
@@ -18436,10 +18436,10 @@ _PRED_DASH_MOCK_CSS = """
 .pred-kpi-info h4 { margin:0 0 4px 0; font-size:14px; font-weight:600; color:#fafafa; }
 .pred-kpi-info p { margin:0; font-size:12px; color:#a0a0a0; }
 .pred-leg { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:8px; padding:8px 12px; background:#1a1c23; border-radius:12px; border:1px solid #444; font-size:13px; color:#e0e0e0; }
-.pred-mock-table-wrap { margin-top:4px; overflow-x:auto; border-radius:8px; border:1px solid #444; }
+.pred-mock-table-wrap { margin-top:4px; overflow-x:auto; min-width:0; border-radius:8px; border:1px solid #444; }
 .pred-mock-table-wrap table { width:100%; table-layout:fixed; border-collapse:collapse; font-size:13px; }
-.pred-mock-table-wrap th { text-align:left; padding:8px 10px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:11px; letter-spacing:0.02em; }
-.pred-mock-table-wrap td { padding:7px 10px; border-bottom:1px solid #333; color:#e0e0e0; vertical-align:top; }
+.pred-mock-table-wrap th { text-align:left; padding:6px 8px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:11px; letter-spacing:0.02em; }
+.pred-mock-table-wrap td { padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0; vertical-align:top; }
 .pred-mock-table-wrap tr.pred-crit td { background:rgba(231,76,60,0.07); }
 .pred-td-contr { font-weight:600; color:#fafafa; background:#1a1c23; }
 .pred-td-sub { font-size:11px; color:#8892a0; margin-top:4px; }
@@ -18451,16 +18451,16 @@ _PRED_DASH_MOCK_CSS = """
 .pred-mock-title { font-size:1.05rem; font-weight:600; color:#fafafa; }
 .pred-mock-sort { font-size:12px; color:#a0a0a0; }
 .pred-mock-badge { background:#c0392b; color:#fff; padding:4px 14px; border-radius:20px; font-size:13px; font-weight:500; }
-.pred-detail-wrap { overflow-x:auto; border:1px solid #444; border-radius:10px; margin-top:8px; }
+.pred-detail-wrap { overflow-x:auto; min-width:0; border:1px solid #444; border-radius:10px; margin-top:8px; }
 .pred-detail-wrap table { width:100%; table-layout:fixed; border-collapse:collapse; }
-.pred-detail-wrap th { text-align:left; padding:8px 10px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:11px; text-transform:uppercase; white-space:normal; line-height:1.1; word-break:keep-all; }
+.pred-detail-wrap th { text-align:left; padding:6px 8px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:11px; text-transform:uppercase; white-space:normal; line-height:1.1; word-break:keep-all; }
 .pred-detail-wrap th.pred-col-st,
 .pred-detail-wrap th.pred-col-num,
 .pred-detail-wrap th.pred-col-dly { white-space:nowrap; }
 .pred-detail-wrap th a { color:#fafafa; text-decoration:none; display:inline-flex; gap:6px; align-items:center; }
 .pred-detail-wrap th a:hover { color:#93c5fd; }
 .pred-sort-icon { color:#8fb4da; font-size:10px; }
-.pred-detail-wrap td { padding:7px 10px; border-bottom:1px solid #333; color:#e0e0e0; vertical-align:top; word-break:normal; overflow-wrap:anywhere; }
+.pred-detail-wrap td { padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0; vertical-align:top; word-break:normal; overflow-wrap:anywhere; }
 .pred-detail-wrap .pred-col-num { width:7.5ch; min-width:7.5ch; max-width:10ch; }
 .pred-detail-wrap .pred-col-dly { width:9ch; min-width:9ch; max-width:10ch; font-variant-numeric:tabular-nums; }
 .pred-detail-wrap .pred-col-st { width:12ch; min-width:12ch; max-width:16ch; }
