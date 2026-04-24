@@ -117,6 +117,7 @@
 
 ## 4.2 Причины отклонений
 - Единые фильтры: `Проект`, `ФБ/БЛОК`, `Строение/уровень`, `Период`, `ТОП-N причин`.
+- [x] После применения фильтров — канонизация `project name` (§**3.1**), чтобы таблицы и агрегаты не дублировали варианты одного проекта.
 - Корректная обработка периода с частичными данными (без падений).
 - Привести таблицу и stacked-диаграммы к логике сверки (подписи/доли/сортировка).
 
@@ -142,6 +143,7 @@
 - Перепроверить заполнение KPI и таблиц через цепочку `tessa_id + tessa_task + KrStates`.
 - Цвета статусов табов привести к ТЗ.
 - Даты в UI показывать без времени.
+- [x] Фильтр «Объект»: один пункт на нормализованный ключ (как **§3.1**), сопоставление строк — по `_project_filter_norm_key`, не по «сырому» равенству строк.
 - В фильтрах оставить обязательный чекбокс: "не показывать просрочку, если ИД сдана".
 
 ## 4.6 Неустраненные предписания
@@ -202,7 +204,7 @@
 - [x] `dashboards/__init__.py`
   - [x] убрать/скрыть дублирующие пункты в ГДРС/СКУД (отдельный пункт «СКУД стройка» / экран «СКУД по неделям» убран из реестра).
   - [ ] проверить алиасы названий отчетов.
-  - [x] обновить `_DASHBOARDS_REGISTRY_VERSION` (27 — после удаления SKUD из кода).
+  - [x] обновить `_DASHBOARDS_REGISTRY_VERSION` (28 — канонизация `project name` / объект в отклонениях+ИД).
 - [x] `dashboards/ui_quiet.py` — `suppress_caption` (без `st.caption` в дашбордах, см. 4.9).
 - [ ] `dashboards/_renderers.py` / `dev_projects_tz_matrix.py` — капшены/подсказки: только п. 4.9.
 - [x] `dashboards/_renderers.py` — **снятие `help=`** по п. **4.10** (все `help=` в файле убраны; админ/профиль/главная при необходимости отдельно).
@@ -213,7 +215,7 @@
   - [ ] `dashboard_control_points()`
   - [ ] `dashboard_project_schedule_chart()`
   - [ ] `dashboard_plan_fact_dates()`
-  - [ ] `dashboard_deviations_combined()`
+  - [ ] `dashboard_deviations_combined()` — [x] в `_render_deviations_combined_shared_filters` канонизация колонки `project name` для таб/графиков.
   - [ ] `dashboard_reasons_of_deviation()`
   - [ ] `dashboard_dynamics_of_deviations()`
   - [ ] `dashboard_dynamics_of_reasons()`
@@ -236,7 +238,7 @@
 
 ## 5.6 ИД и предписания
 - [ ] `dashboards/_renderers.py`
-  - [ ] `dashboard_executive_documentation()`
+  - [ ] `dashboard_executive_documentation()` — [x] фильтр `ObjectName` / объекта: список и отбор по нормализованному ключу (**§3.1**); детальная таблица — даты `дд.мм.гггг`.
   - [ ] `dashboard_predpisania()` — [x] фильтры по периоду выдачи и сроку устранения; [x] KPI/графики по 4.6; [ ] расширения по ТЗ/цветам при появлении макета.
   - [ ] `_tessa_fill_card_from_doc_lookup()`
   - [ ] `_pred_dedupe_by_docid()`

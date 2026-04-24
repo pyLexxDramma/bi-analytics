@@ -1981,6 +1981,9 @@ def _render_deviations_combined_shared_filters(df):
         )
 
     filtered_df = df.copy()
+    # §4.1: одна подпись проекта на ключ (Дмитровский* / Есипово V vs -5) — в табах и группировках.
+    if "project name" in filtered_df.columns:
+        filtered_df = _project_column_apply_canonical(filtered_df, "project name")
     selected_project = (
         st.session_state.get("devcombo_project", "Все")
         if "project name" in filtered_df.columns
@@ -14076,7 +14079,7 @@ def dashboard_executive_documentation(df):
     fc1, fc2, fc3 = st.columns(3)
     with fc1:
         if obj_col:
-            objects = ["Все"] + sorted(work[obj_col].dropna().astype(str).str.strip().unique().tolist())
+            objects = ["Все"] + _unique_project_labels_for_select(work[obj_col])
             sel_obj = st.selectbox("Объект", objects, key="exec_doc_object")
         else:
             sel_obj = "Все"
@@ -14166,7 +14169,7 @@ def dashboard_executive_documentation(df):
 
     filtered_base = work.copy()
     if sel_obj != "Все" and obj_col:
-        filtered_base = filtered_base[filtered_base[obj_col].astype(str).str.strip() == sel_obj]
+        filtered_base = _filter_df_by_norm_key_col(filtered_base, obj_col, sel_obj)
     if sel_contr != "Все" and contr_col:
         filtered_base = filtered_base[filtered_base[contr_col].astype(str).str.strip() == sel_contr]
     if sel_kind != "Все" and kind_col:
