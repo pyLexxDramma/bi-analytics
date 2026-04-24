@@ -403,7 +403,12 @@ def map_tessa_task(path: Path, meta: dict) -> list[dict]:
     for _, row in df.iterrows():
         records.append({
             "snapshot_date":    snapshot_date,
-            "import_date":      _parse_date(row.get("imort_data") or row.get("import_data")),
+            "import_date":      _parse_date(
+                row.get("Import_date")
+                or row.get("import_date")
+                or row.get("import_data")
+                or row.get("imort_data")
+            ),
             "card_id":          _str(row.get("CardID")),
             "card_name":        _str(row.get("CardName")),
             "card_type_caption":_str(row.get("CardTypeCaption")),
@@ -513,15 +518,25 @@ def map_rd_plan(path: Path, meta: dict) -> list[dict]:
         col_map[col] = cn
     df = df.rename(columns=col_map)
 
+    num_col = _find_col(df.columns, ["номер", "number", "№"])
+    cipher_col = _find_col(df.columns, ["шифр", "cipher", "code"])
+    name_col = _find_col(df.columns, ["наименование", "name", "раздел"])
+    count_col = _find_col(df.columns, ["количество", "count", "кол"])
+    # Плановая дата: «дата выдачи …», в т.ч. длинные заголовки из выгрузки
+    date_col = _find_col(
+        df.columns,
+        ["дата выдачи", "дата", "date", "выдачи по договору", "по договору"],
+    )
+
     records = []
     for _, row in df.iterrows():
-        # Попытка найти нужные колонки по подстрокам
-        num_col = _find_col(df.columns, ["номер", "number", "№"])
-        cipher_col = _find_col(df.columns, ["шифр", "cipher", "code"])
-        name_col = _find_col(df.columns, ["наименование", "name", "раздел"])
-        count_col = _find_col(df.columns, ["количество", "count", "кол"])
-        date_col = _find_col(df.columns, ["дата", "date"])
-
+        if date_col:
+            date_plan = _parse_date(row.get(date_col))
+            # mapping §3.3: в плановом слое — только со сроком; пустая/неразобрана → пропуск
+            if not date_plan:
+                continue
+        else:
+            date_plan = None
         records.append({
             "snapshot_date": snapshot_date,
             "project_name":  project_name,
@@ -529,7 +544,7 @@ def map_rd_plan(path: Path, meta: dict) -> list[dict]:
             "cipher":        _str(row.get(cipher_col)) if cipher_col else None,
             "section_name":  _str(row.get(name_col)) if name_col else None,
             "count_plan":    _safe_int(row.get(count_col)) if count_col else None,
-            "date_plan":     _parse_date(row.get(date_col)) if date_col else None,
+            "date_plan":     date_plan,
             "source_file":   source_file,
         })
     return records

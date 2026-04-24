@@ -201,18 +201,14 @@
 ## 5) Чеклист внедрения по файлам/функциям
 
 ## 5.1 ETL: распознавание/маппинг источников
-- [ ] `etl/parser.py`
-  - [x] `detect_file()` — фактические `web/`: `other_{project}_DD.MM.YYYY_rd`, `1с_…_dannye|DK|spravochniki.json` (префикс **1** + лат. **c** / кирил. **с**), `tessa_…_id|rd|task`, `msp_…`, `other_*_resursi`, `KrStates`/`…`; правки 2026-04-24.
-  - [x] `group_by_snapshot()` + `load_from_web_dir` — `__unknown__` (нет даты в имени) → явная ошибка/пропуск, цикл только по `YYYY-MM-DD`; докстринг 2026-04-24.
+- [x] `etl/parser.py` — [x] `detect_file` / [x] `group_by_snapshot` (см. `loader`).
+- [x] `etl/loader.py` — [x] `load_from_web_dir` + `__unknown__`; [x] порядок: справочники → версии по дате; [ ] углублённый аудит `_resolve_kr_states`.
 - [ ] `etl/mapper.py`
-  - [ ] `map_msp()` — нормализация дат/отклонений и колонок MSP.
-  - [ ] `map_tessa_id()` / `map_tessa_rd()` / `map_tessa_task()` — контроль ключей `DocID/CardID`, `KrStateID`, `ObjectProjectID`.
-  - [ ] `map_resources()` — разделение `рабочие/техника`, корректная агрегация дат.
-  - [ ] `map_rd_plan()` — контроль пустой плановой даты.
-  - [ ] `map_1c_budget()` / `map_1c_dk()` / `map_1c_sprav()` — числовые поля и кодировки.
-- [ ] `etl/loader.py`
-  - [ ] `_resolve_kr_states()` — корректная русификация статусов.
-  - [ ] порядок загрузки ссылочных и версионных данных.
+  - [x] `map_msp()` — даты/отклонения, `_MSP_COL_MAP` (сверка с новыми колонками при смене выгрузки — [ ]).
+  - [x] `map_tessa_id()` / `map_tessa_rd()` / `map_tessa_task()` — DocID, KrState(±ID для id), ObjectProjectID `project_id`; [x] `map_tessa_task` — алиасы `Import_date` / `import_data` / `imort_data`.
+  - [ ] `map_resources()` — разделение `рабочие/техника` (в слое приложения/отчёта; в ETL — `resource_type` + `col_type`) — [ ].
+  - [x] `map_rd_plan()` — [x] пустая/битая **плановая дата** при найденной колонке — строка не грузится (**§3.3**); [x] поиск колонок вне `iterrows` + ключевые «дата выдачи…».
+  - [x] `map_1c_budget()` / `map_1c_dk()` / `map_1c_sprav()` — как в `schema` (суммы/остатки); расширение полей 1С — [ ].
 
 ## 5.2 Реестр дашбордов и меню
 - [x] `dashboards/__init__.py`
@@ -289,5 +285,5 @@
 4. `ГДРС`,
 5. `Финансы`.
 
-**Текущий фокус (2026-04-24):** **5.1** ETL — `parser` ([x] `detect_file` + `group_by_snapshot`/loader); далее **`etl/mapper.py`**, **§6**, **4.8**. Реестр **39**.
+**Текущий фокус (2026-04-24):** **5.1** ETL — parser/loader [x], mapper [x] основные `map_*` (деталь: `map_resources`, аудит **1С**/KPI); **§6**, **4.8**. Реестр **39**.
 
