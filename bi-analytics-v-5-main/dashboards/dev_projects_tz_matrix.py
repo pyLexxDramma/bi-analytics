@@ -1168,11 +1168,6 @@ def render_dev_tz_matrix(
     else:
         blocks = [b for b in (rows or []) if isinstance(b, list)]  # type: ignore[assignment]
 
-    with st.expander("Примечание к колонке «Проект»", expanded=False):
-        st.caption(
-            "В группе «Проект» в колонках План и Факт выводятся идентификатор и название проекта "
-            "(не даты). Пустые ячейки и «Н/Д» — по данным выгрузки (ТЗ)."
-        )
     if not blocks or not blocks[0]:
         st.info("Нет строк матрицы.")
         return
@@ -2019,12 +2014,6 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
         table_css + _CONTROL_POINTS_CSS + '<div class="rendered-table-wrap cp-table-wrap">' + html_tbl + "</div>",
         unsafe_allow_html=True,
     )
-    st.caption(
-        "Статус (цветной индикатор): **зелёный** — даты План/Факт совпадают; "
-        "**оранжевый** — для вех «ГПЗУ» и «Экспертиза стадии П» в MSP «% выполнения» ≠ 100%; "
-        "**красный** — отклонение по датам или неполные даты."
-    )
-
     drop_ok = [
         c
         for c in view.columns

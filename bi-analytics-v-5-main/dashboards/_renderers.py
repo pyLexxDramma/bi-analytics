@@ -15,6 +15,8 @@ from urllib.parse import urlencode
 
 from config import MSP_PROJECT_FILTER_EXCLUDE_NAMES, RUSSIAN_MONTHS
 
+from .ui_quiet import suppress_caption
+
 from dashboards.dev_projects_tz_matrix import (
     build_dev_tz_matrix_rows,
     render_dev_tz_matrix,
@@ -264,7 +266,7 @@ def _render_html_table(
                     unsafe_allow_html=True)
     if len(df) > max_rows:
         with st.expander("Ограничение отображения таблицы", expanded=False):
-            st.caption(
+            suppress_caption(
                 f"Показано {max_rows} из {len(df)} записей. Скачайте CSV или Excel для полных данных."
             )
 
@@ -338,7 +340,7 @@ def _render_gantt_schedule_html_table(df: pd.DataFrame, max_rows: int = 80):
     st.markdown(_TABLE_CSS + '<div class="rendered-table-wrap">' + html + "</div>", unsafe_allow_html=True)
     if len(df) > max_rows:
         with st.expander("Ограничение отображения таблицы", expanded=False):
-            st.caption(
+            suppress_caption(
                 f"Показано {max_rows} из {len(df)} записей. Скачайте CSV или Excel для полных данных."
             )
 
@@ -1754,7 +1756,7 @@ def _render_deviations_combined_shared_filters(df):
             blocks = ["Все"] + blocks_raw
             st.selectbox("Функциональный блок", blocks, key="devcombo_block")
         else:
-            st.caption("Нет колонки блока")
+            suppress_caption("Нет колонки блока")
     with col3:
         df_opts = _deviations_project_slice_by_key(df, "devcombo_project")
         if use_hierarchy:
@@ -1805,7 +1807,7 @@ def _render_deviations_combined_shared_filters(df):
             )
             st.selectbox("Строение", bvals, key="devcombo_building")
         else:
-            st.caption("Нет строения")
+            suppress_caption("Нет строения")
 
     available_months = []
     if "plan_month" in df.columns:
@@ -1925,7 +1927,7 @@ def dashboard_deviations_combined(df):
         return
 
     st.header("Причины отклонений")
-    st.caption(
+    suppress_caption(
         "Категории в диаграммах и таблицах приведены к перечню из последних правок по отчёту "
         "(стек долей, легенда и детальная таблица)."
     )
@@ -2097,7 +2099,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                 )
                 st.selectbox("Функциональный блок", blocks, key="reason_block")
             else:
-                st.caption("Нет колонки блока")
+                suppress_caption("Нет колонки блока")
 
         with col3:
             df_opts = _deviations_project_slice_by_key(df, "reason_project")
@@ -2149,7 +2151,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                 )
                 st.selectbox("Строение", bvals, key="reason_building")
             else:
-                st.caption("Нет строения")
+                suppress_caption("Нет строения")
 
         available_months = []
         try:
@@ -2516,7 +2518,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         )
     else:
         with st.expander("Условия отбора по макету", expanded=False):
-            st.caption(
+            suppress_caption(
                 "По макету: уровень 5 MSP, причина отклонения заполнена, отклонение окончания < 0. "
                 "Сортировка: по возрастанию отклонения (худшее сверху)."
             )
@@ -2639,7 +2641,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         )
 
     with st.expander("Полная выгрузка по фильтрам", expanded=False):
-        st.caption(
+        suppress_caption(
             "Ниже — полная таблица по текущим фильтрам и выбранной причине в блоке «Детальные данные» "
             "(не только строки «по макету»). Колонки и цвета — по макету правок (базовые/фактические даты, "
             "отклонения начала и окончания в днях, длительности)."
@@ -3598,7 +3600,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 except (TypeError, ValueError): return x
             project_summary[period_col_name] = project_summary[period_col_name].apply(_fmt_days)
 
-        st.caption(f"Записей: {len(project_summary)}")
+        suppress_caption(f"Записей: {len(project_summary)}")
         _render_html_table(project_summary)
         render_dataframe_excel_csv_downloads(
             project_summary,
@@ -3617,7 +3619,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             "project name": "Проект",
             "reason of deviation": "Причина отклонений",
         })
-        st.caption(f"Записей: {len(display_grouped)}")
+        suppress_caption(f"Записей: {len(display_grouped)}")
         _render_html_table(display_grouped)
         render_dataframe_excel_csv_downloads(
             display_grouped,
@@ -3652,7 +3654,7 @@ def dashboard_plan_fact_dates(df):
             df = df[_is_msp].copy()
             _dropped = _before_rows - len(df)
             if _dropped > 0:
-                st.caption(
+                suppress_caption(
                     f"В отчёт «Отклонение от базового плана» оставлены только MSP-выгрузки "
                     f"(`msp_*.csv`). Исключено строк из других источников: {_dropped}."
                 )
@@ -4400,7 +4402,7 @@ def dashboard_plan_fact_dates(df):
                 else ("task name" if "task name" in _manual_base_df.columns else None)
             )
             if _manual_task_col:
-                st.caption(
+                suppress_caption(
                     "Автопоиск ковенантов не нашёл совпадений по маркерам. "
                     "Выберите нужные задачи вручную."
                 )
@@ -4895,7 +4897,7 @@ def dashboard_plan_fact_dates(df):
 
                 st.subheader("Ковенанты (таблица)")
                 with st.expander("Примечание к таблице ковенантов", expanded=False):
-                    st.caption(
+                    suppress_caption(
                         "Сортировка: по убыванию отклонения окончания. "
                         "Красный — отклонение > 0, зелёный — ≤ 0."
                     )
@@ -4943,7 +4945,7 @@ def dashboard_plan_fact_dates(df):
                     _tbl_parts.append("</tr>")
                 _tbl_parts.append("</tbody></table></div>")
                 st.markdown(_TABLE_CSS + "".join(_tbl_parts), unsafe_allow_html=True)
-                st.caption(f"Записей: {len(cov_display)}")
+                suppress_caption(f"Записей: {len(cov_display)}")
                 render_dataframe_excel_csv_downloads(
                     cov_display,
                     file_stem="covenant_plan_fact",
@@ -5259,12 +5261,12 @@ def dashboard_plan_fact_dates(df):
         )
         with st.expander("Контекст ЗОС", expanded=False):
             if selected_project != "Все":
-                st.caption(f"Проект: {selected_project}")
+                suppress_caption(f"Проект: {selected_project}")
             elif "project name" in zos_subset.columns and zos_proj_count == 1:
                 _pn = zos_subset["project name"].dropna().astype(str).str.strip().unique().tolist()
                 if _pn:
-                    st.caption(f"Проект: {_pn[0]}")
-            st.caption(
+                    suppress_caption(f"Проект: {_pn[0]}")
+            suppress_caption(
                 "Сроки окончания и отклонение (дней); знак отклонения: факт − план по дате окончания."
             )
         zos_show_project_col = (
@@ -5427,7 +5429,7 @@ def dashboard_plan_fact_dates(df):
     if not show_covenant_ui:
         st.subheader("Отклонение от базового плана (таблица)")
         with st.expander("Сводка по таблице", expanded=False):
-            st.caption(
+            suppress_caption(
                 f"Записей: {len(summary_df)} · тип: {dates_value_type}. "
                 "Сортировка — блоком «Сортировка таблицы» выше (через `st.dataframe` клик по заголовку отключён)."
             )
@@ -5443,7 +5445,7 @@ def dashboard_plan_fact_dates(df):
                 "Полная таблица по всем задачам фильтра не выводится отдельным блоком, чтобы не дублировать "
                 "таблицу **Ковенанты** выше. Ниже — развёртка со всеми колонками (план/факт, отклонения), если нужен экспорт."
             )
-            st.caption(
+            suppress_caption(
                 f"Записей: {len(summary_df)} · тип: {dates_value_type}"
             )
             _render_dates_main_table()
@@ -5582,7 +5584,7 @@ def dashboard_deviation_by_tasks_current_month(df):
         target_lvl = 5 if "5" in str(detail_label) else 4
     else:
         with f_block:
-            st.caption("Нет колонки уровня MSP")
+            suppress_caption("Нет колонки уровня MSP")
         block_col_fb = find_column(
             base,
             ["block", "Блок", "Функциональный блок", "Functional block"],
@@ -5616,8 +5618,8 @@ def dashboard_deviation_by_tasks_current_month(df):
             else:
                 selected_building = "Все"
         with f_det:
-            st.caption("—")
-        st.caption(
+            suppress_caption("—")
+        suppress_caption(
             "Колонка уровня MSP не найдена — блок/строение из отдельных колонок (если есть); "
             "режим «уровень 4 / 5» недоступен."
         )
@@ -5982,7 +5984,7 @@ def dashboard_deviation_by_tasks_current_month(df):
                         lambda x: int(round(x, 0)) if pd.notna(x) else 0
                     )
                     table_display = table_display.sort_values("Суммарно дней отклонений", ascending=False)
-                    st.caption(f"Записей: {len(table_display)}")
+                    suppress_caption(f"Записей: {len(table_display)}")
                     _render_html_table(table_display)
                     render_dataframe_excel_csv_downloads(
                         table_display,
@@ -7489,7 +7491,7 @@ def dashboard_budget_cumulative(df):
 def dashboard_budget_by_section(df):
     st.header("💰 БДДС по лотам")
     with st.expander("Вид отображения", expanded=False):
-        st.caption("По месяцам или накопительно — переключатель в блоке графика ниже.")
+        suppress_caption("По месяцам или накопительно — переключатель в блоке графика ниже.")
 
     col1, col2, col3 = st.columns(3)
 
@@ -7979,7 +7981,7 @@ def dashboard_bdr(df):
                 ),
             }
         )
-        st.caption(
+        suppress_caption(
             "Колонка «Итого» — отклонение (факт − план) по проекту за выбранные фильтры."
         )
         st.markdown(
@@ -8280,7 +8282,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 key="rd_delay_section",
             )
         else:
-            st.caption("Колонка раздела ПД не найдена." if is_pd else "Колонка раздела РД не найдена.")
+            suppress_caption("Колонка раздела ПД не найдена." if is_pd else "Колонка раздела РД не найдена.")
 
     selected_statuses_rd: list[str] = []
     rd_status_options_rd: list[str] = []
@@ -8307,7 +8309,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         if selected_statuses_rd is None:
             selected_statuses_rd = []
     else:
-        st.caption("Нет колонок статусов РД для фильтра.")
+        suppress_caption("Нет колонок статусов РД для фильтра.")
 
     # Apply filters
     filtered_df = df.copy()
@@ -8689,7 +8691,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                             unsafe_allow_html=True,
                         )
         except Exception as _ind_err:
-            st.caption(f"Не удалось построить индикаторы просрочки: {_ind_err}")
+            suppress_caption(f"Не удалось построить индикаторы просрочки: {_ind_err}")
 
         if plan_end_col and plan_end_col in filtered_df.columns:
             month_df = filtered_df[filtered_df["_plan_end_dt"].notna()].copy()
@@ -8801,7 +8803,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 )
                 if not _tessa_detail_table.empty:
                     _tessa_rd_detail_active = True
-                    st.caption(
+                    suppress_caption(
                         "Источник: карточки TESSA (`tessa_*_rd.csv`). «Номер договора» — по связке "
                         "`1C_ID_DOG` ↔ `ID_Договора` из 1С (`DK.json`)."
                     )
@@ -9128,7 +9130,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             )
 
             if _contract_source_note:
-                st.caption(_contract_source_note)
+                suppress_caption(_contract_source_note)
             if detail_table.empty and not filtered_df.empty:
                 st.info("Детальная таблица не собрана, хотя строки в источнике есть.")
             elif detail_table.empty:
@@ -9259,7 +9261,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     _fig_dyn.update_xaxes(tickformat="%m.%Y")
                     st.plotly_chart(_fig_dyn, use_container_width=True)
             except Exception as _e_dyn:
-                st.caption(f"Не удалось построить динамику окончания ПД/РД: {_e_dyn}")
+                suppress_caption(f"Не удалось построить динамику окончания ПД/РД: {_e_dyn}")
 
         # Summary metrics
         col1, col2, col3 = st.columns(3)
@@ -10126,10 +10128,10 @@ def dashboard_technique(df):
     elif "week_sum" in filtered_df.columns:
         # Нет отдельной колонки периода (типично для web-выгрузки только с датами в заголовках): факт по подрядчикам
         with st.expander("Нет колонки «Период» в файле", expanded=False):
-            st.caption(
+            suppress_caption(
                 "Показан суммарный факт по подрядчикам (агрегация без оси периода в данных)."
             )
-            st.caption(
+            suppress_caption(
                 "Если суммы «План» и «Факт» по контрагенту почти совпадают: в части web-выгрузок колонка «План» "
                 "задана на строку как норма/лимит рядом с теми же неделями, либо строки дублируют одну и ту же "
                 "запись — тогда агрегированные суммы сходятся. Сверьте исходный файл: уникальность строк "
@@ -10652,7 +10654,7 @@ def dashboard_technique(df):
                     continue
                 by_contractor = by_contractor.sort_values("План", ascending=False)
                 with st.expander(f"Формулы столбцов ({type_label})", expanded=False):
-                    st.caption(
+                    suppress_caption(
                         "План (из договора), СКУД (из выгрузки ресурсов), «%» = факт/план×100%, отклонение = СКУД − план."
                     )
                 _display_cols = ["Контрагент", "План", "Факт", "%", "Отклонение"]
@@ -11910,7 +11912,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 _pl_sum = float(pd.to_numeric(_ref["План"], errors="coerce").fillna(0.0).sum())
                 _sk_sum = float(pd.to_numeric(_ref["СКУД"], errors="coerce").fillna(0.0).sum())
                 if _pl_sum > 0 and _sk_sum > 0 and abs(_pl_sum - _sk_sum) <= max(1.0, 0.001 * _pl_sum):
-                    st.caption(
+                    suppress_caption(
                         "Проверка данных: сумма «План» ≈ сумме «СКУД» (план почти равен факту). "
                         "Если по проекту это не ожидается — проверьте маппинг колонок плана (договор) и факта (ресурсы/недели)."
                     )
@@ -11922,7 +11924,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 + _week_cols_out
                 + ["Дельта (%)"]
             )
-            st.caption("Иерархия строк: **проект** → **контрагент** → **вид работ**.")
+            suppress_caption("Иерархия строк: **проект** → **контрагент** → **вид работ**.")
             st.markdown(
                 budget_table_to_html(
                     _view[_show_cols],
@@ -12314,7 +12316,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             fig_wfb = apply_chart_background(fig_wfb)
             with wfb_cols[wfi]:
                 if not _has_any_plan:
-                    st.caption(
+                    suppress_caption(
                         f"**{lab_wfb}** — план по подрядчикам не заполнен в исходных данных. "
                         "Столбцы нейтрального цвета (план/факт не сравнивается)."
                     )
@@ -12892,7 +12894,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     continue
                 by_contractor = by_contractor.sort_values("План", ascending=False)
                 with st.expander(f"Формулы столбцов ({type_label})", expanded=False):
-                    st.caption(
+                    suppress_caption(
                         "План и факт — суммы по подрядчику; отклонение = план − факт."
                     )
                 display_df = by_contractor[
@@ -14081,7 +14083,7 @@ def dashboard_debit_credit(df):
         display_df[col] = display_df[col].apply(
             lambda x: f"{float(x):,.0f}".replace(",", " ") if pd.notna(x) else "—"
         )
-    st.caption(f"Записей: {len(display_df)}")
+    suppress_caption(f"Записей: {len(display_df)}")
     _render_html_table(display_df)
     render_dataframe_excel_csv_downloads(
         display_df,
@@ -14602,7 +14604,7 @@ def dashboard_executive_documentation(df):
         else:
             p_start = p_end = None
             with st.expander("Период по дате создания", expanded=False):
-                st.caption("В данных нет распознанной колонки даты создания — период не применяется.")
+                suppress_caption("В данных нет распознанной колонки даты создания — период не применяется.")
     with fp2:
         hide_overdue_if_done = st.checkbox(
             "Не отображать просрочку, если ИД сдана (подписана/согласована)",
@@ -14818,15 +14820,15 @@ def dashboard_executive_documentation(df):
             bc3.metric("> 30 дней", b3)
             with st.expander("Подсказка по сегментам (подрядчик)", expanded=False):
                 if sub_c["_late_days"].notna().any():
-                    st.caption(f"Средняя просрочка (дней): {sub_c['_late_days'].mean():.1f}")
+                    suppress_caption(f"Средняя просрочка (дней): {sub_c['_late_days'].mean():.1f}")
                 elif cnt_c > 0:
-                    st.caption(
+                    suppress_caption(
                         "Для сегментации 0–7 / 7–30 / >30 дней укажите в TESSA плановую дату "
                         "(PlanDate / DueDate / Срок)."
                     )
         elif cnt_c > 0:
             with st.expander("Подсказка по сегментам (подрядчик)", expanded=False):
-                st.caption(
+                suppress_caption(
                     "Для сегментации 0–7 / 7–30 / >30 дней укажите в TESSA плановую дату "
                     "(PlanDate / DueDate / Срок)."
                 )
@@ -14840,7 +14842,7 @@ def dashboard_executive_documentation(df):
             fig_c = apply_chart_background(fig_c)
             fig_c.update_layout(height=max(280, len(by_c) * 32 + 80), yaxis_title="", xaxis_title="")
             render_chart(fig_c, caption_below="Просрочка по подрядчикам (дней)", key="exec_overdue_contractor")
-        st.caption("Блок показывает просрочку сдачи исполнительной документации со стороны подрядчика.")
+        suppress_caption("Блок показывает просрочку сдачи исполнительной документации со стороны подрядчика.")
     with oc2:
         st.subheader("Просрочка заказчика (согласование)")
         with st.expander("Пояснение по показателю", expanded=False):
@@ -14859,7 +14861,7 @@ def dashboard_executive_documentation(df):
             u3.metric("> 30 дней", int((sub_u["_late_days"] > 30).sum()))
         elif cnt_u > 0:
             with st.expander("Подсказка по сегментам (заказчик)", expanded=False):
-                st.caption("Для сегментации по дням укажите плановую дату в данных.")
+                suppress_caption("Для сегментации по дням укажите плановую дату в данных.")
 
         if contr_col and contr_col in filtered.columns and cnt_u > 0:
             sub = filtered[overdue_mask & is_on_agree]
@@ -14874,7 +14876,7 @@ def dashboard_executive_documentation(df):
                 caption_below="Просрочка согласования заказчиком — количество документов на согласовании по контрагентам",
                 key="exec_overdue_customer",
             )
-        st.caption("Блок показывает документы, зависшие на согласовании у заказчика.")
+        suppress_caption("Блок показывает документы, зависшие на согласовании у заказчика.")
 
     if compare_panel_payload is not None:
         compare_title, compare_html = compare_panel_payload
@@ -14921,7 +14923,7 @@ def dashboard_executive_documentation(df):
             rmin = filtered["_cd"].min()
             rmax = filtered["_cd"].max()
             with st.expander("Диапазон дат создания в выборке", expanded=False):
-                st.caption(
+                suppress_caption(
                     f"{rmin.strftime('%d.%m.%Y') if pd.notna(rmin) else '—'} — "
                     f"{rmax.strftime('%d.%m.%Y') if pd.notna(rmax) else '—'}"
                 )
@@ -14996,7 +14998,7 @@ def dashboard_executive_documentation(df):
         )
         if len(table_df) > 500:
             with st.expander("Ограничение отображения в браузере", expanded=False):
-                st.caption("Показано 500 из записей — скачайте CSV или Excel для полного списка.")
+                suppress_caption("Показано 500 из записей — скачайте CSV или Excel для полного списка.")
         render_dataframe_excel_csv_downloads(
             table_df,
             file_stem="executive_docs",
@@ -15350,7 +15352,7 @@ def dashboard_documentation(
                         selected_date_start = selected_period
                         selected_date_end = selected_period
                 else:
-                    st.caption(f"Весь период: {min_date:%d.%m.%Y} - {max_date:%d.%m.%Y}")
+                    suppress_caption(f"Весь период: {min_date:%d.%m.%Y} - {max_date:%d.%m.%Y}")
 
     # Filter by RD section kind (несколько значений; пусто = все)
     selected_sections_doc: list[str] = []
@@ -15377,7 +15379,7 @@ def dashboard_documentation(
                 placeholder="Все разделы",
             )
         else:
-            st.caption("Колонка раздела РД не найдена.")
+            suppress_caption("Колонка раздела РД не найдена.")
 
     # Filter by RD status — отдельной строкой, чтобы не ломать сетку selectbox’ов
     selected_statuses: list[str] = []
@@ -15415,7 +15417,7 @@ def dashboard_documentation(
         if selected_statuses is None:
             selected_statuses = []
     else:
-        st.caption("Нет колонок статусов РД/ПД для фильтра.")
+        suppress_caption("Нет колонок статусов РД/ПД для фильтра.")
 
     # Apply filters to data
     filtered_df = df.copy()
@@ -15637,7 +15639,7 @@ def dashboard_documentation(
             ):
                 st.subheader("Исполнение РД")
                 if _used_tessa_source:
-                    st.caption(
+                    suppress_caption(
                         "Статусы Принято/На рассм./Возвр./Не принято — из карточек "
                         "TESSA (KrState)."
                     )
@@ -16016,9 +16018,9 @@ def dashboard_documentation(
                         if d13 > 0:
                             fact_weekly = fact_to_date / d13 * 7.0
 
-                    st.caption("Производительность разделов в неделю (п.12–14 ТЗ)")
+                    suppress_caption("Производительность разделов в неделю (п.12–14 ТЗ)")
                     if use_approx_plan_end:
-                        st.caption(
+                        suppress_caption(
                             "Дата окончания плановая: в колонке планового окончания нет валидных дат — "
                             "используется дата по правому краю кривой динамики (приблизительно)."
                         )
@@ -16053,7 +16055,7 @@ def dashboard_documentation(
                                 help="Отклонение на текущую дату / (дата окончания план − сегодня) × 7",
                             )
                 else:
-                    st.caption("Прогноз производительности (РД в неделю)")
+                    suppress_caption("Прогноз производительности (РД в неделю)")
                     p1, p2 = st.columns(2)
                     with p1:
                         st.metric(
@@ -16190,7 +16192,7 @@ def dashboard_documentation(
                 b_fin_col = _pd_msp_find_baseline_finish_col(df)
                 if b_fin_col is None and plan_end_col and plan_end_col in df.columns:
                     b_fin_col = plan_end_col
-                    st.caption(
+                    suppress_caption(
                         "Колонка Baseline Finish не найдена — для плана используется plan end (приближённо)."
                     )
                 s_fin_col = _pd_msp_find_schedule_finish_col(df)
@@ -16263,7 +16265,7 @@ def dashboard_documentation(
                         nec = var_gap / rem_days * 7.0
                     win_start = today - timedelta(days=7)
                     prod7 = int((done & af.notna() & (af.dt.date > win_start) & (af.dt.date <= today)).sum())
-                    st.caption('Производительность ПД: последние 7 дней и необходимая (по ТЗ)')
+                    suppress_caption('Производительность ПД: последние 7 дней и необходимая (по ТЗ)')
                     pw1, pw2 = st.columns(2)
                     with pw1:
                         st.metric("Текущая производительность в неделю", f"{prod7:,.0f}".replace(",", " "))
@@ -17592,7 +17594,7 @@ def dashboard_approved_budget(df):
         and "budget fact" in filtered_df.columns
     ):
         st.subheader("Детальные данные (таблица)")
-        st.caption(
+        suppress_caption(
             "По ТЗ: утверждённый бюджет и факт из оборотов; отклонение = план − факт "
             "(красный шрифт при отклонении < 0, зелёный при ≥ 0)."
         )
@@ -18024,7 +18026,7 @@ def dashboard_forecast_budget(df):
     project_df = _forecast_merge_bddcs_from_1c(project_df, selected_project)
 
     st.subheader("Редактирование данных задач")
-    st.caption(
+    suppress_caption(
         "Колонка **Лот** (раньше «Раздел»); даты начала/окончания — из графика MSP (план); "
         "**БДДС план (утверждённый)** подставляется из оборотов 1С при загрузке (сценарий «Бюджет», без БДР) "
         "и распределяется по лотам пропорционально плану MSP. "
@@ -20136,7 +20138,7 @@ def dashboard_predpisania(df):
                 issue_end = issue_period
         else:
             issue_start = issue_end = None
-            st.caption("Нет даты выдачи в данных.")
+            suppress_caption("Нет даты выдачи в данных.")
     with fb1:
         st.markdown("<br>", unsafe_allow_html=True)
         st.button("Применить", key="pred_m_apply", type="primary", use_container_width=True)
@@ -20186,7 +20188,7 @@ def dashboard_predpisania(df):
         return
 
     if not due_col:
-        st.caption(
+        suppress_caption(
             "Срок устранения считается отдельно от даты завершения (Completed). "
             "Укажите DueDate или «Срок устранения» в TESSA."
         )
@@ -20209,7 +20211,7 @@ def dashboard_predpisania(df):
         chart_group_col = obj_col
         chart_group_label = "проектам"
     if issue_start is not None and issue_end is not None:
-        st.caption(
+        suppress_caption(
             f"Период выдачи предписаний: {issue_start.strftime('%d.%m.%Y')} — {issue_end.strftime('%d.%m.%Y')}"
         )
     pm1, pm2, pm3 = st.columns(3)
@@ -20423,14 +20425,14 @@ def dashboard_predpisania(df):
             _pred_kpi_circles_html(n_total, n_unresolved, n_resolved, n_overdue, n_critical, with_heading=True),
             unsafe_allow_html=True,
         )
-        st.caption(
+        suppress_caption(
             "Маппинг KPI: «Всего предписаний» = все записи, «Устраненные» = закрытые/устраненные, "
             "«Неустраненные» = открытые, «Просроченные» = открытые с просроченным сроком."
         )
 
     st.subheader("Детальная таблица по предписаниям")
     with st.expander("Примечание к таблице", expanded=False):
-        st.caption("Клик по заголовку сортирует таблицу. Просроченные строки выделены розовым, устраненные — салатовым.")
+        suppress_caption("Клик по заголовку сортирует таблицу. Просроченные строки выделены розовым, устраненные — салатовым.")
     show = filtered.copy()
     if hide_resolved:
         show = show.loc[unres_mask].copy()
@@ -20454,7 +20456,7 @@ def dashboard_predpisania(df):
         table_df = _pred_sort_table_df(table_df, sort_col, sort_order)
 
     overdue_cnt = int((show["_overdue_days"] > 0).sum())
-    st.caption(
+    suppress_caption(
         f"Записей: {len(table_df)} · просроченных: {overdue_cnt} · устраненных: {int(show['_resolved'].sum())}"
     )
     st.markdown(
@@ -20631,7 +20633,7 @@ def _render_dev_detail_table(df, max_rows=500):
     )
     if len(df) > max_rows:
         with st.expander("Ограничение отображения таблицы", expanded=False):
-            st.caption(
+            suppress_caption(
                 f"Показано {max_rows} из {len(df)} записей. Скачайте CSV или Excel для полных данных."
             )
 
@@ -20783,7 +20785,7 @@ def dashboard_developer_projects(df):
 
     st.markdown("---")
     st.subheader("Таблица задач")
-    st.caption(
+    suppress_caption(
         "Таблица строится по выгрузке MSP: базовые даты (plan start/end) и факт (base start/end), "
         "отклонения начала/окончания, длительности, а также «Причина отклонений» и «Заметки» (если есть в файле)."
     )
@@ -20935,7 +20937,7 @@ def dashboard_developer_projects(df):
     show_num = dev_tbl.head(_max_rows_show).copy()
     show_disp = display_tbl.head(_max_rows_show).copy()
     if len(display_tbl) > _max_rows_show:
-        st.caption(
+        suppress_caption(
             f"Показано {_max_rows_show} из {len(display_tbl)} строк (для полного списка используйте выгрузку)."
         )
 
@@ -21028,7 +21030,7 @@ def dashboard_id_tessa_placeholder(df):
         st.info("Данные TESSA не обнаружены. Загрузите tessa_*.csv через web/.")
         return
 
-    st.caption(f"Источник данных: **{_source_label}**.")
+    suppress_caption(f"Источник данных: **{_source_label}**.")
     st.metric("Строк в наборе TESSA", int(len(work)))
     with st.expander("Колонки текущего набора TESSA", expanded=False):
         st.code(", ".join(str(c) for c in work.columns))
@@ -21060,16 +21062,16 @@ def _render_control_points_admin_on_dashboard():
         "Настройка вех, заголовков столбцов и соответствия MSP (администратор)",
         expanded=False,
     ):
-        st.caption(
+        suppress_caption(
             "**title** — заголовок группы столбцов в таблице; **slug** — стабильный ключ данных; "
             "**match** — правила отбора задач из выгрузки MSP (level, names_any, name_contains, "
             "parent_l2_contains, block_contains, phase_needles, phase_exclude_needles). "
             "Изменения сохраняются в базе и сразу применяются к этому отчёту."
         )
         cur = get_control_point_milestones_effective()
-        st.caption(f"Сейчас активно вех: **{len(cur)}**.")
+        suppress_caption(f"Сейчас активно вех: **{len(cur)}**.")
         st.markdown("**Быстрое редактирование заголовков вех**")
-        st.caption("Изменяет только `title`; `slug` и `match` остаются без изменений.")
+        suppress_caption("Изменяет только `title`; `slug` и `match` остаются без изменений.")
         _title_inputs = []
         for i, (t, s, m) in enumerate(cur):
             _new_title = st.text_input(
@@ -21163,7 +21165,7 @@ def dashboard_control_points(df):
             "для «сырого» CSV см. список колонок ниже."
         )
         with st.expander("Диагностика колонок (если таблица не строится)", expanded=False):
-            st.caption("Имена колонок в текущем наборе данных:")
+            suppress_caption("Имена колонок в текущем наборе данных:")
             st.code(", ".join(str(c) for c in work.columns))
             hints = [
                 c
@@ -21182,7 +21184,7 @@ def dashboard_control_points(df):
                 )
             ]
             if hints:
-                st.caption("Колонки, похожие на даты окончания:")
+                suppress_caption("Колонки, похожие на даты окончания:")
                 st.code(", ".join(str(c) for c in hints))
         return
     render_control_points_dashboard(st, work, _TABLE_CSS)
@@ -21395,7 +21397,7 @@ def dashboard_project_schedule_chart(df):
 
     st.header("График проекта")
     with st.expander("Подсказка", expanded=False):
-        st.caption(
+        suppress_caption(
             "Фильтры: проект (ур. 1), функциональный блок (ур. 2), уровень структуры MSP (3/4/5 или все), опционально — только лоты. "
             "Полосы: план и базовый план (если есть данные). "
             "Переключатель подписей: дата окончания или % выполнения — подпись сразу справа от конца полос этой строки (план и при наличии — база). "
@@ -21418,7 +21420,7 @@ def dashboard_project_schedule_chart(df):
             work = work[_is_msp].copy()
             _dropped = _before_rows - len(work)
             if _dropped > 0:
-                st.caption(
+                suppress_caption(
                     f"В отчёт «График проекта» оставлены только MSP-выгрузки "
                     f"(`msp_*.csv`). Исключено строк из других источников: {_dropped}."
                 )
@@ -21613,7 +21615,7 @@ def dashboard_project_schedule_chart(df):
             if sel_proj != "Все":
                 plot_df = plot_df[plot_df[proj_col].astype(str).str.strip() == str(sel_proj).strip()]
         else:
-            st.caption("Колонка проекта не найдена.")
+            suppress_caption("Колонка проекта не найдена.")
     with f2:
         if block_col:
             _raw_blocks = sorted(plot_df[block_col].dropna().astype(str).map(str.strip).unique().tolist())
@@ -21683,9 +21685,9 @@ def dashboard_project_schedule_chart(df):
             if sel_block != "Все":
                 plot_df = plot_df[plot_df[block_col].astype(str).str.strip() == str(sel_block).strip()]
             if not block_col_msp:
-                st.caption(f"Список блоков берётся из поля «{block_col}» (резервный режим).")
+                suppress_caption(f"Список блоков берётся из поля «{block_col}» (резервный режим).")
         else:
-            st.caption("Нет колонки функционального блока.")
+            suppress_caption("Нет колонки функционального блока.")
     if f_building is not None:
         with f_building:
             builds = ["Все"] + sorted(plot_df[building_col].dropna().astype(str).unique().tolist())
@@ -21725,7 +21727,7 @@ def dashboard_project_schedule_chart(df):
                 if wbs_dep.notna().any():
                     plot_df = plot_df[wbs_dep == target]
         elif not level_col:
-            st.caption("Нет колонки уровня.")
+            suppress_caption("Нет колонки уровня.")
     with f_view:
         view_mode = st.selectbox(
             "Вид отображения",
@@ -21774,17 +21776,17 @@ def dashboard_project_schedule_chart(df):
                 "заполненного значения лота у текущей выборки."
             )
         elif _after == _before:
-            st.caption(
+            suppress_caption(
                 f"Фильтр «в лотах»: в выборке все строки уже с заполненным лотом «{lot_col}» "
                 "(ничего не отсеяно)."
             )
         else:
-            st.caption(
+            suppress_caption(
                 f"Фильтр «в лотах»: оставлено {_after} из {_before} строк "
                 f"(колонка «{lot_col}»)."
             )
     elif show_lots and not lot_col:
-        st.caption("Колонка лота не найдена — фильтр «в лотах» недоступен.")
+        suppress_caption("Колонка лота не найдена — фильтр «в лотах» недоступен.")
     label_pct = st.checkbox(
         "Подписи у конца задач: показывать % выполнения (вместо даты окончания)",
         value=False,
@@ -21910,7 +21912,7 @@ def dashboard_project_schedule_chart(df):
                      f" Колонки файла: {', '.join(str(c) for c in _orig_cols_pct_diag[:15])}…")
             st.warning("Не найдена колонка процента выполнения — у концов полос будет «н/д»." + _hint)
         elif not _has_data:
-            st.caption(
+            suppress_caption(
                 f"Колонка процента выполнения найдена («{_gantt_pct_col_used}»), "
                 "но все значения пустые — у концов полос будет «н/д»."
             )
@@ -22361,7 +22363,7 @@ def dashboard_project_schedule_chart(df):
         force_all_labels and not (auto_compact_on_zoom and _readability.get("is_dense"))
     )
     if force_all_labels and not _effective_force_all:
-        st.caption(
+        suppress_caption(
             "Режим «Показывать все подписи» автоматически ограничен для защиты от наложений в плотном/масштабированном виде."
         )
 
@@ -22686,7 +22688,7 @@ def dashboard_project_schedule_chart(df):
 
             # Человекочитаемый caption: что именно нарисовано.
             if labels_hover_only:
-                st.caption(
+                suppress_caption(
                     "Подписи у концов полос отключены — значения доступны при наведении на полосу."
                 )
             elif _summary_only:
@@ -22695,7 +22697,7 @@ def dashboard_project_schedule_chart(df):
                     if (not labels_summary_only and not _effective_force_all)
                     else ""
                 )
-                st.caption(
+                suppress_caption(
                     f"Подписи у концов полос: только сводные задачи (L≤2){_why_auto}. "
                     f"Нарисовано меток: {_labels_drawn} из {_n_rows_here} строк. "
                     "Полные даты/% — при наведении."
@@ -22844,7 +22846,7 @@ def dashboard_project_schedule_chart(df):
             skip_clamp_zoom=True,
         )
 
-    st.caption("Таблица под графиком")
+    suppress_caption("Таблица под графиком")
 
     dev_start_src = _sched_col(
         plot_df,
@@ -22870,7 +22872,7 @@ def dashboard_project_schedule_chart(df):
             else pd.to_datetime(plot_df["plan end"], errors="coerce")
         )
         if not fact_end_col:
-            st.caption("Для ковенантов не найдена колонка фактического окончания — используется «plan end».")
+            suppress_caption("Для ковенантов не найдена колонка фактического окончания — используется «plan end».")
 
         dev_end = (end_used - base_end).dt.days if base_end.notna().any() else pd.Series(np.nan, index=plot_df.index)
         cov_tbl = pd.DataFrame(
@@ -22980,12 +22982,12 @@ def dashboard_project_schedule_chart(df):
     else:
         _render_gantt_schedule_html_table(tbl_show, max_rows=80)
         if len(plot_df) > 80:
-            st.caption(f"Показано 80 из {len(plot_df)} строк (на диаграмме до 400 задач).")
+            suppress_caption(f"Показано 80 из {len(plot_df)} строк (на диаграмме до 400 задач).")
 
 
 def dashboard_pd_delay(df):
     """Просрочка выдачи ПД — раздел «Проектная документация»."""
-    st.caption(
+    suppress_caption(
         "Источник данных — MSP по разделу «Проектная документация». "
         "Ниже показана просрочка выдачи ПД и помесячная динамика по разделам."
     )

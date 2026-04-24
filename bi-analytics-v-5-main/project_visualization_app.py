@@ -556,12 +556,6 @@ def main():
         if data_mode == "FTP → web/":
             from ftp_sync import merge_ftp_config, streamlit_secrets_to_config, sync_ftp_to_web
 
-            with st.expander("Секреты и переменные окружения FTP", expanded=False):
-                st.caption(
-                    "Секреты: файл `.streamlit/secrets.toml`, секция `[ftp]` "
-                    "(host, user, password, remote_dir, port, use_tls) "
-                    "или переменные окружения BI_FTP_HOST / BI_FTP_USER / BI_FTP_PASSWORD."
-                )
             with st.expander("Параметры FTP вручную (если нет secrets)", expanded=False):
                 _h = st.text_input("FTP host", key="ftp_host_override")
                 _u = st.text_input("FTP user", key="ftp_user_override")
