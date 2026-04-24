@@ -14373,12 +14373,6 @@ def dashboard_executive_documentation(df):
     Исключаются строки KindName «Предписание» (отдельный отчёт «Предписания»).
     """
     st.header("Исполнительная документация")
-    with st.expander("О отчёте", expanded=False):
-        st.caption("Контроль просрочек подрядчика и заказчика.")
-        st.caption(
-            "Сводка, детальная таблица и динамика по месяцам собраны в одном отчёте; переключение между разделами — вкладками ниже."
-        )
-
     tessa_df = st.session_state.get("tessa_data", None)
     work = None
     _source_label = ""
@@ -14398,7 +14392,6 @@ def dashboard_executive_documentation(df):
         )
         return
 
-    st.caption(f"Источник данных отчёта: **{_source_label}**.")
     work.columns = [str(c).strip() for c in work.columns]
     try:
         # Дополняем строки ИД данными карточки/задачи TESSA по ключам DocID/CardId.
@@ -14556,19 +14549,6 @@ def dashboard_executive_documentation(df):
             value=True,
             key="exec_doc_hide_overdue_signed",
         )
-        st.caption("Остальные дополнительные флаги из старого макета убраны.")
-
-    with st.expander("Колонка контрагента в TESSA", expanded=False):
-        if contr_col:
-            st.caption(
-                f"Для контрагента используется колонка «{contr_col}» "
-                f"(поиск по точному или частичному совпадению с: {', '.join(_contr_candidates)})."
-            )
-        else:
-            st.caption(
-                "Колонка контрагента в данных TESSA не найдена — фильтр и столбчатые диаграммы по контрагентам недоступны "
-                f"(ожидаются имена или вхождения подстрок из списка: {', '.join(_contr_candidates)})."
-            )
 
     filtered_base = work.copy()
     if sel_obj != "Все" and obj_col:
@@ -19702,12 +19682,6 @@ def dashboard_predpisania(df):
     Оформление в общей тёмной теме дашборда (как остальные отчёты).
     """
     st.header("Неустраненные предписания")
-    st.caption(
-        "Данные TESSA, виды «Предписание». Поля «№ договора» и «Срок устранения» ищутся по типовым именам "
-        "(ContractNumber, DueDate и др.); при раздельных файлах Id (DocID) и Tasks (CardId) строки задач "
-        "дополняются полями карточки, если CardId совпадает с DocID."
-    )
-
     tessa_df = st.session_state.get("tessa_data", None)
     work = None
     _source_label = ""
@@ -19723,7 +19697,6 @@ def dashboard_predpisania(df):
         st.warning("Для отчёта необходимы данные из TESSA. Загрузите файлы tessa_*.csv.")
         return
 
-    st.caption(f"Источник данных отчёта: **{_source_label}**.")
     work.columns = [str(c).strip() for c in work.columns]
     work = _tessa_fill_card_from_doc_lookup(work)
 
