@@ -11690,7 +11690,13 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 _min_dt = _pdt.min().date()
                 _max_dt = _pdt.max().date()
         if _min_dt is None or _max_dt is None:
-            _min_dt = (date.today().replace(day=1))
+            if period_col and period_col in work_df.columns:
+                _pdt_fb = pd.to_datetime(work_df[period_col], errors="coerce", dayfirst=True).dropna()
+                if not _pdt_fb.empty:
+                    _min_dt = _pdt_fb.min().date()
+                    _max_dt = _pdt_fb.max().date()
+        if _min_dt is None or _max_dt is None:
+            _min_dt = date.today().replace(day=1)
             _max_dt = date.today()
 
         _rng = st.date_input(
@@ -11722,12 +11728,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
     # Apply filters
     filtered_df = work_df.copy()
     if selected_projects and project_col and project_col in filtered_df.columns:
-        project_mask = (
-            filtered_df[project_col]
-            .astype(str)
-            .str.strip()
-            .isin([str(p).strip() for p in selected_projects])
-        )
+        _sel_k = [_project_filter_norm_key(p) for p in selected_projects if _project_filter_norm_key(p)]
+        project_mask = filtered_df[project_col].map(_project_filter_norm_key).isin(_sel_k)
         filtered_df = filtered_df[project_mask]
     if selected_contractor != "Все" and "Контрагент" in filtered_df.columns:
         filtered_df = filtered_df[
@@ -11764,10 +11766,20 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             _overlap_days = _overlap_days.clip(lower=0.0)
             _days_in_month = _pser.dt.days_in_month.astype(float)
             _ratio = (_overlap_days / _days_in_month).fillna(0.0).clip(lower=0.0, upper=1.0)
-            keep = _ratio > 0.0
-            filtered_df = filtered_df[keep].copy()
-            if not filtered_df.empty:
-                _ratio = _ratio.loc[filtered_df.index]
+            if bool((_ratio > 0.0).any()) is False and len(filtered_df) > 0:
+                _ratio = pd.Series(1.0, index=filtered_df.index, dtype="float64")
+                suppress_caption(
+                    "Диапазон дат в фильтре не пересекается с месяцом данных (например, апрель в календаре, а "
+                    "выгрузка — за другой месяц). Показаны исходные план/факт без сужения; уточните период."
+                )
+            else:
+                keep = _ratio > 0.0
+                filtered_df = filtered_df[keep].copy()
+                if not filtered_df.empty:
+                    _ratio = _ratio.loc[filtered_df.index]
+                if filtered_df.empty:
+                    _ratio = None
+            if _ratio is not None and not filtered_df.empty:
                 for _col in ("week_sum", "План_numeric", "Дельта_numeric"):
                     if _col in filtered_df.columns:
                         filtered_df[_col] = pd.to_numeric(filtered_df[_col], errors="coerce").fillna(0.0) * _ratio
@@ -11931,6 +11943,12 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                         pd.to_numeric(_tbl[f"{_widx} неделя_numeric"], errors="coerce").fillna(0.0)
                         + _vals
                     )
+            # После groupby по суточным колонкам в work_df суток уже нет — week_sum остаётся, недели 0. Делим факт.
+            if (not _week_map) and (not _daily_hdr_cols) and "week_sum" in _tbl.columns:
+                _ws_line = pd.to_numeric(_tbl["week_sum"], errors="coerce").fillna(0.0)
+                _den = float(max(1, int(_weeks_in_month)))
+                for i in range(1, _weeks_in_month + 1):
+                    _tbl[f"{i} неделя_numeric"] = _ws_line / _den
 
             for _w in _week_cols_out:
                 if f"{_w}_numeric" not in _tbl.columns:
