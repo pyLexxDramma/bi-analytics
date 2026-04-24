@@ -105,13 +105,29 @@ def load_from_web_dir(web_dir: Path) -> dict:
     # Группируем по дате среза
     groups = group_by_snapshot(data_files)
 
+    # Версия в БД = одна `snapshot_date`; файлы без даты в имени — не к какой
+    # версии не привязать: явно пропускаем (даты нет в `detect_file()`).
+    _undated = groups.pop("__unknown__", [])
+    for meta in _undated:
+        nm = meta.get("name", "")
+        result["errors"].append(
+            f"ETL: в имени нет даты среза, файл пропущен: {nm}"
+        )
+        result["files_skipped"] += 1
+    if _undated:
+        log.warning(
+            "Пропущено %d файлов без snapshot_date: %s",
+            len(_undated),
+            [m.get("name") for m in _undated],
+        )
+
     latest_version_id = None
     latest_snapshot_date = None
 
     with get_etl_connection() as conn:
-        for snapshot_date, file_metas in sorted(groups.items()):
-            if snapshot_date.startswith("__"):
-                continue
+        for snapshot_date, file_metas in sorted(
+            (k, v) for k, v in groups.items() if not k.startswith("__")
+        ):
 
             version_id = _ensure_version(conn, snapshot_date, file_metas)
 

@@ -203,7 +203,7 @@
 ## 5.1 ETL: распознавание/маппинг источников
 - [ ] `etl/parser.py`
   - [x] `detect_file()` — фактические `web/`: `other_{project}_DD.MM.YYYY_rd`, `1с_…_dannye|DK|spravochniki.json` (префикс **1** + лат. **c** / кирил. **с**), `tessa_…_id|rd|task`, `msp_…`, `other_*_resursi`, `KrStates`/`…`; правки 2026-04-24.
-  - [ ] `group_by_snapshot()` — проверить консистентность версий.
+  - [x] `group_by_snapshot()` + `load_from_web_dir` — `__unknown__` (нет даты в имени) → явная ошибка/пропуск, цикл только по `YYYY-MM-DD`; докстринг 2026-04-24.
 - [ ] `etl/mapper.py`
   - [ ] `map_msp()` — нормализация дат/отклонений и колонок MSP.
   - [ ] `map_tessa_id()` / `map_tessa_rd()` / `map_tessa_task()` — контроль ключей `DocID/CardID`, `KrStateID`, `ObjectProjectID`.

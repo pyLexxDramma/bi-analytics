@@ -211,9 +211,12 @@ def scan_web_dir(web_dir: Path) -> list[dict]:
 
 def group_by_snapshot(file_metas: list[dict]) -> dict[str, list[dict]]:
     """
-    Группирует файлы по дате среза.
-    Файлы без даты (справочники) попадают в ключ '__reference__'.
-    Файлы с неизвестной датой — в '__unknown__'.
+    Группирует файлы по дате среза (`snapshot_date` из `detect_file`).
+
+    - Справочники (`file_type == "reference"`) с пустой датой — ключ `__reference__`
+      (в `load_from_web_dir` в версии не идут — обрабатываются отдельно).
+    - Остальные без даты — `__unknown__` (в loader нужно залогировать/пропустить:
+      версия в SQLite требует `YYYY-MM-DD`).
     """
     groups: dict[str, list[dict]] = {}
     for meta in file_metas:
