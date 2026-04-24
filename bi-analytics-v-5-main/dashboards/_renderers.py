@@ -15359,6 +15359,8 @@ def dashboard_documentation(
         if "project name" in df.columns
         else find_column(df, ["Проект", "project"])
     )
+    if project_col and project_col in df.columns:
+        df = _project_column_apply_canonical(df, project_col)
 
     # Add filters
     st.subheader("Фильтры")
@@ -16415,6 +16417,9 @@ def dashboard_project_documentation(df):
 # ==================== DASHBOARD 8: Budget by Type (Plan/Fact/Reserve) ====================
 def dashboard_budget_by_type(df):
     st.header("Бюджет план/факт")
+    df = df.copy()
+    if "project name" in df.columns:
+        df = _project_column_apply_canonical(df, "project name")
     col1, col2, col3 = st.columns(3)
 
     with col1:
