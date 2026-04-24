@@ -11803,7 +11803,17 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
     # Референсная таблица ГДРС: проект -> контрагент -> вид работ.
     # Маппинг по ТЗ: План = договор, СКУД = выгрузка ресурсов, Отклонение = СКУД - План.
     if "Контрагент" in filtered_df.columns:
-        st.markdown("#### График движения рабочей силы (люди)")
+        _gdrs_tab_is_tech = (data_source_filter or "").strip().lower() in (
+            "техника",
+            "tech",
+            "technique",
+        )
+        _ref_h4 = (
+            "График движения техники"
+            if _gdrs_tab_is_tech
+            else "График движения рабочей силы (люди)"
+        )
+        st.markdown(f"#### {_ref_h4}")
         _tbl = filtered_df.copy()
 
         def _to_num_safe(series):
@@ -11816,9 +11826,10 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             s = s.str.replace(r"[^0-9\.\-]+", "", regex=True)
             return pd.to_numeric(s, errors="coerce").fillna(0.0)
 
-        # СКУД берём из выгрузки ресурсов.
+        # СКУД: по вкладке — из строк «Ресурсы» или «Техника» (см. data_source).
         if "data_source" in _tbl.columns:
-            _res_mask = _gdrs_match_data_source(_tbl["data_source"], "Ресурсы")
+            _skud_source_label = "Техника" if _gdrs_tab_is_tech else "Ресурсы"
+            _res_mask = _gdrs_match_data_source(_tbl["data_source"], _skud_source_label)
             if _res_mask.any():
                 _tbl = _tbl.loc[_res_mask].copy()
 
