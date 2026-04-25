@@ -18748,20 +18748,20 @@ _PRED_DASH_MOCK_CSS = """
 .pred-mock-sort { font-size:12px; color:#a0a0a0; }
 .pred-mock-badge { background:#c0392b; color:#fff; padding:4px 14px; border-radius:20px; font-size:13px; font-weight:500; }
 .pred-detail-wrap { overflow-x:auto; min-width:0; border:1px solid #444; border-radius:10px; margin-top:8px; }
-.pred-detail-wrap table { width:100%; table-layout:fixed; border-collapse:collapse; }
-.pred-detail-wrap th { text-align:left; padding:6px 8px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:11px; text-transform:uppercase; white-space:normal; line-height:1.1; word-break:keep-all; }
+.pred-detail-wrap table { width:100%; table-layout:auto; border-collapse:collapse; }
+.pred-detail-wrap th { text-align:left; padding:6px 8px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:11px; text-transform:uppercase; white-space:nowrap; line-height:1.2; word-break:normal; overflow:hidden; text-overflow:ellipsis; }
 .pred-detail-wrap th.pred-col-st,
 .pred-detail-wrap th.pred-col-num,
 .pred-detail-wrap th.pred-col-dly { white-space:nowrap; }
 .pred-detail-wrap th a { color:#fafafa; text-decoration:none; display:inline-flex; gap:6px; align-items:center; }
 .pred-detail-wrap th a:hover { color:#93c5fd; }
 .pred-sort-icon { color:#8fb4da; font-size:10px; }
-.pred-detail-wrap td { padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0; vertical-align:top; word-break:normal; overflow-wrap:anywhere; }
-.pred-detail-wrap .pred-col-num { width:7.5ch; min-width:7.5ch; max-width:10ch; }
-.pred-detail-wrap .pred-col-dly { width:9ch; min-width:9ch; max-width:10ch; font-variant-numeric:tabular-nums; }
-.pred-detail-wrap .pred-col-st { width:12ch; min-width:12ch; max-width:16ch; }
-.pred-detail-wrap .pred-col-date { width:11ch; min-width:10ch; max-width:12ch; }
-.pred-detail-wrap .pred-col-mid { width:14ch; min-width:12ch; max-width:20ch; }
+.pred-detail-wrap td { padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0; vertical-align:top; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pred-detail-wrap .pred-col-num { width:9ch; min-width:9ch; max-width:11ch; }
+.pred-detail-wrap .pred-col-dly { width:11ch; min-width:11ch; max-width:12ch; font-variant-numeric:tabular-nums; }
+.pred-detail-wrap .pred-col-st { width:13ch; min-width:13ch; max-width:17ch; }
+.pred-detail-wrap .pred-col-date { width:12ch; min-width:12ch; max-width:13ch; }
+.pred-detail-wrap .pred-col-mid { width:12ch; min-width:11ch; max-width:16ch; }
 .pred-detail-wrap .pred-col-text { width:auto; min-width:12ch; }
 .pred-detail-wrap tr.pred-row-overdue td { background:rgba(255, 111, 145, 0.12); }
 .pred-detail-wrap tr.pred-row-resolved td { background:rgba(158, 255, 158, 0.11); }
@@ -19176,6 +19176,20 @@ def _pred_detail_table_html(
     max_rows: int = 700,
 ) -> str:
     esc = html_module.escape
+    header_alias = {
+        "Статус предписания": "Статус",
+        "Подрядчик": "Подрядчик",
+        "Проект": "Проект",
+        "№ договора": "№ дог.",
+        "№ документа": "№ док.",
+        "№ предписания": "№ предп.",
+        "Дата выдачи предписания": "Выдано",
+        "Блок выдачи предписания": "Блок",
+        "Срок устранения": "Срок",
+        "Фактическая дата устранения предписания": "Факт устран.",
+        "Дней просрочки": "Просрочка, дн",
+        "Критические предписания": "Критич.",
+    }
     if df is None or df.empty:
         return f'<p style="color:#a0a0a0;padding:16px;">{esc("Нет строк для отображения.")}</p>'
     show = df.head(max_rows)
@@ -19187,9 +19201,10 @@ def _pred_detail_table_html(
         if sort_col == col:
             marker = "↑" if str(sort_order).lower() == "asc" else "↓"
         link = _pred_sort_link(col, sort_col, sort_order)
+        caption = header_alias.get(str(col).strip(), str(col).strip())
         parts.append(
             f'<th class="{esc(c_cls, quote=True)}">'
-            f'<a href="{esc(link, quote=True)}">{esc(col)} <span class="pred-sort-icon">{esc(marker)}</span></a></th>'
+            f'<a href="{esc(link, quote=True)}" title="{esc(str(col).strip(), quote=True)}">{esc(caption)} <span class="pred-sort-icon">{esc(marker)}</span></a></th>'
         )
     parts.append("</tr></thead><tbody>")
     for _, row in show.iterrows():
@@ -20769,6 +20784,18 @@ def dashboard_predpisania(df):
                     ),
                 )
             )
+            fig1.add_trace(
+                go.Bar(
+                    y=grp[chart_group_col],
+                    x=grp["Просрочено"],
+                    name="Просроченные (внутри неустранённых)",
+                    orientation="h",
+                    marker=dict(color="#E67E22", line=dict(color="rgba(255,255,255,0.16)", width=1)),
+                    opacity=0.95,
+                    width=0.48,
+                    hovertemplate="<b>%{y}</b><br>Просроченных: %{x}<extra></extra>",
+                )
+            )
             # R23-10: отдельный невидимый трейс в легенде — число просроченных по каждой группе.
             # Даёт требование стр. 24 п.5: «в легенду — число просроченных по подрядчику».
             if _total_overdue_all > 0:
@@ -20789,6 +20816,7 @@ def dashboard_predpisania(df):
             fig1.update_layout(
                 bargap=0.26,
                 showlegend=True,
+                barmode="overlay",
                 legend=dict(orientation="h", yanchor="bottom", y=1.04, xanchor="center", x=0.5),
             )
             xmax = max(
