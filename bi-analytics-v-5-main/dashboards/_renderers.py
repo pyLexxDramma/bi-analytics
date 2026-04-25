@@ -14313,6 +14313,12 @@ def dashboard_debit_credit(df):
     if not value_cols:
         st.info("Нет данных для графика.")
     else:
+        # При большом числе категорий столбцы становятся слишком узкими:
+        # оставляем топ по максимальной абсолютной метрике.
+        chart_df["_bar_rank"] = chart_df[value_cols].abs().max(axis=1)
+        chart_df = _limit_bar_categories(chart_df, "_bar_rank", max_bars=28, label="контрагентов/договоров")
+        chart_df = chart_df.drop(columns=["_bar_rank"], errors="ignore")
+        value_cols = [c for c in chart_df.columns if c != chart_label]
         fig = go.Figure()
         x = chart_df[chart_label].astype(str).map(_trunc_label)
         colors = {
@@ -14350,6 +14356,8 @@ def dashboard_debit_credit(df):
         fig.update_layout(
             barmode="group",
             height=min(900, max(420, len(chart_df) * 28)),
+            bargap=0.14,
+            bargroupgap=0.06,
             legend=dict(
                 orientation="v",
                 yanchor="top",
