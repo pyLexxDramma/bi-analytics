@@ -245,7 +245,7 @@ def _get_dashboards() -> Dict[str, Callable]:
 # Ленивая загрузка, чтобы при импорте dashboards не тянуть project_visualization_app
 # Увеличьте версию при изменении реестра отчётов — иначе долгоживущий процесс Streamlit
 # может держать устаревший словарь в памяти.
-_DASHBOARDS_REGISTRY_VERSION = 54
+_DASHBOARDS_REGISTRY_VERSION = 55
 _dashboards_cache: Dict[str, Callable] = {}
 _dashboards_cache_version: int = 0
 
