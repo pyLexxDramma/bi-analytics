@@ -1879,12 +1879,26 @@ def build_control_points_df(mdf: pd.DataFrame) -> pd.DataFrame:
 _CONTROL_POINTS_CSS = """
 <style>
 .cp-table-wrap { overflow-x: auto; min-width: 0; max-width: 100%; }
-.rendered-table th.cp-ghead { text-align:center; background:#1f232d; font-size:12px; padding:6px 8px; }
-.rendered-table th.cp-sub { font-size:11px; color:#c9d1d9; font-weight:500; }
+.cp-table-wrap .rendered-table th,
+.cp-table-wrap .rendered-table td {
+  border-color: rgba(121, 154, 192, 0.55) !important;
+}
+.cp-table-wrap .rendered-table th {
+  font-size: 12px !important;
+  color: #eaf2fb !important;
+  background: #17314b !important;
+}
+.cp-table-wrap .rendered-table td {
+  font-size: 12px !important;
+  color: #f3f7fc !important;
+  line-height: 1.25;
+}
+.rendered-table th.cp-ghead { text-align:center; background:#1f232d; font-size:13px; padding:7px 9px; color:#f5f9ff !important; }
+.rendered-table th.cp-sub { font-size:12px; color:#dde8f5; font-weight:600; }
 /* ГПЗУ / Экспертиза стадии П: % выполнения в MSP ≠ 100% — «рыжая» подсветка значения */
 .cp-td-warn {
-  background: rgba(234, 88, 12, 0.32) !important;
-  color: #7c2d12 !important;
+  background: rgba(234, 88, 12, 0.38) !important;
+  color: #fff7ed !important;
   font-weight: 600;
 }
 .cp-status-cell { text-align: center; vertical-align: middle; }
