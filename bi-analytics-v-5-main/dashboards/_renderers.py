@@ -4149,11 +4149,6 @@ def dashboard_plan_fact_dates(df):
     # без «висящих» одиночных чекбоксов и без серых fallback-подсказок между
     # элементами управления.
     st.markdown("**Параметры отображения**")
-    _pct_ok = bool(
-        dates_pct_col_resolved and str(dates_pct_col_resolved).strip() in df.columns
-    )
-    if not _pct_ok and dates_pct_col:
-        _pct_ok = bool(str(dates_pct_col).strip() in df.columns)
 
     # R23-03 page_5.4: чекбокс «только отклонение < 0» вынесен ОТДЕЛЬНОЙ строкой
     # ниже (влияет только на графики); в основном ряду — фильтры, общие для таблицы и графиков.
@@ -4167,15 +4162,6 @@ def dashboard_plan_fact_dates(df):
     with cb_c2:
         # R23-03: галочка больше не блокируется из-за отсутствующей колонки —
         # при включении без %-колонки просто не применит фильтр (не ломает UI).
-        _hide_done_help = (
-            "Скрыть задачи со 100% выполнения по числовой колонке процента из MSP "
-            f"({dates_pct_col_resolved or 'не найдена'})."
-        )
-        if not _pct_ok:
-            _hide_done_help += (
-                " Колонка процента сейчас не найдена — фильтр включится, "
-                "но при отсутствии данных останется неактивным."
-            )
         hide_completed_dates = st.checkbox(
             "Скрыть завершённые (100%)",
             value=False,
