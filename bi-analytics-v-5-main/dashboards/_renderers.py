@@ -6409,14 +6409,16 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
     view_type = st.selectbox(
         "Вид отображения", ["По причинам", "По месяцам"], key="reasons_view_type"
     )
-    # R23-04 follow-up: тренд-линия имеет смысл только для «По месяцам»;
-    # в «По причинам» — X-ось это не временной ряд, поэтому чекбокс блокируем.
-    show_trend_line = st.checkbox(
-        "Показывать линию тренда",
-        value=False,
-        key="reasons_dynamics_show_trend_line",
-        disabled=(view_type == "По причинам"),
-    )
+    # Линия тренда имеет смысл только в режиме «По месяцам».
+    # В «По причинам» скрываем переключатель, чтобы не создавать ложное ожидание.
+    if view_type == "По месяцам":
+        show_trend_line = st.checkbox(
+            "Показывать линию тренда",
+            value=False,
+            key="reasons_dynamics_show_trend_line",
+        )
+    else:
+        show_trend_line = False
 
     filtered_df = df.copy()
 
