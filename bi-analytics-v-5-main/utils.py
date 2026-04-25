@@ -569,6 +569,7 @@ def style_dataframe_for_dark_theme(
     percent_deviation_gradient_column: Optional[str] = None,
     *,
     extra_days_columns: Optional[tuple] = None,
+    finance_deviation_abs_min_mln: float = 0.01,
 ):
     """
     Styler для тёмной темы (`st.dataframe` / `st.table`): фон, контраст, **§4.8** — плотные ячейки.
@@ -638,6 +639,8 @@ def style_dataframe_for_dark_theme(
 
     # Подсветка финансовых отклонений
     if finance_deviation_column and finance_deviation_column in df.columns:
+        _fin_dev_min = float(finance_deviation_abs_min_mln)
+
         def _finance_cell_color(series):
             result = []
             for v in series:
@@ -653,6 +656,8 @@ def style_dataframe_for_dark_theme(
                 except (TypeError, ValueError):
                     pass
                 if num is None or pd.isna(num):
+                    result.append(f"background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}")
+                elif _fin_dev_min > 0 and abs(float(num)) < _fin_dev_min:
                     result.append(f"background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}")
                 elif num >= 0:
                     result.append("background-color: #c0392b; color: #ffffff")
@@ -759,6 +764,7 @@ def budget_table_to_html(
     *,
     deviation_red_if_positive_only: bool = False,
     deviation_red_if_negative: bool = False,
+    deviation_abs_min_mln: float = 0.01,
 ) -> str:
     """
     Строит HTML таблицы бюджета с раскраской колонки отклонения.
@@ -770,6 +776,8 @@ def budget_table_to_html(
 
     Если ``deviation_red_if_negative=True`` (ТЗ «Утверждённый бюджет»: отклонение = план − факт):
     значение < 0 — красный, ≥ 0 — зелёный.
+
+    Если ``|число| < deviation_abs_min_mln`` (по умолчанию 0.01 млн руб.), ячейка без акцентного цвета — как обычный текст.
     """
     if df is None or df.empty:
         return "<p>Нет данных для отображения.</p>"
@@ -801,15 +809,29 @@ def budget_table_to_html(
             if finance_deviation_column and col == finance_deviation_column:
                 num = _parse_finance_value(val)
                 if num is not None:
-                    if deviation_red_if_negative:
+                    if (
+                        deviation_abs_min_mln > 0
+                        and abs(float(num)) < float(deviation_abs_min_mln)
+                    ):
+                        parts.append(
+                            f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 6px 8px; '
+                            f'background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
+                        )
+                    elif deviation_red_if_negative:
                         cell_class = "bd-cell-red" if num < 0 else "bd-cell-green"
+                        parts.append(
+                            f'<td class="{cell_class}" style="padding: 6px 8px; font-weight: bold;"><span>{val_esc}</span></td>'
+                        )
                     elif deviation_red_if_positive_only:
                         cell_class = "bd-cell-red" if num > 0 else "bd-cell-green"
+                        parts.append(
+                            f'<td class="{cell_class}" style="padding: 6px 8px; font-weight: bold;"><span>{val_esc}</span></td>'
+                        )
                     else:
                         cell_class = "bd-cell-red" if num >= 0 else "bd-cell-green"
-                    parts.append(
-                        f'<td class="{cell_class}" style="padding: 6px 8px; font-weight: bold;"><span>{val_esc}</span></td>'
-                    )
+                        parts.append(
+                            f'<td class="{cell_class}" style="padding: 6px 8px; font-weight: bold;"><span>{val_esc}</span></td>'
+                        )
                 else:
                     s = val_str.strip()
                     if not s:
@@ -817,16 +839,27 @@ def budget_table_to_html(
                             f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 6px 8px; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
                         )
                     else:
-                        is_neg = s.startswith("-") or bool(re.search(r"^-\d", s))
-                        if deviation_red_if_negative:
-                            cell_class = "bd-cell-red" if is_neg else "bd-cell-green"
-                        elif deviation_red_if_positive_only:
-                            cell_class = "bd-cell-red" if not is_neg else "bd-cell-green"
+                        num_fallback = _parse_finance_value(s)
+                        if (
+                            num_fallback is not None
+                            and deviation_abs_min_mln > 0
+                            and abs(float(num_fallback)) < float(deviation_abs_min_mln)
+                        ):
+                            parts.append(
+                                f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 6px 8px; '
+                                f'background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
+                            )
                         else:
-                            cell_class = "bd-cell-green" if is_neg else "bd-cell-red"
-                        parts.append(
-                            f'<td class="{cell_class}" style="padding: 6px 8px; font-weight: bold;"><span>{val_esc}</span></td>'
-                        )
+                            is_neg = s.startswith("-") or bool(re.search(r"^-\d", s))
+                            if deviation_red_if_negative:
+                                cell_class = "bd-cell-red" if is_neg else "bd-cell-green"
+                            elif deviation_red_if_positive_only:
+                                cell_class = "bd-cell-red" if not is_neg else "bd-cell-green"
+                            else:
+                                cell_class = "bd-cell-green" if is_neg else "bd-cell-red"
+                            parts.append(
+                                f'<td class="{cell_class}" style="padding: 6px 8px; font-weight: bold;"><span>{val_esc}</span></td>'
+                            )
             else:
                 parts.append(
                     f'<td style="padding: 6px 8px; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
