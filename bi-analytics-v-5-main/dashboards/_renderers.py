@@ -8246,7 +8246,10 @@ def dashboard_bdr(df):
             return
 
         _nb = len(chart_df)
+        _is_cumulative = view_type == "Накопительно"
+        _hide_bar_value_labels = _is_cumulative and _nb > 10
         _tlbl_b = 0.005
+        _tlbl_dev = 0.01 if not _hide_bar_value_labels else _tlbl_b
         _tfs_b = 8 if _nb > 32 else 9 if _nb > 20 else 10 if _nb > 12 else 11
         if _nb > 32:
             _bgb, _bggb = 0.04, 0.01
@@ -8254,8 +8257,34 @@ def dashboard_bdr(df):
             _bgb, _bggb = 0.06, 0.02
         else:
             _bgb, _bggb = 0.1, 0.04
-        _bdr_h = 600 if _nb <= 20 else int(min(900, 520 + int(_nb * 1.4)))
+        _leg_b_pre = 300
+        if _is_cumulative:
+            _leg_b_pre = max(340, min(520, 300 + int(_nb * 4.8)))
+        elif _nb > 24:
+            _leg_b_pre = max(300, min(460, 280 + int(_nb * 3.5)))
+        _top_px_pre = 72 if (_hide_bar_value_labels and _nb > 20) else 88
+        _min_plot_core_px = 400
+        _bdr_h_base = 600 if _nb <= 20 else int(min(1100, 520 + int(_nb * 1.4)))
+        _bdr_h = max(_bdr_h_base, _top_px_pre + _leg_b_pre + _min_plot_core_px)
+        _bdr_h = int(min(1400, _bdr_h))
         _xb = -45 if _nb <= 18 else -50 if _nb <= 36 else -55
+        _x_standoff = 30 if _nb <= 18 else (44 if _nb <= 36 else 56)
+        _txt_pos_b = "none" if _hide_bar_value_labels else "outside"
+        _plan_txt_b = (
+            None
+            if _hide_bar_value_labels
+            else _finance_bar_text_mln_rub(chart_df["План расходов"], min_abs_mln=_tlbl_b)
+        )
+        _fact_txt_b = (
+            None
+            if _hide_bar_value_labels
+            else _finance_bar_text_mln_rub(chart_df["Факт расходов"], min_abs_mln=_tlbl_b)
+        )
+        _dev_txt_b = (
+            None
+            if _hide_bar_value_labels
+            else _finance_bar_text_mln_rub(chart_df["Отклонение"], min_abs_mln=_tlbl_dev)
+        )
 
         fig = go.Figure()
         x_vals = chart_df["Период"]
@@ -8265,11 +8294,11 @@ def dashboard_bdr(df):
                 y=chart_df["План расходов"].div(1e6),
                 name="План расходов",
                 marker_color="#2E86AB",
-                text=_finance_bar_text_mln_rub(
-                    chart_df["План расходов"], min_abs_mln=_tlbl_b
-                ),
-                textposition="outside",
+                text=_plan_txt_b,
+                textposition=_txt_pos_b,
                 textfont=dict(size=_tfs_b, color="#f0f4f8"),
+                customdata=chart_df["План расходов"].apply(format_million_rub),
+                hovertemplate="<b>%{x}</b><br>План расходов: %{customdata}<br><extra></extra>",
             )
         )
         fig.add_trace(
@@ -8278,11 +8307,11 @@ def dashboard_bdr(df):
                 y=chart_df["Факт расходов"].div(1e6),
                 name="Факт расходов",
                 marker_color="#A23B72",
-                text=_finance_bar_text_mln_rub(
-                    chart_df["Факт расходов"], min_abs_mln=_tlbl_b
-                ),
-                textposition="outside",
+                text=_fact_txt_b,
+                textposition=_txt_pos_b,
                 textfont=dict(size=_tfs_b, color="#f0f4f8"),
+                customdata=chart_df["Факт расходов"].apply(format_million_rub),
+                hovertemplate="<b>%{x}</b><br>Факт расходов: %{customdata}<br><extra></extra>",
             )
         )
         dev_colors = [
@@ -8294,27 +8323,25 @@ def dashboard_bdr(df):
                 y=chart_df["Отклонение"].div(1e6),
                 name="Отклонение",
                 marker_color=dev_colors,
-                text=_finance_bar_text_mln_rub(
-                    chart_df["Отклонение"], min_abs_mln=_tlbl_b
-                ),
-                textposition="outside",
+                text=_dev_txt_b,
+                textposition=_txt_pos_b,
                 textfont=dict(size=_tfs_b, color="#f0f4f8"),
+                customdata=chart_df["Отклонение"].apply(format_million_rub),
+                hovertemplate="<b>%{x}</b><br>Отклонение: %{customdata}<br><extra></extra>",
             )
         )
         fig.update_layout(
             title_text="",
-            xaxis_title=period_label,
             yaxis_title="млн руб.",
             barmode="group",
             bargap=_bgb,
             bargroupgap=_bggb,
             xaxis=dict(
+                title=dict(text=period_label, standoff=_x_standoff),
                 tickangle=_xb,
                 tickfont=dict(size=8 if _nb > 28 else 9 if _nb > 18 else 10),
                 nticks=min(64, max(12, _nb)),
             ),
-            margin=dict(b=100),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
         )
         if _nb > 10:
             try:
@@ -8348,11 +8375,25 @@ def dashboard_bdr(df):
                 pad = max(abs(_ymax), abs(_ymin), 1e-6) * 0.2
                 fig.update_layout(yaxis=dict(range=[_ymin - pad, _ymax + pad]))
         fig = _apply_finance_bar_label_layout(fig)
+        _leg_b = _leg_b_pre
+        _leg_y = -0.34 if _nb <= 20 else (-0.38 if _nb <= 36 else -0.44)
+        _top_px = _top_px_pre
+        fig = _plotly_legend_horizontal_below_plot(
+            fig, bottom_px=_leg_b, legend_y=_leg_y, top_px=_top_px
+        )
+        try:
+            fig.update_xaxes(
+                title=dict(text=period_label, standoff=_x_standoff),
+                automargin=True,
+            )
+        except Exception:
+            pass
         fig = apply_chart_background(fig)
         render_chart(
             fig,
             caption_below=f"БДР — план/факт расходов{title_suffix}",
             height=_bdr_h,
+            max_height=None,
         )
 
     _bdr_chart()
