@@ -14548,13 +14548,14 @@ _EXEC_DOC_DETAIL_CSS = """
 .exec-doc-table th {
   text-align:left; padding:6px 8px; background:#16283a; color:#f8fbff;
   border-bottom:1px solid rgba(138,160,184,0.28); font-size:11px; font-weight:700;
-  text-transform:uppercase; letter-spacing:0.04em; white-space:normal; line-height:1.25; word-break:break-word; hyphens:auto;
+  text-transform:uppercase; letter-spacing:0.04em; white-space:nowrap; line-height:1.2; word-break:normal; hyphens:none;
+  overflow:hidden; text-overflow:ellipsis;
   vertical-align:bottom;
 }
 .exec-doc-table th.exec-col-num,
 .exec-doc-table th.exec-col-date,
 .exec-doc-table th.exec-col-dly,
-.exec-doc-table th.exec-col-st { white-space:normal; }
+.exec-doc-table th.exec-col-st { white-space:nowrap; }
 .exec-doc-table td {
   padding:5px 8px; border-bottom:1px solid rgba(82,104,130,0.28); color:#e8eef5;
   vertical-align:top;
@@ -14746,6 +14747,20 @@ def _exec_detail_table_html(
 ) -> str:
     """HTML-таблица детального отчёта ИД: CAPS-заголовки, циан для просрочек, пилюли статусов."""
     esc = html_module.escape
+    header_alias = {
+        "Контрагент": "Контрагент",
+        "Объект": "Объект",
+        "№ документа": "№ док",
+        "Тип": "Тип",
+        "Плановая дата сдачи": "План сдачи",
+        "Факт сдачи": "Факт сдачи",
+        "Просрочка сдачи": "Проср. сдачи",
+        "Дата передачи заказчику": "Передача ЗК",
+        "Дата согласования": "Согласование",
+        "Просрочка соглас.": "Проср. согл.",
+        "Статус": "Статус",
+        "Дата создания": "Создан",
+    }
     if df is None or df.empty:
         return f'<p style="color:#8892a0;padding:12px;">{esc("Нет строк для отображения.")}</p>'
     show = df.head(max_rows)
@@ -14757,9 +14772,10 @@ def _exec_detail_table_html(
         if sort_col == c:
             marker = "↑" if str(sort_order).lower() == "asc" else "↓"
         link = _exec_sort_link(c, sort_col, sort_order)
+        caption = header_alias.get(str(c).strip(), str(c).strip())
         head_parts.append(
             f'<th class="{esc(c_cls, quote=True)}">'
-            f'<a href="{esc(link, quote=True)}">{esc(c)} <span class="exec-doc-th-sort">{esc(marker)}</span></a></th>'
+            f'<a href="{esc(link, quote=True)}" title="{esc(str(c).strip(), quote=True)}">{esc(caption)} <span class="exec-doc-th-sort">{esc(marker)}</span></a></th>'
         )
     head_parts.append("</tr></thead>")
     thead = "".join(head_parts)
