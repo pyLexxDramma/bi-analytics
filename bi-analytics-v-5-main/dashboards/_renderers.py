@@ -7070,6 +7070,9 @@ def dashboard_budget_by_period(df):
                 return
 
             _n = len(project_data)
+            _is_cumulative = view_type == "Накопительно"
+            # Накопительно + длинная шкала: подписи на столбцах дают «кашу»; легенда внизу наезжает на подписи оси X.
+            _hide_bar_value_labels = _is_cumulative and _n > 10
             _tlbl = 0.005
             _tfs = 8 if _n > 32 else 9 if _n > 20 else 10 if _n > 12 else 11
             # Меньше «воздуха» между группами/столбцами — визуально шире бары.
@@ -7081,6 +7084,19 @@ def dashboard_budget_by_period(df):
                 _bg, _bgg = 0.1, 0.04
             _ch = 600 if _n <= 20 else int(min(900, 520 + int(_n * 1.4)))
             _xangle = -45 if _n <= 18 else -50 if _n <= 36 else -55
+            _x_standoff = 30 if _n <= 18 else (44 if _n <= 36 else 56)
+
+            _plan_txt = (
+                None
+                if _hide_bar_value_labels
+                else _finance_bar_text_mln_rub(project_data["budget plan"], min_abs_mln=_tlbl)
+            )
+            _fact_txt = (
+                None
+                if _hide_bar_value_labels
+                else _finance_bar_text_mln_rub(project_data["budget fact"], min_abs_mln=_tlbl)
+            )
+            _txt_pos = "none" if _hide_bar_value_labels else "outside"
 
             fig = go.Figure()
             fig.add_trace(
@@ -7089,10 +7105,8 @@ def dashboard_budget_by_period(df):
                     y=project_data["budget plan"].div(1e6),
                     name="БДДС план",
                     marker_color="#2E86AB",
-                    text=_finance_bar_text_mln_rub(
-                        project_data["budget plan"], min_abs_mln=_tlbl
-                    ),
-                    textposition="outside",
+                    text=_plan_txt,
+                    textposition=_txt_pos,
                     textfont=dict(size=_tfs, color="#f0f4f8"),
                     customdata=project_data["budget plan"].apply(format_million_rub),
                     hovertemplate="<b>%{x}</b><br>БДДС план: %{customdata}<br><extra></extra>",
@@ -7104,26 +7118,27 @@ def dashboard_budget_by_period(df):
                     y=project_data["budget fact"].div(1e6),
                     name="БДДС факт",
                     marker_color="#A23B72",
-                    text=_finance_bar_text_mln_rub(
-                        project_data["budget fact"], min_abs_mln=_tlbl
-                    ),
-                    textposition="outside",
+                    text=_fact_txt,
+                    textposition=_txt_pos,
                     textfont=dict(size=_tfs, color="#f0f4f8"),
                     customdata=project_data["budget fact"].apply(format_million_rub),
                     hovertemplate="<b>%{x}</b><br>БДДС факт: %{customdata}<br><extra></extra>",
                 )
             )
             if not hide_reserve:
-                dev_vals = project_data["reserve budget"].div(1e6)
-                dev_colors = ["#e74c3c" if v >= 0 else "#27ae60" for v in project_data["reserve budget"]]
+                _dev_txt = (
+                    None
+                    if _hide_bar_value_labels
+                    else project_data["reserve budget"].apply(format_million_rub)
+                )
                 fig.add_trace(
                     go.Bar(
                         x=project_data[period_col],
                         y=project_data["reserve budget"].div(1e6),
                         name="Отклонение",
                         marker_color="#e74c3c",
-                        text=project_data["reserve budget"].apply(format_million_rub),
-                        textposition="outside",
+                        text=_dev_txt,
+                        textposition=_txt_pos,
                         textfont=dict(size=_tfs, color="#f0f4f8"),
                         customdata=project_data["reserve budget"].apply(format_million_rub),
                         hovertemplate="<b>%{x}</b><br>Отклонение: %{customdata}<br><extra></extra>",
@@ -7135,14 +7150,19 @@ def dashboard_budget_by_period(df):
                 and adjusted_budget_col in project_data.columns
                 and not hide_adjusted
             ):
+                _adj_txt = (
+                    None
+                    if _hide_bar_value_labels
+                    else project_data[adjusted_budget_col].apply(format_million_rub)
+                )
                 fig.add_trace(
                     go.Bar(
                         x=project_data[period_col],
                         y=project_data[adjusted_budget_col].div(1e6),
                         name="Скорректированный бюджет",
                         marker_color="#F18F01",
-                        text=project_data[adjusted_budget_col].apply(format_million_rub),
-                        textposition="outside",
+                        text=_adj_txt,
+                        textposition=_txt_pos,
                         textfont=dict(size=_tfs, color="#f0f4f8"),
                         customdata=project_data[adjusted_budget_col].apply(format_million_rub),
                         hovertemplate="<b>%{x}</b><br>Скорректированный бюджет: %{customdata}<br><extra></extra>",
@@ -7155,7 +7175,7 @@ def dashboard_budget_by_period(df):
                 bargap=_bg,
                 bargroupgap=_bgg,
                 xaxis=dict(
-                    title=dict(text=period_label, standoff=26),
+                    title=dict(text=period_label, standoff=_x_standoff),
                     tickangle=_xangle,
                     tickfont=dict(size=8 if _n > 28 else 9 if _n > 18 else 10),
                     nticks=min(64, max(12, _n)),
@@ -7167,7 +7187,24 @@ def dashboard_budget_by_period(df):
                     fig.update_layout(uniformtext=dict(minsize=5, mode="hide"))
                 except Exception:
                     pass
-            fig = _plotly_legend_horizontal_below_plot(fig)
+            # Легенда под графиком: при длинной шкале (особенно «Накопительно») увеличить b и отступ заголовка оси X.
+            _leg_b = 300
+            if _is_cumulative:
+                _leg_b = max(340, min(520, 300 + int(_n * 4.8)))
+            elif _n > 24:
+                _leg_b = max(300, min(460, 280 + int(_n * 3.5)))
+            _leg_y = -0.34 if _n <= 20 else (-0.38 if _n <= 36 else -0.44)
+            _top_px = 72 if (_hide_bar_value_labels and _n > 20) else 88
+            fig = _plotly_legend_horizontal_below_plot(
+                fig, bottom_px=_leg_b, legend_y=_leg_y, top_px=_top_px
+            )
+            try:
+                fig.update_xaxes(
+                    title=dict(text=period_label, standoff=_x_standoff),
+                    automargin=True,
+                )
+            except Exception:
+                pass
             if not project_data.empty:
                 _ymax = float(
                     np.nanmax(
