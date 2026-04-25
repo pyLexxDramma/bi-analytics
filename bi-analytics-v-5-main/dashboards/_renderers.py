@@ -14540,11 +14540,12 @@ _EXEC_DOC_DETAIL_CSS = """
   color:#9fb3c8; font-size:13px; margin-top:10px; line-height:1.45;
 }
 .exec-doc-table-wrap { overflow-x:auto; min-width:0; margin:0.75rem 0 0.5rem; border-radius:14px; border:1px solid rgba(82,104,130,0.45); }
-.exec-doc-table { width:100%; table-layout:fixed; border-collapse:collapse; font-size:13px; font-family:Inter,system-ui,sans-serif; }
+.exec-doc-table { width:100%; table-layout:auto; border-collapse:collapse; font-size:13px; font-family:Inter,system-ui,sans-serif; }
 .exec-doc-table th {
   text-align:left; padding:6px 8px; background:#16283a; color:#f8fbff;
   border-bottom:1px solid rgba(138,160,184,0.28); font-size:11px; font-weight:700;
-  text-transform:uppercase; letter-spacing:0.05em; white-space:normal; line-height:1.1; word-break:keep-all; hyphens:none;
+  text-transform:uppercase; letter-spacing:0.05em; white-space:nowrap; line-height:1.2; word-break:normal; hyphens:none;
+  overflow:hidden; text-overflow:ellipsis;
   vertical-align:bottom;
 }
 .exec-doc-table th.exec-col-num,
@@ -14554,14 +14555,14 @@ _EXEC_DOC_DETAIL_CSS = """
 .exec-doc-table td {
   padding:5px 8px; border-bottom:1px solid rgba(82,104,130,0.28); color:#e8eef5;
   vertical-align:top;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
 }
 /* Компактные «технические» колонки, чтобы даты/сроки/дни визуально «привязались» к цифрам, а широкие поля — не съедали весь макет */
-.exec-col-num { width:7.5ch; min-width:7.5ch; max-width:10ch; text-align:left; }
-.exec-col-dly { width:9ch; min-width:9ch; max-width:10ch; text-align:left; }
-.exec-col-st { width:12ch; min-width:12ch; max-width:16ch; text-align:left; }
-.exec-col-date { width:11ch; min-width:10ch; max-width:12ch; text-align:left; }
-.exec-col-text { width:auto; min-width:14ch; max-width:none; }
-.exec-doc-table td { word-break:normal; overflow-wrap:anywhere; }
+.exec-col-num { width:10ch; min-width:10ch; max-width:12ch; text-align:left; }
+.exec-col-dly { width:12ch; min-width:12ch; max-width:14ch; text-align:left; }
+.exec-col-st { width:14ch; min-width:14ch; max-width:18ch; text-align:left; }
+.exec-col-date { width:13ch; min-width:13ch; max-width:14ch; text-align:left; }
+.exec-col-text { width:auto; min-width:16ch; max-width:none; }
 .exec-doc-table tr:nth-child(even) td { background:rgba(255,255,255,0.025); }
 .exec-doc-table tr:hover td { background:rgba(48,72,99,0.72); }
 .exec-doc-table th a { color:#f8fbff; text-decoration:none; display:inline-flex; gap:6px; align-items:center; }
