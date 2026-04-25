@@ -2552,33 +2552,44 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             reason_counts["pct"] = (reason_counts["Количество"] / (float(total) or 1.0) * 100).round(1)
 
         n_reasons = len(reason_counts)
+        # Круг «Доли причин»: длинные подписи внутри секторов нечитаемы (§4.11 — без hover).
+        # Легенда даёт полные названия; на диаграмме — только доля: снаружи с коннектором при
+        # умеренном числе сегментов, иначе крупный процент внутри горизонтально + donut.
         fig = px.pie(
             reason_counts,
             values="Количество",
             names="Причина",
             title=None,
+            hole=0.42,
         )
-        _pie_textpos = "outside" if n_reasons <= 6 else "inside"
-        _pie_font = 11 if n_reasons <= 6 else 10
+        _outside_ok = n_reasons <= 10
+        _pie_font = 14 if _outside_ok else 12
         fig.update_traces(
-            textinfo="none",
-            texttemplate="%{label}<br>%{value}<br>(%{percent})",
-            textposition=_pie_textpos,
-            textfont_size=_pie_font,
-            insidetextorientation="radial",
+            texttemplate="%{percent:.1f}%",
+            textposition="outside" if _outside_ok else "inside",
+            textfont=dict(
+                size=_pie_font,
+                color="#e8eaed",
+                family="Inter, system-ui, sans-serif",
+            ),
+            insidetextorientation="horizontal" if not _outside_ok else "auto",
             hovertemplate="<b>%{label}</b><br>Количество: %{value}<br>Доля: %{percent}<extra></extra>",
+            pull=[0.015] * n_reasons if _outside_ok else 0,
+            marker=dict(line=dict(color="rgba(15,17,23,0.85)", width=1)),
         )
         fig.update_layout(
-            height=600,
-            margin=dict(l=20, r=20, t=30, b=30),
+            height=640 if _outside_ok else 600,
+            margin=dict(l=48, r=48, t=36, b=200 if _outside_ok else 160),
             legend=dict(
                 orientation="h",
-                x=0.5, y=-0.15,
-                xanchor="center", yanchor="top",
-                font=dict(size=9),
+                x=0.5,
+                y=-0.22 if _outside_ok else -0.18,
+                xanchor="center",
+                yanchor="top",
+                font=dict(size=10),
+                tracegroupgap=0,
             ),
             font=dict(family="Inter, system-ui, sans-serif"),
-            uniformtext=dict(minsize=7, mode="hide"),
             showlegend=True,
         )
         fig = apply_chart_background(fig)
