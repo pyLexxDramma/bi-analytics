@@ -3285,8 +3285,12 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 text="_дни_текст",
             )
             # Группировка столбцов: легенда справа, как у «По причинам», чтобы не наезжать на ось X
+            _n_per_top = int(project_data["period"].nunique(dropna=True) or 0)
+            _top_h = int(max(640, 420 + min(_n_per_top, 36) * 22))
             fig.update_layout(
                 barmode="group",
+                bargap=0.28,
+                bargroupgap=0.12,
                 legend=dict(
                     title=dict(text="Проект"),
                     orientation="v",
@@ -3294,23 +3298,25 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     y=1,
                     x=1.02,
                     xanchor="left",
-                    font=dict(size=10),
+                    font=dict(size=12),
                     traceorder="normal",
                     itemsizing="constant",
                 ),
-                margin=dict(l=56, r=280, t=28, b=140),
+                margin=dict(l=64, r=300, t=36, b=200),
                 xaxis=dict(
                     title="",
                     tickangle=-45,
-                    tickfont=dict(size=10),
+                    tickfont=dict(size=12),
                     automargin=True,
                 ),
-                yaxis=dict(title="Дни отклонений", automargin=True),
-                height=560,
+                yaxis=dict(title="Дни отклонений", automargin=True, tickfont=dict(size=12)),
+                height=_top_h,
             )
+            if _n_per_top > 18:
+                fig.update_xaxes(ticklabelstep=2)
             fig.update_traces(
                 textposition="outside",
-                textfont=dict(size=12, color="white"),
+                textfont=dict(size=14, color="white"),
             )
             fig = _apply_bar_uniformtext(fig)
             fig = apply_chart_background(fig)
@@ -3399,7 +3405,11 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 pass
 
             if _multi_proj:
-                _wrap = min(4, max(2, _n_proj))
+                # Раньше до 4 колонок в ряд — панели слишком узкие. Одна колонка: полная ширина на проект.
+                _wrap = 1
+                _facet_rows = max(1, int(np.ceil(_n_proj / float(_wrap))))
+                _n_per_facet = int(len(_periods_grid) if _periods_grid else reason_data["period"].nunique(dropna=True) or 0)
+                _panel_h = int(max(440, 360 + min(_n_per_facet, 32) * 18))
                 fig = px.bar(
                     reason_data,
                     x="period",
@@ -3420,6 +3430,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 )
                 fig.update_layout(
                     barmode="stack",
+                    bargap=0.22,
                     legend=dict(
                         title=dict(text="Причина отклонения"),
                         orientation="v",
@@ -3427,15 +3438,26 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         y=1,
                         x=1.02,
                         xanchor="left",
-                        font=dict(size=10),
+                        font=dict(size=12),
                         traceorder="normal",
                         itemsizing="constant",
                     ),
-                    margin=dict(l=56, r=280, t=72, b=160),
-                    height=min(960, 120 + 320 * max(1, int(np.ceil(_n_proj / float(_wrap))))),
+                    margin=dict(l=72, r=300, t=96, b=220),
+                    height=min(2600, 96 + _facet_rows * _panel_h),
                 )
-                fig.update_xaxes(tickangle=-45, title=_period_x_title, automargin=True)
-                fig.update_yaxes(title="Количество отклонений", automargin=True)
+                fig.update_xaxes(
+                    tickangle=-45,
+                    title=_period_x_title,
+                    automargin=True,
+                    tickfont=dict(size=11),
+                )
+                fig.update_yaxes(
+                    title="Количество отклонений",
+                    automargin=True,
+                    tickfont=dict(size=11),
+                )
+                if _n_per_facet > 18:
+                    fig.update_xaxes(ticklabelstep=2)
             else:
                 fig = px.bar(
                     reason_data,
@@ -3452,8 +3474,11 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     },
                     text="_seg_lbl",
                 )
+                _n_per_single = int(len(_periods_grid) if _periods_grid else reason_data["period"].nunique(dropna=True) or 0)
+                _single_h = int(max(600, 440 + min(_n_per_single, 36) * 20))
                 fig.update_layout(
                     barmode="stack",
+                    bargap=0.22,
                     legend=dict(
                         title=dict(text="Причина отклонения"),
                         orientation="v",
@@ -3461,22 +3486,26 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         y=1,
                         x=1.02,
                         xanchor="left",
-                        font=dict(size=10),
+                        font=dict(size=12),
                         traceorder="normal",
                         itemsizing="constant",
                     ),
-                    margin=dict(l=56, r=280, t=40, b=140),
+                    margin=dict(l=64, r=300, t=48, b=200),
                     xaxis=dict(
                         title=_period_x_title,
                         tickangle=-45,
-                        tickfont=dict(size=10),
+                        tickfont=dict(size=12),
                         automargin=True,
                     ),
                     yaxis=dict(
-                        title="Количество отклонений", automargin=True
+                        title="Количество отклонений",
+                        automargin=True,
+                        tickfont=dict(size=12),
                     ),
-                    height=580,
+                    height=_single_h,
                 )
+                if _n_per_single > 18:
+                    fig.update_xaxes(ticklabelstep=2)
             fig.update_traces(
                 textposition="inside",
                 insidetextanchor="middle",
@@ -3509,8 +3538,8 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 if isinstance(mc, str):
                     tc = _deviations_contrast_text_on_fill(mc)
                     tr.update(
-                        textfont=dict(color=tc, size=11),
-                        insidetextfont=dict(color=tc, size=11),
+                        textfont=dict(color=tc, size=13),
+                        insidetextfont=dict(color=tc, size=13),
                     )
                 tr.update(hovertemplate=_hover_tpl_single)
 
@@ -3538,7 +3567,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                             xanchor="center",
                             yanchor="bottom",
                             yshift=8,
-                            font=dict(color="#f5f5f5", size=12),
+                            font=dict(color="#f5f5f5", size=14),
                         )
                     else:
                         fig.add_annotation(
@@ -3551,14 +3580,14 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                             xanchor="center",
                             yanchor="top",
                             yshift=-8,
-                            font=dict(color="#f5f5f5", size=12),
+                            font=dict(color="#f5f5f5", size=14),
                         )
 
             fig = _apply_bar_uniformtext(fig)
             # R23-04 page_10: промежуточные значения должны быть видимыми всегда;
             # поднимаем минимальный размер шрифта и оставляем mode=show.
             try:
-                fig.update_layout(uniformtext=dict(minsize=9, mode="show"))
+                fig.update_layout(uniformtext=dict(minsize=11, mode="show"))
             except Exception:
                 pass
             fig = apply_chart_background(fig)
