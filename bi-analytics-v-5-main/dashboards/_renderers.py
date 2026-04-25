@@ -2563,15 +2563,17 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             hole=0.44,
         )
         _pie_font = 13 if n_reasons <= 12 else 11
+        # В Plotly pie `%{percent}` — доля 0…1, не «проценты 0…100». `:.1f` + суффикс «%» давало «0.3%»
+        # вместо 34.2%; корректно: `:.1%` (d3-format: ×100 и знак %).
         fig.update_traces(
-            texttemplate="%{percent:.1f}%",
+            texttemplate="%{percent:.1%}",
             textposition="outside",
             textfont=dict(
                 size=_pie_font,
                 color="#e8eaed",
                 family="Inter, system-ui, sans-serif",
             ),
-            hovertemplate="<b>%{label}</b><br>Количество: %{value}<br>Доля: %{percent}<extra></extra>",
+            hovertemplate="<b>%{label}</b><br>Количество: %{value}<br>Доля: %{percent:.1%}<extra></extra>",
             pull=[0.012] * n_reasons,
             marker=dict(line=dict(color="rgba(15,17,23,0.85)", width=1)),
             domain=dict(x=[0.18, 0.82], y=[0.20, 0.80]),
