@@ -2551,19 +2551,39 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         if "pct" not in reason_counts.columns:
             reason_counts["pct"] = (reason_counts["Количество"] / (float(total) or 1.0) * 100).round(1)
 
-        n_reasons = len(reason_counts)
-        # Круг «Доли причин»: длинные подписи внутри секторов нечитаемы (§4.11 — без hover).
-        # Легенда даёт полные названия; на диаграмме — только доля: снаружи с коннектором при
-        # умеренном числе сегментов, иначе крупный процент внутри горизонтально + donut.
+        # Круг «Доли причин» (§4.11, без hover): на полном наборе много «хвостовых» долей —
+        # подписи % налезают. Для круга оставляем не больше MAX_PIE_SLICES сегментов:
+        # топ по количеству + один сегмент «Прочее» (детализация — столбик выше и таблица ниже).
+        _MAX_PIE_SLICES = 10
+        _pie_src = reason_counts[["Причина", "Количество", "pct"]].copy()
+        if len(_pie_src) > _MAX_PIE_SLICES:
+            _head = _pie_src.nlargest(_MAX_PIE_SLICES - 1, "Количество").copy()
+            _tail = _pie_src.loc[~_pie_src["Причина"].isin(_head["Причина"])]
+            _n_tail = int(len(_tail))
+            _c_tail = int(_tail["Количество"].sum())
+            _p_tail = float(_tail["pct"].sum())
+            _other = pd.DataFrame(
+                [
+                    {
+                        "Причина": f"Прочее ({_n_tail} причин, {_c_tail} шт.)",
+                        "Количество": _c_tail,
+                        "pct": round(_p_tail, 1),
+                    }
+                ]
+            )
+            _pie_src = pd.concat([_head, _other], ignore_index=True)
+
+        n_reasons = len(_pie_src)
+        # Только %; снаружи при небольшом числе сегментов (после свёртки «Прочее»), иначе внутри.
         fig = px.pie(
-            reason_counts,
+            _pie_src,
             values="Количество",
             names="Причина",
             title=None,
-            hole=0.42,
+            hole=0.48,
         )
         _outside_ok = n_reasons <= 10
-        _pie_font = 14 if _outside_ok else 12
+        _pie_font = 15 if _outside_ok else 12
         fig.update_traces(
             texttemplate="%{percent:.1f}%",
             textposition="outside" if _outside_ok else "inside",
@@ -2574,16 +2594,16 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             ),
             insidetextorientation="horizontal" if not _outside_ok else "auto",
             hovertemplate="<b>%{label}</b><br>Количество: %{value}<br>Доля: %{percent}<extra></extra>",
-            pull=[0.015] * n_reasons if _outside_ok else 0,
+            pull=[0.02] * n_reasons if _outside_ok else 0,
             marker=dict(line=dict(color="rgba(15,17,23,0.85)", width=1)),
         )
         fig.update_layout(
-            height=640 if _outside_ok else 600,
-            margin=dict(l=48, r=48, t=36, b=200 if _outside_ok else 160),
+            height=700 if _outside_ok else 620,
+            margin=dict(l=56, r=56, t=40, b=240 if _outside_ok else 180),
             legend=dict(
                 orientation="h",
                 x=0.5,
-                y=-0.22 if _outside_ok else -0.18,
+                y=-0.26 if _outside_ok else -0.20,
                 xanchor="center",
                 yanchor="top",
                 font=dict(size=10),
