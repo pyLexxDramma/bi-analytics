@@ -14539,23 +14539,27 @@ _EXEC_DOC_DETAIL_CSS = """
 .exec-doc-caption {
   color:#9fb3c8; font-size:13px; margin-top:10px; line-height:1.45;
 }
-.exec-doc-table-wrap { overflow-x:auto; min-width:0; margin:0.75rem 0 0.5rem; border-radius:14px; border:1px solid rgba(82,104,130,0.45); }
+.exec-doc-table-wrap {
+  overflow-x:auto; min-width:0; margin:0.75rem 0 0.5rem;
+  border-radius:14px; border:1px solid rgba(82,104,130,0.45);
+  background:rgba(22,40,58,0.9);
+}
 .exec-doc-table { width:100%; table-layout:auto; border-collapse:collapse; font-size:13px; font-family:Inter,system-ui,sans-serif; }
 .exec-doc-table th {
   text-align:left; padding:6px 8px; background:#16283a; color:#f8fbff;
   border-bottom:1px solid rgba(138,160,184,0.28); font-size:11px; font-weight:700;
-  text-transform:uppercase; letter-spacing:0.05em; white-space:nowrap; line-height:1.2; word-break:normal; hyphens:none;
-  overflow:hidden; text-overflow:ellipsis;
+  text-transform:uppercase; letter-spacing:0.04em; white-space:normal; line-height:1.25; word-break:break-word; hyphens:auto;
   vertical-align:bottom;
 }
 .exec-doc-table th.exec-col-num,
 .exec-doc-table th.exec-col-date,
 .exec-doc-table th.exec-col-dly,
-.exec-doc-table th.exec-col-st { white-space:nowrap; }
+.exec-doc-table th.exec-col-st { white-space:normal; }
 .exec-doc-table td {
   padding:5px 8px; border-bottom:1px solid rgba(82,104,130,0.28); color:#e8eef5;
   vertical-align:top;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  background:rgba(19,35,52,0.9);
 }
 /* Компактные «технические» колонки, чтобы даты/сроки/дни визуально «привязались» к цифрам, а широкие поля — не съедали весь макет */
 .exec-col-num { width:10ch; min-width:10ch; max-width:12ch; text-align:left; }
