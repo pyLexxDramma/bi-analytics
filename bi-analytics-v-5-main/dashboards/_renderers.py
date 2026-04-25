@@ -14323,6 +14323,8 @@ def dashboard_debit_credit(df):
             "Остаток на начало (нетто)": "#8e44ad",
             "Остаток на конец (нетто)": "#e74c3c",
         }
+        _n_bars = int(len(chart_df))
+        _hide_bar_labels = _n_bars > 8
         for col in value_cols:
             fig.add_trace(
                 go.Bar(
@@ -14330,9 +14332,19 @@ def dashboard_debit_credit(df):
                     x=x,
                     y=chart_df[col],
                     marker_color=colors.get(col, None),
-                text=chart_df[col].apply(lambda v: f"{v:,.0f}".replace(",", " ") if pd.notna(v) else ""),
-                    textposition="outside",
+                    text=(
+                        None
+                        if _hide_bar_labels
+                        else chart_df[col].apply(
+                            lambda v: f"{v:,.0f}".replace(",", " ") if pd.notna(v) else ""
+                        )
+                    ),
+                    textposition="none" if _hide_bar_labels else "outside",
                     textfont=dict(size=10, color="#f0f4f8"),
+                    customdata=chart_df[col].apply(
+                        lambda v: f"{v:,.0f}".replace(",", " ") if pd.notna(v) else "0"
+                    ),
+                    hovertemplate=f"<b>{col}</b><br>%{{x}}<br>%{{customdata}}<extra></extra>",
                 )
             )
         fig.update_layout(
@@ -14390,6 +14402,20 @@ def dashboard_debit_credit(df):
         table_df = table_df.rename(columns=rename_map)
     elif contract_col and contract_col in table_df.columns:
         table_df = table_df.rename(columns={contract_col: "Договор"})
+    # Убираем пустые ключи группировки, чтобы не было «пустой строки» в начале таблицы.
+    if "Подрядчик" in table_df.columns:
+        table_df = table_df[
+            table_df["Подрядчик"].astype(str).str.strip().ne("")
+            & table_df["Подрядчик"].astype(str).str.lower().str.strip().ne("nan")
+        ].copy()
+    if "Договор" in table_df.columns:
+        table_df = table_df[
+            table_df["Договор"].astype(str).str.strip().ne("")
+            & table_df["Договор"].astype(str).str.lower().str.strip().ne("nan")
+        ].copy()
+    if table_df.empty:
+        st.info("Нет строк подрядчик/договор после очистки пустых значений.")
+        return
     group_dim_cols = [c for c in ("Проект", "Подрядчик", "Договор") if c in table_df.columns]
     value_cols_t = [c for c in table_df.columns if c not in group_dim_cols]
     total_row = {"Договор": "Итого"}
