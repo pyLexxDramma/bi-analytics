@@ -21495,12 +21495,8 @@ def _render_control_points_admin_hint_on_dashboard() -> None:
     except Exception:
         return
     st.info(
-        "Настройка **вех, заголовков столбцов и соответствия MSP** для отчёта "
-        "«Контрольные точки» перенесена в **Администрирование** → вкладка "
-        "«**MSP: задача для метрик**» (блок вверху вкладки). "
-        "**Как открыть:** в боковом меню, раздел **Настройки**, кнопка **«Административная панель»** — "
-        "она отображается **только** у администратора / суперадминистратора; далее откройте указанную вкладку. "
-        "Доступ к самой настройке, как и ранее, только у этих ролей."
+        "Настройка вех/заголовков/соответствия MSP для отчёта «Контрольные точки» "
+        "доступна в админ-панели (вкладка «MSP: задача для метрик»)."
     )
 
 
@@ -21553,6 +21549,13 @@ def dashboard_control_points(df):
 
 def dashboard_project_schedule_chart(df):
     """График проекта: Гант по плану и базе MSP, фильтры, таблица с отклонениями."""
+    # Масштаб визуализации: высота строк графика и пропорционально шрифты/маркеры/пороги плотности подписей.
+    _GANTT_VIS_SCALE = 4.0
+    # Отдельные коэффициенты читаемости: визуальная высота остаётся x4,
+    # но текст/маркеры/обводки растут умеренно и не налезают друг на друга.
+    _GANTT_FONT_SCALE = 1.35
+    _GANTT_MARKER_SCALE = 1.6
+    _GANTT_STROKE_SCALE = 1.6
 
     def _norm_colname(s) -> str:
         """Жёсткая нормализация: BOM, NBSP, узкие пробелы, табы/переносы → один пробел; нижний регистр; trim."""
@@ -22393,15 +22396,18 @@ def dashboard_project_schedule_chart(df):
         # Подстройка под реальные MSP-выгрузки: читаемость важнее плотности меток.
         is_dense = n_rows > 55 or span_days > 540
         is_very_dense = n_rows > 120 or span_days > 900
+        _lf = 9 if is_very_dense else (10 if is_dense else 11)
+        _tf = 9 if is_very_dense else (10 if is_dense else 11)
+        _ms = 6 if is_very_dense else (7 if is_dense else 8)
         return {
             "date_fmt": "%d.%m.%y" if is_dense else "%d.%m.%Y",
-            "label_font": 9 if is_very_dense else (10 if is_dense else 11),
-            "task_font": 9 if is_very_dense else (10 if is_dense else 11),
+            "label_font": int(round(_lf * _GANTT_FONT_SCALE)),
+            "task_font": int(round(_tf * _GANTT_FONT_SCALE)),
             "max_ticks": 10 if is_very_dense else (16 if is_dense else 24),
-            "right_pad_min": 380 if is_dense else 320,
-            "right_pad_max": 820 if is_dense else 700,
+            "right_pad_min": int(round((380 if is_dense else 320) * _GANTT_VIS_SCALE)),
+            "right_pad_max": int(round((820 if is_dense else 700) * _GANTT_VIS_SCALE)),
             "text_step": 4 if is_very_dense else (2 if is_dense else 1),
-            "marker_size": 6 if is_very_dense else (7 if is_dense else 8),
+            "marker_size": int(round(_ms * _GANTT_MARKER_SCALE)),
             "is_dense": is_dense,
             "is_very_dense": is_very_dense,
         }
@@ -22467,7 +22473,7 @@ def dashboard_project_schedule_chart(df):
                         size=policy.get("marker_size", 8),
                         color=color,
                         symbol=symbol,
-                        line=dict(width=1, color="#ffffff"),
+                        line=dict(width=max(1, int(round(_GANTT_STROKE_SCALE))), color="#ffffff"),
                     ),
                     name=legend_name,
                     customdata=np.stack(
@@ -22486,8 +22492,8 @@ def dashboard_project_schedule_chart(df):
             )
 
         n = len(_df.index)
-        row_h = 34 if policy.get("is_dense") else 30
-        chart_h = min(2600, max(220, 96 + row_h * n))
+        row_h = int(round((34 if policy.get("is_dense") else 30) * _GANTT_VIS_SCALE))
+        chart_h = min(int(round(2600 * _GANTT_VIS_SCALE)), max(int(round(220 * _GANTT_VIS_SCALE)), 96 + row_h * n))
         max_len = int(_df["_gantt_y_label"].astype(str).str.len().max() or 12)
         left_m = int(
             max(
@@ -22498,7 +22504,12 @@ def dashboard_project_schedule_chart(df):
 
         fig.update_layout(
             height=chart_h,
-            margin=dict(l=left_m, r=(140 if policy.get("is_dense") else 120), t=48, b=96),
+            margin=dict(
+                l=left_m,
+                r=int(round((140 if policy.get("is_dense") else 120) * _GANTT_VIS_SCALE)),
+                t=int(round(48 * _GANTT_VIS_SCALE)),
+                b=int(round(96 * _GANTT_VIS_SCALE)),
+            ),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             uirevision="gantt_project_schedule_lines",
         )
@@ -22622,7 +22633,7 @@ def dashboard_project_schedule_chart(df):
                     size=policy.get("marker_size", 8),
                     color="#3B82F6",
                     symbol="circle",
-                    line=dict(width=1, color="#ffffff"),
+                    line=dict(width=max(1, int(round(_GANTT_STROKE_SCALE))), color="#ffffff"),
                 ),
                 name="Базовое окончание",
                 customdata=np.stack(
@@ -22647,7 +22658,7 @@ def dashboard_project_schedule_chart(df):
                     size=policy.get("marker_size", 8),
                     color="#EF4444",
                     symbol="diamond",
-                    line=dict(width=1, color="#ffffff"),
+                    line=dict(width=max(1, int(round(_GANTT_STROKE_SCALE))), color="#ffffff"),
                 ),
                 name=fact_label,
                 customdata=np.stack(
@@ -22664,8 +22675,8 @@ def dashboard_project_schedule_chart(df):
         )
 
         n = len(_df.index)
-        row_h = 34 if policy.get("is_dense") else 30
-        chart_h = min(2600, max(220, 96 + row_h * n))
+        row_h = int(round((34 if policy.get("is_dense") else 30) * _GANTT_VIS_SCALE))
+        chart_h = min(int(round(2600 * _GANTT_VIS_SCALE)), max(int(round(220 * _GANTT_VIS_SCALE)), 96 + row_h * n))
         max_len = int(_df["_gantt_y_label"].astype(str).str.len().max() or 12)
         left_m = int(
             max(
@@ -22676,7 +22687,12 @@ def dashboard_project_schedule_chart(df):
 
         fig.update_layout(
             height=chart_h,
-            margin=dict(l=left_m, r=(160 if policy.get("is_dense") else 140), t=48, b=96),
+            margin=dict(
+                l=left_m,
+                r=int(round((160 if policy.get("is_dense") else 140) * _GANTT_VIS_SCALE)),
+                t=int(round(48 * _GANTT_VIS_SCALE)),
+                b=int(round(96 * _GANTT_VIS_SCALE)),
+            ),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             uirevision="gantt_project_schedule_covenants",
         )
@@ -22793,8 +22809,8 @@ def dashboard_project_schedule_chart(df):
     # При 15-16px шрифте нужно больше пространства.
     right_m = int(
         min(
-            300,
-            max(110, 80 + min(_max_rl, 20) * 9),
+            int(round(300 * _GANTT_VIS_SCALE)),
+            max(int(round(110 * _GANTT_VIS_SCALE)), int(round((80 + min(_max_rl, 20) * 9) * _GANTT_VIS_SCALE))),
         )
     )
 
@@ -22863,8 +22879,8 @@ def dashboard_project_schedule_chart(df):
         fig_gantt.update_layout(barmode="group")
 
     n = len(plot_df)
-    row_h = 40 if _readability.get("is_dense") else 36
-    chart_h = min(3200, max(300, 100 + row_h * n))
+    row_h = int(round((40 if _readability.get("is_dense") else 36) * _GANTT_VIS_SCALE))
+    chart_h = min(int(round(3200 * _GANTT_VIS_SCALE)), max(int(round(300 * _GANTT_VIS_SCALE)), 100 + row_h * n))
     max_len = int(plot_df["_gantt_y_label"].astype(str).str.len().max() or 12)
 
     # Доля ширины под левую панель с названиями задач (xaxis2).
@@ -22872,7 +22888,7 @@ def dashboard_project_schedule_chart(df):
     _x_lo = float(min(0.44, max(0.24, 0.16 + min(max_len, 140) * 0.00175)))
     left_m = 6   # margin слева маленький: метки внутри xaxis2, не в margin
 
-    _task_font_size = max(12, _readability.get("task_font", 11) + 1)
+    _task_font_size = max(12, int(round((_readability.get("task_font", 11) + 1) * _GANTT_FONT_SCALE)))
 
     # Y-ось: категории без нативных подписей (заменяем Scatter-trace на xaxis2).
     fig_gantt.update_yaxes(
@@ -22931,8 +22947,13 @@ def dashboard_project_schedule_chart(df):
     end_label_text: list = []
     fig_gantt.update_layout(
         height=chart_h,
-        margin=dict(l=left_m, r=right_m, t=48, b=78),
-        bargap=0.32,
+        margin=dict(
+            l=left_m,
+            r=right_m,
+            t=int(round(48 * _GANTT_VIS_SCALE)),
+            b=int(round(78 * _GANTT_VIS_SCALE)),
+        ),
+        bargap=max(0.05, 0.32 / _GANTT_VIS_SCALE),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
     # Запас по оси X + подписи сразу справа от конца полос этой строки (не одна общая колонка по max(hi)).
@@ -22961,10 +22982,10 @@ def dashboard_project_schedule_chart(df):
             #     авто-ограничение до сводных задач, если даже с макс. step
             #     подписи физически не умещаются (row_px < label_px).
             _n_rows_here = max(1, int(len(plot_df)))
-            _row_h = 40 if _readability.get("is_dense") else 36
-            _chart_h = min(3200, max(300, 100 + _row_h * _n_rows_here))
+            _row_h = int(round((40 if _readability.get("is_dense") else 36) * _GANTT_VIS_SCALE))
+            _chart_h = min(int(round(3200 * _GANTT_VIS_SCALE)), max(int(round(300 * _GANTT_VIS_SCALE)), 100 + _row_h * _n_rows_here))
             _row_px = float(_chart_h) / float(_n_rows_here)
-            _label_px = 15.0 if label_pct else 17.0
+            _label_px = (15.0 if label_pct else 17.0) * _GANTT_FONT_SCALE
 
             _summary_only = labels_summary_only
             if labels_hover_only:
@@ -23082,7 +23103,13 @@ def dashboard_project_schedule_chart(df):
     try:
         fig_gantt.update_yaxes(automargin=False, fixedrange=True, showticklabels=False)
         fig_gantt.update_layout(
-            margin=dict(l=left_m, r=right_m, t=48, b=48),
+            height=chart_h,
+            margin=dict(
+                l=left_m,
+                r=right_m,
+                t=int(round(48 * _GANTT_VIS_SCALE)),
+                b=int(round(48 * _GANTT_VIS_SCALE)),
+            ),
             uirevision="gantt_project_schedule",
             xaxis=dict(domain=[_x_lo, 1.0]),
             xaxis2=dict(
@@ -23168,6 +23195,14 @@ def dashboard_project_schedule_chart(df):
     # Названия задач отображаются нативными tick labels Y-оси (showticklabels=True),
     # что гарантирует корректное позиционирование при любом масштабе страницы.
 
+    _gantt_render_h = int(chart_h)
+    try:
+        _h_now = int(getattr(fig_gantt.layout, "height", None) or 0)
+        if _h_now > 0:
+            _gantt_render_h = _h_now
+    except Exception:
+        pass
+
     if is_covenants:
         if "base end" not in plot_df.columns or not pd.to_datetime(plot_df["base end"], errors="coerce").notna().any():
             st.info(
@@ -23175,9 +23210,16 @@ def dashboard_project_schedule_chart(df):
                 "точки базового плана будут отсутствовать."
             )
         fig_cov, _fact_end_col, _fact_label = _build_covenants_points_figure(plot_df, policy=_readability)
+        try:
+            _h_cov = int(getattr(fig_cov.layout, "height", None) or 0)
+        except Exception:
+            _h_cov = 0
+        _gantt_render_h = _h_cov if _h_cov > 0 else _gantt_render_h
         render_chart(
             fig_cov,
             key="gantt_project_schedule_covenants",
+            height=_gantt_render_h,
+            max_height=None,
             caption_below=(
                 "Ковенанты: синяя точка — базовое окончание, красная — "
                 + _fact_label.lower()
@@ -23192,9 +23234,16 @@ def dashboard_project_schedule_chart(df):
             show_pct_labels=label_pct,
             policy=_readability,
         )
+        try:
+            _h_lines = int(getattr(fig_lines.layout, "height", None) or 0)
+        except Exception:
+            _h_lines = 0
+        _gantt_render_h = _h_lines if _h_lines > 0 else _gantt_render_h
         render_chart(
             fig_lines,
             key="gantt_project_schedule_lines",
+            height=_gantt_render_h,
+            max_height=None,
             caption_below=(
                 "Линии дат: План/База по началу и окончанию; подписи справа — "
                 + ("% выполнения" if label_pct else "дата окончания")
@@ -23204,9 +23253,16 @@ def dashboard_project_schedule_chart(df):
         )
     else:
         # Гантт: не clamp’ить ось X; scrollZoom — как в общем _PLOTLY_CONFIG (колесо над графиком).
+        try:
+            _h_g = int(getattr(fig_gantt.layout, "height", None) or 0)
+        except Exception:
+            _h_g = 0
+        _gantt_render_h = _h_g if _h_g > 0 else _gantt_render_h
         render_chart(
             fig_gantt,
             key="gantt_project_schedule",
+            height=_gantt_render_h,
+            max_height=None,
             caption_below="План (Начало–Окончание) и базовый план; подписи — справа от концов полос (план и при наличии — база). Масштаб и панорама — колесом мыши или панелью (+/−, рамка).",
             skip_clamp_zoom=True,
         )

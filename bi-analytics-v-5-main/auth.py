@@ -606,6 +606,11 @@ def render_sidebar_menu(current_page: str = "reports"):
         st.markdown("### Меню")
 
         # 1. Отчёты (отдельный визуальный блок от настроек)
+        if has_report_access(user["role"]) and current_page != "reports":
+            if st.button("К дашбордам", width="stretch", key="menu_go_reports"):
+                switch_page_app("project_visualization_app.py")
+            st.markdown("---")
+
         if has_report_access(user["role"]) and current_page == "reports":
             from dashboards import REPORT_CATEGORIES
 
