@@ -3280,7 +3280,13 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             _pd_top_projs = sorted(
                 project_data["project name"].dropna().astype(str).str.strip().unique().tolist()
             )
-            if _pd_top_periods and _pd_top_projs:
+            # Полная сетка сильно ужимает столбцы при длинной оси X; при >30 периодов — без декартова reindex.
+            _DYN_GRID_MAX_PERIODS = 30
+            if (
+                _pd_top_periods
+                and _pd_top_projs
+                and len(_pd_top_periods) <= _DYN_GRID_MAX_PERIODS
+            ):
                 _idx_top = pd.MultiIndex.from_product(
                     [_pd_top_periods, _pd_top_projs],
                     names=["period", "project name"],
@@ -3357,6 +3363,15 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             )
             if _n_per_top > 18:
                 fig.update_xaxes(ticklabelstep=2)
+            # Один выброс по сумме дней растягивает Y — остальные столбцы сливаются с нулём.
+            _vy = pd.to_numeric(project_data["Всего дней отклонений"], errors="coerce").dropna()
+            if len(_vy) > 0:
+                _lo, _hi = float(_vy.min()), float(_vy.max())
+                _p95 = float(_vy.quantile(0.95))
+                if _hi > 0 and _hi > max(_p95 * 2.5, abs(_lo) * 4.0, 120.0) and _p95 > 0:
+                    _cap = max(_p95 * 1.15, abs(_lo) if _lo != 0 else _p95 * 1.15)
+                    _y0 = _lo if _lo < 0 else 0.0
+                    fig.update_yaxes(range=[_y0, _cap], autorange=False)
             fig.update_traces(
                 textposition="outside",
                 textfont=dict(size=14, color="white"),
@@ -3420,29 +3435,35 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 _single_proj_name = _vals[0] if _vals else None
                 reason_data = reason_data.drop(columns=["project name"], errors="ignore")
 
+            _DYN_GRID_MAX_PERIODS = 30
             if not _multi_proj:
-                _grid_idx = pd.MultiIndex.from_product(
-                    [_periods_grid, _reason_order],
-                    names=["period", "_reason_bucket"],
-                )
-                reason_data = (
-                    reason_data.set_index(["period", "_reason_bucket"])
-                    .reindex(_grid_idx)
-                    .reset_index()
-                )
-                reason_data["Всего дней отклонений"] = reason_data[
-                    "Всего дней отклонений"
-                ].fillna(0.0)
-                reason_data["Количество задач"] = reason_data["Количество задач"].fillna(
-                    0.0
-                )
+                if _periods_grid and len(_periods_grid) <= _DYN_GRID_MAX_PERIODS:
+                    _grid_idx = pd.MultiIndex.from_product(
+                        [_periods_grid, _reason_order],
+                        names=["period", "_reason_bucket"],
+                    )
+                    reason_data = (
+                        reason_data.set_index(["period", "_reason_bucket"])
+                        .reindex(_grid_idx)
+                        .reset_index()
+                    )
+                    reason_data["Всего дней отклонений"] = reason_data[
+                        "Всего дней отклонений"
+                    ].fillna(0.0)
+                    reason_data["Количество задач"] = reason_data[
+                        "Количество задач"
+                    ].fillna(0.0)
             elif _multi_proj:
                 # Полная сетка период × проект × причина — на каждом фасете одинаковое число
                 # категорий по X (как у «По проектам»), ширина столбцов согласована.
                 _projs_rd = sorted(
                     reason_data["project name"].dropna().astype(str).str.strip().unique().tolist()
                 )
-                if _periods_grid and _projs_rd:
+                if (
+                    _periods_grid
+                    and _projs_rd
+                    and len(_periods_grid) <= _DYN_GRID_MAX_PERIODS
+                ):
                     _grid_m = pd.MultiIndex.from_product(
                         [_periods_grid, _projs_rd, _reason_order],
                         names=["period", "project name", "_reason_bucket"],
@@ -3500,7 +3521,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 )
                 fig.update_layout(
                     barmode="stack",
-                    bargap=0.12,
+                    bargap=0.06,
                     legend=dict(
                         title=dict(text="Причина отклонения"),
                         orientation="v",
@@ -3528,6 +3549,12 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 )
                 if _n_per_facet > 18:
                     fig.update_xaxes(ticklabelstep=2)
+                # По умолчанию yaxis2.matches='y' — общая шкала Y на всех фасетах; один пик
+                # «убивает» мелкие проекты. Снимаем привязку — автомасштаб на панель.
+                try:
+                    fig.update_yaxes(matches=None)
+                except Exception:
+                    pass
             else:
                 fig = px.bar(
                     reason_data,
@@ -3551,7 +3578,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 _single_h = int(max(600, 440 + min(_n_per_single, 36) * 20))
                 fig.update_layout(
                     barmode="stack",
-                    bargap=0.12,
+                    bargap=0.06,
                     legend=dict(
                         title=dict(text="Причина отклонения"),
                         orientation="v",
@@ -3579,6 +3606,23 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 )
                 if _n_per_single > 18:
                     fig.update_xaxes(ticklabelstep=2)
+                # Один «взрывной» период по сумме стека — остальные не видны.
+                try:
+                    _stk = (
+                        reason_data.groupby("period", observed=False)["Количество задач"]
+                        .sum()
+                        .astype(float)
+                    )
+                    if len(_stk) > 0:
+                        _mxs = float(_stk.max())
+                        _p95s = float(_stk.quantile(0.95))
+                        if _mxs > 0 and _mxs > max(_p95s * 2.5, 30.0) and _p95s > 0:
+                            fig.update_yaxes(
+                                range=[0.0, max(_p95s * 1.15, 1.0)],
+                                autorange=False,
+                            )
+                except Exception:
+                    pass
             fig.update_traces(
                 textposition="inside",
                 insidetextanchor="middle",
