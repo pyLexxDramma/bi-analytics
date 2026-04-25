@@ -7082,7 +7082,18 @@ def dashboard_budget_by_period(df):
                 _bg, _bgg = 0.06, 0.02
             else:
                 _bg, _bgg = 0.1, 0.04
-            _ch = 600 if _n <= 20 else int(min(900, 520 + int(_n * 1.4)))
+            # Нижнее поле под наклонные подписи месяцев + легенда (см. _plotly_legend_horizontal_below_plot).
+            # Высота фигуры должна быть >= margin.t + margin.b + минимум для самих столбцов, иначе область графика ~0 px.
+            _leg_b_pre = 300
+            if _is_cumulative:
+                _leg_b_pre = max(340, min(520, 300 + int(_n * 4.8)))
+            elif _n > 24:
+                _leg_b_pre = max(300, min(460, 280 + int(_n * 3.5)))
+            _top_px_pre = 72 if (_hide_bar_value_labels and _n > 20) else 88
+            _min_plot_core_px = 400
+            _ch_base = 600 if _n <= 20 else int(min(1100, 520 + int(_n * 1.4)))
+            _ch = max(_ch_base, _top_px_pre + _leg_b_pre + _min_plot_core_px)
+            _ch = int(min(1400, _ch))
             _xangle = -45 if _n <= 18 else -50 if _n <= 36 else -55
             _x_standoff = 30 if _n <= 18 else (44 if _n <= 36 else 56)
 
@@ -7187,14 +7198,10 @@ def dashboard_budget_by_period(df):
                     fig.update_layout(uniformtext=dict(minsize=5, mode="hide"))
                 except Exception:
                     pass
-            # Легенда под графиком: при длинной шкале (особенно «Накопительно») увеличить b и отступ заголовка оси X.
-            _leg_b = 300
-            if _is_cumulative:
-                _leg_b = max(340, min(520, 300 + int(_n * 4.8)))
-            elif _n > 24:
-                _leg_b = max(300, min(460, 280 + int(_n * 3.5)))
+            # Легенда под графиком (margin b согласован с расчётом высоты _ch выше).
+            _leg_b = _leg_b_pre
             _leg_y = -0.34 if _n <= 20 else (-0.38 if _n <= 36 else -0.44)
-            _top_px = 72 if (_hide_bar_value_labels and _n > 20) else 88
+            _top_px = _top_px_pre
             fig = _plotly_legend_horizontal_below_plot(
                 fig, bottom_px=_leg_b, legend_y=_leg_y, top_px=_top_px
             )
@@ -7220,7 +7227,13 @@ def dashboard_budget_by_period(df):
                 if np.isfinite(_ymax) and _ymax > 0:
                     fig.update_layout(yaxis=dict(range=[0, _ymax * 1.22]))
             fig = apply_chart_background(fig)
-            render_chart(fig, caption_below=f"БДДС{title_suffix}", height=_ch)
+            # Не clamp’ить к 900: при больших margin и длинной шкале нужна полная высота.
+            render_chart(
+                fig,
+                caption_below=f"БДДС{title_suffix}",
+                height=_ch,
+                max_height=None,
+            )
 
         _budget_period_chart()
 
