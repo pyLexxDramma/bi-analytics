@@ -21369,11 +21369,16 @@ def dashboard_id_tessa_placeholder(df):
     st.success("Источник TESSA доступен. Основная аналитика находится в отчётах «Исполнительная документация» и «Неустраненные предписания».")
 
 
-def _render_control_points_admin_on_dashboard():
+def render_control_points_milestones_admin_settings(*, key_prefix: str = "cp_dash") -> None:
     """
     Администратор: редактирование названий столбцов (title) и сопоставления с MSP (match)
-    на странице отчёта «Контрольные точки» (хранилище: настройка БД control_points_milestones_json).
+    для отчёта «Контрольные точки» (БД: `control_points_milestones_json`).
+
+    **key_prefix** — префикс `key` у виджетов (например, `admin_cp_msp` в админке, `cp_dash` на дашборде
+    при повторном использовании), чтобы не пересекались `session_state` и кнопки.
     """
+    _kp = key_prefix
+    _js_key = f"{_kp}_milestones_json"
     try:
         from auth import get_current_user, has_admin_access
 
@@ -21409,10 +21414,10 @@ def _render_control_points_admin_on_dashboard():
             _new_title = st.text_input(
                 f"Заголовок #{i + 1} (slug: {s})",
                 value=str(t),
-                key=f"cp_dash_title_{i}_{s}",
+                key=f"{_kp}_title_{i}_{s}",
             )
             _title_inputs.append((_new_title, s, m))
-        if st.button("Сохранить заголовки", key="cp_dash_save_titles_only"):
+        if st.button("Сохранить заголовки", key=f"{_kp}_save_titles_only"):
             try:
                 import json
                 _payload = [{"title": tt, "slug": ss, "match": mm} for tt, ss, mm in _title_inputs]
@@ -21433,26 +21438,26 @@ def _render_control_points_admin_on_dashboard():
             "JSON: массив объектов с полями title, slug, match",
             value=initial,
             height=380,
-            key="cp_dash_milestones_json",
+            key=_js_key,
         )
         b1, b2, b3 = st.columns(3)
         uname = str(user.get("username") or "admin")
         with b1:
-            if st.button("Сохранить", type="primary", key="cp_dash_ms_save"):
+            if st.button("Сохранить", type="primary", key=f"{_kp}_ms_save"):
                 ok, msg = save_control_point_milestones_json(txt, uname)
                 if ok:
-                    if "cp_dash_milestones_json" in st.session_state:
-                        del st.session_state["cp_dash_milestones_json"]
+                    if _js_key in st.session_state:
+                        del st.session_state[_js_key]
                     st.success(msg)
                     st.rerun()
                 else:
                     st.error(msg)
         with b2:
-            if st.button("Сбросить на встроенные правила", key="cp_dash_ms_reset"):
+            if st.button("Сбросить на встроенные правила", key=f"{_kp}_ms_reset"):
                 ok, msg = save_control_point_milestones_json("", uname)
                 if ok:
-                    if "cp_dash_milestones_json" in st.session_state:
-                        del st.session_state["cp_dash_milestones_json"]
+                    if _js_key in st.session_state:
+                        del st.session_state[_js_key]
                     st.success(msg)
                     st.rerun()
                 else:
@@ -21463,7 +21468,7 @@ def _render_control_points_admin_on_dashboard():
                 default_js.encode("utf-8-sig"),
                 "control_points_milestones_default.json",
                 "application/json",
-                key="cp_dash_dl_tpl",
+                key=f"{_kp}_dl_tpl",
             )
         with st.expander("Подсказка по полю match", expanded=False):
             st.markdown(
@@ -21477,13 +21482,33 @@ def _render_control_points_admin_on_dashboard():
             )
 
 
+def _render_control_points_admin_hint_on_dashboard() -> None:
+    """Только администратору: куда перенесена настройка вех (см. `render_control_points_milestones_admin_settings`)."""
+    try:
+        from auth import get_current_user, has_admin_access
+
+        u = get_current_user()
+        if not u or not has_admin_access(u.get("role")):
+            return
+    except Exception:
+        return
+    st.info(
+        "Настройка **вех, заголовков столбцов и соответствия MSP** для отчёта "
+        "«Контрольные точки» перенесена в **Администрирование** → вкладка "
+        "«**MSP: задача для метрик**» (блок вверху вкладки). "
+        "**Как открыть:** в боковом меню, раздел **Настройки**, кнопка **«Административная панель»** — "
+        "она отображается **только** у администратора / суперадминистратора; далее откройте указанную вкладку. "
+        "Доступ к самой настройке, как и ранее, только у этих ролей."
+    )
+
+
 def dashboard_control_points(df):
     """
     Контрольные точки (MSP): матрица проектов × вехи по макету правок (скрин file-009).
-    Администратор задаёт вехи и маппинг к MSP в блоке настроек на этой странице.
+    Настройка вех/маппинга — в **Администрировании**; на этой странице — краткая подсказка для админа.
     """
     st.header("Контрольные точки")
-    _render_control_points_admin_on_dashboard()
+    _render_control_points_admin_hint_on_dashboard()
     if df is None or df.empty:
         st.warning("Загрузите данные MSP (проект).")
         return

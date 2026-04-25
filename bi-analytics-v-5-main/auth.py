@@ -657,7 +657,24 @@ def render_sidebar_menu(current_page: str = "reports"):
             if st.button("Настройки профиля", width="stretch"):
                 switch_page_app("pages/profile.py")
 
-        # F2: пункты «Админ панель» и «Параметры отчётов» убраны из бокового меню.
+        if has_admin_access(user["role"]):
+            if current_page == "admin":
+                st.button(
+                    "Административная панель",
+                    width="stretch",
+                    type="primary",
+                    key="menu_sidebar_admin_active",
+                    disabled=True,
+                )
+            else:
+                if st.button(
+                    "Административная панель",
+                    width="stretch",
+                    key="menu_sidebar_admin",
+                ):
+                    switch_page_app("pages/_admin.py")
+
+        # F2: встроенная навигация Streamlit скрыта; «Параметры отчётов» — без отдельной кнопки (при необходимости — прямой URL / pages/_analyst_params).
 
         # 3. Выход (для всех ролей)
         st.markdown("---")

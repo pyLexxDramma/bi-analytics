@@ -432,8 +432,8 @@ def _show_saved_results():
 
 def _render_control_points_msp_tab(user: dict) -> None:
     """
-    Администратор: задача MSP для метрик в отчёте «Отклонение от базового плана».
-    Настройка вех отчёта «Контрольные точки» перенесена на страницу этого отчёта.
+    Администратор: вкладка «MSP: задача для метрик».
+    Вехи, заголовки и соответствие MSP для «Контрольных точек»; задача MSP для «Отклонения от базового плана».
     """
     def _find_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
         if df is None or getattr(df, "empty", True):
@@ -473,12 +473,13 @@ def _render_control_points_msp_tab(user: dict) -> None:
             return [], task_col, "В MSP не найдено ни одной валидной задачи уровней 2 и 3."
         return options, task_col, None
 
+    st.subheader("Контрольные точки: вехи, столбцы, MSP")
+    from dashboards._renderers import render_control_points_milestones_admin_settings
+
+    render_control_points_milestones_admin_settings(key_prefix="admin_cp_msp")
+
+    st.divider()
     st.markdown("<h2 class='Duquhununee'>MSP: задача для метрик</h2>", unsafe_allow_html=True)
-    st.info(
-        "Заголовки столбцов и соответствие вех выгрузке MS Project для отчёта "
-        "**«Контрольные точки»** настраиваются **только на странице этого отчёта** "
-        "(блок «Настройка вех…» для администратора). Здесь в админ-панели этот блок **убран**."
-    )
 
     st.markdown("### Отчёт «Отклонение от базового плана»")
     st.markdown(
