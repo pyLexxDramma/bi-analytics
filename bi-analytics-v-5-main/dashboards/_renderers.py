@@ -9435,7 +9435,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
 
         def _fmt_date_or_blank(series: pd.Series) -> pd.Series:
             parsed = pd.to_datetime(series, errors="coerce")
-            return parsed.dt.strftime("%d.%m.%Y").fillna("")
+            return parsed.dt.strftime("%d.%m.%Y").fillna("—")
 
         # R23-07 (стр.20): порядок колонок — Проект, Название разделов работ, Номер договора, Шифр,
         # Номер шифра, Блок, Шифр полный, даты, статус, отклонения.
@@ -9443,10 +9443,11 @@ def dashboard_rd_delay(df, is_pd: bool = False):
 
         def _safe_str_col(col_name):
             if col_name and col_name in detail_df.columns:
-                return detail_df[col_name].astype(str).str.strip().replace(
+                s = detail_df[col_name].astype(str).str.strip().replace(
                     {"nan": "", "None": "", "<NA>": "", "NaT": ""}
                 )
-            return pd.Series([""] * len(detail_df), index=detail_df.index)
+                return s.where(s.ne(""), "—")
+            return pd.Series(["—"] * len(detail_df), index=detail_df.index)
 
         _col_series["Наименование разделов работ"] = detail_df["_detail_section_name"]
         # «Номер договора»: приоритет MSP-колонке, если она есть; иначе —
@@ -9508,8 +9509,9 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 {"nan": "", "None": "", "<NA>": "", "NaT": ""}
             )
             if _task_for_detail and _task_for_detail in detail_df.columns
-            else pd.Series([""] * len(detail_df), index=detail_df.index)
+            else pd.Series(["—"] * len(detail_df), index=detail_df.index)
         )
+        _msp_task_s = _msp_task_s.where(_msp_task_s.ne(""), "—")
         if "_task_display_tessa" in detail_df.columns:
             _tessa_t = detail_df["_task_display_tessa"].astype(str).str.strip()
             _tessa_t = _tessa_t.replace({"nan": "", "None": "", "<NA>": ""})

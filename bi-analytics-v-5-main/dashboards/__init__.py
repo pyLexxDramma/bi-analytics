@@ -243,7 +243,7 @@ def _get_dashboards() -> Dict[str, Callable]:
 # Ленивая загрузка, чтобы при импорте dashboards не тянуть project_visualization_app
 # Увеличьте версию при изменении реестра отчётов — иначе долгоживущий процесс Streamlit
 # может держать устаревший словарь в памяти.
-_DASHBOARDS_REGISTRY_VERSION = 71
+_DASHBOARDS_REGISTRY_VERSION = 72
 _dashboards_cache: Dict[str, Callable] = {}
 _dashboards_cache_version: int = 0
 
@@ -265,5 +265,6 @@ def get_dashboard_renderer(name: str) -> Callable:
 def get_all_report_names() -> List[str]:
     """Возвращает плоский список всех имён отчётов (для report_params, filters и т.д.)."""
     return [r for _, reports in REPORT_CATEGORIES for r in reports]
+
 
 
