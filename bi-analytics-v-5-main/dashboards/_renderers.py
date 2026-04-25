@@ -8247,7 +8247,9 @@ def dashboard_bdr(df):
 
         _nb = len(chart_df)
         _is_cumulative = view_type == "Накопительно"
-        _hide_bar_value_labels = _is_cumulative and _nb > 10
+        # Три серии в группе: подписи «число + млн руб.» (2 строки) сильно накладываются
+        # и по месяцам, и накопительно — при n>6 убираем inline-текст, оставляем hover.
+        _hide_bar_value_labels = _nb > 6
         _tlbl_b = 0.005
         _tlbl_dev = 0.01 if not _hide_bar_value_labels else _tlbl_b
         _tfs_b = 8 if _nb > 32 else 9 if _nb > 20 else 10 if _nb > 12 else 11
