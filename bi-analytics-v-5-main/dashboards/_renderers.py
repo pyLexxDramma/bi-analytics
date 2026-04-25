@@ -3268,8 +3268,50 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 project_data = grouped_data
 
             project_data = project_data.copy()
+            # Единая сетка периодов × проектов (нули там, где не было строк) — одинаковая ширина
+            # столбцов по оси X на «По проектам», сопоставимо с блоком «По причинам».
+            _pd_top_periods = (
+                list(_period_cat_labels)
+                if _period_cat_labels
+                else sorted(
+                    project_data["period"].dropna().astype(str).unique().tolist()
+                )
+            )
+            _pd_top_projs = sorted(
+                project_data["project name"].dropna().astype(str).str.strip().unique().tolist()
+            )
+            if _pd_top_periods and _pd_top_projs:
+                _idx_top = pd.MultiIndex.from_product(
+                    [_pd_top_periods, _pd_top_projs],
+                    names=["period", "project name"],
+                )
+                project_data = (
+                    project_data.set_index(["period", "project name"])
+                    .reindex(_idx_top)
+                    .reset_index()
+                )
+                project_data["Всего дней отклонений"] = project_data[
+                    "Всего дней отклонений"
+                ].fillna(0.0)
+                if "Количество задач" in project_data.columns:
+                    project_data["Количество задач"] = project_data["Количество задач"].fillna(
+                        0.0
+                    )
+                try:
+                    project_data["period"] = pd.Categorical(
+                        project_data["period"],
+                        categories=_pd_top_periods,
+                        ordered=True,
+                    )
+                except (ValueError, TypeError):
+                    pass
             project_data["_дни_текст"] = project_data["Всего дней отклонений"].apply(
-                lambda x: f"{int(round(x, 0))}" if pd.notna(x) else ""
+                lambda x: f"{int(round(x, 0))}" if pd.notna(x) and float(x) != 0 else ""
+            )
+            _bar_top_kw = (
+                {"category_orders": {"period": _pd_top_periods}}
+                if _pd_top_periods
+                else {}
             )
             fig = px.bar(
                 project_data,
@@ -3283,14 +3325,15 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     "project name": "Проект",
                 },
                 text="_дни_текст",
+                **_bar_top_kw,
             )
             # Группировка столбцов: легенда справа, как у «По причинам», чтобы не наезжать на ось X
-            _n_per_top = int(project_data["period"].nunique(dropna=True) or 0)
+            _n_per_top = int(len(_pd_top_periods) if _pd_top_periods else project_data["period"].nunique(dropna=True) or 0)
             _top_h = int(max(640, 420 + min(_n_per_top, 36) * 22))
             fig.update_layout(
                 barmode="group",
-                bargap=0.28,
-                bargroupgap=0.12,
+                bargap=0.16,
+                bargroupgap=0.06,
                 legend=dict(
                     title=dict(text="Проект"),
                     orientation="v",
@@ -3393,6 +3436,30 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 reason_data["Количество задач"] = reason_data["Количество задач"].fillna(
                     0.0
                 )
+            elif _multi_proj:
+                # Полная сетка период × проект × причина — на каждом фасете одинаковое число
+                # категорий по X (как у «По проектам»), ширина столбцов согласована.
+                _projs_rd = sorted(
+                    reason_data["project name"].dropna().astype(str).str.strip().unique().tolist()
+                )
+                if _periods_grid and _projs_rd:
+                    _grid_m = pd.MultiIndex.from_product(
+                        [_periods_grid, _projs_rd, _reason_order],
+                        names=["period", "project name", "_reason_bucket"],
+                    )
+                    reason_data = (
+                        reason_data.set_index(
+                            ["period", "project name", "_reason_bucket"]
+                        )
+                        .reindex(_grid_m)
+                        .reset_index()
+                    )
+                    reason_data["Всего дней отклонений"] = reason_data[
+                        "Всего дней отклонений"
+                    ].fillna(0.0)
+                    reason_data["Количество задач"] = reason_data[
+                        "Количество задач"
+                    ].fillna(0.0)
 
             reason_data["_seg_lbl"] = reason_data["Количество задач"].map(_seg_cnt_lbl)
             try:
@@ -3419,7 +3486,10 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     facet_col_wrap=_wrap,
                     title=None,
                     color_discrete_map=_clr_map or None,
-                    category_orders={"_reason_bucket": _reason_order},
+                    category_orders={
+                        "period": _periods_grid,
+                        "_reason_bucket": _reason_order,
+                    },
                     labels={
                         "period": _period_x_title,
                         "Количество задач": "Количество отклонений",
@@ -3430,7 +3500,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 )
                 fig.update_layout(
                     barmode="stack",
-                    bargap=0.22,
+                    bargap=0.12,
                     legend=dict(
                         title=dict(text="Причина отклонения"),
                         orientation="v",
@@ -3466,7 +3536,10 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     color="_reason_bucket",
                     title=None,
                     color_discrete_map=_clr_map or None,
-                    category_orders={"_reason_bucket": _reason_order},
+                    category_orders={
+                        "period": _periods_grid,
+                        "_reason_bucket": _reason_order,
+                    },
                     labels={
                         "period": _period_x_title,
                         "Количество задач": "Количество отклонений",
@@ -3478,7 +3551,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 _single_h = int(max(600, 440 + min(_n_per_single, 36) * 20))
                 fig.update_layout(
                     barmode="stack",
-                    bargap=0.22,
+                    bargap=0.12,
                     legend=dict(
                         title=dict(text="Причина отклонения"),
                         orientation="v",
