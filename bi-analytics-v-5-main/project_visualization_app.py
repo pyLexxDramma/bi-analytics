@@ -742,66 +742,7 @@ def main():
         else:
             st.info("Нажмите «Загрузить из web/» чтобы прочитать файлы из папки web/.")
 
-        _panel_tab = st.radio(
-            "Вкладка панели",
-            ["Дашборды", "Проверка данных"],
-            horizontal=True,
-            key="main_panel_view_tab",
-        )
-        if _panel_tab == "Проверка данных":
-            render_data_readiness_expander()
-            if st.session_state.get("last_data_schema_health"):
-                st.caption("Сформирован отчёт схем: `data_health_report.md` и `data_health_report.json` в корне приложения.")
-                _fsch = (st.session_state.get("last_data_schema_health") or {}).get("file_checks") or []
-                if _fsch:
-                    with st.expander("Проверка файлов и колонок (что отсутствует/не распознано)", expanded=True):
-                        _fd = pd.DataFrame(_fsch).copy()
-                        _prio = {"err": 0, "warn": 1, "ok": 2}
-                        _fd["_p"] = _fd["level"].map(lambda x: _prio.get(str(x).lower(), 9))
-                        _fd = _fd.sort_values(["_p", "target"], kind="stable").drop(columns=["_p"])
-
-                        def _style_level(row):
-                            lv = str(row.get("level", "")).lower()
-                            if lv == "err":
-                                return ["background-color: #5a1f1f; color: #ffe3e3;"] * len(row)
-                            if lv == "warn":
-                                return ["background-color: #5a4b1f; color: #fff3d6;"] * len(row)
-                            if lv == "ok":
-                                return ["background-color: #1f4a2a; color: #e7ffe7;"] * len(row)
-                            return [""] * len(row)
-
-                        st.dataframe(
-                            _fd.style.apply(_style_level, axis=1),
-                            use_container_width=True,
-                            hide_index=True,
-                            height=min(720, 40 + max(1, len(_fd)) * 34),
-                        )
-                from data_health import REPORT_JSON, REPORT_MD
-
-                c1, c2 = st.columns(2)
-                with c1:
-                    if REPORT_MD.exists():
-                        st.download_button(
-                            "Скачать data_health_report.md",
-                            data=REPORT_MD.read_text(encoding="utf-8"),
-                            file_name="data_health_report.md",
-                            mime="text/markdown",
-                            key="download_data_health_md",
-                        )
-                with c2:
-                    if REPORT_JSON.exists():
-                        st.download_button(
-                            "Скачать data_health_report.json",
-                            data=REPORT_JSON.read_text(encoding="utf-8"),
-                            file_name="data_health_report.json",
-                            mime="application/json",
-                            key="download_data_health_json",
-                        )
-            _env = st.session_state.get("last_env_fingerprint")
-            if _env:
-                with st.expander("Environment fingerprint (для сравнения local vs deploy)", expanded=False):
-                    st.json(_env)
-            st.stop()
+        # Клиентский режим: показываем только вкладку дашбордов без блока «Проверка данных».
 
     else:
 

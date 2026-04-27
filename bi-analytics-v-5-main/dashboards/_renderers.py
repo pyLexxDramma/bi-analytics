@@ -2673,11 +2673,6 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             "Ниже — полная выгрузка по текущим фильтрам."
         )
     else:
-        with st.expander("Условия отбора по макету", expanded=False):
-            suppress_caption(
-                "По макету: уровень 5 MSP, причина отклонения заполнена, отклонение окончания < 0. "
-                "Сортировка: по возрастанию отклонения (худшее сверху)."
-            )
         _date_bg_m = "rgba(46, 134, 171, 0.22)"
         _tbl_m = [
             '<div class="rendered-table-wrap" style="margin-top:0.5rem">',
@@ -2796,12 +2791,6 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             csv_label="Скачать CSV (по макету, для Excel)",
         )
 
-    with st.expander("Полная выгрузка по фильтрам", expanded=False):
-        suppress_caption(
-            "Ниже — полная таблица по текущим фильтрам и выбранной причине в блоке «Детальные данные» "
-            "(не только строки «по макету»). Колонки и цвета — по макету правок (базовые/фактические даты, "
-            "отклонения начала и окончания в днях, длительности)."
-        )
     _render_deviations_reasons_full_table(table_reason_df, building_col, notes_col_m)
 
 
@@ -3971,24 +3960,6 @@ def dashboard_plan_fact_dates(df):
 
     if "project name" in df.columns:
         df = _project_column_apply_canonical(df.copy(), "project name")
-
-    with st.expander("Откуда берутся сроки и почему таблицы могут отличаться", expanded=False):
-        st.markdown(
-            """
-**Таблица «Отклонение от базового плана (таблица)»** строится **по строкам задач** из выгрузки MSP после ваших фильтров
-(проект, функциональный блок, строение, уровень и т.д.). В ячейках — **базовые (плановые) и фактические даты** из колонок вроде
-`plan start` / `plan end` / `base start` / `base end` (или русских аналогов); отклонения в днях считаются из этих дат.
-
-**Задача для расчёта окончания проекта** (для связанных отчётов) задаётся в **Администрирование**
-→ вкладка **«MSP: задача для метрик»** (настройка в БД: `baseline_plan_task_for_metrics`). Для админа: боковое меню
-→ **Настройки** → **«Административная панель»**.
-
-**ЗОС** — отдельная узкая таблица: только задачи, в названии которых есть ЗОС / «заключение о соответствии».
-
-**Режим «Ковенанты»**: узкая таблица ковенантов сортируется по отклонению окончания; **полная таблица по всем задачам** спрятана
-в развёртку ниже, чтобы не дублировать строки ковенантов.
-            """
-        )
 
     # Helper function to find columns by partial match
     def find_column(df, possible_names):
