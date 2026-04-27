@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from collections import Counter
 
 import pandas as pd
 import streamlit as st
@@ -264,3 +265,41 @@ def save_schema_health_report(data: dict[str, Any] | None = None, load_result: d
             lines.append(f"| {c['level']} | {c['target']} | {c['issue']} | {c.get('hint', '')} |")
     REPORT_MD.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return report
+
+
+def build_environment_fingerprint(load_result: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Снимок окружения/источников, чтобы сравнивать local vs deploy."""
+    from config import ignore_demo_data_files
+    from web_loader import _iter_web_scan_roots
+
+    roots = []
+    try:
+        for p, prefix in _iter_web_scan_roots():
+            roots.append({"path": str(p), "prefix": str(prefix)})
+    except Exception:
+        pass
+
+    active_version = st.session_state.get("web_version_id")
+    diags = (load_result or {}).get("diagnostics") or []
+    if not diags:
+        lfi = st.session_state.get("loaded_files_info") or {}
+        if isinstance(lfi, dict):
+            diags = [
+                {"type": (v or {}).get("type", "unknown"), "rows": int((v or {}).get("rows", 0) or 0)}
+                for _, v in lfi.items()
+            ]
+    c_types = Counter(str((d or {}).get("type", "unknown")) for d in diags)
+    total_rows = 0
+    for d in diags:
+        try:
+            total_rows += int((d or {}).get("rows", 0) or 0)
+        except Exception:
+            pass
+    return {
+        "active_web_version_id": active_version,
+        "ignore_demo_mode": bool(ignore_demo_data_files()),
+        "scan_roots": roots,
+        "diagnostics_files_count": len(diags),
+        "diagnostics_total_rows": total_rows,
+        "diagnostics_types": dict(c_types),
+    }

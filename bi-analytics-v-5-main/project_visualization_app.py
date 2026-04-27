@@ -554,7 +554,7 @@ def main():
     if data_mode in ("Из папки web/", "FTP → web/"):
 
         from config import ignore_demo_data_files
-        from data_health import save_schema_health_report
+        from data_health import save_schema_health_report, build_environment_fingerprint
         from data_readiness import build_data_readiness_report, render_data_readiness_expander
         from web_schema import init_web_schema, get_all_versions, get_active_version_id, activate_version
         from web_loader import load_all_from_web, web_dir_exists, read_version_to_session, get_web_dir
@@ -614,9 +614,11 @@ def main():
                         st.session_state["last_load_result"] = result
                         st.session_state["last_data_readiness"] = build_data_readiness_report(result)
                         st.session_state["last_data_schema_health"] = save_schema_health_report(load_result=result)
+                        st.session_state["last_env_fingerprint"] = build_environment_fingerprint(result)
                     except Exception:
                         st.session_state["last_data_readiness"] = None
                         st.session_state["last_data_schema_health"] = None
+                        st.session_state["last_env_fingerprint"] = None
                     st.cache_data.clear()
                     st.session_state.pop("web_version_id", None)
                     for w in result.get("warnings", []):
@@ -667,9 +669,11 @@ def main():
                         st.session_state["last_load_result"] = result
                         st.session_state["last_data_readiness"] = build_data_readiness_report(result)
                         st.session_state["last_data_schema_health"] = save_schema_health_report(load_result=result)
+                        st.session_state["last_env_fingerprint"] = build_environment_fingerprint(result)
                     except Exception:
                         st.session_state["last_data_readiness"] = None
                         st.session_state["last_data_schema_health"] = None
+                        st.session_state["last_env_fingerprint"] = None
 
                     st.cache_data.clear()
                     # Сбрасываем web_version_id чтобы принудительно перечитать данные
@@ -729,6 +733,9 @@ def main():
                     st.session_state["last_data_schema_health"] = save_schema_health_report(
                         load_result=st.session_state.get("last_load_result")
                     )
+                    st.session_state["last_env_fingerprint"] = build_environment_fingerprint(
+                        st.session_state.get("last_load_result")
+                    )
                 except Exception:
                     pass
 
@@ -783,6 +790,10 @@ def main():
                         mime="application/json",
                         key="download_data_health_json",
                     )
+        _env = st.session_state.get("last_env_fingerprint")
+        if _env:
+            with st.expander("Environment fingerprint (для сравнения local vs deploy)", expanded=False):
+                st.json(_env)
 
     else:
 
