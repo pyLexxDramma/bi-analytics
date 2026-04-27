@@ -4348,7 +4348,6 @@ def dashboard_plan_fact_dates(df):
             for _m in _diag_msgs:
                 st.write(f"• {_m}")
 
-    st.markdown("**Таблица**")
     dates_value_type = "Даты (план/факт)"
     # R23-03 add-on (стр.10-11): обе пары «отклонений» показываем по умолчанию,
     # «отклонение длительности» — опционально (чекбокс), как и раньше.
@@ -4944,7 +4943,7 @@ def dashboard_plan_fact_dates(df):
         )
         if section_dev.empty:
             return
-        section_dev = section_dev.sort_values("Отклонение", ascending=True)
+        section_dev = section_dev.sort_values("Отклонение", ascending=False)
         fig_section = go.Figure()
         fig_section.add_trace(
             go.Bar(
@@ -4962,16 +4961,18 @@ def dashboard_plan_fact_dates(df):
         )
         fig_section.update_layout(
             xaxis_title="Отклонение (дней)",
-            yaxis_title=_dev_group_label,
+            yaxis_title=None,
             height=max(440, len(section_dev) * 52),
             showlegend=False,
         )
-        # Сверху вниз — по убыванию отклонения: в Plotly первая категория в array — низ графика, последняя — верх.
+        # Сверху вниз — по убыванию отклонения (крупнейшие отклонения в начале графика).
         fig_section.update_yaxes(
             categoryorder="array",
-            categoryarray=section_dev.sort_values("Отклонение", ascending=True)[
-                "Группа"
-            ].tolist(),
+            categoryarray=section_dev["Группа"].tolist(),
+            autorange="reversed",
+            showticklabels=True,
+            tickfont=dict(size=11, color="#e8eaed"),
+            title=None,
         )
         fig_section = _apply_finance_bar_label_layout(fig_section)
         fig_section = apply_chart_background(fig_section)
@@ -5496,16 +5497,6 @@ def dashboard_plan_fact_dates(df):
             if "project name" in zos_subset.columns
             else 0
         )
-        with st.expander("Контекст ЗОС", expanded=False):
-            if selected_project != "Все":
-                suppress_caption(f"Проект: {selected_project}")
-            elif "project name" in zos_subset.columns and zos_proj_count == 1:
-                _pn = zos_subset["project name"].dropna().astype(str).str.strip().unique().tolist()
-                if _pn:
-                    suppress_caption(f"Проект: {_pn[0]}")
-            suppress_caption(
-                "Сроки окончания и отклонение (дней); знак отклонения: факт − план по дате окончания."
-            )
         zos_show_project_col = (
             "project name" in zos_subset.columns
             and selected_project == "Все"
@@ -5664,6 +5655,7 @@ def dashboard_plan_fact_dates(df):
         )
 
     if not show_covenant_ui:
+        st.markdown("**Таблица**")
         st.subheader("Отклонение от базового плана (таблица)")
         with st.expander("Сводка по таблице", expanded=False):
             suppress_caption(
@@ -12194,12 +12186,6 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         _plan_sum_f = float(
             pd.to_numeric(filtered_df.get("План_numeric"), errors="coerce").fillna(0.0).abs().sum()
         )
-        if _fact_sum > 1e-6 and _plan_sum_f < 1e-6 and _ref_empty:
-            st.info(
-                "План по ГДРС не подставлен: нет загруженного справочника 1С (`1c_*_spravochniki.json`) "
-                "или в нём нет подходящих полей для сопоставления с фактом. "
-                "Без этого «План» и «Дельта (%)» не заполняются. См. **mapping_spec_v2 §4.3.1**."
-            )
         _ref_h4 = (
             "График движения техники"
             if _gdrs_tab_is_tech
