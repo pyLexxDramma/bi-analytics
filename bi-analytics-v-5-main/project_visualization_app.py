@@ -553,8 +553,17 @@ def main():
 
     if data_mode in ("Из папки web/", "FTP → web/"):
 
+        from config import ignore_demo_data_files
+        from data_health import save_schema_health_report
+        from data_readiness import build_data_readiness_report, render_data_readiness_expander
         from web_schema import init_web_schema, get_all_versions, get_active_version_id, activate_version
         from web_loader import load_all_from_web, web_dir_exists, read_version_to_session, get_web_dir
+
+        if ignore_demo_data_files():
+            st.caption(
+                "На сервере задано BI_ANALYTICS_IGNORE_DEMO: не загружаются демо "
+                "sample_*.csv и файлы в каталогах new_csv/; используйте боевые MSP/1С/TESSA в web/."
+            )
 
         init_web_schema()
 
@@ -577,7 +586,7 @@ def main():
             if _d.strip():
                 cfg["remote_dir"] = _d.strip()
 
-            b_ftp = st.button("Скачать CSV с FTP в web/ и загрузить в БД")
+            b_ftp = st.button("Скачать CSV и JSON с FTP в web/ и загрузить в БД")
             if b_ftp:
                 if not cfg.get("host") or not cfg.get("user"):
                     st.error("Задайте host и user (secrets, env BI_FTP_* или поля выше).")
@@ -585,17 +594,29 @@ def main():
                     web_p = get_web_dir()
                     web_p.mkdir(parents=True, exist_ok=True)
                     with st.spinner("FTP: скачивание в web/…"):
-                        ftp_res = sync_ftp_to_web(web_p, config=cfg, progress=lambda m: None)
+                        ftp_res = sync_ftp_to_web(
+                            web_p,
+                            config=cfg,
+                            extensions=(".csv", ".json"),
+                            progress=lambda m: None,
+                        )
                     if ftp_res.get("errors"):
                         for e in ftp_res["errors"]:
                             st.error(e)
                     else:
                         st.success(
                             f"С FTP скачано файлов: {len(ftp_res.get('downloaded', []))}, "
-                            f"пропуск (не .csv): {ftp_res.get('skipped', 0)}"
+                            f"пропуск (не CSV/JSON): {ftp_res.get('skipped', 0)}"
                         )
                     with st.spinner("Читаю файлы из web/..."):
                         result = load_all_from_web()
+                    try:
+                        st.session_state["last_load_result"] = result
+                        st.session_state["last_data_readiness"] = build_data_readiness_report(result)
+                        st.session_state["last_data_schema_health"] = save_schema_health_report(load_result=result)
+                    except Exception:
+                        st.session_state["last_data_readiness"] = None
+                        st.session_state["last_data_schema_health"] = None
                     st.cache_data.clear()
                     st.session_state.pop("web_version_id", None)
                     for w in result.get("warnings", []):
@@ -642,6 +663,13 @@ def main():
 
                     with st.spinner("Читаю файлы из web/..."):
                         result = load_all_from_web()
+                    try:
+                        st.session_state["last_load_result"] = result
+                        st.session_state["last_data_readiness"] = build_data_readiness_report(result)
+                        st.session_state["last_data_schema_health"] = save_schema_health_report(load_result=result)
+                    except Exception:
+                        st.session_state["last_data_readiness"] = None
+                        st.session_state["last_data_schema_health"] = None
 
                     st.cache_data.clear()
                     # Сбрасываем web_version_id чтобы принудительно перечитать данные
@@ -696,9 +724,65 @@ def main():
                 activate_version(selected_version_id)
                 read_version_to_session(selected_version_id)
                 st.session_state["web_version_id"] = selected_version_id
+                try:
+                    st.session_state["last_data_readiness"] = build_data_readiness_report()
+                    st.session_state["last_data_schema_health"] = save_schema_health_report(
+                        load_result=st.session_state.get("last_load_result")
+                    )
+                except Exception:
+                    pass
 
         else:
             st.info("Нажмите «Загрузить из web/» чтобы прочитать файлы из папки web/.")
+
+        render_data_readiness_expander()
+        if st.session_state.get("last_data_schema_health"):
+            st.caption("Сформирован отчёт схем: `data_health_report.md` и `data_health_report.json` в корне приложения.")
+            _fsch = (st.session_state.get("last_data_schema_health") or {}).get("file_checks") or []
+            if _fsch:
+                with st.expander("Проверка файлов и колонок (что отсутствует/не распознано)", expanded=False):
+                    _fd = pd.DataFrame(_fsch).copy()
+                    _prio = {"err": 0, "warn": 1, "ok": 2}
+                    _fd["_p"] = _fd["level"].map(lambda x: _prio.get(str(x).lower(), 9))
+                    _fd = _fd.sort_values(["_p", "target"], kind="stable").drop(columns=["_p"])
+
+                    def _style_level(row):
+                        lv = str(row.get("level", "")).lower()
+                        if lv == "err":
+                            return ["background-color: #5a1f1f; color: #ffe3e3;"] * len(row)
+                        if lv == "warn":
+                            return ["background-color: #5a4b1f; color: #fff3d6;"] * len(row)
+                        if lv == "ok":
+                            return ["background-color: #1f4a2a; color: #e7ffe7;"] * len(row)
+                        return [""] * len(row)
+
+                    st.dataframe(
+                        _fd.style.apply(_style_level, axis=1),
+                        use_container_width=True,
+                        hide_index=True,
+                        height=min(720, 40 + max(1, len(_fd)) * 34),
+                    )
+            from data_health import REPORT_JSON, REPORT_MD
+
+            c1, c2 = st.columns(2)
+            with c1:
+                if REPORT_MD.exists():
+                    st.download_button(
+                        "Скачать data_health_report.md",
+                        data=REPORT_MD.read_text(encoding="utf-8"),
+                        file_name="data_health_report.md",
+                        mime="text/markdown",
+                        key="download_data_health_md",
+                    )
+            with c2:
+                if REPORT_JSON.exists():
+                    st.download_button(
+                        "Скачать data_health_report.json",
+                        data=REPORT_JSON.read_text(encoding="utf-8"),
+                        file_name="data_health_report.json",
+                        mime="application/json",
+                        key="download_data_health_json",
+                    )
 
     else:
 
@@ -738,13 +822,29 @@ def main():
     # Use project data as main df for backward compatibility
     df = st.session_state.project_data
 
-    # Dashboard selection - allow access if any data is loaded (project, resources, or technique)
+    # Dashboard selection — данные есть, если загружен MSP/ресурсы/TESSA/1С ДЗ/обороты (web_loader).
     has_project_data = df is not None and not df.empty
     resources_data = st.session_state.get("resources_data")
     technique_data = st.session_state.get("technique_data")
+    tessa_data = st.session_state.get("tessa_data")
+    tessa_tasks_data = st.session_state.get("tessa_tasks_data")
+    debit_credit_data = st.session_state.get("debit_credit_data")
+    ref_dannye = st.session_state.get("reference_1c_dannye")
     has_resources_data = resources_data is not None and not resources_data.empty
     has_technique_data = technique_data is not None and not technique_data.empty
-    has_any_data = has_project_data or has_resources_data or has_technique_data
+    has_tessa_data = tessa_data is not None and not getattr(tessa_data, "empty", True)
+    has_tessa_tasks = tessa_tasks_data is not None and not getattr(tessa_tasks_data, "empty", True)
+    has_debit_credit = debit_credit_data is not None and not getattr(debit_credit_data, "empty", True)
+    has_ref_dannye = ref_dannye is not None and not getattr(ref_dannye, "empty", True)
+    has_any_data = (
+        has_project_data
+        or has_resources_data
+        or has_technique_data
+        or has_tessa_data
+        or has_tessa_tasks
+        or has_debit_credit
+        or has_ref_dannye
+    )
 
     if has_any_data:
         # Выбор отчёта только из бокового меню (блок «Выбор панели» в основной области снят).
@@ -767,6 +867,20 @@ def main():
                     st.session_state.current_dashboard = "ГДРС Техника"
                 else:
                     st.session_state.current_dashboard = all_allowed[0]
+            elif not has_project_data and (has_tessa_data or has_tessa_tasks):
+                if "Неустраненные предписания" in all_allowed_set:
+                    st.session_state.current_dashboard = "Неустраненные предписания"
+                elif "Исполнительная документация" in all_allowed_set:
+                    st.session_state.current_dashboard = "Исполнительная документация"
+                else:
+                    st.session_state.current_dashboard = all_allowed[0]
+            elif not has_project_data and has_debit_credit:
+                if "Дебиторская и кредиторская задолженность подрядчиков" in all_allowed_set:
+                    st.session_state.current_dashboard = (
+                        "Дебиторская и кредиторская задолженность подрядчиков"
+                    )
+                else:
+                    st.session_state.current_dashboard = all_allowed[0]
             else:
                 st.session_state.current_dashboard = "Причины отклонений"
 
@@ -787,6 +901,16 @@ def main():
             df_for_render = resources_data if has_resources_data else (
                 technique_data if has_technique_data else df
             )
+        elif selected_dashboard in (
+            "Неустраненные предписания",
+            "Предписания по подрядчикам",
+            "Исполнительная документация",
+        ) and (not has_project_data) and has_tessa_data:
+            df_for_render = tessa_data
+        elif selected_dashboard == "Дебиторская и кредиторская задолженность подрядчиков" and (
+            not has_project_data
+        ) and has_debit_credit:
+            df_for_render = debit_credit_data
         else:
             df_for_render = df
 

@@ -77,6 +77,18 @@ def get_extra_web_dirs_from_env() -> List[Path]:
         except (OSError, ValueError):
             continue
     return out
+
+
+def ignore_demo_data_files() -> bool:
+    """
+    Прод/сервер: ``BI_ANALYTICS_IGNORE_DEMO=1`` (или ``true``/``yes``/``on``) —
+    не подмешивать демо из ``new_csv/`` рядом с приложением и не учитывать
+    ``sample_*.csv`` и файлы в каталогах ``new_csv/`` внутри ``web/`` и доп. путей.
+    """
+    v = os.environ.get("BI_ANALYTICS_IGNORE_DEMO", "").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
 DB_PATH: str = os.path.join(BASE_DIR, "users.db")
 ETL_DB_ENGINE: str = os.environ.get("DB_ENGINE", "sqlite").strip().lower()
 ETL_SQLITE_DB_PATH: str = os.environ.get(

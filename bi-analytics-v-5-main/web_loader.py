@@ -22,6 +22,8 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from config import ignore_demo_data_files
+
 import pandas as pd
 import streamlit as st
 
@@ -573,24 +575,30 @@ def _merge_partner_project_maps(
 
 def _load_tessa_file(filepath: Path) -> Optional[pd.DataFrame]:
     encodings = ["utf-8", "utf-8-sig", "windows-1251", "cp1251"]
+    seps = [";", ","]
     for encoding in encodings:
-        try:
-            df = pd.read_csv(
-                filepath, sep=";", encoding=encoding,
-                quoting=csv.QUOTE_MINIMAL, quotechar='"', doublequote=True,
-                on_bad_lines="skip",
-            )
-            df.columns = [
-                str(c).replace("\ufeff", "").replace("\n", " ").replace("\r", " ").strip()
-                for c in df.columns
-            ]
-            df = df.dropna(how="all")
-            if df.empty or len(df.columns) < 3:
+        for sep in seps:
+            try:
+                df = pd.read_csv(
+                    filepath,
+                    sep=sep,
+                    encoding=encoding,
+                    quoting=csv.QUOTE_MINIMAL,
+                    quotechar='"',
+                    doublequote=True,
+                    on_bad_lines="skip",
+                )
+                df.columns = [
+                    str(c).replace("\ufeff", "").replace("\n", " ").replace("\r", " ").strip()
+                    for c in df.columns
+                ]
+                df = df.dropna(how="all")
+                if df.empty or len(df.columns) < 3:
+                    continue
+                df.attrs["data_type"] = "tessa"
+                return df
+            except (UnicodeDecodeError, pd.errors.ParserError):
                 continue
-            df.attrs["data_type"] = "tessa"
-            return df
-        except (UnicodeDecodeError, pd.errors.ParserError):
-            continue
     return None
 
 
@@ -666,6 +674,20 @@ def web_dir_exists() -> bool:
     return False
 
 
+def _is_demo_file(rel_path: str, name: str) -> bool:
+    """
+    Демо: имена sample_*, любой файл внутри каталога new_csv/ в пути.
+    (Режим отключения — ``BI_ANALYTICS_IGNORE_DEMO`` через :func:`ignore_demo_data_files`.)
+    """
+    n = str(name).lower()
+    if n.startswith("sample_"):
+        return True
+    for part in Path(str(rel_path).replace("\\", "/")).parts:
+        if part.lower() == "new_csv":
+            return True
+    return False
+
+
 def scan_web_files(extensions: tuple = (".csv", ".json")) -> List[Dict]:
     """Рекурсивно сканирует все настроенные корни данных и возвращает список файлов."""
     files: List[Dict] = []
@@ -679,6 +701,8 @@ def scan_web_files(extensions: tuple = (".csv", ".json")) -> List[Dict]:
                     rel_path = str(rel).replace("\\", "/")
                     if prefix:
                         rel_path = f"{prefix}/{rel_path}"
+                    if ignore_demo_data_files() and _is_demo_file(rel_path, filepath.name):
+                        continue
                     files.append({
                         "path": filepath,
                         "name": filepath.name,
@@ -883,11 +907,25 @@ def load_all_from_web() -> Dict:
         "version_id": None,
     }
 
-    files = scan_web_files(extensions=(".csv", ".json")) + scan_new_csv_demo_files()
+    if ignore_demo_data_files():
+        result["warnings"].insert(
+            0,
+            "BI_ANALYTICS_IGNORE_DEMO: демо не подмешивается (каталог new_csv/ рядом с приложением, "
+            "а также sample_*.csv и пути с …/new_csv/ в web/).",
+        )
+        files = scan_web_files(extensions=(".csv", ".json"))
+    else:
+        files = scan_web_files(extensions=(".csv", ".json")) + scan_new_csv_demo_files()
     files, dedupe_warns = _dedupe_scan_files_by_identity(files)
     result["warnings"].extend(dedupe_warns)
     if not files:
-        result["errors"].append("Папка web/ пуста или не найдена, и new_csv/ без демо-файлов.")
+        if ignore_demo_data_files():
+            result["errors"].append(
+                "Нет CSV/JSON для загрузки после исключения демо, либо каталоги пусты. "
+                "Положите в web/ актуальные выгрузки MSP/1С/TESSA (без опоры на sample_ и new_csv)."
+            )
+        else:
+            result["errors"].append("Папка web/ пуста или не найдена, и new_csv/ без демо-файлов.")
         return result
 
     ensure_data_session_state()
@@ -903,6 +941,8 @@ def load_all_from_web() -> Dict:
     st.session_state["reference_contractors"] = None
     st.session_state["reference_krstates"] = None
     st.session_state["reference_docstates"] = None
+    st.session_state["reference_1c_dannye"] = None
+    st.session_state["reference_partner_to_project"] = None
 
     import sqlite3
     conn = sqlite3.connect(WEB_DB_PATH)

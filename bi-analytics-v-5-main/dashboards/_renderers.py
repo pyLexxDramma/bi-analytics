@@ -6914,14 +6914,16 @@ def dashboard_budget_by_period(df):
                         & (_pe_series <= (_end_dt + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)))
                     ].copy()
 
-    # Check for budget columns (нормализуем русские названия)
+    # Единый fallback бюджета: MSP -> 1С dannye при пустых budget колонках.
     ensure_budget_columns(filtered_df)
-    has_budget = (
-        "budget plan" in filtered_df.columns and "budget fact" in filtered_df.columns
-    )
+    from dashboards.finance_from_1c import ensure_budget_frame_with_fallback
 
+    filtered_df, _ = ensure_budget_frame_with_fallback(filtered_df, show_caption=True)
+    ensure_date_columns(filtered_df)
+    ensure_budget_columns(filtered_df)
+    has_budget = "budget plan" in filtered_df.columns and "budget fact" in filtered_df.columns
     if not has_budget:
-        st.warning("Столбцы бюджета (budget plan, budget fact) не найдены в данных.")
+        st.warning("Столбцы бюджета (budget plan, budget fact) не найдены: загрузите MSP с бюджетом и/или `*_dannye.json` с **Сценарий** + **Сумма**.")
         return
 
     # Determine adjusted budget column name
@@ -8108,6 +8110,13 @@ def dashboard_bdr(df):
     if df is None or not hasattr(df, "columns") or df.empty:
         st.warning("⚠️ Нет данных для отображения. Загрузите данные проекта.")
         return
+    from dashboards.finance_from_1c import ensure_budget_frame_with_fallback
+
+    df = df.copy()
+    ensure_budget_columns(df)
+    df, _ = ensure_budget_frame_with_fallback(df, show_caption=True)
+    ensure_budget_columns(df)
+    ensure_date_columns(df)
 
     # Определяем колонки для доходов и расходов
     def find_col(df, variants):
@@ -16756,6 +16765,12 @@ def dashboard_project_documentation(df):
 def dashboard_budget_by_type(df):
     st.header("Бюджет план/факт")
     df = df.copy()
+    from dashboards.finance_from_1c import ensure_budget_frame_with_fallback
+
+    ensure_budget_columns(df)
+    df, _ = ensure_budget_frame_with_fallback(df, show_caption=True)
+    ensure_budget_columns(df)
+    ensure_date_columns(df)
     if "project name" in df.columns:
         df = _project_column_apply_canonical(df, "project name")
     col1, col2, col3 = st.columns(3)
@@ -17935,6 +17950,13 @@ def calculate_approved_budget(df, rule_name="default"):
 def dashboard_approved_budget(df):
     """Панель для отображения утвержденного бюджета"""
     st.header("Утвержденный бюджет")
+    from dashboards.finance_from_1c import ensure_budget_frame_with_fallback
+
+    df = df.copy()
+    ensure_budget_columns(df)
+    df, _ = ensure_budget_frame_with_fallback(df, show_caption=True)
+    ensure_budget_columns(df)
+    ensure_date_columns(df)
 
     # Фильтры (две колонки: проект, этап) — плотная сетка без «дырок» между колонками
     st.markdown(
@@ -18282,6 +18304,12 @@ def calculate_forecast_budget(
 
 def _forecast_find_turnover_dataframe():
     """Ищет в session_state DataFrame оборотов 1С (БДДС) по типичным ключам/колонкам."""
+    try:
+        d0 = st.session_state.get("reference_1c_dannye")
+        if isinstance(d0, pd.DataFrame) and not getattr(d0, "empty", True):
+            return d0
+    except Exception:
+        pass
     try:
         keys = list(st.session_state.keys())
     except Exception:

@@ -79,7 +79,7 @@ def _connect(cfg: Dict[str, Any]):
 def sync_ftp_to_web(
     web_dir: Path,
     config: Optional[Dict[str, Any]] = None,
-    extensions: tuple = (".csv",),
+    extensions: tuple = (".csv", ".json"),
     progress: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     """
