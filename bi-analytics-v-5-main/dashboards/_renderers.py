@@ -2551,47 +2551,47 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         if "pct" not in reason_counts.columns:
             reason_counts["pct"] = (reason_counts["Количество"] / (float(total) or 1.0) * 100).round(1)
 
-        # Круг «Доли причин» (§4.11, без hover): все доли на диаграмме; подписи — только %,
-        # всегда снаружи. Круг сжат (domain), поля увеличены — вынос длиннее, меньше наезда на кольцо.
+        # Круг «Доли причин»: проценты внутри секторов без наложения.
         n_reasons = len(reason_counts)
-        _pie_h = int(max(780, 620 + min(n_reasons, 28) * 26))
+        _pie_h = int(max(980, 860 + min(n_reasons, 28) * 34))
         fig = px.pie(
             reason_counts,
             values="Количество",
             names="Причина",
             title=None,
-            hole=0.44,
+            hole=0.28,
         )
-        _pie_font = 13 if n_reasons <= 12 else 11
-        # В Plotly pie `%{percent}` — доля 0…1, не «проценты 0…100». `:.1f` + суффикс «%» давало «0.3%»
-        # вместо 34.2%; корректно: `:.1%` (d3-format: ×100 и знак %).
+        _pie_font = 17 if n_reasons <= 8 else 15 if n_reasons <= 12 else 13
         fig.update_traces(
             texttemplate="%{percent:.1%}",
             textposition="outside",
+            insidetextorientation="auto",
             textfont=dict(
                 size=_pie_font,
                 color="#e8eaed",
                 family="Inter, system-ui, sans-serif",
             ),
             hovertemplate="<b>%{label}</b><br>Количество: %{value}<br>Доля: %{percent:.1%}<extra></extra>",
-            pull=[0.012] * n_reasons,
+            pull=[0.0] * n_reasons,
             marker=dict(line=dict(color="rgba(15,17,23,0.85)", width=1)),
-            domain=dict(x=[0.18, 0.82], y=[0.20, 0.80]),
+            domain=dict(x=[0.08, 0.62], y=[0.16, 0.90]),
         )
         fig.update_layout(
             height=_pie_h,
-            margin=dict(l=110, r=110, t=56, b=300),
+            margin=dict(l=36, r=36, t=24, b=60),
             legend=dict(
-                orientation="h",
-                x=0.5,
-                y=-0.30,
-                xanchor="center",
-                yanchor="top",
-                font=dict(size=10),
-                tracegroupgap=0,
+                orientation="v",
+                x=0.67,
+                y=0.50,
+                xanchor="left",
+                yanchor="middle",
+                font=dict(size=15, color="#e8eaed"),
+                itemwidth=50,
+                tracegroupgap=8,
             ),
             font=dict(family="Inter, system-ui, sans-serif"),
             showlegend=True,
+            uniformtext=dict(minsize=10, mode="hide"),
         )
         fig = apply_chart_background(fig)
         render_chart(fig, caption_below="")
