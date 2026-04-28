@@ -7,6 +7,8 @@ sys.path.insert(0, str(_app_dir))
 
 import streamlit as st
 import pandas as pd
+import os
+import subprocess
 
 # # ← Новые импорты для теста
 # import datetime
@@ -36,6 +38,7 @@ from data_loader import (
     clear_all_data_for_removed_files,
 )
 from utils import load_custom_css
+from dashboard_diagnostics import render_dashboard_diagnostics_tab
 
 # # ← Добавь тестовый блок сразу после импортов (чтобы он отобразился на всех страницах)
 # st.sidebar.markdown("**Отладка времени**")
@@ -865,6 +868,22 @@ def main():
         or has_ref_dannye
     )
 
+    def _is_release_client_mode() -> bool:
+        if os.environ.get("BI_ANALYTICS_HIDE_DEV_DIAGNOSTICS", "").strip().lower() in ("1", "true", "yes", "on"):
+            return True
+        try:
+            br = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=str(_app_dir),
+                capture_output=True,
+                text=True,
+                timeout=1.5,
+            )
+            branch = (br.stdout or "").strip().lower()
+            return branch == "release"
+        except Exception:
+            return False
+
     if has_any_data:
         # Выбор отчёта только из бокового меню (блок «Выбор панели» в основной области снят).
         from dashboards import get_dashboards, get_main_panel_report_lists
@@ -946,7 +965,18 @@ def main():
                         "в боковом меню."
                     )
                 else:
-                    render_fn(df_for_render)
+                    if _is_release_client_mode():
+                        render_fn(df_for_render)
+                    else:
+                        tab_dash, tab_diag = st.tabs(["Дашборд", "Диагностика (dev)"])
+                        with tab_dash:
+                            render_fn(df_for_render)
+                        with tab_diag:
+                            render_dashboard_diagnostics_tab(
+                                selected_dashboard,
+                                df_for_render,
+                                st.session_state,
+                            )
             else:
                 st.warning(
                     f"График '{selected_dashboard}' не найден. Выберите другой отчёт в боковом меню."
