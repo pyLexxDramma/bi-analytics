@@ -7,6 +7,8 @@ sys.path.insert(0, str(_app_dir))
 
 import streamlit as st
 import pandas as pd
+import os
+import subprocess
 
 # # ← Новые импорты для теста
 # import datetime
@@ -543,10 +545,29 @@ def main():
 
     ensure_data_session_state()
 
+    def _is_release_client_mode() -> bool:
+        if os.environ.get("BI_ANALYTICS_HIDE_DEV_DIAGNOSTICS", "").strip().lower() in ("1", "true", "yes", "on"):
+            return True
+        try:
+            br = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=str(_app_dir),
+                capture_output=True,
+                text=True,
+                timeout=1.5,
+            )
+            branch = (br.stdout or "").strip().lower()
+            return branch == "release"
+        except Exception:
+            return False
+
     # Переключатель режима источника данных
+    data_mode_options = ["Загрузить вручную", "Из папки web/", "FTP → web/"]
+    if _is_release_client_mode():
+        data_mode_options = ["Из папки web/"]
     data_mode = st.radio(
         "Источник данных",
-        ["Загрузить вручную", "Из папки web/", "FTP → web/"],
+        data_mode_options,
         horizontal=True,
         key="data_mode_radio",
     )
