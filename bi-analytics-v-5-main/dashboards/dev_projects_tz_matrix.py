@@ -1267,377 +1267,20 @@ def _is_orange_pct_milestone(slug: str, title: str) -> bool:
     s_title = str(title or "").strip().lower().replace("ё", "е")
     return ("гпзу" in s_title) or ("экспертиз" in s_title)
 
-# Контрольные точки: те же kwargs, что и строки матрицы «Девелоперские проекты» (порядок как в матрице).
+# Контрольные точки: список и правила сопоставления по согласованному ТЗ.
 CONTROL_POINT_MILESTONES: List[Tuple[str, str, dict]] = [
-    (
-        "Аренда ЗУ",
-        "arenda_zu",
-        {
-            "level": 5.0,
-            "name_contains": "Регистрация договора субаренды",
-            "phase_needles": [
-                "Аренда ЗУ",
-                "субаренд",
-                "Инвестиционная. Аренда",
-                "аренда зу",
-                "договор субаренды",
-            ],
-        },
-    ),
-    (
-        "Готовый продукт",
-        "gotoviy_produkt",
-        {
-            "level": 5.0,
-            "names_any": [
-                "Рассмотрение и утверждение на инвестиционном комитете",
-                "инвестиционном комитете",
-                "Готовый продукт",
-                "готовый продукт",
-                "ГОТОВЫЙ ПРОДУКТ",
-                "Этап ГОТОВЫЙ ПРОДУКТ",
-                "Этап ГОТОВЫЙ",
-                "Инвестиционная. Готовый",
-            ],
-            "phase_needles": [
-                "Готовый продукт",
-                "готовый продукт",
-                "ГОТОВЫЙ ПРОДУКТ",
-                "Этап ГОТОВЫЙ ПРОДУКТ",
-                "Этап ГОТОВЫЙ",
-                "Инвестиционная. Готовый",
-                "инвестиционная. готовый",
-            ],
-        },
-    ),
-    (
-        "ГПЗУ",
-        "gpzu",
-        {
-            "level": 5.0,
-            "parent_l2_contains": "Ковенанты",
-            "names_any": [
-                "ГПЗУ",
-                "гпзу",
-                "Градплан",
-                "градостроительн",
-                "план территории",
-                "градостроительного плана",
-                "городской план",
-                "зонирования территории",
-                "Согласование ГП",
-                "( ГП,",
-                "ГП, АР",
-                "планировочных решений",
-                "Предварительные планировочные",
-                "Предварительные планировочные решения",
-                "Эскизный проект (",
-            ],
-            "phase_needles": [
-                "ГПЗУ",
-                "гпзу",
-                "градостроительн",
-                "план территории",
-                "Градплан",
-                "Инвестиционная. ГПЗУ",
-                "градостроительного плана",
-                "зонирования",
-                "Согласование ГП",
-                "( ГП,",
-                "ГП, АР",
-                "планировочных решений",
-                "Предварительные планировочные",
-                "Предварительные планировочные решения",
-            ],
-        },
-    ),
-    (
-        "Экспертиза стадия стП",
-        "exp_pd",
-        {
-            "level": 5.0,
-            "names_any": ["Экспертиза ПД", "Экспертиза", "экспертиза пд"],
-            "parent_l2_contains": "Ковенанты",
-            "phase_needles": ["Экспертиза стадия", "Экспертиза ПД", "Экспертиза стП"],
-        },
-    ),
-    (
-        "КОМАНДА РП",
-        "komanda_rp",
-        {
-            "level": 5.0,
-            "name_contains": "Подбор команды",
-            "parent_l2_contains": "Ковенанты",
-            "phase_needles": ["Команда РП", "КОМАНДА РП", "Подбор команды"],
-        },
-    ),
-    (
-        "РС",
-        "rs",
-        {
-            "level": 5.0,
-            "names_any": [
-                "Разрешение на строительство (РС)",
-                "Разрешение на строительство",
-                "разрешение на строительство",
-            ],
-            "parent_l2_contains": "Ковенанты",
-            "phase_needles": [
-                ". РС",
-                "Разрешение на строительство",
-                "Инвестиционная. РС",
-                "инвестиционная. рс",
-                "Жизнь проекта. РС",
-            ],
-        },
-    ),
-    (
-        "РД (1 вар)",
-        "rd_1var",
-        {
-            "level": 5.0,
-            "names_any": [
-                "Стадия Рабочая Документация (РД)",
-                "Рабочая Документация (РД)",
-                "стадия РД",
-                "стадия рабочая документация",
-            ],
-            "parent_l2_contains": "Ковенанты",
-            "phase_needles": ["РД (1", "1вар)", "1 вар)", "Рабочая Документация", "стадия РД"],
-        },
-    ),
-    (
-        "Подготовительный этап (ТУ, ПРОЕКТ временные сети ЭЛ-ВО)",
-        "ird_el",
-        {
-            "level": 4.0,
-            "names_any": ["Электроснабжение:", "Электроснабжение"],
-            "block_contains": "ИРД",
-            "phase_needles": [
-                "Электроснабжение",
-                "временные сети ЭЛ",
-                "ЭЛ-ВО",
-                "Эл-во",
-                "сети ЭЛ",
-                "ИСЭ",
-                "инженерные сети: электро",
-                "ВНУТРИПЛОЩАДОЧНЫЕ ИНЖЕНЕРНЫЕ СЕТИ: ЭЛЕКТРО",
-            ],
-            "phase_exclude_needles": ["Примыкания", "УДС", "примыкания к удс"],
-        },
-    ),
-    (
-        "Подготовительный этап (ТУ, ПРОЕКТ временные примыкания)",
-        "ird_ud",
-        {
-            "level": 4.0,
-            "names_any": ["Примыкания к УДС:", "Примыкания к УДС"],
-            "block_contains": "ИРД",
-            "phase_needles": ["Примыкания к УДС", "временные примыкания"],
-            "phase_exclude_needles": ["ЭЛ-ВО", "Электроснабжение", "сети ЭЛ", "ИСЭ"],
-        },
-    ),
-    (
-        "ПОС (1 вар)",
-        "pos_1var",
-        {
-            "level": None,
-            "names_any": [
-                "Согласование ПЗУ, ПОС, ПОДД с КРМО, МОЭСК, Мособлгаз, Мосавтодор",
-                "Согласование ПЗУ",
-                "ПОС, ПОДД",
-            ],
-            "block_contains": "ПРОЕКТ",
-            "phase_needles": [
-                "ПОС (1 вар)",
-                "ПОС (1вар)",
-                "ПОС (1 этап)",
-                "ПОС (1этап)",
-                "ПОС (1 очер",
-                "Согласование ПЗУ",
-            ],
-        },
-    ),
-    (
-        "Начало финансирования СМР",
-        "fin_start",
-        {
-            "level": 5.0,
-            "name_contains": "Начало финансирования",
-            "parent_l2_contains": "Ковенанты",
-            "phase_needles": ["Начало финансирования"],
-        },
-    ),
-    (
-        "Начало СМР",
-        "smr_start",
-        {
-            "level": 5.0,
-            "name_contains": "Начало СМР",
-            "parent_l2_contains": "Ковенанты",
-            "phase_needles": ["Начало СМР"],
-        },
-    ),
-    (
-        "ТЕХ.ПРИСОЕДИНЕНИЯ (ГАЗ, ЭЛ-ВО)",
-        "tech_join",
-        {
-            "level": 5.0,
-            "names_any": [
-                "Пуск электричества",
-                "Пуск газа",
-                "ТЕХПРИСОЕДИНЕНИЯ",
-                "техприсоединения",
-                "ГАЗ, ЭП",
-                "ЭП, ВО",
-            ],
-            "parent_l2_contains": "Ковенанты",
-            "phase_needles": [
-                "ТЕХ.ПРИСОЕДИНЕНИЯ",
-                "ТЕХПРИСОЕДИНЕНИЯ",
-                "ПРИСОЕДИНЕНИЯ (ГАЗ",
-                "ГАЗ, ЭЛ-ВО",
-                "ГАЗ, ЭП",
-                "ЭП, ВО",
-                "ЭП ВО",
-                "Пуск электричества",
-                "Пуск газа",
-                "Жизнь проекта. ТЕХ",
-                "Жизнь проекта. ТЕХПРИСОЕДИНЕНИЯ",
-                "Инвестиционная. ТЕХ",
-            ],
-        },
-    ),
-    (
-        "ЗОС",
-        "zos",
-        {
-            "level": 5.0,
-            "names_any": [
-                "Заключение о соответствии",
-                "заключение о соответствии",
-                "ЗОС)",
-                "зос)",
-            ],
-            "parent_l2_contains": "Ковенанты",
-            "phase_needles": [
-                "Заключение о соответствии",
-                ". ЗОС",
-                "Жизнь проекта. ЗОС",
-                "Инвестиционная. ЗОС",
-                "инвестиционная. зос",
-            ],
-        },
-    ),
-    (
-        "РВ",
-        "rv",
-        {
-            "level": 5.0,
-            "names_any": [
-                "Разрешение на ввод в эксплуатацию (РВ)",
-                "Разрешение на ввод",
-                "ввод в эксплуатацию",
-                "Разрешение на ввод объекта",
-                "Разрешение на ввод в эксплуатацию",
-            ],
-            "parent_l2_contains": "Ковенанты",
-            "phase_needles": [
-                ". РВ",
-                " РВ",
-                "Разрешение на ввод",
-                "ввод в эксплуатацию",
-                "Разрешение на ввод объекта",
-                "Жизнь проекта. РВ",
-                "Инвестиционная. РВ",
-            ],
-        },
-    ),
-    (
-        "Право 1",
-        "pravo1",
-        {
-            "level": 5.0,
-            "names_any": ["Право 1", "Право1", "право 1", "Право 1 на"],
-            "parent_l2_contains": "Ковенанты",
-            "phase_needles": [
-                "Право 1",
-                "Право1",
-                "право 1",
-                "Право 1 на",
-                "Жизнь проекта. Право 1",
-                "Инвестиционная. Право 1",
-            ],
-        },
-    ),
-    (
-        "Выкуп ЗУ",
-        "vykup_zu",
-        {
-            "level": 5.0,
-            "names_any": [
-                "Выкуп земельного участка",
-                "Выкуп ЗУ",
-                "Выкуп участка",
-                "выкуп земли",
-                "выкуп земельного",
-            ],
-            "parent_l2_contains": "Ковенанты",
-            "phase_needles": [
-                "Выкуп ЗУ",
-                "Выкуп земельного",
-                "Выкуп участка",
-                "выкуп земли",
-                "Жизнь проекта. Выкуп",
-                "Инвестиционная. Выкуп",
-            ],
-        },
-    ),
-    (
-        "Право 2 на Застройщика",
-        "pravo2",
-        {
-            "level": 5.0,
-            "names_any": [
-                "Право 2 на Застройщика",
-                "Право 2",
-                "Право2",
-            ],
-            "parent_l2_contains": "Ковенанты",
-            "phase_needles": [
-                "Право 2 на Застройщика",
-                "Право 2",
-                "Жизнь проекта. Право 2",
-                "Инвестиционная. Право 2",
-            ],
-        },
-    ),
-    (
-        "Передача БОКСОВ резидентам",
-        "peredacha_boks",
-        {
-            "level": 5.0,
-            "names_any": [
-                "Передача боксов резидентам",
-                "Передача боксов",
-                "Передача бокс",
-                "боксов резидент",
-                "БОНУСОВ",
-                "бонусов резидент",
-                "передача бонус",
-            ],
-            "parent_l2_contains": "Ковенанты",
-            "phase_needles": [
-                "Передача боксов",
-                "БОКСОВ",
-                "БОНУСОВ",
-                "бонусов резидент",
-                "Передача бонус",
-                "Жизнь проекта. Передача",
-                "Инвестиционная. Передача",
-            ],
-        },
-    ),
+    ("ГПЗУ", "gpzu", {"level": 5.0, "names_any": ["ГПЗУ"], "parent_l2_contains": "Ковенанты"}),
+    ("Экспертиза стадии П", "exp_pd", {"level": 5.0, "names_any": ["Экспертиза ПД", "Экспертиза"], "parent_l2_contains": "Ковенанты"}),
+    ("Начало финансирования", "fin_start", {"level": 5.0, "names_any": ["КОД, ОТКР. ФИНАНС. (начало финансирования)", "Начало финансирования"], "parent_l2_contains": "Ковенанты"}),
+    ("Стадия РД", "rd_stage", {"level": 5.0, "names_any": ["Стадия РД", "Стадия Рабочая Документация (РД)", "Рабочая Документация (РД)"], "parent_l2_contains": "Ковенанты"}),
+    ("РС", "rs", {"level": 5.0, "names_any": ["Разрешение РС", "Разрешение на строительство (РС)", "Разрешение на строительство"], "parent_l2_contains": "Ковенанты"}),
+    ("Завершение СМР", "smr_finish", {"level": 5.0, "names_any": ["Завершение СМР"], "parent_l2_contains": "Ковенанты"}),
+    ("Пуск электричества", "power_on", {"level": 5.0, "names_any": ["Пуск электричества"], "parent_l2_contains": "Ковенанты"}),
+    ("Пуск газа", "gas_on", {"level": 5.0, "names_any": ["Пуск газа"], "parent_l2_contains": "Ковенанты"}),
+    ("РВ", "rv", {"level": 5.0, "names_any": ["РВ", "Разрешение на ввод в эксплуатацию (РВ)", "Разрешение на ввод"], "parent_l2_contains": "Ковенанты"}),
+    ("Право 1", "pravo1", {"level": 5.0, "names_any": ["Право 1"], "parent_l2_contains": "Ковенанты"}),
+    ("Выкуп ЗУ", "vykup_zu", {"level": 5.0, "names_any": ["Выкуп ЗУ", "Выкуп земельного участка"], "parent_l2_contains": "Ковенанты"}),
+    ("Право 2", "pravo2", {"level": 5.0, "names_any": ["Право 2", "Право 2 на Застройщика"], "parent_l2_contains": "Ковенанты"}),
 ]
 
 _CP_MILESTONES_JSON_KEY = "control_points_milestones_json"
@@ -1931,17 +1574,141 @@ _CONTROL_POINTS_CSS = """
 
 def _apply_control_points_msp_filters(st, mdf: pd.DataFrame) -> pd.DataFrame:
     """
-    Фильтры по правкам: только «Проект» и при наличии — «Строение» (без «Этап» и «Функциональный блок»).
+    Фильтры по ТЗ:
+    - Проект (ур.1)
+    - Функциональный блок (ур.2)
+    - Строения (ур.3)
+    - Верхний уровень задач (ур.4)
+    - Детальный уровень задач (ур.5)
     """
     if mdf is None or getattr(mdf, "empty", True):
         return mdf
     df = mdf.copy()
-    building_col = _find_building_column(df)
-    if building_col:
-        r1a, r1b = st.columns(2)
-    else:
-        r1a = st.columns(1)[0]
-        r1b = None
+
+    def _clean_filter_label(v: Any) -> str:
+        s = str(v or "").replace("\xa0", " ").replace("\u200b", "").replace("\ufeff", "").strip()
+        while "  " in s:
+            s = s.replace("  ", " ")
+        # Убираем кавычки в отображаемом label (в т.ч. внутренние), чтобы списки фильтров были читаемыми.
+        s = (
+            s.replace('"', "")
+            .replace("'", "")
+            .replace("«", "")
+            .replace("»", "")
+        )
+        # Чистим типовые артефакты выгрузки MSP в названиях.
+        s = s.replace(" ,", ",").replace(" .", ".")
+        s = s.lstrip("*- ").strip()
+        while "  " in s:
+            s = s.replace("  ", " ")
+        s = s.strip()
+        return s
+
+    def _build_options_map(series: pd.Series) -> Dict[str, List[str]]:
+        mp: Dict[str, List[str]] = {}
+        if series is None or getattr(series, "empty", True):
+            return mp
+        for raw in series.dropna().astype(str).tolist():
+            rs = str(raw).strip()
+            if not rs:
+                continue
+            lab = _clean_filter_label(rs)
+            if not lab:
+                continue
+            mp.setdefault(lab, []).append(rs)
+        for k in list(mp.keys()):
+            # Дедуп исходников для выбранной подписи.
+            mp[k] = sorted(set(mp[k]))
+        return mp
+    lvl_col = "level structure" if "level structure" in df.columns else ("level" if "level" in df.columns else None)
+    task_col = _task_name_col(df)
+    if lvl_col and task_col and lvl_col in df.columns and task_col in df.columns:
+        # Восстанавливаем предков по порядку строк MSP.
+        anc2: List[str] = []
+        anc3: List[str] = []
+        anc4: List[str] = []
+        anc5: List[str] = []
+        stack: Dict[int, str] = {}
+        pcol = "project name" if "project name" in df.columns else None
+        if pcol:
+            grouped = df.groupby(df[pcol].astype(str), sort=False)
+            parts = []
+            for _, g in grouped:
+                g = g.copy()
+                stack = {}
+                _a2: List[str] = []
+                _a3: List[str] = []
+                _a4: List[str] = []
+                _a5: List[str] = []
+                for _, r in g.iterrows():
+                    lv = pd.to_numeric(r.get(lvl_col), errors="coerce")
+                    try:
+                        lvi = int(lv)
+                    except Exception:
+                        lvi = -1
+                    if lvi > 0:
+                        for k in list(stack.keys()):
+                            if k >= lvi:
+                                del stack[k]
+                    name = str(r.get(task_col) or "").strip()
+                    if lvi == 2:
+                        v2, v3, v4, v5 = name, "", "", ""
+                    elif lvi == 3:
+                        v2, v3, v4, v5 = stack.get(2, ""), name, "", ""
+                    elif lvi == 4:
+                        v2, v3, v4, v5 = stack.get(2, ""), stack.get(3, ""), name, ""
+                    elif lvi == 5:
+                        v2, v3, v4, v5 = stack.get(2, ""), stack.get(3, ""), stack.get(4, ""), name
+                    else:
+                        v2, v3, v4, v5 = stack.get(2, ""), stack.get(3, ""), stack.get(4, ""), stack.get(5, "")
+                    _a2.append(v2)
+                    _a3.append(v3)
+                    _a4.append(v4)
+                    _a5.append(v5)
+                    if lvi > 0 and name:
+                        stack[lvi] = name
+                g["__l2"] = _a2
+                g["__l3"] = _a3
+                g["__l4"] = _a4
+                g["__l5"] = _a5
+                parts.append(g)
+            if parts:
+                df = pd.concat(parts, axis=0)
+        else:
+            for _, r in df.iterrows():
+                lv = pd.to_numeric(r.get(lvl_col), errors="coerce")
+                try:
+                    lvi = int(lv)
+                except Exception:
+                    lvi = -1
+                if lvi > 0:
+                    for k in list(stack.keys()):
+                        if k >= lvi:
+                            del stack[k]
+                name = str(r.get(task_col) or "").strip()
+                if lvi == 2:
+                    v2, v3, v4, v5 = name, "", "", ""
+                elif lvi == 3:
+                    v2, v3, v4, v5 = stack.get(2, ""), name, "", ""
+                elif lvi == 4:
+                    v2, v3, v4, v5 = stack.get(2, ""), stack.get(3, ""), name, ""
+                elif lvi == 5:
+                    v2, v3, v4, v5 = stack.get(2, ""), stack.get(3, ""), stack.get(4, ""), name
+                else:
+                    v2, v3, v4, v5 = stack.get(2, ""), stack.get(3, ""), stack.get(4, ""), stack.get(5, "")
+                anc2.append(v2)
+                anc3.append(v3)
+                anc4.append(v4)
+                anc5.append(v5)
+                if lvi > 0 and name:
+                    stack[lvi] = name
+            df["__l2"] = anc2
+            df["__l3"] = anc3
+            df["__l4"] = anc4
+            df["__l5"] = anc5
+
+    r1a, r1b, r1c = st.columns(3)
+    r2a, r2b = st.columns(2)
     labels_map: Dict[str, List[str]] = {}
     with r1a:
         if "project name" in df.columns:
@@ -1950,23 +1717,67 @@ def _apply_control_points_msp_filters(st, mdf: pd.DataFrame) -> pd.DataFrame:
             sel_proj = st.selectbox("Проект", opts, key="cp_msp_filter_project")
         else:
             sel_proj = "Все"
-    sel_bld = "Все"
-    if building_col and r1b is not None:
-        with r1b:
-            bopts = ["Все"] + sorted(
-                df[building_col].dropna().astype(str).str.strip().unique().tolist()
-            )
-            sel_bld = st.selectbox("Строение", bopts, key="cp_msp_filter_building")
+
+    # Каскад: каждый следующий список строим из уже отфильтрованного набора.
     out = df
     if sel_proj != "Все" and "project name" in out.columns:
         raws = labels_map.get(str(sel_proj).strip(), [str(sel_proj).strip()])
         out = out[out["project name"].astype(str).str.strip().isin(raws)]
-    if (
-        sel_bld != "Все"
-        and building_col
-        and building_col in out.columns
-    ):
-        out = out[out[building_col].astype(str).str.strip() == str(sel_bld).strip()]
+
+    with r1b:
+        l2_map = _build_options_map(out.get("__l2", pd.Series(dtype=str)))
+        l2_opts = ["Все"] + sorted(l2_map.keys(), key=lambda x: x.lower())
+        sel_l2 = st.selectbox("Функциональный блок", l2_opts, key="cp_msp_filter_l2")
+    if sel_l2 != "Все" and "__l2" in out.columns:
+        raws = l2_map.get(str(sel_l2).strip(), [str(sel_l2).strip()])
+        out = out[out["__l2"].astype(str).str.strip().isin(raws)]
+
+    with r1c:
+        l3_map = _build_options_map(out.get("__l3", pd.Series(dtype=str)))
+        l3_opts = ["Все"] + sorted(l3_map.keys(), key=lambda x: x.lower())
+        sel_l3 = st.selectbox("Строения", l3_opts, key="cp_msp_filter_l3")
+    if sel_l3 != "Все" and "__l3" in out.columns:
+        raws = l3_map.get(str(sel_l3).strip(), [str(sel_l3).strip()])
+        out = out[out["__l3"].astype(str).str.strip().isin(raws)]
+
+    # Для уровней 4/5 показываем только релевантные варианты:
+    # строки, которые потенциально попадают в вехи «Контрольных точек» по текущему ТЗ.
+    rel = out
+    try:
+        rel_idx = set()
+        for _title, _slug, _kw in get_control_point_milestones_effective():
+            _m = _match_milestone_tasks(out, _kw)
+            if _m is not None and not getattr(_m, "empty", True):
+                rel_idx.update(_m.index.tolist())
+        if rel_idx:
+            rel = out.loc[sorted(rel_idx)]
+    except Exception:
+        rel = out
+
+    with r2a:
+        l4_map = _build_options_map(out.get("__l4", pd.Series(dtype=str)))
+        if "__l4" in rel.columns:
+            _rel_l4 = set(_build_options_map(rel["__l4"]).keys())
+            if _rel_l4:
+                l4_map = {k: v for k, v in l4_map.items() if k in _rel_l4}
+        l4_opts = ["Все"] + sorted(l4_map.keys(), key=lambda x: x.lower())
+        sel_l4 = st.selectbox("Верхний уровень задач", l4_opts, key="cp_msp_filter_l4")
+    if sel_l4 != "Все" and "__l4" in out.columns:
+        raws = l4_map.get(str(sel_l4).strip(), [str(sel_l4).strip()])
+        out = out[out["__l4"].astype(str).str.strip().isin(raws)]
+
+    with r2b:
+        l5_map = _build_options_map(out.get("__l5", pd.Series(dtype=str)))
+        if "__l5" in rel.columns:
+            _rel_l5 = set(_build_options_map(rel["__l5"]).keys())
+            if _rel_l5:
+                l5_map = {k: v for k, v in l5_map.items() if k in _rel_l5}
+        l5_opts = ["Все"] + sorted(l5_map.keys(), key=lambda x: x.lower())
+        sel_l5 = st.selectbox("Детальный уровень задач", l5_opts, key="cp_msp_filter_l5")
+    if sel_l5 != "Все" and "__l5" in out.columns:
+        raws = l5_map.get(str(sel_l5).strip(), [str(sel_l5).strip()])
+        out = out[out["__l5"].astype(str).str.strip().isin(raws)]
+    out = out.drop(columns=["__l2", "__l3", "__l4", "__l5"], errors="ignore")
     return out
 
 
