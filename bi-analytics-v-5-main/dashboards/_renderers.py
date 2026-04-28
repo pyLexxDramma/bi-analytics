@@ -143,11 +143,6 @@ def _unique_project_labels_for_select(series: pd.Series) -> list[str]:
     """Уникальные подписи для selectbox: один пункт на один нормализованный ключ (короче имя — приоритет)."""
     if series is None or getattr(series, "empty", True):
         return []
-    excluded_keys = {
-        _project_filter_norm_key(p)
-        for p in MSP_PROJECT_FILTER_EXCLUDE_NAMES
-        if _project_filter_norm_key(p)
-    }
     by_key: dict[str, str] = {}
     for raw in series.dropna().unique():
         s = (
@@ -159,8 +154,13 @@ def _unique_project_labels_for_select(series: pd.Series) -> list[str]:
         )
         while "  " in s:
             s = s.replace("  ", " ")
+        # Исключаем из выпадающего списка только точное написание из конфига (напр. «Дмитровский-1»).
+        # Нельзя резать по norm-key: «Дмитровский-1» и «Дмитровский 1» после fusion дают один ключ «дмитровский 1»,
+        # из‑за чего второй вариант ошибочно пропадал из фильтра при «Все», но оставался в таблице.
+        if s in MSP_PROJECT_FILTER_EXCLUDE_NAMES:
+            continue
         k = _project_filter_norm_key(s)
-        if not k or k in excluded_keys:
+        if not k:
             continue
         if k not in by_key or len(s) < len(by_key[k]):
             by_key[k] = s
@@ -21195,6 +21195,14 @@ def dashboard_developer_projects(df):
     if project_col and project_col in filtered.columns:
         filtered = _project_column_apply_canonical(filtered, project_col)
 
+    # ТЗ: без дублирования задач/проектов; экспорт и матрица строятся из того же набора, что и таблица задач.
+    try:
+        from dashboards.dev_projects_tz_matrix import dedupe_msp_for_developer_projects
+
+        filtered = dedupe_msp_for_developer_projects(filtered)
+    except Exception:
+        pass
+
     if filtered.empty:
         st.info("Нет данных при выбранных фильтрах.")
         return
@@ -21400,6 +21408,9 @@ def dashboard_developer_projects(df):
         "Заметки",
     ]
     dev_tbl = dev_tbl[[c for c in desired_cols if c in dev_tbl.columns]]
+
+    if "Проект" in dev_tbl.columns and "Задача" in dev_tbl.columns:
+        dev_tbl = dev_tbl.drop_duplicates(subset=["Проект", "Задача"], keep="first").reset_index(drop=True)
 
     display_tbl = dev_tbl.copy()
 

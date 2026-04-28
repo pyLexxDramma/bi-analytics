@@ -371,23 +371,6 @@ def _match_tasks_like_msp_row(mdf: pd.DataFrame, kw: dict) -> pd.DataFrame:
     return sub
 
 
-def _agg_plan_fact_otkl(rows: pd.DataFrame) -> Tuple[str, str, str, bool]:
-    if rows is None or rows.empty:
-        return "Н/Д", "Н/Д", "Н/Д", False
-    plan_parts: List[str] = []
-    fact_parts: List[str] = []
-    otkl_parts: List[str] = []
-    warns: List[bool] = []
-    for _, r in rows.iterrows():
-        pdt, fdt, pct = _msp_plan_fact_pct(r)
-        plan_parts.append(_fmt_date_ru(pdt))
-        fact_parts.append(_fmt_date_ru(fdt))
-        otkl_parts.append(_fmt_delta_days(_delta_days_plan_minus_fact(pdt, fdt)))
-        warns.append(_is_pct_complete_not_100(pct))
-    sep = " / "
-    return sep.join(plan_parts), sep.join(fact_parts), sep.join(otkl_parts), any(warns)
-
-
 def _unicode_dash_fold(s: str) -> str:
     """Единый дефис: длинное/короткое тире из MSP/Excel → '-', чтобы ключи группировки совпадали."""
     t = str(s)
@@ -629,8 +612,37 @@ def _predpisaniya_combined(mdf: pd.DataFrame, ss: Any) -> Tuple[str, str, str, b
             sub = mdf[mdf[nm].astype(str).str.contains("предписан", **_lit)]
     if sub.empty:
         return tp, tf, to, False, hint
-    ps, fs, os, w = _agg_plan_fact_otkl(sub)
-    return ps, fs, os, w, hint
+    # ТЗ: одна дата на ячейку — представительная задача вехи (как в _one_milestone_cell), без склейки « / ».
+    ps, fs, os, _ok, w = _one_milestone_cell(sub)
+    return ps, fs, os, bool(w), hint
+
+
+def dedupe_msp_for_developer_projects(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    ТЗ: нет дублирования проектов и задач в «Девелоперские проекты».
+    Сначала по идентификатору задачи MSP (если колонка есть и не пустая), иначе по (проект, задача) / по задаче.
+    """
+    if df is None or getattr(df, "empty", True):
+        return df
+    out = df.copy()
+    for id_c in (
+        "unique id",
+        "Уникальный_идентификатор",
+        "task id seq",
+        "Ид",
+    ):
+        if id_c not in out.columns:
+            continue
+        if int(out[id_c].notna().sum()) == 0:
+            continue
+        return out.drop_duplicates(subset=[id_c], keep="first").reset_index(drop=True)
+    pc = _find_col(out, ["project name", "Проект", "Project", "проект", "ID_проекта"])
+    tc = _task_name_col(out)
+    if pc and tc and pc in out.columns and tc in out.columns:
+        return out.drop_duplicates(subset=[pc, tc], keep="first").reset_index(drop=True)
+    if tc and tc in out.columns:
+        return out.drop_duplicates(subset=[tc], keep="first").reset_index(drop=True)
+    return out
 
 
 def build_dev_tz_matrix_rows(
@@ -648,6 +660,8 @@ def build_dev_tz_matrix_rows(
             mdf = _fill_section_from_task_tree(mdf.copy())
         except Exception:
             pass
+    if mdf is not None and not getattr(mdf, "empty", True):
+        mdf = dedupe_msp_for_developer_projects(mdf)
 
     def add_row(
         group: str,
@@ -684,8 +698,12 @@ def build_dev_tz_matrix_rows(
 
     def _msp_row(phase: str, group: str, label: str, kw: dict) -> None:
         sub = _match_tasks_like_msp_row(mdf, kw)
-        ps, fs, os, w = _agg_plan_fact_otkl(sub)
-        add_row(group, label, ps, fs, os, w, phase=phase)
+        if sub is None or sub.empty:
+            add_row(group, label, "Н/Д", "Н/Д", "Н/Д", False, phase=phase)
+            return
+        # ТЗ: в каждой ячейке План/Факт/Откл. — одно значение (одна дата / один текст отклонения), без «дата1 / дата2».
+        ps, fs, os, _ok, w = _one_milestone_cell(sub)
+        add_row(group, label, ps, fs, os, bool(w), phase=phase)
 
     # Порядок столбцов — по референсу (file-002: вехи Ковенантов; file-003: ДС/ТЕССА до ИРД/ПОС)
     specs_invest_msp: List[Tuple[str, str, str, dict]] = [
@@ -709,7 +727,7 @@ def build_dev_tz_matrix_rows(
         (
             "invest",
             "Ковенанты",
-            "Готовый продукт",
+            "Готовый Продукт",
             {
                 "level": 5.0,
                 "names_any": [
@@ -778,7 +796,7 @@ def build_dev_tz_matrix_rows(
         (
             "invest",
             "Ковенанты",
-            "Экспертиза стадия стП",
+            "Экспертиза стадия ст П",
             {
                 "level": 5.0,
                 "names_any": ["Экспертиза ПД", "Экспертиза", "экспертиза пд"],
@@ -821,7 +839,7 @@ def build_dev_tz_matrix_rows(
         (
             "invest",
             "Ковенанты",
-            "РД (1 вар)",
+            "РД (1вар)",
             {
                 "level": 5.0,
                 "names_any": [
@@ -844,12 +862,13 @@ def build_dev_tz_matrix_rows(
     else:
 
         def _fmtml(v: float) -> str:
-            return f"{v:.3f}".replace(".", ",")
+            # ТЗ: млн руб., два знака после запятой
+            return f"{v:.2f}".replace(".", ",")
 
         add_row("Финансы", "Выборка ДС, млн руб.", _fmtml(pm), _fmtml(fm), _fmtml(om), False, phase="invest")
 
     tp, tf, to, warn_t, _tessa_hint = _predpisaniya_combined(mdf, ss)
-    add_row("TESSA", "ПРЕДПИСАНИЯ", tp, tf, to, warn_t, phase="invest")
+    add_row("ТЕССА", "ПРЕДПИСАНИЯ", tp, tf, to, warn_t, phase="invest")
 
     specs_invest_tail: List[Tuple[str, str, str, dict]] = [
         (

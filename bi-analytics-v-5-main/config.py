@@ -97,7 +97,8 @@ ETL_SQLITE_DB_PATH: str = os.environ.get(
 )
 DATA_MODE: str = os.environ.get("DATA_MODE", "auto").strip().lower()
 
-# Подписи «project name», которые не показываем в фильтрах (дубликаты/устаревшие метки без строк в данных).
+# Точные подписи «project name», которые не показываем в фильтрах (устаревший дубликат написания).
+# Важно: сравнение по строке, не по norm-key — иначе скрывались бы и «Дмитровский 1», если в исключении «Дмитровский-1».
 MSP_PROJECT_FILTER_EXCLUDE_NAMES: FrozenSet[str] = frozenset({"Дмитровский-1"})
 
 MSP_PROJECT_NAME_MAP: Dict[str, str] = {
