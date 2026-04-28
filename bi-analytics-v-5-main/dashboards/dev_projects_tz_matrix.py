@@ -1543,7 +1543,7 @@ _CONTROL_POINTS_CSS = """
 .cp-table-wrap { overflow-x: auto; min-width: 0; max-width: 100%; }
 .cp-table-wrap .rendered-table th,
 .cp-table-wrap .rendered-table td {
-  border-color: rgba(121, 154, 192, 0.55) !important;
+  border: 1px solid rgba(121, 154, 192, 0.55) !important;
 }
 .cp-table-wrap .rendered-table th {
   font-size: 12px !important;
@@ -1555,8 +1555,21 @@ _CONTROL_POINTS_CSS = """
   color: #f3f7fc !important;
   line-height: 1.25;
 }
+.rendered-table th.cp-tophead {
+  text-align: center;
+  background: #17314b !important;
+  color: #f5f9ff !important;
+  font-size: 14px;
+  font-weight: 800;
+}
 .rendered-table th.cp-ghead { text-align:center; background:#1f232d; font-size:13px; padding:7px 9px; color:#f5f9ff !important; }
 .rendered-table th.cp-sub { font-size:12px; color:#dde8f5; font-weight:600; }
+.cp-col-project {
+  border-right: 2px solid rgba(190, 214, 242, 0.8) !important;
+}
+.cp-group-start {
+  border-left: 2px solid rgba(190, 214, 242, 0.8) !important;
+}
 /* ГПЗУ / Экспертиза стадии П: % выполнения в MSP ≠ 100% — «рыжая» подсветка значения */
 .cp-td-warn {
   background: rgba(234, 88, 12, 0.38) !important;
@@ -1798,14 +1811,17 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
     view = df.copy()
 
     ms_specs = [(t, s) for t, s, _k in get_control_point_milestones_effective()]
-    thead1 = ['<th rowspan="2" style="min-width:180px">Проект</th>']
-    for title, slug in ms_specs:
-        thead1.append(f'<th colspan="4" class="cp-ghead">{esc(title)}</th>')
+    project_w = "min-width:180px"
+    thead1 = [f'<th rowspan="2" class="cp-col-project" style="{project_w}">Проекты ↓</th>']
+    for i, (title, slug) in enumerate(ms_specs):
+        hdr = f"Задачи → {title}" if i == 0 else title
+        thead1.append(f'<th colspan="4" class="cp-ghead cp-group-start">{esc(hdr)}</th>')
     sub_headers: List[str] = []
-    for _title, slug in ms_specs:
+    for i, (_title, slug) in enumerate(ms_specs):
+        plan_title = "План →" if i == 0 else "План"
         sub_headers.extend(
             [
-                f'<th class="cp-sub">{esc("План")}</th>',
+                f'<th class="cp-sub cp-group-start">{esc(plan_title)}</th>',
                 f'<th class="cp-sub">{esc("Факт")}</th>',
                 f'<th class="cp-sub">{esc("Откл.")}</th>',
                 f'<th class="cp-sub">{esc("Статус")}</th>',
@@ -1820,14 +1836,15 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
     )
     body: List[str] = ["<tbody>"]
     for _, r in view.iterrows():
-        cells = [f'<td>{esc(str(r.get("project", "")))}</td>']
+        cells = [f'<td class="cp-col-project">{esc(str(r.get("project", "")))}</td>']
         for _t, slug in ms_specs:
             _is_orange_milestone = _is_orange_pct_milestone(slug, _t)
             owarn = _is_orange_milestone and bool(r.get(f"{slug}_warn_pct"))
-            wc = ' class="cp-td-warn"' if owarn else ""
-            cells.append(f"<td{wc}>{esc(str(r.get(f'{slug}_plan', '')))}</td>")
-            cells.append(f"<td{wc}>{esc(str(r.get(f'{slug}_fact', '')))}</td>")
-            cells.append(f"<td{wc}>{esc(str(r.get(f'{slug}_otkl', '')))}</td>")
+            wc_plan = ' class="cp-td-warn cp-group-start"' if owarn else ' class="cp-group-start"'
+            wc_other = ' class="cp-td-warn"' if owarn else ""
+            cells.append(f"<td{wc_plan}>{esc(str(r.get(f'{slug}_plan', '')))}</td>")
+            cells.append(f"<td{wc_other}>{esc(str(r.get(f'{slug}_fact', '')))}</td>")
+            cells.append(f"<td{wc_other}>{esc(str(r.get(f'{slug}_otkl', '')))}</td>")
             m_ok = bool(r.get(f"{slug}_ok", False))
             # A1: для ГПЗУ/Экспертизы стадии П при % < 100 статус должен быть оранжевым.
             if owarn:
@@ -1842,8 +1859,9 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
                 st_cls = "cp-status-ok"
                 tip = "План и факт по датам совпадают (0 дн.), % выполнения — 100% или н/д"
                 al = "Норма"
+            st_extra = " cp-td-warn" if owarn else ""
             cells.append(
-                f'<td class="cp-status-cell" title="{esc(tip)}">'
+                f'<td class="cp-status-cell{st_extra}" title="{esc(tip)}">'
                 f'<span class="cp-status-dot {st_cls}" role="img" aria-label="{esc(al)}"></span></td>'
             )
         body.append("<tr>" + "".join(cells) + "</tr>")
