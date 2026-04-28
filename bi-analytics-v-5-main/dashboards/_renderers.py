@@ -2,6 +2,7 @@
 Отрисовка дашбордов. Код перенесён из project_visualization_app.py для уменьшения главного файла.
 """
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 from typing import Optional
 import plotly.express as px
@@ -6795,8 +6796,110 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
 def dashboard_budget_by_period(df):
     st.header("БДДС")
 
+    def _clean_filter_label(v) -> str:
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return ""
+        s = str(v).replace("\xa0", " ").replace("\u200b", "").replace("\ufeff", "").strip()
+        if not s:
+            return ""
+        for ch in ('"', "'", "`", "«", "»", "“", "”", "‘", "’"):
+            s = s.replace(ch, "")
+        # MSP-артефакты: маркеры/буллеты/звездочки в начале строки
+        s = re.sub(r"^[\*\-–—•·\s]+", "", s)
+        s = re.sub(r"\s+", " ", s)
+        s = re.sub(r"\s*[,;:.-]\s*$", "", s).strip()
+        return s
+
+    def _derive_bdds_dimensions(_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        ТЗ БДДС:
+        - Лот: брать из MSP и прокидывать на дочерние задачи.
+        - Этап: название задачи уровня 2.
+        """
+        if _df is None or getattr(_df, "empty", True):
+            return _df
+        out = _df.copy()
+        task_col = "task name" if "task name" in out.columns else ("Название" if "Название" in out.columns else None)
+        lvl_col = "level structure" if "level structure" in out.columns else ("level" if "level" in out.columns else None)
+        proj_col = "project name" if "project name" in out.columns else None
+        lot_src = (
+            "lot" if "lot" in out.columns else ("ЛОТ" if "ЛОТ" in out.columns else None)
+        )
+        if task_col is None or lvl_col is None:
+            if "stage_l2" not in out.columns:
+                out["stage_l2"] = ""
+            if "lot_effective" not in out.columns:
+                out["lot_effective"] = out.get(lot_src, "")
+            return out
+
+        if "task id seq" in out.columns:
+            sort_col = "task id seq"
+        elif "Ид" in out.columns:
+            sort_col = "Ид"
+        else:
+            sort_col = None
+
+        def _norm_text(v):
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                return ""
+            return str(v).replace("\xa0", " ").replace("\u200b", "").replace("\ufeff", "").strip()
+
+        def _process_group(g: pd.DataFrame) -> pd.DataFrame:
+            gg = g.copy()
+            if sort_col and sort_col in gg.columns:
+                gg = gg.sort_values(sort_col, key=lambda s: pd.to_numeric(s, errors="coerce")).copy()
+            stage_vals = []
+            lot_vals = []
+            stack_task = {}
+            stack_lot = {}
+            for _, r in gg.iterrows():
+                lv = pd.to_numeric(r.get(lvl_col), errors="coerce")
+                try:
+                    lvi = int(lv)
+                except Exception:
+                    lvi = -1
+                if lvi > 0:
+                    for k in list(stack_task.keys()):
+                        if k >= lvi:
+                            del stack_task[k]
+                    for k in list(stack_lot.keys()):
+                        if k >= lvi:
+                            del stack_lot[k]
+
+                tname = _norm_text(r.get(task_col))
+                lot_here = _norm_text(r.get(lot_src)) if lot_src else ""
+                if lvi == 2 and tname:
+                    stage = tname
+                else:
+                    stage = stack_task.get(2, "")
+
+                if lot_here:
+                    lot_eff = lot_here
+                else:
+                    lot_eff = stack_lot.get(2, "") or stack_lot.get(3, "") or stack_lot.get(1, "")
+
+                stage_vals.append(stage)
+                lot_vals.append(lot_eff)
+
+                if lvi > 0 and tname:
+                    stack_task[lvi] = tname
+                if lvi > 0 and lot_here:
+                    stack_lot[lvi] = lot_here
+            gg["stage_l2"] = stage_vals
+            gg["lot_effective"] = lot_vals
+            return gg
+
+        if proj_col and proj_col in out.columns:
+            parts = []
+            for _, g in out.groupby(out[proj_col].astype(str), sort=False):
+                parts.append(_process_group(g))
+            out = pd.concat(parts, axis=0)
+        else:
+            out = _process_group(out)
+        return out
+
     # Сетка фильтров; чекбоксы — после фильтров (П.9)
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
 
     with col1:
         period_type = st.selectbox(
@@ -6814,12 +6917,50 @@ def dashboard_budget_by_period(df):
         else:
             selected_project = "Все"
 
+    df = _derive_bdds_dimensions(df)
+
+    col3, col4 = st.columns(2)
     with col3:
-        if "section" in df.columns:
-            sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
-            selected_section = st.selectbox(
-                "Фильтр по этапу", sections, key="budget_section"
-            )
+        lot_base_col = "lot_effective" if "lot_effective" in df.columns else ("lot" if "lot" in df.columns else ("section" if "section" in df.columns else None))
+        if lot_base_col:
+            _lot_pairs = []
+            for raw in df[lot_base_col].dropna().tolist():
+                clean = _clean_filter_label(raw)
+                if clean:
+                    _lot_pairs.append((clean, str(raw).strip()))
+            _lot_raw_by_display = {}
+            for clean, raw in sorted(set(_lot_pairs), key=lambda t: t[0]):
+                _lot_raw_by_display.setdefault(clean, raw)
+            _lot_opts = ["Все"] + sorted(_lot_raw_by_display.keys())
+            _sel_lot_display = st.selectbox("Фильтр по лоту", _lot_opts, key="budget_lot")
+            selected_lot = "Все" if _sel_lot_display == "Все" else _lot_raw_by_display.get(_sel_lot_display, _sel_lot_display)
+        else:
+            selected_lot = "Все"
+    with col4:
+        if "stage_l2" in df.columns:
+            _stage_pairs = []
+            for raw in df["stage_l2"].dropna().tolist():
+                clean = _clean_filter_label(raw)
+                if clean:
+                    _stage_pairs.append((clean, str(raw).strip()))
+            _stage_raw_by_display = {}
+            for clean, raw in sorted(set(_stage_pairs), key=lambda t: t[0]):
+                _stage_raw_by_display.setdefault(clean, raw)
+            _stage_opts = ["Все"] + sorted(_stage_raw_by_display.keys())
+            _sel_stage_display = st.selectbox("Фильтр по этапу", _stage_opts, key="budget_section")
+            selected_section = "Все" if _sel_stage_display == "Все" else _stage_raw_by_display.get(_sel_stage_display, _sel_stage_display)
+        elif "section" in df.columns:
+            _section_pairs = []
+            for raw in df["section"].dropna().tolist():
+                clean = _clean_filter_label(raw)
+                if clean:
+                    _section_pairs.append((clean, str(raw).strip()))
+            _section_raw_by_display = {}
+            for clean, raw in sorted(set(_section_pairs), key=lambda t: t[0]):
+                _section_raw_by_display.setdefault(clean, raw)
+            _section_opts = ["Все"] + sorted(_section_raw_by_display.keys())
+            _sel_section_display = st.selectbox("Фильтр по этапу", _section_opts, key="budget_section")
+            selected_section = "Все" if _sel_section_display == "Все" else _section_raw_by_display.get(_sel_section_display, _sel_section_display)
         else:
             selected_section = "Все"
 
@@ -6841,11 +6982,18 @@ def dashboard_budget_by_period(df):
             filtered_df["project name"].map(_project_filter_norm_key)
             == _project_filter_norm_key(selected_project)
         ]
-    if selected_section != "Все" and "section" in filtered_df.columns:
-        filtered_df = filtered_df[
-            filtered_df["section"].astype(str).str.strip()
-            == str(selected_section).strip()
-        ]
+    if selected_lot != "Все":
+        lot_filter_col = "lot_effective" if "lot_effective" in filtered_df.columns else ("lot" if "lot" in filtered_df.columns else None)
+        if lot_filter_col and lot_filter_col in filtered_df.columns:
+            filtered_df = filtered_df[
+                filtered_df[lot_filter_col].astype(str).str.strip() == str(selected_lot).strip()
+            ]
+    if selected_section != "Все":
+        stage_filter_col = "stage_l2" if "stage_l2" in filtered_df.columns else ("section" if "section" in filtered_df.columns else None)
+        if stage_filter_col and stage_filter_col in filtered_df.columns:
+            filtered_df = filtered_df[
+                filtered_df[stage_filter_col].astype(str).str.strip() == str(selected_section).strip()
+            ]
 
     ensure_date_columns(filtered_df)
     # R23-13.1 (стр.34): фильтр «Год» заменён на фильтр-календарь «Период»
@@ -6861,13 +7009,71 @@ def dashboard_budget_by_period(df):
             _range_kw = {
                 "label": "Период",
                 "key": "budget_period_range",
-                "help": "Фильтр по диапазону дат (поле «Конец план» / plan end).",
+                "help": "Фильтр по диапазону дат (поле «Конец план»).",
+                "format": "DD.MM.YYYY",
             }
             if _def_start and _def_end and _def_start <= _def_end:
                 _range_kw["value"] = (_def_start, _def_end)
                 _range_kw["min_value"] = _def_start
                 _range_kw["max_value"] = _def_end
             _period_range = st.date_input(**_range_kw)
+            components.html(
+                """
+                <script>
+                (function() {
+                  const dict = new Map([
+                    ["January","Январь"],["February","Февраль"],["March","Март"],["April","Апрель"],
+                    ["May","Май"],["June","Июнь"],["July","Июль"],["August","Август"],
+                    ["September","Сентябрь"],["October","Октябрь"],["November","Ноябрь"],["December","Декабрь"],
+                    ["Mo","Пн"],["Tu","Вт"],["We","Ср"],["Th","Чт"],["Fr","Пт"],["Sa","Сб"],["Su","Вс"],
+                    ["None","Нет"]
+                  ]);
+                  const root = window.parent && window.parent.document ? window.parent.document : document;
+
+                  const shouldSkip = (el) => {
+                    if (!el || !el.tagName) return true;
+                    const t = el.tagName.toLowerCase();
+                    if (t === "script" || t === "style" || t === "textarea" || t === "input") return true;
+                    if (t === "svg" || t === "path") return true; // не трогаем иконки
+                    if (el.isContentEditable) return true;
+                    return false;
+                  };
+
+                  const replaceInTextNode = (node) => {
+                    const raw = node.nodeValue || "";
+                    const txt = raw.trim();
+                    if (!txt) return;
+                    if (dict.has(txt)) {
+                      node.nodeValue = raw.replace(txt, dict.get(txt));
+                      return;
+                    }
+                    let next = raw;
+                    for (const [en, ru] of dict.entries()) {
+                      next = next.replace(new RegExp("\\\\b" + en + "\\\\b", "g"), ru);
+                    }
+                    if (next !== raw) node.nodeValue = next;
+                  };
+
+                  const apply = () => {
+                    const all = root.querySelectorAll("*");
+                    all.forEach((el) => {
+                      if (shouldSkip(el)) return;
+                      const childs = el.childNodes || [];
+                      for (let i = 0; i < childs.length; i++) {
+                        const n = childs[i];
+                        if (n && n.nodeType === Node.TEXT_NODE) replaceInTextNode(n);
+                      }
+                    });
+                  };
+                  apply();
+                  const obs = new MutationObserver(apply);
+                  obs.observe(root.body, { childList: true, subtree: true });
+                })();
+                </script>
+                """,
+                height=0,
+                width=0,
+            )
             if isinstance(_period_range, (list, tuple)) and len(_period_range) == 2:
                 _start_dt = pd.to_datetime(_period_range[0], errors="coerce")
                 _end_dt = pd.to_datetime(_period_range[1], errors="coerce")
@@ -6940,7 +7146,11 @@ def dashboard_budget_by_period(df):
         )
 
     # Колонка для группировки по лотам (лот = section или колонка "лот"/"lot")
-    lot_col = "лот" if "лот" in filtered_df.columns else ("lot" if "lot" in filtered_df.columns else "section")
+    lot_col = (
+        "lot_effective"
+        if "lot_effective" in filtered_df.columns
+        else ("лот" if "лот" in filtered_df.columns else ("lot" if "lot" in filtered_df.columns else "section"))
+    )
     if lot_col not in filtered_df.columns:
         lot_col = "section"  # fallback для группировки по лотам
 

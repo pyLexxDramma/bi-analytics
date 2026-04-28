@@ -546,6 +546,47 @@ def main():
 
     ensure_data_session_state()
 
+    def _read_deeplink_params() -> dict:
+        """
+        Deep-link для автотестов/быстрого открытия:
+        - ?source=manual|web|ftp_web
+        - ?report=<точное имя отчёта, например БДДС>
+        """
+        try:
+            qp = st.query_params
+        except Exception:
+            return {}
+
+        def _pick(k: str) -> str:
+            try:
+                v = qp.get(k, "")
+            except Exception:
+                return ""
+            if isinstance(v, list):
+                return str(v[0]).strip() if v else ""
+            return str(v).strip()
+
+        return {
+            "source": _pick("source").lower(),
+            "report": _pick("report"),
+        }
+
+    _dl = _read_deeplink_params()
+    if not st.session_state.get("_deeplink_applied_once", False):
+        _src_map = {
+            "manual": "Загрузить вручную",
+            "web": "Из папки web/",
+            "ftp_web": "FTP → web/",
+            "ftp": "FTP → web/",
+        }
+        _dl_source = _src_map.get(_dl.get("source", ""))
+        if _dl_source:
+            st.session_state["data_mode_radio"] = _dl_source
+        if _dl.get("report"):
+            st.session_state["current_dashboard"] = _dl["report"]
+        if _dl_source or _dl.get("report"):
+            st.session_state["_deeplink_applied_once"] = True
+
     # Переключатель режима источника данных
     data_mode = st.radio(
         "Источник данных",
@@ -925,6 +966,10 @@ def main():
         cur = st.session_state.get("current_dashboard", "")
         if cur not in all_allowed_set:
             st.session_state.current_dashboard = all_allowed[0]
+        # Повторно применяем report из deep-link после валидации доступных отчётов.
+        _dl_report = (_dl.get("report") or "").strip()
+        if _dl_report and _dl_report in all_allowed_set:
+            st.session_state.current_dashboard = _dl_report
 
         st.session_state.dashboard_selected_from_menu = False
 
