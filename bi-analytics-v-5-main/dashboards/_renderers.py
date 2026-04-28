@@ -8286,6 +8286,127 @@ def dashboard_bdr(df):
     from dashboards.finance_from_1c import ensure_budget_frame_with_fallback
 
     df = df.copy()
+    def _clean_filter_label(v) -> str:
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return ""
+        s = str(v).replace("\xa0", " ").replace("\u200b", "").replace("\ufeff", "").strip()
+        if not s:
+            return ""
+        for ch in ('"', "'", "`", "«", "»", "“", "”", "‘", "’"):
+            s = s.replace(ch, "")
+        s = re.sub(r"^[\*\-–—•·\s]+", "", s)
+        s = re.sub(r"\s+", " ", s)
+        s = re.sub(r"\s*[,;:.-]\s*$", "", s).strip()
+        return s
+
+    def _derive_bdr_dimensions(_df: pd.DataFrame) -> pd.DataFrame:
+        if _df is None or getattr(_df, "empty", True):
+            return _df
+        out = _df.copy()
+        task_col = "task name" if "task name" in out.columns else ("Название" if "Название" in out.columns else None)
+        lvl_col = "level structure" if "level structure" in out.columns else ("level" if "level" in out.columns else None)
+        proj_col = "project name" if "project name" in out.columns else None
+        lot_src = "lot" if "lot" in out.columns else ("ЛОТ" if "ЛОТ" in out.columns else None)
+        if task_col is None or lvl_col is None:
+            if "stage_l2" not in out.columns:
+                out["stage_l2"] = ""
+            if "lot_effective" not in out.columns:
+                out["lot_effective"] = out.get(lot_src, "")
+            return out
+
+        sort_col = "task id seq" if "task id seq" in out.columns else ("Ид" if "Ид" in out.columns else None)
+
+        def _norm_text(v):
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                return ""
+            return str(v).replace("\xa0", " ").replace("\u200b", "").replace("\ufeff", "").strip()
+
+        def _process_group(g: pd.DataFrame) -> pd.DataFrame:
+            gg = g.copy()
+            if sort_col and sort_col in gg.columns:
+                gg = gg.sort_values(sort_col, key=lambda s: pd.to_numeric(s, errors="coerce")).copy()
+            stage_vals, lot_vals = [], []
+            stack_task, stack_lot = {}, {}
+            for _, r in gg.iterrows():
+                lv = pd.to_numeric(r.get(lvl_col), errors="coerce")
+                try:
+                    lvi = int(lv)
+                except Exception:
+                    lvi = -1
+                if lvi > 0:
+                    for k in list(stack_task.keys()):
+                        if k >= lvi:
+                            del stack_task[k]
+                    for k in list(stack_lot.keys()):
+                        if k >= lvi:
+                            del stack_lot[k]
+                tname = _norm_text(r.get(task_col))
+                lot_here = _norm_text(r.get(lot_src)) if lot_src else ""
+                stage = tname if (lvi == 2 and tname) else stack_task.get(2, "")
+                lot_eff = lot_here if lot_here else (stack_lot.get(2, "") or stack_lot.get(3, "") or stack_lot.get(1, ""))
+                stage_vals.append(stage)
+                lot_vals.append(lot_eff)
+                if lvi > 0 and tname:
+                    stack_task[lvi] = tname
+                if lvi > 0 and lot_here:
+                    stack_lot[lvi] = lot_here
+            gg["stage_l2"] = stage_vals
+            gg["lot_effective"] = lot_vals
+            return gg
+
+        if proj_col and proj_col in out.columns:
+            parts = []
+            for _, g in out.groupby(out[proj_col].astype(str), sort=False):
+                parts.append(_process_group(g))
+            return pd.concat(parts, axis=0)
+        return _process_group(out)
+
+    def _try_build_bdr_from_scenario(_df: pd.DataFrame):
+        out = _df.copy()
+        scenario_col = None
+        turnover_col = None
+        amount_col = None
+        period_raw_col = None
+        def _norm_col(s: str) -> str:
+            t = str(s).strip().lower()
+            t = t.replace("ё", "е")
+            t = re.sub(r"[\s_\-./]+", "", t)
+            return t
+        for c in out.columns:
+            lc = _norm_col(c)
+            if scenario_col is None and ("сценар" in lc or "scenario" in lc):
+                scenario_col = c
+            if turnover_col is None and (("статья" in lc and "оборот" in lc) or "turnover" in lc):
+                turnover_col = c
+            if amount_col is None and ("сумм" in lc or "amount" in lc):
+                amount_col = c
+            if period_raw_col is None and ("период" in lc or "period" in lc):
+                period_raw_col = c
+        if not scenario_col or not turnover_col or not amount_col:
+            return out, False
+
+        _sc = out[scenario_col].astype(str).str.upper()
+        _ti = out[turnover_col].astype(str).str.upper()
+        _is_bdr = _ti.str.contains("БДР", na=False)
+        _is_plan = _sc.str.contains("ПЛАН", na=False) & _is_bdr
+        _is_fact = _sc.str.contains("ФАКТ", na=False) & _is_bdr
+        _amount = pd.to_numeric(out[amount_col], errors="coerce").fillna(0.0)
+        # Защита: не переключаемся на сценарный расчёт, если релевантных строк нет
+        # (иначе получаем нули везде и «плоские» одинаковые суммы).
+        if int(_is_plan.sum()) == 0 and int(_is_fact.sum()) == 0:
+            return out, False
+        out["_plan_exp"] = np.where(_is_plan, _amount, 0.0)
+        out["_fact_exp"] = np.where(_is_fact, _amount, 0.0)
+        out["_deviation"] = out["_fact_exp"] - out["_plan_exp"]
+        if float(np.abs(out["_plan_exp"]).sum()) == 0.0 and float(np.abs(out["_fact_exp"]).sum()) == 0.0:
+            return out, False
+        if "plan end" not in out.columns and period_raw_col and period_raw_col in out.columns:
+            _p = pd.to_datetime(out[period_raw_col], errors="coerce", dayfirst=True)
+            if _p.notna().any():
+                out["plan end"] = _p
+        return out, True
+
+    df = _derive_bdr_dimensions(df)
     ensure_budget_columns(df)
     df, _ = ensure_budget_frame_with_fallback(df, show_caption=True)
     ensure_budget_columns(df)
@@ -8299,6 +8420,8 @@ def dashboard_bdr(df):
                     return c
         return None
 
+    df, _bdr_from_scenario = _try_build_bdr_from_scenario(df)
+
     revenue_col = find_col(
         df,
         ["доходы", "доход", "revenue", "income", "Бюджет План", "budget plan"],
@@ -8307,11 +8430,15 @@ def dashboard_bdr(df):
         df,
         ["расходы", "расход", "expense", "Бюджет Факт", "budget fact"],
     )
-    ensure_budget_columns(df)
-    if revenue_col is None and "budget plan" in df.columns:
-        revenue_col = "budget plan"
-    if expense_col is None and "budget fact" in df.columns:
-        expense_col = "budget fact"
+    if _bdr_from_scenario:
+        revenue_col = "_plan_exp"
+        expense_col = "_fact_exp"
+    else:
+        ensure_budget_columns(df)
+        if revenue_col is None and "budget plan" in df.columns:
+            revenue_col = "budget plan"
+        if expense_col is None and "budget fact" in df.columns:
+            expense_col = "budget fact"
 
     if revenue_col is None or expense_col is None:
         st.warning(
@@ -8320,8 +8447,8 @@ def dashboard_bdr(df):
         )
         return
 
-    # Фильтры — в одном стиле с БДДС: строка 1 — Группировать по, Фильтр по проекту; строка 2 — Фильтр по этапу
-    col1, col2, col3 = st.columns(3)
+    # Фильтры — в стиле БДДС
+    col1, col2 = st.columns(2)
     with col1:
         period_type = st.selectbox(
             "Группировать по", ["Месяц", "Квартал", "Год"], key="bdr_period"
@@ -8337,13 +8464,39 @@ def dashboard_bdr(df):
         else:
             selected_project = "Все"
 
-    col3 = st.columns(1)[0]
+    col3, col4 = st.columns(2)
     with col3:
-        if "section" in df.columns:
-            sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
-            selected_section = st.selectbox(
-                "Фильтр по этапу", sections, key="bdr_section"
-            )
+        lot_base_col = "lot_effective" if "lot_effective" in df.columns else ("lot" if "lot" in df.columns else ("section" if "section" in df.columns else None))
+        if lot_base_col:
+            _lot_pairs = []
+            for raw in df[lot_base_col].dropna().tolist():
+                clean = _clean_filter_label(raw)
+                if clean:
+                    _lot_pairs.append((clean, str(raw).strip()))
+            _lot_raw_by_display = {}
+            for clean, raw in sorted(set(_lot_pairs), key=lambda t: t[0]):
+                _lot_raw_by_display.setdefault(clean, raw)
+            _lot_opts = ["Все"] + sorted(_lot_raw_by_display.keys())
+            _sel_lot_display = st.selectbox("Фильтр по лоту", _lot_opts, key="bdr_lot")
+            selected_lot = "Все" if _sel_lot_display == "Все" else _lot_raw_by_display.get(_sel_lot_display, _sel_lot_display)
+        else:
+            selected_lot = "Все"
+    with col4:
+        if "stage_l2" in df.columns:
+            _stage_pairs = []
+            for raw in df["stage_l2"].dropna().tolist():
+                clean = _clean_filter_label(raw)
+                if clean:
+                    _stage_pairs.append((clean, str(raw).strip()))
+            _stage_raw_by_display = {}
+            for clean, raw in sorted(set(_stage_pairs), key=lambda t: t[0]):
+                _stage_raw_by_display.setdefault(clean, raw)
+            _stage_opts = ["Все"] + sorted(_stage_raw_by_display.keys())
+            _sel_stage_display = st.selectbox("Фильтр по этапу", _stage_opts, key="bdr_section")
+            selected_section = "Все" if _sel_stage_display == "Все" else _stage_raw_by_display.get(_sel_stage_display, _sel_stage_display)
+        elif "section" in df.columns:
+            sections = ["Все"] + sorted(df["section"].dropna().astype(str).str.strip().unique().tolist())
+            selected_section = st.selectbox("Фильтр по этапу", sections, key="bdr_section")
         else:
             selected_section = "Все"
 
@@ -8368,11 +8521,18 @@ def dashboard_bdr(df):
             filtered_df["project name"].map(_project_filter_norm_key)
             == _project_filter_norm_key(selected_project)
         ]
-    if selected_section != "Все" and "section" in filtered_df.columns:
-        filtered_df = filtered_df[
-            filtered_df["section"].astype(str).str.strip()
-            == str(selected_section).strip()
-        ]
+    if selected_lot != "Все":
+        lot_filter_col = "lot_effective" if "lot_effective" in filtered_df.columns else ("lot" if "lot" in filtered_df.columns else None)
+        if lot_filter_col and lot_filter_col in filtered_df.columns:
+            filtered_df = filtered_df[
+                filtered_df[lot_filter_col].astype(str).str.strip() == str(selected_lot).strip()
+            ]
+    if selected_section != "Все":
+        stage_col = "stage_l2" if "stage_l2" in filtered_df.columns else ("section" if "section" in filtered_df.columns else None)
+        if stage_col and stage_col in filtered_df.columns:
+            filtered_df = filtered_df[
+                filtered_df[stage_col].astype(str).str.strip() == str(selected_section).strip()
+            ]
 
     filtered_df["_plan_exp"] = pd.to_numeric(filtered_df[revenue_col], errors="coerce")
     filtered_df["_fact_exp"] = pd.to_numeric(filtered_df[expense_col], errors="coerce")
