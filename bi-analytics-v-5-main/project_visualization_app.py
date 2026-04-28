@@ -546,6 +546,22 @@ def main():
 
     ensure_data_session_state()
 
+    def _is_release_client_mode() -> bool:
+        if os.environ.get("BI_ANALYTICS_HIDE_DEV_DIAGNOSTICS", "").strip().lower() in ("1", "true", "yes", "on"):
+            return True
+        try:
+            br = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=str(_app_dir),
+                capture_output=True,
+                text=True,
+                timeout=1.5,
+            )
+            branch = (br.stdout or "").strip().lower()
+            return branch == "release"
+        except Exception:
+            return False
+
     def _read_deeplink_params() -> dict:
         """
         Deep-link для автотестов/быстрого открытия:
@@ -588,9 +604,12 @@ def main():
             st.session_state["_deeplink_applied_once"] = True
 
     # Переключатель режима источника данных
+    data_mode_options = ["Загрузить вручную", "Из папки web/", "FTP → web/"]
+    if _is_release_client_mode():
+        data_mode_options = ["Из папки web/"]
     data_mode = st.radio(
         "Источник данных",
-        ["Загрузить вручную", "Из папки web/", "FTP → web/"],
+        data_mode_options,
         horizontal=True,
         key="data_mode_radio",
     )
@@ -908,22 +927,6 @@ def main():
         or has_debit_credit
         or has_ref_dannye
     )
-
-    def _is_release_client_mode() -> bool:
-        if os.environ.get("BI_ANALYTICS_HIDE_DEV_DIAGNOSTICS", "").strip().lower() in ("1", "true", "yes", "on"):
-            return True
-        try:
-            br = subprocess.run(
-                ["git", "branch", "--show-current"],
-                cwd=str(_app_dir),
-                capture_output=True,
-                text=True,
-                timeout=1.5,
-            )
-            branch = (br.stdout or "").strip().lower()
-            return branch == "release"
-        except Exception:
-            return False
 
     if has_any_data:
         # Выбор отчёта только из бокового меню (блок «Выбор панели» в основной области снят).
