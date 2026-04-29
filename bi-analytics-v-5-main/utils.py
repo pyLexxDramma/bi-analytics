@@ -765,6 +765,8 @@ def budget_table_to_html(
     deviation_red_if_positive_only: bool = False,
     deviation_red_if_negative: bool = False,
     deviation_abs_min_mln: float = 0.01,
+    row_kind_column: Optional[str] = None,
+    emphasize_row_kinds: tuple[str, ...] = ("project", "total"),
 ) -> str:
     """
     Строит HTML таблицы бюджета с раскраской колонки отклонения.
@@ -800,9 +802,22 @@ def budget_table_to_html(
             f'<th style="border: 1px solid rgba(255,255,255,0.3); padding: 6px 8px; background-color: {TABLE_BG_COLOR};">{col_esc}</th>'
         )
     parts.append("</tr></thead><tbody>")
+    visible_cols = [c for c in df.columns if c != row_kind_column]
     for _, row in df.iterrows():
-        parts.append("<tr>")
-        for col in df.columns:
+        row_kind = ""
+        if row_kind_column and row_kind_column in df.columns:
+            try:
+                row_kind = str(row.get(row_kind_column, "")).strip().casefold()
+            except Exception:
+                row_kind = ""
+        is_emphasized_row = row_kind in {str(x).strip().casefold() for x in emphasize_row_kinds}
+        row_style = (
+            f' style="font-weight:700; border-top:1px solid rgba(255,255,255,0.35);"'
+            if is_emphasized_row
+            else ""
+        )
+        parts.append(f"<tr{row_style}>")
+        for col in visible_cols:
             val = row[col]
             val_str = "" if (val is None or (isinstance(val, float) and pd.isna(val))) else str(val)
             val_esc = html_module.escape(val_str)

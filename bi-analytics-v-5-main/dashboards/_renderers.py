@@ -12766,20 +12766,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             )
 
             _daily_hdr_cols = [c for c in _tbl.columns if _gdrs_header_is_dd_mm_yyyy(c)]
-            _weeks_in_month = 4
-            if period_col and period_col in _tbl.columns:
-                _period_dt = pd.to_datetime(_tbl[period_col], errors="coerce", dayfirst=True)
-                if _period_dt.notna().any():
-                    _weeks_in_month = int(np.ceil(_period_dt.dt.days_in_month.dropna().max() / 7.0))
-            elif _daily_hdr_cols:
-                _parsed_hdr = pd.to_datetime(
-                    pd.Series(_daily_hdr_cols).astype(str).str.replace(r"\.{2,3}", ".", regex=True),
-                    errors="coerce",
-                    dayfirst=True,
-                ).dropna()
-                if not _parsed_hdr.empty:
-                    _weeks_in_month = int(np.ceil(_parsed_hdr.iloc[0].days_in_month / 7.0))
-            _weeks_in_month = max(1, min(6, _weeks_in_month))
+            # В эталонной визуализации ГДРС фиксированная сетка 1..6 недель.
+            _weeks_in_month = 6
 
             _week_cols_out = [f"{i} неделя" for i in range(1, _weeks_in_month + 1)]
             _week_map = {}
@@ -12855,11 +12843,18 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             )
 
             if _work_type_col and _work_type_col in _ref.columns:
-                _ref = _ref.rename(columns={_work_type_col: "Вид работ"})
+                _ref = _ref.rename(columns={_work_type_col: "Вид работы"})
             else:
-                _ref["Вид работ"] = "Рабочие" if not _gdrs_tab_is_tech else "—"
-            if (not _gdrs_tab_is_tech) and "Вид работ" in _ref.columns:
-                _ref["Вид работ"] = "Рабочие"
+                _ref["Вид работы"] = "Рабочие" if not _gdrs_tab_is_tech else "—"
+            if (not _gdrs_tab_is_tech) and "Вид работы" in _ref.columns:
+                _ref["Вид работы"] = "Рабочие"
+            if (not project_col) or (project_col not in _ref.columns):
+                _proj_fallback = find_column_by_partial(
+                    _ref,
+                    ["Проект", "проект", "Наименование_Проекта", "project name"],
+                )
+                if _proj_fallback and _proj_fallback in _ref.columns:
+                    project_col = _proj_fallback
             if project_col and project_col in _ref.columns:
                 _ref["_Проект"] = _ref[project_col].fillna("Без проекта").astype(str).str.strip()
             else:
@@ -12876,28 +12871,22 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             _rows = []
             for _proj in sorted(_ref["_Проект"].unique(), key=lambda x: str(x)):
                 _p = _ref[_ref["_Проект"] == _proj]
-                _rows.append(
-                    {"Проект": str(_proj), "Контрагент": "", "Вид работ": "", **_agg_block(_p)}
-                )
-                for _ctr in sorted(_p["Контрагент"].dropna().unique(), key=lambda x: str(x)):
-                    _c = _p[_p["Контрагент"].astype(str) == str(_ctr)]
+                # Заголовок блока проекта с агрегатами (как в эталонной таблице).
+                _rows.append({"__row_kind": "project", "Контрагент": str(_proj), "Вид работы": "", **_agg_block(_p)})
+                _d = _p.sort_values(["Контрагент", "Вид работы"], na_position="last")
+                for _, _r in _d.iterrows():
                     _rows.append(
-                        {"Проект": "", "Контрагент": str(_ctr), "Вид работ": "", **_agg_block(_c)}
+                        {
+                            "__row_kind": "detail",
+                            "Контрагент": str(_r.get("Контрагент", "") or ""),
+                            "Вид работы": _r.get("Вид работы", ""),
+                            "План": _r["План"],
+                            "СКУД": _r["СКУД"],
+                            "Отклонение": _r["Отклонение"],
+                            **{w: _r[w] for w in _week_cols_out},
+                            "Дельта (%)": _r["Дельта (%)"],
+                        }
                     )
-                    _d = _c.sort_values("Вид работ", na_position="last")
-                    for _, _r in _d.iterrows():
-                        _rows.append(
-                            {
-                                "Проект": "",
-                                "Контрагент": "",
-                                "Вид работ": _r.get("Вид работ", ""),
-                                "План": _r["План"],
-                                "СКУД": _r["СКУД"],
-                                "Отклонение": _r["Отклонение"],
-                                **{w: _r[w] for w in _week_cols_out},
-                                "Дельта (%)": _r["Дельта (%)"],
-                            }
-                        )
 
             _view = pd.DataFrame(_rows)
             _grand = _agg_block(_ref)
@@ -12905,7 +12894,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 [
                     _view,
                     pd.DataFrame(
-                        [{"Проект": "Итого", "Контрагент": "", "Вид работ": "", **_grand}]
+                        [{"__row_kind": "total", "Контрагент": "Итого", "Вид работы": "", **_grand}]
                     ),
                 ],
                 ignore_index=True,
@@ -12929,19 +12918,87 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 pass
 
             _show_cols = (
-                ["Проект", "Контрагент", "Вид работ", "План", "СКУД", "Отклонение"]
+                ["Контрагент", "Вид работы", "План", "СКУД", "Отклонение"]
                 + _week_cols_out
                 + ["Дельта (%)"]
             )
-            suppress_caption("Иерархия строк: **проект** → **контрагент** → **вид работ**.")
-            st.markdown(
-                budget_table_to_html(
-                    _view[_show_cols],
-                    finance_deviation_column="Отклонение",
-                    deviation_red_if_negative=True,
-                ),
-                unsafe_allow_html=True,
-            )
+            _render_cols = ["__row_kind"] + _show_cols if "__row_kind" in _view.columns else _show_cols
+
+            _period_title = ""
+            if _d_from and _d_to:
+                try:
+                    _period_title = f"{pd.Timestamp(_d_from):%d.%m.%Y} - {pd.Timestamp(_d_to):%d.%m.%Y}"
+                except Exception:
+                    _period_title = f"{_d_from} - {_d_to}"
+            elif period_col and period_col in filtered_df.columns:
+                _pvals = pd.to_datetime(filtered_df[period_col], errors="coerce", dayfirst=True).dropna()
+                if not _pvals.empty:
+                    try:
+                        _period_title = str(format_period_ru(_pvals.iloc[0].to_period("M")))
+                    except Exception:
+                        _period_title = str(_pvals.iloc[0].to_period("M"))
+
+            def _render_gdrs_ref_html(df_view: pd.DataFrame) -> str:
+                ncols = len(_show_cols)
+                wk_n = len(_week_cols_out)
+                wrap_id = "gdrs_tbl_" + str(id(df_view))
+                parts = [
+                    f'<div id="{wrap_id}" style="overflow-x:auto;min-width:0;margin:0.75em 0;">',
+                    f"<style>"
+                    f"#{wrap_id} table{{width:100%;border-collapse:collapse;background-color:{TABLE_BG_COLOR};color:{TABLE_TEXT_COLOR};font-size:13px;border:1px solid rgba(255,255,255,0.45);}}"
+                    f"#{wrap_id} th,#{wrap_id} td{{border:1px solid rgba(255,255,255,0.45);padding:4px 6px;white-space:nowrap;}}"
+                    f"#{wrap_id} thead th{{background-color:{TABLE_BG_COLOR};font-weight:700;border:1px solid rgba(255,255,255,0.45)!important;}}"
+                    f"#{wrap_id} thead tr{{border-bottom:1px solid rgba(255,255,255,0.45)!important;}}"
+                    f"#{wrap_id} thead tr.title-row{{border-bottom:none!important;}}"
+                    f"#{wrap_id} thead tr.title-row th{{border-bottom:none!important;}}"
+                    f"#{wrap_id} thead tr.period-row th{{border-top:none!important;}}"
+                    f"#{wrap_id} .t-center{{text-align:center !important;}}"
+                    f"#{wrap_id} .rk-project td,#{wrap_id} .rk-total td{{font-weight:700;}}"
+                    f"#{wrap_id} .neg{{color:hsl(348,100%,63%);font-weight:700;}}"
+                    f"#{wrap_id} .pos{{color:hsl(148,100%,63%);font-weight:700;}}"
+                    f"</style>",
+                    "<table>",
+                    "<thead>",
+                    f'<tr class="title-row"><th colspan="{ncols}" class="t-center" style="text-align:center !important;">График движения рабочей силы (люди)</th></tr>',
+                    f'<tr class="period-row"><th colspan="{ncols}" class="t-center" style="text-align:center !important;">{html_module.escape(_period_title) if _period_title else ""}</th></tr>',
+                    "<tr>",
+                    '<th rowspan="2">Контрагент</th>',
+                    '<th rowspan="2">Вид работы</th>',
+                    '<th rowspan="2" class="t-center" style="text-align:center !important;">План</th>',
+                    '<th rowspan="2" class="t-center" style="text-align:center !important;">СКУД</th>',
+                    '<th rowspan="2" class="t-center" style="text-align:center !important;">Отклонение</th>',
+                    f'<th colspan="{wk_n}" class="t-center" style="text-align:center !important;">СКУД</th>',
+                    '<th rowspan="2" class="t-center" style="text-align:center !important;">Дельта (%)</th>',
+                    "</tr>",
+                    "<tr>",
+                ]
+                for w in _week_cols_out:
+                    parts.append(f'<th class="t-center">{html_module.escape(str(w))}</th>')
+                parts.append("</tr></thead><tbody>")
+
+                for _, row in df_view.iterrows():
+                    rk = str(row.get("__row_kind", "")).strip().casefold()
+                    tr_cls = f' class="rk-{rk}"' if rk else ""
+                    parts.append(f"<tr{tr_cls}>")
+                    for c in _show_cols:
+                        val = row.get(c, "")
+                        s = "" if (val is None or (isinstance(val, float) and pd.isna(val))) else str(val)
+                        esc = html_module.escape(s)
+                        cls = ""
+                        if c in ("Отклонение", "Дельта (%)"):
+                            num = pd.to_numeric(
+                                str(s).replace("%", "").replace(",", ".").replace(" ", ""),
+                                errors="coerce",
+                            )
+                            if pd.notna(num):
+                                cls = "neg" if float(num) < 0 else ("pos" if float(num) > 0 else "")
+                        tcenter = " t-center" if c not in ("Контрагент", "Вид работы") else ""
+                        parts.append(f'<td class="{(cls + tcenter).strip()}">{esc}</td>')
+                    parts.append("</tr>")
+                parts.append("</tbody></table></div>")
+                return "".join(parts)
+
+            st.markdown(_render_gdrs_ref_html(_view[_render_cols]), unsafe_allow_html=True)
 
     period_col_hist = _gdrs_resolve_period_column(filtered_df)
     if period_col_hist and "week_sum" in filtered_df.columns:
@@ -14465,52 +14522,129 @@ def _gdrs_merge_plan_from_1c_spravochniki(
             return None
         return v
 
-    def _gdrs_plan_metric_from_spravochnik_cell(cell) -> float | None:
+    def _parse_ref_dt(v):
+        ts = pd.to_datetime(v, errors="coerce", dayfirst=True)
+        if pd.isna(ts):
+            return None
+        if getattr(ts, "tzinfo", None) is not None:
+            ts = ts.tz_localize(None)
+        return ts
+
+    date_end_col = _gdrs_spravochnik_ref_column(
+        ref,
+        (
+            "Дата_Окончания_Договора",
+            "Дата Окончания Договора",
+            "ДатаОкончанияДоговора",
+            "Дата_Окончания",
+        ),
+    )
+
+    def _gdrs_plan_specs_from_spravochnik_cell(cell) -> tuple[float | None, list[tuple[pd.Timestamp, float]]]:
         """
-        План ГДРС в 1С: либо число, либо массив вида [{Дата, Количество}, ...] — берём max(Количество)
-        как согласованный план за период (по срезу выгрузки).
+        Нормализует план из 1С:
+        - scalar: число без явной даты;
+        - timeline: массив [{Дата, Количество}, ...], сортированный по дате.
         """
         if cell is None:
-            return None
+            return (None, [])
+        if isinstance(cell, dict):
+            q = cell.get("Количество") if "Количество" in cell else cell.get("количество")
+            dt_raw = cell.get("Дата") if "Дата" in cell else cell.get("дата")
+            w = float(pd.to_numeric(q, errors="coerce"))
+            if not np.isfinite(w):
+                return (None, [])
+            dt = _parse_ref_dt(dt_raw)
+            if dt is not None:
+                return (None, [(dt, float(w))])
+            return (float(w), [])
         if isinstance(cell, (list, tuple)) and len(cell) > 0:
+            timeline: list[tuple[pd.Timestamp, float]] = []
             nums: list[float] = []
             for it in cell:
                 if isinstance(it, dict):
-                    q = it.get("Количество")
-                    if q is None:
-                        q = it.get("количество")
+                    q = it.get("Количество") if "Количество" in it else it.get("количество")
+                    dt_raw = it.get("Дата") if "Дата" in it else it.get("дата")
                     w = float(pd.to_numeric(q, errors="coerce"))
+                    if not np.isfinite(w):
+                        continue
+                    dt = _parse_ref_dt(dt_raw)
+                    if dt is not None:
+                        timeline.append((dt, float(w)))
+                    else:
+                        nums.append(float(w))
                 else:
                     w = float(pd.to_numeric(it, errors="coerce"))
-                if np.isfinite(w):
-                    nums.append(w)
-            if not nums:
-                return None
-            return float(max(nums))
-        if isinstance(cell, dict):
-            q = cell.get("Количество") or cell.get("количество")
-            w = float(pd.to_numeric(q, errors="coerce"))
-            return w if np.isfinite(w) else None
-        return _gdrs_scalar_ref_float(cell)
+                    if np.isfinite(w):
+                        nums.append(float(w))
+            if timeline:
+                timeline.sort(key=lambda x: x[0])
+                return (None, timeline)
+            if nums:
+                return (float(max(nums)), [])
+            return (None, [])
+        return (_gdrs_scalar_ref_float(cell), [])
 
-    def _one_map(plan_col: str) -> tuple[dict[tuple[str, str], float], dict[str, float]]:
-        by_cp: dict[tuple[str, str], float] = {}
-        by_c: dict[str, float] = {}
+    def _period_bounds(row_period) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
+        if isinstance(row_period, pd.Period):
+            return (row_period.start_time, row_period.end_time)
+        ts = pd.to_datetime(row_period, errors="coerce", dayfirst=True)
+        if pd.isna(ts):
+            return (None, None)
+        if getattr(ts, "tzinfo", None) is not None:
+            ts = ts.tz_localize(None)
+        # Для дат/таймстемпов в периоде используем границы месяца.
+        p = ts.to_period("M")
+        return (p.start_time, p.end_time)
+
+    def _pick_plan_for_period(
+        specs: list[tuple[float | None, list[tuple[pd.Timestamp, float]], pd.Timestamp | None]],
+        period_start: pd.Timestamp | None,
+        period_end: pd.Timestamp | None,
+    ) -> float | None:
+        vals: list[float] = []
+        for scalar_v, timeline, contract_end in specs:
+            if contract_end is not None and period_start is not None and period_start > contract_end:
+                continue
+            if timeline:
+                if period_end is not None:
+                    active = [v for d, v in timeline if d <= period_end]
+                    if active:
+                        vals.append(float(active[-1]))
+                else:
+                    vals.append(float(timeline[-1][1]))
+                continue
+            if scalar_v is not None:
+                vals.append(float(scalar_v))
+        if not vals:
+            return None
+        return float(max(vals))
+
+    def _one_map(
+        plan_col: str,
+    ) -> tuple[
+        dict[tuple[str, str], list[tuple[float | None, list[tuple[pd.Timestamp, float]], pd.Timestamp | None]]],
+        dict[str, list[tuple[float | None, list[tuple[pd.Timestamp, float]], pd.Timestamp | None]]],
+    ]:
+        by_cp: dict[
+            tuple[str, str], list[tuple[float | None, list[tuple[pd.Timestamp, float]], pd.Timestamp | None]]
+        ] = {}
+        by_c: dict[str, list[tuple[float | None, list[tuple[pd.Timestamp, float]], pd.Timestamp | None]]] = {}
         for _, r in ref.iterrows():
             k = norm_partner_join_key(r.get(cont_c, ""))
             if not k:
                 continue
             raw = r.get(plan_col, np.nan)
-            v = _gdrs_plan_metric_from_spravochnik_cell(raw)
-            if v is None:
-                v = _gdrs_scalar_ref_float(raw)
-            if v is None:
+            scalar_v, timeline = _gdrs_plan_specs_from_spravochnik_cell(raw)
+            if scalar_v is None and not timeline:
                 continue
+            contract_end = _parse_ref_dt(r.get(date_end_col, None)) if date_end_col else None
+            spec = (scalar_v, timeline, contract_end)
             if proj_c_r and str(proj_c_r) in ref.columns and proj_c_w and str(proj_c_w) in out.columns:
                 pk = _project_filter_norm_key(r.get(proj_c_r, ""))
                 if pk:
-                    by_cp[(k, pk)] = v
-            by_c[k] = v
+                    by_cp.setdefault((k, pk), []).append(spec)
+            by_c.setdefault(k, []).append(spec)
         return by_cp, by_c
 
     maps: dict[str, tuple[dict, dict] | None] = {}
@@ -14539,6 +14673,7 @@ def _gdrs_merge_plan_from_1c_spravochniki(
         if mkey not in maps or maps[mkey] is None:
             continue
         by_cp, by_c = maps[mkey]
+        period_start, period_end = _period_bounds(out.at[i, "Период"] if "Период" in out.columns else None)
         pick = None
         if (
             proj_c_r
@@ -14548,9 +14683,9 @@ def _gdrs_merge_plan_from_1c_spravochniki(
         ):
             pk = _project_filter_norm_key(out.at[i, proj_c_w])
             if pk and (k, pk) in by_cp:
-                pick = by_cp[(k, pk)]
+                pick = _pick_plan_for_period(by_cp[(k, pk)], period_start, period_end)
         if pick is None and k in by_c:
-            pick = by_c[k]
+            pick = _pick_plan_for_period(by_c[k], period_start, period_end)
         if pick is not None and pick > 0:
             out.at[i, "План_numeric"] = pick
             n_fill += 1
