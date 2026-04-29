@@ -12953,7 +12953,12 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     f"#{wrap_id} thead tr.title-row th{{border-bottom:none!important;}}"
                     f"#{wrap_id} thead tr.period-row th{{border-top:none!important;}}"
                     f"#{wrap_id} .t-center{{text-align:center !important;}}"
-                    f"#{wrap_id} .rk-project td,#{wrap_id} .rk-total td{{font-weight:700;}}"
+                    f"#{wrap_id} .rk-project td{{font-weight:700;background-color:rgba(255,255,255,0.08)!important;border-top:2px solid rgba(255,255,255,0.75)!important;border-bottom:2px solid rgba(255,255,255,0.75)!important;}}"
+                    f"#{wrap_id} .rk-project td:first-child{{border-left:2px solid rgba(255,255,255,0.75)!important;}}"
+                    f"#{wrap_id} .rk-project td:last-child{{border-right:2px solid rgba(255,255,255,0.75)!important;}}"
+                    f"#{wrap_id} .rk-total td{{font-weight:700;background-color:rgba(80,180,255,0.18)!important;border-top:2px solid rgba(160,220,255,0.9)!important;border-bottom:2px solid rgba(160,220,255,0.9)!important;}}"
+                    f"#{wrap_id} .rk-total td:first-child{{border-left:2px solid rgba(160,220,255,0.9)!important;}}"
+                    f"#{wrap_id} .rk-total td:last-child{{border-right:2px solid rgba(160,220,255,0.9)!important;}}"
                     f"#{wrap_id} .neg{{color:hsl(348,100%,63%);font-weight:700;}}"
                     f"#{wrap_id} .pos{{color:hsl(148,100%,63%);font-weight:700;}}"
                     f"</style>",
