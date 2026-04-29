@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 
+from utils import outline_level_numeric
+
 
 def _find_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
     if df is None or not hasattr(df, "columns"):
@@ -1585,7 +1587,9 @@ _CONTROL_POINTS_CSS = """
 """
 
 
-def _apply_control_points_msp_filters(st, mdf: pd.DataFrame) -> pd.DataFrame:
+def _apply_control_points_msp_filters(
+    st, mdf: pd.DataFrame
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     Фильтры по ТЗ:
     - Проект (ур.1)
@@ -1593,9 +1597,13 @@ def _apply_control_points_msp_filters(st, mdf: pd.DataFrame) -> pd.DataFrame:
     - Строения (ур.3)
     - Верхний уровень задач (ур.4)
     - Детальный уровень задач (ур.5)
+
+    Возвращает датафрейм для расчёта вех (поддерево после каскада) и метаданные для подписи:
+    число задач с тем же «Уровень структуры», что и выбранный список (как фильтр по полю Уровень в MSP).
     """
+    meta: Dict[str, Any] = {}
     if mdf is None or getattr(mdf, "empty", True):
-        return mdf
+        return pd.DataFrame(), meta
     df = mdf.copy()
 
     def _clean_filter_label(v: Any) -> str:
@@ -1617,10 +1625,25 @@ def _apply_control_points_msp_filters(st, mdf: pd.DataFrame) -> pd.DataFrame:
         s = s.strip()
         return s
 
+    def _canonical_filter_key(v: Any) -> str:
+        """
+        Ключ для объединения дублей из MSP:
+        - разные пробелы вокруг пунктуации;
+        - хвостовые точки/знаки;
+        - регистр/ё.
+        Пример: «Блок U1. U2» == «Блок U1.U2.».
+        """
+        s = _clean_filter_label(v).lower().replace("ё", "е")
+        s = re.sub(r"\s*([.,;:()])\s*", r"\1", s)
+        s = re.sub(r"[.,;:()\s]+$", "", s)
+        s = re.sub(r"\s+", " ", s).strip()
+        return s
+
     def _build_options_map(series: pd.Series) -> Dict[str, List[str]]:
-        mp: Dict[str, List[str]] = {}
+        key_to_raws: Dict[str, List[str]] = {}
+        key_to_label: Dict[str, str] = {}
         if series is None or getattr(series, "empty", True):
-            return mp
+            return {}
         for raw in series.dropna().astype(str).tolist():
             rs = str(raw).strip()
             if not rs:
@@ -1628,13 +1651,31 @@ def _apply_control_points_msp_filters(st, mdf: pd.DataFrame) -> pd.DataFrame:
             lab = _clean_filter_label(rs)
             if not lab:
                 continue
-            mp.setdefault(lab, []).append(rs)
-        for k in list(mp.keys()):
+            key = _canonical_filter_key(lab)
+            if not key:
+                continue
+            key_to_raws.setdefault(key, []).append(rs)
+            # Более короткая «чистая» подпись обычно читается лучше.
+            if key not in key_to_label or len(lab) < len(key_to_label[key]):
+                key_to_label[key] = lab
+        mp: Dict[str, List[str]] = {}
+        for k, raws in key_to_raws.items():
             # Дедуп исходников для выбранной подписи.
-            mp[k] = sorted(set(mp[k]))
+            label = key_to_label.get(k, k)
+            if label in mp:
+                mp[label] = sorted(set(mp[label] + raws))
+            else:
+                mp[label] = sorted(set(raws))
         return mp
-    lvl_col = "level structure" if "level structure" in df.columns else ("level" if "level" in df.columns else None)
+    # Для фильтров уровней КТ ориентируемся на MSP «Уровень» (level),
+    # а не outline-уровень структуры: так совпадает с ручной проверкой в MSP.
+    lvl_col = "level" if "level" in df.columns else ("level structure" if "level structure" in df.columns else None)
     task_col = _task_name_col(df)
+
+    def _outline_lvl(fr: pd.DataFrame) -> pd.Series:
+        if not lvl_col or lvl_col not in fr.columns:
+            return pd.Series(np.nan, index=fr.index)
+        return outline_level_numeric(fr[lvl_col])
     if lvl_col and task_col and lvl_col in df.columns and task_col in df.columns:
         # Восстанавливаем предков по порядку строк MSP.
         anc2: List[str] = []
@@ -1746,7 +1787,16 @@ def _apply_control_points_msp_filters(st, mdf: pd.DataFrame) -> pd.DataFrame:
         out = out[out["__l2"].astype(str).str.strip().isin(raws)]
 
     with r1c:
-        l3_map = _build_options_map(out.get("__l3", pd.Series(dtype=str)))
+        ol_for_l3 = _outline_lvl(out)
+        if lvl_col and lvl_col in out.columns and ol_for_l3.notna().any():
+            l3_src = out.loc[ol_for_l3.eq(3)]
+            l3_map = (
+                _build_options_map(l3_src.get("__l3", pd.Series(dtype=str)))
+                if not getattr(l3_src, "empty", True)
+                else {}
+            )
+        else:
+            l3_map = _build_options_map(out.get("__l3", pd.Series(dtype=str)))
         l3_opts = ["Все"] + sorted(l3_map.keys(), key=lambda x: x.lower())
         sel_l3 = st.selectbox("Строения", l3_opts, key="cp_msp_filter_l3")
     if sel_l3 != "Все" and "__l3" in out.columns:
@@ -1768,7 +1818,16 @@ def _apply_control_points_msp_filters(st, mdf: pd.DataFrame) -> pd.DataFrame:
         rel = out
 
     with r2a:
-        l4_map = _build_options_map(out.get("__l4", pd.Series(dtype=str)))
+        ol_for_l4 = _outline_lvl(out)
+        if lvl_col and lvl_col in out.columns and ol_for_l4.notna().any():
+            l4_src = out.loc[ol_for_l4.eq(4)]
+            l4_map = (
+                _build_options_map(l4_src.get("__l4", pd.Series(dtype=str)))
+                if not getattr(l4_src, "empty", True)
+                else {}
+            )
+        else:
+            l4_map = _build_options_map(out.get("__l4", pd.Series(dtype=str)))
         if "__l4" in rel.columns:
             _rel_l4 = set(_build_options_map(rel["__l4"]).keys())
             if _rel_l4:
@@ -1780,7 +1839,16 @@ def _apply_control_points_msp_filters(st, mdf: pd.DataFrame) -> pd.DataFrame:
         out = out[out["__l4"].astype(str).str.strip().isin(raws)]
 
     with r2b:
-        l5_map = _build_options_map(out.get("__l5", pd.Series(dtype=str)))
+        ol_for_l5 = _outline_lvl(out)
+        if lvl_col and lvl_col in out.columns and ol_for_l5.notna().any():
+            l5_src = out.loc[ol_for_l5.eq(5)]
+            l5_map = (
+                _build_options_map(l5_src.get("__l5", pd.Series(dtype=str)))
+                if not getattr(l5_src, "empty", True)
+                else {}
+            )
+        else:
+            l5_map = _build_options_map(out.get("__l5", pd.Series(dtype=str)))
         if "__l5" in rel.columns:
             _rel_l5 = set(_build_options_map(rel["__l5"]).keys())
             if _rel_l5:
@@ -1790,8 +1858,22 @@ def _apply_control_points_msp_filters(st, mdf: pd.DataFrame) -> pd.DataFrame:
     if sel_l5 != "Все" and "__l5" in out.columns:
         raws = l5_map.get(str(sel_l5).strip(), [str(sel_l5).strip()])
         out = out[out["__l5"].astype(str).str.strip().isin(raws)]
+
+    meta["subtree_rows"] = int(len(out))
+    depth_strict: Optional[int] = None
+    if sel_l5 != "Все":
+        depth_strict = 5
+    elif sel_l4 != "Все":
+        depth_strict = 4
+    elif sel_l3 != "Все":
+        depth_strict = 3
+    if depth_strict is not None and lvl_col and lvl_col in out.columns:
+        ol_fin = _outline_lvl(out)
+        meta["strict_depth"] = depth_strict
+        meta["strict_rows"] = int(ol_fin.eq(float(depth_strict)).sum())
+
     out = out.drop(columns=["__l2", "__l3", "__l4", "__l5"], errors="ignore")
-    return out
+    return out, meta
 
 
 def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> None:
@@ -1800,10 +1882,18 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
     if mdf is None or getattr(mdf, "empty", True):
         st.warning("Нет строк в данных MSP.")
         return
-    filtered_mdf = _apply_control_points_msp_filters(st, mdf)
+    filtered_mdf, cp_filter_info = _apply_control_points_msp_filters(st, mdf)
     if filtered_mdf is None or getattr(filtered_mdf, "empty", True):
         st.info("Нет строк по выбранным фильтрам.")
         return
+    d_info = cp_filter_info.get("strict_depth")
+    sr = cp_filter_info.get("strict_rows")
+    tr = cp_filter_info.get("subtree_rows")
+    if d_info is not None and sr is not None and tr is not None:
+        st.caption(
+            f"Задач с «Уровень структуры» **{d_info}** (как при фильтре по уровню в MSP): **{sr}**. "
+            f"Для расчёта дат вех учитывается поддерево: **{tr}** задач (включая нижние уровни)."
+        )
     df = build_control_points_df(filtered_mdf)
     if df.empty:
         st.warning("Нет строк проектов в данных MSP.")
