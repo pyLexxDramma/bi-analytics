@@ -564,7 +564,7 @@ def main():
     # Переключатель режима источника данных
     data_mode_options = ["Загрузить вручную", "Из папки web/", "FTP → web/"]
     if _is_release_client_mode():
-        data_mode_options = ["Из папки web/"]
+        data_mode_options = ["Из папки web/", "FTP → web/"]
     data_mode = st.radio(
         "Источник данных",
         data_mode_options,
