@@ -8295,15 +8295,15 @@ def dashboard_budget_by_section(df):
 # ==================== DASHBOARD: БДР (бюджет доходов и расходов) ====================
 def dashboard_bdr(df):
     """
-    БДР — план/факт расходов: колонки ищутся по шаблонам (расходы / budget plan / budget fact).
-    В таблице и на графике: План расходов, Факт расходов, Отклонение (факт − план).
+    БДР по ТЗ: столбчатые серии — доходы, расходы, сальдо; помесячно / накопительно.
+    Fallback из 1С — только обороты БДР/поступление-расходование, не БДДС.
     """
-    st.header("БДР. План/факт расходов")
+    st.header("БДР. Доходы, расходы, сальдо")
 
     if df is None or not hasattr(df, "columns") or df.empty:
         st.warning("⚠️ Нет данных для отображения. Загрузите данные проекта.")
         return
-    from dashboards.finance_from_1c import ensure_budget_frame_with_fallback
+    from dashboards.finance_from_1c import ensure_bdr_frame_with_fallback
 
     df = df.copy()
     def _clean_filter_label(v) -> str:
@@ -8417,54 +8417,9 @@ def dashboard_bdr(df):
 
         return pd.to_numeric(s, errors="coerce")
 
-    def _try_build_bdr_from_scenario(_df: pd.DataFrame):
-        out = _df.copy()
-        scenario_col = None
-        turnover_col = None
-        amount_col = None
-        period_raw_col = None
-        def _norm_col(s: str) -> str:
-            t = str(s).strip().lower()
-            t = t.replace("ё", "е")
-            t = re.sub(r"[\s_\-./]+", "", t)
-            return t
-        for c in out.columns:
-            lc = _norm_col(c)
-            if scenario_col is None and ("сценар" in lc or "scenario" in lc):
-                scenario_col = c
-            if turnover_col is None and (("статья" in lc and "оборот" in lc) or "turnover" in lc):
-                turnover_col = c
-            if amount_col is None and ("сумм" in lc or "amount" in lc):
-                amount_col = c
-            if period_raw_col is None and ("период" in lc or "period" in lc):
-                period_raw_col = c
-        if not scenario_col or not turnover_col or not amount_col:
-            return out, False
-
-        _sc = out[scenario_col].astype(str).str.upper()
-        _ti = out[turnover_col].astype(str).str.upper()
-        _is_bdr = _ti.str.contains("БДР", na=False)
-        _is_plan = _sc.str.contains("ПЛАН", na=False) & _is_bdr
-        _is_fact = _sc.str.contains("ФАКТ", na=False) & _is_bdr
-        _amount = _coerce_bdr_amount_series(out[amount_col]).fillna(0.0)
-        # Защита: не переключаемся на сценарный расчёт, если релевантных строк нет
-        # (иначе получаем нули везде и «плоские» одинаковые суммы).
-        if int(_is_plan.sum()) == 0 and int(_is_fact.sum()) == 0:
-            return out, False
-        out["_plan_exp"] = np.where(_is_plan, _amount, 0.0)
-        out["_fact_exp"] = np.where(_is_fact, _amount, 0.0)
-        out["_deviation"] = out["_fact_exp"] - out["_plan_exp"]
-        if float(np.abs(out["_plan_exp"]).sum()) == 0.0 and float(np.abs(out["_fact_exp"]).sum()) == 0.0:
-            return out, False
-        if "plan end" not in out.columns and period_raw_col and period_raw_col in out.columns:
-            _p = pd.to_datetime(out[period_raw_col], errors="coerce", dayfirst=True)
-            if _p.notna().any():
-                out["plan end"] = _p
-        return out, True
-
     df = _derive_bdr_dimensions(df)
     ensure_budget_columns(df)
-    df, _ = ensure_budget_frame_with_fallback(df, show_caption=True)
+    df, _ = ensure_bdr_frame_with_fallback(df, show_caption=True)
     ensure_budget_columns(df)
     ensure_date_columns(df)
 
@@ -8476,30 +8431,31 @@ def dashboard_bdr(df):
                     return c
         return None
 
-    df, _bdr_from_scenario = _try_build_bdr_from_scenario(df)
-
-    revenue_col = find_col(
+    income_col = find_col(
         df,
-        ["доходы", "доход", "revenue", "income", "Бюджет План", "budget plan"],
+        [
+            "bdr_income",
+            "доходы",
+            "доход",
+            "revenue",
+            "income",
+        ],
     )
     expense_col = find_col(
         df,
-        ["расходы", "расход", "expense", "Бюджет Факт", "budget fact"],
+        [
+            "bdr_expense",
+            "расходы",
+            "расход",
+            "expenses",
+            "expense",
+        ],
     )
-    if _bdr_from_scenario:
-        revenue_col = "_plan_exp"
-        expense_col = "_fact_exp"
-    else:
-        ensure_budget_columns(df)
-        if revenue_col is None and "budget plan" in df.columns:
-            revenue_col = "budget plan"
-        if expense_col is None and "budget fact" in df.columns:
-            expense_col = "budget fact"
 
-    if revenue_col is None or expense_col is None:
+    if income_col is None or expense_col is None:
         st.warning(
-            "Для отчёта БДР нужны столбцы плана и факта расходов "
-            "(например «Бюджет План» / «Бюджет Факт» или пары колонок по шаблону из ТЗ)."
+            "Для отчёта БДР нужны столбцы доходов и расходов "
+            "(например «доходы» / «расходы» после загрузки `*_dannye.json`)."
         )
         return
 
@@ -8685,19 +8641,19 @@ def dashboard_bdr(df):
                         & (_pe_series_bdr <= (_bdr_to + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)))
                     ].copy()
 
-    filtered_df["_plan_exp"] = pd.to_numeric(filtered_df[revenue_col], errors="coerce")
-    filtered_df["_fact_exp"] = pd.to_numeric(filtered_df[expense_col], errors="coerce")
-    filtered_df["_deviation"] = filtered_df["_fact_exp"] - filtered_df["_plan_exp"]
+    filtered_df["_inc"] = _coerce_bdr_amount_series(filtered_df[income_col]).fillna(0.0)
+    filtered_df["_exp"] = _coerce_bdr_amount_series(filtered_df[expense_col]).fillna(0.0)
+    filtered_df["_saldo"] = filtered_df["_inc"] - filtered_df["_exp"]
 
-    agg_dict = {"_plan_exp": "sum", "_fact_exp": "sum", "_deviation": "sum"}
+    agg_dict = {"_inc": "sum", "_exp": "sum", "_saldo": "sum"}
     bdr_summary = (
         filtered_df.groupby(period_col).agg(agg_dict).reset_index()
     )
     bdr_summary = bdr_summary.rename(
         columns={
-            "_plan_exp": "План расходов",
-            "_fact_exp": "Факт расходов",
-            "_deviation": "Отклонение",
+            "_inc": "Доходы",
+            "_exp": "Расходы",
+            "_saldo": "Сальдо",
         }
     )
 
@@ -8710,9 +8666,9 @@ def dashboard_bdr(df):
         )
         chart_df = bdr_summary.copy()
         if view_type == "Накопительно":
-            chart_df["План расходов"] = chart_df["План расходов"].cumsum()
-            chart_df["Факт расходов"] = chart_df["Факт расходов"].cumsum()
-            chart_df["Отклонение"] = chart_df["Факт расходов"] - chart_df["План расходов"]
+            chart_df["Доходы"] = chart_df["Доходы"].cumsum()
+            chart_df["Расходы"] = chart_df["Расходы"].cumsum()
+            chart_df["Сальдо"] = chart_df["Доходы"] - chart_df["Расходы"]
             title_suffix = " (накопительно)"
         else:
             title_suffix = ""
@@ -8720,7 +8676,7 @@ def dashboard_bdr(df):
         _bdr_hide_zero = False
         if period_type_en == "Month" and view_type == "По месяцам":
             _bdr_hide_zero = st.checkbox(
-                "Скрывать месяцы, где план и факт равны 0",
+                "Скрывать месяцы, где доходы и расходы равны 0",
                 value=True,
                 key="bdr_hide_zero_months",
             )
@@ -8730,12 +8686,12 @@ def dashboard_bdr(df):
             and view_type == "По месяцам"
             and not chart_df.empty
         ):
-            _p0 = chart_df["План расходов"].fillna(0.0)
-            _f0 = chart_df["Факт расходов"].fillna(0.0)
-            chart_df = chart_df.loc[_p0.abs() + _f0.abs() > 0.5].copy()
+            _di = chart_df["Доходы"].fillna(0.0)
+            _dx = chart_df["Расходы"].fillna(0.0)
+            chart_df = chart_df.loc[_di.abs() + _dx.abs() > 0.5].copy()
         if chart_df.empty:
             st.info(
-                "Нет периодов для графика. Снимите «Скрывать месяцы, где план и факт равны 0» "
+                "Нет периодов для графика. Снимите «Скрывать месяцы, где доходы и расходы равны 0» "
                 "или расширьте фильтры."
             )
             return
@@ -8770,17 +8726,17 @@ def dashboard_bdr(df):
         _plan_txt_b = (
             None
             if _hide_bar_value_labels
-            else _finance_bar_text_mln_rub(chart_df["План расходов"], min_abs_mln=_tlbl_b)
+            else _finance_bar_text_mln_rub(chart_df["Доходы"], min_abs_mln=_tlbl_b)
         )
         _fact_txt_b = (
             None
             if _hide_bar_value_labels
-            else _finance_bar_text_mln_rub(chart_df["Факт расходов"], min_abs_mln=_tlbl_b)
+            else _finance_bar_text_mln_rub(chart_df["Расходы"], min_abs_mln=_tlbl_b)
         )
         _dev_txt_b = (
             None
             if _hide_bar_value_labels
-            else _finance_bar_text_mln_rub(chart_df["Отклонение"], min_abs_mln=_tlbl_dev)
+            else _finance_bar_text_mln_rub(chart_df["Сальдо"], min_abs_mln=_tlbl_dev)
         )
 
         fig = go.Figure()
@@ -8788,43 +8744,43 @@ def dashboard_bdr(df):
         fig.add_trace(
             go.Bar(
                 x=x_vals,
-                y=chart_df["План расходов"].div(1e6),
-                name="План расходов",
+                y=chart_df["Доходы"].div(1e6),
+                name="Доходы",
                 marker_color="#2E86AB",
                 text=_plan_txt_b,
                 textposition=_txt_pos_b,
                 textfont=dict(size=_tfs_b, color="#f0f4f8"),
-                customdata=chart_df["План расходов"].apply(format_million_rub),
-                hovertemplate="<b>%{x}</b><br>План расходов: %{customdata}<br><extra></extra>",
+                customdata=chart_df["Доходы"].apply(format_million_rub),
+                hovertemplate="<b>%{x}</b><br>Доходы: %{customdata}<br><extra></extra>",
             )
         )
         fig.add_trace(
             go.Bar(
                 x=x_vals,
-                y=chart_df["Факт расходов"].div(1e6),
-                name="Факт расходов",
+                y=chart_df["Расходы"].div(1e6),
+                name="Расходы",
                 marker_color="#A23B72",
                 text=_fact_txt_b,
                 textposition=_txt_pos_b,
                 textfont=dict(size=_tfs_b, color="#f0f4f8"),
-                customdata=chart_df["Факт расходов"].apply(format_million_rub),
-                hovertemplate="<b>%{x}</b><br>Факт расходов: %{customdata}<br><extra></extra>",
+                customdata=chart_df["Расходы"].apply(format_million_rub),
+                hovertemplate="<b>%{x}</b><br>Расходы: %{customdata}<br><extra></extra>",
             )
         )
         dev_colors = [
-            "#e74c3c" if v >= 0 else "#27ae60" for v in chart_df["Отклонение"]
+            "#e74c3c" if v >= 0 else "#27ae60" for v in chart_df["Сальдо"]
         ]
         fig.add_trace(
             go.Bar(
                 x=x_vals,
-                y=chart_df["Отклонение"].div(1e6),
-                name="Отклонение",
+                y=chart_df["Сальдо"].div(1e6),
+                name="Сальдо",
                 marker_color=dev_colors,
                 text=_dev_txt_b,
                 textposition=_txt_pos_b,
                 textfont=dict(size=_tfs_b, color="#f0f4f8"),
-                customdata=chart_df["Отклонение"].apply(format_million_rub),
-                hovertemplate="<b>%{x}</b><br>Отклонение: %{customdata}<br><extra></extra>",
+                customdata=chart_df["Сальдо"].apply(format_million_rub),
+                hovertemplate="<b>%{x}</b><br>Сальдо: %{customdata}<br><extra></extra>",
             )
         )
         fig.update_layout(
@@ -8850,9 +8806,9 @@ def dashboard_bdr(df):
                 np.nanmax(
                     np.concatenate(
                         [
-                            chart_df["План расходов"].div(1e6).to_numpy(),
-                            chart_df["Факт расходов"].div(1e6).to_numpy(),
-                            chart_df["Отклонение"].div(1e6).to_numpy(),
+                            chart_df["Доходы"].div(1e6).to_numpy(),
+                            chart_df["Расходы"].div(1e6).to_numpy(),
+                            chart_df["Сальдо"].div(1e6).to_numpy(),
                         ]
                     )
                 )
@@ -8861,9 +8817,9 @@ def dashboard_bdr(df):
                 np.nanmin(
                     np.concatenate(
                         [
-                            chart_df["План расходов"].div(1e6).to_numpy(),
-                            chart_df["Факт расходов"].div(1e6).to_numpy(),
-                            chart_df["Отклонение"].div(1e6).to_numpy(),
+                            chart_df["Доходы"].div(1e6).to_numpy(),
+                            chart_df["Расходы"].div(1e6).to_numpy(),
+                            chart_df["Сальдо"].div(1e6).to_numpy(),
                         ]
                     )
                 )
@@ -8888,62 +8844,62 @@ def dashboard_bdr(df):
         fig = apply_chart_background(fig)
         render_chart(
             fig,
-            caption_below=f"БДР — план/факт расходов{title_suffix}",
+            caption_below=f"БДР — доходы, расходы, сальдо{title_suffix}",
             height=_bdr_h,
             max_height=None,
         )
 
     _bdr_chart()
 
-    st.subheader("Сводка бюджета по периоду")
+    st.subheader("Сводка БДР по периоду")
     display_df = bdr_summary[
-        [c for c in ["Период", "План расходов", "Факт расходов", "Отклонение"] if c in bdr_summary.columns]
+        [c for c in ["Период", "Доходы", "Расходы", "Сальдо"] if c in bdr_summary.columns]
     ].copy()
     display_df = display_df.rename(columns={"Период": period_label})
-    for col in ["План расходов", "Факт расходов", "Отклонение"]:
+    for col in ["Доходы", "Расходы", "Сальдо"]:
         if col in display_df.columns:
             display_df[col] = (display_df[col] / 1e6).round(2).apply(
                 lambda x: f"{float(x):.2f} млн руб." if pd.notna(x) else ""
             )
     display_df = display_df.rename(columns={
-        "План расходов": "План расходов, млн руб.",
-        "Факт расходов": "Факт расходов, млн руб.",
-        "Отклонение": "Отклонение, млн руб.",
+        "Доходы": "Доходы, млн руб.",
+        "Расходы": "Расходы, млн руб.",
+        "Сальдо": "Сальдо, млн руб.",
     })
     st.markdown(
-        budget_table_to_html(display_df, finance_deviation_column="Отклонение, млн руб."),
+        budget_table_to_html(display_df, finance_deviation_column="Сальдо, млн руб."),
         unsafe_allow_html=True,
     )
 
     if "project name" in filtered_df.columns:
-        st.subheader("Сводка бюджета по проекту")
+        st.subheader("Сводка БДР по проекту")
         by_p = (
             filtered_df.groupby("project name", dropna=False)
-            .agg({"_plan_exp": "sum", "_fact_exp": "sum"})
+            .agg({"_inc": "sum", "_exp": "sum"})
             .reset_index()
         )
-        by_p["Итого"] = by_p["_fact_exp"] - by_p["_plan_exp"]
+        by_p["Итого (сальдо)"] = by_p["_inc"] - by_p["_exp"]
         proj_tbl = pd.DataFrame(
             {
                 "Проект": by_p["project name"].astype(str),
-                "План, млн руб.": (by_p["_plan_exp"] / 1e6).round(2).apply(
+                "Доходы, млн руб.": (by_p["_inc"] / 1e6).round(2).apply(
                     lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
                 ),
-                "Факт, млн руб.": (by_p["_fact_exp"] / 1e6).round(2).apply(
+                "Расходы, млн руб.": (by_p["_exp"] / 1e6).round(2).apply(
                     lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
                 ),
-                "Итого (отклонение), млн руб.": (by_p["Итого"] / 1e6).round(2).apply(
+                "Сальдо, млн руб.": (by_p["Итого (сальдо)"] / 1e6).round(2).apply(
                     lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
                 ),
             }
         )
         suppress_caption(
-            "Колонка «Итого» — отклонение (факт − план) по проекту за выбранные фильтры."
+            "Колонка «Сальдо» — доходы минус расходы по проекту за выбранные фильтры."
         )
         st.markdown(
             budget_table_to_html(
                 proj_tbl,
-                finance_deviation_column="Итого (отклонение), млн руб.",
+                finance_deviation_column="Сальдо, млн руб.",
             ),
             unsafe_allow_html=True,
         )

@@ -1338,7 +1338,11 @@ def _infer_file_type_by_name(file_name: str) -> str:
         return "rd_plan"
 
     # ── TESSA: задачи (CardId, KindName, …) — отдельный тип, чтобы join с Id по правкам ──
-    if "tessa_tasks" in stem or (stem.startswith("tessa_") and "tasks" in stem):
+    # Имя «tessa_*_task.csv» (единственное task) должно считаться задачами, не только *_tasks*.
+    if (
+        "tessa_tasks" in stem
+        or (stem.startswith("tessa_") and ("tasks" in stem or "_task" in stem))
+    ):
         return "tessa_tasks"
 
     # ── TESSA файлы (карточки / Id) ──────────────────────────────────────────

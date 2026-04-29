@@ -598,6 +598,8 @@ def main():
         _dl_source = _src_map.get(_dl.get("source", ""))
         if _dl_source:
             st.session_state["data_mode_radio"] = _dl_source
+            if _dl_source in ("Из папки web/", "FTP → web/"):
+                st.session_state["_pending_web_folder_load"] = True
         if _dl.get("report"):
             st.session_state["current_dashboard"] = _dl["report"]
         if _dl_source or _dl.get("report"):
@@ -607,11 +609,23 @@ def main():
     data_mode_options = ["Загрузить вручную", "Из папки web/", "FTP → web/"]
     if _is_release_client_mode():
         data_mode_options = ["Из папки web/"]
+
+    def _queue_web_folder_load_on_mode_change():
+        try:
+            v = st.session_state.get("data_mode_radio")
+            # Локальная папка web/ читается и в режиме «Из папки web/», и в «FTP → web/»
+            # (FTP-скачивание — отдельная кнопка; до неё показываем уже лежащие в web/ файлы).
+            if v in ("Из папки web/", "FTP → web/"):
+                st.session_state["_pending_web_folder_load"] = True
+        except Exception:
+            pass
+
     data_mode = st.radio(
         "Источник данных",
         data_mode_options,
         horizontal=True,
         key="data_mode_radio",
+        on_change=_queue_web_folder_load_on_mode_change,
     )
 
     if data_mode in ("Из папки web/", "FTP → web/"):
@@ -630,8 +644,80 @@ def main():
 
         init_web_schema()
 
+        def _perform_load_from_web_folder() -> None:
+            """Сканирование web/, запись в SQLite и обновление session_state (как кнопка «Загрузить из web/»)."""
+            if not web_dir_exists():
+                st.error(
+                    "Не найден ни локальный каталог web/ рядом с приложением, "
+                    "ни папка Analitics/web (уровнем выше репозитория), "
+                    "ни пути из переменной BI_ANALYTICS_WEB_EXTRA_PATHS."
+                )
+                return
+
+            with st.spinner("Читаю файлы из web/..."):
+                result = load_all_from_web()
+            try:
+                st.session_state["last_load_result"] = result
+                st.session_state["last_data_readiness"] = build_data_readiness_report(result)
+                st.session_state["last_data_schema_health"] = save_schema_health_report(load_result=result)
+                st.session_state["last_env_fingerprint"] = build_environment_fingerprint(result)
+            except Exception:
+                st.session_state["last_data_readiness"] = None
+                st.session_state["last_data_schema_health"] = None
+                st.session_state["last_env_fingerprint"] = None
+
+            st.cache_data.clear()
+            st.session_state.pop("web_version_id", None)
+
+            for w in result.get("warnings", []):
+                st.warning(w)
+
+            if result["errors"]:
+                st.warning(f"Загружено: {result['loaded']}, пропущено: {result['skipped']}")
+                for err in result["errors"]:
+                    st.error(err)
+            else:
+                st.success(f"Загружено файлов: {result['loaded']}")
+            try:
+                from logger import log_action
+                u = get_current_user()
+                if u:
+                    log_action(
+                        u["username"],
+                        "data_loaded",
+                        f"web/: loaded={result.get('loaded')}, skipped={result.get('skipped')}",
+                    )
+            except Exception:
+                pass
+            with st.expander("Справка: колонки загрузки из web/", expanded=False):
+                for row in result.get("diagnostics", [])[:40]:
+                    st.json(row)
+
+            st.rerun()
+
+        if (
+            _is_release_client_mode()
+            and data_mode == "Из папки web/"
+            and not get_all_versions()
+            and st.session_state.get("project_data") is None
+            and not st.session_state.get("_release_web_autoload_tried", False)
+        ):
+            st.session_state["_pending_web_folder_load"] = True
+            st.session_state["_release_web_autoload_tried"] = True
+
+        if (
+            data_mode in ("Из папки web/", "FTP → web/")
+            and st.session_state.pop("_pending_web_folder_load", False)
+        ):
+            _perform_load_from_web_folder()
+
         if data_mode == "FTP → web/":
             from ftp_sync import merge_ftp_config, streamlit_secrets_to_config, sync_ftp_to_web
+
+            st.caption(
+                "При переключении на этот режим локальная папка `web/` читается так же, как в «Из папки web/». "
+                "Кнопка ниже нужна, чтобы **скачать с FTP** новые файлы в `web/`, затем снова попадают в БД."
+            )
 
             with st.expander("Параметры FTP вручную (если нет secrets)", expanded=False):
                 _h = st.text_input("FTP host", key="ftp_host_override")
@@ -714,63 +800,8 @@ def main():
 
         with col1:
 
-            if data_mode == "Из папки web/" and st.button("Загрузить из web/"):
-
-                if not web_dir_exists():
-
-                    st.error(
-                        "Не найден ни локальный каталог web/ рядом с приложением, "
-                        "ни папка Analitics/web (уровнем выше репозитория), "
-                        "ни пути из переменной BI_ANALYTICS_WEB_EXTRA_PATHS."
-                    )
-
-                else:
-
-                    with st.spinner("Читаю файлы из web/..."):
-                        result = load_all_from_web()
-                    try:
-                        st.session_state["last_load_result"] = result
-                        st.session_state["last_data_readiness"] = build_data_readiness_report(result)
-                        st.session_state["last_data_schema_health"] = save_schema_health_report(load_result=result)
-                        st.session_state["last_env_fingerprint"] = build_environment_fingerprint(result)
-                    except Exception:
-                        st.session_state["last_data_readiness"] = None
-                        st.session_state["last_data_schema_health"] = None
-                        st.session_state["last_env_fingerprint"] = None
-
-                    st.cache_data.clear()
-                    # Сбрасываем web_version_id чтобы принудительно перечитать данные
-                    st.session_state.pop("web_version_id", None)
-
-                    for w in result.get("warnings", []):
-                        st.warning(w)
-
-                    if result["errors"]:
-
-                        st.warning(f"Загружено: {result['loaded']}, пропущено: {result['skipped']}")
-
-                        for err in result["errors"]:
-
-                            st.error(err)
-                    else:
-
-                        st.success(f"Загружено файлов: {result['loaded']}")
-                    try:
-                        from logger import log_action
-                        u = get_current_user()
-                        if u:
-                            log_action(
-                                u["username"],
-                                "data_loaded",
-                                f"web/: loaded={result.get('loaded')}, skipped={result.get('skipped')}",
-                            )
-                    except Exception:
-                        pass
-                    with st.expander("Справка: колонки загрузки из web/", expanded=False):
-                        for row in result.get("diagnostics", [])[:40]:
-                            st.json(row)
-
-                    st.rerun()
+            if data_mode in ("Из папки web/", "FTP → web/") and st.button("Загрузить из web/"):
+                _perform_load_from_web_folder()
 
         # Селектор версий
         versions = get_all_versions()
@@ -803,7 +834,10 @@ def main():
                     pass
 
         else:
-            st.info("Нажмите «Загрузить из web/» чтобы прочитать файлы из папки web/.")
+            st.info(
+                "При первом включении режима файлы считываются автоматически. "
+                "Повторно нажмите «Загрузить из web/», если обновили файлы на диске."
+            )
 
         _panel_tab = st.radio(
             "Вкладка панели",
