@@ -97,6 +97,32 @@ def _project_filter_norm_key(val) -> str:
     return sl
 
 
+_PROJECT_CHILD_SUFFIX_RE = re.compile(r"^(\d{1,4}|[IVX]{1,4})$", re.I)
+
+
+def _project_norm_key_matches_msp_keys(row_key: str, msp_keys: set[str]) -> bool:
+    """
+    Строка 1С/синтетики с ключом «дмитровский 1» входит в выбор MSP «Дмитровский»
+    (ключ «дмитровский»): совпадение или один сегмент-номер/римская цифра после базы.
+    """
+    if not msp_keys:
+        return True
+    if not row_key:
+        return False
+    if row_key in msp_keys:
+        return True
+    for k in msp_keys:
+        if not k:
+            continue
+        pref = k + " "
+        if not row_key.startswith(pref):
+            continue
+        rest = row_key[len(pref) :]
+        if rest and _PROJECT_CHILD_SUFFIX_RE.fullmatch(rest):
+            return True
+    return False
+
+
 def _project_canonical_display_map(series: pd.Series) -> dict[str, str]:
     """
     Для каждого «сырого» варианта названия проекта — одна подпись для таблиц/группировок
@@ -7107,7 +7133,16 @@ def dashboard_budget_by_period(df):
         restrict_projects_from_df=True,
         period_start=_bdds_cal_start,
         period_end=_bdds_cal_end,
+        force_from_1c=True,
     )
+    # После подстановки из 1С повторно применяем фильтр проекта,
+    # чтобы в таблицы/графики не попадали другие проекты.
+    if selected_project != "Все" and "project name" in filtered_df.columns:
+        _sel_pk = _project_filter_norm_key(selected_project)
+        _rk_bdd = filtered_df["project name"].map(_project_filter_norm_key)
+        filtered_df = filtered_df[
+            _rk_bdd.map(lambda rk: _project_norm_key_matches_msp_keys(rk, {_sel_pk}))
+        ].copy()
     ensure_date_columns(filtered_df)
     ensure_budget_columns(filtered_df)
     has_budget = "budget plan" in filtered_df.columns and "budget fact" in filtered_df.columns
@@ -7196,8 +7231,11 @@ def dashboard_budget_by_period(df):
                 "Вид отображения", ["По месяцам", "Накопительно"], key="budget_period_view"
             )
             if selected_project != "Все":
+                _sel_pk_chart = _project_filter_norm_key(selected_project)
                 project_data = budget_summary[
-                    budget_summary["project name"] == selected_project
+                    budget_summary["project name"]
+                    .map(_project_filter_norm_key)
+                    .map(lambda rk: _project_norm_key_matches_msp_keys(rk, {_sel_pk_chart}))
                 ].copy()
             else:
                 agg_dict_all = {

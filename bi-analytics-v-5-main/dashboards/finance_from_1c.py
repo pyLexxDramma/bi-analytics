@@ -29,6 +29,23 @@ def _coerce_1c_money_series(raw: pd.Series) -> pd.Series:
     return pd.to_numeric(s, errors="coerce")
 
 
+def _parse_1c_period_series(raw: pd.Series) -> pd.Series:
+    """
+    Период из 1С в *_dannye.json чаще всего в month-first формате:
+    M/D/YYYY h:mm:ss AM/PM.
+    Сначала парсим как month-first, затем добираем остаток day-first.
+    """
+    if raw is None:
+        return pd.Series(dtype="datetime64[ns]")
+    s = raw.astype(str).str.strip()
+    dt = pd.to_datetime(s, errors="coerce", dayfirst=False)
+    need_fallback = dt.isna()
+    if bool(need_fallback.any()):
+        dt_fb = pd.to_datetime(s[need_fallback], errors="coerce", dayfirst=True)
+        dt.loc[need_fallback] = dt_fb
+    return dt
+
+
 def _pick_col(df: pd.DataFrame, needles: tuple[str, ...]) -> Optional[str]:
     cols = {str(c).strip().casefold(): c for c in df.columns}
     for n in needles:
@@ -101,7 +118,9 @@ def try_synthetic_budget_from_1c_dannye(
     if t.empty:
         return None
 
-    t["_amt"] = _coerce_1c_money_series(t[amt]).fillna(0.0)
+    # 1С обороты в текущих выгрузках передаются в тыс. руб.;
+    # приводим к рублям, чтобы отображение в "млн руб." было корректным.
+    t["_amt"] = _coerce_1c_money_series(t[amt]).fillna(0.0) * 1000.0
     sser = t[scen].astype(str)
     # Выгрузки 1С: «БЮДЖЕТ …» или отдельное «ПЛАН» (без подстроки «ФАКТ» в том же слове сценария).
     plan_mask = (
@@ -119,7 +138,7 @@ def try_synthetic_budget_from_1c_dannye(
         return None
     t["__plan"] = np.where(plan_mask.to_numpy(), t["_amt"].to_numpy(), 0.0)
     t["__fact"] = np.where(fact_mask.to_numpy(), t["_amt"].to_numpy(), 0.0)
-    t["_d"] = pd.to_datetime(t[per], errors="coerce", dayfirst=True)
+    t["_d"] = _parse_1c_period_series(t[per])
     t = t[t["_d"].notna()].copy()
     if t.empty:
         return None
@@ -234,7 +253,9 @@ def try_synthetic_bdr_from_1c_dannye(
     if t.empty:
         return None
 
-    t["_amt"] = _coerce_1c_money_series(t[amt]).fillna(0.0)
+    # 1С обороты в текущих выгрузках передаются в тыс. руб.;
+    # приводим к рублям, чтобы отображение в "млн руб." было корректным.
+    t["_amt"] = _coerce_1c_money_series(t[amt]).fillna(0.0) * 1000.0
 
     def _bucket(v: Any) -> str:
         s = str(v or "").strip().casefold()
@@ -263,7 +284,7 @@ def try_synthetic_bdr_from_1c_dannye(
 
     t["_inc"] = b_inc.values
     t["_exp"] = b_exp.values
-    t["_d"] = pd.to_datetime(t[per], errors="coerce", dayfirst=True)
+    t["_d"] = _parse_1c_period_series(t[per])
     t = t[t["_d"].notna()].copy()
     if t.empty:
         return None
@@ -322,10 +343,12 @@ def ensure_budget_frame_with_fallback(
     restrict_projects_from_df: bool = True,
     period_start: Any | None = None,
     period_end: Any | None = None,
+    force_from_1c: bool = False,
 ) -> tuple[pd.DataFrame, bool]:
     """
     Возвращает (df_for_budget, used_fallback_1c).
     Если в исходном df нет непустых budget plan/fact, пытается собрать их из 1С.
+    При force_from_1c=True всегда предпочитает синтетику из 1С.
 
     После сборки синтетики из 1С можно сузить строки до проектов из текущего MSP-фрейма
     и до интервала дат календаря (поле «plan end» в синтетике = конец месяца из «Период» JSON).
@@ -334,7 +357,7 @@ def ensure_budget_frame_with_fallback(
 
     work = df.copy()
     has_cols = "budget plan" in work.columns and "budget fact" in work.columns
-    if has_cols:
+    if has_cols and not force_from_1c:
         bp = pd.to_numeric(work["budget plan"], errors="coerce").fillna(0.0)
         bf = pd.to_numeric(work["budget fact"], errors="coerce").fillna(0.0)
         if (float(bp.abs().sum()) + float(bf.abs().sum())) > 0.0:
@@ -347,12 +370,18 @@ def ensure_budget_frame_with_fallback(
         nz = work["project name"].dropna()
         if nz.empty:
             return work, False
-        from dashboards._renderers import _project_filter_norm_key
+        from dashboards._renderers import (
+            _project_filter_norm_key,
+            _project_norm_key_matches_msp_keys,
+        )
 
         keys = {_project_filter_norm_key(x) for x in nz.unique()}
         keys.discard("")
         if keys:
-            syn = syn[syn["project name"].map(_project_filter_norm_key).isin(keys)].copy()
+            _rk = syn["project name"].map(_project_filter_norm_key)
+            syn = syn[
+                _rk.map(lambda rk: _project_norm_key_matches_msp_keys(rk, keys))
+            ].copy()
 
     ps = period_start
     pe = period_end
@@ -374,10 +403,13 @@ def ensure_budget_frame_with_fallback(
         return work, False
 
     if show_caption:
-        st.caption(
-            "Использован fallback: бюджетные суммы взяты из 1С (`*_dannye.json`), "
-            "потому что в MSP нет непустых budget plan / budget fact."
-        )
+        if force_from_1c:
+            st.caption("Источник БДДС: суммы взяты из 1С (`*_dannye.json`).")
+        else:
+            st.caption(
+                "Использован fallback: бюджетные суммы взяты из 1С (`*_dannye.json`), "
+                "потому что в MSP нет непустых budget plan / budget fact."
+            )
     return syn, True
 
 
@@ -420,12 +452,18 @@ def ensure_bdr_frame_with_fallback(
         nz = work["project name"].dropna()
         if nz.empty:
             return work, False
-        from dashboards._renderers import _project_filter_norm_key
+        from dashboards._renderers import (
+            _project_filter_norm_key,
+            _project_norm_key_matches_msp_keys,
+        )
 
         keys = {_project_filter_norm_key(x) for x in nz.unique()}
         keys.discard("")
         if keys:
-            syn = syn[syn["project name"].map(_project_filter_norm_key).isin(keys)].copy()
+            _rk = syn["project name"].map(_project_filter_norm_key)
+            syn = syn[
+                _rk.map(lambda rk: _project_norm_key_matches_msp_keys(rk, keys))
+            ].copy()
 
     if syn.empty:
         return work, False
