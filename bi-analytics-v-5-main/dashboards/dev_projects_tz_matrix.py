@@ -1812,16 +1812,18 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
 
     ms_specs = [(t, s) for t, s, _k in get_control_point_milestones_effective()]
     project_w = "min-width:180px"
-    thead1 = [f'<th rowspan="2" class="cp-col-project" style="{project_w}">Проекты ↓</th>']
+    thead1 = [f'<th rowspan="2" class="cp-col-project" style="{project_w}">Проекты</th>']
     for i, (title, slug) in enumerate(ms_specs):
-        hdr = f"Задачи → {title}" if i == 0 else title
-        thead1.append(f'<th colspan="4" class="cp-ghead cp-group-start">{esc(hdr)}</th>')
+        hdr = title
+        gcls = "cp-ghead cp-group-start" if i == 0 else "cp-ghead"
+        thead1.append(f'<th colspan="4" class="{gcls}">{esc(hdr)}</th>')
     sub_headers: List[str] = []
     for i, (_title, slug) in enumerate(ms_specs):
-        plan_title = "План →" if i == 0 else "План"
+        plan_title = "План"
+        p_cls = "cp-sub cp-group-start" if i == 0 else "cp-sub"
         sub_headers.extend(
             [
-                f'<th class="cp-sub cp-group-start">{esc(plan_title)}</th>',
+                f'<th class="{p_cls}">{esc(plan_title)}</th>',
                 f'<th class="cp-sub">{esc("Факт")}</th>',
                 f'<th class="cp-sub">{esc("Откл.")}</th>',
                 f'<th class="cp-sub">{esc("Статус")}</th>',
