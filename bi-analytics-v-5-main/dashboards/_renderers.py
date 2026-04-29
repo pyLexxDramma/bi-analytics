@@ -21998,9 +21998,11 @@ def dashboard_developer_projects(df):
             "Длительность": dur,
         }
         if reason_col and reason_col in tbl_src.columns:
-            row["Причина отклонений"] = _clean_display_str(r.get(reason_col))
+            _rv = _clean_display_str(r.get(reason_col))
+            row["Причина отклонений"] = _rv if str(_rv).strip() else "—"
         if notes_col and notes_col in tbl_src.columns:
-            row["Заметки"] = _clean_display_str(r.get(notes_col))
+            _nv = _clean_display_str(r.get(notes_col))
+            row["Заметки"] = _nv if str(_nv).strip() else "—"
         out_rows.append(row)
 
     dev_tbl = pd.DataFrame(out_rows)
@@ -22062,6 +22064,24 @@ def dashboard_developer_projects(df):
     _max_rows_show = 220
     show_num = dev_tbl.head(_max_rows_show).copy()
     show_disp = display_tbl.head(_max_rows_show).copy()
+    if (
+        sel_proj == "Все"
+        and "Проект" in dev_tbl.columns
+        and int(dev_tbl["Проект"].nunique()) > 1
+        and len(dev_tbl) > _max_rows_show
+    ):
+        # Для выбора «Все» показываем сбалансированную выборку по проектам,
+        # иначе первые 220 строк часто попадают в один проект по порядку загрузки.
+        _projects = [p for p in dev_tbl["Проект"].dropna().astype(str).unique().tolist() if str(p).strip()]
+        _per_proj = max(1, _max_rows_show // max(1, len(_projects)))
+        _parts_num = []
+        _parts_disp = []
+        for _p in _projects:
+            _mask = dev_tbl["Проект"].astype(str) == str(_p)
+            _parts_num.append(dev_tbl.loc[_mask].head(_per_proj))
+            _parts_disp.append(display_tbl.loc[_mask].head(_per_proj))
+        show_num = pd.concat(_parts_num, ignore_index=True).head(_max_rows_show).copy()
+        show_disp = pd.concat(_parts_disp, ignore_index=True).head(_max_rows_show).copy()
     if len(display_tbl) > _max_rows_show:
         suppress_caption(
             f"Показано {_max_rows_show} из {len(display_tbl)} строк (для полного списка используйте выгрузку)."
@@ -22101,7 +22121,25 @@ def dashboard_developer_projects(df):
     for h in headers:
         _parts.append(f"<th>{html_module.escape(str(h))}</th>")
     _parts.append("</tr></thead><tbody>")
+    _proj_col_name = "Проект" if "Проект" in headers else None
+    _prev_proj = None
     for i in range(len(show_disp)):
+        _cur_proj = (
+            str(show_disp.iloc[i].get(_proj_col_name, "")).strip()
+            if _proj_col_name
+            else ""
+        )
+        if _proj_col_name and _cur_proj and _cur_proj != _prev_proj:
+            _parts.append(
+                '<tr>'
+                f'<td colspan="{len(headers)}" '
+                'style="background:rgba(70,130,180,0.30);color:#eaf6ff;'
+                'font-weight:700;border-top:2px solid rgba(190,214,242,0.9);'
+                'border-bottom:1px solid rgba(190,214,242,0.6);padding:7px 12px;">'
+                f'{html_module.escape(_cur_proj)}'
+                "</td></tr>"
+            )
+            _prev_proj = _cur_proj
         _parts.append("<tr>")
         for col in headers:
             cell = show_disp.iloc[i][col]
@@ -22109,6 +22147,9 @@ def dashboard_developer_projects(df):
             esc = html_module.escape(txt) if txt.strip() else ""
             bg = _cell_bg(col)
             extra = ""
+            if _proj_col_name and col == _proj_col_name:
+                bg = "rgba(70,130,180,0.24)"
+                extra += "font-weight:600;"
             if col == "Отклонение начала":
                 clr = _dev_start_color(show_num.iloc[i].get(col) if col in show_num.columns else np.nan)
                 extra = f"color:{clr};font-weight:600;"
