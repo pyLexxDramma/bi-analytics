@@ -7021,6 +7021,16 @@ def dashboard_budget_by_period(df):
                 """
                 <script>
                 (function() {
+                  const rootDoc = window.parent && window.parent.document ? window.parent.document : document;
+                  const hid = "st-bdds-hide-datepicker-quickselect";
+                  if (!rootDoc.getElementById(hid)) {
+                    const st = rootDoc.createElement("style");
+                    st.id = hid;
+                    st.textContent =
+                      '[data-baseweb="popover"] [data-baseweb="calendar"] > div:last-child { display: none !important; }';
+                    rootDoc.head.appendChild(st);
+                  }
+
                   const dict = new Map([
                     ["January","Январь"],["February","Февраль"],["March","Март"],["April","Апрель"],
                     ["May","Май"],["June","Июнь"],["July","Июль"],["August","Август"],
