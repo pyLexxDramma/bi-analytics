@@ -1761,6 +1761,10 @@ def _apply_control_points_msp_filters(
             df["__l4"] = anc4
             df["__l5"] = anc5
 
+    # Порядок фильтров по ТЗ:
+    # 1) Проект (ур.1) → 2) Функциональный блок (ур.2) →
+    # 3) Верхний уровень задач (ур.4) → 4) Детальный уровень задач (ур.5) →
+    # 5) Строения (ур.3)
     r1a, r1b, r1c = st.columns(3)
     r2a, r2b = st.columns(2)
     labels_map: Dict[str, List[str]] = {}
@@ -1786,23 +1790,6 @@ def _apply_control_points_msp_filters(
         raws = l2_map.get(str(sel_l2).strip(), [str(sel_l2).strip()])
         out = out[out["__l2"].astype(str).str.strip().isin(raws)]
 
-    with r1c:
-        ol_for_l3 = _outline_lvl(out)
-        if lvl_col and lvl_col in out.columns and ol_for_l3.notna().any():
-            l3_src = out.loc[ol_for_l3.eq(3)]
-            l3_map = (
-                _build_options_map(l3_src.get("__l3", pd.Series(dtype=str)))
-                if not getattr(l3_src, "empty", True)
-                else {}
-            )
-        else:
-            l3_map = _build_options_map(out.get("__l3", pd.Series(dtype=str)))
-        l3_opts = ["Все"] + sorted(l3_map.keys(), key=lambda x: x.lower())
-        sel_l3 = st.selectbox("Строения", l3_opts, key="cp_msp_filter_l3")
-    if sel_l3 != "Все" and "__l3" in out.columns:
-        raws = l3_map.get(str(sel_l3).strip(), [str(sel_l3).strip()])
-        out = out[out["__l3"].astype(str).str.strip().isin(raws)]
-
     # Для уровней 4/5 показываем только релевантные варианты:
     # строки, которые потенциально попадают в вехи «Контрольных точек» по текущему ТЗ.
     rel = out
@@ -1817,7 +1804,7 @@ def _apply_control_points_msp_filters(
     except Exception:
         rel = out
 
-    with r2a:
+    with r1c:
         ol_for_l4 = _outline_lvl(out)
         if lvl_col and lvl_col in out.columns and ol_for_l4.notna().any():
             l4_src = out.loc[ol_for_l4.eq(4)]
@@ -1838,7 +1825,7 @@ def _apply_control_points_msp_filters(
         raws = l4_map.get(str(sel_l4).strip(), [str(sel_l4).strip()])
         out = out[out["__l4"].astype(str).str.strip().isin(raws)]
 
-    with r2b:
+    with r2a:
         ol_for_l5 = _outline_lvl(out)
         if lvl_col and lvl_col in out.columns and ol_for_l5.notna().any():
             l5_src = out.loc[ol_for_l5.eq(5)]
@@ -1858,6 +1845,23 @@ def _apply_control_points_msp_filters(
     if sel_l5 != "Все" and "__l5" in out.columns:
         raws = l5_map.get(str(sel_l5).strip(), [str(sel_l5).strip()])
         out = out[out["__l5"].astype(str).str.strip().isin(raws)]
+
+    with r2b:
+        ol_for_l3 = _outline_lvl(out)
+        if lvl_col and lvl_col in out.columns and ol_for_l3.notna().any():
+            l3_src = out.loc[ol_for_l3.eq(3)]
+            l3_map = (
+                _build_options_map(l3_src.get("__l3", pd.Series(dtype=str)))
+                if not getattr(l3_src, "empty", True)
+                else {}
+            )
+        else:
+            l3_map = _build_options_map(out.get("__l3", pd.Series(dtype=str)))
+        l3_opts = ["Все"] + sorted(l3_map.keys(), key=lambda x: x.lower())
+        sel_l3 = st.selectbox("Строения", l3_opts, key="cp_msp_filter_l3")
+    if sel_l3 != "Все" and "__l3" in out.columns:
+        raws = l3_map.get(str(sel_l3).strip(), [str(sel_l3).strip()])
+        out = out[out["__l3"].astype(str).str.strip().isin(raws)]
 
     meta["subtree_rows"] = int(len(out))
     depth_strict: Optional[int] = None
