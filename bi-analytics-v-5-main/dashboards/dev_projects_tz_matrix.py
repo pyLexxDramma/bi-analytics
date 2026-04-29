@@ -1667,6 +1667,15 @@ def _apply_control_points_msp_filters(
             else:
                 mp[label] = sorted(set(raws))
         return mp
+
+    def _limit_options_map(mp: Dict[str, List[str]], max_items: int = 9) -> Dict[str, List[str]]:
+        """Ограничение количества значений в фильтре (без «Все»)."""
+        if not mp:
+            return {}
+        keys = sorted(mp.keys(), key=lambda x: x.lower())
+        if len(keys) <= max_items:
+            return {k: mp[k] for k in keys}
+        return {k: mp[k] for k in keys[:max_items]}
     # Для фильтров уровней КТ ориентируемся на MSP «Уровень» (level),
     # а не outline-уровень структуры: так совпадает с ручной проверкой в MSP.
     lvl_col = "level" if "level" in df.columns else ("level structure" if "level structure" in df.columns else None)
@@ -1771,6 +1780,9 @@ def _apply_control_points_msp_filters(
     with r1a:
         if "project name" in df.columns:
             ordered, labels_map = _control_points_project_filter_options(df)
+            preferred_projects = ["Дмитровский", "Есипово V", "Завод", "Ленинский"]
+            if any(p in ordered for p in preferred_projects):
+                ordered = [p for p in preferred_projects if p in ordered]
             opts = ["Все"] + ordered
             sel_proj = st.selectbox("Проект", opts, key="cp_msp_filter_project")
         else:
@@ -1782,16 +1794,7 @@ def _apply_control_points_msp_filters(
         raws = labels_map.get(str(sel_proj).strip(), [str(sel_proj).strip()])
         out = out[out["project name"].astype(str).str.strip().isin(raws)]
 
-    with r1b:
-        l2_map = _build_options_map(out.get("__l2", pd.Series(dtype=str)))
-        l2_opts = ["Все"] + sorted(l2_map.keys(), key=lambda x: x.lower())
-        sel_l2 = st.selectbox("Функциональный блок", l2_opts, key="cp_msp_filter_l2")
-    if sel_l2 != "Все" and "__l2" in out.columns:
-        raws = l2_map.get(str(sel_l2).strip(), [str(sel_l2).strip()])
-        out = out[out["__l2"].astype(str).str.strip().isin(raws)]
-
-    # Для уровней 4/5 показываем только релевантные варианты:
-    # строки, которые потенциально попадают в вехи «Контрольных точек» по текущему ТЗ.
+    # Общая релевантная выборка для опций КТ: то, что потенциально участвует в вехах.
     rel = out
     try:
         rel_idx = set()
@@ -1803,6 +1806,19 @@ def _apply_control_points_msp_filters(
             rel = out.loc[sorted(rel_idx)]
     except Exception:
         rel = out
+
+    with r1b:
+        l2_map = _build_options_map(out.get("__l2", pd.Series(dtype=str)))
+        if "__l2" in rel.columns:
+            _rel_l2 = set(_build_options_map(rel["__l2"]).keys())
+            if _rel_l2:
+                l2_map = {k: v for k, v in l2_map.items() if k in _rel_l2}
+        l2_map = _limit_options_map(l2_map, max_items=9)
+        l2_opts = ["Все"] + sorted(l2_map.keys(), key=lambda x: x.lower())
+        sel_l2 = st.selectbox("Функциональный блок", l2_opts, key="cp_msp_filter_l2")
+    if sel_l2 != "Все" and "__l2" in out.columns:
+        raws = l2_map.get(str(sel_l2).strip(), [str(sel_l2).strip()])
+        out = out[out["__l2"].astype(str).str.strip().isin(raws)]
 
     with r1c:
         ol_for_l4 = _outline_lvl(out)
@@ -1819,6 +1835,7 @@ def _apply_control_points_msp_filters(
             _rel_l4 = set(_build_options_map(rel["__l4"]).keys())
             if _rel_l4:
                 l4_map = {k: v for k, v in l4_map.items() if k in _rel_l4}
+        l4_map = _limit_options_map(l4_map, max_items=9)
         l4_opts = ["Все"] + sorted(l4_map.keys(), key=lambda x: x.lower())
         sel_l4 = st.selectbox("Верхний уровень задач", l4_opts, key="cp_msp_filter_l4")
     if sel_l4 != "Все" and "__l4" in out.columns:
@@ -1840,6 +1857,7 @@ def _apply_control_points_msp_filters(
             _rel_l5 = set(_build_options_map(rel["__l5"]).keys())
             if _rel_l5:
                 l5_map = {k: v for k, v in l5_map.items() if k in _rel_l5}
+        l5_map = _limit_options_map(l5_map, max_items=9)
         l5_opts = ["Все"] + sorted(l5_map.keys(), key=lambda x: x.lower())
         sel_l5 = st.selectbox("Детальный уровень задач", l5_opts, key="cp_msp_filter_l5")
     if sel_l5 != "Все" and "__l5" in out.columns:
@@ -1857,6 +1875,11 @@ def _apply_control_points_msp_filters(
             )
         else:
             l3_map = _build_options_map(out.get("__l3", pd.Series(dtype=str)))
+        if "__l3" in rel.columns:
+            _rel_l3 = set(_build_options_map(rel["__l3"]).keys())
+            if _rel_l3:
+                l3_map = {k: v for k, v in l3_map.items() if k in _rel_l3}
+        l3_map = _limit_options_map(l3_map, max_items=9)
         l3_opts = ["Все"] + sorted(l3_map.keys(), key=lambda x: x.lower())
         sel_l3 = st.selectbox("Строения", l3_opts, key="cp_msp_filter_l3")
     if sel_l3 != "Все" and "__l3" in out.columns:
