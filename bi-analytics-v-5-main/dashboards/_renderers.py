@@ -6996,6 +6996,8 @@ def dashboard_budget_by_period(df):
             ]
 
     ensure_date_columns(filtered_df)
+    _bdds_cal_start = None
+    _bdds_cal_end = None
     # R23-13.1 (стр.34): фильтр «Год» заменён на фильтр-календарь «Период»
     # (диапазон дат по «plan end»); селектор гранулярности (месяц/квартал/год)
     # уже присутствует выше ("Группировать по").
@@ -7092,12 +7094,20 @@ def dashboard_budget_by_period(df):
                         (_pe_series >= _start_dt)
                         & (_pe_series <= (_end_dt + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)))
                     ].copy()
+                    _bdds_cal_start = _start_dt
+                    _bdds_cal_end = _end_dt
 
     # Единый fallback бюджета: MSP -> 1С dannye при пустых budget колонках.
     ensure_budget_columns(filtered_df)
     from dashboards.finance_from_1c import ensure_budget_frame_with_fallback
 
-    filtered_df, _ = ensure_budget_frame_with_fallback(filtered_df, show_caption=True)
+    filtered_df, _ = ensure_budget_frame_with_fallback(
+        filtered_df,
+        show_caption=True,
+        restrict_projects_from_df=True,
+        period_start=_bdds_cal_start,
+        period_end=_bdds_cal_end,
+    )
     ensure_date_columns(filtered_df)
     ensure_budget_columns(filtered_df)
     has_budget = "budget plan" in filtered_df.columns and "budget fact" in filtered_df.columns
