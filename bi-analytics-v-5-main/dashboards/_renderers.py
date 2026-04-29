@@ -8381,6 +8381,42 @@ def dashboard_bdr(df):
             return pd.concat(parts, axis=0)
         return _process_group(out)
 
+    def _coerce_bdr_amount_series(raw: pd.Series) -> pd.Series:
+        """
+        Нормализует денежные значения из 1С/CSV:
+        - пробелы/неразрывные пробелы как разделители тысяч;
+        - десятичная запятая;
+        - скобки для отрицательных значений;
+        - хвосты вида «руб.», «₽», мусорные символы.
+        """
+        if raw is None:
+            return pd.Series(dtype="float64")
+        s = raw.astype(str).str.strip()
+        s = s.replace({"": np.nan, "nan": np.nan, "None": np.nan, "null": np.nan})
+
+        # (123,45) -> -123,45
+        s = s.str.replace(r"^\((.*)\)$", r"-\1", regex=True)
+
+        # Убираем валютные/служебные символы, оставляя только знаки/цифры/разделители.
+        s = s.str.replace(r"[^0-9,\.\-]", "", regex=True)
+
+        # Если есть и точка, и запятая — считаем точку разделителем тысяч, запятую десятичной.
+        mixed = s.str.contains(",", na=False) & s.str.contains(r"\.", na=False)
+        s.loc[mixed] = s.loc[mixed].str.replace(".", "", regex=False)
+
+        # Если только запятая — делаем её десятичной.
+        only_comma = s.str.contains(",", na=False) & ~s.str.contains(r"\.", na=False)
+        s.loc[only_comma] = s.loc[only_comma].str.replace(",", ".", regex=False)
+
+        # Если несколько точек, оставляем последнюю как десятичный разделитель.
+        multi_dot = s.str.count(r"\.").fillna(0) > 1
+        if bool(multi_dot.any()):
+            s.loc[multi_dot] = s.loc[multi_dot].str.replace(
+                r"\.(?=.*\.)", "", regex=True
+            )
+
+        return pd.to_numeric(s, errors="coerce")
+
     def _try_build_bdr_from_scenario(_df: pd.DataFrame):
         out = _df.copy()
         scenario_col = None
@@ -8410,7 +8446,7 @@ def dashboard_bdr(df):
         _is_bdr = _ti.str.contains("БДР", na=False)
         _is_plan = _sc.str.contains("ПЛАН", na=False) & _is_bdr
         _is_fact = _sc.str.contains("ФАКТ", na=False) & _is_bdr
-        _amount = pd.to_numeric(out[amount_col], errors="coerce").fillna(0.0)
+        _amount = _coerce_bdr_amount_series(out[amount_col]).fillna(0.0)
         # Защита: не переключаемся на сценарный расчёт, если релевантных строк нет
         # (иначе получаем нули везде и «плоские» одинаковые суммы).
         if int(_is_plan.sum()) == 0 and int(_is_fact.sum()) == 0:
@@ -8553,6 +8589,101 @@ def dashboard_bdr(df):
             filtered_df = filtered_df[
                 filtered_df[stage_col].astype(str).str.strip() == str(selected_section).strip()
             ]
+
+    # Фильтр-календарь периода (как в БДДС): диапазон по plan end после проект/лот/этап фильтров.
+    if "plan end" in filtered_df.columns:
+        _pe_series_bdr = pd.to_datetime(filtered_df["plan end"], errors="coerce")
+        if _pe_series_bdr.notna().any():
+            _bdr_min = _pe_series_bdr.min()
+            _bdr_max = _pe_series_bdr.max()
+            _bdr_start = _bdr_min.date() if pd.notna(_bdr_min) else None
+            _bdr_end = _bdr_max.date() if pd.notna(_bdr_max) else None
+            _bdr_range_kw = {
+                "label": "Период",
+                "key": "bdr_period_range",
+                "help": "Фильтр по диапазону дат (поле «Период»/plan end).",
+                "format": "DD.MM.YYYY",
+            }
+            if _bdr_start and _bdr_end and _bdr_start <= _bdr_end:
+                _bdr_range_kw["value"] = (_bdr_start, _bdr_end)
+                _bdr_range_kw["min_value"] = _bdr_start
+                _bdr_range_kw["max_value"] = _bdr_end
+            _bdr_period_range = st.date_input(**_bdr_range_kw)
+            components.html(
+                """
+                <script>
+                (function() {
+                  const rootDoc = window.parent && window.parent.document ? window.parent.document : document;
+                  const hid = "st-bdr-hide-datepicker-quickselect";
+                  if (!rootDoc.getElementById(hid)) {
+                    const st = rootDoc.createElement("style");
+                    st.id = hid;
+                    st.textContent =
+                      '[data-baseweb="popover"] [data-baseweb="calendar"] > div:last-child { display: none !important; }';
+                    rootDoc.head.appendChild(st);
+                  }
+
+                  const dict = new Map([
+                    ["January","Январь"],["February","Февраль"],["March","Март"],["April","Апрель"],
+                    ["May","Май"],["June","Июнь"],["July","Июль"],["August","Август"],
+                    ["September","Сентябрь"],["October","Октябрь"],["November","Ноябрь"],["December","Декабрь"],
+                    ["Mo","Пн"],["Tu","Вт"],["We","Ср"],["Th","Чт"],["Fr","Пт"],["Sa","Сб"],["Su","Вс"],
+                    ["None","Нет"]
+                  ]);
+                  const root = window.parent && window.parent.document ? window.parent.document : document;
+
+                  const shouldSkip = (el) => {
+                    if (!el || !el.tagName) return true;
+                    const t = el.tagName.toLowerCase();
+                    if (t === "script" || t === "style" || t === "textarea" || t === "input") return true;
+                    if (t === "svg" || t === "path") return true;
+                    if (el.isContentEditable) return true;
+                    return false;
+                  };
+
+                  const replaceInTextNode = (node) => {
+                    const raw = node.nodeValue || "";
+                    const txt = raw.trim();
+                    if (!txt) return;
+                    if (dict.has(txt)) {
+                      node.nodeValue = raw.replace(txt, dict.get(txt));
+                      return;
+                    }
+                    let next = raw;
+                    for (const [en, ru] of dict.entries()) {
+                      next = next.replace(new RegExp("\\\\b" + en + "\\\\b", "g"), ru);
+                    }
+                    if (next !== raw) node.nodeValue = next;
+                  };
+
+                  const apply = () => {
+                    const all = root.querySelectorAll("*");
+                    all.forEach((el) => {
+                      if (shouldSkip(el)) return;
+                      const childs = el.childNodes || [];
+                      for (let i = 0; i < childs.length; i++) {
+                        const n = childs[i];
+                        if (n && n.nodeType === Node.TEXT_NODE) replaceInTextNode(n);
+                      }
+                    });
+                  };
+                  apply();
+                  const obs = new MutationObserver(apply);
+                  obs.observe(root.body, { childList: true, subtree: true });
+                })();
+                </script>
+                """,
+                height=0,
+                width=0,
+            )
+            if isinstance(_bdr_period_range, (list, tuple)) and len(_bdr_period_range) == 2:
+                _bdr_from = pd.to_datetime(_bdr_period_range[0], errors="coerce")
+                _bdr_to = pd.to_datetime(_bdr_period_range[1], errors="coerce")
+                if pd.notna(_bdr_from) and pd.notna(_bdr_to):
+                    filtered_df = filtered_df[
+                        (_pe_series_bdr >= _bdr_from)
+                        & (_pe_series_bdr <= (_bdr_to + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)))
+                    ].copy()
 
     filtered_df["_plan_exp"] = pd.to_numeric(filtered_df[revenue_col], errors="coerce")
     filtered_df["_fact_exp"] = pd.to_numeric(filtered_df[expense_col], errors="coerce")

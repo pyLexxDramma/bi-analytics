@@ -86,7 +86,17 @@ def _sample_parse_rate_num(s: pd.Series) -> float:
     x = s.dropna()
     if x.empty:
         return 1.0
-    y = pd.to_numeric(x.astype(str).str.replace(",", ".", regex=False), errors="coerce")
+    z = x.astype(str).str.strip()
+    z = z.str.replace(r"^\((.*)\)$", r"-\1", regex=True)
+    z = z.str.replace(r"[^0-9,\.\-]", "", regex=True)
+    mixed = z.str.contains(",", na=False) & z.str.contains(r"\.", na=False)
+    z.loc[mixed] = z.loc[mixed].str.replace(".", "", regex=False)
+    only_comma = z.str.contains(",", na=False) & ~z.str.contains(r"\.", na=False)
+    z.loc[only_comma] = z.loc[only_comma].str.replace(",", ".", regex=False)
+    multi_dot = z.str.count(r"\.").fillna(0) > 1
+    if bool(multi_dot.any()):
+        z.loc[multi_dot] = z.loc[multi_dot].str.replace(r"\.(?=.*\.)", "", regex=True)
+    y = pd.to_numeric(z, errors="coerce")
     return float(y.notna().mean())
 
 
