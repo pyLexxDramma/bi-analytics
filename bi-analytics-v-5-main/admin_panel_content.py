@@ -459,6 +459,11 @@ def _render_control_points_msp_tab(user: dict) -> None:
 
     render_control_points_milestones_admin_settings(key_prefix="admin_cp_msp")
 
+    st.subheader("Девелоперские проекты: матрица контрольных точек")
+    from dashboards._renderers import render_developer_projects_matrix_admin_settings
+
+    render_developer_projects_matrix_admin_settings(key_prefix="admin_dev_matrix")
+
     st.divider()
     st.markdown("<h2 class='Duquhununee'>MSP: задача для метрик</h2>", unsafe_allow_html=True)
 

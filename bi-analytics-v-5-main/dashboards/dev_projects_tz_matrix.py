@@ -5,7 +5,9 @@
 """
 from __future__ import annotations
 
+import copy
 import html as html_module
+import json
 import re
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -14,6 +16,151 @@ import numpy as np
 import pandas as pd
 
 from utils import outline_level_numeric
+
+from settings import SETTING_KEYS
+
+DEV_MATRIX_JSON_KEY = "developer_projects_matrix_json"
+
+# Стабильные ключи строк матрицы (порядок = порядок колонок отчёта), для titles/matches в JSON.
+_DEV_MATRIX_ROW_KEYS: List[str] = [
+    "inv_arenda_zu",
+    "inv_gotovy_produkt",
+    "inv_gpzu",
+    "life_ekspertiza_st_p",
+    "life_komanda_rp",
+    "life_rs",
+    "life_rd_1var",
+    "life_fin_ds",
+    "life_tessa_preds",
+    "life_ird_elvo",
+    "life_ird_udc",
+    "life_pos_1var",
+    "life_fin_smr_start",
+    "life_smr_start",
+    "life_tech_pri",
+    "life_zos",
+    "life_rv",
+    "life_pravo1",
+    "life_vykup_zu",
+    "life_pravo2",
+    "life_boxes_res",
+]
+
+
+def load_developer_projects_matrix_prefs() -> Dict[str, Any]:
+    """Подписи План/Факт/Откл., умолчание вертикальных дат, заголовки вех и patch match-критериев к MSP."""
+    try:
+        from settings import get_setting
+
+        raw = (get_setting(DEV_MATRIX_JSON_KEY) or "").strip()
+        base: Dict[str, Any] = {
+            "subcolumns": {"plan": "План", "fact": "Факт", "otkl": "Откл."},
+            "default_vertical_dates": False,
+            "titles": {},
+            "matches": {},
+        }
+        if not raw:
+            return base
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return base
+        sc = data.get("subcolumns")
+        if isinstance(sc, dict):
+            for k in ("plan", "fact", "otkl"):
+                v = sc.get(k)
+                if isinstance(v, str) and v.strip():
+                    base["subcolumns"][k] = v.strip()
+        dv = data.get("default_vertical_dates")
+        if isinstance(dv, bool):
+            base["default_vertical_dates"] = dv
+        tt = data.get("titles")
+        if isinstance(tt, dict):
+            base["titles"] = {
+                str(a).strip(): str(b).strip() for a, b in tt.items() if str(a).strip()
+            }
+        mt = data.get("matches")
+        if isinstance(mt, dict):
+            base["matches"] = mt
+        return base
+    except Exception:
+        return {
+            "subcolumns": {"plan": "План", "fact": "Факт", "otkl": "Откл."},
+            "default_vertical_dates": False,
+            "titles": {},
+            "matches": {},
+        }
+
+
+def developer_projects_matrix_default_prefs_json() -> str:
+    return json.dumps(
+        {
+            "subcolumns": {"plan": "План", "fact": "Факт", "otkl": "Откл."},
+            "default_vertical_dates": False,
+            "titles": {},
+            "matches": {},
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def save_developer_projects_matrix_prefs_json(json_str: str, updated_by: str) -> Tuple[bool, str]:
+    """Сохранение JSON; пустая строка — сброс подписей/маппинга."""
+    try:
+        from settings import set_setting
+
+        s = (json_str or "").strip()
+        desc = ""
+        try:
+            desc = str(SETTING_KEYS.get(DEV_MATRIX_JSON_KEY, ""))
+        except Exception:
+            desc = ""
+        if not s:
+            set_setting(
+                DEV_MATRIX_JSON_KEY,
+                "",
+                description=desc,
+                updated_by=updated_by,
+            )
+            return True, "Сброшено на правила из кода / пустые переопределения."
+        data = json.loads(s)
+        if not isinstance(data, dict):
+            return False, "Ожидается JSON-объект (subcolumns, default_vertical_dates, titles, matches)."
+        out: Dict[str, Any] = {
+            "subcolumns": {"plan": "План", "fact": "Факт", "otkl": "Откл."},
+            "default_vertical_dates": bool(data.get("default_vertical_dates", False)),
+            "titles": {},
+            "matches": {},
+        }
+        sc = data.get("subcolumns")
+        if isinstance(sc, dict):
+            for k in ("plan", "fact", "otkl"):
+                vv = sc.get(k)
+                if isinstance(vv, str) and vv.strip():
+                    out["subcolumns"][k] = vv.strip()
+        tt = data.get("titles")
+        if isinstance(tt, dict):
+            for a, b in tt.items():
+                ak = str(a).strip()
+                if ak:
+                    out["titles"][ak] = str(b).strip()
+        mt = data.get("matches")
+        if isinstance(mt, dict):
+            for a, patch in mt.items():
+                ak = str(a).strip()
+                if ak and isinstance(patch, dict):
+                    out["matches"][ak] = patch
+        set_setting(
+            DEV_MATRIX_JSON_KEY,
+            json.dumps(out, ensure_ascii=False, separators=(",", ":")),
+            description=desc,
+            updated_by=updated_by,
+        )
+        return True, "Сохранено."
+    except json.JSONDecodeError as e:
+        return False, f"Ошибка JSON: {e}"
+    except Exception as e:
+        return False, str(e)[:500]
 
 
 def _guess_msp_project_slug_for_loader(df: pd.DataFrame) -> str:
@@ -971,6 +1118,21 @@ def build_dev_tz_matrix_rows(
     if mdf is not None and not getattr(mdf, "empty", True):
         mdf = dedupe_msp_for_developer_projects(mdf)
 
+    _prefs = load_developer_projects_matrix_prefs()
+
+    def effective_title(row_key: str, default_title: str) -> str:
+        tt = (_prefs.get("titles") or {}).get(row_key)
+        if isinstance(tt, str) and tt.strip():
+            return tt.strip()
+        return default_title
+
+    def effective_match(row_key: str, kw: dict) -> dict:
+        patch = (_prefs.get("matches") or {}).get(row_key)
+        out = copy.deepcopy(kw)
+        if isinstance(patch, dict) and patch:
+            out.update(patch)
+        return out
+
     def add_row(
         group: str,
         label: str,
@@ -981,6 +1143,7 @@ def build_dev_tz_matrix_rows(
         warn_pct: bool = False,
         warn_directives: bool = False,
         phase: str = "",
+        row_key: str = "",
     ) -> None:
         rows.append(
             {
@@ -993,6 +1156,7 @@ def build_dev_tz_matrix_rows(
                 "warn_pct": bool(warn_pct),
                 "warn_directives": bool(warn_directives),
                 "phase": phase,
+                "row_key": str(row_key or "").strip(),
             }
         )
 
@@ -1000,16 +1164,26 @@ def build_dev_tz_matrix_rows(
     if "project name" in mdf.columns and mdf["project name"].notna().any():
         cap = str(mdf["project name"].dropna().astype(str).iloc[0]).strip()
 
-    def _msp_row(phase: str, group: str, label: str, kw: dict) -> None:
-        sub = _match_tasks_like_msp_row(mdf, kw)
+    def _msp_row(
+        phase: str,
+        group: str,
+        label: str,
+        kw: dict,
+        *,
+        row_key: str,
+    ) -> None:
+        lab = effective_title(row_key, label)
+        kw2 = effective_match(row_key, kw)
+        sub = _match_tasks_like_msp_row(mdf, kw2)
         if sub is None or sub.empty:
-            add_row(group, label, "Н/Д", "Н/Д", "Н/Д", phase=phase)
+            add_row(group, lab, "Н/Д", "Н/Д", "Н/Д", phase=phase, row_key=row_key)
             return
         # ТЗ: в каждой ячейке План/Факт/Откл. — одно значение (одна дата / один текст отклонения), без «дата1 / дата2».
         ps, fs, os, _ok, w = _one_milestone_cell(sub)
-        add_row(group, label, ps, fs, os, warn_pct=bool(w), phase=phase)
+        add_row(group, lab, ps, fs, os, warn_pct=bool(w), phase=phase, row_key=row_key)
 
     # Порядок столбцов — по референсу (file-002: вехи Ковенантов; file-003: ДС/ТЕССА до ИРД/ПОС)
+    _rk = iter(_DEV_MATRIX_ROW_KEYS)
     specs_invest_msp: List[Tuple[str, str, str, dict]] = [
         # По ТЗ: в реальной MSP — имя задачи + ур.5; во внутренних CSV вехи часто в колонке «Фаза» (см. phase_needles).
         (
@@ -1173,21 +1347,47 @@ def build_dev_tz_matrix_rows(
         ),
     ]
     for phase, group, label, kw in specs_invest_msp:
-        _msp_row(phase, group, label, kw)
+        _msp_row(phase, group, label, kw, row_key=str(next(_rk)))
 
+    def _fmtml(v: float) -> str:
+        # ТЗ: млн руб., два знака после запятой
+        return f"{v:.2f}".replace(".", ",")
+
+    rk_ds = str(next(_rk))
     pm, fm, om = _ds_plan_fact_otkl_mln(_bddds_df_for_dev_matrix(mdf, project_data, ss))
     if pm is None:
-        add_row("Финансы", "Выборка ДС, млн руб.", "Н/Д", "Н/Д", "Н/Д", phase="life")
+        add_row(
+            "Финансы",
+            effective_title(rk_ds, "Выборка ДС, млн руб."),
+            "Н/Д",
+            "Н/Д",
+            "Н/Д",
+            phase="life",
+            row_key=rk_ds,
+        )
     else:
+        add_row(
+            "Финансы",
+            effective_title(rk_ds, "Выборка ДС, млн руб."),
+            _fmtml(pm),
+            _fmtml(fm),
+            _fmtml(om),
+            phase="life",
+            row_key=rk_ds,
+        )
 
-        def _fmtml(v: float) -> str:
-            # ТЗ: млн руб., два знака после запятой
-            return f"{v:.2f}".replace(".", ",")
-
-        add_row("Финансы", "Выборка ДС, млн руб.", _fmtml(pm), _fmtml(fm), _fmtml(om), phase="life")
-
+    rk_tp = str(next(_rk))
     tp, tf, to, warn_t, _tessa_hint = _predpisaniya_combined(mdf, ss)
-    add_row("ТЕССА", "ПРЕДПИСАНИЯ", tp, tf, to, warn_directives=warn_t, phase="life")
+    add_row(
+        "ТЕССА",
+        effective_title(rk_tp, "ПРЕДПИСАНИЯ"),
+        tp,
+        tf,
+        to,
+        warn_directives=warn_t,
+        phase="life",
+        row_key=rk_tp,
+    )
 
     specs_invest_tail: List[Tuple[str, str, str, dict]] = [
         (
@@ -1275,7 +1475,7 @@ def build_dev_tz_matrix_rows(
         ),
     ]
     for phase, group, label, kw in specs_invest_tail:
-        _msp_row(phase, group, label, kw)
+        _msp_row(phase, group, label, kw, row_key=str(next(_rk)))
 
     specs_life: List[Tuple[str, str, str, dict]] = [
         (
@@ -1462,7 +1662,14 @@ def build_dev_tz_matrix_rows(
         ),
     ]
     for phase, group, label, kw in specs_life:
-        _msp_row(phase, group, label, kw)
+        _msp_row(phase, group, label, kw, row_key=str(next(_rk)))
+
+    try:
+        next(_rk)
+    except StopIteration:
+        pass
+    else:
+        raise RuntimeError("_DEV_MATRIX_ROW_KEYS не совпадает с генерацией строк матрицы")
 
     return rows, cap
 
@@ -1581,6 +1788,9 @@ _DEV_TZ_MATRIX_CSS = """
 
 def _dev_tz_matrix_row_key(r: Dict[str, Any]) -> Tuple[str, str]:
     """Стабильный ключ строки матрицы для сопоставления блоков разных проектов."""
+    rid = str(r.get("row_key") or "").strip()
+    if rid:
+        return ("__devmx_key__", rid)
     return (str(r.get("group") or ""), str(r.get("label") or ""))
 
 
@@ -1646,6 +1856,11 @@ def render_dev_tz_matrix(
 
     template = blocks[0]
     esc = html_module.escape
+    prefs = load_developer_projects_matrix_prefs()
+    sc_map = prefs.get("subcolumns") or {}
+    l_plan = str(sc_map.get("plan") or "План").strip() or "План"
+    l_fact = str(sc_map.get("fact") or "Факт").strip() or "Факт"
+    l_otkl = str(sc_map.get("otkl") or "Откл.").strip() or "Откл."
     invest_labels = [r["label"] for r in template if r.get("phase") == "invest"]
     life_labels = [r["label"] for r in template if r.get("phase") == "life"]
     n_inv = max(1, len(invest_labels))
@@ -1671,9 +1886,9 @@ def render_dev_tz_matrix(
         )
         subline.extend(
             [
-                f'<th class="dev-tz-sub {band}">План</th>',
-                f'<th class="dev-tz-sub {band}">Факт</th>',
-                f'<th class="dev-tz-sub {band}">Откл.</th>',
+                f'<th class="dev-tz-sub {band}">{esc(l_plan)}</th>',
+                f'<th class="dev-tz-sub {band}">{esc(l_fact)}</th>',
+                f'<th class="dev-tz-sub {band}">{esc(l_otkl)}</th>',
             ]
         )
     head_rows.append("<tr>" + "".join(mline) + "</tr>")

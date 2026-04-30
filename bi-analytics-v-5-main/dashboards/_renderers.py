@@ -21,6 +21,7 @@ from .ui_quiet import suppress_caption
 from dashboards.dev_projects_tz_matrix import (
     build_dev_tz_matrix_rows,
     ensure_msp_df_for_dev_matrix,
+    load_developer_projects_matrix_prefs,
     render_dev_tz_matrix,
     render_control_points_dashboard,
 )
@@ -21887,7 +21888,15 @@ def dashboard_developer_projects(df):
 
     st.subheader("Матрица контрольных точек")
 
-    vert_dates = False
+    _prefs_dm = load_developer_projects_matrix_prefs()
+    if "dev_matrix_vert_dates" not in st.session_state:
+        st.session_state["dev_matrix_vert_dates"] = bool(_prefs_dm.get("default_vertical_dates"))
+
+    vert_dates = st.checkbox(
+        "Даты в ячейках План/Факт вертикально",
+        key="dev_matrix_vert_dates",
+    )
+
     try:
         from settings import get_setting as _get_admin_mail
 
@@ -22396,6 +22405,119 @@ def render_control_points_milestones_admin_settings(*, key_prefix: str = "cp_das
                 "- **block_contains** — подстрока функционального блока.\n"
                 "- **phase_needles** / **phase_exclude_needles** — если в файле есть колонка «Фаза».\n\n"
                 "Пустое сохранение через «Сбросить» восстанавливает встроенный список из кода."
+            )
+
+
+def render_developer_projects_matrix_admin_settings(*, key_prefix: str = "admin_dev_mx") -> None:
+    """Администратор: заголовки вех, правила MSP (partial match), подписи План/Факт/Откл., вертикальные даты по умолчанию."""
+    _kp = key_prefix
+    _tx_key = f"{_kp}_dev_matrix_prefs_json"
+    try:
+        from auth import get_current_user, has_admin_access
+
+        user = get_current_user()
+        if not user or not has_admin_access(user.get("role")):
+            return
+    except Exception:
+        return
+
+    import json as _json
+
+    from dashboards.dev_projects_tz_matrix import (
+        _DEV_MATRIX_ROW_KEYS,
+        developer_projects_matrix_default_prefs_json,
+        load_developer_projects_matrix_prefs,
+        save_developer_projects_matrix_prefs_json,
+    )
+
+    with st.expander(
+        "Девелоперские проекты — матрица: подписи столбцов, маппинг MSP и даты по умолчанию",
+        expanded=False,
+    ):
+        suppress_caption(
+            "**subcolumns**: подписи третьей строки шапки («План/Факт/Откл.»). "
+            "**default_vertical_dates**: начальное значение чекбокса вертикальных дат для новых сессий. "
+            "**titles**: переименование вех `{ \"row_key\": \"Новый заголовок\" }`. Ключи: "
+            + ", ".join(_DEV_MATRIX_ROW_KEYS[:8])
+            + ", … (**полный список** — в блоке ниже)."
+        )
+
+        prefs0 = load_developer_projects_matrix_prefs()
+        suppress_caption(f"Сейчас в настройках: **{len(prefs0.get('titles') or {})}** заголовков, **{len(prefs0.get('matches') or {})}** маппингов.")
+
+        st.markdown("Быстрое редактирование заголовков вех")
+        for rk in _DEV_MATRIX_ROW_KEYS:
+            cur = str((prefs0.get("titles") or {}).get(rk, "") or "").strip()
+            _ = st.text_input(f"Заголовок столбца (ключ `{rk}`)", value=cur, key=f"{_kp}_ttl_{rk}")
+
+        uname = str(user.get("username") or "admin")
+        if st.button("Сохранить заголовки вех", key=f"{_kp}_save_titles"):
+            try:
+                prefs = load_developer_projects_matrix_prefs()
+                titles: dict[str, str] = {}
+                for rk in _DEV_MATRIX_ROW_KEYS:
+                    kk = f"{_kp}_ttl_{rk}"
+                    vv = str(st.session_state.get(kk, "")).strip()
+                    if vv:
+                        titles[rk] = vv
+                prefs["titles"] = titles
+                ok, msg = save_developer_projects_matrix_prefs_json(
+                    _json.dumps(prefs, ensure_ascii=False, indent=2), uname
+                )
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+            except Exception as e:
+                st.error(f"Ошибка сохранения заголовков: {e}")
+
+        st.markdown("---")
+        default_js = developer_projects_matrix_default_prefs_json()
+        raw = _json.dumps(prefs0, ensure_ascii=False, indent=2)
+        txt = st.text_area(
+            "JSON: subcolumns, default_vertical_dates, titles, matches",
+            value=raw,
+            height=420,
+            key=_tx_key,
+        )
+        b1, b2, b3 = st.columns(3)
+        with b1:
+            if st.button("Сохранить JSON", type="primary", key=f"{_kp}_save_json"):
+                ok, msg = save_developer_projects_matrix_prefs_json(txt, uname)
+                if ok:
+                    if _tx_key in st.session_state:
+                        del st.session_state[_tx_key]
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+        with b2:
+            if st.button("Сбросить настройки матрицы", key=f"{_kp}_reset_json"):
+                ok, msg = save_developer_projects_matrix_prefs_json("", uname)
+                if ok:
+                    if _tx_key in st.session_state:
+                        del st.session_state[_tx_key]
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+        with b3:
+            st.download_button(
+                "Шаблон JSON",
+                default_js.encode("utf-8-sig"),
+                "developer_projects_matrix_prefs_default.json",
+                "application/json",
+                key=f"{_kp}_dl_tpl",
+            )
+        with st.expander("Ключи строк матрицы (titles / matches)", expanded=False):
+            st.code("\n".join(_DEV_MATRIX_ROW_KEYS), language="text")
+        with st.expander("Подсказка по полю matches", expanded=False):
+            st.markdown(
+                "Для ключа `row_key` укажите объект с полями **match** из кода (частичная подмена по верхнему уровню): "
+                "`level`, `names_any`, `name_contains`, `parent_l2_contains`, `block_contains`, "
+                "`phase_needles`, `phase_exclude_needles`, `names_exact_any`. "
+                "Списки (`names_any`, `phase_needles`, …) при подмене **заменяются целиком**."
             )
 
 
