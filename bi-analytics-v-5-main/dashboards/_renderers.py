@@ -6991,16 +6991,8 @@ def dashboard_budget_by_period(df):
         else:
             selected_section = "Все"
 
-    hide_adjusted = st.checkbox(
-        "Скрыть скорректированный бюджет",
-        value=True,
-        key="budget_period_hide_adjusted",
-    )
-    hide_reserve = st.checkbox(
-        "Скрыть отклонение (столбец на графике)",
-        value=False,
-        key="budget_period_hide_reserve",
-    )
+    hide_adjusted = True
+    hide_reserve = False
 
     # Apply filters - fix filtering
     filtered_df = df.copy()
