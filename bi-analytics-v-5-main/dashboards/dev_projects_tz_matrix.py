@@ -5,13 +5,223 @@
 """
 from __future__ import annotations
 
+import copy
 import html as html_module
+import json
 import re
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
+
+from utils import outline_level_numeric
+
+from settings import SETTING_KEYS
+
+DEV_MATRIX_JSON_KEY = "developer_projects_matrix_json"
+
+# Стабильные ключи строк матрицы (порядок = порядок колонок отчёта), для titles/matches в JSON.
+_DEV_MATRIX_ROW_KEYS: List[str] = [
+    "inv_arenda_zu",
+    "inv_gotovy_produkt",
+    "inv_gpzu",
+    "life_ekspertiza_st_p",
+    "life_komanda_rp",
+    "life_rs",
+    "life_rd_1var",
+    "life_fin_ds",
+    "life_tessa_preds",
+    "life_ird_elvo",
+    "life_ird_udc",
+    "life_pos_1var",
+    "life_fin_smr_start",
+    "life_smr_start",
+    "life_tech_pri",
+    "life_zos",
+    "life_rv",
+    "life_pravo1",
+    "life_vykup_zu",
+    "life_pravo2",
+    "life_boxes_res",
+]
+
+
+def load_developer_projects_matrix_prefs() -> Dict[str, Any]:
+    """Подписи План/Факт/Откл., умолчание вертикальных дат, заголовки вех и patch match-критериев к MSP."""
+    try:
+        from settings import get_setting
+
+        raw = (get_setting(DEV_MATRIX_JSON_KEY) or "").strip()
+        base: Dict[str, Any] = {
+            "subcolumns": {"plan": "План", "fact": "Факт", "otkl": "Откл."},
+            "default_vertical_dates": False,
+            "titles": {},
+            "matches": {},
+        }
+        if not raw:
+            return base
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return base
+        sc = data.get("subcolumns")
+        if isinstance(sc, dict):
+            for k in ("plan", "fact", "otkl"):
+                v = sc.get(k)
+                if isinstance(v, str) and v.strip():
+                    base["subcolumns"][k] = v.strip()
+        dv = data.get("default_vertical_dates")
+        if isinstance(dv, bool):
+            base["default_vertical_dates"] = dv
+        tt = data.get("titles")
+        if isinstance(tt, dict):
+            base["titles"] = {
+                str(a).strip(): str(b).strip() for a, b in tt.items() if str(a).strip()
+            }
+        mt = data.get("matches")
+        if isinstance(mt, dict):
+            base["matches"] = mt
+        return base
+    except Exception:
+        return {
+            "subcolumns": {"plan": "План", "fact": "Факт", "otkl": "Откл."},
+            "default_vertical_dates": False,
+            "titles": {},
+            "matches": {},
+        }
+
+
+def developer_projects_matrix_default_prefs_json() -> str:
+    return json.dumps(
+        {
+            "subcolumns": {"plan": "План", "fact": "Факт", "otkl": "Откл."},
+            "default_vertical_dates": False,
+            "titles": {},
+            "matches": {},
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def save_developer_projects_matrix_prefs_json(json_str: str, updated_by: str) -> Tuple[bool, str]:
+    """Сохранение JSON; пустая строка — сброс подписей/маппинга."""
+    try:
+        from settings import set_setting
+
+        s = (json_str or "").strip()
+        desc = ""
+        try:
+            desc = str(SETTING_KEYS.get(DEV_MATRIX_JSON_KEY, ""))
+        except Exception:
+            desc = ""
+        if not s:
+            set_setting(
+                DEV_MATRIX_JSON_KEY,
+                "",
+                description=desc,
+                updated_by=updated_by,
+            )
+            return True, "Сброшено на правила из кода / пустые переопределения."
+        data = json.loads(s)
+        if not isinstance(data, dict):
+            return False, "Ожидается JSON-объект (subcolumns, default_vertical_dates, titles, matches)."
+        out: Dict[str, Any] = {
+            "subcolumns": {"plan": "План", "fact": "Факт", "otkl": "Откл."},
+            "default_vertical_dates": bool(data.get("default_vertical_dates", False)),
+            "titles": {},
+            "matches": {},
+        }
+        sc = data.get("subcolumns")
+        if isinstance(sc, dict):
+            for k in ("plan", "fact", "otkl"):
+                vv = sc.get(k)
+                if isinstance(vv, str) and vv.strip():
+                    out["subcolumns"][k] = vv.strip()
+        tt = data.get("titles")
+        if isinstance(tt, dict):
+            for a, b in tt.items():
+                ak = str(a).strip()
+                if ak:
+                    out["titles"][ak] = str(b).strip()
+        mt = data.get("matches")
+        if isinstance(mt, dict):
+            for a, patch in mt.items():
+                ak = str(a).strip()
+                if ak and isinstance(patch, dict):
+                    out["matches"][ak] = patch
+        set_setting(
+            DEV_MATRIX_JSON_KEY,
+            json.dumps(out, ensure_ascii=False, separators=(",", ":")),
+            description=desc,
+            updated_by=updated_by,
+        )
+        return True, "Сохранено."
+    except json.JSONDecodeError as e:
+        return False, f"Ошибка JSON: {e}"
+    except Exception as e:
+        return False, str(e)[:500]
+
+
+def _guess_msp_project_slug_for_loader(df: pd.DataFrame) -> str:
+    """
+    Ключ для web_loader._apply_msp_column_mapping (MSP_PROJECT_NAME_MAP / имя файла):
+    из первой непустой ячейки проекта или пустая строка.
+    """
+    try:
+        from config import MSP_PROJECT_NAME_MAP as M
+    except Exception:
+        M = {}
+    pc = _find_col(df, ["project name", "Проект", "Project", "проект", "ID_проекта"])
+    if not pc or pc not in df.columns:
+        return ""
+    s = df[pc].dropna().astype(str).str.strip()
+    if s.empty:
+        return ""
+    raw = str(s.iloc[0]).strip()
+    lk = raw.lower().replace(" ", "").replace("\xa0", "")
+    if lk in M:
+        return str(lk)
+    for k, v in M.items():
+        if str(v).strip().lower() == raw.lower():
+            return str(k).strip().lower()
+    return lk
+
+
+def _needs_msp_web_loader_normalize(df: pd.DataFrame) -> bool:
+    """Русская выгрузка без прохода через web_loader: нет canonical-колонок дат/задачи/уровня."""
+    if df is None or getattr(df, "empty", True):
+        return False
+    cl = {str(c).strip().lower() for c in df.columns}
+    if "plan end" not in cl and _find_col(df, ["Окончание", "План окончание", "План_окончание"]) is not None:
+        return True
+    if "task name" not in cl and _find_col(df, ["Название", "Название задачи", "Task Name"]) is not None:
+        return True
+    if "level" not in cl and _find_col(df, ["Уровень"]) is not None:
+        return True
+    if "base end" not in cl and _find_col(df, ["Базовое_окончание", "Базовое окончание"]) is not None:
+        return True
+    return False
+
+
+def ensure_msp_df_for_dev_matrix(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Единая схема MSP для матрицы: canonical-колонки, даты, section из дерева (как при load_all_from_web).
+    """
+    if df is None or getattr(df, "empty", True):
+        return df
+    out = df.copy()
+    if _needs_msp_web_loader_normalize(out):
+        try:
+            from web_loader import _apply_msp_column_mapping
+
+            slug = _guess_msp_project_slug_for_loader(out)
+            out = _apply_msp_column_mapping(out, slug)
+        except Exception:
+            out = _control_points_prepare_msp_dates(out)
+    else:
+        out = _control_points_prepare_msp_dates(out)
+    return out
 
 
 def _find_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
@@ -210,6 +420,68 @@ def _fmt_delta_days(d: Optional[int]) -> str:
     return f"{sign}{d} дн."
 
 
+_OTKL_DAYS_DISPLAY_RE = re.compile(r"([+-]?\d+)\s*дн", re.IGNORECASE)
+
+
+def _parse_otkl_days_display(s: Any) -> Optional[int]:
+    """Число дней из строки вида «+3 дн.» / «0 дн.» для раскраски «Откл.» (План−Факт)."""
+    if s is None:
+        return None
+    t = str(s).strip()
+    if not t or t.upper() in ("Н/Д", "N/D", "—", "-"):
+        return None
+    m = _OTKL_DAYS_DISPLAY_RE.search(t)
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except ValueError:
+        return None
+
+
+def _norm_cell_for_date_check(s: Any) -> str:
+    """Нормализация текста ячейки: NBSP/ZWSP, чтобы облако/Excel не ломали матч даты."""
+    if s is None:
+        return ""
+    t = (
+        str(s)
+        .replace("\xa0", " ")
+        .replace("\u2009", " ")
+        .replace("\u200b", "")
+        .replace("\ufeff", "")
+        .strip()
+    )
+    while "  " in t:
+        t = t.replace("  ", " ")
+    return t
+
+
+def _looks_like_ru_date_cell(s: Any) -> bool:
+    if s is None:
+        return False
+    t = _norm_cell_for_date_check(s)
+    if not t or t.upper() in ("Н/Д", "N/D", "—", "-"):
+        return False
+    # Строго DD.MM.YYYY или дата в начале («01.03.2026 г.», хвост от экспорта)
+    if re.fullmatch(r"\d{2}\.\d{2}\.\d{4}", t):
+        return True
+    if re.match(r"^\d{2}\.\d{2}\.\d{4}\b", t):
+        return True
+    # Иногда в CSV/Excel приходит ISO
+    if re.match(r"^\d{4}-\d{2}-\d{2}\b", t):
+        return True
+    return False
+
+
+def _dev_tz_apply_vert_date(vertical_dates: bool, col: str, cell_val: Any) -> bool:
+    """Нужны и класс, и inline-style (на Streamlit Cloud стили из <style> иногда не цепляются к ячейкам)."""
+    return bool(
+        vertical_dates
+        and col in ("plan", "fact")
+        and _looks_like_ru_date_cell(cell_val)
+    )
+
+
 def _find_phase_column(df: pd.DataFrame) -> Optional[str]:
     """Колонка вехи по макету правок: «Инвестиционная. Аренда ЗУ» и т.п. (не имена задач MSP)."""
     if df is None or not hasattr(df, "columns"):
@@ -271,6 +543,7 @@ def _match_msp(
     level: Optional[float],
     name_contains: Optional[str] = None,
     names_any: Optional[List[str]] = None,
+    names_exact_any: Optional[List[str]] = None,
     parent_l2_contains: Optional[str] = None,
     block_contains: Optional[str] = None,
 ) -> pd.DataFrame:
@@ -297,18 +570,25 @@ def _match_msp(
             out = out[sc.str.contains("ковенант", **_lit)]
         else:
             out = out[sc.str.contains(str(parent_l2_contains), **_lit)]
+    name_masks: List[pd.Series] = []
     if names_any:
-        masks = []
         for needle in names_any:
             if needle:
-                masks.append(out[nm].astype(str).str.contains(str(needle), **_lit))
-        if masks:
-            mm = masks[0]
-            for x in masks[1:]:
-                mm = mm | x
-            out = out[mm]
-    elif name_contains:
-        out = out[out[nm].astype(str).str.contains(str(name_contains), **_lit)]
+                name_masks.append(out[nm].astype(str).str.contains(str(needle), **_lit))
+    if names_exact_any:
+        nv = out[nm].astype(str).str.strip().str.casefold()
+        for xs in names_exact_any:
+            if xs is None or str(xs).strip() == "":
+                continue
+            xf = str(xs).strip().casefold()
+            name_masks.append(nv.eq(xf))
+    if name_contains:
+        name_masks.append(out[nm].astype(str).str.contains(str(name_contains), **_lit))
+    if name_masks:
+        mm_nm = name_masks[0]
+        for xm in name_masks[1:]:
+            mm_nm = mm_nm | xm
+        out = out[mm_nm]
     return out
 
 
@@ -319,7 +599,12 @@ def _match_tasks_like_msp_row(mdf: pd.DataFrame, kw: dict) -> pd.DataFrame:
     """
     if mdf is None or getattr(mdf, "empty", True):
         return mdf.iloc[0:0].copy()
-    kw_m = {k: v for k, v in kw.items() if k not in ("phase_needles", "phase_exclude_needles")}
+    kw_m = {
+        k: v
+        for k, v in kw.items()
+        if k not in ("phase_needles", "phase_exclude_needles", "names_exact_any")
+    }
+    _nex = kw.get("names_exact_any")
     phase_needles = kw.get("phase_needles")
     phase_exclude = kw.get("phase_exclude_needles")
     sub = _match_msp(
@@ -327,6 +612,7 @@ def _match_tasks_like_msp_row(mdf: pd.DataFrame, kw: dict) -> pd.DataFrame:
         level=kw_m.get("level"),
         name_contains=kw_m.get("name_contains"),
         names_any=kw_m.get("names_any"),
+        names_exact_any=_nex,
         parent_l2_contains=kw_m.get("parent_l2_contains"),
         block_contains=kw_m.get("block_contains"),
     )
@@ -336,6 +622,7 @@ def _match_tasks_like_msp_row(mdf: pd.DataFrame, kw: dict) -> pd.DataFrame:
             level=kw_m.get("level"),
             name_contains=kw_m.get("name_contains"),
             names_any=kw_m.get("names_any"),
+            names_exact_any=_nex,
             parent_l2_contains=None,
             block_contains=kw_m.get("block_contains"),
         )
@@ -345,6 +632,7 @@ def _match_tasks_like_msp_row(mdf: pd.DataFrame, kw: dict) -> pd.DataFrame:
             level=None,
             name_contains=kw_m.get("name_contains"),
             names_any=kw_m.get("names_any"),
+            names_exact_any=_nex,
             parent_l2_contains=None,
             block_contains=kw_m.get("block_contains"),
         )
@@ -354,6 +642,7 @@ def _match_tasks_like_msp_row(mdf: pd.DataFrame, kw: dict) -> pd.DataFrame:
             level=None,
             name_contains=kw_m.get("name_contains"),
             names_any=kw_m.get("names_any"),
+            names_exact_any=_nex,
             parent_l2_contains=None,
             block_contains=kw_m.get("block_contains"),
         )
@@ -363,29 +652,13 @@ def _match_tasks_like_msp_row(mdf: pd.DataFrame, kw: dict) -> pd.DataFrame:
             level=None,
             name_contains=kw_m.get("name_contains"),
             names_any=kw_m.get("names_any"),
+            names_exact_any=_nex,
             parent_l2_contains=None,
             block_contains=None,
         )
     if sub.empty and phase_needles:
         sub = _match_by_phase_needles(mdf, phase_needles, phase_exclude)
     return sub
-
-
-def _agg_plan_fact_otkl(rows: pd.DataFrame) -> Tuple[str, str, str, bool]:
-    if rows is None or rows.empty:
-        return "Н/Д", "Н/Д", "Н/Д", False
-    plan_parts: List[str] = []
-    fact_parts: List[str] = []
-    otkl_parts: List[str] = []
-    warns: List[bool] = []
-    for _, r in rows.iterrows():
-        pdt, fdt, pct = _msp_plan_fact_pct(r)
-        plan_parts.append(_fmt_date_ru(pdt))
-        fact_parts.append(_fmt_date_ru(fdt))
-        otkl_parts.append(_fmt_delta_days(_delta_days_plan_minus_fact(pdt, fdt)))
-        warns.append(_is_pct_complete_not_100(pct))
-    sep = " / "
-    return sep.join(plan_parts), sep.join(fact_parts), sep.join(otkl_parts), any(warns)
 
 
 def _unicode_dash_fold(s: str) -> str:
@@ -504,6 +777,20 @@ def _bddds_df_for_dev_matrix(
                             return sub2
             except Exception:
                 pass
+            if pk:
+                def _soft_dev_proj_cell(x: Any) -> bool:
+                    nk = _norm_dev_project_key(x)
+                    if not nk:
+                        return False
+                    if nk == pk:
+                        return True
+                    a, b = (nk, pk) if len(nk) <= len(pk) else (pk, nk)
+                    return len(a) >= 4 and (a in b)
+
+                m_soft = ref[pc].map(_soft_dev_proj_cell)
+                sub_s = ref.loc[m_soft.fillna(False)].copy()
+                if not sub_s.empty:
+                    return sub_s
     if project_data is None or getattr(project_data, "empty", True):
         return None
     scen = _find_col(project_data, ["Сценарий", "Scenario"])
@@ -516,6 +803,19 @@ def _bddds_df_for_dev_matrix(
             m3 = project_data[pc2].map(lambda x: _norm_dev_project_key(x) == pk)
             if m3.fillna(False).any():
                 return project_data.loc[m3.fillna(False)].copy()
+            if pk:
+                def _soft_proj_pd(x: Any) -> bool:
+                    nk = _norm_dev_project_key(x)
+                    if not nk:
+                        return False
+                    if nk == pk:
+                        return True
+                    a, b = (nk, pk) if len(nk) <= len(pk) else (pk, nk)
+                    return len(a) >= 4 and (a in b)
+
+                ms = project_data[pc2].map(_soft_proj_pd)
+                if ms.fillna(False).any():
+                    return project_data.loc[ms.fillna(False)].copy()
     return project_data
 
 
@@ -629,8 +929,169 @@ def _predpisaniya_combined(mdf: pd.DataFrame, ss: Any) -> Tuple[str, str, str, b
             sub = mdf[mdf[nm].astype(str).str.contains("предписан", **_lit)]
     if sub.empty:
         return tp, tf, to, False, hint
-    ps, fs, os, w = _agg_plan_fact_otkl(sub)
-    return ps, fs, os, w, hint
+    # ТЗ: одна дата на ячейку — представительная задача вехи (как в _one_milestone_cell), без склейки « / ».
+    ps, fs, os, _ok, w = _one_milestone_cell(sub)
+    return ps, fs, os, bool(w), hint
+
+
+def build_predpisaniya_detail_df(ss: Any, project_name_hint: str = "") -> pd.DataFrame:
+    """Все строки предписаний из Tessa (tasks), опционально — фильтр по названию проекта/объекта."""
+    tdf = ss.get("tessa_tasks_data") if hasattr(ss, "get") else None
+    if tdf is None or getattr(tdf, "empty", True):
+        return pd.DataFrame()
+    tk = tdf.copy()
+    tk.columns = [str(c).strip() for c in tk.columns]
+    kk = _find_col(tk, ["KindName", "kindname", "Вид"])
+    if not kk:
+        return pd.DataFrame()
+    pred = tk[tk[kk].astype(str).str.contains(r"предписани", case=False, na=False, regex=True)].copy()
+    if pred.empty:
+        return pd.DataFrame()
+    hint = (project_name_hint or "").strip()
+    if hint:
+        pk = _norm_dev_project_key(hint)
+        proj_cols = [
+            _find_col(pred, ["ObjectName", "Object Name", "Объект"]),
+            _find_col(pred, ["Проект", "Project", "project", "ProjectName"]),
+        ]
+        matched = False
+        for proj_c in proj_cols:
+            if not proj_c or proj_c not in pred.columns:
+                continue
+
+            def _row_match_cell(x: Any) -> bool:
+                nk = _norm_dev_project_key(x)
+                if not nk:
+                    return False
+                if nk == pk:
+                    return True
+                if len(pk) >= 4 and (pk in nk or nk in pk):
+                    return True
+                return False
+
+            m = pred[proj_c].map(_row_match_cell)
+            if m.fillna(False).any():
+                pred = pred.loc[m.fillna(False)].copy()
+                matched = True
+                break
+        if not matched and pk:
+            pass
+    return pred.reset_index(drop=True)
+
+
+def render_developer_predpisaniya_expander(
+    ss: Any,
+    project_names: Optional[List[str]] = None,
+    *,
+    expanded: bool = False,
+) -> None:
+    """Полная таблица предписаний Tessa под матрицей + выгрузка."""
+    import streamlit as st
+
+    from utils import render_dataframe_excel_csv_downloads
+
+    raw_names = [str(n).strip() for n in (project_names or []) if str(n).strip()]
+    if len(raw_names) == 1:
+        exp_title = f"Предписания (Tessa), полная выгрузка — «{raw_names[0]}»"
+    elif len(raw_names) > 1:
+        exp_title = f"Предписания (Tessa), полная выгрузка — проектов: {len(raw_names)}"
+    else:
+        exp_title = "Предписания (Tessa), полная выгрузка"
+
+    with st.expander(exp_title, expanded=expanded):
+        if not raw_names:
+            df_all = build_predpisaniya_detail_df(ss, "")
+            if df_all.empty:
+                st.caption("Нет данных Tessa по предписаниям (KindName) или файл не загружен.")
+                return
+            st.dataframe(df_all, use_container_width=True, hide_index=True)
+            render_dataframe_excel_csv_downloads(
+                df_all,
+                file_stem="predpisaniya_tessa",
+                key_prefix="dev_pred_all",
+                csv_label="Скачать предписания (CSV)",
+            )
+            return
+
+        chunks: List[pd.DataFrame] = []
+        for pname in raw_names:
+            chunk = build_predpisaniya_detail_df(ss, pname)
+            if not chunk.empty:
+                c2 = chunk.copy()
+                c2.insert(0, "проект_фильтр", pname)
+                chunks.append(c2)
+
+        if not chunks:
+            st.caption(
+                "Для выбранных проектов не найдено строк предписаний по объекту/проекту в Tessa. "
+                "Показываются все предписания без фильтра."
+            )
+            df_fallback = build_predpisaniya_detail_df(ss, "")
+            if df_fallback.empty:
+                return
+            st.dataframe(df_fallback, use_container_width=True, hide_index=True)
+            render_dataframe_excel_csv_downloads(
+                df_fallback,
+                file_stem="predpisaniya_tessa",
+                key_prefix="dev_pred_fb",
+                csv_label="Скачать предписания (CSV)",
+            )
+            return
+
+        merged = pd.concat(chunks, ignore_index=True)
+        st.dataframe(merged, use_container_width=True, hide_index=True)
+        render_dataframe_excel_csv_downloads(
+            merged,
+            file_stem="predpisaniya_tessa_by_project",
+            key_prefix="dev_pred_detail",
+            csv_label="Скачать предписания (CSV)",
+        )
+
+
+def dedupe_msp_for_developer_projects(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    ТЗ: нет дублирования проектов и задач в «Девелоперские проекты».
+    Сначала по идентификатору задачи MSP (если колонка есть и не пустая), иначе по (проект, задача) / по задаче.
+
+    Если в колонке id часть строк без значения, нельзя делать ``drop_duplicates`` по всему кадру:
+    строки без id считаются дубликатами друг друга и схлопываются в одну (матрица уходит в Н/Д).
+    """
+    if df is None or getattr(df, "empty", True):
+        return df
+    out = df.copy()
+
+    def _series_id_valid(ser: pd.Series) -> pd.Series:
+        s2 = ser.astype(str).str.strip()
+        low = s2.str.lower()
+        return ser.notna() & ~low.isin(("", "nan", "none", "<na>", "nat"))
+
+    def _dedupe_by_id_nonempty(frame: pd.DataFrame, id_col: str) -> pd.DataFrame:
+        ok = _series_id_valid(frame[id_col])
+        if int(ok.sum()) == 0:
+            return frame
+        part_ok = frame.loc[ok].drop_duplicates(subset=[id_col], keep="first")
+        part_miss = frame.loc[~ok]
+        return pd.concat([part_miss, part_ok]).sort_index()
+
+    for id_c in (
+        "unique id",
+        "Уникальный_идентификатор",
+        "task id seq",
+        "Ид",
+    ):
+        if id_c not in out.columns:
+            continue
+        if int(_series_id_valid(out[id_c]).sum()) == 0:
+            continue
+        out = _dedupe_by_id_nonempty(out, id_c).reset_index(drop=True)
+        return out
+    pc = _find_col(out, ["project name", "Проект", "Project", "проект", "ID_проекта"])
+    tc = _task_name_col(out)
+    if pc and tc and pc in out.columns and tc in out.columns:
+        return out.drop_duplicates(subset=[pc, tc], keep="first").reset_index(drop=True)
+    if tc and tc in out.columns:
+        return out.drop_duplicates(subset=[tc], keep="first").reset_index(drop=True)
+    return out
 
 
 def build_dev_tz_matrix_rows(
@@ -640,6 +1101,12 @@ def build_dev_tz_matrix_rows(
 ) -> Tuple[List[Dict[str, Any]], str]:
     rows: List[Dict[str, Any]] = []
 
+    if mdf is None or getattr(mdf, "empty", True):
+        return [], ""
+    mdf = ensure_msp_df_for_dev_matrix(mdf)
+    if mdf is None or getattr(mdf, "empty", True):
+        return [], ""
+
     # На всякий случай пересчитываем section из дерева (старые сессии/БД могли иметь ЛОТ вместо родителя ур.2)
     if mdf is not None and not getattr(mdf, "empty", True) and "task name" in mdf.columns:
         try:
@@ -648,6 +1115,23 @@ def build_dev_tz_matrix_rows(
             mdf = _fill_section_from_task_tree(mdf.copy())
         except Exception:
             pass
+    if mdf is not None and not getattr(mdf, "empty", True):
+        mdf = dedupe_msp_for_developer_projects(mdf)
+
+    _prefs = load_developer_projects_matrix_prefs()
+
+    def effective_title(row_key: str, default_title: str) -> str:
+        tt = (_prefs.get("titles") or {}).get(row_key)
+        if isinstance(tt, str) and tt.strip():
+            return tt.strip()
+        return default_title
+
+    def effective_match(row_key: str, kw: dict) -> dict:
+        patch = (_prefs.get("matches") or {}).get(row_key)
+        out = copy.deepcopy(kw)
+        if isinstance(patch, dict) and patch:
+            out.update(patch)
+        return out
 
     def add_row(
         group: str,
@@ -655,9 +1139,11 @@ def build_dev_tz_matrix_rows(
         plan_s: str,
         fact_s: str,
         otkl_s: str,
-        warn: bool = False,
         *,
+        warn_pct: bool = False,
+        warn_directives: bool = False,
         phase: str = "",
+        row_key: str = "",
     ) -> None:
         rows.append(
             {
@@ -666,28 +1152,38 @@ def build_dev_tz_matrix_rows(
                 "plan": plan_s,
                 "fact": fact_s,
                 "otkl": otkl_s,
-                "warn": warn,
+                "warn": bool(warn_pct or warn_directives),
+                "warn_pct": bool(warn_pct),
+                "warn_directives": bool(warn_directives),
                 "phase": phase,
+                "row_key": str(row_key or "").strip(),
             }
         )
 
-    pid = "Н/Д"
-    pname = "Н/Д"
-    if "project id" in mdf.columns and mdf["project id"].notna().any():
-        pid = str(mdf["project id"].dropna().astype(str).iloc[0]).strip() or "Н/Д"
+    cap = ""
     if "project name" in mdf.columns and mdf["project name"].notna().any():
-        pname = str(mdf["project name"].dropna().astype(str).iloc[0]).strip() or "Н/Д"
-    # Если в выгрузке нет ID, но есть имя — в «План» показываем имя (чтобы не везде Н/Д)
-    if pid == "Н/Д" and pname != "Н/Д":
-        pid = pname
-    add_row("Проект", "Проект", pid, pname, "—", False, phase="invest")
+        cap = str(mdf["project name"].dropna().astype(str).iloc[0]).strip()
 
-    def _msp_row(phase: str, group: str, label: str, kw: dict) -> None:
-        sub = _match_tasks_like_msp_row(mdf, kw)
-        ps, fs, os, w = _agg_plan_fact_otkl(sub)
-        add_row(group, label, ps, fs, os, w, phase=phase)
+    def _msp_row(
+        phase: str,
+        group: str,
+        label: str,
+        kw: dict,
+        *,
+        row_key: str,
+    ) -> None:
+        lab = effective_title(row_key, label)
+        kw2 = effective_match(row_key, kw)
+        sub = _match_tasks_like_msp_row(mdf, kw2)
+        if sub is None or sub.empty:
+            add_row(group, lab, "Н/Д", "Н/Д", "Н/Д", phase=phase, row_key=row_key)
+            return
+        # ТЗ: в каждой ячейке План/Факт/Откл. — одно значение (одна дата / один текст отклонения), без «дата1 / дата2».
+        ps, fs, os, _ok, w = _one_milestone_cell(sub)
+        add_row(group, lab, ps, fs, os, warn_pct=bool(w), phase=phase, row_key=row_key)
 
     # Порядок столбцов — по референсу (file-002: вехи Ковенантов; file-003: ДС/ТЕССА до ИРД/ПОС)
+    _rk = iter(_DEV_MATRIX_ROW_KEYS)
     specs_invest_msp: List[Tuple[str, str, str, dict]] = [
         # По ТЗ: в реальной MSP — имя задачи + ур.5; во внутренних CSV вехи часто в колонке «Фаза» (см. phase_needles).
         (
@@ -709,7 +1205,7 @@ def build_dev_tz_matrix_rows(
         (
             "invest",
             "Ковенанты",
-            "Готовый продукт",
+            "Готовый Продукт",
             {
                 "level": 5.0,
                 "names_any": [
@@ -776,9 +1272,9 @@ def build_dev_tz_matrix_rows(
             },
         ),
         (
-            "invest",
+            "life",
             "Ковенанты",
-            "Экспертиза стадия стП",
+            "Экспертиза стадия ст П",
             {
                 "level": 5.0,
                 "names_any": ["Экспертиза ПД", "Экспертиза", "экспертиза пд"],
@@ -787,23 +1283,38 @@ def build_dev_tz_matrix_rows(
             },
         ),
         (
-            "invest",
+            "life",
             "Ковенанты",
             "КОМАНДА РП",
             {
                 "level": 5.0,
-                "name_contains": "Подбор команды",
+                "names_any": [
+                    "Подбор команды",
+                    "Команда РП",
+                    "КОМАНДА РП",
+                    "Распоряжение Руководителя Холдинга",
+                    "Руководителя Холдинга об утверждении",
+                    "назначен руководител",
+                    "проектную группу",
+                ],
                 "parent_l2_contains": "Ковенанты",
-                "phase_needles": ["Команда РП", "КОМАНДА РП", "Подбор команды"],
+                "phase_needles": [
+                    "Команда РП",
+                    "КОМАНДА РП",
+                    "Подбор команды",
+                    "руководител проекта",
+                    "назначени руководител",
+                ],
             },
         ),
         (
-            "invest",
+            "life",
             "Ковенанты",
             "РС",
             {
                 "level": 5.0,
                 "names_any": [
+                    "Разрешение РС",
                     "Разрешение на строительство (РС)",
                     "Разрешение на строительство",
                     "разрешение на строительство",
@@ -819,9 +1330,9 @@ def build_dev_tz_matrix_rows(
             },
         ),
         (
-            "invest",
+            "life",
             "Ковенанты",
-            "РД (1 вар)",
+            "РД (1вар)",
             {
                 "level": 5.0,
                 "names_any": [
@@ -836,24 +1347,51 @@ def build_dev_tz_matrix_rows(
         ),
     ]
     for phase, group, label, kw in specs_invest_msp:
-        _msp_row(phase, group, label, kw)
+        _msp_row(phase, group, label, kw, row_key=str(next(_rk)))
 
+    def _fmtml(v: float) -> str:
+        # ТЗ: млн руб., два знака после запятой
+        return f"{v:.2f}".replace(".", ",")
+
+    rk_ds = str(next(_rk))
     pm, fm, om = _ds_plan_fact_otkl_mln(_bddds_df_for_dev_matrix(mdf, project_data, ss))
     if pm is None:
-        add_row("Финансы", "Выборка ДС, млн руб.", "Н/Д", "Н/Д", "Н/Д", False, phase="invest")
+        add_row(
+            "Финансы",
+            effective_title(rk_ds, "Выборка ДС, млн руб."),
+            "Н/Д",
+            "Н/Д",
+            "Н/Д",
+            phase="life",
+            row_key=rk_ds,
+        )
     else:
+        add_row(
+            "Финансы",
+            effective_title(rk_ds, "Выборка ДС, млн руб."),
+            _fmtml(pm),
+            _fmtml(fm),
+            _fmtml(om),
+            phase="life",
+            row_key=rk_ds,
+        )
 
-        def _fmtml(v: float) -> str:
-            return f"{v:.3f}".replace(".", ",")
-
-        add_row("Финансы", "Выборка ДС, млн руб.", _fmtml(pm), _fmtml(fm), _fmtml(om), False, phase="invest")
-
+    rk_tp = str(next(_rk))
     tp, tf, to, warn_t, _tessa_hint = _predpisaniya_combined(mdf, ss)
-    add_row("TESSA", "ПРЕДПИСАНИЯ", tp, tf, to, warn_t, phase="invest")
+    add_row(
+        "ТЕССА",
+        effective_title(rk_tp, "ПРЕДПИСАНИЯ"),
+        tp,
+        tf,
+        to,
+        warn_directives=warn_t,
+        phase="life",
+        row_key=rk_tp,
+    )
 
     specs_invest_tail: List[Tuple[str, str, str, dict]] = [
         (
-            "invest",
+            "life",
             "ИРД",
             "Подготовительный этап (ТУ, ПРОЕКТ временные сети ЭЛ-ВО)",
             {
@@ -875,7 +1413,7 @@ def build_dev_tz_matrix_rows(
             },
         ),
         (
-            "invest",
+            "life",
             "ИРД",
             "Подготовительный этап (ТУ, ПРОЕКТ временные примыкания)",
             {
@@ -887,7 +1425,7 @@ def build_dev_tz_matrix_rows(
             },
         ),
         (
-            "invest",
+            "life",
             "Проектные работы",
             "ПОС (1 вар)",
             {
@@ -909,7 +1447,7 @@ def build_dev_tz_matrix_rows(
             },
         ),
         (
-            "invest",
+            "life",
             "Ковенанты",
             "Начало финансирования СМР",
             {
@@ -920,34 +1458,44 @@ def build_dev_tz_matrix_rows(
             },
         ),
         (
-            "invest",
+            "life",
             "Ковенанты",
             "Начало СМР",
             {
                 "level": 5.0,
-                "name_contains": "Начало СМР",
+                "names_any": [
+                    "Начало СМР",
+                    "начало смр",
+                    "СМР (начало)",
+                    "смр (начало)",
+                ],
                 "parent_l2_contains": "Ковенанты",
-                "phase_needles": ["Начало СМР"],
+                "phase_needles": ["Начало СМР", "СМР (начало)", "смр (начало)"],
             },
         ),
     ]
     for phase, group, label, kw in specs_invest_tail:
-        _msp_row(phase, group, label, kw)
+        _msp_row(phase, group, label, kw, row_key=str(next(_rk)))
 
     specs_life: List[Tuple[str, str, str, dict]] = [
         (
             "life",
             "Ковенанты",
-            "ТЕХ.ПРИСОЕДИНЕНИЯ (ГАЗ, ЭЛ-ВО)",
+            "ТЕХ.ПРИСОЕДИНЕНИЯ (ГАЗ, ЭЛ-ВО, ВОДА)",
             {
                 "level": 5.0,
                 "names_any": [
                     "Пуск электричества",
                     "Пуск газа",
+                    "Пуск воды",
+                    "Пуск водоснабжения",
+                    "водоснабжения",
                     "ТЕХПРИСОЕДИНЕНИЯ",
                     "техприсоединения",
                     "ГАЗ, ЭП",
                     "ЭП, ВО",
+                    "ВИС",
+                    "вода",
                 ],
                 "parent_l2_contains": "Ковенанты",
                 "phase_needles": [
@@ -958,8 +1506,12 @@ def build_dev_tz_matrix_rows(
                     "ГАЗ, ЭП",
                     "ЭП, ВО",
                     "ЭП ВО",
+                    "ГАЗ, ВОД",
+                    "ВОДА",
+                    "водоснабж",
                     "Пуск электричества",
                     "Пуск газа",
+                    "Пуск вод",
                     "Жизнь проекта. ТЕХ",
                     "Жизнь проекта. ТЕХПРИСОЕДИНЕНИЯ",
                     "Инвестиционная. ТЕХ",
@@ -1086,6 +1638,11 @@ def build_dev_tz_matrix_rows(
                     "Передача боксов",
                     "Передача бокс",
                     "боксов резидент",
+                    "передачи резидент",
+                    "передаче резидент",
+                    "для передачи резидент",
+                    "сформированная документация для передачи",
+                    "по боксам)",
                     "БОНУСОВ",
                     "бонусов резидент",
                     "передача бонус",
@@ -1093,6 +1650,7 @@ def build_dev_tz_matrix_rows(
                 "parent_l2_contains": "Ковенанты",
                 "phase_needles": [
                     "Передача боксов",
+                    "передачи резидент",
                     "БОКСОВ",
                     "БОНУСОВ",
                     "бонусов резидент",
@@ -1104,40 +1662,125 @@ def build_dev_tz_matrix_rows(
         ),
     ]
     for phase, group, label, kw in specs_life:
-        _msp_row(phase, group, label, kw)
+        _msp_row(phase, group, label, kw, row_key=str(next(_rk)))
 
-    cap = ""
+    try:
+        next(_rk)
+    except StopIteration:
+        pass
+    else:
+        raise RuntimeError("_DEV_MATRIX_ROW_KEYS не совпадает с генерацией строк матрицы")
+
     return rows, cap
 
 
 _DEV_TZ_MATRIX_CSS = """
 <style>
+/* Сетка шапки/тела: глобальный _TABLE_CSS даёт th только border-bottom — здесь явные границы ячеек. */
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide {
+  border: 2px solid rgba(220, 228, 240, 0.45);
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 720px;
+}
 .dev-tz-matrix-wrap { overflow-x: auto; min-width: 0; max-width: 100%; margin-bottom: 0.75rem; }
-.rendered-table.dev-tz-wide { border-collapse: collapse; min-width: 720px; }
-.rendered-table.dev-tz-wide th.dev-tz-ghead {
-  text-align: center; font-weight: 700; font-size: 13px; padding: 6px 8px;
-  background: linear-gradient(180deg, rgba(34, 139, 34, 0.35) 0%, rgba(25, 90, 25, 0.25) 100%);
-  color: #e8f5e9; border: 1px solid rgba(255,255,255,0.12);
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th {
+  border: 1px solid rgba(200, 210, 225, 0.5) !important;
+  border-bottom: 2px solid rgba(200, 210, 225, 0.6) !important;
+  box-sizing: border-box;
+  position: static !important;
 }
-.rendered-table.dev-tz-wide th.dev-tz-ghead-life {
-  background: linear-gradient(180deg, rgba(34, 139, 34, 0.28) 0%, rgba(25, 90, 25, 0.18) 100%);
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td {
+  border: 1px solid rgba(200, 210, 225, 0.38) !important;
+  border-top: 1px solid rgba(200, 210, 225, 0.45) !important;
 }
-.rendered-table.dev-tz-wide th.dev-tz-milestone {
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody tr:hover td {
+  background: inherit;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody tr:nth-child(even) td {
+  background: inherit;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-th-project {
+  text-align: left; vertical-align: middle; font-weight: 700; font-size: 12px;
+  padding: 6px 10px; color: #e8f5e9;
+  background: rgba(20, 40, 28, 0.55) !important;
+  min-width: 10em; max-width: 18em;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead {
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-weight: 700; font-size: 13px; padding: 6px 8px;
+  background: linear-gradient(180deg, rgba(34, 139, 34, 0.35) 0%, rgba(25, 90, 25, 0.25) 100%) !important;
+  color: #e8f5e9;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead-life {
+  text-align: center !important;
+  vertical-align: middle !important;
+  background: linear-gradient(180deg, rgba(92, 100, 115, 0.58) 0%, rgba(55, 61, 72, 0.48) 100%) !important;
+  color: #e8eaed !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone {
   text-align: center; vertical-align: bottom; font-size: 11px; font-weight: 600; line-height: 1.25;
-  max-width: 9em; padding: 5px 6px; color: #c9d1d9; border: 1px solid rgba(255,255,255,0.08);
+  max-width: 9em; padding: 5px 6px; color: #c9d1d9;
+  background: rgba(26, 28, 35, 0.92) !important;
 }
-.rendered-table.dev-tz-wide th.dev-tz-sub {
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub {
   font-size: 11px; font-weight: 500; color: #9aa4b2; padding: 5px 6px;
-  border: 1px solid rgba(255,255,255,0.06);
+  background: rgba(22, 24, 32, 0.95) !important;
 }
-.rendered-table.dev-tz-wide td {
-  font-size: 12px; padding: 5px 8px; text-align: center; vertical-align: middle;
-  border: 1px solid rgba(255,255,255,0.06);
+/* Вторая и третья строки шапки — те же палитры, что у «Инвестиционная фаза» / «Жизнь проекта» */
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-inv-block,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-inv-block {
+  background: linear-gradient(180deg, rgba(34, 139, 34, 0.35) 0%, rgba(25, 90, 25, 0.25) 100%) !important;
+  color: #e8f5e9 !important;
 }
-/* ТЗ: при «% выполнения» ≠ 100% — подсветка ячеек оранжевым */
-.rendered-table.dev-tz-wide td.dev-tz-warn {
-  background: rgba(255, 140, 0, 0.38) !important;
-  color: #1a1a1a;
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-inv-block {
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-weight: 600;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-life-block,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-life-block {
+  background: linear-gradient(180deg, rgba(92, 100, 115, 0.58) 0%, rgba(55, 61, 72, 0.48) 100%) !important;
+  color: #e8eaed !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-life-block {
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-weight: 600;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-td-project {
+  text-align: left; font-weight: 600; font-size: 12px; padding: 6px 10px;
+  background: rgba(15, 25, 35, 0.35);
+  color: #e6edf3;
+}
+/* ТЗ: при «% выполнения» ≠ 100% — оранжевый текст значений */
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-text-pct-warn {
+  color: #fb923c !important;
+  font-weight: 600 !important;
+}
+/* Отклонение по дням План−Факт: без просрочки / с просрочкой */
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-otkl-ok {
+  color: #22c55e !important;
+  font-weight: 600 !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-otkl-bad {
+  color: #ef4444 !important;
+  font-weight: 600 !important;
+}
+/* Опционально: даты вертикально */
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-date-vert {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  max-height: 7.5em;
+  white-space: nowrap;
+  vertical-align: middle;
+  text-align: center;
+  padding: 8px 4px !important;
+}
+/* Предписания: открытые/просроченные — лёгкий акцент в «Откл.» */
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-directives-warn {
+  background: rgba(234, 88, 12, 0.15) !important;
 }
 </style>
 """
@@ -1145,20 +1788,49 @@ _DEV_TZ_MATRIX_CSS = """
 
 def _dev_tz_matrix_row_key(r: Dict[str, Any]) -> Tuple[str, str]:
     """Стабильный ключ строки матрицы для сопоставления блоков разных проектов."""
+    rid = str(r.get("row_key") or "").strip()
+    if rid:
+        return ("__devmx_key__", rid)
     return (str(r.get("group") or ""), str(r.get("label") or ""))
+
+
+def _dev_tz_matrix_cell_classes(
+    r: Dict[str, Any],
+    col: str,
+    *,
+    vertical_dates: bool,
+) -> str:
+    """CSS-классы для ячейки План / Факт / Откл."""
+    parts: List[str] = []
+    v = r.get(col) or ""
+    warn_pct = bool(r.get("warn_pct"))
+    warn_dir = bool(r.get("warn_directives"))
+    if col in ("plan", "fact") and warn_pct and _looks_like_ru_date_cell(v):
+        parts.append("dev-tz-text-pct-warn")
+    if _dev_tz_apply_vert_date(vertical_dates, col, v):
+        parts.append("dev-tz-date-vert")
+    if col == "otkl":
+        if warn_dir:
+            parts.append("dev-tz-directives-warn")
+        dd = _parse_otkl_days_display(v)
+        if dd is not None:
+            parts.append("dev-tz-otkl-ok" if dd >= 0 else "dev-tz-otkl-bad")
+    return " ".join(parts).strip()
 
 
 def render_dev_tz_matrix(
     rows: Union[List[Dict[str, Any]], List[List[Dict[str, Any]]]],
     table_css: str,
+    *,
+    project_labels: Optional[List[str]] = None,
+    vertical_dates: bool = False,
 ) -> None:
     """
-    Макет по референсу клиента: две группы столбцов «Инвестиционная фаза» / «Жизнь проекта»,
-    под каждой вехой — План / Факт / Откл.
+    Первая колонка «Проект» — только название; далее «Инвестиционная фаза» / «Жизнь проекта»
+    и под каждой вехой План / Факт / Откл.
 
-    - Один проект: ``rows`` — плоский список словарей (как раньше) — одна строка данных в таблице.
-    - Несколько проектов: ``rows`` — список списков словарей (по одному списку на проект, тот же порядок
-      вех, что у первого проекта) — в tbody по одной строке на проект.
+    ``project_labels``: подпись в колонке «Проект» для каждой строки (порядок = порядок блоков).
+    ``vertical_dates``: писать даты в План/Факт вертикально (ТЗ).
     """
     import streamlit as st
 
@@ -1172,8 +1844,23 @@ def render_dev_tz_matrix(
         st.info("Нет строк матрицы.")
         return
 
+    n_blocks = len(blocks)
+    if project_labels is None:
+        row_labels = [""] * n_blocks
+    else:
+        row_labels = [str(x or "").strip() for x in project_labels]
+        if len(row_labels) < n_blocks:
+            row_labels.extend([""] * (n_blocks - len(row_labels)))
+        else:
+            row_labels = row_labels[:n_blocks]
+
     template = blocks[0]
     esc = html_module.escape
+    prefs = load_developer_projects_matrix_prefs()
+    sc_map = prefs.get("subcolumns") or {}
+    l_plan = str(sc_map.get("plan") or "План").strip() or "План"
+    l_fact = str(sc_map.get("fact") or "Факт").strip() or "Факт"
+    l_otkl = str(sc_map.get("otkl") or "Откл.").strip() or "Откл."
     invest_labels = [r["label"] for r in template if r.get("phase") == "invest"]
     life_labels = [r["label"] for r in template if r.get("phase") == "life"]
     n_inv = max(1, len(invest_labels))
@@ -1183,20 +1870,25 @@ def render_dev_tz_matrix(
 
     head_rows: List[str] = [
         "<tr>"
-        f'<th colspan="{col_span_inv}" class="dev-tz-ghead">Инвестиционная фаза</th>'
-        f'<th colspan="{col_span_life}" class="dev-tz-ghead dev-tz-ghead-life">Жизнь проекта</th>'
+        '<th rowspan="3" class="dev-tz-th-project">Проект</th>'
+        f'<th colspan="{col_span_inv}" class="dev-tz-ghead" style="text-align:center;vertical-align:middle;">Инвестиционная фаза</th>'
+        f'<th colspan="{col_span_life}" class="dev-tz-ghead dev-tz-ghead-life" style="text-align:center;vertical-align:middle;">Жизнь проекта</th>'
         "</tr>"
     ]
     mline: List[str] = []
     subline: List[str] = []
     for r in template:
         lab = r.get("label") or ""
-        mline.append(f'<th colspan="3" class="dev-tz-milestone" title="{esc(str(lab))}">{esc(str(lab))}</th>')
+        ph = str(r.get("phase") or "life").strip().lower()
+        band = "dev-tz-inv-block" if ph == "invest" else "dev-tz-life-block"
+        mline.append(
+            f'<th colspan="3" class="dev-tz-milestone {band}" title="{esc(str(lab))}">{esc(str(lab))}</th>'
+        )
         subline.extend(
             [
-                '<th class="dev-tz-sub">План</th>',
-                '<th class="dev-tz-sub">Факт</th>',
-                '<th class="dev-tz-sub">Откл.</th>',
+                f'<th class="dev-tz-sub {band}">{esc(l_plan)}</th>',
+                f'<th class="dev-tz-sub {band}">{esc(l_fact)}</th>',
+                f'<th class="dev-tz-sub {band}">{esc(l_otkl)}</th>',
             ]
         )
     head_rows.append("<tr>" + "".join(mline) + "</tr>")
@@ -1205,7 +1897,7 @@ def render_dev_tz_matrix(
 
     body_trs: List[str] = []
     tmpl_keys: List[Tuple[str, str]] = [_dev_tz_matrix_row_key(r) for r in template]
-    for block in blocks:
+    for bi, block in enumerate(blocks):
         row_by_key = {_dev_tz_matrix_row_key(r): r for r in block}
         body_cells: List[str] = []
         for k in tmpl_keys:
@@ -1214,12 +1906,22 @@ def render_dev_tz_matrix(
                 for _ in ("plan", "fact", "otkl"):
                     body_cells.append("<td>Н/Д</td>")
                 continue
-            warn_row = bool(r.get("warn"))
             for key in ("plan", "fact", "otkl"):
                 v = r.get(key) or ""
-                oc = ' class="dev-tz-warn"' if warn_row else ""
-                body_cells.append(f"<td{oc}>{esc(str(v))}</td>")
-        body_trs.append("<tr>" + "".join(body_cells) + "</tr>")
+                cls = _dev_tz_matrix_cell_classes(r, key, vertical_dates=vertical_dates)
+                oc = f' class="{esc(cls)}"' if cls else ""
+                iv = ""
+                if _dev_tz_apply_vert_date(vertical_dates, key, v):
+                    iv = (
+                        ' style="writing-mode:vertical-rl;text-orientation:mixed;'
+                        "max-height:7.5em;white-space:nowrap;vertical-align:middle;"
+                        'text-align:center;padding:8px 4px;"'
+                    )
+                body_cells.append(f"<td{oc}{iv}>{esc(str(v))}</td>")
+        plab = row_labels[bi] if bi < len(row_labels) else ""
+        body_trs.append(
+            '<tr><td class="dev-tz-td-project">' + esc(plab) + "</td>" + "".join(body_cells) + "</tr>"
+        )
 
     html_tbl = (
         '<table class="rendered-table dev-tz-wide" border="0">'
@@ -1228,10 +1930,19 @@ def render_dev_tz_matrix(
         + "".join(body_trs)
         + "</tbody></table>"
     )
-    st.markdown(
-        table_css + _DEV_TZ_MATRIX_CSS + '<div class="dev-tz-matrix-wrap">' + html_tbl + "</div>",
-        unsafe_allow_html=True,
+    frag = (
+        table_css
+        + _DEV_TZ_MATRIX_CSS
+        + '<div class="dev-tz-matrix-wrap">'
+        + html_tbl
+        + "</div>"
     )
+    # st.markdown(unsafe_allow_html) на Streamlit Cloud срезает style/class у <td>.
+    # st.html отдаёт фрагмент через отдельный путь разметки — вертикальные даты остаются.
+    if hasattr(st, "html"):
+        st.html(frag)
+    else:
+        st.markdown(frag, unsafe_allow_html=True)
 
 
 # ── Контрольные точки (Сроки / макет file-009): проекты × вехи ───────────────
@@ -1248,108 +1959,53 @@ def _is_orange_pct_milestone(slug: str, title: str) -> bool:
     s_title = str(title or "").strip().lower().replace("ё", "е")
     return ("гпзу" in s_title) or ("экспертиз" in s_title)
 
-# Контрольные точки: те же kwargs, что и строки матрицы «Девелоперские проекты» (порядок как в матрице).
+# Контрольные точки: список и правила сопоставления по согласованному ТЗ.
+# Контрольные точки (ТЗ скрин): задачи блока «Ковенанты», План = Базовое окончание, Факт = Окончание,
+# столбцы MSP → см. маппинг web_loader (_MSP_COLUMN_REMAP).
 CONTROL_POINT_MILESTONES: List[Tuple[str, str, dict]] = [
+    ("ГПЗУ", "gpzu", {"level": 5.0, "names_any": ["ГПЗУ"], "parent_l2_contains": "Ковенанты"}),
     (
-        "Аренда ЗУ",
-        "arenda_zu",
-        {
-            "level": 5.0,
-            "name_contains": "Регистрация договора субаренды",
-            "phase_needles": [
-                "Аренда ЗУ",
-                "субаренд",
-                "Инвестиционная. Аренда",
-                "аренда зу",
-                "договор субаренды",
-            ],
-        },
-    ),
-    (
-        "Готовый продукт",
-        "gotoviy_produkt",
-        {
-            "level": 5.0,
-            "names_any": [
-                "Рассмотрение и утверждение на инвестиционном комитете",
-                "инвестиционном комитете",
-                "Готовый продукт",
-                "готовый продукт",
-                "ГОТОВЫЙ ПРОДУКТ",
-                "Этап ГОТОВЫЙ ПРОДУКТ",
-                "Этап ГОТОВЫЙ",
-                "Инвестиционная. Готовый",
-            ],
-            "phase_needles": [
-                "Готовый продукт",
-                "готовый продукт",
-                "ГОТОВЫЙ ПРОДУКТ",
-                "Этап ГОТОВЫЙ ПРОДУКТ",
-                "Этап ГОТОВЫЙ",
-                "Инвестиционная. Готовый",
-                "инвестиционная. готовый",
-            ],
-        },
-    ),
-    (
-        "ГПЗУ",
-        "gpzu",
-        {
-            "level": 5.0,
-            "parent_l2_contains": "Ковенанты",
-            "names_any": [
-                "ГПЗУ",
-                "гпзу",
-                "Градплан",
-                "градостроительн",
-                "план территории",
-                "градостроительного плана",
-                "городской план",
-                "зонирования территории",
-                "Согласование ГП",
-                "( ГП,",
-                "ГП, АР",
-                "планировочных решений",
-                "Предварительные планировочные",
-                "Предварительные планировочные решения",
-                "Эскизный проект (",
-            ],
-            "phase_needles": [
-                "ГПЗУ",
-                "гпзу",
-                "градостроительн",
-                "план территории",
-                "Градплан",
-                "Инвестиционная. ГПЗУ",
-                "градостроительного плана",
-                "зонирования",
-                "Согласование ГП",
-                "( ГП,",
-                "ГП, АР",
-                "планировочных решений",
-                "Предварительные планировочные",
-                "Предварительные планировочные решения",
-            ],
-        },
-    ),
-    (
-        "Экспертиза стадия стП",
+        "Экспертиза стадии П",
         "exp_pd",
         {
             "level": 5.0,
-            "names_any": ["Экспертиза ПД", "Экспертиза", "экспертиза пд"],
+            "names_any": [
+                "Экспертиза стадии П",
+                "Экспертиза стадии",
+                "Экспертиза ПД",
+                "экспертиза пд",
+                "Экспертиза проектной документации",
+                "экспертиза проектной документации",
+                "Экспертиза",
+            ],
             "parent_l2_contains": "Ковенанты",
-            "phase_needles": ["Экспертиза стадия", "Экспертиза ПД", "Экспертиза стП"],
         },
     ),
     (
-        "КОМАНДА РП",
-        "komanda_rp",
+        "Начало финансирования",
+        "fin_start",
         {
             "level": 5.0,
-            "name_contains": "Подбор команды",
+            "names_any": [
+                "КОД, ОТКР. ФИНАНС.",
+                "КОД ОТКР. ФИНАНС.",
+                "ОТКР. ФИНАНС.",
+                "ОТКР ФИНАНС",
+                "(начало финансирования)",
+                "Начало финансирования",
+                "начало финансирования",
+                "КОД, ОТКР. ФИНАНС. (начало финансирования)",
+            ],
             "parent_l2_contains": "Ковенанты",
-            "phase_needles": ["Команда РП", "КОМАНДА РП", "Подбор команды"],
+        },
+    ),
+    (
+        "Стадия РД",
+        "rd_stage",
+        {
+            "level": 5.0,
+            "names_any": ["Стадия РД", "Стадия Рабочая Документация (РД)", "Рабочая Документация (РД)"],
+            "parent_l2_contains": "Ковенанты",
         },
     ),
     (
@@ -1357,159 +2013,13 @@ CONTROL_POINT_MILESTONES: List[Tuple[str, str, dict]] = [
         "rs",
         {
             "level": 5.0,
-            "names_any": [
-                "Разрешение на строительство (РС)",
-                "Разрешение на строительство",
-                "разрешение на строительство",
-            ],
+            "names_any": ["Разрешение РС", "Разрешение на строительство (РС)", "Разрешение на строительство"],
             "parent_l2_contains": "Ковенанты",
-            "phase_needles": [
-                ". РС",
-                "Разрешение на строительство",
-                "Инвестиционная. РС",
-                "инвестиционная. рс",
-                "Жизнь проекта. РС",
-            ],
         },
     ),
-    (
-        "РД (1 вар)",
-        "rd_1var",
-        {
-            "level": 5.0,
-            "names_any": [
-                "Стадия Рабочая Документация (РД)",
-                "Рабочая Документация (РД)",
-                "стадия РД",
-                "стадия рабочая документация",
-            ],
-            "parent_l2_contains": "Ковенанты",
-            "phase_needles": ["РД (1", "1вар)", "1 вар)", "Рабочая Документация", "стадия РД"],
-        },
-    ),
-    (
-        "Подготовительный этап (ТУ, ПРОЕКТ временные сети ЭЛ-ВО)",
-        "ird_el",
-        {
-            "level": 4.0,
-            "names_any": ["Электроснабжение:", "Электроснабжение"],
-            "block_contains": "ИРД",
-            "phase_needles": [
-                "Электроснабжение",
-                "временные сети ЭЛ",
-                "ЭЛ-ВО",
-                "Эл-во",
-                "сети ЭЛ",
-                "ИСЭ",
-                "инженерные сети: электро",
-                "ВНУТРИПЛОЩАДОЧНЫЕ ИНЖЕНЕРНЫЕ СЕТИ: ЭЛЕКТРО",
-            ],
-            "phase_exclude_needles": ["Примыкания", "УДС", "примыкания к удс"],
-        },
-    ),
-    (
-        "Подготовительный этап (ТУ, ПРОЕКТ временные примыкания)",
-        "ird_ud",
-        {
-            "level": 4.0,
-            "names_any": ["Примыкания к УДС:", "Примыкания к УДС"],
-            "block_contains": "ИРД",
-            "phase_needles": ["Примыкания к УДС", "временные примыкания"],
-            "phase_exclude_needles": ["ЭЛ-ВО", "Электроснабжение", "сети ЭЛ", "ИСЭ"],
-        },
-    ),
-    (
-        "ПОС (1 вар)",
-        "pos_1var",
-        {
-            "level": None,
-            "names_any": [
-                "Согласование ПЗУ, ПОС, ПОДД с КРМО, МОЭСК, Мособлгаз, Мосавтодор",
-                "Согласование ПЗУ",
-                "ПОС, ПОДД",
-            ],
-            "block_contains": "ПРОЕКТ",
-            "phase_needles": [
-                "ПОС (1 вар)",
-                "ПОС (1вар)",
-                "ПОС (1 этап)",
-                "ПОС (1этап)",
-                "ПОС (1 очер",
-                "Согласование ПЗУ",
-            ],
-        },
-    ),
-    (
-        "Начало финансирования СМР",
-        "fin_start",
-        {
-            "level": 5.0,
-            "name_contains": "Начало финансирования",
-            "parent_l2_contains": "Ковенанты",
-            "phase_needles": ["Начало финансирования"],
-        },
-    ),
-    (
-        "Начало СМР",
-        "smr_start",
-        {
-            "level": 5.0,
-            "name_contains": "Начало СМР",
-            "parent_l2_contains": "Ковенанты",
-            "phase_needles": ["Начало СМР"],
-        },
-    ),
-    (
-        "ТЕХ.ПРИСОЕДИНЕНИЯ (ГАЗ, ЭЛ-ВО)",
-        "tech_join",
-        {
-            "level": 5.0,
-            "names_any": [
-                "Пуск электричества",
-                "Пуск газа",
-                "ТЕХПРИСОЕДИНЕНИЯ",
-                "техприсоединения",
-                "ГАЗ, ЭП",
-                "ЭП, ВО",
-            ],
-            "parent_l2_contains": "Ковенанты",
-            "phase_needles": [
-                "ТЕХ.ПРИСОЕДИНЕНИЯ",
-                "ТЕХПРИСОЕДИНЕНИЯ",
-                "ПРИСОЕДИНЕНИЯ (ГАЗ",
-                "ГАЗ, ЭЛ-ВО",
-                "ГАЗ, ЭП",
-                "ЭП, ВО",
-                "ЭП ВО",
-                "Пуск электричества",
-                "Пуск газа",
-                "Жизнь проекта. ТЕХ",
-                "Жизнь проекта. ТЕХПРИСОЕДИНЕНИЯ",
-                "Инвестиционная. ТЕХ",
-            ],
-        },
-    ),
-    (
-        "ЗОС",
-        "zos",
-        {
-            "level": 5.0,
-            "names_any": [
-                "Заключение о соответствии",
-                "заключение о соответствии",
-                "ЗОС)",
-                "зос)",
-            ],
-            "parent_l2_contains": "Ковенанты",
-            "phase_needles": [
-                "Заключение о соответствии",
-                ". ЗОС",
-                "Жизнь проекта. ЗОС",
-                "Инвестиционная. ЗОС",
-                "инвестиционная. зос",
-            ],
-        },
-    ),
+    ("Завершение СМР", "smr_finish", {"level": 5.0, "names_any": ["Завершение СМР"], "parent_l2_contains": "Ковенанты"}),
+    ("Пуск электричества", "power_on", {"level": 5.0, "names_any": ["Пуск электричества"], "parent_l2_contains": "Ковенанты"}),
+    ("Пуск газа", "gas_on", {"level": 5.0, "names_any": ["Пуск газа"], "parent_l2_contains": "Ковенанты"}),
     (
         "РВ",
         "rv",
@@ -1517,108 +2027,18 @@ CONTROL_POINT_MILESTONES: List[Tuple[str, str, dict]] = [
             "level": 5.0,
             "names_any": [
                 "Разрешение на ввод в эксплуатацию (РВ)",
-                "Разрешение на ввод",
-                "ввод в эксплуатацию",
-                "Разрешение на ввод объекта",
                 "Разрешение на ввод в эксплуатацию",
-            ],
-            "parent_l2_contains": "Ковенанты",
-            "phase_needles": [
-                ". РВ",
-                " РВ",
+                "Разрешение на ввод объекта",
                 "Разрешение на ввод",
                 "ввод в эксплуатацию",
-                "Разрешение на ввод объекта",
-                "Жизнь проекта. РВ",
-                "Инвестиционная. РВ",
             ],
-        },
-    ),
-    (
-        "Право 1",
-        "pravo1",
-        {
-            "level": 5.0,
-            "names_any": ["Право 1", "Право1", "право 1", "Право 1 на"],
+            "names_exact_any": ["РВ"],
             "parent_l2_contains": "Ковенанты",
-            "phase_needles": [
-                "Право 1",
-                "Право1",
-                "право 1",
-                "Право 1 на",
-                "Жизнь проекта. Право 1",
-                "Инвестиционная. Право 1",
-            ],
         },
     ),
-    (
-        "Выкуп ЗУ",
-        "vykup_zu",
-        {
-            "level": 5.0,
-            "names_any": [
-                "Выкуп земельного участка",
-                "Выкуп ЗУ",
-                "Выкуп участка",
-                "выкуп земли",
-                "выкуп земельного",
-            ],
-            "parent_l2_contains": "Ковенанты",
-            "phase_needles": [
-                "Выкуп ЗУ",
-                "Выкуп земельного",
-                "Выкуп участка",
-                "выкуп земли",
-                "Жизнь проекта. Выкуп",
-                "Инвестиционная. Выкуп",
-            ],
-        },
-    ),
-    (
-        "Право 2 на Застройщика",
-        "pravo2",
-        {
-            "level": 5.0,
-            "names_any": [
-                "Право 2 на Застройщика",
-                "Право 2",
-                "Право2",
-            ],
-            "parent_l2_contains": "Ковенанты",
-            "phase_needles": [
-                "Право 2 на Застройщика",
-                "Право 2",
-                "Жизнь проекта. Право 2",
-                "Инвестиционная. Право 2",
-            ],
-        },
-    ),
-    (
-        "Передача БОКСОВ резидентам",
-        "peredacha_boks",
-        {
-            "level": 5.0,
-            "names_any": [
-                "Передача боксов резидентам",
-                "Передача боксов",
-                "Передача бокс",
-                "боксов резидент",
-                "БОНУСОВ",
-                "бонусов резидент",
-                "передача бонус",
-            ],
-            "parent_l2_contains": "Ковенанты",
-            "phase_needles": [
-                "Передача боксов",
-                "БОКСОВ",
-                "БОНУСОВ",
-                "бонусов резидент",
-                "Передача бонус",
-                "Жизнь проекта. Передача",
-                "Инвестиционная. Передача",
-            ],
-        },
-    ),
+    ("Право 1", "pravo1", {"level": 5.0, "names_any": ["Право 1"], "parent_l2_contains": "Ковенанты"}),
+    ("Выкуп ЗУ", "vykup_zu", {"level": 5.0, "names_any": ["Выкуп ЗУ", "Выкуп земельного участка"], "parent_l2_contains": "Ковенанты"}),
+    ("Право 2", "pravo2", {"level": 5.0, "names_any": ["Право 2", "Право 2 на Застройщика"], "parent_l2_contains": "Ковенанты"}),
 ]
 
 _CP_MILESTONES_JSON_KEY = "control_points_milestones_json"
@@ -1837,11 +2257,34 @@ def _one_milestone_cell(rows: pd.DataFrame) -> Tuple[str, str, str, bool, bool]:
         return pl, fl, "Н/Д", False, warn_pct
     dev_days = _delta_days_plan_minus_fact(pdt, fdt)
     otk = _fmt_delta_days(dev_days)
-    ok = bool(dev_days == 0) if dev_days is not None else False
+    # План − Факт: ≥0 — факт не позже плана (в срок или раньше); <0 — просрочка.
+    ok = bool(dev_days is not None and dev_days >= 0)
     return pl, fl, otk, ok, warn_pct
 
 
-def build_control_points_df(mdf: pd.DataFrame) -> pd.DataFrame:
+def _cp_hide_completed_candidates(sub: pd.DataFrame) -> pd.DataFrame:
+    """Строки с % выполнения ≠ 100 или без процента; если пусто — исходный кадр (без потери вехи)."""
+    if sub is None or getattr(sub, "empty", True) or "pct complete" not in sub.columns:
+        return sub
+    pc = pd.to_numeric(sub["pct complete"], errors="coerce")
+    keep = (~pc.fillna(np.nan).eq(100.0)) | pc.isna()
+    out = sub.loc[keep.fillna(False)]
+    return out if not getattr(out, "empty", True) else sub
+
+
+def _control_point_matching_row_indices(mdf: pd.DataFrame) -> set:
+    """Индексы строк, попавших под любую встроенную/админскую веху «Контрольные точки»."""
+    idx: set = set()
+    if mdf is None or getattr(mdf, "empty", True):
+        return idx
+    for _t, _s, kw in get_control_point_milestones_effective():
+        hit = _match_milestone_tasks(mdf, kw)
+        if hit is not None and not hit.empty:
+            idx.update(hit.index.tolist())
+    return idx
+
+
+def build_control_points_df(mdf: pd.DataFrame, *, hide_completed: bool = False) -> pd.DataFrame:
     """Одна строка на проект; столбцы project, row_ok, {slug}_plan|_fact|_otkl|_warn_pct."""
     pcol = _project_name_column(mdf)
     if pcol is None or mdf is None or mdf.empty:
@@ -1863,7 +2306,10 @@ def build_control_points_df(mdf: pd.DataFrame) -> pd.DataFrame:
         display = _control_points_project_label(gk, raws)
         rec: Dict[str, Any] = {"project": display, "row_ok": True}
         for title, slug, kw in get_control_point_milestones_effective():
-            m = _match_milestone_tasks(sub, kw)
+            sub_m = _cp_hide_completed_candidates(sub) if hide_completed else sub
+            m = _match_milestone_tasks(sub_m, kw)
+            if hide_completed and (m is None or getattr(m, "empty", True)):
+                m = _match_milestone_tasks(sub, kw)
             pl, fl, otk, ok, warn_pct = _one_milestone_cell(m)
             rec[f"{slug}_plan"] = pl
             rec[f"{slug}_fact"] = fl
@@ -1881,7 +2327,7 @@ _CONTROL_POINTS_CSS = """
 .cp-table-wrap { overflow-x: auto; min-width: 0; max-width: 100%; }
 .cp-table-wrap .rendered-table th,
 .cp-table-wrap .rendered-table td {
-  border-color: rgba(121, 154, 192, 0.55) !important;
+  border: 1px solid rgba(121, 154, 192, 0.55) !important;
 }
 .cp-table-wrap .rendered-table th {
   font-size: 12px !important;
@@ -1893,8 +2339,21 @@ _CONTROL_POINTS_CSS = """
   color: #f3f7fc !important;
   line-height: 1.25;
 }
+.rendered-table th.cp-tophead {
+  text-align: center;
+  background: #17314b !important;
+  color: #f5f9ff !important;
+  font-size: 14px;
+  font-weight: 800;
+}
 .rendered-table th.cp-ghead { text-align:center; background:#1f232d; font-size:13px; padding:7px 9px; color:#f5f9ff !important; }
 .rendered-table th.cp-sub { font-size:12px; color:#dde8f5; font-weight:600; }
+.cp-col-project {
+  border-right: 2px solid rgba(190, 214, 242, 0.8) !important;
+}
+.cp-group-start {
+  border-left: 2px solid rgba(190, 214, 242, 0.8) !important;
+}
 /* ГПЗУ / Экспертиза стадии П: % выполнения в MSP ≠ 100% — «рыжая» подсветка значения */
 .cp-td-warn {
   background: rgba(234, 88, 12, 0.38) !important;
@@ -1910,72 +2369,69 @@ _CONTROL_POINTS_CSS = """
 """
 
 
-def _apply_control_points_msp_filters(st, mdf: pd.DataFrame) -> pd.DataFrame:
+def _apply_control_points_msp_filters(
+    st, mdf: pd.DataFrame
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
-    Фильтры по правкам: только «Проект» и при наличии — «Строение» (без «Этап» и «Функциональный блок»).
+    Фильтр по проекту (ур.1): единственный фильтр на дашборде «Контрольные точки».
+    Возвращает датафрейм для расчёта вех и метаданные (число строк после фильтра).
     """
+    meta: Dict[str, Any] = {}
     if mdf is None or getattr(mdf, "empty", True):
-        return mdf
+        return pd.DataFrame(), meta
     df = mdf.copy()
-    building_col = _find_building_column(df)
-    if building_col:
-        r1a, r1b = st.columns(2)
-    else:
-        r1a = st.columns(1)[0]
-        r1b = None
     labels_map: Dict[str, List[str]] = {}
-    with r1a:
-        if "project name" in df.columns:
-            ordered, labels_map = _control_points_project_filter_options(df)
-            opts = ["Все"] + ordered
-            sel_proj = st.selectbox("Проект", opts, key="cp_msp_filter_project")
-        else:
-            sel_proj = "Все"
-    sel_bld = "Все"
-    if building_col and r1b is not None:
-        with r1b:
-            bopts = ["Все"] + sorted(
-                df[building_col].dropna().astype(str).str.strip().unique().tolist()
-            )
-            sel_bld = st.selectbox("Строение", bopts, key="cp_msp_filter_building")
+    if "project name" in df.columns:
+        ordered, labels_map = _control_points_project_filter_options(df)
+        preferred_projects = ["Дмитровский", "Есипово V", "Завод", "Ленинский"]
+        if any(p in ordered for p in preferred_projects):
+            ordered = [p for p in preferred_projects if p in ordered]
+        opts = ["Все"] + ordered
+        sel_proj = st.selectbox("Проект", opts, key="cp_msp_filter_project")
+    else:
+        sel_proj = "Все"
+
     out = df
     if sel_proj != "Все" and "project name" in out.columns:
         raws = labels_map.get(str(sel_proj).strip(), [str(sel_proj).strip()])
         out = out[out["project name"].astype(str).str.strip().isin(raws)]
-    if (
-        sel_bld != "Все"
-        and building_col
-        and building_col in out.columns
-    ):
-        out = out[out[building_col].astype(str).str.strip() == str(sel_bld).strip()]
-    return out
+
+    meta["subtree_rows"] = int(len(out))
+    return out, meta
 
 
 def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> None:
-    """Таблица «Контрольные точки проектов» + фильтры MSP + выгрузка CSV."""
+    """Таблица «Контрольные точки проектов»: фильтр по проекту, выгрузка CSV."""
     esc = html_module.escape
     if mdf is None or getattr(mdf, "empty", True):
         st.warning("Нет строк в данных MSP.")
         return
-    filtered_mdf = _apply_control_points_msp_filters(st, mdf)
+
+    filtered_mdf, _cp_filter_info = _apply_control_points_msp_filters(st, mdf)
     if filtered_mdf is None or getattr(filtered_mdf, "empty", True):
         st.info("Нет строк по выбранным фильтрам.")
         return
-    df = build_control_points_df(filtered_mdf)
+
+    df = build_control_points_df(filtered_mdf, hide_completed=False)
     if df.empty:
         st.warning("Нет строк проектов в данных MSP.")
         return
     view = df.copy()
 
     ms_specs = [(t, s) for t, s, _k in get_control_point_milestones_effective()]
-    thead1 = ['<th rowspan="2" style="min-width:180px">Проект</th>']
-    for title, slug in ms_specs:
-        thead1.append(f'<th colspan="4" class="cp-ghead">{esc(title)}</th>')
+    project_w = "min-width:180px"
+    thead1 = [f'<th rowspan="2" class="cp-col-project" style="{project_w}">Проекты</th>']
+    for i, (title, slug) in enumerate(ms_specs):
+        hdr = title
+        gcls = "cp-ghead cp-group-start" if i == 0 else "cp-ghead"
+        thead1.append(f'<th colspan="4" class="{gcls}">{esc(hdr)}</th>')
     sub_headers: List[str] = []
-    for _title, slug in ms_specs:
+    for i, (_title, slug) in enumerate(ms_specs):
+        plan_title = "План"
+        p_cls = "cp-sub cp-group-start" if i == 0 else "cp-sub"
         sub_headers.extend(
             [
-                f'<th class="cp-sub">{esc("План")}</th>',
+                f'<th class="{p_cls}">{esc(plan_title)}</th>',
                 f'<th class="cp-sub">{esc("Факт")}</th>',
                 f'<th class="cp-sub">{esc("Откл.")}</th>',
                 f'<th class="cp-sub">{esc("Статус")}</th>',
@@ -1990,14 +2446,15 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
     )
     body: List[str] = ["<tbody>"]
     for _, r in view.iterrows():
-        cells = [f'<td>{esc(str(r.get("project", "")))}</td>']
+        cells = [f'<td class="cp-col-project">{esc(str(r.get("project", "")))}</td>']
         for _t, slug in ms_specs:
             _is_orange_milestone = _is_orange_pct_milestone(slug, _t)
             owarn = _is_orange_milestone and bool(r.get(f"{slug}_warn_pct"))
-            wc = ' class="cp-td-warn"' if owarn else ""
-            cells.append(f"<td{wc}>{esc(str(r.get(f'{slug}_plan', '')))}</td>")
-            cells.append(f"<td{wc}>{esc(str(r.get(f'{slug}_fact', '')))}</td>")
-            cells.append(f"<td{wc}>{esc(str(r.get(f'{slug}_otkl', '')))}</td>")
+            wc_plan = ' class="cp-td-warn cp-group-start"' if owarn else ' class="cp-group-start"'
+            wc_other = ' class="cp-td-warn"' if owarn else ""
+            cells.append(f"<td{wc_plan}>{esc(str(r.get(f'{slug}_plan', '')))}</td>")
+            cells.append(f"<td{wc_other}>{esc(str(r.get(f'{slug}_fact', '')))}</td>")
+            cells.append(f"<td{wc_other}>{esc(str(r.get(f'{slug}_otkl', '')))}</td>")
             m_ok = bool(r.get(f"{slug}_ok", False))
             # A1: для ГПЗУ/Экспертизы стадии П при % < 100 статус должен быть оранжевым.
             if owarn:
@@ -2010,10 +2467,11 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
                 al = "Отклонение по датам"
             else:
                 st_cls = "cp-status-ok"
-                tip = "План и факт по датам совпадают (0 дн.), % выполнения — 100% или н/д"
+                tip = "Факт не позже плана (отклонение План−Факт ≥ 0); % выполнения — 100% или н/д"
                 al = "Норма"
+            st_extra = " cp-td-warn" if owarn else ""
             cells.append(
-                f'<td class="cp-status-cell" title="{esc(tip)}">'
+                f'<td class="cp-status-cell{st_extra}" title="{esc(tip)}">'
                 f'<span class="cp-status-dot {st_cls}" role="img" aria-label="{esc(al)}"></span></td>'
             )
         body.append("<tr>" + "".join(cells) + "</tr>")

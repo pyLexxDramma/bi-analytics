@@ -20,9 +20,35 @@ def switch_page_app(path: str) -> None:
       делегирующие во ``bi-analytics-v-5-main/pages/`` (см. корневой каталог ``pages/``).
     """
     import streamlit as st
+    from streamlit.errors import StreamlitAPIException
 
-    path = path.replace("\\", "/").lstrip("/")
-    st.switch_page(path)
+    normalized = path.replace("\\", "/").lstrip("/")
+    candidates: list[str] = [normalized]
+
+    # Streamlit Cloud / обертка через streamlit_app.py:
+    # страница дашбордов может быть зарегистрирована под корневым файлом.
+    if normalized.endswith("project_visualization_app.py"):
+        candidates.append("streamlit_app.py")
+
+    # Для совместимости добавляем вариант по basename для страниц из папки pages/.
+    if "/" in normalized:
+        candidates.append(normalized.split("/")[-1])
+
+    tried: set[str] = set()
+    last_err: Exception | None = None
+    for cand in candidates:
+        if not cand or cand in tried:
+            continue
+        tried.add(cand)
+        try:
+            st.switch_page(cand)
+            return
+        except StreamlitAPIException as e:
+            last_err = e
+            continue
+
+    if last_err is not None:
+        raise last_err
 
 # Пути
 BASE_DIR: str = os.path.dirname(os.path.abspath(__file__))
@@ -97,7 +123,8 @@ ETL_SQLITE_DB_PATH: str = os.environ.get(
 )
 DATA_MODE: str = os.environ.get("DATA_MODE", "auto").strip().lower()
 
-# Подписи «project name», которые не показываем в фильтрах (дубликаты/устаревшие метки без строк в данных).
+# Точные подписи «project name», которые не показываем в фильтрах (устаревший дубликат написания).
+# Важно: сравнение по строке, не по norm-key — иначе скрывались бы и «Дмитровский 1», если в исключении «Дмитровский-1».
 MSP_PROJECT_FILTER_EXCLUDE_NAMES: FrozenSet[str] = frozenset({"Дмитровский-1"})
 
 MSP_PROJECT_NAME_MAP: Dict[str, str] = {

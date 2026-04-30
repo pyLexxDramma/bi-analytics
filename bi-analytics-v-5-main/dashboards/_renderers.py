@@ -2,6 +2,7 @@
 Отрисовка дашбордов. Код перенесён из project_visualization_app.py для уменьшения главного файла.
 """
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 from typing import Optional
 import plotly.express as px
@@ -19,9 +20,10 @@ from .ui_quiet import suppress_caption
 
 from dashboards.dev_projects_tz_matrix import (
     build_dev_tz_matrix_rows,
+    ensure_msp_df_for_dev_matrix,
+    load_developer_projects_matrix_prefs,
     render_dev_tz_matrix,
     render_control_points_dashboard,
-    _control_points_prepare_msp_dates,
 )
 
 
@@ -96,6 +98,32 @@ def _project_filter_norm_key(val) -> str:
     return sl
 
 
+_PROJECT_CHILD_SUFFIX_RE = re.compile(r"^(\d{1,4}|[IVX]{1,4})$", re.I)
+
+
+def _project_norm_key_matches_msp_keys(row_key: str, msp_keys: set[str]) -> bool:
+    """
+    Строка 1С/синтетики с ключом «дмитровский 1» входит в выбор MSP «Дмитровский»
+    (ключ «дмитровский»): совпадение или один сегмент-номер/римская цифра после базы.
+    """
+    if not msp_keys:
+        return True
+    if not row_key:
+        return False
+    if row_key in msp_keys:
+        return True
+    for k in msp_keys:
+        if not k:
+            continue
+        pref = k + " "
+        if not row_key.startswith(pref):
+            continue
+        rest = row_key[len(pref) :]
+        if rest and _PROJECT_CHILD_SUFFIX_RE.fullmatch(rest):
+            return True
+    return False
+
+
 def _project_canonical_display_map(series: pd.Series) -> dict[str, str]:
     """
     Для каждого «сырого» варианта названия проекта — одна подпись для таблиц/группировок
@@ -143,11 +171,6 @@ def _unique_project_labels_for_select(series: pd.Series) -> list[str]:
     """Уникальные подписи для selectbox: один пункт на один нормализованный ключ (короче имя — приоритет)."""
     if series is None or getattr(series, "empty", True):
         return []
-    excluded_keys = {
-        _project_filter_norm_key(p)
-        for p in MSP_PROJECT_FILTER_EXCLUDE_NAMES
-        if _project_filter_norm_key(p)
-    }
     by_key: dict[str, str] = {}
     for raw in series.dropna().unique():
         s = (
@@ -159,8 +182,13 @@ def _unique_project_labels_for_select(series: pd.Series) -> list[str]:
         )
         while "  " in s:
             s = s.replace("  ", " ")
+        # Исключаем из выпадающего списка только точное написание из конфига (напр. «Дмитровский-1»).
+        # Нельзя резать по norm-key: «Дмитровский-1» и «Дмитровский 1» после fusion дают один ключ «дмитровский 1»,
+        # из‑за чего второй вариант ошибочно пропадал из фильтра при «Все», но оставался в таблице.
+        if s in MSP_PROJECT_FILTER_EXCLUDE_NAMES:
+            continue
         k = _project_filter_norm_key(s)
-        if not k or k in excluded_keys:
+        if not k:
             continue
         if k not in by_key or len(s) < len(by_key[k]):
             by_key[k] = s
@@ -560,6 +588,72 @@ def _gdrs_header_is_dd_mm_yyyy(name) -> bool:
     if re.match(r"^\d{1,2}\.{2,3}\d{1,2}\.\d{2,4}$", t):
         return True
     return False
+
+
+def _format_gdrs_period_range_dd_mm_yyyy(d_from, d_to, sep: str = " - ") -> str:
+    """Диапазон в виде ДД.ММ.ГГГГ - ДД.ММ.ГГГГ (как у виджета «Период» с format=DD.MM.YYYY)."""
+    try:
+        ts_a = pd.Timestamp(d_from)
+        ts_b = pd.Timestamp(d_to)
+        if pd.isna(ts_a) or pd.isna(ts_b):
+            return ""
+        da = ts_a.normalize().date()
+        db = ts_b.normalize().date()
+        return (
+            f"{da.day:02d}.{da.month:02d}.{da.year:04d}"
+            f"{sep}"
+            f"{db.day:02d}.{db.month:02d}.{db.year:04d}"
+        )
+    except Exception:
+        return ""
+
+
+def _gdrs_detect_csv_resource_kind_column(pdf: pd.DataFrame) -> Optional[str]:
+    """Колонка признака «Рабочие / Техника» в CSV (PDF: столбец H)."""
+    if pdf is None or getattr(pdf, "empty", True):
+        return None
+    exclude_lc = {
+        "проект",
+        "контрагент",
+        "период",
+        "план",
+        "факт",
+        "скуд",
+        "data_source",
+        "тип ресурсов",
+        "вид работы",
+        "вид работ",
+        "__source_file",
+        "snapshot_date",
+    }
+    best_c = None
+    best_score = 0.0
+    for c in pdf.columns:
+        cl = str(c).strip().lower()
+        if cl in exclude_lc or _gdrs_header_is_dd_mm_yyyy(c):
+            continue
+        raw = pdf[c].astype(str).str.strip()
+        ser = raw.str.casefold().replace({"nan": "", "none": ""})
+        ser = ser[ser.ne("")]
+        if ser.empty:
+            continue
+        uniq = ser.unique().tolist()
+        if len(uniq) > 14:
+            continue
+        u = set(uniq)
+        score = 0.0
+        if any("рабоч" in v for v in u):
+            score += 3.0
+        if any("тех" in v for v in u):
+            score += 3.0
+        if any(v in {"ресурсы", "ресурс", "люди"} for v in u):
+            score += 1.0
+        if 2 <= len(u) <= 10:
+            score += 1.0
+        if score > best_score:
+            best_score = score
+            best_c = str(c)
+    return best_c if best_score >= 4.0 else None
 
 
 def _gdrs_fact_bar_color(plan_v: float, fact_v: float) -> str:
@@ -4348,7 +4442,6 @@ def dashboard_plan_fact_dates(df):
             for _m in _diag_msgs:
                 st.write(f"• {_m}")
 
-    st.markdown("**Таблица**")
     dates_value_type = "Даты (план/факт)"
     # R23-03 add-on (стр.10-11): обе пары «отклонений» показываем по умолчанию,
     # «отклонение длительности» — опционально (чекбокс), как и раньше.
@@ -4944,7 +5037,7 @@ def dashboard_plan_fact_dates(df):
         )
         if section_dev.empty:
             return
-        section_dev = section_dev.sort_values("Отклонение", ascending=True)
+        section_dev = section_dev.sort_values("Отклонение", ascending=False)
         fig_section = go.Figure()
         fig_section.add_trace(
             go.Bar(
@@ -4962,16 +5055,18 @@ def dashboard_plan_fact_dates(df):
         )
         fig_section.update_layout(
             xaxis_title="Отклонение (дней)",
-            yaxis_title=_dev_group_label,
+            yaxis_title=None,
             height=max(440, len(section_dev) * 52),
             showlegend=False,
         )
-        # Сверху вниз — по убыванию отклонения: в Plotly первая категория в array — низ графика, последняя — верх.
+        # Сверху вниз — по убыванию отклонения (крупнейшие отклонения в начале графика).
         fig_section.update_yaxes(
             categoryorder="array",
-            categoryarray=section_dev.sort_values("Отклонение", ascending=True)[
-                "Группа"
-            ].tolist(),
+            categoryarray=section_dev["Группа"].tolist(),
+            autorange="reversed",
+            showticklabels=True,
+            tickfont=dict(size=11, color="#e8eaed"),
+            title=None,
         )
         fig_section = _apply_finance_bar_label_layout(fig_section)
         fig_section = apply_chart_background(fig_section)
@@ -5496,16 +5591,6 @@ def dashboard_plan_fact_dates(df):
             if "project name" in zos_subset.columns
             else 0
         )
-        with st.expander("Контекст ЗОС", expanded=False):
-            if selected_project != "Все":
-                suppress_caption(f"Проект: {selected_project}")
-            elif "project name" in zos_subset.columns and zos_proj_count == 1:
-                _pn = zos_subset["project name"].dropna().astype(str).str.strip().unique().tolist()
-                if _pn:
-                    suppress_caption(f"Проект: {_pn[0]}")
-            suppress_caption(
-                "Сроки окончания и отклонение (дней); знак отклонения: факт − план по дате окончания."
-            )
         zos_show_project_col = (
             "project name" in zos_subset.columns
             and selected_project == "Все"
@@ -5664,6 +5749,7 @@ def dashboard_plan_fact_dates(df):
         )
 
     if not show_covenant_ui:
+        st.markdown("**Таблица**")
         st.subheader("Отклонение от базового плана (таблица)")
         with st.expander("Сводка по таблице", expanded=False):
             suppress_caption(
@@ -6803,8 +6889,110 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
 def dashboard_budget_by_period(df):
     st.header("БДДС")
 
+    def _clean_filter_label(v) -> str:
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return ""
+        s = str(v).replace("\xa0", " ").replace("\u200b", "").replace("\ufeff", "").strip()
+        if not s:
+            return ""
+        for ch in ('"', "'", "`", "«", "»", "“", "”", "‘", "’"):
+            s = s.replace(ch, "")
+        # MSP-артефакты: маркеры/буллеты/звездочки в начале строки
+        s = re.sub(r"^[\*\-–—•·\s]+", "", s)
+        s = re.sub(r"\s+", " ", s)
+        s = re.sub(r"\s*[,;:.-]\s*$", "", s).strip()
+        return s
+
+    def _derive_bdds_dimensions(_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        ТЗ БДДС:
+        - Лот: брать из MSP и прокидывать на дочерние задачи.
+        - Этап: название задачи уровня 2.
+        """
+        if _df is None or getattr(_df, "empty", True):
+            return _df
+        out = _df.copy()
+        task_col = "task name" if "task name" in out.columns else ("Название" if "Название" in out.columns else None)
+        lvl_col = "level structure" if "level structure" in out.columns else ("level" if "level" in out.columns else None)
+        proj_col = "project name" if "project name" in out.columns else None
+        lot_src = (
+            "lot" if "lot" in out.columns else ("ЛОТ" if "ЛОТ" in out.columns else None)
+        )
+        if task_col is None or lvl_col is None:
+            if "stage_l2" not in out.columns:
+                out["stage_l2"] = ""
+            if "lot_effective" not in out.columns:
+                out["lot_effective"] = out.get(lot_src, "")
+            return out
+
+        if "task id seq" in out.columns:
+            sort_col = "task id seq"
+        elif "Ид" in out.columns:
+            sort_col = "Ид"
+        else:
+            sort_col = None
+
+        def _norm_text(v):
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                return ""
+            return str(v).replace("\xa0", " ").replace("\u200b", "").replace("\ufeff", "").strip()
+
+        def _process_group(g: pd.DataFrame) -> pd.DataFrame:
+            gg = g.copy()
+            if sort_col and sort_col in gg.columns:
+                gg = gg.sort_values(sort_col, key=lambda s: pd.to_numeric(s, errors="coerce")).copy()
+            stage_vals = []
+            lot_vals = []
+            stack_task = {}
+            stack_lot = {}
+            for _, r in gg.iterrows():
+                lv = pd.to_numeric(r.get(lvl_col), errors="coerce")
+                try:
+                    lvi = int(lv)
+                except Exception:
+                    lvi = -1
+                if lvi > 0:
+                    for k in list(stack_task.keys()):
+                        if k >= lvi:
+                            del stack_task[k]
+                    for k in list(stack_lot.keys()):
+                        if k >= lvi:
+                            del stack_lot[k]
+
+                tname = _norm_text(r.get(task_col))
+                lot_here = _norm_text(r.get(lot_src)) if lot_src else ""
+                if lvi == 2 and tname:
+                    stage = tname
+                else:
+                    stage = stack_task.get(2, "")
+
+                if lot_here:
+                    lot_eff = lot_here
+                else:
+                    lot_eff = stack_lot.get(2, "") or stack_lot.get(3, "") or stack_lot.get(1, "")
+
+                stage_vals.append(stage)
+                lot_vals.append(lot_eff)
+
+                if lvi > 0 and tname:
+                    stack_task[lvi] = tname
+                if lvi > 0 and lot_here:
+                    stack_lot[lvi] = lot_here
+            gg["stage_l2"] = stage_vals
+            gg["lot_effective"] = lot_vals
+            return gg
+
+        if proj_col and proj_col in out.columns:
+            parts = []
+            for _, g in out.groupby(out[proj_col].astype(str), sort=False):
+                parts.append(_process_group(g))
+            out = pd.concat(parts, axis=0)
+        else:
+            out = _process_group(out)
+        return out
+
     # Сетка фильтров; чекбоксы — после фильтров (П.9)
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
 
     with col1:
         period_type = st.selectbox(
@@ -6822,25 +7010,55 @@ def dashboard_budget_by_period(df):
         else:
             selected_project = "Все"
 
+    df = _derive_bdds_dimensions(df)
+
+    col3, col4 = st.columns(2)
     with col3:
-        if "section" in df.columns:
-            sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
-            selected_section = st.selectbox(
-                "Фильтр по этапу", sections, key="budget_section"
-            )
+        lot_base_col = "lot_effective" if "lot_effective" in df.columns else ("lot" if "lot" in df.columns else ("section" if "section" in df.columns else None))
+        if lot_base_col:
+            _lot_pairs = []
+            for raw in df[lot_base_col].dropna().tolist():
+                clean = _clean_filter_label(raw)
+                if clean:
+                    _lot_pairs.append((clean, str(raw).strip()))
+            _lot_raw_by_display = {}
+            for clean, raw in sorted(set(_lot_pairs), key=lambda t: t[0]):
+                _lot_raw_by_display.setdefault(clean, raw)
+            _lot_opts = ["Все"] + sorted(_lot_raw_by_display.keys())
+            _sel_lot_display = st.selectbox("Фильтр по лоту", _lot_opts, key="budget_lot")
+            selected_lot = "Все" if _sel_lot_display == "Все" else _lot_raw_by_display.get(_sel_lot_display, _sel_lot_display)
+        else:
+            selected_lot = "Все"
+    with col4:
+        if "stage_l2" in df.columns:
+            _stage_pairs = []
+            for raw in df["stage_l2"].dropna().tolist():
+                clean = _clean_filter_label(raw)
+                if clean:
+                    _stage_pairs.append((clean, str(raw).strip()))
+            _stage_raw_by_display = {}
+            for clean, raw in sorted(set(_stage_pairs), key=lambda t: t[0]):
+                _stage_raw_by_display.setdefault(clean, raw)
+            _stage_opts = ["Все"] + sorted(_stage_raw_by_display.keys())
+            _sel_stage_display = st.selectbox("Фильтр по этапу", _stage_opts, key="budget_section")
+            selected_section = "Все" if _sel_stage_display == "Все" else _stage_raw_by_display.get(_sel_stage_display, _sel_stage_display)
+        elif "section" in df.columns:
+            _section_pairs = []
+            for raw in df["section"].dropna().tolist():
+                clean = _clean_filter_label(raw)
+                if clean:
+                    _section_pairs.append((clean, str(raw).strip()))
+            _section_raw_by_display = {}
+            for clean, raw in sorted(set(_section_pairs), key=lambda t: t[0]):
+                _section_raw_by_display.setdefault(clean, raw)
+            _section_opts = ["Все"] + sorted(_section_raw_by_display.keys())
+            _sel_section_display = st.selectbox("Фильтр по этапу", _section_opts, key="budget_section")
+            selected_section = "Все" if _sel_section_display == "Все" else _section_raw_by_display.get(_sel_section_display, _sel_section_display)
         else:
             selected_section = "Все"
 
-    hide_adjusted = st.checkbox(
-        "Скрыть скорректированный бюджет",
-        value=True,
-        key="budget_period_hide_adjusted",
-    )
-    hide_reserve = st.checkbox(
-        "Скрыть отклонение (столбец на графике)",
-        value=False,
-        key="budget_period_hide_reserve",
-    )
+    hide_adjusted = True
+    hide_reserve = False
 
     # Apply filters - fix filtering
     filtered_df = df.copy()
@@ -6849,13 +7067,22 @@ def dashboard_budget_by_period(df):
             filtered_df["project name"].map(_project_filter_norm_key)
             == _project_filter_norm_key(selected_project)
         ]
-    if selected_section != "Все" and "section" in filtered_df.columns:
-        filtered_df = filtered_df[
-            filtered_df["section"].astype(str).str.strip()
-            == str(selected_section).strip()
-        ]
+    if selected_lot != "Все":
+        lot_filter_col = "lot_effective" if "lot_effective" in filtered_df.columns else ("lot" if "lot" in filtered_df.columns else None)
+        if lot_filter_col and lot_filter_col in filtered_df.columns:
+            filtered_df = filtered_df[
+                filtered_df[lot_filter_col].astype(str).str.strip() == str(selected_lot).strip()
+            ]
+    if selected_section != "Все":
+        stage_filter_col = "stage_l2" if "stage_l2" in filtered_df.columns else ("section" if "section" in filtered_df.columns else None)
+        if stage_filter_col and stage_filter_col in filtered_df.columns:
+            filtered_df = filtered_df[
+                filtered_df[stage_filter_col].astype(str).str.strip() == str(selected_section).strip()
+            ]
 
     ensure_date_columns(filtered_df)
+    _bdds_cal_start = None
+    _bdds_cal_end = None
     # R23-13.1 (стр.34): фильтр «Год» заменён на фильтр-календарь «Период»
     # (диапазон дат по «plan end»); селектор гранулярности (месяц/квартал/год)
     # уже присутствует выше ("Группировать по").
@@ -6869,13 +7096,81 @@ def dashboard_budget_by_period(df):
             _range_kw = {
                 "label": "Период",
                 "key": "budget_period_range",
-                "help": "Фильтр по диапазону дат (поле «Конец план» / plan end).",
+                "help": "Фильтр по диапазону дат (поле «Конец план»).",
+                "format": "DD.MM.YYYY",
             }
             if _def_start and _def_end and _def_start <= _def_end:
                 _range_kw["value"] = (_def_start, _def_end)
                 _range_kw["min_value"] = _def_start
                 _range_kw["max_value"] = _def_end
             _period_range = st.date_input(**_range_kw)
+            components.html(
+                """
+                <script>
+                (function() {
+                  const rootDoc = window.parent && window.parent.document ? window.parent.document : document;
+                  const hid = "st-bdds-hide-datepicker-quickselect";
+                  let tag = rootDoc.getElementById(hid);
+                  if (!tag) {
+                    tag = rootDoc.createElement("style");
+                    tag.id = hid;
+                    rootDoc.head.appendChild(tag);
+                  }
+                  tag.textContent = "";
+
+                  const dict = new Map([
+                    ["January","Январь"],["February","Февраль"],["March","Март"],["April","Апрель"],
+                    ["May","Май"],["June","Июнь"],["July","Июль"],["August","Август"],
+                    ["September","Сентябрь"],["October","Октябрь"],["November","Ноябрь"],["December","Декабрь"],
+                    ["Mo","Пн"],["Tu","Вт"],["We","Ср"],["Th","Чт"],["Fr","Пт"],["Sa","Сб"],["Su","Вс"],
+                    ["None","Нет"]
+                  ]);
+                  const root = window.parent && window.parent.document ? window.parent.document : document;
+
+                  const shouldSkip = (el) => {
+                    if (!el || !el.tagName) return true;
+                    const t = el.tagName.toLowerCase();
+                    if (t === "script" || t === "style" || t === "textarea" || t === "input") return true;
+                    if (t === "svg" || t === "path") return true; // не трогаем иконки
+                    if (el.isContentEditable) return true;
+                    return false;
+                  };
+
+                  const replaceInTextNode = (node) => {
+                    const raw = node.nodeValue || "";
+                    const txt = raw.trim();
+                    if (!txt) return;
+                    if (dict.has(txt)) {
+                      node.nodeValue = raw.replace(txt, dict.get(txt));
+                      return;
+                    }
+                    let next = raw;
+                    for (const [en, ru] of dict.entries()) {
+                      next = next.replace(new RegExp("\\\\b" + en + "\\\\b", "g"), ru);
+                    }
+                    if (next !== raw) node.nodeValue = next;
+                  };
+
+                  const apply = () => {
+                    const all = root.querySelectorAll("*");
+                    all.forEach((el) => {
+                      if (shouldSkip(el)) return;
+                      const childs = el.childNodes || [];
+                      for (let i = 0; i < childs.length; i++) {
+                        const n = childs[i];
+                        if (n && n.nodeType === Node.TEXT_NODE) replaceInTextNode(n);
+                      }
+                    });
+                  };
+                  apply();
+                  const obs = new MutationObserver(apply);
+                  obs.observe(root.body, { childList: true, subtree: true });
+                })();
+                </script>
+                """,
+                height=0,
+                width=0,
+            )
             if isinstance(_period_range, (list, tuple)) and len(_period_range) == 2:
                 _start_dt = pd.to_datetime(_period_range[0], errors="coerce")
                 _end_dt = pd.to_datetime(_period_range[1], errors="coerce")
@@ -6884,12 +7179,38 @@ def dashboard_budget_by_period(df):
                         (_pe_series >= _start_dt)
                         & (_pe_series <= (_end_dt + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)))
                     ].copy()
+                    _bdds_cal_start = _start_dt
+                    _bdds_cal_end = _end_dt
 
     # Единый fallback бюджета: MSP -> 1С dannye при пустых budget колонках.
     ensure_budget_columns(filtered_df)
     from dashboards.finance_from_1c import ensure_budget_frame_with_fallback
 
-    filtered_df, _ = ensure_budget_frame_with_fallback(filtered_df, show_caption=True)
+    _bdds_narrow_pk = (
+        _project_filter_norm_key(selected_project)
+        if selected_project != "Все"
+        else ""
+    )
+    _bdds_narrow_pk = (_bdds_narrow_pk or "").strip() or None
+
+    filtered_df, _ = ensure_budget_frame_with_fallback(
+        filtered_df,
+        show_caption=True,
+        restrict_projects_from_df=True,
+        period_start=_bdds_cal_start,
+        period_end=_bdds_cal_end,
+        force_from_1c=True,
+        narrow_to_project_norm_key=_bdds_narrow_pk,
+    )
+    # После подстановки из 1С повторно применяем фильтр проекта,
+    # чтобы в таблицы/графики не попадали другие проекты.
+    if selected_project != "Все" and "project name" in filtered_df.columns:
+        _sel_pk = _project_filter_norm_key(selected_project)
+        if _sel_pk:
+            _rk_bdd = filtered_df["project name"].map(_project_filter_norm_key)
+            filtered_df = filtered_df[
+                _rk_bdd.map(lambda rk: _project_norm_key_matches_msp_keys(rk, {_sel_pk}))
+            ].copy()
     ensure_date_columns(filtered_df)
     ensure_budget_columns(filtered_df)
     has_budget = "budget plan" in filtered_df.columns and "budget fact" in filtered_df.columns
@@ -6948,7 +7269,11 @@ def dashboard_budget_by_period(df):
         )
 
     # Колонка для группировки по лотам (лот = section или колонка "лот"/"lot")
-    lot_col = "лот" if "лот" in filtered_df.columns else ("lot" if "lot" in filtered_df.columns else "section")
+    lot_col = (
+        "lot_effective"
+        if "lot_effective" in filtered_df.columns
+        else ("лот" if "лот" in filtered_df.columns else ("lot" if "lot" in filtered_df.columns else "section"))
+    )
     if lot_col not in filtered_df.columns:
         lot_col = "section"  # fallback для группировки по лотам
 
@@ -6974,8 +7299,11 @@ def dashboard_budget_by_period(df):
                 "Вид отображения", ["По месяцам", "Накопительно"], key="budget_period_view"
             )
             if selected_project != "Все":
+                _sel_pk_chart = _project_filter_norm_key(selected_project)
                 project_data = budget_summary[
-                    budget_summary["project name"] == selected_project
+                    budget_summary["project name"]
+                    .map(_project_filter_norm_key)
+                    .map(lambda rk: _project_norm_key_matches_msp_keys(rk, {_sel_pk_chart}))
                 ].copy()
             else:
                 agg_dict_all = {
@@ -8073,21 +8401,261 @@ def dashboard_budget_by_section(df):
 # ==================== DASHBOARD: БДР (бюджет доходов и расходов) ====================
 def dashboard_bdr(df):
     """
-    БДР — план/факт расходов: колонки ищутся по шаблонам (расходы / budget plan / budget fact).
-    В таблице и на графике: План расходов, Факт расходов, Отклонение (факт − план).
+    БДР по ТЗ: столбчатые серии — доходы, расходы, сальдо; помесячно / накопительно.
+    Fallback из 1С — только обороты БДР/поступление-расходование, не БДДС.
     """
-    st.header("БДР. План/факт расходов")
+    st.header("БДР")
 
     if df is None or not hasattr(df, "columns") or df.empty:
         st.warning("⚠️ Нет данных для отображения. Загрузите данные проекта.")
         return
-    from dashboards.finance_from_1c import ensure_budget_frame_with_fallback
+    from dashboards.finance_from_1c import ensure_bdr_frame_with_fallback
 
-    df = df.copy()
-    ensure_budget_columns(df)
-    df, _ = ensure_budget_frame_with_fallback(df, show_caption=True)
-    ensure_budget_columns(df)
-    ensure_date_columns(df)
+    df_src = df.copy()
+
+    def _clean_filter_label(v) -> str:
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return ""
+        s = str(v).replace("\xa0", " ").replace("\u200b", "").replace("\ufeff", "").strip()
+        if not s:
+            return ""
+        for ch in ('"', "'", "`", "«", "»", "“", "”", "‘", "’"):
+            s = s.replace(ch, "")
+        s = re.sub(r"^[\*\-–—•·\s]+", "", s)
+        s = re.sub(r"\s+", " ", s)
+        s = re.sub(r"\s*[,;:.-]\s*$", "", s).strip()
+        return s
+
+    def _derive_bdr_dimensions(_df: pd.DataFrame) -> pd.DataFrame:
+        if _df is None or getattr(_df, "empty", True):
+            return _df
+        out = _df.copy()
+        task_col = "task name" if "task name" in out.columns else ("Название" if "Название" in out.columns else None)
+        lvl_col = "level structure" if "level structure" in out.columns else ("level" if "level" in out.columns else None)
+        proj_col = "project name" if "project name" in out.columns else None
+        lot_src = "lot" if "lot" in out.columns else ("ЛОТ" if "ЛОТ" in out.columns else None)
+        if task_col is None or lvl_col is None:
+            if "stage_l2" not in out.columns:
+                out["stage_l2"] = ""
+            if "lot_effective" not in out.columns:
+                out["lot_effective"] = out.get(lot_src, "")
+            return out
+
+        sort_col = "task id seq" if "task id seq" in out.columns else ("Ид" if "Ид" in out.columns else None)
+
+        def _norm_text(v):
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                return ""
+            return str(v).replace("\xa0", " ").replace("\u200b", "").replace("\ufeff", "").strip()
+
+        def _process_group(g: pd.DataFrame) -> pd.DataFrame:
+            gg = g.copy()
+            if sort_col and sort_col in gg.columns:
+                gg = gg.sort_values(sort_col, key=lambda s: pd.to_numeric(s, errors="coerce")).copy()
+            stage_vals, lot_vals = [], []
+            stack_task, stack_lot = {}, {}
+            for _, r in gg.iterrows():
+                lv = pd.to_numeric(r.get(lvl_col), errors="coerce")
+                try:
+                    lvi = int(lv)
+                except Exception:
+                    lvi = -1
+                if lvi > 0:
+                    for k in list(stack_task.keys()):
+                        if k >= lvi:
+                            del stack_task[k]
+                    for k in list(stack_lot.keys()):
+                        if k >= lvi:
+                            del stack_lot[k]
+                tname = _norm_text(r.get(task_col))
+                lot_here = _norm_text(r.get(lot_src)) if lot_src else ""
+                stage = tname if (lvi == 2 and tname) else stack_task.get(2, "")
+                lot_eff = lot_here if lot_here else (stack_lot.get(2, "") or stack_lot.get(3, "") or stack_lot.get(1, ""))
+                stage_vals.append(stage)
+                lot_vals.append(lot_eff)
+                if lvi > 0 and tname:
+                    stack_task[lvi] = tname
+                if lvi > 0 and lot_here:
+                    stack_lot[lvi] = lot_here
+            gg["stage_l2"] = stage_vals
+            gg["lot_effective"] = lot_vals
+            return gg
+
+        if proj_col and proj_col in out.columns:
+            parts = []
+            for _, g in out.groupby(out[proj_col].astype(str), sort=False):
+                parts.append(_process_group(g))
+            return pd.concat(parts, axis=0)
+        return _process_group(out)
+
+    def _coerce_bdr_amount_series(raw: pd.Series) -> pd.Series:
+        """
+        Нормализует денежные значения из 1С/CSV:
+        - пробелы/неразрывные пробелы как разделители тысяч;
+        - десятичная запятая;
+        - скобки для отрицательных значений;
+        - хвосты вида «руб.», «₽», мусорные символы.
+        """
+        if raw is None:
+            return pd.Series(dtype="float64")
+        s = raw.astype(str).str.strip()
+        s = s.replace({"": np.nan, "nan": np.nan, "None": np.nan, "null": np.nan})
+
+        # (123,45) -> -123,45
+        s = s.str.replace(r"^\((.*)\)$", r"-\1", regex=True)
+
+        # Убираем валютные/служебные символы, оставляя только знаки/цифры/разделители.
+        s = s.str.replace(r"[^0-9,\.\-]", "", regex=True)
+
+        # Если есть и точка, и запятая — считаем точку разделителем тысяч, запятую десятичной.
+        mixed = s.str.contains(",", na=False) & s.str.contains(r"\.", na=False)
+        s.loc[mixed] = s.loc[mixed].str.replace(".", "", regex=False)
+
+        # Если только запятая — делаем её десятичной.
+        only_comma = s.str.contains(",", na=False) & ~s.str.contains(r"\.", na=False)
+        s.loc[only_comma] = s.loc[only_comma].str.replace(",", ".", regex=False)
+
+        # Если несколько точек, оставляем последнюю как десятичный разделитель.
+        multi_dot = s.str.count(r"\.").fillna(0) > 1
+        if bool(multi_dot.any()):
+            s.loc[multi_dot] = s.loc[multi_dot].str.replace(
+                r"\.(?=.*\.)", "", regex=True
+            )
+
+        return pd.to_numeric(s, errors="coerce")
+
+    def _bdr_dimension_combos_by_project_key(msp_derived: pd.DataFrame) -> dict[str, list[dict]]:
+        """Уникальные пары лот/этап по нормализованному ключу проекта (как в фильтрах БДДС)."""
+        out: dict[str, list[dict]] = {}
+        if (
+            msp_derived is None
+            or getattr(msp_derived, "empty", True)
+            or "project name" not in msp_derived.columns
+        ):
+            return out
+        for _, rr in msp_derived.iterrows():
+            pk = _project_filter_norm_key(rr.get("project name"))
+            if not pk:
+                continue
+            lr = rr.get("lot_effective") if "lot_effective" in msp_derived.columns else rr.get("lot")
+            sr = rr.get("stage_l2") if "stage_l2" in msp_derived.columns else rr.get("section")
+            lr_s = "" if lr is None or (isinstance(lr, float) and pd.isna(lr)) else str(lr).strip()
+            sr_s = "" if sr is None or (isinstance(sr, float) and pd.isna(sr)) else str(sr).strip()
+            cl = _clean_filter_label(lr_s)
+            cs = _clean_filter_label(sr_s)
+            if not cl and not cs:
+                continue
+            bucket = out.setdefault(pk, [])
+            entry = {"lot_disp": lr_s or lr, "stage_disp": sr_s or sr, "clean_lot": cl, "clean_stage": cs}
+            if entry not in bucket:
+                bucket.append(entry)
+        return out
+
+    def _spread_bdr_synthetic_with_msp_dims(
+        synth: pd.DataFrame,
+        msp_derived: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """
+        Синтетика БДР из 1С без лота/этапа: добавляем комбинации из MSP на проект и делим суммы поровну,
+        чтобы фильтры по лоту/этапу работали и не раздували итоги при выборе «Все».
+        """
+        if synth is None or getattr(synth, "empty", True):
+            return synth
+        if not bool(getattr(synth, "attrs", {}).get("data_source_1c_synthetic_bdr")):
+            return synth
+        combos_map = _bdr_dimension_combos_by_project_key(msp_derived)
+        if not combos_map:
+            return synth
+        need_cols = ("bdr_income", "bdr_expense", "bdr_saldo", "project name", "plan end")
+        if any(c not in synth.columns for c in need_cols):
+            return synth
+        rows_exp: list[dict] = []
+        for _, r in synth.iterrows():
+            pj = r.get("project name")
+            pk_s = _project_filter_norm_key(pj)
+            combos: list[dict] = combos_map.get(pk_s, []) if pk_s else []
+            if not combos:
+                cand: list[list[dict]] = []
+                for k_msp, combos_m in combos_map.items():
+                    if _project_norm_key_matches_msp_keys(pk_s, {k_msp}):
+                        cand.append(combos_m)
+                    elif pk_s and k_msp and _project_norm_key_matches_msp_keys(k_msp, {pk_s}):
+                        cand.append(combos_m)
+                if cand:
+                    seen_k: set[tuple[str, str]] = set()
+                    merged: list[dict] = []
+                    for block in cand:
+                        for ent in block:
+                            tkey = (str(ent.get("clean_lot")), str(ent.get("clean_stage")))
+                            if tkey in seen_k:
+                                continue
+                            seen_k.add(tkey)
+                            merged.append(ent)
+                    combos = merged
+            k = len(combos) if combos else 0
+            if k <= 0:
+                rr = dict(r)
+                rr.setdefault("lot_effective", "")
+                rr.setdefault("stage_l2", "")
+                rows_exp.append(rr)
+                continue
+            inv = 1.0 / float(k)
+            for ent in combos:
+                rr = dict(r)
+                for money in ("bdr_income", "bdr_expense", "bdr_saldo"):
+                    try:
+                        v = float(rr.get(money, np.nan))
+                    except Exception:
+                        v = np.nan
+                    rr[money] = (v * inv) if np.isfinite(v) else v
+                rr["lot_effective"] = str(ent.get("lot_disp") or "")
+                rr["stage_l2"] = str(ent.get("stage_disp") or "")
+                if "section" in synth.columns:
+                    rr["section"] = (
+                        ent.get("clean_stage") or rr.get("section") or rr.get("stage_l2") or ""
+                    )
+                rows_exp.append(rr)
+        if not rows_exp:
+            return synth
+        odf = pd.DataFrame(rows_exp)
+        try:
+            odf.attrs.update(dict(getattr(synth, "attrs", {}) or {}))
+        except Exception:
+            pass
+        odf.attrs["bdr_synthetic_split_by_msp_dims"] = True
+        # Периоды после explode
+        if "plan end" in odf.columns:
+            _pe2 = pd.to_datetime(odf["plan end"], errors="coerce")
+            odf["plan_month"] = _pe2.dt.to_period("M")
+            odf["plan_quarter"] = _pe2.dt.to_period("Q")
+            odf["plan_year"] = _pe2.dt.to_period("Y")
+        return odf
+
+    # Как БДДС: «Группировать по» + «Фильтр по проекту» — до derive/fallback,
+    # чтобы список проектов брался из MSP, а не только из синтетики из 1С.
+    col1, col2 = st.columns(2)
+    with col1:
+        period_type = st.selectbox(
+            "Группировать по", ["Месяц", "Квартал", "Год"], key="bdr_period"
+        )
+        period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
+        period_type_en = period_map.get(period_type, "Month")
+    with col2:
+        if "project name" in df_src.columns:
+            projects = ["Все"] + _unique_project_labels_for_select(df_src["project name"])
+            selected_project = st.selectbox(
+                "Фильтр по проекту", projects, key="bdr_project"
+            )
+        else:
+            selected_project = "Все"
+
+    df_derived_filters = _derive_bdr_dimensions(df_src)
+    df_work = df_derived_filters.copy()
+    ensure_budget_columns(df_work)
+    df_work, _ = ensure_bdr_frame_with_fallback(df_work)
+    df_work = _spread_bdr_synthetic_with_msp_dims(df_work, df_derived_filters)
+    ensure_budget_columns(df_work)
+    ensure_date_columns(df_work)
 
     # Определяем колонки для доходов и расходов
     def find_col(df, variants):
@@ -8097,55 +8665,102 @@ def dashboard_bdr(df):
                     return c
         return None
 
-    revenue_col = find_col(
-        df,
-        ["доходы", "доход", "revenue", "income", "Бюджет План", "budget plan"],
+    income_col = find_col(
+        df_work,
+        [
+            "bdr_income",
+            "доходы",
+            "доход",
+            "revenue",
+            "income",
+        ],
     )
     expense_col = find_col(
-        df,
-        ["расходы", "расход", "expense", "Бюджет Факт", "budget fact"],
+        df_work,
+        [
+            "bdr_expense",
+            "расходы",
+            "расход",
+            "expenses",
+            "expense",
+        ],
     )
-    ensure_budget_columns(df)
-    if revenue_col is None and "budget plan" in df.columns:
-        revenue_col = "budget plan"
-    if expense_col is None and "budget fact" in df.columns:
-        expense_col = "budget fact"
 
-    if revenue_col is None or expense_col is None:
+    if income_col is None or expense_col is None:
         st.warning(
-            "Для отчёта БДР нужны столбцы плана и факта расходов "
-            "(например «Бюджет План» / «Бюджет Факт» или пары колонок по шаблону из ТЗ)."
+            "Для отчёта БДР нужны столбцы доходов и расходов "
+            "(например «доходы» / «расходы» после загрузки `*_dannye.json`)."
         )
         return
 
-    # Фильтры — в одном стиле с БДДС: строка 1 — Группировать по, Фильтр по проекту; строка 2 — Фильтр по этапу
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        period_type = st.selectbox(
-            "Группировать по", ["Месяц", "Квартал", "Год"], key="bdr_period"
-        )
-        period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
-        period_type_en = period_map.get(period_type, "Month")
-    with col2:
-        if "project name" in df.columns:
-            projects = ["Все"] + _unique_project_labels_for_select(df["project name"])
-            selected_project = st.selectbox(
-                "Фильтр по проекту", projects, key="bdr_project"
-            )
-        else:
-            selected_project = "Все"
-
-    col3 = st.columns(1)[0]
+    col3, col4 = st.columns(2)
     with col3:
-        if "section" in df.columns:
-            sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
-            selected_section = st.selectbox(
-                "Фильтр по этапу", sections, key="bdr_section"
+        lot_base_col = (
+            "lot_effective"
+            if "lot_effective" in df_work.columns
+            else (
+                "lot"
+                if "lot" in df_work.columns
+                else ("section" if "section" in df_work.columns else None)
             )
+        )
+        if lot_base_col:
+            _lot_pairs = []
+            _lot_series_src = (
+                df_work[lot_base_col]
+                if (lot_base_col in df_work.columns)
+                else (
+                    df_derived_filters[lot_base_col]
+                    if (lot_base_col in df_derived_filters.columns)
+                    else pd.Series(dtype=object)
+                )
+            )
+            for raw in _lot_series_src.dropna().tolist():
+                clean = _clean_filter_label(raw)
+                if clean:
+                    _lot_pairs.append((clean, str(raw).strip()))
+            _lot_raw_by_display = {}
+            for clean, raw in sorted(set(_lot_pairs), key=lambda t: t[0]):
+                _lot_raw_by_display.setdefault(clean, raw)
+            _lot_opts = ["Все"] + sorted(_lot_raw_by_display.keys())
+            _sel_lot_display = st.selectbox("Фильтр по лоту", _lot_opts, key="bdr_lot")
+            selected_lot = "Все" if _sel_lot_display == "Все" else _lot_raw_by_display.get(_sel_lot_display, _sel_lot_display)
+        else:
+            selected_lot = "Все"
+    with col4:
+        if ("stage_l2" in df_work.columns) or ("stage_l2" in df_derived_filters.columns):
+            _stage_pairs = []
+            _st_series = (
+                df_work["stage_l2"]
+                if "stage_l2" in df_work.columns
+                else df_derived_filters["stage_l2"]
+            )
+            for raw in _st_series.dropna().tolist():
+                clean = _clean_filter_label(raw)
+                if clean:
+                    _stage_pairs.append((clean, str(raw).strip()))
+            _stage_raw_by_display = {}
+            for clean, raw in sorted(set(_stage_pairs), key=lambda t: t[0]):
+                _stage_raw_by_display.setdefault(clean, raw)
+            _stage_opts = ["Все"] + sorted(_stage_raw_by_display.keys())
+            _sel_stage_display = st.selectbox("Фильтр по этапу", _stage_opts, key="bdr_section")
+            selected_section = "Все" if _sel_stage_display == "Все" else _stage_raw_by_display.get(_sel_stage_display, _sel_stage_display)
+        elif ("section" in df_work.columns) or ("section" in df_derived_filters.columns):
+            _sec_series = (
+                df_work["section"]
+                if "section" in df_work.columns
+                else df_derived_filters["section"]
+            )
+            _sec_labels: list[str] = []
+            for raw in _sec_series.dropna().tolist():
+                c = _clean_filter_label(str(raw).strip())
+                if c:
+                    _sec_labels.append(c)
+            sections = ["Все"] + sorted(set(_sec_labels))
+            selected_section = st.selectbox("Фильтр по этапу", sections, key="bdr_section")
         else:
             selected_section = "Все"
 
-    # Период
     if period_type_en == "Month":
         period_col = "plan_month"
         period_label = "Месяц"
@@ -8156,35 +8771,138 @@ def dashboard_bdr(df):
         period_col = "plan_year"
         period_label = "Год"
 
-    if period_col not in df.columns:
+    if period_col not in df_work.columns:
         st.warning(f"Столбец периода «{period_col}» не найден. Добавьте даты в данные.")
         return
 
-    filtered_df = df.copy()
+    filtered_df = df_work.copy()
     if selected_project != "Все" and "project name" in filtered_df.columns:
         filtered_df = filtered_df[
             filtered_df["project name"].map(_project_filter_norm_key)
             == _project_filter_norm_key(selected_project)
         ]
-    if selected_section != "Все" and "section" in filtered_df.columns:
-        filtered_df = filtered_df[
-            filtered_df["section"].astype(str).str.strip()
-            == str(selected_section).strip()
-        ]
+    if selected_lot != "Все":
+        lot_filter_col = "lot_effective" if "lot_effective" in filtered_df.columns else ("lot" if "lot" in filtered_df.columns else None)
+        if lot_filter_col and lot_filter_col in filtered_df.columns:
+            filtered_df = filtered_df[
+                filtered_df[lot_filter_col].astype(str).str.strip() == str(selected_lot).strip()
+            ]
+    if selected_section != "Все":
+        stage_col = "stage_l2" if "stage_l2" in filtered_df.columns else ("section" if "section" in filtered_df.columns else None)
+        if stage_col and stage_col in filtered_df.columns:
+            filtered_df = filtered_df[
+                filtered_df[stage_col].astype(str).str.strip() == str(selected_section).strip()
+            ]
 
-    filtered_df["_plan_exp"] = pd.to_numeric(filtered_df[revenue_col], errors="coerce")
-    filtered_df["_fact_exp"] = pd.to_numeric(filtered_df[expense_col], errors="coerce")
-    filtered_df["_deviation"] = filtered_df["_fact_exp"] - filtered_df["_plan_exp"]
+    ensure_date_columns(filtered_df)
+    # Фильтр-календарь «Период» — как БДДС: тот же help/format и общий стиль/скрипт для datepicker.
+    if "plan end" in filtered_df.columns:
+        _pe_series_bdr = pd.to_datetime(filtered_df["plan end"], errors="coerce")
+        if _pe_series_bdr.notna().any():
+            _bdr_min = _pe_series_bdr.min()
+            _bdr_max = _pe_series_bdr.max()
+            _bdr_start = _bdr_min.date() if pd.notna(_bdr_min) else None
+            _bdr_end = _bdr_max.date() if pd.notna(_bdr_max) else None
+            _bdr_range_kw = {
+                "label": "Период",
+                "key": "bdr_period_range",
+                "help": "Фильтр по диапазону дат (поле «Конец план»).",
+                "format": "DD.MM.YYYY",
+            }
+            if _bdr_start and _bdr_end and _bdr_start <= _bdr_end:
+                _bdr_range_kw["value"] = (_bdr_start, _bdr_end)
+                _bdr_range_kw["min_value"] = _bdr_start
+                _bdr_range_kw["max_value"] = _bdr_end
+            _bdr_period_range = st.date_input(**_bdr_range_kw)
+            components.html(
+                """
+                <script>
+                (function() {
+                  const rootDoc = window.parent && window.parent.document ? window.parent.document : document;
+                  const hid = "st-bdds-hide-datepicker-quickselect";
+                  let tag = rootDoc.getElementById(hid);
+                  if (!tag) {
+                    tag = rootDoc.createElement("style");
+                    tag.id = hid;
+                    rootDoc.head.appendChild(tag);
+                  }
+                  tag.textContent = "";
 
-    agg_dict = {"_plan_exp": "sum", "_fact_exp": "sum", "_deviation": "sum"}
+                  const dict = new Map([
+                    ["January","Январь"],["February","Февраль"],["March","Март"],["April","Апрель"],
+                    ["May","Май"],["June","Июнь"],["July","Июль"],["August","Август"],
+                    ["September","Сентябрь"],["October","Октябрь"],["November","Ноябрь"],["December","Декабрь"],
+                    ["Mo","Пн"],["Tu","Вт"],["We","Ср"],["Th","Чт"],["Fr","Пт"],["Sa","Сб"],["Su","Вс"],
+                    ["None","Нет"]
+                  ]);
+                  const root = window.parent && window.parent.document ? window.parent.document : document;
+
+                  const shouldSkip = (el) => {
+                    if (!el || !el.tagName) return true;
+                    const t = el.tagName.toLowerCase();
+                    if (t === "script" || t === "style" || t === "textarea" || t === "input") return true;
+                    if (t === "svg" || t === "path") return true;
+                    if (el.isContentEditable) return true;
+                    return false;
+                  };
+
+                  const replaceInTextNode = (node) => {
+                    const raw = node.nodeValue || "";
+                    const txt = raw.trim();
+                    if (!txt) return;
+                    if (dict.has(txt)) {
+                      node.nodeValue = raw.replace(txt, dict.get(txt));
+                      return;
+                    }
+                    let next = raw;
+                    for (const [en, ru] of dict.entries()) {
+                      next = next.replace(new RegExp("\\\\b" + en + "\\\\b", "g"), ru);
+                    }
+                    if (next !== raw) node.nodeValue = next;
+                  };
+
+                  const apply = () => {
+                    const all = root.querySelectorAll("*");
+                    all.forEach((el) => {
+                      if (shouldSkip(el)) return;
+                      const childs = el.childNodes || [];
+                      for (let i = 0; i < childs.length; i++) {
+                        const n = childs[i];
+                        if (n && n.nodeType === Node.TEXT_NODE) replaceInTextNode(n);
+                      }
+                    });
+                  };
+                  apply();
+                  const obs = new MutationObserver(apply);
+                  obs.observe(root.body, { childList: true, subtree: true });
+                })();
+                </script>
+                """,
+                height=0,
+                width=0,
+            )
+            if isinstance(_bdr_period_range, (list, tuple)) and len(_bdr_period_range) == 2:
+                _bdr_from = pd.to_datetime(_bdr_period_range[0], errors="coerce")
+                _bdr_to = pd.to_datetime(_bdr_period_range[1], errors="coerce")
+                if pd.notna(_bdr_from) and pd.notna(_bdr_to):
+                    filtered_df = filtered_df[
+                        (_pe_series_bdr >= _bdr_from)
+                        & (_pe_series_bdr <= (_bdr_to + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)))
+                    ].copy()
+
+    filtered_df["_inc"] = _coerce_bdr_amount_series(filtered_df[income_col]).fillna(0.0)
+    filtered_df["_exp"] = _coerce_bdr_amount_series(filtered_df[expense_col]).fillna(0.0)
+    filtered_df["_saldo"] = filtered_df["_inc"] - filtered_df["_exp"]
+
+    agg_dict = {"_inc": "sum", "_exp": "sum", "_saldo": "sum"}
     bdr_summary = (
         filtered_df.groupby(period_col).agg(agg_dict).reset_index()
     )
     bdr_summary = bdr_summary.rename(
         columns={
-            "_plan_exp": "План расходов",
-            "_fact_exp": "Факт расходов",
-            "_deviation": "Отклонение",
+            "_inc": "Доходы",
+            "_exp": "Расходы",
+            "_saldo": "Сальдо",
         }
     )
 
@@ -8197,9 +8915,9 @@ def dashboard_bdr(df):
         )
         chart_df = bdr_summary.copy()
         if view_type == "Накопительно":
-            chart_df["План расходов"] = chart_df["План расходов"].cumsum()
-            chart_df["Факт расходов"] = chart_df["Факт расходов"].cumsum()
-            chart_df["Отклонение"] = chart_df["Факт расходов"] - chart_df["План расходов"]
+            chart_df["Доходы"] = chart_df["Доходы"].cumsum()
+            chart_df["Расходы"] = chart_df["Расходы"].cumsum()
+            chart_df["Сальдо"] = chart_df["Доходы"] - chart_df["Расходы"]
             title_suffix = " (накопительно)"
         else:
             title_suffix = ""
@@ -8207,7 +8925,7 @@ def dashboard_bdr(df):
         _bdr_hide_zero = False
         if period_type_en == "Month" and view_type == "По месяцам":
             _bdr_hide_zero = st.checkbox(
-                "Скрывать месяцы, где план и факт равны 0",
+                "Скрывать месяцы, где доходы и расходы равны 0",
                 value=True,
                 key="bdr_hide_zero_months",
             )
@@ -8217,12 +8935,12 @@ def dashboard_bdr(df):
             and view_type == "По месяцам"
             and not chart_df.empty
         ):
-            _p0 = chart_df["План расходов"].fillna(0.0)
-            _f0 = chart_df["Факт расходов"].fillna(0.0)
-            chart_df = chart_df.loc[_p0.abs() + _f0.abs() > 0.5].copy()
+            _di = chart_df["Доходы"].fillna(0.0)
+            _dx = chart_df["Расходы"].fillna(0.0)
+            chart_df = chart_df.loc[_di.abs() + _dx.abs() > 0.5].copy()
         if chart_df.empty:
             st.info(
-                "Нет периодов для графика. Снимите «Скрывать месяцы, где план и факт равны 0» "
+                "Нет периодов для графика. Снимите «Скрывать месяцы, где доходы и расходы равны 0» "
                 "или расширьте фильтры."
             )
             return
@@ -8257,17 +8975,17 @@ def dashboard_bdr(df):
         _plan_txt_b = (
             None
             if _hide_bar_value_labels
-            else _finance_bar_text_mln_rub(chart_df["План расходов"], min_abs_mln=_tlbl_b)
+            else _finance_bar_text_mln_rub(chart_df["Доходы"], min_abs_mln=_tlbl_b)
         )
         _fact_txt_b = (
             None
             if _hide_bar_value_labels
-            else _finance_bar_text_mln_rub(chart_df["Факт расходов"], min_abs_mln=_tlbl_b)
+            else _finance_bar_text_mln_rub(chart_df["Расходы"], min_abs_mln=_tlbl_b)
         )
         _dev_txt_b = (
             None
             if _hide_bar_value_labels
-            else _finance_bar_text_mln_rub(chart_df["Отклонение"], min_abs_mln=_tlbl_dev)
+            else _finance_bar_text_mln_rub(chart_df["Сальдо"], min_abs_mln=_tlbl_dev)
         )
 
         fig = go.Figure()
@@ -8275,43 +8993,43 @@ def dashboard_bdr(df):
         fig.add_trace(
             go.Bar(
                 x=x_vals,
-                y=chart_df["План расходов"].div(1e6),
-                name="План расходов",
+                y=chart_df["Доходы"].div(1e6),
+                name="Доходы",
                 marker_color="#2E86AB",
                 text=_plan_txt_b,
                 textposition=_txt_pos_b,
                 textfont=dict(size=_tfs_b, color="#f0f4f8"),
-                customdata=chart_df["План расходов"].apply(format_million_rub),
-                hovertemplate="<b>%{x}</b><br>План расходов: %{customdata}<br><extra></extra>",
+                customdata=chart_df["Доходы"].apply(format_million_rub),
+                hovertemplate="<b>%{x}</b><br>Доходы: %{customdata}<br><extra></extra>",
             )
         )
         fig.add_trace(
             go.Bar(
                 x=x_vals,
-                y=chart_df["Факт расходов"].div(1e6),
-                name="Факт расходов",
+                y=chart_df["Расходы"].div(1e6),
+                name="Расходы",
                 marker_color="#A23B72",
                 text=_fact_txt_b,
                 textposition=_txt_pos_b,
                 textfont=dict(size=_tfs_b, color="#f0f4f8"),
-                customdata=chart_df["Факт расходов"].apply(format_million_rub),
-                hovertemplate="<b>%{x}</b><br>Факт расходов: %{customdata}<br><extra></extra>",
+                customdata=chart_df["Расходы"].apply(format_million_rub),
+                hovertemplate="<b>%{x}</b><br>Расходы: %{customdata}<br><extra></extra>",
             )
         )
         dev_colors = [
-            "#e74c3c" if v >= 0 else "#27ae60" for v in chart_df["Отклонение"]
+            "#e74c3c" if v >= 0 else "#27ae60" for v in chart_df["Сальдо"]
         ]
         fig.add_trace(
             go.Bar(
                 x=x_vals,
-                y=chart_df["Отклонение"].div(1e6),
-                name="Отклонение",
+                y=chart_df["Сальдо"].div(1e6),
+                name="Сальдо",
                 marker_color=dev_colors,
                 text=_dev_txt_b,
                 textposition=_txt_pos_b,
                 textfont=dict(size=_tfs_b, color="#f0f4f8"),
-                customdata=chart_df["Отклонение"].apply(format_million_rub),
-                hovertemplate="<b>%{x}</b><br>Отклонение: %{customdata}<br><extra></extra>",
+                customdata=chart_df["Сальдо"].apply(format_million_rub),
+                hovertemplate="<b>%{x}</b><br>Сальдо: %{customdata}<br><extra></extra>",
             )
         )
         fig.update_layout(
@@ -8337,9 +9055,9 @@ def dashboard_bdr(df):
                 np.nanmax(
                     np.concatenate(
                         [
-                            chart_df["План расходов"].div(1e6).to_numpy(),
-                            chart_df["Факт расходов"].div(1e6).to_numpy(),
-                            chart_df["Отклонение"].div(1e6).to_numpy(),
+                            chart_df["Доходы"].div(1e6).to_numpy(),
+                            chart_df["Расходы"].div(1e6).to_numpy(),
+                            chart_df["Сальдо"].div(1e6).to_numpy(),
                         ]
                     )
                 )
@@ -8348,9 +9066,9 @@ def dashboard_bdr(df):
                 np.nanmin(
                     np.concatenate(
                         [
-                            chart_df["План расходов"].div(1e6).to_numpy(),
-                            chart_df["Факт расходов"].div(1e6).to_numpy(),
-                            chart_df["Отклонение"].div(1e6).to_numpy(),
+                            chart_df["Доходы"].div(1e6).to_numpy(),
+                            chart_df["Расходы"].div(1e6).to_numpy(),
+                            chart_df["Сальдо"].div(1e6).to_numpy(),
                         ]
                     )
                 )
@@ -8375,62 +9093,62 @@ def dashboard_bdr(df):
         fig = apply_chart_background(fig)
         render_chart(
             fig,
-            caption_below=f"БДР — план/факт расходов{title_suffix}",
+            caption_below=f"БДР{title_suffix}",
             height=_bdr_h,
             max_height=None,
         )
 
     _bdr_chart()
 
-    st.subheader("Сводка бюджета по периоду")
+    st.subheader("Сводка БДР по периоду")
     display_df = bdr_summary[
-        [c for c in ["Период", "План расходов", "Факт расходов", "Отклонение"] if c in bdr_summary.columns]
+        [c for c in ["Период", "Доходы", "Расходы", "Сальдо"] if c in bdr_summary.columns]
     ].copy()
     display_df = display_df.rename(columns={"Период": period_label})
-    for col in ["План расходов", "Факт расходов", "Отклонение"]:
+    for col in ["Доходы", "Расходы", "Сальдо"]:
         if col in display_df.columns:
             display_df[col] = (display_df[col] / 1e6).round(2).apply(
                 lambda x: f"{float(x):.2f} млн руб." if pd.notna(x) else ""
             )
     display_df = display_df.rename(columns={
-        "План расходов": "План расходов, млн руб.",
-        "Факт расходов": "Факт расходов, млн руб.",
-        "Отклонение": "Отклонение, млн руб.",
+        "Доходы": "Доходы, млн руб.",
+        "Расходы": "Расходы, млн руб.",
+        "Сальдо": "Сальдо, млн руб.",
     })
     st.markdown(
-        budget_table_to_html(display_df, finance_deviation_column="Отклонение, млн руб."),
+        budget_table_to_html(display_df, finance_deviation_column="Сальдо, млн руб."),
         unsafe_allow_html=True,
     )
 
     if "project name" in filtered_df.columns:
-        st.subheader("Сводка бюджета по проекту")
+        st.subheader("Сводка БДР по проекту")
         by_p = (
             filtered_df.groupby("project name", dropna=False)
-            .agg({"_plan_exp": "sum", "_fact_exp": "sum"})
+            .agg({"_inc": "sum", "_exp": "sum"})
             .reset_index()
         )
-        by_p["Итого"] = by_p["_fact_exp"] - by_p["_plan_exp"]
+        by_p["Итого (сальдо)"] = by_p["_inc"] - by_p["_exp"]
         proj_tbl = pd.DataFrame(
             {
                 "Проект": by_p["project name"].astype(str),
-                "План, млн руб.": (by_p["_plan_exp"] / 1e6).round(2).apply(
+                "Доходы, млн руб.": (by_p["_inc"] / 1e6).round(2).apply(
                     lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
                 ),
-                "Факт, млн руб.": (by_p["_fact_exp"] / 1e6).round(2).apply(
+                "Расходы, млн руб.": (by_p["_exp"] / 1e6).round(2).apply(
                     lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
                 ),
-                "Итого (отклонение), млн руб.": (by_p["Итого"] / 1e6).round(2).apply(
+                "Сальдо, млн руб.": (by_p["Итого (сальдо)"] / 1e6).round(2).apply(
                     lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
                 ),
             }
         )
         suppress_caption(
-            "Колонка «Итого» — отклонение (факт − план) по проекту за выбранные фильтры."
+            "Колонка «Сальдо» — доходы минус расходы по проекту за выбранные фильтры."
         )
         st.markdown(
             budget_table_to_html(
                 proj_tbl,
-                finance_deviation_column="Итого (отклонение), млн руб.",
+                finance_deviation_column="Сальдо, млн руб.",
             ),
             unsafe_allow_html=True,
         )
@@ -11377,12 +12095,11 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
     """
     if show_header:
         _dst = (data_source_filter or "").strip().lower()
-        # R23-05 стр.12: «Переименовать отчёт в "План-факт рабочие" из "Рабочие (план/факт)"»
-        # (заголовок теперь через дефис, а не через косую черту).
+        # R23-05 стр.12: «Переименовать отчёт в "План/факт рабочие"».
         if _dst == "техника":
-            st.header("План-факт техника")
+            st.header("План/факт техника")
         elif _dst == "ресурсы":
-            st.header("План-факт рабочие")
+            st.header("План/факт рабочие")
         else:
             st.header("ГДРС")
 
@@ -11872,8 +12589,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             errors="coerce",
         ).fillna(0)
     else:
-        # Отклонение по ТЗ: СКУД (факт) - план
-        work_df["Дельта_numeric"] = work_df["week_sum"] - work_df["План_numeric"]
+        # Отклонение по PDF правок ГДРС: План − Факт (Факт ≈ week_sum / СКУД).
+        work_df["Дельта_numeric"] = work_df["План_numeric"] - work_df["week_sum"]
 
     # Process Дельта (%) (Delta %) if available - extract numeric value from percentage string
     # Try to find column by partial match
@@ -11991,6 +12708,22 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             work_df["Период"] = pd.Timestamp.today().to_period("M")
             period_col = "Период"
 
+    _gdrs_csv_kind_col = _gdrs_detect_csv_resource_kind_column(work_df)
+    if _gdrs_csv_kind_col and _gdrs_csv_kind_col in work_df.columns:
+        _kind_raw = work_df[_gdrs_csv_kind_col].astype(str).str.strip()
+        _kind_ok = _kind_raw.ne("") & ~_kind_raw.str.lower().isin({"nan", "none"})
+        _uniq_kind = sorted(_kind_raw[_kind_ok].unique().tolist())
+        if len(_uniq_kind) >= 2:
+            _kind_opts = ["Все"] + _uniq_kind
+            _kind_sel = st.selectbox(
+                "Вид ресурсов (по файлу)",
+                _kind_opts,
+                key=f"{key_prefix}_csv_resource_kind",
+                help=f"Колонка признака в CSV: {_gdrs_csv_kind_col}",
+            )
+            if _kind_sel != "Все":
+                work_df = work_df.loc[_kind_raw.eq(str(_kind_sel).strip())].copy()
+
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -12058,10 +12791,83 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             _min_dt = date.today().replace(day=1)
             _max_dt = date.today()
 
-        _rng = st.date_input(
-            "Период с / по",
-            value=(_min_dt, _max_dt),
-            key=f"{key_prefix}_period_range",
+        _gdrs_range_kw = {
+            "label": "Период",
+            "key": f"{key_prefix}_period_range",
+            "help": "Фильтр по диапазону дат (суточные столбцы или колонка «Период»).",
+            "format": "DD.MM.YYYY",
+        }
+        if _min_dt and _max_dt and _min_dt <= _max_dt:
+            _gdrs_range_kw["value"] = (_min_dt, _max_dt)
+            _gdrs_range_kw["min_value"] = _min_dt
+            _gdrs_range_kw["max_value"] = _max_dt
+        _rng = st.date_input(**_gdrs_range_kw)
+        components.html(
+            """
+                <script>
+                (function() {
+                  const rootDoc = window.parent && window.parent.document ? window.parent.document : document;
+                  const hid = "st-bdds-hide-datepicker-quickselect";
+                  let tag = rootDoc.getElementById(hid);
+                  if (!tag) {
+                    tag = rootDoc.createElement("style");
+                    tag.id = hid;
+                    rootDoc.head.appendChild(tag);
+                  }
+                  tag.textContent = "";
+
+                  const dict = new Map([
+                    ["January","Январь"],["February","Февраль"],["March","Март"],["April","Апрель"],
+                    ["May","Май"],["June","Июнь"],["July","Июль"],["August","Август"],
+                    ["September","Сентябрь"],["October","Октябрь"],["November","Ноябрь"],["December","Декабрь"],
+                    ["Mo","Пн"],["Tu","Вт"],["We","Ср"],["Th","Чт"],["Fr","Пт"],["Sa","Сб"],["Su","Вс"],
+                    ["None","Нет"]
+                  ]);
+                  const root = window.parent && window.parent.document ? window.parent.document : document;
+
+                  const shouldSkip = (el) => {
+                    if (!el || !el.tagName) return true;
+                    const t = el.tagName.toLowerCase();
+                    if (t === "script" || t === "style" || t === "textarea" || t === "input") return true;
+                    if (t === "svg" || t === "path") return true;
+                    if (el.isContentEditable) return true;
+                    return false;
+                  };
+
+                  const replaceInTextNode = (node) => {
+                    const raw = node.nodeValue || "";
+                    const txt = raw.trim();
+                    if (!txt) return;
+                    if (dict.has(txt)) {
+                      node.nodeValue = raw.replace(txt, dict.get(txt));
+                      return;
+                    }
+                    let next = raw;
+                    for (const [en, ru] of dict.entries()) {
+                      next = next.replace(new RegExp("\\\\b" + en + "\\\\b", "g"), ru);
+                    }
+                    if (next !== raw) node.nodeValue = next;
+                  };
+
+                  const apply = () => {
+                    const all = root.querySelectorAll("*");
+                    all.forEach((el) => {
+                      if (shouldSkip(el)) return;
+                      const childs = el.childNodes || [];
+                      for (let i = 0; i < childs.length; i++) {
+                        const n = childs[i];
+                        if (n && n.nodeType === Node.TEXT_NODE) replaceInTextNode(n);
+                      }
+                    });
+                  };
+                  apply();
+                  const obs = new MutationObserver(apply);
+                  obs.observe(root.body, { childList: true, subtree: true });
+                })();
+                </script>
+                """,
+            height=0,
+            width=0,
         )
         _d_from = None
         _d_to = None
@@ -12110,7 +12916,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 pd.to_numeric(filtered_df["План_numeric"], errors="coerce").fillna(0.0) * day_ratio
             )
         if "Дельта_numeric" in filtered_df.columns:
-            filtered_df["Дельта_numeric"] = filtered_df["week_sum"] - filtered_df["План_numeric"]
+            filtered_df["Дельта_numeric"] = filtered_df["План_numeric"] - filtered_df["week_sum"]
     # Для месячных периодов (без суточных колонок): фильтрация/пересчёт по пересечению диапазона дат с месяцем строки.
     if len(_daily_dates) <= 1 and period_col and period_col in filtered_df.columns and _d_from and _d_to:
         _pf = pd.Timestamp(_d_from)
@@ -12194,12 +13000,6 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         _plan_sum_f = float(
             pd.to_numeric(filtered_df.get("План_numeric"), errors="coerce").fillna(0.0).abs().sum()
         )
-        if _fact_sum > 1e-6 and _plan_sum_f < 1e-6 and _ref_empty:
-            st.info(
-                "План по ГДРС не подставлен: нет загруженного справочника 1С (`1c_*_spravochniki.json`) "
-                "или в нём нет подходящих полей для сопоставления с фактом. "
-                "Без этого «План» и «Дельта (%)» не заполняются. См. **mapping_spec_v2 §4.3.1**."
-            )
         _ref_h4 = (
             "График движения техники"
             if _gdrs_tab_is_tech
@@ -12260,20 +13060,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             )
 
             _daily_hdr_cols = [c for c in _tbl.columns if _gdrs_header_is_dd_mm_yyyy(c)]
-            _weeks_in_month = 4
-            if period_col and period_col in _tbl.columns:
-                _period_dt = pd.to_datetime(_tbl[period_col], errors="coerce", dayfirst=True)
-                if _period_dt.notna().any():
-                    _weeks_in_month = int(np.ceil(_period_dt.dt.days_in_month.dropna().max() / 7.0))
-            elif _daily_hdr_cols:
-                _parsed_hdr = pd.to_datetime(
-                    pd.Series(_daily_hdr_cols).astype(str).str.replace(r"\.{2,3}", ".", regex=True),
-                    errors="coerce",
-                    dayfirst=True,
-                ).dropna()
-                if not _parsed_hdr.empty:
-                    _weeks_in_month = int(np.ceil(_parsed_hdr.iloc[0].days_in_month / 7.0))
-            _weeks_in_month = max(1, min(6, _weeks_in_month))
+            # В эталонной визуализации ГДРС фиксированная сетка 1..6 недель.
+            _weeks_in_month = 6
 
             _week_cols_out = [f"{i} неделя" for i in range(1, _weeks_in_month + 1)]
             _week_map = {}
@@ -12340,7 +13128,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 _ref[_week_cols_out].sum(axis=1) / float(_weeks_in_month)
             ).round(0)
             _ref["План"] = pd.to_numeric(_ref["План"], errors="coerce").fillna(0.0)
-            _ref["Отклонение"] = _ref["СКУД"] - _ref["План"]
+            _ref["Отклонение"] = _ref["План"] - _ref["СКУД"]
             _ref["Дельта (%)"] = _ref.apply(
                 lambda r: round(float(r["Отклонение"]) / float(r["План"]) * 100.0, 1)
                 if float(r["План"]) != 0.0
@@ -12349,11 +13137,24 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             )
 
             if _work_type_col and _work_type_col in _ref.columns:
-                _ref = _ref.rename(columns={_work_type_col: "Вид работ"})
+                _ref = _ref.rename(columns={_work_type_col: "Вид работы"})
             else:
-                _ref["Вид работ"] = "Рабочие" if not _gdrs_tab_is_tech else "—"
-            if (not _gdrs_tab_is_tech) and "Вид работ" in _ref.columns:
-                _ref["Вид работ"] = "Рабочие"
+                _ref["Вид работы"] = "Рабочие" if not _gdrs_tab_is_tech else "—"
+            if not _gdrs_tab_is_tech:
+                _vw = (
+                    _ref["Вид работы"]
+                    .astype(str)
+                    .str.strip()
+                    .replace({"nan": "", "None": "", "<NA>": ""})
+                )
+                _ref["Вид работы"] = _vw.mask(_vw.eq("") | _vw.eq("—"), "Рабочие")
+            if (not project_col) or (project_col not in _ref.columns):
+                _proj_fallback = find_column_by_partial(
+                    _ref,
+                    ["Проект", "проект", "Наименование_Проекта", "project name"],
+                )
+                if _proj_fallback and _proj_fallback in _ref.columns:
+                    project_col = _proj_fallback
             if project_col and project_col in _ref.columns:
                 _ref["_Проект"] = _ref[project_col].fillna("Без проекта").astype(str).str.strip()
             else:
@@ -12363,35 +13164,29 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 _plan = float(pd.to_numeric(_sub["План"], errors="coerce").fillna(0.0).sum())
                 _ws = {w: float(pd.to_numeric(_sub[w], errors="coerce").fillna(0.0).sum()) for w in _week_cols_out}
                 _skud = int(round(sum(_ws.values()) / float(_weeks_in_month), 0))
-                _dev = float(_skud - _plan)
+                _dev = float(_plan - _skud)
                 _pct = round((_dev / _plan) * 100.0, 1) if _plan != 0.0 else None
                 return {"План": _plan, "СКУД": _skud, "Отклонение": _dev, **_ws, "Дельта (%)": _pct}
 
             _rows = []
             for _proj in sorted(_ref["_Проект"].unique(), key=lambda x: str(x)):
                 _p = _ref[_ref["_Проект"] == _proj]
-                _rows.append(
-                    {"Проект": str(_proj), "Контрагент": "", "Вид работ": "", **_agg_block(_p)}
-                )
-                for _ctr in sorted(_p["Контрагент"].dropna().unique(), key=lambda x: str(x)):
-                    _c = _p[_p["Контрагент"].astype(str) == str(_ctr)]
+                # Заголовок блока проекта с агрегатами (как в эталонной таблице).
+                _rows.append({"__row_kind": "project", "Контрагент": str(_proj), "Вид работы": "", **_agg_block(_p)})
+                _d = _p.sort_values(["Контрагент", "Вид работы"], na_position="last")
+                for _, _r in _d.iterrows():
                     _rows.append(
-                        {"Проект": "", "Контрагент": str(_ctr), "Вид работ": "", **_agg_block(_c)}
+                        {
+                            "__row_kind": "detail",
+                            "Контрагент": str(_r.get("Контрагент", "") or ""),
+                            "Вид работы": _r.get("Вид работы", ""),
+                            "План": _r["План"],
+                            "СКУД": _r["СКУД"],
+                            "Отклонение": _r["Отклонение"],
+                            **{w: _r[w] for w in _week_cols_out},
+                            "Дельта (%)": _r["Дельта (%)"],
+                        }
                     )
-                    _d = _c.sort_values("Вид работ", na_position="last")
-                    for _, _r in _d.iterrows():
-                        _rows.append(
-                            {
-                                "Проект": "",
-                                "Контрагент": "",
-                                "Вид работ": _r.get("Вид работ", ""),
-                                "План": _r["План"],
-                                "СКУД": _r["СКУД"],
-                                "Отклонение": _r["Отклонение"],
-                                **{w: _r[w] for w in _week_cols_out},
-                                "Дельта (%)": _r["Дельта (%)"],
-                            }
-                        )
 
             _view = pd.DataFrame(_rows)
             _grand = _agg_block(_ref)
@@ -12399,7 +13194,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 [
                     _view,
                     pd.DataFrame(
-                        [{"Проект": "Итого", "Контрагент": "", "Вид работ": "", **_grand}]
+                        [{"__row_kind": "total", "Контрагент": "Итого", "Вид работы": "", **_grand}]
                     ),
                 ],
                 ignore_index=True,
@@ -12423,18 +13218,98 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 pass
 
             _show_cols = (
-                ["Проект", "Контрагент", "Вид работ", "План", "СКУД", "Отклонение"]
+                ["Контрагент", "Вид работы", "План", "СКУД", "Отклонение"]
                 + _week_cols_out
                 + ["Дельта (%)"]
             )
-            suppress_caption("Иерархия строк: **проект** → **контрагент** → **вид работ**.")
-            st.markdown(
-                budget_table_to_html(
-                    _view[_show_cols],
-                    finance_deviation_column="Отклонение",
-                    deviation_red_if_negative=True,
-                ),
-                unsafe_allow_html=True,
+            _render_cols = ["__row_kind"] + _show_cols if "__row_kind" in _view.columns else _show_cols
+
+            _period_title = ""
+            if _d_from and _d_to:
+                _period_title = _format_gdrs_period_range_dd_mm_yyyy(_d_from, _d_to)
+                if not _period_title:
+                    _period_title = f"{_d_from} - {_d_to}"
+            elif period_col and period_col in filtered_df.columns:
+                _pvals = pd.to_datetime(filtered_df[period_col], errors="coerce", dayfirst=True).dropna()
+                if not _pvals.empty:
+                    _pmin = _pvals.min()
+                    _pmax = _pvals.max()
+                    _ms = pd.Timestamp(_pmin).to_period("M").start_time.normalize().date()
+                    _me = pd.Timestamp(_pmax).to_period("M").end_time.normalize().date()
+                    _period_title = _format_gdrs_period_range_dd_mm_yyyy(_ms, _me)
+
+            _gdrs_ref_table_title = "ГДРС — техника" if _gdrs_tab_is_tech else "ГДРС — рабочие"
+
+            def _render_gdrs_ref_html(df_view: pd.DataFrame) -> str:
+                ncols = len(_show_cols)
+                wk_n = len(_week_cols_out)
+                wrap_id = "gdrs_tbl_" + str(id(df_view))
+                parts = [
+                    f'<div id="{wrap_id}" style="overflow-x:auto;min-width:0;margin:0.75em 0;">',
+                    f"<style>"
+                    f"#{wrap_id} table{{width:100%;border-collapse:collapse;background-color:{TABLE_BG_COLOR};color:{TABLE_TEXT_COLOR};font-size:13px;border:1px solid rgba(255,255,255,0.45);}}"
+                    f"#{wrap_id} th,#{wrap_id} td{{border:1px solid rgba(255,255,255,0.45);padding:4px 6px;white-space:nowrap;}}"
+                    f"#{wrap_id} thead th{{background-color:{TABLE_BG_COLOR};font-weight:700;border:1px solid rgba(255,255,255,0.45)!important;}}"
+                    f"#{wrap_id} thead tr{{border-bottom:1px solid rgba(255,255,255,0.45)!important;}}"
+                    f"#{wrap_id} thead tr.title-row{{border-bottom:none!important;}}"
+                    f"#{wrap_id} thead tr.title-row th{{border-bottom:none!important;}}"
+                    f"#{wrap_id} thead tr.period-row th{{border-top:none!important;}}"
+                    f"#{wrap_id} .t-center{{text-align:center !important;}}"
+                    f"#{wrap_id} .rk-project td{{font-weight:700;background-color:rgba(255,255,255,0.08)!important;border-top:2px solid rgba(255,255,255,0.75)!important;border-bottom:2px solid rgba(255,255,255,0.75)!important;}}"
+                    f"#{wrap_id} .rk-project td:first-child{{border-left:2px solid rgba(255,255,255,0.75)!important;}}"
+                    f"#{wrap_id} .rk-project td:last-child{{border-right:2px solid rgba(255,255,255,0.75)!important;}}"
+                    f"#{wrap_id} .rk-total td{{font-weight:700;background-color:rgba(80,180,255,0.18)!important;border-top:2px solid rgba(160,220,255,0.9)!important;border-bottom:2px solid rgba(160,220,255,0.9)!important;}}"
+                    f"#{wrap_id} .rk-total td:first-child{{border-left:2px solid rgba(160,220,255,0.9)!important;}}"
+                    f"#{wrap_id} .rk-total td:last-child{{border-right:2px solid rgba(160,220,255,0.9)!important;}}"
+                    f"#{wrap_id} .neg{{color:hsl(348,100%,63%);font-weight:700;}}"
+                    f"#{wrap_id} .pos{{color:hsl(148,100%,63%);font-weight:700;}}"
+                    f"</style>",
+                    "<table>",
+                    "<thead>",
+                    f'<tr class="title-row"><th colspan="{ncols}" class="t-center" style="text-align:center !important;">{html_module.escape(_gdrs_ref_table_title)}</th></tr>',
+                    f'<tr class="period-row"><th colspan="{ncols}" class="t-center" style="text-align:center !important;">{html_module.escape(_period_title) if _period_title else ""}</th></tr>',
+                    "<tr>",
+                    '<th rowspan="2">Контрагент</th>',
+                    '<th rowspan="2">Вид работы</th>',
+                    '<th rowspan="2" class="t-center" style="text-align:center !important;">План</th>',
+                    '<th rowspan="2" class="t-center" style="text-align:center !important;">СКУД</th>',
+                    '<th rowspan="2" class="t-center" style="text-align:center !important;">Отклонение</th>',
+                    f'<th colspan="{wk_n}" class="t-center" style="text-align:center !important;">СКУД</th>',
+                    '<th rowspan="2" class="t-center" style="text-align:center !important;">(отклонение %)</th>',
+                    "</tr>",
+                    "<tr>",
+                ]
+                for w in _week_cols_out:
+                    parts.append(f'<th class="t-center">{html_module.escape(str(w))}</th>')
+                parts.append("</tr></thead><tbody>")
+
+                for _, row in df_view.iterrows():
+                    rk = str(row.get("__row_kind", "")).strip().casefold()
+                    tr_cls = f' class="rk-{rk}"' if rk else ""
+                    parts.append(f"<tr{tr_cls}>")
+                    for c in _show_cols:
+                        val = row.get(c, "")
+                        s = "" if (val is None or (isinstance(val, float) and pd.isna(val))) else str(val)
+                        esc = html_module.escape(s)
+                        cls = ""
+                        if c in ("Отклонение", "Дельта (%)"):
+                            num = pd.to_numeric(
+                                str(s).replace("%", "").replace(",", ".").replace(" ", ""),
+                                errors="coerce",
+                            )
+                            if pd.notna(num):
+                                cls = "neg" if float(num) < 0 else ("pos" if float(num) > 0 else "")
+                        tcenter = " t-center" if c not in ("Контрагент", "Вид работы") else ""
+                        parts.append(f'<td class="{(cls + tcenter).strip()}">{esc}</td>')
+                    parts.append("</tr>")
+                parts.append("</tbody></table></div>")
+                return "".join(parts)
+
+            st.markdown(_render_gdrs_ref_html(_view[_render_cols]), unsafe_allow_html=True)
+            suppress_caption(
+                "Пояснение: «СКУД» в строке — среднее по столбцам 1–6 недели (как в методичке по неделям). "
+                "В строке «Итого» значения по неделям — сумма по строкам таблицы; «СКУД» — среднее этих шести сумм "
+                "(не сумма столбца «СКУД» по строкам)."
             )
 
     period_col_hist = _gdrs_resolve_period_column(filtered_df)
@@ -12717,7 +13592,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             import math as _math
             by_w["Факт"] = by_w["Факт"].apply(lambda v: int(_math.ceil(float(v))) if float(v) > 0 else int(v))
             by_w["План"] = by_w["План"].apply(lambda v: int(_math.ceil(float(v))) if float(v) > 0 else int(v))
-            by_w["Отклонение"] = by_w["Факт"] - by_w["План"]
+            by_w["Отклонение"] = by_w["План"] - by_w["Факт"]
             by_w = by_w[(by_w["Факт"].abs() > 0) | (by_w["План"].abs() > 0)].sort_values("Факт", ascending=False)
             if by_w.empty:
                 with wfb_cols[wfi]:
@@ -12863,7 +13738,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         fact_sum = float(pd.to_numeric(d["week_sum"], errors="coerce").fillna(0).sum())
         if plan_sum <= 0 and fact_sum <= 0:
             return None, None
-        dev = fact_sum - plan_sum
+        dev = plan_sum - fact_sum
         fp_pct = (fact_sum / plan_sum * 100.0) if plan_sum else 0.0
         proj_col_local = "project name" if "project name" in d.columns else ("Проект" if "Проект" in d.columns else None)
         proj_name = "Все проекты"
@@ -13044,7 +13919,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         plan_by = d.groupby("Контрагент", as_index=False)["_p"].sum()
         pie_df = by_c.merge(plan_by, on="Контрагент", how="left").fillna({"_p": 0.0})
         pie_df = pie_df.rename(columns={"_f": "Факт", "_p": "План"})
-        pie_df["Отклонение"] = pie_df["Факт"] - pie_df["План"]
+        pie_df["Отклонение"] = pie_df["План"] - pie_df["Факт"]
 
         labels = pie_df["Контрагент"].astype(str).tolist()
         values = pie_df["Факт"].astype(float).tolist()
@@ -13134,7 +14009,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
 
         plan_sum = float(pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0).sum()) if "План_numeric" in d.columns else 0.0
         fact_sum = float(by_c["_f"].sum())
-        dev = fact_sum - plan_sum
+        dev = plan_sum - fact_sum
         fp_pct = (fact_sum / plan_sum * 100.0) if plan_sum else None
         return fig_cf, {"plan": plan_sum, "fact": fact_sum, "dev": dev, "fp_pct": fp_pct}
 
@@ -13146,11 +14021,11 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
     )
     plan_fact_row_done = False
     if show_plan_fact_row:
-        # R23-05 стр.12: «Переименовать отчёт в "План-факт рабочие" из "Рабочие (план/факт)"».
+        # R23-05 стр.12: «Переименовать отчёт в "План/факт рабочие"».
         if (data_source_filter or "").strip().lower() == "техника":
-            st.subheader("План-факт техника")
+            st.subheader("План/факт техника")
         else:
-            st.subheader("План-факт рабочие")
+            st.subheader("План/факт рабочие")
         pf_cols = st.columns(len(projects_to_process))
         for _ix, _pname in enumerate(projects_to_process):
             _pdf = filtered_df.copy()
@@ -13332,7 +14207,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             if not df_people.empty and "План_numeric" in df_people.columns and "week_sum" in df_people.columns:
                 fig_pf, met_pf = _gdrs_plan_fact_fig_and_metrics(df_people)
                 if fig_pf is not None and met_pf is not None:
-                    st.subheader("План-факт рабочие")
+                    st.subheader("План/факт рабочие")
                     render_chart(fig_pf, key=f"{key_prefix}_planfact_single_{_pslug}", caption_below="")
 
         # ========== Chart 1: круговая — доля факта по подрядчикам ==========
@@ -13433,7 +14308,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             ]
         if "Дельта_numeric" not in bar_df.columns and "План_numeric" in bar_df.columns and "week_sum" in bar_df.columns:
             bar_df = bar_df.copy()
-            bar_df["Дельта_numeric"] = bar_df["week_sum"] - bar_df["План_numeric"]
+            bar_df["Дельта_numeric"] = bar_df["План_numeric"] - bar_df["week_sum"]
         elif "Дельта_numeric" not in bar_df.columns:
             bar_df = bar_df.copy()
             bar_df["Дельта_numeric"] = 0
@@ -13497,29 +14372,30 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             f"{int(np.ceil(abs(float(d))))}" if abs(float(d)) >= 0.5 else "0"
             for d in delta_values
         ]
-        positive_mask = delta_values > 0
-        if positive_mask.any():
+        # Отклонение = План − Факт: >0 — просадка (красный), <0 — перевыполнение (зелёный).
+        shortfall_mask = delta_values > 0
+        if shortfall_mask.any():
             fig_bar.add_trace(
                 go.Bar(
-                    name="Отклонение (+)",
-                    x=contractor_data.loc[positive_mask, "Контрагент"],
-                    y=delta_abs[positive_mask],
-                    marker_color="#2ecc71",
-                    text=[delta_text[i] for i in range(len(delta_text)) if positive_mask.iloc[i]],
+                    name="Отклонение (план > факт)",
+                    x=contractor_data.loc[shortfall_mask, "Контрагент"],
+                    y=delta_abs[shortfall_mask],
+                    marker_color="#e74c3c",
+                    text=[delta_text[i] for i in range(len(delta_text)) if shortfall_mask.iloc[i]],
                     textposition="outside",
                     textfont=dict(size=12, color="white"),
                     showlegend=False,
                 )
             )
-        negative_mask = delta_values < 0
-        if negative_mask.any():
+        surplus_mask = delta_values < 0
+        if surplus_mask.any():
             fig_bar.add_trace(
                 go.Bar(
-                    name="Отклонение (-)",
-                    x=contractor_data.loc[negative_mask, "Контрагент"],
-                    y=delta_abs[negative_mask],
-                    marker_color="#e74c3c",
-                    text=[delta_text[i] for i in range(len(delta_text)) if negative_mask.iloc[i]],
+                    name="Отклонение (факт > план)",
+                    x=contractor_data.loc[surplus_mask, "Контрагент"],
+                    y=delta_abs[surplus_mask],
+                    marker_color="#2ecc71",
+                    text=[delta_text[i] for i in range(len(delta_text)) if surplus_mask.iloc[i]],
                     textposition="outside",
                     textfont=dict(size=12, color="white"),
                     showlegend=True,
@@ -13661,7 +14537,8 @@ def dashboard_technique_tabs(df):
     ГДРС → «Рабочие»: график движения рабочей силы.
     R23-05 стр.14: отдельный пункт меню «ГДРС Техника» вынесен в dashboard_gdrs_equipment.
     """
-    st.header("График движения рабочей силы")
+    st.header("ГДРС")
+    st.caption("График движения рабочей силы · рабочие")
     dashboard_workforce_movement(
         df, data_source_filter="Ресурсы", show_header=False, key_prefix="gdrs_people"
     )
@@ -13671,7 +14548,8 @@ def dashboard_gdrs_equipment(df):
     """
     R23-05 стр.14: восстановленный отчёт «Техника» (параллельно с «Рабочие»).
     """
-    st.header("График движения техники")
+    st.header("ГДРС")
+    st.caption("График движения рабочей силы · техника")
     dashboard_workforce_movement(
         df, data_source_filter="Техника", show_header=False, key_prefix="gdrs_tech"
     )
@@ -13959,52 +14837,129 @@ def _gdrs_merge_plan_from_1c_spravochniki(
             return None
         return v
 
-    def _gdrs_plan_metric_from_spravochnik_cell(cell) -> float | None:
+    def _parse_ref_dt(v):
+        ts = pd.to_datetime(v, errors="coerce", dayfirst=True)
+        if pd.isna(ts):
+            return None
+        if getattr(ts, "tzinfo", None) is not None:
+            ts = ts.tz_localize(None)
+        return ts
+
+    date_end_col = _gdrs_spravochnik_ref_column(
+        ref,
+        (
+            "Дата_Окончания_Договора",
+            "Дата Окончания Договора",
+            "ДатаОкончанияДоговора",
+            "Дата_Окончания",
+        ),
+    )
+
+    def _gdrs_plan_specs_from_spravochnik_cell(cell) -> tuple[float | None, list[tuple[pd.Timestamp, float]]]:
         """
-        План ГДРС в 1С: либо число, либо массив вида [{Дата, Количество}, ...] — берём max(Количество)
-        как согласованный план за период (по срезу выгрузки).
+        Нормализует план из 1С:
+        - scalar: число без явной даты;
+        - timeline: массив [{Дата, Количество}, ...], сортированный по дате.
         """
         if cell is None:
-            return None
+            return (None, [])
+        if isinstance(cell, dict):
+            q = cell.get("Количество") if "Количество" in cell else cell.get("количество")
+            dt_raw = cell.get("Дата") if "Дата" in cell else cell.get("дата")
+            w = float(pd.to_numeric(q, errors="coerce"))
+            if not np.isfinite(w):
+                return (None, [])
+            dt = _parse_ref_dt(dt_raw)
+            if dt is not None:
+                return (None, [(dt, float(w))])
+            return (float(w), [])
         if isinstance(cell, (list, tuple)) and len(cell) > 0:
+            timeline: list[tuple[pd.Timestamp, float]] = []
             nums: list[float] = []
             for it in cell:
                 if isinstance(it, dict):
-                    q = it.get("Количество")
-                    if q is None:
-                        q = it.get("количество")
+                    q = it.get("Количество") if "Количество" in it else it.get("количество")
+                    dt_raw = it.get("Дата") if "Дата" in it else it.get("дата")
                     w = float(pd.to_numeric(q, errors="coerce"))
+                    if not np.isfinite(w):
+                        continue
+                    dt = _parse_ref_dt(dt_raw)
+                    if dt is not None:
+                        timeline.append((dt, float(w)))
+                    else:
+                        nums.append(float(w))
                 else:
                     w = float(pd.to_numeric(it, errors="coerce"))
-                if np.isfinite(w):
-                    nums.append(w)
-            if not nums:
-                return None
-            return float(max(nums))
-        if isinstance(cell, dict):
-            q = cell.get("Количество") or cell.get("количество")
-            w = float(pd.to_numeric(q, errors="coerce"))
-            return w if np.isfinite(w) else None
-        return _gdrs_scalar_ref_float(cell)
+                    if np.isfinite(w):
+                        nums.append(float(w))
+            if timeline:
+                timeline.sort(key=lambda x: x[0])
+                return (None, timeline)
+            if nums:
+                return (float(max(nums)), [])
+            return (None, [])
+        return (_gdrs_scalar_ref_float(cell), [])
 
-    def _one_map(plan_col: str) -> tuple[dict[tuple[str, str], float], dict[str, float]]:
-        by_cp: dict[tuple[str, str], float] = {}
-        by_c: dict[str, float] = {}
+    def _period_bounds(row_period) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
+        if isinstance(row_period, pd.Period):
+            return (row_period.start_time, row_period.end_time)
+        ts = pd.to_datetime(row_period, errors="coerce", dayfirst=True)
+        if pd.isna(ts):
+            return (None, None)
+        if getattr(ts, "tzinfo", None) is not None:
+            ts = ts.tz_localize(None)
+        # Для дат/таймстемпов в периоде используем границы месяца.
+        p = ts.to_period("M")
+        return (p.start_time, p.end_time)
+
+    def _pick_plan_for_period(
+        specs: list[tuple[float | None, list[tuple[pd.Timestamp, float]], pd.Timestamp | None]],
+        period_start: pd.Timestamp | None,
+        period_end: pd.Timestamp | None,
+    ) -> float | None:
+        vals: list[float] = []
+        for scalar_v, timeline, contract_end in specs:
+            if contract_end is not None and period_start is not None and period_start > contract_end:
+                continue
+            if timeline:
+                if period_end is not None:
+                    active = [v for d, v in timeline if d <= period_end]
+                    if active:
+                        vals.append(float(active[-1]))
+                else:
+                    vals.append(float(timeline[-1][1]))
+                continue
+            if scalar_v is not None:
+                vals.append(float(scalar_v))
+        if not vals:
+            return None
+        return float(max(vals))
+
+    def _one_map(
+        plan_col: str,
+    ) -> tuple[
+        dict[tuple[str, str], list[tuple[float | None, list[tuple[pd.Timestamp, float]], pd.Timestamp | None]]],
+        dict[str, list[tuple[float | None, list[tuple[pd.Timestamp, float]], pd.Timestamp | None]]],
+    ]:
+        by_cp: dict[
+            tuple[str, str], list[tuple[float | None, list[tuple[pd.Timestamp, float]], pd.Timestamp | None]]
+        ] = {}
+        by_c: dict[str, list[tuple[float | None, list[tuple[pd.Timestamp, float]], pd.Timestamp | None]]] = {}
         for _, r in ref.iterrows():
             k = norm_partner_join_key(r.get(cont_c, ""))
             if not k:
                 continue
             raw = r.get(plan_col, np.nan)
-            v = _gdrs_plan_metric_from_spravochnik_cell(raw)
-            if v is None:
-                v = _gdrs_scalar_ref_float(raw)
-            if v is None:
+            scalar_v, timeline = _gdrs_plan_specs_from_spravochnik_cell(raw)
+            if scalar_v is None and not timeline:
                 continue
+            contract_end = _parse_ref_dt(r.get(date_end_col, None)) if date_end_col else None
+            spec = (scalar_v, timeline, contract_end)
             if proj_c_r and str(proj_c_r) in ref.columns and proj_c_w and str(proj_c_w) in out.columns:
                 pk = _project_filter_norm_key(r.get(proj_c_r, ""))
                 if pk:
-                    by_cp[(k, pk)] = v
-            by_c[k] = v
+                    by_cp.setdefault((k, pk), []).append(spec)
+            by_c.setdefault(k, []).append(spec)
         return by_cp, by_c
 
     maps: dict[str, tuple[dict, dict] | None] = {}
@@ -14033,6 +14988,7 @@ def _gdrs_merge_plan_from_1c_spravochniki(
         if mkey not in maps or maps[mkey] is None:
             continue
         by_cp, by_c = maps[mkey]
+        period_start, period_end = _period_bounds(out.at[i, "Период"] if "Период" in out.columns else None)
         pick = None
         if (
             proj_c_r
@@ -14042,9 +14998,9 @@ def _gdrs_merge_plan_from_1c_spravochniki(
         ):
             pk = _project_filter_norm_key(out.at[i, proj_c_w])
             if pk and (k, pk) in by_cp:
-                pick = by_cp[(k, pk)]
+                pick = _pick_plan_for_period(by_cp[(k, pk)], period_start, period_end)
         if pick is None and k in by_c:
-            pick = by_c[k]
+            pick = _pick_plan_for_period(by_c[k], period_start, period_end)
         if pick is not None and pick > 0:
             out.at[i, "План_numeric"] = pick
             n_fill += 1
@@ -21159,6 +22115,13 @@ def dashboard_developer_projects(df):
     """
     st.header("Девелоперские проекты")
 
+    _dev_dash_seen = "_dev_projects_prev_dashboard_seen"
+    cur_dash = str(st.session_state.get("current_dashboard", "") or "").strip()
+    prev_seen = str(st.session_state.get(_dev_dash_seen, "") or "").strip()
+    if cur_dash == "Девелоперские проекты" and prev_seen != "Девелоперские проекты":
+        st.session_state["dev_proj"] = "Все"
+    st.session_state[_dev_dash_seen] = cur_dash
+
     if df is None or not hasattr(df, "columns") or df.empty:
         st.warning("Загрузите файл с данными проекта (MSP) для отчёта «Девелоперские проекты».")
         return
@@ -21188,6 +22151,7 @@ def dashboard_developer_projects(df):
 
     # По правкам ТЗ: в фильтрах только проект
     if project_col and project_col in work.columns:
+        _session_reset_project_if_excluded("dev_proj")
         projects = ["Все"] + _unique_project_labels_for_select(work[project_col])
         sel_proj = st.selectbox(
             "Проект",
@@ -21210,6 +22174,14 @@ def dashboard_developer_projects(df):
     if project_col and project_col in filtered.columns:
         filtered = _project_column_apply_canonical(filtered, project_col)
 
+    # ТЗ: без дублирования задач/проектов; экспорт и матрица строятся из того же набора, что и таблица задач.
+    try:
+        from dashboards.dev_projects_tz_matrix import dedupe_msp_for_developer_projects
+
+        filtered = dedupe_msp_for_developer_projects(filtered)
+    except Exception:
+        pass
+
     if filtered.empty:
         st.info("Нет данных при выбранных фильтрах.")
         return
@@ -21221,6 +22193,26 @@ def dashboard_developer_projects(df):
     )
 
     st.subheader("Матрица контрольных точек")
+
+    _prefs_dm = load_developer_projects_matrix_prefs()
+    if "dev_matrix_vert_dates" not in st.session_state:
+        st.session_state["dev_matrix_vert_dates"] = bool(_prefs_dm.get("default_vertical_dates"))
+
+    vert_dates = st.checkbox(
+        "Даты в ячейках План/Факт вертикально",
+        key="dev_matrix_vert_dates",
+    )
+
+    try:
+        from settings import get_setting as _get_admin_mail
+
+        _adm_m = (_get_admin_mail("admin_notification_email") or "").strip()
+    except Exception:
+        _adm_m = ""
+    if _adm_m:
+        with st.expander("Оформление отчёта", expanded=False):
+            st.caption(f"Email администратора: {_adm_m}")
+
     matrix_df = filtered.copy()
     if matrix_df.empty:
         st.info("Нет строк MSP для выбранного проекта.")
@@ -21230,12 +22222,22 @@ def dashboard_developer_projects(df):
     export_project_names: list = []
 
     if sel_proj != "Все" or not project_col or uniq_proj_n <= 1:
-        rows_tz, _cap = build_dev_tz_matrix_rows(
+        rows_tz, cap_tz = build_dev_tz_matrix_rows(
             matrix_df,
             st.session_state.get("project_data"),
             st.session_state,
         )
-        render_dev_tz_matrix(rows_tz, _TABLE_CSS)
+        plab = str(cap_tz or "").strip()
+        if (
+            not plab
+            and project_col
+            and project_col in matrix_df.columns
+            and matrix_df[project_col].notna().any()
+        ):
+            plab = str(matrix_df[project_col].dropna().astype(str).str.strip().iloc[0]).strip()
+        elif not plab and sel_proj and str(sel_proj).strip() != "Все":
+            plab = str(sel_proj).strip()
+        render_dev_tz_matrix(rows_tz, _TABLE_CSS, project_labels=[plab], vertical_dates=vert_dates)
         rows_blocks_for_export = [rows_tz]
         if project_col and project_col in matrix_df.columns and matrix_df[project_col].notna().any():
             export_project_names = [
@@ -21263,7 +22265,7 @@ def dashboard_developer_projects(df):
         if not blocks:
             st.info("Нет строк MSP для проектов в выборке.")
             return
-        render_dev_tz_matrix(blocks, _TABLE_CSS)
+        render_dev_tz_matrix(blocks, _TABLE_CSS, project_labels=names, vertical_dates=vert_dates)
         rows_blocks_for_export = blocks
         export_project_names = names
 
@@ -21272,7 +22274,11 @@ def dashboard_developer_projects(df):
         for i, blk in enumerate(rows_blocks_for_export):
             part = pd.DataFrame(blk)
             if "warn" in part.columns:
-                part = part.rename(columns={"warn": "Подсветка_менее_100pct"})
+                part = part.rename(columns={"warn": "Флаг_внимание"})
+            if "warn_pct" in part.columns:
+                part = part.rename(columns={"warn_pct": "MSP_pct_менее_100"})
+            if "warn_directives" in part.columns:
+                part = part.rename(columns={"warn_directives": "Предписания_внимание"})
             pname = export_project_names[i] if i < len(export_project_names) else ""
             if pname:
                 part.insert(0, "проект", pname)
@@ -21388,9 +22394,11 @@ def dashboard_developer_projects(df):
             "Длительность": dur,
         }
         if reason_col and reason_col in tbl_src.columns:
-            row["Причина отклонений"] = _clean_display_str(r.get(reason_col))
+            _rv = _clean_display_str(r.get(reason_col))
+            row["Причина отклонений"] = _rv if str(_rv).strip() else "—"
         if notes_col and notes_col in tbl_src.columns:
-            row["Заметки"] = _clean_display_str(r.get(notes_col))
+            _nv = _clean_display_str(r.get(notes_col))
+            row["Заметки"] = _nv if str(_nv).strip() else "—"
         out_rows.append(row)
 
     dev_tbl = pd.DataFrame(out_rows)
@@ -21415,6 +22423,9 @@ def dashboard_developer_projects(df):
         "Заметки",
     ]
     dev_tbl = dev_tbl[[c for c in desired_cols if c in dev_tbl.columns]]
+
+    if "Проект" in dev_tbl.columns and "Задача" in dev_tbl.columns:
+        dev_tbl = dev_tbl.drop_duplicates(subset=["Проект", "Задача"], keep="first").reset_index(drop=True)
 
     display_tbl = dev_tbl.copy()
 
@@ -21449,6 +22460,24 @@ def dashboard_developer_projects(df):
     _max_rows_show = 220
     show_num = dev_tbl.head(_max_rows_show).copy()
     show_disp = display_tbl.head(_max_rows_show).copy()
+    if (
+        sel_proj == "Все"
+        and "Проект" in dev_tbl.columns
+        and int(dev_tbl["Проект"].nunique()) > 1
+        and len(dev_tbl) > _max_rows_show
+    ):
+        # Для выбора «Все» показываем сбалансированную выборку по проектам,
+        # иначе первые 220 строк часто попадают в один проект по порядку загрузки.
+        _projects = [p for p in dev_tbl["Проект"].dropna().astype(str).unique().tolist() if str(p).strip()]
+        _per_proj = max(1, _max_rows_show // max(1, len(_projects)))
+        _parts_num = []
+        _parts_disp = []
+        for _p in _projects:
+            _mask = dev_tbl["Проект"].astype(str) == str(_p)
+            _parts_num.append(dev_tbl.loc[_mask].head(_per_proj))
+            _parts_disp.append(display_tbl.loc[_mask].head(_per_proj))
+        show_num = pd.concat(_parts_num, ignore_index=True).head(_max_rows_show).copy()
+        show_disp = pd.concat(_parts_disp, ignore_index=True).head(_max_rows_show).copy()
     if len(display_tbl) > _max_rows_show:
         suppress_caption(
             f"Показано {_max_rows_show} из {len(display_tbl)} строк (для полного списка используйте выгрузку)."
@@ -21488,7 +22517,25 @@ def dashboard_developer_projects(df):
     for h in headers:
         _parts.append(f"<th>{html_module.escape(str(h))}</th>")
     _parts.append("</tr></thead><tbody>")
+    _proj_col_name = "Проект" if "Проект" in headers else None
+    _prev_proj = None
     for i in range(len(show_disp)):
+        _cur_proj = (
+            str(show_disp.iloc[i].get(_proj_col_name, "")).strip()
+            if _proj_col_name
+            else ""
+        )
+        if _proj_col_name and _cur_proj and _cur_proj != _prev_proj:
+            _parts.append(
+                '<tr>'
+                f'<td colspan="{len(headers)}" '
+                'style="background:rgba(70,130,180,0.30);color:#eaf6ff;'
+                'font-weight:700;border-top:2px solid rgba(190,214,242,0.9);'
+                'border-bottom:1px solid rgba(190,214,242,0.6);padding:7px 12px;">'
+                f'{html_module.escape(_cur_proj)}'
+                "</td></tr>"
+            )
+            _prev_proj = _cur_proj
         _parts.append("<tr>")
         for col in headers:
             cell = show_disp.iloc[i][col]
@@ -21496,6 +22543,9 @@ def dashboard_developer_projects(df):
             esc = html_module.escape(txt) if txt.strip() else ""
             bg = _cell_bg(col)
             extra = ""
+            if _proj_col_name and col == _proj_col_name:
+                bg = "rgba(70,130,180,0.24)"
+                extra += "font-weight:600;"
             if col == "Отклонение начала":
                 clr = _dev_start_color(show_num.iloc[i].get(col) if col in show_num.columns else np.nan)
                 extra = f"color:{clr};font-weight:600;"
@@ -21655,6 +22705,7 @@ def render_control_points_milestones_admin_settings(*, key_prefix: str = "cp_das
             st.markdown(
                 "- **level** — уровень задачи MSP (например 5.0).\n"
                 "- **names_any** — список подстрок для названия задачи.\n"
+                "- **names_exact_any** — точное совпадение имени задачи (после trim), напр. «РВ» без ложных вхождений в «КРП».\n"
                 "- **name_contains** — одна подстрока в названии.\n"
                 "- **parent_l2_contains** — родитель уровня 2 (часто «Ковенанты»).\n"
                 "- **block_contains** — подстрока функционального блока.\n"
@@ -21663,36 +22714,131 @@ def render_control_points_milestones_admin_settings(*, key_prefix: str = "cp_das
             )
 
 
-def _render_control_points_admin_hint_on_dashboard() -> None:
-    """Только администратору: куда перенесена настройка вех (см. `render_control_points_milestones_admin_settings`)."""
+def render_developer_projects_matrix_admin_settings(*, key_prefix: str = "admin_dev_mx") -> None:
+    """Администратор: заголовки вех, правила MSP (partial match), подписи План/Факт/Откл., вертикальные даты по умолчанию."""
+    _kp = key_prefix
+    _tx_key = f"{_kp}_dev_matrix_prefs_json"
     try:
         from auth import get_current_user, has_admin_access
 
-        u = get_current_user()
-        if not u or not has_admin_access(u.get("role")):
+        user = get_current_user()
+        if not user or not has_admin_access(user.get("role")):
             return
     except Exception:
         return
-    st.info(
-        "Настройка вех/заголовков/соответствия MSP для отчёта «Контрольные точки» "
-        "доступна в админ-панели (вкладка «MSP: задача для метрик»)."
+
+    import json as _json
+
+    from dashboards.dev_projects_tz_matrix import (
+        _DEV_MATRIX_ROW_KEYS,
+        developer_projects_matrix_default_prefs_json,
+        load_developer_projects_matrix_prefs,
+        save_developer_projects_matrix_prefs_json,
     )
+
+    with st.expander(
+        "Девелоперские проекты — матрица: подписи столбцов, маппинг MSP и даты по умолчанию",
+        expanded=False,
+    ):
+        suppress_caption(
+            "**subcolumns**: подписи третьей строки шапки («План/Факт/Откл.»). "
+            "**default_vertical_dates**: начальное значение чекбокса вертикальных дат для новых сессий. "
+            "**titles**: переименование вех `{ \"row_key\": \"Новый заголовок\" }`. Ключи: "
+            + ", ".join(_DEV_MATRIX_ROW_KEYS[:8])
+            + ", … (**полный список** — в блоке ниже)."
+        )
+
+        prefs0 = load_developer_projects_matrix_prefs()
+        suppress_caption(f"Сейчас в настройках: **{len(prefs0.get('titles') or {})}** заголовков, **{len(prefs0.get('matches') or {})}** маппингов.")
+
+        st.markdown("Быстрое редактирование заголовков вех")
+        for rk in _DEV_MATRIX_ROW_KEYS:
+            cur = str((prefs0.get("titles") or {}).get(rk, "") or "").strip()
+            _ = st.text_input(f"Заголовок столбца (ключ `{rk}`)", value=cur, key=f"{_kp}_ttl_{rk}")
+
+        uname = str(user.get("username") or "admin")
+        if st.button("Сохранить заголовки вех", key=f"{_kp}_save_titles"):
+            try:
+                prefs = load_developer_projects_matrix_prefs()
+                titles: dict[str, str] = {}
+                for rk in _DEV_MATRIX_ROW_KEYS:
+                    kk = f"{_kp}_ttl_{rk}"
+                    vv = str(st.session_state.get(kk, "")).strip()
+                    if vv:
+                        titles[rk] = vv
+                prefs["titles"] = titles
+                ok, msg = save_developer_projects_matrix_prefs_json(
+                    _json.dumps(prefs, ensure_ascii=False, indent=2), uname
+                )
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+            except Exception as e:
+                st.error(f"Ошибка сохранения заголовков: {e}")
+
+        st.markdown("---")
+        default_js = developer_projects_matrix_default_prefs_json()
+        raw = _json.dumps(prefs0, ensure_ascii=False, indent=2)
+        txt = st.text_area(
+            "JSON: subcolumns, default_vertical_dates, titles, matches",
+            value=raw,
+            height=420,
+            key=_tx_key,
+        )
+        b1, b2, b3 = st.columns(3)
+        with b1:
+            if st.button("Сохранить JSON", type="primary", key=f"{_kp}_save_json"):
+                ok, msg = save_developer_projects_matrix_prefs_json(txt, uname)
+                if ok:
+                    if _tx_key in st.session_state:
+                        del st.session_state[_tx_key]
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+        with b2:
+            if st.button("Сбросить настройки матрицы", key=f"{_kp}_reset_json"):
+                ok, msg = save_developer_projects_matrix_prefs_json("", uname)
+                if ok:
+                    if _tx_key in st.session_state:
+                        del st.session_state[_tx_key]
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+        with b3:
+            st.download_button(
+                "Шаблон JSON",
+                default_js.encode("utf-8-sig"),
+                "developer_projects_matrix_prefs_default.json",
+                "application/json",
+                key=f"{_kp}_dl_tpl",
+            )
+        with st.expander("Ключи строк матрицы (titles / matches)", expanded=False):
+            st.code("\n".join(_DEV_MATRIX_ROW_KEYS), language="text")
+        with st.expander("Подсказка по полю matches", expanded=False):
+            st.markdown(
+                "Для ключа `row_key` укажите объект с полями **match** из кода (частичная подмена по верхнему уровню): "
+                "`level`, `names_any`, `name_contains`, `parent_l2_contains`, `block_contains`, "
+                "`phase_needles`, `phase_exclude_needles`, `names_exact_any`. "
+                "Списки (`names_any`, `phase_needles`, …) при подмене **заменяются целиком**."
+            )
 
 
 def dashboard_control_points(df):
     """
     Контрольные точки (MSP): матрица проектов × вехи по макету правок (скрин file-009).
-    Настройка вех/маппинга — в **Администрировании**; на этой странице — краткая подсказка для админа.
     """
     st.header("Контрольные точки")
-    _render_control_points_admin_hint_on_dashboard()
     if df is None or df.empty:
         st.warning("Загрузите данные MSP (проект).")
         return
     _cp_df = df.copy()
     if "project name" in _cp_df.columns:
         _cp_df = _project_column_apply_canonical(_cp_df, "project name")
-    work = _control_points_prepare_msp_dates(_cp_df)
+    work = ensure_msp_df_for_dev_matrix(_cp_df)
     has_fact_col = "plan end" in work.columns or "actual finish" in work.columns
     if "base end" not in work.columns or not has_fact_col:
         st.warning(

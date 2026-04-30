@@ -38,6 +38,7 @@ from data_loader import (
     clear_all_data_for_removed_files,
 )
 from utils import load_custom_css
+from dashboard_diagnostics import render_dashboard_diagnostics_tab
 
 # # ← Добавь тестовый блок сразу после импортов (чтобы он отобразился на всех страницах)
 # st.sidebar.markdown("**Отладка времени**")
@@ -561,15 +562,71 @@ def main():
         except Exception:
             return False
 
+    def _read_deeplink_params() -> dict:
+        """
+        Deep-link для автотестов/быстрого открытия:
+        - ?source=manual|web|ftp_web
+        - ?report=<точное имя отчёта, например БДДС>
+        """
+        try:
+            qp = st.query_params
+        except Exception:
+            return {}
+
+        def _pick(k: str) -> str:
+            try:
+                v = qp.get(k, "")
+            except Exception:
+                return ""
+            if isinstance(v, list):
+                return str(v[0]).strip() if v else ""
+            return str(v).strip()
+
+        return {
+            "source": _pick("source").lower(),
+            "report": _pick("report"),
+        }
+
+    _dl = _read_deeplink_params()
+    if not st.session_state.get("_deeplink_applied_once", False):
+        _src_map = {
+            "manual": "Загрузить вручную",
+            "web": "Из папки web/",
+            "ftp_web": "FTP → web/",
+            "ftp": "FTP → web/",
+        }
+        _dl_source = _src_map.get(_dl.get("source", ""))
+        if _dl_source:
+            st.session_state["data_mode_radio"] = _dl_source
+            if _dl_source in ("Из папки web/", "FTP → web/"):
+                st.session_state["_pending_web_folder_load"] = True
+        if _dl.get("report"):
+            st.session_state["current_dashboard"] = _dl["report"]
+        if _dl_source or _dl.get("report"):
+            st.session_state["_deeplink_applied_once"] = True
+
     # Переключатель режима источника данных
     data_mode_options = ["Загрузить вручную", "Из папки web/", "FTP → web/"]
     if _is_release_client_mode():
+        # Для клиента без ручной загрузки; FTP оставлен для их демо/обновления (см. ветку release).
         data_mode_options = ["Из папки web/", "FTP → web/"]
+
+    def _queue_web_folder_load_on_mode_change():
+        try:
+            v = st.session_state.get("data_mode_radio")
+            # Локальная папка web/ читается и в режиме «Из папки web/», и в «FTP → web/»
+            # (FTP-скачивание — отдельная кнопка; до неё показываем уже лежащие в web/ файлы).
+            if v in ("Из папки web/", "FTP → web/"):
+                st.session_state["_pending_web_folder_load"] = True
+        except Exception:
+            pass
+
     data_mode = st.radio(
         "Источник данных",
         data_mode_options,
         horizontal=True,
         key="data_mode_radio",
+        on_change=_queue_web_folder_load_on_mode_change,
     )
 
     if data_mode in ("Из папки web/", "FTP → web/"):
@@ -588,8 +645,80 @@ def main():
 
         init_web_schema()
 
+        def _perform_load_from_web_folder() -> None:
+            """Сканирование web/, запись в SQLite и обновление session_state (как кнопка «Загрузить из web/»)."""
+            if not web_dir_exists():
+                st.error(
+                    "Не найден ни локальный каталог web/ рядом с приложением, "
+                    "ни папка Analitics/web (уровнем выше репозитория), "
+                    "ни пути из переменной BI_ANALYTICS_WEB_EXTRA_PATHS."
+                )
+                return
+
+            with st.spinner("Читаю файлы из web/..."):
+                result = load_all_from_web()
+            try:
+                st.session_state["last_load_result"] = result
+                st.session_state["last_data_readiness"] = build_data_readiness_report(result)
+                st.session_state["last_data_schema_health"] = save_schema_health_report(load_result=result)
+                st.session_state["last_env_fingerprint"] = build_environment_fingerprint(result)
+            except Exception:
+                st.session_state["last_data_readiness"] = None
+                st.session_state["last_data_schema_health"] = None
+                st.session_state["last_env_fingerprint"] = None
+
+            st.cache_data.clear()
+            st.session_state.pop("web_version_id", None)
+
+            for w in result.get("warnings", []):
+                st.warning(w)
+
+            if result["errors"]:
+                st.warning(f"Загружено: {result['loaded']}, пропущено: {result['skipped']}")
+                for err in result["errors"]:
+                    st.error(err)
+            else:
+                st.success(f"Загружено файлов: {result['loaded']}")
+            try:
+                from logger import log_action
+                u = get_current_user()
+                if u:
+                    log_action(
+                        u["username"],
+                        "data_loaded",
+                        f"web/: loaded={result.get('loaded')}, skipped={result.get('skipped')}",
+                    )
+            except Exception:
+                pass
+            with st.expander("Справка: колонки загрузки из web/", expanded=False):
+                for row in result.get("diagnostics", [])[:40]:
+                    st.json(row)
+
+            st.rerun()
+
+        if (
+            _is_release_client_mode()
+            and data_mode == "Из папки web/"
+            and not get_all_versions()
+            and st.session_state.get("project_data") is None
+            and not st.session_state.get("_release_web_autoload_tried", False)
+        ):
+            st.session_state["_pending_web_folder_load"] = True
+            st.session_state["_release_web_autoload_tried"] = True
+
+        if (
+            data_mode in ("Из папки web/", "FTP → web/")
+            and st.session_state.pop("_pending_web_folder_load", False)
+        ):
+            _perform_load_from_web_folder()
+
         if data_mode == "FTP → web/":
             from ftp_sync import merge_ftp_config, streamlit_secrets_to_config, sync_ftp_to_web
+
+            st.caption(
+                "При переключении на этот режим локальная папка `web/` читается так же, как в «Из папки web/». "
+                "Кнопка ниже нужна, чтобы **скачать с FTP** новые файлы в `web/`, затем снова попадают в БД."
+            )
 
             with st.expander("Параметры FTP вручную (если нет secrets)", expanded=False):
                 _h = st.text_input("FTP host", key="ftp_host_override")
@@ -672,63 +801,8 @@ def main():
 
         with col1:
 
-            if data_mode == "Из папки web/" and st.button("Загрузить из web/"):
-
-                if not web_dir_exists():
-
-                    st.error(
-                        "Не найден ни локальный каталог web/ рядом с приложением, "
-                        "ни папка Analitics/web (уровнем выше репозитория), "
-                        "ни пути из переменной BI_ANALYTICS_WEB_EXTRA_PATHS."
-                    )
-
-                else:
-
-                    with st.spinner("Читаю файлы из web/..."):
-                        result = load_all_from_web()
-                    try:
-                        st.session_state["last_load_result"] = result
-                        st.session_state["last_data_readiness"] = build_data_readiness_report(result)
-                        st.session_state["last_data_schema_health"] = save_schema_health_report(load_result=result)
-                        st.session_state["last_env_fingerprint"] = build_environment_fingerprint(result)
-                    except Exception:
-                        st.session_state["last_data_readiness"] = None
-                        st.session_state["last_data_schema_health"] = None
-                        st.session_state["last_env_fingerprint"] = None
-
-                    st.cache_data.clear()
-                    # Сбрасываем web_version_id чтобы принудительно перечитать данные
-                    st.session_state.pop("web_version_id", None)
-
-                    for w in result.get("warnings", []):
-                        st.warning(w)
-
-                    if result["errors"]:
-
-                        st.warning(f"Загружено: {result['loaded']}, пропущено: {result['skipped']}")
-
-                        for err in result["errors"]:
-
-                            st.error(err)
-                    else:
-
-                        st.success(f"Загружено файлов: {result['loaded']}")
-                    try:
-                        from logger import log_action
-                        u = get_current_user()
-                        if u:
-                            log_action(
-                                u["username"],
-                                "data_loaded",
-                                f"web/: loaded={result.get('loaded')}, skipped={result.get('skipped')}",
-                            )
-                    except Exception:
-                        pass
-                    with st.expander("Справка: колонки загрузки из web/", expanded=False):
-                        for row in result.get("diagnostics", [])[:40]:
-                            st.json(row)
-
-                    st.rerun()
+            if data_mode in ("Из папки web/", "FTP → web/") and st.button("Загрузить из web/"):
+                _perform_load_from_web_folder()
 
         # Селектор версий
         versions = get_all_versions()
@@ -761,9 +835,74 @@ def main():
                     pass
 
         else:
-            st.info("Нажмите «Загрузить из web/» чтобы прочитать файлы из папки web/.")
+            st.info(
+                "При первом включении режима файлы считываются автоматически. "
+                "Повторно нажмите «Загрузить из web/», если обновили файлы на диске."
+            )
 
-        # Клиентский режим: показываем только вкладку дашбордов без блока «Проверка данных».
+        if _is_release_client_mode():
+            _panel_tab = "Дашборды"
+        else:
+            _panel_tab = st.radio(
+                "Вкладка панели",
+                ["Дашборды", "Проверка данных"],
+                horizontal=True,
+                key="main_panel_view_tab",
+            )
+        if _panel_tab == "Проверка данных":
+            render_data_readiness_expander()
+            if st.session_state.get("last_data_schema_health"):
+                st.caption("Сформирован отчёт схем: `data_health_report.md` и `data_health_report.json` в корне приложения.")
+                _fsch = (st.session_state.get("last_data_schema_health") or {}).get("file_checks") or []
+                if _fsch:
+                    with st.expander("Проверка файлов и колонок (что отсутствует/не распознано)", expanded=True):
+                        _fd = pd.DataFrame(_fsch).copy()
+                        _prio = {"err": 0, "warn": 1, "ok": 2}
+                        _fd["_p"] = _fd["level"].map(lambda x: _prio.get(str(x).lower(), 9))
+                        _fd = _fd.sort_values(["_p", "target"], kind="stable").drop(columns=["_p"])
+
+                        def _style_level(row):
+                            lv = str(row.get("level", "")).lower()
+                            if lv == "err":
+                                return ["background-color: #5a1f1f; color: #ffe3e3;"] * len(row)
+                            if lv == "warn":
+                                return ["background-color: #5a4b1f; color: #fff3d6;"] * len(row)
+                            if lv == "ok":
+                                return ["background-color: #1f4a2a; color: #e7ffe7;"] * len(row)
+                            return [""] * len(row)
+
+                        st.dataframe(
+                            _fd.style.apply(_style_level, axis=1),
+                            use_container_width=True,
+                            hide_index=True,
+                            height=min(720, 40 + max(1, len(_fd)) * 34),
+                        )
+                from data_health import REPORT_JSON, REPORT_MD
+
+                c1, c2 = st.columns(2)
+                with c1:
+                    if REPORT_MD.exists():
+                        st.download_button(
+                            "Скачать data_health_report.md",
+                            data=REPORT_MD.read_text(encoding="utf-8"),
+                            file_name="data_health_report.md",
+                            mime="text/markdown",
+                            key="download_data_health_md",
+                        )
+                with c2:
+                    if REPORT_JSON.exists():
+                        st.download_button(
+                            "Скачать data_health_report.json",
+                            data=REPORT_JSON.read_text(encoding="utf-8"),
+                            file_name="data_health_report.json",
+                            mime="application/json",
+                            key="download_data_health_json",
+                        )
+            _env = st.session_state.get("last_env_fingerprint")
+            if _env:
+                with st.expander("Environment fingerprint (для сравнения local vs deploy)", expanded=False):
+                    st.json(_env)
+            st.stop()
 
     else:
 
@@ -868,6 +1007,10 @@ def main():
         cur = st.session_state.get("current_dashboard", "")
         if cur not in all_allowed_set:
             st.session_state.current_dashboard = all_allowed[0]
+        # Повторно применяем report из deep-link после валидации доступных отчётов.
+        _dl_report = (_dl.get("report") or "").strip()
+        if _dl_report and _dl_report in all_allowed_set:
+            st.session_state.current_dashboard = _dl_report
 
         st.session_state.dashboard_selected_from_menu = False
 
@@ -908,7 +1051,18 @@ def main():
                         "в боковом меню."
                     )
                 else:
-                    render_fn(df_for_render)
+                    if _is_release_client_mode():
+                        render_fn(df_for_render)
+                    else:
+                        tab_dash, tab_diag = st.tabs(["Дашборд", "Диагностика (dev)"])
+                        with tab_dash:
+                            render_fn(df_for_render)
+                        with tab_diag:
+                            render_dashboard_diagnostics_tab(
+                                selected_dashboard,
+                                df_for_render,
+                                st.session_state,
+                            )
             else:
                 st.warning(
                     f"График '{selected_dashboard}' не найден. Выберите другой отчёт в боковом меню."

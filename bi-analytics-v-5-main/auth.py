@@ -72,6 +72,7 @@ _REPORT_ROLE_ALLOWLIST: Dict[str, frozenset] = {
     "Рабочая документация": frozenset({"manager", "analyst", "rp", "gip", "admin", "superadmin"}),
     "Проектная документация": frozenset({"manager", "analyst", "rp", "gip", "admin", "superadmin"}),
     "ГДРС": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
+    "График движения рабочей силы": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "ГДРС Техника": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "Исполнительная документация": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "Предписания по подрядчикам": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
@@ -662,24 +663,13 @@ def render_sidebar_menu(current_page: str = "reports"):
             if st.button("Настройки профиля", width="stretch"):
                 switch_page_app("pages/profile.py")
 
-        if has_admin_access(user["role"]):
-            if current_page == "admin":
-                st.button(
-                    "Административная панель",
-                    width="stretch",
-                    type="primary",
-                    key="menu_sidebar_admin_active",
-                    disabled=True,
-                )
-            else:
-                if st.button(
-                    "Административная панель",
-                    width="stretch",
-                    key="menu_sidebar_admin",
-                ):
-                    switch_page_app("pages/_admin.py")
+        # Административная панель: только внутри «Настройки профиля» (вторая вкладка) или прямой URL pages/_admin.py
 
-        # F2: встроенная навигация Streamlit скрыта; «Параметры отчётов» — без отдельной кнопки (при необходимости — прямой URL / pages/_analyst_params).
+        if current_page != "analyst_params":
+            if st.button("Параметры отчётов", width="stretch", key="menu_go_analyst_params"):
+                switch_page_app("pages/_analyst_params.py")
+
+        # F2: встроенная навигация Streamlit скрыта.
 
         # 3. Выход (для всех ролей)
         st.markdown("---")
@@ -689,73 +679,3 @@ def render_sidebar_menu(current_page: str = "reports"):
             logout()
 
             st.rerun()  # success не нужен — после rerun этой строки уже не будет
-
-        st.markdown("---")
-
-        st.markdown("### Служебная информация")
-
-        # Информация о загруженных файлах
-        if has_report_access(user["role"]):
-            loaded_files_info = st.session_state.get("loaded_files_info", {})
-            if loaded_files_info:
-                with st.expander("Загруженные файлы", expanded=False):
-
-                    project_data = st.session_state.get("project_data")
-                    if project_data is not None:
-                        total_rows = len(project_data)
-                        st.success(f"Проекты: {total_rows} строк")
-                        project_files = [
-                            f
-                            for f, info in loaded_files_info.items()
-                            if info["type"] == "project"
-                        ]
-                        if project_files:
-                            st.markdown(
-                                "\n".join(
-                                    f"- `{file_name}` — {loaded_files_info[file_name]['rows']} строк"
-                                    for file_name in project_files
-                                )
-                            )
-
-                    resources_data = st.session_state.get("resources_data")
-                    if resources_data is not None:
-                        total_rows = len(resources_data)
-                        st.success(f"Ресурсы: {total_rows} строк")
-                        resources_files = [
-                            f
-                            for f, info in loaded_files_info.items()
-                            if info["type"] == "resources"
-                        ]
-                        if resources_files:
-                            st.markdown(
-                                "\n".join(
-                                    f"- `{file_name}` — {loaded_files_info[file_name]['rows']} строк"
-                                    for file_name in resources_files
-                                )
-                            )
-
-                    technique_data = st.session_state.get("technique_data")
-                    if technique_data is not None:
-                        total_rows = len(technique_data)
-                        st.success(f"Техника: {total_rows} строк")
-                        technique_files = [
-                            f
-                            for f, info in loaded_files_info.items()
-                            if info["type"] == "technique"
-                        ]
-                        if technique_files:
-                            st.markdown(
-                                "\n".join(
-                                    f"- `{file_name}` — {loaded_files_info[file_name]['rows']} строк"
-                                    for file_name in technique_files
-                                )
-                            )
-
-                st.markdown("---")
-
-        st.markdown("---")
-
-        # Информация о пользователе
-        st.markdown("### Пользователь")
-        st.write(f"**{user['username']}**")
-        st.markdown(f"*Роль: {get_user_role_display(user['role'])}*")
