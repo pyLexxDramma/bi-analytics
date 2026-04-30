@@ -16,6 +16,67 @@ import pandas as pd
 from utils import outline_level_numeric
 
 
+def _guess_msp_project_slug_for_loader(df: pd.DataFrame) -> str:
+    """
+    Ключ для web_loader._apply_msp_column_mapping (MSP_PROJECT_NAME_MAP / имя файла):
+    из первой непустой ячейки проекта или пустая строка.
+    """
+    try:
+        from config import MSP_PROJECT_NAME_MAP as M
+    except Exception:
+        M = {}
+    pc = _find_col(df, ["project name", "Проект", "Project", "проект", "ID_проекта"])
+    if not pc or pc not in df.columns:
+        return ""
+    s = df[pc].dropna().astype(str).str.strip()
+    if s.empty:
+        return ""
+    raw = str(s.iloc[0]).strip()
+    lk = raw.lower().replace(" ", "").replace("\xa0", "")
+    if lk in M:
+        return str(lk)
+    for k, v in M.items():
+        if str(v).strip().lower() == raw.lower():
+            return str(k).strip().lower()
+    return lk
+
+
+def _needs_msp_web_loader_normalize(df: pd.DataFrame) -> bool:
+    """Русская выгрузка без прохода через web_loader: нет canonical-колонок дат/задачи/уровня."""
+    if df is None or getattr(df, "empty", True):
+        return False
+    cl = {str(c).strip().lower() for c in df.columns}
+    if "plan end" not in cl and _find_col(df, ["Окончание", "План окончание", "План_окончание"]) is not None:
+        return True
+    if "task name" not in cl and _find_col(df, ["Название", "Название задачи", "Task Name"]) is not None:
+        return True
+    if "level" not in cl and _find_col(df, ["Уровень"]) is not None:
+        return True
+    if "base end" not in cl and _find_col(df, ["Базовое_окончание", "Базовое окончание"]) is not None:
+        return True
+    return False
+
+
+def ensure_msp_df_for_dev_matrix(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Единая схема MSP для матрицы: canonical-колонки, даты, section из дерева (как при load_all_from_web).
+    """
+    if df is None or getattr(df, "empty", True):
+        return df
+    out = df.copy()
+    if _needs_msp_web_loader_normalize(out):
+        try:
+            from web_loader import _apply_msp_column_mapping
+
+            slug = _guess_msp_project_slug_for_loader(out)
+            out = _apply_msp_column_mapping(out, slug)
+        except Exception:
+            out = _control_points_prepare_msp_dates(out)
+    else:
+        out = _control_points_prepare_msp_dates(out)
+    return out
+
+
 def _find_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
     if df is None or not hasattr(df, "columns"):
         return None
@@ -273,6 +334,7 @@ def _match_msp(
     level: Optional[float],
     name_contains: Optional[str] = None,
     names_any: Optional[List[str]] = None,
+    names_exact_any: Optional[List[str]] = None,
     parent_l2_contains: Optional[str] = None,
     block_contains: Optional[str] = None,
 ) -> pd.DataFrame:
@@ -299,18 +361,25 @@ def _match_msp(
             out = out[sc.str.contains("ковенант", **_lit)]
         else:
             out = out[sc.str.contains(str(parent_l2_contains), **_lit)]
+    name_masks: List[pd.Series] = []
     if names_any:
-        masks = []
         for needle in names_any:
             if needle:
-                masks.append(out[nm].astype(str).str.contains(str(needle), **_lit))
-        if masks:
-            mm = masks[0]
-            for x in masks[1:]:
-                mm = mm | x
-            out = out[mm]
-    elif name_contains:
-        out = out[out[nm].astype(str).str.contains(str(name_contains), **_lit)]
+                name_masks.append(out[nm].astype(str).str.contains(str(needle), **_lit))
+    if names_exact_any:
+        nv = out[nm].astype(str).str.strip().str.casefold()
+        for xs in names_exact_any:
+            if xs is None or str(xs).strip() == "":
+                continue
+            xf = str(xs).strip().casefold()
+            name_masks.append(nv.eq(xf))
+    if name_contains:
+        name_masks.append(out[nm].astype(str).str.contains(str(name_contains), **_lit))
+    if name_masks:
+        mm_nm = name_masks[0]
+        for xm in name_masks[1:]:
+            mm_nm = mm_nm | xm
+        out = out[mm_nm]
     return out
 
 
@@ -321,7 +390,12 @@ def _match_tasks_like_msp_row(mdf: pd.DataFrame, kw: dict) -> pd.DataFrame:
     """
     if mdf is None or getattr(mdf, "empty", True):
         return mdf.iloc[0:0].copy()
-    kw_m = {k: v for k, v in kw.items() if k not in ("phase_needles", "phase_exclude_needles")}
+    kw_m = {
+        k: v
+        for k, v in kw.items()
+        if k not in ("phase_needles", "phase_exclude_needles", "names_exact_any")
+    }
+    _nex = kw.get("names_exact_any")
     phase_needles = kw.get("phase_needles")
     phase_exclude = kw.get("phase_exclude_needles")
     sub = _match_msp(
@@ -329,6 +403,7 @@ def _match_tasks_like_msp_row(mdf: pd.DataFrame, kw: dict) -> pd.DataFrame:
         level=kw_m.get("level"),
         name_contains=kw_m.get("name_contains"),
         names_any=kw_m.get("names_any"),
+        names_exact_any=_nex,
         parent_l2_contains=kw_m.get("parent_l2_contains"),
         block_contains=kw_m.get("block_contains"),
     )
@@ -338,6 +413,7 @@ def _match_tasks_like_msp_row(mdf: pd.DataFrame, kw: dict) -> pd.DataFrame:
             level=kw_m.get("level"),
             name_contains=kw_m.get("name_contains"),
             names_any=kw_m.get("names_any"),
+            names_exact_any=_nex,
             parent_l2_contains=None,
             block_contains=kw_m.get("block_contains"),
         )
@@ -347,6 +423,7 @@ def _match_tasks_like_msp_row(mdf: pd.DataFrame, kw: dict) -> pd.DataFrame:
             level=None,
             name_contains=kw_m.get("name_contains"),
             names_any=kw_m.get("names_any"),
+            names_exact_any=_nex,
             parent_l2_contains=None,
             block_contains=kw_m.get("block_contains"),
         )
@@ -356,6 +433,7 @@ def _match_tasks_like_msp_row(mdf: pd.DataFrame, kw: dict) -> pd.DataFrame:
             level=None,
             name_contains=kw_m.get("name_contains"),
             names_any=kw_m.get("names_any"),
+            names_exact_any=_nex,
             parent_l2_contains=None,
             block_contains=kw_m.get("block_contains"),
         )
@@ -365,6 +443,7 @@ def _match_tasks_like_msp_row(mdf: pd.DataFrame, kw: dict) -> pd.DataFrame:
             level=None,
             name_contains=kw_m.get("name_contains"),
             names_any=kw_m.get("names_any"),
+            names_exact_any=_nex,
             parent_l2_contains=None,
             block_contains=None,
         )
@@ -489,6 +568,20 @@ def _bddds_df_for_dev_matrix(
                             return sub2
             except Exception:
                 pass
+            if pk:
+                def _soft_dev_proj_cell(x: Any) -> bool:
+                    nk = _norm_dev_project_key(x)
+                    if not nk:
+                        return False
+                    if nk == pk:
+                        return True
+                    a, b = (nk, pk) if len(nk) <= len(pk) else (pk, nk)
+                    return len(a) >= 4 and (a in b)
+
+                m_soft = ref[pc].map(_soft_dev_proj_cell)
+                sub_s = ref.loc[m_soft.fillna(False)].copy()
+                if not sub_s.empty:
+                    return sub_s
     if project_data is None or getattr(project_data, "empty", True):
         return None
     scen = _find_col(project_data, ["Сценарий", "Scenario"])
@@ -501,6 +594,19 @@ def _bddds_df_for_dev_matrix(
             m3 = project_data[pc2].map(lambda x: _norm_dev_project_key(x) == pk)
             if m3.fillna(False).any():
                 return project_data.loc[m3.fillna(False)].copy()
+            if pk:
+                def _soft_proj_pd(x: Any) -> bool:
+                    nk = _norm_dev_project_key(x)
+                    if not nk:
+                        return False
+                    if nk == pk:
+                        return True
+                    a, b = (nk, pk) if len(nk) <= len(pk) else (pk, nk)
+                    return len(a) >= 4 and (a in b)
+
+                ms = project_data[pc2].map(_soft_proj_pd)
+                if ms.fillna(False).any():
+                    return project_data.loc[ms.fillna(False)].copy()
     return project_data
 
 
@@ -623,10 +729,27 @@ def dedupe_msp_for_developer_projects(df: pd.DataFrame) -> pd.DataFrame:
     """
     ТЗ: нет дублирования проектов и задач в «Девелоперские проекты».
     Сначала по идентификатору задачи MSP (если колонка есть и не пустая), иначе по (проект, задача) / по задаче.
+
+    Если в колонке id часть строк без значения, нельзя делать ``drop_duplicates`` по всему кадру:
+    строки без id считаются дубликатами друг друга и схлопываются в одну (матрица уходит в Н/Д).
     """
     if df is None or getattr(df, "empty", True):
         return df
     out = df.copy()
+
+    def _series_id_valid(ser: pd.Series) -> pd.Series:
+        s2 = ser.astype(str).str.strip()
+        low = s2.str.lower()
+        return ser.notna() & ~low.isin(("", "nan", "none", "<na>", "nat"))
+
+    def _dedupe_by_id_nonempty(frame: pd.DataFrame, id_col: str) -> pd.DataFrame:
+        ok = _series_id_valid(frame[id_col])
+        if int(ok.sum()) == 0:
+            return frame
+        part_ok = frame.loc[ok].drop_duplicates(subset=[id_col], keep="first")
+        part_miss = frame.loc[~ok]
+        return pd.concat([part_miss, part_ok]).sort_index()
+
     for id_c in (
         "unique id",
         "Уникальный_идентификатор",
@@ -635,9 +758,10 @@ def dedupe_msp_for_developer_projects(df: pd.DataFrame) -> pd.DataFrame:
     ):
         if id_c not in out.columns:
             continue
-        if int(out[id_c].notna().sum()) == 0:
+        if int(_series_id_valid(out[id_c]).sum()) == 0:
             continue
-        return out.drop_duplicates(subset=[id_c], keep="first").reset_index(drop=True)
+        out = _dedupe_by_id_nonempty(out, id_c).reset_index(drop=True)
+        return out
     pc = _find_col(out, ["project name", "Проект", "Project", "проект", "ID_проекта"])
     tc = _task_name_col(out)
     if pc and tc and pc in out.columns and tc in out.columns:
@@ -653,6 +777,12 @@ def build_dev_tz_matrix_rows(
     ss: Any,
 ) -> Tuple[List[Dict[str, Any]], str]:
     rows: List[Dict[str, Any]] = []
+
+    if mdf is None or getattr(mdf, "empty", True):
+        return [], ""
+    mdf = ensure_msp_df_for_dev_matrix(mdf)
+    if mdf is None or getattr(mdf, "empty", True):
+        return [], ""
 
     # На всякий случай пересчитываем section из дерева (старые сессии/БД могли иметь ЛОТ вместо родителя ур.2)
     if mdf is not None and not getattr(mdf, "empty", True) and "task name" in mdf.columns:
@@ -687,16 +817,9 @@ def build_dev_tz_matrix_rows(
             }
         )
 
-    pid = "Н/Д"
-    pname = "Н/Д"
-    if "project id" in mdf.columns and mdf["project id"].notna().any():
-        pid = str(mdf["project id"].dropna().astype(str).iloc[0]).strip() or "Н/Д"
+    cap = ""
     if "project name" in mdf.columns and mdf["project name"].notna().any():
-        pname = str(mdf["project name"].dropna().astype(str).iloc[0]).strip() or "Н/Д"
-    # Если в выгрузке нет ID, но есть имя — в «План» показываем имя (чтобы не везде Н/Д)
-    if pid == "Н/Д" and pname != "Н/Д":
-        pid = pname
-    add_row("Проект", "Проект", pid, pname, "—", False, phase="invest")
+        cap = str(mdf["project name"].dropna().astype(str).iloc[0]).strip()
 
     def _msp_row(phase: str, group: str, label: str, kw: dict) -> None:
         sub = _match_tasks_like_msp_row(mdf, kw)
@@ -812,9 +935,23 @@ def build_dev_tz_matrix_rows(
             "КОМАНДА РП",
             {
                 "level": 5.0,
-                "name_contains": "Подбор команды",
+                "names_any": [
+                    "Подбор команды",
+                    "Команда РП",
+                    "КОМАНДА РП",
+                    "Распоряжение Руководителя Холдинга",
+                    "Руководителя Холдинга об утверждении",
+                    "назначен руководител",
+                    "проектную группу",
+                ],
                 "parent_l2_contains": "Ковенанты",
-                "phase_needles": ["Команда РП", "КОМАНДА РП", "Подбор команды"],
+                "phase_needles": [
+                    "Команда РП",
+                    "КОМАНДА РП",
+                    "Подбор команды",
+                    "руководител проекта",
+                    "назначени руководител",
+                ],
             },
         ),
         (
@@ -824,6 +961,7 @@ def build_dev_tz_matrix_rows(
             {
                 "level": 5.0,
                 "names_any": [
+                    "Разрешение РС",
                     "Разрешение на строительство (РС)",
                     "Разрешение на строительство",
                     "разрешение на строительство",
@@ -946,9 +1084,14 @@ def build_dev_tz_matrix_rows(
             "Начало СМР",
             {
                 "level": 5.0,
-                "name_contains": "Начало СМР",
+                "names_any": [
+                    "Начало СМР",
+                    "начало смр",
+                    "СМР (начало)",
+                    "смр (начало)",
+                ],
                 "parent_l2_contains": "Ковенанты",
-                "phase_needles": ["Начало СМР"],
+                "phase_needles": ["Начало СМР", "СМР (начало)", "смр (начало)"],
             },
         ),
     ]
@@ -1107,6 +1250,11 @@ def build_dev_tz_matrix_rows(
                     "Передача боксов",
                     "Передача бокс",
                     "боксов резидент",
+                    "передачи резидент",
+                    "передаче резидент",
+                    "для передачи резидент",
+                    "сформированная документация для передачи",
+                    "по боксам)",
                     "БОНУСОВ",
                     "бонусов резидент",
                     "передача бонус",
@@ -1114,6 +1262,7 @@ def build_dev_tz_matrix_rows(
                 "parent_l2_contains": "Ковенанты",
                 "phase_needles": [
                     "Передача боксов",
+                    "передачи резидент",
                     "БОКСОВ",
                     "БОНУСОВ",
                     "бонусов резидент",
@@ -1127,36 +1276,65 @@ def build_dev_tz_matrix_rows(
     for phase, group, label, kw in specs_life:
         _msp_row(phase, group, label, kw)
 
-    cap = ""
     return rows, cap
 
 
 _DEV_TZ_MATRIX_CSS = """
 <style>
+/* Сетка шапки/тела: глобальный _TABLE_CSS даёт th только border-bottom — здесь явные границы ячеек. */
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide {
+  border: 2px solid rgba(220, 228, 240, 0.45);
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 720px;
+}
 .dev-tz-matrix-wrap { overflow-x: auto; min-width: 0; max-width: 100%; margin-bottom: 0.75rem; }
-.rendered-table.dev-tz-wide { border-collapse: collapse; min-width: 720px; }
-.rendered-table.dev-tz-wide th.dev-tz-ghead {
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th {
+  border: 1px solid rgba(200, 210, 225, 0.5) !important;
+  border-bottom: 2px solid rgba(200, 210, 225, 0.6) !important;
+  box-sizing: border-box;
+  position: static !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td {
+  border: 1px solid rgba(200, 210, 225, 0.38) !important;
+  border-top: 1px solid rgba(200, 210, 225, 0.45) !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody tr:hover td {
+  background: inherit;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody tr:nth-child(even) td {
+  background: inherit;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-th-project {
+  text-align: left; vertical-align: middle; font-weight: 700; font-size: 12px;
+  padding: 6px 10px; color: #e8f5e9;
+  background: rgba(20, 40, 28, 0.55) !important;
+  min-width: 10em; max-width: 18em;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead {
   text-align: center; font-weight: 700; font-size: 13px; padding: 6px 8px;
-  background: linear-gradient(180deg, rgba(34, 139, 34, 0.35) 0%, rgba(25, 90, 25, 0.25) 100%);
-  color: #e8f5e9; border: 1px solid rgba(255,255,255,0.12);
+  background: linear-gradient(180deg, rgba(34, 139, 34, 0.35) 0%, rgba(25, 90, 25, 0.25) 100%) !important;
+  color: #e8f5e9;
 }
-.rendered-table.dev-tz-wide th.dev-tz-ghead-life {
-  background: linear-gradient(180deg, rgba(34, 139, 34, 0.28) 0%, rgba(25, 90, 25, 0.18) 100%);
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead-life {
+  background: linear-gradient(180deg, rgba(34, 139, 34, 0.28) 0%, rgba(25, 90, 25, 0.18) 100%) !important;
 }
-.rendered-table.dev-tz-wide th.dev-tz-milestone {
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone {
   text-align: center; vertical-align: bottom; font-size: 11px; font-weight: 600; line-height: 1.25;
-  max-width: 9em; padding: 5px 6px; color: #c9d1d9; border: 1px solid rgba(255,255,255,0.08);
+  max-width: 9em; padding: 5px 6px; color: #c9d1d9;
+  background: rgba(26, 28, 35, 0.92) !important;
 }
-.rendered-table.dev-tz-wide th.dev-tz-sub {
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub {
   font-size: 11px; font-weight: 500; color: #9aa4b2; padding: 5px 6px;
-  border: 1px solid rgba(255,255,255,0.06);
+  background: rgba(22, 24, 32, 0.95) !important;
 }
-.rendered-table.dev-tz-wide td {
-  font-size: 12px; padding: 5px 8px; text-align: center; vertical-align: middle;
-  border: 1px solid rgba(255,255,255,0.06);
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-td-project {
+  text-align: left; font-weight: 600; font-size: 12px; padding: 6px 10px;
+  background: rgba(15, 25, 35, 0.35);
+  color: #e6edf3;
 }
 /* ТЗ: при «% выполнения» ≠ 100% — подсветка ячеек оранжевым */
-.rendered-table.dev-tz-wide td.dev-tz-warn {
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-warn {
   background: rgba(255, 140, 0, 0.38) !important;
   color: #1a1a1a;
 }
@@ -1172,14 +1350,14 @@ def _dev_tz_matrix_row_key(r: Dict[str, Any]) -> Tuple[str, str]:
 def render_dev_tz_matrix(
     rows: Union[List[Dict[str, Any]], List[List[Dict[str, Any]]]],
     table_css: str,
+    *,
+    project_labels: Optional[List[str]] = None,
 ) -> None:
     """
-    Макет по референсу клиента: две группы столбцов «Инвестиционная фаза» / «Жизнь проекта»,
-    под каждой вехой — План / Факт / Откл.
+    Первая колонка «Проект» — только название; далее «Инвестиционная фаза» / «Жизнь проекта»
+    и под каждой вехой План / Факт / Откл.
 
-    - Один проект: ``rows`` — плоский список словарей (как раньше) — одна строка данных в таблице.
-    - Несколько проектов: ``rows`` — список списков словарей (по одному списку на проект, тот же порядок
-      вех, что у первого проекта) — в tbody по одной строке на проект.
+    ``project_labels``: подпись в колонке «Проект» для каждой строки (порядок = порядок блоков).
     """
     import streamlit as st
 
@@ -1193,6 +1371,16 @@ def render_dev_tz_matrix(
         st.info("Нет строк матрицы.")
         return
 
+    n_blocks = len(blocks)
+    if project_labels is None:
+        row_labels = [""] * n_blocks
+    else:
+        row_labels = [str(x or "").strip() for x in project_labels]
+        if len(row_labels) < n_blocks:
+            row_labels.extend([""] * (n_blocks - len(row_labels)))
+        else:
+            row_labels = row_labels[:n_blocks]
+
     template = blocks[0]
     esc = html_module.escape
     invest_labels = [r["label"] for r in template if r.get("phase") == "invest"]
@@ -1204,6 +1392,7 @@ def render_dev_tz_matrix(
 
     head_rows: List[str] = [
         "<tr>"
+        '<th rowspan="3" class="dev-tz-th-project">Проект</th>'
         f'<th colspan="{col_span_inv}" class="dev-tz-ghead">Инвестиционная фаза</th>'
         f'<th colspan="{col_span_life}" class="dev-tz-ghead dev-tz-ghead-life">Жизнь проекта</th>'
         "</tr>"
@@ -1226,7 +1415,7 @@ def render_dev_tz_matrix(
 
     body_trs: List[str] = []
     tmpl_keys: List[Tuple[str, str]] = [_dev_tz_matrix_row_key(r) for r in template]
-    for block in blocks:
+    for bi, block in enumerate(blocks):
         row_by_key = {_dev_tz_matrix_row_key(r): r for r in block}
         body_cells: List[str] = []
         for k in tmpl_keys:
@@ -1240,7 +1429,10 @@ def render_dev_tz_matrix(
                 v = r.get(key) or ""
                 oc = ' class="dev-tz-warn"' if warn_row else ""
                 body_cells.append(f"<td{oc}>{esc(str(v))}</td>")
-        body_trs.append("<tr>" + "".join(body_cells) + "</tr>")
+        plab = row_labels[bi] if bi < len(row_labels) else ""
+        body_trs.append(
+            '<tr><td class="dev-tz-td-project">' + esc(plab) + "</td>" + "".join(body_cells) + "</tr>"
+        )
 
     html_tbl = (
         '<table class="rendered-table dev-tz-wide" border="0">'
@@ -1270,16 +1462,82 @@ def _is_orange_pct_milestone(slug: str, title: str) -> bool:
     return ("гпзу" in s_title) or ("экспертиз" in s_title)
 
 # Контрольные точки: список и правила сопоставления по согласованному ТЗ.
+# Контрольные точки (ТЗ скрин): задачи блока «Ковенанты», План = Базовое окончание, Факт = Окончание,
+# столбцы MSP → см. маппинг web_loader (_MSP_COLUMN_REMAP).
 CONTROL_POINT_MILESTONES: List[Tuple[str, str, dict]] = [
     ("ГПЗУ", "gpzu", {"level": 5.0, "names_any": ["ГПЗУ"], "parent_l2_contains": "Ковенанты"}),
-    ("Экспертиза стадии П", "exp_pd", {"level": 5.0, "names_any": ["Экспертиза ПД", "Экспертиза"], "parent_l2_contains": "Ковенанты"}),
-    ("Начало финансирования", "fin_start", {"level": 5.0, "names_any": ["КОД, ОТКР. ФИНАНС. (начало финансирования)", "Начало финансирования"], "parent_l2_contains": "Ковенанты"}),
-    ("Стадия РД", "rd_stage", {"level": 5.0, "names_any": ["Стадия РД", "Стадия Рабочая Документация (РД)", "Рабочая Документация (РД)"], "parent_l2_contains": "Ковенанты"}),
-    ("РС", "rs", {"level": 5.0, "names_any": ["Разрешение РС", "Разрешение на строительство (РС)", "Разрешение на строительство"], "parent_l2_contains": "Ковенанты"}),
+    (
+        "Экспертиза стадии П",
+        "exp_pd",
+        {
+            "level": 5.0,
+            "names_any": [
+                "Экспертиза стадии П",
+                "Экспертиза стадии",
+                "Экспертиза ПД",
+                "экспертиза пд",
+                "Экспертиза проектной документации",
+                "экспертиза проектной документации",
+                "Экспертиза",
+            ],
+            "parent_l2_contains": "Ковенанты",
+        },
+    ),
+    (
+        "Начало финансирования",
+        "fin_start",
+        {
+            "level": 5.0,
+            "names_any": [
+                "КОД, ОТКР. ФИНАНС.",
+                "КОД ОТКР. ФИНАНС.",
+                "ОТКР. ФИНАНС.",
+                "ОТКР ФИНАНС",
+                "(начало финансирования)",
+                "Начало финансирования",
+                "начало финансирования",
+                "КОД, ОТКР. ФИНАНС. (начало финансирования)",
+            ],
+            "parent_l2_contains": "Ковенанты",
+        },
+    ),
+    (
+        "Стадия РД",
+        "rd_stage",
+        {
+            "level": 5.0,
+            "names_any": ["Стадия РД", "Стадия Рабочая Документация (РД)", "Рабочая Документация (РД)"],
+            "parent_l2_contains": "Ковенанты",
+        },
+    ),
+    (
+        "РС",
+        "rs",
+        {
+            "level": 5.0,
+            "names_any": ["Разрешение РС", "Разрешение на строительство (РС)", "Разрешение на строительство"],
+            "parent_l2_contains": "Ковенанты",
+        },
+    ),
     ("Завершение СМР", "smr_finish", {"level": 5.0, "names_any": ["Завершение СМР"], "parent_l2_contains": "Ковенанты"}),
     ("Пуск электричества", "power_on", {"level": 5.0, "names_any": ["Пуск электричества"], "parent_l2_contains": "Ковенанты"}),
     ("Пуск газа", "gas_on", {"level": 5.0, "names_any": ["Пуск газа"], "parent_l2_contains": "Ковенанты"}),
-    ("РВ", "rv", {"level": 5.0, "names_any": ["РВ", "Разрешение на ввод в эксплуатацию (РВ)", "Разрешение на ввод"], "parent_l2_contains": "Ковенанты"}),
+    (
+        "РВ",
+        "rv",
+        {
+            "level": 5.0,
+            "names_any": [
+                "Разрешение на ввод в эксплуатацию (РВ)",
+                "Разрешение на ввод в эксплуатацию",
+                "Разрешение на ввод объекта",
+                "Разрешение на ввод",
+                "ввод в эксплуатацию",
+            ],
+            "names_exact_any": ["РВ"],
+            "parent_l2_contains": "Ковенанты",
+        },
+    ),
     ("Право 1", "pravo1", {"level": 5.0, "names_any": ["Право 1"], "parent_l2_contains": "Ковенанты"}),
     ("Выкуп ЗУ", "vykup_zu", {"level": 5.0, "names_any": ["Выкуп ЗУ", "Выкуп земельного участка"], "parent_l2_contains": "Ковенанты"}),
     ("Право 2", "pravo2", {"level": 5.0, "names_any": ["Право 2", "Право 2 на Застройщика"], "parent_l2_contains": "Ковенанты"}),
@@ -1505,7 +1763,29 @@ def _one_milestone_cell(rows: pd.DataFrame) -> Tuple[str, str, str, bool, bool]:
     return pl, fl, otk, ok, warn_pct
 
 
-def build_control_points_df(mdf: pd.DataFrame) -> pd.DataFrame:
+def _cp_hide_completed_candidates(sub: pd.DataFrame) -> pd.DataFrame:
+    """Строки с % выполнения ≠ 100 или без процента; если пусто — исходный кадр (без потери вехи)."""
+    if sub is None or getattr(sub, "empty", True) or "pct complete" not in sub.columns:
+        return sub
+    pc = pd.to_numeric(sub["pct complete"], errors="coerce")
+    keep = (~pc.fillna(np.nan).eq(100.0)) | pc.isna()
+    out = sub.loc[keep.fillna(False)]
+    return out if not getattr(out, "empty", True) else sub
+
+
+def _control_point_matching_row_indices(mdf: pd.DataFrame) -> set:
+    """Индексы строк, попавших под любую встроенную/админскую веху «Контрольные точки»."""
+    idx: set = set()
+    if mdf is None or getattr(mdf, "empty", True):
+        return idx
+    for _t, _s, kw in get_control_point_milestones_effective():
+        hit = _match_milestone_tasks(mdf, kw)
+        if hit is not None and not hit.empty:
+            idx.update(hit.index.tolist())
+    return idx
+
+
+def build_control_points_df(mdf: pd.DataFrame, *, hide_completed: bool = False) -> pd.DataFrame:
     """Одна строка на проект; столбцы project, row_ok, {slug}_plan|_fact|_otkl|_warn_pct."""
     pcol = _project_name_column(mdf)
     if pcol is None or mdf is None or mdf.empty:
@@ -1527,7 +1807,10 @@ def build_control_points_df(mdf: pd.DataFrame) -> pd.DataFrame:
         display = _control_points_project_label(gk, raws)
         rec: Dict[str, Any] = {"project": display, "row_ok": True}
         for title, slug, kw in get_control_point_milestones_effective():
-            m = _match_milestone_tasks(sub, kw)
+            sub_m = _cp_hide_completed_candidates(sub) if hide_completed else sub
+            m = _match_milestone_tasks(sub_m, kw)
+            if hide_completed and (m is None or getattr(m, "empty", True)):
+                m = _match_milestone_tasks(sub, kw)
             pl, fl, otk, ok, warn_pct = _one_milestone_cell(m)
             rec[f"{slug}_plan"] = pl
             rec[f"{slug}_fact"] = fl
@@ -1909,10 +2192,32 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
     if mdf is None or getattr(mdf, "empty", True):
         st.warning("Нет строк в данных MSP.")
         return
+    f1, f2, _ = st.columns([1.1, 1.1, 2.8])
+    with f1:
+        only_ctl = st.checkbox(
+            "Только контрольные задачи",
+            value=False,
+            key="cp_ui_only_control_tasks",
+            help="В расчёт вех включаются только строки MSP, попадающие под список вех (см. ТЗ / админ).",
+        )
+    with f2:
+        hide_cm = st.checkbox(
+            "Скрыть завершённые (100%)",
+            value=False,
+            key="cp_ui_hide_pct100",
+            help="Сначала исключать задачи с «% выполнения» = 100; если веха не находится — берётся задача и с 100%.",
+        )
+
     filtered_mdf, cp_filter_info = _apply_control_points_msp_filters(st, mdf)
     if filtered_mdf is None or getattr(filtered_mdf, "empty", True):
         st.info("Нет строк по выбранным фильтрам.")
         return
+
+    if only_ctl:
+        _ix = _control_point_matching_row_indices(filtered_mdf)
+        if _ix:
+            filtered_mdf = filtered_mdf.loc[sorted(_ix)].copy()
+
     d_info = cp_filter_info.get("strict_depth")
     sr = cp_filter_info.get("strict_rows")
     tr = cp_filter_info.get("subtree_rows")
@@ -1921,7 +2226,7 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
             f"Задач с «Уровень структуры» **{d_info}** (как при фильтре по уровню в MSP): **{sr}**. "
             f"Для расчёта дат вех учитывается поддерево: **{tr}** задач (включая нижние уровни)."
         )
-    df = build_control_points_df(filtered_mdf)
+    df = build_control_points_df(filtered_mdf, hide_completed=hide_cm)
     if df.empty:
         st.warning("Нет строк проектов в данных MSP.")
         return

@@ -20,9 +20,9 @@ from .ui_quiet import suppress_caption
 
 from dashboards.dev_projects_tz_matrix import (
     build_dev_tz_matrix_rows,
+    ensure_msp_df_for_dev_matrix,
     render_dev_tz_matrix,
     render_control_points_dashboard,
-    _control_points_prepare_msp_dates,
 )
 
 
@@ -21878,12 +21878,22 @@ def dashboard_developer_projects(df):
     export_project_names: list = []
 
     if sel_proj != "Все" or not project_col or uniq_proj_n <= 1:
-        rows_tz, _cap = build_dev_tz_matrix_rows(
+        rows_tz, cap_tz = build_dev_tz_matrix_rows(
             matrix_df,
             st.session_state.get("project_data"),
             st.session_state,
         )
-        render_dev_tz_matrix(rows_tz, _TABLE_CSS)
+        plab = str(cap_tz or "").strip()
+        if (
+            not plab
+            and project_col
+            and project_col in matrix_df.columns
+            and matrix_df[project_col].notna().any()
+        ):
+            plab = str(matrix_df[project_col].dropna().astype(str).str.strip().iloc[0]).strip()
+        elif not plab and sel_proj and str(sel_proj).strip() != "Все":
+            plab = str(sel_proj).strip()
+        render_dev_tz_matrix(rows_tz, _TABLE_CSS, project_labels=[plab])
         rows_blocks_for_export = [rows_tz]
         if project_col and project_col in matrix_df.columns and matrix_df[project_col].notna().any():
             export_project_names = [
@@ -21911,7 +21921,7 @@ def dashboard_developer_projects(df):
         if not blocks:
             st.info("Нет строк MSP для проектов в выборке.")
             return
-        render_dev_tz_matrix(blocks, _TABLE_CSS)
+        render_dev_tz_matrix(blocks, _TABLE_CSS, project_labels=names)
         rows_blocks_for_export = blocks
         export_project_names = names
 
@@ -22347,6 +22357,7 @@ def render_control_points_milestones_admin_settings(*, key_prefix: str = "cp_das
             st.markdown(
                 "- **level** — уровень задачи MSP (например 5.0).\n"
                 "- **names_any** — список подстрок для названия задачи.\n"
+                "- **names_exact_any** — точное совпадение имени задачи (после trim), напр. «РВ» без ложных вхождений в «КРП».\n"
                 "- **name_contains** — одна подстрока в названии.\n"
                 "- **parent_l2_contains** — родитель уровня 2 (часто «Ковенанты»).\n"
                 "- **block_contains** — подстрока функционального блока.\n"
@@ -22384,7 +22395,7 @@ def dashboard_control_points(df):
     _cp_df = df.copy()
     if "project name" in _cp_df.columns:
         _cp_df = _project_column_apply_canonical(_cp_df, "project name")
-    work = _control_points_prepare_msp_dates(_cp_df)
+    work = ensure_msp_df_for_dev_matrix(_cp_df)
     has_fact_col = "plan end" in work.columns or "actual finish" in work.columns
     if "base end" not in work.columns or not has_fact_col:
         st.warning(
