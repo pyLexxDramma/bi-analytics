@@ -7052,13 +7052,13 @@ def dashboard_budget_by_period(df):
                 (function() {
                   const rootDoc = window.parent && window.parent.document ? window.parent.document : document;
                   const hid = "st-bdds-hide-datepicker-quickselect";
-                  if (!rootDoc.getElementById(hid)) {
-                    const st = rootDoc.createElement("style");
-                    st.id = hid;
-                    st.textContent =
-                      '[data-baseweb="popover"] [data-baseweb="calendar"] > div:last-child { display: none !important; }';
-                    rootDoc.head.appendChild(st);
+                  let tag = rootDoc.getElementById(hid);
+                  if (!tag) {
+                    tag = rootDoc.createElement("style");
+                    tag.id = hid;
+                    rootDoc.head.appendChild(tag);
                   }
+                  tag.textContent = "";
 
                   const dict = new Map([
                     ["January","Январь"],["February","Февраль"],["March","Март"],["April","Апрель"],
@@ -8346,14 +8346,15 @@ def dashboard_bdr(df):
     БДР по ТЗ: столбчатые серии — доходы, расходы, сальдо; помесячно / накопительно.
     Fallback из 1С — только обороты БДР/поступление-расходование, не БДДС.
     """
-    st.header("БДР. Доходы, расходы, сальдо")
+    st.header("БДР")
 
     if df is None or not hasattr(df, "columns") or df.empty:
         st.warning("⚠️ Нет данных для отображения. Загрузите данные проекта.")
         return
     from dashboards.finance_from_1c import ensure_bdr_frame_with_fallback
 
-    df = df.copy()
+    df_src = df.copy()
+
     def _clean_filter_label(v) -> str:
         if v is None or (isinstance(v, float) and pd.isna(v)):
             return ""
@@ -8465,11 +8466,138 @@ def dashboard_bdr(df):
 
         return pd.to_numeric(s, errors="coerce")
 
-    df = _derive_bdr_dimensions(df)
-    ensure_budget_columns(df)
-    df, _ = ensure_bdr_frame_with_fallback(df, show_caption=True)
-    ensure_budget_columns(df)
-    ensure_date_columns(df)
+    def _bdr_dimension_combos_by_project_key(msp_derived: pd.DataFrame) -> dict[str, list[dict]]:
+        """Уникальные пары лот/этап по нормализованному ключу проекта (как в фильтрах БДДС)."""
+        out: dict[str, list[dict]] = {}
+        if (
+            msp_derived is None
+            or getattr(msp_derived, "empty", True)
+            or "project name" not in msp_derived.columns
+        ):
+            return out
+        for _, rr in msp_derived.iterrows():
+            pk = _project_filter_norm_key(rr.get("project name"))
+            if not pk:
+                continue
+            lr = rr.get("lot_effective") if "lot_effective" in msp_derived.columns else rr.get("lot")
+            sr = rr.get("stage_l2") if "stage_l2" in msp_derived.columns else rr.get("section")
+            lr_s = "" if lr is None or (isinstance(lr, float) and pd.isna(lr)) else str(lr).strip()
+            sr_s = "" if sr is None or (isinstance(sr, float) and pd.isna(sr)) else str(sr).strip()
+            cl = _clean_filter_label(lr_s)
+            cs = _clean_filter_label(sr_s)
+            if not cl and not cs:
+                continue
+            bucket = out.setdefault(pk, [])
+            entry = {"lot_disp": lr_s or lr, "stage_disp": sr_s or sr, "clean_lot": cl, "clean_stage": cs}
+            if entry not in bucket:
+                bucket.append(entry)
+        return out
+
+    def _spread_bdr_synthetic_with_msp_dims(
+        synth: pd.DataFrame,
+        msp_derived: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """
+        Синтетика БДР из 1С без лота/этапа: добавляем комбинации из MSP на проект и делим суммы поровну,
+        чтобы фильтры по лоту/этапу работали и не раздували итоги при выборе «Все».
+        """
+        if synth is None or getattr(synth, "empty", True):
+            return synth
+        if not bool(getattr(synth, "attrs", {}).get("data_source_1c_synthetic_bdr")):
+            return synth
+        combos_map = _bdr_dimension_combos_by_project_key(msp_derived)
+        if not combos_map:
+            return synth
+        need_cols = ("bdr_income", "bdr_expense", "bdr_saldo", "project name", "plan end")
+        if any(c not in synth.columns for c in need_cols):
+            return synth
+        rows_exp: list[dict] = []
+        for _, r in synth.iterrows():
+            pj = r.get("project name")
+            pk_s = _project_filter_norm_key(pj)
+            combos: list[dict] = combos_map.get(pk_s, []) if pk_s else []
+            if not combos:
+                cand: list[list[dict]] = []
+                for k_msp, combos_m in combos_map.items():
+                    if _project_norm_key_matches_msp_keys(pk_s, {k_msp}):
+                        cand.append(combos_m)
+                    elif pk_s and k_msp and _project_norm_key_matches_msp_keys(k_msp, {pk_s}):
+                        cand.append(combos_m)
+                if cand:
+                    seen_k: set[tuple[str, str]] = set()
+                    merged: list[dict] = []
+                    for block in cand:
+                        for ent in block:
+                            tkey = (str(ent.get("clean_lot")), str(ent.get("clean_stage")))
+                            if tkey in seen_k:
+                                continue
+                            seen_k.add(tkey)
+                            merged.append(ent)
+                    combos = merged
+            k = len(combos) if combos else 0
+            if k <= 0:
+                rr = dict(r)
+                rr.setdefault("lot_effective", "")
+                rr.setdefault("stage_l2", "")
+                rows_exp.append(rr)
+                continue
+            inv = 1.0 / float(k)
+            for ent in combos:
+                rr = dict(r)
+                for money in ("bdr_income", "bdr_expense", "bdr_saldo"):
+                    try:
+                        v = float(rr.get(money, np.nan))
+                    except Exception:
+                        v = np.nan
+                    rr[money] = (v * inv) if np.isfinite(v) else v
+                rr["lot_effective"] = str(ent.get("lot_disp") or "")
+                rr["stage_l2"] = str(ent.get("stage_disp") or "")
+                if "section" in synth.columns:
+                    rr["section"] = (
+                        ent.get("clean_stage") or rr.get("section") or rr.get("stage_l2") or ""
+                    )
+                rows_exp.append(rr)
+        if not rows_exp:
+            return synth
+        odf = pd.DataFrame(rows_exp)
+        try:
+            odf.attrs.update(dict(getattr(synth, "attrs", {}) or {}))
+        except Exception:
+            pass
+        odf.attrs["bdr_synthetic_split_by_msp_dims"] = True
+        # Периоды после explode
+        if "plan end" in odf.columns:
+            _pe2 = pd.to_datetime(odf["plan end"], errors="coerce")
+            odf["plan_month"] = _pe2.dt.to_period("M")
+            odf["plan_quarter"] = _pe2.dt.to_period("Q")
+            odf["plan_year"] = _pe2.dt.to_period("Y")
+        return odf
+
+    # Как БДДС: «Группировать по» + «Фильтр по проекту» — до derive/fallback,
+    # чтобы список проектов брался из MSP, а не только из синтетики из 1С.
+    col1, col2 = st.columns(2)
+    with col1:
+        period_type = st.selectbox(
+            "Группировать по", ["Месяц", "Квартал", "Год"], key="bdr_period"
+        )
+        period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
+        period_type_en = period_map.get(period_type, "Month")
+    with col2:
+        if "project name" in df_src.columns:
+            projects = ["Все"] + _unique_project_labels_for_select(df_src["project name"])
+            selected_project = st.selectbox(
+                "Фильтр по проекту", projects, key="bdr_project"
+            )
+        else:
+            selected_project = "Все"
+
+    df_derived_filters = _derive_bdr_dimensions(df_src)
+    df_work = df_derived_filters.copy()
+    ensure_budget_columns(df_work)
+    df_work, _ = ensure_bdr_frame_with_fallback(df_work)
+    df_work = _spread_bdr_synthetic_with_msp_dims(df_work, df_derived_filters)
+    ensure_budget_columns(df_work)
+    ensure_date_columns(df_work)
 
     # Определяем колонки для доходов и расходов
     def find_col(df, variants):
@@ -8480,7 +8608,7 @@ def dashboard_bdr(df):
         return None
 
     income_col = find_col(
-        df,
+        df_work,
         [
             "bdr_income",
             "доходы",
@@ -8490,7 +8618,7 @@ def dashboard_bdr(df):
         ],
     )
     expense_col = find_col(
-        df,
+        df_work,
         [
             "bdr_expense",
             "расходы",
@@ -8507,29 +8635,29 @@ def dashboard_bdr(df):
         )
         return
 
-    # Фильтры — в стиле БДДС
-    col1, col2 = st.columns(2)
-    with col1:
-        period_type = st.selectbox(
-            "Группировать по", ["Месяц", "Квартал", "Год"], key="bdr_period"
-        )
-        period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
-        period_type_en = period_map.get(period_type, "Month")
-    with col2:
-        if "project name" in df.columns:
-            projects = ["Все"] + _unique_project_labels_for_select(df["project name"])
-            selected_project = st.selectbox(
-                "Фильтр по проекту", projects, key="bdr_project"
-            )
-        else:
-            selected_project = "Все"
-
     col3, col4 = st.columns(2)
     with col3:
-        lot_base_col = "lot_effective" if "lot_effective" in df.columns else ("lot" if "lot" in df.columns else ("section" if "section" in df.columns else None))
+        lot_base_col = (
+            "lot_effective"
+            if "lot_effective" in df_work.columns
+            else (
+                "lot"
+                if "lot" in df_work.columns
+                else ("section" if "section" in df_work.columns else None)
+            )
+        )
         if lot_base_col:
             _lot_pairs = []
-            for raw in df[lot_base_col].dropna().tolist():
+            _lot_series_src = (
+                df_work[lot_base_col]
+                if (lot_base_col in df_work.columns)
+                else (
+                    df_derived_filters[lot_base_col]
+                    if (lot_base_col in df_derived_filters.columns)
+                    else pd.Series(dtype=object)
+                )
+            )
+            for raw in _lot_series_src.dropna().tolist():
                 clean = _clean_filter_label(raw)
                 if clean:
                     _lot_pairs.append((clean, str(raw).strip()))
@@ -8542,9 +8670,14 @@ def dashboard_bdr(df):
         else:
             selected_lot = "Все"
     with col4:
-        if "stage_l2" in df.columns:
+        if ("stage_l2" in df_work.columns) or ("stage_l2" in df_derived_filters.columns):
             _stage_pairs = []
-            for raw in df["stage_l2"].dropna().tolist():
+            _st_series = (
+                df_work["stage_l2"]
+                if "stage_l2" in df_work.columns
+                else df_derived_filters["stage_l2"]
+            )
+            for raw in _st_series.dropna().tolist():
                 clean = _clean_filter_label(raw)
                 if clean:
                     _stage_pairs.append((clean, str(raw).strip()))
@@ -8554,13 +8687,22 @@ def dashboard_bdr(df):
             _stage_opts = ["Все"] + sorted(_stage_raw_by_display.keys())
             _sel_stage_display = st.selectbox("Фильтр по этапу", _stage_opts, key="bdr_section")
             selected_section = "Все" if _sel_stage_display == "Все" else _stage_raw_by_display.get(_sel_stage_display, _sel_stage_display)
-        elif "section" in df.columns:
-            sections = ["Все"] + sorted(df["section"].dropna().astype(str).str.strip().unique().tolist())
+        elif ("section" in df_work.columns) or ("section" in df_derived_filters.columns):
+            _sec_series = (
+                df_work["section"]
+                if "section" in df_work.columns
+                else df_derived_filters["section"]
+            )
+            _sec_labels: list[str] = []
+            for raw in _sec_series.dropna().tolist():
+                c = _clean_filter_label(str(raw).strip())
+                if c:
+                    _sec_labels.append(c)
+            sections = ["Все"] + sorted(set(_sec_labels))
             selected_section = st.selectbox("Фильтр по этапу", sections, key="bdr_section")
         else:
             selected_section = "Все"
 
-    # Период
     if period_type_en == "Month":
         period_col = "plan_month"
         period_label = "Месяц"
@@ -8571,11 +8713,11 @@ def dashboard_bdr(df):
         period_col = "plan_year"
         period_label = "Год"
 
-    if period_col not in df.columns:
+    if period_col not in df_work.columns:
         st.warning(f"Столбец периода «{period_col}» не найден. Добавьте даты в данные.")
         return
 
-    filtered_df = df.copy()
+    filtered_df = df_work.copy()
     if selected_project != "Все" and "project name" in filtered_df.columns:
         filtered_df = filtered_df[
             filtered_df["project name"].map(_project_filter_norm_key)
@@ -8594,7 +8736,8 @@ def dashboard_bdr(df):
                 filtered_df[stage_col].astype(str).str.strip() == str(selected_section).strip()
             ]
 
-    # Фильтр-календарь периода (как в БДДС): диапазон по plan end после проект/лот/этап фильтров.
+    ensure_date_columns(filtered_df)
+    # Фильтр-календарь «Период» — как БДДС: тот же help/format и общий стиль/скрипт для datepicker.
     if "plan end" in filtered_df.columns:
         _pe_series_bdr = pd.to_datetime(filtered_df["plan end"], errors="coerce")
         if _pe_series_bdr.notna().any():
@@ -8605,7 +8748,7 @@ def dashboard_bdr(df):
             _bdr_range_kw = {
                 "label": "Период",
                 "key": "bdr_period_range",
-                "help": "Фильтр по диапазону дат (поле «Период»/plan end).",
+                "help": "Фильтр по диапазону дат (поле «Конец план»).",
                 "format": "DD.MM.YYYY",
             }
             if _bdr_start and _bdr_end and _bdr_start <= _bdr_end:
@@ -8618,14 +8761,14 @@ def dashboard_bdr(df):
                 <script>
                 (function() {
                   const rootDoc = window.parent && window.parent.document ? window.parent.document : document;
-                  const hid = "st-bdr-hide-datepicker-quickselect";
-                  if (!rootDoc.getElementById(hid)) {
-                    const st = rootDoc.createElement("style");
-                    st.id = hid;
-                    st.textContent =
-                      '[data-baseweb="popover"] [data-baseweb="calendar"] > div:last-child { display: none !important; }';
-                    rootDoc.head.appendChild(st);
+                  const hid = "st-bdds-hide-datepicker-quickselect";
+                  let tag = rootDoc.getElementById(hid);
+                  if (!tag) {
+                    tag = rootDoc.createElement("style");
+                    tag.id = hid;
+                    rootDoc.head.appendChild(tag);
                   }
+                  tag.textContent = "";
 
                   const dict = new Map([
                     ["January","Январь"],["February","Февраль"],["March","Март"],["April","Апрель"],
@@ -8892,7 +9035,7 @@ def dashboard_bdr(df):
         fig = apply_chart_background(fig)
         render_chart(
             fig,
-            caption_below=f"БДР — доходы, расходы, сальдо{title_suffix}",
+            caption_below=f"БДР{title_suffix}",
             height=_bdr_h,
             max_height=None,
         )

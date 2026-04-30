@@ -429,7 +429,6 @@ def ensure_budget_frame_with_fallback(
 def ensure_bdr_frame_with_fallback(
     df: pd.DataFrame,
     *,
-    show_caption: bool = True,
     restrict_projects_from_df: bool = True,
 ) -> tuple[pd.DataFrame, bool]:
     """
@@ -480,16 +479,6 @@ def ensure_bdr_frame_with_fallback(
 
     if syn.empty:
         return work, False
-
-    if show_caption:
-        approx = bool(getattr(syn, "attrs", {}).get("bdr_approx_by_rd_split"))
-        if approx:
-            st.caption(
-                "БДР из 1С: доходы и расходы по полю «РасходДоход» (поступления / расходования), "
-                "т.к. в выгрузке нет отдельных строк типа «БДР»."
-            )
-        else:
-            st.caption("БДР из оборотов 1С (`*_dannye.json`).")
 
     syn.attrs.setdefault("data_source_1c_synthetic_bdr", True)
     return syn, True
