@@ -473,6 +473,34 @@ def _render_control_points_msp_tab(user: dict) -> None:
             return [], task_col, "В MSP не найдено ни одной валидной задачи уровней 2 и 3."
         return options, task_col, None
 
+    st.subheader("Email администратора")
+    st.caption(
+        "Используется как контактный email в отчёте «Девелоперские проекты» и может применяться в уведомлениях."
+    )
+    cur_em = (get_setting("admin_notification_email") or "").strip()
+    new_em = st.text_input(
+        "Email администратора",
+        value=cur_em,
+        placeholder="например, admin@company.ru",
+        key="admin_notification_email_field",
+    )
+    if st.button("Сохранить email администратора", type="secondary", key="admin_save_notification_email_btn"):
+        set_setting(
+            "admin_notification_email",
+            str(new_em).strip(),
+            description=SETTING_KEYS.get("admin_notification_email", ""),
+            updated_by=user.get("username"),
+        )
+        log_action(
+            user.get("username") or "admin",
+            "admin_setting",
+            "admin_notification_email updated",
+        )
+        st.success("Сохранено.")
+        st.rerun()
+
+    st.divider()
+
     st.subheader("Контрольные точки: вехи, столбцы, MSP")
     from dashboards._renderers import render_control_points_milestones_admin_settings
 

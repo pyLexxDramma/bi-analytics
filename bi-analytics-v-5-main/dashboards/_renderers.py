@@ -22,6 +22,7 @@ from dashboards.dev_projects_tz_matrix import (
     build_dev_tz_matrix_rows,
     ensure_msp_df_for_dev_matrix,
     render_dev_tz_matrix,
+    render_developer_predpisaniya_expander,
     render_control_points_dashboard,
 )
 
@@ -21878,6 +21879,24 @@ def dashboard_developer_projects(df):
     )
 
     st.subheader("Матрица контрольных точек")
+
+    dv_col, adm_col = st.columns([1, 2])
+    with dv_col:
+        vert_dates = st.checkbox(
+            "Даты в ячейках План/Факт вертикально",
+            value=False,
+            key="dev_matrix_vert_dates",
+        )
+    with adm_col:
+        try:
+            from settings import get_setting as _get_admin_mail
+
+            _adm_m = (_get_admin_mail("admin_notification_email") or "").strip()
+        except Exception:
+            _adm_m = ""
+        if _adm_m:
+            st.caption(f"Email администратора: {_adm_m}")
+
     matrix_df = filtered.copy()
     if matrix_df.empty:
         st.info("Нет строк MSP для выбранного проекта.")
@@ -21902,7 +21921,7 @@ def dashboard_developer_projects(df):
             plab = str(matrix_df[project_col].dropna().astype(str).str.strip().iloc[0]).strip()
         elif not plab and sel_proj and str(sel_proj).strip() != "Все":
             plab = str(sel_proj).strip()
-        render_dev_tz_matrix(rows_tz, _TABLE_CSS, project_labels=[plab])
+        render_dev_tz_matrix(rows_tz, _TABLE_CSS, project_labels=[plab], vertical_dates=vert_dates)
         rows_blocks_for_export = [rows_tz]
         if project_col and project_col in matrix_df.columns and matrix_df[project_col].notna().any():
             export_project_names = [
@@ -21930,7 +21949,7 @@ def dashboard_developer_projects(df):
         if not blocks:
             st.info("Нет строк MSP для проектов в выборке.")
             return
-        render_dev_tz_matrix(blocks, _TABLE_CSS, project_labels=names)
+        render_dev_tz_matrix(blocks, _TABLE_CSS, project_labels=names, vertical_dates=vert_dates)
         rows_blocks_for_export = blocks
         export_project_names = names
 
@@ -21939,7 +21958,11 @@ def dashboard_developer_projects(df):
         for i, blk in enumerate(rows_blocks_for_export):
             part = pd.DataFrame(blk)
             if "warn" in part.columns:
-                part = part.rename(columns={"warn": "Подсветка_менее_100pct"})
+                part = part.rename(columns={"warn": "Флаг_внимание"})
+            if "warn_pct" in part.columns:
+                part = part.rename(columns={"warn_pct": "MSP_pct_менее_100"})
+            if "warn_directives" in part.columns:
+                part = part.rename(columns={"warn_directives": "Предписания_внимание"})
             pname = export_project_names[i] if i < len(export_project_names) else ""
             if pname:
                 part.insert(0, "проект", pname)
@@ -21959,6 +21982,15 @@ def dashboard_developer_projects(df):
             file_stem=csv_name,
             key_prefix="dev_matrix",
             csv_label="Скачать матрицу (CSV, для Excel)",
+        )
+    except Exception:
+        pass
+
+    try:
+        render_developer_predpisaniya_expander(
+            st.session_state,
+            export_project_names or None,
+            expanded=False,
         )
     except Exception:
         pass

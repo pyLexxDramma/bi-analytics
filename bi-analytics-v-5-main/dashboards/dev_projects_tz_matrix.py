@@ -273,6 +273,34 @@ def _fmt_delta_days(d: Optional[int]) -> str:
     return f"{sign}{d} дн."
 
 
+_OTKL_DAYS_DISPLAY_RE = re.compile(r"([+-]?\d+)\s*дн", re.IGNORECASE)
+
+
+def _parse_otkl_days_display(s: Any) -> Optional[int]:
+    """Число дней из строки вида «+3 дн.» / «0 дн.» для раскраски «Откл.» (План−Факт)."""
+    if s is None:
+        return None
+    t = str(s).strip()
+    if not t or t.upper() in ("Н/Д", "N/D", "—", "-"):
+        return None
+    m = _OTKL_DAYS_DISPLAY_RE.search(t)
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except ValueError:
+        return None
+
+
+def _looks_like_ru_date_cell(s: Any) -> bool:
+    if s is None:
+        return False
+    t = str(s).strip()
+    if not t or t.upper() == "Н/Д":
+        return False
+    return bool(re.fullmatch(r"\d{2}\.\d{2}\.\d{4}", t))
+
+
 def _find_phase_column(df: pd.DataFrame) -> Optional[str]:
     """Колонка вехи по макету правок: «Инвестиционная. Аренда ЗУ» и т.п. (не имена задач MSP)."""
     if df is None or not hasattr(df, "columns"):
@@ -725,6 +753,120 @@ def _predpisaniya_combined(mdf: pd.DataFrame, ss: Any) -> Tuple[str, str, str, b
     return ps, fs, os, bool(w), hint
 
 
+def build_predpisaniya_detail_df(ss: Any, project_name_hint: str = "") -> pd.DataFrame:
+    """Все строки предписаний из Tessa (tasks), опционально — фильтр по названию проекта/объекта."""
+    tdf = ss.get("tessa_tasks_data") if hasattr(ss, "get") else None
+    if tdf is None or getattr(tdf, "empty", True):
+        return pd.DataFrame()
+    tk = tdf.copy()
+    tk.columns = [str(c).strip() for c in tk.columns]
+    kk = _find_col(tk, ["KindName", "kindname", "Вид"])
+    if not kk:
+        return pd.DataFrame()
+    pred = tk[tk[kk].astype(str).str.contains(r"предписани", case=False, na=False, regex=True)].copy()
+    if pred.empty:
+        return pd.DataFrame()
+    hint = (project_name_hint or "").strip()
+    if hint:
+        pk = _norm_dev_project_key(hint)
+        proj_cols = [
+            _find_col(pred, ["ObjectName", "Object Name", "Объект"]),
+            _find_col(pred, ["Проект", "Project", "project", "ProjectName"]),
+        ]
+        matched = False
+        for proj_c in proj_cols:
+            if not proj_c or proj_c not in pred.columns:
+                continue
+
+            def _row_match_cell(x: Any) -> bool:
+                nk = _norm_dev_project_key(x)
+                if not nk:
+                    return False
+                if nk == pk:
+                    return True
+                if len(pk) >= 4 and (pk in nk or nk in pk):
+                    return True
+                return False
+
+            m = pred[proj_c].map(_row_match_cell)
+            if m.fillna(False).any():
+                pred = pred.loc[m.fillna(False)].copy()
+                matched = True
+                break
+        if not matched and pk:
+            pass
+    return pred.reset_index(drop=True)
+
+
+def render_developer_predpisaniya_expander(
+    ss: Any,
+    project_names: Optional[List[str]] = None,
+    *,
+    expanded: bool = False,
+) -> None:
+    """Полная таблица предписаний Tessa под матрицей + выгрузка."""
+    import streamlit as st
+
+    from utils import render_dataframe_excel_csv_downloads
+
+    raw_names = [str(n).strip() for n in (project_names or []) if str(n).strip()]
+    if len(raw_names) == 1:
+        exp_title = f"Предписания (Tessa), полная выгрузка — «{raw_names[0]}»"
+    elif len(raw_names) > 1:
+        exp_title = f"Предписания (Tessa), полная выгрузка — проектов: {len(raw_names)}"
+    else:
+        exp_title = "Предписания (Tessa), полная выгрузка"
+
+    with st.expander(exp_title, expanded=expanded):
+        if not raw_names:
+            df_all = build_predpisaniya_detail_df(ss, "")
+            if df_all.empty:
+                st.caption("Нет данных Tessa по предписаниям (KindName) или файл не загружен.")
+                return
+            st.dataframe(df_all, use_container_width=True, hide_index=True)
+            render_dataframe_excel_csv_downloads(
+                df_all,
+                file_stem="predpisaniya_tessa",
+                key_prefix="dev_pred_all",
+                csv_label="Скачать предписания (CSV)",
+            )
+            return
+
+        chunks: List[pd.DataFrame] = []
+        for pname in raw_names:
+            chunk = build_predpisaniya_detail_df(ss, pname)
+            if not chunk.empty:
+                c2 = chunk.copy()
+                c2.insert(0, "проект_фильтр", pname)
+                chunks.append(c2)
+
+        if not chunks:
+            st.caption(
+                "Для выбранных проектов не найдено строк предписаний по объекту/проекту в Tessa. "
+                "Показываются все предписания без фильтра."
+            )
+            df_fallback = build_predpisaniya_detail_df(ss, "")
+            if df_fallback.empty:
+                return
+            st.dataframe(df_fallback, use_container_width=True, hide_index=True)
+            render_dataframe_excel_csv_downloads(
+                df_fallback,
+                file_stem="predpisaniya_tessa",
+                key_prefix="dev_pred_fb",
+                csv_label="Скачать предписания (CSV)",
+            )
+            return
+
+        merged = pd.concat(chunks, ignore_index=True)
+        st.dataframe(merged, use_container_width=True, hide_index=True)
+        render_dataframe_excel_csv_downloads(
+            merged,
+            file_stem="predpisaniya_tessa_by_project",
+            key_prefix="dev_pred_detail",
+            csv_label="Скачать предписания (CSV)",
+        )
+
+
 def dedupe_msp_for_developer_projects(df: pd.DataFrame) -> pd.DataFrame:
     """
     ТЗ: нет дублирования проектов и задач в «Девелоперские проекты».
@@ -801,8 +943,9 @@ def build_dev_tz_matrix_rows(
         plan_s: str,
         fact_s: str,
         otkl_s: str,
-        warn: bool = False,
         *,
+        warn_pct: bool = False,
+        warn_directives: bool = False,
         phase: str = "",
     ) -> None:
         rows.append(
@@ -812,7 +955,9 @@ def build_dev_tz_matrix_rows(
                 "plan": plan_s,
                 "fact": fact_s,
                 "otkl": otkl_s,
-                "warn": warn,
+                "warn": bool(warn_pct or warn_directives),
+                "warn_pct": bool(warn_pct),
+                "warn_directives": bool(warn_directives),
                 "phase": phase,
             }
         )
@@ -824,11 +969,11 @@ def build_dev_tz_matrix_rows(
     def _msp_row(phase: str, group: str, label: str, kw: dict) -> None:
         sub = _match_tasks_like_msp_row(mdf, kw)
         if sub is None or sub.empty:
-            add_row(group, label, "Н/Д", "Н/Д", "Н/Д", False, phase=phase)
+            add_row(group, label, "Н/Д", "Н/Д", "Н/Д", phase=phase)
             return
         # ТЗ: в каждой ячейке План/Факт/Откл. — одно значение (одна дата / один текст отклонения), без «дата1 / дата2».
         ps, fs, os, _ok, w = _one_milestone_cell(sub)
-        add_row(group, label, ps, fs, os, bool(w), phase=phase)
+        add_row(group, label, ps, fs, os, warn_pct=bool(w), phase=phase)
 
     # Порядок столбцов — по референсу (file-002: вехи Ковенантов; file-003: ДС/ТЕССА до ИРД/ПОС)
     specs_invest_msp: List[Tuple[str, str, str, dict]] = [
@@ -998,17 +1143,17 @@ def build_dev_tz_matrix_rows(
 
     pm, fm, om = _ds_plan_fact_otkl_mln(_bddds_df_for_dev_matrix(mdf, project_data, ss))
     if pm is None:
-        add_row("Финансы", "Выборка ДС, млн руб.", "Н/Д", "Н/Д", "Н/Д", False, phase="invest")
+        add_row("Финансы", "Выборка ДС, млн руб.", "Н/Д", "Н/Д", "Н/Д", phase="invest")
     else:
 
         def _fmtml(v: float) -> str:
             # ТЗ: млн руб., два знака после запятой
             return f"{v:.2f}".replace(".", ",")
 
-        add_row("Финансы", "Выборка ДС, млн руб.", _fmtml(pm), _fmtml(fm), _fmtml(om), False, phase="invest")
+        add_row("Финансы", "Выборка ДС, млн руб.", _fmtml(pm), _fmtml(fm), _fmtml(om), phase="invest")
 
     tp, tf, to, warn_t, _tessa_hint = _predpisaniya_combined(mdf, ss)
-    add_row("ТЕССА", "ПРЕДПИСАНИЯ", tp, tf, to, warn_t, phase="invest")
+    add_row("ТЕССА", "ПРЕДПИСАНИЯ", tp, tf, to, warn_directives=warn_t, phase="invest")
 
     specs_invest_tail: List[Tuple[str, str, str, dict]] = [
         (
@@ -1102,16 +1247,21 @@ def build_dev_tz_matrix_rows(
         (
             "life",
             "Ковенанты",
-            "ТЕХ.ПРИСОЕДИНЕНИЯ (ГАЗ, ЭЛ-ВО)",
+            "ТЕХ.ПРИСОЕДИНЕНИЯ (ГАЗ, ЭЛ-ВО, ВОДА)",
             {
                 "level": 5.0,
                 "names_any": [
                     "Пуск электричества",
                     "Пуск газа",
+                    "Пуск воды",
+                    "Пуск водоснабжения",
+                    "водоснабжения",
                     "ТЕХПРИСОЕДИНЕНИЯ",
                     "техприсоединения",
                     "ГАЗ, ЭП",
                     "ЭП, ВО",
+                    "ВИС",
+                    "вода",
                 ],
                 "parent_l2_contains": "Ковенанты",
                 "phase_needles": [
@@ -1122,8 +1272,12 @@ def build_dev_tz_matrix_rows(
                     "ГАЗ, ЭП",
                     "ЭП, ВО",
                     "ЭП ВО",
+                    "ГАЗ, ВОД",
+                    "ВОДА",
+                    "водоснабж",
                     "Пуск электричества",
                     "Пуск газа",
+                    "Пуск вод",
                     "Жизнь проекта. ТЕХ",
                     "Жизнь проекта. ТЕХПРИСОЕДИНЕНИЯ",
                     "Инвестиционная. ТЕХ",
@@ -1317,7 +1471,8 @@ _DEV_TZ_MATRIX_CSS = """
   color: #e8f5e9;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead-life {
-  background: linear-gradient(180deg, rgba(34, 139, 34, 0.28) 0%, rgba(25, 90, 25, 0.18) 100%) !important;
+  background: linear-gradient(180deg, rgba(92, 100, 115, 0.58) 0%, rgba(55, 61, 72, 0.48) 100%) !important;
+  color: #e8eaed !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone {
   text-align: center; vertical-align: bottom; font-size: 11px; font-weight: 600; line-height: 1.25;
@@ -1333,10 +1488,33 @@ _DEV_TZ_MATRIX_CSS = """
   background: rgba(15, 25, 35, 0.35);
   color: #e6edf3;
 }
-/* ТЗ: при «% выполнения» ≠ 100% — подсветка ячеек оранжевым */
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-warn {
-  background: rgba(255, 140, 0, 0.38) !important;
-  color: #1a1a1a;
+/* ТЗ: при «% выполнения» ≠ 100% — оранжевый текст значений */
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-text-pct-warn {
+  color: #fb923c !important;
+  font-weight: 600 !important;
+}
+/* Отклонение по дням План−Факт: без просрочки / с просрочкой */
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-otkl-ok {
+  color: #22c55e !important;
+  font-weight: 600 !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-otkl-bad {
+  color: #ef4444 !important;
+  font-weight: 600 !important;
+}
+/* Опционально: даты вертикально */
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-date-vert {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  max-height: 7.5em;
+  white-space: nowrap;
+  vertical-align: middle;
+  text-align: center;
+  padding: 8px 4px !important;
+}
+/* Предписания: открытые/просроченные — лёгкий акцент в «Откл.» */
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-directives-warn {
+  background: rgba(234, 88, 12, 0.15) !important;
 }
 </style>
 """
@@ -1347,17 +1525,43 @@ def _dev_tz_matrix_row_key(r: Dict[str, Any]) -> Tuple[str, str]:
     return (str(r.get("group") or ""), str(r.get("label") or ""))
 
 
+def _dev_tz_matrix_cell_classes(
+    r: Dict[str, Any],
+    col: str,
+    *,
+    vertical_dates: bool,
+) -> str:
+    """CSS-классы для ячейки План / Факт / Откл."""
+    parts: List[str] = []
+    v = r.get(col) or ""
+    warn_pct = bool(r.get("warn_pct"))
+    warn_dir = bool(r.get("warn_directives"))
+    if col in ("plan", "fact") and warn_pct and _looks_like_ru_date_cell(v):
+        parts.append("dev-tz-text-pct-warn")
+    if vertical_dates and col in ("plan", "fact") and _looks_like_ru_date_cell(v):
+        parts.append("dev-tz-date-vert")
+    if col == "otkl":
+        if warn_dir:
+            parts.append("dev-tz-directives-warn")
+        dd = _parse_otkl_days_display(v)
+        if dd is not None:
+            parts.append("dev-tz-otkl-ok" if dd >= 0 else "dev-tz-otkl-bad")
+    return " ".join(parts).strip()
+
+
 def render_dev_tz_matrix(
     rows: Union[List[Dict[str, Any]], List[List[Dict[str, Any]]]],
     table_css: str,
     *,
     project_labels: Optional[List[str]] = None,
+    vertical_dates: bool = False,
 ) -> None:
     """
     Первая колонка «Проект» — только название; далее «Инвестиционная фаза» / «Жизнь проекта»
     и под каждой вехой План / Факт / Откл.
 
     ``project_labels``: подпись в колонке «Проект» для каждой строки (порядок = порядок блоков).
+    ``vertical_dates``: писать даты в План/Факт вертикально (ТЗ).
     """
     import streamlit as st
 
@@ -1424,10 +1628,10 @@ def render_dev_tz_matrix(
                 for _ in ("plan", "fact", "otkl"):
                     body_cells.append("<td>Н/Д</td>")
                 continue
-            warn_row = bool(r.get("warn"))
             for key in ("plan", "fact", "otkl"):
                 v = r.get(key) or ""
-                oc = ' class="dev-tz-warn"' if warn_row else ""
+                cls = _dev_tz_matrix_cell_classes(r, key, vertical_dates=vertical_dates)
+                oc = f' class="{esc(cls)}"' if cls else ""
                 body_cells.append(f"<td{oc}>{esc(str(v))}</td>")
         plab = row_labels[bi] if bi < len(row_labels) else ""
         body_trs.append(
