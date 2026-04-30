@@ -2042,7 +2042,8 @@ def _one_milestone_cell(rows: pd.DataFrame) -> Tuple[str, str, str, bool, bool]:
         return pl, fl, "Н/Д", False, warn_pct
     dev_days = _delta_days_plan_minus_fact(pdt, fdt)
     otk = _fmt_delta_days(dev_days)
-    ok = bool(dev_days == 0) if dev_days is not None else False
+    # План − Факт: ≥0 — факт не позже плана (в срок или раньше); <0 — просрочка.
+    ok = bool(dev_days is not None and dev_days >= 0)
     return pl, fl, otk, ok, warn_pct
 
 
@@ -2157,359 +2158,46 @@ def _apply_control_points_msp_filters(
     st, mdf: pd.DataFrame
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
-    Фильтры по ТЗ:
-    - Проект (ур.1)
-    - Функциональный блок (ур.2)
-    - Строения (ур.3)
-    - Верхний уровень задач (ур.4)
-    - Детальный уровень задач (ур.5)
-
-    Возвращает датафрейм для расчёта вех (поддерево после каскада) и метаданные для подписи:
-    число задач с тем же «Уровень структуры», что и выбранный список (как фильтр по полю Уровень в MSP).
+    Фильтр по проекту (ур.1): единственный фильтр на дашборде «Контрольные точки».
+    Возвращает датафрейм для расчёта вех и метаданные (число строк после фильтра).
     """
     meta: Dict[str, Any] = {}
     if mdf is None or getattr(mdf, "empty", True):
         return pd.DataFrame(), meta
     df = mdf.copy()
-
-    def _clean_filter_label(v: Any) -> str:
-        s = str(v or "").replace("\xa0", " ").replace("\u200b", "").replace("\ufeff", "").strip()
-        while "  " in s:
-            s = s.replace("  ", " ")
-        # Убираем кавычки в отображаемом label (в т.ч. внутренние), чтобы списки фильтров были читаемыми.
-        s = (
-            s.replace('"', "")
-            .replace("'", "")
-            .replace("«", "")
-            .replace("»", "")
-        )
-        # Чистим типовые артефакты выгрузки MSP в названиях.
-        s = s.replace(" ,", ",").replace(" .", ".")
-        s = s.lstrip("*- ").strip()
-        while "  " in s:
-            s = s.replace("  ", " ")
-        s = s.strip()
-        return s
-
-    def _canonical_filter_key(v: Any) -> str:
-        """
-        Ключ для объединения дублей из MSP:
-        - разные пробелы вокруг пунктуации;
-        - хвостовые точки/знаки;
-        - регистр/ё.
-        Пример: «Блок U1. U2» == «Блок U1.U2.».
-        """
-        s = _clean_filter_label(v).lower().replace("ё", "е")
-        s = re.sub(r"\s*([.,;:()])\s*", r"\1", s)
-        s = re.sub(r"[.,;:()\s]+$", "", s)
-        s = re.sub(r"\s+", " ", s).strip()
-        return s
-
-    def _build_options_map(series: pd.Series) -> Dict[str, List[str]]:
-        key_to_raws: Dict[str, List[str]] = {}
-        key_to_label: Dict[str, str] = {}
-        if series is None or getattr(series, "empty", True):
-            return {}
-        for raw in series.dropna().astype(str).tolist():
-            rs = str(raw).strip()
-            if not rs:
-                continue
-            lab = _clean_filter_label(rs)
-            if not lab:
-                continue
-            key = _canonical_filter_key(lab)
-            if not key:
-                continue
-            key_to_raws.setdefault(key, []).append(rs)
-            # Более короткая «чистая» подпись обычно читается лучше.
-            if key not in key_to_label or len(lab) < len(key_to_label[key]):
-                key_to_label[key] = lab
-        mp: Dict[str, List[str]] = {}
-        for k, raws in key_to_raws.items():
-            # Дедуп исходников для выбранной подписи.
-            label = key_to_label.get(k, k)
-            if label in mp:
-                mp[label] = sorted(set(mp[label] + raws))
-            else:
-                mp[label] = sorted(set(raws))
-        return mp
-
-    def _limit_options_map(mp: Dict[str, List[str]], max_items: int = 9) -> Dict[str, List[str]]:
-        """Ограничение количества значений в фильтре (без «Все»)."""
-        if not mp:
-            return {}
-        keys = sorted(mp.keys(), key=lambda x: x.lower())
-        if len(keys) <= max_items:
-            return {k: mp[k] for k in keys}
-        return {k: mp[k] for k in keys[:max_items]}
-    # Для фильтров уровней КТ ориентируемся на MSP «Уровень» (level),
-    # а не outline-уровень структуры: так совпадает с ручной проверкой в MSP.
-    lvl_col = "level" if "level" in df.columns else ("level structure" if "level structure" in df.columns else None)
-    task_col = _task_name_col(df)
-
-    def _outline_lvl(fr: pd.DataFrame) -> pd.Series:
-        if not lvl_col or lvl_col not in fr.columns:
-            return pd.Series(np.nan, index=fr.index)
-        return outline_level_numeric(fr[lvl_col])
-    if lvl_col and task_col and lvl_col in df.columns and task_col in df.columns:
-        # Восстанавливаем предков по порядку строк MSP.
-        anc2: List[str] = []
-        anc3: List[str] = []
-        anc4: List[str] = []
-        anc5: List[str] = []
-        stack: Dict[int, str] = {}
-        pcol = "project name" if "project name" in df.columns else None
-        if pcol:
-            grouped = df.groupby(df[pcol].astype(str), sort=False)
-            parts = []
-            for _, g in grouped:
-                g = g.copy()
-                stack = {}
-                _a2: List[str] = []
-                _a3: List[str] = []
-                _a4: List[str] = []
-                _a5: List[str] = []
-                for _, r in g.iterrows():
-                    lv = pd.to_numeric(r.get(lvl_col), errors="coerce")
-                    try:
-                        lvi = int(lv)
-                    except Exception:
-                        lvi = -1
-                    if lvi > 0:
-                        for k in list(stack.keys()):
-                            if k >= lvi:
-                                del stack[k]
-                    name = str(r.get(task_col) or "").strip()
-                    if lvi == 2:
-                        v2, v3, v4, v5 = name, "", "", ""
-                    elif lvi == 3:
-                        v2, v3, v4, v5 = stack.get(2, ""), name, "", ""
-                    elif lvi == 4:
-                        v2, v3, v4, v5 = stack.get(2, ""), stack.get(3, ""), name, ""
-                    elif lvi == 5:
-                        v2, v3, v4, v5 = stack.get(2, ""), stack.get(3, ""), stack.get(4, ""), name
-                    else:
-                        v2, v3, v4, v5 = stack.get(2, ""), stack.get(3, ""), stack.get(4, ""), stack.get(5, "")
-                    _a2.append(v2)
-                    _a3.append(v3)
-                    _a4.append(v4)
-                    _a5.append(v5)
-                    if lvi > 0 and name:
-                        stack[lvi] = name
-                g["__l2"] = _a2
-                g["__l3"] = _a3
-                g["__l4"] = _a4
-                g["__l5"] = _a5
-                parts.append(g)
-            if parts:
-                df = pd.concat(parts, axis=0)
-        else:
-            for _, r in df.iterrows():
-                lv = pd.to_numeric(r.get(lvl_col), errors="coerce")
-                try:
-                    lvi = int(lv)
-                except Exception:
-                    lvi = -1
-                if lvi > 0:
-                    for k in list(stack.keys()):
-                        if k >= lvi:
-                            del stack[k]
-                name = str(r.get(task_col) or "").strip()
-                if lvi == 2:
-                    v2, v3, v4, v5 = name, "", "", ""
-                elif lvi == 3:
-                    v2, v3, v4, v5 = stack.get(2, ""), name, "", ""
-                elif lvi == 4:
-                    v2, v3, v4, v5 = stack.get(2, ""), stack.get(3, ""), name, ""
-                elif lvi == 5:
-                    v2, v3, v4, v5 = stack.get(2, ""), stack.get(3, ""), stack.get(4, ""), name
-                else:
-                    v2, v3, v4, v5 = stack.get(2, ""), stack.get(3, ""), stack.get(4, ""), stack.get(5, "")
-                anc2.append(v2)
-                anc3.append(v3)
-                anc4.append(v4)
-                anc5.append(v5)
-                if lvi > 0 and name:
-                    stack[lvi] = name
-            df["__l2"] = anc2
-            df["__l3"] = anc3
-            df["__l4"] = anc4
-            df["__l5"] = anc5
-
-    # Порядок фильтров по ТЗ:
-    # 1) Проект (ур.1) → 2) Функциональный блок (ур.2) →
-    # 3) Верхний уровень задач (ур.4) → 4) Детальный уровень задач (ур.5) →
-    # 5) Строения (ур.3)
-    r1a, r1b, r1c = st.columns(3)
-    r2a, r2b = st.columns(2)
     labels_map: Dict[str, List[str]] = {}
-    with r1a:
-        if "project name" in df.columns:
-            ordered, labels_map = _control_points_project_filter_options(df)
-            preferred_projects = ["Дмитровский", "Есипово V", "Завод", "Ленинский"]
-            if any(p in ordered for p in preferred_projects):
-                ordered = [p for p in preferred_projects if p in ordered]
-            opts = ["Все"] + ordered
-            sel_proj = st.selectbox("Проект", opts, key="cp_msp_filter_project")
-        else:
-            sel_proj = "Все"
+    if "project name" in df.columns:
+        ordered, labels_map = _control_points_project_filter_options(df)
+        preferred_projects = ["Дмитровский", "Есипово V", "Завод", "Ленинский"]
+        if any(p in ordered for p in preferred_projects):
+            ordered = [p for p in preferred_projects if p in ordered]
+        opts = ["Все"] + ordered
+        sel_proj = st.selectbox("Проект", opts, key="cp_msp_filter_project")
+    else:
+        sel_proj = "Все"
 
-    # Каскад: каждый следующий список строим из уже отфильтрованного набора.
     out = df
     if sel_proj != "Все" and "project name" in out.columns:
         raws = labels_map.get(str(sel_proj).strip(), [str(sel_proj).strip()])
         out = out[out["project name"].astype(str).str.strip().isin(raws)]
 
-    # Общая релевантная выборка для опций КТ: то, что потенциально участвует в вехах.
-    rel = out
-    try:
-        rel_idx = set()
-        for _title, _slug, _kw in get_control_point_milestones_effective():
-            _m = _match_milestone_tasks(out, _kw)
-            if _m is not None and not getattr(_m, "empty", True):
-                rel_idx.update(_m.index.tolist())
-        if rel_idx:
-            rel = out.loc[sorted(rel_idx)]
-    except Exception:
-        rel = out
-
-    with r1b:
-        l2_map = _build_options_map(out.get("__l2", pd.Series(dtype=str)))
-        if "__l2" in rel.columns:
-            _rel_l2 = set(_build_options_map(rel["__l2"]).keys())
-            if _rel_l2:
-                l2_map = {k: v for k, v in l2_map.items() if k in _rel_l2}
-        l2_map = _limit_options_map(l2_map, max_items=9)
-        l2_opts = ["Все"] + sorted(l2_map.keys(), key=lambda x: x.lower())
-        sel_l2 = st.selectbox("Функциональный блок", l2_opts, key="cp_msp_filter_l2")
-    if sel_l2 != "Все" and "__l2" in out.columns:
-        raws = l2_map.get(str(sel_l2).strip(), [str(sel_l2).strip()])
-        out = out[out["__l2"].astype(str).str.strip().isin(raws)]
-
-    with r1c:
-        ol_for_l4 = _outline_lvl(out)
-        if lvl_col and lvl_col in out.columns and ol_for_l4.notna().any():
-            l4_src = out.loc[ol_for_l4.eq(4)]
-            l4_map = (
-                _build_options_map(l4_src.get("__l4", pd.Series(dtype=str)))
-                if not getattr(l4_src, "empty", True)
-                else {}
-            )
-        else:
-            l4_map = _build_options_map(out.get("__l4", pd.Series(dtype=str)))
-        if "__l4" in rel.columns:
-            _rel_l4 = set(_build_options_map(rel["__l4"]).keys())
-            if _rel_l4:
-                l4_map = {k: v for k, v in l4_map.items() if k in _rel_l4}
-        l4_map = _limit_options_map(l4_map, max_items=9)
-        l4_opts = ["Все"] + sorted(l4_map.keys(), key=lambda x: x.lower())
-        sel_l4 = st.selectbox("Верхний уровень задач", l4_opts, key="cp_msp_filter_l4")
-    if sel_l4 != "Все" and "__l4" in out.columns:
-        raws = l4_map.get(str(sel_l4).strip(), [str(sel_l4).strip()])
-        out = out[out["__l4"].astype(str).str.strip().isin(raws)]
-
-    with r2a:
-        ol_for_l5 = _outline_lvl(out)
-        if lvl_col and lvl_col in out.columns and ol_for_l5.notna().any():
-            l5_src = out.loc[ol_for_l5.eq(5)]
-            l5_map = (
-                _build_options_map(l5_src.get("__l5", pd.Series(dtype=str)))
-                if not getattr(l5_src, "empty", True)
-                else {}
-            )
-        else:
-            l5_map = _build_options_map(out.get("__l5", pd.Series(dtype=str)))
-        if "__l5" in rel.columns:
-            _rel_l5 = set(_build_options_map(rel["__l5"]).keys())
-            if _rel_l5:
-                l5_map = {k: v for k, v in l5_map.items() if k in _rel_l5}
-        l5_map = _limit_options_map(l5_map, max_items=9)
-        l5_opts = ["Все"] + sorted(l5_map.keys(), key=lambda x: x.lower())
-        sel_l5 = st.selectbox("Детальный уровень задач", l5_opts, key="cp_msp_filter_l5")
-    if sel_l5 != "Все" and "__l5" in out.columns:
-        raws = l5_map.get(str(sel_l5).strip(), [str(sel_l5).strip()])
-        out = out[out["__l5"].astype(str).str.strip().isin(raws)]
-
-    with r2b:
-        ol_for_l3 = _outline_lvl(out)
-        if lvl_col and lvl_col in out.columns and ol_for_l3.notna().any():
-            l3_src = out.loc[ol_for_l3.eq(3)]
-            l3_map = (
-                _build_options_map(l3_src.get("__l3", pd.Series(dtype=str)))
-                if not getattr(l3_src, "empty", True)
-                else {}
-            )
-        else:
-            l3_map = _build_options_map(out.get("__l3", pd.Series(dtype=str)))
-        if "__l3" in rel.columns:
-            _rel_l3 = set(_build_options_map(rel["__l3"]).keys())
-            if _rel_l3:
-                l3_map = {k: v for k, v in l3_map.items() if k in _rel_l3}
-        l3_map = _limit_options_map(l3_map, max_items=9)
-        l3_opts = ["Все"] + sorted(l3_map.keys(), key=lambda x: x.lower())
-        sel_l3 = st.selectbox("Строения", l3_opts, key="cp_msp_filter_l3")
-    if sel_l3 != "Все" and "__l3" in out.columns:
-        raws = l3_map.get(str(sel_l3).strip(), [str(sel_l3).strip()])
-        out = out[out["__l3"].astype(str).str.strip().isin(raws)]
-
     meta["subtree_rows"] = int(len(out))
-    depth_strict: Optional[int] = None
-    if sel_l5 != "Все":
-        depth_strict = 5
-    elif sel_l4 != "Все":
-        depth_strict = 4
-    elif sel_l3 != "Все":
-        depth_strict = 3
-    if depth_strict is not None and lvl_col and lvl_col in out.columns:
-        ol_fin = _outline_lvl(out)
-        meta["strict_depth"] = depth_strict
-        meta["strict_rows"] = int(ol_fin.eq(float(depth_strict)).sum())
-
-    out = out.drop(columns=["__l2", "__l3", "__l4", "__l5"], errors="ignore")
     return out, meta
 
 
 def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> None:
-    """Таблица «Контрольные точки проектов» + фильтры MSP + выгрузка CSV."""
+    """Таблица «Контрольные точки проектов»: фильтр по проекту, выгрузка CSV."""
     esc = html_module.escape
     if mdf is None or getattr(mdf, "empty", True):
         st.warning("Нет строк в данных MSP.")
         return
-    f1, f2, _ = st.columns([1.1, 1.1, 2.8])
-    with f1:
-        only_ctl = st.checkbox(
-            "Только контрольные задачи",
-            value=False,
-            key="cp_ui_only_control_tasks",
-            help="В расчёт вех включаются только строки MSP, попадающие под список вех (см. ТЗ / админ).",
-        )
-    with f2:
-        hide_cm = st.checkbox(
-            "Скрыть завершённые (100%)",
-            value=False,
-            key="cp_ui_hide_pct100",
-            help="Сначала исключать задачи с «% выполнения» = 100; если веха не находится — берётся задача и с 100%.",
-        )
 
-    filtered_mdf, cp_filter_info = _apply_control_points_msp_filters(st, mdf)
+    filtered_mdf, _cp_filter_info = _apply_control_points_msp_filters(st, mdf)
     if filtered_mdf is None or getattr(filtered_mdf, "empty", True):
         st.info("Нет строк по выбранным фильтрам.")
         return
 
-    if only_ctl:
-        _ix = _control_point_matching_row_indices(filtered_mdf)
-        if _ix:
-            filtered_mdf = filtered_mdf.loc[sorted(_ix)].copy()
-
-    d_info = cp_filter_info.get("strict_depth")
-    sr = cp_filter_info.get("strict_rows")
-    tr = cp_filter_info.get("subtree_rows")
-    if d_info is not None and sr is not None and tr is not None:
-        st.caption(
-            f"Задач с «Уровень структуры» **{d_info}** (как при фильтре по уровню в MSP): **{sr}**. "
-            f"Для расчёта дат вех учитывается поддерево: **{tr}** задач (включая нижние уровни)."
-        )
-    df = build_control_points_df(filtered_mdf, hide_completed=hide_cm)
+    df = build_control_points_df(filtered_mdf, hide_completed=False)
     if df.empty:
         st.warning("Нет строк проектов в данных MSP.")
         return
@@ -2564,7 +2252,7 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
                 al = "Отклонение по датам"
             else:
                 st_cls = "cp-status-ok"
-                tip = "План и факт по датам совпадают (0 дн.), % выполнения — 100% или н/д"
+                tip = "Факт не позже плана (отклонение План−Факт ≥ 0); % выполнения — 100% или н/д"
                 al = "Норма"
             st_extra = " cp-td-warn" if owarn else ""
             cells.append(

@@ -22399,29 +22399,11 @@ def render_control_points_milestones_admin_settings(*, key_prefix: str = "cp_das
             )
 
 
-def _render_control_points_admin_hint_on_dashboard() -> None:
-    """Только администратору: куда перенесена настройка вех (см. `render_control_points_milestones_admin_settings`)."""
-    try:
-        from auth import get_current_user, has_admin_access
-
-        u = get_current_user()
-        if not u or not has_admin_access(u.get("role")):
-            return
-    except Exception:
-        return
-    st.info(
-        "Настройка вех/заголовков/соответствия MSP для отчёта «Контрольные точки» "
-        "доступна в админ-панели (вкладка «MSP: задача для метрик»)."
-    )
-
-
 def dashboard_control_points(df):
     """
     Контрольные точки (MSP): матрица проектов × вехи по макету правок (скрин file-009).
-    Настройка вех/маппинга — в **Администрировании**; на этой странице — краткая подсказка для админа.
     """
     st.header("Контрольные точки")
-    _render_control_points_admin_hint_on_dashboard()
     if df is None or df.empty:
         st.warning("Загрузите данные MSP (проект).")
         return
