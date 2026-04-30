@@ -22,7 +22,6 @@ from dashboards.dev_projects_tz_matrix import (
     build_dev_tz_matrix_rows,
     ensure_msp_df_for_dev_matrix,
     render_dev_tz_matrix,
-    render_developer_predpisaniya_expander,
     render_control_points_dashboard,
 )
 
@@ -21888,19 +21887,19 @@ def dashboard_developer_projects(df):
 
     st.subheader("Матрица контрольных точек")
 
-    with st.expander("Оформление отчёта", expanded=False):
-        vert_dates = st.checkbox(
-            "Даты в ячейках План/Факт вертикально",
-            value=False,
-            key="dev_matrix_vert_dates",
-        )
-        try:
-            from settings import get_setting as _get_admin_mail
+    vert_dates = st.checkbox(
+        "Даты в ячейках План/Факт вертикально",
+        value=False,
+        key="dev_matrix_vert_dates",
+    )
+    try:
+        from settings import get_setting as _get_admin_mail
 
-            _adm_m = (_get_admin_mail("admin_notification_email") or "").strip()
-        except Exception:
-            _adm_m = ""
-        if _adm_m:
+        _adm_m = (_get_admin_mail("admin_notification_email") or "").strip()
+    except Exception:
+        _adm_m = ""
+    if _adm_m:
+        with st.expander("Оформление отчёта", expanded=False):
             st.caption(f"Email администратора: {_adm_m}")
 
     matrix_df = filtered.copy()
@@ -21988,15 +21987,6 @@ def dashboard_developer_projects(df):
             file_stem=csv_name,
             key_prefix="dev_matrix",
             csv_label="Скачать матрицу (CSV, для Excel)",
-        )
-    except Exception:
-        pass
-
-    try:
-        render_developer_predpisaniya_expander(
-            st.session_state,
-            export_project_names or None,
-            expanded=False,
         )
     except Exception:
         pass
