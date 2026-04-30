@@ -608,6 +608,54 @@ def _format_gdrs_period_range_dd_mm_yyyy(d_from, d_to, sep: str = " - ") -> str:
         return ""
 
 
+def _gdrs_detect_csv_resource_kind_column(pdf: pd.DataFrame) -> Optional[str]:
+    """Колонка признака «Рабочие / Техника» в CSV (PDF: столбец H)."""
+    if pdf is None or getattr(pdf, "empty", True):
+        return None
+    exclude_lc = {
+        "проект",
+        "контрагент",
+        "период",
+        "план",
+        "факт",
+        "скуд",
+        "data_source",
+        "тип ресурсов",
+        "вид работы",
+        "вид работ",
+        "__source_file",
+        "snapshot_date",
+    }
+    best_c = None
+    best_score = 0.0
+    for c in pdf.columns:
+        cl = str(c).strip().lower()
+        if cl in exclude_lc or _gdrs_header_is_dd_mm_yyyy(c):
+            continue
+        raw = pdf[c].astype(str).str.strip()
+        ser = raw.str.casefold().replace({"nan": "", "none": ""})
+        ser = ser[ser.ne("")]
+        if ser.empty:
+            continue
+        uniq = ser.unique().tolist()
+        if len(uniq) > 14:
+            continue
+        u = set(uniq)
+        score = 0.0
+        if any("рабоч" in v for v in u):
+            score += 3.0
+        if any("тех" in v for v in u):
+            score += 3.0
+        if any(v in {"ресурсы", "ресурс", "люди"} for v in u):
+            score += 1.0
+        if 2 <= len(u) <= 10:
+            score += 1.0
+        if score > best_score:
+            best_score = score
+            best_c = str(c)
+    return best_c if best_score >= 4.0 else None
+
+
 def _gdrs_fact_bar_color(plan_v: float, fact_v: float) -> str:
     """R23-05 стр.12: градиентная окраска факта относительно плана.
 
@@ -12660,6 +12708,22 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             work_df["Период"] = pd.Timestamp.today().to_period("M")
             period_col = "Период"
 
+    _gdrs_csv_kind_col = _gdrs_detect_csv_resource_kind_column(work_df)
+    if _gdrs_csv_kind_col and _gdrs_csv_kind_col in work_df.columns:
+        _kind_raw = work_df[_gdrs_csv_kind_col].astype(str).str.strip()
+        _kind_ok = _kind_raw.ne("") & ~_kind_raw.str.lower().isin({"nan", "none"})
+        _uniq_kind = sorted(_kind_raw[_kind_ok].unique().tolist())
+        if len(_uniq_kind) >= 2:
+            _kind_opts = ["Все"] + _uniq_kind
+            _kind_sel = st.selectbox(
+                "Вид ресурсов (по файлу)",
+                _kind_opts,
+                key=f"{key_prefix}_csv_resource_kind",
+                help=f"Колонка признака в CSV: {_gdrs_csv_kind_col}",
+            )
+            if _kind_sel != "Все":
+                work_df = work_df.loc[_kind_raw.eq(str(_kind_sel).strip())].copy()
+
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -13174,11 +13238,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     _me = pd.Timestamp(_pmax).to_period("M").end_time.normalize().date()
                     _period_title = _format_gdrs_period_range_dd_mm_yyyy(_ms, _me)
 
-            _gdrs_ref_table_title = (
-                "График движения рабочей силы (техника)"
-                if _gdrs_tab_is_tech
-                else "График движения рабочей силы (люди)"
-            )
+            _gdrs_ref_table_title = "ГДРС — техника" if _gdrs_tab_is_tech else "ГДРС — рабочие"
 
             def _render_gdrs_ref_html(df_view: pd.DataFrame) -> str:
                 ncols = len(_show_cols)
@@ -13215,7 +13275,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     '<th rowspan="2" class="t-center" style="text-align:center !important;">СКУД</th>',
                     '<th rowspan="2" class="t-center" style="text-align:center !important;">Отклонение</th>',
                     f'<th colspan="{wk_n}" class="t-center" style="text-align:center !important;">СКУД</th>',
-                    '<th rowspan="2" class="t-center" style="text-align:center !important;">Дельта (%)</th>',
+                    '<th rowspan="2" class="t-center" style="text-align:center !important;">(отклонение %)</th>',
                     "</tr>",
                     "<tr>",
                 ]
@@ -14476,7 +14536,8 @@ def dashboard_technique_tabs(df):
     ГДРС → «Рабочие»: график движения рабочей силы.
     R23-05 стр.14: отдельный пункт меню «ГДРС Техника» вынесен в dashboard_gdrs_equipment.
     """
-    st.header("График движения рабочей силы")
+    st.header("ГДРС")
+    st.caption("График движения рабочей силы · рабочие")
     dashboard_workforce_movement(
         df, data_source_filter="Ресурсы", show_header=False, key_prefix="gdrs_people"
     )
@@ -14486,7 +14547,8 @@ def dashboard_gdrs_equipment(df):
     """
     R23-05 стр.14: восстановленный отчёт «Техника» (параллельно с «Рабочие»).
     """
-    st.header("График движения техники")
+    st.header("ГДРС")
+    st.caption("График движения рабочей силы · техника")
     dashboard_workforce_movement(
         df, data_source_filter="Техника", show_header=False, key_prefix="gdrs_tech"
     )
