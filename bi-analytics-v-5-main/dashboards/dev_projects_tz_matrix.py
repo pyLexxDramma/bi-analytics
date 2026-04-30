@@ -1686,10 +1686,19 @@ def render_dev_tz_matrix(
         + "".join(body_trs)
         + "</tbody></table>"
     )
-    st.markdown(
-        table_css + _DEV_TZ_MATRIX_CSS + '<div class="dev-tz-matrix-wrap">' + html_tbl + "</div>",
-        unsafe_allow_html=True,
+    frag = (
+        table_css
+        + _DEV_TZ_MATRIX_CSS
+        + '<div class="dev-tz-matrix-wrap">'
+        + html_tbl
+        + "</div>"
     )
+    # st.markdown(unsafe_allow_html) на Streamlit Cloud срезает style/class у <td>.
+    # st.html отдаёт фрагмент через отдельный путь разметки — вертикальные даты остаются.
+    if hasattr(st, "html"):
+        st.html(frag)
+    else:
+        st.markdown(frag, unsafe_allow_html=True)
 
 
 # ── Контрольные точки (Сроки / макет file-009): проекты × вехи ───────────────
