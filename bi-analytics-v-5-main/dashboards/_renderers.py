@@ -590,6 +590,24 @@ def _gdrs_header_is_dd_mm_yyyy(name) -> bool:
     return False
 
 
+def _format_gdrs_period_range_dd_mm_yyyy(d_from, d_to, sep: str = " - ") -> str:
+    """Диапазон в виде ДД.ММ.ГГГГ - ДД.ММ.ГГГГ (как у виджета «Период» с format=DD.MM.YYYY)."""
+    try:
+        ts_a = pd.Timestamp(d_from)
+        ts_b = pd.Timestamp(d_to)
+        if pd.isna(ts_a) or pd.isna(ts_b):
+            return ""
+        da = ts_a.normalize().date()
+        db = ts_b.normalize().date()
+        return (
+            f"{da.day:02d}.{da.month:02d}.{da.year:04d}"
+            f"{sep}"
+            f"{db.day:02d}.{db.month:02d}.{db.year:04d}"
+        )
+    except Exception:
+        return ""
+
+
 def _gdrs_fact_bar_color(plan_v: float, fact_v: float) -> str:
     """R23-05 стр.12: градиентная окраска факта относительно плана.
 
@@ -12523,8 +12541,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             errors="coerce",
         ).fillna(0)
     else:
-        # Отклонение по ТЗ: СКУД (факт) - план
-        work_df["Дельта_numeric"] = work_df["week_sum"] - work_df["План_numeric"]
+        # Отклонение по PDF правок ГДРС: План − Факт (Факт ≈ week_sum / СКУД).
+        work_df["Дельта_numeric"] = work_df["План_numeric"] - work_df["week_sum"]
 
     # Process Дельта (%) (Delta %) if available - extract numeric value from percentage string
     # Try to find column by partial match
@@ -12709,10 +12727,83 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             _min_dt = date.today().replace(day=1)
             _max_dt = date.today()
 
-        _rng = st.date_input(
-            "Период с / по",
-            value=(_min_dt, _max_dt),
-            key=f"{key_prefix}_period_range",
+        _gdrs_range_kw = {
+            "label": "Период",
+            "key": f"{key_prefix}_period_range",
+            "help": "Фильтр по диапазону дат (суточные столбцы или колонка «Период»).",
+            "format": "DD.MM.YYYY",
+        }
+        if _min_dt and _max_dt and _min_dt <= _max_dt:
+            _gdrs_range_kw["value"] = (_min_dt, _max_dt)
+            _gdrs_range_kw["min_value"] = _min_dt
+            _gdrs_range_kw["max_value"] = _max_dt
+        _rng = st.date_input(**_gdrs_range_kw)
+        components.html(
+            """
+                <script>
+                (function() {
+                  const rootDoc = window.parent && window.parent.document ? window.parent.document : document;
+                  const hid = "st-bdds-hide-datepicker-quickselect";
+                  let tag = rootDoc.getElementById(hid);
+                  if (!tag) {
+                    tag = rootDoc.createElement("style");
+                    tag.id = hid;
+                    rootDoc.head.appendChild(tag);
+                  }
+                  tag.textContent = "";
+
+                  const dict = new Map([
+                    ["January","Январь"],["February","Февраль"],["March","Март"],["April","Апрель"],
+                    ["May","Май"],["June","Июнь"],["July","Июль"],["August","Август"],
+                    ["September","Сентябрь"],["October","Октябрь"],["November","Ноябрь"],["December","Декабрь"],
+                    ["Mo","Пн"],["Tu","Вт"],["We","Ср"],["Th","Чт"],["Fr","Пт"],["Sa","Сб"],["Su","Вс"],
+                    ["None","Нет"]
+                  ]);
+                  const root = window.parent && window.parent.document ? window.parent.document : document;
+
+                  const shouldSkip = (el) => {
+                    if (!el || !el.tagName) return true;
+                    const t = el.tagName.toLowerCase();
+                    if (t === "script" || t === "style" || t === "textarea" || t === "input") return true;
+                    if (t === "svg" || t === "path") return true;
+                    if (el.isContentEditable) return true;
+                    return false;
+                  };
+
+                  const replaceInTextNode = (node) => {
+                    const raw = node.nodeValue || "";
+                    const txt = raw.trim();
+                    if (!txt) return;
+                    if (dict.has(txt)) {
+                      node.nodeValue = raw.replace(txt, dict.get(txt));
+                      return;
+                    }
+                    let next = raw;
+                    for (const [en, ru] of dict.entries()) {
+                      next = next.replace(new RegExp("\\\\b" + en + "\\\\b", "g"), ru);
+                    }
+                    if (next !== raw) node.nodeValue = next;
+                  };
+
+                  const apply = () => {
+                    const all = root.querySelectorAll("*");
+                    all.forEach((el) => {
+                      if (shouldSkip(el)) return;
+                      const childs = el.childNodes || [];
+                      for (let i = 0; i < childs.length; i++) {
+                        const n = childs[i];
+                        if (n && n.nodeType === Node.TEXT_NODE) replaceInTextNode(n);
+                      }
+                    });
+                  };
+                  apply();
+                  const obs = new MutationObserver(apply);
+                  obs.observe(root.body, { childList: true, subtree: true });
+                })();
+                </script>
+                """,
+            height=0,
+            width=0,
         )
         _d_from = None
         _d_to = None
@@ -12761,7 +12852,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 pd.to_numeric(filtered_df["План_numeric"], errors="coerce").fillna(0.0) * day_ratio
             )
         if "Дельта_numeric" in filtered_df.columns:
-            filtered_df["Дельта_numeric"] = filtered_df["week_sum"] - filtered_df["План_numeric"]
+            filtered_df["Дельта_numeric"] = filtered_df["План_numeric"] - filtered_df["week_sum"]
     # Для месячных периодов (без суточных колонок): фильтрация/пересчёт по пересечению диапазона дат с месяцем строки.
     if len(_daily_dates) <= 1 and period_col and period_col in filtered_df.columns and _d_from and _d_to:
         _pf = pd.Timestamp(_d_from)
@@ -12973,7 +13064,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 _ref[_week_cols_out].sum(axis=1) / float(_weeks_in_month)
             ).round(0)
             _ref["План"] = pd.to_numeric(_ref["План"], errors="coerce").fillna(0.0)
-            _ref["Отклонение"] = _ref["СКУД"] - _ref["План"]
+            _ref["Отклонение"] = _ref["План"] - _ref["СКУД"]
             _ref["Дельта (%)"] = _ref.apply(
                 lambda r: round(float(r["Отклонение"]) / float(r["План"]) * 100.0, 1)
                 if float(r["План"]) != 0.0
@@ -12985,8 +13076,14 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 _ref = _ref.rename(columns={_work_type_col: "Вид работы"})
             else:
                 _ref["Вид работы"] = "Рабочие" if not _gdrs_tab_is_tech else "—"
-            if (not _gdrs_tab_is_tech) and "Вид работы" in _ref.columns:
-                _ref["Вид работы"] = "Рабочие"
+            if not _gdrs_tab_is_tech:
+                _vw = (
+                    _ref["Вид работы"]
+                    .astype(str)
+                    .str.strip()
+                    .replace({"nan": "", "None": "", "<NA>": ""})
+                )
+                _ref["Вид работы"] = _vw.mask(_vw.eq("") | _vw.eq("—"), "Рабочие")
             if (not project_col) or (project_col not in _ref.columns):
                 _proj_fallback = find_column_by_partial(
                     _ref,
@@ -13003,7 +13100,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 _plan = float(pd.to_numeric(_sub["План"], errors="coerce").fillna(0.0).sum())
                 _ws = {w: float(pd.to_numeric(_sub[w], errors="coerce").fillna(0.0).sum()) for w in _week_cols_out}
                 _skud = int(round(sum(_ws.values()) / float(_weeks_in_month), 0))
-                _dev = float(_skud - _plan)
+                _dev = float(_plan - _skud)
                 _pct = round((_dev / _plan) * 100.0, 1) if _plan != 0.0 else None
                 return {"План": _plan, "СКУД": _skud, "Отклонение": _dev, **_ws, "Дельта (%)": _pct}
 
@@ -13065,17 +13162,23 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
 
             _period_title = ""
             if _d_from and _d_to:
-                try:
-                    _period_title = f"{pd.Timestamp(_d_from):%d.%m.%Y} - {pd.Timestamp(_d_to):%d.%m.%Y}"
-                except Exception:
+                _period_title = _format_gdrs_period_range_dd_mm_yyyy(_d_from, _d_to)
+                if not _period_title:
                     _period_title = f"{_d_from} - {_d_to}"
             elif period_col and period_col in filtered_df.columns:
                 _pvals = pd.to_datetime(filtered_df[period_col], errors="coerce", dayfirst=True).dropna()
                 if not _pvals.empty:
-                    try:
-                        _period_title = str(format_period_ru(_pvals.iloc[0].to_period("M")))
-                    except Exception:
-                        _period_title = str(_pvals.iloc[0].to_period("M"))
+                    _pmin = _pvals.min()
+                    _pmax = _pvals.max()
+                    _ms = pd.Timestamp(_pmin).to_period("M").start_time.normalize().date()
+                    _me = pd.Timestamp(_pmax).to_period("M").end_time.normalize().date()
+                    _period_title = _format_gdrs_period_range_dd_mm_yyyy(_ms, _me)
+
+            _gdrs_ref_table_title = (
+                "График движения рабочей силы (техника)"
+                if _gdrs_tab_is_tech
+                else "График движения рабочей силы (люди)"
+            )
 
             def _render_gdrs_ref_html(df_view: pd.DataFrame) -> str:
                 ncols = len(_show_cols)
@@ -13103,7 +13206,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     f"</style>",
                     "<table>",
                     "<thead>",
-                    f'<tr class="title-row"><th colspan="{ncols}" class="t-center" style="text-align:center !important;">График движения рабочей силы (люди)</th></tr>',
+                    f'<tr class="title-row"><th colspan="{ncols}" class="t-center" style="text-align:center !important;">{html_module.escape(_gdrs_ref_table_title)}</th></tr>',
                     f'<tr class="period-row"><th colspan="{ncols}" class="t-center" style="text-align:center !important;">{html_module.escape(_period_title) if _period_title else ""}</th></tr>',
                     "<tr>",
                     '<th rowspan="2">Контрагент</th>',
@@ -13143,6 +13246,11 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 return "".join(parts)
 
             st.markdown(_render_gdrs_ref_html(_view[_render_cols]), unsafe_allow_html=True)
+            suppress_caption(
+                "Пояснение: «СКУД» в строке — среднее по столбцам 1–6 недели (как в методичке по неделям). "
+                "В строке «Итого» значения по неделям — сумма по строкам таблицы; «СКУД» — среднее этих шести сумм "
+                "(не сумма столбца «СКУД» по строкам)."
+            )
 
     period_col_hist = _gdrs_resolve_period_column(filtered_df)
     if period_col_hist and "week_sum" in filtered_df.columns:
