@@ -13592,7 +13592,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             import math as _math
             by_w["Факт"] = by_w["Факт"].apply(lambda v: int(_math.ceil(float(v))) if float(v) > 0 else int(v))
             by_w["План"] = by_w["План"].apply(lambda v: int(_math.ceil(float(v))) if float(v) > 0 else int(v))
-            by_w["Отклонение"] = by_w["Факт"] - by_w["План"]
+            by_w["Отклонение"] = by_w["План"] - by_w["Факт"]
             by_w = by_w[(by_w["Факт"].abs() > 0) | (by_w["План"].abs() > 0)].sort_values("Факт", ascending=False)
             if by_w.empty:
                 with wfb_cols[wfi]:
@@ -13738,7 +13738,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         fact_sum = float(pd.to_numeric(d["week_sum"], errors="coerce").fillna(0).sum())
         if plan_sum <= 0 and fact_sum <= 0:
             return None, None
-        dev = fact_sum - plan_sum
+        dev = plan_sum - fact_sum
         fp_pct = (fact_sum / plan_sum * 100.0) if plan_sum else 0.0
         proj_col_local = "project name" if "project name" in d.columns else ("Проект" if "Проект" in d.columns else None)
         proj_name = "Все проекты"
@@ -13919,7 +13919,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         plan_by = d.groupby("Контрагент", as_index=False)["_p"].sum()
         pie_df = by_c.merge(plan_by, on="Контрагент", how="left").fillna({"_p": 0.0})
         pie_df = pie_df.rename(columns={"_f": "Факт", "_p": "План"})
-        pie_df["Отклонение"] = pie_df["Факт"] - pie_df["План"]
+        pie_df["Отклонение"] = pie_df["План"] - pie_df["Факт"]
 
         labels = pie_df["Контрагент"].astype(str).tolist()
         values = pie_df["Факт"].astype(float).tolist()
@@ -14009,7 +14009,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
 
         plan_sum = float(pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0).sum()) if "План_numeric" in d.columns else 0.0
         fact_sum = float(by_c["_f"].sum())
-        dev = fact_sum - plan_sum
+        dev = plan_sum - fact_sum
         fp_pct = (fact_sum / plan_sum * 100.0) if plan_sum else None
         return fig_cf, {"plan": plan_sum, "fact": fact_sum, "dev": dev, "fp_pct": fp_pct}
 
@@ -14045,7 +14045,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                             caption_below="",
                         )
                     with a2:
-                        _col = "#e74c3c" if met_pf["dev"] < 0 else "#27ae60"
+                        _col = "#e74c3c" if met_pf["dev"] > 0 else "#27ae60"
                         st.markdown(
                             f"**План:** {int(round(met_pf['plan']))}\n\n"
                             f"**Факт:** {int(round(met_pf['fact']))}\n\n"
@@ -14091,7 +14091,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     max_height=720,
                     caption_below="",
                 )
-                _cfc = "#e74c3c" if met_cf["dev"] < 0 else "#27ae60"
+                _cfc = "#e74c3c" if met_cf["dev"] > 0 else "#27ae60"
                 _pl = float(met_cf.get("plan") or 0)
                 _pl_disp = "—" if _pl == 0.0 else str(int(round(_pl)))
                 st.markdown(
@@ -14226,7 +14226,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                         caption_below=f"Доля факта по подрядчикам — {project_name}",
                     )
                 with cf_c2:
-                    _cfc = "#e74c3c" if met_cf["dev"] < 0 else "#27ae60"
+                    _cfc = "#e74c3c" if met_cf["dev"] > 0 else "#27ae60"
                     _pl = float(met_cf.get("plan") or 0)
                     _pl_disp = "—" if _pl == 0.0 else str(int(round(_pl)))
                     st.markdown(
@@ -14308,7 +14308,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             ]
         if "Дельта_numeric" not in bar_df.columns and "План_numeric" in bar_df.columns and "week_sum" in bar_df.columns:
             bar_df = bar_df.copy()
-            bar_df["Дельта_numeric"] = bar_df["week_sum"] - bar_df["План_numeric"]
+            bar_df["Дельта_numeric"] = bar_df["План_numeric"] - bar_df["week_sum"]
         elif "Дельта_numeric" not in bar_df.columns:
             bar_df = bar_df.copy()
             bar_df["Дельта_numeric"] = 0
@@ -14372,29 +14372,30 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             f"{int(np.ceil(abs(float(d))))}" if abs(float(d)) >= 0.5 else "0"
             for d in delta_values
         ]
-        positive_mask = delta_values > 0
-        if positive_mask.any():
+        # Отклонение = План − Факт: >0 — просадка (красный), <0 — перевыполнение (зелёный).
+        shortfall_mask = delta_values > 0
+        if shortfall_mask.any():
             fig_bar.add_trace(
                 go.Bar(
-                    name="Отклонение (+)",
-                    x=contractor_data.loc[positive_mask, "Контрагент"],
-                    y=delta_abs[positive_mask],
-                    marker_color="#2ecc71",
-                    text=[delta_text[i] for i in range(len(delta_text)) if positive_mask.iloc[i]],
+                    name="Отклонение (план > факт)",
+                    x=contractor_data.loc[shortfall_mask, "Контрагент"],
+                    y=delta_abs[shortfall_mask],
+                    marker_color="#e74c3c",
+                    text=[delta_text[i] for i in range(len(delta_text)) if shortfall_mask.iloc[i]],
                     textposition="outside",
                     textfont=dict(size=12, color="white"),
                     showlegend=False,
                 )
             )
-        negative_mask = delta_values < 0
-        if negative_mask.any():
+        surplus_mask = delta_values < 0
+        if surplus_mask.any():
             fig_bar.add_trace(
                 go.Bar(
-                    name="Отклонение (-)",
-                    x=contractor_data.loc[negative_mask, "Контрагент"],
-                    y=delta_abs[negative_mask],
-                    marker_color="#e74c3c",
-                    text=[delta_text[i] for i in range(len(delta_text)) if negative_mask.iloc[i]],
+                    name="Отклонение (факт > план)",
+                    x=contractor_data.loc[surplus_mask, "Контрагент"],
+                    y=delta_abs[surplus_mask],
+                    marker_color="#2ecc71",
+                    text=[delta_text[i] for i in range(len(delta_text)) if surplus_mask.iloc[i]],
                     textposition="outside",
                     textfont=dict(size=12, color="white"),
                     showlegend=True,
