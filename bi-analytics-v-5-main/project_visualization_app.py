@@ -839,12 +839,15 @@ def main():
                 "Повторно нажмите «Загрузить из web/», если обновили файлы на диске."
             )
 
-        _panel_tab = st.radio(
-            "Вкладка панели",
-            ["Дашборды", "Проверка данных"],
-            horizontal=True,
-            key="main_panel_view_tab",
-        )
+        if _is_release_client_mode():
+            _panel_tab = "Дашборды"
+        else:
+            _panel_tab = st.radio(
+                "Вкладка панели",
+                ["Дашборды", "Проверка данных"],
+                horizontal=True,
+                key="main_panel_view_tab",
+            )
         if _panel_tab == "Проверка данных":
             render_data_readiness_expander()
             if st.session_state.get("last_data_schema_health"):
