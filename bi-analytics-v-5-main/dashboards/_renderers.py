@@ -21809,6 +21809,13 @@ def dashboard_developer_projects(df):
     """
     st.header("Девелоперские проекты")
 
+    _dev_dash_seen = "_dev_projects_prev_dashboard_seen"
+    cur_dash = str(st.session_state.get("current_dashboard", "") or "").strip()
+    prev_seen = str(st.session_state.get(_dev_dash_seen, "") or "").strip()
+    if cur_dash == "Девелоперские проекты" and prev_seen != "Девелоперские проекты":
+        st.session_state["dev_proj"] = "Все"
+    st.session_state[_dev_dash_seen] = cur_dash
+
     if df is None or not hasattr(df, "columns") or df.empty:
         st.warning("Загрузите файл с данными проекта (MSP) для отчёта «Девелоперские проекты».")
         return
@@ -21838,6 +21845,7 @@ def dashboard_developer_projects(df):
 
     # По правкам ТЗ: в фильтрах только проект
     if project_col and project_col in work.columns:
+        _session_reset_project_if_excluded("dev_proj")
         projects = ["Все"] + _unique_project_labels_for_select(work[project_col])
         sel_proj = st.selectbox(
             "Проект",
@@ -21880,14 +21888,12 @@ def dashboard_developer_projects(df):
 
     st.subheader("Матрица контрольных точек")
 
-    dv_col, adm_col = st.columns([1, 2])
-    with dv_col:
+    with st.expander("Оформление отчёта", expanded=False):
         vert_dates = st.checkbox(
             "Даты в ячейках План/Факт вертикально",
             value=False,
             key="dev_matrix_vert_dates",
         )
-    with adm_col:
         try:
             from settings import get_setting as _get_admin_mail
 
