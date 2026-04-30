@@ -608,7 +608,7 @@ def main():
     # Переключатель режима источника данных
     data_mode_options = ["Загрузить вручную", "Из папки web/", "FTP → web/"]
     if _is_release_client_mode():
-        # Для клиента без ручной загрузки; FTP оставлен для их демо/обновления (см. ветку release).
+        # Без ручной загрузки; FTP — для обновления данных на стороне клиента.
         data_mode_options = ["Из папки web/", "FTP → web/"]
 
     def _queue_web_folder_load_on_mode_change():
