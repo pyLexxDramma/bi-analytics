@@ -344,6 +344,7 @@ def ensure_budget_frame_with_fallback(
     period_start: Any | None = None,
     period_end: Any | None = None,
     force_from_1c: bool = False,
+    narrow_to_project_norm_key: Optional[str] = None,
 ) -> tuple[pd.DataFrame, bool]:
     """
     Возвращает (df_for_budget, used_fallback_1c).
@@ -352,6 +353,10 @@ def ensure_budget_frame_with_fallback(
 
     После сборки синтетики из 1С можно сузить строки до проектов из текущего MSP-фрейма
     и до интервала дат календаря (поле «plan end» в синтетике = конец месяца из «Период» JSON).
+
+    narrow_to_project_norm_key: если задан (нормализованный ключ из _project_filter_norm_key),
+    синтетика дополнительно сужается до этого проекта (и дочернего «… 1» и т.п.), чтобы таблицы
+    БДДС не подтягивали остальные проекты при расхождении MSP и 1С.
     """
     import streamlit as st
 
@@ -366,14 +371,15 @@ def ensure_budget_frame_with_fallback(
     if syn is None or syn.empty:
         return work, False
 
+    from dashboards._renderers import (
+        _project_filter_norm_key,
+        _project_norm_key_matches_msp_keys,
+    )
+
     if restrict_projects_from_df and "project name" in work.columns:
         nz = work["project name"].dropna()
         if nz.empty:
             return work, False
-        from dashboards._renderers import (
-            _project_filter_norm_key,
-            _project_norm_key_matches_msp_keys,
-        )
 
         keys = {_project_filter_norm_key(x) for x in nz.unique()}
         keys.discard("")
@@ -382,6 +388,13 @@ def ensure_budget_frame_with_fallback(
             syn = syn[
                 _rk.map(lambda rk: _project_norm_key_matches_msp_keys(rk, keys))
             ].copy()
+
+    nt = (narrow_to_project_norm_key or "").strip()
+    if nt and not syn.empty and "project name" in syn.columns:
+        _rk_n = syn["project name"].map(_project_filter_norm_key)
+        syn = syn[
+            _rk_n.map(lambda rk: _project_norm_key_matches_msp_keys(rk, {nt}))
+        ].copy()
 
     ps = period_start
     pe = period_end

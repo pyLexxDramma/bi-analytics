@@ -7127,6 +7127,13 @@ def dashboard_budget_by_period(df):
     ensure_budget_columns(filtered_df)
     from dashboards.finance_from_1c import ensure_budget_frame_with_fallback
 
+    _bdds_narrow_pk = (
+        _project_filter_norm_key(selected_project)
+        if selected_project != "Все"
+        else ""
+    )
+    _bdds_narrow_pk = (_bdds_narrow_pk or "").strip() or None
+
     filtered_df, _ = ensure_budget_frame_with_fallback(
         filtered_df,
         show_caption=True,
@@ -7134,15 +7141,17 @@ def dashboard_budget_by_period(df):
         period_start=_bdds_cal_start,
         period_end=_bdds_cal_end,
         force_from_1c=True,
+        narrow_to_project_norm_key=_bdds_narrow_pk,
     )
     # После подстановки из 1С повторно применяем фильтр проекта,
     # чтобы в таблицы/графики не попадали другие проекты.
     if selected_project != "Все" and "project name" in filtered_df.columns:
         _sel_pk = _project_filter_norm_key(selected_project)
-        _rk_bdd = filtered_df["project name"].map(_project_filter_norm_key)
-        filtered_df = filtered_df[
-            _rk_bdd.map(lambda rk: _project_norm_key_matches_msp_keys(rk, {_sel_pk}))
-        ].copy()
+        if _sel_pk:
+            _rk_bdd = filtered_df["project name"].map(_project_filter_norm_key)
+            filtered_df = filtered_df[
+                _rk_bdd.map(lambda rk: _project_norm_key_matches_msp_keys(rk, {_sel_pk}))
+            ].copy()
     ensure_date_columns(filtered_df)
     ensure_budget_columns(filtered_df)
     has_budget = "budget plan" in filtered_df.columns and "budget fact" in filtered_df.columns
