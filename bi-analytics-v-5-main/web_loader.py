@@ -1386,13 +1386,21 @@ def _infer_file_type_by_name(file_name: str) -> str:
 
     # ── 1C JSON файлы ──────────────────────────────────────────────────────────
     if name_lower.endswith(".json"):
-        if "dk" in stem.lower():
+        sl = stem  # уже lower-case (из name_lower)
+        if "dk" in sl:
             return "debit_credit_json"
-        if "dtkttpopodryad" in stem.lower() or "dtkt" in stem.lower() or "дткт" in stem.lower():
+        if "dtkttpopodryad" in sl or "dtkt" in sl or "дткт" in sl:
             return "debit_credit_json"
-        if "spravochniki" in stem.lower() or "справочник" in stem.lower():
+        # Справочники контрагентов для ГДРС: по ключевым словам или префиксу 1c_/lc_* + «sprav…»
+        _ref_prefix = sl.startswith(("1c_", "lc_", "1с_", "лк_", "lk_"))
+        if (
+            "spravochniki" in sl
+            or "spravochnik" in sl
+            or "справочник" in sl
+            or (_ref_prefix and ("sprav" in sl or "справ" in sl))
+        ):
             return "reference_json"
-        if "dannye" in stem.lower() or "данные" in stem.lower():
+        if "dannye" in sl or "данные" in sl:
             return "budget_json"
         return "skip"
 
