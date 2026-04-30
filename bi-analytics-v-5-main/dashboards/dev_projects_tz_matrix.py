@@ -292,13 +292,47 @@ def _parse_otkl_days_display(s: Any) -> Optional[int]:
         return None
 
 
+def _norm_cell_for_date_check(s: Any) -> str:
+    """Нормализация текста ячейки: NBSP/ZWSP, чтобы облако/Excel не ломали матч даты."""
+    if s is None:
+        return ""
+    t = (
+        str(s)
+        .replace("\xa0", " ")
+        .replace("\u2009", " ")
+        .replace("\u200b", "")
+        .replace("\ufeff", "")
+        .strip()
+    )
+    while "  " in t:
+        t = t.replace("  ", " ")
+    return t
+
+
 def _looks_like_ru_date_cell(s: Any) -> bool:
     if s is None:
         return False
-    t = str(s).strip()
-    if not t or t.upper() == "Н/Д":
+    t = _norm_cell_for_date_check(s)
+    if not t or t.upper() in ("Н/Д", "N/D", "—", "-"):
         return False
-    return bool(re.fullmatch(r"\d{2}\.\d{2}\.\d{4}", t))
+    # Строго DD.MM.YYYY или дата в начале («01.03.2026 г.», хвост от экспорта)
+    if re.fullmatch(r"\d{2}\.\d{2}\.\d{4}", t):
+        return True
+    if re.match(r"^\d{2}\.\d{2}\.\d{4}\b", t):
+        return True
+    # Иногда в CSV/Excel приходит ISO
+    if re.match(r"^\d{4}-\d{2}-\d{2}\b", t):
+        return True
+    return False
+
+
+def _dev_tz_apply_vert_date(vertical_dates: bool, col: str, cell_val: Any) -> bool:
+    """Нужны и класс, и inline-style (на Streamlit Cloud стили из <style> иногда не цепляются к ячейкам)."""
+    return bool(
+        vertical_dates
+        and col in ("plan", "fact")
+        and _looks_like_ru_date_cell(cell_val)
+    )
 
 
 def _find_phase_column(df: pd.DataFrame) -> Optional[str]:
@@ -1538,7 +1572,7 @@ def _dev_tz_matrix_cell_classes(
     warn_dir = bool(r.get("warn_directives"))
     if col in ("plan", "fact") and warn_pct and _looks_like_ru_date_cell(v):
         parts.append("dev-tz-text-pct-warn")
-    if vertical_dates and col in ("plan", "fact") and _looks_like_ru_date_cell(v):
+    if _dev_tz_apply_vert_date(vertical_dates, col, v):
         parts.append("dev-tz-date-vert")
     if col == "otkl":
         if warn_dir:
@@ -1632,7 +1666,14 @@ def render_dev_tz_matrix(
                 v = r.get(key) or ""
                 cls = _dev_tz_matrix_cell_classes(r, key, vertical_dates=vertical_dates)
                 oc = f' class="{esc(cls)}"' if cls else ""
-                body_cells.append(f"<td{oc}>{esc(str(v))}</td>")
+                iv = ""
+                if _dev_tz_apply_vert_date(vertical_dates, key, v):
+                    iv = (
+                        ' style="writing-mode:vertical-rl;text-orientation:mixed;'
+                        "max-height:7.5em;white-space:nowrap;vertical-align:middle;"
+                        'text-align:center;padding:8px 4px;"'
+                    )
+                body_cells.append(f"<td{oc}{iv}>{esc(str(v))}</td>")
         plab = row_labels[bi] if bi < len(row_labels) else ""
         body_trs.append(
             '<tr><td class="dev-tz-td-project">' + esc(plab) + "</td>" + "".join(body_cells) + "</tr>"
