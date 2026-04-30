@@ -21887,11 +21887,7 @@ def dashboard_developer_projects(df):
 
     st.subheader("Матрица контрольных точек")
 
-    vert_dates = st.checkbox(
-        "Даты в ячейках План/Факт вертикально",
-        value=False,
-        key="dev_matrix_vert_dates",
-    )
+    vert_dates = False
     try:
         from settings import get_setting as _get_admin_mail
 

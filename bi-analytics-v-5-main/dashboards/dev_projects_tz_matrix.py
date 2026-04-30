@@ -1098,7 +1098,7 @@ def build_dev_tz_matrix_rows(
             },
         ),
         (
-            "invest",
+            "life",
             "Ковенанты",
             "Экспертиза стадия ст П",
             {
@@ -1109,7 +1109,7 @@ def build_dev_tz_matrix_rows(
             },
         ),
         (
-            "invest",
+            "life",
             "Ковенанты",
             "КОМАНДА РП",
             {
@@ -1134,7 +1134,7 @@ def build_dev_tz_matrix_rows(
             },
         ),
         (
-            "invest",
+            "life",
             "Ковенанты",
             "РС",
             {
@@ -1156,7 +1156,7 @@ def build_dev_tz_matrix_rows(
             },
         ),
         (
-            "invest",
+            "life",
             "Ковенанты",
             "РД (1вар)",
             {
@@ -1177,21 +1177,21 @@ def build_dev_tz_matrix_rows(
 
     pm, fm, om = _ds_plan_fact_otkl_mln(_bddds_df_for_dev_matrix(mdf, project_data, ss))
     if pm is None:
-        add_row("Финансы", "Выборка ДС, млн руб.", "Н/Д", "Н/Д", "Н/Д", phase="invest")
+        add_row("Финансы", "Выборка ДС, млн руб.", "Н/Д", "Н/Д", "Н/Д", phase="life")
     else:
 
         def _fmtml(v: float) -> str:
             # ТЗ: млн руб., два знака после запятой
             return f"{v:.2f}".replace(".", ",")
 
-        add_row("Финансы", "Выборка ДС, млн руб.", _fmtml(pm), _fmtml(fm), _fmtml(om), phase="invest")
+        add_row("Финансы", "Выборка ДС, млн руб.", _fmtml(pm), _fmtml(fm), _fmtml(om), phase="life")
 
     tp, tf, to, warn_t, _tessa_hint = _predpisaniya_combined(mdf, ss)
-    add_row("ТЕССА", "ПРЕДПИСАНИЯ", tp, tf, to, warn_directives=warn_t, phase="invest")
+    add_row("ТЕССА", "ПРЕДПИСАНИЯ", tp, tf, to, warn_directives=warn_t, phase="life")
 
     specs_invest_tail: List[Tuple[str, str, str, dict]] = [
         (
-            "invest",
+            "life",
             "ИРД",
             "Подготовительный этап (ТУ, ПРОЕКТ временные сети ЭЛ-ВО)",
             {
@@ -1213,7 +1213,7 @@ def build_dev_tz_matrix_rows(
             },
         ),
         (
-            "invest",
+            "life",
             "ИРД",
             "Подготовительный этап (ТУ, ПРОЕКТ временные примыкания)",
             {
@@ -1225,7 +1225,7 @@ def build_dev_tz_matrix_rows(
             },
         ),
         (
-            "invest",
+            "life",
             "Проектные работы",
             "ПОС (1 вар)",
             {
@@ -1247,7 +1247,7 @@ def build_dev_tz_matrix_rows(
             },
         ),
         (
-            "invest",
+            "life",
             "Ковенанты",
             "Начало финансирования СМР",
             {
@@ -1258,7 +1258,7 @@ def build_dev_tz_matrix_rows(
             },
         ),
         (
-            "invest",
+            "life",
             "Ковенанты",
             "Начало СМР",
             {
@@ -1500,11 +1500,15 @@ _DEV_TZ_MATRIX_CSS = """
   min-width: 10em; max-width: 18em;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead {
-  text-align: center; font-weight: 700; font-size: 13px; padding: 6px 8px;
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-weight: 700; font-size: 13px; padding: 6px 8px;
   background: linear-gradient(180deg, rgba(34, 139, 34, 0.35) 0%, rgba(25, 90, 25, 0.25) 100%) !important;
   color: #e8f5e9;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead-life {
+  text-align: center !important;
+  vertical-align: middle !important;
   background: linear-gradient(180deg, rgba(92, 100, 115, 0.58) 0%, rgba(55, 61, 72, 0.48) 100%) !important;
   color: #e8eaed !important;
 }
@@ -1516,6 +1520,27 @@ _DEV_TZ_MATRIX_CSS = """
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub {
   font-size: 11px; font-weight: 500; color: #9aa4b2; padding: 5px 6px;
   background: rgba(22, 24, 32, 0.95) !important;
+}
+/* Вторая и третья строки шапки — те же палитры, что у «Инвестиционная фаза» / «Жизнь проекта» */
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-inv-block,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-inv-block {
+  background: linear-gradient(180deg, rgba(34, 139, 34, 0.35) 0%, rgba(25, 90, 25, 0.25) 100%) !important;
+  color: #e8f5e9 !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-inv-block {
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-weight: 600;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-life-block,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-life-block {
+  background: linear-gradient(180deg, rgba(92, 100, 115, 0.58) 0%, rgba(55, 61, 72, 0.48) 100%) !important;
+  color: #e8eaed !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-life-block {
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-weight: 600;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-td-project {
   text-align: left; font-weight: 600; font-size: 12px; padding: 6px 10px;
@@ -1631,20 +1656,24 @@ def render_dev_tz_matrix(
     head_rows: List[str] = [
         "<tr>"
         '<th rowspan="3" class="dev-tz-th-project">Проект</th>'
-        f'<th colspan="{col_span_inv}" class="dev-tz-ghead">Инвестиционная фаза</th>'
-        f'<th colspan="{col_span_life}" class="dev-tz-ghead dev-tz-ghead-life">Жизнь проекта</th>'
+        f'<th colspan="{col_span_inv}" class="dev-tz-ghead" style="text-align:center;vertical-align:middle;">Инвестиционная фаза</th>'
+        f'<th colspan="{col_span_life}" class="dev-tz-ghead dev-tz-ghead-life" style="text-align:center;vertical-align:middle;">Жизнь проекта</th>'
         "</tr>"
     ]
     mline: List[str] = []
     subline: List[str] = []
     for r in template:
         lab = r.get("label") or ""
-        mline.append(f'<th colspan="3" class="dev-tz-milestone" title="{esc(str(lab))}">{esc(str(lab))}</th>')
+        ph = str(r.get("phase") or "life").strip().lower()
+        band = "dev-tz-inv-block" if ph == "invest" else "dev-tz-life-block"
+        mline.append(
+            f'<th colspan="3" class="dev-tz-milestone {band}" title="{esc(str(lab))}">{esc(str(lab))}</th>'
+        )
         subline.extend(
             [
-                '<th class="dev-tz-sub">План</th>',
-                '<th class="dev-tz-sub">Факт</th>',
-                '<th class="dev-tz-sub">Откл.</th>',
+                f'<th class="dev-tz-sub {band}">План</th>',
+                f'<th class="dev-tz-sub {band}">Факт</th>',
+                f'<th class="dev-tz-sub {band}">Откл.</th>',
             ]
         )
     head_rows.append("<tr>" + "".join(mline) + "</tr>")
