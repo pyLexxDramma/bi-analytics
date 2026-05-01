@@ -608,6 +608,77 @@ def _format_gdrs_period_range_dd_mm_yyyy(d_from, d_to, sep: str = " - ") -> str:
         return ""
 
 
+def _format_gdrs_month_year_title_ru(d_from, d_to, pdf: pd.DataFrame | None, period_col: str | None) -> str:
+    """Человекочитаемый период для шапки ГДРС: «Март 2026» или «Январь — Март 2026»."""
+    _months = (
+        "",
+        "Январь",
+        "Февраль",
+        "Март",
+        "Апрель",
+        "Май",
+        "Июнь",
+        "Июль",
+        "Август",
+        "Сентябрь",
+        "Октябрь",
+        "Ноябрь",
+        "Декабрь",
+    )
+
+    def _one_month(y: int, m: int) -> str:
+        if 1 <= int(m) <= 12:
+            return f"{_months[int(m)]} {int(y)}"
+        return ""
+
+    try:
+        if d_from is not None and d_to is not None:
+            ta = pd.Timestamp(d_from).normalize()
+            tb = pd.Timestamp(d_to).normalize()
+            if pd.notna(ta) and pd.notna(tb):
+                if ta.year == tb.year and ta.month == tb.month:
+                    return _one_month(ta.year, ta.month)
+                if ta.year == tb.year:
+                    return f"{_months[int(ta.month)]} — {_months[int(tb.month)]} {int(ta.year)}"
+                return (
+                    f"{_months[int(ta.month)]} {int(ta.year)} — {_months[int(tb.month)]} {int(tb.year)}"
+                )
+    except Exception:
+        pass
+    try:
+        if pdf is not None and period_col and period_col in pdf.columns:
+            _pvals = pd.to_datetime(pdf[period_col], errors="coerce", dayfirst=True).dropna()
+            if not _pvals.empty:
+                ta = pd.Timestamp(_pvals.min()).normalize()
+                tb = pd.Timestamp(_pvals.max()).normalize()
+                if ta.year == tb.year and ta.month == tb.month:
+                    return _one_month(ta.year, ta.month)
+                if ta.year == tb.year:
+                    return f"{_months[int(ta.month)]} — {_months[int(tb.month)]} {int(ta.year)}"
+                return (
+                    f"{_months[int(ta.month)]} {int(ta.year)} — {_months[int(tb.month)]} {int(tb.year)}"
+                )
+    except Exception:
+        pass
+    return ""
+
+
+def _gdrs_delta_pct_cell_bg_style(raw) -> str:
+    """Фон ячейки «Итого (%)»: от светло-зелёного при малом |%| к красному при большом."""
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return ""
+    try:
+        p = float(raw)
+    except Exception:
+        return ""
+    t = min(abs(p), 100.0) / 100.0
+    r = int(72 + t * (229 - 72))
+    g = int(199 + t * (72 - 199))
+    b = int(116 + t * (96 - 116))
+    alpha = 0.14 + 0.26 * t
+    return f"background-color:rgba({r},{g},{b},{alpha:.3f});"
+
+
 def _gdrs_period_series_to_year(series: pd.Series) -> pd.Series:
     """Календарный год для значений колонки периода (Period / Timestamp / строка)."""
 
@@ -13059,12 +13130,6 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         _plan_sum_f = float(
             pd.to_numeric(filtered_df.get("План_numeric"), errors="coerce").fillna(0.0).abs().sum()
         )
-        _ref_h4 = (
-            "График движения техники"
-            if _gdrs_tab_is_tech
-            else "График движения рабочей силы"
-        )
-        st.markdown(f"#### {_ref_h4}")
         _tbl = filtered_df.copy()
 
         def _to_num_safe(series):
@@ -13258,9 +13323,10 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 ],
                 ignore_index=True,
             )
+            _view["_delta_pct_raw"] = pd.to_numeric(_view["Дельта (%)"], errors="coerce")
             for _c in ["План", "СКУД", "Отклонение"] + _week_cols_out:
                 _view[_c] = pd.to_numeric(_view[_c], errors="coerce").fillna(0).round(0).astype(int)
-            _view["Дельта (%)"] = _view["Дельта (%)"].apply(
+            _view["Дельта (%)"] = _view["_delta_pct_raw"].apply(
                 lambda v: f"{float(v):.1f}%" if v is not None and pd.notna(v) else "—"
             )
 
@@ -13281,7 +13347,11 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 + _week_cols_out
                 + ["Дельта (%)"]
             )
-            _render_cols = ["__row_kind"] + _show_cols if "__row_kind" in _view.columns else _show_cols
+            _render_cols = (
+                (["__row_kind", "_delta_pct_raw"] + _show_cols)
+                if "__row_kind" in _view.columns
+                else (["_delta_pct_raw"] + _show_cols)
+            )
 
             _period_title = ""
             if _d_from and _d_to:
@@ -13297,7 +13367,15 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     _me = pd.Timestamp(_pmax).to_period("M").end_time.normalize().date()
                     _period_title = _format_gdrs_period_range_dd_mm_yyyy(_ms, _me)
 
-            _gdrs_ref_table_title = "ГДРС — техника" if _gdrs_tab_is_tech else "ГДРС — рабочие"
+            _period_row_display = _format_gdrs_month_year_title_ru(
+                _d_from, _d_to, filtered_df, period_col
+            ) or _period_title
+
+            _gdrs_ref_line1 = (
+                "График движения рабочей силы (техника)"
+                if _gdrs_tab_is_tech
+                else "График движения рабочей силы (люди)"
+            )
 
             def _render_gdrs_ref_html(df_view: pd.DataFrame) -> str:
                 ncols = len(_show_cols)
@@ -13325,8 +13403,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     f"</style>",
                     "<table>",
                     "<thead>",
-                    f'<tr class="title-row"><th colspan="{ncols}" class="t-center" style="text-align:center !important;">{html_module.escape(_gdrs_ref_table_title)}</th></tr>',
-                    f'<tr class="period-row"><th colspan="{ncols}" class="t-center" style="text-align:center !important;">{html_module.escape(_period_title) if _period_title else ""}</th></tr>',
+                    f'<tr class="title-row"><th colspan="{ncols}" class="t-center" style="text-align:center !important;">{html_module.escape(_gdrs_ref_line1)}</th></tr>',
+                    f'<tr class="period-row"><th colspan="{ncols}" class="t-center" style="text-align:center !important;">{html_module.escape(_period_row_display) if _period_row_display else ""}</th></tr>',
                     "<tr>",
                     '<th rowspan="2">Контрагент</th>',
                     '<th rowspan="2">Вид работы</th>',
@@ -13334,7 +13412,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     '<th rowspan="2" class="t-center" style="text-align:center !important;">СКУД</th>',
                     '<th rowspan="2" class="t-center" style="text-align:center !important;">Отклонение</th>',
                     f'<th colspan="{wk_n}" class="t-center" style="text-align:center !important;">СКУД</th>',
-                    '<th rowspan="2" class="t-center" style="text-align:center !important;">(отклонение %)</th>',
+                    '<th rowspan="2" class="t-center" style="text-align:center !important;">Итого (%)</th>',
                     "</tr>",
                     "<tr>",
                 ]
@@ -13351,15 +13429,21 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                         s = "" if (val is None or (isinstance(val, float) and pd.isna(val))) else str(val)
                         esc = html_module.escape(s)
                         cls = ""
-                        if c in ("Отклонение", "Дельта (%)"):
-                            num = pd.to_numeric(
-                                str(s).replace("%", "").replace(",", ".").replace(" ", ""),
-                                errors="coerce",
-                            )
+                        td_style = ""
+                        if c == "Отклонение":
+                            num = pd.to_numeric(val, errors="coerce")
                             if pd.notna(num):
                                 cls = "neg" if float(num) < 0 else ("pos" if float(num) > 0 else "")
+                        elif c == "Дельта (%)":
+                            raw_pct = row.get("_delta_pct_raw")
+                            num = pd.to_numeric(raw_pct, errors="coerce")
+                            if pd.notna(num):
+                                cls = "neg" if float(num) < 0 else ("pos" if float(num) > 0 else "")
+                                td_style = _gdrs_delta_pct_cell_bg_style(raw_pct)
                         tcenter = " t-center" if c not in ("Контрагент", "Вид работы") else ""
-                        parts.append(f'<td class="{(cls + tcenter).strip()}">{esc}</td>')
+                        parts.append(
+                            f'<td class="{(cls + tcenter).strip()}" style="{td_style}">{esc}</td>'
+                        )
                     parts.append("</tr>")
                 parts.append("</tbody></table></div>")
                 return "".join(parts)
@@ -13571,10 +13655,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     title_text="",
                     xaxis_title=_x_title,
                     yaxis_title="Количество",
-                    height=440,
-                    showlegend=bool(_has_plan_line),
-                    legend=dict(orientation="h", x=0.5, xanchor="center", y=1.08, yanchor="bottom"),
-                    margin=dict(l=56, r=28, t=72, b=168),
+                    height=430,
+                    showlegend=False,
+                    margin=dict(l=56, r=28, t=72, b=155),
                     uniformtext=dict(minsize=7, mode="show"),
                     xaxis=dict(
                         tickangle=-45,
@@ -13584,14 +13667,30 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     ),
                     yaxis=dict(automargin=True),
                 )
+                try:
+                    fig_hist.update_xaxes(title_standoff=24)
+                except Exception:
+                    pass
                 fig_hist = apply_chart_background(fig_hist)
                 with hist_cols[idx]:
                     render_chart(
                         fig_hist,
                         key=f"{key_prefix}_hist_period_{idx}",
-                        caption_below=(
-                            f"Факт по периодам ({_cap_grain}), % к сумме плана периода (округление вверх): {label}"
-                        ),
+                        caption_below=None,
+                    )
+                    if _has_plan_line:
+                        st.markdown(
+                            "<div style='text-align:center;color:#e8eef5;font-size:13px;line-height:1.35;"
+                            "margin:0.2rem 0 0.45rem;'>"
+                            '<span style="margin-right:1.85rem;">'
+                            '<span style="color:#5DADE2;font-weight:700">●</span> План'
+                            "</span>"
+                            '<span><span style="color:#F39C12;font-weight:700">●</span> Факт</span>'
+                            "</div>",
+                            unsafe_allow_html=True,
+                        )
+                    _chart_caption_below(
+                        f"Факт по периодам ({_cap_grain}), % к сумме плана периода (округление вверх): {label}"
                     )
             else:
                 # Нет колонок по неделям — агрегат по месяцу (период) или по году
