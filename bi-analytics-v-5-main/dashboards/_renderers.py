@@ -11594,6 +11594,8 @@ def dashboard_technique(df):
             st.markdown("---")
             st.subheader(f"Проект: {project_name}")
 
+        _pslug = str(project_name).replace(" ", "_")[:20]
+
         if not has_plan_data and "Контрагент" in project_filtered_df.columns and "week_sum" in project_filtered_df.columns:
             _bar_avg = (
                 project_filtered_df.groupby("Контрагент", as_index=False)["week_sum"]
@@ -11608,7 +11610,6 @@ def dashboard_technique(df):
                     text=_bar_avg["Среднее за месяц"].apply(lambda v: f"{v:.0f}"),
                     color_discrete_sequence=["#2ecc71"],
                 )
-                _pslug = str(project_name).replace(" ", "_")[:20]
                 fig_avg.update_traces(textposition="outside", textfont=dict(size=12, color="white"))
                 fig_avg.update_layout(height=500, xaxis=dict(tickangle=-45), yaxis_title="Среднее за месяц")
                 fig_avg = _apply_finance_bar_label_layout(fig_avg)
@@ -11897,7 +11898,7 @@ def dashboard_technique(df):
                 by_contractor["План"] = pd.to_numeric(
                     by_contractor["План"], errors="coerce"
                 ).fillna(0.0)
-                by_contractor["Отклонение"] = by_contractor["Факт"] - by_contractor["План"]
+                by_contractor["Отклонение"] = by_contractor["План"] - by_contractor["Факт"]
                 by_contractor["%"] = by_contractor.apply(
                     lambda r: (
                         round(float(r["Факт"]) / float(r["План"]) * 100.0, 1)
@@ -11914,7 +11915,7 @@ def dashboard_technique(df):
                 by_contractor = by_contractor.sort_values("План", ascending=False)
                 with st.expander(f"Формулы столбцов ({type_label})", expanded=False):
                     suppress_caption(
-                        "План (из договора), СКУД (из выгрузки ресурсов), «%» = факт/план×100%, отклонение = СКУД − план."
+                        "План (из договора), Факт (СКУД / выгрузка ресурсов), «%» = факт/план×100%, отклонение = план − факт."
                     )
                 _display_cols = ["Контрагент", "План", "Факт", "%", "Отклонение"]
                 if project_col and project_col in by_contractor.columns:
@@ -11927,6 +11928,7 @@ def dashboard_technique(df):
                 display_df["Факт"] = display_df["Факт"].apply(
                     lambda x: int(round(x, 0)) if pd.notna(x) else 0
                 )
+                st.subheader(f"Доля факта ({type_label}) по контрагентам")
                 display_df["%"] = display_df["%"].apply(
                     lambda v: f"{v:.1f}%" if v is not None and pd.notna(v) else "—"
                 )
@@ -11938,13 +11940,14 @@ def dashboard_technique(df):
                         display_df,
                         finance_deviation_column="Отклонение",
                         deviation_red_if_positive_only=True,
+                        deviation_semaphore_style=True,
                     ),
                     unsafe_allow_html=True,
                 )
 
-        # ========== Chart 2: Bar Chart by Contractor (Plan, Average, Дельта) ==========
+        # ========== Chart 2: Bar Chart by Contractor (Plan, Fact, Отклонение) ==========
         st.subheader(
-            "Столбчатая диаграмма: План, Среднее за месяц, Дельта (группировка по контрагенту; сортировка по убыванию Плана)"
+            "Столбчатая диаграмма: План, Факт, Отклонение (группировка по контрагенту)"
         )
 
         # Filter by selected period(s) for this chart
@@ -11974,12 +11977,23 @@ def dashboard_technique(df):
             )
             .reset_index()
         )
-        contractor_data.columns = ["Контрагент", "План", "Среднее за месяц", "Отклонение"]
+        contractor_data.columns = ["Контрагент", "План", "Факт", "Отклонение"]
 
         contractor_data["Отклонение"] = pd.to_numeric(
             contractor_data["Отклонение"], errors="coerce"
         ).fillna(0)
-        contractor_data = contractor_data.sort_values("План", ascending=False)
+
+        _sort_bar_label = st.radio(
+            "Сортировка контрагентов по",
+            options=("План", "Факт", "Отклонение"),
+            index=0,
+            horizontal=True,
+            key=f"{key_prefix}_bar_sort_technique_{_pslug}",
+        )
+        _sort_col_map = {"План": "План", "Факт": "Факт", "Отклонение": "Отклонение"}
+        contractor_data = contractor_data.sort_values(
+            _sort_col_map[_sort_bar_label], ascending=False
+        ).reset_index(drop=True)
 
         # Столбцы — как в макете PDF: синий план, серый факт, дельта по модулю; оранжевый если > 0, зелёный если ≤ 0.
         delta_values = contractor_data["Отклонение"].fillna(0)
@@ -11993,8 +12007,7 @@ def dashboard_technique(df):
                 pd.to_numeric(contractor_data["План"].iloc[i], errors="coerce") or 0.0
             )
             fv = float(
-                pd.to_numeric(contractor_data["Среднее за месяц"].iloc[i], errors="coerce")
-                or 0.0
+                pd.to_numeric(contractor_data["Факт"].iloc[i], errors="coerce") or 0.0
             )
             dv = float(pd.to_numeric(delta_values.iloc[i], errors="coerce") or 0.0)
             av = abs(dv)
@@ -12024,9 +12037,9 @@ def dashboard_technique(df):
         )
         fig_bar.add_trace(
             go.Bar(
-                name="Среднее за месяц",
+                name="Факт",
                 x=contractor_data["Контрагент"],
-                y=contractor_data["Среднее за месяц"],
+                y=contractor_data["Факт"],
                 marker_color="#95a5a6",
                 text=fact_text,
                 textposition="outside",
@@ -12096,9 +12109,9 @@ def dashboard_technique(df):
         render_chart(
             fig_bar,
             caption_below=(
-                "План, Среднее за месяц и Отклонение по контрагентам"
+                "План, Факт и Отклонение по контрагентам"
                 + period_caption
-                + ". Макет: высота отклонения — модуль; оранжевый при Отклонение > 0, зелёный при ≤ 0."
+                + ". Макет: высота отклонения — модуль; оранжевый при Отклонение > 0, зелёный при ≤ 0. Сортировка — виджет выше."
             ),
         )
 
@@ -14532,6 +14545,14 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     by_contractor["План"], errors="coerce"
                 ).fillna(0.0)
                 by_contractor["Отклонение"] = by_contractor["План"] - by_contractor["Факт"]
+                by_contractor["%"] = by_contractor.apply(
+                    lambda r: (
+                        round(float(r["Факт"]) / float(r["План"]) * 100.0, 1)
+                        if float(r["План"]) != 0.0
+                        else None
+                    ),
+                    axis=1,
+                )
                 by_contractor = by_contractor[
                     (by_contractor["Факт"] != 0) | (by_contractor["План"] != 0)
                 ].copy()
@@ -14540,16 +14561,19 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 by_contractor = by_contractor.sort_values("План", ascending=False)
                 with st.expander(f"Формулы столбцов ({type_label})", expanded=False):
                     suppress_caption(
-                        "План и факт — суммы по подрядчику; отклонение = план − факт."
+                        "План (из договора), Факт (СКУД / выгрузка ресурсов), «%» = факт/план×100%, отклонение = план − факт."
                     )
-                display_df = by_contractor[
-                    ["Контрагент", "План", "Факт", "Отклонение"]
-                ].copy()
+                _display_cols_w = ["Контрагент", "План", "Факт", "%", "Отклонение"]
+                display_df = by_contractor[_display_cols_w].copy()
                 display_df["План"] = display_df["План"].apply(
                     lambda x: int(round(x, 0)) if pd.notna(x) else 0
                 )
                 display_df["Факт"] = display_df["Факт"].apply(
                     lambda x: int(round(x, 0)) if pd.notna(x) else 0
+                )
+                st.subheader(f"Доля факта ({type_label}) по контрагентам")
+                display_df["%"] = display_df["%"].apply(
+                    lambda v: f"{v:.1f}%" if v is not None and pd.notna(v) else "—"
                 )
                 display_df["Отклонение"] = display_df["Отклонение"].apply(
                     lambda x: int(round(x, 0)) if pd.notna(x) else 0
@@ -14559,13 +14583,14 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                         display_df,
                         finance_deviation_column="Отклонение",
                         deviation_red_if_positive_only=True,
+                        deviation_semaphore_style=True,
                     ),
                     unsafe_allow_html=True,
                 )
 
-        # ========== Chart 2: Bar Chart by Contractor (Plan, Average, Дельта) ==========
+        # ========== Chart 2: Bar Chart by Contractor (Plan, Fact, Отклонение) ==========
         st.subheader(
-            "Столбчатая диаграмма: План, Среднее за месяц, Дельта (группировка по контрагенту; сортировка по убыванию Плана)"
+            "Столбчатая диаграмма: План, Факт, Отклонение (группировка по контрагенту)"
         )
 
         bar_df = project_filtered_df.copy()
@@ -14584,25 +14609,35 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             .agg(
                 {
                     "План_numeric": "sum",  # Sum of plans
-                    "week_sum": "sum",  # Sum of weeks = среднее за месяц
+                    "week_sum": "sum",  # Sum of weeks (факт)
                     "Дельта_numeric": "sum",  # Sum of deltas
                 }
             )
             .reset_index()
         )
 
-        contractor_data.columns = ["Контрагент", "План", "Среднее за месяц", "Отклонение"]
+        contractor_data.columns = ["Контрагент", "План", "Факт", "Отклонение"]
 
         # Ensure Отклонение column has numeric values
         contractor_data["Отклонение"] = pd.to_numeric(
             contractor_data["Отклонение"], errors="coerce"
         ).fillna(0)
 
-        contractor_data = contractor_data.sort_values("План", ascending=False)
+        _sort_bar_label_w = st.radio(
+            "Сортировка контрагентов по",
+            options=("План", "Факт", "Отклонение"),
+            index=0,
+            horizontal=True,
+            key=f"{key_prefix}_bar_sort_work_{_pslug}",
+        )
+        _sort_col_map_w = {"План": "План", "Факт": "Факт", "Отклонение": "Отклонение"}
+        contractor_data = contractor_data.sort_values(
+            _sort_col_map_w[_sort_bar_label_w], ascending=False
+        ).reset_index(drop=True)
 
         contractor_data["%"] = np.where(
             contractor_data["План"] > 0,
-            (contractor_data["Среднее за месяц"] / contractor_data["План"] * 100.0).round(1),
+            (contractor_data["Факт"] / contractor_data["План"] * 100.0).round(1),
             np.nan,
         )
 
@@ -14618,8 +14653,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 pd.to_numeric(contractor_data["План"].iloc[i], errors="coerce") or 0.0
             )
             fv = float(
-                pd.to_numeric(contractor_data["Среднее за месяц"].iloc[i], errors="coerce")
-                or 0.0
+                pd.to_numeric(contractor_data["Факт"].iloc[i], errors="coerce") or 0.0
             )
             dv = float(pd.to_numeric(delta_values.iloc[i], errors="coerce") or 0.0)
             av = abs(dv)
@@ -14649,9 +14683,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         )
         fig_bar.add_trace(
             go.Bar(
-                name="Среднее за месяц",
+                name="Факт",
                 x=contractor_data["Контрагент"],
-                y=contractor_data["Среднее за месяц"],
+                y=contractor_data["Факт"],
                 marker_color="#95a5a6",
                 text=fact_text,
                 textposition="outside",
@@ -14722,9 +14756,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         render_chart(
             fig_bar,
             caption_below=(
-                "План, Среднее за месяц и Отклонение по контрагентам"
+                "План, Факт и Отклонение по контрагентам"
                 + period_caption
-                + ". Макет: высота отклонения — модуль; оранжевый при Отклонение > 0, зелёный при ≤ 0."
+                + ". Макет: высота отклонения — модуль; оранжевый при Отклонение > 0, зелёный при ≤ 0. Сортировка — виджет выше."
             ),
         )
 
@@ -14782,7 +14816,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             summary_table["План"] = summary_table["План"].apply(
                 lambda x: f"{int(x)}" if pd.notna(x) else "0"
             )
-            summary_table["Среднее за месяц"] = summary_table["Среднее за месяц"].apply(
+            summary_table["Факт"] = summary_table["Факт"].apply(
                 lambda x: f"{int(x)}" if pd.notna(x) else "0"
             )
             summary_table["%"] = _pct_fmt.apply(
@@ -14792,11 +14826,16 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 lambda x: f"{int(x)}" if pd.notna(x) else "0"
             )
             summary_table = summary_table[
-                ["Контрагент", "План", "Среднее за месяц", "%", "Отклонение"]
+                ["Контрагент", "План", "Факт", "%", "Отклонение"]
             ]
 
             st.markdown(
-                budget_table_to_html(summary_table, finance_deviation_column="Отклонение"),
+                budget_table_to_html(
+                    summary_table,
+                    finance_deviation_column="Отклонение",
+                    deviation_red_if_positive_only=True,
+                    deviation_semaphore_style=True,
+                ),
                 unsafe_allow_html=True,
             )
 
@@ -14808,8 +14847,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 st.metric("Общий план", f"{int(total_plan)}")
 
             with col2:
-                total_average = contractor_data["Среднее за месяц"].sum()
-                st.metric("Общее среднее за месяц", f"{int(total_average)}")
+                total_fact = contractor_data["Факт"].sum()
+                st.metric("Общий факт", f"{int(total_fact)}")
 
             with col3:
                 total_delta = contractor_data["Отклонение"].sum()

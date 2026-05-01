@@ -765,6 +765,7 @@ def budget_table_to_html(
     deviation_red_if_positive_only: bool = False,
     deviation_red_if_negative: bool = False,
     deviation_abs_min_mln: float = 0.01,
+    deviation_semaphore_style: bool = False,
     row_kind_column: Optional[str] = None,
     emphasize_row_kinds: tuple[str, ...] = ("project", "total"),
 ) -> str:
@@ -775,6 +776,9 @@ def budget_table_to_html(
 
     Если ``deviation_red_if_positive_only=True`` (например, отклонение = план − факт в графике рабочей силы):
     значение > 0 — красный, ≤ 0 — зелёный.
+
+    Если ``deviation_semaphore_style=True`` вместе с ``deviation_red_if_positive_only=True``:
+    индикатор ● зелёный при отклонении ≥ 0, красный при < 0; цвет числа — красный при > 0, зелёный при ≤ 0.
 
     Если ``deviation_red_if_negative=True`` (ТЗ «Утверждённый бюджет»: отклонение = план − факт):
     значение < 0 — красный, ≥ 0 — зелёный.
@@ -838,10 +842,26 @@ def budget_table_to_html(
                             f'<td class="{cell_class}" style="padding: 6px 8px; font-weight: bold;"><span>{val_esc}</span></td>'
                         )
                     elif deviation_red_if_positive_only:
-                        cell_class = "bd-cell-red" if num > 0 else "bd-cell-green"
-                        parts.append(
-                            f'<td class="{cell_class}" style="padding: 6px 8px; font-weight: bold;"><span>{val_esc}</span></td>'
-                        )
+                        nf = float(num)
+                        if deviation_semaphore_style:
+                            bullet_color = (
+                                "hsl(148,100%,63%)" if nf >= 0 else "hsl(348,100%,63%)"
+                            )
+                            text_color = (
+                                "hsl(348,100%,63%)" if nf > 0 else "hsl(148,100%,63%)"
+                            )
+                            parts.append(
+                                f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 6px 8px; '
+                                f'background-color: {TABLE_BG_COLOR};">'
+                                f'<span style="color:{bullet_color};font-weight:700;font-size:1.12em;margin-right:6px">●</span>'
+                                f'<span style="color:{text_color}!important;font-weight:700">{val_esc}</span>'
+                                f"</td>"
+                            )
+                        else:
+                            cell_class = "bd-cell-red" if nf > 0 else "bd-cell-green"
+                            parts.append(
+                                f'<td class="{cell_class}" style="padding: 6px 8px; font-weight: bold;"><span>{val_esc}</span></td>'
+                            )
                     else:
                         cell_class = "bd-cell-red" if num >= 0 else "bd-cell-green"
                         parts.append(
@@ -863,6 +883,25 @@ def budget_table_to_html(
                             parts.append(
                                 f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 6px 8px; '
                                 f'background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
+                            )
+                        elif (
+                            deviation_red_if_positive_only
+                            and deviation_semaphore_style
+                            and num_fallback is not None
+                        ):
+                            nf = float(num_fallback)
+                            bullet_color = (
+                                "hsl(148,100%,63%)" if nf >= 0 else "hsl(348,100%,63%)"
+                            )
+                            text_color = (
+                                "hsl(348,100%,63%)" if nf > 0 else "hsl(148,100%,63%)"
+                            )
+                            parts.append(
+                                f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 6px 8px; '
+                                f'background-color: {TABLE_BG_COLOR};">'
+                                f'<span style="color:{bullet_color};font-weight:700;font-size:1.12em;margin-right:6px">●</span>'
+                                f'<span style="color:{text_color}!important;font-weight:700">{val_esc}</span>'
+                                f"</td>"
                             )
                         else:
                             is_neg = s.startswith("-") or bool(re.search(r"^-\d", s))
