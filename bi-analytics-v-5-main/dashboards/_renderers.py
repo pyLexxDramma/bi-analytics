@@ -13091,6 +13091,331 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         else:
             projects_to_process = ["Все проекты"]
 
+    def _gdrs_plan_fact_data_slice(pdf: pd.DataFrame) -> pd.DataFrame:
+        if pdf is None or pdf.empty:
+            return pdf
+        if "data_source" not in pdf.columns:
+            return pdf
+        dst = (data_source_filter or "").strip().lower()
+        if dst == "техника":
+            return pdf[
+                pdf["data_source"].astype(str).str.strip().str.lower() == "техника"
+            ].copy()
+        if dst == "ресурсы":
+            return pdf[
+                pdf["data_source"].astype(str).str.strip().str.lower() == "ресурсы"
+            ].copy()
+        rk = st.session_state.get(f"{key_prefix}_resource_kind", "Рабочие (ресурсы)")
+        if rk == "Техника":
+            return pdf[
+                pdf["data_source"].astype(str).str.strip().str.lower() == "техника"
+            ].copy()
+        if rk == "Все":
+            return pdf[
+                pdf["data_source"].astype(str).str.strip().str.lower() == "ресурсы"
+            ].copy()
+        return pdf[pdf["data_source"].astype(str).str.strip().str.lower() == "ресурсы"].copy()
+
+    def _gdrs_plan_fact_fig_and_metrics(pdf: pd.DataFrame):
+        d = _gdrs_plan_fact_data_slice(pdf)
+        if d is None or d.empty or "План_numeric" not in d.columns or "week_sum" not in d.columns:
+            return None, None
+        plan_sum = float(pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0).sum())
+        _ws_pf = pd.to_numeric(d["week_sum"], errors="coerce").fillna(0.0)
+        fact_sum = (
+            float((_ws_pf / 6.0).sum())
+            if week_columns
+            else float(_ws_pf.sum())
+        )
+        if plan_sum <= 0 and fact_sum <= 0:
+            return None, None
+        dev = plan_sum - fact_sum
+        fp_pct = (fact_sum / plan_sum * 100.0) if plan_sum else 0.0
+        proj_col_local = "project name" if "project name" in d.columns else ("Проект" if "Проект" in d.columns else None)
+        proj_name = "Все проекты"
+        if proj_col_local and proj_col_local in d.columns:
+            _u = d[proj_col_local].dropna().astype(str).str.strip().unique().tolist()
+            if len(_u) == 1:
+                proj_name = _u[0]
+
+        def _fact_bar_color(plan_v: float, fact_v: float) -> str:
+            _light_green = "#2ECC71"
+            _orange = "#F39C12"
+            if plan_v <= 0:
+                return _orange
+            if float(fact_v) <= 0:
+                return "#c0392b"
+            if fact_v >= plan_v:
+                return _light_green
+            miss_ratio = max(0.0, min(1.0, (plan_v - fact_v) / plan_v))
+            lo = (255, 179, 179)
+            hi = (192, 57, 43)
+            rr = int(round(lo[0] + (hi[0] - lo[0]) * miss_ratio))
+            gg = int(round(lo[1] + (hi[1] - lo[1]) * miss_ratio))
+            bb = int(round(lo[2] + (hi[2] - lo[2]) * miss_ratio))
+            return f"#{rr:02x}{gg:02x}{bb:02x}"
+
+        fact_color = _fact_bar_color(plan_sum, fact_sum)
+
+        def _ceil_int(v: float) -> int:
+            try:
+                fv = float(v)
+            except (TypeError, ValueError):
+                return 0
+            if fv >= 0:
+                return int(np.ceil(fv))
+            return -int(np.ceil(abs(fv)))
+
+        plan_i = _ceil_int(plan_sum)
+        fact_i = _ceil_int(fact_sum)
+        dev_i = _ceil_int(dev)
+        _use_pie = plan_sum > 0 and fact_sum > 0
+        if _use_pie:
+            import math as _math
+
+            _total_pf = plan_sum + fact_sum
+            plan_pct = plan_sum / _total_pf * 100.0
+            fact_pct = fact_sum / _total_pf * 100.0
+            _plan_outside = f"<b>План</b><br>{plan_i}"
+            _fact_outside = f"<b>Факт</b><br>{fact_i}<br>Δ {dev_i}"
+            fig_pie_pf = go.Figure(
+                data=[
+                    go.Pie(
+                        labels=["План", "Факт"],
+                        values=[plan_sum, fact_sum],
+                        sort=False,
+                        direction="clockwise",
+                        text=[_plan_outside, _fact_outside],
+                        textinfo="text",
+                        textposition="outside",
+                        insidetextorientation="horizontal",
+                        hole=0.35,
+                        marker=dict(
+                            colors=["#2E86AB", fact_color],
+                            line=dict(color="#0f1724", width=2),
+                        ),
+                        customdata=[
+                            [proj_name, plan_i, fact_i, dev_i],
+                            [proj_name, plan_i, fact_i, dev_i],
+                        ],
+                        hovertemplate=(
+                            "<b>%{label}</b><br>"
+                            "Проект: %{customdata[0]}<br>"
+                            "План: %{customdata[1]}<br>"
+                            "Факт: %{customdata[2]}<br>"
+                            "Отклонение: %{customdata[3]}<extra></extra>"
+                        ),
+                        showlegend=False,
+                        textfont=dict(size=12, color="#ffffff"),
+                    )
+                ]
+            )
+            _r_in = 0.22
+            _ang_plan = _math.radians(360.0 * (plan_pct / 100.0) / 2.0)
+            _ang_fact = _math.radians(360.0 * ((plan_pct + fact_pct / 2.0) / 100.0))
+            _annots = [
+                dict(
+                    x=0.5 + _r_in * _math.sin(_ang_plan),
+                    y=0.5 + _r_in * _math.cos(_ang_plan),
+                    xref="paper",
+                    yref="paper",
+                    text=f"<b>{plan_pct:.0f}%</b>",
+                    showarrow=False,
+                    font=dict(color="#ffffff", size=15),
+                ),
+                dict(
+                    x=0.5 + _r_in * _math.sin(_ang_fact),
+                    y=0.5 + _r_in * _math.cos(_ang_fact),
+                    xref="paper",
+                    yref="paper",
+                    text=f"<b>{fact_pct:.0f}%</b>",
+                    showarrow=False,
+                    font=dict(color="#ffffff", size=15),
+                ),
+            ]
+            fig_pie_pf.update_layout(
+                height=490,
+                showlegend=False,
+                margin=dict(l=44, r=44, t=52, b=52),
+                uniformtext=dict(minsize=8, mode="show"),
+                annotations=_annots,
+            )
+            try:
+                fig_pie_pf.update_traces(domain=dict(x=[0.06, 0.94], y=[0.06, 0.94]))
+            except Exception:
+                pass
+        else:
+            fig_pie_pf = go.Figure(
+                data=[
+                    go.Bar(
+                        x=["План", "Факт"],
+                        y=[plan_sum, fact_sum],
+                        marker_color=["#2E86AB", fact_color],
+                        text=[f"{plan_i}", f"{fact_i}<br>Δ {dev_i}"],
+                        textposition="outside",
+                        textfont=dict(size=13, color="#ffffff"),
+                        cliponaxis=False,
+                        customdata=[
+                            [proj_name, plan_i, fact_i, dev_i],
+                            [proj_name, plan_i, fact_i, dev_i],
+                        ],
+                        hovertemplate=(
+                            "<b>%{x}</b><br>"
+                            "Проект: %{customdata[0]}<br>"
+                            "План: %{customdata[1]}<br>"
+                            "Факт: %{customdata[2]}<br>"
+                            "Отклонение: %{customdata[3]}<extra></extra>"
+                        ),
+                    )
+                ]
+            )
+            fig_pie_pf.update_layout(
+                height=460,
+                showlegend=False,
+                margin=dict(l=48, r=28, t=56, b=72),
+                yaxis=dict(title=""),
+                uniformtext=dict(minsize=7, mode="show"),
+            )
+            fig_pie_pf = _apply_bar_uniformtext(fig_pie_pf)
+            try:
+                fig_pie_pf.update_layout(uniformtext=dict(minsize=6, mode="show"))
+            except Exception:
+                pass
+        fig_pie_pf = apply_chart_background(fig_pie_pf)
+        return fig_pie_pf, {
+            "plan": plan_sum,
+            "fact": fact_sum,
+            "dev": dev,
+            "fp_pct": fp_pct,
+        }
+
+    def _gdrs_contractor_fact_fig_and_metrics(pdf: pd.DataFrame):
+        """Круговая: доля факта по подрядчикам; подписи «факт (факт/план %)»."""
+        d = _gdrs_plan_fact_data_slice(pdf)
+        if d is None or d.empty:
+            return None, None
+        if "Контрагент" not in d.columns or "week_sum" not in d.columns:
+            return None, None
+        d = d.copy()
+        _ws_cf = pd.to_numeric(d["week_sum"], errors="coerce").fillna(0.0)
+        d["_f"] = _ws_cf / (6.0 if week_columns else 1.0)
+        d["_p"] = (
+            pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0)
+            if "План_numeric" in d.columns
+            else 0.0
+        )
+        by_c = d.groupby("Контрагент", as_index=False)["_f"].sum()
+        by_c = by_c[by_c["_f"] > 0].sort_values("_f", ascending=False)
+        if by_c.empty or float(by_c["_f"].sum()) <= 0:
+            return None, None
+        plan_by = d.groupby("Контрагент", as_index=False)["_p"].sum()
+        pie_df = by_c.merge(plan_by, on="Контрагент", how="left").fillna({"_p": 0.0})
+        pie_df = pie_df.rename(columns={"_f": "Факт", "_p": "План"})
+        pie_df["Отклонение"] = pie_df["План"] - pie_df["Факт"]
+
+        labels = pie_df["Контрагент"].astype(str).tolist()
+        values = pie_df["Факт"].astype(float).tolist()
+        total_v = float(sum(values)) if values else 0.0
+        slice_text: list[str] = []
+        slice_pull: list[float] = []
+        if total_v > 0:
+            for _, row in pie_df.iterrows():
+                fv = float(row["Факт"])
+                pv = float(row["План"])
+                fv_i = int(np.ceil(fv)) if fv >= 0 else -int(np.ceil(abs(fv)))
+                if pv > 0:
+                    pct_fp = max(0.0, fv / pv * 100.0)
+                    lbl = f"{fv_i} ({pct_fp:.0f}%)"
+                else:
+                    pct_fp = 0.0
+                    lbl = str(fv_i)
+                frac = fv / total_v
+                if frac < 0.02:
+                    slice_text.append("")
+                    slice_pull.append(0.0)
+                elif frac < 0.05:
+                    slice_text.append(f"{pct_fp:.0f}%" if pv > 0 else lbl)
+                    slice_pull.append(0.0)
+                else:
+                    slice_text.append(lbl)
+                    slice_pull.append(0.0)
+        else:
+            slice_text = [""] * len(values)
+            slice_pull = [0.0] * len(values)
+
+        _cd = []
+        for i in range(len(pie_df)):
+            _dev = float(pie_df.iloc[i]["Отклонение"])
+            _dv = int(np.ceil(_dev)) if _dev >= 0 else -int(np.ceil(abs(_dev)))
+            _cd.append(
+                (
+                    int(np.ceil(float(pie_df.iloc[i]["План"]))),
+                    int(np.ceil(float(pie_df.iloc[i]["Факт"]))),
+                    _dv,
+                )
+            )
+
+        fig_cf = go.Figure(
+            data=[
+                go.Pie(
+                    labels=labels,
+                    values=values,
+                    customdata=_cd,
+                    sort=False,
+                    direction="clockwise",
+                    text=slice_text,
+                    textinfo="text",
+                    textposition="inside",
+                    insidetextorientation="horizontal",
+                    pull=slice_pull,
+                    hole=0.0,
+                    hovertemplate=(
+                        "<b>%{label}</b><br>"
+                        "План: %{customdata[0]}<br>"
+                        "Факт: %{customdata[1]}<br>"
+                        "Откл.: %{customdata[2]}<extra></extra>"
+                    ),
+                    showlegend=True,
+                    marker=dict(line=dict(color="rgba(255,255,255,0.45)", width=1)),
+                    textfont=dict(size=10, color="#f5f5f5"),
+                )
+            ]
+        )
+        fig_cf.update_layout(
+            height=440,
+            margin=dict(l=12, r=132, t=24, b=32),
+            legend=dict(
+                orientation="v",
+                yanchor="middle",
+                y=0.5,
+                x=1.02,
+                xanchor="left",
+                font=dict(size=10, color="#e0e0e0"),
+            ),
+            uniformtext=dict(minsize=7, mode="show"),
+        )
+        try:
+            fig_cf.update_traces(domain=dict(x=[0.02, 0.62], y=[0.06, 0.94]))
+        except Exception:
+            pass
+        fig_cf = apply_chart_background(fig_cf, skip_uniformtext=True)
+
+        plan_sum = float(pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0).sum()) if "План_numeric" in d.columns else 0.0
+        fact_sum = float(by_c["_f"].sum())
+        dev = plan_sum - fact_sum
+        fp_pct = (fact_sum / plan_sum * 100.0) if plan_sum else None
+        return fig_cf, {"plan": plan_sum, "fact": fact_sum, "dev": dev, "fp_pct": fp_pct}
+
+    def _gdrs_fp_pct_caption_line(met: dict) -> str:
+        _pl = float(met.get("plan") or 0.0)
+        _fp = met.get("fp_pct")
+        if _pl <= 0 or _fp is None:
+            return ""
+        try:
+            return f" ({float(_fp):.1f}% — факт/план)"
+        except (TypeError, ValueError):
+            return ""
+
     # Сводные KPI по текущим фильтрам (PDF / docs 17 — суммы план/факт/отклонение).
     if "week_sum" in filtered_df.columns:
         _ws_kpi = pd.to_numeric(filtered_df["week_sum"], errors="coerce").fillna(0.0)
@@ -13794,6 +14119,51 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                         caption_below=f"Факт по периодам, % к сумме плана периода (округление вверх): {label}",
                     )
 
+    show_plan_fact_row = (
+        has_plan_data
+        and len(projects_to_process) > 1
+        and project_col
+        and project_col in filtered_df.columns
+    )
+    plan_fact_row_done = False
+    if show_plan_fact_row:
+        if (data_source_filter or "").strip().lower() == "техника":
+            st.subheader("План/факт техники")
+        else:
+            st.subheader("План/факт рабочих")
+        pf_cols = st.columns(len(projects_to_process))
+        for _ix, _pname in enumerate(projects_to_process):
+            _pdf = filtered_df.copy()
+            if project_col in _pdf.columns and _pname != "Все проекты":
+                _pdf = _pdf[
+                    _pdf[project_col].astype(str).str.strip() == str(_pname).strip()
+                ]
+            fig_pf, met_pf = _gdrs_plan_fact_fig_and_metrics(_pdf)
+            with pf_cols[_ix]:
+                st.markdown(f"##### {_pname}")
+                if fig_pf is not None and met_pf is not None:
+                    a1, a2 = st.columns([3, 2])
+                    with a1:
+                        render_chart(
+                            fig_pf,
+                            key=f"{key_prefix}_planfact_row_{_ix}",
+                            caption_below="",
+                        )
+                    with a2:
+                        _col = "#e74c3c" if met_pf["dev"] > 0 else "#27ae60"
+                        st.markdown(
+                            f"**План:** {int(round(met_pf['plan']))}\n\n"
+                            f"**Факт:** {int(round(met_pf['fact']))}\n\n"
+                            f"**Отклонение:** <span style='color:{_col};font-size:1.15em'>●</span> "
+                            f"{int(round(met_pf['dev']))}"
+                            f"{_gdrs_fp_pct_caption_line(met_pf)}",
+                            unsafe_allow_html=True,
+                        )
+                else:
+                    st.markdown("*Нет данных для плана/факта по этому проекту.*")
+        plan_fact_row_done = True
+        st.markdown("---")
+
     # R23-05 стр.12: «Факт по подрядчикам» показываем всегда при наличии week_sum
     # (раньше это был elif и при наличии колонки «Период» диаграмма пропадала).
     if "week_sum" in filtered_df.columns:
@@ -13928,8 +14298,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 yaxis_title="Контрагент",
                 barmode="group" if _has_any_plan else "relative",
                 height=_h_wfb,
-                showlegend=bool(_has_any_plan),
-                legend=dict(orientation="h", x=0.5, xanchor="center", y=1.08, yanchor="bottom"),
+                showlegend=False,
                 xaxis=dict(automargin=True),
                 yaxis=dict(automargin=True),
                 margin=dict(l=120, r=36, t=72, b=56),
@@ -13945,380 +14314,20 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 render_chart(
                     fig_wfb,
                     key=f"{key_prefix}_hist_noperiod_{wfi}",
-                    caption_below=f"План и факт по подрядчикам: {lab_wfb}",
+                    caption_below=None,
                 )
-
-    # Несколько проектов — круговые «план/факт» в одну строку, сводка справа
-    def _gdrs_plan_fact_data_slice(pdf: pd.DataFrame) -> pd.DataFrame:
-        if pdf is None or pdf.empty:
-            return pdf
-        if "data_source" not in pdf.columns:
-            return pdf
-        dst = (data_source_filter or "").strip().lower()
-        if dst == "техника":
-            return pdf[
-                pdf["data_source"].astype(str).str.strip().str.lower() == "техника"
-            ].copy()
-        if dst == "ресурсы":
-            return pdf[
-                pdf["data_source"].astype(str).str.strip().str.lower() == "ресурсы"
-            ].copy()
-        rk = st.session_state.get(f"{key_prefix}_resource_kind", "Рабочие (ресурсы)")
-        if rk == "Техника":
-            return pdf[
-                pdf["data_source"].astype(str).str.strip().str.lower() == "техника"
-            ].copy()
-        if rk == "Все":
-            return pdf[
-                pdf["data_source"].astype(str).str.strip().str.lower() == "ресурсы"
-            ].copy()
-        return pdf[pdf["data_source"].astype(str).str.strip().str.lower() == "ресурсы"].copy()
-
-    def _gdrs_plan_fact_fig_and_metrics(pdf: pd.DataFrame):
-        d = _gdrs_plan_fact_data_slice(pdf)
-        if d is None or d.empty or "План_numeric" not in d.columns or "week_sum" not in d.columns:
-            return None, None
-        plan_sum = float(pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0).sum())
-        _ws_pf = pd.to_numeric(d["week_sum"], errors="coerce").fillna(0.0)
-        fact_sum = (
-            float((_ws_pf / 6.0).sum())
-            if week_columns
-            else float(_ws_pf.sum())
-        )
-        if plan_sum <= 0 and fact_sum <= 0:
-            return None, None
-        dev = plan_sum - fact_sum
-        fp_pct = (fact_sum / plan_sum * 100.0) if plan_sum else 0.0
-        proj_col_local = "project name" if "project name" in d.columns else ("Проект" if "Проект" in d.columns else None)
-        proj_name = "Все проекты"
-        if proj_col_local and proj_col_local in d.columns:
-            _u = d[proj_col_local].dropna().astype(str).str.strip().unique().tolist()
-            if len(_u) == 1:
-                proj_name = _u[0]
-
-        def _fact_bar_color(plan_v: float, fact_v: float) -> str:
-            # R23-05 стр.12: «Если факт меньше плана — столбец красный по градиенту
-            # (чем больше просрочка, тем краснее). Если план выполнен — столбец салатовый».
-            _light_green = "#2ECC71"  # салатовый (план выполнен / перевыполнен)
-            _orange = "#F39C12"       # когда плана нет вообще (нечего сравнивать)
-            if plan_v <= 0:
-                return _orange
-            if float(fact_v) <= 0:
-                return "#c0392b"
-            if fact_v >= plan_v:
-                return _light_green
-            miss_ratio = max(0.0, min(1.0, (plan_v - fact_v) / plan_v))
-            lo = (255, 179, 179)
-            hi = (192, 57, 43)
-            rr = int(round(lo[0] + (hi[0] - lo[0]) * miss_ratio))
-            gg = int(round(lo[1] + (hi[1] - lo[1]) * miss_ratio))
-            bb = int(round(lo[2] + (hi[2] - lo[2]) * miss_ratio))
-            return f"#{rr:02x}{gg:02x}{bb:02x}"
-
-        fact_color = _fact_bar_color(plan_sum, fact_sum)
-
-        def _ceil_int(v: float) -> int:
-            try:
-                fv = float(v)
-            except (TypeError, ValueError):
-                return 0
-            if fv >= 0:
-                return int(np.ceil(fv))
-            return -int(np.ceil(abs(fv)))
-
-        plan_i = _ceil_int(plan_sum)
-        fact_i = _ceil_int(fact_sum)
-        dev_i = _ceil_int(dev)
-        # R23-05 стр.12: круговая «План / Факт» — наружу: название, значение, отклонение;
-        # внутри сектора — процент. Fallback на столбчатую только если оба значения нулевые.
-        _use_pie = plan_sum > 0 and fact_sum > 0
-        if _use_pie:
-            import math as _math
-            _total_pf = plan_sum + fact_sum
-            plan_pct = plan_sum / _total_pf * 100.0
-            fact_pct = fact_sum / _total_pf * 100.0
-            _plan_outside = f"<b>План</b><br>{plan_i}"
-            _fact_outside = f"<b>Факт</b><br>{fact_i}<br>Δ {dev_i}"
-            fig_pie_pf = go.Figure(
-                data=[
-                    go.Pie(
-                        labels=["План", "Факт"],
-                        values=[plan_sum, fact_sum],
-                        sort=False,
-                        direction="clockwise",
-                        text=[_plan_outside, _fact_outside],
-                        textinfo="text",
-                        textposition="outside",
-                        insidetextorientation="horizontal",
-                        hole=0.35,
-                        marker=dict(
-                            colors=["#2E86AB", fact_color],
-                            line=dict(color="#0f1724", width=2),
-                        ),
-                        customdata=[
-                            [proj_name, plan_i, fact_i, dev_i],
-                            [proj_name, plan_i, fact_i, dev_i],
-                        ],
-                        hovertemplate=(
-                            "<b>%{label}</b><br>"
-                            "Проект: %{customdata[0]}<br>"
-                            "План: %{customdata[1]}<br>"
-                            "Факт: %{customdata[2]}<br>"
-                            "Отклонение: %{customdata[3]}<extra></extra>"
-                        ),
-                        showlegend=False,
-                        textfont=dict(size=12, color="#ffffff"),
+                if _has_any_plan:
+                    st.markdown(
+                        "<div style='text-align:center;color:#e8eef5;font-size:12px;line-height:1.35;"
+                        "margin:0.15rem 0 0.35rem;'>"
+                        '<span style="margin-right:1.75rem;">'
+                        '<span style="color:#5dade2;font-weight:700">●</span> План (договор)'
+                        "</span>"
+                        '<span><span style="color:#3498db;font-weight:700">●</span> Факт</span>'
+                        "</div>",
+                        unsafe_allow_html=True,
                     )
-                ]
-            )
-            # Проценты внутри сектора — через annotations на paper-координатах.
-            # Plotly Pie: начало с 12 часов, direction=clockwise.
-            _r_in = 0.22  # радиус для размещения процента внутри сектора
-            _ang_plan = _math.radians(360.0 * (plan_pct / 100.0) / 2.0)
-            _ang_fact = _math.radians(360.0 * ((plan_pct + fact_pct / 2.0) / 100.0))
-            _annots = [
-                dict(
-                    x=0.5 + _r_in * _math.sin(_ang_plan),
-                    y=0.5 + _r_in * _math.cos(_ang_plan),
-                    xref="paper", yref="paper",
-                    text=f"<b>{plan_pct:.0f}%</b>",
-                    showarrow=False,
-                    font=dict(color="#ffffff", size=14),
-                ),
-                dict(
-                    x=0.5 + _r_in * _math.sin(_ang_fact),
-                    y=0.5 + _r_in * _math.cos(_ang_fact),
-                    xref="paper", yref="paper",
-                    text=f"<b>{fact_pct:.0f}%</b>",
-                    showarrow=False,
-                    font=dict(color="#ffffff", size=14),
-                ),
-            ]
-            fig_pie_pf.update_layout(
-                height=420,
-                showlegend=False,
-                margin=dict(l=56, r=56, t=72, b=72),
-                uniformtext=dict(minsize=8, mode="show"),
-                annotations=_annots,
-            )
-        else:
-            # Fallback: столбчатая (план=0 или факт=0).
-            fig_pie_pf = go.Figure(
-                data=[
-                    go.Bar(
-                        x=["План", "Факт"],
-                        y=[plan_sum, fact_sum],
-                        marker_color=["#2E86AB", fact_color],
-                        text=[f"{plan_i}", f"{fact_i}<br>Δ {dev_i}"],
-                        textposition="outside",
-                        textfont=dict(size=13, color="#ffffff"),
-                        cliponaxis=False,
-                        customdata=[
-                            [proj_name, plan_i, fact_i, dev_i],
-                            [proj_name, plan_i, fact_i, dev_i],
-                        ],
-                        hovertemplate=(
-                            "<b>%{x}</b><br>"
-                            "Проект: %{customdata[0]}<br>"
-                            "План: %{customdata[1]}<br>"
-                            "Факт: %{customdata[2]}<br>"
-                            "Отклонение: %{customdata[3]}<extra></extra>"
-                        ),
-                    )
-                ]
-            )
-            fig_pie_pf.update_layout(
-                height=420,
-                showlegend=False,
-                margin=dict(l=48, r=28, t=56, b=72),
-                yaxis=dict(title=""),
-                uniformtext=dict(minsize=7, mode="show"),
-            )
-            fig_pie_pf = _apply_bar_uniformtext(fig_pie_pf)
-            try:
-                fig_pie_pf.update_layout(uniformtext=dict(minsize=6, mode="show"))
-            except Exception:
-                pass
-        fig_pie_pf = apply_chart_background(fig_pie_pf)
-        return fig_pie_pf, {
-            "plan": plan_sum,
-            "fact": fact_sum,
-            "dev": dev,
-            "fp_pct": fp_pct,
-        }
-
-    def _gdrs_contractor_fact_fig_and_metrics(pdf: pd.DataFrame):
-        """Круговая: доля факта по подрядчикам (кусочки = факт), сводка — как у план/факт."""
-        d = _gdrs_plan_fact_data_slice(pdf)
-        if d is None or d.empty:
-            return None, None
-        if "Контрагент" not in d.columns or "week_sum" not in d.columns:
-            return None, None
-        d = d.copy()
-        _ws_cf = pd.to_numeric(d["week_sum"], errors="coerce").fillna(0.0)
-        d["_f"] = _ws_cf / (6.0 if week_columns else 1.0)
-        d["_p"] = (
-            pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0)
-            if "План_numeric" in d.columns
-            else 0.0
-        )
-        by_c = d.groupby("Контрагент", as_index=False)["_f"].sum()
-        by_c = by_c[by_c["_f"] > 0].sort_values("_f", ascending=False)
-        if by_c.empty or float(by_c["_f"].sum()) <= 0:
-            return None, None
-        plan_by = d.groupby("Контрагент", as_index=False)["_p"].sum()
-        pie_df = by_c.merge(plan_by, on="Контрагент", how="left").fillna({"_p": 0.0})
-        pie_df = pie_df.rename(columns={"_f": "Факт", "_p": "План"})
-        pie_df["Отклонение"] = pie_df["План"] - pie_df["Факт"]
-
-        labels = pie_df["Контрагент"].astype(str).tolist()
-        values = pie_df["Факт"].astype(float).tolist()
-        total_v = float(sum(values)) if values else 0.0
-        slice_text: list[str] = []
-        slice_pull: list[float] = []
-        if total_v > 0:
-            for val in values:
-                frac = float(val) / total_v
-                if 0 < frac < 0.03:
-                    # Очень маленькие доли подписываем только в hover/легенде,
-                    # чтобы текст не ломал контур круга и не слипался у вершины.
-                    if frac < 0.02:
-                        slice_text.append("")
-                    else:
-                        slice_text.append(f"{frac * 100:.1f}%")
-                    # Для крошечных долей pull отключен: иначе визуально «вылезают» за круг.
-                    slice_pull.append(0.0)
-                else:
-                    slice_text.append(f"{frac * 100:.0f}%")
-                    slice_pull.append(0.0)
-        else:
-            slice_text = [""] * len(values)
-            slice_pull = [0.0] * len(values)
-
-        # План/факт/откл. в подсказке; без ручных paper-аннотаций (они съезжали относительно круга).
-        _cd = []
-        for i in range(len(pie_df)):
-            _dev = float(pie_df.iloc[i]["Отклонение"])
-            _dv = int(np.ceil(_dev)) if _dev >= 0 else -int(np.ceil(abs(_dev)))
-            _cd.append(
-                (
-                    int(np.ceil(float(pie_df.iloc[i]["План"]))),
-                    int(np.ceil(float(pie_df.iloc[i]["Факт"]))),
-                    _dv,
-                )
-            )
-
-        fig_cf = go.Figure(
-            data=[
-                go.Pie(
-                    labels=labels,
-                    values=values,
-                    customdata=_cd,
-                    sort=False,
-                    direction="clockwise",
-                    text=slice_text,
-                    textinfo="text",
-                    textposition="inside",
-                    insidetextorientation="horizontal",
-                    pull=slice_pull,
-                    hole=0.0,
-                    hovertemplate=(
-                        "<b>%{label}</b><br>"
-                        "План: %{customdata[0]}<br>"
-                        "Факт: %{customdata[1]}<br>"
-                        "Откл.: %{customdata[2]}<extra></extra>"
-                    ),
-                    showlegend=True,
-                    marker=dict(line=dict(color="rgba(255,255,255,0.45)", width=1)),
-                    textfont=dict(size=10, color="#f5f5f5"),
-                )
-            ]
-        )
-        # Легенда в зоне полей figure (как в px.pie), а не в «бумажных» углах круга
-        fig_cf.update_layout(
-            height=520,
-            margin=dict(l=24, r=24, t=32, b=200),
-            legend=dict(
-                orientation="h",
-                yanchor="top",
-                y=-0.08,
-                x=0.5,
-                xanchor="center",
-                font=dict(size=9, color="#e0e0e0"),
-            ),
-            uniformtext=dict(minsize=7, mode="show"),
-        )
-        # Круг в верхней части области, чтобы легенда не наезжала
-        try:
-            fig_cf.update_traces(
-                domain=dict(x=[0.04, 0.96], y=[0.18, 0.95]),
-            )
-        except Exception:
-            pass
-        fig_cf = apply_chart_background(fig_cf, skip_uniformtext=True)
-
-        plan_sum = float(pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0).sum()) if "План_numeric" in d.columns else 0.0
-        fact_sum = float(by_c["_f"].sum())
-        dev = plan_sum - fact_sum
-        fp_pct = (fact_sum / plan_sum * 100.0) if plan_sum else None
-        return fig_cf, {"plan": plan_sum, "fact": fact_sum, "dev": dev, "fp_pct": fp_pct}
-
-    def _gdrs_fp_pct_caption_line(met: dict) -> str:
-        """Строка „факт/план“; если плана нет или 0 — без деления на ноль."""
-        _pl = float(met.get("plan") or 0.0)
-        _fp = met.get("fp_pct")
-        if _pl <= 0 or _fp is None:
-            return ""
-        try:
-            return f" ({float(_fp):.1f}% — факт/план)"
-        except (TypeError, ValueError):
-            return ""
-
-    show_plan_fact_row = (
-        has_plan_data
-        and len(projects_to_process) > 1
-        and project_col
-        and project_col in filtered_df.columns
-    )
-    plan_fact_row_done = False
-    if show_plan_fact_row:
-        # R23-05 стр.12: «Переименовать отчёт в "План/факт рабочие"».
-        if (data_source_filter or "").strip().lower() == "техника":
-            st.subheader("План/факт техники")
-        else:
-            st.subheader("План/факт рабочих")
-        pf_cols = st.columns(len(projects_to_process))
-        for _ix, _pname in enumerate(projects_to_process):
-            _pdf = filtered_df.copy()
-            if project_col in _pdf.columns and _pname != "Все проекты":
-                _pdf = _pdf[
-                    _pdf[project_col].astype(str).str.strip() == str(_pname).strip()
-                ]
-            fig_pf, met_pf = _gdrs_plan_fact_fig_and_metrics(_pdf)
-            with pf_cols[_ix]:
-                st.markdown(f"##### {_pname}")
-                if fig_pf is not None and met_pf is not None:
-                    a1, a2 = st.columns([3, 2])
-                    with a1:
-                        render_chart(
-                            fig_pf,
-                            key=f"{key_prefix}_planfact_row_{_ix}",
-                            caption_below="",
-                        )
-                    with a2:
-                        _col = "#e74c3c" if met_pf["dev"] > 0 else "#27ae60"
-                        st.markdown(
-                            f"**План:** {int(round(met_pf['plan']))}\n\n"
-                            f"**Факт:** {int(round(met_pf['fact']))}\n\n"
-                            f"**Отклонение:** <span style='color:{_col};font-size:1.15em'>●</span> "
-                            f"{int(round(met_pf['dev']))}"
-                            f"{_gdrs_fp_pct_caption_line(met_pf)}",
-                            unsafe_allow_html=True,
-                        )
-                else:
-                    st.markdown("*Нет данных для плана/факта по этому проекту.*")
-        plan_fact_row_done = True
-        st.markdown("---")
+                _chart_caption_below(f"План и факт по подрядчикам: {lab_wfb}")
 
     show_contractor_fact_row = (
         len(projects_to_process) > 1
@@ -14345,8 +14354,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 render_chart(
                     fig_cf,
                     key=f"{key_prefix}_contractor_fact_row_{_ix}",
-                    height=540,
-                    max_height=720,
+                    height=460,
+                    max_height=620,
                     caption_below="",
                 )
                 _cfc = "#e74c3c" if met_cf["dev"] > 0 else "#27ae60"
