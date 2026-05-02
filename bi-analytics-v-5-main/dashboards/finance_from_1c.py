@@ -71,6 +71,11 @@ def try_synthetic_budget_from_1c_dannye(
     Строки без колонки периода или с неразобранной датой исключаются (не подставляются на max-дату).
     Статьи оборотов БДР не включаются в БДДС (как в прогнозном бюджете).
 
+    ТЗ БДДС (обороты 1С): план — сценарий содержит «Бюджет», статья не «ФАКТ» и не (БДР);
+    факт — тот же бюджетный сценарий и статья оборотов ровно «ФАКТ». Если колонки статьи нет
+    или по правилам выше не получается ни одной строки — используется прежнее разделение по словам
+    в поле «Сценарий» (план/факт).
+
     Возвращает None, если в reference_1c_dannye нет сценария+суммы или не удаётся агрегировать.
 
     ``reference_1c_dannye``: если передан (например из CLI-скрипта), session_state не используется.
@@ -122,7 +127,7 @@ def try_synthetic_budget_from_1c_dannye(
     # приводим к рублям, чтобы отображение в "млн руб." было корректным.
     t["_amt"] = _coerce_1c_money_series(t[amt]).fillna(0.0) * 1000.0
     sser = t[scen].astype(str)
-    # Выгрузки 1С: «БЮДЖЕТ …» или отдельное «ПЛАН» (без подстроки «ФАКТ» в том же слове сценария).
+    # Выгрузки 1С: по ТЗ план/факт из бюджетного сценария и статьи «ФАКТ» для факта; иначе — по сценарию.
     plan_mask = (
         sser.str.contains("бюджет", case=False, na=False)
         | sser.str.contains("budget", case=False, na=False)
@@ -134,10 +139,39 @@ def try_synthetic_budget_from_1c_dannye(
     fact_mask = sser.str.contains("факт", case=False, na=False) | sser.str.contains(
         "fact", case=False, na=False
     )
-    if not plan_mask.any() and not fact_mask.any():
-        return None
-    t["__plan"] = np.where(plan_mask.to_numpy(), t["_amt"].to_numpy(), 0.0)
-    t["__fact"] = np.where(fact_mask.to_numpy(), t["_amt"].to_numpy(), 0.0)
+
+    use_article_split = bool(art and art in t.columns)
+    plan_hit = pd.Series(False, index=t.index)
+    fact_hit = pd.Series(False, index=t.index)
+    if use_article_split:
+        scen_budget = sser.str.contains("бюджет", case=False, na=False) | sser.str.contains(
+            "budget", case=False, na=False
+        )
+        art_norm = (
+            t[art]
+            .astype(str)
+            .str.replace("\xa0", " ", regex=False)
+            .str.replace("\u200b", "", regex=False)
+            .str.strip()
+            .str.casefold()
+        )
+        is_fact_article = art_norm.eq("факт")
+        plan_hit = scen_budget & (~is_fact_article)
+        fact_hit = scen_budget & is_fact_article
+        if not (bool(plan_hit.any()) or bool(fact_hit.any())):
+            use_article_split = False
+
+    if use_article_split:
+        amt_np = t["_amt"].to_numpy()
+        t["__plan"] = np.where(plan_hit.to_numpy(), amt_np, 0.0)
+        t["__fact"] = np.where(fact_hit.to_numpy(), amt_np, 0.0)
+        if not bool(fact_hit.any()) and bool(fact_mask.any()):
+            t["__fact"] = np.where(fact_mask.to_numpy(), amt_np, t["__fact"].to_numpy())
+    else:
+        if not plan_mask.any() and not fact_mask.any():
+            return None
+        t["__plan"] = np.where(plan_mask.to_numpy(), t["_amt"].to_numpy(), 0.0)
+        t["__fact"] = np.where(fact_mask.to_numpy(), t["_amt"].to_numpy(), 0.0)
     t["_d"] = _parse_1c_period_series(t[per])
     t = t[t["_d"].notna()].copy()
     if t.empty:

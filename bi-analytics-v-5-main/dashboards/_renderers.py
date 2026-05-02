@@ -7070,7 +7070,13 @@ def dashboard_budget_by_period(df):
         return out
 
     # Сетка фильтров; чекбоксы — после фильтров (П.9)
-    col1, col2 = st.columns(2)
+    df = _derive_bdds_dimensions(df)
+
+    hide_adjusted = True
+    hide_reserve = False
+
+    filtered_df = df.copy()
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         period_type = st.selectbox(
@@ -7080,33 +7086,50 @@ def dashboard_budget_by_period(df):
         period_type_en = period_map.get(period_type, "Month")
 
     with col2:
-        if "project name" in df.columns:
-            projects = ["Все"] + _unique_project_labels_for_select(df["project name"])
+        if "project name" in filtered_df.columns:
+            projects = ["Все"] + _unique_project_labels_for_select(filtered_df["project name"])
             selected_project = st.selectbox(
                 "Фильтр по проекту", projects, key="budget_project"
             )
         else:
             selected_project = "Все"
 
-    df = _derive_bdds_dimensions(df)
-
-    hide_adjusted = True
-    hide_reserve = False
-
-    # Apply filters - fix filtering
-    filtered_df = df.copy()
     if selected_project != "Все" and "project name" in filtered_df.columns:
         filtered_df = filtered_df[
             filtered_df["project name"].map(_project_filter_norm_key)
             == _project_filter_norm_key(selected_project)
-        ]
+        ].copy()
+
+    with col3:
+        _year_options = ["Все"]
+        if "plan end" in filtered_df.columns:
+            _pe_for_year = pd.to_datetime(filtered_df["plan end"], errors="coerce")
+            if _pe_for_year.notna().any():
+                _year_options.extend(
+                    str(int(y))
+                    for y in sorted(_pe_for_year.dt.year.dropna().astype(int).unique())
+                )
+        selected_year = st.selectbox(
+            "Год",
+            _year_options,
+            key="budget_plan_end_year",
+            help="Фильтр по календарному году поля «Конец план» (plan end).",
+        )
+
+    if (
+        selected_year != "Все"
+        and "plan end" in filtered_df.columns
+        and str(selected_year).strip().isdigit()
+    ):
+        _y_i = int(selected_year)
+        _pe_y_f = pd.to_datetime(filtered_df["plan end"], errors="coerce")
+        filtered_df = filtered_df[_pe_y_f.dt.year == _y_i].copy()
 
     ensure_date_columns(filtered_df)
     _bdds_cal_start = None
     _bdds_cal_end = None
-    # R23-13.1 (стр.34): фильтр «Год» заменён на фильтр-календарь «Период»
-    # (диапазон дат по «plan end»); селектор гранулярности (месяц/квартал/год)
-    # уже присутствует выше ("Группировать по").
+    # R23-13.1 (стр.34): календарь «Период» по диапазону «plan end»; дополнительно
+    # селектор «Год» (колонка фильтров) и «Группировать по» (месяц/квартал/год).
     if "plan end" in filtered_df.columns:
         _pe_series = pd.to_datetime(filtered_df["plan end"], errors="coerce")
         if _pe_series.notna().any():
@@ -7114,31 +7137,34 @@ def dashboard_budget_by_period(df):
             _pe_max = _pe_series.max()
             _def_start = _pe_min.date() if pd.notna(_pe_min) else None
             _def_end = _pe_max.date() if pd.notna(_pe_max) else None
-            _range_kw = {
-                "label": "Период",
-                "key": "budget_period_range",
-                "help": "Фильтр по диапазону дат (поле «Конец план»).",
+            _from_kw: dict = {
+                "label": "С",
+                "key": "budget_period_from",
+                "help": "Начало диапазона по полю «Конец план».",
+                "format": "DD.MM.YYYY",
+            }
+            _to_kw: dict = {
+                "label": "По",
+                "key": "budget_period_to",
+                "help": "Конец диапазона по полю «Конец план».",
                 "format": "DD.MM.YYYY",
             }
             if _def_start and _def_end and _def_start <= _def_end:
-                _range_kw["value"] = (_def_start, _def_end)
-                _range_kw["min_value"] = _def_start
-                _range_kw["max_value"] = _def_end
-            _period_range = st.date_input(**_range_kw)
+                _from_kw["value"] = _def_start
+                _to_kw["value"] = _def_end
+                _from_kw["min_value"] = _def_start
+                _from_kw["max_value"] = _def_end
+                _to_kw["min_value"] = _def_start
+                _to_kw["max_value"] = _def_end
+            _bdds_pc_from, _bdds_pc_to = st.columns(2)
+            with _bdds_pc_from:
+                _period_from = st.date_input(**_from_kw)
+            with _bdds_pc_to:
+                _period_to = st.date_input(**_to_kw)
             components.html(
                 """
                 <script>
                 (function() {
-                  const rootDoc = window.parent && window.parent.document ? window.parent.document : document;
-                  const hid = "st-bdds-hide-datepicker-quickselect";
-                  let tag = rootDoc.getElementById(hid);
-                  if (!tag) {
-                    tag = rootDoc.createElement("style");
-                    tag.id = hid;
-                    rootDoc.head.appendChild(tag);
-                  }
-                  tag.textContent = "";
-
                   const dict = new Map([
                     ["January","Январь"],["February","Февраль"],["March","Март"],["April","Апрель"],
                     ["May","Май"],["June","Июнь"],["July","Июль"],["August","Август"],
@@ -7147,16 +7173,14 @@ def dashboard_budget_by_period(df):
                     ["None","Нет"]
                   ]);
                   const root = window.parent && window.parent.document ? window.parent.document : document;
-
                   const shouldSkip = (el) => {
                     if (!el || !el.tagName) return true;
                     const t = el.tagName.toLowerCase();
                     if (t === "script" || t === "style" || t === "textarea" || t === "input") return true;
-                    if (t === "svg" || t === "path") return true; // не трогаем иконки
+                    if (t === "svg" || t === "path") return true;
                     if (el.isContentEditable) return true;
                     return false;
                   };
-
                   const replaceInTextNode = (node) => {
                     const raw = node.nodeValue || "";
                     const txt = raw.trim();
@@ -7167,11 +7191,10 @@ def dashboard_budget_by_period(df):
                     }
                     let next = raw;
                     for (const [en, ru] of dict.entries()) {
-                      next = next.replace(new RegExp("\\\\b" + en + "\\\\b", "g"), ru);
+                      next = next.replace(new RegExp("\\b" + en + "\\b", "g"), ru);
                     }
                     if (next !== raw) node.nodeValue = next;
                   };
-
                   const apply = () => {
                     const all = root.querySelectorAll("*");
                     all.forEach((el) => {
@@ -7184,18 +7207,22 @@ def dashboard_budget_by_period(df):
                     });
                   };
                   apply();
-                  const obs = new MutationObserver(apply);
-                  obs.observe(root.body, { childList: true, subtree: true });
+                  try {
+                    const obs = new MutationObserver(apply);
+                    if (root.body) obs.observe(root.body, { childList: true, subtree: true });
+                  } catch (e) {}
                 })();
                 </script>
                 """,
                 height=0,
                 width=0,
             )
-            if isinstance(_period_range, (list, tuple)) and len(_period_range) == 2:
-                _start_dt = pd.to_datetime(_period_range[0], errors="coerce")
-                _end_dt = pd.to_datetime(_period_range[1], errors="coerce")
+            if _period_from is not None and _period_to is not None:
+                _start_dt = pd.to_datetime(_period_from, errors="coerce")
+                _end_dt = pd.to_datetime(_period_to, errors="coerce")
                 if pd.notna(_start_dt) and pd.notna(_end_dt):
+                    if _start_dt > _end_dt:
+                        _start_dt, _end_dt = _end_dt, _start_dt
                     filtered_df = filtered_df[
                         (_pe_series >= _start_dt)
                         & (_pe_series <= (_end_dt + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)))
@@ -7549,43 +7576,111 @@ def dashboard_budget_by_period(df):
 
     _budget_period_chart()
 
-    # Summary table — суммы в млн руб., строка «Итого» (ТЗ)
-    st.subheader(f"Сводка бюджета (по {period_label.lower()})")
-    table_display = budget_summary.drop(columns=["period_original"], errors="ignore").copy()
-    _tot_vals = {
-        period_col: "Итого",
-        "project name": "",
-        "budget plan": table_display["budget plan"].sum(),
-        "budget fact": table_display["budget fact"].sum(),
-        "reserve budget": table_display["reserve budget"].sum(),
-    }
-    if adjusted_budget_col and adjusted_budget_col in table_display.columns:
-        _tot_vals[adjusted_budget_col] = table_display[adjusted_budget_col].sum()
-    table_display = pd.concat([table_display, pd.DataFrame([_tot_vals])], ignore_index=True)
-    budget_cols_table = ["budget plan", "budget fact", "reserve budget"]
-    if adjusted_budget_col and adjusted_budget_col in table_display.columns:
-        budget_cols_table = budget_cols_table + [adjusted_budget_col]
-    for col in budget_cols_table:
-        if col in table_display.columns:
-            table_display[col] = (table_display[col] / 1e6).round(2).apply(
-                lambda x: f"{float(x):.2f} млн руб." if pd.notna(x) else ""
-            )
-    table_display = table_display.rename(columns={
-        "budget plan": "БДДС план, млн руб.",
-        "budget fact": "БДДС факт, млн руб.",
-        "reserve budget": "Отклонение (факт − план), млн руб.",
-        "project name": "Проект",
-        **({adjusted_budget_col: "Скорр. бюджет, млн руб."} if adjusted_budget_col and adjusted_budget_col in table_display.columns else {}),
-    })
-    if period_col in table_display.columns:
-        table_display = table_display.rename(columns={period_col: period_label})
-    st.markdown(
-        budget_table_to_html(
-            table_display,
-            finance_deviation_column="Отклонение (факт − план), млн руб.",
-        ),
-        unsafe_allow_html=True,
-    )
+    # Сводная таблица: накопительные суммы по периоду (график — отдельно, с переключателем).
+    st.subheader(f"Сводка бюджета (по {period_label.lower()}, накопительно)")
+    _bdds_dev_col = "Отклонение (факт − план), млн руб."
+    if selected_project != "Все":
+        _tbl_pk = _project_filter_norm_key(selected_project)
+        _tbl_period = budget_summary[
+            budget_summary["project name"]
+            .map(_project_filter_norm_key)
+            .map(lambda rk: _project_norm_key_matches_msp_keys(rk, {_tbl_pk}))
+        ].copy()
+    else:
+        _agg_tbl = {"budget plan": "sum", "budget fact": "sum", "reserve budget": "sum"}
+        if adjusted_budget_col and adjusted_budget_col in budget_summary.columns:
+            _agg_tbl[adjusted_budget_col] = "sum"
+        _tbl_period = budget_summary.groupby("period_original", dropna=False).agg(_agg_tbl).reset_index()
+        _tbl_period[period_col] = _tbl_period["period_original"].apply(format_period_ru)
+
+    _tbl_period = _tbl_period.sort_values("period_original").reset_index(drop=True)
+
+    if _tbl_period.empty:
+        st.info("Нет строк для сводной таблицы по выбранным фильтрам.")
+    else:
+        _plan_tot = float(_tbl_period["budget plan"].fillna(0.0).sum())
+        _fact_tot = float(_tbl_period["budget fact"].fillna(0.0).sum())
+        _res_tot = float(_tbl_period["reserve budget"].fillna(0.0).sum())
+        _adj_tot = None
+        if adjusted_budget_col and adjusted_budget_col in _tbl_period.columns:
+            _adj_tot = float(_tbl_period[adjusted_budget_col].fillna(0.0).sum())
+
+        _tbl_c = _tbl_period.copy()
+        if hide_adjusted and adjusted_budget_col and adjusted_budget_col in _tbl_c.columns:
+            _tbl_c = _tbl_c.drop(columns=[adjusted_budget_col], errors="ignore")
+        for _c in ("budget plan", "budget fact", "reserve budget"):
+            _tbl_c[_c] = _tbl_c[_c].fillna(0.0).cumsum()
+        if (
+            adjusted_budget_col
+            and adjusted_budget_col in _tbl_c.columns
+            and not hide_adjusted
+        ):
+            _tbl_c[adjusted_budget_col] = _tbl_c[adjusted_budget_col].fillna(0.0).cumsum()
+
+        if selected_project == "Все":
+            _tbl_c = _tbl_c.drop(columns=["project name"], errors="ignore")
+
+        _tbl_c = _tbl_c.drop(columns=["period_original"], errors="ignore")
+        _tbl_c["_row_kind"] = ""
+
+        _tot_vals = {
+            period_col: "ИТОГО",
+            "_row_kind": "total",
+            "budget plan": _plan_tot,
+            "budget fact": _fact_tot,
+            "reserve budget": _res_tot,
+        }
+        if selected_project != "Все":
+            _tot_vals["project name"] = ""
+        if (
+            adjusted_budget_col
+            and adjusted_budget_col in _tbl_period.columns
+            and not hide_adjusted
+        ):
+            _tot_vals[adjusted_budget_col] = _adj_tot if _adj_tot is not None else 0.0
+
+        _tbl_c = pd.concat([_tbl_c, pd.DataFrame([_tot_vals])], ignore_index=True)
+
+        budget_cols_table = ["budget plan", "budget fact", "reserve budget"]
+        if (
+            adjusted_budget_col
+            and adjusted_budget_col in _tbl_c.columns
+            and not hide_adjusted
+        ):
+            budget_cols_table = budget_cols_table + [adjusted_budget_col]
+
+        for col in budget_cols_table:
+            if col in _tbl_c.columns:
+                _tbl_c[col] = (_tbl_c[col] / 1e6).round(2).apply(
+                    lambda x: f"{float(x):.2f} млн руб." if pd.notna(x) else ""
+                )
+
+        _rename_tbl = {
+            "budget plan": "Бюджет План, млн руб.",
+            "budget fact": "Бюджет Факт, млн руб.",
+            "reserve budget": _bdds_dev_col,
+            "project name": "Проект",
+            **(
+                {adjusted_budget_col: "Скорр. бюджет, млн руб."}
+                if adjusted_budget_col
+                and adjusted_budget_col in _tbl_c.columns
+                and not hide_adjusted
+                else {}
+            ),
+        }
+        table_display = _tbl_c.rename(columns=_rename_tbl)
+        if period_col in table_display.columns:
+            table_display = table_display.rename(columns={period_col: period_label})
+
+        st.markdown(
+            budget_table_to_html(
+                table_display,
+                finance_deviation_column=_bdds_dev_col,
+                row_kind_column="_row_kind",
+                emphasize_row_kinds=("total",),
+            ),
+            unsafe_allow_html=True,
+        )
 
     # R23-13.2 (стр.35): в БДДС дополнительно вывести таблицу
     # «Сводка бюджета по проекту» (как в БДР) с итоговой строкой «ИТОГО».
@@ -7609,6 +7704,7 @@ def dashboard_budget_by_period(df):
                 "Отклонение (факт − план), млн руб.": (_bp["_dev"] / 1e6).round(2).apply(
                     lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
                 ),
+                "_row_kind": "",
             }
         )
         if not _proj_tbl.empty:
@@ -7621,6 +7717,7 @@ def dashboard_budget_by_period(df):
                         "План, млн руб.": f"{_plan_sum / 1e6:.2f}",
                         "Факт, млн руб.": f"{_fact_sum / 1e6:.2f}",
                         "Отклонение (факт − план), млн руб.": f"{(_fact_sum - _plan_sum) / 1e6:.2f}",
+                        "_row_kind": "total",
                     }
                 ]
             )
@@ -7629,6 +7726,8 @@ def dashboard_budget_by_period(df):
             budget_table_to_html(
                 _proj_tbl,
                 finance_deviation_column="Отклонение (факт − план), млн руб.",
+                row_kind_column="_row_kind",
+                emphasize_row_kinds=("total",),
             ),
             unsafe_allow_html=True,
         )
@@ -8568,7 +8667,7 @@ def dashboard_bdr(df):
         ]
 
     ensure_date_columns(filtered_df)
-    # Фильтр-календарь «Период» — как БДДС: тот же help/format и общий стиль/скрипт для datepicker.
+    # Фильтр периода — два одиночных date_input («С»/«По»), без range quick select Streamlit.
     if "plan end" in filtered_df.columns:
         _pe_series_bdr = pd.to_datetime(filtered_df["plan end"], errors="coerce")
         if _pe_series_bdr.notna().any():
@@ -8576,31 +8675,34 @@ def dashboard_bdr(df):
             _bdr_max = _pe_series_bdr.max()
             _bdr_start = _bdr_min.date() if pd.notna(_bdr_min) else None
             _bdr_end = _bdr_max.date() if pd.notna(_bdr_max) else None
-            _bdr_range_kw = {
-                "label": "Период",
-                "key": "bdr_period_range",
-                "help": "Фильтр по диапазону дат (поле «Конец план»).",
+            _bdr_from_kw: dict = {
+                "label": "С",
+                "key": "bdr_period_from",
+                "help": "Начало диапазона по полю «Конец план».",
+                "format": "DD.MM.YYYY",
+            }
+            _bdr_to_kw: dict = {
+                "label": "По",
+                "key": "bdr_period_to",
+                "help": "Конец диапазона по полю «Конец план».",
                 "format": "DD.MM.YYYY",
             }
             if _bdr_start and _bdr_end and _bdr_start <= _bdr_end:
-                _bdr_range_kw["value"] = (_bdr_start, _bdr_end)
-                _bdr_range_kw["min_value"] = _bdr_start
-                _bdr_range_kw["max_value"] = _bdr_end
-            _bdr_period_range = st.date_input(**_bdr_range_kw)
+                _bdr_from_kw["value"] = _bdr_start
+                _bdr_to_kw["value"] = _bdr_end
+                _bdr_from_kw["min_value"] = _bdr_start
+                _bdr_from_kw["max_value"] = _bdr_end
+                _bdr_to_kw["min_value"] = _bdr_start
+                _bdr_to_kw["max_value"] = _bdr_end
+            _bdr_pc_from, _bdr_pc_to = st.columns(2)
+            with _bdr_pc_from:
+                _bdr_period_from = st.date_input(**_bdr_from_kw)
+            with _bdr_pc_to:
+                _bdr_period_to = st.date_input(**_bdr_to_kw)
             components.html(
                 """
                 <script>
                 (function() {
-                  const rootDoc = window.parent && window.parent.document ? window.parent.document : document;
-                  const hid = "st-bdds-hide-datepicker-quickselect";
-                  let tag = rootDoc.getElementById(hid);
-                  if (!tag) {
-                    tag = rootDoc.createElement("style");
-                    tag.id = hid;
-                    rootDoc.head.appendChild(tag);
-                  }
-                  tag.textContent = "";
-
                   const dict = new Map([
                     ["January","Январь"],["February","Февраль"],["March","Март"],["April","Апрель"],
                     ["May","Май"],["June","Июнь"],["July","Июль"],["August","Август"],
@@ -8609,7 +8711,6 @@ def dashboard_bdr(df):
                     ["None","Нет"]
                   ]);
                   const root = window.parent && window.parent.document ? window.parent.document : document;
-
                   const shouldSkip = (el) => {
                     if (!el || !el.tagName) return true;
                     const t = el.tagName.toLowerCase();
@@ -8618,7 +8719,6 @@ def dashboard_bdr(df):
                     if (el.isContentEditable) return true;
                     return false;
                   };
-
                   const replaceInTextNode = (node) => {
                     const raw = node.nodeValue || "";
                     const txt = raw.trim();
@@ -8629,11 +8729,10 @@ def dashboard_bdr(df):
                     }
                     let next = raw;
                     for (const [en, ru] of dict.entries()) {
-                      next = next.replace(new RegExp("\\\\b" + en + "\\\\b", "g"), ru);
+                      next = next.replace(new RegExp("\\b" + en + "\\b", "g"), ru);
                     }
                     if (next !== raw) node.nodeValue = next;
                   };
-
                   const apply = () => {
                     const all = root.querySelectorAll("*");
                     all.forEach((el) => {
@@ -8646,18 +8745,22 @@ def dashboard_bdr(df):
                     });
                   };
                   apply();
-                  const obs = new MutationObserver(apply);
-                  obs.observe(root.body, { childList: true, subtree: true });
+                  try {
+                    const obs = new MutationObserver(apply);
+                    if (root.body) obs.observe(root.body, { childList: true, subtree: true });
+                  } catch (e) {}
                 })();
                 </script>
                 """,
                 height=0,
                 width=0,
             )
-            if isinstance(_bdr_period_range, (list, tuple)) and len(_bdr_period_range) == 2:
-                _bdr_from = pd.to_datetime(_bdr_period_range[0], errors="coerce")
-                _bdr_to = pd.to_datetime(_bdr_period_range[1], errors="coerce")
+            if _bdr_period_from is not None and _bdr_period_to is not None:
+                _bdr_from = pd.to_datetime(_bdr_period_from, errors="coerce")
+                _bdr_to = pd.to_datetime(_bdr_period_to, errors="coerce")
                 if pd.notna(_bdr_from) and pd.notna(_bdr_to):
+                    if _bdr_from > _bdr_to:
+                        _bdr_from, _bdr_to = _bdr_to, _bdr_from
                     filtered_df = filtered_df[
                         (_pe_series_bdr >= _bdr_from)
                         & (_pe_series_bdr <= (_bdr_to + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)))
@@ -12607,16 +12710,6 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             """
                 <script>
                 (function() {
-                  const rootDoc = window.parent && window.parent.document ? window.parent.document : document;
-                  const hid = "st-bdds-hide-datepicker-quickselect";
-                  let tag = rootDoc.getElementById(hid);
-                  if (!tag) {
-                    tag = rootDoc.createElement("style");
-                    tag.id = hid;
-                    rootDoc.head.appendChild(tag);
-                  }
-                  tag.textContent = "";
-
                   const dict = new Map([
                     ["January","Январь"],["February","Февраль"],["March","Март"],["April","Апрель"],
                     ["May","Май"],["June","Июнь"],["July","Июль"],["August","Август"],

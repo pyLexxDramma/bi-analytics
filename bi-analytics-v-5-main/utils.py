@@ -768,6 +768,7 @@ def budget_table_to_html(
     deviation_semaphore_style: bool = False,
     row_kind_column: Optional[str] = None,
     emphasize_row_kinds: tuple[str, ...] = ("project", "total"),
+    emphasize_row_font_em: float = 1.12,
 ) -> str:
     """
     Строит HTML таблицы бюджета с раскраской колонки отклонения.
@@ -800,7 +801,8 @@ def budget_table_to_html(
         f'<table style="width:100%; border-collapse: collapse; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; font-size: 13px;">',
         "<thead><tr>",
     ]
-    for col in df.columns:
+    header_cols = [c for c in df.columns if c != row_kind_column]
+    for col in header_cols:
         col_esc = html_module.escape(str(col))
         parts.append(
             f'<th style="border: 1px solid rgba(255,255,255,0.3); padding: 6px 8px; background-color: {TABLE_BG_COLOR};">{col_esc}</th>'
@@ -815,8 +817,10 @@ def budget_table_to_html(
             except Exception:
                 row_kind = ""
         is_emphasized_row = row_kind in {str(x).strip().casefold() for x in emphasize_row_kinds}
+        _efs = float(emphasize_row_font_em) if emphasize_row_font_em and emphasize_row_font_em > 1 else 1.12
         row_style = (
-            f' style="font-weight:700; border-top:1px solid rgba(255,255,255,0.35);"'
+            " style=\"font-weight:700; "
+            f"font-size:{_efs}em; border-top:1px solid rgba(255,255,255,0.35);\""
             if is_emphasized_row
             else ""
         )
