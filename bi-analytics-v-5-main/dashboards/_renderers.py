@@ -6981,20 +6981,6 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
 def dashboard_budget_by_period(df):
     st.header("БДДС")
 
-    def _clean_filter_label(v) -> str:
-        if v is None or (isinstance(v, float) and pd.isna(v)):
-            return ""
-        s = str(v).replace("\xa0", " ").replace("\u200b", "").replace("\ufeff", "").strip()
-        if not s:
-            return ""
-        for ch in ('"', "'", "`", "«", "»", "“", "”", "‘", "’"):
-            s = s.replace(ch, "")
-        # MSP-артефакты: маркеры/буллеты/звездочки в начале строки
-        s = re.sub(r"^[\*\-–—•·\s]+", "", s)
-        s = re.sub(r"\s+", " ", s)
-        s = re.sub(r"\s*[,;:.-]\s*$", "", s).strip()
-        return s
-
     def _derive_bdds_dimensions(_df: pd.DataFrame) -> pd.DataFrame:
         """
         ТЗ БДДС:
@@ -7104,51 +7090,6 @@ def dashboard_budget_by_period(df):
 
     df = _derive_bdds_dimensions(df)
 
-    col3, col4 = st.columns(2)
-    with col3:
-        lot_base_col = "lot_effective" if "lot_effective" in df.columns else ("lot" if "lot" in df.columns else ("section" if "section" in df.columns else None))
-        if lot_base_col:
-            _lot_pairs = []
-            for raw in df[lot_base_col].dropna().tolist():
-                clean = _clean_filter_label(raw)
-                if clean:
-                    _lot_pairs.append((clean, str(raw).strip()))
-            _lot_raw_by_display = {}
-            for clean, raw in sorted(set(_lot_pairs), key=lambda t: t[0]):
-                _lot_raw_by_display.setdefault(clean, raw)
-            _lot_opts = ["Все"] + sorted(_lot_raw_by_display.keys())
-            _sel_lot_display = st.selectbox("Фильтр по лоту", _lot_opts, key="budget_lot")
-            selected_lot = "Все" if _sel_lot_display == "Все" else _lot_raw_by_display.get(_sel_lot_display, _sel_lot_display)
-        else:
-            selected_lot = "Все"
-    with col4:
-        if "stage_l2" in df.columns:
-            _stage_pairs = []
-            for raw in df["stage_l2"].dropna().tolist():
-                clean = _clean_filter_label(raw)
-                if clean:
-                    _stage_pairs.append((clean, str(raw).strip()))
-            _stage_raw_by_display = {}
-            for clean, raw in sorted(set(_stage_pairs), key=lambda t: t[0]):
-                _stage_raw_by_display.setdefault(clean, raw)
-            _stage_opts = ["Все"] + sorted(_stage_raw_by_display.keys())
-            _sel_stage_display = st.selectbox("Фильтр по этапу", _stage_opts, key="budget_section")
-            selected_section = "Все" if _sel_stage_display == "Все" else _stage_raw_by_display.get(_sel_stage_display, _sel_stage_display)
-        elif "section" in df.columns:
-            _section_pairs = []
-            for raw in df["section"].dropna().tolist():
-                clean = _clean_filter_label(raw)
-                if clean:
-                    _section_pairs.append((clean, str(raw).strip()))
-            _section_raw_by_display = {}
-            for clean, raw in sorted(set(_section_pairs), key=lambda t: t[0]):
-                _section_raw_by_display.setdefault(clean, raw)
-            _section_opts = ["Все"] + sorted(_section_raw_by_display.keys())
-            _sel_section_display = st.selectbox("Фильтр по этапу", _section_opts, key="budget_section")
-            selected_section = "Все" if _sel_section_display == "Все" else _section_raw_by_display.get(_sel_section_display, _sel_section_display)
-        else:
-            selected_section = "Все"
-
     hide_adjusted = True
     hide_reserve = False
 
@@ -7159,18 +7100,6 @@ def dashboard_budget_by_period(df):
             filtered_df["project name"].map(_project_filter_norm_key)
             == _project_filter_norm_key(selected_project)
         ]
-    if selected_lot != "Все":
-        lot_filter_col = "lot_effective" if "lot_effective" in filtered_df.columns else ("lot" if "lot" in filtered_df.columns else None)
-        if lot_filter_col and lot_filter_col in filtered_df.columns:
-            filtered_df = filtered_df[
-                filtered_df[lot_filter_col].astype(str).str.strip() == str(selected_lot).strip()
-            ]
-    if selected_section != "Все":
-        stage_filter_col = "stage_l2" if "stage_l2" in filtered_df.columns else ("section" if "section" in filtered_df.columns else None)
-        if stage_filter_col and stage_filter_col in filtered_df.columns:
-            filtered_df = filtered_df[
-                filtered_df[stage_filter_col].astype(str).str.strip() == str(selected_section).strip()
-            ]
 
     ensure_date_columns(filtered_df)
     _bdds_cal_start = None
@@ -7360,517 +7289,349 @@ def dashboard_budget_by_period(df):
             filtered_df[adjusted_budget_col], errors="coerce"
         )
 
-    # Колонка для группировки по лотам (лот = section или колонка "лот"/"lot")
-    lot_col = (
-        "lot_effective"
-        if "lot_effective" in filtered_df.columns
-        else ("лот" if "лот" in filtered_df.columns else ("lot" if "lot" in filtered_df.columns else "section"))
+    # Group by period and project
+    agg_dict = {"budget plan": "sum", "budget fact": "sum", "reserve budget": "sum"}
+    if adjusted_budget_col:
+        agg_dict[adjusted_budget_col] = "sum"
+
+    budget_summary = (
+        filtered_df.groupby([period_col, "project name"]).agg(agg_dict).reset_index()
     )
-    if lot_col not in filtered_df.columns:
-        lot_col = "section"  # fallback для группировки по лотам
 
-    tab_period, tab_lot = st.tabs(["По периодам", "По лотам"])
+    # Store original period values for sorting before formatting
+    budget_summary["period_original"] = budget_summary[period_col]
+    budget_summary[period_col] = budget_summary[period_col].apply(format_period_ru)
 
-    with tab_period:
-        # Group by period and project
-        agg_dict = {"budget plan": "sum", "budget fact": "sum", "reserve budget": "sum"}
-        if adjusted_budget_col:
-            agg_dict[adjusted_budget_col] = "sum"
-
-        budget_summary = (
-            filtered_df.groupby([period_col, "project name"]).agg(agg_dict).reset_index()
+    @st.fragment
+    def _budget_period_chart():
+        view_type = st.selectbox(
+            "Вид отображения", ["По месяцам", "Накопительно"], key="budget_period_view"
         )
-
-        # Store original period values for sorting before formatting
-        budget_summary["period_original"] = budget_summary[period_col]
-        budget_summary[period_col] = budget_summary[period_col].apply(format_period_ru)
-
-        @st.fragment
-        def _budget_period_chart():
-            view_type = st.selectbox(
-                "Вид отображения", ["По месяцам", "Накопительно"], key="budget_period_view"
+        if selected_project != "Все":
+            _sel_pk_chart = _project_filter_norm_key(selected_project)
+            project_data = budget_summary[
+                budget_summary["project name"]
+                .map(_project_filter_norm_key)
+                .map(lambda rk: _project_norm_key_matches_msp_keys(rk, {_sel_pk_chart}))
+            ].copy()
+        else:
+            agg_dict_all = {
+                "budget plan": "sum",
+                "budget fact": "sum",
+                "reserve budget": "sum",
+                "period_original": "first",
+            }
+            if adjusted_budget_col:
+                agg_dict_all[adjusted_budget_col] = "sum"
+            project_data = (
+                budget_summary.groupby(period_col).agg(agg_dict_all).reset_index()
             )
-            if selected_project != "Все":
-                _sel_pk_chart = _project_filter_norm_key(selected_project)
-                project_data = budget_summary[
-                    budget_summary["project name"]
-                    .map(_project_filter_norm_key)
-                    .map(lambda rk: _project_norm_key_matches_msp_keys(rk, {_sel_pk_chart}))
-                ].copy()
-            else:
-                agg_dict_all = {
-                    "budget plan": "sum",
-                    "budget fact": "sum",
-                    "reserve budget": "sum",
-                    "period_original": "first",
-                }
-                if adjusted_budget_col:
-                    agg_dict_all[adjusted_budget_col] = "sum"
-                project_data = (
-                    budget_summary.groupby(period_col).agg(agg_dict_all).reset_index()
-                )
-            if project_data["period_original"].dtype == "object":
-                try:
-                    project_data["period_sort"] = project_data["period_original"].apply(
-                        lambda x: (
-                            x if isinstance(x, pd.Period)
-                            else (pd.Period(str(x), freq=period_type_en[0]) if pd.notna(x) else None)
-                        )
+        if project_data["period_original"].dtype == "object":
+            try:
+                project_data["period_sort"] = project_data["period_original"].apply(
+                    lambda x: (
+                        x if isinstance(x, pd.Period)
+                        else (pd.Period(str(x), freq=period_type_en[0]) if pd.notna(x) else None)
                     )
-                    project_data = project_data.sort_values("period_sort").copy()
-                    project_data = project_data.drop("period_sort", axis=1)
-                except Exception:
-                    project_data = project_data.sort_values("period_original").copy()
-            else:
+                )
+                project_data = project_data.sort_values("period_sort").copy()
+                project_data = project_data.drop("period_sort", axis=1)
+            except Exception:
                 project_data = project_data.sort_values("period_original").copy()
-            if view_type == "Накопительно":
-                project_data["budget plan"] = project_data["budget plan"].cumsum()
-                project_data["budget fact"] = project_data["budget fact"].cumsum()
-                project_data["reserve budget"] = project_data["reserve budget"].cumsum()
-                if adjusted_budget_col and adjusted_budget_col in project_data.columns:
-                    project_data[adjusted_budget_col] = project_data[adjusted_budget_col].cumsum()
-                title_suffix = " (накопительно)"
-            else:
-                title_suffix = ""
+        else:
+            project_data = project_data.sort_values("period_original").copy()
+        if view_type == "Накопительно":
+            project_data["budget plan"] = project_data["budget plan"].cumsum()
+            project_data["budget fact"] = project_data["budget fact"].cumsum()
+            project_data["reserve budget"] = project_data["reserve budget"].cumsum()
+            if adjusted_budget_col and adjusted_budget_col in project_data.columns:
+                project_data[adjusted_budget_col] = project_data[adjusted_budget_col].cumsum()
+            title_suffix = " (накопительно)"
+        else:
+            title_suffix = ""
 
-            # Узкие столбцы при длинной шкале: убираем «пустые» месяцы (иначе каждая колонка — тонкая).
-            _hide_zero_months = False
-            if period_type_en == "Month" and view_type == "По месяцам":
-                _hide_zero_months = st.checkbox(
-                    "Скрывать месяцы, где план и факт равны 0",
-                    value=True,
-                    key="budget_period_hide_zero_months",
-                )
-            if (
-                _hide_zero_months
-                and period_type_en == "Month"
-                and view_type == "По месяцам"
-                and not project_data.empty
-            ):
-                _pl = project_data["budget plan"].fillna(0.0)
-                _fc = project_data["budget fact"].fillna(0.0)
-                _keep = _pl.abs() + _fc.abs() > 0.5
-                if (
-                    adjusted_budget_col
-                    and adjusted_budget_col in project_data.columns
-                    and not hide_adjusted
-                ):
-                    _keep = _keep | (project_data[adjusted_budget_col].fillna(0.0).abs() > 0.5)
-                project_data = project_data.loc[_keep].copy()
-            if project_data.empty:
-                st.info(
-                    "Нет периодов для графика. Снимите «Скрывать месяцы, где план и факт равны 0» "
-                    "или расширьте период/фильтры."
-                )
-                return
-
-            _n = len(project_data)
-            _is_cumulative = view_type == "Накопительно"
-            # Накопительно + длинная шкала: подписи на столбцах дают «кашу»; легенда внизу наезжает на подписи оси X.
-            _hide_bar_value_labels = _is_cumulative and _n > 10
-            _tlbl = 0.005
-            _tfs = 8 if _n > 32 else 9 if _n > 20 else 10 if _n > 12 else 11
-            # Меньше «воздуха» между группами/столбцами — визуально шире бары.
-            if _n > 32:
-                _bg, _bgg = 0.04, 0.01
-            elif _n > 18:
-                _bg, _bgg = 0.06, 0.02
-            else:
-                _bg, _bgg = 0.1, 0.04
-            # Нижнее поле под наклонные подписи месяцев + легенда (см. _plotly_legend_horizontal_below_plot).
-            # Высота фигуры должна быть >= margin.t + margin.b + минимум для самих столбцов, иначе область графика ~0 px.
-            _leg_b_pre = 300
-            if _is_cumulative:
-                _leg_b_pre = max(340, min(520, 300 + int(_n * 4.8)))
-            elif _n > 24:
-                _leg_b_pre = max(300, min(460, 280 + int(_n * 3.5)))
-            _top_px_pre = 72 if (_hide_bar_value_labels and _n > 20) else 88
-            _min_plot_core_px = 400
-            _ch_base = 600 if _n <= 20 else int(min(1100, 520 + int(_n * 1.4)))
-            _ch = max(_ch_base, _top_px_pre + _leg_b_pre + _min_plot_core_px)
-            _ch = int(min(1400, _ch))
-            _xangle = -45 if _n <= 18 else -50 if _n <= 36 else -55
-            _x_standoff = 30 if _n <= 18 else (44 if _n <= 36 else 56)
-
-            _plan_txt = (
-                None
-                if _hide_bar_value_labels
-                else _finance_bar_text_mln_rub(project_data["budget plan"], min_abs_mln=_tlbl)
+        # Узкие столбцы при длинной шкале: убираем «пустые» месяцы (иначе каждая колонка — тонкая).
+        _hide_zero_months = False
+        if period_type_en == "Month" and view_type == "По месяцам":
+            _hide_zero_months = st.checkbox(
+                "Скрывать месяцы, где план и факт равны 0",
+                value=True,
+                key="budget_period_hide_zero_months",
             )
-            _fact_txt = (
-                None
-                if _hide_bar_value_labels
-                else _finance_bar_text_mln_rub(project_data["budget fact"], min_abs_mln=_tlbl)
-            )
-            _txt_pos = "none" if _hide_bar_value_labels else "outside"
-
-            fig = go.Figure()
-            fig.add_trace(
-                go.Bar(
-                    x=project_data[period_col],
-                    y=project_data["budget plan"].div(1e6),
-                    name="БДДС план",
-                    marker_color="#2E86AB",
-                    text=_plan_txt,
-                    textposition=_txt_pos,
-                    textfont=dict(size=_tfs, color="#f0f4f8"),
-                    customdata=project_data["budget plan"].apply(format_million_rub),
-                    hovertemplate="<b>%{x}</b><br>БДДС план: %{customdata}<br><extra></extra>",
-                )
-            )
-            fig.add_trace(
-                go.Bar(
-                    x=project_data[period_col],
-                    y=project_data["budget fact"].div(1e6),
-                    name="БДДС факт",
-                    marker_color="#A23B72",
-                    text=_fact_txt,
-                    textposition=_txt_pos,
-                    textfont=dict(size=_tfs, color="#f0f4f8"),
-                    customdata=project_data["budget fact"].apply(format_million_rub),
-                    hovertemplate="<b>%{x}</b><br>БДДС факт: %{customdata}<br><extra></extra>",
-                )
-            )
-            if not hide_reserve:
-                _dev_txt = (
-                    None
-                    if _hide_bar_value_labels
-                    else project_data["reserve budget"].apply(format_million_rub)
-                )
-                fig.add_trace(
-                    go.Bar(
-                        x=project_data[period_col],
-                        y=project_data["reserve budget"].div(1e6),
-                        name="Отклонение",
-                        marker_color="#e74c3c",
-                        text=_dev_txt,
-                        textposition=_txt_pos,
-                        textfont=dict(size=_tfs, color="#f0f4f8"),
-                        customdata=project_data["reserve budget"].apply(format_million_rub),
-                        hovertemplate="<b>%{x}</b><br>Отклонение: %{customdata}<br><extra></extra>",
-                        visible="legendonly",
-                    )
-                )
+        if (
+            _hide_zero_months
+            and period_type_en == "Month"
+            and view_type == "По месяцам"
+            and not project_data.empty
+        ):
+            _pl = project_data["budget plan"].fillna(0.0)
+            _fc = project_data["budget fact"].fillna(0.0)
+            _keep = _pl.abs() + _fc.abs() > 0.5
             if (
                 adjusted_budget_col
                 and adjusted_budget_col in project_data.columns
                 and not hide_adjusted
             ):
-                _adj_txt = (
-                    None
-                    if _hide_bar_value_labels
-                    else project_data[adjusted_budget_col].apply(format_million_rub)
-                )
-                fig.add_trace(
-                    go.Bar(
-                        x=project_data[period_col],
-                        y=project_data[adjusted_budget_col].div(1e6),
-                        name="Скорректированный бюджет",
-                        marker_color="#F18F01",
-                        text=_adj_txt,
-                        textposition=_txt_pos,
-                        textfont=dict(size=_tfs, color="#f0f4f8"),
-                        customdata=project_data[adjusted_budget_col].apply(format_million_rub),
-                        hovertemplate="<b>%{x}</b><br>Скорректированный бюджет: %{customdata}<br><extra></extra>",
-                    )
-                )
-            fig.update_layout(
-                title_text="",
-                yaxis_title="млн руб.",
-                barmode="group",
-                bargap=_bg,
-                bargroupgap=_bgg,
-                xaxis=dict(
-                    title=dict(text=period_label, standoff=_x_standoff),
-                    tickangle=_xangle,
-                    tickfont=dict(size=8 if _n > 28 else 9 if _n > 18 else 10),
-                    nticks=min(64, max(12, _n)),
-                ),
+                _keep = _keep | (project_data[adjusted_budget_col].fillna(0.0).abs() > 0.5)
+            project_data = project_data.loc[_keep].copy()
+        if project_data.empty:
+            st.info(
+                "Нет периодов для графика. Снимите «Скрывать месяцы, где план и факт равны 0» "
+                "или расширьте период/фильтры."
             )
-            fig = _apply_finance_bar_label_layout(fig)
-            if _n > 10:
-                try:
-                    fig.update_layout(uniformtext=dict(minsize=5, mode="hide"))
-                except Exception:
-                    pass
-            # Легенда под графиком (margin b согласован с расчётом высоты _ch выше).
-            _leg_b = _leg_b_pre
-            _leg_y = -0.34 if _n <= 20 else (-0.38 if _n <= 36 else -0.44)
-            _top_px = _top_px_pre
-            fig = _plotly_legend_horizontal_below_plot(
-                fig, bottom_px=_leg_b, legend_y=_leg_y, top_px=_top_px
+            return
+
+        _n = len(project_data)
+        _is_cumulative = view_type == "Накопительно"
+        # Накопительно + длинная шкала: подписи на столбцах дают «кашу»; легенда внизу наезжает на подписи оси X.
+        _hide_bar_value_labels = _is_cumulative and _n > 10
+        _tlbl = 0.005
+        _tfs = 8 if _n > 32 else 9 if _n > 20 else 10 if _n > 12 else 11
+        # Меньше «воздуха» между группами/столбцами — визуально шире бары.
+        if _n > 32:
+            _bg, _bgg = 0.04, 0.01
+        elif _n > 18:
+            _bg, _bgg = 0.06, 0.02
+        else:
+            _bg, _bgg = 0.1, 0.04
+        # Нижнее поле под наклонные подписи месяцев + легенда (см. _plotly_legend_horizontal_below_plot).
+        # Высота фигуры должна быть >= margin.t + margin.b + минимум для самих столбцов, иначе область графика ~0 px.
+        _leg_b_pre = 300
+        if _is_cumulative:
+            _leg_b_pre = max(340, min(520, 300 + int(_n * 4.8)))
+        elif _n > 24:
+            _leg_b_pre = max(300, min(460, 280 + int(_n * 3.5)))
+        _top_px_pre = 72 if (_hide_bar_value_labels and _n > 20) else 88
+        _min_plot_core_px = 400
+        _ch_base = 600 if _n <= 20 else int(min(1100, 520 + int(_n * 1.4)))
+        _ch = max(_ch_base, _top_px_pre + _leg_b_pre + _min_plot_core_px)
+        _ch = int(min(1400, _ch))
+        _xangle = -45 if _n <= 18 else -50 if _n <= 36 else -55
+        _x_standoff = 30 if _n <= 18 else (44 if _n <= 36 else 56)
+
+        _plan_txt = (
+            None
+            if _hide_bar_value_labels
+            else _finance_bar_text_mln_rub(project_data["budget plan"], min_abs_mln=_tlbl)
+        )
+        _fact_txt = (
+            None
+            if _hide_bar_value_labels
+            else _finance_bar_text_mln_rub(project_data["budget fact"], min_abs_mln=_tlbl)
+        )
+        _txt_pos = "none" if _hide_bar_value_labels else "outside"
+
+        fig = go.Figure()
+        fig.add_trace(
+            go.Bar(
+                x=project_data[period_col],
+                y=project_data["budget plan"].div(1e6),
+                name="БДДС план",
+                marker_color="#2E86AB",
+                text=_plan_txt,
+                textposition=_txt_pos,
+                textfont=dict(size=_tfs, color="#f0f4f8"),
+                customdata=project_data["budget plan"].apply(format_million_rub),
+                hovertemplate="<b>%{x}</b><br>БДДС план: %{customdata}<br><extra></extra>",
             )
+        )
+        fig.add_trace(
+            go.Bar(
+                x=project_data[period_col],
+                y=project_data["budget fact"].div(1e6),
+                name="БДДС факт",
+                marker_color="#A23B72",
+                text=_fact_txt,
+                textposition=_txt_pos,
+                textfont=dict(size=_tfs, color="#f0f4f8"),
+                customdata=project_data["budget fact"].apply(format_million_rub),
+                hovertemplate="<b>%{x}</b><br>БДДС факт: %{customdata}<br><extra></extra>",
+            )
+        )
+        if not hide_reserve:
+            _dev_txt = (
+                None
+                if _hide_bar_value_labels
+                else project_data["reserve budget"].apply(format_million_rub)
+            )
+            fig.add_trace(
+                go.Bar(
+                    x=project_data[period_col],
+                    y=project_data["reserve budget"].div(1e6),
+                    name="Отклонение",
+                    marker_color="#e74c3c",
+                    text=_dev_txt,
+                    textposition=_txt_pos,
+                    textfont=dict(size=_tfs, color="#f0f4f8"),
+                    customdata=project_data["reserve budget"].apply(format_million_rub),
+                    hovertemplate="<b>%{x}</b><br>Отклонение: %{customdata}<br><extra></extra>",
+                    visible="legendonly",
+                )
+            )
+        if (
+            adjusted_budget_col
+            and adjusted_budget_col in project_data.columns
+            and not hide_adjusted
+        ):
+            _adj_txt = (
+                None
+                if _hide_bar_value_labels
+                else project_data[adjusted_budget_col].apply(format_million_rub)
+            )
+            fig.add_trace(
+                go.Bar(
+                    x=project_data[period_col],
+                    y=project_data[adjusted_budget_col].div(1e6),
+                    name="Скорректированный бюджет",
+                    marker_color="#F18F01",
+                    text=_adj_txt,
+                    textposition=_txt_pos,
+                    textfont=dict(size=_tfs, color="#f0f4f8"),
+                    customdata=project_data[adjusted_budget_col].apply(format_million_rub),
+                    hovertemplate="<b>%{x}</b><br>Скорректированный бюджет: %{customdata}<br><extra></extra>",
+                )
+            )
+        fig.update_layout(
+            title_text="",
+            yaxis_title="млн руб.",
+            barmode="group",
+            bargap=_bg,
+            bargroupgap=_bgg,
+            xaxis=dict(
+                title=dict(text=period_label, standoff=_x_standoff),
+                tickangle=_xangle,
+                tickfont=dict(size=8 if _n > 28 else 9 if _n > 18 else 10),
+                nticks=min(64, max(12, _n)),
+            ),
+        )
+        fig = _apply_finance_bar_label_layout(fig)
+        if _n > 10:
             try:
-                fig.update_xaxes(
-                    title=dict(text=period_label, standoff=_x_standoff),
-                    automargin=True,
-                )
+                fig.update_layout(uniformtext=dict(minsize=5, mode="hide"))
             except Exception:
                 pass
-            if not project_data.empty:
-                _ymax = float(
-                    np.nanmax(
-                        np.concatenate(
-                            [
-                                project_data["budget plan"].div(1e6).to_numpy(),
-                                project_data["budget fact"].div(1e6).to_numpy(),
-                                project_data["reserve budget"].div(1e6).to_numpy(),
-                            ]
-                        )
+        # Легенда под графиком (margin b согласован с расчётом высоты _ch выше).
+        _leg_b = _leg_b_pre
+        _leg_y = -0.34 if _n <= 20 else (-0.38 if _n <= 36 else -0.44)
+        _top_px = _top_px_pre
+        fig = _plotly_legend_horizontal_below_plot(
+            fig, bottom_px=_leg_b, legend_y=_leg_y, top_px=_top_px
+        )
+        try:
+            fig.update_xaxes(
+                title=dict(text=period_label, standoff=_x_standoff),
+                automargin=True,
+            )
+        except Exception:
+            pass
+        if not project_data.empty:
+            _ymax = float(
+                np.nanmax(
+                    np.concatenate(
+                        [
+                            project_data["budget plan"].div(1e6).to_numpy(),
+                            project_data["budget fact"].div(1e6).to_numpy(),
+                            project_data["reserve budget"].div(1e6).to_numpy(),
+                        ]
                     )
                 )
-                if np.isfinite(_ymax) and _ymax > 0:
-                    fig.update_layout(yaxis=dict(range=[0, _ymax * 1.22]))
-            fig = apply_chart_background(fig)
-            # Не clamp’ить к 900: при больших margin и длинной шкале нужна полная высота.
-            render_chart(
-                fig,
-                caption_below=f"БДДС{title_suffix}",
-                height=_ch,
-                max_height=None,
             )
+            if np.isfinite(_ymax) and _ymax > 0:
+                fig.update_layout(yaxis=dict(range=[0, _ymax * 1.22]))
+        fig = apply_chart_background(fig)
+        # Не clamp’ить к 900: при больших margin и длинной шкале нужна полная высота.
+        render_chart(
+            fig,
+            caption_below=f"БДДС{title_suffix}",
+            height=_ch,
+            max_height=None,
+        )
 
-        _budget_period_chart()
+    _budget_period_chart()
 
-        # Summary table — суммы в млн руб., строка «Итого» (ТЗ)
-        st.subheader(f"Сводка бюджета (по {period_label.lower()})")
-        table_display = budget_summary.drop(columns=["period_original"], errors="ignore").copy()
-        _tot_vals = {
-            period_col: "Итого",
-            "project name": "",
-            "budget plan": table_display["budget plan"].sum(),
-            "budget fact": table_display["budget fact"].sum(),
-            "reserve budget": table_display["reserve budget"].sum(),
-        }
-        if adjusted_budget_col and adjusted_budget_col in table_display.columns:
-            _tot_vals[adjusted_budget_col] = table_display[adjusted_budget_col].sum()
-        table_display = pd.concat([table_display, pd.DataFrame([_tot_vals])], ignore_index=True)
-        budget_cols_table = ["budget plan", "budget fact", "reserve budget"]
-        if adjusted_budget_col and adjusted_budget_col in table_display.columns:
-            budget_cols_table = budget_cols_table + [adjusted_budget_col]
-        for col in budget_cols_table:
-            if col in table_display.columns:
-                table_display[col] = (table_display[col] / 1e6).round(2).apply(
-                    lambda x: f"{float(x):.2f} млн руб." if pd.notna(x) else ""
-                )
-        table_display = table_display.rename(columns={
-            "budget plan": "БДДС план, млн руб.",
-            "budget fact": "БДДС факт, млн руб.",
-            "reserve budget": "Отклонение (факт − план), млн руб.",
-            "project name": "Проект",
-            **({adjusted_budget_col: "Скорр. бюджет, млн руб."} if adjusted_budget_col and adjusted_budget_col in table_display.columns else {}),
-        })
-        if period_col in table_display.columns:
-            table_display = table_display.rename(columns={period_col: period_label})
+    # Summary table — суммы в млн руб., строка «Итого» (ТЗ)
+    st.subheader(f"Сводка бюджета (по {period_label.lower()})")
+    table_display = budget_summary.drop(columns=["period_original"], errors="ignore").copy()
+    _tot_vals = {
+        period_col: "Итого",
+        "project name": "",
+        "budget plan": table_display["budget plan"].sum(),
+        "budget fact": table_display["budget fact"].sum(),
+        "reserve budget": table_display["reserve budget"].sum(),
+    }
+    if adjusted_budget_col and adjusted_budget_col in table_display.columns:
+        _tot_vals[adjusted_budget_col] = table_display[adjusted_budget_col].sum()
+    table_display = pd.concat([table_display, pd.DataFrame([_tot_vals])], ignore_index=True)
+    budget_cols_table = ["budget plan", "budget fact", "reserve budget"]
+    if adjusted_budget_col and adjusted_budget_col in table_display.columns:
+        budget_cols_table = budget_cols_table + [adjusted_budget_col]
+    for col in budget_cols_table:
+        if col in table_display.columns:
+            table_display[col] = (table_display[col] / 1e6).round(2).apply(
+                lambda x: f"{float(x):.2f} млн руб." if pd.notna(x) else ""
+            )
+    table_display = table_display.rename(columns={
+        "budget plan": "БДДС план, млн руб.",
+        "budget fact": "БДДС факт, млн руб.",
+        "reserve budget": "Отклонение (факт − план), млн руб.",
+        "project name": "Проект",
+        **({adjusted_budget_col: "Скорр. бюджет, млн руб."} if adjusted_budget_col and adjusted_budget_col in table_display.columns else {}),
+    })
+    if period_col in table_display.columns:
+        table_display = table_display.rename(columns={period_col: period_label})
+    st.markdown(
+        budget_table_to_html(
+            table_display,
+            finance_deviation_column="Отклонение (факт − план), млн руб.",
+        ),
+        unsafe_allow_html=True,
+    )
+
+    # R23-13.2 (стр.35): в БДДС дополнительно вывести таблицу
+    # «Сводка бюджета по проекту» (как в БДР) с итоговой строкой «ИТОГО».
+    if "project name" in filtered_df.columns:
+        st.subheader("Сводка бюджета по проекту")
+        _bp = (
+            filtered_df.groupby("project name", dropna=False)
+            .agg({"budget plan": "sum", "budget fact": "sum"})
+            .reset_index()
+        )
+        _bp["_dev"] = _bp["budget fact"] - _bp["budget plan"]
+        _proj_tbl = pd.DataFrame(
+            {
+                "Проект": _bp["project name"].astype(str),
+                "План, млн руб.": (_bp["budget plan"] / 1e6).round(2).apply(
+                    lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
+                ),
+                "Факт, млн руб.": (_bp["budget fact"] / 1e6).round(2).apply(
+                    lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
+                ),
+                "Отклонение (факт − план), млн руб.": (_bp["_dev"] / 1e6).round(2).apply(
+                    lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
+                ),
+            }
+        )
+        if not _proj_tbl.empty:
+            _plan_sum = float(_bp["budget plan"].fillna(0.0).sum())
+            _fact_sum = float(_bp["budget fact"].fillna(0.0).sum())
+            _total_row = pd.DataFrame(
+                [
+                    {
+                        "Проект": "ИТОГО",
+                        "План, млн руб.": f"{_plan_sum / 1e6:.2f}",
+                        "Факт, млн руб.": f"{_fact_sum / 1e6:.2f}",
+                        "Отклонение (факт − план), млн руб.": f"{(_fact_sum - _plan_sum) / 1e6:.2f}",
+                    }
+                ]
+            )
+            _proj_tbl = pd.concat([_proj_tbl, _total_row], ignore_index=True)
         st.markdown(
             budget_table_to_html(
-                table_display,
+                _proj_tbl,
                 finance_deviation_column="Отклонение (факт − план), млн руб.",
             ),
             unsafe_allow_html=True,
         )
-
-        # R23-13.2 (стр.35): в БДДС дополнительно вывести таблицу
-        # «Сводка бюджета по проекту» (как в БДР) с итоговой строкой «ИТОГО».
-        if "project name" in filtered_df.columns:
-            st.subheader("Сводка бюджета по проекту")
-            _bp = (
-                filtered_df.groupby("project name", dropna=False)
-                .agg({"budget plan": "sum", "budget fact": "sum"})
-                .reset_index()
-            )
-            _bp["_dev"] = _bp["budget fact"] - _bp["budget plan"]
-            _proj_tbl = pd.DataFrame(
-                {
-                    "Проект": _bp["project name"].astype(str),
-                    "План, млн руб.": (_bp["budget plan"] / 1e6).round(2).apply(
-                        lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
-                    ),
-                    "Факт, млн руб.": (_bp["budget fact"] / 1e6).round(2).apply(
-                        lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
-                    ),
-                    "Отклонение (факт − план), млн руб.": (_bp["_dev"] / 1e6).round(2).apply(
-                        lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
-                    ),
-                }
-            )
-            if not _proj_tbl.empty:
-                _plan_sum = float(_bp["budget plan"].fillna(0.0).sum())
-                _fact_sum = float(_bp["budget fact"].fillna(0.0).sum())
-                _total_row = pd.DataFrame(
-                    [
-                        {
-                            "Проект": "ИТОГО",
-                            "План, млн руб.": f"{_plan_sum / 1e6:.2f}",
-                            "Факт, млн руб.": f"{_fact_sum / 1e6:.2f}",
-                            "Отклонение (факт − план), млн руб.": f"{(_fact_sum - _plan_sum) / 1e6:.2f}",
-                        }
-                    ]
-                )
-                _proj_tbl = pd.concat([_proj_tbl, _total_row], ignore_index=True)
-            st.markdown(
-                budget_table_to_html(
-                    _proj_tbl,
-                    finance_deviation_column="Отклонение (факт − план), млн руб.",
-                ),
-                unsafe_allow_html=True,
-            )
-
-    with tab_lot:
-        # По лотам: группировка по периоду и лоту (section / лот / lot)
-        if lot_col not in filtered_df.columns:
-            st.info("Нет колонки для группировки по лотам (section / лот).")
-        else:
-            agg_dict_lot = {"budget plan": "sum", "budget fact": "sum", "reserve budget": "sum"}
-            budget_summary_lot = (
-                filtered_df.groupby([period_col, lot_col]).agg(agg_dict_lot).reset_index()
-            )
-            budget_summary_lot["period_original"] = budget_summary_lot[period_col]
-            budget_summary_lot[period_col] = budget_summary_lot[period_col].apply(format_period_ru)
-
-            # hide_reserve_lot = st.checkbox(
-            #     "Скрыть отклонение", value=True, key="budget_lot_hide_reserve"
-            # )
-            hide_reserve_lot = False
-            # По лотам: ось Y = этапы (лоты), ось X = млн руб.
-            lot_chart_data = (
-                budget_summary_lot.groupby(lot_col)
-                .agg({"budget plan": "sum", "budget fact": "sum", "reserve budget": "sum"})
-                .reset_index()
-            )
-            # Только лоты с ненулевой суммой — иначе на оси Y сотни «пустых» строк и огромный зазор.
-            _lot_abs = (
-                lot_chart_data["budget plan"].abs()
-                + lot_chart_data["budget fact"].abs()
-                + lot_chart_data["reserve budget"].abs()
-            )
-            lot_chart_data = lot_chart_data[_lot_abs > 1.0].copy()
-            if not lot_chart_data.empty:
-                lot_chart_data["_sort_key"] = lot_chart_data[
-                    ["budget plan", "budget fact"]
-                ].abs().max(axis=1)
-                lot_chart_data = _limit_bar_categories(
-                    lot_chart_data, "_sort_key", max_bars=40, label="лотов"
-                )
-                lot_chart_data = lot_chart_data.drop(columns=["_sort_key"], errors="ignore")
-                lot_chart_data = lot_chart_data.sort_values("budget plan", ascending=True)
-
-            def _wrap_lot_label(text, max_len=25):
-                words = str(text).split(" ")
-                lines, current = [], ""
-                for word in words:
-                    if len(current) + len(word) + 1 > max_len:
-                        lines.append(current)
-                        current = word
-                    else:
-                        current = (current + " " + word).strip()
-                if current:
-                    lines.append(current)
-                return "<br>".join(lines)
-
-            if lot_chart_data.empty:
-                st.info("Нет ненулевых сумм по лотам для выбранных фильтров.")
-            else:
-                lot_chart_data[lot_col] = lot_chart_data[lot_col].apply(_wrap_lot_label)
-
-                fig_lot = go.Figure()
-                fig_lot.add_trace(
-                    go.Bar(
-                        y=lot_chart_data[lot_col],
-                        x=lot_chart_data["budget plan"].div(1e6),
-                        name="Бюджет План",
-                        marker_color="#2E86AB",
-                        text=lot_chart_data["budget plan"].apply(format_million_rub),
-                        textposition="outside",
-                        textfont=dict(size=12, color="#f0f4f8"),
-                        cliponaxis=False,
-                        orientation="h",
-                    )
-                )
-                fig_lot.add_trace(
-                    go.Bar(
-                        y=lot_chart_data[lot_col],
-                        x=lot_chart_data["budget fact"].div(1e6),
-                        name="Бюджет Факт",
-                        marker_color="#A23B72",
-                        text=lot_chart_data["budget fact"].apply(format_million_rub),
-                        textposition="outside",
-                        textfont=dict(size=12, color="#f0f4f8"),
-                        cliponaxis=False,
-                        orientation="h",
-                    )
-                )
-                fig_lot.add_trace(
-                    go.Bar(
-                        y=lot_chart_data[lot_col],
-                        x=lot_chart_data["reserve budget"].div(1e6),
-                        name="Отклонение",
-                        marker_color="#e74c3c",
-                        text=lot_chart_data["reserve budget"].apply(format_million_rub),
-                        textposition="outside",
-                        textfont=dict(size=12, color="#f0f4f8"),
-                        cliponaxis=False,
-                        orientation="h",
-                        visible="legendonly",
-                    )
-                )
-                fig_lot.update_layout(
-                    title_text="",
-                    xaxis_title="млн руб.",
-                    yaxis_title="Этапы",
-                    barmode="group",
-                    bargap=0.22,
-                    bargroupgap=0.05,
-                    xaxis=dict(tickangle=0, tickfont=dict(size=12), rangemode="tozero"),
-                    yaxis=dict(tickfont=dict(size=12), categoryorder="trace"),
-                    legend=dict(font=dict(size=12)),
-                )
-                fig_lot = _apply_finance_bar_label_layout(fig_lot)
-                fig_lot = apply_chart_background(fig_lot)
-                max_line_len = max(
-                    max(len(line) for line in s.split("<br>"))
-                    for s in lot_chart_data[lot_col].tolist()
-                ) if not lot_chart_data.empty else 20
-                left_margin = min(max_line_len * 8.2, 400)
-                max_val = float(
-                    lot_chart_data[["budget plan", "budget fact"]].max().max() / 1e6
-                )
-                if not np.isfinite(max_val) or max_val <= 0:
-                    max_val = 0.0
-                # Умеренный запас справа для подписей «outside», без лишнего «воздуха» на оси
-                _x_hi = max_val * (1.18 if max_val > 0 else 1.0)
-                fig_lot.update_layout(
-                    margin=dict(l=left_margin, r=130, t=80, b=50),
-                    xaxis=dict(range=[0, _x_hi], rangemode="tozero"),
-                )
-                _lot_rows = len(lot_chart_data)
-                _plot_height = max(320, min(_lot_rows * 56, 1200))
-                render_chart(
-                    fig_lot,
-                    caption_below="План/факт/отклонение по лотам",
-                    height=_plot_height,
-                    max_height=1200,
-                )
-
-            st.subheader("Сводка бюджета по лотам")
-            table_lot = budget_summary_lot.drop(columns=["period_original"], errors="ignore").copy()
-            for col in ["budget plan", "budget fact", "reserve budget"]:
-                if col in table_lot.columns:
-                    table_lot[col] = (table_lot[col] / 1e6).round(2).apply(
-                        lambda x: f"{float(x):.2f} млн руб." if pd.notna(x) else ""
-                    )
-            rename_cols = {
-                "budget plan": "Бюджет План, млн руб.",
-                "budget fact": "Бюджет Факт, млн руб.",
-                "reserve budget": "Отклонение, млн руб.",
-            }
-            if lot_col in table_lot.columns:
-                rename_cols[lot_col] = "Лот"
-            table_lot = table_lot.rename(columns=rename_cols)
-            st.markdown(
-                budget_table_to_html(table_lot, finance_deviation_column="Отклонение, млн руб."),
-                unsafe_allow_html=True,
-            )
 
 
 # ==================== DASHBOARD 6.5: Budget Cumulative ====================
@@ -8785,74 +8546,6 @@ def dashboard_bdr(df):
         )
         return
 
-    col3, col4 = st.columns(2)
-    with col3:
-        lot_base_col = (
-            "lot_effective"
-            if "lot_effective" in df_work.columns
-            else (
-                "lot"
-                if "lot" in df_work.columns
-                else ("section" if "section" in df_work.columns else None)
-            )
-        )
-        if lot_base_col:
-            _lot_pairs = []
-            _lot_series_src = (
-                df_work[lot_base_col]
-                if (lot_base_col in df_work.columns)
-                else (
-                    df_derived_filters[lot_base_col]
-                    if (lot_base_col in df_derived_filters.columns)
-                    else pd.Series(dtype=object)
-                )
-            )
-            for raw in _lot_series_src.dropna().tolist():
-                clean = _clean_filter_label(raw)
-                if clean:
-                    _lot_pairs.append((clean, str(raw).strip()))
-            _lot_raw_by_display = {}
-            for clean, raw in sorted(set(_lot_pairs), key=lambda t: t[0]):
-                _lot_raw_by_display.setdefault(clean, raw)
-            _lot_opts = ["Все"] + sorted(_lot_raw_by_display.keys())
-            _sel_lot_display = st.selectbox("Фильтр по лоту", _lot_opts, key="bdr_lot")
-            selected_lot = "Все" if _sel_lot_display == "Все" else _lot_raw_by_display.get(_sel_lot_display, _sel_lot_display)
-        else:
-            selected_lot = "Все"
-    with col4:
-        if ("stage_l2" in df_work.columns) or ("stage_l2" in df_derived_filters.columns):
-            _stage_pairs = []
-            _st_series = (
-                df_work["stage_l2"]
-                if "stage_l2" in df_work.columns
-                else df_derived_filters["stage_l2"]
-            )
-            for raw in _st_series.dropna().tolist():
-                clean = _clean_filter_label(raw)
-                if clean:
-                    _stage_pairs.append((clean, str(raw).strip()))
-            _stage_raw_by_display = {}
-            for clean, raw in sorted(set(_stage_pairs), key=lambda t: t[0]):
-                _stage_raw_by_display.setdefault(clean, raw)
-            _stage_opts = ["Все"] + sorted(_stage_raw_by_display.keys())
-            _sel_stage_display = st.selectbox("Фильтр по этапу", _stage_opts, key="bdr_section")
-            selected_section = "Все" if _sel_stage_display == "Все" else _stage_raw_by_display.get(_sel_stage_display, _sel_stage_display)
-        elif ("section" in df_work.columns) or ("section" in df_derived_filters.columns):
-            _sec_series = (
-                df_work["section"]
-                if "section" in df_work.columns
-                else df_derived_filters["section"]
-            )
-            _sec_labels: list[str] = []
-            for raw in _sec_series.dropna().tolist():
-                c = _clean_filter_label(str(raw).strip())
-                if c:
-                    _sec_labels.append(c)
-            sections = ["Все"] + sorted(set(_sec_labels))
-            selected_section = st.selectbox("Фильтр по этапу", sections, key="bdr_section")
-        else:
-            selected_section = "Все"
-
     if period_type_en == "Month":
         period_col = "plan_month"
         period_label = "Месяц"
@@ -8873,18 +8566,6 @@ def dashboard_bdr(df):
             filtered_df["project name"].map(_project_filter_norm_key)
             == _project_filter_norm_key(selected_project)
         ]
-    if selected_lot != "Все":
-        lot_filter_col = "lot_effective" if "lot_effective" in filtered_df.columns else ("lot" if "lot" in filtered_df.columns else None)
-        if lot_filter_col and lot_filter_col in filtered_df.columns:
-            filtered_df = filtered_df[
-                filtered_df[lot_filter_col].astype(str).str.strip() == str(selected_lot).strip()
-            ]
-    if selected_section != "Все":
-        stage_col = "stage_l2" if "stage_l2" in filtered_df.columns else ("section" if "section" in filtered_df.columns else None)
-        if stage_col and stage_col in filtered_df.columns:
-            filtered_df = filtered_df[
-                filtered_df[stage_col].astype(str).str.strip() == str(selected_section).strip()
-            ]
 
     ensure_date_columns(filtered_df)
     # Фильтр-календарь «Период» — как БДДС: тот же help/format и общий стиль/скрипт для datepicker.

@@ -42,7 +42,7 @@ def _row(report: list[dict[str, str]], dashboard: str, level: str, required: str
     )
 
 
-def _collect_file_checks(load_result: dict[str, Any] | None) -> list[dict[str, str]]:
+def collect_contract_file_checks(load_result: dict[str, Any] | None) -> list[dict[str, str]]:
     checks: list[dict[str, str]] = []
     diags = (load_result or {}).get("diagnostics") or []
     if not isinstance(diags, list):
@@ -243,7 +243,7 @@ def build_schema_health_report(load_result: dict[str, Any] | None = None) -> dic
             "dannye_rows": 0 if d1c is None else int(len(d1c)),
         },
         "rows": rows,
-        "file_checks": _collect_file_checks(load_result),
+        "file_checks": collect_contract_file_checks(load_result),
     }
     return data
 

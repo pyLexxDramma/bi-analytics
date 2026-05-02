@@ -115,6 +115,22 @@ def ignore_demo_data_files() -> bool:
     return v in ("1", "true", "yes", "on")
 
 
+def web_load_latest_snapshots_only() -> bool:
+    """
+    При загрузке из ``web/``: оставлять только последний снимок по дате в имени файла
+    (1С, TESSA, MSP, выгрузки с датой в названии), чтобы не раздувать SQLite и память.
+
+    По умолчанию включено (не задано или ``1``/``true``/``yes``/``on``).
+    Полная история всех файлов: ``BI_ANALYTICS_WEB_LATEST_ONLY=0`` (или ``false``/``no``/``off``).
+    """
+    v = os.environ.get("BI_ANALYTICS_WEB_LATEST_ONLY", "").strip().lower()
+    if v in ("0", "false", "no", "off"):
+        return False
+    if v in ("1", "true", "yes", "on"):
+        return True
+    return True
+
+
 DB_PATH: str = os.path.join(BASE_DIR, "users.db")
 ETL_DB_ENGINE: str = os.environ.get("DB_ENGINE", "sqlite").strip().lower()
 ETL_SQLITE_DB_PATH: str = os.environ.get(

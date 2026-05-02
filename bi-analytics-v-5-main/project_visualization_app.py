@@ -662,10 +662,14 @@ def main():
                 st.session_state["last_data_readiness"] = build_data_readiness_report(result)
                 st.session_state["last_data_schema_health"] = save_schema_health_report(load_result=result)
                 st.session_state["last_env_fingerprint"] = build_environment_fingerprint(result)
+                from data_contract import evaluate_data_contract
+
+                st.session_state["last_data_contract"] = evaluate_data_contract(result)
             except Exception:
                 st.session_state["last_data_readiness"] = None
                 st.session_state["last_data_schema_health"] = None
                 st.session_state["last_env_fingerprint"] = None
+                st.session_state["last_data_contract"] = None
 
             st.cache_data.clear()
             st.session_state.pop("web_version_id", None)
@@ -716,15 +720,22 @@ def main():
             from ftp_sync import merge_ftp_config, streamlit_secrets_to_config, sync_ftp_to_web
 
             st.caption(
-                "При переключении на этот режим локальная папка `web/` читается так же, как в «Из папки web/». "
-                "Кнопка ниже нужна, чтобы **скачать с FTP** новые файлы в `web/`, затем снова попадают в БД."
+                "**Как обновить данные с FTP для клиента:**  \n"
+                "1) Задайте доступ: секреты Streamlit `[ftp]`, либо переменные окружения "
+                "`BI_FTP_HOST`, `BI_FTP_USER`, `BI_FTP_PASSWORD` (или пароль в `FTP_AI_PASSWORD`). "
+                "Каталог на сервере — `BI_FTP_REMOTE_DIR` (типично **`/web`**).  \n"
+                "2) Режим **«FTP → web/»** → кнопка **«Скачать CSV и JSON с FTP в web/ и загрузить в БД»** "
+                "скачивает файлы в локальную папку `web/` и сразу выполняет то же чтение в SQLite, что и кнопка ниже.  \n"
+                "3) **«Загрузить из web/»** — только перечитать уже лежащие на диске файлы (без FTP).  \n"
+                "Актуальные снимки по дате в именах файлов включаются политикой `BI_ANALYTICS_WEB_LATEST_ONLY` "
+                "(по умолчанию последний снимок; полная история — `=0`)."
             )
 
             with st.expander("Параметры FTP вручную (если нет secrets)", expanded=False):
                 _h = st.text_input("FTP host", key="ftp_host_override")
                 _u = st.text_input("FTP user", key="ftp_user_override")
                 _p = st.text_input("FTP password", type="password", key="ftp_pass_override")
-                _d = st.text_input("Удалённая папка", value="/", key="ftp_remote_dir_override")
+                _d = st.text_input("Удалённая папка", value="/web", key="ftp_remote_dir_override")
 
             cfg = merge_ftp_config(streamlit_secrets_to_config())
             if _h.strip():
@@ -765,10 +776,14 @@ def main():
                         st.session_state["last_data_readiness"] = build_data_readiness_report(result)
                         st.session_state["last_data_schema_health"] = save_schema_health_report(load_result=result)
                         st.session_state["last_env_fingerprint"] = build_environment_fingerprint(result)
+                        from data_contract import evaluate_data_contract
+
+                        st.session_state["last_data_contract"] = evaluate_data_contract(result)
                     except Exception:
                         st.session_state["last_data_readiness"] = None
                         st.session_state["last_data_schema_health"] = None
                         st.session_state["last_env_fingerprint"] = None
+                        st.session_state["last_data_contract"] = None
                     st.cache_data.clear()
                     st.session_state.pop("web_version_id", None)
                     for w in result.get("warnings", []):
@@ -829,6 +844,11 @@ def main():
                         load_result=st.session_state.get("last_load_result")
                     )
                     st.session_state["last_env_fingerprint"] = build_environment_fingerprint(
+                        st.session_state.get("last_load_result")
+                    )
+                    from data_contract import evaluate_data_contract
+
+                    st.session_state["last_data_contract"] = evaluate_data_contract(
                         st.session_state.get("last_load_result")
                     )
                 except Exception:
@@ -938,6 +958,23 @@ def main():
                 if df_loaded is not None:
 
                     update_session_with_loaded_file(df_loaded, file_id)
+
+    _dm_radio = st.session_state.get("data_mode_radio", "Загрузить вручную")
+    if _dm_radio in ("Из папки web/", "FTP → web/"):
+        from data_contract import evaluate_data_contract, render_contract_banner, should_enforce_data_contract_stop
+
+        _had_data_attempt = (
+            st.session_state.get("last_load_result") is not None
+            or st.session_state.get("web_version_id") is not None
+        )
+        if _had_data_attempt:
+            _ctr = evaluate_data_contract(st.session_state.get("last_load_result"))
+            st.session_state["last_data_contract"] = _ctr
+            render_contract_banner(_ctr)
+            if should_enforce_data_contract_stop(release_client_mode=_is_release_client_mode()) and not _ctr.get(
+                "ok"
+            ):
+                st.stop()
 
     # Use project data as main df for backward compatibility
     df = st.session_state.project_data

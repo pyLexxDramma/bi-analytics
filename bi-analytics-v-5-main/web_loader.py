@@ -4,6 +4,8 @@ web_loader.py — парсинг файлов из папки web/ и сохра
 Основная функция: load_all_from_web()
 - Сканирует локальный web/, при наличии — каталог «Analitics/web» (см. config.get_analytics_sibling_web_dir),
   и дополнительные пути из BI_ANALYTICS_WEB_EXTRA_PATHS
+- По умолчанию оставляет только последний снимок по дате в имени (1С/TESSA/MSP и др.); отключение:
+  BI_ANALYTICS_WEB_LATEST_ONLY=0 (см. config.web_load_latest_snapshots_only).
 - Сканирует web/ рекурсивно
 - Определяет тип файла через ETL-парсер (etl/parser.py)
 - Для MSP-файлов применяет маппинг колонок → формат дашбордов
@@ -22,7 +24,7 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from config import ignore_demo_data_files
+from config import ignore_demo_data_files, web_load_latest_snapshots_only
 
 import pandas as pd
 import streamlit as st
@@ -739,6 +741,205 @@ def _dedupe_scan_files_by_identity(files: List[Dict]) -> Tuple[List[Dict], List[
     return out, warns
 
 
+_ONE_C_STEM_RE = re.compile(
+    r"^(?:1с_|1c_|lc_|лк_|lk_)(\d{2}-\d{2}-\d{4})(?:_(\d{2}-\d{2}))?(?:_.*)?$",
+    re.IGNORECASE,
+)
+
+
+def _file_mtime(path: Path) -> float:
+    try:
+        return float(path.stat().st_mtime)
+    except OSError:
+        return 0.0
+
+
+def _all_dates_in_stem(stem: str) -> List:
+    out = []
+    for m in re.finditer(r"\b(\d{2}-\d{2}-\d{4})\b", stem):
+        d = _parse_snapshot_date(m.group(1))
+        if d is not None:
+            out.append(d)
+    for m in re.finditer(r"\b(\d{2})_(\d{2})_(\d{4})\b", stem):
+        d = _parse_snapshot_date(f"{m.group(1)}-{m.group(2)}-{m.group(3)}")
+        if d is not None:
+            out.append(d)
+    for m in re.finditer(r"\b(\d{4}-\d{2}-\d{2})\b", stem):
+        d = _parse_snapshot_date(m.group(1))
+        if d is not None:
+            out.append(d)
+    return out
+
+
+def _max_date_in_stem(stem: str):
+    ds = _all_dates_in_stem(stem)
+    return max(ds) if ds else None
+
+
+def _one_c_snapshot_sort_key(stem: str):
+    m = _ONE_C_STEM_RE.match(stem.lower())
+    if not m:
+        return None
+    d = _parse_snapshot_date(m.group(1))
+    if d is None:
+        return None
+    hhmm = m.group(2) or "00-00"
+    return (d, hhmm)
+
+
+def _generic_stem_family(stem: str) -> str:
+    k = stem.lower()
+    k = re.sub(r"\d{2}-\d{2}-\d{4}", "*", k)
+    k = re.sub(r"\d{2}_\d{2}_\d{4}", "*", k)
+    k = re.sub(r"\d{4}-\d{2}-\d{2}", "*", k)
+    return k
+
+
+def _tessa_kind_key(stem: str) -> str:
+    s = stem.lower()
+    if "_task" in s or "tasks" in s:
+        return "task"
+    if "_rd" in s:
+        return "rd"
+    if "_id" in s:
+        return "id"
+    return "other"
+
+
+def _msp_project_bucket(stem: str) -> Optional[str]:
+    s = stem.lower().replace(".csv", "")
+    if not (s.startswith("msp_") or s.startswith("msp-")):
+        return None
+    parts = s.split("_")
+    if len(parts) < 3:
+        return s
+    return "_".join(parts[1:-1]).lower()
+
+
+def pick_latest_snapshot_files(files: List[Dict]) -> Tuple[List[Dict], List[str]]:
+    """
+    Оставляет только последние выгрузки по дате в имени файла (и времени снимка для JSON 1С).
+
+    - JSON 1С с префиксом 1с_/1c_/…: один актуальный снимок (максимум пары дата + HH-MM).
+    - TESSA: отдельно последний файл для task / rd / id / прочее.
+    - MSP: по корню имени проекта — файл с максимальной датой в имени.
+    - Остальные имена с распознанной датой: группа по шаблону без дат — файл с max датой.
+    - Без даты в имени — без изменений.
+    """
+    from datetime import date as dt_date
+
+    warns: List[str] = []
+    if not files:
+        return [], warns
+
+    passthrough: List[Dict] = []
+    one_c: List[Dict] = []
+    tessa: List[Dict] = []
+    msp: List[Dict] = []
+    dated_other: List[Dict] = []
+
+    for f in files:
+        name = str(f.get("name") or "")
+        stem = Path(name).stem
+        nl = name.lower()
+
+        if nl.endswith(".json") and re.match(r"(?i)^(1с_|1c_|lc_|лк_|lk_)", stem):
+            one_c.append(f)
+            continue
+        if nl.startswith("tessa_"):
+            tessa.append(f)
+            continue
+        sl = stem.lower()
+        if sl.startswith("msp_") or sl.startswith("msp-"):
+            msp.append(f)
+            continue
+
+        if _max_date_in_stem(stem) is not None:
+            dated_other.append(f)
+            continue
+
+        passthrough.append(f)
+
+    kept: List[Dict] = []
+    kept_ids: set = set()
+
+    def _add(fitem: Dict) -> None:
+        pid = id(fitem["path"])
+        if pid not in kept_ids:
+            kept_ids.add(pid)
+            kept.append(fitem)
+
+    for f in passthrough:
+        _add(f)
+
+    keys_ok: List[Tuple[tuple, Dict]] = []
+    one_c_fallback: List[Dict] = []
+    for f in one_c:
+        sk = _one_c_snapshot_sort_key(Path(f["name"]).stem)
+        if sk is None:
+            one_c_fallback.append(f)
+        else:
+            keys_ok.append((sk, f))
+    if keys_ok:
+        best_k = max(k for k, _ in keys_ok)
+        for k, f in keys_ok:
+            if k == best_k:
+                _add(f)
+    for f in one_c_fallback:
+        dated_other.append(f)
+
+    buckets_t: Dict[str, List[Dict]] = {}
+    for f in tessa:
+        buckets_t.setdefault(_tessa_kind_key(Path(f["name"]).stem), []).append(f)
+    for lst in buckets_t.values():
+        rated = []
+        for f in lst:
+            stem = Path(f["name"]).stem
+            md = _max_date_in_stem(stem)
+            rated.append(((md or dt_date.min, _file_mtime(f["path"])), f))
+        best_f = max(rated, key=lambda x: x[0])[1]
+        _add(best_f)
+
+    buckets_m: Dict[str, List[Dict]] = {}
+    for f in msp:
+        stem = Path(f["name"]).stem
+        bk = _msp_project_bucket(stem) or stem.lower()
+        buckets_m.setdefault(str(bk), []).append(f)
+    for lst in buckets_m.values():
+        rated = []
+        for f in lst:
+            stem = Path(f["name"]).stem
+            md = _max_date_in_stem(stem)
+            rated.append(((md or dt_date.min, _file_mtime(f["path"])), f))
+        best_f = max(rated, key=lambda x: x[0])[1]
+        _add(best_f)
+
+    buckets_o: Dict[str, List[Dict]] = {}
+    for f in dated_other:
+        stem = Path(f["name"]).stem
+        ext = Path(f["name"]).suffix.lower()
+        fam = _generic_stem_family(stem) + "|" + ext
+        buckets_o.setdefault(fam, []).append(f)
+    for lst in buckets_o.values():
+        rated = []
+        for f in lst:
+            stem = Path(f["name"]).stem
+            md = _max_date_in_stem(stem)
+            rated.append(((md or dt_date.min, _file_mtime(f["path"])), f))
+        best_f = max(rated, key=lambda x: x[0])[1]
+        _add(best_f)
+
+    total_in = len(files)
+    total_kept = len(kept)
+    if total_kept < total_in:
+        warns.append(
+            f"Режим последних снимков: файлов было {total_in}, к загрузке оставлено {total_kept}. "
+            "Полная история (все даты в web/): переменная BI_ANALYTICS_WEB_LATEST_ONLY=0."
+        )
+
+    return kept, warns
+
+
 def scan_new_csv_demo_files(extensions: tuple = (".csv",)) -> List[Dict]:
     """
     Демо-файлы из new_csv/ — подмешиваются к загрузке из web/, чтобы локально
@@ -918,6 +1119,9 @@ def load_all_from_web() -> Dict:
         files = scan_web_files(extensions=(".csv", ".json")) + scan_new_csv_demo_files()
     files, dedupe_warns = _dedupe_scan_files_by_identity(files)
     result["warnings"].extend(dedupe_warns)
+    if web_load_latest_snapshots_only():
+        files, snap_warns = pick_latest_snapshot_files(files)
+        result["warnings"].extend(snap_warns)
     if not files:
         if ignore_demo_data_files():
             result["errors"].append(
