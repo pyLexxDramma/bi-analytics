@@ -22,7 +22,7 @@ import json
 import math
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from config import ignore_demo_data_files, web_load_latest_snapshots_only
 
@@ -42,6 +42,60 @@ from web_schema import (
 
 # MSP экспортирует файлы с русскими названиями колонок (Windows-1251).
 # Дашборды ожидают английские canonical-имена из data_loader.column_mapping.
+def _looks_like_msp_spurious_project_label(val: Any) -> bool:
+    """
+    Значение похоже на построчный штамп/UID выгрузки MSP, а не на человекочитаемое имя проекта.
+    """
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return False
+    s = str(val).replace("\xa0", "").strip()
+    if len(s) < 14:
+        return False
+    if re.search(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}", s):
+        return True
+    # 24-04-2024-15-41-47 / цепочки сегментов дата-время
+    if re.match(r"^\d{2}-\d{2}-\d{4}-\d{2}-\d{2}-\d{2}", s):
+        return True
+    parts = re.split(r"[-_\s]+", s)
+    if len(parts) >= 5:
+        digit_segments = sum(1 for p in parts if p.isdigit())
+        if digit_segments >= 4 and sum(c.isdigit() for c in s) >= 12:
+            return True
+    return False
+
+
+def _coerce_msp_project_name_from_file_if_needed(
+    df: pd.DataFrame, ru_from_file: str
+) -> pd.DataFrame:
+    """
+    Если колонка project name заполнена «мусорными» построчными метками, заменяем на имя из файла.
+    Один файл MSP у нас соответствует одному проекту (префикс msp_<slug>_…).
+    """
+    if (
+        df is None
+        or getattr(df, "empty", True)
+        or not (ru_from_file or "").strip()
+        or "project name" not in df.columns
+    ):
+        return df
+    ser = df["project name"]
+    cleaned = ser.dropna().astype(str).map(lambda x: str(x).strip())
+    cleaned = cleaned[cleaned.str.len() > 0]
+    cleaned = cleaned[~cleaned.str.lower().isin(("nan", "none", "<na>"))]
+    if cleaned.empty:
+        return df
+    nuniq = int(cleaned.nunique())
+    sample = cleaned.head(min(400, len(cleaned)))
+    spurious_frac = float(sample.map(_looks_like_msp_spurious_project_label).mean())
+    too_many_distinct = nuniq >= 10
+    mostly_stamps = nuniq >= 4 and spurious_frac >= 0.35
+    if not (too_many_distinct or mostly_stamps):
+        return df
+    out = df.copy()
+    out["project name"] = ru_from_file.strip()
+    return out
+
+
 _MSP_COLUMN_REMAP: Dict[str, str] = {
     "Название задачи":       "task name",
     "Название":              "task name",
@@ -257,6 +311,8 @@ def _apply_msp_column_mapping(df: pd.DataFrame, project_name: str) -> pd.DataFra
         df["project name"] = ru_from_file
     else:
         df["project name"] = df["project name"].apply(_normalize_project_cell)
+
+    df = _coerce_msp_project_name_from_file_if_needed(df, ru_from_file)
 
     # ── Вспомогательные функции ──────────────────────────────────────────────
     def _parse_msp_date(val):

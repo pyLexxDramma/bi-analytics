@@ -166,13 +166,25 @@ def save_developer_projects_matrix_prefs_json(json_str: str, updated_by: str) ->
 def _guess_msp_project_slug_for_loader(df: pd.DataFrame) -> str:
     """
     Ключ для web_loader._apply_msp_column_mapping (MSP_PROJECT_NAME_MAP / имя файла):
-    из первой непустой ячейки проекта или пустая строка.
+    по имени файла msp_<slug>_… при наличии в attrs, иначе из первой ячейки колонки проекта.
     """
+    try:
+        fn = str(df.attrs.get("file_name") or "").strip()
+    except Exception:
+        fn = ""
+    if fn:
+        base = fn.replace("\\", "/").split("/")[-1]
+        low = base.lower()
+        if low.startswith("msp_") and low.endswith(".csv"):
+            stem = base[:-4]
+            parts = stem.split("_")
+            if len(parts) >= 2 and parts[1].strip():
+                return parts[1].strip().lower()
     try:
         from config import MSP_PROJECT_NAME_MAP as M
     except Exception:
         M = {}
-    pc = _find_col(df, ["project name", "Проект", "Project", "проект", "ID_проекта"])
+    pc = _find_col(df, ["project name", "Проект", "Project", "проект"])
     if not pc or pc not in df.columns:
         return ""
     s = df[pc].dropna().astype(str).str.strip()
@@ -221,6 +233,17 @@ def ensure_msp_df_for_dev_matrix(df: pd.DataFrame) -> pd.DataFrame:
             out = _control_points_prepare_msp_dates(out)
     else:
         out = _control_points_prepare_msp_dates(out)
+    try:
+        from web_loader import _coerce_msp_project_name_from_file_if_needed
+        from config import MSP_PROJECT_NAME_MAP
+
+        slug = (_guess_msp_project_slug_for_loader(out) or "").strip().lower()
+        if slug:
+            ru_from_file = str(MSP_PROJECT_NAME_MAP.get(slug, slug)).strip()
+            if ru_from_file:
+                out = _coerce_msp_project_name_from_file_if_needed(out, ru_from_file)
+    except Exception:
+        pass
     return out
 
 
@@ -1085,7 +1108,7 @@ def dedupe_msp_for_developer_projects(df: pd.DataFrame) -> pd.DataFrame:
             continue
         out = _dedupe_by_id_nonempty(out, id_c).reset_index(drop=True)
         return out
-    pc = _find_col(out, ["project name", "Проект", "Project", "проект", "ID_проекта"])
+    pc = _find_col(out, ["project name", "Проект", "Project", "проект"])
     tc = _task_name_col(out)
     if pc and tc and pc in out.columns and tc in out.columns:
         return out.drop_duplicates(subset=[pc, tc], keep="first").reset_index(drop=True)
@@ -2450,26 +2473,30 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
         for _t, slug in ms_specs:
             _is_orange_milestone = _is_orange_pct_milestone(slug, _t)
             owarn = _is_orange_milestone and bool(r.get(f"{slug}_warn_pct"))
-            wc_plan = ' class="cp-td-warn cp-group-start"' if owarn else ' class="cp-group-start"'
-            wc_other = ' class="cp-td-warn"' if owarn else ""
+            m_ok = bool(r.get(f"{slug}_ok", False))
+            # Оранжевая подсветка ячеек — только если по датам норма; просрочка важнее «не 100%».
+            pct_warn_cells = owarn and m_ok
+            wc_plan = (
+                ' class="cp-td-warn cp-group-start"' if pct_warn_cells else ' class="cp-group-start"'
+            )
+            wc_other = ' class="cp-td-warn"' if pct_warn_cells else ""
             cells.append(f"<td{wc_plan}>{esc(str(r.get(f'{slug}_plan', '')))}</td>")
             cells.append(f"<td{wc_other}>{esc(str(r.get(f'{slug}_fact', '')))}</td>")
             cells.append(f"<td{wc_other}>{esc(str(r.get(f'{slug}_otkl', '')))}</td>")
-            m_ok = bool(r.get(f"{slug}_ok", False))
-            # A1: для ГПЗУ/Экспертизы стадии П при % < 100 статус должен быть оранжевым.
-            if owarn:
-                st_cls = "cp-status-warn"
-                tip = "В MSP для задачи «% выполнения» указано не 100% (вехи ГПЗУ / Экспертиза стадии П)"
-                al = "Незавершено по %"
-            elif not m_ok:
+            # Просрочка / неполные даты — красный; оранжевый только если по датам ок, но % ≠ 100 (ГПЗУ / экспертиза П).
+            if not m_ok:
                 st_cls = "cp-status-bad"
                 tip = "Отклонение по датам (План/Факт) или неполные даты"
                 al = "Отклонение по датам"
+            elif owarn:
+                st_cls = "cp-status-warn"
+                tip = "В MSP для задачи «% выполнения» указано не 100% (вехи ГПЗУ / Экспертиза стадии П)"
+                al = "Незавершено по %"
             else:
                 st_cls = "cp-status-ok"
                 tip = "Факт не позже плана (отклонение План−Факт ≥ 0); % выполнения — 100% или н/д"
                 al = "Норма"
-            st_extra = " cp-td-warn" if owarn else ""
+            st_extra = " cp-td-warn" if pct_warn_cells else ""
             cells.append(
                 f'<td class="cp-status-cell{st_extra}" title="{esc(tip)}">'
                 f'<span class="cp-status-dot {st_cls}" role="img" aria-label="{esc(al)}"></span></td>'
