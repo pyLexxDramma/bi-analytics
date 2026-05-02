@@ -356,6 +356,28 @@ def format_period_ru(period_val) -> str:
         pass
     try:
         if isinstance(period_val, pd.Period):
+            freq = getattr(period_val, "freq", None)
+            try:
+                if isinstance(freq, pd.offsets.QuarterEnd):
+                    return f"К{int(period_val.quarter)} {int(period_val.year)}"
+                if isinstance(
+                    freq,
+                    (pd.offsets.YearEnd, pd.offsets.YearBegin),
+                ):
+                    return str(int(period_val.year))
+            except Exception:
+                pass
+            fs = str(getattr(period_val, "freqstr", "") or "")
+            if fs.startswith("Q"):
+                try:
+                    return f"К{int(period_val.quarter)} {int(period_val.year)}"
+                except Exception:
+                    pass
+            if fs.startswith("A") or fs.startswith("Y"):
+                try:
+                    return str(int(period_val.year))
+                except Exception:
+                    pass
             month_num = period_val.month
             year = period_val.year
             return f"{RUSSIAN_MONTHS.get(month_num, 'Н/Д')} {year}"

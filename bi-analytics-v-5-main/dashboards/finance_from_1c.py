@@ -47,16 +47,50 @@ def _parse_1c_period_series(raw: pd.Series) -> pd.Series:
 
 
 def _pick_col(df: pd.DataFrame, needles: tuple[str, ...]) -> Optional[str]:
-    cols = {str(c).strip().casefold(): c for c in df.columns}
+    cols_exact: dict[str, str] = {}
+    for c in df.columns:
+        cs = str(c).strip()
+        if not cs:
+            continue
+        cols_exact[cs.casefold()] = cs
     for n in needles:
         k = str(n).strip().casefold()
-        if k in cols:
-            return cols[k]
+        if k in cols_exact:
+            return cols_exact[k]
     for c in df.columns:
-        cl = str(c).casefold()
+        cs = str(c).strip()
+        if not cs:
+            continue
+        cl = cs.casefold()
         for n in needles:
-            if str(n).casefold() in cl:
-                return str(c)
+            nk = str(n).strip().casefold()
+            if nk and nk in cl:
+                return cs
+    return None
+
+
+def _guess_1c_period_column(df: pd.DataFrame) -> Optional[str]:
+    """Если нет колонки «Период», ищем столбец с датами в первых строках."""
+    if df is None or getattr(df, "empty", True):
+        return None
+    n = min(500, len(df))
+    if n < 1:
+        return None
+    money_hints = ("сумма", "amount", "оборот", "оплат", "остаток")
+    best_col: Optional[str] = None
+    best_ok = 0
+    for c in df.columns:
+        cs = str(c).strip()
+        cl = cs.casefold()
+        if any(h in cl for h in money_hints):
+            continue
+        parsed = pd.to_datetime(df[c].head(n).astype(str).str.strip(), errors="coerce")
+        ok = int(parsed.notna().sum())
+        if ok > best_ok:
+            best_ok = ok
+            best_col = cs
+    if best_col is not None and best_ok >= max(3, n // 25):
+        return best_col
     return None
 
 
@@ -217,14 +251,18 @@ def try_synthetic_bdr_from_1c_dannye(
     reference_1c_dannye: Optional[pd.DataFrame] = None,
 ) -> Optional[pd.DataFrame]:
     """
-    Собирает БДР (доходы / расходы / сальдо) из `reference_1c_dannye`.
+    БДР из `reference_1c_dannye` по ТЗ заказчика (расходы):
 
-    Строки со статьёй/типом «БДР» — приоритет; если таких нет, используется разрез
-    «Поступление» / «Расходование» по полю «РасходДоход» по всем оборотам (с пояснением в attrs).
+    - План: «Сценарий» содержит «Бюджет» / «План» / budget и «Статья оборотов» содержит «(БДР)»
+      (или тип статьи БДР без БДДС).
+    - Факт: «Сценарий» содержит «ФАКТ» / fact и та же статья БДР.
 
-    Предпочтительно сценарий «ФАКТ»; если фактовых строк нет — «ПЛАН»/«БЮДЖЕТ».
+    В каждой строке в сумму расходов попадает только оборот по «РасходДоход» с признаком расходования;
+    неклассифицированные отрицательные суммы трактуются как расход (как в прежней версии).
 
-    ``reference_1c_dannye``: если передан, session_state не используется.
+    Дополнительно выставляются legacy-колонки bdr_income=0, bdr_expense=fact, bdr_saldo=plan−fact.
+
+    ``reference_1c_dannye``: если передан (например из CLI-скрипта), session_state не используется.
     """
     if reference_1c_dannye is not None:
         ref = reference_1c_dannye
@@ -235,89 +273,145 @@ def try_synthetic_bdr_from_1c_dannye(
     if ref is None or not isinstance(ref, pd.DataFrame) or ref.empty:
         return None
     t = ref.copy()
-    scen = _pick_col(t, ("Сценарий", "scenario"))
+    scen = _pick_col(
+        t,
+        (
+            "Сценарий",
+            "scenario",
+            "сценарий",
+            "видплана",
+            "вид плана",
+            "режим",
+        ),
+    )
     amt = _pick_col(
         t,
-        ("Сумма", "amount", "суммаоборот", "сумма оборот", "суммавруб"),
+        (
+            "Сумма",
+            "amount",
+            "суммаоборот",
+            "сумма оборот",
+            "суммавруб",
+            "оборот",
+            "суммаоборотов",
+            "sum",
+        ),
     )
-    per = _pick_col(t, ("Период", "period", "месяц", "дата", "date", "периодитогов"))
+    per = _pick_col(
+        t,
+        (
+            "Период",
+            "period",
+            "месяц",
+            "дата",
+            "date",
+            "периодитогов",
+            "месяцитогов",
+            "итоговыйпериод",
+            "периодпрописью",
+        ),
+    )
+    if not per:
+        per = _guess_1c_period_column(t)
     proj = _pick_col(
         t,
-        ("Проект", "project", "проект", "проектдляотчетов", "проект для отчетов"),
+        (
+            "Проект",
+            "project",
+            "проект",
+            "проектдляотчетов",
+            "проект для отчетов",
+            "наименованиепроекта",
+        ),
     )
     rd = _pick_col(
         t,
-        ("РасходДоход", "Расходдоход", "ПриходРасход", "приходрасход"),
+        (
+            "РасходДоход",
+            "Расходдоход",
+            "ПриходРасход",
+            "приходрасход",
+            "виддвижения",
+            "вид движения",
+            "видоборота",
+            "вид оборота",
+            "направление",
+            "движение",
+            "поступлениерасход",
+            "дебеткредит",
+        ),
     )
-    art = _pick_col(t, ("СтатьяОборотов", "Статья оборотов", "article"))
-    typ = _pick_col(t, ("ТипСтатьи", "article_type", "Тип статьи"))
-    if not scen or not amt or not per or not rd:
+    art = _pick_col(
+        t,
+        (
+            "СтатьяОборотов",
+            "Статья оборотов",
+            "article",
+            "статьяоборотов",
+            "статья",
+        ),
+    )
+    typ = _pick_col(t, ("ТипСтатьи", "article_type", "Тип статьи", "типстатьи"))
+    rd_synthetic = False
+    if rd is None:
+        t = t.copy()
+        t["__bdr_rd_syn"] = "Расходование"
+        rd = "__bdr_rd_syn"
+        rd_synthetic = True
+    if not scen or not amt or not per:
         return None
 
     def _bdr_article_or_type(fr: pd.DataFrame) -> pd.Series:
         m = pd.Series(False, index=fr.index)
         if art and art in fr.columns:
             a = fr[art].astype(str).fillna("")
-            m = m | a.str.casefold().str.contains(r"\(бдр\)|^бдр$|^бдр\s", regex=True)
+            al = a.str.casefold()
+            m = m | al.str.contains(r"\(бдр\)|^бдр$|^бдр\s", regex=True)
+            m = m | (al.str.contains("бдр", regex=False) & (~al.str.contains("бддс", regex=False)))
         if typ and typ in fr.columns:
             tl = fr[typ].astype(str).fillna("").str.casefold()
             m = m | (tl.str.contains("бдр", regex=False) & (~tl.str.contains("бддс", regex=False)))
         return m
 
     strict_m = _bdr_article_or_type(t)
-    use_approx_split = True
-    if bool(strict_m.any()):
+    approx_no_bdr_marker = not bool(strict_m.any())
+    if approx_no_bdr_marker:
+        pass
+    else:
         t = t.loc[strict_m].copy()
-        use_approx_split = False
     if t.empty:
         return None
 
     scm = t[scen].astype(str).str.casefold()
-    if scm.str.contains("факт", na=False).any():
-        t = t.loc[scm.str.contains("факт", na=False)].copy()
-    elif (
-        scm.str.contains("план", na=False).any()
-        or scm.str.contains("бюджет", na=False).any()
-    ):
-        m2 = scm.str.contains("план", na=False) | scm.str.contains(
-            "бюджет", na=False
-        )
-        m2 = m2 & ~scm.str.contains("факт", na=False)
-        t = t.loc[m2].copy()
-    if t.empty:
-        return None
+    fact_rows = scm.str.contains("факт", na=False) | scm.str.contains("fact", na=False)
+    plan_rows = (
+        scm.str.contains("бюджет", na=False)
+        | scm.str.contains("budget", na=False)
+        | scm.str.contains("план", na=False)
+    ) & ~fact_rows
 
-    # 1С обороты в текущих выгрузках передаются в тыс. руб.;
-    # приводим к рублям, чтобы отображение в "млн руб." было корректным.
     t["_amt"] = _coerce_1c_money_series(t[amt]).fillna(0.0) * 1000.0
 
-    def _bucket(v: Any) -> str:
-        s = str(v or "").strip().casefold()
-        if not s:
-            return ""
-        if "поступ" in s:
-            return "inc"
-        if "расход" in s:
-            return "exp"
-        return ""
+    rs = t[rd].astype(str).str.casefold()
+    is_inc = rs.str.contains("поступ", na=False)
+    is_exp = rs.str.contains("расход", na=False)
+    amt_np = t["_amt"].to_numpy(dtype=float)
+    exp_amt = np.zeros(len(t), dtype=float)
+    exp_amt[is_exp.to_numpy()] = np.abs(amt_np[is_exp.to_numpy()])
+    uncls = ~(is_inc.to_numpy() | is_exp.to_numpy())
+    neg_other = uncls & (amt_np < 0)
+    exp_amt[neg_other] = np.abs(amt_np[neg_other])
 
-    b_inc = pd.Series(np.zeros(len(t), dtype=float), index=t.index)
-    b_exp = pd.Series(np.zeros(len(t), dtype=float), index=t.index)
-    for idx, row in t.iterrows():
-        am = float(row["_amt"]) if pd.notna(row["_amt"]) else 0.0
-        bk = _bucket(row[rd])
-        if bk == "inc":
-            b_inc.loc[idx] = abs(am)
-        elif bk == "exp":
-            b_exp.loc[idx] = abs(am)
-        else:
-            if am >= 0:
-                b_inc.loc[idx] += am  # знак неклассифицированного трактуем как поступление
-            else:
-                b_exp.loc[idx] += abs(am)
+    scenario_unsplit = not bool(plan_rows.any()) and not bool(fact_rows.any())
+    if scenario_unsplit:
+        fe_amt = exp_amt
+        pe_amt = np.zeros(len(t), dtype=float)
+    else:
+        pe_amt = np.where(plan_rows.to_numpy(), exp_amt, 0.0)
+        fe_amt = np.where(fact_rows.to_numpy(), exp_amt, 0.0)
+    t["_plan_exp"] = pe_amt
+    t["_fact_exp"] = fe_amt
 
-    t["_inc"] = b_inc.values
-    t["_exp"] = b_exp.values
     t["_d"] = _parse_1c_period_series(t[per])
     t = t[t["_d"].notna()].copy()
     if t.empty:
@@ -326,14 +420,16 @@ def try_synthetic_bdr_from_1c_dannye(
 
     if proj and proj in t.columns:
         grp = (
-            t.groupby([proj, "_m"], dropna=False, sort=True)[["_inc", "_exp"]]
+            t.groupby([proj, "_m"], dropna=False, sort=True)[["_plan_exp", "_fact_exp"]]
             .sum()
             .reset_index()
         )
         grp = grp.rename(columns={proj: "project name"})
     else:
         grp = (
-            t.groupby("_m", dropna=False, sort=True)[["_inc", "_exp"]].sum().reset_index()
+            t.groupby("_m", dropna=False, sort=True)[["_plan_exp", "_fact_exp"]]
+            .sum()
+            .reset_index()
         )
         grp["project name"] = "—"
 
@@ -346,16 +442,20 @@ def try_synthetic_bdr_from_1c_dannye(
             pe = m.to_timestamp(how="end")
         except Exception:
             continue
-        inc = float(r["_inc"])
-        exp = float(r["_exp"])
+        pl = float(r["_plan_exp"])
+        fc = float(r["_fact_exp"])
+        dev = fc - pl
         out_rows.append(
             {
                 "project name": r["project name"],
                 "plan end": pe,
                 "section": "—",
-                "bdr_income": inc,
-                "bdr_expense": exp,
-                "bdr_saldo": inc - exp,
+                "bdr_plan_expense": pl,
+                "bdr_fact_expense": fc,
+                "bdr_expense_deviation": dev,
+                "bdr_income": 0.0,
+                "bdr_expense": fc,
+                "bdr_saldo": pl - fc,
             }
         )
     if not out_rows:
@@ -366,7 +466,13 @@ def try_synthetic_bdr_from_1c_dannye(
     odf["plan_quarter"] = _pe.dt.to_period("Q")
     odf["plan_year"] = _pe.dt.to_period("Y")
     odf.attrs["data_source_1c_synthetic_bdr"] = True
-    odf.attrs["bdr_approx_by_rd_split"] = use_approx_split
+    odf.attrs["bdr_tz_plan_fact_expense"] = True
+    if approx_no_bdr_marker:
+        odf.attrs["bdr_approx_no_bdr_marker"] = True
+    if rd_synthetic:
+        odf.attrs["bdr_synthetic_rd_column"] = True
+    if scenario_unsplit:
+        odf.attrs["bdr_scenario_unsplit_all_to_fact"] = True
     return odf
 
 
@@ -473,6 +579,7 @@ def ensure_bdr_frame_with_fallback(
 
     def _has_bdr_amounts(frame: pd.DataFrame) -> bool:
         for a, b in (
+            ("bdr_plan_expense", "bdr_fact_expense"),
             ("bdr_income", "bdr_expense"),
             ("доходы", "расходы"),
             ("доход", "расход"),
@@ -492,25 +599,29 @@ def ensure_bdr_frame_with_fallback(
     if syn is None or syn.empty:
         return work, False
 
+    syn_use = syn
     if restrict_projects_from_df and "project name" in work.columns:
         nz = work["project name"].dropna()
-        if nz.empty:
-            return work, False
-        from dashboards._renderers import (
-            _project_filter_norm_key,
-            _project_norm_key_matches_msp_keys,
-        )
+        if not nz.empty:
+            from dashboards._renderers import (
+                _project_filter_norm_key,
+                _project_norm_key_matches_msp_keys,
+            )
 
-        keys = {_project_filter_norm_key(x) for x in nz.unique()}
-        keys.discard("")
-        if keys:
-            _rk = syn["project name"].map(_project_filter_norm_key)
-            syn = syn[
-                _rk.map(lambda rk: _project_norm_key_matches_msp_keys(rk, keys))
-            ].copy()
+            keys = {_project_filter_norm_key(x) for x in nz.unique()}
+            keys.discard("")
+            if keys:
+                _rk = syn["project name"].map(_project_filter_norm_key)
+                syn_f = syn[
+                    _rk.map(lambda rk: _project_norm_key_matches_msp_keys(rk, keys))
+                ].copy()
+                if not syn_f.empty:
+                    syn_use = syn_f
+                # Иначе имена проектов в 1С не сопоставились с MSP — показываем всю синтетику 1С.
 
-    if syn.empty:
+    if syn_use.empty:
         return work, False
 
-    syn.attrs.setdefault("data_source_1c_synthetic_bdr", True)
-    return syn, True
+    syn_use.attrs.update(dict(getattr(syn, "attrs", {}) or {}))
+    syn_use.attrs.setdefault("data_source_1c_synthetic_bdr", True)
+    return syn_use, True

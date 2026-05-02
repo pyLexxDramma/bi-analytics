@@ -1295,6 +1295,12 @@ def load_all_from_web() -> Dict:
                     ddf = _load_1c_json_spravochniki(filepath)
                     if ddf is not None and not ddf.empty:
                         ddf.attrs["data_type"] = "reference_dannye"
+                        file_type_rd = "reference_dannye"
+                        file_id = _register_file(
+                            cur, version_id, file_info, file_type_rd, len(ddf)
+                        )
+                        _save_rows(cur, version_id, file_id, file_type_rd, name, ddf)
+                        total_rows += len(ddf)
                         if st.session_state.get("reference_1c_dannye") is None:
                             st.session_state["reference_1c_dannye"] = ddf
                         else:
@@ -1662,6 +1668,21 @@ def _infer_file_type_by_name(file_name: str) -> str:
             return "reference_json"
         if "dannye" in sl or "данные" in sl:
             return "budget_json"
+        if _ref_prefix or sl.startswith("1c") or sl.startswith("1с"):
+            if any(
+                k in sl
+                for k in (
+                    "oborot",
+                    "оборот",
+                    "budget",
+                    "бюджет",
+                    "bdds",
+                    "бддс",
+                    "bdr",
+                    "бдр",
+                )
+            ):
+                return "budget_json"
         return "skip"
 
     return "unknown"
@@ -1811,6 +1832,20 @@ def read_version_to_session(version_id: int):
         st.session_state["tessa_tasks_data"] = tt
     elif st.session_state.get("tessa_tasks_data") is None:
         st.session_state["tessa_tasks_data"] = None
+
+    # ── Обороты 1С (dannye / бюджетные JSON): в БД как reference_dannye ───────
+    rd_ref = _load_version_data(version_id, "reference_dannye")
+    if rd_ref is not None and not rd_ref.empty:
+        st.session_state["reference_1c_dannye"] = rd_ref
+        try:
+            st.session_state["reference_partner_to_project"] = (
+                _build_partner_project_map_from_dannye(rd_ref)
+            )
+        except Exception:
+            st.session_state["reference_partner_to_project"] = None
+    else:
+        st.session_state["reference_1c_dannye"] = None
+        st.session_state["reference_partner_to_project"] = None
 
     # ── Справочники (KrStates / DocStates) ────────────────────────────────
     # Загружаются из CSV при load_all_from_web(), не из БД;
