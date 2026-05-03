@@ -2252,7 +2252,7 @@ def _one_milestone_cell(rows: pd.DataFrame) -> Tuple[str, str, str, bool, bool]:
     """
     План = базовое окончание (base end), Факт = «Окончание» (plan end после загрузки MSP).
     Откл. = План − Факт (календарные дни), как в матрице девелоперских проектов.
-    Пятый элемент — подсветка по % выполнения (не 100% при известном %).
+    Пятый элемент — подсветка по % выполнения у строки-представителя вехи (не 100% при известном %).
     """
     if rows is None or rows.empty:
         return "Н/Д", "Н/Д", "Н/Д", False, False
@@ -2262,7 +2262,8 @@ def _one_milestone_cell(rows: pd.DataFrame) -> Tuple[str, str, str, bool, bool]:
     else:
         r = rows.iloc[0]
     pdt, fdt, pct = _msp_plan_fact_pct(r)
-    # Для оранжевого статуса достаточно, чтобы в любой строке вехи % был задан и < 100.
+    # Предупреждение по % — только по строке-представителе вехи (та же, что даёт План/Факт),
+    # иначе при нескольких совпадениях под одну веху «оранжевый» статус липнет ко всем столбцам.
     def _row_has_pct_lt_100(rr: pd.Series) -> bool:
         if "pct complete" not in rr.index:
             return False
@@ -2274,14 +2275,10 @@ def _one_milestone_cell(rows: pd.DataFrame) -> Tuple[str, str, str, bool, bool]:
             return False
         return _is_pct_complete_not_100(v)
 
-    warn_pct = False
     try:
-        for _, _rr in rows.iterrows():
-            if _row_has_pct_lt_100(_rr):
-                warn_pct = True
-                break
+        warn_pct = bool(_row_has_pct_lt_100(r))
     except Exception:
-        warn_pct = _is_pct_complete_not_100(pct)
+        warn_pct = bool(_is_pct_complete_not_100(pct))
     pl = _fmt_date_ru(pdt)
     fl = _fmt_date_ru(fdt)
     if pd.isna(pdt) or pd.isna(fdt):
