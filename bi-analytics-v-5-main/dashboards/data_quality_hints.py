@@ -81,6 +81,36 @@ def collect_forecast_bddcs_hints(attrs: dict[str, Any] | None) -> list[str]:
     return _dedupe_preserve(hints)
 
 
+def collect_developer_projects_hints(
+    ss: Any,
+    mdf: Any | None,
+) -> list[str]:
+    """
+    Дашборд «Девелоперские проекты»: обороты 1С для «Выборка ДС», TESSA для предписаний.
+    """
+    hints: list[str] = []
+    if mdf is None or getattr(mdf, "empty", True):
+        return _dedupe_preserve(hints)
+    try:
+        from dashboards.dev_projects_tz_matrix import _bddds_df_for_dev_matrix
+
+        pd_obj = ss.get("project_data") if hasattr(ss, "get") else None
+        bd = _bddds_df_for_dev_matrix(mdf, pd_obj, ss)
+        if bd is None:
+            hints.append(
+                "Строка «Выборка ДС, млн руб.»: не найдены обороты 1С для выбранного проекта "
+                "(`reference_1c_dannye` или `project_data` со столбцом «Сценарий»). По ТЗ источник — отчёт оборотов по бюджетам; без выгрузки отображается Н/Д."
+            )
+    except Exception:
+        pass
+    tdf = ss.get("tessa_tasks_data") if hasattr(ss, "get") else None
+    if tdf is None or getattr(tdf, "empty", True):
+        hints.append(
+            "Блок «ПРЕДПИСАНИЯ»: не загружен набор TESSA (`tessa_tasks_data`). При отсутствии файла счётчики и сроки могут быть Н/Д или опираться на строки MSP с «Предписан» в фазе/названии."
+        )
+    return _dedupe_preserve(hints)
+
+
 def render_quality_hints(hints: list[str]) -> None:
     import streamlit as st
 

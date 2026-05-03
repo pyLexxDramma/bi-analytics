@@ -22695,6 +22695,13 @@ def dashboard_developer_projects(df):
 
     st.subheader("Матрица контрольных точек")
 
+    try:
+        from dashboards.data_quality_hints import collect_developer_projects_hints, render_quality_hints
+
+        render_quality_hints(collect_developer_projects_hints(st.session_state, filtered))
+    except Exception:
+        pass
+
     _prefs_dm = load_developer_projects_matrix_prefs()
     if "dev_matrix_vert_dates" not in st.session_state:
         st.session_state["dev_matrix_vert_dates"] = bool(_prefs_dm.get("default_vertical_dates"))
