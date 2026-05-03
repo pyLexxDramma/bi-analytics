@@ -328,8 +328,10 @@ def _parse_gantt_dev_days_display(v):
 def _gantt_deviation_cell_style(v) -> str:
     n = _parse_gantt_dev_days_display(v)
     base = f"background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}"
-    if n is None or n == 0:
+    if n is None:
         return base
+    if n == 0:
+        return "background-color: #14532d; color: #ecfdf5"
     if n > 0:
         return "background-color: #c0392b; color: #ffffff"
     return "background-color: #27ae60; color: #ffffff"
@@ -1292,7 +1294,7 @@ def _chart_caption_below(title: str) -> None:
         return
     esc = html_module.escape(str(title))
     st.markdown(
-        "<p style='text-align:center;color:#e8eef5;margin:0.6rem 0 1rem;font-size:1.08rem;font-weight:700;'>"
+        "<p style='text-align:center;color:#e8eef5;margin:0.45rem 0 0.35rem;font-size:1.08rem;font-weight:700;'>"
         f"{esc}</p>",
         unsafe_allow_html=True,
     )
@@ -23334,6 +23336,7 @@ def dashboard_project_schedule_chart(df):
     with st.expander("Подсказка", expanded=False):
         suppress_caption(
             "Фильтры: проект (ур. 1), функциональный блок (ур. 2), уровень структуры MSP (3/4/5 или все), опционально — только лоты. "
+            "График ковенантов по ТЗ (синие/красные точки на шкале дат): включите флажок «Ковенанты по ТЗ» в колонке «Вид отображения» или выберите блок, в названии которого есть «ковенант» / «covenant». "
             "Полосы: план и базовый план (если есть данные). "
             "Переключатель подписей: дата окончания или % выполнения — подпись сразу справа от конца полос этой строки (план и при наличии — база). "
             "Масштаб и панорама колесом мыши (scroll) включены; при странном поведении подписей — панель инструментов (+/−, рамка). "
@@ -23675,13 +23678,24 @@ def dashboard_project_schedule_chart(df):
             index=0,
             key="gantt_view_mode",
         )
+        force_covenant_points = st.checkbox(
+            "Ковенанты по ТЗ: точки на шкале (базовое и окончание)",
+            value=False,
+            key="gantt_force_covenant_points",
+            help=(
+                "Как в ТЗ: синие маркеры — базовое окончание, красные — окончание (факт или план). "
+                "Также включается само, если в «Функциональном блоке» есть «ковенант» или «covenant» в названии."
+            ),
+        )
 
-    is_covenants = False
+    _blk_cov = False
     try:
-        if block_col and str(sel_block).strip() != "Все":
-            is_covenants = "ковенант" in str(sel_block).strip().lower()
+        _bs = str(sel_block).strip().lower()
+        if block_col and _bs not in ("", "все"):
+            _blk_cov = ("ковенант" in _bs) or ("covenant" in _bs)
     except Exception:
-        is_covenants = False
+        _blk_cov = False
+    is_covenants = bool(force_covenant_points) or _blk_cov
 
     lot_row_l, lot_row_r = st.columns(2)
     with lot_row_l:
@@ -23749,6 +23763,23 @@ def dashboard_project_schedule_chart(df):
         value=True,
         key="gantt_auto_compact_on_zoom",
     )
+    hide_completed = st.checkbox(
+        "Скрыть задачи с 100% выполнения",
+        value=False,
+        key="gantt_hide_completed",
+    )
+    only_finish_delay = st.checkbox(
+        "На диаграмме только просрочка по окончанию (базовое − факт/plan < 0 дн.)",
+        value=True,
+        key="gantt_only_finish_delay",
+        disabled=is_covenants,
+        help=(
+            "По ТЗ для блоков кроме «Ковенанты»: только задачи, где базовое окончание раньше фактического/планового "
+            "(просрочка по формуле «базовое окончание − окончание»)."
+        ),
+    )
+    if is_covenants:
+        only_finish_delay = False
 
     if plot_df.empty:
         st.info("Нет строк после фильтров.")
@@ -23794,7 +23825,6 @@ def dashboard_project_schedule_chart(df):
     else:
         sort_cols = ["plan start"]
         sort_asc = [True]
-    plot_df = plot_df.sort_values(sort_cols, ascending=sort_asc, na_position="last").head(400)
 
     _gantt_pct_col_used = None
     plot_df = plot_df.copy()
@@ -23920,6 +23950,56 @@ def dashboard_project_schedule_chart(df):
                     ),
                     use_container_width=True,
                 )
+
+    # Фильтры и лимит строк после назначения «% выполнения» (ТЗ: скрыть 100%; только просрочка по окончанию).
+    if hide_completed:
+        pcn = pd.to_numeric(plot_df["pct complete"], errors="coerce")
+        plot_df = plot_df.loc[~(pcn >= 99.999)].copy()
+
+    if (not is_covenants) and only_finish_delay:
+        if "base end" not in plot_df.columns or "plan end" not in plot_df.columns:
+            suppress_caption(
+                "Фильтр «только просрочка по окончанию»: нет колонок «base end» или «plan end» — отбор не применён."
+            )
+        else:
+            be = pd.to_datetime(plot_df["base end"], errors="coerce")
+            fe = pd.to_datetime(plot_df["plan end"], errors="coerce")
+            _fin_dev = (be - fe).dt.days
+            plot_df = plot_df.loc[_fin_dev.notna() & (_fin_dev < 0)].copy()
+
+    if plot_df.empty:
+        st.info("Нет строк после фильтров «Скрыть 100%» / «Только просрочка по окончанию».")
+        return
+
+    _be_pres = "base end" in plot_df.columns
+    _be_ratio = None
+    if _be_pres:
+        _be_ratio = float(pd.to_datetime(plot_df["base end"], errors="coerce").notna().mean())
+    try:
+        from dashboards.data_quality_hints import collect_project_schedule_hints, render_quality_hints
+
+        render_quality_hints(
+            collect_project_schedule_hints(
+                only_finish_delay_active=bool((not is_covenants) and only_finish_delay),
+                is_covenants=is_covenants,
+                base_end_column_present=_be_pres,
+                base_end_filled_ratio=_be_ratio,
+            )
+        )
+    except Exception:
+        pass
+
+    if (not is_covenants) and only_finish_delay and "base end" in plot_df.columns and "plan end" in plot_df.columns:
+        be = pd.to_datetime(plot_df["base end"], errors="coerce")
+        fe = pd.to_datetime(plot_df["plan end"], errors="coerce")
+        plot_df = (
+            plot_df.assign(_dd_fin=(be - fe).dt.days)
+            .sort_values("_dd_fin", ascending=True, na_position="last")
+            .drop(columns=["_dd_fin"])
+        )
+    else:
+        plot_df = plot_df.sort_values(sort_cols, ascending=sort_asc, na_position="last")
+    plot_df = plot_df.head(400)
 
     lvl_for_indent = None
     if level_col:
@@ -24838,7 +24918,11 @@ def dashboard_project_schedule_chart(df):
             skip_clamp_zoom=True,
         )
 
-    suppress_caption("Таблица под графиком")
+    st.markdown(
+        "<div style='margin:0.25rem 0 0.35rem;color:#e8eef5;font-weight:600;font-size:1.02rem;"
+        "border-top:1px solid rgba(148,163,184,0.35);padding-top:0.45rem;'>Таблица под графиком</div>",
+        unsafe_allow_html=True,
+    )
 
     dev_start_src = _sched_col(
         plot_df,

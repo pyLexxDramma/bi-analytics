@@ -81,6 +81,31 @@ def collect_forecast_bddcs_hints(attrs: dict[str, Any] | None) -> list[str]:
     return _dedupe_preserve(hints)
 
 
+def collect_project_schedule_hints(
+    *,
+    only_finish_delay_active: bool,
+    is_covenants: bool,
+    base_end_column_present: bool,
+    base_end_filled_ratio: float | None,
+) -> list[str]:
+    """Дашборд «График проекта» / MSP: фильтр просрочки по базовому окончанию."""
+    hints: list[str] = []
+    if is_covenants or not only_finish_delay_active:
+        return _dedupe_preserve(hints)
+    if not base_end_column_present:
+        hints.append(
+            "Фильтр «только просрочка по окончанию» по ТЗ опирается на колонку «base end» (базовое окончание). "
+            "В текущей MSP-выгрузке её нет — отбор по просрочке не применён; добавьте базовый план в файл или снимите фильтр."
+        )
+        return _dedupe_preserve(hints)
+    if base_end_filled_ratio is not None and base_end_filled_ratio < 0.15:
+        pct = int(max(0, min(100, round(base_end_filled_ratio * 100))))
+        hints.append(
+            f"Базовое окончание заполнено лишь у ~{pct}% строк — при включённом фильтре просрочки график может быть почти пустым."
+        )
+    return _dedupe_preserve(hints)
+
+
 def collect_developer_projects_hints(
     ss: Any,
     mdf: Any | None,
