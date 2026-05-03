@@ -437,10 +437,14 @@ def _delta_days_plan_minus_fact(plan_d: Any, fact_d: Any) -> Optional[int]:
 def _fmt_delta_days(d: Optional[int]) -> str:
     if d is None:
         return "Н/Д"
-    if d == 0:
+    try:
+        di = int(d)
+    except (TypeError, ValueError):
+        return "Н/Д"
+    if di == 0:
         return "0 дн."
-    sign = "+" if d > 0 else ""
-    return f"{sign}{d} дн."
+    sign = "+" if di > 0 else ""
+    return f"{sign}{di} дн."
 
 
 _OTKL_DAYS_DISPLAY_RE = re.compile(r"([+-]?\d+)\s*дн", re.IGNORECASE)
@@ -457,7 +461,8 @@ def _parse_otkl_days_display(s: Any) -> Optional[int]:
     if not m:
         return None
     try:
-        return int(m.group(1))
+        v = int(m.group(1))
+        return v
     except ValueError:
         return None
 
@@ -2524,20 +2529,20 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
                 if wc_otkl
                 else f"<td>{esc(otkl_txt)}</td>"
             )
-            # Просрочка по датам — красный статус; предупреждение по % — если выполнение в MSP не 100%.
+            # Индикатор «Статус» — только соблюдение сроков (зелёный/красный). Незавершённые по %
+            # подсвечиваются в ячейках План/Факт/Откл. (полужирный; для ГПЗУ/Экспертизы — фон).
             if not m_ok:
                 st_cls = "cp-status-bad"
-                tip = "Отклонение по датам (План/Факт) или неполные даты"
-                al = "Отклонение по датам"
-            elif pct_inc:
-                st_cls = "cp-status-warn"
-                tip = "В MSP для задачи указано «% выполнения» не 100%"
-                al = "Незавершено по %"
+                tip = "Отклонение по срокам (факт позже плана) или неполные даты."
+                al = "Отклонение по срокам"
             else:
                 st_cls = "cp-status-ok"
-                tip = "Факт не позже плана (отклонение План−Факт ≥ 0); % выполнения — 100% или н/д"
-                al = "Норма"
-            st_extra = (" cp-td-warn" if pct_warn_cells else "") + (" cp-td-pct-bold" if pct_inc else "")
+                tip = (
+                    "По срокам норма: факт не позже плана. Если в MSP «% выполнения» не 100%, "
+                    "смотрите полужирный текст и оранжевую подсветку в ячейках (для ГПЗУ и Экспертизы стадии П)."
+                )
+                al = "Норма по срокам"
+            st_extra = " cp-td-pct-bold" if pct_inc else ""
             cells.append(
                 f'<td class="cp-status-cell{st_extra}" title="{esc(tip)}">'
                 f'<span class="cp-status-dot {st_cls}" role="img" aria-label="{esc(al)}"></span></td>'
