@@ -1976,7 +1976,7 @@ def render_dev_tz_matrix(
 
 # ── Контрольные точки (Сроки / макет file-009): проекты × вехи ───────────────
 
-# Вехи «Контрольные точки»: оранжевая подсветка План/Факт/Откл. при % выполнения ≠ 100% (ТЗ, правки 1).
+# Вехи «Контрольные точки»: доп. оранжевая подсветка ячеек при % ≠ 100% только для ГПЗУ / Экспертизы стадии П.
 CONTROL_POINTS_ORANGE_PCT_SLUGS: frozenset = frozenset({"gpzu", "exp_pd"})
 
 
@@ -2016,6 +2016,8 @@ CONTROL_POINT_MILESTONES: List[Tuple[str, str, dict]] = [
         {
             "level": 5.0,
             "names_any": [
+                "КОД_ОТКР_ФИНАНС",
+                "КОД ОТКР ФИНАНС",
                 "КОД, ОТКР. ФИНАНС.",
                 "КОД ОТКР. ФИНАНС.",
                 "ОТКР. ФИНАНС.",
@@ -2383,11 +2385,23 @@ _CONTROL_POINTS_CSS = """
 .cp-group-start {
   border-left: 2px solid rgba(190, 214, 242, 0.8) !important;
 }
-/* ГПЗУ / Экспертиза стадии П: % выполнения в MSP ≠ 100% — «рыжая» подсветка значения */
+/* ТЗ «СРОКИ»: при % выполнения ≠ 100% — полужирный текст во всех вехах */
+.cp-td-pct-bold {
+  font-weight: 700 !important;
+}
+/* ГПЗУ / Экспертиза стадии П: дополнительно «рыжая» подсветка (согласованные правки) */
 .cp-td-warn {
   background: rgba(234, 88, 12, 0.38) !important;
   color: #fff7ed !important;
   font-weight: 600;
+}
+.cp-td-warn.cp-td-pct-bold {
+  font-weight: 700 !important;
+}
+/* Просрочка по План−Факт (отрицательные дни в «Откл.») — красный текст по макету ТЗ */
+.cp-otkl-late {
+  color: #f87171 !important;
+  font-weight: 700 !important;
 }
 .cp-status-cell { text-align: center; vertical-align: middle; }
 .cp-status-dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; vertical-align: middle; }
@@ -2478,31 +2492,55 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
         cells = [f'<td class="cp-col-project">{esc(str(r.get("project", "")))}</td>']
         for _t, slug in ms_specs:
             _is_orange_milestone = _is_orange_pct_milestone(slug, _t)
-            owarn = _is_orange_milestone and bool(r.get(f"{slug}_warn_pct"))
+            pct_inc = bool(r.get(f"{slug}_warn_pct"))
+            owarn = _is_orange_milestone and pct_inc
             m_ok = bool(r.get(f"{slug}_ok", False))
-            # Оранжевая подсветка ячеек — только если по датам норма; просрочка важнее «не 100%».
+            # Оранжевая подсветка — только для ГПЗУ/Экспертизы и только если по датам норма.
             pct_warn_cells = owarn and m_ok
-            wc_plan = (
-                ' class="cp-td-warn cp-group-start"' if pct_warn_cells else ' class="cp-group-start"'
-            )
-            wc_other = ' class="cp-td-warn"' if pct_warn_cells else ""
+            otkl_txt = str(r.get(f"{slug}_otkl", "") or "")
+            _od = _parse_otkl_days_display(otkl_txt)
+            otk_late = _od is not None and _od < 0
+            plan_parts = ["cp-group-start"]
+            fact_parts: List[str] = []
+            otkl_parts: List[str] = []
+            if pct_inc:
+                plan_parts.append("cp-td-pct-bold")
+                fact_parts.append("cp-td-pct-bold")
+                otkl_parts.append("cp-td-pct-bold")
+            if pct_warn_cells:
+                plan_parts.append("cp-td-warn")
+                fact_parts.append("cp-td-warn")
+                otkl_parts.append("cp-td-warn")
+            if otk_late:
+                otkl_parts.append("cp-otkl-late")
+            wc_plan = ' class="' + " ".join(plan_parts) + '"'
+            wc_fact = (' class="' + " ".join(fact_parts) + '"') if fact_parts else ""
+            wc_otkl = (' class="' + " ".join(otkl_parts) + '"') if otkl_parts else ""
             cells.append(f"<td{wc_plan}>{esc(str(r.get(f'{slug}_plan', '')))}</td>")
-            cells.append(f"<td{wc_other}>{esc(str(r.get(f'{slug}_fact', '')))}</td>")
-            cells.append(f"<td{wc_other}>{esc(str(r.get(f'{slug}_otkl', '')))}</td>")
-            # Просрочка / неполные даты — красный; оранжевый только если по датам ок, но % ≠ 100 (ГПЗУ / экспертиза П).
+            cells.append(
+                f"<td{wc_fact}>{esc(str(r.get(f'{slug}_fact', '')))}</td>"
+                if wc_fact
+                else f"<td>{esc(str(r.get(f'{slug}_fact', '')))}</td>"
+            )
+            cells.append(
+                f"<td{wc_otkl}>{esc(otkl_txt)}</td>"
+                if wc_otkl
+                else f"<td>{esc(otkl_txt)}</td>"
+            )
+            # Просрочка по датам — красный статус; предупреждение по % — если выполнение в MSP не 100%.
             if not m_ok:
                 st_cls = "cp-status-bad"
                 tip = "Отклонение по датам (План/Факт) или неполные даты"
                 al = "Отклонение по датам"
-            elif owarn:
+            elif pct_inc:
                 st_cls = "cp-status-warn"
-                tip = "В MSP для задачи «% выполнения» указано не 100% (вехи ГПЗУ / Экспертиза стадии П)"
+                tip = "В MSP для задачи указано «% выполнения» не 100%"
                 al = "Незавершено по %"
             else:
                 st_cls = "cp-status-ok"
                 tip = "Факт не позже плана (отклонение План−Факт ≥ 0); % выполнения — 100% или н/д"
                 al = "Норма"
-            st_extra = " cp-td-warn" if pct_warn_cells else ""
+            st_extra = (" cp-td-warn" if pct_warn_cells else "") + (" cp-td-pct-bold" if pct_inc else "")
             cells.append(
                 f'<td class="cp-status-cell{st_extra}" title="{esc(tip)}">'
                 f'<span class="cp-status-dot {st_cls}" role="img" aria-label="{esc(al)}"></span></td>'
