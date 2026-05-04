@@ -1735,7 +1735,9 @@ _DEV_TZ_MATRIX_CSS = """
   background: inherit;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-th-project {
-  text-align: left; vertical-align: middle; font-weight: 700; font-size: 12px;
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-weight: 700; font-size: 12px;
   padding: 6px 10px; color: #e8f5e9;
   background: rgba(20, 40, 28, 0.55) !important;
   min-width: 10em; max-width: 18em;
@@ -1754,11 +1756,15 @@ _DEV_TZ_MATRIX_CSS = """
   color: #e8eaed !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone {
-  text-align: center; vertical-align: bottom; font-size: 11px; font-weight: 600; line-height: 1.25;
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-size: 11px; font-weight: 600; line-height: 1.25;
   max-width: 9em; padding: 5px 6px; color: #c9d1d9;
   background: rgba(26, 28, 35, 0.92) !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub {
+  text-align: center !important;
+  vertical-align: middle !important;
   font-size: 11px; font-weight: 500; color: #9aa4b2; padding: 5px 6px;
   background: rgba(22, 24, 32, 0.95) !important;
 }
