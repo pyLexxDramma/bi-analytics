@@ -2014,13 +2014,13 @@ html,body{margin:0;padding:0;background:transparent;overflow:hidden}
 /* Чёткие границы ячеек: при separate каждой ячейке нужны все четыре стороны */
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th,
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td{
-  border:1px solid rgba(200,210,225,0.55)!important}
+  border:1px solid rgba(121,154,192,0.55)!important}
 /* Sticky-колонка «Проект»: фон + правый бордер через box-shadow,
    чтобы не «съезжал» вместе с ячейкой */
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project,
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project{
   position:sticky!important;left:0!important;
-  border-right:1px solid rgba(200,210,225,0.7)!important;
+  border-right:1px solid rgba(190,214,242,0.8)!important;
   box-shadow:2px 0 0 rgba(190,214,242,0.45)}
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project{
   z-index:5!important;background:#1a3328!important}
