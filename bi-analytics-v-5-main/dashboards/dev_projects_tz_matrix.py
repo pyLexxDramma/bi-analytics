@@ -1997,19 +1997,49 @@ def render_dev_tz_matrix(
         + "".join(body_trs)
         + "</tbody></table>"
     )
-    frag = (
-        table_css
-        + _DEV_TZ_MATRIX_CSS
+    # Рендер в iframe (components.html) — единственный способ получить надёжную
+    # фиксацию первой колонки при горизонтальном скролле в Streamlit, так как
+    # внешние контейнеры st.markdown/st.html ломают position:sticky.
+    import streamlit.components.v1 as _components
+    _table_css_raw = (table_css or "").replace("<style>", "").replace("</style>", "")
+    _dev_css_raw = _DEV_TZ_MATRIX_CSS.replace("<style>", "").replace("</style>", "")
+    _sticky_css = """
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:transparent;overflow:hidden}
+.dev-tz-matrix-wrap{width:100%;max-width:100%;overflow-x:auto;overflow-y:hidden;
+  -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide{
+  border-collapse:separate!important;border-spacing:0!important;
+  width:max-content!important;min-width:100%!important}
+/* Чёткие границы ячеек: при separate каждой ячейке нужны все четыре стороны */
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td{
+  border:1px solid rgba(200,210,225,0.55)!important}
+/* Sticky-колонка «Проект»: фон + правый бордер через box-shadow,
+   чтобы не «съезжал» вместе с ячейкой */
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project{
+  position:sticky!important;left:0!important;
+  border-right:1px solid rgba(200,210,225,0.7)!important;
+  box-shadow:2px 0 0 rgba(190,214,242,0.45)}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project{
+  z-index:5!important;background:#1a3328!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project{
+  z-index:4!important;background:#161f2b!important}
+"""
+    _n_rows = len(blocks)
+    _iframe_h = max(260, 130 + _n_rows * 44)
+    _iframe_html = (
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><style>"
+        + _table_css_raw
+        + _dev_css_raw
+        + _sticky_css
+        + "</style></head><body>"
         + '<div class="dev-tz-matrix-wrap">'
         + html_tbl
-        + "</div>"
+        + "</div></body></html>"
     )
-    # st.markdown(unsafe_allow_html) на Streamlit Cloud срезает style/class у <td>.
-    # st.html отдаёт фрагмент через отдельный путь разметки — вертикальные даты остаются.
-    if hasattr(st, "html"):
-        st.html(frag)
-    else:
-        st.markdown(frag, unsafe_allow_html=True)
+    _components.html(_iframe_html, height=_iframe_h, scrolling=False)
 
 
 # ── Контрольные точки (Сроки / макет file-009): проекты × вехи ───────────────
@@ -2391,6 +2421,11 @@ def build_control_points_df(mdf: pd.DataFrame, *, hide_completed: bool = False) 
 _CONTROL_POINTS_CSS = """
 <style>
 .cp-table-wrap { overflow-x: auto; min-width: 0; max-width: 100%; }
+/* border-collapse:separate обязателен для position:sticky на ячейках */
+.cp-table-wrap .rendered-table {
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+}
 .cp-table-wrap .rendered-table th,
 .cp-table-wrap .rendered-table td {
   border: 1px solid rgba(121, 154, 192, 0.55) !important;
@@ -2431,9 +2466,23 @@ _CONTROL_POINTS_CSS = """
 .cp-table-wrap .rendered-table th.cp-col-project {
   text-align: center !important;
   vertical-align: middle !important;
+  position: sticky !important;
+  left: 0 !important;
+  z-index: 3 !important;
+  background: #17314b !important;
 }
 .cp-col-project {
+  position: sticky !important;
+  left: 0 !important;
+  z-index: 2 !important;
+  background: #1a1c23 !important;
   border-right: 2px solid rgba(190, 214, 242, 0.8) !important;
+}
+.cp-table-wrap .rendered-table tr:nth-child(even) td.cp-col-project {
+  background: #1e2230 !important;
+}
+.cp-table-wrap .rendered-table tr:hover td.cp-col-project {
+  background: #262833 !important;
 }
 .cp-group-start {
   border-left: 2px solid rgba(190, 214, 242, 0.8) !important;
@@ -2611,10 +2660,44 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
         + "".join(body)
         + "</table>"
     )
-    st.markdown(
-        table_css + _CONTROL_POINTS_CSS + '<div class="rendered-table-wrap cp-table-wrap">' + html_tbl + "</div>",
-        unsafe_allow_html=True,
+    # iframe-рендер ради надёжной фиксации первой колонки «Проекты» при скролле.
+    import streamlit.components.v1 as _components
+    _table_css_raw = (table_css or "").replace("<style>", "").replace("</style>", "")
+    _cp_css_raw = _CONTROL_POINTS_CSS.replace("<style>", "").replace("</style>", "")
+    _sticky_css = """
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:transparent;overflow:hidden}
+.cp-table-wrap{width:100%;max-width:100%;overflow-x:auto;overflow-y:hidden;
+  -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}
+.cp-table-wrap .rendered-table{
+  border-collapse:separate!important;border-spacing:0!important;
+  width:max-content!important;min-width:100%!important}
+.cp-table-wrap .rendered-table th,
+.cp-table-wrap .rendered-table td{
+  border:1px solid rgba(121,154,192,0.55)!important}
+.cp-table-wrap .rendered-table th.cp-col-project,
+.cp-table-wrap .rendered-table td.cp-col-project{
+  position:sticky!important;left:0!important;
+  border-right:1px solid rgba(190,214,242,0.8)!important;
+  box-shadow:2px 0 0 rgba(190,214,242,0.45)}
+.cp-table-wrap .rendered-table th.cp-col-project{
+  z-index:5!important;background:#17314b!important}
+.cp-table-wrap .rendered-table td.cp-col-project{
+  z-index:4!important;background:#1a1c23!important}
+"""
+    _n_rows = len(view)
+    _iframe_h = max(220, 110 + _n_rows * 38)
+    _iframe_html = (
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><style>"
+        + _table_css_raw
+        + _cp_css_raw
+        + _sticky_css
+        + "</style></head><body>"
+        + '<div class="rendered-table-wrap cp-table-wrap">'
+        + html_tbl
+        + "</div></body></html>"
     )
+    _components.html(_iframe_html, height=_iframe_h, scrolling=False)
     drop_ok = [
         c
         for c in view.columns
