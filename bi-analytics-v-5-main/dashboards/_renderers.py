@@ -9146,7 +9146,6 @@ def dashboard_bdr(df):
                     tickangle=_xb,
                     tickfont=dict(size=8 if _nb > 28 else 9 if _nb > 18 else 10),
                     nticks=min(64, max(12, _nb)),
-                    ticklabelhalign="center",
                 ),
             )
             if not chart_df.empty:
@@ -9347,7 +9346,6 @@ def dashboard_bdr(df):
                 tickangle=_xb,
                 tickfont=dict(size=8 if _nb > 28 else 9 if _nb > 18 else 10),
                 nticks=min(64, max(12, _nb)),
-                ticklabelhalign="center",
             ),
         )
         if not chart_df.empty:
