@@ -94,6 +94,83 @@ def _guess_1c_period_column(df: pd.DataFrame) -> Optional[str]:
     return None
 
 
+def _bddds_route_unassigned_plan_fact(
+    t: pd.DataFrame,
+    *,
+    plan_mask: pd.Series,
+    fact_mask: pd.Series,
+) -> None:
+    """
+    После article-split строки со сценарием «ПЛАН»/«ФАКТ» без «Бюджет» в тексте сценария
+    остаются с нулевыми __plan/__fact; fallback по fact_mask при этом не срабатывает,
+    если хотя бы одна строка попала в fact_hit. Добираем такие суммы теми же масками сценария,
+    что и в ветке без разнесения по статье «ФАКТ».
+    """
+    amt = pd.to_numeric(t["_amt"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+    pl = pd.to_numeric(t["__plan"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+    fc = pd.to_numeric(t["__fact"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+    pm = np.asarray(plan_mask, dtype=bool)
+    fm = np.asarray(fact_mask, dtype=bool)
+    eps = 1e-9
+    un = (np.abs(pl) < eps) & (np.abs(fc) < eps) & (np.abs(amt) > eps)
+    if not bool(un.any()):
+        return
+    only_p = un & pm & ~fm
+    only_f = un & fm & ~pm
+    both = un & pm & fm
+    pl = np.where(only_p, amt, pl)
+    fc = np.where(only_f | both, amt, fc)
+    t["__plan"] = pl
+    t["__fact"] = fc
+
+
+def _bddds_impute_missing_plan_from_fact_ratio(odf: pd.DataFrame) -> pd.DataFrame:
+    """
+    Если в `*_dannye.json` за часть месяцев есть только сценарий «ФАКТ» без строк «ПЛАН»
+    (часто прошлый год), то после агрегации «budget plan» обнуляется при ненулевом факте.
+
+    Оценка плана для таких строк: факт × (Σплан/Σфакт) по месяцам, где обе величины > 0,
+    сначала внутри проекта, иначе общий коэффициент по всему набору строк.
+    """
+    if odf is None or getattr(odf, "empty", True):
+        return odf
+    out = odf.copy()
+    bp_all = pd.to_numeric(out["budget plan"], errors="coerce").fillna(0.0)
+    bf_all = pd.to_numeric(out["budget fact"], errors="coerce").fillna(0.0)
+    sel_pairs = (bp_all > 0.0) & (bf_all > 0.0)
+    global_ratio: float | None = None
+    if bool(sel_pairs.any()):
+        gbp = float(bp_all.loc[sel_pairs].sum())
+        gbf = float(bf_all.loc[sel_pairs].sum())
+        if gbf > 0.0 and np.isfinite(gbp):
+            global_ratio = gbp / gbf
+    imputed_any = False
+    for _proj, chunk in out.groupby("project name"):
+        idx = chunk.index
+        bp = pd.to_numeric(out.loc[idx, "budget plan"], errors="coerce").fillna(0.0)
+        bf = pd.to_numeric(out.loc[idx, "budget fact"], errors="coerce").fillna(0.0)
+        sel = (bp > 0.0) & (bf > 0.0)
+        ratio: float | None = None
+        if bool(sel.any()):
+            sp = float(bp.loc[sel].sum())
+            sf = float(bf.loc[sel].sum())
+            if sf > 0.0 and np.isfinite(sp):
+                ratio = sp / sf
+        if ratio is None and global_ratio is not None and np.isfinite(global_ratio) and global_ratio > 0.0:
+            ratio = global_ratio
+        if ratio is None or not np.isfinite(ratio) or ratio <= 0.0:
+            continue
+        need = (bp <= 0.0) & (bf > 0.0)
+        if not bool(need.any()):
+            continue
+        imputed_idx = idx[need.to_numpy()]
+        out.loc[imputed_idx, "budget plan"] = bf.loc[need].to_numpy(dtype=float) * ratio
+        imputed_any = True
+    if imputed_any:
+        out.attrs["bddds_plan_imputed_ratio"] = True
+    return out
+
+
 def try_synthetic_budget_from_1c_dannye(
     *,
     reference_1c_dannye: Optional[pd.DataFrame] = None,
@@ -108,7 +185,8 @@ def try_synthetic_budget_from_1c_dannye(
     ТЗ БДДС (обороты 1С): план — сценарий содержит «Бюджет», статья не «ФАКТ» и не (БДР);
     факт — тот же бюджетный сценарий и статья оборотов ровно «ФАКТ». Если колонки статьи нет
     или по правилам выше не получается ни одной строки — используется прежнее разделение по словам
-    в поле «Сценарий» (план/факт).
+    в поле «Сценарий» (план/факт). Смешанные выгрузки («Бюджет»+статья и отдельные «ПЛАН»/«ФАКТ»):
+    не попавшие в article-split строки добираются масками сценария.
 
     Возвращает None, если в reference_1c_dannye нет сценария+суммы или не удаётся агрегировать.
 
@@ -173,6 +251,9 @@ def try_synthetic_budget_from_1c_dannye(
     fact_mask = sser.str.contains("факт", case=False, na=False) | sser.str.contains(
         "fact", case=False, na=False
     )
+    _norm_scen = sser.str.strip().str.casefold()
+    plan_mask = plan_mask | _norm_scen.eq("план")
+    fact_mask = fact_mask | _norm_scen.eq("факт")
 
     use_article_split = bool(art and art in t.columns)
     plan_hit = pd.Series(False, index=t.index)
@@ -201,6 +282,7 @@ def try_synthetic_budget_from_1c_dannye(
         t["__fact"] = np.where(fact_hit.to_numpy(), amt_np, 0.0)
         if not bool(fact_hit.any()) and bool(fact_mask.any()):
             t["__fact"] = np.where(fact_mask.to_numpy(), amt_np, t["__fact"].to_numpy())
+        _bddds_route_unassigned_plan_fact(t, plan_mask=plan_mask, fact_mask=fact_mask)
     else:
         if not plan_mask.any() and not fact_mask.any():
             return None
@@ -242,6 +324,7 @@ def try_synthetic_budget_from_1c_dannye(
     odf["plan_month"] = _pe.dt.to_period("M")
     odf["plan_quarter"] = _pe.dt.to_period("Q")
     odf["plan_year"] = _pe.dt.to_period("Y")
+    odf = _bddds_impute_missing_plan_from_fact_ratio(odf)
     odf.attrs["data_source_1c_synthetic"] = True
     return odf
 
