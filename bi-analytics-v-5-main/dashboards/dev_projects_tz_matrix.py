@@ -390,7 +390,7 @@ def _series_first_value(row: pd.Series, col: str) -> Any:
 
 
 def _is_pct_complete_not_100(pct: Any) -> bool:
-    """ТЗ: подсветка, если «% выполнения» задан и не равен 100%."""
+    """ТЗ «Контрольные точки»: узкий шрифт значения ячейки, если «% выполнения» задан и не равен 100%."""
     if pct is None:
         return False
     try:
@@ -2290,7 +2290,7 @@ def _one_milestone_cell(rows: pd.DataFrame) -> Tuple[str, str, str, bool, bool]:
     """
     План = базовое окончание (base end), Факт = «Окончание» (plan end после загрузки MSP).
     Откл. = План − Факт (календарные дни), как в матрице девелоперских проектов.
-    Пятый элемент — подсветка по % выполнения у строки-представителя вехи (не 100% при известном %).
+    Пятый элемент — узкий шрифт по ТЗ: «% выполнения» у строки-представителя вехи не 100% (при известном %).
     """
     if rows is None or rows.empty:
         return "Н/Д", "Н/Д", "Н/Д", False, False
@@ -2420,18 +2420,22 @@ _CONTROL_POINTS_CSS = """
 .cp-group-start {
   border-left: 2px solid rgba(190, 214, 242, 0.8) !important;
 }
-/* ТЗ «СРОКИ»: при % выполнения ≠ 100% — полужирный текст во всех вехах */
-.cp-td-pct-bold {
-  font-weight: 700 !important;
+/* ТЗ «Контрольные точки»: при % выполнения ≠ 100% — значение ячейки узким шрифтом */
+.cp-td-pct-narrow {
+  font-family: "Arial Narrow", "Roboto Condensed", "Helvetica Neue Condensed", "Segoe UI Variable",
+    "Segoe UI", ui-sans-serif, system-ui, sans-serif !important;
+  font-stretch: condensed;
+  font-synthesis: none;
+  font-weight: 400 !important;
+  letter-spacing: -0.04em;
 }
 /* ГПЗУ / Экспертиза стадии П: дополнительно «рыжая» подсветка (согласованные правки) */
 .cp-td-warn {
   background: rgba(234, 88, 12, 0.38) !important;
   color: #fff7ed !important;
-  font-weight: 600;
 }
-.cp-td-warn.cp-td-pct-bold {
-  font-weight: 700 !important;
+.cp-td-warn.cp-td-pct-narrow {
+  font-weight: 400 !important;
 }
 /* Просрочка по План−Факт (отрицательные дни в «Откл.») — красный текст по макету ТЗ */
 .cp-otkl-late {
@@ -2539,9 +2543,9 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
             fact_parts: List[str] = []
             otkl_parts: List[str] = []
             if pct_inc:
-                plan_parts.append("cp-td-pct-bold")
-                fact_parts.append("cp-td-pct-bold")
-                otkl_parts.append("cp-td-pct-bold")
+                plan_parts.append("cp-td-pct-narrow")
+                fact_parts.append("cp-td-pct-narrow")
+                otkl_parts.append("cp-td-pct-narrow")
             if pct_warn_cells:
                 plan_parts.append("cp-td-warn")
                 fact_parts.append("cp-td-warn")
@@ -2562,8 +2566,8 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
                 if wc_otkl
                 else f"<td>{esc(otkl_txt)}</td>"
             )
-            # Индикатор «Статус» — только соблюдение сроков (зелёный/красный). Незавершённые по %
-            # подсвечиваются в ячейках План/Факт/Откл. (полужирный; для ГПЗУ/Экспертизы — фон).
+            # Индикатор «Статус» — только соблюдение сроков (зелёный/красный). При % выполнения ≠ 100%
+            # значения в План/Факт/Откл. — узкий шрифт по ТЗ; для ГПЗУ/Экспертизы стадии П ещё оранжевый фон.
             if not m_ok:
                 st_cls = "cp-status-bad"
                 tip = "Отклонение по срокам (факт позже плана) или неполные даты."
@@ -2572,10 +2576,11 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
                 st_cls = "cp-status-ok"
                 tip = (
                     "По срокам норма: факт не позже плана. Если в MSP «% выполнения» не 100%, "
-                    "смотрите полужирный текст и оранжевую подсветку в ячейках (для ГПЗУ и Экспертизы стадии П)."
+                    "значения в ячейках показываются узким шрифтом; для ГПЗУ и Экспертизы стадии П "
+                    "дополнительно оранжевая подсветка."
                 )
                 al = "Норма по срокам"
-            st_extra = " cp-td-pct-bold" if pct_inc else ""
+            st_extra = " cp-td-pct-narrow" if pct_inc else ""
             cells.append(
                 f'<td class="cp-status-cell{st_extra}" title="{esc(tip)}">'
                 f'<span class="cp-status-dot {st_cls}" role="img" aria-label="{esc(al)}"></span></td>'
