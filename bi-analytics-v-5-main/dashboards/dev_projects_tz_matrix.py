@@ -1715,13 +1715,30 @@ _DEV_TZ_MATRIX_CSS = """
   border: 2px solid rgba(220, 228, 240, 0.45);
   border-collapse: separate;
   border-spacing: 0;
-  min-width: 720px;
+  /* Иначе width:100% из глобального _TABLE_CSS растягивает таблицу под блок Streamlit:
+     горизонтальный скролл уезжает «наружу», и sticky по left не к чему цепляться. */
+  width: max-content !important;
+  min-width: max(720px, 100%) !important;
+  max-width: none !important;
 }
-.dev-tz-matrix-wrap { overflow-x: auto; min-width: 0; max-width: 100%; margin-bottom: 0.75rem; }
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th {
+.dev-tz-matrix-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
+  overscroll-behavior-x: contain;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  margin-bottom: 0.75rem;
+  -webkit-overflow-scrolling: touch;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th:not(.dev-tz-th-project) {
   border: 1px solid rgba(200, 210, 225, 0.5) !important;
   border-bottom: 2px solid rgba(200, 210, 225, 0.6) !important;
   box-sizing: border-box;
+  /* Глобальный _TABLE_CSS задаёт всем th position:sticky;top:0 — для 3 строк шапки это ломает сетку;
+     горизонтальный скролл нужен только у первого столбца. */
+  position: relative !important;
+  top: auto !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td {
   border: 1px solid rgba(200, 210, 225, 0.38) !important;
@@ -1738,13 +1755,17 @@ _DEV_TZ_MATRIX_CSS = """
   vertical-align: middle !important;
   font-weight: 700; font-size: 12px;
   padding: 6px 10px; color: #e8f5e9;
+  box-sizing: border-box;
+  border: 1px solid rgba(200, 210, 225, 0.5) !important;
+  border-bottom: 2px solid rgba(200, 210, 225, 0.6) !important;
   /* Непрозрачный фон + sticky: при горизонтальном скролле название проекта остаётся на месте */
   background: #1a3328 !important;
   min-width: 10em; max-width: 18em;
   width: 11em;
   position: sticky !important;
-  left: 0;
-  z-index: 6;
+  left: 0 !important;
+  top: auto !important;
+  z-index: 12 !important;
   border-right: 2px solid rgba(190, 214, 242, 0.65) !important;
   box-shadow: 6px 0 14px -6px rgba(0, 0, 0, 0.55);
 }
@@ -1796,12 +1817,13 @@ _DEV_TZ_MATRIX_CSS = """
   font-weight: 600;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-td-project {
-  text-align: left; font-weight: 600; font-size: 12px; padding: 6px 10px;
+  text-align: center !important;
+  font-weight: 600; font-size: 12px; padding: 6px 10px;
   background: #161f2b !important;
   color: #e6edf3;
   position: sticky !important;
-  left: 0;
-  z-index: 3;
+  left: 0 !important;
+  z-index: 4 !important;
   border-right: 2px solid rgba(190, 214, 242, 0.45) !important;
   box-shadow: 6px 0 14px -6px rgba(0, 0, 0, 0.45);
 }
