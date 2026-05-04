@@ -1722,7 +1722,6 @@ _DEV_TZ_MATRIX_CSS = """
   border: 1px solid rgba(200, 210, 225, 0.5) !important;
   border-bottom: 2px solid rgba(200, 210, 225, 0.6) !important;
   box-sizing: border-box;
-  position: static !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td {
   border: 1px solid rgba(200, 210, 225, 0.38) !important;
@@ -1739,8 +1738,15 @@ _DEV_TZ_MATRIX_CSS = """
   vertical-align: middle !important;
   font-weight: 700; font-size: 12px;
   padding: 6px 10px; color: #e8f5e9;
-  background: rgba(20, 40, 28, 0.55) !important;
+  /* Непрозрачный фон + sticky: при горизонтальном скролле название проекта остаётся на месте */
+  background: #1a3328 !important;
   min-width: 10em; max-width: 18em;
+  width: 11em;
+  position: sticky !important;
+  left: 0;
+  z-index: 6;
+  border-right: 2px solid rgba(190, 214, 242, 0.65) !important;
+  box-shadow: 6px 0 14px -6px rgba(0, 0, 0, 0.55);
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead {
   text-align: center !important;
@@ -1791,8 +1797,13 @@ _DEV_TZ_MATRIX_CSS = """
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-td-project {
   text-align: left; font-weight: 600; font-size: 12px; padding: 6px 10px;
-  background: rgba(15, 25, 35, 0.35);
+  background: #161f2b !important;
   color: #e6edf3;
+  position: sticky !important;
+  left: 0;
+  z-index: 3;
+  border-right: 2px solid rgba(190, 214, 242, 0.45) !important;
+  box-shadow: 6px 0 14px -6px rgba(0, 0, 0, 0.45);
 }
 /* ТЗ: при «% выполнения» ≠ 100% — оранжевый текст значений */
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-text-pct-warn {
