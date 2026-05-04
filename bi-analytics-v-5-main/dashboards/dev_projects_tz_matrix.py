@@ -1751,6 +1751,19 @@ _DEV_TZ_MATRIX_CSS = """
   border-spacing: 0;
   table-layout: fixed;
 }
+/* Одна высота трёх строк шапки у левой и правой таблицы — иначе tbody «Проект» / данные смещаются */
+.dev-tz-matrix-split thead tr:nth-child(1) th {
+  min-height: 3rem;
+  vertical-align: middle !important;
+}
+.dev-tz-matrix-split thead tr:nth-child(2) th {
+  min-height: 3.35rem;
+  vertical-align: middle !important;
+}
+.dev-tz-matrix-split thead tr:nth-child(3) th {
+  min-height: 2.85rem;
+  vertical-align: middle !important;
+}
 .dev-tz-matrix-scroll table.dev-tz-scroll-table {
   border: none !important;
   border-collapse: separate;
@@ -1788,15 +1801,13 @@ _DEV_TZ_MATRIX_CSS = """
   border-bottom: 2px solid rgba(200, 210, 225, 0.6) !important;
   background: #1a3328 !important;
 }
-.dev-tz-matrix-wrap table.dev-tz-pin-table th.dev-tz-pin-head-fill {
-  background: #1a3328 !important;
+.dev-tz-matrix-pin thead tr:first-child th.dev-tz-th-project {
+  font-size: 13px !important;
+  padding: 6px 8px !important;
+}
+.dev-tz-matrix-wrap th.dev-tz-pin-sync {
   color: transparent !important;
-  font-size: 11px;
-  line-height: 1.25;
-  font-weight: 600;
-  padding: 5px 6px !important;
-  border: 1px solid rgba(200, 210, 225, 0.5) !important;
-  border-bottom: 2px solid rgba(200, 210, 225, 0.6) !important;
+  white-space: nowrap !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead {
   text-align: center !important;
@@ -1862,6 +1873,10 @@ _DEV_TZ_MATRIX_CSS = """
   color: #e6edf3;
   word-wrap: break-word;
   overflow-wrap: anywhere;
+  vertical-align: middle !important;
+}
+.dev-tz-matrix-wrap table.dev-tz-scroll-table tbody td {
+  vertical-align: middle !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-text-pct-warn {
   color: #fb923c !important;
@@ -1990,6 +2005,11 @@ def render_dev_tz_matrix(
             ]
         )
 
+    _pin_band = "dev-tz-inv-block"
+    if template:
+        _fp = str(template[0].get("phase") or "life").strip().lower()
+        _pin_band = "dev-tz-inv-block" if _fp == "invest" else "dev-tz-life-block"
+
     scroll_head_row1 = (
         "<tr>"
         f'<th colspan="{col_span_inv}" class="dev-tz-ghead" style="text-align:center;vertical-align:middle;">Инвестиционная фаза</th>'
@@ -2008,8 +2028,8 @@ def render_dev_tz_matrix(
     thead_pin = (
         "<thead>"
         '<tr><th class="dev-tz-th-project">Проект</th></tr>'
-        '<tr><th class="dev-tz-pin-head-fill" aria-hidden="true">&nbsp;</th></tr>'
-        '<tr><th class="dev-tz-pin-head-fill" aria-hidden="true">&nbsp;</th></tr>'
+        f'<tr><th class="dev-tz-milestone {_pin_band} dev-tz-pin-sync" aria-hidden="true">&nbsp;</th></tr>'
+        f'<tr><th class="dev-tz-sub {_pin_band} dev-tz-pin-sync" aria-hidden="true">&nbsp;</th></tr>'
         "</thead>"
     )
 
