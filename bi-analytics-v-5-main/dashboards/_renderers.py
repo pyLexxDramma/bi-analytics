@@ -7774,7 +7774,6 @@ def dashboard_budget_by_period(df):
             ),
             unsafe_allow_html=True,
         )
-    render_quality_hints(_bdds_q_hints)
 
     # R23-13.2 (стр.35): в БДДС дополнительно вывести таблицу
     # «Сводка бюджета по проекту» (как в БДР) с итоговой строкой «ИТОГО».
@@ -7825,7 +7824,8 @@ def dashboard_budget_by_period(df):
             ),
             unsafe_allow_html=True,
         )
-        render_quality_hints(_bdds_q_hints)
+
+    render_quality_hints(_bdds_q_hints)
 
 
 # ==================== DASHBOARD 6.5: Budget Cumulative ====================
