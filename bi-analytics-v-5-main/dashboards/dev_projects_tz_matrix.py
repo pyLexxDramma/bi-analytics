@@ -1710,76 +1710,19 @@ def build_dev_tz_matrix_rows(
 
 _DEV_TZ_MATRIX_CSS = """
 <style>
-/*
- * Колонка «Проект» — отдельная таблица слева (не скроллится).
- * Справа — только данные с overflow-x (Streamlit часто ломает sticky у одной таблицы).
- * Три строки шапки слева повторяют высоты справа (min-height + классы вех у синхронизаторов).
- */
+/* Одна таблица: горизонтальный скролл целиком; колонка «Проект» не закреплена. */
 .dev-tz-matrix-wrap {
   width: 100%;
   max-width: 100%;
   min-width: 0;
   margin-bottom: 0.75rem;
   box-sizing: border-box;
-}
-.dev-tz-matrix-split {
-  display: flex;
-  align-items: stretch;
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-  border: 2px solid rgba(220, 228, 240, 0.45);
-  box-sizing: border-box;
-}
-.dev-tz-matrix-pin {
-  flex: 0 0 auto;
-  width: 11.25em;
-  min-width: 9.5em;
-  max-width: 16em;
-  z-index: 2;
-  box-shadow: 10px 0 22px -12px rgba(0, 0, 0, 0.6);
-}
-.dev-tz-matrix-scroll {
-  flex: 1 1 auto;
-  min-width: 0;
   overflow-x: auto;
-  overflow-y: visible;
   overscroll-behavior-x: contain;
   -webkit-overflow-scrolling: touch;
 }
-.dev-tz-matrix-pin table.dev-tz-pin-table {
-  width: 100%;
-  border: none !important;
-  border-collapse: separate;
-  border-spacing: 0;
-  table-layout: fixed;
-}
-/* Фиксированные высоты трёх строк шапки: min-height на <th> в таблицах часто не задаёт высоту строки */
-.dev-tz-matrix-pin thead tr:nth-child(1),
-.dev-tz-matrix-scroll thead tr:nth-child(1) {
-  height: 3rem;
-}
-.dev-tz-matrix-pin thead tr:nth-child(2),
-.dev-tz-matrix-scroll thead tr:nth-child(2) {
-  height: 3.35rem;
-}
-.dev-tz-matrix-pin thead tr:nth-child(3),
-.dev-tz-matrix-scroll thead tr:nth-child(3) {
-  height: 2.85rem;
-}
-.dev-tz-matrix-split thead tr:nth-child(1) th,
-.dev-tz-matrix-split thead tr:nth-child(2) th,
-.dev-tz-matrix-split thead tr:nth-child(3) th {
-  vertical-align: middle !important;
-  box-sizing: border-box !important;
-}
-.dev-tz-matrix-scroll thead th {
-  overflow: hidden !important;
-  text-overflow: ellipsis !important;
-  white-space: nowrap !important;
-}
-.dev-tz-matrix-scroll table.dev-tz-scroll-table {
-  border: none !important;
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide {
+  border: 2px solid rgba(220, 228, 240, 0.45);
   border-collapse: separate;
   border-spacing: 0;
   width: max-content !important;
@@ -1804,29 +1747,15 @@ _DEV_TZ_MATRIX_CSS = """
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody tr:nth-child(even) td {
   background: inherit;
 }
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-th-project {
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project {
   text-align: center !important;
   vertical-align: middle !important;
   font-weight: 700;
-  font-size: 12px;
+  font-size: 13px;
   padding: 6px 10px;
   color: #e8f5e9;
   box-sizing: border-box;
-  border: 1px solid rgba(200, 210, 225, 0.5) !important;
-  border-bottom: 2px solid rgba(200, 210, 225, 0.6) !important;
   background: #1a3328 !important;
-}
-.dev-tz-matrix-pin thead tr:first-child th.dev-tz-th-project {
-  font-size: 13px !important;
-  padding: 6px 8px !important;
-}
-.dev-tz-matrix-wrap th.dev-tz-pin-sync {
-  color: transparent !important;
-  white-space: nowrap !important;
-  font-size: 11px !important;
-  line-height: 1.25 !important;
-  padding: 5px 6px !important;
-  overflow: hidden !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead {
   text-align: center !important;
@@ -1893,20 +1822,7 @@ _DEV_TZ_MATRIX_CSS = """
   word-wrap: break-word;
   overflow-wrap: anywhere;
   vertical-align: middle !important;
-  border-right: 2px solid rgba(190, 214, 242, 0.45) !important;
-  box-shadow: 8px 0 18px -10px rgba(0, 0, 0, 0.45);
-}
-.dev-tz-matrix-wrap table.dev-tz-scroll-table tbody td {
-  vertical-align: middle !important;
-}
-/* Одна строка данных — общая высота строки (левый и правый tbody не делят строку автоматически) */
-.dev-tz-matrix-pin tbody tr,
-.dev-tz-matrix-scroll tbody tr {
-  height: 3.25rem;
-}
-.dev-tz-matrix-wrap.dev-tz-matrix-vert-dates tbody tr {
-  height: auto !important;
-  min-height: 5.75rem;
+  border-right: 1px solid rgba(190, 214, 242, 0.35) !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-text-pct-warn {
   color: #fb923c !important;
@@ -2035,36 +1951,18 @@ def render_dev_tz_matrix(
             ]
         )
 
-    _pin_band = "dev-tz-inv-block"
-    if template:
-        _fp = str(template[0].get("phase") or "life").strip().lower()
-        _pin_band = "dev-tz-inv-block" if _fp == "invest" else "dev-tz-life-block"
-
-    scroll_head_row1 = (
+    head_rows: List[str] = [
         "<tr>"
+        '<th rowspan="3" class="dev-tz-th-project">Проект</th>'
         f'<th colspan="{col_span_inv}" class="dev-tz-ghead" style="text-align:center;vertical-align:middle;">Инвестиционная фаза</th>'
         f'<th colspan="{col_span_life}" class="dev-tz-ghead dev-tz-ghead-life" style="text-align:center;vertical-align:middle;">Жизнь проекта</th>'
         "</tr>"
-    )
-    thead_scroll = (
-        "<thead>"
-        + scroll_head_row1
-        + "<tr>"
-        + "".join(mline)
-        + "</tr><tr>"
-        + "".join(subline)
-        + "</tr></thead>"
-    )
-    thead_pin = (
-        "<thead>"
-        '<tr><th class="dev-tz-th-project">Проект</th></tr>'
-        f'<tr><th class="dev-tz-milestone {_pin_band} dev-tz-pin-sync" aria-hidden="true">&nbsp;</th></tr>'
-        f'<tr><th class="dev-tz-sub {_pin_band} dev-tz-pin-sync" aria-hidden="true">&nbsp;</th></tr>'
-        "</thead>"
-    )
+    ]
+    head_rows.append("<tr>" + "".join(mline) + "</tr>")
+    head_rows.append("<tr>" + "".join(subline) + "</tr>")
+    thead = "<thead>" + "".join(head_rows) + "</thead>"
 
-    body_trs_pin: List[str] = []
-    body_trs_scroll: List[str] = []
+    body_trs: List[str] = []
     tmpl_keys: List[Tuple[str, str]] = [_dev_tz_matrix_row_key(r) for r in template]
     for bi, block in enumerate(blocks):
         row_by_key = {_dev_tz_matrix_row_key(r): r for r in block}
@@ -2088,37 +1986,23 @@ def render_dev_tz_matrix(
                     )
                 body_cells.append(f"<td{oc}{iv}>{esc(str(v))}</td>")
         plab = row_labels[bi] if bi < len(row_labels) else ""
-        body_trs_pin.append(
-            '<tr><td class="dev-tz-td-project">' + esc(plab) + "</td></tr>"
+        body_trs.append(
+            '<tr><td class="dev-tz-td-project">' + esc(plab) + "</td>" + "".join(body_cells) + "</tr>"
         )
-        body_trs_scroll.append("<tr>" + "".join(body_cells) + "</tr>")
 
-    html_pin = (
-        '<table class="rendered-table dev-tz-wide dev-tz-pin-table" border="0">'
-        + thead_pin
+    html_tbl = (
+        '<table class="rendered-table dev-tz-wide" border="0">'
+        + thead
         + "<tbody>"
-        + "".join(body_trs_pin)
-        + "</tbody></table>"
-    )
-    html_scroll = (
-        '<table class="rendered-table dev-tz-wide dev-tz-scroll-table" border="0">'
-        + thead_scroll
-        + "<tbody>"
-        + "".join(body_trs_scroll)
+        + "".join(body_trs)
         + "</tbody></table>"
     )
     frag = (
         table_css
         + _DEV_TZ_MATRIX_CSS
-        + '<div class="dev-tz-matrix-wrap'
-        + (" dev-tz-matrix-vert-dates" if vertical_dates else "")
-        + '">'
-        + '<div class="dev-tz-matrix-split">'
-        + '<div class="dev-tz-matrix-pin">'
-        + html_pin
-        + '</div><div class="dev-tz-matrix-scroll">'
-        + html_scroll
-        + "</div></div></div>"
+        + '<div class="dev-tz-matrix-wrap">'
+        + html_tbl
+        + "</div>"
     )
     # st.markdown(unsafe_allow_html) на Streamlit Cloud срезает style/class у <td>.
     # st.html отдаёт фрагмент через отдельный путь разметки — вертикальные даты остаются.
