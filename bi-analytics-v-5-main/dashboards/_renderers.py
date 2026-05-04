@@ -9029,7 +9029,6 @@ def dashboard_bdr(df):
                     "Нет периодов для графика. Снимите фильтр скрытия нулевых периодов "
                     "или расширьте фильтры."
                 )
-                render_quality_hints(_bdr_q_hints)
                 return
 
             _nb = len(chart_df)
@@ -9218,7 +9217,6 @@ def dashboard_bdr(df):
                 ),
                 unsafe_allow_html=True,
             )
-            render_quality_hints(_bdr_q_hints)
             return
 
         if view_type == "Накопительно":
@@ -9248,7 +9246,6 @@ def dashboard_bdr(df):
                 "Нет периодов для графика. Снимите «Скрывать месяцы, где доходы и расходы равны 0» "
                 "или расширьте фильтры."
             )
-            render_quality_hints(_bdr_q_hints)
             return
 
         _nb = len(chart_df)
@@ -9421,7 +9418,6 @@ def dashboard_bdr(df):
             budget_table_to_html(display_df, finance_deviation_column="Сальдо, млн руб."),
             unsafe_allow_html=True,
         )
-        render_quality_hints(_bdr_q_hints)
 
     _bdr_chart()
 
@@ -9489,7 +9485,8 @@ def dashboard_bdr(df):
                 ),
                 unsafe_allow_html=True,
             )
-        render_quality_hints(_bdr_q_hints)
+
+    render_quality_hints(_bdr_q_hints)
 
 
 # ==================== DASHBOARD 8.6: RD Delay Chart ====================
