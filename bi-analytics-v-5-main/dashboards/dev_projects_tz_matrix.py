@@ -390,7 +390,7 @@ def _series_first_value(row: pd.Series, col: str) -> Any:
 
 
 def _is_pct_complete_not_100(pct: Any) -> bool:
-    """ТЗ: подсветка, если «% выполнения» задан и не равен 100%."""
+    """ТЗ «Контрольные точки»: узкий шрифт значения ячейки, если «% выполнения» задан и не равен 100%."""
     if pct is None:
         return False
     try:
@@ -1710,23 +1710,36 @@ def build_dev_tz_matrix_rows(
 
 _DEV_TZ_MATRIX_CSS = """
 <style>
-/* Сетка шапки/тела: глобальный _TABLE_CSS даёт th только border-bottom — здесь явные границы ячеек. */
+/* Одна таблица: горизонтальный скролл целиком; колонка «Проект» не закреплена. */
+.dev-tz-matrix-wrap {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin-bottom: 0.75rem;
+  box-sizing: border-box;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide {
   border: 2px solid rgba(220, 228, 240, 0.45);
   border-collapse: separate;
   border-spacing: 0;
-  min-width: 720px;
+  width: max-content !important;
+  min-width: max(720px, 100%) !important;
+  max-width: none !important;
 }
-.dev-tz-matrix-wrap { overflow-x: auto; min-width: 0; max-width: 100%; margin-bottom: 0.75rem; }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th {
   border: 1px solid rgba(200, 210, 225, 0.5) !important;
   border-bottom: 2px solid rgba(200, 210, 225, 0.6) !important;
   box-sizing: border-box;
-  position: static !important;
+  position: relative !important;
+  top: auto !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td {
   border: 1px solid rgba(200, 210, 225, 0.38) !important;
   border-top: 1px solid rgba(200, 210, 225, 0.45) !important;
+  vertical-align: middle !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody tr:hover td {
   background: inherit;
@@ -1734,16 +1747,22 @@ _DEV_TZ_MATRIX_CSS = """
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody tr:nth-child(even) td {
   background: inherit;
 }
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-th-project {
-  text-align: left; vertical-align: middle; font-weight: 700; font-size: 12px;
-  padding: 6px 10px; color: #e8f5e9;
-  background: rgba(20, 40, 28, 0.55) !important;
-  min-width: 10em; max-width: 18em;
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project {
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 6px 10px;
+  color: #e8f5e9;
+  box-sizing: border-box;
+  background: #1a3328 !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead {
   text-align: center !important;
   vertical-align: middle !important;
-  font-weight: 700; font-size: 13px; padding: 6px 8px;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 6px 8px;
   background: linear-gradient(180deg, rgba(34, 139, 34, 0.35) 0%, rgba(25, 90, 25, 0.25) 100%) !important;
   color: #e8f5e9;
 }
@@ -1754,15 +1773,25 @@ _DEV_TZ_MATRIX_CSS = """
   color: #e8eaed !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone {
-  text-align: center; vertical-align: bottom; font-size: 11px; font-weight: 600; line-height: 1.25;
-  max-width: 9em; padding: 5px 6px; color: #c9d1d9;
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25;
+  max-width: 9em;
+  padding: 5px 6px;
+  color: #c9d1d9;
   background: rgba(26, 28, 35, 0.92) !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub {
-  font-size: 11px; font-weight: 500; color: #9aa4b2; padding: 5px 6px;
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-size: 11px;
+  font-weight: 500;
+  color: #9aa4b2;
+  padding: 5px 6px;
   background: rgba(22, 24, 32, 0.95) !important;
 }
-/* Вторая и третья строки шапки — те же палитры, что у «Инвестиционная фаза» / «Жизнь проекта» */
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-inv-block,
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-inv-block {
   background: linear-gradient(180deg, rgba(34, 139, 34, 0.35) 0%, rgba(25, 90, 25, 0.25) 100%) !important;
@@ -1784,16 +1813,21 @@ _DEV_TZ_MATRIX_CSS = """
   font-weight: 600;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-td-project {
-  text-align: left; font-weight: 600; font-size: 12px; padding: 6px 10px;
-  background: rgba(15, 25, 35, 0.35);
+  text-align: center !important;
+  font-weight: 600;
+  font-size: 12px;
+  padding: 6px 10px;
+  background: #161f2b !important;
   color: #e6edf3;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+  vertical-align: middle !important;
+  border-right: 1px solid rgba(190, 214, 242, 0.35) !important;
 }
-/* ТЗ: при «% выполнения» ≠ 100% — оранжевый текст значений */
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-text-pct-warn {
   color: #fb923c !important;
   font-weight: 600 !important;
 }
-/* Отклонение по дням План−Факт: без просрочки / с просрочкой */
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-otkl-ok {
   color: #22c55e !important;
   font-weight: 600 !important;
@@ -1802,7 +1836,6 @@ _DEV_TZ_MATRIX_CSS = """
   color: #ef4444 !important;
   font-weight: 600 !important;
 }
-/* Опционально: даты вертикально */
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-date-vert {
   writing-mode: vertical-rl;
   text-orientation: mixed;
@@ -1812,7 +1845,6 @@ _DEV_TZ_MATRIX_CSS = """
   text-align: center;
   padding: 8px 4px !important;
 }
-/* Предписания: открытые/просроченные — лёгкий акцент в «Откл.» */
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-directives-warn {
   background: rgba(234, 88, 12, 0.15) !important;
 }
@@ -1902,13 +1934,6 @@ def render_dev_tz_matrix(
     col_span_inv = n_inv * 3
     col_span_life = n_life * 3
 
-    head_rows: List[str] = [
-        "<tr>"
-        '<th rowspan="3" class="dev-tz-th-project">Проект</th>'
-        f'<th colspan="{col_span_inv}" class="dev-tz-ghead" style="text-align:center;vertical-align:middle;">Инвестиционная фаза</th>'
-        f'<th colspan="{col_span_life}" class="dev-tz-ghead dev-tz-ghead-life" style="text-align:center;vertical-align:middle;">Жизнь проекта</th>'
-        "</tr>"
-    ]
     mline: List[str] = []
     subline: List[str] = []
     for r in template:
@@ -1925,6 +1950,14 @@ def render_dev_tz_matrix(
                 f'<th class="dev-tz-sub {band}">{esc(l_otkl)}</th>',
             ]
         )
+
+    head_rows: List[str] = [
+        "<tr>"
+        '<th rowspan="3" class="dev-tz-th-project">Проект</th>'
+        f'<th colspan="{col_span_inv}" class="dev-tz-ghead" style="text-align:center;vertical-align:middle;">Инвестиционная фаза</th>'
+        f'<th colspan="{col_span_life}" class="dev-tz-ghead dev-tz-ghead-life" style="text-align:center;vertical-align:middle;">Жизнь проекта</th>'
+        "</tr>"
+    ]
     head_rows.append("<tr>" + "".join(mline) + "</tr>")
     head_rows.append("<tr>" + "".join(subline) + "</tr>")
     thead = "<thead>" + "".join(head_rows) + "</thead>"
@@ -2257,7 +2290,7 @@ def _one_milestone_cell(rows: pd.DataFrame) -> Tuple[str, str, str, bool, bool]:
     """
     План = базовое окончание (base end), Факт = «Окончание» (plan end после загрузки MSP).
     Откл. = План − Факт (календарные дни), как в матрице девелоперских проектов.
-    Пятый элемент — подсветка по % выполнения у строки-представителя вехи (не 100% при известном %).
+    Пятый элемент — узкий шрифт по ТЗ: «% выполнения» у строки-представителя вехи не 100% (при известном %).
     """
     if rows is None or rows.empty:
         return "Н/Д", "Н/Д", "Н/Д", False, False
@@ -2373,32 +2406,54 @@ _CONTROL_POINTS_CSS = """
   line-height: 1.25;
 }
 .rendered-table th.cp-tophead {
-  text-align: center;
+  text-align: center !important;
   background: #17314b !important;
   color: #f5f9ff !important;
   font-size: 14px;
   font-weight: 800;
 }
-.rendered-table th.cp-ghead { text-align:center; background:#1f232d; font-size:13px; padding:7px 9px; color:#f5f9ff !important; }
-.rendered-table th.cp-sub { font-size:12px; color:#dde8f5; font-weight:600; }
+/* Центрирование заголовков вех и подстолбцов (глобальный _TABLE_CSS задаёт th { text-align:left }) */
+.cp-table-wrap .rendered-table th.cp-ghead {
+  text-align: center !important;
+  vertical-align: middle !important;
+  background: #1f232d !important;
+  font-size: 13px !important;
+  padding: 7px 9px !important;
+  color: #f5f9ff !important;
+}
+.cp-table-wrap .rendered-table th.cp-sub {
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-size: 12px !important;
+  color: #dde8f5 !important;
+  font-weight: 600 !important;
+}
+.cp-table-wrap .rendered-table th.cp-col-project {
+  text-align: center !important;
+  vertical-align: middle !important;
+}
 .cp-col-project {
   border-right: 2px solid rgba(190, 214, 242, 0.8) !important;
 }
 .cp-group-start {
   border-left: 2px solid rgba(190, 214, 242, 0.8) !important;
 }
-/* ТЗ «СРОКИ»: при % выполнения ≠ 100% — полужирный текст во всех вехах */
-.cp-td-pct-bold {
-  font-weight: 700 !important;
+/* ТЗ «Контрольные точки»: при % выполнения ≠ 100% — значение ячейки узким шрифтом */
+.cp-td-pct-narrow {
+  font-family: "Arial Narrow", "Roboto Condensed", "Helvetica Neue Condensed", "Segoe UI Variable",
+    "Segoe UI", ui-sans-serif, system-ui, sans-serif !important;
+  font-stretch: condensed;
+  font-synthesis: none;
+  font-weight: 400 !important;
+  letter-spacing: -0.04em;
 }
 /* ГПЗУ / Экспертиза стадии П: дополнительно «рыжая» подсветка (согласованные правки) */
 .cp-td-warn {
   background: rgba(234, 88, 12, 0.38) !important;
   color: #fff7ed !important;
-  font-weight: 600;
 }
-.cp-td-warn.cp-td-pct-bold {
-  font-weight: 700 !important;
+.cp-td-warn.cp-td-pct-narrow {
+  font-weight: 400 !important;
 }
 /* Просрочка по План−Факт (отрицательные дни в «Откл.») — красный текст по макету ТЗ */
 .cp-otkl-late {
@@ -2506,9 +2561,9 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
             fact_parts: List[str] = []
             otkl_parts: List[str] = []
             if pct_inc:
-                plan_parts.append("cp-td-pct-bold")
-                fact_parts.append("cp-td-pct-bold")
-                otkl_parts.append("cp-td-pct-bold")
+                plan_parts.append("cp-td-pct-narrow")
+                fact_parts.append("cp-td-pct-narrow")
+                otkl_parts.append("cp-td-pct-narrow")
             if pct_warn_cells:
                 plan_parts.append("cp-td-warn")
                 fact_parts.append("cp-td-warn")
@@ -2529,8 +2584,8 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
                 if wc_otkl
                 else f"<td>{esc(otkl_txt)}</td>"
             )
-            # Индикатор «Статус» — только соблюдение сроков (зелёный/красный). Незавершённые по %
-            # подсвечиваются в ячейках План/Факт/Откл. (полужирный; для ГПЗУ/Экспертизы — фон).
+            # Индикатор «Статус» — только соблюдение сроков (зелёный/красный). При % выполнения ≠ 100%
+            # значения в План/Факт/Откл. — узкий шрифт по ТЗ; для ГПЗУ/Экспертизы стадии П ещё оранжевый фон.
             if not m_ok:
                 st_cls = "cp-status-bad"
                 tip = "Отклонение по срокам (факт позже плана) или неполные даты."
@@ -2539,10 +2594,11 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
                 st_cls = "cp-status-ok"
                 tip = (
                     "По срокам норма: факт не позже плана. Если в MSP «% выполнения» не 100%, "
-                    "смотрите полужирный текст и оранжевую подсветку в ячейках (для ГПЗУ и Экспертизы стадии П)."
+                    "значения в ячейках показываются узким шрифтом; для ГПЗУ и Экспертизы стадии П "
+                    "дополнительно оранжевая подсветка."
                 )
                 al = "Норма по срокам"
-            st_extra = " cp-td-pct-bold" if pct_inc else ""
+            st_extra = " cp-td-pct-narrow" if pct_inc else ""
             cells.append(
                 f'<td class="cp-status-cell{st_extra}" title="{esc(tip)}">'
                 f'<span class="cp-status-dot {st_cls}" role="img" aria-label="{esc(al)}"></span></td>'

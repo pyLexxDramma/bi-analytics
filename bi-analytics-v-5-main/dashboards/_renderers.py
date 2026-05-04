@@ -7774,7 +7774,6 @@ def dashboard_budget_by_period(df):
             ),
             unsafe_allow_html=True,
         )
-    render_quality_hints(_bdds_q_hints)
 
     # R23-13.2 (стр.35): в БДДС дополнительно вывести таблицу
     # «Сводка бюджета по проекту» (как в БДР) с итоговой строкой «ИТОГО».
@@ -7825,7 +7824,8 @@ def dashboard_budget_by_period(df):
             ),
             unsafe_allow_html=True,
         )
-        render_quality_hints(_bdds_q_hints)
+
+    render_quality_hints(_bdds_q_hints)
 
 
 # ==================== DASHBOARD 6.5: Budget Cumulative ====================
@@ -9029,12 +9029,12 @@ def dashboard_bdr(df):
                     "Нет периодов для графика. Снимите фильтр скрытия нулевых периодов "
                     "или расширьте фильтры."
                 )
-                render_quality_hints(_bdr_q_hints)
                 return
 
             _nb = len(chart_df)
             _is_cumulative = view_type == "Накопительно"
-            _hide_bar_value_labels = _nb > 6
+            # Подписи значений на столбцах — по ТЗ/UX всегда (раньше скрывались при >6 периодов).
+            _hide_bar_value_labels = False
             _tlbl_b = 0.005
             _tlbl_dev = 0.01 if not _hide_bar_value_labels else _tlbl_b
             _tfs_b = 8 if _nb > 32 else 9 if _nb > 20 else 10 if _nb > 12 else 11
@@ -9049,7 +9049,8 @@ def dashboard_bdr(df):
                 _leg_b_pre = max(340, min(520, 300 + int(_nb * 4.8)))
             elif _nb > 24:
                 _leg_b_pre = max(300, min(460, 280 + int(_nb * 3.5)))
-            _top_px_pre = 72 if (_hide_bar_value_labels and _nb > 20) else 88
+            # Больше верхнего поля — чтобы подписи «outside» и высокие столбцы не обрезались при прокрутке/зуме.
+            _top_px_pre = 124 if not _hide_bar_value_labels else (72 if _nb > 20 else 88)
             _min_plot_core_px = 400
             _bdr_h_base = 600 if _nb <= 20 else int(min(1100, 520 + int(_nb * 1.4)))
             _bdr_h = max(_bdr_h_base, _top_px_pre + _leg_b_pre + _min_plot_core_px)
@@ -9139,6 +9140,7 @@ def dashboard_bdr(df):
                 barmode="group",
                 bargap=_bgb,
                 bargroupgap=_bggb,
+                uniformtext=dict(minsize=7, mode="show"),
                 xaxis=dict(
                     title=dict(text=period_label, standoff=_x_standoff),
                     tickangle=_xb,
@@ -9146,11 +9148,6 @@ def dashboard_bdr(df):
                     nticks=min(64, max(12, _nb)),
                 ),
             )
-            if _nb > 10:
-                try:
-                    fig.update_layout(uniformtext=dict(minsize=5, mode="hide"))
-                except Exception:
-                    pass
             if not chart_df.empty:
                 _series_for_range = [
                     chart_df["План расходов"].div(1e6).to_numpy(),
@@ -9161,9 +9158,12 @@ def dashboard_bdr(df):
                 _ymax = float(np.nanmax(np.concatenate(_series_for_range)))
                 _ymin = float(np.nanmin(np.concatenate(_series_for_range)))
                 if np.isfinite(_ymax) and np.isfinite(_ymin):
-                    pad = max(abs(_ymax), abs(_ymin), 1e-6) * 0.2
-                    fig.update_layout(yaxis=dict(range=[_ymin - pad, _ymax + pad]))
-            fig = _apply_finance_bar_label_layout(fig)
+                    pad = max(abs(_ymax), abs(_ymin), 1e-6) * 0.22
+                    span = float(max(_ymax - _ymin, 1e-6))
+                    head = max(span * 0.22, abs(_ymax) * 0.14, 0.55)
+                    foot = pad if _ymin >= 0 else max(pad, abs(_ymin) * 0.18)
+                    fig.update_layout(yaxis=dict(range=[_ymin - foot, _ymax + pad + head]))
+            fig = _apply_finance_bar_label_layout(fig, y_rangemode=None)
             _leg_b = _leg_b_pre
             _leg_y = -0.34 if _nb <= 20 else (-0.38 if _nb <= 36 else -0.44)
             _top_px = _top_px_pre
@@ -9218,7 +9218,6 @@ def dashboard_bdr(df):
                 ),
                 unsafe_allow_html=True,
             )
-            render_quality_hints(_bdr_q_hints)
             return
 
         if view_type == "Накопительно":
@@ -9248,12 +9247,11 @@ def dashboard_bdr(df):
                 "Нет периодов для графика. Снимите «Скрывать месяцы, где доходы и расходы равны 0» "
                 "или расширьте фильтры."
             )
-            render_quality_hints(_bdr_q_hints)
             return
 
         _nb = len(chart_df)
         _is_cumulative = view_type == "Накопительно"
-        _hide_bar_value_labels = _nb > 6
+        _hide_bar_value_labels = False
         _tlbl_b = 0.005
         _tlbl_dev = 0.01 if not _hide_bar_value_labels else _tlbl_b
         _tfs_b = 8 if _nb > 32 else 9 if _nb > 20 else 10 if _nb > 12 else 11
@@ -9268,7 +9266,7 @@ def dashboard_bdr(df):
             _leg_b_pre = max(340, min(520, 300 + int(_nb * 4.8)))
         elif _nb > 24:
             _leg_b_pre = max(300, min(460, 280 + int(_nb * 3.5)))
-        _top_px_pre = 72 if (_hide_bar_value_labels and _nb > 20) else 88
+        _top_px_pre = 124 if not _hide_bar_value_labels else (72 if _nb > 20 else 88)
         _min_plot_core_px = 400
         _bdr_h_base = 600 if _nb <= 20 else int(min(1100, 520 + int(_nb * 1.4)))
         _bdr_h = max(_bdr_h_base, _top_px_pre + _leg_b_pre + _min_plot_core_px)
@@ -9342,6 +9340,7 @@ def dashboard_bdr(df):
             barmode="group",
             bargap=_bgb,
             bargroupgap=_bggb,
+            uniformtext=dict(minsize=7, mode="show"),
             xaxis=dict(
                 title=dict(text=period_label, standoff=_x_standoff),
                 tickangle=_xb,
@@ -9349,11 +9348,6 @@ def dashboard_bdr(df):
                 nticks=min(64, max(12, _nb)),
             ),
         )
-        if _nb > 10:
-            try:
-                fig.update_layout(uniformtext=dict(minsize=5, mode="hide"))
-            except Exception:
-                pass
         if not chart_df.empty:
             _ymax = float(
                 np.nanmax(
@@ -9378,9 +9372,12 @@ def dashboard_bdr(df):
                 )
             )
             if np.isfinite(_ymax) and np.isfinite(_ymin):
-                pad = max(abs(_ymax), abs(_ymin), 1e-6) * 0.2
-                fig.update_layout(yaxis=dict(range=[_ymin - pad, _ymax + pad]))
-        fig = _apply_finance_bar_label_layout(fig)
+                pad = max(abs(_ymax), abs(_ymin), 1e-6) * 0.22
+                span = float(max(_ymax - _ymin, 1e-6))
+                head = max(span * 0.22, abs(_ymax) * 0.14, 0.55)
+                foot = pad if _ymin >= 0 else max(pad, abs(_ymin) * 0.18)
+                fig.update_layout(yaxis=dict(range=[_ymin - foot, _ymax + pad + head]))
+        fig = _apply_finance_bar_label_layout(fig, y_rangemode=None)
         _leg_b = _leg_b_pre
         _leg_y = -0.34 if _nb <= 20 else (-0.38 if _nb <= 36 else -0.44)
         _top_px = _top_px_pre
@@ -9421,7 +9418,6 @@ def dashboard_bdr(df):
             budget_table_to_html(display_df, finance_deviation_column="Сальдо, млн руб."),
             unsafe_allow_html=True,
         )
-        render_quality_hints(_bdr_q_hints)
 
     _bdr_chart()
 
@@ -9489,7 +9485,8 @@ def dashboard_bdr(df):
                 ),
                 unsafe_allow_html=True,
             )
-        render_quality_hints(_bdr_q_hints)
+
+    render_quality_hints(_bdr_q_hints)
 
 
 # ==================== DASHBOARD 8.6: RD Delay Chart ====================
