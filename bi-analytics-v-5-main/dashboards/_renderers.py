@@ -1717,6 +1717,10 @@ def _apply_plotly_spec_411_labels(fig: go.Figure) -> go.Figure:
     return fig
 
 
+# Ширина холста Plotly по умолчанию: одинаковая «рамка» графика между проектами/блоками при stretch в Streamlit.
+_RENDER_CHART_DEFAULT_WIDTH_PX = 1150
+
+
 def render_chart(
     fig,
     key: str = None,
@@ -1753,6 +1757,12 @@ def render_chart(
             fig.update_layout(title_text="")
         except Exception:
             pass
+    try:
+        _lw = fig.layout.width
+        if _lw is None:
+            fig.update_layout(width=_RENDER_CHART_DEFAULT_WIDTH_PX)
+    except Exception:
+        pass
     if not skip_clamp_zoom:
         _clamp_plotly_scroll_zoom_padding(fig)
     _apply_plotly_spec_411_labels(fig)
@@ -11874,7 +11884,6 @@ def dashboard_technique(df):
                     render_chart(fig_pie_avg, key=f"{key_prefix}_avg_pie_{_pslug}", caption_below=f"Распределение ресурсов — {project_name}")
             else:
                 st.info("Нет данных для отображения.")
-            continue
 
         if not plan_fact_row_done:
             df_people = project_filtered_df.copy()
@@ -11892,37 +11901,52 @@ def dashboard_technique(df):
                 )
                 total_pf = plan_sum + fact_sum
                 if total_pf > 0:
-                    plan_pct = round(plan_sum / total_pf * 100, 1)
-                    fact_pct = round(fact_sum / total_pf * 100, 1)
-                    pie_plan_fact = pd.DataFrame({
-                        "Тип": ["План", "Факт"],
-                        "Значение": [plan_sum, fact_sum],
-                        "Текст": [f"План: {int(plan_sum)} ({plan_pct}%)", f"Факт: {int(fact_sum)} ({fact_pct}%)"],
-                    })
+                    _ps = float(plan_sum)
+                    _fs = float(fact_sum)
+                    _dv = _ps - _fs
+                    plan_i = int(np.ceil(_ps)) if _ps >= 0 else -int(np.ceil(abs(_ps)))
+                    fact_i = int(np.ceil(_fs)) if _fs >= 0 else -int(np.ceil(abs(_fs)))
+                    dev_i = int(np.ceil(_dv)) if _dv >= 0 else -int(np.ceil(abs(_dv)))
+                    fact_color = _gdrs_fact_bar_color(_ps, _fs)
                     st.subheader("План и факт (люди) по проекту")
-                    fig_pie_pf = px.pie(
-                        pie_plan_fact,
-                        values="Значение",
-                        names="Тип",
-                        title=None,
-                        color_discrete_sequence=["#3498db", "#2ecc71"],
+                    fig_pf_pf = go.Figure(
+                        data=[
+                            go.Bar(
+                                x=["План", "Факт"],
+                                y=[_ps, _fs],
+                                marker_color=["#2E86AB", fact_color],
+                                text=[f"{plan_i}", f"{fact_i}<br>Δ {dev_i}"],
+                                textposition="outside",
+                                textfont=dict(size=13, color="#ffffff"),
+                                cliponaxis=False,
+                                customdata=[
+                                    [str(project_name), plan_i, fact_i, dev_i],
+                                    [str(project_name), plan_i, fact_i, dev_i],
+                                ],
+                                hovertemplate=(
+                                    "<b>%{x}</b><br>"
+                                    "Проект: %{customdata[0]}<br>"
+                                    "План: %{customdata[1]}<br>"
+                                    "Факт: %{customdata[2]}<br>"
+                                    "Отклонение: %{customdata[3]}<extra></extra>"
+                                ),
+                            )
+                        ]
                     )
-                    fig_pie_pf = _pie_apply_percent_inside_legend_left(
-                        fig_pie_pf,
-                        height=500,
-                        pct_fontsize=22,
-                        legend_fontsize=12,
-                        left_margin=172,
-                        domain_x=(0.36, 0.96),
+                    fig_pf_pf.update_layout(
+                        height=460,
+                        showlegend=False,
+                        margin=dict(l=48, r=28, t=56, b=72),
+                        yaxis=dict(title=""),
+                        uniformtext=dict(minsize=7, mode="show"),
                     )
-                    fig_pie_pf.update_traces(
-                        hovertemplate=(
-                            "<b>%{label}</b><br>%{value:,.0f}<br>%{percent:.0%}<extra></extra>"
-                        ),
-                    )
-                    fig_pie_pf.update_layout(title_font_size=14)
-                    fig_pie_pf = apply_chart_background(fig_pie_pf)
-                    render_chart(fig_pie_pf, caption_below=f"План и факт — {project_name}")
+                    fig_pf_pf = _apply_bar_uniformtext(fig_pf_pf)
+                    try:
+                        fig_pf_pf.update_layout(uniformtext=dict(minsize=6, mode="show"))
+                    except Exception:
+                        pass
+                    fig_pf_pf = apply_chart_background(fig_pf_pf)
+                    render_chart(fig_pf_pf, caption_below=f"План и факт — {project_name}")
 
         # ========== Chart 1: Pie Chart by Contractor (Delta %) ==========
         st.subheader("Круговая диаграмма: Распределение дельты (%) по контрагентам")
@@ -12253,6 +12277,11 @@ def dashboard_technique(df):
                 fact_text.append(f"{int(round(fv))}" if abs(fv) >= 0.5 else "0")
                 delta_text.append(f"{int(round(av))}" if av >= 0.5 else "0")
 
+        _pv_arr = pd.to_numeric(contractor_data["План"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+        _fv_arr = pd.to_numeric(contractor_data["Факт"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+        _fact_bar_colors_pf = [_gdrs_fact_bar_color(float(a), float(b)) for a, b in zip(_pv_arr, _fv_arr)]
+        _hover_fact_pf = np.stack([_pv_arr, _fv_arr, _pv_arr - _fv_arr], axis=-1)
+
         fig_bar = go.Figure()
         fig_bar.add_trace(
             go.Bar(
@@ -12263,6 +12292,13 @@ def dashboard_technique(df):
                 text=plan_text,
                 textposition="outside",
                 textfont=dict(size=12, color="white"),
+                customdata=_hover_fact_pf,
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    "План: %{y:.0f}<br>"
+                    "Факт: %{customdata[1]:.0f}<br>"
+                    "Отклонение (план−факт): %{customdata[2]:.0f}<extra></extra>"
+                ),
             )
         )
         fig_bar.add_trace(
@@ -12270,10 +12306,17 @@ def dashboard_technique(df):
                 name="Факт",
                 x=contractor_data["Контрагент"],
                 y=contractor_data["Факт"],
-                marker_color="#95a5a6",
+                marker=dict(color=_fact_bar_colors_pf, line=dict(width=1, color="#eaf2fb")),
                 text=fact_text,
                 textposition="outside",
                 textfont=dict(size=12, color="white"),
+                customdata=_hover_fact_pf,
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    "План: %{customdata[0]:.0f}<br>"
+                    "Факт: %{y:.0f}<br>"
+                    "Отклонение (план−факт): %{customdata[2]:.0f}<extra></extra>"
+                ),
             )
         )
 
@@ -12310,8 +12353,11 @@ def dashboard_technique(df):
         fig_bar.update_layout(
             title_text="",
             xaxis_title="Контрагент",
-            yaxis_title="Значение",
+            yaxis_title="Факт (сумма), план и отклонение",
             barmode="group",
+            width=_RENDER_CHART_DEFAULT_WIDTH_PX,
+            bargap=0.22,
+            bargroupgap=0.09,
             height=620,
             legend=dict(
                 orientation="v",
@@ -12924,6 +12970,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 work_df, _nw
             )
 
+    # ГДРС: при колонках «N неделя» week_sum — сумма недель; для сравнения с планом делим на 6 (фикс. сетка).
+    week_fact_den = 6.0 if week_columns else 1.0
+
     # Process Дельта (Delta) if available - try to find column by partial match
     delta_col = None
     if "Дельта" in work_df.columns:
@@ -12939,8 +12988,10 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             errors="coerce",
         ).fillna(0)
     else:
-        # Отклонение по PDF правок ГДРС: План − Факт (Факт ≈ week_sum / СКУД).
-        work_df["Дельта_numeric"] = work_df["План_numeric"] - work_df["week_sum"]
+        # Отклонение по PDF правок ГДРС: План − Факт (Факт ≈ week_sum / 6 при недельных колонках).
+        work_df["Дельта_numeric"] = work_df["План_numeric"] - (
+            pd.to_numeric(work_df["week_sum"], errors="coerce").fillna(0.0) / week_fact_den
+        )
 
     # Process Дельта (%) (Delta %) if available - extract numeric value from percentage string
     # Try to find column by partial match
@@ -13355,11 +13406,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             return None, None
         plan_sum = float(pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0).sum())
         _ws_pf = pd.to_numeric(d["week_sum"], errors="coerce").fillna(0.0)
-        fact_sum = (
-            float((_ws_pf / 6.0).sum())
-            if week_columns
-            else float(_ws_pf.sum())
-        )
+        fact_sum = float((_ws_pf / week_fact_den).sum())
         if plan_sum <= 0 and fact_sum <= 0:
             return None, None
         dev = plan_sum - fact_sum
@@ -13402,81 +13449,42 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         plan_i = _ceil_int(plan_sum)
         fact_i = _ceil_int(fact_sum)
         dev_i = _ceil_int(dev)
-        _use_pie = plan_sum > 0 and fact_sum > 0
-        if _use_pie:
-            fig_pie_pf = go.Figure(
-                data=[
-                    go.Pie(
-                        labels=["План", "Факт"],
-                        values=[plan_sum, fact_sum],
-                        sort=False,
-                        direction="clockwise",
-                        hole=0.35,
-                        marker=dict(
-                            colors=["#2E86AB", fact_color],
-                            line=dict(width=0),
-                        ),
-                        customdata=[
-                            [proj_name, plan_i, fact_i, dev_i],
-                            [proj_name, plan_i, fact_i, dev_i],
-                        ],
-                        hovertemplate=(
-                            "<b>%{label}</b><br>"
-                            "Проект: %{customdata[0]}<br>"
-                            "План: %{customdata[1]}<br>"
-                            "Факт: %{customdata[2]}<br>"
-                            "Отклонение: %{customdata[3]}<extra></extra>"
-                        ),
-                        showlegend=True,
-                    )
-                ]
-            )
-            fig_pie_pf = _pie_apply_percent_inside_legend_left(
-                fig_pie_pf,
-                height=490,
-                pct_fontsize=22,
-                legend_fontsize=12,
-                left_margin=168,
-                domain_x=(0.36, 0.94),
-                clear_annotations=True,
-            )
-        else:
-            fig_pie_pf = go.Figure(
-                data=[
-                    go.Bar(
-                        x=["План", "Факт"],
-                        y=[plan_sum, fact_sum],
-                        marker_color=["#2E86AB", fact_color],
-                        text=[f"{plan_i}", f"{fact_i}<br>Δ {dev_i}"],
-                        textposition="outside",
-                        textfont=dict(size=13, color="#ffffff"),
-                        cliponaxis=False,
-                        customdata=[
-                            [proj_name, plan_i, fact_i, dev_i],
-                            [proj_name, plan_i, fact_i, dev_i],
-                        ],
-                        hovertemplate=(
-                            "<b>%{x}</b><br>"
-                            "Проект: %{customdata[0]}<br>"
-                            "План: %{customdata[1]}<br>"
-                            "Факт: %{customdata[2]}<br>"
-                            "Отклонение: %{customdata[3]}<extra></extra>"
-                        ),
-                    )
-                ]
-            )
-            fig_pie_pf.update_layout(
-                height=460,
-                showlegend=False,
-                margin=dict(l=48, r=28, t=56, b=72),
-                yaxis=dict(title=""),
-                uniformtext=dict(minsize=7, mode="show"),
-            )
-            fig_pie_pf = _apply_bar_uniformtext(fig_pie_pf)
-            try:
-                fig_pie_pf.update_layout(uniformtext=dict(minsize=6, mode="show"))
-            except Exception:
-                pass
+        fig_pie_pf = go.Figure(
+            data=[
+                go.Bar(
+                    x=["План", "Факт"],
+                    y=[plan_sum, fact_sum],
+                    marker_color=["#2E86AB", fact_color],
+                    text=[f"{plan_i}", f"{fact_i}<br>Δ {dev_i}"],
+                    textposition="outside",
+                    textfont=dict(size=13, color="#ffffff"),
+                    cliponaxis=False,
+                    customdata=[
+                        [proj_name, plan_i, fact_i, dev_i],
+                        [proj_name, plan_i, fact_i, dev_i],
+                    ],
+                    hovertemplate=(
+                        "<b>%{x}</b><br>"
+                        "Проект: %{customdata[0]}<br>"
+                        "План: %{customdata[1]}<br>"
+                        "Факт: %{customdata[2]}<br>"
+                        "Отклонение: %{customdata[3]}<extra></extra>"
+                    ),
+                )
+            ]
+        )
+        fig_pie_pf.update_layout(
+            height=460,
+            showlegend=False,
+            margin=dict(l=48, r=28, t=56, b=72),
+            yaxis=dict(title=""),
+            uniformtext=dict(minsize=7, mode="show"),
+        )
+        fig_pie_pf = _apply_bar_uniformtext(fig_pie_pf)
+        try:
+            fig_pie_pf.update_layout(uniformtext=dict(minsize=6, mode="show"))
+        except Exception:
+            pass
         fig_pie_pf = apply_chart_background(fig_pie_pf)
         return fig_pie_pf, {
             "plan": plan_sum,
@@ -13494,7 +13502,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             return None, None
         d = d.copy()
         _ws_cf = pd.to_numeric(d["week_sum"], errors="coerce").fillna(0.0)
-        d["_f"] = _ws_cf / (6.0 if week_columns else 1.0)
+        d["_f"] = _ws_cf / week_fact_den
         d["_p"] = (
             pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0)
             if "План_numeric" in d.columns
@@ -13576,11 +13584,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
     if "week_sum" in filtered_df.columns:
         _ws_kpi = pd.to_numeric(filtered_df["week_sum"], errors="coerce").fillna(0.0)
         # Как в эталонной таблице ГДРС: «СКУД» = сумма недель по строке / 6, не сырая сумма недель.
-        _kp_fact = (
-            float((_ws_kpi / 6.0).sum())
-            if week_columns
-            else float(_ws_kpi.sum())
-        )
+        _kp_fact = float((_ws_kpi / week_fact_den).sum())
         _kp_plan = (
             float(pd.to_numeric(filtered_df["План_numeric"], errors="coerce").fillna(0.0).sum())
             if "План_numeric" in filtered_df.columns
@@ -14284,9 +14288,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
     plan_fact_row_done = False
     if show_plan_fact_row:
         if (data_source_filter or "").strip().lower() == "техника":
-            st.subheader("План/факт техники")
+            st.subheader("План/Факт техника")
         else:
-            st.subheader("План/факт рабочих")
+            st.subheader("План/Факт рабочие")
         pf_cols = st.columns(len(projects_to_process))
         for _ix, _pname in enumerate(projects_to_process):
             _pdf = filtered_df.copy()
@@ -14323,7 +14327,10 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
     # R23-05 стр.12: «Факт по подрядчикам» показываем всегда при наличии week_sum
     # (раньше это был elif и при наличии колонки «Период» диаграмма пропадала).
     if "week_sum" in filtered_df.columns:
-        st.subheader("План-факт по подрядчикам")
+        if (data_source_filter or "").strip().lower() == "техника":
+            st.subheader("План/Факт техника")
+        else:
+            st.subheader("План/Факт рабочие")
         sources_wfb = []
         if "data_source" in filtered_df.columns:
             sources_wfb = filtered_df["data_source"].dropna().unique().tolist()
@@ -14353,7 +14360,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             if "План_numeric" in df_wfb.columns:
                 _agg_dict["План_numeric"] = "sum"
             by_w = df_wfb.groupby("Контрагент", as_index=False).agg(_agg_dict)
-            by_w["Факт"] = pd.to_numeric(by_w["week_sum"], errors="coerce").fillna(0)
+            _ws_grp = pd.to_numeric(by_w["week_sum"], errors="coerce").fillna(0)
+            by_w["Факт"] = _ws_grp / week_fact_den
             if "План_numeric" in by_w.columns:
                 by_w["План"] = pd.to_numeric(by_w["План_numeric"], errors="coerce").fillna(0)
             else:
@@ -14609,7 +14617,6 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     render_chart(fig_pie_avg, key=f"{key_prefix}_avg_pie_{_pslug}", caption_below=f"Распределение ресурсов — {project_name}")
             else:
                 st.info("Нет данных для отображения.")
-            continue
 
         if not plan_fact_row_done:
             df_people = project_filtered_df.copy()
@@ -14620,7 +14627,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             if not df_people.empty and "План_numeric" in df_people.columns and "week_sum" in df_people.columns:
                 fig_pf, met_pf = _gdrs_plan_fact_fig_and_metrics(df_people)
                 if fig_pf is not None and met_pf is not None:
-                    st.subheader("План/факт рабочие")
+                    st.subheader("План/Факт рабочие")
                     render_chart(fig_pf, key=f"{key_prefix}_planfact_single_{_pslug}", caption_below="")
 
         # ========== Chart 1: круговая — доля факта по подрядчикам ==========
@@ -14733,7 +14740,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             ]
         if "Дельта_numeric" not in bar_df.columns and "План_numeric" in bar_df.columns and "week_sum" in bar_df.columns:
             bar_df = bar_df.copy()
-            bar_df["Дельта_numeric"] = bar_df["План_numeric"] - bar_df["week_sum"]
+            bar_df["Дельта_numeric"] = bar_df["План_numeric"] - (
+                pd.to_numeric(bar_df["week_sum"], errors="coerce").fillna(0.0) / week_fact_den
+            )
         elif "Дельта_numeric" not in bar_df.columns:
             bar_df = bar_df.copy()
             bar_df["Дельта_numeric"] = 0
@@ -14750,11 +14759,14 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         )
 
         contractor_data.columns = ["Контрагент", "План", "Факт", "Отклонение"]
+        contractor_data["Факт"] = (
+            pd.to_numeric(contractor_data["Факт"], errors="coerce").fillna(0.0) / week_fact_den
+        )
 
-        # Ensure Отклонение column has numeric values
-        contractor_data["Отклонение"] = pd.to_numeric(
-            contractor_data["Отклонение"], errors="coerce"
-        ).fillna(0)
+        contractor_data["Отклонение"] = (
+            pd.to_numeric(contractor_data["План"], errors="coerce").fillna(0.0)
+            - pd.to_numeric(contractor_data["Факт"], errors="coerce").fillna(0.0)
+        )
 
         _sort_bar_label_w = st.radio(
             "Сортировка контрагентов по",
@@ -14802,6 +14814,11 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 fact_text.append(f"{int(round(fv))}" if abs(fv) >= 0.5 else "0")
                 delta_text.append(f"{int(round(av))}" if av >= 0.5 else "0")
 
+        _pv_arr = pd.to_numeric(contractor_data["План"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+        _fv_arr = pd.to_numeric(contractor_data["Факт"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+        _fact_bar_colors_pf = [_gdrs_fact_bar_color(float(a), float(b)) for a, b in zip(_pv_arr, _fv_arr)]
+        _hover_fact_pf = np.stack([_pv_arr, _fv_arr, _pv_arr - _fv_arr], axis=-1)
+
         fig_bar = go.Figure()
         fig_bar.add_trace(
             go.Bar(
@@ -14812,6 +14829,13 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 text=plan_text,
                 textposition="outside",
                 textfont=dict(size=12, color="white"),
+                customdata=_hover_fact_pf,
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    "План: %{y:.0f}<br>"
+                    "Факт: %{customdata[1]:.0f}<br>"
+                    "Отклонение (план−факт): %{customdata[2]:.0f}<extra></extra>"
+                ),
             )
         )
         fig_bar.add_trace(
@@ -14819,10 +14843,17 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 name="Факт",
                 x=contractor_data["Контрагент"],
                 y=contractor_data["Факт"],
-                marker_color="#95a5a6",
+                marker=dict(color=_fact_bar_colors_pf, line=dict(width=1, color="#eaf2fb")),
                 text=fact_text,
                 textposition="outside",
                 textfont=dict(size=12, color="white"),
+                customdata=_hover_fact_pf,
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    "План: %{customdata[0]:.0f}<br>"
+                    "Факт: %{y:.0f}<br>"
+                    "Отклонение (план−факт): %{customdata[2]:.0f}<extra></extra>"
+                ),
             )
         )
 
@@ -14860,8 +14891,11 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         fig_bar.update_layout(
             title_text="",
             xaxis_title="Контрагент",
-            yaxis_title="Значение",
+            yaxis_title="Факт (сумма), план и отклонение",
             barmode="group",
+            width=_RENDER_CHART_DEFAULT_WIDTH_PX,
+            bargap=0.22,
+            bargroupgap=0.09,
             height=620,
             legend=dict(
                 orientation="v",
