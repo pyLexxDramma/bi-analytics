@@ -22722,13 +22722,7 @@ def dashboard_developer_projects(df):
         pass
 
     _prefs_dm = load_developer_projects_matrix_prefs()
-    if "dev_matrix_vert_dates" not in st.session_state:
-        st.session_state["dev_matrix_vert_dates"] = bool(_prefs_dm.get("default_vertical_dates"))
-
-    vert_dates = st.checkbox(
-        "Даты в ячейках План/Факт вертикально",
-        key="dev_matrix_vert_dates",
-    )
+    vert_dates = bool(_prefs_dm.get("default_vertical_dates", False))
 
     try:
         from settings import get_setting as _get_admin_mail
