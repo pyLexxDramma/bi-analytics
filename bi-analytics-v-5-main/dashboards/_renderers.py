@@ -4,7 +4,7 @@
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
-from typing import Optional
+from typing import Any, Dict, List, Optional
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta, date
@@ -23131,6 +23131,1072 @@ def dashboard_control_points(df):
     render_control_points_dashboard(st, work, _TABLE_CSS)
 
 
+def _prepare_project_schedule_data(
+    df: pd.DataFrame, key_prefix: str
+) -> Optional[Dict[str, Any]]:
+    """Общие фильтры и подготовка строк для всех альтернативных видов «Графика проекта».
+
+    Возвращает None, если данных нет / отсутствуют обязательные колонки. Иначе:
+    {"rows": List[Dict], "show_dates": bool, "show_reasons": bool,
+     "block_col": str|None, "work": pd.DataFrame, "block_values": pd.Series}.
+    """
+    if df is None or getattr(df, "empty", True):
+        st.warning("Загрузите данные MSP.")
+        return None
+
+    work = df.copy()
+    if "__source_file" in work.columns:
+        _src_low = work["__source_file"].astype(str).str.lower()
+        _is_msp = (
+            _src_low.str.startswith("msp_")
+            | _src_low.str.contains("/msp_", na=False)
+            | _src_low.str.contains(r"\\msp_", na=False, regex=True)
+        )
+        if bool(_is_msp.any()):
+            work = work[_is_msp].copy()
+
+    if "project name" in work.columns:
+        work = _project_column_apply_canonical(work.copy(), "project name")
+
+    def _col(d, names):
+        cols_norm = {str(c).strip().lower(): c for c in d.columns}
+        for n in names:
+            if str(n).strip().lower() in cols_norm:
+                return cols_norm[str(n).strip().lower()]
+        return None
+
+    proj_col = _col(work, ["project name", "Проект", "проект", "Project"])
+    block_col = _col(work, ["block", "БЛОК", "Блок"]) or _col(
+        work, ["section", "Раздел", "Функциональный блок"]
+    )
+    building_col = _col(
+        work,
+        ["building", "строение", "Строение", "корпус", "Корпус", "объект", "Объект"],
+    )
+    task_col = _col(work, ["task name", "Task Name", "Название", "Задача"])
+    if not task_col:
+        work["task name"] = work.index.astype(str)
+        task_col = "task name"
+
+    level_col = _col(
+        work,
+        ["level structure", "level", "outline level", "Уровень_структуры", "Уровень"],
+    )
+    wbs_col = _col(work, ["outline number", "wbs", "WBS", "Иерархический номер"])
+    pct_col = _col(work, ["pct complete", "% завершения", "Процент выполнения"])
+    reason_col = _col(work, ["причины отклонений", "deviation reasons", "Причины"])
+    notes_col = _col(work, ["заметки", "notes", "Notes"])
+    lot_col = _col(work, ["lot", "Лот", "ЛОТ"])
+
+    for dc in ("plan start", "plan end", "base start", "base end"):
+        if dc in work.columns:
+            work[dc] = pd.to_datetime(work[dc], errors="coerce")
+    if "plan start" not in work.columns or "plan end" not in work.columns:
+        st.warning(
+            "Нужны колонки «plan start» и «plan end» (после загрузки MSP они появляются автоматически)."
+        )
+        return None
+
+    flt_cols = st.columns(5)
+    with flt_cols[0]:
+        if proj_col:
+            projs = ["Все"] + sorted(
+                work[proj_col].dropna().astype(str).map(str.strip).unique().tolist()
+            )
+            sel_proj = st.selectbox("Проект (ур. 1)", projs, key=f"{key_prefix}_project")
+            if sel_proj != "Все":
+                work = work[work[proj_col].astype(str).str.strip() == sel_proj]
+    with flt_cols[1]:
+        if block_col:
+            blocks = ["Все"] + sorted(
+                work[block_col].dropna().astype(str).map(str.strip).unique().tolist()
+            )
+            sel_block = st.selectbox("Блок (ур. 2)", blocks, key=f"{key_prefix}_block")
+            if sel_block != "Все":
+                work = work[work[block_col].astype(str).str.strip() == sel_block]
+    with flt_cols[2]:
+        if building_col:
+            bld = ["Все"] + sorted(
+                work[building_col].dropna().astype(str).map(str.strip).unique().tolist()
+            )
+            sel_bld = st.selectbox("Строение (ур. 3)", bld, key=f"{key_prefix}_building")
+            if sel_bld != "Все":
+                work = work[work[building_col].astype(str).str.strip() == sel_bld]
+    with flt_cols[3]:
+        sel_level = st.selectbox(
+            "Уровень отображения",
+            ["Все уровни", "Верхний (≤4)", "Детальный (≤5)"],
+            index=2,
+            key=f"{key_prefix}_level_mode",
+        )
+    with flt_cols[4]:
+        val_mode = st.selectbox(
+            "Тип значений",
+            ["Даты + дни отклонений", "Только дни отклонений"],
+            key=f"{key_prefix}_value_mode",
+        )
+
+    flt2 = st.columns(4)
+    with flt2[0]:
+        hide_done = st.checkbox(
+            "Скрыть задачи со 100% выполнения", value=False, key=f"{key_prefix}_hide_done"
+        )
+    with flt2[1]:
+        only_lots = st.checkbox(
+            "Только задачи с заполненным ЛОТ",
+            value=False,
+            key=f"{key_prefix}_only_lots",
+            disabled=lot_col is None,
+        )
+    with flt2[2]:
+        show_reasons = st.checkbox(
+            "Показать «Причины отклонений» и «Заметки»",
+            value=True,
+            key=f"{key_prefix}_show_reasons",
+        )
+    with flt2[3]:
+        only_overdue = st.checkbox(
+            "Только просроченные (Δ оконч. > 0)",
+            value=True,
+            key=f"{key_prefix}_only_overdue",
+            help="По ТЗ: показывать задачи, где Базовое окончание − Окончание < 0 (плановое позже базового).",
+        )
+
+    if level_col:
+        lvl_num = outline_level_numeric(work[level_col])
+    else:
+        lvl_num = pd.Series([np.nan] * len(work), index=work.index)
+    work["__lvl"] = lvl_num.fillna(99).astype(int)
+    if sel_level == "Верхний (≤4)":
+        work = work[work["__lvl"] <= 4]
+    elif sel_level == "Детальный (≤5)":
+        work = work[work["__lvl"] <= 5]
+
+    if only_lots and lot_col:
+        lc = work[lot_col].astype(str).str.strip().str.lower()
+        blanks = {"", "nan", "none", "null", "<na>", "-", "—"}
+        work = work[~lc.isin(blanks) & work[lot_col].notna()]
+
+    if pct_col and hide_done:
+        _pn = pd.to_numeric(work[pct_col], errors="coerce")
+        _mx = _pn.max(skipna=True) if _pn.notna().any() else None
+        if _mx is not None and _mx <= 1.0:
+            _pn = _pn * 100.0
+        work = work[~(_pn >= 99.999)]
+
+    if work.empty:
+        st.info("Нет строк после фильтров.")
+        return None
+
+    if wbs_col and wbs_col in work.columns:
+        def _wbs_key(v):
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                return ""
+            parts = re.split(r"[.\s/|>\\-]+", str(v).strip())
+            out = []
+            for p in parts:
+                if not p:
+                    continue
+                try:
+                    out.append(f"{int(float(p)):010d}")
+                except (TypeError, ValueError):
+                    out.append(p.zfill(10))
+            return ".".join(out)
+        work["__wbs_sort"] = work[wbs_col].map(_wbs_key)
+        work = work.sort_values(by=["__wbs_sort"], kind="stable")
+    else:
+        work = work.sort_values(by=["__lvl", "plan start"], kind="stable")
+
+    def _days(a, b):
+        try:
+            d = (pd.to_datetime(a, errors="coerce") - pd.to_datetime(b, errors="coerce")).days
+            return int(d) if pd.notna(d) else None
+        except Exception:
+            return None
+
+    def _fmt_date(x):
+        try:
+            ts = pd.to_datetime(x, errors="coerce")
+            return ts.strftime("%d.%m.%Y") if pd.notna(ts) else ""
+        except Exception:
+            return ""
+
+    rows: List[Dict[str, Any]] = []
+    for idx, r in work.iterrows():
+        lvl = int(r["__lvl"]) if pd.notna(r["__lvl"]) else 99
+        if lvl > 5:
+            lvl = 5
+        bs = r.get("base start") if "base start" in work.columns else None
+        be = r.get("base end") if "base end" in work.columns else None
+        ps = r.get("plan start")
+        pe = r.get("plan end")
+        dev_s = _days(ps, bs) if pd.notna(bs) and pd.notna(ps) else None
+        dev_e = _days(pe, be) if pd.notna(be) and pd.notna(pe) else None
+        bdur = _days(be, bs) if pd.notna(be) and pd.notna(bs) else None
+        pdur = _days(pe, ps) if pd.notna(pe) and pd.notna(ps) else None
+        dev_d = (pdur - bdur) if (bdur is not None and pdur is not None) else None
+        try:
+            pct = float(pd.to_numeric(r.get(pct_col), errors="coerce")) if pct_col else None
+            if pct is not None and pd.notna(pct):
+                if pct <= 1.0:
+                    pct = pct * 100.0
+            else:
+                pct = None
+        except Exception:
+            pct = None
+        task_label = str(r.get(task_col, "") or "")
+        task_label = re.sub(r"(?i)^\s*задача\s+\d+\s+", "", task_label).strip()
+        block_label = str(r.get(block_col, "") or "") if block_col else ""
+        rows.append(
+            {
+                "id": str(idx),
+                "lvl": lvl,
+                "task": task_label,
+                "proj": str(r.get(proj_col, "") or "") if proj_col else "",
+                "block": block_label,
+                "bs": _fmt_date(bs) if bs is not None else "",
+                "ps": _fmt_date(ps),
+                "dev_s": dev_s,
+                "be": _fmt_date(be) if be is not None else "",
+                "pe": _fmt_date(pe),
+                "dev_e": dev_e,
+                "bdur": bdur,
+                "pdur": pdur,
+                "dev_d": dev_d,
+                "pct": pct,
+                "reason": str(r.get(reason_col, "") or "") if reason_col else "",
+                "notes": str(r.get(notes_col, "") or "") if notes_col else "",
+            }
+        )
+
+    if not rows:
+        st.info("Нет данных для таблицы.")
+        return None
+
+    if only_overdue:
+        rows = [r for r in rows if (r.get("dev_e") is not None and r["dev_e"] > 0)]
+        if not rows:
+            st.info("Просроченных задач (Δ окончания > 0) в выборке нет.")
+            return None
+        # ТЗ: вверху самое большое отклонение окончания, далее по убыванию.
+        rows.sort(key=lambda r: r["dev_e"], reverse=True)
+
+    return {
+        "rows": rows,
+        "show_dates": val_mode == "Даты + дни отклонений",
+        "show_reasons": show_reasons,
+        "block_col": block_col,
+        "only_overdue": only_overdue,
+        "work": work,
+    }
+
+
+def _render_project_schedule_hierarchical(df: pd.DataFrame) -> None:
+    """Иерархическая WBS-таблица: разворачиваемая, сортировка, цвет отклонений."""
+    import streamlit.components.v1 as _components
+
+    prep = _prepare_project_schedule_data(df, "hsched")
+    if prep is None:
+        return
+    rows = prep["rows"]
+    show_dates = prep["show_dates"]
+    show_reasons = prep["show_reasons"]
+
+    esc = html_module.escape
+
+    def _fmt_dev(n):
+        if n is None:
+            return ""
+        if n == 0:
+            return "0 дн."
+        return f"{('+' if n > 0 else '')}{n} дн."
+
+    def _dev_cls(n):
+        # ТЗ: красный — отклонение в худшую сторону (плановая дата позже базовой; Δ > 0),
+        # зелёный — лучше базы (Δ < 0), серый — на сроке.
+        if n is None:
+            return ""
+        if n > 0:
+            return "neg"
+        if n < 0:
+            return "pos"
+        return "zero"
+
+    def _cell_dev(n):
+        if n is None:
+            return '<td class="num"></td>'
+        return f'<td class="num dev-{_dev_cls(n)}">{esc(_fmt_dev(n))}</td>'
+
+    def _cell_dur(n):
+        if n is None:
+            return '<td class="num"></td>'
+        return f'<td class="num">{n}</td>'
+
+    body_html: List[str] = []
+    for i, rr in enumerate(rows):
+        indent = max(0, rr["lvl"] - 1) * 18
+        has_children = (i + 1 < len(rows)) and (rows[i + 1]["lvl"] > rr["lvl"])
+        toggle = (
+            f'<span class="toggle" data-row="{i}">▼</span>'
+            if has_children
+            else '<span class="toggle empty"></span>'
+        )
+        pct_str = "" if rr["pct"] is None else f'{rr["pct"]:.0f}%'
+        # ТЗ: заливка строки отражает «состояние»: просрочка по окончанию — красноватая,
+        # опережение — зеленоватая, иначе нейтральная.
+        if rr.get("dev_e") is not None:
+            if rr["dev_e"] > 0:
+                row_cls = "row-late"
+            elif rr["dev_e"] < 0:
+                row_cls = "row-early"
+            else:
+                row_cls = ""
+        else:
+            row_cls = ""
+        cells = [f'<td class="id">{i + 1}</td>']
+        cells.append(
+            '<td class="task" style="padding-left:'
+            + str(8 + indent)
+            + 'px"><span class="lvl-tag">L'
+            + str(rr["lvl"])
+            + "</span>"
+            + toggle
+            + " "
+            + esc(rr["task"])
+            + (f' <span class="proj">· {esc(rr["proj"])}</span>' if rr["proj"] else "")
+            + "</td>"
+        )
+        if show_dates:
+            cells.extend(
+                [
+                    f'<td class="dt">{esc(rr["bs"])}</td>',
+                    f'<td class="dt">{esc(rr["ps"])}</td>',
+                ]
+            )
+        cells.append(_cell_dev(rr["dev_s"]))
+        if show_dates:
+            cells.extend(
+                [
+                    f'<td class="dt">{esc(rr["be"])}</td>',
+                    f'<td class="dt">{esc(rr["pe"])}</td>',
+                ]
+            )
+        cells.append(_cell_dev(rr["dev_e"]))
+        cells.extend([_cell_dur(rr["bdur"]), _cell_dur(rr["pdur"]), _cell_dev(rr["dev_d"])])
+        cells.append(f'<td class="num pct">{pct_str}</td>')
+        if show_reasons:
+            cells.append(f'<td class="txt">{esc(rr["reason"])}</td>')
+            cells.append(f'<td class="txt">{esc(rr["notes"])}</td>')
+        body_html.append(
+            f'<tr data-idx="{i}" data-lvl="{rr["lvl"]}" data-collapsed="0" class="{row_cls}">'
+            + "".join(cells)
+            + "</tr>"
+        )
+
+    head_cells = ['<th class="num">№</th>', '<th class="task">Задача</th>']
+    if show_dates:
+        head_cells.extend(['<th>Базовое начало</th>', '<th>Начало</th>'])
+    head_cells.append('<th class="num">Откл.&nbsp;нач.</th>')
+    if show_dates:
+        head_cells.extend(['<th>Базовое окончание</th>', '<th>Окончание</th>'])
+    head_cells.append('<th class="num">Откл.&nbsp;оконч.</th>')
+    head_cells.extend(
+        [
+            '<th class="num">Баз.&nbsp;длит.</th>',
+            '<th class="num">Длит.</th>',
+            '<th class="num">Откл.&nbsp;длит.</th>',
+            '<th class="num">% выполн.</th>',
+        ]
+    )
+    if show_reasons:
+        head_cells.extend(['<th class="txt">Причины отклонений</th>', '<th class="txt">Заметки</th>'])
+
+    head_html = "<thead><tr>" + "".join(
+        h.replace("<th", f'<th data-col="{i}"', 1) for i, h in enumerate(head_cells)
+    ) + "</tr></thead>"
+    table_html = (
+        '<table class="hsched">'
+        + head_html
+        + "<tbody>"
+        + "".join(body_html)
+        + "</tbody></table>"
+    )
+
+    iframe_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+*{{box-sizing:border-box}}
+html,body{{margin:0;padding:0;background:transparent;color:#e6edf3;
+  font-family:Inter,system-ui,sans-serif;font-size:12px}}
+.wrap{{width:100%;overflow-x:auto;overflow-y:auto;max-height:78vh;
+  border:1px solid rgba(121,154,192,0.55)}}
+table.hsched{{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%}}
+table.hsched th,table.hsched td{{border:1px solid rgba(121,154,192,0.55);
+  padding:5px 8px;white-space:nowrap;vertical-align:middle}}
+table.hsched thead th{{position:sticky;top:0;z-index:5;background:#17314b;
+  color:#eaf2fb;font-weight:700;text-align:center;cursor:pointer;user-select:none}}
+table.hsched thead th:hover{{background:#1f3e5e}}
+table.hsched tbody td.task{{position:sticky;left:0;z-index:3;background:#161f2b;
+  text-align:left;min-width:280px;max-width:520px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;
+  box-shadow:2px 0 0 rgba(190,214,242,0.45)}}
+table.hsched thead th:first-child,table.hsched thead th:nth-child(2){{
+  position:sticky;top:0;z-index:6}}
+table.hsched thead th:nth-child(2){{left:0;z-index:7;text-align:left;background:#1a3328}}
+table.hsched tbody tr:nth-child(even) td{{background:rgba(255,255,255,0.025)}}
+table.hsched tbody tr:nth-child(even) td.task{{background:#1a2433}}
+table.hsched tbody tr:hover td{{background:#23304a}}
+table.hsched tbody tr:hover td.task{{background:#22314a}}
+td.num{{text-align:center;font-variant-numeric:tabular-nums}}
+td.dt{{text-align:center;font-variant-numeric:tabular-nums;color:#cfe0f5}}
+td.id{{text-align:center;color:#9aa4b2}}
+td.txt{{white-space:nowrap;max-width:380px;overflow:hidden;text-overflow:ellipsis;
+  color:#cfd8e3}}
+td.pct{{color:#a7c4ff;font-weight:600}}
+td.dev-neg{{color:#f87171;font-weight:700}}
+td.dev-pos{{color:#22c55e;font-weight:700}}
+td.dev-zero{{color:#9aa4b2}}
+table.hsched tbody tr.row-late td{{background:rgba(220,38,38,0.18)}}
+table.hsched tbody tr.row-late td.task{{background:#3a1a1f}}
+table.hsched tbody tr.row-early td{{background:rgba(22,163,74,0.14)}}
+table.hsched tbody tr.row-early td.task{{background:#173025}}
+table.hsched tbody tr.row-late:hover td{{background:rgba(220,38,38,0.28)}}
+table.hsched tbody tr.row-late:hover td.task{{background:#46232a}}
+table.hsched tbody tr.row-early:hover td{{background:rgba(22,163,74,0.22)}}
+table.hsched tbody tr.row-early:hover td.task{{background:#1e3c2f}}
+.lvl-tag{{display:inline-block;font-size:10px;color:#9aa4b2;
+  background:rgba(255,255,255,0.06);border-radius:3px;padding:1px 5px;margin-right:6px}}
+.toggle{{display:inline-block;width:14px;cursor:pointer;color:#7aa6d8;
+  user-select:none;text-align:center}}
+.toggle.empty{{visibility:hidden}}
+.proj{{color:#7aa6d8;font-style:italic;margin-left:6px}}
+tr.hidden{{display:none}}
+th.sort-asc::after{{content:" \\25B2";font-size:9px;color:#a7c4ff}}
+th.sort-desc::after{{content:" \\25BC";font-size:9px;color:#a7c4ff}}
+</style></head><body>
+<div class="wrap">{table_html}</div>
+<script>
+(function(){{
+  var table=document.querySelector('table.hsched');
+  if(!table)return;
+  var tbody=table.querySelector('tbody');
+  var rows=Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+
+  // Свернуть/развернуть
+  function applyVisibility(){{
+    var hideUntilLvl=null;
+    rows.forEach(function(tr){{
+      var lvl=parseInt(tr.getAttribute('data-lvl'),10);
+      if(hideUntilLvl!==null && lvl>hideUntilLvl){{
+        tr.classList.add('hidden');
+      }}else{{
+        tr.classList.remove('hidden');
+        hideUntilLvl=null;
+        if(tr.getAttribute('data-collapsed')==='1') hideUntilLvl=lvl;
+      }}
+    }});
+  }}
+  table.addEventListener('click',function(e){{
+    var t=e.target;
+    if(t.classList && t.classList.contains('toggle') && !t.classList.contains('empty')){{
+      var tr=t.closest('tr');
+      var c=tr.getAttribute('data-collapsed')==='1'?'0':'1';
+      tr.setAttribute('data-collapsed',c);
+      t.textContent=(c==='1')?'\u25B6':'\u25BC';
+      applyVisibility();
+      e.stopPropagation();
+    }}
+  }});
+
+  // Сортировка
+  var headers=table.querySelectorAll('thead th');
+  function parseDate(s){{
+    if(!s)return null;
+    var m=s.match(/^(\\d{{2}})\\.(\\d{{2}})\\.(\\d{{4}})/);
+    if(!m)return null;
+    return new Date(+m[3],+m[2]-1,+m[1]).getTime();
+  }}
+  function parseDays(s){{
+    if(!s)return null;
+    var m=String(s).match(/(-?\\d+)/);
+    return m?+m[1]:null;
+  }}
+  function getVal(tr,col){{
+    var td=tr.children[col];
+    if(!td)return '';
+    var t=td.textContent.trim();
+    var d=parseDate(t);
+    if(d!==null)return d;
+    var n=parseDays(t);
+    if(n!==null)return n;
+    return t.toLowerCase();
+  }}
+  headers.forEach(function(th,col){{
+    th.addEventListener('click',function(){{
+      var dir=th.classList.contains('sort-asc')?-1:1;
+      headers.forEach(function(h){{h.classList.remove('sort-asc','sort-desc');}});
+      th.classList.add(dir>0?'sort-asc':'sort-desc');
+      var arr=Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+      arr.sort(function(a,b){{
+        var va=getVal(a,col),vb=getVal(b,col);
+        if(va===''||va===null)return 1;
+        if(vb===''||vb===null)return -1;
+        return (va>vb?1:va<vb?-1:0)*dir;
+      }});
+      arr.forEach(function(tr){{tbody.appendChild(tr);}});
+      rows=Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+    }});
+  }});
+}})();
+</script></body></html>"""
+
+    n_rows = len(rows)
+    iframe_h = max(380, min(900, 110 + n_rows * 30))
+    _components.html(iframe_html, height=iframe_h, scrolling=False)
+
+
+def _render_project_schedule_minibars(df: pd.DataFrame) -> None:
+    """Таблица + горизонтальные мини-бары в ячейках отклонений (без Plotly)."""
+    import streamlit.components.v1 as _components
+
+    prep = _prepare_project_schedule_data(df, "msched_mb")
+    if prep is None:
+        return
+    rows = prep["rows"]
+    show_dates = prep["show_dates"]
+    show_reasons = prep["show_reasons"]
+    esc = html_module.escape
+
+    # Масштаб баров — по максимальному модулю отклонения по любому столбцу.
+    max_abs = 1
+    for rr in rows:
+        for k in ("dev_s", "dev_e", "dev_d"):
+            v = rr.get(k)
+            if v is not None and abs(v) > max_abs:
+                max_abs = abs(v)
+
+    def _bar_cell(n):
+        if n is None:
+            return '<td class="num"></td>'
+        # ТЗ: красный = просрочка (Δ > 0), зелёный = опережение (Δ < 0).
+        cls = "neg" if n > 0 else ("pos" if n < 0 else "zero")
+        pct = max(2, min(100, int(round(abs(n) / max_abs * 100))))
+        sign = "+" if n > 0 else ""
+        side = "left" if n > 0 else "right"
+        return (
+            f'<td class="bar-cell">'
+            f'<div class="bar-row">'
+            f'<span class="bar-val dev-{cls}">{esc(f"{sign}{n} дн." if n != 0 else "0 дн.")}</span>'
+            f'<span class="bar-track">'
+            f'<span class="bar-fill bar-{cls}" style="width:{pct}%;float:{side}"></span>'
+            f"</span>"
+            f"</div></td>"
+        )
+
+    def _dur_cell(n):
+        if n is None:
+            return '<td class="num"></td>'
+        return f'<td class="num">{n}</td>'
+
+    body_html: List[str] = []
+    for i, rr in enumerate(rows):
+        indent = max(0, rr["lvl"] - 1) * 18
+        pct_str = "" if rr["pct"] is None else f'{rr["pct"]:.0f}%'
+        if rr.get("dev_e") is not None and rr["dev_e"] > 0:
+            row_cls = "row-late"
+        elif rr.get("dev_e") is not None and rr["dev_e"] < 0:
+            row_cls = "row-early"
+        else:
+            row_cls = ""
+        cells = [f'<td class="id">{i + 1}</td>']
+        cells.append(
+            '<td class="task" style="padding-left:'
+            + str(8 + indent)
+            + 'px"><span class="lvl-tag">L'
+            + str(rr["lvl"])
+            + "</span> "
+            + esc(rr["task"])
+            + (f' <span class="proj">· {esc(rr["proj"])}</span>' if rr["proj"] else "")
+            + "</td>"
+        )
+        if show_dates:
+            cells.extend(
+                [
+                    f'<td class="dt">{esc(rr["bs"])}</td>',
+                    f'<td class="dt">{esc(rr["ps"])}</td>',
+                ]
+            )
+        cells.append(_bar_cell(rr["dev_s"]))
+        if show_dates:
+            cells.extend(
+                [
+                    f'<td class="dt">{esc(rr["be"])}</td>',
+                    f'<td class="dt">{esc(rr["pe"])}</td>',
+                ]
+            )
+        cells.append(_bar_cell(rr["dev_e"]))
+        cells.extend([_dur_cell(rr["bdur"]), _dur_cell(rr["pdur"]), _bar_cell(rr["dev_d"])])
+        cells.append(f'<td class="num pct">{pct_str}</td>')
+        if show_reasons:
+            cells.append(f'<td class="txt">{esc(rr["reason"])}</td>')
+            cells.append(f'<td class="txt">{esc(rr["notes"])}</td>')
+        body_html.append(f'<tr class="{row_cls}">' + "".join(cells) + "</tr>")
+
+    head_cells = ['<th>№</th>', '<th class="task">Задача</th>']
+    if show_dates:
+        head_cells.extend(["<th>Базовое начало</th>", "<th>Начало</th>"])
+    head_cells.append("<th>Откл.&nbsp;нач.</th>")
+    if show_dates:
+        head_cells.extend(["<th>Базовое окончание</th>", "<th>Окончание</th>"])
+    head_cells.append("<th>Откл.&nbsp;оконч.</th>")
+    head_cells.extend(
+        [
+            "<th>Баз.&nbsp;длит.</th>",
+            "<th>Длит.</th>",
+            "<th>Откл.&nbsp;длит.</th>",
+            "<th>% выполн.</th>",
+        ]
+    )
+    if show_reasons:
+        head_cells.extend(["<th>Причины отклонений</th>", "<th>Заметки</th>"])
+
+    table_html = (
+        '<table class="msched">'
+        + "<thead><tr>" + "".join(head_cells) + "</tr></thead>"
+        + "<tbody>" + "".join(body_html) + "</tbody>"
+        + "</table>"
+    )
+
+    iframe_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+*{{box-sizing:border-box}}
+html,body{{margin:0;padding:0;background:transparent;color:#e6edf3;
+  font-family:Inter,system-ui,sans-serif;font-size:12px}}
+.wrap{{width:100%;overflow-x:auto;overflow-y:auto;max-height:78vh;
+  border:1px solid rgba(121,154,192,0.55)}}
+table.msched{{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%}}
+table.msched th,table.msched td{{border:1px solid rgba(121,154,192,0.55);
+  padding:5px 8px;white-space:nowrap;vertical-align:middle}}
+table.msched thead th{{position:sticky;top:0;z-index:5;background:#17314b;
+  color:#eaf2fb;font-weight:700;text-align:center}}
+table.msched tbody td.task{{position:sticky;left:0;z-index:3;background:#161f2b;
+  text-align:left;min-width:280px;max-width:520px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;
+  box-shadow:2px 0 0 rgba(190,214,242,0.45)}}
+table.msched thead th:nth-child(2){{left:0;z-index:7;text-align:left;background:#1a3328}}
+table.msched tbody tr:nth-child(even) td{{background:rgba(255,255,255,0.025)}}
+table.msched tbody tr:nth-child(even) td.task{{background:#1a2433}}
+td.num,td.bar-cell{{text-align:center;font-variant-numeric:tabular-nums;min-width:120px}}
+td.dt{{text-align:center;color:#cfe0f5}}
+td.id{{text-align:center;color:#9aa4b2}}
+td.txt{{max-width:380px;overflow:hidden;text-overflow:ellipsis;color:#cfd8e3}}
+td.pct{{color:#a7c4ff;font-weight:600}}
+.bar-row{{display:flex;flex-direction:column;align-items:stretch;gap:2px;width:100%}}
+.bar-val{{font-size:11px;font-weight:700;text-align:center}}
+.bar-val.dev-neg{{color:#fca5a5}}
+.bar-val.dev-pos{{color:#86efac}}
+.bar-val.dev-zero{{color:#9aa4b2;font-weight:500}}
+.bar-track{{display:block;width:100%;height:6px;background:rgba(255,255,255,0.07);
+  border-radius:3px;overflow:hidden}}
+.bar-fill{{display:block;height:100%;border-radius:3px}}
+.bar-neg{{background:linear-gradient(90deg,#dc2626,#fb7185)}}
+.bar-pos{{background:linear-gradient(90deg,#16a34a,#86efac)}}
+.bar-zero{{background:rgba(148,163,184,0.4)}}
+table.msched tbody tr.row-late td{{background:rgba(220,38,38,0.18)}}
+table.msched tbody tr.row-late td.task{{background:#3a1a1f}}
+table.msched tbody tr.row-early td{{background:rgba(22,163,74,0.14)}}
+table.msched tbody tr.row-early td.task{{background:#173025}}
+.lvl-tag{{display:inline-block;font-size:10px;color:#9aa4b2;
+  background:rgba(255,255,255,0.06);border-radius:3px;padding:1px 5px;margin-right:6px}}
+.proj{{color:#7aa6d8;font-style:italic;margin-left:6px}}
+</style></head><body>
+<div class="wrap">{table_html}</div>
+</body></html>"""
+
+    iframe_h = max(380, min(900, 110 + len(rows) * 36))
+    _components.html(iframe_html, height=iframe_h, scrolling=False)
+
+
+def _render_project_schedule_barchart(df: pd.DataFrame) -> None:
+    """Сводный bar-chart (Plotly): задачи по Y, отклонение в днях по X, сортировка по убыванию |Δ|."""
+    prep = _prepare_project_schedule_data(df, "bsched")
+    if prep is None:
+        return
+    rows = prep["rows"]
+    show_reasons = prep["show_reasons"]
+
+    metric_cols = st.columns(2)
+    with metric_cols[0]:
+        metric = st.radio(
+            "Метрика отклонения",
+            ("Окончание", "Начало", "Длительность"),
+            horizontal=True,
+            key="bsched_metric",
+        )
+    with metric_cols[1]:
+        top_n = st.slider("Показать топ-N задач", 5, 100, 30, key="bsched_top_n")
+
+    key_map = {"Окончание": "dev_e", "Начало": "dev_s", "Длительность": "dev_d"}
+    dkey = key_map[metric]
+    dev_rows = [r for r in rows if r.get(dkey) is not None]
+    if not dev_rows:
+        st.info(f"Нет данных по отклонению «{metric}» в выборке.")
+        return
+    dev_rows.sort(key=lambda r: abs(r[dkey]), reverse=True)
+    top = dev_rows[:top_n]
+
+    labels: List[str] = []
+    values: List[int] = []
+    colors: List[str] = []
+    hover: List[str] = []
+    for r in top:
+        lab = r["task"][:60] + ("…" if len(r["task"]) > 60 else "")
+        if r["proj"]:
+            lab = f'{lab}  ({r["proj"][:20]})'
+        labels.append(lab)
+        v = int(r[dkey])
+        values.append(v)
+        # ТЗ: красный = просрочка (v > 0), зелёный = опережение (v < 0).
+        colors.append("#ef4444" if v > 0 else ("#22c55e" if v < 0 else "#94a3b8"))
+        hover.append(
+            f'{r["task"]}<br>База: {r["bs"]} → {r["be"]}'
+            f'<br>План: {r["ps"]} → {r["pe"]}<br>Δ {metric}: {v} дн.'
+        )
+
+    fig = go.Figure(
+        go.Bar(
+            x=values,
+            y=labels,
+            orientation="h",
+            marker_color=colors,
+            text=[f"{('+' if v > 0 else '')}{v} дн." for v in values],
+            textposition="outside",
+            hovertext=hover,
+            hoverinfo="text",
+            cliponaxis=False,
+        )
+    )
+    fig.update_layout(
+        height=max(360, 28 * len(top) + 100),
+        margin=dict(l=10, r=80, t=30, b=20),
+        xaxis_title=f"Отклонение {metric.lower()}, дн.",
+        yaxis=dict(autorange="reversed"),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#e6edf3", size=12),
+        showlegend=False,
+    )
+    fig.update_xaxes(zeroline=True, zerolinewidth=1, zerolinecolor="rgba(148,163,184,0.6)")
+    st.plotly_chart(fig, use_container_width=True, key="bsched_fig")
+
+    # Под графиком — компактная таблица топа.
+    tbl_rows: List[Dict[str, Any]] = []
+    for i, r in enumerate(top, 1):
+        rec = {
+            "№": i,
+            "Задача": r["task"],
+            "Проект": r["proj"],
+            "Базовое начало": r["bs"],
+            "Начало": r["ps"],
+            "Откл. нач.": r["dev_s"] if r["dev_s"] is not None else "",
+            "Базовое окончание": r["be"],
+            "Окончание": r["pe"],
+            "Откл. оконч.": r["dev_e"] if r["dev_e"] is not None else "",
+            "Откл. длит.": r["dev_d"] if r["dev_d"] is not None else "",
+            "% выполн.": "" if r["pct"] is None else f'{r["pct"]:.0f}%',
+        }
+        if show_reasons:
+            rec["Причины отклонений"] = r["reason"]
+            rec["Заметки"] = r["notes"]
+        tbl_rows.append(rec)
+    st.dataframe(
+        style_dataframe_for_dark_theme(pd.DataFrame(tbl_rows)),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+def _render_project_schedule_heatmap(df: pd.DataFrame) -> None:
+    """Теплокарта (Plotly): строки = блоки, столбцы = задачи, цвет = величина отклонения окончания."""
+    prep = _prepare_project_schedule_data(df, "hmsched")
+    if prep is None:
+        return
+    rows = prep["rows"]
+    block_col = prep["block_col"]
+    if not block_col:
+        st.warning("Не найдена колонка функционального блока — теплокарта недоступна.")
+        return
+
+    metric = st.radio(
+        "Метрика отклонения для цвета",
+        ("Окончание", "Начало", "Длительность"),
+        horizontal=True,
+        key="hmsched_metric",
+    )
+    key_map = {"Окончание": "dev_e", "Начало": "dev_s", "Длительность": "dev_d"}
+    dkey = key_map[metric]
+
+    # Сборка матрицы block × task. Если задача встречается в нескольких строках одного блока — берём по модулю максимум.
+    df_long = pd.DataFrame(
+        [
+            {
+                "block": r["block"] or "(без блока)",
+                "task": r["task"][:50] + ("…" if len(r["task"]) > 50 else ""),
+                "dev": r[dkey],
+            }
+            for r in rows
+            if r.get(dkey) is not None
+        ]
+    )
+    if df_long.empty:
+        st.info(f"Нет значений отклонения «{metric}» в выборке.")
+        return
+
+    df_long["abs_dev"] = df_long["dev"].abs()
+    pivot = (
+        df_long.sort_values("abs_dev", ascending=False)
+        .drop_duplicates(["block", "task"], keep="first")
+        .pivot(index="block", columns="task", values="dev")
+    )
+    if pivot.empty:
+        st.info("Недостаточно данных для теплокарты.")
+        return
+
+    # Сортировка задач по убыванию |максимального| отклонения по блокам.
+    task_order = pivot.abs().max(axis=0).sort_values(ascending=False).index.tolist()
+    pivot = pivot[task_order]
+    block_order = pivot.abs().max(axis=1).sort_values(ascending=False).index.tolist()
+    pivot = pivot.reindex(block_order)
+
+    z = pivot.values
+    z_max = float(np.nanmax(np.abs(z)))
+    if z_max == 0:
+        z_max = 1.0
+    fig = go.Figure(
+        go.Heatmap(
+            z=z,
+            x=list(pivot.columns),
+            y=list(pivot.index),
+            zmin=-z_max,
+            zmax=z_max,
+            # ТЗ: положительные Δ = просрочка → красный, отрицательные = опережение → зелёный.
+            colorscale=[
+                (0.0, "#16a34a"),
+                (0.45, "#86efac"),
+                (0.5, "#1e293b"),
+                (0.55, "#f87171"),
+                (1.0, "#dc2626"),
+            ],
+            colorbar=dict(title=f"Δ {metric.lower()}, дн.", tickfont=dict(color="#cfd8e3")),
+            hovertemplate="<b>%{y}</b><br>%{x}<br>Δ: %{z} дн.<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        height=max(380, 32 * len(pivot.index) + 180),
+        margin=dict(l=10, r=10, t=30, b=120),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#e6edf3", size=11),
+        xaxis=dict(tickangle=-45),
+    )
+    st.plotly_chart(fig, use_container_width=True, key="hmsched_fig")
+    suppress_caption(
+        f"Цвет: красный — просрочка (Δ < 0), зелёный — опережение (Δ > 0). Шкала симметрична: ±{int(z_max)} дн."
+    )
+
+
+def _render_project_schedule_covenants(df: pd.DataFrame) -> None:
+    """Ковенанты — вехи на шкале (Рисунок 6 ТЗ).
+
+    Каждая ковенанта — отдельная строка. Синий ромб — Базовое окончание, красный
+    квадрат — фактическое/плановое окончание; рядом с маркерами подписана дата.
+    Под графиком — таблица: Ковенанта / Базовое окончание / Окончание / Δ окончания.
+    """
+    if df is None or getattr(df, "empty", True):
+        st.warning("Загрузите данные MSP.")
+        return
+
+    work = df.copy()
+    if "__source_file" in work.columns:
+        _src_low = work["__source_file"].astype(str).str.lower()
+        _is_msp = (
+            _src_low.str.startswith("msp_")
+            | _src_low.str.contains("/msp_", na=False)
+            | _src_low.str.contains(r"\\msp_", na=False, regex=True)
+        )
+        if bool(_is_msp.any()):
+            work = work[_is_msp].copy()
+    if "project name" in work.columns:
+        work = _project_column_apply_canonical(work.copy(), "project name")
+
+    def _col(d, names):
+        cols_norm = {str(c).strip().lower(): c for c in d.columns}
+        for n in names:
+            if str(n).strip().lower() in cols_norm:
+                return cols_norm[str(n).strip().lower()]
+        return None
+
+    proj_col = _col(work, ["project name", "Проект"])
+    block_col = _col(work, ["block", "БЛОК", "Блок"]) or _col(
+        work, ["section", "Раздел", "Функциональный блок"]
+    )
+    task_col = _col(work, ["task name", "Task Name", "Название", "Задача"])
+    if not task_col:
+        work["task name"] = work.index.astype(str)
+        task_col = "task name"
+    for dc in ("plan end", "base end"):
+        if dc in work.columns:
+            work[dc] = pd.to_datetime(work[dc], errors="coerce")
+    if "plan end" not in work.columns and "base end" not in work.columns:
+        st.warning("Нужны колонки «plan end» и/или «base end».")
+        return
+
+    flt = st.columns(2)
+    with flt[0]:
+        if proj_col:
+            projs = ["Все"] + sorted(
+                work[proj_col].dropna().astype(str).map(str.strip).unique().tolist()
+            )
+            sel_proj = st.selectbox("Проект", projs, key="cov_project")
+            if sel_proj != "Все":
+                work = work[work[proj_col].astype(str).str.strip() == sel_proj]
+    with flt[1]:
+        if block_col:
+            blocks = sorted(
+                work[block_col].dropna().astype(str).map(str.strip).unique().tolist()
+            )
+            cov_default = next(
+                (b for b in blocks if "ковенант" in b.lower() or "covenant" in b.lower()),
+                blocks[0] if blocks else None,
+            )
+            sel_block = st.selectbox(
+                "Функциональный блок",
+                blocks,
+                index=blocks.index(cov_default) if cov_default in blocks else 0,
+                key="cov_block",
+                help="По ТЗ: вид «вехи» рекомендуется для блока «Ковенанты».",
+            )
+            work = work[work[block_col].astype(str).str.strip() == sel_block]
+
+    if work.empty:
+        st.info("Нет строк по выбранным фильтрам.")
+        return
+
+    rows: List[Dict[str, Any]] = []
+    for _, r in work.iterrows():
+        name = str(r.get(task_col, "") or "")
+        name = re.sub(r"(?i)^\s*задача\s+\d+\s+", "", name).strip()
+        be = pd.to_datetime(r.get("base end"), errors="coerce") if "base end" in work.columns else pd.NaT
+        pe = pd.to_datetime(r.get("plan end"), errors="coerce") if "plan end" in work.columns else pd.NaT
+        if pd.isna(be) and pd.isna(pe):
+            continue
+        dev = None
+        if pd.notna(be) and pd.notna(pe):
+            dev = (pe - be).days
+        rows.append({"name": name, "base_end": be, "plan_end": pe, "dev": dev})
+    if not rows:
+        st.info("Нет ковенант с заполненными датами.")
+        return
+
+    # По ТЗ: упорядочить по убыванию просрочки (наибольшее Δ оконч. сверху).
+    rows.sort(key=lambda r: (-(r["dev"] if r["dev"] is not None else -10**6), r["name"]))
+
+    y_labels = [r["name"][:80] + ("…" if len(r["name"]) > 80 else "") for r in rows]
+    base_x = [r["base_end"] for r in rows]
+    plan_x = [r["plan_end"] for r in rows]
+
+    fig = go.Figure()
+    # Соединяющий сегмент base→plan, чтобы взгляд читал направление сдвига.
+    for i, r in enumerate(rows):
+        if pd.notna(r["base_end"]) and pd.notna(r["plan_end"]):
+            late = r["dev"] is not None and r["dev"] > 0
+            fig.add_shape(
+                type="line",
+                x0=r["base_end"],
+                x1=r["plan_end"],
+                y0=y_labels[i],
+                y1=y_labels[i],
+                line=dict(
+                    color="#dc2626" if late else "#22c55e",
+                    width=2,
+                    dash="dot",
+                ),
+                layer="below",
+            )
+    # Базовое окончание — синие ромбы.
+    fig.add_trace(
+        go.Scatter(
+            x=base_x,
+            y=y_labels,
+            mode="markers+text",
+            marker=dict(symbol="diamond", size=14, color="#3b82f6", line=dict(color="#1d4ed8", width=1)),
+            text=[d.strftime("%d.%m.%Y") if pd.notna(d) else "" for d in base_x],
+            textposition="top center",
+            textfont=dict(color="#a7c4ff", size=10),
+            name="Базовое окончание",
+            hovertemplate="<b>%{y}</b><br>База: %{x|%d.%m.%Y}<extra></extra>",
+        )
+    )
+    # Окончание — красные квадраты (или зелёные, если факт раньше базы).
+    plan_colors = []
+    for r in rows:
+        if r["dev"] is None:
+            plan_colors.append("#94a3b8")
+        elif r["dev"] > 0:
+            plan_colors.append("#ef4444")
+        elif r["dev"] < 0:
+            plan_colors.append("#22c55e")
+        else:
+            plan_colors.append("#a7c4ff")
+    fig.add_trace(
+        go.Scatter(
+            x=plan_x,
+            y=y_labels,
+            mode="markers+text",
+            marker=dict(symbol="square", size=12, color=plan_colors, line=dict(color="#7f1d1d", width=1)),
+            text=[d.strftime("%d.%m.%Y") if pd.notna(d) else "" for d in plan_x],
+            textposition="bottom center",
+            textfont=dict(color="#fda4af", size=10),
+            name="Окончание (план/факт)",
+            hovertemplate="<b>%{y}</b><br>Окончание: %{x|%d.%m.%Y}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        height=max(360, 36 * len(rows) + 140),
+        margin=dict(l=10, r=20, t=40, b=20),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#e6edf3", size=12),
+        xaxis=dict(
+            title="Дата окончания",
+            type="date",
+            gridcolor="rgba(148,163,184,0.18)",
+            zeroline=False,
+        ),
+        yaxis=dict(
+            autorange="reversed",
+            gridcolor="rgba(148,163,184,0.10)",
+        ),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    st.plotly_chart(fig, use_container_width=True, key="cov_fig")
+
+    # Таблица: ковенанты / база / окончание / Δ.
+    tbl = pd.DataFrame(
+        [
+            {
+                "Ковенанта": r["name"],
+                "Базовое окончание": r["base_end"].strftime("%d.%m.%Y") if pd.notna(r["base_end"]) else "",
+                "Окончание": r["plan_end"].strftime("%d.%m.%Y") if pd.notna(r["plan_end"]) else "",
+                "Δ окончания, дн.": r["dev"] if r["dev"] is not None else "",
+            }
+            for r in rows
+        ]
+    )
+    st.dataframe(
+        style_dataframe_for_dark_theme(tbl),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
 def dashboard_project_schedule_chart(df):
     """График проекта: Гант по плану и базе MSP, фильтры, таблица с отклонениями."""
     # Масштаб визуализации: высота строк графика и пропорционально шрифты/маркеры/пороги плотности подписей.
@@ -23344,6 +24410,43 @@ def dashboard_project_schedule_chart(df):
         return f"{sign}{n} дн."
 
     st.header("График проекта")
+    _view_mode = st.radio(
+        "Вид отображения",
+        (
+            "Иерархическая таблица (WBS)",
+            "Таблица + мини-бары отклонений",
+            "Ковенанты — вехи на шкале",
+            "Сводный bar-chart отклонений",
+            "Теплокарта по блокам/задачам",
+            "Диаграмма Ганта",
+        ),
+        index=0,
+        horizontal=True,
+        key="project_schedule_view_mode",
+        help=(
+            "Иерархическая таблица: WBS-дерево с разворачиванием/сворачиванием. "
+            "Мини-бары: те же данные, но в столбцах отклонений горизонтальные индикаторы. "
+            "Ковенанты — вехи: точки «база/факт» на временной шкале (по ТЗ для блока «Ковенанты»). "
+            "Bar-chart: топ-N задач по абсолютной величине отклонения. "
+            "Теплокарта: блоки × задачи, цвет = знак и величина отклонения. "
+            "Гант: классическая диаграмма."
+        ),
+    )
+    if _view_mode == "Иерархическая таблица (WBS)":
+        _render_project_schedule_hierarchical(df)
+        return
+    if _view_mode == "Таблица + мини-бары отклонений":
+        _render_project_schedule_minibars(df)
+        return
+    if _view_mode == "Ковенанты — вехи на шкале":
+        _render_project_schedule_covenants(df)
+        return
+    if _view_mode == "Сводный bar-chart отклонений":
+        _render_project_schedule_barchart(df)
+        return
+    if _view_mode == "Теплокарта по блокам/задачам":
+        _render_project_schedule_heatmap(df)
+        return
     with st.expander("Подсказка", expanded=False):
         suppress_caption(
             "Фильтры: проект (ур. 1), функциональный блок (ур. 2), уровень структуры MSP (3/4/5 или все), опционально — только лоты. "
