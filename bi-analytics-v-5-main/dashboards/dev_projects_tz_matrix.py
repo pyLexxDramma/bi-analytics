@@ -1716,12 +1716,16 @@ _DEV_TZ_MATRIX_CSS = """
  * остальные th без вертикального sticky из глобального _TABLE_CSS (иначе ломается шапка).
  */
 .dev-tz-matrix-wrap {
+  display: block;
   width: 100%;
   max-width: 100%;
+  /* В колонке Streamlit — flex; иначе min-width:auto растягивает блок на ширину таблицы,
+     скролл уезжает на родителя и sticky первого столбца перестаёт работать. */
+  min-width: 0;
   margin-bottom: 0.75rem;
   box-sizing: border-box;
   overflow-x: auto;
-  overflow-y: visible;
+  overflow-y: hidden;
   overscroll-behavior-x: contain;
   -webkit-overflow-scrolling: touch;
 }
