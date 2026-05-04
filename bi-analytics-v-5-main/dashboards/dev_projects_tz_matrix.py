@@ -2406,14 +2406,32 @@ _CONTROL_POINTS_CSS = """
   line-height: 1.25;
 }
 .rendered-table th.cp-tophead {
-  text-align: center;
+  text-align: center !important;
   background: #17314b !important;
   color: #f5f9ff !important;
   font-size: 14px;
   font-weight: 800;
 }
-.rendered-table th.cp-ghead { text-align:center; background:#1f232d; font-size:13px; padding:7px 9px; color:#f5f9ff !important; }
-.rendered-table th.cp-sub { font-size:12px; color:#dde8f5; font-weight:600; }
+/* Центрирование заголовков вех и подстолбцов (глобальный _TABLE_CSS задаёт th { text-align:left }) */
+.cp-table-wrap .rendered-table th.cp-ghead {
+  text-align: center !important;
+  vertical-align: middle !important;
+  background: #1f232d !important;
+  font-size: 13px !important;
+  padding: 7px 9px !important;
+  color: #f5f9ff !important;
+}
+.cp-table-wrap .rendered-table th.cp-sub {
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-size: 12px !important;
+  color: #dde8f5 !important;
+  font-weight: 600 !important;
+}
+.cp-table-wrap .rendered-table th.cp-col-project {
+  text-align: center !important;
+  vertical-align: middle !important;
+}
 .cp-col-project {
   border-right: 2px solid rgba(190, 214, 242, 0.8) !important;
 }
