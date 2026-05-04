@@ -163,8 +163,8 @@ def _bddds_impute_missing_plan_from_fact_ratio(odf: pd.DataFrame) -> pd.DataFram
         need = (bp <= 0.0) & (bf > 0.0)
         if not bool(need.any()):
             continue
-        imputed_idx = idx[need.to_numpy()]
-        out.loc[imputed_idx, "budget plan"] = bf.loc[need].to_numpy(dtype=float) * ratio
+        fill = bf.loc[need].to_numpy(dtype=float) * float(ratio)
+        out.loc[idx[need], "budget plan"] = fill
         imputed_any = True
     if imputed_any:
         out.attrs["bddds_plan_imputed_ratio"] = True
@@ -186,7 +186,8 @@ def try_synthetic_budget_from_1c_dannye(
     факт — тот же бюджетный сценарий и статья оборотов ровно «ФАКТ». Если колонки статьи нет
     или по правилам выше не получается ни одной строки — используется прежнее разделение по словам
     в поле «Сценарий» (план/факт). Смешанные выгрузки («Бюджет»+статья и отдельные «ПЛАН»/«ФАКТ»):
-    не попавшие в article-split строки добираются масками сценария.
+    не попавшие в article-split строки добираются масками сценария. Если для месяца нет строк «ПЛАН»,
+    но есть «ФАКТ», план может быть оценён коэффициентом Σплан/Σфакт по месяцам с полными данными (`_bddds_impute_missing_plan_from_fact_ratio`).
 
     Возвращает None, если в reference_1c_dannye нет сценария+суммы или не удаётся агрегировать.
 
