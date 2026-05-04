@@ -1754,18 +1754,29 @@ _DEV_TZ_MATRIX_CSS = """
   border-spacing: 0;
   table-layout: fixed;
 }
-/* Одна суммарная высота трёх строк шапки слева и справа */
-.dev-tz-matrix-split thead tr:nth-child(1) th {
-  min-height: 3rem;
-  vertical-align: middle !important;
+/* Фиксированные высоты трёх строк шапки: min-height на <th> в таблицах часто не задаёт высоту строки */
+.dev-tz-matrix-pin thead tr:nth-child(1),
+.dev-tz-matrix-scroll thead tr:nth-child(1) {
+  height: 3rem;
 }
-.dev-tz-matrix-split thead tr:nth-child(2) th {
-  min-height: 3.35rem;
-  vertical-align: middle !important;
+.dev-tz-matrix-pin thead tr:nth-child(2),
+.dev-tz-matrix-scroll thead tr:nth-child(2) {
+  height: 3.35rem;
 }
+.dev-tz-matrix-pin thead tr:nth-child(3),
+.dev-tz-matrix-scroll thead tr:nth-child(3) {
+  height: 2.85rem;
+}
+.dev-tz-matrix-split thead tr:nth-child(1) th,
+.dev-tz-matrix-split thead tr:nth-child(2) th,
 .dev-tz-matrix-split thead tr:nth-child(3) th {
-  min-height: 2.85rem;
   vertical-align: middle !important;
+  box-sizing: border-box !important;
+}
+.dev-tz-matrix-scroll thead th {
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
 }
 .dev-tz-matrix-scroll table.dev-tz-scroll-table {
   border: none !important;
@@ -1812,6 +1823,10 @@ _DEV_TZ_MATRIX_CSS = """
 .dev-tz-matrix-wrap th.dev-tz-pin-sync {
   color: transparent !important;
   white-space: nowrap !important;
+  font-size: 11px !important;
+  line-height: 1.25 !important;
+  padding: 5px 6px !important;
+  overflow: hidden !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead {
   text-align: center !important;
@@ -1883,6 +1898,15 @@ _DEV_TZ_MATRIX_CSS = """
 }
 .dev-tz-matrix-wrap table.dev-tz-scroll-table tbody td {
   vertical-align: middle !important;
+}
+/* Одна строка данных — общая высота строки (левый и правый tbody не делят строку автоматически) */
+.dev-tz-matrix-pin tbody tr,
+.dev-tz-matrix-scroll tbody tr {
+  height: 3.25rem;
+}
+.dev-tz-matrix-wrap.dev-tz-matrix-vert-dates tbody tr {
+  height: auto !important;
+  min-height: 5.75rem;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-text-pct-warn {
   color: #fb923c !important;
@@ -2086,7 +2110,9 @@ def render_dev_tz_matrix(
     frag = (
         table_css
         + _DEV_TZ_MATRIX_CSS
-        + '<div class="dev-tz-matrix-wrap">'
+        + '<div class="dev-tz-matrix-wrap'
+        + (" dev-tz-matrix-vert-dates" if vertical_dates else "")
+        + '">'
         + '<div class="dev-tz-matrix-split">'
         + '<div class="dev-tz-matrix-pin">'
         + html_pin
