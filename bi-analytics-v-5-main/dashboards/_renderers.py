@@ -1072,19 +1072,17 @@ def _fmt_int_days(v):
         return ""
 
 
-def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_col):
+def _deviations_full_table_build(table_reason_df, notes_col=None):
     """
-    Полная таблица отчёта «Причины отклонений» по правкам ТЗ: порядок колонок, подписи,
-    отклонения начала/окончания и длительности, цветовые группы.
+    Строки полной таблицы «Причины отклонений»: словари для CSV/Excel и ячейки для HTML.
+    Возвращает (headers, rows_out, cells_rows) или ([], [], []) если данных нет.
     """
     if table_reason_df is None or getattr(table_reason_df, "empty", True):
-        st.info("Нет строк для полной таблицы.")
-        return
+        return [], [], []
     d = table_reason_df.copy()
     for c in ("plan start", "plan end", "base start", "base end"):
         if c in d.columns:
             d[c] = pd.to_datetime(d[c], errors="coerce", dayfirst=True)
-    # MSP-совместимость: причина/заметки могут приходить в русских колонках без ремапа.
     reason_col = (
         "reason of deviation"
         if "reason of deviation" in d.columns
@@ -1117,23 +1115,13 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
         headers.append("Дата снимка")
 
     rows_out = []
-    parts = [
-        '<div class="dev-reasons-wrap">',
-        '<table class="dev-reasons-table">',
-        "<thead><tr>",
-    ]
-    for h in headers:
-        parts.append(f"<th>{html_module.escape(h)}</th>")
-    parts.append("</tr></thead><tbody>")
-
+    cells_rows = []
     for _, row in d.iterrows():
         ps = row.get("plan start")
         pe = row.get("plan end")
         bs = row.get("base start")
         be = row.get("base end")
-        # ТЗ: отклонение начала = Базовое начало − Начало (дни)
         start_dev = _dev_days_diff(ps, bs)
-        # ТЗ: отклонение окончания = Окончание − Базовое окончание (дни); красный шрифт если > 0
         end_dev = _dev_days_diff(be, pe)
         dur_b = _dev_days_diff(pe, ps)
         dur_f = _dev_days_diff(be, bs)
@@ -1203,20 +1191,134 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
                 else:
                     row_csv[h] = ent[1] if len(ent) > 1 else ""
         rows_out.append(row_csv)
+        cells_rows.append(cells)
 
+    return headers, rows_out, cells_rows
+
+
+def build_deviations_reasons_full_table_export_df(
+    table_reason_df, notes_col=None
+) -> pd.DataFrame:
+    """Тот же набор колонок и форматирование, что у CSV «deviations_detail» в отчёте."""
+    headers, rows_out, _cells = _deviations_full_table_build(table_reason_df, notes_col)
+    if not headers:
+        return pd.DataFrame()
+    return pd.DataFrame(rows_out, columns=headers)
+
+
+def build_deviations_maket_export_df(
+    table_reason_df, building_col=None, notes_col=None
+) -> pd.DataFrame:
+    """Строки таблицы по макету (ур. 5, причина, отклонение окончания < 0) — как выгрузка maket."""
+    from utils import ensure_date_columns
+
+    if table_reason_df is None or getattr(table_reason_df, "empty", True):
+        return pd.DataFrame()
+    work_m = table_reason_df.copy()
+    try:
+        ensure_date_columns(work_m)
+    except Exception:
+        pass
+    if "plan end" in work_m.columns:
+        work_m["plan end"] = pd.to_datetime(
+            work_m["plan end"], errors="coerce", dayfirst=True
+        )
+    if "base end" in work_m.columns:
+        work_m["base end"] = pd.to_datetime(
+            work_m["base end"], errors="coerce", dayfirst=True
+        )
+
+    work_m["_end_diff"] = np.nan
+    if "plan end" in work_m.columns and "base end" in work_m.columns:
+        _m = work_m["plan end"].notna() & work_m["base end"].notna()
+        work_m.loc[_m, "_end_diff"] = (
+            work_m.loc[_m, "base end"] - work_m.loc[_m, "plan end"]
+        ).dt.total_seconds() / 86400.0
+
+    mask_r = pd.Series(True, index=work_m.index)
+    if "reason of deviation" in work_m.columns:
+        mask_r = (
+            work_m["reason of deviation"].notna()
+            & (work_m["reason of deviation"].astype(str).str.strip() != "")
+        )
+    mask_l = pd.Series(True, index=work_m.index)
+    if "level" in work_m.columns:
+        _ln = pd.to_numeric(work_m["level"], errors="coerce")
+        mask_l = _ln == 5
+    mask_neg = work_m["_end_diff"].notna() & (work_m["_end_diff"] < 0)
+    maket_df = work_m[mask_r & mask_l & mask_neg].copy()
+    maket_df = maket_df.sort_values("_end_diff", ascending=True)
+
+    if maket_df.empty:
+        return pd.DataFrame()
+
+    notes_col_m = (
+        notes_col
+        if notes_col and notes_col in maket_df.columns
+        else _find_column_by_keywords(
+            maket_df, ("note", "заметк", "comment", "remark", "notes")
+        )
+    )
+    _maket_out = []
+    for i, (_, rr) in enumerate(maket_df.iterrows(), start=1):
+        row = {"№": i, "Проект": _clean_display_str(rr.get("project name"))}
+        if "block" in maket_df.columns:
+            row["Функциональный блок"] = _clean_display_str(rr.get("block"))
+        if building_col and building_col in maket_df.columns:
+            row["Строение"] = _clean_display_str(rr.get(building_col))
+        pe = rr.get("plan end")
+        fe = rr.get("base end")
+        ed = rr.get("_end_diff")
+        row["Базовое окончание"] = pe.strftime("%d.%m.%Y") if pd.notna(pe) else ""
+        row["Окончание"] = fe.strftime("%d.%m.%Y") if pd.notna(fe) else ""
+        row["Отклонение"] = int(round(float(ed), 0)) if pd.notna(ed) else ""
+        row["Причина отклонения"] = _clean_display_str(rr.get("reason of deviation"))
+        row["Заметки"] = (
+            _clean_display_str(rr.get(notes_col_m))
+            if notes_col_m and notes_col_m in maket_df.columns
+            else ""
+        )
+        _maket_out.append(row)
+    return pd.DataFrame(_maket_out)
+
+
+def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_col):
+    """
+    Полная таблица отчёта «Причины отклонений» по правкам ТЗ: порядок колонок, подписи,
+    отклонения начала/окончания и длительности, цветовые группы.
+    """
+    headers, rows_out, cells_rows = _deviations_full_table_build(
+        table_reason_df, notes_col
+    )
+    if not headers:
+        st.info("Нет строк для полной таблицы.")
+        return
+
+    parts = [
+        '<div class="dev-reasons-wrap">',
+        '<table class="dev-reasons-table">',
+        "<thead><tr>",
+    ]
+    for h in headers:
+        parts.append(f"<th>{html_module.escape(h)}</th>")
+    parts.append("</tr></thead><tbody>")
+
+    for cells in cells_rows:
         parts.append("<tr>")
         for ent in cells:
             if len(ent) == 4:
                 cls, txt, _kind, raw = ent
                 fg = ""
-                if _kind == "start_dev" and not (raw is None or (isinstance(raw, float) and pd.isna(raw))):
+                if _kind == "start_dev" and not (
+                    raw is None or (isinstance(raw, float) and pd.isna(raw))
+                ):
                     fg = " dev-txt-bad" if float(raw) < 0 else " dev-txt-ok"
-                elif _kind == "end_dev" and not (raw is None or (isinstance(raw, float) and pd.isna(raw))):
+                elif _kind == "end_dev" and not (
+                    raw is None or (isinstance(raw, float) and pd.isna(raw))
+                ):
                     fg = " dev-txt-bad" if float(raw) > 0 else " dev-txt-ok"
                 esc = html_module.escape(txt) if str(txt).strip() != "" else ""
-                parts.append(
-                    f'<td class="{cls.strip()}{fg}">{esc}</td>'
-                )
+                parts.append(f'<td class="{cls.strip()}{fg}">{esc}</td>')
             else:
                 cls, txt = ent[0], ent[1]
                 esc = html_module.escape(txt) if str(txt).strip() != "" else ""
@@ -1224,7 +1326,7 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
         parts.append("</tr>")
 
     parts.append("</tbody></table></div>")
-    st.markdown(f"**Записей:** {len(d)}")
+    st.markdown(f"**Записей:** {len(rows_out)}")
     st.markdown(_DEV_REASONS_FULL_TABLE_CSS + "".join(parts), unsafe_allow_html=True)
 
     out_df = pd.DataFrame(rows_out, columns=headers)
@@ -2108,6 +2210,104 @@ def _is_generic_block_name(v) -> bool:
     return bool(re.match(r"^(блок|block)\s*[-_a-zа-я]*\d+$", s))
 
 
+def _apply_deviations_combined_filters(
+    df: pd.DataFrame, *, building_col=None
+) -> pd.DataFrame:
+    """Фильтры «Причины отклонений» из session_state (devcombo_*) без отрисовки виджетов."""
+    if df is None or getattr(df, "empty", True):
+        return df
+    if building_col is None:
+        building_col = _find_column_by_keywords(
+            df, ("building", "строение", "лот", "lot", "bldg")
+        )
+    filtered_df = df.copy()
+    if "project name" in filtered_df.columns:
+        filtered_df = _project_column_apply_canonical(filtered_df, "project name")
+    selected_project = (
+        st.session_state.get("devcombo_project", "Все")
+        if "project name" in filtered_df.columns
+        else "Все"
+    )
+    selected_block = st.session_state.get("devcombo_block", "Все")
+    selected_building = st.session_state.get("devcombo_building", "Все")
+    available_months = []
+    if "plan_month" in filtered_df.columns:
+        unique_months = filtered_df["plan_month"].dropna().unique()
+        if len(unique_months) > 0:
+            month_dict = {format_period_ru(m): m for m in unique_months}
+            available_months = sorted(month_dict.keys(), key=lambda x: month_dict[x])
+    elif "plan end" in filtered_df.columns:
+        mask = filtered_df["plan end"].notna()
+        if mask.any():
+            temp_months = filtered_df.loc[mask, "plan end"].dt.to_period("M").unique()
+            if len(temp_months) > 0:
+                month_dict = {format_period_ru(m): m for m in temp_months}
+                available_months = sorted(month_dict.keys(), key=lambda x: month_dict[x])
+    period_from = (
+        st.session_state.get("devcombo_period_from", "Все")
+        if len(available_months) > 0
+        else "Все"
+    )
+    period_to = (
+        st.session_state.get("devcombo_period_to", "Все")
+        if len(available_months) > 0
+        else "Все"
+    )
+
+    if selected_project != "Все" and "project name" in filtered_df.columns:
+        filtered_df = _deviations_filter_df_by_project_name(
+            filtered_df, selected_project
+        )
+    filtered_df = _deviations_apply_block_building_filters(
+        filtered_df, selected_block, selected_building, building_col
+    )
+
+    has_plan_month_col = "plan_month" in filtered_df.columns
+    if has_plan_month_col and (period_from != "Все" or period_to != "Все"):
+        pf = (
+            _deviations_filter_month_string_to_period(period_from)
+            if period_from != "Все"
+            else None
+        )
+        pt = (
+            _deviations_filter_month_string_to_period(period_to)
+            if period_to != "Все"
+            else None
+        )
+        if pf is not None and pt is not None and pf > pt:
+            pf, pt = pt, pf
+        if pf is not None:
+            filtered_df = filtered_df[filtered_df["plan_month"] >= pf]
+        if pt is not None:
+            filtered_df = filtered_df[filtered_df["plan_month"] <= pt]
+    elif not has_plan_month_col and "plan end" in filtered_df.columns:
+        pf = (
+            _deviations_filter_month_string_to_period(period_from)
+            if period_from != "Все"
+            else None
+        )
+        pt = (
+            _deviations_filter_month_string_to_period(period_to)
+            if period_to != "Все"
+            else None
+        )
+        if pf is not None or pt is not None:
+            if pf is not None and pt is not None and pf > pt:
+                pf, pt = pt, pf
+            _pe = pd.to_datetime(
+                filtered_df["plan end"], errors="coerce", dayfirst=True
+            )
+            pm = _pe.dt.to_period("M")
+            ok = pd.Series(True, index=filtered_df.index)
+            if pf is not None:
+                ok &= pm >= pf
+            if pt is not None:
+                ok &= pm <= pt
+            filtered_df = filtered_df[ok]
+
+    return filtered_df
+
+
 def _render_deviations_combined_shared_filters(df):
     ensure_msp_hierarchy_columns(df)
     st.markdown(
@@ -2274,83 +2474,12 @@ def _render_deviations_combined_shared_filters(df):
 
     with col6:
         st.checkbox(
-            "ТОП‑5",
+            "ТОП 5 причин отклонений",
             value=False,
             key="reason_top5",
         )
 
-    filtered_df = df.copy()
-    # §4.1: одна подпись проекта на ключ (Дмитровский* / Есипово V vs -5) — в табах и группировках.
-    if "project name" in filtered_df.columns:
-        filtered_df = _project_column_apply_canonical(filtered_df, "project name")
-    selected_project = (
-        st.session_state.get("devcombo_project", "Все")
-        if "project name" in filtered_df.columns
-        else "Все"
-    )
-    selected_block = st.session_state.get("devcombo_block", "Все")
-    selected_building = st.session_state.get("devcombo_building", "Все")
-    period_from = (
-        st.session_state.get("devcombo_period_from", "Все")
-        if len(available_months) > 0
-        else "Все"
-    )
-    period_to = (
-        st.session_state.get("devcombo_period_to", "Все")
-        if len(available_months) > 0
-        else "Все"
-    )
-
-    if selected_project != "Все" and "project name" in filtered_df.columns:
-        filtered_df = _deviations_filter_df_by_project_name(
-            filtered_df, selected_project
-        )
-    filtered_df = _deviations_apply_block_building_filters(
-        filtered_df, selected_block, selected_building, building_col
-    )
-
-    has_plan_month_col = "plan_month" in filtered_df.columns
-    if has_plan_month_col and (period_from != "Все" or period_to != "Все"):
-        pf = (
-            _deviations_filter_month_string_to_period(period_from)
-            if period_from != "Все"
-            else None
-        )
-        pt = (
-            _deviations_filter_month_string_to_period(period_to)
-            if period_to != "Все"
-            else None
-        )
-        if pf is not None and pt is not None and pf > pt:
-            pf, pt = pt, pf
-        if pf is not None:
-            filtered_df = filtered_df[filtered_df["plan_month"] >= pf]
-        if pt is not None:
-            filtered_df = filtered_df[filtered_df["plan_month"] <= pt]
-    elif not has_plan_month_col and "plan end" in filtered_df.columns:
-        pf = (
-            _deviations_filter_month_string_to_period(period_from)
-            if period_from != "Все"
-            else None
-        )
-        pt = (
-            _deviations_filter_month_string_to_period(period_to)
-            if period_to != "Все"
-            else None
-        )
-        if pf is not None or pt is not None:
-            if pf is not None and pt is not None and pf > pt:
-                pf, pt = pt, pf
-            _pe = pd.to_datetime(
-                filtered_df["plan end"], errors="coerce", dayfirst=True
-            )
-            pm = _pe.dt.to_period("M")
-            ok = pd.Series(True, index=filtered_df.index)
-            if pf is not None:
-                ok &= pm >= pf
-            if pt is not None:
-                ok &= pm <= pt
-            filtered_df = filtered_df[ok]
+    filtered_df = _apply_deviations_combined_filters(df, building_col=building_col)
 
     return filtered_df, building_col
 
@@ -2372,7 +2501,7 @@ def dashboard_deviations_combined(df):
     filtered_shared, building_col = _render_deviations_combined_shared_filters(df)
     tab_by_month, tab_dynamics, tab_reasons = st.tabs(
         [
-            "Доли причин по проекту",
+            "Доли причин отклонений по проекту",
             "Динамика отклонений по месяцам",
             "Динамика причин",
         ]
@@ -2404,7 +2533,7 @@ def dashboard_deviations_combined(df):
         _render_tab_safe(
             dashboard_reasons_of_deviation,
             filtered_shared,
-            tab_label="Доли причин по проекту",
+            tab_label="Доли причин отклонений по проекту",
             hide_shared_filters=True,
             building_col=building_col,
         )
@@ -2450,6 +2579,22 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         building_col = _find_column_by_keywords(
             df, ("building", "строение", "лот", "lot", "bldg")
         )
+
+    # ТЗ: доли причин — по полной истории снимков CSV (до дедупликации), при наличии в session_state.
+    if hide_shared_filters:
+        snap = st.session_state.get("project_data_all_snapshots")
+        if snap is not None and not getattr(snap, "empty", True):
+            _snap_df = snap.copy()
+            ensure_msp_hierarchy_columns(_snap_df)
+            if "project name" in _snap_df.columns:
+                _snap_df = _project_column_apply_canonical(_snap_df, "project name")
+            if building_col is None or (
+                building_col not in getattr(_snap_df, "columns", [])
+            ):
+                building_col = _find_column_by_keywords(
+                    _snap_df, ("building", "строение", "лот", "lot", "bldg")
+                )
+            df = _apply_deviations_combined_filters(_snap_df, building_col=building_col)
 
     if not hide_shared_filters:
         st.header("Доли причин отклонений по проекту")
@@ -2766,8 +2911,18 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         if not reason_counts.empty:
             main_reason_name = str(reason_counts.index[0]).strip() or "—"
             main_reason_count = int(reason_counts.iloc[0])
-            total_tasks = len(filtered_df)
-            main_reason_pct = (main_reason_count / total_tasks * 100) if total_tasks else 0.0
+            _nr = (
+                filtered_df["reason of deviation"].notna()
+                & (
+                    filtered_df["reason of deviation"].astype(str).str.strip() != ""
+                )
+            )
+            total_reason_rows = int(_nr.sum())
+            main_reason_pct = (
+                (main_reason_count / total_reason_rows * 100)
+                if total_reason_rows
+                else 0.0
+            )
 
     m1, m2 = st.columns(2)
     with m1:
@@ -2789,8 +2944,9 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         reason_counts["pct"] = (reason_counts["Количество"] / total_rc * 100).round(1)
         if top5_only:
             reason_counts = reason_counts.nlargest(5, "Количество").reset_index(drop=True)
+        # ТЗ: над столбцом одна строка «число (доля %)», как на круговой диаграмме.
         reason_counts["label_bar"] = reason_counts.apply(
-            lambda r: f"{int(r['Количество'])}\n({r['pct']}%)", axis=1
+            lambda r: f"{int(r['Количество'])} ({r['pct']}%)", axis=1
         )
 
         fig = px.bar(
@@ -2864,7 +3020,24 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         )
         fig.update_traces(
             hovertemplate="<b>%{label}</b><br>Количество: %{value}<br>Доля: %{percent:.1%}<extra></extra>",
-            pull=[0.0] * n_reasons,
+        )
+        fig.update_traces(
+            selector=dict(type="pie"),
+            texttemplate="<b>%{value:.0f}</b> (%{percent:.1%})",
+            textinfo="text",
+            insidetextorientation="horizontal",
+            textposition="auto",
+            pull=[0.03] * n_reasons,
+            textfont=dict(
+                size=max(11, min(_pie_font, 17)),
+                color="#ffffff",
+                family="Inter, system-ui, Arial, sans-serif",
+            ),
+            outsidetextfont=dict(
+                size=13,
+                color="#e8eef5",
+                family="Inter, system-ui, Arial, sans-serif",
+            ),
         )
         fig = apply_chart_background(fig)
         render_chart(fig, caption_below="")
@@ -2880,7 +3053,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             else "Все проекты"
         )
     st.markdown(
-        f"<div style='text-align:right;font-size:1.35rem;font-weight:600;color:#b8c0cc;margin:0.75rem 0 0 0'>{html_module.escape(proj_lbl)}</div>",
+        f"<div style='text-align:right;font-size:2.35rem;font-weight:700;color:#d8dee9;margin:1rem 0 0 0'>{html_module.escape(proj_lbl)}</div>",
         unsafe_allow_html=True,
     )
 
@@ -2888,7 +3061,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
     st.subheader("Детальные данные")
     table_reason_df = filtered_df
     selected_reason_table = "Все"
-    if has_reason_col:
+    if has_reason_col and not hide_shared_filters:
         _reason_opts_tbl = ["Все"] + sorted(
             filtered_df["reason of deviation"].dropna().astype(str).str.strip().unique().tolist()
         )
@@ -3031,34 +3204,11 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         _tbl_m.append("</tbody></table></div>")
         st.markdown(_TABLE_CSS + "".join(_tbl_m), unsafe_allow_html=True)
         st.markdown(f"**Записей (по макету):** {len(maket_df)}")
-        _maket_out = []
-        for i, (_, rr) in enumerate(maket_df.iterrows(), start=1):
-            row = {"№": i, "Проект": _clean_display_str(rr.get("project name"))}
-            if "block" in maket_df.columns:
-                row["Функциональный блок"] = _clean_display_str(rr.get("block"))
-            if building_col and building_col in maket_df.columns:
-                row["Строение"] = _clean_display_str(rr.get(building_col))
-            pe = rr.get("plan end")
-            fe = rr.get("base end")
-            ed = rr.get("_end_diff")
-            row["Базовое окончание"] = (
-                pe.strftime("%d.%m.%Y") if pd.notna(pe) else ""
-            )
-            row["Окончание"] = fe.strftime("%d.%m.%Y") if pd.notna(fe) else ""
-            row["Отклонение"] = (
-                int(round(float(ed), 0)) if pd.notna(ed) else ""
-            )
-            row["Причина отклонения"] = _clean_display_str(
-                rr.get("reason of deviation")
-            )
-            row["Заметки"] = (
-                _clean_display_str(rr.get(notes_col_m))
-                if notes_col_m and notes_col_m in maket_df.columns
-                else ""
-            )
-            _maket_out.append(row)
+        maket_csv_df = build_deviations_maket_export_df(
+            table_reason_df, building_col, notes_col_m
+        )
         render_dataframe_excel_csv_downloads(
-            pd.DataFrame(_maket_out),
+            maket_csv_df,
             file_stem="deviations_detail_maket",
             key_prefix="devtable_maket",
             csv_label="Скачать CSV (по макету, для Excel)",
@@ -3142,20 +3292,33 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         )
         return
 
-    if hide_shared_filters:
-        st.subheader("Динамика отклонений по месяцам")
-    else:
+    if not hide_shared_filters:
         st.header("Динамика отклонений по месяцам")
 
-    _time_axis = st.radio(
-        "Ось времени",
-        [
-            "По дате окончания плана (plan end)",
-            "По дате снимка выгрузки (snapshot_date)",
-        ],
-        horizontal=True,
-        key="dynamics_time_axis_pravki",
-    )
+    def _dynamics_caption(msg: str) -> str:
+        return "" if hide_shared_filters else msg
+
+    if hide_shared_filters:
+        _time_axis = st.radio(
+            "Ось времени",
+            [
+                "По дате окончания плана (plan end)",
+                "По дате снимка выгрузки (snapshot_date)",
+            ],
+            horizontal=True,
+            key="dynamics_time_axis_combo",
+            index=1,
+        )
+    else:
+        _time_axis = st.radio(
+            "Ось времени",
+            [
+                "По дате окончания плана (plan end)",
+                "По дате снимка выгрузки (snapshot_date)",
+            ],
+            horizontal=True,
+            key="dynamics_time_axis_pravki",
+        )
     source_df = df
     if _time_axis.startswith("По дате снимка"):
         snap = st.session_state.get("project_data_all_snapshots")
@@ -3468,6 +3631,119 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
     except (ValueError, TypeError):
         pass
 
+    # ТЗ визуал 2 (комбо): по дате снимка файла — стек типовых причин по месяцам, итог над столбцами, красная линия итога.
+    if (
+        hide_shared_filters
+        and use_snapshot_period
+        and period_type_en == "Month"
+        and "reason of deviation" in filtered_df.columns
+    ):
+        _tz_fd = filtered_df.copy()
+        _tz_fd["_reason_bucket"] = _tz_fd["reason of deviation"].map(
+            _deviations_reason_bucket_label
+        )
+        _ps_tz = sorted(
+            _tz_fd["period"].dropna().unique(),
+            key=_dynamics_period_sort_key,
+        )
+        _pl_tz = [format_period_ru(x) for x in _ps_tz]
+        _tz_fd["_per_lbl"] = _tz_fd["period"].map(format_period_ru)
+        _agg_tz = (
+            _tz_fd.groupby(["_per_lbl", "_reason_bucket"], observed=False)
+            .size()
+            .reset_index(name="Количество")
+        )
+        _ord_tz = list(DEVIATIONS_REASON_BUCKET_ORDER)
+        _clr_tz = _deviations_reason_bucket_colors()
+        _n_per_tz = len(_pl_tz)
+        _h_tz = int(max(560, 420 + min(_n_per_tz, 36) * 18))
+        fig_tz = px.bar(
+            _agg_tz,
+            x="_per_lbl",
+            y="Количество",
+            color="_reason_bucket",
+            title=None,
+            color_discrete_map=_clr_tz or None,
+            category_orders={"_per_lbl": _pl_tz, "_reason_bucket": _ord_tz},
+            labels={
+                "_per_lbl": str(period_label),
+                "Количество": "Количество",
+                "_reason_bucket": "Типовая причина",
+            },
+            text="Количество",
+        )
+        fig_tz.update_layout(
+            barmode="stack",
+            bargap=0.08,
+            legend=dict(
+                title=dict(text="Типовая причина"),
+                orientation="v",
+                yanchor="top",
+                y=1,
+                x=1.02,
+                xanchor="left",
+                font=dict(size=12),
+            ),
+            margin=dict(l=64, r=280, t=48, b=160),
+            height=_h_tz,
+            xaxis=dict(title=str(period_label), tickangle=-45, automargin=True),
+            yaxis=dict(title="Количество", automargin=True),
+        )
+        if _n_per_tz > 18:
+            fig_tz.update_xaxes(ticklabelstep=2)
+        fig_tz.update_traces(
+            texttemplate="%{y}",
+            textposition="inside",
+            insidetextanchor="middle",
+            textangle=0,
+            cliponaxis=False,
+        )
+        for tr in fig_tz.data:
+            if getattr(tr, "type", None) == "bar":
+                mc = getattr(tr.marker, "color", None)
+                if isinstance(mc, str):
+                    tc = _deviations_contrast_text_on_fill(mc)
+                    tr.update(textfont=dict(color=tc, size=12))
+        _tot_tz = (
+            _agg_tz.groupby("_per_lbl", observed=False)["Количество"]
+            .sum()
+            .reindex(_pl_tz)
+            .fillna(0)
+            .astype(float)
+        )
+        fig_tz.add_trace(
+            go.Scatter(
+                x=_pl_tz,
+                y=_tot_tz.values,
+                mode="lines+markers",
+                name="Итого",
+                line=dict(color="#e53935", width=3),
+                marker=dict(color="#e53935", size=9),
+                yaxis="y",
+            )
+        )
+        for _xl, _yv in zip(_pl_tz, _tot_tz.values):
+            if _yv > 0:
+                fig_tz.add_annotation(
+                    x=_xl,
+                    y=float(_yv),
+                    text=f"<b>{int(round(_yv, 0))}</b>",
+                    showarrow=False,
+                    xref="x",
+                    yref="y",
+                    xanchor="center",
+                    yanchor="bottom",
+                    yshift=8,
+                    font=dict(color="#ffcdd2", size=14),
+                )
+        fig_tz = _apply_bar_uniformtext(fig_tz)
+        try:
+            fig_tz.update_layout(uniformtext=dict(minsize=10, mode="show"))
+        except Exception:
+            pass
+        fig_tz = apply_chart_background(fig_tz)
+        render_chart(fig_tz, caption_below=_dynamics_caption(""))
+
     # Visualizations
     if len(group_cols) == 1:  # Only period
         col1, col2 = st.columns(2)
@@ -3489,7 +3765,9 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             fig = apply_chart_background(fig)
             render_chart(
                 fig,
-                caption_below=f"Количество задач с отклонениями по {period_label.lower()}",
+                caption_below=_dynamics_caption(
+                    f"Количество задач с отклонениями по {period_label.lower()}"
+                ),
             )
 
         with col2:
@@ -3511,14 +3789,17 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 fig = apply_chart_background(fig)
                 render_chart(
                     fig,
-                    caption_below=f"Всего дней отклонений по {period_label.lower()}",
+                    caption_below=_dynamics_caption(
+                        f"Всего дней отклонений по {period_label.lower()}"
+                    ),
                 )
             else:
                 st.info("Нет данных по дням отклонений.")
     else:  # Grouped by project and/or reason
         # Show by project if project is in group
         if "project name" in group_cols:
-            st.subheader("По проектам")
+            if not hide_shared_filters:
+                st.subheader("По проектам")
             # If reason is also in group_cols, aggregate by period and project only (sum across reasons)
             if "reason of deviation" in group_cols:
                 project_data = (
@@ -3640,11 +3921,15 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             )
             fig = _apply_bar_uniformtext(fig)
             fig = apply_chart_background(fig)
-            render_chart(fig, caption_below="Дни отклонений по периоду")
+            render_chart(
+                fig,
+                caption_below=_dynamics_caption("Дни отклонений по периоду"),
+            )
 
         # Show by reason if reason is in group
         if "reason of deviation" in group_cols:
-            st.subheader("По причинам")
+            if not hide_shared_filters:
+                st.subheader("По причинам")
             # Агрегируем по периоду и причинам; при нескольких проектах — сохраняем «project name» для стека/фасетов
             reason_data = grouped_data.copy()
             reason_data["_reason_bucket"] = reason_data["reason of deviation"].map(
@@ -3975,7 +4260,10 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 "В сегменте — число отклонений по причине; над столбцом — итог за период. "
                 "В подсказке (hover) — проект, причина, период, количество задач."
             )
-            render_chart(fig, caption_below=_cap_dyn)
+            render_chart(
+                fig,
+                caption_below=_dynamics_caption(_cap_dyn),
+            )
 
     # Summary table
     # If project is in group, show summary grouped by project overall (aggregate across all periods)
@@ -3997,9 +4285,10 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     lb for lb in _period_cat_labels if lb in _present
                 ]
 
-        st.subheader(
-            f"Сводная таблица (группировка: {', '.join(project_summary_cols)})"
-        )
+        if not hide_shared_filters:
+            st.subheader(
+                f"Сводная таблица (группировка: {', '.join(project_summary_cols)})"
+            )
 
         # Добавляем селекторы для фильтрации таблицы
         filter_cols = st.columns(3)
