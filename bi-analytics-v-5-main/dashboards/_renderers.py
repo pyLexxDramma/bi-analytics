@@ -328,8 +328,10 @@ def _parse_gantt_dev_days_display(v):
 def _gantt_deviation_cell_style(v) -> str:
     n = _parse_gantt_dev_days_display(v)
     base = f"background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}"
-    if n is None or n == 0:
+    if n is None:
         return base
+    if n == 0:
+        return "background-color: #14532d; color: #ecfdf5"
     if n > 0:
         return "background-color: #c0392b; color: #ffffff"
     return "background-color: #27ae60; color: #ffffff"
@@ -606,6 +608,93 @@ def _format_gdrs_period_range_dd_mm_yyyy(d_from, d_to, sep: str = " - ") -> str:
         )
     except Exception:
         return ""
+
+
+def _format_gdrs_month_year_title_ru(d_from, d_to, pdf: pd.DataFrame | None, period_col: str | None) -> str:
+    """Человекочитаемый период для шапки ГДРС: «Март 2026» или «Январь — Март 2026»."""
+    _months = (
+        "",
+        "Январь",
+        "Февраль",
+        "Март",
+        "Апрель",
+        "Май",
+        "Июнь",
+        "Июль",
+        "Август",
+        "Сентябрь",
+        "Октябрь",
+        "Ноябрь",
+        "Декабрь",
+    )
+
+    def _one_month(y: int, m: int) -> str:
+        if 1 <= int(m) <= 12:
+            return f"{_months[int(m)]} {int(y)}"
+        return ""
+
+    try:
+        if d_from is not None and d_to is not None:
+            ta = pd.Timestamp(d_from).normalize()
+            tb = pd.Timestamp(d_to).normalize()
+            if pd.notna(ta) and pd.notna(tb):
+                if ta.year == tb.year and ta.month == tb.month:
+                    return _one_month(ta.year, ta.month)
+                if ta.year == tb.year:
+                    return f"{_months[int(ta.month)]} — {_months[int(tb.month)]} {int(ta.year)}"
+                return (
+                    f"{_months[int(ta.month)]} {int(ta.year)} — {_months[int(tb.month)]} {int(tb.year)}"
+                )
+    except Exception:
+        pass
+    try:
+        if pdf is not None and period_col and period_col in pdf.columns:
+            _pvals = pd.to_datetime(pdf[period_col], errors="coerce", dayfirst=True).dropna()
+            if not _pvals.empty:
+                ta = pd.Timestamp(_pvals.min()).normalize()
+                tb = pd.Timestamp(_pvals.max()).normalize()
+                if ta.year == tb.year and ta.month == tb.month:
+                    return _one_month(ta.year, ta.month)
+                if ta.year == tb.year:
+                    return f"{_months[int(ta.month)]} — {_months[int(tb.month)]} {int(ta.year)}"
+                return (
+                    f"{_months[int(ta.month)]} {int(ta.year)} — {_months[int(tb.month)]} {int(tb.year)}"
+                )
+    except Exception:
+        pass
+    return ""
+
+
+def _gdrs_delta_pct_cell_bg_style(raw) -> str:
+    """Фон ячейки «Итого (%)»: от светло-зелёного при малом |%| к красному при большом."""
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return ""
+    try:
+        p = float(raw)
+    except Exception:
+        return ""
+    t = min(abs(p), 100.0) / 100.0
+    r = int(72 + t * (229 - 72))
+    g = int(199 + t * (72 - 199))
+    b = int(116 + t * (96 - 116))
+    alpha = 0.14 + 0.26 * t
+    return f"background-color:rgba({r},{g},{b},{alpha:.3f});"
+
+
+def _gdrs_period_series_to_year(series: pd.Series) -> pd.Series:
+    """Календарный год для значений колонки периода (Period / Timestamp / строка)."""
+
+    def _one(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return np.nan
+        try:
+            if isinstance(v, pd.Period):
+                return int(v.year)
+            return int(pd.Timestamp(v).year)
+        except Exception:
+            return np.nan
+
+    return series.map(_one)
 
 
 def _gdrs_detect_csv_resource_kind_column(pdf: pd.DataFrame) -> Optional[str]:
@@ -1205,7 +1294,7 @@ def _chart_caption_below(title: str) -> None:
         return
     esc = html_module.escape(str(title))
     st.markdown(
-        "<p style='text-align:center;color:#e8eef5;margin:0.6rem 0 1rem;font-size:1.08rem;font-weight:700;'>"
+        "<p style='text-align:center;color:#e8eef5;margin:0.45rem 0 0.35rem;font-size:1.08rem;font-weight:700;'>"
         f"{esc}</p>",
         unsafe_allow_html=True,
     )
@@ -1298,7 +1387,9 @@ def _clamp_plotly_scroll_zoom_padding(fig: go.Figure) -> None:
         pass
 
 
-def _apply_finance_bar_label_layout(fig: go.Figure) -> go.Figure:
+def _apply_finance_bar_label_layout(
+    fig: go.Figure, *, y_rangemode: str | None = "tozero"
+) -> go.Figure:
     try:
         fig.update_layout(
             uniformtext=dict(minsize=8, mode="show"),
@@ -1306,7 +1397,10 @@ def _apply_finance_bar_label_layout(fig: go.Figure) -> go.Figure:
             margin=dict(l=56, r=36, t=72, b=120),
         )
         fig.update_xaxes(automargin=True)
-        fig.update_yaxes(automargin=True, rangemode="tozero")
+        if y_rangemode:
+            fig.update_yaxes(automargin=True, rangemode=y_rangemode)
+        else:
+            fig.update_yaxes(automargin=True)
     except Exception:
         pass
     return fig
@@ -1357,10 +1451,12 @@ def _finance_bar_text_mln_rub(
     values_rub: pd.Series,
     *,
     min_abs_mln: float = 0.0,
+    mln_suffix: str = "млн руб.",
 ) -> list:
-    """Подписи над столбцами по ТЗ: число и строка «млн руб.» (две строки)."""
+    """Подписи над столбцами: число и строка единиц (по умолчанию «млн руб.»), две строки."""
     out = []
     _floor = float(min_abs_mln) if min_abs_mln else 0.0
+    _suf = str(mln_suffix) if mln_suffix else "млн руб."
     for v in values_rub:
         if v is None or (isinstance(v, float) and pd.isna(v)):
             out.append("")
@@ -1373,7 +1469,7 @@ def _finance_bar_text_mln_rub(
         if _floor > 0.0 and abs(x) < _floor:
             out.append("")
             continue
-        out.append(f"{x:.2f}<br>млн руб.")
+        out.append(f"{x:.2f}<br>{_suf}")
     return out
 
 
@@ -1482,6 +1578,80 @@ def _format_plotly_bar_scalar(v) -> str:
     return s
 
 
+def _pie_apply_percent_inside_legend_left(
+    fig: go.Figure,
+    *,
+    height=None,
+    pct_fontsize=22,
+    legend_fontsize=12,
+    left_margin=None,
+    domain_x=None,
+    domain_y=None,
+    clear_annotations=False,
+    showlegend=True,
+    extra_layout=None,
+) -> go.Figure:
+    """В секторе — только проценты (крупный шрифт); названия секторов — вертикальная легенда слева."""
+    if fig is None:
+        return fig
+    try:
+        lm = (
+            int(left_margin)
+            if left_margin is not None
+            else max(230, int(legend_fontsize) * 17)
+        )
+    except Exception:
+        lm = 230
+    dx = domain_x if domain_x is not None else (0.32, 0.97)
+    dy = domain_y if domain_y is not None else (0.06, 0.93)
+    try:
+        fig.update_traces(
+            selector=dict(type="pie"),
+            textinfo="percent",
+            texttemplate="%{percent:.0%}",
+            textposition="inside",
+            insidetextorientation="horizontal",
+            textfont=dict(
+                size=int(pct_fontsize),
+                color="#ffffff",
+                family="Inter, system-ui, Arial, sans-serif",
+            ),
+            marker_line_width=0,
+            domain=dict(x=[float(dx[0]), float(dx[1])], y=[float(dy[0]), float(dy[1])]),
+        )
+    except Exception:
+        pass
+    layout = dict(
+        showlegend=bool(showlegend),
+        legend=dict(
+            orientation="v",
+            yanchor="middle",
+            y=0.5,
+            xanchor="left",
+            x=-0.01,
+            xref="paper",
+            font=dict(size=int(legend_fontsize), color="#f0f4f8"),
+            bgcolor="rgba(0,0,0,0)",
+            borderwidth=0,
+            itemwidth=max(30, int(legend_fontsize) + 16),
+            tracegroupgap=4,
+        ),
+        uniformtext=dict(minsize=max(10, int(pct_fontsize) - 5), mode="show"),
+        margin=dict(l=lm, r=36, t=44, b=44),
+    )
+    if height is not None:
+        layout["height"] = int(height)
+    if extra_layout:
+        layout.update(extra_layout)
+    fig.update_layout(**layout)
+    if clear_annotations:
+        try:
+            fig.update_layout(annotations=[])
+        except Exception:
+            pass
+    return fig
+
+
 def _apply_plotly_spec_411_labels(fig: go.Figure) -> go.Figure:
     if fig is None:
         return fig
@@ -1520,16 +1690,35 @@ def _apply_plotly_spec_411_labels(fig: go.Figure) -> go.Figure:
                     cliponaxis=False,
                 )
             elif tname == "Pie":
+                if getattr(tr, "texttemplate", None):
+                    continue
                 if not _plotly_text_all_empty(getattr(tr, "text", None)):
                     continue
-                ti0 = getattr(tr, "textinfo", None) or "percent"
-                tis = str(ti0).lower()
-                if "label" in tis or tis in ("", "none"):
+                ti_raw = getattr(tr, "textinfo", None)
+                if ti_raw is None:
+                    tr.update(textinfo="label+percent")
+                    continue
+                tn = (
+                    str(ti_raw)
+                    .strip()
+                    .lower()
+                    .replace(" ", "")
+                    .replace("+", "")
+                )
+                if tn in ("percent", "none"):
+                    continue
+                if str(ti_raw).strip().lower() == "none":
+                    continue
+                if "label" in str(ti_raw).lower():
                     continue
                 tr.update(textinfo="label+percent")
         except Exception:
             continue
     return fig
+
+
+# Ширина холста Plotly по умолчанию: одинаковая «рамка» графика между проектами/блоками при stretch в Streamlit.
+_RENDER_CHART_DEFAULT_WIDTH_PX = 1150
 
 
 def render_chart(
@@ -1568,6 +1757,12 @@ def render_chart(
             fig.update_layout(title_text="")
         except Exception:
             pass
+    try:
+        _lw = fig.layout.width
+        if _lw is None:
+            fig.update_layout(width=_RENDER_CHART_DEFAULT_WIDTH_PX)
+    except Exception:
+        pass
     if not skip_clamp_zoom:
         _clamp_plotly_scroll_zoom_padding(fig)
     _apply_plotly_spec_411_labels(fig)
@@ -2645,7 +2840,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         if "pct" not in reason_counts.columns:
             reason_counts["pct"] = (reason_counts["Количество"] / (float(total) or 1.0) * 100).round(1)
 
-        # Круг «Доли причин»: проценты внутри секторов без наложения.
+        # Круг «Доли причин»: в секторах только %; причины — легенда столбиком слева.
         n_reasons = len(reason_counts)
         _pie_h = int(max(980, 860 + min(n_reasons, 28) * 34))
         fig = px.pie(
@@ -2655,37 +2850,21 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             title=None,
             hole=0.28,
         )
-        _pie_font = 17 if n_reasons <= 8 else 15 if n_reasons <= 12 else 13
+        _pie_font = 18 if n_reasons <= 8 else 17 if n_reasons <= 12 else 15
+        _lm_reason = min(380, max(236, int(200 + n_reasons * 6)))
+        fig = _pie_apply_percent_inside_legend_left(
+            fig,
+            height=_pie_h,
+            pct_fontsize=_pie_font,
+            legend_fontsize=13,
+            left_margin=_lm_reason,
+            domain_x=(0.34, 0.92),
+            domain_y=(0.12, 0.89),
+            extra_layout=dict(font=dict(family="Inter, system-ui, sans-serif")),
+        )
         fig.update_traces(
-            texttemplate="%{percent:.1%}",
-            textposition="outside",
-            insidetextorientation="auto",
-            textfont=dict(
-                size=_pie_font,
-                color="#e8eaed",
-                family="Inter, system-ui, sans-serif",
-            ),
             hovertemplate="<b>%{label}</b><br>Количество: %{value}<br>Доля: %{percent:.1%}<extra></extra>",
             pull=[0.0] * n_reasons,
-            marker=dict(line=dict(color="rgba(15,17,23,0.85)", width=1)),
-            domain=dict(x=[0.08, 0.62], y=[0.16, 0.90]),
-        )
-        fig.update_layout(
-            height=_pie_h,
-            margin=dict(l=36, r=36, t=24, b=60),
-            legend=dict(
-                orientation="v",
-                x=0.67,
-                y=0.50,
-                xanchor="left",
-                yanchor="middle",
-                font=dict(size=15, color="#e8eaed"),
-                itemwidth=50,
-                tracegroupgap=8,
-            ),
-            font=dict(family="Inter, system-ui, sans-serif"),
-            showlegend=True,
-            uniformtext=dict(minsize=10, mode="hide"),
         )
         fig = apply_chart_background(fig)
         render_chart(fig, caption_below="")
@@ -6889,20 +7068,6 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
 def dashboard_budget_by_period(df):
     st.header("БДДС")
 
-    def _clean_filter_label(v) -> str:
-        if v is None or (isinstance(v, float) and pd.isna(v)):
-            return ""
-        s = str(v).replace("\xa0", " ").replace("\u200b", "").replace("\ufeff", "").strip()
-        if not s:
-            return ""
-        for ch in ('"', "'", "`", "«", "»", "“", "”", "‘", "’"):
-            s = s.replace(ch, "")
-        # MSP-артефакты: маркеры/буллеты/звездочки в начале строки
-        s = re.sub(r"^[\*\-–—•·\s]+", "", s)
-        s = re.sub(r"\s+", " ", s)
-        s = re.sub(r"\s*[,;:.-]\s*$", "", s).strip()
-        return s
-
     def _derive_bdds_dimensions(_df: pd.DataFrame) -> pd.DataFrame:
         """
         ТЗ БДДС:
@@ -6992,7 +7157,13 @@ def dashboard_budget_by_period(df):
         return out
 
     # Сетка фильтров; чекбоксы — после фильтров (П.9)
-    col1, col2 = st.columns(2)
+    df = _derive_bdds_dimensions(df)
+
+    hide_adjusted = True
+    hide_reserve = False
+
+    filtered_df = df.copy()
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         period_type = st.selectbox(
@@ -7002,90 +7173,50 @@ def dashboard_budget_by_period(df):
         period_type_en = period_map.get(period_type, "Month")
 
     with col2:
-        if "project name" in df.columns:
-            projects = ["Все"] + _unique_project_labels_for_select(df["project name"])
+        if "project name" in filtered_df.columns:
+            projects = ["Все"] + _unique_project_labels_for_select(filtered_df["project name"])
             selected_project = st.selectbox(
                 "Фильтр по проекту", projects, key="budget_project"
             )
         else:
             selected_project = "Все"
 
-    df = _derive_bdds_dimensions(df)
-
-    col3, col4 = st.columns(2)
-    with col3:
-        lot_base_col = "lot_effective" if "lot_effective" in df.columns else ("lot" if "lot" in df.columns else ("section" if "section" in df.columns else None))
-        if lot_base_col:
-            _lot_pairs = []
-            for raw in df[lot_base_col].dropna().tolist():
-                clean = _clean_filter_label(raw)
-                if clean:
-                    _lot_pairs.append((clean, str(raw).strip()))
-            _lot_raw_by_display = {}
-            for clean, raw in sorted(set(_lot_pairs), key=lambda t: t[0]):
-                _lot_raw_by_display.setdefault(clean, raw)
-            _lot_opts = ["Все"] + sorted(_lot_raw_by_display.keys())
-            _sel_lot_display = st.selectbox("Фильтр по лоту", _lot_opts, key="budget_lot")
-            selected_lot = "Все" if _sel_lot_display == "Все" else _lot_raw_by_display.get(_sel_lot_display, _sel_lot_display)
-        else:
-            selected_lot = "Все"
-    with col4:
-        if "stage_l2" in df.columns:
-            _stage_pairs = []
-            for raw in df["stage_l2"].dropna().tolist():
-                clean = _clean_filter_label(raw)
-                if clean:
-                    _stage_pairs.append((clean, str(raw).strip()))
-            _stage_raw_by_display = {}
-            for clean, raw in sorted(set(_stage_pairs), key=lambda t: t[0]):
-                _stage_raw_by_display.setdefault(clean, raw)
-            _stage_opts = ["Все"] + sorted(_stage_raw_by_display.keys())
-            _sel_stage_display = st.selectbox("Фильтр по этапу", _stage_opts, key="budget_section")
-            selected_section = "Все" if _sel_stage_display == "Все" else _stage_raw_by_display.get(_sel_stage_display, _sel_stage_display)
-        elif "section" in df.columns:
-            _section_pairs = []
-            for raw in df["section"].dropna().tolist():
-                clean = _clean_filter_label(raw)
-                if clean:
-                    _section_pairs.append((clean, str(raw).strip()))
-            _section_raw_by_display = {}
-            for clean, raw in sorted(set(_section_pairs), key=lambda t: t[0]):
-                _section_raw_by_display.setdefault(clean, raw)
-            _section_opts = ["Все"] + sorted(_section_raw_by_display.keys())
-            _sel_section_display = st.selectbox("Фильтр по этапу", _section_opts, key="budget_section")
-            selected_section = "Все" if _sel_section_display == "Все" else _section_raw_by_display.get(_sel_section_display, _sel_section_display)
-        else:
-            selected_section = "Все"
-
-    hide_adjusted = True
-    hide_reserve = False
-
-    # Apply filters - fix filtering
-    filtered_df = df.copy()
     if selected_project != "Все" and "project name" in filtered_df.columns:
         filtered_df = filtered_df[
             filtered_df["project name"].map(_project_filter_norm_key)
             == _project_filter_norm_key(selected_project)
-        ]
-    if selected_lot != "Все":
-        lot_filter_col = "lot_effective" if "lot_effective" in filtered_df.columns else ("lot" if "lot" in filtered_df.columns else None)
-        if lot_filter_col and lot_filter_col in filtered_df.columns:
-            filtered_df = filtered_df[
-                filtered_df[lot_filter_col].astype(str).str.strip() == str(selected_lot).strip()
-            ]
-    if selected_section != "Все":
-        stage_filter_col = "stage_l2" if "stage_l2" in filtered_df.columns else ("section" if "section" in filtered_df.columns else None)
-        if stage_filter_col and stage_filter_col in filtered_df.columns:
-            filtered_df = filtered_df[
-                filtered_df[stage_filter_col].astype(str).str.strip() == str(selected_section).strip()
-            ]
+        ].copy()
+
+    with col3:
+        _year_options = ["Все"]
+        if "plan end" in filtered_df.columns:
+            _pe_for_year = pd.to_datetime(filtered_df["plan end"], errors="coerce")
+            if _pe_for_year.notna().any():
+                _year_options.extend(
+                    str(int(y))
+                    for y in sorted(_pe_for_year.dt.year.dropna().astype(int).unique())
+                )
+        selected_year = st.selectbox(
+            "Год",
+            _year_options,
+            key="budget_plan_end_year",
+            help="Фильтр по календарному году поля «Конец план» (plan end).",
+        )
+
+    if (
+        selected_year != "Все"
+        and "plan end" in filtered_df.columns
+        and str(selected_year).strip().isdigit()
+    ):
+        _y_i = int(selected_year)
+        _pe_y_f = pd.to_datetime(filtered_df["plan end"], errors="coerce")
+        filtered_df = filtered_df[_pe_y_f.dt.year == _y_i].copy()
 
     ensure_date_columns(filtered_df)
     _bdds_cal_start = None
     _bdds_cal_end = None
-    # R23-13.1 (стр.34): фильтр «Год» заменён на фильтр-календарь «Период»
-    # (диапазон дат по «plan end»); селектор гранулярности (месяц/квартал/год)
-    # уже присутствует выше ("Группировать по").
+    # R23-13.1 (стр.34): календарь «Период» по диапазону «plan end»; дополнительно
+    # селектор «Год» (колонка фильтров) и «Группировать по» (месяц/квартал/год).
     if "plan end" in filtered_df.columns:
         _pe_series = pd.to_datetime(filtered_df["plan end"], errors="coerce")
         if _pe_series.notna().any():
@@ -7093,31 +7224,34 @@ def dashboard_budget_by_period(df):
             _pe_max = _pe_series.max()
             _def_start = _pe_min.date() if pd.notna(_pe_min) else None
             _def_end = _pe_max.date() if pd.notna(_pe_max) else None
-            _range_kw = {
-                "label": "Период",
-                "key": "budget_period_range",
-                "help": "Фильтр по диапазону дат (поле «Конец план»).",
+            _from_kw: dict = {
+                "label": "С",
+                "key": "budget_period_from",
+                "help": "Начало диапазона по полю «Конец план».",
+                "format": "DD.MM.YYYY",
+            }
+            _to_kw: dict = {
+                "label": "По",
+                "key": "budget_period_to",
+                "help": "Конец диапазона по полю «Конец план».",
                 "format": "DD.MM.YYYY",
             }
             if _def_start and _def_end and _def_start <= _def_end:
-                _range_kw["value"] = (_def_start, _def_end)
-                _range_kw["min_value"] = _def_start
-                _range_kw["max_value"] = _def_end
-            _period_range = st.date_input(**_range_kw)
+                _from_kw["value"] = _def_start
+                _to_kw["value"] = _def_end
+                _from_kw["min_value"] = _def_start
+                _from_kw["max_value"] = _def_end
+                _to_kw["min_value"] = _def_start
+                _to_kw["max_value"] = _def_end
+            _bdds_pc_from, _bdds_pc_to = st.columns(2)
+            with _bdds_pc_from:
+                _period_from = st.date_input(**_from_kw)
+            with _bdds_pc_to:
+                _period_to = st.date_input(**_to_kw)
             components.html(
                 """
                 <script>
                 (function() {
-                  const rootDoc = window.parent && window.parent.document ? window.parent.document : document;
-                  const hid = "st-bdds-hide-datepicker-quickselect";
-                  let tag = rootDoc.getElementById(hid);
-                  if (!tag) {
-                    tag = rootDoc.createElement("style");
-                    tag.id = hid;
-                    rootDoc.head.appendChild(tag);
-                  }
-                  tag.textContent = "";
-
                   const dict = new Map([
                     ["January","Январь"],["February","Февраль"],["March","Март"],["April","Апрель"],
                     ["May","Май"],["June","Июнь"],["July","Июль"],["August","Август"],
@@ -7126,16 +7260,14 @@ def dashboard_budget_by_period(df):
                     ["None","Нет"]
                   ]);
                   const root = window.parent && window.parent.document ? window.parent.document : document;
-
                   const shouldSkip = (el) => {
                     if (!el || !el.tagName) return true;
                     const t = el.tagName.toLowerCase();
                     if (t === "script" || t === "style" || t === "textarea" || t === "input") return true;
-                    if (t === "svg" || t === "path") return true; // не трогаем иконки
+                    if (t === "svg" || t === "path") return true;
                     if (el.isContentEditable) return true;
                     return false;
                   };
-
                   const replaceInTextNode = (node) => {
                     const raw = node.nodeValue || "";
                     const txt = raw.trim();
@@ -7146,11 +7278,10 @@ def dashboard_budget_by_period(df):
                     }
                     let next = raw;
                     for (const [en, ru] of dict.entries()) {
-                      next = next.replace(new RegExp("\\\\b" + en + "\\\\b", "g"), ru);
+                      next = next.replace(new RegExp("\\b" + en + "\\b", "g"), ru);
                     }
                     if (next !== raw) node.nodeValue = next;
                   };
-
                   const apply = () => {
                     const all = root.querySelectorAll("*");
                     all.forEach((el) => {
@@ -7163,18 +7294,22 @@ def dashboard_budget_by_period(df):
                     });
                   };
                   apply();
-                  const obs = new MutationObserver(apply);
-                  obs.observe(root.body, { childList: true, subtree: true });
+                  try {
+                    const obs = new MutationObserver(apply);
+                    if (root.body) obs.observe(root.body, { childList: true, subtree: true });
+                  } catch (e) {}
                 })();
                 </script>
                 """,
                 height=0,
                 width=0,
             )
-            if isinstance(_period_range, (list, tuple)) and len(_period_range) == 2:
-                _start_dt = pd.to_datetime(_period_range[0], errors="coerce")
-                _end_dt = pd.to_datetime(_period_range[1], errors="coerce")
+            if _period_from is not None and _period_to is not None:
+                _start_dt = pd.to_datetime(_period_from, errors="coerce")
+                _end_dt = pd.to_datetime(_period_to, errors="coerce")
                 if pd.notna(_start_dt) and pd.notna(_end_dt):
+                    if _start_dt > _end_dt:
+                        _start_dt, _end_dt = _end_dt, _start_dt
                     filtered_df = filtered_df[
                         (_pe_series >= _start_dt)
                         & (_pe_series <= (_end_dt + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)))
@@ -7193,7 +7328,7 @@ def dashboard_budget_by_period(df):
     )
     _bdds_narrow_pk = (_bdds_narrow_pk or "").strip() or None
 
-    filtered_df, _ = ensure_budget_frame_with_fallback(
+    filtered_df, _bdds_used_1c = ensure_budget_frame_with_fallback(
         filtered_df,
         show_caption=True,
         restrict_projects_from_df=True,
@@ -7213,6 +7348,12 @@ def dashboard_budget_by_period(df):
             ].copy()
     ensure_date_columns(filtered_df)
     ensure_budget_columns(filtered_df)
+    from dashboards.data_quality_hints import collect_budget_1c_hints, render_quality_hints
+
+    _bdds_q_hints = collect_budget_1c_hints(
+        dict(getattr(filtered_df, "attrs", {}) or {}),
+        used_fallback_1c=bool(_bdds_used_1c),
+    )
     has_budget = "budget plan" in filtered_df.columns and "budget fact" in filtered_df.columns
     if not has_budget:
         st.warning("Столбцы бюджета (budget plan, budget fact) не найдены: загрузите MSP с бюджетом и/или `*_dannye.json` с **Сценарий** + **Сумма**.")
@@ -7268,517 +7409,423 @@ def dashboard_budget_by_period(df):
             filtered_df[adjusted_budget_col], errors="coerce"
         )
 
-    # Колонка для группировки по лотам (лот = section или колонка "лот"/"lot")
-    lot_col = (
-        "lot_effective"
-        if "lot_effective" in filtered_df.columns
-        else ("лот" if "лот" in filtered_df.columns else ("lot" if "lot" in filtered_df.columns else "section"))
+    # Group by period and project
+    agg_dict = {"budget plan": "sum", "budget fact": "sum", "reserve budget": "sum"}
+    if adjusted_budget_col:
+        agg_dict[adjusted_budget_col] = "sum"
+
+    budget_summary = (
+        filtered_df.groupby([period_col, "project name"]).agg(agg_dict).reset_index()
     )
-    if lot_col not in filtered_df.columns:
-        lot_col = "section"  # fallback для группировки по лотам
 
-    tab_period, tab_lot = st.tabs(["По периодам", "По лотам"])
+    # Store original period values for sorting before formatting
+    budget_summary["period_original"] = budget_summary[period_col]
+    budget_summary[period_col] = budget_summary[period_col].apply(format_period_ru)
 
-    with tab_period:
-        # Group by period and project
-        agg_dict = {"budget plan": "sum", "budget fact": "sum", "reserve budget": "sum"}
-        if adjusted_budget_col:
-            agg_dict[adjusted_budget_col] = "sum"
-
-        budget_summary = (
-            filtered_df.groupby([period_col, "project name"]).agg(agg_dict).reset_index()
+    @st.fragment
+    def _budget_period_chart():
+        view_type = st.selectbox(
+            "Вид отображения", ["По месяцам", "Накопительно"], key="budget_period_view"
         )
-
-        # Store original period values for sorting before formatting
-        budget_summary["period_original"] = budget_summary[period_col]
-        budget_summary[period_col] = budget_summary[period_col].apply(format_period_ru)
-
-        @st.fragment
-        def _budget_period_chart():
-            view_type = st.selectbox(
-                "Вид отображения", ["По месяцам", "Накопительно"], key="budget_period_view"
+        if selected_project != "Все":
+            _sel_pk_chart = _project_filter_norm_key(selected_project)
+            project_data = budget_summary[
+                budget_summary["project name"]
+                .map(_project_filter_norm_key)
+                .map(lambda rk: _project_norm_key_matches_msp_keys(rk, {_sel_pk_chart}))
+            ].copy()
+        else:
+            agg_dict_all = {
+                "budget plan": "sum",
+                "budget fact": "sum",
+                "reserve budget": "sum",
+                "period_original": "first",
+            }
+            if adjusted_budget_col:
+                agg_dict_all[adjusted_budget_col] = "sum"
+            project_data = (
+                budget_summary.groupby(period_col).agg(agg_dict_all).reset_index()
             )
-            if selected_project != "Все":
-                _sel_pk_chart = _project_filter_norm_key(selected_project)
-                project_data = budget_summary[
-                    budget_summary["project name"]
-                    .map(_project_filter_norm_key)
-                    .map(lambda rk: _project_norm_key_matches_msp_keys(rk, {_sel_pk_chart}))
-                ].copy()
-            else:
-                agg_dict_all = {
-                    "budget plan": "sum",
-                    "budget fact": "sum",
-                    "reserve budget": "sum",
-                    "period_original": "first",
-                }
-                if adjusted_budget_col:
-                    agg_dict_all[adjusted_budget_col] = "sum"
-                project_data = (
-                    budget_summary.groupby(period_col).agg(agg_dict_all).reset_index()
-                )
-            if project_data["period_original"].dtype == "object":
-                try:
-                    project_data["period_sort"] = project_data["period_original"].apply(
-                        lambda x: (
-                            x if isinstance(x, pd.Period)
-                            else (pd.Period(str(x), freq=period_type_en[0]) if pd.notna(x) else None)
-                        )
+        if project_data["period_original"].dtype == "object":
+            try:
+                project_data["period_sort"] = project_data["period_original"].apply(
+                    lambda x: (
+                        x if isinstance(x, pd.Period)
+                        else (pd.Period(str(x), freq=period_type_en[0]) if pd.notna(x) else None)
                     )
-                    project_data = project_data.sort_values("period_sort").copy()
-                    project_data = project_data.drop("period_sort", axis=1)
-                except Exception:
-                    project_data = project_data.sort_values("period_original").copy()
-            else:
+                )
+                project_data = project_data.sort_values("period_sort").copy()
+                project_data = project_data.drop("period_sort", axis=1)
+            except Exception:
                 project_data = project_data.sort_values("period_original").copy()
-            if view_type == "Накопительно":
-                project_data["budget plan"] = project_data["budget plan"].cumsum()
-                project_data["budget fact"] = project_data["budget fact"].cumsum()
-                project_data["reserve budget"] = project_data["reserve budget"].cumsum()
-                if adjusted_budget_col and adjusted_budget_col in project_data.columns:
-                    project_data[adjusted_budget_col] = project_data[adjusted_budget_col].cumsum()
-                title_suffix = " (накопительно)"
-            else:
-                title_suffix = ""
+        else:
+            project_data = project_data.sort_values("period_original").copy()
+        if view_type == "Накопительно":
+            project_data["budget plan"] = project_data["budget plan"].cumsum()
+            project_data["budget fact"] = project_data["budget fact"].cumsum()
+            project_data["reserve budget"] = project_data["reserve budget"].cumsum()
+            if adjusted_budget_col and adjusted_budget_col in project_data.columns:
+                project_data[adjusted_budget_col] = project_data[adjusted_budget_col].cumsum()
+            title_suffix = " (накопительно)"
+        else:
+            title_suffix = ""
 
-            # Узкие столбцы при длинной шкале: убираем «пустые» месяцы (иначе каждая колонка — тонкая).
-            _hide_zero_months = False
-            if period_type_en == "Month" and view_type == "По месяцам":
-                _hide_zero_months = st.checkbox(
-                    "Скрывать месяцы, где план и факт равны 0",
-                    value=True,
-                    key="budget_period_hide_zero_months",
-                )
-            if (
-                _hide_zero_months
-                and period_type_en == "Month"
-                and view_type == "По месяцам"
-                and not project_data.empty
-            ):
-                _pl = project_data["budget plan"].fillna(0.0)
-                _fc = project_data["budget fact"].fillna(0.0)
-                _keep = _pl.abs() + _fc.abs() > 0.5
-                if (
-                    adjusted_budget_col
-                    and adjusted_budget_col in project_data.columns
-                    and not hide_adjusted
-                ):
-                    _keep = _keep | (project_data[adjusted_budget_col].fillna(0.0).abs() > 0.5)
-                project_data = project_data.loc[_keep].copy()
-            if project_data.empty:
-                st.info(
-                    "Нет периодов для графика. Снимите «Скрывать месяцы, где план и факт равны 0» "
-                    "или расширьте период/фильтры."
-                )
-                return
-
-            _n = len(project_data)
-            _is_cumulative = view_type == "Накопительно"
-            # Накопительно + длинная шкала: подписи на столбцах дают «кашу»; легенда внизу наезжает на подписи оси X.
-            _hide_bar_value_labels = _is_cumulative and _n > 10
-            _tlbl = 0.005
-            _tfs = 8 if _n > 32 else 9 if _n > 20 else 10 if _n > 12 else 11
-            # Меньше «воздуха» между группами/столбцами — визуально шире бары.
-            if _n > 32:
-                _bg, _bgg = 0.04, 0.01
-            elif _n > 18:
-                _bg, _bgg = 0.06, 0.02
-            else:
-                _bg, _bgg = 0.1, 0.04
-            # Нижнее поле под наклонные подписи месяцев + легенда (см. _plotly_legend_horizontal_below_plot).
-            # Высота фигуры должна быть >= margin.t + margin.b + минимум для самих столбцов, иначе область графика ~0 px.
-            _leg_b_pre = 300
-            if _is_cumulative:
-                _leg_b_pre = max(340, min(520, 300 + int(_n * 4.8)))
-            elif _n > 24:
-                _leg_b_pre = max(300, min(460, 280 + int(_n * 3.5)))
-            _top_px_pre = 72 if (_hide_bar_value_labels and _n > 20) else 88
-            _min_plot_core_px = 400
-            _ch_base = 600 if _n <= 20 else int(min(1100, 520 + int(_n * 1.4)))
-            _ch = max(_ch_base, _top_px_pre + _leg_b_pre + _min_plot_core_px)
-            _ch = int(min(1400, _ch))
-            _xangle = -45 if _n <= 18 else -50 if _n <= 36 else -55
-            _x_standoff = 30 if _n <= 18 else (44 if _n <= 36 else 56)
-
-            _plan_txt = (
-                None
-                if _hide_bar_value_labels
-                else _finance_bar_text_mln_rub(project_data["budget plan"], min_abs_mln=_tlbl)
+        # Узкие столбцы при длинной шкале: убираем «пустые» месяцы (иначе каждая колонка — тонкая).
+        _hide_zero_months = False
+        if period_type_en == "Month" and view_type == "По месяцам":
+            _hide_zero_months = st.checkbox(
+                "Скрывать месяцы, где план и факт равны 0",
+                value=True,
+                key="budget_period_hide_zero_months",
             )
-            _fact_txt = (
-                None
-                if _hide_bar_value_labels
-                else _finance_bar_text_mln_rub(project_data["budget fact"], min_abs_mln=_tlbl)
-            )
-            _txt_pos = "none" if _hide_bar_value_labels else "outside"
-
-            fig = go.Figure()
-            fig.add_trace(
-                go.Bar(
-                    x=project_data[period_col],
-                    y=project_data["budget plan"].div(1e6),
-                    name="БДДС план",
-                    marker_color="#2E86AB",
-                    text=_plan_txt,
-                    textposition=_txt_pos,
-                    textfont=dict(size=_tfs, color="#f0f4f8"),
-                    customdata=project_data["budget plan"].apply(format_million_rub),
-                    hovertemplate="<b>%{x}</b><br>БДДС план: %{customdata}<br><extra></extra>",
-                )
-            )
-            fig.add_trace(
-                go.Bar(
-                    x=project_data[period_col],
-                    y=project_data["budget fact"].div(1e6),
-                    name="БДДС факт",
-                    marker_color="#A23B72",
-                    text=_fact_txt,
-                    textposition=_txt_pos,
-                    textfont=dict(size=_tfs, color="#f0f4f8"),
-                    customdata=project_data["budget fact"].apply(format_million_rub),
-                    hovertemplate="<b>%{x}</b><br>БДДС факт: %{customdata}<br><extra></extra>",
-                )
-            )
-            if not hide_reserve:
-                _dev_txt = (
-                    None
-                    if _hide_bar_value_labels
-                    else project_data["reserve budget"].apply(format_million_rub)
-                )
-                fig.add_trace(
-                    go.Bar(
-                        x=project_data[period_col],
-                        y=project_data["reserve budget"].div(1e6),
-                        name="Отклонение",
-                        marker_color="#e74c3c",
-                        text=_dev_txt,
-                        textposition=_txt_pos,
-                        textfont=dict(size=_tfs, color="#f0f4f8"),
-                        customdata=project_data["reserve budget"].apply(format_million_rub),
-                        hovertemplate="<b>%{x}</b><br>Отклонение: %{customdata}<br><extra></extra>",
-                        visible="legendonly",
-                    )
-                )
+        if (
+            _hide_zero_months
+            and period_type_en == "Month"
+            and view_type == "По месяцам"
+            and not project_data.empty
+        ):
+            _pl = project_data["budget plan"].fillna(0.0)
+            _fc = project_data["budget fact"].fillna(0.0)
+            _keep = _pl.abs() + _fc.abs() > 0.5
             if (
                 adjusted_budget_col
                 and adjusted_budget_col in project_data.columns
                 and not hide_adjusted
             ):
-                _adj_txt = (
-                    None
-                    if _hide_bar_value_labels
-                    else project_data[adjusted_budget_col].apply(format_million_rub)
-                )
-                fig.add_trace(
-                    go.Bar(
-                        x=project_data[period_col],
-                        y=project_data[adjusted_budget_col].div(1e6),
-                        name="Скорректированный бюджет",
-                        marker_color="#F18F01",
-                        text=_adj_txt,
-                        textposition=_txt_pos,
-                        textfont=dict(size=_tfs, color="#f0f4f8"),
-                        customdata=project_data[adjusted_budget_col].apply(format_million_rub),
-                        hovertemplate="<b>%{x}</b><br>Скорректированный бюджет: %{customdata}<br><extra></extra>",
-                    )
-                )
-            fig.update_layout(
-                title_text="",
-                yaxis_title="млн руб.",
-                barmode="group",
-                bargap=_bg,
-                bargroupgap=_bgg,
-                xaxis=dict(
-                    title=dict(text=period_label, standoff=_x_standoff),
-                    tickangle=_xangle,
-                    tickfont=dict(size=8 if _n > 28 else 9 if _n > 18 else 10),
-                    nticks=min(64, max(12, _n)),
-                ),
+                _keep = _keep | (project_data[adjusted_budget_col].fillna(0.0).abs() > 0.5)
+            project_data = project_data.loc[_keep].copy()
+        if project_data.empty:
+            st.info(
+                "Нет периодов для графика. Снимите «Скрывать месяцы, где план и факт равны 0» "
+                "или расширьте период/фильтры."
             )
-            fig = _apply_finance_bar_label_layout(fig)
-            if _n > 10:
-                try:
-                    fig.update_layout(uniformtext=dict(minsize=5, mode="hide"))
-                except Exception:
-                    pass
-            # Легенда под графиком (margin b согласован с расчётом высоты _ch выше).
-            _leg_b = _leg_b_pre
-            _leg_y = -0.34 if _n <= 20 else (-0.38 if _n <= 36 else -0.44)
-            _top_px = _top_px_pre
-            fig = _plotly_legend_horizontal_below_plot(
-                fig, bottom_px=_leg_b, legend_y=_leg_y, top_px=_top_px
+            return
+
+        _n = len(project_data)
+        _is_cumulative = view_type == "Накопительно"
+        # Накопительно + длинная шкала: подписи на столбцах дают «кашу»; легенда внизу наезжает на подписи оси X.
+        _hide_bar_value_labels = _is_cumulative and _n > 10
+        _tlbl = 0.005
+        _tfs = 8 if _n > 32 else 9 if _n > 20 else 10 if _n > 12 else 11
+        # Меньше «воздуха» между группами/столбцами — визуально шире бары.
+        if _n > 32:
+            _bg, _bgg = 0.04, 0.01
+        elif _n > 18:
+            _bg, _bgg = 0.06, 0.02
+        else:
+            _bg, _bgg = 0.1, 0.04
+        # Нижнее поле под наклонные подписи месяцев + легенда (см. _plotly_legend_horizontal_below_plot).
+        # Высота фигуры должна быть >= margin.t + margin.b + минимум для самих столбцов, иначе область графика ~0 px.
+        _leg_b_pre = 300
+        if _is_cumulative:
+            _leg_b_pre = max(340, min(520, 300 + int(_n * 4.8)))
+        elif _n > 24:
+            _leg_b_pre = max(300, min(460, 280 + int(_n * 3.5)))
+        _top_px_pre = 72 if (_hide_bar_value_labels and _n > 20) else 88
+        _min_plot_core_px = 400
+        _ch_base = 600 if _n <= 20 else int(min(1100, 520 + int(_n * 1.4)))
+        _ch = max(_ch_base, _top_px_pre + _leg_b_pre + _min_plot_core_px)
+        _ch = int(min(1400, _ch))
+        _xangle = -45 if _n <= 18 else -50 if _n <= 36 else -55
+        _x_standoff = 30 if _n <= 18 else (44 if _n <= 36 else 56)
+
+        _plan_txt = (
+            None
+            if _hide_bar_value_labels
+            else _finance_bar_text_mln_rub(project_data["budget plan"], min_abs_mln=_tlbl)
+        )
+        _fact_txt = (
+            None
+            if _hide_bar_value_labels
+            else _finance_bar_text_mln_rub(project_data["budget fact"], min_abs_mln=_tlbl)
+        )
+        _txt_pos = "none" if _hide_bar_value_labels else "outside"
+
+        fig = go.Figure()
+        fig.add_trace(
+            go.Bar(
+                x=project_data[period_col],
+                y=project_data["budget plan"].div(1e6),
+                name="БДДС план",
+                marker_color="#2E86AB",
+                text=_plan_txt,
+                textposition=_txt_pos,
+                textfont=dict(size=_tfs, color="#f0f4f8"),
+                customdata=project_data["budget plan"].apply(format_million_rub),
+                hovertemplate="<b>%{x}</b><br>БДДС план: %{customdata}<br><extra></extra>",
             )
+        )
+        fig.add_trace(
+            go.Bar(
+                x=project_data[period_col],
+                y=project_data["budget fact"].div(1e6),
+                name="БДДС факт",
+                marker_color="#A23B72",
+                text=_fact_txt,
+                textposition=_txt_pos,
+                textfont=dict(size=_tfs, color="#f0f4f8"),
+                customdata=project_data["budget fact"].apply(format_million_rub),
+                hovertemplate="<b>%{x}</b><br>БДДС факт: %{customdata}<br><extra></extra>",
+            )
+        )
+        if not hide_reserve:
+            _dev_txt = (
+                None
+                if _hide_bar_value_labels
+                else project_data["reserve budget"].apply(format_million_rub)
+            )
+            fig.add_trace(
+                go.Bar(
+                    x=project_data[period_col],
+                    y=project_data["reserve budget"].div(1e6),
+                    name="Отклонение",
+                    marker_color="#e74c3c",
+                    text=_dev_txt,
+                    textposition=_txt_pos,
+                    textfont=dict(size=_tfs, color="#f0f4f8"),
+                    customdata=project_data["reserve budget"].apply(format_million_rub),
+                    hovertemplate="<b>%{x}</b><br>Отклонение: %{customdata}<br><extra></extra>",
+                    visible="legendonly",
+                )
+            )
+        if (
+            adjusted_budget_col
+            and adjusted_budget_col in project_data.columns
+            and not hide_adjusted
+        ):
+            _adj_txt = (
+                None
+                if _hide_bar_value_labels
+                else project_data[adjusted_budget_col].apply(format_million_rub)
+            )
+            fig.add_trace(
+                go.Bar(
+                    x=project_data[period_col],
+                    y=project_data[adjusted_budget_col].div(1e6),
+                    name="Скорректированный бюджет",
+                    marker_color="#F18F01",
+                    text=_adj_txt,
+                    textposition=_txt_pos,
+                    textfont=dict(size=_tfs, color="#f0f4f8"),
+                    customdata=project_data[adjusted_budget_col].apply(format_million_rub),
+                    hovertemplate="<b>%{x}</b><br>Скорректированный бюджет: %{customdata}<br><extra></extra>",
+                )
+            )
+        fig.update_layout(
+            title_text="",
+            yaxis_title="млн руб.",
+            barmode="group",
+            bargap=_bg,
+            bargroupgap=_bgg,
+            xaxis=dict(
+                title=dict(text=period_label, standoff=_x_standoff),
+                tickangle=_xangle,
+                tickfont=dict(size=8 if _n > 28 else 9 if _n > 18 else 10),
+                nticks=min(64, max(12, _n)),
+            ),
+        )
+        fig = _apply_finance_bar_label_layout(fig)
+        if _n > 10:
             try:
-                fig.update_xaxes(
-                    title=dict(text=period_label, standoff=_x_standoff),
-                    automargin=True,
-                )
+                fig.update_layout(uniformtext=dict(minsize=5, mode="hide"))
             except Exception:
                 pass
-            if not project_data.empty:
-                _ymax = float(
-                    np.nanmax(
-                        np.concatenate(
-                            [
-                                project_data["budget plan"].div(1e6).to_numpy(),
-                                project_data["budget fact"].div(1e6).to_numpy(),
-                                project_data["reserve budget"].div(1e6).to_numpy(),
-                            ]
-                        )
+        # Легенда под графиком (margin b согласован с расчётом высоты _ch выше).
+        _leg_b = _leg_b_pre
+        _leg_y = -0.34 if _n <= 20 else (-0.38 if _n <= 36 else -0.44)
+        _top_px = _top_px_pre
+        fig = _plotly_legend_horizontal_below_plot(
+            fig, bottom_px=_leg_b, legend_y=_leg_y, top_px=_top_px
+        )
+        try:
+            fig.update_xaxes(
+                title=dict(text=period_label, standoff=_x_standoff),
+                automargin=True,
+            )
+        except Exception:
+            pass
+        if not project_data.empty:
+            _ymax = float(
+                np.nanmax(
+                    np.concatenate(
+                        [
+                            project_data["budget plan"].div(1e6).to_numpy(),
+                            project_data["budget fact"].div(1e6).to_numpy(),
+                            project_data["reserve budget"].div(1e6).to_numpy(),
+                        ]
                     )
                 )
-                if np.isfinite(_ymax) and _ymax > 0:
-                    fig.update_layout(yaxis=dict(range=[0, _ymax * 1.22]))
-            fig = apply_chart_background(fig)
-            # Не clamp’ить к 900: при больших margin и длинной шкале нужна полная высота.
-            render_chart(
-                fig,
-                caption_below=f"БДДС{title_suffix}",
-                height=_ch,
-                max_height=None,
             )
+            if np.isfinite(_ymax) and _ymax > 0:
+                fig.update_layout(yaxis=dict(range=[0, _ymax * 1.22]))
+        fig = apply_chart_background(fig)
+        # Не clamp’ить к 900: при больших margin и длинной шкале нужна полная высота.
+        render_chart(
+            fig,
+            caption_below=f"БДДС{title_suffix}",
+            height=_ch,
+            max_height=None,
+        )
 
-        _budget_period_chart()
+    _budget_period_chart()
 
-        # Summary table — суммы в млн руб., строка «Итого» (ТЗ)
-        st.subheader(f"Сводка бюджета (по {period_label.lower()})")
-        table_display = budget_summary.drop(columns=["period_original"], errors="ignore").copy()
+    # Сводная таблица: накопительные суммы по периоду (график — отдельно, с переключателем).
+    st.subheader(f"Сводка бюджета (по {period_label.lower()}, накопительно)")
+    _bdds_dev_col = "Отклонение (факт − план), млн руб."
+    if selected_project != "Все":
+        _tbl_pk = _project_filter_norm_key(selected_project)
+        _tbl_period = budget_summary[
+            budget_summary["project name"]
+            .map(_project_filter_norm_key)
+            .map(lambda rk: _project_norm_key_matches_msp_keys(rk, {_tbl_pk}))
+        ].copy()
+    else:
+        _agg_tbl = {"budget plan": "sum", "budget fact": "sum", "reserve budget": "sum"}
+        if adjusted_budget_col and adjusted_budget_col in budget_summary.columns:
+            _agg_tbl[adjusted_budget_col] = "sum"
+        _tbl_period = budget_summary.groupby("period_original", dropna=False).agg(_agg_tbl).reset_index()
+        _tbl_period[period_col] = _tbl_period["period_original"].apply(format_period_ru)
+
+    _tbl_period = _tbl_period.sort_values("period_original").reset_index(drop=True)
+
+    if _tbl_period.empty:
+        st.info("Нет строк для сводной таблицы по выбранным фильтрам.")
+    else:
+        _plan_tot = float(_tbl_period["budget plan"].fillna(0.0).sum())
+        _fact_tot = float(_tbl_period["budget fact"].fillna(0.0).sum())
+        _res_tot = float(_tbl_period["reserve budget"].fillna(0.0).sum())
+        _adj_tot = None
+        if adjusted_budget_col and adjusted_budget_col in _tbl_period.columns:
+            _adj_tot = float(_tbl_period[adjusted_budget_col].fillna(0.0).sum())
+
+        _tbl_c = _tbl_period.copy()
+        if hide_adjusted and adjusted_budget_col and adjusted_budget_col in _tbl_c.columns:
+            _tbl_c = _tbl_c.drop(columns=[adjusted_budget_col], errors="ignore")
+        for _c in ("budget plan", "budget fact", "reserve budget"):
+            _tbl_c[_c] = _tbl_c[_c].fillna(0.0).cumsum()
+        if (
+            adjusted_budget_col
+            and adjusted_budget_col in _tbl_c.columns
+            and not hide_adjusted
+        ):
+            _tbl_c[adjusted_budget_col] = _tbl_c[adjusted_budget_col].fillna(0.0).cumsum()
+
+        if selected_project == "Все":
+            _tbl_c = _tbl_c.drop(columns=["project name"], errors="ignore")
+
+        _tbl_c = _tbl_c.drop(columns=["period_original"], errors="ignore")
+        _tbl_c["_row_kind"] = ""
+
         _tot_vals = {
-            period_col: "Итого",
-            "project name": "",
-            "budget plan": table_display["budget plan"].sum(),
-            "budget fact": table_display["budget fact"].sum(),
-            "reserve budget": table_display["reserve budget"].sum(),
+            period_col: "ИТОГО",
+            "_row_kind": "total",
+            "budget plan": _plan_tot,
+            "budget fact": _fact_tot,
+            "reserve budget": _res_tot,
         }
-        if adjusted_budget_col and adjusted_budget_col in table_display.columns:
-            _tot_vals[adjusted_budget_col] = table_display[adjusted_budget_col].sum()
-        table_display = pd.concat([table_display, pd.DataFrame([_tot_vals])], ignore_index=True)
+        if selected_project != "Все":
+            _tot_vals["project name"] = ""
+        if (
+            adjusted_budget_col
+            and adjusted_budget_col in _tbl_period.columns
+            and not hide_adjusted
+        ):
+            _tot_vals[adjusted_budget_col] = _adj_tot if _adj_tot is not None else 0.0
+
+        _tbl_c = pd.concat([_tbl_c, pd.DataFrame([_tot_vals])], ignore_index=True)
+
         budget_cols_table = ["budget plan", "budget fact", "reserve budget"]
-        if adjusted_budget_col and adjusted_budget_col in table_display.columns:
+        if (
+            adjusted_budget_col
+            and adjusted_budget_col in _tbl_c.columns
+            and not hide_adjusted
+        ):
             budget_cols_table = budget_cols_table + [adjusted_budget_col]
+
         for col in budget_cols_table:
-            if col in table_display.columns:
-                table_display[col] = (table_display[col] / 1e6).round(2).apply(
+            if col in _tbl_c.columns:
+                _tbl_c[col] = (_tbl_c[col] / 1e6).round(2).apply(
                     lambda x: f"{float(x):.2f} млн руб." if pd.notna(x) else ""
                 )
-        table_display = table_display.rename(columns={
-            "budget plan": "БДДС план, млн руб.",
-            "budget fact": "БДДС факт, млн руб.",
-            "reserve budget": "Отклонение (факт − план), млн руб.",
+
+        _rename_tbl = {
+            "budget plan": "Бюджет План, млн руб.",
+            "budget fact": "Бюджет Факт, млн руб.",
+            "reserve budget": _bdds_dev_col,
             "project name": "Проект",
-            **({adjusted_budget_col: "Скорр. бюджет, млн руб."} if adjusted_budget_col and adjusted_budget_col in table_display.columns else {}),
-        })
+            **(
+                {adjusted_budget_col: "Скорр. бюджет, млн руб."}
+                if adjusted_budget_col
+                and adjusted_budget_col in _tbl_c.columns
+                and not hide_adjusted
+                else {}
+            ),
+        }
+        table_display = _tbl_c.rename(columns=_rename_tbl)
         if period_col in table_display.columns:
             table_display = table_display.rename(columns={period_col: period_label})
+
         st.markdown(
             budget_table_to_html(
                 table_display,
-                finance_deviation_column="Отклонение (факт − план), млн руб.",
+                finance_deviation_column=_bdds_dev_col,
+                row_kind_column="_row_kind",
+                emphasize_row_kinds=("total",),
             ),
             unsafe_allow_html=True,
         )
+    render_quality_hints(_bdds_q_hints)
 
-        # R23-13.2 (стр.35): в БДДС дополнительно вывести таблицу
-        # «Сводка бюджета по проекту» (как в БДР) с итоговой строкой «ИТОГО».
-        if "project name" in filtered_df.columns:
-            st.subheader("Сводка бюджета по проекту")
-            _bp = (
-                filtered_df.groupby("project name", dropna=False)
-                .agg({"budget plan": "sum", "budget fact": "sum"})
-                .reset_index()
-            )
-            _bp["_dev"] = _bp["budget fact"] - _bp["budget plan"]
-            _proj_tbl = pd.DataFrame(
-                {
-                    "Проект": _bp["project name"].astype(str),
-                    "План, млн руб.": (_bp["budget plan"] / 1e6).round(2).apply(
-                        lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
-                    ),
-                    "Факт, млн руб.": (_bp["budget fact"] / 1e6).round(2).apply(
-                        lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
-                    ),
-                    "Отклонение (факт − план), млн руб.": (_bp["_dev"] / 1e6).round(2).apply(
-                        lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
-                    ),
-                }
-            )
-            if not _proj_tbl.empty:
-                _plan_sum = float(_bp["budget plan"].fillna(0.0).sum())
-                _fact_sum = float(_bp["budget fact"].fillna(0.0).sum())
-                _total_row = pd.DataFrame(
-                    [
-                        {
-                            "Проект": "ИТОГО",
-                            "План, млн руб.": f"{_plan_sum / 1e6:.2f}",
-                            "Факт, млн руб.": f"{_fact_sum / 1e6:.2f}",
-                            "Отклонение (факт − план), млн руб.": f"{(_fact_sum - _plan_sum) / 1e6:.2f}",
-                        }
-                    ]
-                )
-                _proj_tbl = pd.concat([_proj_tbl, _total_row], ignore_index=True)
-            st.markdown(
-                budget_table_to_html(
-                    _proj_tbl,
-                    finance_deviation_column="Отклонение (факт − план), млн руб.",
+    # R23-13.2 (стр.35): в БДДС дополнительно вывести таблицу
+    # «Сводка бюджета по проекту» (как в БДР) с итоговой строкой «ИТОГО».
+    if "project name" in filtered_df.columns:
+        st.subheader("Сводка бюджета по проекту")
+        _bp = (
+            filtered_df.groupby("project name", dropna=False)
+            .agg({"budget plan": "sum", "budget fact": "sum"})
+            .reset_index()
+        )
+        _bp["_dev"] = _bp["budget fact"] - _bp["budget plan"]
+        _proj_tbl = pd.DataFrame(
+            {
+                "Проект": _bp["project name"].astype(str),
+                "План, млн руб.": (_bp["budget plan"] / 1e6).round(2).apply(
+                    lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
                 ),
-                unsafe_allow_html=True,
-            )
-
-    with tab_lot:
-        # По лотам: группировка по периоду и лоту (section / лот / lot)
-        if lot_col not in filtered_df.columns:
-            st.info("Нет колонки для группировки по лотам (section / лот).")
-        else:
-            agg_dict_lot = {"budget plan": "sum", "budget fact": "sum", "reserve budget": "sum"}
-            budget_summary_lot = (
-                filtered_df.groupby([period_col, lot_col]).agg(agg_dict_lot).reset_index()
-            )
-            budget_summary_lot["period_original"] = budget_summary_lot[period_col]
-            budget_summary_lot[period_col] = budget_summary_lot[period_col].apply(format_period_ru)
-
-            # hide_reserve_lot = st.checkbox(
-            #     "Скрыть отклонение", value=True, key="budget_lot_hide_reserve"
-            # )
-            hide_reserve_lot = False
-            # По лотам: ось Y = этапы (лоты), ось X = млн руб.
-            lot_chart_data = (
-                budget_summary_lot.groupby(lot_col)
-                .agg({"budget plan": "sum", "budget fact": "sum", "reserve budget": "sum"})
-                .reset_index()
-            )
-            # Только лоты с ненулевой суммой — иначе на оси Y сотни «пустых» строк и огромный зазор.
-            _lot_abs = (
-                lot_chart_data["budget plan"].abs()
-                + lot_chart_data["budget fact"].abs()
-                + lot_chart_data["reserve budget"].abs()
-            )
-            lot_chart_data = lot_chart_data[_lot_abs > 1.0].copy()
-            if not lot_chart_data.empty:
-                lot_chart_data["_sort_key"] = lot_chart_data[
-                    ["budget plan", "budget fact"]
-                ].abs().max(axis=1)
-                lot_chart_data = _limit_bar_categories(
-                    lot_chart_data, "_sort_key", max_bars=40, label="лотов"
-                )
-                lot_chart_data = lot_chart_data.drop(columns=["_sort_key"], errors="ignore")
-                lot_chart_data = lot_chart_data.sort_values("budget plan", ascending=True)
-
-            def _wrap_lot_label(text, max_len=25):
-                words = str(text).split(" ")
-                lines, current = [], ""
-                for word in words:
-                    if len(current) + len(word) + 1 > max_len:
-                        lines.append(current)
-                        current = word
-                    else:
-                        current = (current + " " + word).strip()
-                if current:
-                    lines.append(current)
-                return "<br>".join(lines)
-
-            if lot_chart_data.empty:
-                st.info("Нет ненулевых сумм по лотам для выбранных фильтров.")
-            else:
-                lot_chart_data[lot_col] = lot_chart_data[lot_col].apply(_wrap_lot_label)
-
-                fig_lot = go.Figure()
-                fig_lot.add_trace(
-                    go.Bar(
-                        y=lot_chart_data[lot_col],
-                        x=lot_chart_data["budget plan"].div(1e6),
-                        name="Бюджет План",
-                        marker_color="#2E86AB",
-                        text=lot_chart_data["budget plan"].apply(format_million_rub),
-                        textposition="outside",
-                        textfont=dict(size=12, color="#f0f4f8"),
-                        cliponaxis=False,
-                        orientation="h",
-                    )
-                )
-                fig_lot.add_trace(
-                    go.Bar(
-                        y=lot_chart_data[lot_col],
-                        x=lot_chart_data["budget fact"].div(1e6),
-                        name="Бюджет Факт",
-                        marker_color="#A23B72",
-                        text=lot_chart_data["budget fact"].apply(format_million_rub),
-                        textposition="outside",
-                        textfont=dict(size=12, color="#f0f4f8"),
-                        cliponaxis=False,
-                        orientation="h",
-                    )
-                )
-                fig_lot.add_trace(
-                    go.Bar(
-                        y=lot_chart_data[lot_col],
-                        x=lot_chart_data["reserve budget"].div(1e6),
-                        name="Отклонение",
-                        marker_color="#e74c3c",
-                        text=lot_chart_data["reserve budget"].apply(format_million_rub),
-                        textposition="outside",
-                        textfont=dict(size=12, color="#f0f4f8"),
-                        cliponaxis=False,
-                        orientation="h",
-                        visible="legendonly",
-                    )
-                )
-                fig_lot.update_layout(
-                    title_text="",
-                    xaxis_title="млн руб.",
-                    yaxis_title="Этапы",
-                    barmode="group",
-                    bargap=0.22,
-                    bargroupgap=0.05,
-                    xaxis=dict(tickangle=0, tickfont=dict(size=12), rangemode="tozero"),
-                    yaxis=dict(tickfont=dict(size=12), categoryorder="trace"),
-                    legend=dict(font=dict(size=12)),
-                )
-                fig_lot = _apply_finance_bar_label_layout(fig_lot)
-                fig_lot = apply_chart_background(fig_lot)
-                max_line_len = max(
-                    max(len(line) for line in s.split("<br>"))
-                    for s in lot_chart_data[lot_col].tolist()
-                ) if not lot_chart_data.empty else 20
-                left_margin = min(max_line_len * 8.2, 400)
-                max_val = float(
-                    lot_chart_data[["budget plan", "budget fact"]].max().max() / 1e6
-                )
-                if not np.isfinite(max_val) or max_val <= 0:
-                    max_val = 0.0
-                # Умеренный запас справа для подписей «outside», без лишнего «воздуха» на оси
-                _x_hi = max_val * (1.18 if max_val > 0 else 1.0)
-                fig_lot.update_layout(
-                    margin=dict(l=left_margin, r=130, t=80, b=50),
-                    xaxis=dict(range=[0, _x_hi], rangemode="tozero"),
-                )
-                _lot_rows = len(lot_chart_data)
-                _plot_height = max(320, min(_lot_rows * 56, 1200))
-                render_chart(
-                    fig_lot,
-                    caption_below="План/факт/отклонение по лотам",
-                    height=_plot_height,
-                    max_height=1200,
-                )
-
-            st.subheader("Сводка бюджета по лотам")
-            table_lot = budget_summary_lot.drop(columns=["period_original"], errors="ignore").copy()
-            for col in ["budget plan", "budget fact", "reserve budget"]:
-                if col in table_lot.columns:
-                    table_lot[col] = (table_lot[col] / 1e6).round(2).apply(
-                        lambda x: f"{float(x):.2f} млн руб." if pd.notna(x) else ""
-                    )
-            rename_cols = {
-                "budget plan": "Бюджет План, млн руб.",
-                "budget fact": "Бюджет Факт, млн руб.",
-                "reserve budget": "Отклонение, млн руб.",
+                "Факт, млн руб.": (_bp["budget fact"] / 1e6).round(2).apply(
+                    lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
+                ),
+                "Отклонение (факт − план), млн руб.": (_bp["_dev"] / 1e6).round(2).apply(
+                    lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
+                ),
+                "_row_kind": "",
             }
-            if lot_col in table_lot.columns:
-                rename_cols[lot_col] = "Лот"
-            table_lot = table_lot.rename(columns=rename_cols)
-            st.markdown(
-                budget_table_to_html(table_lot, finance_deviation_column="Отклонение, млн руб."),
-                unsafe_allow_html=True,
+        )
+        if not _proj_tbl.empty:
+            _plan_sum = float(_bp["budget plan"].fillna(0.0).sum())
+            _fact_sum = float(_bp["budget fact"].fillna(0.0).sum())
+            _total_row = pd.DataFrame(
+                [
+                    {
+                        "Проект": "ИТОГО",
+                        "План, млн руб.": f"{_plan_sum / 1e6:.2f}",
+                        "Факт, млн руб.": f"{_fact_sum / 1e6:.2f}",
+                        "Отклонение (факт − план), млн руб.": f"{(_fact_sum - _plan_sum) / 1e6:.2f}",
+                        "_row_kind": "total",
+                    }
+                ]
             )
+            _proj_tbl = pd.concat([_proj_tbl, _total_row], ignore_index=True)
+        st.markdown(
+            budget_table_to_html(
+                _proj_tbl,
+                finance_deviation_column="Отклонение (факт − план), млн руб.",
+                row_kind_column="_row_kind",
+                emphasize_row_kinds=("total",),
+            ),
+            unsafe_allow_html=True,
+        )
+        render_quality_hints(_bdds_q_hints)
 
 
 # ==================== DASHBOARD 6.5: Budget Cumulative ====================
@@ -7853,6 +7900,20 @@ def dashboard_budget_cumulative(df):
                 except (TypeError, ValueError):
                     pass
 
+    ensure_budget_columns(filtered_df)
+    from dashboards.finance_from_1c import ensure_budget_frame_with_fallback
+    from dashboards.data_quality_hints import collect_budget_1c_hints, render_quality_hints
+
+    filtered_df, _bcc_used_1c = ensure_budget_frame_with_fallback(
+        filtered_df,
+        show_caption=True,
+        restrict_projects_from_df=True,
+        force_from_1c=False,
+    )
+    _bcc_q_hints = collect_budget_1c_hints(
+        dict(getattr(filtered_df, "attrs", {}) or {}),
+        used_fallback_1c=bool(_bcc_used_1c),
+    )
     ensure_budget_columns(filtered_df)
     has_budget = (
         "budget plan" in filtered_df.columns and "budget fact" in filtered_df.columns
@@ -7990,6 +8051,7 @@ def dashboard_budget_cumulative(df):
     chart_src = _sort_period_df(chart_src)
     if chart_src.empty:
         st.info("Нет данных для графика накопительно по выбранным фильтрам.")
+        render_quality_hints(_bcc_q_hints)
     else:
         chart_src["budget plan_cum"] = chart_src["budget plan"].cumsum()
         chart_src["budget fact_cum"] = chart_src["budget fact"].cumsum()
@@ -8079,6 +8141,7 @@ def dashboard_budget_cumulative(df):
             fig_cum.update_layout(yaxis=dict(range=[0, _ymax * 1.22]))
         fig_cum = apply_chart_background(fig_cum)
         render_chart(fig_cum, caption_below="БДДС накопительно (подписи — млн руб.)", height=600)
+        render_quality_hints(_bcc_q_hints)
 
     # --- Таблица «накопительно»: по каждому проекту — нарастающий итог по периодам
     st.subheader(f"Сводка бюджета (накопительно) по {period_label.lower()}")
@@ -8149,6 +8212,7 @@ def dashboard_budget_cumulative(df):
         ),
         unsafe_allow_html=True,
     )
+    render_quality_hints(_bcc_q_hints)
 
 
 # ==================== DASHBOARD 7: Budget Plan/Fact/Reserve by Section by Period ====================
@@ -8191,6 +8255,20 @@ def dashboard_budget_by_section(df):
         ]
 
     # Check for budget columns (нормализуем русские названия)
+    ensure_budget_columns(filtered_df)
+    from dashboards.finance_from_1c import ensure_budget_frame_with_fallback
+    from dashboards.data_quality_hints import collect_budget_1c_hints, render_quality_hints
+
+    filtered_df, _bss_used_1c = ensure_budget_frame_with_fallback(
+        filtered_df,
+        show_caption=True,
+        restrict_projects_from_df=True,
+        force_from_1c=False,
+    )
+    _bss_q_hints = collect_budget_1c_hints(
+        dict(getattr(filtered_df, "attrs", {}) or {}),
+        used_fallback_1c=bool(_bss_used_1c),
+    )
     ensure_budget_columns(filtered_df)
     has_budget = (
         "budget plan" in filtered_df.columns and "budget fact" in filtered_df.columns
@@ -8376,6 +8454,7 @@ def dashboard_budget_by_section(df):
         fig = _apply_finance_bar_label_layout(fig)
         fig = apply_chart_background(fig)
         render_chart(fig, caption_below=_lot_budget_caption)
+        render_quality_hints(_bss_q_hints)
 
     _budget_section_chart()
 
@@ -8396,13 +8475,15 @@ def dashboard_budget_by_section(df):
         budget_table_to_html(table_section, finance_deviation_column="Отклонение, млн руб."),
         unsafe_allow_html=True,
     )
+    render_quality_hints(_bss_q_hints)
 
 
 # ==================== DASHBOARD: БДР (бюджет доходов и расходов) ====================
 def dashboard_bdr(df):
     """
-    БДР по ТЗ: столбчатые серии — доходы, расходы, сальдо; помесячно / накопительно.
-    Fallback из 1С — только обороты БДР/поступление-расходование, не БДДС.
+    БДР: режим ТЗ (план/факт/отклонение расходов из 1С по статьям «(БДР)» и сценариям)
+    или классический режим доходы / расходы / сальдо; помесячно / накопительно.
+    Fallback из 1С — обороты БДР по расходам (не БДДС).
     """
     st.header("БДР")
 
@@ -8566,8 +8647,20 @@ def dashboard_bdr(df):
         combos_map = _bdr_dimension_combos_by_project_key(msp_derived)
         if not combos_map:
             return synth
-        need_cols = ("bdr_income", "bdr_expense", "bdr_saldo", "project name", "plan end")
-        if any(c not in synth.columns for c in need_cols):
+        money_cols = [
+            c
+            for c in (
+                "bdr_plan_expense",
+                "bdr_fact_expense",
+                "bdr_expense_deviation",
+                "bdr_income",
+                "bdr_expense",
+                "bdr_saldo",
+            )
+            if c in synth.columns
+        ]
+        base_need = ("project name", "plan end")
+        if not money_cols or any(c not in synth.columns for c in base_need):
             return synth
         rows_exp: list[dict] = []
         for _, r in synth.iterrows():
@@ -8602,7 +8695,7 @@ def dashboard_bdr(df):
             inv = 1.0 / float(k)
             for ent in combos:
                 rr = dict(r)
-                for money in ("bdr_income", "bdr_expense", "bdr_saldo"):
+                for money in money_cols:
                     try:
                         v = float(rr.get(money, np.nan))
                     except Exception:
@@ -8631,9 +8724,63 @@ def dashboard_bdr(df):
             odf["plan_year"] = _pe2.dt.to_period("Y")
         return odf
 
-    # Как БДДС: «Группировать по» + «Фильтр по проекту» — до derive/fallback,
-    # чтобы список проектов брался из MSP, а не только из синтетики из 1С.
-    col1, col2 = st.columns(2)
+    df_derived_filters = _derive_bdr_dimensions(df_src)
+    df_work = df_derived_filters.copy()
+    ensure_budget_columns(df_work)
+    df_work, _ = ensure_bdr_frame_with_fallback(df_work)
+    df_work = _spread_bdr_synthetic_with_msp_dims(df_work, df_derived_filters)
+    ensure_budget_columns(df_work)
+    ensure_date_columns(df_work)
+
+    def find_col(df, variants):
+        for v in variants:
+            for c in df.columns:
+                if str(c).strip().lower() == v.lower() or v.lower() in str(c).lower():
+                    return c
+        return None
+
+    plan_ec = find_col(df_work, ["bdr_plan_expense"])
+    fact_ec = find_col(df_work, ["bdr_fact_expense"])
+    dev_ec = find_col(df_work, ["bdr_expense_deviation", "bdr_expense_deviance"])
+    bdr_tz_mode = False
+    if plan_ec is not None and fact_ec is not None:
+        _psum = pd.to_numeric(df_work[plan_ec], errors="coerce").fillna(0.0).abs().sum()
+        _fsum = pd.to_numeric(df_work[fact_ec], errors="coerce").fillna(0.0).abs().sum()
+        if float(_psum + _fsum) > 0.0:
+            bdr_tz_mode = True
+
+    income_col = None
+    expense_col = None
+    if not bdr_tz_mode:
+        income_col = find_col(
+            df_work,
+            [
+                "bdr_income",
+                "доходы",
+                "доход",
+                "revenue",
+                "income",
+            ],
+        )
+        expense_col = find_col(
+            df_work,
+            [
+                "bdr_expense",
+                "расходы",
+                "расход",
+                "expenses",
+                "expense",
+            ],
+        )
+        if income_col is None or expense_col is None:
+            st.warning(
+                "Для отчёта БДР нужны столбцы доходов и расходов "
+                "(например «доходы» / «расходы» после загрузки `*_dannye.json`)."
+            )
+            return
+
+    # Как БДДС: период / проект / год — список проектов из MSP; год после фильтра по проекту.
+    col1, col2, col3 = st.columns(3)
     with col1:
         period_type = st.selectbox(
             "Группировать по", ["Месяц", "Квартал", "Год"], key="bdr_period"
@@ -8648,118 +8795,6 @@ def dashboard_bdr(df):
             )
         else:
             selected_project = "Все"
-
-    df_derived_filters = _derive_bdr_dimensions(df_src)
-    df_work = df_derived_filters.copy()
-    ensure_budget_columns(df_work)
-    df_work, _ = ensure_bdr_frame_with_fallback(df_work)
-    df_work = _spread_bdr_synthetic_with_msp_dims(df_work, df_derived_filters)
-    ensure_budget_columns(df_work)
-    ensure_date_columns(df_work)
-
-    # Определяем колонки для доходов и расходов
-    def find_col(df, variants):
-        for v in variants:
-            for c in df.columns:
-                if str(c).strip().lower() == v.lower() or v.lower() in str(c).lower():
-                    return c
-        return None
-
-    income_col = find_col(
-        df_work,
-        [
-            "bdr_income",
-            "доходы",
-            "доход",
-            "revenue",
-            "income",
-        ],
-    )
-    expense_col = find_col(
-        df_work,
-        [
-            "bdr_expense",
-            "расходы",
-            "расход",
-            "expenses",
-            "expense",
-        ],
-    )
-
-    if income_col is None or expense_col is None:
-        st.warning(
-            "Для отчёта БДР нужны столбцы доходов и расходов "
-            "(например «доходы» / «расходы» после загрузки `*_dannye.json`)."
-        )
-        return
-
-    col3, col4 = st.columns(2)
-    with col3:
-        lot_base_col = (
-            "lot_effective"
-            if "lot_effective" in df_work.columns
-            else (
-                "lot"
-                if "lot" in df_work.columns
-                else ("section" if "section" in df_work.columns else None)
-            )
-        )
-        if lot_base_col:
-            _lot_pairs = []
-            _lot_series_src = (
-                df_work[lot_base_col]
-                if (lot_base_col in df_work.columns)
-                else (
-                    df_derived_filters[lot_base_col]
-                    if (lot_base_col in df_derived_filters.columns)
-                    else pd.Series(dtype=object)
-                )
-            )
-            for raw in _lot_series_src.dropna().tolist():
-                clean = _clean_filter_label(raw)
-                if clean:
-                    _lot_pairs.append((clean, str(raw).strip()))
-            _lot_raw_by_display = {}
-            for clean, raw in sorted(set(_lot_pairs), key=lambda t: t[0]):
-                _lot_raw_by_display.setdefault(clean, raw)
-            _lot_opts = ["Все"] + sorted(_lot_raw_by_display.keys())
-            _sel_lot_display = st.selectbox("Фильтр по лоту", _lot_opts, key="bdr_lot")
-            selected_lot = "Все" if _sel_lot_display == "Все" else _lot_raw_by_display.get(_sel_lot_display, _sel_lot_display)
-        else:
-            selected_lot = "Все"
-    with col4:
-        if ("stage_l2" in df_work.columns) or ("stage_l2" in df_derived_filters.columns):
-            _stage_pairs = []
-            _st_series = (
-                df_work["stage_l2"]
-                if "stage_l2" in df_work.columns
-                else df_derived_filters["stage_l2"]
-            )
-            for raw in _st_series.dropna().tolist():
-                clean = _clean_filter_label(raw)
-                if clean:
-                    _stage_pairs.append((clean, str(raw).strip()))
-            _stage_raw_by_display = {}
-            for clean, raw in sorted(set(_stage_pairs), key=lambda t: t[0]):
-                _stage_raw_by_display.setdefault(clean, raw)
-            _stage_opts = ["Все"] + sorted(_stage_raw_by_display.keys())
-            _sel_stage_display = st.selectbox("Фильтр по этапу", _stage_opts, key="bdr_section")
-            selected_section = "Все" if _sel_stage_display == "Все" else _stage_raw_by_display.get(_sel_stage_display, _sel_stage_display)
-        elif ("section" in df_work.columns) or ("section" in df_derived_filters.columns):
-            _sec_series = (
-                df_work["section"]
-                if "section" in df_work.columns
-                else df_derived_filters["section"]
-            )
-            _sec_labels: list[str] = []
-            for raw in _sec_series.dropna().tolist():
-                c = _clean_filter_label(str(raw).strip())
-                if c:
-                    _sec_labels.append(c)
-            sections = ["Все"] + sorted(set(_sec_labels))
-            selected_section = st.selectbox("Фильтр по этапу", sections, key="bdr_section")
-        else:
-            selected_section = "Все"
 
     if period_type_en == "Month":
         period_col = "plan_month"
@@ -8780,22 +8815,35 @@ def dashboard_bdr(df):
         filtered_df = filtered_df[
             filtered_df["project name"].map(_project_filter_norm_key)
             == _project_filter_norm_key(selected_project)
-        ]
-    if selected_lot != "Все":
-        lot_filter_col = "lot_effective" if "lot_effective" in filtered_df.columns else ("lot" if "lot" in filtered_df.columns else None)
-        if lot_filter_col and lot_filter_col in filtered_df.columns:
-            filtered_df = filtered_df[
-                filtered_df[lot_filter_col].astype(str).str.strip() == str(selected_lot).strip()
-            ]
-    if selected_section != "Все":
-        stage_col = "stage_l2" if "stage_l2" in filtered_df.columns else ("section" if "section" in filtered_df.columns else None)
-        if stage_col and stage_col in filtered_df.columns:
-            filtered_df = filtered_df[
-                filtered_df[stage_col].astype(str).str.strip() == str(selected_section).strip()
-            ]
+        ].copy()
+
+    with col3:
+        _year_options = ["Все"]
+        if "plan end" in filtered_df.columns:
+            _pe_for_year_bdr = pd.to_datetime(filtered_df["plan end"], errors="coerce")
+            if _pe_for_year_bdr.notna().any():
+                _year_options.extend(
+                    str(int(y))
+                    for y in sorted(_pe_for_year_bdr.dt.year.dropna().astype(int).unique())
+                )
+        selected_year = st.selectbox(
+            "Год",
+            _year_options,
+            key="bdr_plan_end_year",
+            help="Фильтр по календарному году поля «Конец план» (plan end).",
+        )
+
+    if (
+        selected_year != "Все"
+        and "plan end" in filtered_df.columns
+        and str(selected_year).strip().isdigit()
+    ):
+        _y_bdr_i = int(selected_year)
+        _pe_y_bdr_f = pd.to_datetime(filtered_df["plan end"], errors="coerce")
+        filtered_df = filtered_df[_pe_y_bdr_f.dt.year == _y_bdr_i].copy()
 
     ensure_date_columns(filtered_df)
-    # Фильтр-календарь «Период» — как БДДС: тот же help/format и общий стиль/скрипт для datepicker.
+    # Фильтр периода — два одиночных date_input («С»/«По»), без range quick select Streamlit.
     if "plan end" in filtered_df.columns:
         _pe_series_bdr = pd.to_datetime(filtered_df["plan end"], errors="coerce")
         if _pe_series_bdr.notna().any():
@@ -8803,31 +8851,34 @@ def dashboard_bdr(df):
             _bdr_max = _pe_series_bdr.max()
             _bdr_start = _bdr_min.date() if pd.notna(_bdr_min) else None
             _bdr_end = _bdr_max.date() if pd.notna(_bdr_max) else None
-            _bdr_range_kw = {
-                "label": "Период",
-                "key": "bdr_period_range",
-                "help": "Фильтр по диапазону дат (поле «Конец план»).",
+            _bdr_from_kw: dict = {
+                "label": "С",
+                "key": "bdr_period_from",
+                "help": "Начало диапазона по полю «Конец план».",
+                "format": "DD.MM.YYYY",
+            }
+            _bdr_to_kw: dict = {
+                "label": "По",
+                "key": "bdr_period_to",
+                "help": "Конец диапазона по полю «Конец план».",
                 "format": "DD.MM.YYYY",
             }
             if _bdr_start and _bdr_end and _bdr_start <= _bdr_end:
-                _bdr_range_kw["value"] = (_bdr_start, _bdr_end)
-                _bdr_range_kw["min_value"] = _bdr_start
-                _bdr_range_kw["max_value"] = _bdr_end
-            _bdr_period_range = st.date_input(**_bdr_range_kw)
+                _bdr_from_kw["value"] = _bdr_start
+                _bdr_to_kw["value"] = _bdr_end
+                _bdr_from_kw["min_value"] = _bdr_start
+                _bdr_from_kw["max_value"] = _bdr_end
+                _bdr_to_kw["min_value"] = _bdr_start
+                _bdr_to_kw["max_value"] = _bdr_end
+            _bdr_pc_from, _bdr_pc_to = st.columns(2)
+            with _bdr_pc_from:
+                _bdr_period_from = st.date_input(**_bdr_from_kw)
+            with _bdr_pc_to:
+                _bdr_period_to = st.date_input(**_bdr_to_kw)
             components.html(
                 """
                 <script>
                 (function() {
-                  const rootDoc = window.parent && window.parent.document ? window.parent.document : document;
-                  const hid = "st-bdds-hide-datepicker-quickselect";
-                  let tag = rootDoc.getElementById(hid);
-                  if (!tag) {
-                    tag = rootDoc.createElement("style");
-                    tag.id = hid;
-                    rootDoc.head.appendChild(tag);
-                  }
-                  tag.textContent = "";
-
                   const dict = new Map([
                     ["January","Январь"],["February","Февраль"],["March","Март"],["April","Апрель"],
                     ["May","Май"],["June","Июнь"],["July","Июль"],["August","Август"],
@@ -8836,7 +8887,6 @@ def dashboard_bdr(df):
                     ["None","Нет"]
                   ]);
                   const root = window.parent && window.parent.document ? window.parent.document : document;
-
                   const shouldSkip = (el) => {
                     if (!el || !el.tagName) return true;
                     const t = el.tagName.toLowerCase();
@@ -8845,7 +8895,6 @@ def dashboard_bdr(df):
                     if (el.isContentEditable) return true;
                     return false;
                   };
-
                   const replaceInTextNode = (node) => {
                     const raw = node.nodeValue || "";
                     const txt = raw.trim();
@@ -8856,11 +8905,10 @@ def dashboard_bdr(df):
                     }
                     let next = raw;
                     for (const [en, ru] of dict.entries()) {
-                      next = next.replace(new RegExp("\\\\b" + en + "\\\\b", "g"), ru);
+                      next = next.replace(new RegExp("\\b" + en + "\\b", "g"), ru);
                     }
                     if (next !== raw) node.nodeValue = next;
                   };
-
                   const apply = () => {
                     const all = root.querySelectorAll("*");
                     all.forEach((el) => {
@@ -8873,40 +8921,72 @@ def dashboard_bdr(df):
                     });
                   };
                   apply();
-                  const obs = new MutationObserver(apply);
-                  obs.observe(root.body, { childList: true, subtree: true });
+                  try {
+                    const obs = new MutationObserver(apply);
+                    if (root.body) obs.observe(root.body, { childList: true, subtree: true });
+                  } catch (e) {}
                 })();
                 </script>
                 """,
                 height=0,
                 width=0,
             )
-            if isinstance(_bdr_period_range, (list, tuple)) and len(_bdr_period_range) == 2:
-                _bdr_from = pd.to_datetime(_bdr_period_range[0], errors="coerce")
-                _bdr_to = pd.to_datetime(_bdr_period_range[1], errors="coerce")
+            if _bdr_period_from is not None and _bdr_period_to is not None:
+                _bdr_from = pd.to_datetime(_bdr_period_from, errors="coerce")
+                _bdr_to = pd.to_datetime(_bdr_period_to, errors="coerce")
                 if pd.notna(_bdr_from) and pd.notna(_bdr_to):
+                    if _bdr_from > _bdr_to:
+                        _bdr_from, _bdr_to = _bdr_to, _bdr_from
                     filtered_df = filtered_df[
                         (_pe_series_bdr >= _bdr_from)
                         & (_pe_series_bdr <= (_bdr_to + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)))
                     ].copy()
 
-    filtered_df["_inc"] = _coerce_bdr_amount_series(filtered_df[income_col]).fillna(0.0)
-    filtered_df["_exp"] = _coerce_bdr_amount_series(filtered_df[expense_col]).fillna(0.0)
-    filtered_df["_saldo"] = filtered_df["_inc"] - filtered_df["_exp"]
+    if bdr_tz_mode:
+        filtered_df["_plan_exp"] = _coerce_bdr_amount_series(filtered_df[plan_ec]).fillna(0.0)
+        filtered_df["_fact_exp"] = _coerce_bdr_amount_series(filtered_df[fact_ec]).fillna(0.0)
+        if dev_ec is not None:
+            filtered_df["_dev"] = _coerce_bdr_amount_series(filtered_df[dev_ec]).fillna(0.0)
+        else:
+            filtered_df["_dev"] = filtered_df["_fact_exp"] - filtered_df["_plan_exp"]
+        bdr_summary = (
+            filtered_df.groupby(period_col, dropna=False)
+            .agg({"_plan_exp": "sum", "_fact_exp": "sum", "_dev": "sum"})
+            .reset_index()
+        )
+        bdr_summary = bdr_summary.rename(
+            columns={
+                "_plan_exp": "План расходов",
+                "_fact_exp": "Факт расходов",
+                "_dev": "Отклонение",
+            }
+        )
+    else:
+        filtered_df["_inc"] = _coerce_bdr_amount_series(filtered_df[income_col]).fillna(0.0)
+        filtered_df["_exp"] = _coerce_bdr_amount_series(filtered_df[expense_col]).fillna(0.0)
+        filtered_df["_saldo"] = filtered_df["_inc"] - filtered_df["_exp"]
 
-    agg_dict = {"_inc": "sum", "_exp": "sum", "_saldo": "sum"}
-    bdr_summary = (
-        filtered_df.groupby(period_col).agg(agg_dict).reset_index()
-    )
-    bdr_summary = bdr_summary.rename(
-        columns={
-            "_inc": "Доходы",
-            "_exp": "Расходы",
-            "_saldo": "Сальдо",
-        }
-    )
+        agg_dict = {"_inc": "sum", "_exp": "sum", "_saldo": "sum"}
+        bdr_summary = filtered_df.groupby(period_col).agg(agg_dict).reset_index()
+        bdr_summary = bdr_summary.rename(
+            columns={
+                "_inc": "Доходы",
+                "_exp": "Расходы",
+                "_saldo": "Сальдо",
+            }
+        )
 
     bdr_summary["Период"] = bdr_summary[period_col].apply(format_period_ru)
+
+    from dashboards.data_quality_hints import collect_bdr_hints, render_quality_hints
+
+    _bdr_q_hints = collect_bdr_hints(dict(getattr(df_work, "attrs", {}) or {}))
+
+    _bdr_tz_table_title = {
+        "Month": "Сводка бюджета по месяцам",
+        "Quarter": "Сводка бюджета по кварталам",
+        "Year": "Сводка бюджета по годам",
+    }.get(period_type_en, "Сводка бюджета по периоду")
 
     @st.fragment
     def _bdr_chart():
@@ -8914,13 +8994,238 @@ def dashboard_bdr(df):
             "Вид отображения", ["По месяцам", "Накопительно"], key="bdr_view"
         )
         chart_df = bdr_summary.copy()
+        title_suffix = ""
+
+        if bdr_tz_mode:
+            hide_deviation = st.checkbox(
+                "Скрыть отклонение",
+                value=False,
+                key="bdr_hide_deviation_tz",
+            )
+            if view_type == "Накопительно":
+                chart_df["План расходов"] = chart_df["План расходов"].cumsum()
+                chart_df["Факт расходов"] = chart_df["Факт расходов"].cumsum()
+                chart_df["Отклонение"] = chart_df["Факт расходов"] - chart_df["План расходов"]
+                title_suffix = " (накопительно)"
+
+            _bdr_hide_zero = False
+            if period_type_en == "Month" and view_type == "По месяцам":
+                _bdr_hide_zero = st.checkbox(
+                    "Скрывать месяцы, где план и факт расходов равны 0",
+                    value=True,
+                    key="bdr_hide_zero_months_tz",
+                )
+            if (
+                _bdr_hide_zero
+                and period_type_en == "Month"
+                and view_type == "По месяцам"
+                and not chart_df.empty
+            ):
+                _dp = chart_df["План расходов"].fillna(0.0)
+                _dfx = chart_df["Факт расходов"].fillna(0.0)
+                chart_df = chart_df.loc[_dp.abs() + _dfx.abs() > 0.5].copy()
+            if chart_df.empty:
+                st.info(
+                    "Нет периодов для графика. Снимите фильтр скрытия нулевых периодов "
+                    "или расширьте фильтры."
+                )
+                render_quality_hints(_bdr_q_hints)
+                return
+
+            _nb = len(chart_df)
+            _is_cumulative = view_type == "Накопительно"
+            _hide_bar_value_labels = _nb > 6
+            _tlbl_b = 0.005
+            _tlbl_dev = 0.01 if not _hide_bar_value_labels else _tlbl_b
+            _tfs_b = 8 if _nb > 32 else 9 if _nb > 20 else 10 if _nb > 12 else 11
+            if _nb > 32:
+                _bgb, _bggb = 0.04, 0.01
+            elif _nb > 18:
+                _bgb, _bggb = 0.06, 0.02
+            else:
+                _bgb, _bggb = 0.1, 0.04
+            _leg_b_pre = 300
+            if _is_cumulative:
+                _leg_b_pre = max(340, min(520, 300 + int(_nb * 4.8)))
+            elif _nb > 24:
+                _leg_b_pre = max(300, min(460, 280 + int(_nb * 3.5)))
+            _top_px_pre = 72 if (_hide_bar_value_labels and _nb > 20) else 88
+            _min_plot_core_px = 400
+            _bdr_h_base = 600 if _nb <= 20 else int(min(1100, 520 + int(_nb * 1.4)))
+            _bdr_h = max(_bdr_h_base, _top_px_pre + _leg_b_pre + _min_plot_core_px)
+            _bdr_h = int(min(1400, _bdr_h))
+            _xb = -45 if _nb <= 18 else -50 if _nb <= 36 else -55
+            _x_standoff = 30 if _nb <= 18 else (44 if _nb <= 36 else 56)
+            _txt_pos_b = "none" if _hide_bar_value_labels else "outside"
+            _mln_lab = "млн.руб."
+            _plan_txt_b = (
+                None
+                if _hide_bar_value_labels
+                else _finance_bar_text_mln_rub(
+                    chart_df["План расходов"],
+                    min_abs_mln=_tlbl_b,
+                    mln_suffix=_mln_lab,
+                )
+            )
+            _fact_txt_b = (
+                None
+                if _hide_bar_value_labels
+                else _finance_bar_text_mln_rub(
+                    chart_df["Факт расходов"],
+                    min_abs_mln=_tlbl_b,
+                    mln_suffix=_mln_lab,
+                )
+            )
+
+            fig = go.Figure()
+            x_vals = chart_df["Период"]
+            fig.add_trace(
+                go.Bar(
+                    x=x_vals,
+                    y=chart_df["План расходов"].div(1e6),
+                    name="План расходов",
+                    marker_color="#2E86AB",
+                    text=_plan_txt_b,
+                    textposition=_txt_pos_b,
+                    textfont=dict(size=_tfs_b, color="#f0f4f8"),
+                    customdata=chart_df["План расходов"].apply(format_million_rub),
+                    hovertemplate="<b>%{x}</b><br>План расходов: %{customdata}<br><extra></extra>",
+                )
+            )
+            fig.add_trace(
+                go.Bar(
+                    x=x_vals,
+                    y=chart_df["Факт расходов"].div(1e6),
+                    name="Факт расходов",
+                    marker_color="#A23B72",
+                    text=_fact_txt_b,
+                    textposition=_txt_pos_b,
+                    textfont=dict(size=_tfs_b, color="#f0f4f8"),
+                    customdata=chart_df["Факт расходов"].apply(format_million_rub),
+                    hovertemplate="<b>%{x}</b><br>Факт расходов: %{customdata}<br><extra></extra>",
+                )
+            )
+            if not hide_deviation:
+                dev_colors = [
+                    "#e74c3c" if float(v) >= 0 else "#27ae60"
+                    for v in chart_df["Отклонение"]
+                ]
+                _dev_txt_b = (
+                    None
+                    if _hide_bar_value_labels
+                    else _finance_bar_text_mln_rub(
+                        chart_df["Отклонение"],
+                        min_abs_mln=_tlbl_dev,
+                        mln_suffix=_mln_lab,
+                    )
+                )
+                fig.add_trace(
+                    go.Bar(
+                        x=x_vals,
+                        y=chart_df["Отклонение"].div(1e6),
+                        name="Отклонение",
+                        marker_color=dev_colors,
+                        text=_dev_txt_b,
+                        textposition=_txt_pos_b,
+                        textfont=dict(size=_tfs_b, color="#f0f4f8"),
+                        customdata=chart_df["Отклонение"].apply(format_million_rub),
+                        hovertemplate="<b>%{x}</b><br>Отклонение: %{customdata}<br><extra></extra>",
+                    )
+                )
+
+            fig.update_layout(
+                title_text="",
+                yaxis_title=_mln_lab,
+                barmode="group",
+                bargap=_bgb,
+                bargroupgap=_bggb,
+                xaxis=dict(
+                    title=dict(text=period_label, standoff=_x_standoff),
+                    tickangle=_xb,
+                    tickfont=dict(size=8 if _nb > 28 else 9 if _nb > 18 else 10),
+                    nticks=min(64, max(12, _nb)),
+                ),
+            )
+            if _nb > 10:
+                try:
+                    fig.update_layout(uniformtext=dict(minsize=5, mode="hide"))
+                except Exception:
+                    pass
+            if not chart_df.empty:
+                _series_for_range = [
+                    chart_df["План расходов"].div(1e6).to_numpy(),
+                    chart_df["Факт расходов"].div(1e6).to_numpy(),
+                ]
+                if not hide_deviation:
+                    _series_for_range.append(chart_df["Отклонение"].div(1e6).to_numpy())
+                _ymax = float(np.nanmax(np.concatenate(_series_for_range)))
+                _ymin = float(np.nanmin(np.concatenate(_series_for_range)))
+                if np.isfinite(_ymax) and np.isfinite(_ymin):
+                    pad = max(abs(_ymax), abs(_ymin), 1e-6) * 0.2
+                    fig.update_layout(yaxis=dict(range=[_ymin - pad, _ymax + pad]))
+            fig = _apply_finance_bar_label_layout(fig)
+            _leg_b = _leg_b_pre
+            _leg_y = -0.34 if _nb <= 20 else (-0.38 if _nb <= 36 else -0.44)
+            _top_px = _top_px_pre
+            fig = _plotly_legend_horizontal_below_plot(
+                fig, bottom_px=_leg_b, legend_y=_leg_y, top_px=_top_px
+            )
+            try:
+                fig.update_xaxes(
+                    title=dict(text=period_label, standoff=_x_standoff),
+                    automargin=True,
+                )
+            except Exception:
+                pass
+            fig = apply_chart_background(fig)
+            render_chart(
+                fig,
+                caption_below=f"БДР. План/факт расходов{title_suffix}",
+                height=_bdr_h,
+                max_height=None,
+            )
+
+            st.subheader(_bdr_tz_table_title)
+            tbl_raw = chart_df[
+                ["Период", "План расходов", "Факт расходов", "Отклонение"]
+            ].copy()
+            _sums = tbl_raw[["План расходов", "Факт расходов", "Отклонение"]].sum()
+            tot_row = {
+                "Период": "ИТОГО",
+                "__rk": "total",
+                "План расходов": float(_sums["План расходов"]),
+                "Факт расходов": float(_sums["Факт расходов"]),
+                "Отклонение": float(_sums["Отклонение"]),
+            }
+            tbl_disp = pd.concat([tbl_raw, pd.DataFrame([tot_row])], ignore_index=True)
+            tbl_disp = tbl_disp.rename(columns={"Период": period_label})
+            for _cn in ("План расходов", "Факт расходов", "Отклонение"):
+                tbl_disp[_cn] = (tbl_disp[_cn] / 1e6).round(2).apply(
+                    lambda x: f"{float(x):.2f} млн.руб." if pd.notna(x) else ""
+                )
+            tbl_disp = tbl_disp.rename(
+                columns={
+                    "План расходов": "План расходов, млн.руб.",
+                    "Факт расходов": "Факт расходов, млн.руб.",
+                    "Отклонение": "Отклонение, млн.руб.",
+                }
+            )
+            st.markdown(
+                budget_table_to_html(
+                    tbl_disp,
+                    row_kind_column="__rk",
+                    finance_deviation_column="Отклонение, млн.руб.",
+                ),
+                unsafe_allow_html=True,
+            )
+            render_quality_hints(_bdr_q_hints)
+            return
+
         if view_type == "Накопительно":
             chart_df["Доходы"] = chart_df["Доходы"].cumsum()
             chart_df["Расходы"] = chart_df["Расходы"].cumsum()
             chart_df["Сальдо"] = chart_df["Доходы"] - chart_df["Расходы"]
             title_suffix = " (накопительно)"
-        else:
-            title_suffix = ""
 
         _bdr_hide_zero = False
         if period_type_en == "Month" and view_type == "По месяцам":
@@ -8943,12 +9248,11 @@ def dashboard_bdr(df):
                 "Нет периодов для графика. Снимите «Скрывать месяцы, где доходы и расходы равны 0» "
                 "или расширьте фильтры."
             )
+            render_quality_hints(_bdr_q_hints)
             return
 
         _nb = len(chart_df)
         _is_cumulative = view_type == "Накопительно"
-        # Три серии в группе: подписи «число + млн руб.» (2 строки) сильно накладываются
-        # и по месяцам, и накопительно — при n>6 убираем inline-текст, оставляем hover.
         _hide_bar_value_labels = _nb > 6
         _tlbl_b = 0.005
         _tlbl_dev = 0.01 if not _hide_bar_value_labels else _tlbl_b
@@ -9098,60 +9402,94 @@ def dashboard_bdr(df):
             max_height=None,
         )
 
-    _bdr_chart()
+        st.subheader("Сводка БДР по периоду")
+        display_df = chart_df[
+            [c for c in ["Период", "Доходы", "Расходы", "Сальдо"] if c in chart_df.columns]
+        ].copy()
+        display_df = display_df.rename(columns={"Период": period_label})
+        for col in ["Доходы", "Расходы", "Сальдо"]:
+            if col in display_df.columns:
+                display_df[col] = (display_df[col] / 1e6).round(2).apply(
+                    lambda x: f"{float(x):.2f} млн руб." if pd.notna(x) else ""
+                )
+        display_df = display_df.rename(columns={
+            "Доходы": "Доходы, млн руб.",
+            "Расходы": "Расходы, млн руб.",
+            "Сальдо": "Сальдо, млн руб.",
+        })
+        st.markdown(
+            budget_table_to_html(display_df, finance_deviation_column="Сальдо, млн руб."),
+            unsafe_allow_html=True,
+        )
+        render_quality_hints(_bdr_q_hints)
 
-    st.subheader("Сводка БДР по периоду")
-    display_df = bdr_summary[
-        [c for c in ["Период", "Доходы", "Расходы", "Сальдо"] if c in bdr_summary.columns]
-    ].copy()
-    display_df = display_df.rename(columns={"Период": period_label})
-    for col in ["Доходы", "Расходы", "Сальдо"]:
-        if col in display_df.columns:
-            display_df[col] = (display_df[col] / 1e6).round(2).apply(
-                lambda x: f"{float(x):.2f} млн руб." if pd.notna(x) else ""
-            )
-    display_df = display_df.rename(columns={
-        "Доходы": "Доходы, млн руб.",
-        "Расходы": "Расходы, млн руб.",
-        "Сальдо": "Сальдо, млн руб.",
-    })
-    st.markdown(
-        budget_table_to_html(display_df, finance_deviation_column="Сальдо, млн руб."),
-        unsafe_allow_html=True,
-    )
+    _bdr_chart()
 
     if "project name" in filtered_df.columns:
         st.subheader("Сводка БДР по проекту")
-        by_p = (
-            filtered_df.groupby("project name", dropna=False)
-            .agg({"_inc": "sum", "_exp": "sum"})
-            .reset_index()
-        )
-        by_p["Итого (сальдо)"] = by_p["_inc"] - by_p["_exp"]
-        proj_tbl = pd.DataFrame(
-            {
-                "Проект": by_p["project name"].astype(str),
-                "Доходы, млн руб.": (by_p["_inc"] / 1e6).round(2).apply(
-                    lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
+        if bdr_tz_mode:
+            by_p = (
+                filtered_df.groupby("project name", dropna=False)
+                .agg({"_plan_exp": "sum", "_fact_exp": "sum"})
+                .reset_index()
+            )
+            by_p["Отклонение"] = by_p["_fact_exp"] - by_p["_plan_exp"]
+            proj_tbl = pd.DataFrame(
+                {
+                    "Проект": by_p["project name"].astype(str),
+                    "План расходов, млн.руб.": (by_p["_plan_exp"] / 1e6).round(2).apply(
+                        lambda x: f"{float(x):.2f} млн.руб." if pd.notna(x) else ""
+                    ),
+                    "Факт расходов, млн.руб.": (by_p["_fact_exp"] / 1e6).round(2).apply(
+                        lambda x: f"{float(x):.2f} млн.руб." if pd.notna(x) else ""
+                    ),
+                    "Отклонение, млн.руб.": (by_p["Отклонение"] / 1e6).round(2).apply(
+                        lambda x: f"{float(x):.2f} млн.руб." if pd.notna(x) else ""
+                    ),
+                }
+            )
+            suppress_caption(
+                "План/факт расходов и отклонение (факт минус план) по проекту за выбранные фильтры."
+            )
+            st.markdown(
+                budget_table_to_html(
+                    proj_tbl,
+                    finance_deviation_column="Отклонение, млн.руб.",
                 ),
-                "Расходы, млн руб.": (by_p["_exp"] / 1e6).round(2).apply(
-                    lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
+                unsafe_allow_html=True,
+            )
+        else:
+            by_p = (
+                filtered_df.groupby("project name", dropna=False)
+                .agg({"_inc": "sum", "_exp": "sum"})
+                .reset_index()
+            )
+            by_p["Итого (сальдо)"] = by_p["_inc"] - by_p["_exp"]
+            proj_tbl = pd.DataFrame(
+                {
+                    "Проект": by_p["project name"].astype(str),
+                    "Доходы, млн руб.": (by_p["_inc"] / 1e6).round(2).apply(
+                        lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
+                    ),
+                    "Расходы, млн руб.": (by_p["_exp"] / 1e6).round(2).apply(
+                        lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
+                    ),
+                    "Сальдо, млн руб.": (by_p["Итого (сальдо)"] / 1e6).round(2).apply(
+                        lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
+                    ),
+                }
+            )
+            suppress_caption(
+                "Колонка «Сальдо» — доходы минус расходы по проекту за выбранные фильтры."
+            )
+            st.markdown(
+                budget_table_to_html(
+                    proj_tbl,
+                    finance_deviation_column="Сальдо, млн руб.",
                 ),
-                "Сальдо, млн руб.": (by_p["Итого (сальдо)"] / 1e6).round(2).apply(
-                    lambda x: f"{float(x):.2f}" if pd.notna(x) else ""
-                ),
-            }
-        )
-        suppress_caption(
-            "Колонка «Сальдо» — доходы минус расходы по проекту за выбранные фильтры."
-        )
-        st.markdown(
-            budget_table_to_html(
-                proj_tbl,
-                finance_deviation_column="Сальдо, млн руб.",
-            ),
-            unsafe_allow_html=True,
-        )
+                unsafe_allow_html=True,
+            )
+        render_quality_hints(_bdr_q_hints)
 
 
 # ==================== DASHBOARD 8.6: RD Delay Chart ====================
@@ -11502,6 +11840,8 @@ def dashboard_technique(df):
             st.markdown("---")
             st.subheader(f"Проект: {project_name}")
 
+        _pslug = str(project_name).replace(" ", "_")[:20]
+
         if not has_plan_data and "Контрагент" in project_filtered_df.columns and "week_sum" in project_filtered_df.columns:
             _bar_avg = (
                 project_filtered_df.groupby("Контрагент", as_index=False)["week_sum"]
@@ -11516,7 +11856,6 @@ def dashboard_technique(df):
                     text=_bar_avg["Среднее за месяц"].apply(lambda v: f"{v:.0f}"),
                     color_discrete_sequence=["#2ecc71"],
                 )
-                _pslug = str(project_name).replace(" ", "_")[:20]
                 fig_avg.update_traces(textposition="outside", textfont=dict(size=12, color="white"))
                 fig_avg.update_layout(height=500, xaxis=dict(tickangle=-45), yaxis_title="Среднее за месяц")
                 fig_avg = _apply_finance_bar_label_layout(fig_avg)
@@ -11529,33 +11868,22 @@ def dashboard_technique(df):
                         _bar_avg, values="Среднее за месяц", names="Контрагент",
                         title=None, color_discrete_sequence=px.colors.qualitative.Set3,
                     )
-                    fig_pie_avg.update_traces(
-                        textinfo="text",
-                        texttemplate="%{label}<br>%{value:,.0f}<br>(%{percent:.1%})",
-                        textposition="inside",
-                        textfont_size=11,
-                        insidetextorientation="horizontal",
-                        hovertemplate="<b>%{label}</b><br>%{value:,.0f} (%{percent:.1%})<extra></extra>",
-                    )
-                    fig_pie_avg.update_layout(
+                    _n_con = len(_bar_avg.index)
+                    _lm_avg = min(380, max(236, int(206 + _n_con * 7)))
+                    fig_pie_avg = _pie_apply_percent_inside_legend_left(
+                        fig_pie_avg,
                         height=500,
-                        showlegend=True,
-                        legend=dict(
-                            orientation="h",
-                            yanchor="top",
-                            y=-0.2,
-                            x=0.5,
-                            xanchor="center",
-                            font=dict(size=10),
-                        ),
-                        margin=dict(t=40, b=140, l=24, r=24),
-                        uniformtext=dict(minsize=7, mode="show"),
+                        pct_fontsize=18,
+                        legend_fontsize=11,
+                        left_margin=_lm_avg,
+                    )
+                    fig_pie_avg.update_traces(
+                        hovertemplate="<b>%{label}</b><br>Среднее: %{value:,.1f}<br>%{percent:.0%}<extra></extra>",
                     )
                     fig_pie_avg = apply_chart_background(fig_pie_avg)
                     render_chart(fig_pie_avg, key=f"{key_prefix}_avg_pie_{_pslug}", caption_below=f"Распределение ресурсов — {project_name}")
             else:
                 st.info("Нет данных для отображения.")
-            continue
 
         if not plan_fact_row_done:
             df_people = project_filtered_df.copy()
@@ -11565,44 +11893,63 @@ def dashboard_technique(df):
                 ].copy()
             if not df_people.empty and "План_numeric" in df_people.columns and "week_sum" in df_people.columns:
                 plan_sum = df_people["План_numeric"].sum()
-                fact_sum = df_people["week_sum"].sum()
+                _ws_sp = pd.to_numeric(df_people["week_sum"], errors="coerce").fillna(0.0)
+                fact_sum = (
+                    float((_ws_sp / 6.0).sum())
+                    if week_columns
+                    else float(_ws_sp.sum())
+                )
                 total_pf = plan_sum + fact_sum
                 if total_pf > 0:
-                    plan_pct = round(plan_sum / total_pf * 100, 1)
-                    fact_pct = round(fact_sum / total_pf * 100, 1)
-                    pie_plan_fact = pd.DataFrame({
-                        "Тип": ["План", "Факт"],
-                        "Значение": [plan_sum, fact_sum],
-                        "Текст": [f"План: {int(plan_sum)} ({plan_pct}%)", f"Факт: {int(fact_sum)} ({fact_pct}%)"],
-                    })
+                    _ps = float(plan_sum)
+                    _fs = float(fact_sum)
+                    _dv = _ps - _fs
+                    plan_i = int(np.ceil(_ps)) if _ps >= 0 else -int(np.ceil(abs(_ps)))
+                    fact_i = int(np.ceil(_fs)) if _fs >= 0 else -int(np.ceil(abs(_fs)))
+                    dev_i = int(np.ceil(_dv)) if _dv >= 0 else -int(np.ceil(abs(_dv)))
+                    fact_color = _gdrs_fact_bar_color(_ps, _fs)
                     st.subheader("План и факт (люди) по проекту")
-                    fig_pie_pf = px.pie(
-                        pie_plan_fact,
-                        values="Значение",
-                        names="Тип",
-                        title=None,
-                        color_discrete_sequence=["#3498db", "#2ecc71"],
+                    fig_pf_pf = go.Figure(
+                        data=[
+                            go.Bar(
+                                x=["План", "Факт"],
+                                y=[_ps, _fs],
+                                marker_color=["#2E86AB", fact_color],
+                                text=[f"{plan_i}", f"{fact_i}<br>Δ {dev_i}"],
+                                textposition="outside",
+                                textfont=dict(size=13, color="#ffffff"),
+                                cliponaxis=False,
+                                customdata=[
+                                    [str(project_name), plan_i, fact_i, dev_i],
+                                    [str(project_name), plan_i, fact_i, dev_i],
+                                ],
+                                hovertemplate=(
+                                    "<b>%{x}</b><br>"
+                                    "Проект: %{customdata[0]}<br>"
+                                    "План: %{customdata[1]}<br>"
+                                    "Факт: %{customdata[2]}<br>"
+                                    "Отклонение: %{customdata[3]}<extra></extra>"
+                                ),
+                            )
+                        ]
                     )
-                    fig_pie_pf.update_traces(
-                        textinfo="text",
-                        texttemplate="%{label}<br>%{value:,.0f} (%{percent:.0%})",
-                        textposition="inside",
-                        textfont_size=11,
-                        insidetextorientation="horizontal",
-                        hovertemplate="<b>%{label}</b><br>%{value:,.0f} (%{percent:.0%})<extra></extra>",
+                    fig_pf_pf.update_layout(
+                        height=460,
+                        showlegend=False,
+                        margin=dict(l=48, r=28, t=56, b=72),
+                        yaxis=dict(title=""),
+                        uniformtext=dict(minsize=7, mode="show"),
                     )
-                    fig_pie_pf.update_layout(
-                        height=500,
-                        showlegend=True,
-                        title_font_size=14,
-                        uniformtext=dict(minsize=8, mode="hide"),
-                        legend=dict(orientation="v", font=dict(size=10)),
-                    )
-                    fig_pie_pf = apply_chart_background(fig_pie_pf)
-                    render_chart(fig_pie_pf, caption_below=f"План и факт — {project_name}")
+                    fig_pf_pf = _apply_bar_uniformtext(fig_pf_pf)
+                    try:
+                        fig_pf_pf.update_layout(uniformtext=dict(minsize=6, mode="show"))
+                    except Exception:
+                        pass
+                    fig_pf_pf = apply_chart_background(fig_pf_pf)
+                    render_chart(fig_pf_pf, caption_below=f"План и факт — {project_name}")
 
         # ========== Chart 1: Pie Chart by Contractor (Delta %) ==========
-        st.subheader("Круговая диаграмма: Распределение отклонения % по контрагентам")
+        st.subheader("Круговая диаграмма: Распределение дельты (%) по контрагентам")
 
         # Group by Контрагент and aggregate for pie chart (Delta %)
         # Ensure Дельта_процент_numeric exists - check if it was created in work_df
@@ -11736,6 +12083,9 @@ def dashboard_technique(df):
                 # Store original values for display
                 original_values = contractor_delta_pct_abs["Отклонение %"].tolist()
 
+                _n_d = len(contractor_delta_pct_abs.index)
+                _lm_d = min(400, max(240, int(210 + _n_d * 8)))
+
                 # Create pie chart using absolute values
                 fig_pie = px.pie(
                     contractor_delta_pct_abs,
@@ -11744,30 +12094,32 @@ def dashboard_technique(df):
                     title=None,
                     color_discrete_sequence=px.colors.qualitative.Set3,
                 )
-
-                fig_pie.update_layout(
+                fig_pie = _pie_apply_percent_inside_legend_left(
+                    fig_pie,
                     height=600,
-                    showlegend=True,
-                    legend=dict(
-                        orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.1, font=dict(size=10),
-                    ),
-                    title_font_size=16,
-                    uniformtext=dict(minsize=8, mode="hide"),
+                    pct_fontsize=17,
+                    legend_fontsize=11,
+                    left_margin=_lm_d,
+                    extra_layout=dict(title_font_size=16),
                 )
-
                 fig_pie.update_traces(
-                    textinfo="label+percent",
-                    textposition="auto",
-                    textfont_size=10,
-                    insidetextorientation="radial",
-                    customdata=original_values,
-                    hovertemplate="<b>%{label}</b><br>Отклонение %: %{customdata:.0f}%<br>Процент: %{percent}<br><extra></extra>",
+                    customdata=list(
+                        zip(
+                            original_values,
+                            contractor_delta_pct_abs["Отклонение %_abs"].tolist(),
+                        )
+                    ),
+                    hovertemplate=(
+                        "<b>%{label}</b><br>Сумма |Δ%|: %{customdata[1]:.0f}<br>"
+                        "Δ% (знак): %{customdata[0]:+.0f}%<br>"
+                        "Доля: %{percent:.0%}<extra></extra>"
+                    ),
                 )
 
                 fig_pie = apply_chart_background(fig_pie)
                 render_chart(
                     fig_pie,
-                    caption_below="Распределение отклонения % по контрагентам",
+                    caption_below="Распределение дельты (%) по контрагентам",
                 )
 
         # ========== Таблица по подрядчикам: план, факт, % (факт/план), отклонение ==========
@@ -11800,7 +12152,7 @@ def dashboard_technique(df):
                 by_contractor["План"] = pd.to_numeric(
                     by_contractor["План"], errors="coerce"
                 ).fillna(0.0)
-                by_contractor["Отклонение"] = by_contractor["Факт"] - by_contractor["План"]
+                by_contractor["Отклонение"] = by_contractor["План"] - by_contractor["Факт"]
                 by_contractor["%"] = by_contractor.apply(
                     lambda r: (
                         round(float(r["Факт"]) / float(r["План"]) * 100.0, 1)
@@ -11817,7 +12169,7 @@ def dashboard_technique(df):
                 by_contractor = by_contractor.sort_values("План", ascending=False)
                 with st.expander(f"Формулы столбцов ({type_label})", expanded=False):
                     suppress_caption(
-                        "План (из договора), СКУД (из выгрузки ресурсов), «%» = факт/план×100%, отклонение = СКУД − план."
+                        "План (из договора), Факт (СКУД / выгрузка ресурсов), «%» = факт/план×100%, отклонение = план − факт."
                     )
                 _display_cols = ["Контрагент", "План", "Факт", "%", "Отклонение"]
                 if project_col and project_col in by_contractor.columns:
@@ -11830,6 +12182,7 @@ def dashboard_technique(df):
                 display_df["Факт"] = display_df["Факт"].apply(
                     lambda x: int(round(x, 0)) if pd.notna(x) else 0
                 )
+                st.subheader(f"Доля факта ({type_label}) по контрагентам")
                 display_df["%"] = display_df["%"].apply(
                     lambda v: f"{v:.1f}%" if v is not None and pd.notna(v) else "—"
                 )
@@ -11841,13 +12194,14 @@ def dashboard_technique(df):
                         display_df,
                         finance_deviation_column="Отклонение",
                         deviation_red_if_positive_only=True,
+                        deviation_semaphore_style=True,
                     ),
                     unsafe_allow_html=True,
                 )
 
-        # ========== Chart 2: Bar Chart by Contractor (Plan, Average, Отклонение) ==========
+        # ========== Chart 2: Bar Chart by Contractor (Plan, Fact, Отклонение) ==========
         st.subheader(
-            "Столбчатая диаграмма: План, Среднее за месяц, Отклонение (группировка по контрагенту; сортировка по убыванию Плана)"
+            "Столбчатая диаграмма: План, Факт, Отклонение (группировка по контрагенту)"
         )
 
         # Filter by selected period(s) for this chart
@@ -11877,24 +12231,58 @@ def dashboard_technique(df):
             )
             .reset_index()
         )
-        contractor_data.columns = ["Контрагент", "План", "Среднее за месяц", "Отклонение"]
+        contractor_data.columns = ["Контрагент", "План", "Факт", "Отклонение"]
 
         contractor_data["Отклонение"] = pd.to_numeric(
             contractor_data["Отклонение"], errors="coerce"
         ).fillna(0)
-        contractor_data = contractor_data.sort_values("План", ascending=False)
 
-        total_plan = contractor_data["План"].sum() or 1
-        total_fact = contractor_data["Среднее за месяц"].sum() or 1
+        _sort_bar_label = st.radio(
+            "Сортировка контрагентов по",
+            options=("План", "Факт", "Отклонение"),
+            index=0,
+            horizontal=True,
+            key=f"{key_prefix}_bar_sort_technique_{_pslug}",
+        )
+        _sort_col_map = {"План": "План", "Факт": "Факт", "Отклонение": "Отклонение"}
+        contractor_data = contractor_data.sort_values(
+            _sort_col_map[_sort_bar_label], ascending=False
+        ).reset_index(drop=True)
 
-        # Create bar chart
+        # Столбцы — как в макете PDF: синий план, серый факт, дельта по модулю; оранжевый если > 0, зелёный если ≤ 0.
+        delta_values = contractor_data["Отклонение"].fillna(0)
+        delta_abs = delta_values.abs()
+
+        plan_text = []
+        fact_text = []
+        delta_text = []
+        for i in range(len(contractor_data)):
+            pv = float(
+                pd.to_numeric(contractor_data["План"].iloc[i], errors="coerce") or 0.0
+            )
+            fv = float(
+                pd.to_numeric(contractor_data["Факт"].iloc[i], errors="coerce") or 0.0
+            )
+            dv = float(pd.to_numeric(delta_values.iloc[i], errors="coerce") or 0.0)
+            av = abs(dv)
+            if pv > 1e-9:
+                plan_text.append(f"{int(round(pv))} (100%)")
+                fact_text.append(f"{int(round(fv))} ({fv/pv*100:.0f}%)")
+                if av < 0.5:
+                    delta_text.append("0")
+                else:
+                    delta_text.append(f"{int(round(av))} ({dv/pv*100:+.0f}%)")
+            else:
+                plan_text.append("0")
+                fact_text.append(f"{int(round(fv))}" if abs(fv) >= 0.5 else "0")
+                delta_text.append(f"{int(round(av))}" if av >= 0.5 else "0")
+
+        _pv_arr = pd.to_numeric(contractor_data["План"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+        _fv_arr = pd.to_numeric(contractor_data["Факт"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+        _fact_bar_colors_pf = [_gdrs_fact_bar_color(float(a), float(b)) for a, b in zip(_pv_arr, _fv_arr)]
+        _hover_fact_pf = np.stack([_pv_arr, _fv_arr, _pv_arr - _fv_arr], axis=-1)
+
         fig_bar = go.Figure()
-
-        # Подписи на столбцах: абсолютное количество и % (без наведения)
-        plan_text = [f"{int(x)} ({x / total_plan * 100:.0f}%)" if pd.notna(x) else "0" for x in contractor_data["План"]]
-        fact_text = [f"{int(x)} ({x / total_fact * 100:.0f}%)" if pd.notna(x) else "0" for x in contractor_data["Среднее за месяц"]]
-
-        # Add bars for Plan
         fig_bar.add_trace(
             go.Bar(
                 name="План",
@@ -11904,74 +12292,60 @@ def dashboard_technique(df):
                 text=plan_text,
                 textposition="outside",
                 textfont=dict(size=12, color="white"),
+                customdata=_hover_fact_pf,
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    "План: %{y:.0f}<br>"
+                    "Факт: %{customdata[1]:.0f}<br>"
+                    "Отклонение (план−факт): %{customdata[2]:.0f}<extra></extra>"
+                ),
             )
         )
-
-        # Add bars for Average (Факт)
         fig_bar.add_trace(
             go.Bar(
-                name="Среднее за месяц",
+                name="Факт",
                 x=contractor_data["Контрагент"],
-                y=contractor_data["Среднее за месяц"],
-                marker_color="#2ecc71",
+                y=contractor_data["Факт"],
+                marker=dict(color=_fact_bar_colors_pf, line=dict(width=1, color="#eaf2fb")),
                 text=fact_text,
                 textposition="outside",
                 textfont=dict(size=12, color="white"),
+                customdata=_hover_fact_pf,
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    "План: %{customdata[0]:.0f}<br>"
+                    "Факт: %{y:.0f}<br>"
+                    "Отклонение (план−факт): %{customdata[2]:.0f}<extra></extra>"
+                ),
             )
         )
 
-        # Отклонение: подпись — абсолютное значение и % от плана контрагента
-        delta_values = contractor_data["Отклонение"].fillna(0)
-        delta_abs = delta_values.abs()
-        plan_vals = contractor_data["План"].replace(0, 1)
-        delta_pct = (contractor_data["Отклонение"] / plan_vals * 100).round(0)
-        delta_text = [
-            f"{int(abs(d))} ({pct:.0f}%)" if abs(d) >= 0.5 else "0"
-            for d, pct in zip(delta_values, delta_pct)
-        ]
-
-        positive_mask = delta_values > 0
-        if positive_mask.any():
+        pos_mask = delta_values > 0
+        nonpos_mask = delta_values <= 0
+        if pos_mask.any():
             fig_bar.add_trace(
                 go.Bar(
-                    name="Отклонение (+)",
-                    x=contractor_data.loc[positive_mask, "Контрагент"],
-                    y=delta_abs[positive_mask],
+                    name="Отклонение > 0",
+                    x=contractor_data.loc[pos_mask, "Контрагент"],
+                    y=delta_abs[pos_mask],
+                    marker_color="#e67e22",
+                    text=[delta_text[i] for i in range(len(delta_text)) if pos_mask.iloc[i]],
+                    textposition="outside",
+                    textfont=dict(size=12, color="white"),
+                    showlegend=True,
+                )
+            )
+        if nonpos_mask.any():
+            fig_bar.add_trace(
+                go.Bar(
+                    name="Отклонение ≤ 0",
+                    x=contractor_data.loc[nonpos_mask, "Контрагент"],
+                    y=delta_abs[nonpos_mask],
                     marker_color="#2ecc71",
-                    text=[delta_text[i] for i in range(len(delta_text)) if positive_mask.iloc[i]],
+                    text=[delta_text[i] for i in range(len(delta_text)) if nonpos_mask.iloc[i]],
                     textposition="outside",
                     textfont=dict(size=12, color="white"),
-                    showlegend=False,
-                )
-            )
-
-        negative_mask = delta_values < 0
-        if negative_mask.any():
-            fig_bar.add_trace(
-                go.Bar(
-                    name="Отклонение (-)",
-                    x=contractor_data.loc[negative_mask, "Контрагент"],
-                    y=delta_abs[negative_mask],
-                    marker_color="#e74c3c",
-                    text=[delta_text[i] for i in range(len(delta_text)) if negative_mask.iloc[i]],
-                    textposition="outside",
-                    textfont=dict(size=12, color="white"),
-                    showlegend=False,
-                )
-            )
-
-        zero_mask = delta_values == 0
-        if zero_mask.any():
-            fig_bar.add_trace(
-                go.Bar(
-                    name="Отклонение (0)",
-                    x=contractor_data.loc[zero_mask, "Контрагент"],
-                    y=delta_abs[zero_mask],
-                    marker_color="#95a5a6",
-                    text=[delta_text[i] for i in range(len(delta_text)) if zero_mask.iloc[i]],
-                    textposition="outside",
-                    textfont=dict(size=12, color="white"),
-                    showlegend=False,
+                    showlegend=True,
                 )
             )
 
@@ -11979,20 +12353,42 @@ def dashboard_technique(df):
         fig_bar.update_layout(
             title_text="",
             xaxis_title="Контрагент",
-            yaxis_title="Значение",
+            yaxis_title="Факт (сумма), план и отклонение",
             barmode="group",
-            height=600,
+            width=_RENDER_CHART_DEFAULT_WIDTH_PX,
+            bargap=0.22,
+            bargroupgap=0.09,
+            height=620,
             legend=dict(
-                orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
+                orientation="v",
+                yanchor="top",
+                y=1,
+                xanchor="left",
+                x=1.01,
+                font=dict(size=11, color="#e8eef5"),
             ),
-            xaxis=dict(tickangle=-45),
+            xaxis=dict(tickangle=-45, automargin=True),
+            yaxis=dict(automargin=True, rangemode="tozero"),
         )
 
-        fig_bar = _apply_finance_bar_label_layout(fig_bar)
+        fig_bar = _apply_finance_bar_label_layout(fig_bar, y_rangemode="tozero")
+        try:
+            fig_bar.update_layout(
+                uniformtext=dict(minsize=6, mode="show"),
+                margin=dict(l=56, r=150, t=100, b=200),
+            )
+            fig_bar.update_yaxes(rangemode="tozero")
+            fig_bar.update_traces(cliponaxis=False, selector=dict(type="bar"))
+        except Exception:
+            pass
         fig_bar = apply_chart_background(fig_bar)
         render_chart(
             fig_bar,
-            caption_below="План, Среднее за месяц и Отклонение по контрагентам" + period_caption,
+            caption_below=(
+                "План, Факт и Отклонение по контрагентам"
+                + period_caption
+                + ". Макет: высота отклонения — модуль; оранжевый при Отклонение > 0, зелёный при ≤ 0. Сортировка — виджет выше."
+            ),
         )
 
         # ========== Chart 3: Pie Chart by Contractor (Plan + Average) ==========
@@ -12574,6 +12970,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 work_df, _nw
             )
 
+    # ГДРС: при колонках «N неделя» week_sum — сумма недель; для сравнения с планом делим на 6 (фикс. сетка).
+    week_fact_den = 6.0 if week_columns else 1.0
+
     # Process Дельта (Delta) if available - try to find column by partial match
     delta_col = None
     if "Дельта" in work_df.columns:
@@ -12589,8 +12988,10 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             errors="coerce",
         ).fillna(0)
     else:
-        # Отклонение по PDF правок ГДРС: План − Факт (Факт ≈ week_sum / СКУД).
-        work_df["Дельта_numeric"] = work_df["План_numeric"] - work_df["week_sum"]
+        # Отклонение по PDF правок ГДРС: План − Факт (Факт ≈ week_sum / 6 при недельных колонках).
+        work_df["Дельта_numeric"] = work_df["План_numeric"] - (
+            pd.to_numeric(work_df["week_sum"], errors="coerce").fillna(0.0) / week_fact_den
+        )
 
     # Process Дельта (%) (Delta %) if available - extract numeric value from percentage string
     # Try to find column by partial match
@@ -12806,16 +13207,6 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             """
                 <script>
                 (function() {
-                  const rootDoc = window.parent && window.parent.document ? window.parent.document : document;
-                  const hid = "st-bdds-hide-datepicker-quickselect";
-                  let tag = rootDoc.getElementById(hid);
-                  if (!tag) {
-                    tag = rootDoc.createElement("style");
-                    tag.id = hid;
-                    rootDoc.head.appendChild(tag);
-                  }
-                  tag.textContent = "";
-
                   const dict = new Map([
                     ["January","Январь"],["February","Февраль"],["March","Март"],["April","Апрель"],
                     ["May","Май"],["June","Июнь"],["July","Июль"],["August","Август"],
@@ -12984,8 +13375,232 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         else:
             projects_to_process = ["Все проекты"]
 
+    def _gdrs_plan_fact_data_slice(pdf: pd.DataFrame) -> pd.DataFrame:
+        if pdf is None or pdf.empty:
+            return pdf
+        if "data_source" not in pdf.columns:
+            return pdf
+        dst = (data_source_filter or "").strip().lower()
+        if dst == "техника":
+            return pdf[
+                pdf["data_source"].astype(str).str.strip().str.lower() == "техника"
+            ].copy()
+        if dst == "ресурсы":
+            return pdf[
+                pdf["data_source"].astype(str).str.strip().str.lower() == "ресурсы"
+            ].copy()
+        rk = st.session_state.get(f"{key_prefix}_resource_kind", "Рабочие (ресурсы)")
+        if rk == "Техника":
+            return pdf[
+                pdf["data_source"].astype(str).str.strip().str.lower() == "техника"
+            ].copy()
+        if rk == "Все":
+            return pdf[
+                pdf["data_source"].astype(str).str.strip().str.lower() == "ресурсы"
+            ].copy()
+        return pdf[pdf["data_source"].astype(str).str.strip().str.lower() == "ресурсы"].copy()
+
+    def _gdrs_plan_fact_fig_and_metrics(pdf: pd.DataFrame):
+        d = _gdrs_plan_fact_data_slice(pdf)
+        if d is None or d.empty or "План_numeric" not in d.columns or "week_sum" not in d.columns:
+            return None, None
+        plan_sum = float(pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0).sum())
+        _ws_pf = pd.to_numeric(d["week_sum"], errors="coerce").fillna(0.0)
+        fact_sum = float((_ws_pf / week_fact_den).sum())
+        if plan_sum <= 0 and fact_sum <= 0:
+            return None, None
+        dev = plan_sum - fact_sum
+        fp_pct = (fact_sum / plan_sum * 100.0) if plan_sum else 0.0
+        proj_col_local = "project name" if "project name" in d.columns else ("Проект" if "Проект" in d.columns else None)
+        proj_name = "Все проекты"
+        if proj_col_local and proj_col_local in d.columns:
+            _u = d[proj_col_local].dropna().astype(str).str.strip().unique().tolist()
+            if len(_u) == 1:
+                proj_name = _u[0]
+
+        def _fact_bar_color(plan_v: float, fact_v: float) -> str:
+            _light_green = "#2ECC71"
+            _orange = "#F39C12"
+            if plan_v <= 0:
+                return _orange
+            if float(fact_v) <= 0:
+                return "#c0392b"
+            if fact_v >= plan_v:
+                return _light_green
+            miss_ratio = max(0.0, min(1.0, (plan_v - fact_v) / plan_v))
+            lo = (255, 179, 179)
+            hi = (192, 57, 43)
+            rr = int(round(lo[0] + (hi[0] - lo[0]) * miss_ratio))
+            gg = int(round(lo[1] + (hi[1] - lo[1]) * miss_ratio))
+            bb = int(round(lo[2] + (hi[2] - lo[2]) * miss_ratio))
+            return f"#{rr:02x}{gg:02x}{bb:02x}"
+
+        fact_color = _fact_bar_color(plan_sum, fact_sum)
+
+        def _ceil_int(v: float) -> int:
+            try:
+                fv = float(v)
+            except (TypeError, ValueError):
+                return 0
+            if fv >= 0:
+                return int(np.ceil(fv))
+            return -int(np.ceil(abs(fv)))
+
+        plan_i = _ceil_int(plan_sum)
+        fact_i = _ceil_int(fact_sum)
+        dev_i = _ceil_int(dev)
+        fig_pie_pf = go.Figure(
+            data=[
+                go.Bar(
+                    x=["План", "Факт"],
+                    y=[plan_sum, fact_sum],
+                    marker_color=["#2E86AB", fact_color],
+                    text=[f"{plan_i}", f"{fact_i}<br>Δ {dev_i}"],
+                    textposition="outside",
+                    textfont=dict(size=13, color="#ffffff"),
+                    cliponaxis=False,
+                    customdata=[
+                        [proj_name, plan_i, fact_i, dev_i],
+                        [proj_name, plan_i, fact_i, dev_i],
+                    ],
+                    hovertemplate=(
+                        "<b>%{x}</b><br>"
+                        "Проект: %{customdata[0]}<br>"
+                        "План: %{customdata[1]}<br>"
+                        "Факт: %{customdata[2]}<br>"
+                        "Отклонение: %{customdata[3]}<extra></extra>"
+                    ),
+                )
+            ]
+        )
+        fig_pie_pf.update_layout(
+            height=460,
+            showlegend=False,
+            margin=dict(l=48, r=28, t=56, b=72),
+            yaxis=dict(title=""),
+            uniformtext=dict(minsize=7, mode="show"),
+        )
+        fig_pie_pf = _apply_bar_uniformtext(fig_pie_pf)
+        try:
+            fig_pie_pf.update_layout(uniformtext=dict(minsize=6, mode="show"))
+        except Exception:
+            pass
+        fig_pie_pf = apply_chart_background(fig_pie_pf)
+        return fig_pie_pf, {
+            "plan": plan_sum,
+            "fact": fact_sum,
+            "dev": dev,
+            "fp_pct": fp_pct,
+        }
+
+    def _gdrs_contractor_fact_fig_and_metrics(pdf: pd.DataFrame):
+        """Круговая: доля факта по подрядчикам; в секторе только %; названия — легенда слева."""
+        d = _gdrs_plan_fact_data_slice(pdf)
+        if d is None or d.empty:
+            return None, None
+        if "Контрагент" not in d.columns or "week_sum" not in d.columns:
+            return None, None
+        d = d.copy()
+        _ws_cf = pd.to_numeric(d["week_sum"], errors="coerce").fillna(0.0)
+        d["_f"] = _ws_cf / week_fact_den
+        d["_p"] = (
+            pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0)
+            if "План_numeric" in d.columns
+            else 0.0
+        )
+        by_c = d.groupby("Контрагент", as_index=False)["_f"].sum()
+        by_c = by_c[by_c["_f"] > 0].sort_values("_f", ascending=False)
+        if by_c.empty or float(by_c["_f"].sum()) <= 0:
+            return None, None
+        plan_by = d.groupby("Контрагент", as_index=False)["_p"].sum()
+        pie_df = by_c.merge(plan_by, on="Контрагент", how="left").fillna({"_p": 0.0})
+        pie_df = pie_df.rename(columns={"_f": "Факт", "_p": "План"})
+        pie_df["Отклонение"] = pie_df["План"] - pie_df["Факт"]
+
+        labels = pie_df["Контрагент"].astype(str).tolist()
+        values = pie_df["Факт"].astype(float).tolist()
+
+        _cd = []
+        for i in range(len(pie_df)):
+            _dev = float(pie_df.iloc[i]["Отклонение"])
+            _dv = int(np.ceil(_dev)) if _dev >= 0 else -int(np.ceil(abs(_dev)))
+            _cd.append(
+                (
+                    int(np.ceil(float(pie_df.iloc[i]["План"]))),
+                    int(np.ceil(float(pie_df.iloc[i]["Факт"]))),
+                    _dv,
+                )
+            )
+
+        _n_cf = len(labels)
+        _lm_cf = min(420, max(244, int(214 + _n_cf * 7)))
+
+        fig_cf = go.Figure(
+            data=[
+                go.Pie(
+                    labels=labels,
+                    values=values,
+                    customdata=_cd,
+                    sort=False,
+                    direction="clockwise",
+                    hole=0.0,
+                    hovertemplate=(
+                        "<b>%{label}</b><br>"
+                        "План: %{customdata[0]}<br>"
+                        "Факт: %{customdata[1]}<br>"
+                        "Откл.: %{customdata[2]}<extra></extra>"
+                    ),
+                    showlegend=True,
+                    marker=dict(line=dict(width=0)),
+                )
+            ]
+        )
+        fig_cf = _pie_apply_percent_inside_legend_left(
+            fig_cf,
+            height=440,
+            pct_fontsize=17,
+            legend_fontsize=11,
+            left_margin=_lm_cf,
+        )
+        fig_cf = apply_chart_background(fig_cf, skip_uniformtext=True)
+
+        plan_sum = float(pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0).sum()) if "План_numeric" in d.columns else 0.0
+        fact_sum = float(by_c["_f"].sum())
+        dev = plan_sum - fact_sum
+        fp_pct = (fact_sum / plan_sum * 100.0) if plan_sum else None
+        return fig_cf, {"plan": plan_sum, "fact": fact_sum, "dev": dev, "fp_pct": fp_pct}
+
+    def _gdrs_fp_pct_caption_line(met: dict) -> str:
+        _pl = float(met.get("plan") or 0.0)
+        _fp = met.get("fp_pct")
+        if _pl <= 0 or _fp is None:
+            return ""
+        try:
+            return f" ({float(_fp):.1f}% — факт/план)"
+        except (TypeError, ValueError):
+            return ""
+
+    # Сводные KPI по текущим фильтрам (PDF / docs 17 — суммы план/факт/отклонение).
+    if "week_sum" in filtered_df.columns:
+        _ws_kpi = pd.to_numeric(filtered_df["week_sum"], errors="coerce").fillna(0.0)
+        # Как в эталонной таблице ГДРС: «СКУД» = сумма недель по строке / 6, не сырая сумма недель.
+        _kp_fact = float((_ws_kpi / week_fact_den).sum())
+        _kp_plan = (
+            float(pd.to_numeric(filtered_df["План_numeric"], errors="coerce").fillna(0.0).sum())
+            if "План_numeric" in filtered_df.columns
+            else 0.0
+        )
+        _kp_dev = _kp_plan - _kp_fact
+        _km1, _km2, _km3 = st.columns(3)
+        with _km1:
+            st.metric("План (сумма)", f"{int(round(_kp_plan))}")
+        with _km2:
+            st.metric("Факт (сумма)", f"{int(round(_kp_fact))}")
+        with _km3:
+            st.metric("Отклонение (план − факт)", f"{int(round(_kp_dev))}")
+
     # Референсная таблица ГДРС: проект -> контрагент -> вид работ.
-    # Маппинг по ТЗ: План = договор, СКУД = выгрузка ресурсов, Отклонение = СКУД - План.
+    # По PDF: Отклонение = План − Факт (Факт ≈ СКУД / недели по методике экрана).
     if "Контрагент" in filtered_df.columns:
         _gdrs_tab_is_tech = (data_source_filter or "").strip().lower() in (
             "техника",
@@ -13000,12 +13615,6 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         _plan_sum_f = float(
             pd.to_numeric(filtered_df.get("План_numeric"), errors="coerce").fillna(0.0).abs().sum()
         )
-        _ref_h4 = (
-            "График движения техники"
-            if _gdrs_tab_is_tech
-            else "График движения рабочей силы"
-        )
-        st.markdown(f"#### {_ref_h4}")
         _tbl = filtered_df.copy()
 
         def _to_num_safe(series):
@@ -13199,9 +13808,10 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 ],
                 ignore_index=True,
             )
+            _view["_delta_pct_raw"] = pd.to_numeric(_view["Дельта (%)"], errors="coerce")
             for _c in ["План", "СКУД", "Отклонение"] + _week_cols_out:
                 _view[_c] = pd.to_numeric(_view[_c], errors="coerce").fillna(0).round(0).astype(int)
-            _view["Дельта (%)"] = _view["Дельта (%)"].apply(
+            _view["Дельта (%)"] = _view["_delta_pct_raw"].apply(
                 lambda v: f"{float(v):.1f}%" if v is not None and pd.notna(v) else "—"
             )
 
@@ -13222,7 +13832,11 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 + _week_cols_out
                 + ["Дельта (%)"]
             )
-            _render_cols = ["__row_kind"] + _show_cols if "__row_kind" in _view.columns else _show_cols
+            _render_cols = (
+                (["__row_kind", "_delta_pct_raw"] + _show_cols)
+                if "__row_kind" in _view.columns
+                else (["_delta_pct_raw"] + _show_cols)
+            )
 
             _period_title = ""
             if _d_from and _d_to:
@@ -13238,7 +13852,15 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     _me = pd.Timestamp(_pmax).to_period("M").end_time.normalize().date()
                     _period_title = _format_gdrs_period_range_dd_mm_yyyy(_ms, _me)
 
-            _gdrs_ref_table_title = "ГДРС — техника" if _gdrs_tab_is_tech else "ГДРС — рабочие"
+            _period_row_display = _format_gdrs_month_year_title_ru(
+                _d_from, _d_to, filtered_df, period_col
+            ) or _period_title
+
+            _gdrs_ref_line1 = (
+                "График движения рабочей силы (техника)"
+                if _gdrs_tab_is_tech
+                else "График движения рабочей силы (люди)"
+            )
 
             def _render_gdrs_ref_html(df_view: pd.DataFrame) -> str:
                 ncols = len(_show_cols)
@@ -13266,8 +13888,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     f"</style>",
                     "<table>",
                     "<thead>",
-                    f'<tr class="title-row"><th colspan="{ncols}" class="t-center" style="text-align:center !important;">{html_module.escape(_gdrs_ref_table_title)}</th></tr>',
-                    f'<tr class="period-row"><th colspan="{ncols}" class="t-center" style="text-align:center !important;">{html_module.escape(_period_title) if _period_title else ""}</th></tr>',
+                    f'<tr class="title-row"><th colspan="{ncols}" class="t-center" style="text-align:center !important;">{html_module.escape(_gdrs_ref_line1)}</th></tr>',
+                    f'<tr class="period-row"><th colspan="{ncols}" class="t-center" style="text-align:center !important;">{html_module.escape(_period_row_display) if _period_row_display else ""}</th></tr>',
                     "<tr>",
                     '<th rowspan="2">Контрагент</th>',
                     '<th rowspan="2">Вид работы</th>',
@@ -13275,7 +13897,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     '<th rowspan="2" class="t-center" style="text-align:center !important;">СКУД</th>',
                     '<th rowspan="2" class="t-center" style="text-align:center !important;">Отклонение</th>',
                     f'<th colspan="{wk_n}" class="t-center" style="text-align:center !important;">СКУД</th>',
-                    '<th rowspan="2" class="t-center" style="text-align:center !important;">(отклонение %)</th>',
+                    '<th rowspan="2" class="t-center" style="text-align:center !important;">Итого (%)</th>',
                     "</tr>",
                     "<tr>",
                 ]
@@ -13292,15 +13914,21 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                         s = "" if (val is None or (isinstance(val, float) and pd.isna(val))) else str(val)
                         esc = html_module.escape(s)
                         cls = ""
-                        if c in ("Отклонение", "Дельта (%)"):
-                            num = pd.to_numeric(
-                                str(s).replace("%", "").replace(",", ".").replace(" ", ""),
-                                errors="coerce",
-                            )
+                        td_style = ""
+                        if c == "Отклонение":
+                            num = pd.to_numeric(val, errors="coerce")
                             if pd.notna(num):
                                 cls = "neg" if float(num) < 0 else ("pos" if float(num) > 0 else "")
+                        elif c == "Дельта (%)":
+                            raw_pct = row.get("_delta_pct_raw")
+                            num = pd.to_numeric(raw_pct, errors="coerce")
+                            if pd.notna(num):
+                                cls = "neg" if float(num) < 0 else ("pos" if float(num) > 0 else "")
+                                td_style = _gdrs_delta_pct_cell_bg_style(raw_pct)
                         tcenter = " t-center" if c not in ("Контрагент", "Вид работы") else ""
-                        parts.append(f'<td class="{(cls + tcenter).strip()}">{esc}</td>')
+                        parts.append(
+                            f'<td class="{(cls + tcenter).strip()}" style="{td_style}">{esc}</td>'
+                        )
                     parts.append("</tr>")
                 parts.append("</tbody></table></div>")
                 return "".join(parts)
@@ -13329,6 +13957,14 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 source_labels_hist.append("Техника")
             else:
                 source_labels_hist.append(str(s))
+        dyn_grain = st.radio(
+            "Шкала динамики (ось X)",
+            options=("Неделя", "Месяц", "Год"),
+            index=0,
+            horizontal=True,
+            key=f"{key_prefix}_dyn_grain",
+            help="PDF: «Динамика по рабочим/технике» — неделя / месяц / год.",
+        )
         hist_cols = st.columns(max(1, len(sources_hist)))
         for idx, (src, label) in enumerate(zip(sources_hist, source_labels_hist)):
             if src is None:
@@ -13373,6 +14009,44 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     by_period_week = _gdrs_point_pct_of_period_plan(
                         by_period_week, df_hist, period_col_hist, "Факт"
                     )
+                    if dyn_grain == "Месяц":
+                        _m = (
+                            by_period_week.groupby(period_col_hist, as_index=False)["Факт"]
+                            .sum()
+                        )
+                        _m["Период_стр"] = _m[period_col_hist].astype(str).str.strip()
+                        _m = _gdrs_point_pct_of_period_plan(_m, df_hist, period_col_hist, "Факт")
+                        _m["Неделя"] = ""
+                        _m["x_label"] = _m["Период_стр"]
+                        _m["План_нед"] = pd.to_numeric(_m["План_период"], errors="coerce")
+                        by_period_week = _m.sort_values(period_col_hist)
+                    elif dyn_grain == "Год":
+                        _w = by_period_week.copy()
+                        _w["_yr"] = _gdrs_period_series_to_year(_w[period_col_hist])
+                        _y = _w.groupby("_yr", as_index=False)["Факт"].sum()
+                        _y = _y[pd.notna(_y["_yr"])].copy()
+                        if _y.empty:
+                            by_period_week = _y
+                        else:
+                            _y["_yr"] = _y["_yr"].astype(int)
+                            _y["Период_стр"] = _y["_yr"].astype(str)
+                            _dfy = df_hist.copy()
+                            _dfy["_yr"] = _gdrs_period_series_to_year(_dfy[period_col_hist])
+                            _plan_y = (
+                                _dfy.groupby("_yr")["План_numeric"]
+                                .apply(lambda s: float(pd.to_numeric(s, errors="coerce").fillna(0.0).sum()))
+                                .reset_index(name="_psum")
+                            )
+                            _y = _y.merge(_plan_y, on="_yr", how="left")
+                            _y["План_период"] = pd.to_numeric(_y["_psum"], errors="coerce")
+                            _y.drop(columns=["_psum"], inplace=True, errors="ignore")
+                            fac = pd.to_numeric(_y["Факт"], errors="coerce").fillna(0.0)
+                            psum = pd.to_numeric(_y["План_период"], errors="coerce").fillna(0.0)
+                            _y["%"] = np.where(psum > 0, (fac / psum * 100.0).clip(lower=0.0), 0.0)
+                            _y["Неделя"] = ""
+                            _y["x_label"] = _y["Период_стр"]
+                            _y["План_нед"] = _y["План_период"]
+                            by_period_week = _y.sort_values("_yr")
                 else:
                     by_period_week = None
             else:
@@ -13382,31 +14056,46 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 # R23-05 стр.14: «Динамика» — цвета линий: план — голубой, факт — оранжевый.
                 _plan_color = "#5DADE2"
                 _fact_color = "#F39C12"
-                weeks = by_period_week["Неделя"].unique().tolist()
-                # Люди и техника: точечная диаграмма — одна линия через все точки по порядку (период → неделя)
-                by_period_week = by_period_week.copy()
-                by_period_week["x_label"] = (
-                    by_period_week["Период_стр"].astype(str)
-                    + " — "
-                    + by_period_week["Неделя"].astype(str).str.replace(" неделя", "н", regex=False)
+                plot_df = by_period_week.copy()
+                if dyn_grain == "Неделя":
+                    plot_df["x_label"] = (
+                        plot_df["Период_стр"].astype(str)
+                        + " — "
+                        + plot_df["Неделя"].astype(str).str.replace(" неделя", "н", regex=False)
+                    )
+                    plot_df = plot_df.sort_values([period_col_hist, "Неделя"])
+                    _weeks_per_period = plot_df.groupby("Период_стр")["Неделя"].nunique().to_dict()
+
+                    def _plan_per_week(_row):
+                        _pp = _row.get("План_период")
+                        try:
+                            _pp_f = float(_pp) if pd.notna(_pp) else float("nan")
+                        except Exception:  # noqa: BLE001
+                            return float("nan")
+                        _nw = int(_weeks_per_period.get(_row["Период_стр"], 0) or 0)
+                        if _nw <= 0 or not np.isfinite(_pp_f):
+                            return float("nan")
+                        return _pp_f / _nw
+
+                    plot_df["План_нед"] = plot_df.apply(_plan_per_week, axis=1)
+                    _x_title = "Период — неделя"
+                    _plan_hover_line = "%{x}<br>План (на неделю): %{y:.0f}<extra></extra>"
+                    _cap_grain = "недели"
+                else:
+                    if "x_label" not in plot_df.columns:
+                        plot_df["x_label"] = plot_df["Период_стр"].astype(str)
+                    _sort_keys = ["_yr"] if "_yr" in plot_df.columns else [period_col_hist]
+                    plot_df = plot_df.sort_values(_sort_keys)
+                    if "План_нед" not in plot_df.columns or plot_df["План_нед"].isna().all():
+                        plot_df["План_нед"] = pd.to_numeric(plot_df.get("План_период"), errors="coerce")
+                    _x_title = "Месяц (период выгрузки)" if dyn_grain == "Месяц" else "Год"
+                    _plan_hover_line = "%{x}<br>План (за период): %{y:.0f}<extra></extra>"
+                    _cap_grain = "месяц" if dyn_grain == "Месяц" else "год"
+                by_period_week = plot_df
+                _has_plan_line = bool(
+                    by_period_week["План_нед"].notna().any()
+                    and (by_period_week["План_нед"].fillna(0) > 0).any()
                 )
-                by_period_week = by_period_week.sort_values([period_col_hist, "Неделя"])
-                # План по неделям: «План_период» распределяем на число недель в периоде.
-                _weeks_per_period = (
-                    by_period_week.groupby("Период_стр")["Неделя"].nunique().to_dict()
-                )
-                def _plan_per_week(_row):
-                    _pp = _row.get("План_период")
-                    try:
-                        _pp_f = float(_pp) if pd.notna(_pp) else float("nan")
-                    except Exception:  # noqa: BLE001
-                        return float("nan")
-                    _nw = int(_weeks_per_period.get(_row["Период_стр"], 0) or 0)
-                    if _nw <= 0 or not np.isfinite(_pp_f):
-                        return float("nan")
-                    return _pp_f / _nw
-                by_period_week["План_нед"] = by_period_week.apply(_plan_per_week, axis=1)
-                _has_plan_line = bool(by_period_week["План_нед"].notna().any() and (by_period_week["План_нед"].fillna(0) > 0).any())
                 x_order = by_period_week["x_label"].tolist()
                 _mk_week_lbl_w = lambda r: (
                     f"{int(r['Факт'])} ({int(np.ceil(float(r['%'])))}%)"
@@ -13425,10 +14114,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                             mode="lines+markers",
                             line=dict(color=_plan_color, width=2, dash="dash"),
                             marker=dict(size=8, color=_plan_color, line=dict(width=1, color="white")),
-                            hovertemplate=(
-                                "%{x}<br>"
-                                "План (на неделю): %{y:.0f}<extra></extra>"
-                            ),
+                            hovertemplate=_plan_hover_line,
                             connectgaps=False,
                             cliponaxis=False,
                         )
@@ -13452,12 +14138,11 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 )
                 fig_hist.update_layout(
                     title_text="",
-                    xaxis_title="Период — неделя",
+                    xaxis_title=_x_title,
                     yaxis_title="Количество",
-                    height=440,
-                    showlegend=bool(_has_plan_line),
-                    legend=dict(orientation="h", x=0.5, xanchor="center", y=1.08, yanchor="bottom"),
-                    margin=dict(l=56, r=28, t=72, b=168),
+                    height=430,
+                    showlegend=False,
+                    margin=dict(l=56, r=28, t=72, b=155),
                     uniformtext=dict(minsize=7, mode="show"),
                     xaxis=dict(
                         tickangle=-45,
@@ -13467,27 +14152,71 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     ),
                     yaxis=dict(automargin=True),
                 )
+                try:
+                    fig_hist.update_xaxes(title_standoff=24)
+                except Exception:
+                    pass
                 fig_hist = apply_chart_background(fig_hist)
                 with hist_cols[idx]:
                     render_chart(
                         fig_hist,
                         key=f"{key_prefix}_hist_period_{idx}",
-                        caption_below=(
-                            f"Факт по периодам (недели), % к сумме плана периода (округление вверх): {label}"
-                        ),
+                        caption_below=None,
+                    )
+                    if _has_plan_line:
+                        st.markdown(
+                            "<div style='text-align:center;color:#e8eef5;font-size:13px;line-height:1.35;"
+                            "margin:0.2rem 0 0.45rem;'>"
+                            '<span style="margin-right:1.85rem;">'
+                            '<span style="color:#5DADE2;font-weight:700">●</span> План'
+                            "</span>"
+                            '<span><span style="color:#F39C12;font-weight:700">●</span> Факт</span>'
+                            "</div>",
+                            unsafe_allow_html=True,
+                        )
+                    _chart_caption_below(
+                        f"Факт по периодам ({_cap_grain}), % к сумме плана периода (округление вверх): {label}"
                     )
             else:
-                # Нет колонок по неделям — один столбец/точка на период (сумма)
-                by_period = (
-                    df_hist.groupby(period_col_hist, as_index=False)["week_sum"]
-                    .sum()
-                    .rename(columns={"week_sum": "Факт"})
-                )
-                by_period["Период_стр"] = by_period[period_col_hist].astype(str).str.strip()
-                by_period = _gdrs_point_pct_of_period_plan(
-                    by_period, df_hist, period_col_hist, "Факт"
-                )
-                by_period = by_period.sort_values(period_col_hist)
+                # Нет колонок по неделям — агрегат по месяцу (период) или по году
+                if dyn_grain == "Год":
+                    _t = df_hist.copy()
+                    _t["_yr"] = _gdrs_period_series_to_year(_t[period_col_hist])
+                    by_period = (
+                        _t.groupby("_yr", as_index=False)["week_sum"]
+                        .sum()
+                        .rename(columns={"week_sum": "Факт"})
+                    )
+                    by_period = by_period[pd.notna(by_period["_yr"])].copy()
+                    if by_period.empty:
+                        with hist_cols[idx]:
+                            st.info(f"**{label}** — нет данных для годовой шкалы.")
+                        continue
+                    by_period["_yr"] = by_period["_yr"].astype(int)
+                    by_period["Период_стр"] = by_period["_yr"].astype(str)
+                    _pl = (
+                        _t.groupby("_yr")["План_numeric"]
+                        .apply(lambda s: float(pd.to_numeric(s, errors="coerce").fillna(0.0).sum()))
+                        .reset_index(name="_psum")
+                    )
+                    by_period = by_period.merge(_pl, on="_yr", how="left")
+                    by_period["План_период"] = pd.to_numeric(by_period["_psum"], errors="coerce")
+                    by_period.drop(columns=["_psum"], inplace=True, errors="ignore")
+                    fac = pd.to_numeric(by_period["Факт"], errors="coerce").fillna(0.0)
+                    psum = pd.to_numeric(by_period["План_период"], errors="coerce").fillna(0.0)
+                    by_period["%"] = np.where(psum > 0, (fac / psum * 100.0).clip(lower=0.0), 0.0)
+                    by_period = by_period.sort_values("_yr")
+                else:
+                    by_period = (
+                        df_hist.groupby(period_col_hist, as_index=False)["week_sum"]
+                        .sum()
+                        .rename(columns={"week_sum": "Факт"})
+                    )
+                    by_period["Период_стр"] = by_period[period_col_hist].astype(str).str.strip()
+                    by_period = _gdrs_point_pct_of_period_plan(
+                        by_period, df_hist, period_col_hist, "Факт"
+                    )
+                    by_period = by_period.sort_values(period_col_hist)
                 with hist_cols[idx]:
                     fig_hist = go.Figure()
                     is_resources_fb = "Ресурсы" in label or "Люди" in label
@@ -13550,10 +14279,58 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                         caption_below=f"Факт по периодам, % к сумме плана периода (округление вверх): {label}",
                     )
 
+    show_plan_fact_row = (
+        has_plan_data
+        and len(projects_to_process) > 1
+        and project_col
+        and project_col in filtered_df.columns
+    )
+    plan_fact_row_done = False
+    if show_plan_fact_row:
+        if (data_source_filter or "").strip().lower() == "техника":
+            st.subheader("План/Факт техника")
+        else:
+            st.subheader("План/Факт рабочие")
+        pf_cols = st.columns(len(projects_to_process))
+        for _ix, _pname in enumerate(projects_to_process):
+            _pdf = filtered_df.copy()
+            if project_col in _pdf.columns and _pname != "Все проекты":
+                _pdf = _pdf[
+                    _pdf[project_col].astype(str).str.strip() == str(_pname).strip()
+                ]
+            fig_pf, met_pf = _gdrs_plan_fact_fig_and_metrics(_pdf)
+            with pf_cols[_ix]:
+                st.markdown(f"##### {_pname}")
+                if fig_pf is not None and met_pf is not None:
+                    a1, a2 = st.columns([3, 2])
+                    with a1:
+                        render_chart(
+                            fig_pf,
+                            key=f"{key_prefix}_planfact_row_{_ix}",
+                            caption_below="",
+                        )
+                    with a2:
+                        _col = "#e74c3c" if met_pf["dev"] > 0 else "#27ae60"
+                        st.markdown(
+                            f"**План:** {int(round(met_pf['plan']))}\n\n"
+                            f"**Факт:** {int(round(met_pf['fact']))}\n\n"
+                            f"**Отклонение:** <span style='color:{_col};font-size:1.15em'>●</span> "
+                            f"{int(round(met_pf['dev']))}"
+                            f"{_gdrs_fp_pct_caption_line(met_pf)}",
+                            unsafe_allow_html=True,
+                        )
+                else:
+                    st.markdown("*Нет данных для плана/факта по этому проекту.*")
+        plan_fact_row_done = True
+        st.markdown("---")
+
     # R23-05 стр.12: «Факт по подрядчикам» показываем всегда при наличии week_sum
     # (раньше это был elif и при наличии колонки «Период» диаграмма пропадала).
     if "week_sum" in filtered_df.columns:
-        st.subheader("План-факт по подрядчикам")
+        if (data_source_filter or "").strip().lower() == "техника":
+            st.subheader("План/Факт техника")
+        else:
+            st.subheader("План/Факт рабочие")
         sources_wfb = []
         if "data_source" in filtered_df.columns:
             sources_wfb = filtered_df["data_source"].dropna().unique().tolist()
@@ -13583,7 +14360,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             if "План_numeric" in df_wfb.columns:
                 _agg_dict["План_numeric"] = "sum"
             by_w = df_wfb.groupby("Контрагент", as_index=False).agg(_agg_dict)
-            by_w["Факт"] = pd.to_numeric(by_w["week_sum"], errors="coerce").fillna(0)
+            _ws_grp = pd.to_numeric(by_w["week_sum"], errors="coerce").fillna(0)
+            by_w["Факт"] = _ws_grp / week_fact_den
             if "План_numeric" in by_w.columns:
                 by_w["План"] = pd.to_numeric(by_w["План_numeric"], errors="coerce").fillna(0)
             else:
@@ -13684,8 +14462,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 yaxis_title="Контрагент",
                 barmode="group" if _has_any_plan else "relative",
                 height=_h_wfb,
-                showlegend=bool(_has_any_plan),
-                legend=dict(orientation="h", x=0.5, xanchor="center", y=1.08, yanchor="bottom"),
+                showlegend=False,
                 xaxis=dict(automargin=True),
                 yaxis=dict(automargin=True),
                 margin=dict(l=120, r=36, t=72, b=56),
@@ -13701,362 +14478,20 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 render_chart(
                     fig_wfb,
                     key=f"{key_prefix}_hist_noperiod_{wfi}",
-                    caption_below=f"План и факт по подрядчикам: {lab_wfb}",
+                    caption_below=None,
                 )
-
-    # Несколько проектов — круговые «план/факт» в одну строку, сводка справа
-    def _gdrs_plan_fact_data_slice(pdf: pd.DataFrame) -> pd.DataFrame:
-        if pdf is None or pdf.empty:
-            return pdf
-        if "data_source" not in pdf.columns:
-            return pdf
-        dst = (data_source_filter or "").strip().lower()
-        if dst == "техника":
-            return pdf[
-                pdf["data_source"].astype(str).str.strip().str.lower() == "техника"
-            ].copy()
-        if dst == "ресурсы":
-            return pdf[
-                pdf["data_source"].astype(str).str.strip().str.lower() == "ресурсы"
-            ].copy()
-        rk = st.session_state.get(f"{key_prefix}_resource_kind", "Рабочие (ресурсы)")
-        if rk == "Техника":
-            return pdf[
-                pdf["data_source"].astype(str).str.strip().str.lower() == "техника"
-            ].copy()
-        if rk == "Все":
-            return pdf[
-                pdf["data_source"].astype(str).str.strip().str.lower() == "ресурсы"
-            ].copy()
-        return pdf[pdf["data_source"].astype(str).str.strip().str.lower() == "ресурсы"].copy()
-
-    def _gdrs_plan_fact_fig_and_metrics(pdf: pd.DataFrame):
-        d = _gdrs_plan_fact_data_slice(pdf)
-        if d is None or d.empty or "План_numeric" not in d.columns or "week_sum" not in d.columns:
-            return None, None
-        plan_sum = float(pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0).sum())
-        fact_sum = float(pd.to_numeric(d["week_sum"], errors="coerce").fillna(0).sum())
-        if plan_sum <= 0 and fact_sum <= 0:
-            return None, None
-        dev = plan_sum - fact_sum
-        fp_pct = (fact_sum / plan_sum * 100.0) if plan_sum else 0.0
-        proj_col_local = "project name" if "project name" in d.columns else ("Проект" if "Проект" in d.columns else None)
-        proj_name = "Все проекты"
-        if proj_col_local and proj_col_local in d.columns:
-            _u = d[proj_col_local].dropna().astype(str).str.strip().unique().tolist()
-            if len(_u) == 1:
-                proj_name = _u[0]
-
-        def _fact_bar_color(plan_v: float, fact_v: float) -> str:
-            # R23-05 стр.12: «Если факт меньше плана — столбец красный по градиенту
-            # (чем больше просрочка, тем краснее). Если план выполнен — столбец салатовый».
-            _light_green = "#2ECC71"  # салатовый (план выполнен / перевыполнен)
-            _orange = "#F39C12"       # когда плана нет вообще (нечего сравнивать)
-            if plan_v <= 0:
-                return _orange
-            if float(fact_v) <= 0:
-                return "#c0392b"
-            if fact_v >= plan_v:
-                return _light_green
-            miss_ratio = max(0.0, min(1.0, (plan_v - fact_v) / plan_v))
-            lo = (255, 179, 179)
-            hi = (192, 57, 43)
-            rr = int(round(lo[0] + (hi[0] - lo[0]) * miss_ratio))
-            gg = int(round(lo[1] + (hi[1] - lo[1]) * miss_ratio))
-            bb = int(round(lo[2] + (hi[2] - lo[2]) * miss_ratio))
-            return f"#{rr:02x}{gg:02x}{bb:02x}"
-
-        fact_color = _fact_bar_color(plan_sum, fact_sum)
-
-        def _ceil_int(v: float) -> int:
-            try:
-                fv = float(v)
-            except (TypeError, ValueError):
-                return 0
-            if fv >= 0:
-                return int(np.ceil(fv))
-            return -int(np.ceil(abs(fv)))
-
-        plan_i = _ceil_int(plan_sum)
-        fact_i = _ceil_int(fact_sum)
-        dev_i = _ceil_int(dev)
-        # R23-05 стр.12: круговая «План / Факт» — наружу: название, значение, отклонение;
-        # внутри сектора — процент. Fallback на столбчатую только если оба значения нулевые.
-        _use_pie = plan_sum > 0 and fact_sum > 0
-        if _use_pie:
-            import math as _math
-            _total_pf = plan_sum + fact_sum
-            plan_pct = plan_sum / _total_pf * 100.0
-            fact_pct = fact_sum / _total_pf * 100.0
-            _plan_outside = f"<b>План</b><br>{plan_i}"
-            _fact_outside = f"<b>Факт</b><br>{fact_i}<br>Δ {dev_i}"
-            fig_pie_pf = go.Figure(
-                data=[
-                    go.Pie(
-                        labels=["План", "Факт"],
-                        values=[plan_sum, fact_sum],
-                        sort=False,
-                        direction="clockwise",
-                        text=[_plan_outside, _fact_outside],
-                        textinfo="text",
-                        textposition="outside",
-                        insidetextorientation="horizontal",
-                        hole=0.35,
-                        marker=dict(
-                            colors=["#2E86AB", fact_color],
-                            line=dict(color="#0f1724", width=2),
-                        ),
-                        customdata=[
-                            [proj_name, plan_i, fact_i, dev_i],
-                            [proj_name, plan_i, fact_i, dev_i],
-                        ],
-                        hovertemplate=(
-                            "<b>%{label}</b><br>"
-                            "Проект: %{customdata[0]}<br>"
-                            "План: %{customdata[1]}<br>"
-                            "Факт: %{customdata[2]}<br>"
-                            "Отклонение: %{customdata[3]}<extra></extra>"
-                        ),
-                        showlegend=False,
-                        textfont=dict(size=12, color="#ffffff"),
+                if _has_any_plan:
+                    st.markdown(
+                        "<div style='text-align:center;color:#e8eef5;font-size:12px;line-height:1.35;"
+                        "margin:0.15rem 0 0.35rem;'>"
+                        '<span style="margin-right:1.75rem;">'
+                        '<span style="color:#5dade2;font-weight:700">●</span> План (договор)'
+                        "</span>"
+                        '<span><span style="color:#3498db;font-weight:700">●</span> Факт</span>'
+                        "</div>",
+                        unsafe_allow_html=True,
                     )
-                ]
-            )
-            # Проценты внутри сектора — через annotations на paper-координатах.
-            # Plotly Pie: начало с 12 часов, direction=clockwise.
-            _r_in = 0.22  # радиус для размещения процента внутри сектора
-            _ang_plan = _math.radians(360.0 * (plan_pct / 100.0) / 2.0)
-            _ang_fact = _math.radians(360.0 * ((plan_pct + fact_pct / 2.0) / 100.0))
-            _annots = [
-                dict(
-                    x=0.5 + _r_in * _math.sin(_ang_plan),
-                    y=0.5 + _r_in * _math.cos(_ang_plan),
-                    xref="paper", yref="paper",
-                    text=f"<b>{plan_pct:.0f}%</b>",
-                    showarrow=False,
-                    font=dict(color="#ffffff", size=14),
-                ),
-                dict(
-                    x=0.5 + _r_in * _math.sin(_ang_fact),
-                    y=0.5 + _r_in * _math.cos(_ang_fact),
-                    xref="paper", yref="paper",
-                    text=f"<b>{fact_pct:.0f}%</b>",
-                    showarrow=False,
-                    font=dict(color="#ffffff", size=14),
-                ),
-            ]
-            fig_pie_pf.update_layout(
-                height=420,
-                showlegend=False,
-                margin=dict(l=56, r=56, t=72, b=72),
-                uniformtext=dict(minsize=8, mode="show"),
-                annotations=_annots,
-            )
-        else:
-            # Fallback: столбчатая (план=0 или факт=0).
-            fig_pie_pf = go.Figure(
-                data=[
-                    go.Bar(
-                        x=["План", "Факт"],
-                        y=[plan_sum, fact_sum],
-                        marker_color=["#2E86AB", fact_color],
-                        text=[f"{plan_i}", f"{fact_i}<br>Δ {dev_i}"],
-                        textposition="outside",
-                        textfont=dict(size=13, color="#ffffff"),
-                        cliponaxis=False,
-                        customdata=[
-                            [proj_name, plan_i, fact_i, dev_i],
-                            [proj_name, plan_i, fact_i, dev_i],
-                        ],
-                        hovertemplate=(
-                            "<b>%{x}</b><br>"
-                            "Проект: %{customdata[0]}<br>"
-                            "План: %{customdata[1]}<br>"
-                            "Факт: %{customdata[2]}<br>"
-                            "Отклонение: %{customdata[3]}<extra></extra>"
-                        ),
-                    )
-                ]
-            )
-            fig_pie_pf.update_layout(
-                height=420,
-                showlegend=False,
-                margin=dict(l=48, r=28, t=56, b=72),
-                yaxis=dict(title=""),
-                uniformtext=dict(minsize=7, mode="show"),
-            )
-            fig_pie_pf = _apply_bar_uniformtext(fig_pie_pf)
-            try:
-                fig_pie_pf.update_layout(uniformtext=dict(minsize=6, mode="show"))
-            except Exception:
-                pass
-        fig_pie_pf = apply_chart_background(fig_pie_pf)
-        return fig_pie_pf, {
-            "plan": plan_sum,
-            "fact": fact_sum,
-            "dev": dev,
-            "fp_pct": fp_pct,
-        }
-
-    def _gdrs_contractor_fact_fig_and_metrics(pdf: pd.DataFrame):
-        """Круговая: доля факта по подрядчикам (кусочки = факт), сводка — как у план/факт."""
-        d = _gdrs_plan_fact_data_slice(pdf)
-        if d is None or d.empty:
-            return None, None
-        if "Контрагент" not in d.columns or "week_sum" not in d.columns:
-            return None, None
-        d = d.copy()
-        d["_f"] = pd.to_numeric(d["week_sum"], errors="coerce").fillna(0)
-        d["_p"] = (
-            pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0)
-            if "План_numeric" in d.columns
-            else 0.0
-        )
-        by_c = d.groupby("Контрагент", as_index=False)["_f"].sum()
-        by_c = by_c[by_c["_f"] > 0].sort_values("_f", ascending=False)
-        if by_c.empty or float(by_c["_f"].sum()) <= 0:
-            return None, None
-        plan_by = d.groupby("Контрагент", as_index=False)["_p"].sum()
-        pie_df = by_c.merge(plan_by, on="Контрагент", how="left").fillna({"_p": 0.0})
-        pie_df = pie_df.rename(columns={"_f": "Факт", "_p": "План"})
-        pie_df["Отклонение"] = pie_df["План"] - pie_df["Факт"]
-
-        labels = pie_df["Контрагент"].astype(str).tolist()
-        values = pie_df["Факт"].astype(float).tolist()
-        total_v = float(sum(values)) if values else 0.0
-        slice_text: list[str] = []
-        slice_pull: list[float] = []
-        if total_v > 0:
-            for val in values:
-                frac = float(val) / total_v
-                if 0 < frac < 0.03:
-                    # Очень маленькие доли подписываем только в hover/легенде,
-                    # чтобы текст не ломал контур круга и не слипался у вершины.
-                    if frac < 0.02:
-                        slice_text.append("")
-                    else:
-                        slice_text.append(f"{frac * 100:.1f}%")
-                    # Для крошечных долей pull отключен: иначе визуально «вылезают» за круг.
-                    slice_pull.append(0.0)
-                else:
-                    slice_text.append(f"{frac * 100:.0f}%")
-                    slice_pull.append(0.0)
-        else:
-            slice_text = [""] * len(values)
-            slice_pull = [0.0] * len(values)
-
-        # План/факт/откл. в подсказке; без ручных paper-аннотаций (они съезжали относительно круга).
-        _cd = []
-        for i in range(len(pie_df)):
-            _dev = float(pie_df.iloc[i]["Отклонение"])
-            _dv = int(np.ceil(_dev)) if _dev >= 0 else -int(np.ceil(abs(_dev)))
-            _cd.append(
-                (
-                    int(np.ceil(float(pie_df.iloc[i]["План"]))),
-                    int(np.ceil(float(pie_df.iloc[i]["Факт"]))),
-                    _dv,
-                )
-            )
-
-        fig_cf = go.Figure(
-            data=[
-                go.Pie(
-                    labels=labels,
-                    values=values,
-                    customdata=_cd,
-                    sort=False,
-                    direction="clockwise",
-                    text=slice_text,
-                    textinfo="text",
-                    textposition="inside",
-                    insidetextorientation="horizontal",
-                    pull=slice_pull,
-                    hole=0.0,
-                    hovertemplate=(
-                        "<b>%{label}</b><br>"
-                        "План: %{customdata[0]}<br>"
-                        "Факт: %{customdata[1]}<br>"
-                        "Откл.: %{customdata[2]}<extra></extra>"
-                    ),
-                    showlegend=True,
-                    marker=dict(line=dict(color="rgba(255,255,255,0.45)", width=1)),
-                    textfont=dict(size=10, color="#f5f5f5"),
-                )
-            ]
-        )
-        # Легенда в зоне полей figure (как в px.pie), а не в «бумажных» углах круга
-        fig_cf.update_layout(
-            height=520,
-            margin=dict(l=24, r=24, t=32, b=200),
-            legend=dict(
-                orientation="h",
-                yanchor="top",
-                y=-0.08,
-                x=0.5,
-                xanchor="center",
-                font=dict(size=9, color="#e0e0e0"),
-            ),
-            uniformtext=dict(minsize=7, mode="show"),
-        )
-        # Круг в верхней части области, чтобы легенда не наезжала
-        try:
-            fig_cf.update_traces(
-                domain=dict(x=[0.04, 0.96], y=[0.18, 0.95]),
-            )
-        except Exception:
-            pass
-        fig_cf = apply_chart_background(fig_cf, skip_uniformtext=True)
-
-        plan_sum = float(pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0).sum()) if "План_numeric" in d.columns else 0.0
-        fact_sum = float(by_c["_f"].sum())
-        dev = plan_sum - fact_sum
-        fp_pct = (fact_sum / plan_sum * 100.0) if plan_sum else None
-        return fig_cf, {"plan": plan_sum, "fact": fact_sum, "dev": dev, "fp_pct": fp_pct}
-
-    show_plan_fact_row = (
-        has_plan_data
-        and len(projects_to_process) > 1
-        and project_col
-        and project_col in filtered_df.columns
-    )
-    plan_fact_row_done = False
-    if show_plan_fact_row:
-        # R23-05 стр.12: «Переименовать отчёт в "План/факт рабочие"».
-        if (data_source_filter or "").strip().lower() == "техника":
-            st.subheader("План/факт техника")
-        else:
-            st.subheader("План/факт рабочие")
-        pf_cols = st.columns(len(projects_to_process))
-        for _ix, _pname in enumerate(projects_to_process):
-            _pdf = filtered_df.copy()
-            if project_col in _pdf.columns and _pname != "Все проекты":
-                _pdf = _pdf[
-                    _pdf[project_col].astype(str).str.strip() == str(_pname).strip()
-                ]
-            fig_pf, met_pf = _gdrs_plan_fact_fig_and_metrics(_pdf)
-            with pf_cols[_ix]:
-                st.markdown(f"##### {_pname}")
-                if fig_pf is not None and met_pf is not None:
-                    a1, a2 = st.columns([3, 2])
-                    with a1:
-                        render_chart(
-                            fig_pf,
-                            key=f"{key_prefix}_planfact_row_{_ix}",
-                            caption_below="",
-                        )
-                    with a2:
-                        _col = "#e74c3c" if met_pf["dev"] > 0 else "#27ae60"
-                        st.markdown(
-                            f"**План:** {int(round(met_pf['plan']))}\n\n"
-                            f"**Факт:** {int(round(met_pf['fact']))}\n\n"
-                            f"**Отклонение:** <span style='color:{_col};font-size:1.15em'>●</span> "
-                            f"{int(round(met_pf['dev']))}",
-                            unsafe_allow_html=True,
-                        )
-                else:
-                    st.markdown("*Нет данных для плана/факта по этому проекту.*")
-        plan_fact_row_done = True
-        st.markdown("---")
+                _chart_caption_below(f"План и факт по подрядчикам: {lab_wfb}")
 
     show_contractor_fact_row = (
         len(projects_to_process) > 1
@@ -14065,10 +14500,6 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         and "Контрагент" in filtered_df.columns
         and "week_sum" in filtered_df.columns
     )
-    def _gdrs_fp_pct_caption_line(met: dict) -> str:
-        """Строка „факт/план“; если плана нет или 0 — без деления на ноль."""
-        return ""
-
     contractor_fact_row_done = False
     if show_contractor_fact_row:
         if (data_source_filter or "").strip().lower() == "техника":
@@ -14087,8 +14518,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 render_chart(
                     fig_cf,
                     key=f"{key_prefix}_contractor_fact_row_{_ix}",
-                    height=540,
-                    max_height=720,
+                    height=460,
+                    max_height=620,
                     caption_below="",
                 )
                 _cfc = "#e74c3c" if met_cf["dev"] > 0 else "#27ae60"
@@ -14170,33 +14601,22 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                         _bar_avg, values="Среднее за месяц", names="Контрагент",
                         title=None, color_discrete_sequence=px.colors.qualitative.Set3,
                     )
-                    fig_pie_avg.update_traces(
-                        textinfo="text",
-                        texttemplate="%{label}<br>%{value:,.0f}<br>(%{percent:.1%})",
-                        textposition="inside",
-                        textfont_size=11,
-                        insidetextorientation="horizontal",
-                        hovertemplate="<b>%{label}</b><br>%{value:,.0f} (%{percent:.1%})<extra></extra>",
-                    )
-                    fig_pie_avg.update_layout(
+                    _n_con = len(_bar_avg.index)
+                    _lm_avg = min(380, max(236, int(206 + _n_con * 7)))
+                    fig_pie_avg = _pie_apply_percent_inside_legend_left(
+                        fig_pie_avg,
                         height=500,
-                        showlegend=True,
-                        legend=dict(
-                            orientation="h",
-                            yanchor="top",
-                            y=-0.2,
-                            x=0.5,
-                            xanchor="center",
-                            font=dict(size=10),
-                        ),
-                        margin=dict(t=40, b=140, l=24, r=24),
-                        uniformtext=dict(minsize=7, mode="show"),
+                        pct_fontsize=18,
+                        legend_fontsize=11,
+                        left_margin=_lm_avg,
+                    )
+                    fig_pie_avg.update_traces(
+                        hovertemplate="<b>%{label}</b><br>Среднее: %{value:,.1f}<br>%{percent:.0%}<extra></extra>",
                     )
                     fig_pie_avg = apply_chart_background(fig_pie_avg)
                     render_chart(fig_pie_avg, key=f"{key_prefix}_avg_pie_{_pslug}", caption_below=f"Распределение ресурсов — {project_name}")
             else:
                 st.info("Нет данных для отображения.")
-            continue
 
         if not plan_fact_row_done:
             df_people = project_filtered_df.copy()
@@ -14207,7 +14627,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             if not df_people.empty and "План_numeric" in df_people.columns and "week_sum" in df_people.columns:
                 fig_pf, met_pf = _gdrs_plan_fact_fig_and_metrics(df_people)
                 if fig_pf is not None and met_pf is not None:
-                    st.subheader("План/факт рабочие")
+                    st.subheader("План/Факт рабочие")
                     render_chart(fig_pf, key=f"{key_prefix}_planfact_single_{_pslug}", caption_below="")
 
         # ========== Chart 1: круговая — доля факта по подрядчикам ==========
@@ -14265,6 +14685,14 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     by_contractor["План"], errors="coerce"
                 ).fillna(0.0)
                 by_contractor["Отклонение"] = by_contractor["План"] - by_contractor["Факт"]
+                by_contractor["%"] = by_contractor.apply(
+                    lambda r: (
+                        round(float(r["Факт"]) / float(r["План"]) * 100.0, 1)
+                        if float(r["План"]) != 0.0
+                        else None
+                    ),
+                    axis=1,
+                )
                 by_contractor = by_contractor[
                     (by_contractor["Факт"] != 0) | (by_contractor["План"] != 0)
                 ].copy()
@@ -14273,16 +14701,19 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 by_contractor = by_contractor.sort_values("План", ascending=False)
                 with st.expander(f"Формулы столбцов ({type_label})", expanded=False):
                     suppress_caption(
-                        "План и факт — суммы по подрядчику; отклонение = план − факт."
+                        "План (из договора), Факт (СКУД / выгрузка ресурсов), «%» = факт/план×100%, отклонение = план − факт."
                     )
-                display_df = by_contractor[
-                    ["Контрагент", "План", "Факт", "Отклонение"]
-                ].copy()
+                _display_cols_w = ["Контрагент", "План", "Факт", "%", "Отклонение"]
+                display_df = by_contractor[_display_cols_w].copy()
                 display_df["План"] = display_df["План"].apply(
                     lambda x: int(round(x, 0)) if pd.notna(x) else 0
                 )
                 display_df["Факт"] = display_df["Факт"].apply(
                     lambda x: int(round(x, 0)) if pd.notna(x) else 0
+                )
+                st.subheader(f"Доля факта ({type_label}) по контрагентам")
+                display_df["%"] = display_df["%"].apply(
+                    lambda v: f"{v:.1f}%" if v is not None and pd.notna(v) else "—"
                 )
                 display_df["Отклонение"] = display_df["Отклонение"].apply(
                     lambda x: int(round(x, 0)) if pd.notna(x) else 0
@@ -14292,13 +14723,14 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                         display_df,
                         finance_deviation_column="Отклонение",
                         deviation_red_if_positive_only=True,
+                        deviation_semaphore_style=True,
                     ),
                     unsafe_allow_html=True,
                 )
 
-        # ========== Chart 2: Bar Chart by Contractor (Plan, Average, Отклонение) ==========
+        # ========== Chart 2: Bar Chart by Contractor (Plan, Fact, Отклонение) ==========
         st.subheader(
-            "Столбчатая диаграмма: План, Среднее за месяц, Отклонение (группировка по контрагенту; сортировка по убыванию Плана)"
+            "Столбчатая диаграмма: План, Факт, Отклонение (группировка по контрагенту)"
         )
 
         bar_df = project_filtered_df.copy()
@@ -14308,7 +14740,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             ]
         if "Дельта_numeric" not in bar_df.columns and "План_numeric" in bar_df.columns and "week_sum" in bar_df.columns:
             bar_df = bar_df.copy()
-            bar_df["Дельта_numeric"] = bar_df["План_numeric"] - bar_df["week_sum"]
+            bar_df["Дельта_numeric"] = bar_df["План_numeric"] - (
+                pd.to_numeric(bar_df["week_sum"], errors="coerce").fillna(0.0) / week_fact_den
+            )
         elif "Дельта_numeric" not in bar_df.columns:
             bar_df = bar_df.copy()
             bar_df["Дельта_numeric"] = 0
@@ -14317,30 +14751,73 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             .agg(
                 {
                     "План_numeric": "sum",  # Sum of plans
-                    "week_sum": "sum",  # Sum of weeks = среднее за месяц
+                    "week_sum": "sum",  # Sum of weeks (факт)
                     "Дельта_numeric": "sum",  # Sum of deltas
                 }
             )
             .reset_index()
         )
 
-        contractor_data.columns = ["Контрагент", "План", "Среднее за месяц", "Отклонение"]
+        contractor_data.columns = ["Контрагент", "План", "Факт", "Отклонение"]
+        contractor_data["Факт"] = (
+            pd.to_numeric(contractor_data["Факт"], errors="coerce").fillna(0.0) / week_fact_den
+        )
 
-        # Ensure Отклонение column has numeric values
-        contractor_data["Отклонение"] = pd.to_numeric(
-            contractor_data["Отклонение"], errors="coerce"
-        ).fillna(0)
+        contractor_data["Отклонение"] = (
+            pd.to_numeric(contractor_data["План"], errors="coerce").fillna(0.0)
+            - pd.to_numeric(contractor_data["Факт"], errors="coerce").fillna(0.0)
+        )
 
-        contractor_data = contractor_data.sort_values("План", ascending=False)
+        _sort_bar_label_w = st.radio(
+            "Сортировка контрагентов по",
+            options=("План", "Факт", "Отклонение"),
+            index=0,
+            horizontal=True,
+            key=f"{key_prefix}_bar_sort_work_{_pslug}",
+        )
+        _sort_col_map_w = {"План": "План", "Факт": "Факт", "Отклонение": "Отклонение"}
+        contractor_data = contractor_data.sort_values(
+            _sort_col_map_w[_sort_bar_label_w], ascending=False
+        ).reset_index(drop=True)
 
-        plan_text = [
-            f"{int(np.ceil(float(v)))}" if pd.notna(v) and float(v) > 0 else "0"
-            for v in contractor_data["План"]
-        ]
-        fact_text = [
-            f"{int(np.ceil(float(v)))}" if pd.notna(v) and float(v) > 0 else "0"
-            for v in contractor_data["Среднее за месяц"]
-        ]
+        contractor_data["%"] = np.where(
+            contractor_data["План"] > 0,
+            (contractor_data["Факт"] / contractor_data["План"] * 100.0).round(1),
+            np.nan,
+        )
+
+        delta_values = contractor_data["Отклонение"].fillna(0)
+        delta_abs = delta_values.abs()
+
+        # Подписи как в макете: значение и (%) — план 100%, факт и дельта от плана; дельта на графике по модулю.
+        plan_text: list[str] = []
+        fact_text: list[str] = []
+        delta_text: list[str] = []
+        for i in range(len(contractor_data)):
+            pv = float(
+                pd.to_numeric(contractor_data["План"].iloc[i], errors="coerce") or 0.0
+            )
+            fv = float(
+                pd.to_numeric(contractor_data["Факт"].iloc[i], errors="coerce") or 0.0
+            )
+            dv = float(pd.to_numeric(delta_values.iloc[i], errors="coerce") or 0.0)
+            av = abs(dv)
+            if pv > 1e-9:
+                plan_text.append(f"{int(round(pv))} (100%)")
+                fact_text.append(f"{int(round(fv))} ({fv/pv*100:.0f}%)")
+                if av < 0.5:
+                    delta_text.append("0")
+                else:
+                    delta_text.append(f"{int(round(av))} ({dv/pv*100:+.0f}%)")
+            else:
+                plan_text.append("0")
+                fact_text.append(f"{int(round(fv))}" if abs(fv) >= 0.5 else "0")
+                delta_text.append(f"{int(round(av))}" if av >= 0.5 else "0")
+
+        _pv_arr = pd.to_numeric(contractor_data["План"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+        _fv_arr = pd.to_numeric(contractor_data["Факт"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+        _fact_bar_colors_pf = [_gdrs_fact_bar_color(float(a), float(b)) for a, b in zip(_pv_arr, _fv_arr)]
+        _hover_fact_pf = np.stack([_pv_arr, _fv_arr, _pv_arr - _fv_arr], axis=-1)
 
         fig_bar = go.Figure()
         fig_bar.add_trace(
@@ -14352,67 +14829,61 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 text=plan_text,
                 textposition="outside",
                 textfont=dict(size=12, color="white"),
+                customdata=_hover_fact_pf,
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    "План: %{y:.0f}<br>"
+                    "Факт: %{customdata[1]:.0f}<br>"
+                    "Отклонение (план−факт): %{customdata[2]:.0f}<extra></extra>"
+                ),
             )
         )
         fig_bar.add_trace(
             go.Bar(
-                name="Среднее за месяц",
+                name="Факт",
                 x=contractor_data["Контрагент"],
-                y=contractor_data["Среднее за месяц"],
-                marker_color="#e67e22",
+                y=contractor_data["Факт"],
+                marker=dict(color=_fact_bar_colors_pf, line=dict(width=1, color="#eaf2fb")),
                 text=fact_text,
                 textposition="outside",
                 textfont=dict(size=12, color="white"),
+                customdata=_hover_fact_pf,
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    "План: %{customdata[0]:.0f}<br>"
+                    "Факт: %{y:.0f}<br>"
+                    "Отклонение (план−факт): %{customdata[2]:.0f}<extra></extra>"
+                ),
             )
         )
 
-        delta_values = contractor_data["Отклонение"].fillna(0)
-        delta_abs = delta_values.abs()
-        delta_text = [
-            f"{int(np.ceil(abs(float(d))))}" if abs(float(d)) >= 0.5 else "0"
-            for d in delta_values
-        ]
-        # Отклонение = План − Факт: >0 — просадка (красный), <0 — перевыполнение (зелёный).
-        shortfall_mask = delta_values > 0
-        if shortfall_mask.any():
+        # Эталон: отклонение всегда по модулю выше оси X; оранжевый если > 0, зелёный если ≤ 0.
+        pos_mask = delta_values > 0
+        nonpos_mask = delta_values <= 0
+        if pos_mask.any():
             fig_bar.add_trace(
                 go.Bar(
-                    name="Отклонение (план > факт)",
-                    x=contractor_data.loc[shortfall_mask, "Контрагент"],
-                    y=delta_abs[shortfall_mask],
-                    marker_color="#e74c3c",
-                    text=[delta_text[i] for i in range(len(delta_text)) if shortfall_mask.iloc[i]],
-                    textposition="outside",
-                    textfont=dict(size=12, color="white"),
-                    showlegend=False,
-                )
-            )
-        surplus_mask = delta_values < 0
-        if surplus_mask.any():
-            fig_bar.add_trace(
-                go.Bar(
-                    name="Отклонение (факт > план)",
-                    x=contractor_data.loc[surplus_mask, "Контрагент"],
-                    y=delta_abs[surplus_mask],
-                    marker_color="#2ecc71",
-                    text=[delta_text[i] for i in range(len(delta_text)) if surplus_mask.iloc[i]],
+                    name="Отклонение > 0",
+                    x=contractor_data.loc[pos_mask, "Контрагент"],
+                    y=delta_abs[pos_mask],
+                    marker_color="#e67e22",
+                    text=[delta_text[i] for i in range(len(delta_text)) if pos_mask.iloc[i]],
                     textposition="outside",
                     textfont=dict(size=12, color="white"),
                     showlegend=True,
                 )
             )
-        zero_mask = delta_values == 0
-        if zero_mask.any():
+        if nonpos_mask.any():
             fig_bar.add_trace(
                 go.Bar(
-                    name="Отклонение (0)",
-                    x=contractor_data.loc[zero_mask, "Контрагент"],
-                    y=delta_abs[zero_mask],
-                    marker_color="#95a5a6",
-                    text=[delta_text[i] for i in range(len(delta_text)) if zero_mask.iloc[i]],
+                    name="Отклонение ≤ 0",
+                    x=contractor_data.loc[nonpos_mask, "Контрагент"],
+                    y=delta_abs[nonpos_mask],
+                    marker_color="#2ecc71",
+                    text=[delta_text[i] for i in range(len(delta_text)) if nonpos_mask.iloc[i]],
                     textposition="outside",
                     textfont=dict(size=12, color="white"),
-                    showlegend=False,
+                    showlegend=True,
                 )
             )
 
@@ -14420,8 +14891,11 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         fig_bar.update_layout(
             title_text="",
             xaxis_title="Контрагент",
-            yaxis_title="Значение",
+            yaxis_title="Факт (сумма), план и отклонение",
             barmode="group",
+            width=_RENDER_CHART_DEFAULT_WIDTH_PX,
+            bargap=0.22,
+            bargroupgap=0.09,
             height=620,
             legend=dict(
                 orientation="v",
@@ -14432,22 +14906,27 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 font=dict(size=11, color="#e8eef5"),
             ),
             xaxis=dict(tickangle=-45, automargin=True),
-            yaxis=dict(automargin=True),
+            yaxis=dict(automargin=True, rangemode="tozero"),
         )
 
-        fig_bar = _apply_finance_bar_label_layout(fig_bar)
+        fig_bar = _apply_finance_bar_label_layout(fig_bar, y_rangemode="tozero")
         try:
             fig_bar.update_layout(
                 uniformtext=dict(minsize=6, mode="show"),
-                margin=dict(l=56, r=150, t=100, b=168),
+                margin=dict(l=56, r=150, t=100, b=200),
             )
+            fig_bar.update_yaxes(rangemode="tozero")
             fig_bar.update_traces(cliponaxis=False, selector=dict(type="bar"))
         except Exception:
             pass
         fig_bar = apply_chart_background(fig_bar)
         render_chart(
             fig_bar,
-            caption_below="План, Среднее за месяц и Отклонение по контрагентам" + period_caption,
+            caption_below=(
+                "План, Факт и Отклонение по контрагентам"
+                + period_caption
+                + ". Макет: высота отклонения — модуль; оранжевый при Отклонение > 0, зелёный при ≤ 0. Сортировка — виджет выше."
+            ),
         )
 
         # Макет: круговые по подрядчикам — выше; отдельный блок «СКУД по неделям» здесь не показываем.
@@ -14500,18 +14979,30 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
 
             # Format numbers for display
             summary_table = contractor_data.copy()
+            _pct_fmt = summary_table["%"]
             summary_table["План"] = summary_table["План"].apply(
                 lambda x: f"{int(x)}" if pd.notna(x) else "0"
             )
-            summary_table["Среднее за месяц"] = summary_table["Среднее за месяц"].apply(
+            summary_table["Факт"] = summary_table["Факт"].apply(
                 lambda x: f"{int(x)}" if pd.notna(x) else "0"
+            )
+            summary_table["%"] = _pct_fmt.apply(
+                lambda x: f"{float(x):.1f}%" if pd.notna(x) else "—"
             )
             summary_table["Отклонение"] = summary_table["Отклонение"].apply(
                 lambda x: f"{int(x)}" if pd.notna(x) else "0"
             )
+            summary_table = summary_table[
+                ["Контрагент", "План", "Факт", "%", "Отклонение"]
+            ]
 
             st.markdown(
-                budget_table_to_html(summary_table, finance_deviation_column="Отклонение"),
+                budget_table_to_html(
+                    summary_table,
+                    finance_deviation_column="Отклонение",
+                    deviation_red_if_positive_only=True,
+                    deviation_semaphore_style=True,
+                ),
                 unsafe_allow_html=True,
             )
 
@@ -14523,8 +15014,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 st.metric("Общий план", f"{int(total_plan)}")
 
             with col2:
-                total_average = contractor_data["Среднее за месяц"].sum()
-                st.metric("Общее среднее за месяц", f"{int(total_average)}")
+                total_fact = contractor_data["Факт"].sum()
+                st.metric("Общий факт", f"{int(total_fact)}")
 
             with col3:
                 total_delta = contractor_data["Отклонение"].sum()
@@ -16972,6 +17463,7 @@ def dashboard_documentation(
                 pie_data = {k: v for k, v in pie_data.items() if v > 0}
 
                 if pie_data:
+                    _nk = len(pie_data)
                     fig_pie = px.pie(
                         values=list(pie_data.values()),
                         names=list(pie_data.keys()),
@@ -16985,18 +17477,15 @@ def dashboard_documentation(
                             "Не выдано": "#7F8C8D",
                         },
                     )
-                    fig_pie.update_traces(
-                        textinfo="label+percent+value",
-                        textposition="auto",
-                        textfont_size=10,
-                        insidetextorientation="radial",
-                        hovertemplate="<b>%{label}</b><br>Значение: %{value}<br>Доля: %{percent}<br><extra></extra>",
-                    )
-                    fig_pie.update_layout(
+                    fig_pie = _pie_apply_percent_inside_legend_left(
+                        fig_pie,
                         height=500,
-                        showlegend=True,
-                        uniformtext=dict(minsize=8, mode="hide"),
-                        legend=dict(orientation="v", font=dict(size=10), title_text=""),
+                        pct_fontsize=17 if _nk <= 5 else 15,
+                        legend_fontsize=11,
+                        left_margin=min(380, max(236, int(218 + _nk * 26))),
+                    )
+                    fig_pie.update_traces(
+                        hovertemplate="<b>%{label}</b><br>Значение: %{value}<br>Доля: %{percent}<br><extra></extra>",
                     )
                     fig_pie = apply_chart_background(fig_pie)
                     render_chart(fig_pie, caption_below="Исполнение РД")
@@ -17066,6 +17555,7 @@ def dashboard_documentation(
                     }
                     pie_data = {k: v for k, v in pie_data.items() if v > 0}
                     if pie_data:
+                        _nk = len(pie_data)
                         fig_pie = px.pie(
                             values=list(pie_data.values()),
                             names=list(pie_data.keys()),
@@ -17076,20 +17566,17 @@ def dashboard_documentation(
                                 "Не начато": "#E74C3C",
                             },
                         )
+                        fig_pie = _pie_apply_percent_inside_legend_left(
+                            fig_pie,
+                            height=500,
+                            pct_fontsize=18 if _nk <= 3 else 16,
+                            legend_fontsize=11,
+                            left_margin=min(340, max(228, int(210 + _nk * 42))),
+                        )
                         fig_pie.update_traces(
-                            textinfo="label+percent+value",
-                            textposition="auto",
-                            textfont_size=10,
-                            insidetextorientation="radial",
                             hovertemplate=(
                                 "<b>%{label}</b><br>Значение: %{value}<br>Доля: %{percent}<br><extra></extra>"
                             ),
-                        )
-                        fig_pie.update_layout(
-                            height=500,
-                            showlegend=True,
-                            uniformtext=dict(minsize=8, mode='hide'),
-                            legend=dict(orientation="v", font=dict(size=10), title_text=""),
                         )
                         fig_pie = apply_chart_background(fig_pie)
                         render_chart(fig_pie, caption_below="Исполнение ПД")
@@ -17695,7 +18182,7 @@ def dashboard_budget_by_type(df):
     from dashboards.finance_from_1c import ensure_budget_frame_with_fallback
 
     ensure_budget_columns(df)
-    df, _ = ensure_budget_frame_with_fallback(df, show_caption=True)
+    df, _budget_type_used_1c = ensure_budget_frame_with_fallback(df, show_caption=True)
     ensure_budget_columns(df)
     ensure_date_columns(df)
     if "project name" in df.columns:
@@ -17735,6 +18222,12 @@ def dashboard_budget_by_type(df):
         ]
     # Check for budget columns (нормализуем русские названия)
     ensure_budget_columns(filtered_df)
+    from dashboards.data_quality_hints import collect_budget_1c_hints, render_quality_hints
+
+    _budget_type_q_hints = collect_budget_1c_hints(
+        dict(getattr(filtered_df, "attrs", {}) or {}),
+        used_fallback_1c=bool(_budget_type_used_1c),
+    )
     has_budget = (
         "budget plan" in filtered_df.columns and "budget fact" in filtered_df.columns
     )
@@ -17826,6 +18319,7 @@ def dashboard_budget_by_type(df):
         fig_kpi.update_layout(height=220, margin=dict(l=16, r=16, t=48, b=16))
         fig_kpi = apply_chart_background(fig_kpi)
         render_chart(fig_kpi, caption_below="План/факт по бюджету")
+        render_quality_hints(_budget_type_q_hints)
     with kpi_plan_col:
         st.metric(
             "Расходы план",
@@ -17906,6 +18400,7 @@ def dashboard_budget_by_type(df):
         ),
         unsafe_allow_html=True,
     )
+    render_quality_hints(_budget_type_q_hints)
     render_dataframe_excel_csv_downloads(
         budget_table_display,
         file_stem="budget_plan_fact",
@@ -18087,6 +18582,7 @@ def dashboard_budget_by_type(df):
                     fig_hist,
                     caption_below="Бюджет план/факт/корректировка/отклонение по проектам",
                 )
+                render_quality_hints(_budget_type_q_hints)
 
                 # Summary table (суммы в млн руб., два знака, подпись в названии колонки)
                 st.subheader("Сводная таблица по проектам")
@@ -18881,7 +19377,7 @@ def dashboard_approved_budget(df):
 
     df = df.copy()
     ensure_budget_columns(df)
-    df, _ = ensure_budget_frame_with_fallback(df, show_caption=True)
+    df, _approved_budget_used_1c = ensure_budget_frame_with_fallback(df, show_caption=True)
     ensure_budget_columns(df)
     ensure_date_columns(df)
 
@@ -18942,6 +19438,12 @@ def dashboard_approved_budget(df):
         filtered_df = _project_column_apply_canonical(filtered_df, project_col)
 
     ensure_budget_columns(filtered_df)
+    from dashboards.data_quality_hints import collect_budget_1c_hints, render_quality_hints
+
+    _approved_q_hints = collect_budget_1c_hints(
+        dict(getattr(filtered_df, "attrs", {}) or {}),
+        used_fallback_1c=bool(_approved_budget_used_1c),
+    )
     _proj_key = project_col if project_col and project_col in filtered_df.columns else None
     if (
         _proj_key
@@ -18981,6 +19483,7 @@ def dashboard_approved_budget(df):
             ),
             unsafe_allow_html=True,
         )
+        render_quality_hints(_approved_q_hints)
 
     if "budget plan" in filtered_df.columns and "budget fact" in filtered_df.columns:
         _plan_tot = float(pd.to_numeric(filtered_df["budget plan"], errors="coerce").fillna(0.0).sum())
@@ -19041,6 +19544,7 @@ def dashboard_approved_budget(df):
                 )
             else:
                 st.markdown(f"{_fb:.2f} млрд руб. ({_fact_tot/1e6:.2f} млн руб.)")
+        render_quality_hints(_approved_q_hints)
 
     ensure_date_columns(filtered_df)
     if "plan end" in filtered_df.columns:
@@ -19201,6 +19705,7 @@ def dashboard_approved_budget(df):
         ),
         unsafe_allow_html=True,
     )
+    render_quality_hints(_approved_q_hints)
     render_dataframe_excel_csv_downloads(
         summary_table,
         file_stem="approved_budget_by_month",
@@ -19331,12 +19836,20 @@ def _forecast_merge_bddcs_from_1c(project_df: pd.DataFrame, project_name: str) -
 
     w = pd.to_numeric(out.get("budget plan"), errors="coerce").fillna(0.0)
     wsum = float(w.sum())
-    if wsum <= 0 and plan_sum > 0:
+    _fc_uniform_lot_weights = False
+    if wsum <= 0 and (plan_sum > 0 or fact_sum > 0):
+        _fc_uniform_lot_weights = True
         w = pd.Series(1.0, index=out.index)
         wsum = float(len(out))
     if wsum > 0 and (plan_sum > 0 or fact_sum > 0):
         out["budget plan"] = w / wsum * float(plan_sum)
         out["budget fact"] = w / wsum * float(fact_sum)
+        try:
+            out.attrs["forecast_bddcs_injected_from_1c"] = True
+            if _fc_uniform_lot_weights:
+                out.attrs["forecast_bddcs_uniform_lot_weights"] = True
+        except Exception:
+            pass
     return out
 
 
@@ -21951,9 +22464,19 @@ def dashboard_predpisania(df):
             values="Количество",
             color_discrete_sequence=px.colors.qualitative.Set2,
         )
-        fig2.update_traces(textinfo="label+percent+value", textfont_size=12)
+        _nst = len(status_df.index)
+        fig2 = _pie_apply_percent_inside_legend_left(
+            fig2,
+            height=420,
+            pct_fontsize=18 if _nst <= 6 else 16,
+            legend_fontsize=11,
+            left_margin=min(320, max(232, int(208 + _nst * 26))),
+            extra_layout=dict(uirevision="pred_status_pie"),
+        )
+        fig2.update_traces(
+            hovertemplate="<b>%{label}</b><br>Количество: %{value}<br>Доля: %{percent:.1%}<extra></extra>",
+        )
         fig2 = apply_chart_background(fig2)
-        fig2.update_layout(height=420, uirevision="pred_status_pie")
         render_chart(fig2, key="pred_status_pie", caption_below="Распределение предписаний по статусам")
 
         if obj_col and obj_col in filtered.columns:
@@ -22174,7 +22697,7 @@ def dashboard_developer_projects(df):
     if project_col and project_col in filtered.columns:
         filtered = _project_column_apply_canonical(filtered, project_col)
 
-    # ТЗ: без дублирования задач/проектов; экспорт и матрица строятся из того же набора, что и таблица задач.
+    # ТЗ: без дублирования задач/проектов; экспорт и матрица строятся из одного dedupe-набора MSP.
     try:
         from dashboards.dev_projects_tz_matrix import dedupe_msp_for_developer_projects
 
@@ -22193,6 +22716,13 @@ def dashboard_developer_projects(df):
     )
 
     st.subheader("Матрица контрольных точек")
+
+    try:
+        from dashboards.data_quality_hints import collect_developer_projects_hints, render_quality_hints
+
+        render_quality_hints(collect_developer_projects_hints(st.session_state, filtered))
+    except Exception:
+        pass
 
     _prefs_dm = load_developer_projects_matrix_prefs()
     if "dev_matrix_vert_dates" not in st.session_state:
@@ -22302,268 +22832,6 @@ def dashboard_developer_projects(df):
     except Exception:
         pass
 
-    st.markdown("---")
-    st.subheader("Таблица задач")
-    suppress_caption(
-        "Таблица строится по выгрузке MSP: базовые даты (plan start/end) и факт (base start/end), "
-        "отклонения начала/окончания, длительности, а также «Причина отклонений» и «Заметки» (если есть в файле)."
-    )
-
-    def _dev_find_col(d: pd.DataFrame, names: list[str]):
-        if d is None or getattr(d, "empty", True):
-            return None
-        for nm in names:
-            for c in d.columns:
-                if str(nm).strip().lower() == str(c).strip().lower():
-                    return c
-        return None
-
-    def _dev_find_notes_col(d: pd.DataFrame):
-        return _find_column_by_keywords(d, ("note", "заметк", "comment", "remark", "notes"))
-
-    tbl_src = filtered.copy()
-    ensure_date_columns(tbl_src)
-    for dc in ("plan start", "plan end", "base start", "base end"):
-        if dc in tbl_src.columns:
-            tbl_src[dc] = pd.to_datetime(tbl_src[dc], errors="coerce", dayfirst=True)
-
-    # Колонки «причина/заметки» в разных выгрузках
-    reason_col = _dev_find_col(tbl_src, ["reason of deviation", "Причина отклонений", "Причина_отклонений", "причина"])
-    notes_col = _dev_find_notes_col(tbl_src)
-
-    # Отбираем только строки с хотя бы одной парой дат (база или факт)
-    _has_base = tbl_src.get("plan start").notna() & tbl_src.get("plan end").notna()
-    _has_fact = tbl_src.get("base start").notna() & tbl_src.get("base end").notna()
-    tbl_src = tbl_src[_has_base | _has_fact].copy()
-    if tbl_src.empty:
-        st.info("Нет строк с датами для таблицы.")
-        return
-
-    def _fmt_date(v):
-        if v is None or (isinstance(v, float) and pd.isna(v)) or pd.isna(v):
-            return ""
-        try:
-            return pd.Timestamp(v).strftime("%d.%m.%Y")
-        except Exception:
-            return str(v).strip()
-
-    def _days(v):
-        if v is None or (isinstance(v, float) and pd.isna(v)) or pd.isna(v):
-            return np.nan
-        try:
-            return float(v)
-        except Exception:
-            return np.nan
-
-    # Сбор строк таблицы
-    out_rows = []
-    for _, r in tbl_src.iterrows():
-        pn = _clean_display_str(r.get(project_col)) if project_col else ""
-        tn = _clean_display_str(r.get(task_col)) if task_col else ""
-        ps = r.get("plan start")
-        pe = r.get("plan end")
-        fs = r.get("base start")
-        fe = r.get("base end")
-
-        # Отклонение начала: (базовое начало − начало), красный если < 0
-        dev_start = np.nan
-        if pd.notna(ps) and pd.notna(fs):
-            dev_start = (pd.Timestamp(ps) - pd.Timestamp(fs)).total_seconds() / 86400.0
-        # Отклонение окончания: (окончание − базовое окончание), красный если > 0
-        dev_end = np.nan
-        if pd.notna(pe) and pd.notna(fe):
-            dev_end = (pd.Timestamp(fe) - pd.Timestamp(pe)).total_seconds() / 86400.0
-
-        base_dur = np.nan
-        if pd.notna(ps) and pd.notna(pe):
-            base_dur = (pd.Timestamp(pe) - pd.Timestamp(ps)).total_seconds() / 86400.0
-        dur = np.nan
-        if pd.notna(fs) and pd.notna(fe):
-            dur = (pd.Timestamp(fe) - pd.Timestamp(fs)).total_seconds() / 86400.0
-
-        row = {
-            "Проект": pn,
-            "Задача": tn,
-            "Начало": _fmt_date(fs),
-            "Базовое начало": _fmt_date(ps),
-            "Отклонение начала": dev_start,
-            "Окончание": _fmt_date(fe),
-            "Базовое окончание": _fmt_date(pe),
-            "Отклонение окончания": dev_end,
-            "Базовая длительность": base_dur,
-            "Длительность": dur,
-        }
-        if reason_col and reason_col in tbl_src.columns:
-            _rv = _clean_display_str(r.get(reason_col))
-            row["Причина отклонений"] = _rv if str(_rv).strip() else "—"
-        if notes_col and notes_col in tbl_src.columns:
-            _nv = _clean_display_str(r.get(notes_col))
-            row["Заметки"] = _nv if str(_nv).strip() else "—"
-        out_rows.append(row)
-
-    dev_tbl = pd.DataFrame(out_rows)
-    # Числовые колонки — числа, форматирование будет на display-копии
-    for c in ("Отклонение начала", "Отклонение окончания", "Базовая длительность", "Длительность"):
-        if c in dev_tbl.columns:
-            dev_tbl[c] = pd.to_numeric(dev_tbl[c], errors="coerce")
-
-    # Порядок столбцов по ТЗ; «Этап» не выводим.
-    desired_cols = [
-        "Проект",
-        "Задача",
-        "Начало",
-        "Базовое начало",
-        "Отклонение начала",
-        "Окончание",
-        "Базовое окончание",
-        "Отклонение окончания",
-        "Базовая длительность",
-        "Длительность",
-        "Причина отклонений",
-        "Заметки",
-    ]
-    dev_tbl = dev_tbl[[c for c in desired_cols if c in dev_tbl.columns]]
-
-    if "Проект" in dev_tbl.columns and "Задача" in dev_tbl.columns:
-        dev_tbl = dev_tbl.drop_duplicates(subset=["Проект", "Задача"], keep="first").reset_index(drop=True)
-
-    display_tbl = dev_tbl.copy()
-
-    def _fmt_int(x):
-        if pd.isna(x):
-            return ""
-        try:
-            return str(int(round(float(x), 0)))
-        except Exception:
-            return ""
-
-    for c in ("Отклонение начала", "Отклонение окончания", "Базовая длительность", "Длительность"):
-        if c in display_tbl.columns:
-            display_tbl[c] = display_tbl[c].apply(_fmt_int)
-
-    def _dev_start_style(v):
-        n = pd.to_numeric(v, errors="coerce")
-        if pd.isna(n):
-            return f"color: {TABLE_TEXT_COLOR}"
-        # красный если < 0, иначе зелёный
-        return "color: #c0392b; font-weight: 600" if float(n) < 0 else "color: #27ae60; font-weight: 600"
-
-    def _dev_end_style(v):
-        n = pd.to_numeric(v, errors="coerce")
-        if pd.isna(n):
-            return f"color: {TABLE_TEXT_COLOR}"
-        # красный если > 0, иначе зелёный
-        return "color: #c0392b; font-weight: 600" if float(n) > 0 else "color: #27ae60; font-weight: 600"
-
-    # В старых версиях pandas Styler может не поддерживать applymap/часть API.
-    # Поэтому рендерим таблицу вручную как HTML (как в других отчётах проекта).
-    _max_rows_show = 220
-    show_num = dev_tbl.head(_max_rows_show).copy()
-    show_disp = display_tbl.head(_max_rows_show).copy()
-    if (
-        sel_proj == "Все"
-        and "Проект" in dev_tbl.columns
-        and int(dev_tbl["Проект"].nunique()) > 1
-        and len(dev_tbl) > _max_rows_show
-    ):
-        # Для выбора «Все» показываем сбалансированную выборку по проектам,
-        # иначе первые 220 строк часто попадают в один проект по порядку загрузки.
-        _projects = [p for p in dev_tbl["Проект"].dropna().astype(str).unique().tolist() if str(p).strip()]
-        _per_proj = max(1, _max_rows_show // max(1, len(_projects)))
-        _parts_num = []
-        _parts_disp = []
-        for _p in _projects:
-            _mask = dev_tbl["Проект"].astype(str) == str(_p)
-            _parts_num.append(dev_tbl.loc[_mask].head(_per_proj))
-            _parts_disp.append(display_tbl.loc[_mask].head(_per_proj))
-        show_num = pd.concat(_parts_num, ignore_index=True).head(_max_rows_show).copy()
-        show_disp = pd.concat(_parts_disp, ignore_index=True).head(_max_rows_show).copy()
-    if len(display_tbl) > _max_rows_show:
-        suppress_caption(
-            f"Показано {_max_rows_show} из {len(display_tbl)} строк (для полного списка используйте выгрузку)."
-        )
-
-    _bg_turq = "rgba(46, 134, 171, 0.22)"  # базовое начало / начало
-    _bg_blue = "rgba(59, 130, 246, 0.18)"  # базовое окончание / окончание
-    _bg_dur = "rgba(99, 102, 241, 0.16)"  # длительности
-
-    def _cell_bg(col_name: str) -> str:
-        if col_name in ("Базовое начало", "Начало"):
-            return _bg_turq
-        if col_name in ("Базовое окончание", "Окончание"):
-            return _bg_blue
-        if col_name in ("Базовая длительность", "Длительность"):
-            return _bg_dur
-        return TABLE_BG_COLOR
-
-    def _dev_start_color(nv) -> str:
-        n = pd.to_numeric(nv, errors="coerce")
-        if pd.isna(n):
-            return TABLE_TEXT_COLOR
-        return "#c0392b" if float(n) < 0 else "#27ae60"
-
-    def _dev_end_color(nv) -> str:
-        n = pd.to_numeric(nv, errors="coerce")
-        if pd.isna(n):
-            return TABLE_TEXT_COLOR
-        return "#c0392b" if float(n) > 0 else "#27ae60"
-
-    headers = list(show_disp.columns)
-    _parts = [
-        '<div class="rendered-table-wrap" style="margin-top:0.5rem">',
-        '<table class="rendered-table" style="border-collapse:collapse;width:100%">',
-        "<thead><tr>",
-    ]
-    for h in headers:
-        _parts.append(f"<th>{html_module.escape(str(h))}</th>")
-    _parts.append("</tr></thead><tbody>")
-    _proj_col_name = "Проект" if "Проект" in headers else None
-    _prev_proj = None
-    for i in range(len(show_disp)):
-        _cur_proj = (
-            str(show_disp.iloc[i].get(_proj_col_name, "")).strip()
-            if _proj_col_name
-            else ""
-        )
-        if _proj_col_name and _cur_proj and _cur_proj != _prev_proj:
-            _parts.append(
-                '<tr>'
-                f'<td colspan="{len(headers)}" '
-                'style="background:rgba(70,130,180,0.30);color:#eaf6ff;'
-                'font-weight:700;border-top:2px solid rgba(190,214,242,0.9);'
-                'border-bottom:1px solid rgba(190,214,242,0.6);padding:7px 12px;">'
-                f'{html_module.escape(_cur_proj)}'
-                "</td></tr>"
-            )
-            _prev_proj = _cur_proj
-        _parts.append("<tr>")
-        for col in headers:
-            cell = show_disp.iloc[i][col]
-            txt = "" if cell is None else str(cell)
-            esc = html_module.escape(txt) if txt.strip() else ""
-            bg = _cell_bg(col)
-            extra = ""
-            if _proj_col_name and col == _proj_col_name:
-                bg = "rgba(70,130,180,0.24)"
-                extra += "font-weight:600;"
-            if col == "Отклонение начала":
-                clr = _dev_start_color(show_num.iloc[i].get(col) if col in show_num.columns else np.nan)
-                extra = f"color:{clr};font-weight:600;"
-            elif col == "Отклонение окончания":
-                clr = _dev_end_color(show_num.iloc[i].get(col) if col in show_num.columns else np.nan)
-                extra = f"color:{clr};font-weight:600;"
-            _parts.append(
-                f'<td style="background:{bg};color:{TABLE_TEXT_COLOR};{extra}border-bottom:1px solid #333;padding:6px 12px;">{esc}</td>'
-            )
-        _parts.append("</tr>")
-    _parts.append("</tbody></table></div>")
-    st.markdown(_TABLE_CSS + "".join(_parts), unsafe_allow_html=True)
-    render_dataframe_excel_csv_downloads(
-        display_tbl,
-        file_stem="developer_projects_tasks_table",
-        key_prefix="dev_projects_tasks",
-        csv_label="Скачать таблицу задач (CSV, для Excel)",
-    )
 
 
 # ── Правки заказчика (Правки 1.pdf): скрытые и новые отчёты ─────────────────
@@ -23088,6 +23356,7 @@ def dashboard_project_schedule_chart(df):
     with st.expander("Подсказка", expanded=False):
         suppress_caption(
             "Фильтры: проект (ур. 1), функциональный блок (ур. 2), уровень структуры MSP (3/4/5 или все), опционально — только лоты. "
+            "График ковенантов по ТЗ (синие/красные точки на шкале дат): включите флажок «Ковенанты по ТЗ» в колонке «Вид отображения» или выберите блок, в названии которого есть «ковенант» / «covenant». "
             "Полосы: план и базовый план (если есть данные). "
             "Переключатель подписей: дата окончания или % выполнения — подпись сразу справа от конца полос этой строки (план и при наличии — база). "
             "Масштаб и панорама колесом мыши (scroll) включены; при странном поведении подписей — панель инструментов (+/−, рамка). "
@@ -23429,13 +23698,24 @@ def dashboard_project_schedule_chart(df):
             index=0,
             key="gantt_view_mode",
         )
+        force_covenant_points = st.checkbox(
+            "Ковенанты по ТЗ: точки на шкале (базовое и окончание)",
+            value=False,
+            key="gantt_force_covenant_points",
+            help=(
+                "Как в ТЗ: синие маркеры — базовое окончание, красные — окончание (факт или план). "
+                "Также включается само, если в «Функциональном блоке» есть «ковенант» или «covenant» в названии."
+            ),
+        )
 
-    is_covenants = False
+    _blk_cov = False
     try:
-        if block_col and str(sel_block).strip() != "Все":
-            is_covenants = "ковенант" in str(sel_block).strip().lower()
+        _bs = str(sel_block).strip().lower()
+        if block_col and _bs not in ("", "все"):
+            _blk_cov = ("ковенант" in _bs) or ("covenant" in _bs)
     except Exception:
-        is_covenants = False
+        _blk_cov = False
+    is_covenants = bool(force_covenant_points) or _blk_cov
 
     lot_row_l, lot_row_r = st.columns(2)
     with lot_row_l:
@@ -23503,6 +23783,23 @@ def dashboard_project_schedule_chart(df):
         value=True,
         key="gantt_auto_compact_on_zoom",
     )
+    hide_completed = st.checkbox(
+        "Скрыть задачи с 100% выполнения",
+        value=False,
+        key="gantt_hide_completed",
+    )
+    only_finish_delay = st.checkbox(
+        "На диаграмме только просрочка по окончанию (базовое − факт/plan < 0 дн.)",
+        value=True,
+        key="gantt_only_finish_delay",
+        disabled=is_covenants,
+        help=(
+            "По ТЗ для блоков кроме «Ковенанты»: только задачи, где базовое окончание раньше фактического/планового "
+            "(просрочка по формуле «базовое окончание − окончание»)."
+        ),
+    )
+    if is_covenants:
+        only_finish_delay = False
 
     if plot_df.empty:
         st.info("Нет строк после фильтров.")
@@ -23548,7 +23845,6 @@ def dashboard_project_schedule_chart(df):
     else:
         sort_cols = ["plan start"]
         sort_asc = [True]
-    plot_df = plot_df.sort_values(sort_cols, ascending=sort_asc, na_position="last").head(400)
 
     _gantt_pct_col_used = None
     plot_df = plot_df.copy()
@@ -23674,6 +23970,56 @@ def dashboard_project_schedule_chart(df):
                     ),
                     use_container_width=True,
                 )
+
+    # Фильтры и лимит строк после назначения «% выполнения» (ТЗ: скрыть 100%; только просрочка по окончанию).
+    if hide_completed:
+        pcn = pd.to_numeric(plot_df["pct complete"], errors="coerce")
+        plot_df = plot_df.loc[~(pcn >= 99.999)].copy()
+
+    if (not is_covenants) and only_finish_delay:
+        if "base end" not in plot_df.columns or "plan end" not in plot_df.columns:
+            suppress_caption(
+                "Фильтр «только просрочка по окончанию»: нет колонок «base end» или «plan end» — отбор не применён."
+            )
+        else:
+            be = pd.to_datetime(plot_df["base end"], errors="coerce")
+            fe = pd.to_datetime(plot_df["plan end"], errors="coerce")
+            _fin_dev = (be - fe).dt.days
+            plot_df = plot_df.loc[_fin_dev.notna() & (_fin_dev < 0)].copy()
+
+    if plot_df.empty:
+        st.info("Нет строк после фильтров «Скрыть 100%» / «Только просрочка по окончанию».")
+        return
+
+    _be_pres = "base end" in plot_df.columns
+    _be_ratio = None
+    if _be_pres:
+        _be_ratio = float(pd.to_datetime(plot_df["base end"], errors="coerce").notna().mean())
+    try:
+        from dashboards.data_quality_hints import collect_project_schedule_hints, render_quality_hints
+
+        render_quality_hints(
+            collect_project_schedule_hints(
+                only_finish_delay_active=bool((not is_covenants) and only_finish_delay),
+                is_covenants=is_covenants,
+                base_end_column_present=_be_pres,
+                base_end_filled_ratio=_be_ratio,
+            )
+        )
+    except Exception:
+        pass
+
+    if (not is_covenants) and only_finish_delay and "base end" in plot_df.columns and "plan end" in plot_df.columns:
+        be = pd.to_datetime(plot_df["base end"], errors="coerce")
+        fe = pd.to_datetime(plot_df["plan end"], errors="coerce")
+        plot_df = (
+            plot_df.assign(_dd_fin=(be - fe).dt.days)
+            .sort_values("_dd_fin", ascending=True, na_position="last")
+            .drop(columns=["_dd_fin"])
+        )
+    else:
+        plot_df = plot_df.sort_values(sort_cols, ascending=sort_asc, na_position="last")
+    plot_df = plot_df.head(400)
 
     lvl_for_indent = None
     if level_col:
@@ -24592,7 +24938,11 @@ def dashboard_project_schedule_chart(df):
             skip_clamp_zoom=True,
         )
 
-    suppress_caption("Таблица под графиком")
+    st.markdown(
+        "<div style='margin:0.25rem 0 0.35rem;color:#e8eef5;font-weight:600;font-size:1.02rem;"
+        "border-top:1px solid rgba(148,163,184,0.35);padding-top:0.45rem;'>Таблица под графиком</div>",
+        unsafe_allow_html=True,
+    )
 
     dev_start_src = _sched_col(
         plot_df,

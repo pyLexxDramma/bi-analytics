@@ -6,7 +6,8 @@
   BI_FTP_USER       — пользователь
   BI_FTP_PASSWORD   — пароль
   BI_FTP_PORT       — порт (по умолчанию 21)
-  BI_FTP_REMOTE_DIR — каталог на сервере (по умолчанию /)
+  BI_FTP_REMOTE_DIR — каталог на сервере (часто ``/web``; по умолчанию ``/``)
+  BI_FTP_PASSWORD   — пароль; если пусто, берётся ``FTP_AI_PASSWORD`` (совместимость с VS Code SFTP)
   BI_FTP_TLS        — true / 1 для FTPS (AUTH_TLS)
   BI_FTP_TIMEOUT    — таймаут секунд (по умолчанию 60)
 
@@ -35,6 +36,8 @@ def _env_config() -> Dict[str, Any]:
 
 def merge_ftp_config(overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     cfg = _env_config()
+    if not (cfg.get("password") or "").strip():
+        cfg["password"] = os.environ.get("FTP_AI_PASSWORD", "").strip()
     if overrides:
         for k, v in overrides.items():
             if v is None:

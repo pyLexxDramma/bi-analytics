@@ -4,6 +4,8 @@ web_loader.py — парсинг файлов из папки web/ и сохра
 Основная функция: load_all_from_web()
 - Сканирует локальный web/, при наличии — каталог «Analitics/web» (см. config.get_analytics_sibling_web_dir),
   и дополнительные пути из BI_ANALYTICS_WEB_EXTRA_PATHS
+- По умолчанию оставляет только последний снимок по дате в имени (1С/TESSA/MSP и др.); отключение:
+  BI_ANALYTICS_WEB_LATEST_ONLY=0 (см. config.web_load_latest_snapshots_only).
 - Сканирует web/ рекурсивно
 - Определяет тип файла через ETL-парсер (etl/parser.py)
 - Для MSP-файлов применяет маппинг колонок → формат дашбордов
@@ -20,9 +22,9 @@ import json
 import math
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from config import ignore_demo_data_files
+from config import ignore_demo_data_files, web_load_latest_snapshots_only
 
 import pandas as pd
 import streamlit as st
@@ -40,6 +42,60 @@ from web_schema import (
 
 # MSP экспортирует файлы с русскими названиями колонок (Windows-1251).
 # Дашборды ожидают английские canonical-имена из data_loader.column_mapping.
+def _looks_like_msp_spurious_project_label(val: Any) -> bool:
+    """
+    Значение похоже на построчный штамп/UID выгрузки MSP, а не на человекочитаемое имя проекта.
+    """
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return False
+    s = str(val).replace("\xa0", "").strip()
+    if len(s) < 14:
+        return False
+    if re.search(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}", s):
+        return True
+    # 24-04-2024-15-41-47 / цепочки сегментов дата-время
+    if re.match(r"^\d{2}-\d{2}-\d{4}-\d{2}-\d{2}-\d{2}", s):
+        return True
+    parts = re.split(r"[-_\s]+", s)
+    if len(parts) >= 5:
+        digit_segments = sum(1 for p in parts if p.isdigit())
+        if digit_segments >= 4 and sum(c.isdigit() for c in s) >= 12:
+            return True
+    return False
+
+
+def _coerce_msp_project_name_from_file_if_needed(
+    df: pd.DataFrame, ru_from_file: str
+) -> pd.DataFrame:
+    """
+    Если колонка project name заполнена «мусорными» построчными метками, заменяем на имя из файла.
+    Один файл MSP у нас соответствует одному проекту (префикс msp_<slug>_…).
+    """
+    if (
+        df is None
+        or getattr(df, "empty", True)
+        or not (ru_from_file or "").strip()
+        or "project name" not in df.columns
+    ):
+        return df
+    ser = df["project name"]
+    cleaned = ser.dropna().astype(str).map(lambda x: str(x).strip())
+    cleaned = cleaned[cleaned.str.len() > 0]
+    cleaned = cleaned[~cleaned.str.lower().isin(("nan", "none", "<na>"))]
+    if cleaned.empty:
+        return df
+    nuniq = int(cleaned.nunique())
+    sample = cleaned.head(min(400, len(cleaned)))
+    spurious_frac = float(sample.map(_looks_like_msp_spurious_project_label).mean())
+    too_many_distinct = nuniq >= 10
+    mostly_stamps = nuniq >= 4 and spurious_frac >= 0.35
+    if not (too_many_distinct or mostly_stamps):
+        return df
+    out = df.copy()
+    out["project name"] = ru_from_file.strip()
+    return out
+
+
 _MSP_COLUMN_REMAP: Dict[str, str] = {
     "Название задачи":       "task name",
     "Название":              "task name",
@@ -255,6 +311,8 @@ def _apply_msp_column_mapping(df: pd.DataFrame, project_name: str) -> pd.DataFra
         df["project name"] = ru_from_file
     else:
         df["project name"] = df["project name"].apply(_normalize_project_cell)
+
+    df = _coerce_msp_project_name_from_file_if_needed(df, ru_from_file)
 
     # ── Вспомогательные функции ──────────────────────────────────────────────
     def _parse_msp_date(val):
@@ -739,6 +797,205 @@ def _dedupe_scan_files_by_identity(files: List[Dict]) -> Tuple[List[Dict], List[
     return out, warns
 
 
+_ONE_C_STEM_RE = re.compile(
+    r"^(?:1с_|1c_|lc_|лк_|lk_)(\d{2}-\d{2}-\d{4})(?:_(\d{2}-\d{2}))?(?:_.*)?$",
+    re.IGNORECASE,
+)
+
+
+def _file_mtime(path: Path) -> float:
+    try:
+        return float(path.stat().st_mtime)
+    except OSError:
+        return 0.0
+
+
+def _all_dates_in_stem(stem: str) -> List:
+    out = []
+    for m in re.finditer(r"\b(\d{2}-\d{2}-\d{4})\b", stem):
+        d = _parse_snapshot_date(m.group(1))
+        if d is not None:
+            out.append(d)
+    for m in re.finditer(r"\b(\d{2})_(\d{2})_(\d{4})\b", stem):
+        d = _parse_snapshot_date(f"{m.group(1)}-{m.group(2)}-{m.group(3)}")
+        if d is not None:
+            out.append(d)
+    for m in re.finditer(r"\b(\d{4}-\d{2}-\d{2})\b", stem):
+        d = _parse_snapshot_date(m.group(1))
+        if d is not None:
+            out.append(d)
+    return out
+
+
+def _max_date_in_stem(stem: str):
+    ds = _all_dates_in_stem(stem)
+    return max(ds) if ds else None
+
+
+def _one_c_snapshot_sort_key(stem: str):
+    m = _ONE_C_STEM_RE.match(stem.lower())
+    if not m:
+        return None
+    d = _parse_snapshot_date(m.group(1))
+    if d is None:
+        return None
+    hhmm = m.group(2) or "00-00"
+    return (d, hhmm)
+
+
+def _generic_stem_family(stem: str) -> str:
+    k = stem.lower()
+    k = re.sub(r"\d{2}-\d{2}-\d{4}", "*", k)
+    k = re.sub(r"\d{2}_\d{2}_\d{4}", "*", k)
+    k = re.sub(r"\d{4}-\d{2}-\d{2}", "*", k)
+    return k
+
+
+def _tessa_kind_key(stem: str) -> str:
+    s = stem.lower()
+    if "_task" in s or "tasks" in s:
+        return "task"
+    if "_rd" in s:
+        return "rd"
+    if "_id" in s:
+        return "id"
+    return "other"
+
+
+def _msp_project_bucket(stem: str) -> Optional[str]:
+    s = stem.lower().replace(".csv", "")
+    if not (s.startswith("msp_") or s.startswith("msp-")):
+        return None
+    parts = s.split("_")
+    if len(parts) < 3:
+        return s
+    return "_".join(parts[1:-1]).lower()
+
+
+def pick_latest_snapshot_files(files: List[Dict]) -> Tuple[List[Dict], List[str]]:
+    """
+    Оставляет только последние выгрузки по дате в имени файла (и времени снимка для JSON 1С).
+
+    - JSON 1С с префиксом 1с_/1c_/…: один актуальный снимок (максимум пары дата + HH-MM).
+    - TESSA: отдельно последний файл для task / rd / id / прочее.
+    - MSP: по корню имени проекта — файл с максимальной датой в имени.
+    - Остальные имена с распознанной датой: группа по шаблону без дат — файл с max датой.
+    - Без даты в имени — без изменений.
+    """
+    from datetime import date as dt_date
+
+    warns: List[str] = []
+    if not files:
+        return [], warns
+
+    passthrough: List[Dict] = []
+    one_c: List[Dict] = []
+    tessa: List[Dict] = []
+    msp: List[Dict] = []
+    dated_other: List[Dict] = []
+
+    for f in files:
+        name = str(f.get("name") or "")
+        stem = Path(name).stem
+        nl = name.lower()
+
+        if nl.endswith(".json") and re.match(r"(?i)^(1с_|1c_|lc_|лк_|lk_)", stem):
+            one_c.append(f)
+            continue
+        if nl.startswith("tessa_"):
+            tessa.append(f)
+            continue
+        sl = stem.lower()
+        if sl.startswith("msp_") or sl.startswith("msp-"):
+            msp.append(f)
+            continue
+
+        if _max_date_in_stem(stem) is not None:
+            dated_other.append(f)
+            continue
+
+        passthrough.append(f)
+
+    kept: List[Dict] = []
+    kept_ids: set = set()
+
+    def _add(fitem: Dict) -> None:
+        pid = id(fitem["path"])
+        if pid not in kept_ids:
+            kept_ids.add(pid)
+            kept.append(fitem)
+
+    for f in passthrough:
+        _add(f)
+
+    keys_ok: List[Tuple[tuple, Dict]] = []
+    one_c_fallback: List[Dict] = []
+    for f in one_c:
+        sk = _one_c_snapshot_sort_key(Path(f["name"]).stem)
+        if sk is None:
+            one_c_fallback.append(f)
+        else:
+            keys_ok.append((sk, f))
+    if keys_ok:
+        best_k = max(k for k, _ in keys_ok)
+        for k, f in keys_ok:
+            if k == best_k:
+                _add(f)
+    for f in one_c_fallback:
+        dated_other.append(f)
+
+    buckets_t: Dict[str, List[Dict]] = {}
+    for f in tessa:
+        buckets_t.setdefault(_tessa_kind_key(Path(f["name"]).stem), []).append(f)
+    for lst in buckets_t.values():
+        rated = []
+        for f in lst:
+            stem = Path(f["name"]).stem
+            md = _max_date_in_stem(stem)
+            rated.append(((md or dt_date.min, _file_mtime(f["path"])), f))
+        best_f = max(rated, key=lambda x: x[0])[1]
+        _add(best_f)
+
+    buckets_m: Dict[str, List[Dict]] = {}
+    for f in msp:
+        stem = Path(f["name"]).stem
+        bk = _msp_project_bucket(stem) or stem.lower()
+        buckets_m.setdefault(str(bk), []).append(f)
+    for lst in buckets_m.values():
+        rated = []
+        for f in lst:
+            stem = Path(f["name"]).stem
+            md = _max_date_in_stem(stem)
+            rated.append(((md or dt_date.min, _file_mtime(f["path"])), f))
+        best_f = max(rated, key=lambda x: x[0])[1]
+        _add(best_f)
+
+    buckets_o: Dict[str, List[Dict]] = {}
+    for f in dated_other:
+        stem = Path(f["name"]).stem
+        ext = Path(f["name"]).suffix.lower()
+        fam = _generic_stem_family(stem) + "|" + ext
+        buckets_o.setdefault(fam, []).append(f)
+    for lst in buckets_o.values():
+        rated = []
+        for f in lst:
+            stem = Path(f["name"]).stem
+            md = _max_date_in_stem(stem)
+            rated.append(((md or dt_date.min, _file_mtime(f["path"])), f))
+        best_f = max(rated, key=lambda x: x[0])[1]
+        _add(best_f)
+
+    total_in = len(files)
+    total_kept = len(kept)
+    if total_kept < total_in:
+        warns.append(
+            f"Режим последних снимков: файлов было {total_in}, к загрузке оставлено {total_kept}. "
+            "Полная история (все даты в web/): переменная BI_ANALYTICS_WEB_LATEST_ONLY=0."
+        )
+
+    return kept, warns
+
+
 def scan_new_csv_demo_files(extensions: tuple = (".csv",)) -> List[Dict]:
     """
     Демо-файлы из new_csv/ — подмешиваются к загрузке из web/, чтобы локально
@@ -918,6 +1175,9 @@ def load_all_from_web() -> Dict:
         files = scan_web_files(extensions=(".csv", ".json")) + scan_new_csv_demo_files()
     files, dedupe_warns = _dedupe_scan_files_by_identity(files)
     result["warnings"].extend(dedupe_warns)
+    if web_load_latest_snapshots_only():
+        files, snap_warns = pick_latest_snapshot_files(files)
+        result["warnings"].extend(snap_warns)
     if not files:
         if ignore_demo_data_files():
             result["errors"].append(
@@ -1035,6 +1295,12 @@ def load_all_from_web() -> Dict:
                     ddf = _load_1c_json_spravochniki(filepath)
                     if ddf is not None and not ddf.empty:
                         ddf.attrs["data_type"] = "reference_dannye"
+                        file_type_rd = "reference_dannye"
+                        file_id = _register_file(
+                            cur, version_id, file_info, file_type_rd, len(ddf)
+                        )
+                        _save_rows(cur, version_id, file_id, file_type_rd, name, ddf)
+                        total_rows += len(ddf)
                         if st.session_state.get("reference_1c_dannye") is None:
                             st.session_state["reference_1c_dannye"] = ddf
                         else:
@@ -1402,6 +1668,21 @@ def _infer_file_type_by_name(file_name: str) -> str:
             return "reference_json"
         if "dannye" in sl or "данные" in sl:
             return "budget_json"
+        if _ref_prefix or sl.startswith("1c") or sl.startswith("1с"):
+            if any(
+                k in sl
+                for k in (
+                    "oborot",
+                    "оборот",
+                    "budget",
+                    "бюджет",
+                    "bdds",
+                    "бддс",
+                    "bdr",
+                    "бдр",
+                )
+            ):
+                return "budget_json"
         return "skip"
 
     return "unknown"
@@ -1551,6 +1832,20 @@ def read_version_to_session(version_id: int):
         st.session_state["tessa_tasks_data"] = tt
     elif st.session_state.get("tessa_tasks_data") is None:
         st.session_state["tessa_tasks_data"] = None
+
+    # ── Обороты 1С (dannye / бюджетные JSON): в БД как reference_dannye ───────
+    rd_ref = _load_version_data(version_id, "reference_dannye")
+    if rd_ref is not None and not rd_ref.empty:
+        st.session_state["reference_1c_dannye"] = rd_ref
+        try:
+            st.session_state["reference_partner_to_project"] = (
+                _build_partner_project_map_from_dannye(rd_ref)
+            )
+        except Exception:
+            st.session_state["reference_partner_to_project"] = None
+    else:
+        st.session_state["reference_1c_dannye"] = None
+        st.session_state["reference_partner_to_project"] = None
 
     # ── Справочники (KrStates / DocStates) ────────────────────────────────
     # Загружаются из CSV при load_all_from_web(), не из БД;

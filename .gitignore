@@ -5,9 +5,13 @@ _visual_check_out/
 # Локальный журнал правок (не публиковать)
 PRAVKI_HOD_RABOT.md
 
-# Cursor / локальные сессии (не в origin)
-.cursor/
-**/.cursor/
+# Cursor / локальные сессии (не в origin); правила агента — в репозитории
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/**
+**/.cursor/*
+!**/.cursor/rules/
+!**/.cursor/rules/**
 agent-transcripts/
 **/agent-transcripts/
 

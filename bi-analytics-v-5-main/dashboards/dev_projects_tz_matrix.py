@@ -166,13 +166,25 @@ def save_developer_projects_matrix_prefs_json(json_str: str, updated_by: str) ->
 def _guess_msp_project_slug_for_loader(df: pd.DataFrame) -> str:
     """
     Ключ для web_loader._apply_msp_column_mapping (MSP_PROJECT_NAME_MAP / имя файла):
-    из первой непустой ячейки проекта или пустая строка.
+    по имени файла msp_<slug>_… при наличии в attrs, иначе из первой ячейки колонки проекта.
     """
+    try:
+        fn = str(df.attrs.get("file_name") or "").strip()
+    except Exception:
+        fn = ""
+    if fn:
+        base = fn.replace("\\", "/").split("/")[-1]
+        low = base.lower()
+        if low.startswith("msp_") and low.endswith(".csv"):
+            stem = base[:-4]
+            parts = stem.split("_")
+            if len(parts) >= 2 and parts[1].strip():
+                return parts[1].strip().lower()
     try:
         from config import MSP_PROJECT_NAME_MAP as M
     except Exception:
         M = {}
-    pc = _find_col(df, ["project name", "Проект", "Project", "проект", "ID_проекта"])
+    pc = _find_col(df, ["project name", "Проект", "Project", "проект"])
     if not pc or pc not in df.columns:
         return ""
     s = df[pc].dropna().astype(str).str.strip()
@@ -221,6 +233,17 @@ def ensure_msp_df_for_dev_matrix(df: pd.DataFrame) -> pd.DataFrame:
             out = _control_points_prepare_msp_dates(out)
     else:
         out = _control_points_prepare_msp_dates(out)
+    try:
+        from web_loader import _coerce_msp_project_name_from_file_if_needed
+        from config import MSP_PROJECT_NAME_MAP
+
+        slug = (_guess_msp_project_slug_for_loader(out) or "").strip().lower()
+        if slug:
+            ru_from_file = str(MSP_PROJECT_NAME_MAP.get(slug, slug)).strip()
+            if ru_from_file:
+                out = _coerce_msp_project_name_from_file_if_needed(out, ru_from_file)
+    except Exception:
+        pass
     return out
 
 
@@ -414,10 +437,14 @@ def _delta_days_plan_minus_fact(plan_d: Any, fact_d: Any) -> Optional[int]:
 def _fmt_delta_days(d: Optional[int]) -> str:
     if d is None:
         return "Н/Д"
-    if d == 0:
+    try:
+        di = int(d)
+    except (TypeError, ValueError):
+        return "Н/Д"
+    if di == 0:
         return "0 дн."
-    sign = "+" if d > 0 else ""
-    return f"{sign}{d} дн."
+    sign = "+" if di > 0 else ""
+    return f"{sign}{di} дн."
 
 
 _OTKL_DAYS_DISPLAY_RE = re.compile(r"([+-]?\d+)\s*дн", re.IGNORECASE)
@@ -434,7 +461,8 @@ def _parse_otkl_days_display(s: Any) -> Optional[int]:
     if not m:
         return None
     try:
-        return int(m.group(1))
+        v = int(m.group(1))
+        return v
     except ValueError:
         return None
 
@@ -1085,7 +1113,7 @@ def dedupe_msp_for_developer_projects(df: pd.DataFrame) -> pd.DataFrame:
             continue
         out = _dedupe_by_id_nonempty(out, id_c).reset_index(drop=True)
         return out
-    pc = _find_col(out, ["project name", "Проект", "Project", "проект", "ID_проекта"])
+    pc = _find_col(out, ["project name", "Проект", "Project", "проект"])
     tc = _task_name_col(out)
     if pc and tc and pc in out.columns and tc in out.columns:
         return out.drop_duplicates(subset=[pc, tc], keep="first").reset_index(drop=True)
@@ -1192,7 +1220,13 @@ def build_dev_tz_matrix_rows(
             "Аренда ЗУ",
             {
                 "level": 5.0,
-                "name_contains": "Регистрация договора субаренды",
+                # ТЗ (редакции): «Регистрация договора субаренды» и «Подготовка договора аренды».
+                "names_any": [
+                    "Регистрация договора субаренды",
+                    "Подготовка договора аренды",
+                    "договор субаренды",
+                    "субаренд",
+                ],
                 "phase_needles": [
                     "Аренда ЗУ",
                     "субаренд",
@@ -1947,7 +1981,7 @@ def render_dev_tz_matrix(
 
 # ── Контрольные точки (Сроки / макет file-009): проекты × вехи ───────────────
 
-# Вехи «Контрольные точки»: оранжевая подсветка План/Факт/Откл. при % выполнения ≠ 100% (ТЗ, правки 1).
+# Вехи «Контрольные точки»: доп. оранжевая подсветка ячеек при % ≠ 100% только для ГПЗУ / Экспертизы стадии П.
 CONTROL_POINTS_ORANGE_PCT_SLUGS: frozenset = frozenset({"gpzu", "exp_pd"})
 
 
@@ -1987,6 +2021,8 @@ CONTROL_POINT_MILESTONES: List[Tuple[str, str, dict]] = [
         {
             "level": 5.0,
             "names_any": [
+                "КОД_ОТКР_ФИНАНС",
+                "КОД ОТКР ФИНАНС",
                 "КОД, ОТКР. ФИНАНС.",
                 "КОД ОТКР. ФИНАНС.",
                 "ОТКР. ФИНАНС.",
@@ -2221,7 +2257,7 @@ def _one_milestone_cell(rows: pd.DataFrame) -> Tuple[str, str, str, bool, bool]:
     """
     План = базовое окончание (base end), Факт = «Окончание» (plan end после загрузки MSP).
     Откл. = План − Факт (календарные дни), как в матрице девелоперских проектов.
-    Пятый элемент — подсветка по % выполнения (не 100% при известном %).
+    Пятый элемент — подсветка по % выполнения у строки-представителя вехи (не 100% при известном %).
     """
     if rows is None or rows.empty:
         return "Н/Д", "Н/Д", "Н/Д", False, False
@@ -2231,7 +2267,8 @@ def _one_milestone_cell(rows: pd.DataFrame) -> Tuple[str, str, str, bool, bool]:
     else:
         r = rows.iloc[0]
     pdt, fdt, pct = _msp_plan_fact_pct(r)
-    # Для оранжевого статуса достаточно, чтобы в любой строке вехи % был задан и < 100.
+    # Предупреждение по % — только по строке-представителе вехи (та же, что даёт План/Факт),
+    # иначе при нескольких совпадениях под одну веху «оранжевый» статус липнет ко всем столбцам.
     def _row_has_pct_lt_100(rr: pd.Series) -> bool:
         if "pct complete" not in rr.index:
             return False
@@ -2243,14 +2280,10 @@ def _one_milestone_cell(rows: pd.DataFrame) -> Tuple[str, str, str, bool, bool]:
             return False
         return _is_pct_complete_not_100(v)
 
-    warn_pct = False
     try:
-        for _, _rr in rows.iterrows():
-            if _row_has_pct_lt_100(_rr):
-                warn_pct = True
-                break
+        warn_pct = bool(_row_has_pct_lt_100(r))
     except Exception:
-        warn_pct = _is_pct_complete_not_100(pct)
+        warn_pct = bool(_is_pct_complete_not_100(pct))
     pl = _fmt_date_ru(pdt)
     fl = _fmt_date_ru(fdt)
     if pd.isna(pdt) or pd.isna(fdt):
@@ -2354,11 +2387,23 @@ _CONTROL_POINTS_CSS = """
 .cp-group-start {
   border-left: 2px solid rgba(190, 214, 242, 0.8) !important;
 }
-/* ГПЗУ / Экспертиза стадии П: % выполнения в MSP ≠ 100% — «рыжая» подсветка значения */
+/* ТЗ «СРОКИ»: при % выполнения ≠ 100% — полужирный текст во всех вехах */
+.cp-td-pct-bold {
+  font-weight: 700 !important;
+}
+/* ГПЗУ / Экспертиза стадии П: дополнительно «рыжая» подсветка (согласованные правки) */
 .cp-td-warn {
   background: rgba(234, 88, 12, 0.38) !important;
   color: #fff7ed !important;
   font-weight: 600;
+}
+.cp-td-warn.cp-td-pct-bold {
+  font-weight: 700 !important;
+}
+/* Просрочка по План−Факт (отрицательные дни в «Откл.») — красный текст по макету ТЗ */
+.cp-otkl-late {
+  color: #f87171 !important;
+  font-weight: 700 !important;
 }
 .cp-status-cell { text-align: center; vertical-align: middle; }
 .cp-status-dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; vertical-align: middle; }
@@ -2449,27 +2494,55 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
         cells = [f'<td class="cp-col-project">{esc(str(r.get("project", "")))}</td>']
         for _t, slug in ms_specs:
             _is_orange_milestone = _is_orange_pct_milestone(slug, _t)
-            owarn = _is_orange_milestone and bool(r.get(f"{slug}_warn_pct"))
-            wc_plan = ' class="cp-td-warn cp-group-start"' if owarn else ' class="cp-group-start"'
-            wc_other = ' class="cp-td-warn"' if owarn else ""
-            cells.append(f"<td{wc_plan}>{esc(str(r.get(f'{slug}_plan', '')))}</td>")
-            cells.append(f"<td{wc_other}>{esc(str(r.get(f'{slug}_fact', '')))}</td>")
-            cells.append(f"<td{wc_other}>{esc(str(r.get(f'{slug}_otkl', '')))}</td>")
+            pct_inc = bool(r.get(f"{slug}_warn_pct"))
+            owarn = _is_orange_milestone and pct_inc
             m_ok = bool(r.get(f"{slug}_ok", False))
-            # A1: для ГПЗУ/Экспертизы стадии П при % < 100 статус должен быть оранжевым.
-            if owarn:
-                st_cls = "cp-status-warn"
-                tip = "В MSP для задачи «% выполнения» указано не 100% (вехи ГПЗУ / Экспертиза стадии П)"
-                al = "Незавершено по %"
-            elif not m_ok:
+            # Оранжевая подсветка — только для ГПЗУ/Экспертизы и только если по датам норма.
+            pct_warn_cells = owarn and m_ok
+            otkl_txt = str(r.get(f"{slug}_otkl", "") or "")
+            _od = _parse_otkl_days_display(otkl_txt)
+            otk_late = _od is not None and _od < 0
+            plan_parts = ["cp-group-start"]
+            fact_parts: List[str] = []
+            otkl_parts: List[str] = []
+            if pct_inc:
+                plan_parts.append("cp-td-pct-bold")
+                fact_parts.append("cp-td-pct-bold")
+                otkl_parts.append("cp-td-pct-bold")
+            if pct_warn_cells:
+                plan_parts.append("cp-td-warn")
+                fact_parts.append("cp-td-warn")
+                otkl_parts.append("cp-td-warn")
+            if otk_late:
+                otkl_parts.append("cp-otkl-late")
+            wc_plan = ' class="' + " ".join(plan_parts) + '"'
+            wc_fact = (' class="' + " ".join(fact_parts) + '"') if fact_parts else ""
+            wc_otkl = (' class="' + " ".join(otkl_parts) + '"') if otkl_parts else ""
+            cells.append(f"<td{wc_plan}>{esc(str(r.get(f'{slug}_plan', '')))}</td>")
+            cells.append(
+                f"<td{wc_fact}>{esc(str(r.get(f'{slug}_fact', '')))}</td>"
+                if wc_fact
+                else f"<td>{esc(str(r.get(f'{slug}_fact', '')))}</td>"
+            )
+            cells.append(
+                f"<td{wc_otkl}>{esc(otkl_txt)}</td>"
+                if wc_otkl
+                else f"<td>{esc(otkl_txt)}</td>"
+            )
+            # Индикатор «Статус» — только соблюдение сроков (зелёный/красный). Незавершённые по %
+            # подсвечиваются в ячейках План/Факт/Откл. (полужирный; для ГПЗУ/Экспертизы — фон).
+            if not m_ok:
                 st_cls = "cp-status-bad"
-                tip = "Отклонение по датам (План/Факт) или неполные даты"
-                al = "Отклонение по датам"
+                tip = "Отклонение по срокам (факт позже плана) или неполные даты."
+                al = "Отклонение по срокам"
             else:
                 st_cls = "cp-status-ok"
-                tip = "Факт не позже плана (отклонение План−Факт ≥ 0); % выполнения — 100% или н/д"
-                al = "Норма"
-            st_extra = " cp-td-warn" if owarn else ""
+                tip = (
+                    "По срокам норма: факт не позже плана. Если в MSP «% выполнения» не 100%, "
+                    "смотрите полужирный текст и оранжевую подсветку в ячейках (для ГПЗУ и Экспертизы стадии П)."
+                )
+                al = "Норма по срокам"
+            st_extra = " cp-td-pct-bold" if pct_inc else ""
             cells.append(
                 f'<td class="cp-status-cell{st_extra}" title="{esc(tip)}">'
                 f'<span class="cp-status-dot {st_cls}" role="img" aria-label="{esc(al)}"></span></td>'

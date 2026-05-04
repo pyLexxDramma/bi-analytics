@@ -345,8 +345,10 @@ def load_data(uploaded_file, file_name: Optional[str] = None) -> Optional[pd.Dat
                 if alt in df.columns:
                     df["lot"] = df[alt]
                     break
+        # Не подставляем ID_проекта: в выгрузках MSP там построчные идентификаторы/штампы,
+        # из‑за чего «Контрольные точки» получают сотни ложных «проектов» и Н/Д.
         if "project name" not in df.columns:
-            for alt in ("Проект", "ID_проекта"):
+            for alt in ("Проект", "Project", "project"):
                 if alt in df.columns:
                     df["project name"] = df[alt]
                     break
