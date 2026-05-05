@@ -144,3 +144,7 @@ scripts/requirements-visual-audit.txt
 # Локальные одноразовые скрипты / черновики (не в репозиторий)
 _scan_bddcs.py
 dashboards/patch_pd_phase1.py
+
+# Локальные черновики и QA-артефакты (см. «Доп материалы/README.md»)
+Доп материалы/**
+!Доп материалы/README.md
