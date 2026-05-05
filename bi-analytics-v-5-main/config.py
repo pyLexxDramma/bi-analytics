@@ -3,6 +3,8 @@
 Единый источник для путей, констант и при необходимости переменных окружения.
 """
 import os
+import subprocess
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, FrozenSet, List, Optional
 
@@ -105,14 +107,94 @@ def get_extra_web_dirs_from_env() -> List[Path]:
     return out
 
 
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_falsy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("0", "false", "no", "off")
+
+
+@lru_cache(maxsize=1)
+def _git_current_branch() -> str:
+    """Текущая git-ветка приложения. Кешируется на процесс. На сервере без git вернёт ''."""
+    try:
+        br = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=str(BASE_PATH),
+            capture_output=True,
+            text=True,
+            timeout=1.5,
+        )
+        return (br.stdout or "").strip().lower()
+    except Exception:
+        return ""
+
+
+def is_release_client_mode() -> bool:
+    """
+    Единый предикат «клиентского релиза».
+
+    True, если выполнено ЛЮБОЕ из:
+
+    - ``BI_ANALYTICS_HIDE_DEV_DIAGNOSTICS=1`` — явный флаг для деплоя на хостинге без git
+      (Streamlit Cloud, Docker, systemd unit). Рекомендуется для production.
+    - ``BI_ANALYTICS_RELEASE_MODE=1`` — синоним явного флага.
+    - текущая git-ветка приложения = ``release`` — чтобы при работе из этой ветки локально
+      поведение совпадало с production.
+
+    Используется:
+    - ``project_visualization_app.py`` — скрытие dev-диагностики в UI.
+    - ``ignore_demo_data_files()`` — автоматически включает игнор sample_*/new_csv/.
+    """
+    if _env_truthy("BI_ANALYTICS_HIDE_DEV_DIAGNOSTICS"):
+        return True
+    if _env_truthy("BI_ANALYTICS_RELEASE_MODE"):
+        return True
+    return _git_current_branch() == "release"
+
+
+def is_dev_branch() -> bool:
+    """Текущая git-ветка = ``dev`` (или содержит «dev» в начале/как префикс)."""
+    br = _git_current_branch()
+    return br == "dev" or br.startswith("dev/") or br.startswith("dev-")
+
+
 def ignore_demo_data_files() -> bool:
     """
-    Прод/сервер: ``BI_ANALYTICS_IGNORE_DEMO=1`` (или ``true``/``yes``/``on``) —
-    не подмешивать демо из ``new_csv/`` рядом с приложением и не учитывать
-    ``sample_*.csv`` и файлы в каталогах ``new_csv/`` внутри ``web/`` и доп. путей.
+    Не подмешивать демо: каталог ``new_csv/`` рядом с приложением,
+    ``sample_*.csv`` и любые файлы в каталогах ``new_csv/`` внутри ``web/`` и доп. путей.
+
+    Приоритет источников решения (сверху → вниз, первый сработавший побеждает):
+
+    1. ``release``-режим (см. :func:`is_release_client_mode`) — на release демо
+       **всегда отключены**, никакие сессионные/env-переключатели не возвращают их.
+       Это аппаратное правило безопасности для клиентского деплоя.
+    2. Сессионный admin-тумблер ``st.session_state["_admin_demo_pref"]`` — действует
+       только в dev, ставится из сайдбара (`auth.render_sidebar_menu`):
+       - ``"include"`` → демо подмешиваются (вернёт ``False``);
+       - ``"ignore"``  → демо игнорируются (вернёт ``True``).
+    3. ``BI_ANALYTICS_INCLUDE_DEMO=1`` (env) → ``False``.
+    4. ``BI_ANALYTICS_IGNORE_DEMO=1`` (env) → ``True``.
+    5. Дефолт по ветке: dev → ``False`` (демо для UI-тестов), любые другие → ``False``.
     """
-    v = os.environ.get("BI_ANALYTICS_IGNORE_DEMO", "").strip().lower()
-    return v in ("1", "true", "yes", "on")
+    if is_release_client_mode():
+        return True
+    try:
+        import streamlit as st  # type: ignore
+
+        pref = str(st.session_state.get("_admin_demo_pref", "") or "").strip().lower()
+        if pref == "ignore":
+            return True
+        if pref == "include":
+            return False
+    except Exception:
+        pass
+    if _env_truthy("BI_ANALYTICS_INCLUDE_DEMO"):
+        return False
+    if _env_truthy("BI_ANALYTICS_IGNORE_DEMO"):
+        return True
+    return False
 
 
 def web_load_latest_snapshots_only() -> bool:

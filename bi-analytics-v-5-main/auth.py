@@ -660,6 +660,39 @@ def render_sidebar_menu(current_page: str = "reports"):
 
         # F2: встроенная навигация Streamlit скрыта.
 
+        # ── Admin-only тумблер «Демо-данные» (только в dev, на release недоступно) ──
+        try:
+            from config import is_release_client_mode as _cfg_is_release
+            from config import ignore_demo_data_files as _cfg_ignore_demo
+            _is_release = bool(_cfg_is_release())
+        except Exception:
+            _is_release = False
+            _cfg_ignore_demo = lambda: False  # type: ignore[assignment]
+        if not _is_release and has_admin_access(user.get("role", "")):
+            st.markdown("---")
+            st.markdown(
+                '<p class="sidebar-section-title">Dev-инструменты</p>',
+                unsafe_allow_html=True,
+            )
+            _demo_now_on = not bool(_cfg_ignore_demo())
+            _new_val = st.toggle(
+                "Подмешивать демо-данные",
+                value=_demo_now_on,
+                key="_admin_demo_toggle",
+                help=(
+                    "Демо: sample_*.csv и файлы из new_csv/. Включён — подмешиваются "
+                    "при загрузке из web/. Выключен — игнорируются (как на release). "
+                    "Только для admin/superadmin на dev. На release недоступно."
+                ),
+            )
+            _prev_pref = str(st.session_state.get("_admin_demo_pref", "") or "")
+            _new_pref = "include" if _new_val else "ignore"
+            if _new_pref != _prev_pref:
+                st.session_state["_admin_demo_pref"] = _new_pref
+                st.session_state["_pending_web_folder_load"] = True
+                st.cache_data.clear()
+                st.rerun()
+
         # 3. Выход (для всех ролей)
         st.markdown("---")
 

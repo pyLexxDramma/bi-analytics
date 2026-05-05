@@ -559,20 +559,13 @@ def main():
     ensure_data_session_state()
 
     def _is_release_client_mode() -> bool:
-        if os.environ.get("BI_ANALYTICS_HIDE_DEV_DIAGNOSTICS", "").strip().lower() in ("1", "true", "yes", "on"):
-            return True
         try:
-            br = subprocess.run(
-                ["git", "branch", "--show-current"],
-                cwd=str(_app_dir),
-                capture_output=True,
-                text=True,
-                timeout=1.5,
-            )
-            branch = (br.stdout or "").strip().lower()
-            return branch == "release"
+            from config import is_release_client_mode as _cfg_is_release
+            return bool(_cfg_is_release())
         except Exception:
-            return False
+            return os.environ.get(
+                "BI_ANALYTICS_HIDE_DEV_DIAGNOSTICS", ""
+            ).strip().lower() in ("1", "true", "yes", "on")
 
     def _read_deeplink_params() -> dict:
         """
@@ -620,8 +613,19 @@ def main():
     # Переключатель режима источника данных
     data_mode_options = ["Загрузить вручную", "Из папки web/", "FTP → web/"]
     if _is_release_client_mode():
-        # Без ручной загрузки; FTP — для обновления данных на стороне клиента.
-        data_mode_options = ["Из папки web/", "FTP → web/"]
+        # На release: ручная загрузка убрана для обычных пользователей
+        # (грузит файл только в session_state — клиент путается, куда «делись» данные).
+        # Админу/суперадмину оставляем «Загрузить вручную» как страховку,
+        # если FTP/web/ недоступны и нужно срочно подсунуть свежий MSP/1С/TESSA.
+        try:
+            _u = get_current_user()
+            _is_admin = bool(_u and has_admin_access(_u.get("role", "")))
+        except Exception:
+            _is_admin = False
+        if _is_admin:
+            data_mode_options = ["Из папки web/", "FTP → web/", "Загрузить вручную"]
+        else:
+            data_mode_options = ["Из папки web/", "FTP → web/"]
 
     def _queue_web_folder_load_on_mode_change():
         try:
@@ -694,14 +698,16 @@ def main():
             except Exception:
                 pass
 
-            for w in result.get("warnings", []):
-                st.warning(w)
+            _release_quiet = _is_release_client_mode()
+            if not _release_quiet:
+                for w in result.get("warnings", []):
+                    st.warning(w)
 
             if result["errors"]:
                 st.warning(f"Загружено: {result['loaded']}, пропущено: {result['skipped']}")
                 for err in result["errors"]:
                     st.error(err)
-            else:
+            elif not _release_quiet:
                 st.success(f"Загружено файлов: {result['loaded']}")
             try:
                 from logger import log_action
@@ -714,9 +720,10 @@ def main():
                     )
             except Exception:
                 pass
-            with st.expander("Справка: колонки загрузки из web/", expanded=False):
-                for row in result.get("diagnostics", [])[:40]:
-                    st.json(row)
+            if not _release_quiet:
+                with st.expander("Справка: колонки загрузки из web/", expanded=False):
+                    for row in result.get("diagnostics", [])[:40]:
+                        st.json(row)
 
             st.rerun()
 
@@ -814,15 +821,17 @@ def main():
                             st.session_state["web_version_pick_id"] = int(_na_ftp)
                     except Exception:
                         pass
-                    for w in result.get("warnings", []):
-                        st.warning(w)
+                    _release_quiet_ftp = _is_release_client_mode()
+                    if not _release_quiet_ftp:
+                        for w in result.get("warnings", []):
+                            st.warning(w)
                     if result.get("errors"):
                         st.warning(
                             f"Загружено: {result['loaded']}, пропущено: {result['skipped']}"
                         )
                         for err in result["errors"]:
                             st.error(err)
-                    else:
+                    elif not _release_quiet_ftp:
                         st.success(f"В БД загружено файлов: {result['loaded']}")
                     try:
                         from logger import log_action
@@ -835,9 +844,10 @@ def main():
                             )
                     except Exception:
                         pass
-                    with st.expander("Справка: колонки загрузки (первые файлы)", expanded=False):
-                        for row in result.get("diagnostics", [])[:40]:
-                            st.json(row)
+                    if not _release_quiet_ftp:
+                        with st.expander("Справка: колонки загрузки (первые файлы)", expanded=False):
+                            for row in result.get("diagnostics", [])[:40]:
+                                st.json(row)
                     st.rerun()
 
         col1, col2 = st.columns([1, 3])
