@@ -389,25 +389,92 @@ def _series_first_value(row: pd.Series, col: str) -> Any:
     return v
 
 
-def _is_pct_complete_not_100(pct: Any) -> bool:
-    """ТЗ «Контрольные точки»: узкий шрифт значения ячейки, если «% выполнения» задан и не равен 100%."""
+def _msp_row_date_completeness(row: pd.Series) -> float:
+    """
+    Оценка полноты дат для дедупликации (проект×задача): приоритет строке с План/Факт (base/plan end),
+    иначе дедуп оставлял первую пустую строку — в матрице веха уходила в «Н/Д» при наличии данных в Excel.
+    """
+    be = _series_first_value(row, "base end")
+    pe = _series_first_value(row, "plan end")
+    if pd.isna(be) and pd.isna(pe):
+        return 0.0
+    if pd.isna(be) or pd.isna(pe):
+        return 1.0
+    return 2.0
+
+
+def _dev_tz_pct_complete_series(df: pd.DataFrame, col: str = "pct complete") -> Optional[pd.Series]:
+    """Одна серия колонки процента (при дублях имён — первый столбец)."""
+    if df is None or getattr(df, "empty", True) or col not in df.columns:
+        return None
+    ser = df[col]
+    if isinstance(ser, pd.DataFrame):
+        ser = ser.iloc[:, 0]
+    return ser if isinstance(ser, pd.Series) else None
+
+
+def _pct_scale_max_from_frame(ref: Optional[pd.DataFrame], col: str = "pct complete") -> Optional[float]:
+    """
+    Max сырого процента по столбцу (после strip % / запятая), как в _parse_msp_percent_complete_series.
+    Нужен, чтобы отличить доли 0..1 от шкалы 0..100 без ошибки «1% → 100%».
+    """
+    ser = _dev_tz_pct_complete_series(ref, col=col) if ref is not None else None
+    if ser is None or ser.empty:
+        return None
+    t = ser.astype(str).str.strip()
+    t = t.str.replace("\xa0", "", regex=False).str.replace("\u200b", "", regex=False)
+    t = t.str.replace("%", "", regex=False).str.replace(",", ".", regex=False)
+    num = pd.to_numeric(t, errors="coerce")
+    v = num.dropna()
+    if v.empty:
+        return None
+    return float(v.max())
+
+
+def _normalized_pct_0_100(pct: Any, *, pct_scale_max: Any = None) -> Optional[float]:
+    """Возвращает число в шкале 0..100+ или None; логика согласована с _is_pct_complete_not_100."""
     if pct is None:
-        return False
+        return None
     try:
         if isinstance(pct, float) and pd.isna(pct):
-            return False
+            return None
     except (TypeError, ValueError):
-        return False
+        return None
     s = str(pct).strip().replace("%", "").replace(" ", "").replace(",", ".")
     if not s or s.lower() in ("nan", "none", "nat"):
-        return False
+        return None
     try:
         v = float(s)
     except (TypeError, ValueError):
-        return False
-    # Некоторые выгрузки дают долю 0..1 вместо процентов 0..100.
-    if 0.0 <= v <= 1.0:
+        return None
+    sm: Optional[float] = None
+    if pct_scale_max is not None:
+        try:
+            if isinstance(pct_scale_max, float) and pd.isna(pct_scale_max):
+                sm = None
+            else:
+                sm = float(pct_scale_max)
+        except (TypeError, ValueError):
+            sm = None
+    if sm is not None and sm <= 1.000001:
         v = v * 100.0
+    elif sm is None:
+        if 0.0 <= v <= 1.0:
+            v = v * 100.0
+    return float(v)
+
+
+def _is_pct_complete_not_100(pct: Any, *, pct_scale_max: Any = None) -> bool:
+    """
+    ТЗ «Контрольные точки»: оранжевый акцент, если % задан и в интервале (0, 100); 0% и 100% — без акцента.
+
+    pct_scale_max — max сырого «pct complete» по тому же ref-датафрейму, что и _pct_scale_max_from_frame.
+    """
+    v = _normalized_pct_0_100(pct, pct_scale_max=pct_scale_max)
+    if v is None:
+        return False
+    if abs(v) <= 1e-3:
+        return False
     return abs(v - 100.0) > 1e-3
 
 
@@ -581,6 +648,14 @@ def _match_msp(
     nm = _task_name_col(out)
     if nm is None:
         return out.iloc[0:0].copy()
+    _nm_clean = (
+        out[nm]
+        .astype(str)
+        .str.replace("\xa0", " ", regex=False)
+        .str.replace("\u200b", "", regex=False)
+        .str.replace("\ufeff", "", regex=False)
+        .str.strip()
+    )
     lvl = _level_series(out)
     if level is not None and lvl.notna().any():
         out = out[lvl == float(level)]
@@ -602,16 +677,19 @@ def _match_msp(
     if names_any:
         for needle in names_any:
             if needle:
-                name_masks.append(out[nm].astype(str).str.contains(str(needle), **_lit))
+                nd = str(needle).replace("\xa0", " ").strip()
+                name_masks.append(_nm_clean.loc[out.index].str.contains(nd, **_lit))
     if names_exact_any:
-        nv = out[nm].astype(str).str.strip().str.casefold()
+        nv = _nm_clean.loc[out.index].str.casefold()
         for xs in names_exact_any:
             if xs is None or str(xs).strip() == "":
                 continue
             xf = str(xs).strip().casefold()
             name_masks.append(nv.eq(xf))
     if name_contains:
-        name_masks.append(out[nm].astype(str).str.contains(str(name_contains), **_lit))
+        name_masks.append(
+            _nm_clean.loc[out.index].str.contains(str(name_contains), **_lit)
+        )
     if name_masks:
         mm_nm = name_masks[0]
         for xm in name_masks[1:]:
@@ -1278,7 +1356,9 @@ def dedupe_msp_for_developer_projects(df: pd.DataFrame) -> pd.DataFrame:
     pc = _find_col(out, ["project name", "Проект", "Project", "проект"])
     tc = _task_name_col(out)
     if pc and tc and pc in out.columns and tc in out.columns:
-        return out.drop_duplicates(subset=[pc, tc], keep="first").reset_index(drop=True)
+        _score = out.apply(_msp_row_date_completeness, axis=1)
+        _ord = out.assign(_d=_score).sort_values(by="_d", ascending=False).drop(columns=["_d"])
+        return _ord.drop_duplicates(subset=[pc, tc], keep="first").reset_index(drop=True)
     if tc and tc in out.columns:
         return out.drop_duplicates(subset=[tc], keep="first").reset_index(drop=True)
     return out
@@ -1288,6 +1368,8 @@ def build_dev_tz_matrix_rows(
     mdf: pd.DataFrame,
     project_data: Optional[pd.DataFrame],
     ss: Any,
+    *,
+    project_label_for_scope: str = "",
 ) -> Tuple[List[Dict[str, Any]], str]:
     rows: List[Dict[str, Any]] = []
 
@@ -1296,6 +1378,21 @@ def build_dev_tz_matrix_rows(
     mdf = ensure_msp_df_for_dev_matrix(mdf)
     if mdf is None or getattr(mdf, "empty", True):
         return [], ""
+
+    # Один столбец матрицы = одна подпись проекта. Если в кадре смешаны сырые «Дмитровский» и «Дмитровский 1»
+    # (общий group key), без сужения вехи матчились по всем строкам и бралась задача «чужого» варианта имени.
+    plab = str(project_label_for_scope or "").strip()
+    if plab and "project name" in mdf.columns:
+        try:
+            pk_tgt = _norm_dev_project_key(plab)
+            if pk_tgt:
+                m_scoped = mdf[
+                    mdf["project name"].map(lambda x, pk=pk_tgt: _norm_dev_project_key(x) == pk)
+                ]
+                if m_scoped is not None and not getattr(m_scoped, "empty", True):
+                    mdf = m_scoped
+        except Exception:
+            pass
 
     # На всякий случай пересчитываем section из дерева (старые сессии/БД могли иметь ЛОТ вместо родителя ур.2)
     if mdf is not None and not getattr(mdf, "empty", True) and "task name" in mdf.columns:
@@ -1369,7 +1466,7 @@ def build_dev_tz_matrix_rows(
             add_row(group, lab, "Н/Д", "Н/Д", "Н/Д", phase=phase, row_key=row_key)
             return
         # ТЗ: в каждой ячейке План/Факт/Откл. — одно значение (одна дата / один текст отклонения), без «дата1 / дата2».
-        ps, fs, os, _ok, w = _one_milestone_cell(sub)
+        ps, fs, os, _ok, w = _one_milestone_cell(sub, pct_scale_ref=mdf)
         add_row(group, lab, ps, fs, os, warn_pct=bool(w), phase=phase, row_key=row_key)
 
     # Порядок столбцов — по референсу (file-002: вехи Ковенантов; file-003: ДС/ТЕССА до ИРД/ПОС)
@@ -1511,6 +1608,7 @@ def build_dev_tz_matrix_rows(
                 "level": 5.0,
                 "names_any": [
                     "Разрешение РС",
+                    "Разрешение на строительство РС",
                     "Разрешение на строительство (РС)",
                     "Разрешение на строительство",
                     "разрешение на строительство",
@@ -1524,6 +1622,7 @@ def build_dev_tz_matrix_rows(
                     ". РС",
                     " РС",
                     "Разрешение на строительство",
+                    "Разрешение на строительство РС",
                     "Инвестиционная. РС",
                     "инвестиционная. рс",
                     "Жизнь проекта. РС",
@@ -1920,6 +2019,10 @@ _DEV_TZ_MATRIX_CSS = """
   box-sizing: border-box;
   position: relative !important;
   top: auto !important;
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  max-width: none !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td {
   border: 1px solid rgba(200, 210, 225, 0.38) !important;
@@ -1962,9 +2065,16 @@ _DEV_TZ_MATRIX_CSS = """
   vertical-align: middle !important;
   font-size: 11px;
   font-weight: 800;
-  line-height: 1.25;
-  max-width: 9em;
-  padding: 5px 6px;
+  line-height: 1.35;
+  min-width: 6.5em;
+  max-width: none !important;
+  white-space: normal !important;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  hyphens: manual;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  padding: 6px 8px;
   color: #c9d1d9;
   background: rgba(26, 28, 35, 0.92) !important;
 }
@@ -1974,6 +2084,13 @@ _DEV_TZ_MATRIX_CSS = """
   font-size: 11px;
   font-weight: 500;
   color: #9aa4b2;
+  min-width: 4.5em;
+  max-width: none !important;
+  white-space: normal !important;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  overflow: visible !important;
+  text-overflow: clip !important;
   padding: 5px 6px;
   background: rgba(22, 24, 32, 0.95) !important;
 }
@@ -2067,6 +2184,90 @@ def _dev_tz_matrix_cell_classes(
         if dd is not None:
             parts.append("dev-tz-otkl-ok" if dd >= 0 else "dev-tz-otkl-bad")
     return " ".join(parts).strip()
+
+
+# Кнопка «на весь экран» в iframe-матрице — аналог панели Plotly (отчёт «Финансы»), Fullscreen API.
+_MATRIX_IFRAME_FULLSCREEN_SHELL_CSS = """
+.matrix-fs-root{display:flex;flex-direction:column;min-height:100%;width:100%}
+.matrix-fs-topbar{flex:0 0 auto;display:flex;justify-content:flex-end;align-items:center;
+  padding:2px 2px 6px 0;min-height:34px}
+.matrix-fs-btn{
+  box-sizing:border-box;width:32px;height:32px;margin:0;padding:0;
+  border:1px solid rgba(68,84,108,0.55);border-radius:2px;
+  background:rgba(35,43,56,0.96);color:#e8eef5;
+  cursor:pointer;font-size:17px;line-height:1;text-align:center;
+}
+.matrix-fs-btn:hover{background:rgba(55,65,82,0.98);color:#fff;border-color:rgba(121,154,192,0.55)}
+.matrix-fs-btn:focus-visible{outline:2px solid rgba(121,154,192,0.75);outline-offset:1px}
+.matrix-fs-body{flex:1 1 auto;min-height:0;width:100%}
+#matrix-fs-root:fullscreen,#matrix-fs-root:-webkit-full-screen{
+  background:#0e1520;padding:10px;box-sizing:border-box;
+  width:100vw!important;height:100vh!important;overflow:hidden!important;display:flex!important;flex-direction:column!important;
+}
+#matrix-fs-root:fullscreen .matrix-fs-body,#matrix-fs-root:-webkit-full-screen .matrix-fs-body{
+  flex:1 1 auto;min-height:0;overflow:hidden!important;
+}
+#matrix-fs-root:fullscreen .dev-tz-matrix-wrap,
+#matrix-fs-root:-webkit-full-screen .dev-tz-matrix-wrap,
+#matrix-fs-root:fullscreen .cp-table-wrap,
+#matrix-fs-root:-webkit-full-screen .cp-table-wrap{
+  max-height:calc(100vh - 64px)!important;overflow:auto!important;
+}
+"""
+
+_MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
+<script>
+(function(){
+  var root=document.getElementById("matrix-fs-root");
+  var btn=document.getElementById("matrix-fs-btn");
+  if(!root||!btn) return;
+  function active(){
+    return document.fullscreenElement===root||document.webkitFullscreenElement===root;
+  }
+  function sync(){
+    btn.textContent=active()?"\u2715":"\u26F6";
+    btn.setAttribute("title", active()?
+      "\u0412\u044b\u0439\u0442\u0438 \u0438\u0437 \u043f\u043e\u043b\u043d\u043e\u044d\u043a\u0440\u0430\u043d\u043d\u043e\u0433\u043e \u0440\u0435\u0436\u0438\u043c\u0430":
+      "\u041d\u0430 \u0432\u0435\u0441\u044c \u044d\u043a\u0440\u0430\u043d (\u043a\u0430\u043a \u0433\u0440\u0430\u0444\u0438\u043a\u0438 \u0424\u0438\u043d\u0430\u043d\u0441\u044b)");
+  }
+  btn.addEventListener("click",function(e){
+    e.preventDefault();
+    e.stopPropagation();
+    if(active()){
+      if(document.exitFullscreen) document.exitFullscreen();
+      else if(document.webkitExitFullscreen) document.webkitExitFullscreen();
+    }else{
+      (root.requestFullscreen||root.webkitRequestFullscreen||function(){}).call(root);
+    }
+  });
+  document.addEventListener("fullscreenchange",sync);
+  document.addEventListener("webkitfullscreenchange",sync);
+  sync();
+})();
+</script>
+"""
+
+
+def _matrix_iframe_html_document(head_styles: str, scroll_block_inner: str) -> str:
+    """
+    Полный HTML-документ для st.components.v1.html: матрица + кнопка полноэкранного режима.
+    ``scroll_block_inner`` — готовый блок с обёрткой (.dev-tz-matrix-wrap / .cp-table-wrap) и таблицей.
+    """
+    return (
+        '<!DOCTYPE html><html><head><meta charset="utf-8"><style>'
+        + head_styles
+        + _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS
+        + "</style></head><body>"
+        + '<div id="matrix-fs-root" class="matrix-fs-root">'
+        + '<div class="matrix-fs-topbar" role="toolbar" aria-label="Таблица">'
+        + '<button type="button" class="matrix-fs-btn" id="matrix-fs-btn" title="На весь экран">\u26F6</button>'
+        + "</div>"
+        + '<div class="matrix-fs-body">'
+        + scroll_block_inner
+        + "</div></div>"
+        + _MATRIX_IFRAME_FULLSCREEN_SCRIPT
+        + "</body></html>"
+    )
 
 
 def render_dev_tz_matrix(
@@ -2222,16 +2423,9 @@ html,body{margin:0;padding:0;background:transparent;overflow:hidden}
 """
     _n_rows = len(blocks)
     _iframe_h = max(260, 130 + _n_rows * 44)
-    _iframe_html = (
-        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><style>"
-        + _table_css_raw
-        + _dev_css_raw
-        + _sticky_css
-        + "</style></head><body>"
-        + '<div class="dev-tz-matrix-wrap">'
-        + html_tbl
-        + "</div></body></html>"
-    )
+    _head_styles = _table_css_raw + _dev_css_raw + _sticky_css
+    _scroll_block = '<div class="dev-tz-matrix-wrap">' + html_tbl + "</div>"
+    _iframe_html = _matrix_iframe_html_document(_head_styles, _scroll_block)
     _components.html(_iframe_html, height=_iframe_h, scrolling=False)
 
 
@@ -2305,7 +2499,16 @@ CONTROL_POINT_MILESTONES: List[Tuple[str, str, dict]] = [
         "rs",
         {
             "level": 5.0,
-            "names_any": ["Разрешение РС", "Разрешение на строительство (РС)", "Разрешение на строительство"],
+            "names_any": [
+                "Разрешение РС",
+                "Разрешение на строительство РС",
+                "Разрешение на строительство (РС)",
+                "Разрешение на строительство",
+                "разрешение на строительство",
+                "РС:",
+                "(РС)",
+                "РЗУ РС",
+            ],
             "parent_l2_contains": "Ковенанты",
         },
     ),
@@ -2509,10 +2712,19 @@ def _match_milestone_tasks(mdf: pd.DataFrame, kw: dict) -> pd.DataFrame:
     return _match_tasks_like_msp_row(mdf, kw)
 
 
-def _pick_representative_milestone_row(rows: pd.DataFrame) -> pd.Series:
+def _pick_representative_milestone_row(
+    rows: pd.DataFrame,
+    *,
+    pct_scale_max: Any = None,
+) -> pd.Series:
     """Строка-репрезентант вехи: приоритет задача с минимальным известным «% выполнения» (типичная просрочка/0%)."""
     if rows is None or getattr(rows, "empty", True):
         return rows.iloc[0]
+
+    def _both_dates_ok(rr: pd.Series) -> bool:
+        pdt, fdt, _p = _msp_plan_fact_pct(rr)
+        return (not pd.isna(pdt)) and (not pd.isna(fdt))
+
     if "pct complete" in rows.columns:
         best_ix = None
         best_val: float | None = None
@@ -2521,32 +2733,34 @@ def _pick_representative_milestone_row(rows: pd.DataFrame) -> pd.Series:
             if isinstance(raw, pd.Series):
                 raw2 = raw.dropna()
                 raw = raw2.iloc[0] if len(raw2) else np.nan
-            try:
-                if raw is None or (isinstance(raw, float) and pd.isna(raw)):
-                    continue
-            except (TypeError, ValueError):
+            nv = _normalized_pct_0_100(raw, pct_scale_max=pct_scale_max)
+            if nv is None:
                 continue
-            try:
-                s = str(raw).strip().replace("%", "").replace(" ", "").replace(",", ".")
-                if not s or s.lower() in ("nan", "none", "nat"):
-                    continue
-                val = float(s)
-                if 0.0 <= val <= 1.0:
-                    val = val * 100.0
-            except (TypeError, ValueError):
-                continue
-            if best_val is None or val < best_val:
-                best_val = val
+            if best_val is None or nv < best_val:
+                best_val = nv
                 best_ix = ix
         if best_ix is not None:
-            return rows.loc[best_ix]
+            cand = rows.loc[best_ix]
+            if _both_dates_ok(cand):
+                return cand
+            for _ix, rr in rows.iterrows():
+                if _both_dates_ok(rr):
+                    return rr
+            return cand
+    for _ix, rr in rows.iterrows():
+        if _both_dates_ok(rr):
+            return rr
     tc = _task_name_col(rows)
     if tc and tc in rows.columns:
         return rows.sort_values(by=tc).iloc[0]
     return rows.iloc[0]
 
 
-def _one_milestone_cell(rows: pd.DataFrame) -> Tuple[str, str, str, bool, bool]:
+def _one_milestone_cell(
+    rows: pd.DataFrame,
+    *,
+    pct_scale_ref: Optional[pd.DataFrame] = None,
+) -> Tuple[str, str, str, bool, bool]:
     """
     План = базовое окончание (base end), Факт = «Окончание» (plan end после загрузки MSP).
     Откл. = План − Факт (календарные дни), как в матрице девелоперских проектов.
@@ -2554,7 +2768,12 @@ def _one_milestone_cell(rows: pd.DataFrame) -> Tuple[str, str, str, bool, bool]:
     """
     if rows is None or rows.empty:
         return "Н/Д", "Н/Д", "Н/Д", False, False
-    r = _pick_representative_milestone_row(rows)
+    ref_for_scale = pct_scale_ref if pct_scale_ref is not None else rows
+    try:
+        pct_scale_max = _pct_scale_max_from_frame(ref_for_scale)
+    except Exception:
+        pct_scale_max = None
+    r = _pick_representative_milestone_row(rows, pct_scale_max=pct_scale_max)
     pdt, fdt, pct = _msp_plan_fact_pct(r)
     # Предупреждение по % — только по строке-представителе вехи (та же, что даёт План/Факт),
     # иначе при нескольких совпадениях под одну веху «оранжевый» статус липнет ко всем столбцам.
@@ -2564,15 +2783,15 @@ def _one_milestone_cell(rows: pd.DataFrame) -> Tuple[str, str, str, bool, bool]:
         v = rr["pct complete"]
         if isinstance(v, pd.Series):
             for _x in v.tolist():
-                if _is_pct_complete_not_100(_x):
+                if _is_pct_complete_not_100(_x, pct_scale_max=pct_scale_max):
                     return True
             return False
-        return _is_pct_complete_not_100(v)
+        return _is_pct_complete_not_100(v, pct_scale_max=pct_scale_max)
 
     try:
         warn_pct = bool(_row_has_pct_lt_100(r))
     except Exception:
-        warn_pct = bool(_is_pct_complete_not_100(pct))
+        warn_pct = bool(_is_pct_complete_not_100(pct, pct_scale_max=pct_scale_max))
     pl = _fmt_date_ru(pdt)
     fl = _fmt_date_ru(fdt)
     if pd.isna(pdt) or pd.isna(fdt):
@@ -2632,7 +2851,7 @@ def build_control_points_df(mdf: pd.DataFrame, *, hide_completed: bool = False) 
             m = _match_milestone_tasks(sub_m, kw)
             if hide_completed and (m is None or getattr(m, "empty", True)):
                 m = _match_milestone_tasks(sub, kw)
-            pl, fl, otk, ok, warn_pct = _one_milestone_cell(m)
+            pl, fl, otk, ok, warn_pct = _one_milestone_cell(m, pct_scale_ref=sub)
             rec[f"{slug}_plan"] = pl
             rec[f"{slug}_fact"] = fl
             rec[f"{slug}_otkl"] = otk
@@ -2784,7 +3003,7 @@ def _apply_control_points_msp_filters(
         if any(p in ordered for p in preferred_projects):
             ordered = [p for p in preferred_projects if p in ordered]
         opts = ["Все"] + ordered
-        from dashboards.filter_layout import filters_panel
+        from .ui_quiet import filters_panel
 
         with filters_panel(st):
             sel_proj = st.selectbox("Проект", opts, key="cp_msp_filter_project")
@@ -2943,16 +3162,9 @@ html,body{margin:0;padding:0;background:transparent;overflow:hidden}
 """
     _n_rows = len(view)
     _iframe_h = max(220, 110 + _n_rows * 38)
-    _iframe_html = (
-        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><style>"
-        + _table_css_raw
-        + _cp_css_raw
-        + _sticky_css
-        + "</style></head><body>"
-        + '<div class="rendered-table-wrap cp-table-wrap">'
-        + html_tbl
-        + "</div></body></html>"
-    )
+    _head_styles = _table_css_raw + _cp_css_raw + _sticky_css
+    _scroll_block = '<div class="rendered-table-wrap cp-table-wrap">' + html_tbl + "</div>"
+    _iframe_html = _matrix_iframe_html_document(_head_styles, _scroll_block)
     _components.html(_iframe_html, height=_iframe_h, scrolling=False)
     drop_ok = [
         c

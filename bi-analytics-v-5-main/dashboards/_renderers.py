@@ -17,8 +17,7 @@ from urllib.parse import urlencode
 
 from config import MSP_PROJECT_FILTER_EXCLUDE_NAMES, RUSSIAN_MONTHS
 
-from .ui_quiet import suppress_caption
-from dashboards.filter_layout import filters_panel, inject_unified_filters_css
+from .ui_quiet import inject_unified_filters_css, filters_panel, suppress_caption
 
 from dashboards.dev_projects_tz_matrix import (
     build_dev_tz_matrix_rows,
@@ -1404,15 +1403,13 @@ def _chart_caption_below(title: str) -> None:
     )
 
 
-# Единая конфигурация Plotly для всех графиков:
-# responsive=True — перерисовка при изменении размера окна браузера
-# displayModeBar — панель инструментов только при hover
+# Единая конфигурация Plotly для всех графиков (как на вкладке БДДС):
+# responsive, полная панель modebar (скачивание PNG, зум, панорама, сброс и т.д.).
 _PLOTLY_CONFIG = {
     "responsive": True,
     "displayModeBar": True,
     "displaylogo": False,
     "scrollZoom": True,
-    "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d"],
 }
 
 
@@ -1432,11 +1429,13 @@ def _series_is_non_numeric_non_date(x) -> bool:
 
 def _clamp_plotly_scroll_zoom_padding(fig: go.Figure) -> None:
     """
-    Уменьшает «пустые поля» при зуме колёсиком (scrollZoom):
-    - горизонтальные бары по датам (Gantt): ось X нельзя уводить далеко за пределы данных;
-    - категориальные оси у столбиков: без интерактивного «растягивания» категорий (пустые промежутки).
+    Ограничение по оси времени для горизонтальных bar по датам (Gantt и т.п.):
+    ось дат не уходит бесконечно в стороны при колёсике (scrollZoom).
 
-    Вызывается из render_chart для всех фигур — для остальных типов графиков обычно no-op.
+    Раньше здесь же выставлялся fixedrange для категориальных столбиковых графиков — из‑за этого
+    не работали режимы Pan / Zoom в панели Plotly; отключено.
+
+    Вызывается из render_chart — для остальных типов графиков обычно только no-op по датам.
     """
     try:
         traces = list(fig.data or [])
@@ -1446,34 +1445,18 @@ def _clamp_plotly_scroll_zoom_padding(fig: go.Figure) -> None:
         return
 
     date_points = []
-    has_h_bar = False
-    has_v_categorical_bar = False
 
     for tr in traces:
         if type(tr).__name__ != "Bar":
             continue
         orient = getattr(tr, "orientation", None) or "v"
         if orient == "h":
-            has_h_bar = True
             for arr in (getattr(tr, "x", None), getattr(tr, "base", None)):
                 if arr is None:
                     continue
                 s = pd.to_datetime(pd.Series(list(arr)), errors="coerce").dropna()
                 if not s.empty:
                     date_points.extend(s.tolist())
-        elif orient == "v" and _series_is_non_numeric_non_date(getattr(tr, "x", None)):
-            has_v_categorical_bar = True
-
-    if has_h_bar:
-        try:
-            fig.update_yaxes(fixedrange=True)
-        except Exception:
-            pass
-    if has_v_categorical_bar:
-        try:
-            fig.update_xaxes(fixedrange=True)
-        except Exception:
-            pass
 
     if len(date_points) < 1:
         return
@@ -11222,7 +11205,11 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                         height=420, margin=dict(l=10, r=10, t=60, b=40),
                     )
                     _fig_dyn.update_xaxes(tickformat="%m.%Y")
-                    st.plotly_chart(_fig_dyn, use_container_width=True)
+                    st.plotly_chart(
+                        _fig_dyn,
+                        use_container_width=True,
+                        config=dict(_PLOTLY_CONFIG),
+                    )
             except Exception as _e_dyn:
                 suppress_caption(f"Не удалось построить динамику окончания ПД/РД: {_e_dyn}")
 
@@ -23100,17 +23087,20 @@ def _dev_column_looks_like_date(col_name: str) -> bool:
 
 def _render_dev_detail_table(df, max_rows=500):
     """Детальная таблица по правкам: даты дд.мм.гггг или «Н/Д»; при % выполнения < 100 — оранжевый акцент (макет правок)."""
+    from dashboards.dev_projects_tz_matrix import _is_pct_complete_not_100, _pct_scale_max_from_frame
+
     show = df.head(max_rows).copy()
     pct_name = "% выполнения"
     esc = html_module.escape
+
+    pct_scale_max = _pct_scale_max_from_frame(show, col=pct_name) if pct_name in show.columns else None
 
     thead = "<thead><tr>" + "".join(f"<th>{esc(str(c))}</th>" for c in show.columns) + "</tr></thead>"
     body_parts = []
     for _, row in show.iterrows():
         pct_raw = row[pct_name] if pct_name in show.columns else None
         pct_num = pd.to_numeric(pct_raw, errors="coerce")
-        # По ТЗ: подсветка при % выполнения < 100 (не трогаем > 100 как «не завершено»)
-        warn = pd.notna(pct_num) and float(pct_num) < 100.0
+        warn = bool(_is_pct_complete_not_100(pct_raw, pct_scale_max=pct_scale_max))
         tr_o = '<tr class="dev-detail-row-warn">' if warn else "<tr>"
         tds = []
         for col in show.columns:
@@ -23160,8 +23150,6 @@ def dashboard_developer_projects(df):
     """
     Отчёт «Девелоперские проекты» — одна таблица: матрица контрольных точек по ТЗ.
     """
-    st.header("Девелоперские проекты")
-
     _dev_dash_seen = "_dev_projects_prev_dashboard_seen"
     cur_dash = str(st.session_state.get("current_dashboard", "") or "").strip()
     prev_seen = str(st.session_state.get(_dev_dash_seen, "") or "").strip()
@@ -23311,10 +23299,12 @@ def dashboard_developer_projects(df):
     export_project_names: list = []
 
     if sel_proj != "Все" or not project_col or uniq_proj_n <= 1:
+        plab_scope = str(sel_proj).strip() if (sel_proj and str(sel_proj).strip() != "Все") else ""
         rows_tz, cap_tz = build_dev_tz_matrix_rows(
             matrix_df,
             st.session_state.get("project_data"),
             st.session_state,
+            project_label_for_scope=plab_scope,
         )
         plab = str(cap_tz or "").strip()
         if (
@@ -23367,6 +23357,7 @@ def dashboard_developer_projects(df):
                 sub,
                 st.session_state.get("project_data"),
                 st.session_state,
+                project_label_for_scope=str(label or "").strip(),
             )
             blocks.append(rows_p)
             names.append(label)
@@ -24472,7 +24463,12 @@ def _render_project_schedule_barchart(df: pd.DataFrame) -> None:
         showlegend=False,
     )
     fig.update_xaxes(zeroline=True, zerolinewidth=1, zerolinecolor="rgba(148,163,184,0.6)")
-    st.plotly_chart(fig, use_container_width=True, key="bsched_fig")
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        key="bsched_fig",
+        config=dict(_PLOTLY_CONFIG),
+    )
 
     # Под графиком — компактная таблица топа.
     tbl_rows: List[Dict[str, Any]] = []
@@ -24584,7 +24580,12 @@ def _render_project_schedule_heatmap(df: pd.DataFrame) -> None:
         font=dict(color="#e6edf3", size=11),
         xaxis=dict(tickangle=-45),
     )
-    st.plotly_chart(fig, use_container_width=True, key="hmsched_fig")
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        key="hmsched_fig",
+        config=dict(_PLOTLY_CONFIG),
+    )
     suppress_caption(
         f"Цвет: красный — просрочка (Δ < 0), зелёный — опережение (Δ > 0). Шкала симметрична: ±{int(z_max)} дн."
     )
@@ -24764,7 +24765,12 @@ def _render_project_schedule_covenants(df: pd.DataFrame) -> None:
         ),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
-    st.plotly_chart(fig, use_container_width=True, key="cov_fig")
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        key="cov_fig",
+        config=dict(_PLOTLY_CONFIG),
+    )
 
     # Таблица: ковенанты / база / окончание / Δ.
     tbl = pd.DataFrame(

@@ -9,6 +9,7 @@ import streamlit as st
 import pandas as pd
 import os
 import subprocess
+from html import escape as _html_escape
 
 # # ← Новые импорты для теста
 # import datetime
@@ -543,8 +544,12 @@ def main():
             st.rerun()
         st.stop()
 
+    _dash_title = str(st.session_state.get("current_dashboard") or "").strip()
+    _h1_text = (
+        _html_escape(_dash_title) if _dash_title else "Панель аналитики проектов"
+    )
     st.markdown(
-        '<h1 class="main-header">Панель аналитики проектов</h1>',
+        f'<h1 class="main-header">{_h1_text}</h1>',
         unsafe_allow_html=True,
     )
 
@@ -680,6 +685,14 @@ def main():
 
             st.cache_data.clear()
             st.session_state.pop("web_version_id", None)
+            try:
+                from web_schema import get_active_version_id
+
+                _na = get_active_version_id()
+                if _na is not None:
+                    st.session_state["web_version_pick_id"] = int(_na)
+            except Exception:
+                pass
 
             for w in result.get("warnings", []):
                 st.warning(w)
@@ -793,6 +806,14 @@ def main():
                         st.session_state["last_data_contract"] = None
                     st.cache_data.clear()
                     st.session_state.pop("web_version_id", None)
+                    try:
+                        from web_schema import get_active_version_id as _gav_ftp
+
+                        _na_ftp = _gav_ftp()
+                        if _na_ftp is not None:
+                            st.session_state["web_version_pick_id"] = int(_na_ftp)
+                    except Exception:
+                        pass
                     for w in result.get("warnings", []):
                         st.warning(w)
                     if result.get("errors"):
@@ -830,15 +851,45 @@ def main():
         versions = get_all_versions()
 
         if versions:
-            version_labels = {
-                f"{v['created_at']}  |  файлов: {v['files_count']}, строк: {v['rows_count']}  {'✅' if v['is_active'] else ''}": v["id"]
-                for v in versions
-            }
-
+            # Опции — по id: стабильные подписи (без «✅» в ключе), иначе при смене active все строки
+            # пересобираются и selectbox теряет выбор.
             active_id = get_active_version_id()
-            active_label = next((k for k, v in version_labels.items() if v == active_id), list(version_labels.keys())[0])
-            selected_label = st.selectbox("Версия данных", list(version_labels.keys()), index=list(version_labels.keys()).index(active_label))
-            selected_version_id = version_labels[selected_label]
+            ids_ordered = [int(v["id"]) for v in versions]
+            by_id = {int(v["id"]): v for v in versions}
+
+            def _fmt_version_option(vid: int) -> str:
+                v = by_id.get(int(vid)) or {}
+                base = (
+                    f"{v.get('created_at', '')}  |  файлов: {v.get('files_count', 0)}, "
+                    f"строк: {v.get('rows_count', 0)}"
+                )
+                try:
+                    cur = get_active_version_id()
+                except Exception:
+                    cur = active_id
+                if cur is not None and int(vid) == int(cur):
+                    return f"{base}  ✅"
+                return base
+
+            if "web_version_pick_id" not in st.session_state:
+                st.session_state["web_version_pick_id"] = (
+                    int(active_id)
+                    if active_id is not None and int(active_id) in ids_ordered
+                    else ids_ordered[0]
+                )
+            elif int(st.session_state["web_version_pick_id"]) not in ids_ordered:
+                st.session_state["web_version_pick_id"] = (
+                    int(active_id)
+                    if active_id is not None and int(active_id) in ids_ordered
+                    else ids_ordered[0]
+                )
+
+            selected_version_id = st.selectbox(
+                "Версия данных",
+                ids_ordered,
+                format_func=_fmt_version_option,
+                key="web_version_pick_id",
+            )
 
             # Загружаем данные версии в session_state если ещё не загружены или версия сменилась
             if selected_version_id != st.session_state.get("web_version_id") or st.session_state.get("project_data") is None:
