@@ -174,9 +174,13 @@ def ignore_demo_data_files() -> bool:
        только в dev, ставится из сайдбара (`auth.render_sidebar_menu`):
        - ``"include"`` → демо подмешиваются (вернёт ``False``);
        - ``"ignore"``  → демо игнорируются (вернёт ``True``).
-    3. ``BI_ANALYTICS_INCLUDE_DEMO=1`` (env) → ``False``.
+    3. ``BI_ANALYTICS_INCLUDE_DEMO=1`` (env) → ``False`` (явное включение демо
+       для текущего процесса, например для UI-демонстрации).
     4. ``BI_ANALYTICS_IGNORE_DEMO=1`` (env) → ``True``.
-    5. Дефолт по ветке: dev → ``False`` (демо для UI-тестов), любые другие → ``False``.
+    5. **Дефолт**: ``True`` — демо игнорируются. Это «безопасный по умолчанию»
+       подход: разработчик видит данные так же, как клиент на release; чтобы
+       подмешать демо, admin явно включает тумблер в сайдбаре или задаётся
+       ``BI_ANALYTICS_INCLUDE_DEMO=1``.
     """
     if is_release_client_mode():
         return True
@@ -194,7 +198,7 @@ def ignore_demo_data_files() -> bool:
         return False
     if _env_truthy("BI_ANALYTICS_IGNORE_DEMO"):
         return True
-    return False
+    return True
 
 
 def web_load_latest_snapshots_only() -> bool:

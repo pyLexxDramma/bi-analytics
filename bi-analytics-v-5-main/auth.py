@@ -689,8 +689,28 @@ def render_sidebar_menu(current_page: str = "reports"):
             _new_pref = "include" if _new_val else "ignore"
             if _new_pref != _prev_pref:
                 st.session_state["_admin_demo_pref"] = _new_pref
-                st.session_state["_pending_web_folder_load"] = True
                 st.cache_data.clear()
+                # Прямая перезагрузка из web/ — гарантирует, что новая версия БД
+                # будет содержать (или не содержать) демо в соответствии с тумблером,
+                # без зависимости от того, на какой странице сейчас находится admin.
+                try:
+                    from web_loader import load_all_from_web
+                    from data_loader import ensure_data_session_state
+                    ensure_data_session_state()
+                    with st.spinner("Перечитываю web/ с новыми настройками демо…"):
+                        result = load_all_from_web()
+                    st.session_state["last_load_result"] = result
+                    st.session_state.pop("web_version_id", None)
+                    try:
+                        from web_schema import get_active_version_id as _gav
+                        _na = _gav()
+                        if _na is not None:
+                            st.session_state["web_version_pick_id"] = int(_na)
+                    except Exception:
+                        pass
+                except Exception as _e:
+                    st.warning(f"Не удалось перечитать web/ автоматически: {_e}")
+                st.session_state.pop("_pending_web_folder_load", None)
                 st.rerun()
 
         # 3. Выход (для всех ролей)

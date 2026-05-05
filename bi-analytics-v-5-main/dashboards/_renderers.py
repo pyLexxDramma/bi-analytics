@@ -23163,18 +23163,24 @@ def dashboard_developer_projects(df):
 
     work = df.copy()
 
-    src_col = next(
-        (c for c in ("__source_file", "source_file", "_source_file") if c in work.columns),
-        None,
-    )
-    if src_col is not None:
-        try:
-            _src_l = work[src_col].fillna("").astype(str).str.strip().str.lower()
-            _is_demo = _src_l.str.startswith("sample_") | _src_l.str.startswith("new_csv/sample_")
-            if _is_demo.any():
-                work = work[~_is_demo].reset_index(drop=True)
-        except Exception:
-            pass
+    try:
+        from config import ignore_demo_data_files as _cfg_ignore_demo
+        _drop_demo = bool(_cfg_ignore_demo())
+    except Exception:
+        _drop_demo = True
+    if _drop_demo:
+        src_col = next(
+            (c for c in ("__source_file", "source_file", "_source_file") if c in work.columns),
+            None,
+        )
+        if src_col is not None:
+            try:
+                _src_l = work[src_col].fillna("").astype(str).str.strip().str.lower()
+                _is_demo = _src_l.str.startswith("sample_") | _src_l.str.startswith("new_csv/sample_")
+                if _is_demo.any():
+                    work = work[~_is_demo].reset_index(drop=True)
+            except Exception:
+                pass
 
     def _find(possible):
         for name in possible:
