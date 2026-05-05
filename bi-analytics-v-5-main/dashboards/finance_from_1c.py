@@ -5,10 +5,57 @@
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
+
+
+def _turnover_article_has_lot_and_sublot(raw) -> bool:
+    """
+    ТЗ БДДС/БДР (1С): в расчёт включаются строки, где в «СтатьяОборотов» явно указаны
+    лот и подлот (или эквивалентные маркеры).
+    """
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return False
+    s = (
+        str(raw)
+        .replace("\xa0", " ")
+        .replace("\u200b", "")
+        .replace("\ufeff", "")
+        .strip()
+        .casefold()
+        .replace("ё", "е")
+    )
+    if not s:
+        return False
+    has_lot = ("лот" in s) or bool(re.search(r"\blots?\b", s))
+    if not has_lot:
+        return False
+    sublot_markers = (
+        "подлот",
+        "подлот.",
+        "под лот",
+        "сублот",
+        "sub lot",
+        "sublot",
+    )
+    if any(m in s for m in sublot_markers):
+        return True
+    # «Лот … / подуровень» или два уровня через точку после слова лот (напр. Лот 1.2 …)
+    if "/" in s and re.search(r"лот.+/", s):
+        return True
+    return bool(re.search(r"лот\s*[\.\-]\s*\d", s))
+
+
+def _filter_1c_frame_by_article_lot_sublot(frame: pd.DataFrame, *, art_col: Optional[str]) -> pd.DataFrame:
+    if frame is None or getattr(frame, "empty", True) or not art_col or art_col not in frame.columns:
+        return frame
+    m = frame[art_col].map(_turnover_article_has_lot_and_sublot).fillna(False)
+    if not bool(m.any()):
+        return frame.iloc[0:0].copy()
+    return frame.loc[m].copy()
 
 
 def _coerce_1c_money_series(raw: pd.Series) -> pd.Series:
@@ -182,6 +229,9 @@ def try_synthetic_budget_from_1c_dannye(
     Строки без колонки периода или с неразобранной датой исключаются (не подставляются на max-дату).
     Статьи оборотов БДР не включаются в БДДС (как в прогнозном бюджете).
 
+    ТЗ: в агрегацию попадают строки, где в «СтатьяОборотов» одновременно отражены лот и подлот
+    (`_turnover_article_has_lot_and_sublot`). При отсутствии таких строк результат пустой → None.
+
     ТЗ БДДС (обороты 1С): план — сценарий содержит «Бюджет», статья не «ФАКТ» и не (БДР);
     факт — тот же бюджетный сценарий и статья оборотов ровно «ФАКТ». Если колонки статьи нет
     или по правилам выше не получается ни одной строки — используется прежнее разделение по словам
@@ -233,6 +283,10 @@ def try_synthetic_budget_from_1c_dannye(
         return True
 
     t = t[t.apply(_no_bdr, axis=1)].copy()
+    if t.empty:
+        return None
+    if art:
+        t = _filter_1c_frame_by_article_lot_sublot(t, art_col=art)
     if t.empty:
         return None
 
@@ -345,6 +399,9 @@ def try_synthetic_bdr_from_1c_dannye(
     неклассифицированные отрицательные суммы трактуются как расход (как в прежней версии).
 
     Дополнительно выставляются legacy-колонки bdr_income=0, bdr_expense=fact, bdr_saldo=plan−fact.
+
+    Отбор сумм только по строкам «СтатьяОборотов» с лотом и подлотом — см.
+    `_turnover_article_has_lot_and_sublot`.
 
     ``reference_1c_dannye``: если передан (например из CLI-скрипта), session_state не используется.
     """
@@ -466,6 +523,19 @@ def try_synthetic_bdr_from_1c_dannye(
     if t.empty:
         return None
 
+    if art:
+        t_before_lot = t
+        t_f = _filter_1c_frame_by_article_lot_sublot(t, art_col=art)
+        if getattr(t_f, "empty", True) and not getattr(t_before_lot, "empty", True):
+            # Иначе синтетика БДР = None при несовпадении маркеров лота: график не строится.
+            t = t_before_lot.copy()
+            t.attrs = dict(getattr(t_before_lot, "attrs", {}) or {})
+            t.attrs["bdr_article_lot_sublot_skipped_empty"] = True
+        else:
+            t = t_f
+    if t.empty:
+        return None
+
     scm = t[scen].astype(str).str.casefold()
     fact_rows = scm.str.contains("факт", na=False) | scm.str.contains("fact", na=False)
     plan_rows = (
@@ -551,6 +621,10 @@ def try_synthetic_bdr_from_1c_dannye(
     odf["plan_year"] = _pe.dt.to_period("Y")
     odf.attrs["data_source_1c_synthetic_bdr"] = True
     odf.attrs["bdr_tz_plan_fact_expense"] = True
+    if getattr(t, "attrs", None) and dict(getattr(t, "attrs") or {}).get(
+        "bdr_article_lot_sublot_skipped_empty"
+    ):
+        odf.attrs["bdr_article_lot_sublot_skipped_empty"] = True
     if approx_no_bdr_marker:
         odf.attrs["bdr_approx_no_bdr_marker"] = True
     if rd_synthetic:

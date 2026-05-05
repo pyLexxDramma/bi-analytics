@@ -527,12 +527,12 @@ def apply_chart_background(fig, *, skip_uniformtext: bool = False):
 
 
 def format_million_rub(value) -> str:
-    """Форматирует сумму в млн руб.: 940346 -> '0.94 млн руб.'"""
+    """Форматирует сумму в рублях как млн руб. с двумя знаками: 940346 -> '0.94 млн. руб.'"""
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return ""
     try:
         x = float(value) / MILLION
-        return f"{x:.2f} млн руб."
+        return f"{x:.2f} млн. руб."
     except (TypeError, ValueError):
         return ""
 
@@ -815,19 +815,19 @@ def budget_table_to_html(
     parts = [
         f'<div id="{wrap_id}" class="budget-deviation-table-wrap" style="overflow-x: auto; min-width: 0; margin: 0.75em 0;">',
         f'<style>'
-        f'#{wrap_id} table {{ table-layout: auto; font-size: 13px; }}'
-        f'#{wrap_id} th, #{wrap_id} td {{ max-width: 16em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}'
+        f'#{wrap_id} table {{ table-layout: auto; font-size: 15px; }}'
+        f'#{wrap_id} th, #{wrap_id} td {{ max-width: 11em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}'
         f'#{wrap_id} td.bd-cell-red, #{wrap_id} td.bd-cell-red * {{ color: hsl(348,100%,63%) !important; }} '
         f'#{wrap_id} td.bd-cell-green, #{wrap_id} td.bd-cell-green * {{ color: hsl(148,100%,63%) !important; }}'
         f'</style>',
-        f'<table style="width:100%; border-collapse: collapse; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; font-size: 13px;">',
+        f'<table style="width:100%; border-collapse: collapse; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; font-size: 15px;">',
         "<thead><tr>",
     ]
     header_cols = [c for c in df.columns if c != row_kind_column]
     for col in header_cols:
         col_esc = html_module.escape(str(col))
         parts.append(
-            f'<th style="border: 1px solid rgba(255,255,255,0.3); padding: 6px 8px; background-color: {TABLE_BG_COLOR};">{col_esc}</th>'
+            f'<th style="border: 1px solid rgba(255,255,255,0.3); padding: 4px 5px; background-color: {TABLE_BG_COLOR};">{col_esc}</th>'
         )
     parts.append("</tr></thead><tbody>")
     visible_cols = [c for c in df.columns if c != row_kind_column]
@@ -859,13 +859,13 @@ def budget_table_to_html(
                         and abs(float(num)) < float(deviation_abs_min_mln)
                     ):
                         parts.append(
-                            f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 6px 8px; '
+                            f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 4px 5px; '
                             f'background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
                         )
                     elif deviation_red_if_negative:
                         cell_class = "bd-cell-red" if num < 0 else "bd-cell-green"
                         parts.append(
-                            f'<td class="{cell_class}" style="padding: 6px 8px; font-weight: bold;"><span>{val_esc}</span></td>'
+                            f'<td class="{cell_class}" style="padding: 4px 5px; font-weight: bold;"><span>{val_esc}</span></td>'
                         )
                     elif deviation_red_if_positive_only:
                         nf = float(num)
@@ -877,7 +877,7 @@ def budget_table_to_html(
                                 "hsl(348,100%,63%)" if nf > 0 else "hsl(148,100%,63%)"
                             )
                             parts.append(
-                                f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 6px 8px; '
+                                f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 4px 5px; '
                                 f'background-color: {TABLE_BG_COLOR};">'
                                 f'<span style="color:{bullet_color};font-weight:700;font-size:1.12em;margin-right:6px">●</span>'
                                 f'<span style="color:{text_color}!important;font-weight:700">{val_esc}</span>'
@@ -886,18 +886,18 @@ def budget_table_to_html(
                         else:
                             cell_class = "bd-cell-red" if nf > 0 else "bd-cell-green"
                             parts.append(
-                                f'<td class="{cell_class}" style="padding: 6px 8px; font-weight: bold;"><span>{val_esc}</span></td>'
+                                f'<td class="{cell_class}" style="padding: 4px 5px; font-weight: bold;"><span>{val_esc}</span></td>'
                             )
                     else:
                         cell_class = "bd-cell-red" if num >= 0 else "bd-cell-green"
                         parts.append(
-                            f'<td class="{cell_class}" style="padding: 6px 8px; font-weight: bold;"><span>{val_esc}</span></td>'
+                            f'<td class="{cell_class}" style="padding: 4px 5px; font-weight: bold;"><span>{val_esc}</span></td>'
                         )
                 else:
                     s = val_str.strip()
                     if not s:
                         parts.append(
-                            f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 6px 8px; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
+                            f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 4px 5px; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
                         )
                     else:
                         num_fallback = _parse_finance_value(s)
@@ -907,7 +907,7 @@ def budget_table_to_html(
                             and abs(float(num_fallback)) < float(deviation_abs_min_mln)
                         ):
                             parts.append(
-                                f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 6px 8px; '
+                                f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 4px 5px; '
                                 f'background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
                             )
                         elif (
@@ -923,7 +923,7 @@ def budget_table_to_html(
                                 "hsl(348,100%,63%)" if nf > 0 else "hsl(148,100%,63%)"
                             )
                             parts.append(
-                                f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 6px 8px; '
+                                f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 4px 5px; '
                                 f'background-color: {TABLE_BG_COLOR};">'
                                 f'<span style="color:{bullet_color};font-weight:700;font-size:1.12em;margin-right:6px">●</span>'
                                 f'<span style="color:{text_color}!important;font-weight:700">{val_esc}</span>'
@@ -938,11 +938,11 @@ def budget_table_to_html(
                             else:
                                 cell_class = "bd-cell-green" if is_neg else "bd-cell-red"
                             parts.append(
-                                f'<td class="{cell_class}" style="padding: 6px 8px; font-weight: bold;"><span>{val_esc}</span></td>'
+                                f'<td class="{cell_class}" style="padding: 4px 5px; font-weight: bold;"><span>{val_esc}</span></td>'
                             )
             else:
                 parts.append(
-                    f'<td style="padding: 6px 8px; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
+                    f'<td style="padding: 4px 5px; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
                 )
         parts.append("</tr>")
     parts.append("</tbody></table></div>")
