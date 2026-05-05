@@ -847,6 +847,170 @@ def _bddds_df_for_dev_matrix(
     return project_data
 
 
+def _dev_matrix_bddds_totals_mln(
+    ss: Any,
+    pname: str,
+    project_data: Optional[pd.DataFrame],
+    mdf: pd.DataFrame,
+) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+    """
+    «Выборка ДС, млн руб.»: те же источники и срез, что дашборд БДДС.
+
+    Берётся синтетика `try_synthetic_budget_from_1c_dannye`, фильтр по проекту строки матрицы,
+    затем — как на БДДС: «Год» (`budget_plan_end_year`), календарь «С»/«По» по `plan end`
+    (`budget_period_from` / `budget_period_to`), группировка «Месяц/Квартал/Год» (`budget_period`),
+    вид «Накопительно» / «По месяцам» (`budget_period_view`). Если отчёт БДДС ещё не открывали
+    и ключей нет — используется полный диапазон дат по данным проекта и режим «Накопительно».
+
+    При неудаче — прежний fallback по оборотам `reference_1c_dannye` / `project_data`.
+    """
+    try:
+        from dashboards.finance_from_1c import try_synthetic_budget_from_1c_dannye
+    except Exception:
+        try_synthetic_budget_from_1c_dannye = None  # type: ignore[misc]
+
+    def _ss_get(key: str, default: Any = None) -> Any:
+        if hasattr(ss, "get"):
+            return ss.get(key, default)
+        return default
+
+    ref = _ss_get("reference_1c_dannye")
+    pname = str(pname or "").strip()
+
+    if (
+        try_synthetic_budget_from_1c_dannye is None
+        or ref is None
+        or not isinstance(ref, pd.DataFrame)
+        or getattr(ref, "empty", True)
+        or not pname
+    ):
+        bdd = _bddds_df_for_dev_matrix(mdf, project_data, ss)
+        return _ds_plan_fact_otkl_mln(bdd)
+
+    syn = try_synthetic_budget_from_1c_dannye(reference_1c_dannye=ref)
+    if syn is None or syn.empty or "project name" not in syn.columns:
+        bdd = _bddds_df_for_dev_matrix(mdf, project_data, ss)
+        return _ds_plan_fact_otkl_mln(bdd)
+
+    try:
+        from dashboards._renderers import (
+            _project_filter_norm_key,
+            _project_norm_key_matches_msp_keys,
+        )
+    except Exception:
+        bdd = _bddds_df_for_dev_matrix(mdf, project_data, ss)
+        return _ds_plan_fact_otkl_mln(bdd)
+
+    pk = _norm_dev_project_key(pname)
+    _rk = syn["project name"].map(_project_filter_norm_key)
+    m_eq = _rk == pk
+
+    def _soft_row(x: Any) -> bool:
+        nk = _norm_dev_project_key(x)
+        if not nk:
+            return False
+        if nk == pk:
+            return True
+        return len(pk) >= 4 and (pk in nk or nk in pk)
+
+    sub = syn.loc[m_eq.fillna(False)].copy()
+    if sub.empty:
+        sub = syn.loc[syn["project name"].map(_soft_row)].copy()
+    if sub.empty:
+        _sel_pk = _project_filter_norm_key(pname)
+        if _sel_pk:
+            sub = syn.loc[
+                syn["project name"]
+                .map(_project_filter_norm_key)
+                .map(lambda rk: _project_norm_key_matches_msp_keys(rk, {_sel_pk}))
+            ].copy()
+    if sub.empty:
+        bdd = _bddds_df_for_dev_matrix(mdf, project_data, ss)
+        return _ds_plan_fact_otkl_mln(bdd)
+
+    # Год по plan end (как селектор «Год» на БДДС)
+    sel_year = _ss_get("budget_plan_end_year", "Все")
+    sy = str(sel_year).strip() if sel_year is not None else "Все"
+    if sy not in ("", "Все", "None") and sy.isdigit():
+        _pe_y = pd.to_datetime(sub["plan end"], errors="coerce")
+        sub = sub[_pe_y.dt.year == int(sy)].copy()
+        if sub.empty:
+            bdd = _bddds_df_for_dev_matrix(mdf, project_data, ss)
+            return _ds_plan_fact_otkl_mln(bdd)
+
+    # Календарь «С» / «По» по plan end (те же ключи, что date_input на БДДС)
+    _pe = pd.to_datetime(sub["plan end"], errors="coerce")
+    pf = _ss_get("budget_period_from")
+    pt = _ss_get("budget_period_to")
+    if pf is not None and pt is not None:
+        ts = pd.to_datetime(pf, errors="coerce")
+        te = pd.to_datetime(pt, errors="coerce")
+        if pd.notna(ts) and pd.notna(te):
+            if ts > te:
+                ts, te = te, ts
+            sub = sub[
+                _pe.notna()
+                & (_pe >= ts.normalize())
+                & (
+                    _pe
+                    <= (te.normalize() + pd.Timedelta(days=1) - pd.Timedelta(seconds=1))
+                )
+            ].copy()
+    if sub.empty:
+        bdd = _bddds_df_for_dev_matrix(mdf, project_data, ss)
+        return _ds_plan_fact_otkl_mln(bdd)
+
+    period_ui = str(_ss_get("budget_period", "Месяц") or "Месяц").strip()
+    period_col_map = {"Месяц": "plan_month", "Квартал": "plan_quarter", "Год": "plan_year"}
+    period_col = period_col_map.get(period_ui, "plan_month")
+
+    if period_col not in sub.columns and "plan end" in sub.columns:
+        _pe2 = pd.to_datetime(sub["plan end"], errors="coerce")
+        if period_col == "plan_month":
+            sub = sub.assign(plan_month=_pe2.dt.to_period("M"))
+        elif period_col == "plan_quarter":
+            sub = sub.assign(plan_quarter=_pe2.dt.to_period("Q"))
+        elif period_col == "plan_year":
+            sub = sub.assign(plan_year=_pe2.dt.to_period("Y"))
+
+    if period_col not in sub.columns:
+        bdd = _bddds_df_for_dev_matrix(mdf, project_data, ss)
+        return _ds_plan_fact_otkl_mln(bdd)
+
+    sub = sub[sub[period_col].notna()].copy()
+    if sub.empty:
+        bdd = _bddds_df_for_dev_matrix(mdf, project_data, ss)
+        return _ds_plan_fact_otkl_mln(bdd)
+
+    sub["budget plan"] = pd.to_numeric(sub.get("budget plan", 0), errors="coerce").fillna(0.0)
+    sub["budget fact"] = pd.to_numeric(sub.get("budget fact", 0), errors="coerce").fillna(0.0)
+
+    g = (
+        sub.groupby(period_col, dropna=False, sort=False)[["budget plan", "budget fact"]]
+        .sum()
+        .reset_index()
+    )
+    if g.empty:
+        bdd = _bddds_df_for_dev_matrix(mdf, project_data, ss)
+        return _ds_plan_fact_otkl_mln(bdd)
+
+    try:
+        g = g.sort_values(period_col)
+    except Exception:
+        pass
+
+    view_type = str(_ss_get("budget_period_view", "Накопительно") or "Накопительно").strip()
+    if view_type == "Накопительно":
+        plan_sum = float(g["budget plan"].cumsum().iloc[-1])
+        fact_sum = float(g["budget fact"].cumsum().iloc[-1])
+    else:
+        plan_sum = float(g["budget plan"].sum())
+        fact_sum = float(g["budget fact"].sum())
+
+    diff = plan_sum - fact_sum
+    return plan_sum / 1e6, fact_sum / 1e6, diff / 1e6
+
+
 def _ds_plan_fact_otkl_mln(project_data: Optional[pd.DataFrame]) -> Tuple[Optional[float], Optional[float], Optional[float]]:
     if project_data is None or project_data.empty:
         return None, None, None
@@ -886,7 +1050,7 @@ def _tessa_to_dt(series: pd.Series) -> pd.Series:
     return pd.to_datetime(series, errors="coerce", dayfirst=True)
 
 
-def _tessa_counts(ss: Any) -> Tuple[str, str, str, str]:
+def _tessa_counts(ss: Any, project_name_hint: str = "") -> Tuple[str, str, str, str]:
     tdf = ss.get("tessa_tasks_data") if hasattr(ss, "get") else None
     if tdf is None or getattr(tdf, "empty", True):
         return "Н/Д", "Н/Д", "Н/Д", ""
@@ -899,6 +1063,13 @@ def _tessa_counts(ss: Any) -> Tuple[str, str, str, str]:
     pred = tk[tk[kk].astype(str).str.contains(r"предписани", case=False, na=False, regex=True)].copy()
     if pred.empty:
         return "0", "0", "0", ""
+    hint = (project_name_hint or "").strip()
+    if hint:
+        pred_f = build_predpisaniya_detail_df(ss, hint)
+        if pred_f is not None and not pred_f.empty:
+            pred = pred_f
+        else:
+            return "Н/Д", "Н/Д", "Н/Д", "Нет строк предписаний Tessa после фильтра по проекту."
     card_c = _find_col(pred, ["CardId", "CardID", "cardId"])
     state_c = _find_col(pred, ["KrStateName", "KrState", "State", "Состояние", "Статус"])
     due_c = _find_col(pred, ["PlanDate", "DueDate", "Срок", "Крайний срок"])
@@ -915,7 +1086,7 @@ def _tessa_counts(ss: Any) -> Tuple[str, str, str, str]:
     else:
         n_signed = 0
     n_open = int(max(0, n_cards - n_signed))
-    hint = ""
+    tail_hint = ""
     overdue_n = 0
     if due_c and due_c in pred.columns and state_c and state_c in pred.columns:
         now = pd.Timestamp.now().normalize()
@@ -927,17 +1098,18 @@ def _tessa_counts(ss: Any) -> Tuple[str, str, str, str]:
         dts = _tessa_to_dt(pred.loc[om, due_c])
         overdue_n = int(((dts.dt.normalize() < now) & dts.notna()).sum())
         if overdue_n:
-            hint = f"Просрочено (не устранено, срок прошёл): {overdue_n}"
+            tail_hint = f"Просрочено (не устранено, срок прошёл): {overdue_n}"
     # ТЗ: План = «Количество» (уник. cardId); Факт = «Не устранено»; Откл. = «Просрочено»
     otkl_s = str(overdue_n) if (due_c and due_c in pred.columns and state_c and state_c in pred.columns) else "Н/Д"
-    return str(n_cards), str(n_open), otkl_s, hint
+    return str(n_cards), str(n_open), otkl_s, tail_hint
 
 
-def _predpisaniya_combined(mdf: pd.DataFrame, ss: Any) -> Tuple[str, str, str, bool, str]:
+def _predpisaniya_combined(mdf: pd.DataFrame, ss: Any, project_name: str = "") -> Tuple[str, str, str, bool, str]:
     """
-    TESSA (предписания) — приоритет; если файла нет / колонок нет (всё Н/Д) — строки с «Предписан» в «Фаза» или в названии задачи.
+    Строка «ПРЕДПИСАНИЯ»: только TESSA (как смежные отчёты по tessa_*), с фильтром по проекту MSP.
+    Подстановка дат из MSP/фазы по предписаниям отключена.
     """
-    tp, tf, to, hint = _tessa_counts(ss)
+    tp, tf, to, hint = _tessa_counts(ss, project_name)
     if not (tp == "Н/Д" and tf == "Н/Д" and to == "Н/Д"):
         try:
             nfu = int(str(tf).strip())
@@ -949,17 +1121,7 @@ def _predpisaniya_combined(mdf: pd.DataFrame, ss: Any) -> Tuple[str, str, str, b
             nov = 0
         warn_t = nfu > 0 or nov > 0
         return tp, tf, to, warn_t, hint
-    sub = _match_by_phase_needles(mdf, ["Предписан", "предписание", "предписания"])
-    if sub.empty:
-        nm = _task_name_col(mdf)
-        if nm and nm in mdf.columns:
-            _lit = dict(case=False, na=False, regex=False)
-            sub = mdf[mdf[nm].astype(str).str.contains("предписан", **_lit)]
-    if sub.empty:
-        return tp, tf, to, False, hint
-    # ТЗ: одна дата на ячейку — представительная задача вехи (как в _one_milestone_cell), без склейки « / ».
-    ps, fs, os, _ok, w = _one_milestone_cell(sub)
-    return ps, fs, os, bool(w), hint
+    return tp, tf, to, False, (hint or "Нет данных Tessa по предписаниям или не загружён tessa_tasks_data.")
 
 
 def build_predpisaniya_detail_df(ss: Any, project_name_hint: str = "") -> pd.DataFrame:
@@ -1352,14 +1514,20 @@ def build_dev_tz_matrix_rows(
                     "Разрешение на строительство (РС)",
                     "Разрешение на строительство",
                     "разрешение на строительство",
+                    "РС:",
+                    "(РС)",
+                    "РЗУ РС",
                 ],
+                "names_exact_any": ["РС", "Рс", "рс"],
                 "parent_l2_contains": "Ковенанты",
                 "phase_needles": [
                     ". РС",
+                    " РС",
                     "Разрешение на строительство",
                     "Инвестиционная. РС",
                     "инвестиционная. рс",
                     "Жизнь проекта. РС",
+                    "РЗУ РС",
                 ],
             },
         ),
@@ -1388,7 +1556,7 @@ def build_dev_tz_matrix_rows(
         return f"{v:.2f}".replace(".", ",")
 
     rk_ds = str(next(_rk))
-    pm, fm, om = _ds_plan_fact_otkl_mln(_bddds_df_for_dev_matrix(mdf, project_data, ss))
+    pm, fm, om = _dev_matrix_bddds_totals_mln(ss, cap, project_data, mdf)
     if pm is None:
         add_row(
             "Финансы",
@@ -1411,7 +1579,7 @@ def build_dev_tz_matrix_rows(
         )
 
     rk_tp = str(next(_rk))
-    tp, tf, to, warn_t, _tessa_hint = _predpisaniya_combined(mdf, ss)
+    tp, tf, to, warn_t, _tessa_hint = _predpisaniya_combined(mdf, ss, cap)
     add_row(
         "ТЕССА",
         effective_title(rk_tp, "ПРЕДПИСАНИЯ"),
@@ -1720,6 +1888,23 @@ _DEV_TZ_MATRIX_CSS = """
   overflow-x: auto;
   overscroll-behavior-x: contain;
   -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(121, 154, 192, 0.5) #141820;
+}
+.dev-tz-matrix-wrap::-webkit-scrollbar {
+  height: 10px;
+}
+.dev-tz-matrix-wrap::-webkit-scrollbar-track {
+  background: #141820;
+  border-radius: 5px;
+}
+.dev-tz-matrix-wrap::-webkit-scrollbar-thumb {
+  background: rgba(121, 154, 192, 0.42);
+  border-radius: 5px;
+  border: 2px solid #141820;
+}
+.dev-tz-matrix-wrap::-webkit-scrollbar-thumb:hover {
+  background: rgba(121, 154, 192, 0.65);
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide {
   border: 2px solid rgba(220, 228, 240, 0.45);
@@ -1750,7 +1935,7 @@ _DEV_TZ_MATRIX_CSS = """
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project {
   text-align: center !important;
   vertical-align: middle !important;
-  font-weight: 700;
+  font-weight: 800;
   font-size: 13px;
   padding: 6px 10px;
   color: #e8f5e9;
@@ -1760,7 +1945,7 @@ _DEV_TZ_MATRIX_CSS = """
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead {
   text-align: center !important;
   vertical-align: middle !important;
-  font-weight: 700;
+  font-weight: 800;
   font-size: 13px;
   padding: 6px 8px;
   background: linear-gradient(180deg, rgba(34, 139, 34, 0.35) 0%, rgba(25, 90, 25, 0.25) 100%) !important;
@@ -1776,7 +1961,7 @@ _DEV_TZ_MATRIX_CSS = """
   text-align: center !important;
   vertical-align: middle !important;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 800;
   line-height: 1.25;
   max-width: 9em;
   padding: 5px 6px;
@@ -1814,7 +1999,7 @@ _DEV_TZ_MATRIX_CSS = """
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-td-project {
   text-align: center !important;
-  font-weight: 600;
+  font-weight: 800;
   font-size: 12px;
   padding: 6px 10px;
   background: #161f2b !important;
@@ -1984,7 +2169,10 @@ def render_dev_tz_matrix(
                         "max-height:7.5em;white-space:nowrap;vertical-align:middle;"
                         'text-align:center;padding:8px 4px;"'
                     )
-                body_cells.append(f"<td{oc}{iv}>{esc(str(v))}</td>")
+                tip = ""
+                if key in ("plan", "fact") and r.get("warn_pct") and "dev-tz-text-pct-warn" in cls:
+                    tip = ' title="' + esc("% выполнения в MSP для выбранной задачи ниже 100%; подсветка предупреждает о риске срыва срока.") + '"'
+                body_cells.append(f"<td{oc}{iv}{tip}>{esc(str(v))}</td>")
         plab = row_labels[bi] if bi < len(row_labels) else ""
         body_trs.append(
             '<tr><td class="dev-tz-td-project">' + esc(plab) + "</td>" + "".join(body_cells) + "</tr>"
@@ -2007,7 +2195,12 @@ def render_dev_tz_matrix(
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;background:transparent;overflow:hidden}
 .dev-tz-matrix-wrap{width:100%;max-width:100%;overflow-x:auto;overflow-y:hidden;
-  -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}
+  -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;
+  scrollbar-width:thin;scrollbar-color:rgba(121,154,192,0.5) #141820}
+.dev-tz-matrix-wrap::-webkit-scrollbar{height:10px}
+.dev-tz-matrix-wrap::-webkit-scrollbar-track{background:#141820;border-radius:5px}
+.dev-tz-matrix-wrap::-webkit-scrollbar-thumb{background:rgba(121,154,192,0.42);border-radius:5px;border:2px solid #141820}
+.dev-tz-matrix-wrap::-webkit-scrollbar-thumb:hover{background:rgba(121,154,192,0.65)}
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide{
   border-collapse:separate!important;border-spacing:0!important;
   width:max-content!important;min-width:100%!important}
@@ -2044,7 +2237,7 @@ html,body{margin:0;padding:0;background:transparent;overflow:hidden}
 
 # ── Контрольные точки (Сроки / макет file-009): проекты × вехи ───────────────
 
-# Вехи «Контрольные точки»: доп. оранжевая подсветка ячеек при % ≠ 100% только для ГПЗУ / Экспертизы стадии П.
+# Вехи «Контрольные точки»: при % ≠ 100% для ГПЗУ / Экспертизы стадии П — оранжевый текст в ячейках (не заливка).
 CONTROL_POINTS_ORANGE_PCT_SLUGS: frozenset = frozenset({"gpzu", "exp_pd"})
 
 
@@ -2316,6 +2509,43 @@ def _match_milestone_tasks(mdf: pd.DataFrame, kw: dict) -> pd.DataFrame:
     return _match_tasks_like_msp_row(mdf, kw)
 
 
+def _pick_representative_milestone_row(rows: pd.DataFrame) -> pd.Series:
+    """Строка-репрезентант вехи: приоритет задача с минимальным известным «% выполнения» (типичная просрочка/0%)."""
+    if rows is None or getattr(rows, "empty", True):
+        return rows.iloc[0]
+    if "pct complete" in rows.columns:
+        best_ix = None
+        best_val: float | None = None
+        for ix, rr in rows.iterrows():
+            raw = rr.get("pct complete", np.nan)
+            if isinstance(raw, pd.Series):
+                raw2 = raw.dropna()
+                raw = raw2.iloc[0] if len(raw2) else np.nan
+            try:
+                if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+                    continue
+            except (TypeError, ValueError):
+                continue
+            try:
+                s = str(raw).strip().replace("%", "").replace(" ", "").replace(",", ".")
+                if not s or s.lower() in ("nan", "none", "nat"):
+                    continue
+                val = float(s)
+                if 0.0 <= val <= 1.0:
+                    val = val * 100.0
+            except (TypeError, ValueError):
+                continue
+            if best_val is None or val < best_val:
+                best_val = val
+                best_ix = ix
+        if best_ix is not None:
+            return rows.loc[best_ix]
+    tc = _task_name_col(rows)
+    if tc and tc in rows.columns:
+        return rows.sort_values(by=tc).iloc[0]
+    return rows.iloc[0]
+
+
 def _one_milestone_cell(rows: pd.DataFrame) -> Tuple[str, str, str, bool, bool]:
     """
     План = базовое окончание (base end), Факт = «Окончание» (plan end после загрузки MSP).
@@ -2324,11 +2554,7 @@ def _one_milestone_cell(rows: pd.DataFrame) -> Tuple[str, str, str, bool, bool]:
     """
     if rows is None or rows.empty:
         return "Н/Д", "Н/Д", "Н/Д", False, False
-    tc = _task_name_col(rows)
-    if tc and tc in rows.columns:
-        r = rows.sort_values(by=tc).iloc[0]
-    else:
-        r = rows.iloc[0]
+    r = _pick_representative_milestone_row(rows)
     pdt, fdt, pct = _msp_plan_fact_pct(r)
     # Предупреждение по % — только по строке-представителе вехи (та же, что даёт План/Факт),
     # иначе при нескольких совпадениях под одну веху «оранжевый» статус липнет ко всем столбцам.
@@ -2420,7 +2646,28 @@ def build_control_points_df(mdf: pd.DataFrame, *, hide_completed: bool = False) 
 
 _CONTROL_POINTS_CSS = """
 <style>
-.cp-table-wrap { overflow-x: auto; min-width: 0; max-width: 100%; }
+.cp-table-wrap {
+  overflow-x: auto;
+  min-width: 0;
+  max-width: 100%;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(121, 154, 192, 0.5) #141820;
+}
+.cp-table-wrap::-webkit-scrollbar {
+  height: 10px;
+}
+.cp-table-wrap::-webkit-scrollbar-track {
+  background: #141820;
+  border-radius: 5px;
+}
+.cp-table-wrap::-webkit-scrollbar-thumb {
+  background: rgba(121, 154, 192, 0.42);
+  border-radius: 5px;
+  border: 2px solid #141820;
+}
+.cp-table-wrap::-webkit-scrollbar-thumb:hover {
+  background: rgba(121, 154, 192, 0.65);
+}
 /* border-collapse:separate обязателен для position:sticky на ячейках */
 .cp-table-wrap .rendered-table {
   border-collapse: separate !important;
@@ -2496,16 +2743,17 @@ _CONTROL_POINTS_CSS = """
   font-weight: 400 !important;
   letter-spacing: -0.04em;
 }
-/* ГПЗУ / Экспертиза стадии П: дополнительно «рыжая» подсветка (согласованные правки) */
-.cp-td-warn {
-  background: rgba(234, 88, 12, 0.38) !important;
-  color: #fff7ed !important;
+/* ГПЗУ / Экспертиза стадии П: только оранжевый текст (селектор сильнее общего td { color }) */
+.cp-table-wrap .rendered-table td.cp-td-warn {
+  background: transparent !important;
+  color: #fb923c !important;
+  font-weight: 600 !important;
 }
-.cp-td-warn.cp-td-pct-narrow {
+.cp-table-wrap .rendered-table td.cp-td-warn.cp-td-pct-narrow {
   font-weight: 400 !important;
 }
-/* Просрочка по План−Факт (отрицательные дни в «Откл.») — красный текст по макету ТЗ */
-.cp-otkl-late {
+/* Просрочка по План−Факт (отрицательные дни в «Откл.») — красный текст */
+.cp-table-wrap .rendered-table td.cp-otkl-late {
   color: #f87171 !important;
   font-weight: 700 !important;
 }
@@ -2536,7 +2784,10 @@ def _apply_control_points_msp_filters(
         if any(p in ordered for p in preferred_projects):
             ordered = [p for p in preferred_projects if p in ordered]
         opts = ["Все"] + ordered
-        sel_proj = st.selectbox("Проект", opts, key="cp_msp_filter_project")
+        from dashboards.filter_layout import filters_panel
+
+        with filters_panel(st):
+            sel_proj = st.selectbox("Проект", opts, key="cp_msp_filter_project")
     else:
         sel_proj = "Все"
 
@@ -2601,7 +2852,7 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
             pct_inc = bool(r.get(f"{slug}_warn_pct"))
             owarn = _is_orange_milestone and pct_inc
             m_ok = bool(r.get(f"{slug}_ok", False))
-            # Оранжевая подсветка — только для ГПЗУ/Экспертизы и только если по датам норма.
+            # Оранжевый текст — только для ГПЗУ/Экспертизы и только если по датам норма.
             pct_warn_cells = owarn and m_ok
             otkl_txt = str(r.get(f"{slug}_otkl", "") or "")
             _od = _parse_otkl_days_display(otkl_txt)
@@ -2634,7 +2885,7 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
                 else f"<td>{esc(otkl_txt)}</td>"
             )
             # Индикатор «Статус» — только соблюдение сроков (зелёный/красный). При % выполнения ≠ 100%
-            # значения в План/Факт/Откл. — узкий шрифт по ТЗ; для ГПЗУ/Экспертизы стадии П ещё оранжевый фон.
+            # значения в План/Факт/Откл. — узкий шрифт по ТЗ; для ГПЗУ/Экспертизы стадии П — оранжевый текст.
             if not m_ok:
                 st_cls = "cp-status-bad"
                 tip = "Отклонение по срокам (факт позже плана) или неполные даты."
@@ -2644,7 +2895,7 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
                 tip = (
                     "По срокам норма: факт не позже плана. Если в MSP «% выполнения» не 100%, "
                     "значения в ячейках показываются узким шрифтом; для ГПЗУ и Экспертизы стадии П "
-                    "дополнительно оранжевая подсветка."
+                    "дополнительно оранжевым цветом текста."
                 )
                 al = "Норма по срокам"
             st_extra = " cp-td-pct-narrow" if pct_inc else ""
@@ -2668,7 +2919,12 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;background:transparent;overflow:hidden}
 .cp-table-wrap{width:100%;max-width:100%;overflow-x:auto;overflow-y:hidden;
-  -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}
+  -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;
+  scrollbar-width:thin;scrollbar-color:rgba(121,154,192,0.5) #141820}
+.cp-table-wrap::-webkit-scrollbar{height:10px}
+.cp-table-wrap::-webkit-scrollbar-track{background:#141820;border-radius:5px}
+.cp-table-wrap::-webkit-scrollbar-thumb{background:rgba(121,154,192,0.42);border-radius:5px;border:2px solid #141820}
+.cp-table-wrap::-webkit-scrollbar-thumb:hover{background:rgba(121,154,192,0.65)}
 .cp-table-wrap .rendered-table{
   border-collapse:separate!important;border-spacing:0!important;
   width:max-content!important;min-width:100%!important}

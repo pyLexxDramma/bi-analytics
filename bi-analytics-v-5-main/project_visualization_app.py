@@ -200,6 +200,13 @@ if not st.session_state.get("authenticated"):
 
 load_custom_css()
 
+try:
+    from dashboards.filter_layout import inject_unified_filters_css
+
+    inject_unified_filters_css(st)
+except Exception:
+    pass
+
 # ┌──────────────────────────────────────────────────────────────────────────┐ #
 # │ ⊗ CSS CONNECT ¤ End                                                      │ #
 # └──────────────────────────────────────────────────────────────────────────┘ #

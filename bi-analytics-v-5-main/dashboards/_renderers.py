@@ -5,6 +5,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 from typing import Any, Dict, List, Optional
+from collections import defaultdict
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta, date
@@ -17,6 +18,7 @@ from urllib.parse import urlencode
 from config import MSP_PROJECT_FILTER_EXCLUDE_NAMES, RUSSIAN_MONTHS
 
 from .ui_quiet import suppress_caption
+from dashboards.filter_layout import filters_panel, inject_unified_filters_css
 
 from dashboards.dev_projects_tz_matrix import (
     build_dev_tz_matrix_rows,
@@ -2110,17 +2112,7 @@ def _is_generic_block_name(v) -> bool:
 
 def _render_deviations_combined_shared_filters(df):
     ensure_msp_hierarchy_columns(df)
-    st.markdown(
-        """
-        <style>
-        div[data-testid="column"] {
-            flex: 1 1 0%;
-            min-width: 0;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    inject_unified_filters_css(st)
     building_col = _find_column_by_keywords(
         df, ("building", "строение", "лот", "lot", "bldg")
     )
@@ -2133,151 +2125,152 @@ def _render_deviations_combined_shared_filters(df):
     use_hierarchy = bool(level_col and task_col and task_col in df.columns)
     use_flat_bs = _deviations_use_flat_block_section_task(df)
 
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
-    with col1:
-        if "project name" in df.columns:
-            _session_reset_project_if_excluded("devcombo_project")
-            projects = ["Все"] + _project_name_select_options(df["project name"])
-            st.selectbox("Проект", projects, key="devcombo_project")
-    with col2:
-        df_opts = _deviations_project_slice_by_key(df, "devcombo_project")
-        if use_hierarchy:
-            _ln_opts = _dev_outline_level_numeric(df_opts[level_col])
-            _blv, _bdv = _deviations_msp_tier_levels(_ln_opts)
-            wh = _dev_tasks_build_ancestor_keys(
-                df_opts.copy(),
-                level_col,
-                task_col,
-                block_outline_level=_blv,
-                building_outline_level=_bdv,
-            )
-            ln = _dev_outline_level_numeric(wh[level_col])
-            _raw_l2 = (
-                wh.loc[ln == _blv, task_col]
-                .dropna()
-                .astype(str)
-                .str.strip()
-                .unique()
-                .tolist()
-            )
-            _raw_l2 = [x for x in _raw_l2 if x and not _is_generic_block_name(x)]
-            block_opts = ["Все"] + sorted(_raw_l2)
-            if len(block_opts) <= 1 and "_dt_lvl2_key" in wh.columns:
-                _k2c = wh["_dt_lvl2_key"].astype(str).str.strip()
-                _k2c = _k2c[_k2c.ne("") & _k2c.str.lower().ne("nan")]
-                if len(_k2c):
-                    _k2c_list = [
-                        x for x in pd.unique(_k2c).tolist()
-                        if not _is_generic_block_name(x)
-                    ]
-                    block_opts = ["Все"] + sorted(_k2c_list)
-            st.selectbox(
-                "Функциональный блок",
-                block_opts,
-                key="devcombo_block",
-            )
-        elif use_flat_bs:
-            fb_opts = _deviations_flat_functional_block_options(df_opts)
-            fb_opts = [
-                x for x in fb_opts if x == "Все" or not _is_generic_block_name(x)
-            ]
-            st.selectbox(
-                "Функциональный блок",
-                fb_opts,
-                key="devcombo_block",
-            )
-        elif "block" in df.columns:
-            blocks_raw = sorted(
-                df["block"].dropna().astype(str).str.strip().unique().tolist()
-            )
-            blocks_raw = [x for x in blocks_raw if not _is_generic_block_name(x)]
-            blocks = ["Все"] + blocks_raw
-            st.selectbox("Функциональный блок", blocks, key="devcombo_block")
-        else:
-            suppress_caption("Нет колонки блока")
-    with col3:
-        df_opts = _deviations_project_slice_by_key(df, "devcombo_project")
-        if use_hierarchy:
-            _ln_opts_b = _dev_outline_level_numeric(df_opts[level_col])
-            _blv_b, _bdv_b = _deviations_msp_tier_levels(_ln_opts_b)
-            wh = _dev_tasks_build_ancestor_keys(
-                df_opts.copy(),
-                level_col,
-                task_col,
-                block_outline_level=_blv_b,
-                building_outline_level=_bdv_b,
-            )
-            ln = _dev_outline_level_numeric(wh[level_col])
-            sb = st.session_state.get("devcombo_block", "Все")
-            w3 = wh[ln == _bdv_b]
-            if sb != "Все":
-                w3 = w3[
-                    w3["_dt_lvl2_key"].astype(str).str.strip()
-                    == str(sb).strip()
+    with filters_panel(st):
+        col1, col2, col3, col4, col5, col6 = st.columns(6)
+        with col1:
+            if "project name" in df.columns:
+                _session_reset_project_if_excluded("devcombo_project")
+                projects = ["Все"] + _project_name_select_options(df["project name"])
+                st.selectbox("Проект", projects, key="devcombo_project")
+        with col2:
+            df_opts = _deviations_project_slice_by_key(df, "devcombo_project")
+            if use_hierarchy:
+                _ln_opts = _dev_outline_level_numeric(df_opts[level_col])
+                _blv, _bdv = _deviations_msp_tier_levels(_ln_opts)
+                wh = _dev_tasks_build_ancestor_keys(
+                    df_opts.copy(),
+                    level_col,
+                    task_col,
+                    block_outline_level=_blv,
+                    building_outline_level=_bdv,
+                )
+                ln = _dev_outline_level_numeric(wh[level_col])
+                _raw_l2 = (
+                    wh.loc[ln == _blv, task_col]
+                    .dropna()
+                    .astype(str)
+                    .str.strip()
+                    .unique()
+                    .tolist()
+                )
+                _raw_l2 = [x for x in _raw_l2 if x and not _is_generic_block_name(x)]
+                block_opts = ["Все"] + sorted(_raw_l2)
+                if len(block_opts) <= 1 and "_dt_lvl2_key" in wh.columns:
+                    _k2c = wh["_dt_lvl2_key"].astype(str).str.strip()
+                    _k2c = _k2c[_k2c.ne("") & _k2c.str.lower().ne("nan")]
+                    if len(_k2c):
+                        _k2c_list = [
+                            x for x in pd.unique(_k2c).tolist()
+                            if not _is_generic_block_name(x)
+                        ]
+                        block_opts = ["Все"] + sorted(_k2c_list)
+                st.selectbox(
+                    "Функциональный блок",
+                    block_opts,
+                    key="devcombo_block",
+                )
+            elif use_flat_bs:
+                fb_opts = _deviations_flat_functional_block_options(df_opts)
+                fb_opts = [
+                    x for x in fb_opts if x == "Все" or not _is_generic_block_name(x)
                 ]
-            build_opts = ["Все"] + sorted(
-                w3[task_col].dropna().astype(str).str.strip().unique().tolist()
-            )
-            if len(build_opts) <= 1 and sb != "Все" and "_dt_lvl3_key" in w3.columns:
-                _k3b = w3["_dt_lvl3_key"].astype(str).str.strip()
-                _k3b = _k3b[_k3b.ne("") & _k3b.str.lower().ne("nan")]
-                if len(_k3b):
-                    build_opts = ["Все"] + sorted(pd.unique(_k3b).tolist())
-            st.selectbox(
-                "Строение",
-                build_opts,
-                key="devcombo_building",
-            )
-        elif use_flat_bs:
-            _tc_fb = _deviations_resolve_task_col(df_opts)
-            _sb_fb = st.session_state.get("devcombo_block", "Все")
-            _bld_opts = _deviations_flat_building_options(df_opts, _sb_fb, _tc_fb)
-            st.selectbox(
-                "Строение",
-                _bld_opts,
-                key="devcombo_building",
-            )
-        elif building_col and building_col in df.columns:
-            bvals = ["Все"] + sorted(
-                df[building_col].dropna().astype(str).str.strip().unique().tolist()
-            )
-            st.selectbox("Строение", bvals, key="devcombo_building")
-        else:
-            suppress_caption("Нет строения")
-
-    available_months = []
-    if "plan_month" in df.columns:
-        unique_months = df["plan_month"].dropna().unique()
-        if len(unique_months) > 0:
-            month_dict = {format_period_ru(m): m for m in unique_months}
-            available_months = sorted(month_dict.keys(), key=lambda x: month_dict[x])
-    elif "plan end" in df.columns:
-        mask = df["plan end"].notna()
-        if mask.any():
-            temp_months = df.loc[mask, "plan end"].dt.to_period("M").unique()
-            if len(temp_months) > 0:
-                month_dict = {format_period_ru(m): m for m in temp_months}
+                st.selectbox(
+                    "Функциональный блок",
+                    fb_opts,
+                    key="devcombo_block",
+                )
+            elif "block" in df.columns:
+                blocks_raw = sorted(
+                    df["block"].dropna().astype(str).str.strip().unique().tolist()
+                )
+                blocks_raw = [x for x in blocks_raw if not _is_generic_block_name(x)]
+                blocks = ["Все"] + blocks_raw
+                st.selectbox("Функциональный блок", blocks, key="devcombo_block")
+            else:
+                suppress_caption("Нет колонки блока")
+        with col3:
+            df_opts = _deviations_project_slice_by_key(df, "devcombo_project")
+            if use_hierarchy:
+                _ln_opts_b = _dev_outline_level_numeric(df_opts[level_col])
+                _blv_b, _bdv_b = _deviations_msp_tier_levels(_ln_opts_b)
+                wh = _dev_tasks_build_ancestor_keys(
+                    df_opts.copy(),
+                    level_col,
+                    task_col,
+                    block_outline_level=_blv_b,
+                    building_outline_level=_bdv_b,
+                )
+                ln = _dev_outline_level_numeric(wh[level_col])
+                sb = st.session_state.get("devcombo_block", "Все")
+                w3 = wh[ln == _bdv_b]
+                if sb != "Все":
+                    w3 = w3[
+                        w3["_dt_lvl2_key"].astype(str).str.strip()
+                        == str(sb).strip()
+                    ]
+                build_opts = ["Все"] + sorted(
+                    w3[task_col].dropna().astype(str).str.strip().unique().tolist()
+                )
+                if len(build_opts) <= 1 and sb != "Все" and "_dt_lvl3_key" in w3.columns:
+                    _k3b = w3["_dt_lvl3_key"].astype(str).str.strip()
+                    _k3b = _k3b[_k3b.ne("") & _k3b.str.lower().ne("nan")]
+                    if len(_k3b):
+                        build_opts = ["Все"] + sorted(pd.unique(_k3b).tolist())
+                st.selectbox(
+                    "Строение",
+                    build_opts,
+                    key="devcombo_building",
+                )
+            elif use_flat_bs:
+                _tc_fb = _deviations_resolve_task_col(df_opts)
+                _sb_fb = st.session_state.get("devcombo_block", "Все")
+                _bld_opts = _deviations_flat_building_options(df_opts, _sb_fb, _tc_fb)
+                st.selectbox(
+                    "Строение",
+                    _bld_opts,
+                    key="devcombo_building",
+                )
+            elif building_col and building_col in df.columns:
+                bvals = ["Все"] + sorted(
+                    df[building_col].dropna().astype(str).str.strip().unique().tolist()
+                )
+                st.selectbox("Строение", bvals, key="devcombo_building")
+            else:
+                suppress_caption("Нет строения")
+    
+        available_months = []
+        if "plan_month" in df.columns:
+            unique_months = df["plan_month"].dropna().unique()
+            if len(unique_months) > 0:
+                month_dict = {format_period_ru(m): m for m in unique_months}
                 available_months = sorted(month_dict.keys(), key=lambda x: month_dict[x])
-
-    with col4:
-        if len(available_months) > 0:
-            months_opts = ["Все"] + available_months
-            st.selectbox("Период с", months_opts, key="devcombo_period_from")
-        else:
-            st.selectbox("Период с", ["Все"], key="devcombo_period_from", disabled=True)
-    with col5:
-        if len(available_months) > 0:
-            months_opts = ["Все"] + available_months
-            st.selectbox("Период по", months_opts, key="devcombo_period_to")
-        else:
-            st.selectbox("Период по", ["Все"], key="devcombo_period_to", disabled=True)
-
-    with col6:
-        st.checkbox(
-            "ТОП‑5",
-            value=False,
-            key="reason_top5",
-        )
+        elif "plan end" in df.columns:
+            mask = df["plan end"].notna()
+            if mask.any():
+                temp_months = df.loc[mask, "plan end"].dt.to_period("M").unique()
+                if len(temp_months) > 0:
+                    month_dict = {format_period_ru(m): m for m in temp_months}
+                    available_months = sorted(month_dict.keys(), key=lambda x: month_dict[x])
+    
+        with col4:
+            if len(available_months) > 0:
+                months_opts = ["Все"] + available_months
+                st.selectbox("Период с", months_opts, key="devcombo_period_from")
+            else:
+                st.selectbox("Период с", ["Все"], key="devcombo_period_from", disabled=True)
+        with col5:
+            if len(available_months) > 0:
+                months_opts = ["Все"] + available_months
+                st.selectbox("Период по", months_opts, key="devcombo_period_to")
+            else:
+                st.selectbox("Период по", ["Все"], key="devcombo_period_to", disabled=True)
+    
+        with col6:
+            st.checkbox(
+                "ТОП‑5",
+                value=False,
+                key="reason_top5",
+            )
 
     filtered_df = df.copy()
     # §4.1: одна подпись проекта на ключ (Дмитровский* / Есипово V vs -5) — в табах и группировках.
@@ -7163,160 +7156,161 @@ def dashboard_budget_by_period(df):
     hide_reserve = False
 
     filtered_df = df.copy()
-    col1, col2, col3 = st.columns(3)
+    with filters_panel(st):
+        col1, col2, col3 = st.columns(3)
 
-    with col1:
-        period_type = st.selectbox(
-            "Группировать по", ["Месяц", "Квартал", "Год"], key="budget_period"
-        )
-        period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
-        period_type_en = period_map.get(period_type, "Month")
-
-    with col2:
-        if "project name" in filtered_df.columns:
-            projects = ["Все"] + _unique_project_labels_for_select(filtered_df["project name"])
-            selected_project = st.selectbox(
-                "Фильтр по проекту", projects, key="budget_project"
+        with col1:
+            period_type = st.selectbox(
+                "Группировать по", ["Месяц", "Квартал", "Год"], key="budget_period"
             )
-        else:
-            selected_project = "Все"
+            period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
+            period_type_en = period_map.get(period_type, "Month")
 
-    if selected_project != "Все" and "project name" in filtered_df.columns:
-        filtered_df = filtered_df[
-            filtered_df["project name"].map(_project_filter_norm_key)
-            == _project_filter_norm_key(selected_project)
-        ].copy()
-
-    with col3:
-        _year_options = ["Все"]
-        if "plan end" in filtered_df.columns:
-            _pe_for_year = pd.to_datetime(filtered_df["plan end"], errors="coerce")
-            if _pe_for_year.notna().any():
-                _year_options.extend(
-                    str(int(y))
-                    for y in sorted(_pe_for_year.dt.year.dropna().astype(int).unique())
+        with col2:
+            if "project name" in filtered_df.columns:
+                projects = ["Все"] + _unique_project_labels_for_select(filtered_df["project name"])
+                selected_project = st.selectbox(
+                    "Фильтр по проекту", projects, key="budget_project"
                 )
-        selected_year = st.selectbox(
-            "Год",
-            _year_options,
-            key="budget_plan_end_year",
-            help="Фильтр по календарному году поля «Конец план» (plan end).",
-        )
-
-    if (
-        selected_year != "Все"
-        and "plan end" in filtered_df.columns
-        and str(selected_year).strip().isdigit()
-    ):
-        _y_i = int(selected_year)
-        _pe_y_f = pd.to_datetime(filtered_df["plan end"], errors="coerce")
-        filtered_df = filtered_df[_pe_y_f.dt.year == _y_i].copy()
-
-    ensure_date_columns(filtered_df)
-    _bdds_cal_start = None
-    _bdds_cal_end = None
-    # R23-13.1 (стр.34): календарь «Период» по диапазону «plan end»; дополнительно
-    # селектор «Год» (колонка фильтров) и «Группировать по» (месяц/квартал/год).
-    if "plan end" in filtered_df.columns:
-        _pe_series = pd.to_datetime(filtered_df["plan end"], errors="coerce")
-        if _pe_series.notna().any():
-            _pe_min = _pe_series.min()
-            _pe_max = _pe_series.max()
-            _def_start = _pe_min.date() if pd.notna(_pe_min) else None
-            _def_end = _pe_max.date() if pd.notna(_pe_max) else None
-            _from_kw: dict = {
-                "label": "С",
-                "key": "budget_period_from",
-                "help": "Начало диапазона по полю «Конец план».",
-                "format": "DD.MM.YYYY",
-            }
-            _to_kw: dict = {
-                "label": "По",
-                "key": "budget_period_to",
-                "help": "Конец диапазона по полю «Конец план».",
-                "format": "DD.MM.YYYY",
-            }
-            if _def_start and _def_end and _def_start <= _def_end:
-                _from_kw["value"] = _def_start
-                _to_kw["value"] = _def_end
-                _from_kw["min_value"] = _def_start
-                _from_kw["max_value"] = _def_end
-                _to_kw["min_value"] = _def_start
-                _to_kw["max_value"] = _def_end
-            _bdds_pc_from, _bdds_pc_to = st.columns(2)
-            with _bdds_pc_from:
-                _period_from = st.date_input(**_from_kw)
-            with _bdds_pc_to:
-                _period_to = st.date_input(**_to_kw)
-            components.html(
-                """
-                <script>
-                (function() {
-                  const dict = new Map([
-                    ["January","Январь"],["February","Февраль"],["March","Март"],["April","Апрель"],
-                    ["May","Май"],["June","Июнь"],["July","Июль"],["August","Август"],
-                    ["September","Сентябрь"],["October","Октябрь"],["November","Ноябрь"],["December","Декабрь"],
-                    ["Mo","Пн"],["Tu","Вт"],["We","Ср"],["Th","Чт"],["Fr","Пт"],["Sa","Сб"],["Su","Вс"],
-                    ["None","Нет"]
-                  ]);
-                  const root = window.parent && window.parent.document ? window.parent.document : document;
-                  const shouldSkip = (el) => {
-                    if (!el || !el.tagName) return true;
-                    const t = el.tagName.toLowerCase();
-                    if (t === "script" || t === "style" || t === "textarea" || t === "input") return true;
-                    if (t === "svg" || t === "path") return true;
-                    if (el.isContentEditable) return true;
-                    return false;
-                  };
-                  const replaceInTextNode = (node) => {
-                    const raw = node.nodeValue || "";
-                    const txt = raw.trim();
-                    if (!txt) return;
-                    if (dict.has(txt)) {
-                      node.nodeValue = raw.replace(txt, dict.get(txt));
-                      return;
-                    }
-                    let next = raw;
-                    for (const [en, ru] of dict.entries()) {
-                      next = next.replace(new RegExp("\\b" + en + "\\b", "g"), ru);
-                    }
-                    if (next !== raw) node.nodeValue = next;
-                  };
-                  const apply = () => {
-                    const all = root.querySelectorAll("*");
-                    all.forEach((el) => {
-                      if (shouldSkip(el)) return;
-                      const childs = el.childNodes || [];
-                      for (let i = 0; i < childs.length; i++) {
-                        const n = childs[i];
-                        if (n && n.nodeType === Node.TEXT_NODE) replaceInTextNode(n);
-                      }
-                    });
-                  };
-                  apply();
-                  try {
-                    const obs = new MutationObserver(apply);
-                    if (root.body) obs.observe(root.body, { childList: true, subtree: true });
-                  } catch (e) {}
-                })();
-                </script>
-                """,
-                height=0,
-                width=0,
+            else:
+                selected_project = "Все"
+    
+        if selected_project != "Все" and "project name" in filtered_df.columns:
+            filtered_df = filtered_df[
+                filtered_df["project name"].map(_project_filter_norm_key)
+                == _project_filter_norm_key(selected_project)
+            ].copy()
+    
+        with col3:
+            _year_options = ["Все"]
+            if "plan end" in filtered_df.columns:
+                _pe_for_year = pd.to_datetime(filtered_df["plan end"], errors="coerce")
+                if _pe_for_year.notna().any():
+                    _year_options.extend(
+                        str(int(y))
+                        for y in sorted(_pe_for_year.dt.year.dropna().astype(int).unique())
+                    )
+            selected_year = st.selectbox(
+                "Год",
+                _year_options,
+                key="budget_plan_end_year",
+                help="Фильтр по календарному году поля «Конец план» (plan end).",
             )
-            if _period_from is not None and _period_to is not None:
-                _start_dt = pd.to_datetime(_period_from, errors="coerce")
-                _end_dt = pd.to_datetime(_period_to, errors="coerce")
-                if pd.notna(_start_dt) and pd.notna(_end_dt):
-                    if _start_dt > _end_dt:
-                        _start_dt, _end_dt = _end_dt, _start_dt
-                    filtered_df = filtered_df[
-                        (_pe_series >= _start_dt)
-                        & (_pe_series <= (_end_dt + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)))
-                    ].copy()
-                    _bdds_cal_start = _start_dt
-                    _bdds_cal_end = _end_dt
-
+    
+        if (
+            selected_year != "Все"
+            and "plan end" in filtered_df.columns
+            and str(selected_year).strip().isdigit()
+        ):
+            _y_i = int(selected_year)
+            _pe_y_f = pd.to_datetime(filtered_df["plan end"], errors="coerce")
+            filtered_df = filtered_df[_pe_y_f.dt.year == _y_i].copy()
+    
+        ensure_date_columns(filtered_df)
+        _bdds_cal_start = None
+        _bdds_cal_end = None
+        # R23-13.1 (стр.34): календарь «Период» по диапазону «plan end»; дополнительно
+        # селектор «Год» (колонка фильтров) и «Группировать по» (месяц/квартал/год).
+        if "plan end" in filtered_df.columns:
+            _pe_series = pd.to_datetime(filtered_df["plan end"], errors="coerce")
+            if _pe_series.notna().any():
+                _pe_min = _pe_series.min()
+                _pe_max = _pe_series.max()
+                _def_start = _pe_min.date() if pd.notna(_pe_min) else None
+                _def_end = _pe_max.date() if pd.notna(_pe_max) else None
+                _from_kw: dict = {
+                    "label": "С",
+                    "key": "budget_period_from",
+                    "help": "Начало диапазона по полю «Конец план».",
+                    "format": "DD.MM.YYYY",
+                }
+                _to_kw: dict = {
+                    "label": "По",
+                    "key": "budget_period_to",
+                    "help": "Конец диапазона по полю «Конец план».",
+                    "format": "DD.MM.YYYY",
+                }
+                if _def_start and _def_end and _def_start <= _def_end:
+                    _from_kw["value"] = _def_start
+                    _to_kw["value"] = _def_end
+                    _from_kw["min_value"] = _def_start
+                    _from_kw["max_value"] = _def_end
+                    _to_kw["min_value"] = _def_start
+                    _to_kw["max_value"] = _def_end
+                _bdds_pc_from, _bdds_pc_to = st.columns(2)
+                with _bdds_pc_from:
+                    _period_from = st.date_input(**_from_kw)
+                with _bdds_pc_to:
+                    _period_to = st.date_input(**_to_kw)
+                components.html(
+                    """
+                    <script>
+                    (function() {
+                      const dict = new Map([
+                        ["January","Январь"],["February","Февраль"],["March","Март"],["April","Апрель"],
+                        ["May","Май"],["June","Июнь"],["July","Июль"],["August","Август"],
+                        ["September","Сентябрь"],["October","Октябрь"],["November","Ноябрь"],["December","Декабрь"],
+                        ["Mo","Пн"],["Tu","Вт"],["We","Ср"],["Th","Чт"],["Fr","Пт"],["Sa","Сб"],["Su","Вс"],
+                        ["None","Нет"]
+                      ]);
+                      const root = window.parent && window.parent.document ? window.parent.document : document;
+                      const shouldSkip = (el) => {
+                        if (!el || !el.tagName) return true;
+                        const t = el.tagName.toLowerCase();
+                        if (t === "script" || t === "style" || t === "textarea" || t === "input") return true;
+                        if (t === "svg" || t === "path") return true;
+                        if (el.isContentEditable) return true;
+                        return false;
+                      };
+                      const replaceInTextNode = (node) => {
+                        const raw = node.nodeValue || "";
+                        const txt = raw.trim();
+                        if (!txt) return;
+                        if (dict.has(txt)) {
+                          node.nodeValue = raw.replace(txt, dict.get(txt));
+                          return;
+                        }
+                        let next = raw;
+                        for (const [en, ru] of dict.entries()) {
+                          next = next.replace(new RegExp("\\b" + en + "\\b", "g"), ru);
+                        }
+                        if (next !== raw) node.nodeValue = next;
+                      };
+                      const apply = () => {
+                        const all = root.querySelectorAll("*");
+                        all.forEach((el) => {
+                          if (shouldSkip(el)) return;
+                          const childs = el.childNodes || [];
+                          for (let i = 0; i < childs.length; i++) {
+                            const n = childs[i];
+                            if (n && n.nodeType === Node.TEXT_NODE) replaceInTextNode(n);
+                          }
+                        });
+                      };
+                      apply();
+                      try {
+                        const obs = new MutationObserver(apply);
+                        if (root.body) obs.observe(root.body, { childList: true, subtree: true });
+                      } catch (e) {}
+                    })();
+                    </script>
+                    """,
+                    height=0,
+                    width=0,
+                )
+                if _period_from is not None and _period_to is not None:
+                    _start_dt = pd.to_datetime(_period_from, errors="coerce")
+                    _end_dt = pd.to_datetime(_period_to, errors="coerce")
+                    if pd.notna(_start_dt) and pd.notna(_end_dt):
+                        if _start_dt > _end_dt:
+                            _start_dt, _end_dt = _end_dt, _start_dt
+                        filtered_df = filtered_df[
+                            (_pe_series >= _start_dt)
+                            & (_pe_series <= (_end_dt + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)))
+                        ].copy()
+                        _bdds_cal_start = _start_dt
+                        _bdds_cal_end = _end_dt
+    
     # Единый fallback бюджета: MSP -> 1С dannye при пустых budget колонках.
     ensure_budget_columns(filtered_df)
     from dashboards.finance_from_1c import ensure_budget_frame_with_fallback
@@ -7833,39 +7827,40 @@ def dashboard_budget_cumulative(df):
 
     st.header("БДДС накопительно")
 
-    col1, col2, col3 = st.columns(3)
+    with filters_panel(st):
+        col1, col2, col3 = st.columns(3)
 
-    with col1:
-        period_type = st.selectbox(
-            "Группировать по", ["Месяц", "Квартал", "Год"], key="budget_cum_period"
+        with col1:
+            period_type = st.selectbox(
+                "Группировать по", ["Месяц", "Квартал", "Год"], key="budget_cum_period"
+            )
+            period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
+            period_type_en = period_map.get(period_type, "Month")
+
+        with col2:
+            if "project name" in df.columns:
+                projects = ["Все"] + _unique_project_labels_for_select(df["project name"])
+                selected_project = st.selectbox(
+                    "Фильтр по проекту", projects, key="budget_cum_project"
+                )
+            else:
+                selected_project = "Все"
+    
+        col3 = st.columns(1)[0]
+        with col3:
+            if "section" in df.columns:
+                sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
+                selected_section = st.selectbox(
+                    "Фильтр по этапу", sections, key="budget_cum_section"
+                )
+            else:
+                selected_section = "Все"
+    
+        hide_reserve = st.checkbox(
+            "Скрыть отклонение (столбец на графике)",
+            value=False,
+            key="budget_cum_hide_reserve",
         )
-        period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
-        period_type_en = period_map.get(period_type, "Month")
-
-    with col2:
-        if "project name" in df.columns:
-            projects = ["Все"] + _unique_project_labels_for_select(df["project name"])
-            selected_project = st.selectbox(
-                "Фильтр по проекту", projects, key="budget_cum_project"
-            )
-        else:
-            selected_project = "Все"
-
-    col3 = st.columns(1)[0]
-    with col3:
-        if "section" in df.columns:
-            sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
-            selected_section = st.selectbox(
-                "Фильтр по этапу", sections, key="budget_cum_section"
-            )
-        else:
-            selected_section = "Все"
-
-    hide_reserve = st.checkbox(
-        "Скрыть отклонение (столбец на графике)",
-        value=False,
-        key="budget_cum_hide_reserve",
-    )
 
     filtered_df = df.copy()
     if selected_project != "Все" and "project name" in filtered_df.columns:
@@ -8221,30 +8216,31 @@ def dashboard_budget_by_section(df):
     with st.expander("Вид отображения", expanded=False):
         suppress_caption("По месяцам или накопительно — переключатель в блоке графика ниже.")
 
-    col1, col2, col3 = st.columns(3)
+    with filters_panel(st):
+        col1, col2, col3 = st.columns(3)
 
-    with col1:
-        period_type = st.selectbox(
-            "Группировать по", ["Месяц", "Квартал", "Год"], key="budget_section_period"
-        )
-        period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
-        period_type_en = period_map.get(period_type, "Month")
-
-    with col2:
-        if "section" in df.columns:
-            sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
-            selected_section = st.selectbox(
-                "Фильтр по этапу", sections, key="budget_section"
+        with col1:
+            period_type = st.selectbox(
+                "Группировать по", ["Месяц", "Квартал", "Год"], key="budget_section_period"
             )
-        else:
-            selected_section = "Все"
+            period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
+            period_type_en = period_map.get(period_type, "Month")
 
-    with col3:
-        pass
+        with col2:
+            if "section" in df.columns:
+                sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
+                selected_section = st.selectbox(
+                    "Фильтр по этапу", sections, key="budget_section"
+                )
+            else:
+                selected_section = "Все"
 
-    hide_reserve = st.checkbox(
-        "Скрыть отклонение", value=True, key="budget_section_hide_reserve"
-    )
+        with col3:
+            pass
+
+        hide_reserve = st.checkbox(
+            "Скрыть отклонение", value=True, key="budget_section_hide_reserve"
+        )
 
     # Apply filters
     filtered_df = df.copy()
@@ -8780,168 +8776,169 @@ def dashboard_bdr(df):
             return
 
     # Как БДДС: период / проект / год — список проектов из MSP; год после фильтра по проекту.
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        period_type = st.selectbox(
-            "Группировать по", ["Месяц", "Квартал", "Год"], key="bdr_period"
-        )
-        period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
-        period_type_en = period_map.get(period_type, "Month")
-    with col2:
-        if "project name" in df_src.columns:
-            projects = ["Все"] + _unique_project_labels_for_select(df_src["project name"])
-            selected_project = st.selectbox(
-                "Фильтр по проекту", projects, key="bdr_project"
+    with filters_panel(st):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            period_type = st.selectbox(
+                "Группировать по", ["Месяц", "Квартал", "Год"], key="bdr_period"
             )
-        else:
-            selected_project = "Все"
-
-    if period_type_en == "Month":
-        period_col = "plan_month"
-        period_label = "Месяц"
-    elif period_type_en == "Quarter":
-        period_col = "plan_quarter"
-        period_label = "Квартал"
-    else:
-        period_col = "plan_year"
-        period_label = "Год"
-
-    if period_col not in df_work.columns:
-        st.warning(f"Столбец периода «{period_col}» не найден. Добавьте даты в данные.")
-        return
-
-    filtered_df = df_work.copy()
-    if selected_project != "Все" and "project name" in filtered_df.columns:
-        filtered_df = filtered_df[
-            filtered_df["project name"].map(_project_filter_norm_key)
-            == _project_filter_norm_key(selected_project)
-        ].copy()
-
-    with col3:
-        _year_options = ["Все"]
-        if "plan end" in filtered_df.columns:
-            _pe_for_year_bdr = pd.to_datetime(filtered_df["plan end"], errors="coerce")
-            if _pe_for_year_bdr.notna().any():
-                _year_options.extend(
-                    str(int(y))
-                    for y in sorted(_pe_for_year_bdr.dt.year.dropna().astype(int).unique())
+            period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
+            period_type_en = period_map.get(period_type, "Month")
+        with col2:
+            if "project name" in df_src.columns:
+                projects = ["Все"] + _unique_project_labels_for_select(df_src["project name"])
+                selected_project = st.selectbox(
+                    "Фильтр по проекту", projects, key="bdr_project"
                 )
-        selected_year = st.selectbox(
-            "Год",
-            _year_options,
-            key="bdr_plan_end_year",
-            help="Фильтр по календарному году поля «Конец план» (plan end).",
-        )
-
-    if (
-        selected_year != "Все"
-        and "plan end" in filtered_df.columns
-        and str(selected_year).strip().isdigit()
-    ):
-        _y_bdr_i = int(selected_year)
-        _pe_y_bdr_f = pd.to_datetime(filtered_df["plan end"], errors="coerce")
-        filtered_df = filtered_df[_pe_y_bdr_f.dt.year == _y_bdr_i].copy()
-
-    ensure_date_columns(filtered_df)
-    # Фильтр периода — два одиночных date_input («С»/«По»), без range quick select Streamlit.
-    if "plan end" in filtered_df.columns:
-        _pe_series_bdr = pd.to_datetime(filtered_df["plan end"], errors="coerce")
-        if _pe_series_bdr.notna().any():
-            _bdr_min = _pe_series_bdr.min()
-            _bdr_max = _pe_series_bdr.max()
-            _bdr_start = _bdr_min.date() if pd.notna(_bdr_min) else None
-            _bdr_end = _bdr_max.date() if pd.notna(_bdr_max) else None
-            _bdr_from_kw: dict = {
-                "label": "С",
-                "key": "bdr_period_from",
-                "help": "Начало диапазона по полю «Конец план».",
-                "format": "DD.MM.YYYY",
-            }
-            _bdr_to_kw: dict = {
-                "label": "По",
-                "key": "bdr_period_to",
-                "help": "Конец диапазона по полю «Конец план».",
-                "format": "DD.MM.YYYY",
-            }
-            if _bdr_start and _bdr_end and _bdr_start <= _bdr_end:
-                _bdr_from_kw["value"] = _bdr_start
-                _bdr_to_kw["value"] = _bdr_end
-                _bdr_from_kw["min_value"] = _bdr_start
-                _bdr_from_kw["max_value"] = _bdr_end
-                _bdr_to_kw["min_value"] = _bdr_start
-                _bdr_to_kw["max_value"] = _bdr_end
-            _bdr_pc_from, _bdr_pc_to = st.columns(2)
-            with _bdr_pc_from:
-                _bdr_period_from = st.date_input(**_bdr_from_kw)
-            with _bdr_pc_to:
-                _bdr_period_to = st.date_input(**_bdr_to_kw)
-            components.html(
-                """
-                <script>
-                (function() {
-                  const dict = new Map([
-                    ["January","Январь"],["February","Февраль"],["March","Март"],["April","Апрель"],
-                    ["May","Май"],["June","Июнь"],["July","Июль"],["August","Август"],
-                    ["September","Сентябрь"],["October","Октябрь"],["November","Ноябрь"],["December","Декабрь"],
-                    ["Mo","Пн"],["Tu","Вт"],["We","Ср"],["Th","Чт"],["Fr","Пт"],["Sa","Сб"],["Su","Вс"],
-                    ["None","Нет"]
-                  ]);
-                  const root = window.parent && window.parent.document ? window.parent.document : document;
-                  const shouldSkip = (el) => {
-                    if (!el || !el.tagName) return true;
-                    const t = el.tagName.toLowerCase();
-                    if (t === "script" || t === "style" || t === "textarea" || t === "input") return true;
-                    if (t === "svg" || t === "path") return true;
-                    if (el.isContentEditable) return true;
-                    return false;
-                  };
-                  const replaceInTextNode = (node) => {
-                    const raw = node.nodeValue || "";
-                    const txt = raw.trim();
-                    if (!txt) return;
-                    if (dict.has(txt)) {
-                      node.nodeValue = raw.replace(txt, dict.get(txt));
-                      return;
-                    }
-                    let next = raw;
-                    for (const [en, ru] of dict.entries()) {
-                      next = next.replace(new RegExp("\\b" + en + "\\b", "g"), ru);
-                    }
-                    if (next !== raw) node.nodeValue = next;
-                  };
-                  const apply = () => {
-                    const all = root.querySelectorAll("*");
-                    all.forEach((el) => {
-                      if (shouldSkip(el)) return;
-                      const childs = el.childNodes || [];
-                      for (let i = 0; i < childs.length; i++) {
-                        const n = childs[i];
-                        if (n && n.nodeType === Node.TEXT_NODE) replaceInTextNode(n);
-                      }
-                    });
-                  };
-                  apply();
-                  try {
-                    const obs = new MutationObserver(apply);
-                    if (root.body) obs.observe(root.body, { childList: true, subtree: true });
-                  } catch (e) {}
-                })();
-                </script>
-                """,
-                height=0,
-                width=0,
+            else:
+                selected_project = "Все"
+    
+        if period_type_en == "Month":
+            period_col = "plan_month"
+            period_label = "Месяц"
+        elif period_type_en == "Quarter":
+            period_col = "plan_quarter"
+            period_label = "Квартал"
+        else:
+            period_col = "plan_year"
+            period_label = "Год"
+    
+        if period_col not in df_work.columns:
+            st.warning(f"Столбец периода «{period_col}» не найден. Добавьте даты в данные.")
+            return
+    
+        filtered_df = df_work.copy()
+        if selected_project != "Все" and "project name" in filtered_df.columns:
+            filtered_df = filtered_df[
+                filtered_df["project name"].map(_project_filter_norm_key)
+                == _project_filter_norm_key(selected_project)
+            ].copy()
+    
+        with col3:
+            _year_options = ["Все"]
+            if "plan end" in filtered_df.columns:
+                _pe_for_year_bdr = pd.to_datetime(filtered_df["plan end"], errors="coerce")
+                if _pe_for_year_bdr.notna().any():
+                    _year_options.extend(
+                        str(int(y))
+                        for y in sorted(_pe_for_year_bdr.dt.year.dropna().astype(int).unique())
+                    )
+            selected_year = st.selectbox(
+                "Год",
+                _year_options,
+                key="bdr_plan_end_year",
+                help="Фильтр по календарному году поля «Конец план» (plan end).",
             )
-            if _bdr_period_from is not None and _bdr_period_to is not None:
-                _bdr_from = pd.to_datetime(_bdr_period_from, errors="coerce")
-                _bdr_to = pd.to_datetime(_bdr_period_to, errors="coerce")
-                if pd.notna(_bdr_from) and pd.notna(_bdr_to):
-                    if _bdr_from > _bdr_to:
-                        _bdr_from, _bdr_to = _bdr_to, _bdr_from
-                    filtered_df = filtered_df[
-                        (_pe_series_bdr >= _bdr_from)
-                        & (_pe_series_bdr <= (_bdr_to + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)))
-                    ].copy()
-
+    
+        if (
+            selected_year != "Все"
+            and "plan end" in filtered_df.columns
+            and str(selected_year).strip().isdigit()
+        ):
+            _y_bdr_i = int(selected_year)
+            _pe_y_bdr_f = pd.to_datetime(filtered_df["plan end"], errors="coerce")
+            filtered_df = filtered_df[_pe_y_bdr_f.dt.year == _y_bdr_i].copy()
+    
+        ensure_date_columns(filtered_df)
+        # Фильтр периода — два одиночных date_input («С»/«По»), без range quick select Streamlit.
+        if "plan end" in filtered_df.columns:
+            _pe_series_bdr = pd.to_datetime(filtered_df["plan end"], errors="coerce")
+            if _pe_series_bdr.notna().any():
+                _bdr_min = _pe_series_bdr.min()
+                _bdr_max = _pe_series_bdr.max()
+                _bdr_start = _bdr_min.date() if pd.notna(_bdr_min) else None
+                _bdr_end = _bdr_max.date() if pd.notna(_bdr_max) else None
+                _bdr_from_kw: dict = {
+                    "label": "С",
+                    "key": "bdr_period_from",
+                    "help": "Начало диапазона по полю «Конец план».",
+                    "format": "DD.MM.YYYY",
+                }
+                _bdr_to_kw: dict = {
+                    "label": "По",
+                    "key": "bdr_period_to",
+                    "help": "Конец диапазона по полю «Конец план».",
+                    "format": "DD.MM.YYYY",
+                }
+                if _bdr_start and _bdr_end and _bdr_start <= _bdr_end:
+                    _bdr_from_kw["value"] = _bdr_start
+                    _bdr_to_kw["value"] = _bdr_end
+                    _bdr_from_kw["min_value"] = _bdr_start
+                    _bdr_from_kw["max_value"] = _bdr_end
+                    _bdr_to_kw["min_value"] = _bdr_start
+                    _bdr_to_kw["max_value"] = _bdr_end
+                _bdr_pc_from, _bdr_pc_to = st.columns(2)
+                with _bdr_pc_from:
+                    _bdr_period_from = st.date_input(**_bdr_from_kw)
+                with _bdr_pc_to:
+                    _bdr_period_to = st.date_input(**_bdr_to_kw)
+                components.html(
+                    """
+                    <script>
+                    (function() {
+                      const dict = new Map([
+                        ["January","Январь"],["February","Февраль"],["March","Март"],["April","Апрель"],
+                        ["May","Май"],["June","Июнь"],["July","Июль"],["August","Август"],
+                        ["September","Сентябрь"],["October","Октябрь"],["November","Ноябрь"],["December","Декабрь"],
+                        ["Mo","Пн"],["Tu","Вт"],["We","Ср"],["Th","Чт"],["Fr","Пт"],["Sa","Сб"],["Su","Вс"],
+                        ["None","Нет"]
+                      ]);
+                      const root = window.parent && window.parent.document ? window.parent.document : document;
+                      const shouldSkip = (el) => {
+                        if (!el || !el.tagName) return true;
+                        const t = el.tagName.toLowerCase();
+                        if (t === "script" || t === "style" || t === "textarea" || t === "input") return true;
+                        if (t === "svg" || t === "path") return true;
+                        if (el.isContentEditable) return true;
+                        return false;
+                      };
+                      const replaceInTextNode = (node) => {
+                        const raw = node.nodeValue || "";
+                        const txt = raw.trim();
+                        if (!txt) return;
+                        if (dict.has(txt)) {
+                          node.nodeValue = raw.replace(txt, dict.get(txt));
+                          return;
+                        }
+                        let next = raw;
+                        for (const [en, ru] of dict.entries()) {
+                          next = next.replace(new RegExp("\\b" + en + "\\b", "g"), ru);
+                        }
+                        if (next !== raw) node.nodeValue = next;
+                      };
+                      const apply = () => {
+                        const all = root.querySelectorAll("*");
+                        all.forEach((el) => {
+                          if (shouldSkip(el)) return;
+                          const childs = el.childNodes || [];
+                          for (let i = 0; i < childs.length; i++) {
+                            const n = childs[i];
+                            if (n && n.nodeType === Node.TEXT_NODE) replaceInTextNode(n);
+                          }
+                        });
+                      };
+                      apply();
+                      try {
+                        const obs = new MutationObserver(apply);
+                        if (root.body) obs.observe(root.body, { childList: true, subtree: true });
+                      } catch (e) {}
+                    })();
+                    </script>
+                    """,
+                    height=0,
+                    width=0,
+                )
+                if _bdr_period_from is not None and _bdr_period_to is not None:
+                    _bdr_from = pd.to_datetime(_bdr_period_from, errors="coerce")
+                    _bdr_to = pd.to_datetime(_bdr_period_to, errors="coerce")
+                    if pd.notna(_bdr_from) and pd.notna(_bdr_to):
+                        if _bdr_from > _bdr_to:
+                            _bdr_from, _bdr_to = _bdr_to, _bdr_from
+                        filtered_df = filtered_df[
+                            (_pe_series_bdr >= _bdr_from)
+                            & (_pe_series_bdr <= (_bdr_to + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)))
+                        ].copy()
+    
     if bdr_tz_mode:
         filtered_df["_plan_exp"] = _coerce_bdr_amount_series(filtered_df[plan_ec]).fillna(0.0)
         filtered_df["_fact_exp"] = _coerce_bdr_amount_series(filtered_df[fact_ec]).fillna(0.0)
@@ -21998,103 +21995,164 @@ def dashboard_predpisania(df):
             return float(int(np.ceil(val / 10.0)) * 10)
         return float(int(np.ceil(val / 25.0)) * 25)
 
-    st.markdown("**Фильтры**")
-    projects = pred_project_options
-    if contr_col:
-        contractors_ms = sorted(
-            pred[contr_col].dropna().astype(str).str.strip().unique().tolist(),
-            key=lambda x: str(x).lower(),
-        )
-    else:
-        contractors_ms = []
-    if curator_col:
-        curators = ["Все кураторы"] + sorted(
-            pred[curator_col].dropna().astype(str).str.strip().unique().tolist(),
-            key=lambda x: str(x).lower(),
-        )
-    else:
-        curators = ["Все кураторы"]
-
-    if curator_col:
-        fc1, fc2, fc3, fc4, fc5, fb1, fb2 = st.columns([2, 2, 2, 2, 2, 1, 1])
-    else:
-        fc1, fc2, fc3, fc4, fb1, fb2 = st.columns([2, 2, 2, 2, 1, 1])
-        fc5 = None
-
-    with fc1:
-        if obj_col:
-            sel_obj = st.multiselect(
-                "Проект",
-                projects,
-                default=st.session_state.get("pred_m_p", []),
-                key="pred_m_p",
-                placeholder="Выберите проекты",
-            )
-        else:
-            sel_obj = []
-    with fc2:
+    with filters_panel(st):
+        projects = pred_project_options
         if contr_col:
-            sel_contr = st.multiselect(
-                "Подрядчик",
-                contractors_ms,
-                default=st.session_state.get("pred_m_c_ms", []),
-                key="pred_m_c_ms",
-                placeholder="Все подрядчики",
+            contractors_ms = sorted(
+                pred[contr_col].dropna().astype(str).str.strip().unique().tolist(),
+                key=lambda x: str(x).lower(),
             )
         else:
-            sel_contr = []
-    if curator_col and fc5 is not None:
-        with fc3:
-            sel_curator = st.selectbox("Куратор", curators, key="pred_m_curator")
-        _fc_contract = fc4
-        _fc_period = fc5
-    else:
-        sel_curator = "Все кураторы"
-        _fc_contract = fc3
-        _fc_period = fc4
-    with _fc_contract:
-        contract_q = st.text_input("№ договора (частичный поиск)", "", key="pred_m_contract")
-    with _fc_period:
-        if pred["_issue_date"].notna().any():
-            min_issue = pred["_issue_date"].min().date()
-            max_issue = pred["_issue_date"].max().date()
-            issue_period = st.date_input(
-                "Выбор периода выданных предписаний",
-                value=(min_issue, max_issue),
-                min_value=min_issue,
-                max_value=max_issue,
-                key="pred_issue_period",
-                format="DD.MM.YYYY",
+            contractors_ms = []
+        if curator_col:
+            curators = ["Все кураторы"] + sorted(
+                pred[curator_col].dropna().astype(str).str.strip().unique().tolist(),
+                key=lambda x: str(x).lower(),
             )
-            if isinstance(issue_period, tuple) and len(issue_period) == 2:
-                issue_start, issue_end = issue_period
-            else:
-                issue_start = issue_period
-                issue_end = issue_period
         else:
-            issue_start = issue_end = None
-            suppress_caption("Нет даты выдачи в данных.")
-    with fb1:
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.button("Применить", key="pred_m_apply", type="primary", use_container_width=True)
-    with fb2:
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("Сбросить", key="pred_m_reset", use_container_width=True):
+            curators = ["Все кураторы"]
+    
+        if curator_col:
+            fc1, fc2, fc3, fc4, fc5, fb1, fb2 = st.columns([2, 2, 2, 2, 2, 1, 1])
+        else:
+            fc1, fc2, fc3, fc4, fb1, fb2 = st.columns([2, 2, 2, 2, 1, 1])
+            fc5 = None
+    
+        with fc1:
             if obj_col:
-                st.session_state.pred_m_p = []
+                sel_obj = st.multiselect(
+                    "Проект",
+                    projects,
+                    default=st.session_state.get("pred_m_p", []),
+                    key="pred_m_p",
+                    placeholder="Выберите проект",
+                )
+            else:
+                sel_obj = []
+        with fc2:
             if contr_col:
-                st.session_state.pred_m_c_ms = []
-            if curator_col:
-                st.session_state.pred_m_curator = "Все кураторы"
-            st.session_state.pred_m_contract = ""
+                sel_contr = st.multiselect(
+                    "Подрядчик",
+                    contractors_ms,
+                    default=st.session_state.get("pred_m_c_ms", []),
+                    key="pred_m_c_ms",
+                    placeholder="Все подрядчики",
+                )
+            else:
+                sel_contr = []
+        if curator_col and fc5 is not None:
+            with fc3:
+                sel_curator = st.selectbox("Куратор", curators, key="pred_m_curator")
+            _fc_contract = fc4
+            _fc_period = fc5
+        else:
+            sel_curator = "Все кураторы"
+            _fc_contract = fc3
+            _fc_period = fc4
+        with _fc_contract:
+            contract_q = st.text_input("№ договора (частичный поиск)", "", key="pred_m_contract")
+        with _fc_period:
             if pred["_issue_date"].notna().any():
-                st.session_state.pred_issue_period = (min_issue, max_issue)
-            if due_col and pred["_due"].notna().any():
-                _dmn = pd.to_datetime(pred["_due"], errors="coerce").min()
-                _dmx = pd.to_datetime(pred["_due"], errors="coerce").max()
-                if pd.notna(_dmn) and pd.notna(_dmx):
-                    st.session_state.pred_due_period = (_dmn.date(), _dmx.date())
-            st.rerun()
+                min_issue = pred["_issue_date"].min().date()
+                max_issue = pred["_issue_date"].max().date()
+                issue_period = st.date_input(
+                    "Выбор периода выданных предписаний",
+                    value=(min_issue, max_issue),
+                    min_value=min_issue,
+                    max_value=max_issue,
+                    key="pred_issue_period",
+                    format="DD.MM.YYYY",
+                )
+                if isinstance(issue_period, tuple) and len(issue_period) == 2:
+                    issue_start, issue_end = issue_period
+                else:
+                    issue_start = issue_period
+                    issue_end = issue_period
+            else:
+                issue_start = issue_end = None
+                suppress_caption("Нет даты выдачи в данных.")
+        with fb1:
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.button("Применить", key="pred_m_apply", type="primary", use_container_width=True)
+        with fb2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("Сбросить", key="pred_m_reset", use_container_width=True):
+                if obj_col:
+                    st.session_state.pred_m_p = []
+                if contr_col:
+                    st.session_state.pred_m_c_ms = []
+                if curator_col:
+                    st.session_state.pred_m_curator = "Все кураторы"
+                st.session_state.pred_m_contract = ""
+                if pred["_issue_date"].notna().any():
+                    st.session_state.pred_issue_period = (min_issue, max_issue)
+                if due_col and pred["_due"].notna().any():
+                    _dmn = pd.to_datetime(pred["_due"], errors="coerce").min()
+                    _dmx = pd.to_datetime(pred["_due"], errors="coerce").max()
+                    if pd.notna(_dmn) and pd.notna(_dmx):
+                        st.session_state.pred_due_period = (_dmn.date(), _dmx.date())
+                st.rerun()
+    # Локализация встроенных подписей st.multiselect (Select all / Select N matches / No results).
+    components.html(
+        """
+        <script>
+        (function() {
+          const dict = new Map([
+            ["Select all", "Выбрать все"],
+            ["No results", "Нет результатов"],
+          ]);
+          const root = window.parent && window.parent.document ? window.parent.document : document;
+          const shouldSkip = (el) => {
+            if (!el || !el.tagName) return true;
+            const t = el.tagName.toLowerCase();
+            if (t === "script" || t === "style" || t === "textarea" || t === "input") return true;
+            if (t === "svg" || t === "path") return true;
+            if (el.isContentEditable) return true;
+            return false;
+          };
+          const replaceInTextNode = (node) => {
+            const raw = node.nodeValue || "";
+            const txt = raw.trim();
+            if (!txt) return;
+            let next = raw;
+            if (dict.has(txt)) {
+              node.nodeValue = raw.replace(txt, dict.get(txt));
+              return;
+            }
+            next = raw.replace(/^Select (\d+) matches$/g, "Выбрать $1 совпадений");
+            next = next.replace(/\bSelect (\d+) matches\b/g, "Выбрать $1 совпадений");
+            next = next.replace(
+              /^You can only select up to (\d+) option\. Remove an option first\.$/g,
+              "Можно выбрать не более $1 варианта. Сначала снимите один вариант."
+            );
+            next = next.replace(
+              /^You can only select up to (\d+) options\. Remove an option first\.$/g,
+              "Можно выбрать не более $1 вариантов. Сначала снимите один вариант."
+            );
+            if (next !== raw) node.nodeValue = next;
+          };
+          const apply = () => {
+            const all = root.querySelectorAll("*");
+            all.forEach((el) => {
+              if (shouldSkip(el)) return;
+              const childs = el.childNodes || [];
+              for (let i = 0; i < childs.length; i++) {
+                const n = childs[i];
+                if (n && n.nodeType === Node.TEXT_NODE) replaceInTextNode(n);
+              }
+            });
+          };
+          apply();
+          try {
+            const obs = new MutationObserver(apply);
+            if (root.body) obs.observe(root.body, { childList: true, subtree: true });
+          } catch (e) {}
+        })();
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
     hide_resolved = st.checkbox(
         "Не отображать устраненные предписания",
         value=True,
@@ -22669,16 +22727,48 @@ def dashboard_developer_projects(df):
         st.warning("Не найдены ключевые колонки (проект, задача). Проверьте формат файла.")
         return
 
-    # По правкам ТЗ: в фильтрах только проект
+    # По правкам ТЗ: в фильтрах только проект — одна строка на логический объект (совпадает «Контрольные точки»).
     if project_col and project_col in work.columns:
         _session_reset_project_if_excluded("dev_proj")
-        projects = ["Все"] + _unique_project_labels_for_select(work[project_col])
-        sel_proj = st.selectbox(
-            "Проект",
-            projects,
-            index=0,
-            key="dev_proj",
-        )
+        try:
+            from dashboards.dev_projects_tz_matrix import (
+                _control_points_project_group_key as _cp_gk,
+                _control_points_project_label as _cp_lab,
+            )
+        except Exception:
+            _cp_gk = None  # type: ignore[assignment]
+            _cp_lab = None  # type: ignore[assignment]
+        if _cp_gk is not None and _cp_lab is not None:
+            gm: dict[str, list[str]] = defaultdict(list)
+            for raw in work[project_col].dropna().unique():
+                s = (
+                    str(raw)
+                    .replace("\xa0", " ")
+                    .replace("\u200b", "")
+                    .replace("\ufeff", "")
+                    .strip()
+                )
+                while "  " in s:
+                    s = s.replace("  ", " ")
+                if not s or s.lower() in ("nan", "none", "nat"):
+                    continue
+                if s in MSP_PROJECT_FILTER_EXCLUDE_NAMES:
+                    continue
+                gm[str(_cp_gk(s))].append(s)
+            labels = sorted(
+                (_cp_lab(gk, sorted(set(vs))) for gk, vs in gm.items()),
+                key=lambda x: str(x).casefold(),
+            )
+            projects = ["Все"] + labels
+        else:
+            projects = ["Все"] + _unique_project_labels_for_select(work[project_col])
+        with filters_panel(st):
+            sel_proj = st.selectbox(
+                "Проект",
+                projects,
+                index=0,
+                key="dev_proj",
+            )
     else:
         sel_proj = "Все"
     # Не фильтруем по «Уровень» в UI: в MSP это не outline; выбор не «Все» оставлял только часть строк —
@@ -22686,10 +22776,20 @@ def dashboard_developer_projects(df):
 
     filtered = work.copy()
     if sel_proj != "Все" and project_col:
-        _pk = _project_filter_norm_key(sel_proj)
-        filtered = filtered[
-            filtered[project_col].map(_project_filter_norm_key) == _pk
-        ]
+        try:
+            from dashboards.dev_projects_tz_matrix import _control_points_project_group_key as _cp_gk2
+        except Exception:
+            _cp_gk2 = None  # type: ignore[assignment]
+        if _cp_gk2 is not None:
+            tgt = str(_cp_gk2(sel_proj))
+            filtered = filtered[
+                filtered[project_col].map(lambda x: str(_cp_gk2(x)) == tgt)
+            ]
+        else:
+            _pk = _project_filter_norm_key(sel_proj)
+            filtered = filtered[
+                filtered[project_col].map(_project_filter_norm_key) == _pk
+            ]
 
     if project_col and project_col in filtered.columns:
         filtered = _project_column_apply_canonical(filtered, project_col)
@@ -22721,9 +22821,8 @@ def dashboard_developer_projects(df):
     except Exception:
         pass
 
-    _prefs_dm = load_developer_projects_matrix_prefs()
-    vert_dates = bool(_prefs_dm.get("default_vertical_dates", False))
-
+    # JSON префов подгружается внутри матрицы; вертикальные даты в UI отключены.
+    vert_dates = False
     try:
         from settings import get_setting as _get_admin_mail
 
@@ -22769,11 +22868,30 @@ def dashboard_developer_projects(df):
         else:
             export_project_names = [""]
     else:
-        ordered = sorted(matrix_df[project_col].dropna().astype(str).str.strip().unique().tolist())
+        raw_names = sorted(
+            matrix_df[project_col].dropna().astype(str).str.strip().unique().tolist()
+        )
+        try:
+            from dashboards.dev_projects_tz_matrix import (
+                _control_points_project_group_key,
+                _control_points_project_label,
+            )
+        except Exception:
+            _control_points_project_group_key = None  # type: ignore[assignment]
+            _control_points_project_label = None  # type: ignore[assignment]
+        grouped: dict[str, list[str]] = defaultdict(list)
+        if _control_points_project_group_key is not None:
+            for pname in raw_names:
+                grouped[str(_control_points_project_group_key(pname))].append(str(pname).strip())
+        else:
+            for pname in raw_names:
+                grouped[str(pname).strip()].append(str(pname).strip())
         blocks: list = []
         names: list = []
-        for pname in ordered:
-            sub = matrix_df[matrix_df[project_col].astype(str).str.strip() == pname]
+        for gk in sorted(grouped.keys(), key=lambda x: (_control_points_project_label(x, grouped[x]).lower()) if (_control_points_project_label is not None) else x.lower()):
+            raws = sorted(set(grouped[gk]))
+            label = (_control_points_project_label(gk, raws)) if (_control_points_project_label is not None) else (raws[0] if raws else gk)
+            sub = matrix_df[matrix_df[project_col].astype(str).str.strip().isin(raws)]
             if sub.empty:
                 continue
             rows_p, _cap = build_dev_tz_matrix_rows(
@@ -22782,7 +22900,7 @@ def dashboard_developer_projects(df):
                 st.session_state,
             )
             blocks.append(rows_p)
-            names.append(pname)
+            names.append(label)
         if not blocks:
             st.info("Нет строк MSP для проектов в выборке.")
             return
@@ -23001,7 +23119,8 @@ def render_developer_projects_matrix_admin_settings(*, key_prefix: str = "admin_
     ):
         suppress_caption(
             "**subcolumns**: подписи третьей строки шапки («План/Факт/Откл.»). "
-            "**default_vertical_dates**: начальное значение чекбокса вертикальных дат для новых сессий. "
+            "**default_vertical_dates**: поле в JSON оставлено для совместимости; **в отчёте не используется** "
+            "(даты только в одну строку, без чекбокса).\n\n"
             "**titles**: переименование вех `{ \"row_key\": \"Новый заголовок\" }`. Ключи: "
             + ", ".join(_DEV_MATRIX_ROW_KEYS[:8])
             + ", … (**полный список** — в блоке ниже)."
