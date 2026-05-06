@@ -1237,7 +1237,10 @@ def load_all_from_web() -> Dict:
                     df = _load_resources_file(filepath)
                     if df is None or df.empty:
                         result["skipped"] += 1
-                        result["errors"].append(
+                        # Это warning, а не error: нестандартный формат
+                        # КОНКРЕТНОГО файла не должен превращать всю
+                        # версию в partial и блокировать активацию.
+                        result["warnings"].append(
                             _format_skip_reason(
                                 rel_path,
                                 "ресурсы не распознаны",
@@ -1283,7 +1286,9 @@ def load_all_from_web() -> Dict:
                         })
                     else:
                         result["skipped"] += 1
-                        result["errors"].append(_format_skip_reason(rel_path, "JSON DK не распознан"))
+                        result["warnings"].append(
+                            _format_skip_reason(rel_path, "JSON DK не распознан")
+                        )
                     continue
 
                 if file_type_by_name == "reference_json":
@@ -1423,7 +1428,9 @@ def load_all_from_web() -> Dict:
 
                 if df is None or df.empty:
                     result["skipped"] += 1
-                    result["errors"].append(
+                    # warning, не error: проблема в формате конкретного
+                    # файла, не в коде. Не должна блокировать активацию.
+                    result["warnings"].append(
                         _format_skip_reason(
                             rel_path,
                             "не удалось прочитать CSV",
@@ -1514,9 +1521,16 @@ def load_all_from_web() -> Dict:
         )
         # Политика активации:
         # - `success`: становится активной, старые деактивируются.
-        # - `partial`: активируется только если нет ни одной прежней `success`-версии
-        #   (иначе оставляем активной последнюю корректную, чтобы неполная загрузка
-        #   не ломала рабочий дашборд).
+        # - `partial`: активируется, ЕСЛИ её прогресс не хуже последней
+        #   success-версии (loaded ≥ prev.loaded И rows ≥ prev.rows).
+        #   Иначе оставляем активной прежнюю success — чтобы неполная
+        #   загрузка не ломала уже работающий дашборд.
+        #
+        # Зачем так: один-единственный нестандартный CSV (например
+        # AI/other_…__resursi.csv с двухстрочной шапкой без 'Проект;Подрядчик')
+        # раньше превращал любую новую версию в partial и её НЕ активировал.
+        # Получалось, что клиент годами сидел на устаревшей версии,
+        # хотя 26 из 27 файлов в новой выгрузке корректные.
         if status == "success":
             cur.execute("UPDATE web_versions SET is_active=0")
             cur.execute(
@@ -1524,24 +1538,42 @@ def load_all_from_web() -> Dict:
             )
         else:
             prev_success = cur.execute(
-                "SELECT id FROM web_versions "
+                "SELECT id, files_count, rows_count FROM web_versions "
                 "WHERE status='success' AND id<>? ORDER BY id DESC LIMIT 1",
                 (version_id,),
             ).fetchone()
-            if prev_success:
-                cur.execute("UPDATE web_versions SET is_active=0")
-                cur.execute(
-                    "UPDATE web_versions SET is_active=1 WHERE id=?",
-                    (prev_success[0],),
-                )
-                result.setdefault("warnings", []).append(
-                    f"Версия {version_id} сохранена как partial — активной оставлена "
-                    f"последняя success-версия (id={prev_success[0]})."
-                )
-            else:
+            curr_loaded = int(result.get("loaded") or 0)
+            curr_rows = int(total_rows or 0)
+            prev_files = int(prev_success["files_count"] or 0) if prev_success else 0
+            prev_rows = int(prev_success["rows_count"] or 0) if prev_success else 0
+            promote_partial = (
+                prev_success is None
+                or (curr_loaded >= prev_files and curr_rows >= prev_rows)
+            )
+            if promote_partial:
                 cur.execute("UPDATE web_versions SET is_active=0")
                 cur.execute(
                     "UPDATE web_versions SET is_active=1 WHERE id=?", (version_id,)
+                )
+                if prev_success is not None:
+                    result.setdefault("warnings", []).append(
+                        f"Версия {version_id} помечена как partial (есть ошибки "
+                        f"по отдельным файлам), но активирована, т.к. содержит "
+                        f"больше или столько же данных, сколько success-версия "
+                        f"id={prev_success['id']} ({curr_loaded}/{prev_files} файлов, "
+                        f"{curr_rows}/{prev_rows} строк)."
+                    )
+            else:
+                cur.execute("UPDATE web_versions SET is_active=0")
+                cur.execute(
+                    "UPDATE web_versions SET is_active=1 WHERE id=?",
+                    (prev_success["id"],),
+                )
+                result.setdefault("warnings", []).append(
+                    f"Версия {version_id} сохранена как partial и НЕ активирована "
+                    f"(меньше данных: {curr_loaded}/{prev_files} файлов, "
+                    f"{curr_rows}/{prev_rows} строк) — активной оставлена "
+                    f"последняя success-версия id={prev_success['id']}."
                 )
 
         conn.commit()
