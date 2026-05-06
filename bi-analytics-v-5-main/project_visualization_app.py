@@ -734,9 +734,14 @@ def main():
             and st.session_state.get("project_data") is None
             and not st.session_state.get("_release_web_autoload_tried", False)
         ):
-            # Release-клиент при первом заходе: пробуем подтянуть свежие файлы с FTP
-            # (если в st.secrets[ftp] / env BI_FTP_* настроены host+user), затем читаем web/.
+            # Release-клиент при первом заходе: ставим флаги первыми, чтобы при любом
+            # сбое FTP / зависании не зацикливаться и не блокировать UI на каждом
+            # rerun. Если FTP сработает — данные подтянутся; если нет — клиент увидит
+            # данные из локального web/ (закоммиченные снимки).
+            #
             # Управление: BI_ANALYTICS_AUTO_FTP_ON_START=0 — отключить авто-FTP даже если настроен.
+            st.session_state["_release_web_autoload_tried"] = True
+            st.session_state["_pending_web_folder_load"] = True
             try:
                 _auto_ftp_off = str(os.environ.get("BI_ANALYTICS_AUTO_FTP_ON_START", "")).strip().lower() in (
                     "0",
@@ -755,6 +760,9 @@ def main():
                     )
 
                     _ftp_cfg = merge_ftp_config(streamlit_secrets_to_config())
+                    # Жёсткий потолок таймаута, чтобы при недоступном FTP клиент
+                    # не висел на спиннере вечно (по умолчанию ftplib timeout=60s).
+                    _ftp_cfg["timeout"] = float(_ftp_cfg.get("timeout") or 30) or 30
                     if _ftp_cfg.get("host") and _ftp_cfg.get("user"):
                         with st.spinner("Загружаю свежие данные…"):
                             sync_ftp_to_web(
@@ -767,8 +775,6 @@ def main():
                     # Без шумовых ошибок: на release клиенту нечего показывать,
                     # упадём в чтение того, что уже лежит локально в web/.
                     pass
-            st.session_state["_pending_web_folder_load"] = True
-            st.session_state["_release_web_autoload_tried"] = True
 
         if (
             data_mode in ("Из папки web/", "FTP → web/")
