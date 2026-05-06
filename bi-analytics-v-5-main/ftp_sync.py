@@ -10,6 +10,10 @@
   BI_FTP_PASSWORD   — пароль; если пусто, берётся ``FTP_AI_PASSWORD`` (совместимость с VS Code SFTP)
   BI_FTP_TLS        — true / 1 для FTPS (AUTH_TLS)
   BI_FTP_TIMEOUT    — таймаут секунд (по умолчанию 60)
+  BI_FTP_RECURSIVE  — 1/true (по умолчанию) — рекурсивно обходить подпапки.
+                     0/false — только корень remote_dir (старое поведение).
+  BI_FTP_FORCE_REDOWNLOAD — 1/true — игнорировать проверку размера и качать всё заново.
+                            По умолчанию 0 (инкремент по SIZE).
 
 В Streamlit можно передать секции из st.secrets (ключи host, user, password, remote_dir, port, use_tls).
 """
@@ -19,7 +23,7 @@ import os
 import sys
 from ftplib import FTP, FTP_TLS, error_perm
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 
 def _env_config() -> Dict[str, Any]:
@@ -79,24 +83,151 @@ def _connect(cfg: Dict[str, Any]):
     return ftp
 
 
+def _list_dir(ftp) -> List[Tuple[str, str, Optional[int]]]:
+    """Возвращает содержимое текущего cwd как список (name, kind, size).
+
+    kind: 'file' | 'dir' | 'unknown'
+    size: байт для file (если сервер сообщил), иначе None.
+
+    Сначала пробуем MLSD (RFC 3659) — он сразу даёт type+size. Если его нет
+    — парсим LIST (UNIX-style). Если и LIST не структурирован — возвращаем NLST,
+    тогда тип будет определяться по факту попытки cwd.
+    """
+    items: List[Tuple[str, str, Optional[int]]] = []
+    try:
+        for name, facts in ftp.mlsd():
+            if name in (".", ".."):
+                continue
+            t = (facts.get("type") or "").lower()
+            kind = "dir" if t in ("dir", "cdir", "pdir") else ("file" if t == "file" else "unknown")
+            size: Optional[int] = None
+            if facts.get("size") is not None:
+                try:
+                    size = int(facts["size"])
+                except (TypeError, ValueError):
+                    size = None
+            items.append((name, kind, size))
+        return items
+    except (error_perm, AttributeError, Exception):
+        items = []
+
+    lines: List[str] = []
+    try:
+        ftp.retrlines("LIST", lines.append)
+    except Exception:
+        lines = []
+
+    parsed_any = False
+    for line in lines:
+        if not line:
+            continue
+        parts = line.split(None, 8)
+        if len(parts) >= 9 and (line[:1] in ("-", "d", "l")):
+            perm = line[:1]
+            name = parts[-1]
+            if name in (".", ".."):
+                continue
+            kind = "dir" if perm == "d" else "file"
+            size: Optional[int] = None
+            try:
+                size = int(parts[4])
+            except (TypeError, ValueError):
+                size = None
+            items.append((name, kind, size))
+            parsed_any = True
+
+    if parsed_any:
+        return items
+
+    try:
+        names = [n for n in ftp.nlst() if n not in (".", "..")]
+    except Exception:
+        names = []
+    for raw in names:
+        name = Path(str(raw).strip().replace("\\", "/")).name
+        if not name or name in (".", ".."):
+            continue
+        items.append((name, "unknown", None))
+    return items
+
+
+def _safe_size(ftp, name: str) -> Optional[int]:
+    """ftp.size() в ASCII режиме падает; перед SIZE переключаемся в TYPE I."""
+    try:
+        ftp.voidcmd("TYPE I")
+    except Exception:
+        pass
+    try:
+        return ftp.size(name)
+    except Exception:
+        try:
+            safe = name.replace('"', '\\"')
+            return ftp.size(f'"{safe}"')
+        except Exception:
+            return None
+
+
+def _retrieve(ftp, name: str, dest: Path) -> None:
+    """Атомарно скачивает RETR в dest через временный *.tmp.
+
+    Зачем .tmp: если RETR упадёт в середине (на FTP файл занят пишущим
+    процессом — приходит 550 Failed to open file), мы НЕ должны затереть
+    уже валидный локальный файл нулём байт. Поэтому пишем в tmp, и только
+    при успехе переименовываем поверх.
+    """
+    tmp = dest.with_suffix(dest.suffix + ".tmp")
+    try:
+        with tmp.open("wb") as fh:
+            try:
+                ftp.retrbinary(f"RETR {name}", fh.write)
+            except error_perm:
+                fh.seek(0)
+                fh.truncate()
+                safe = name.replace('"', '\\"')
+                ftp.retrbinary(f'RETR "{safe}"', fh.write)
+        # os.replace атомарен на одном томе и работает на Windows
+        os.replace(tmp, dest)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
+
+
 def sync_ftp_to_web(
     web_dir: Path,
     config: Optional[Dict[str, Any]] = None,
     extensions: tuple = (".csv", ".json"),
     progress: Optional[Callable[[str], None]] = None,
+    recursive: Optional[bool] = None,
+    force_redownload: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """
-    Скачивает все файлы с расширениями из extensions из remote_dir в web_dir (плоский список).
-    Не удаляет старые локальные файлы — только перезаписывает совпадающие имена.
+    Скачивает файлы из remote_dir в web_dir с инкрементальной проверкой размера.
+
+    - Для каждого remote-файла перед загрузкой берём размер (SIZE / MLSD).
+      Если локально уже лежит файл такого же размера — пропускаем (skip_same_size).
+    - По умолчанию обходим подпапки рекурсивно с сохранением структуры
+      (например, /web/AI/msp.csv → web_dir/AI/msp.csv). Это нужно потому, что
+      MSP-файлы лежат в /web/AI/, а старая плоская реализация их не подтягивала.
+    - Не удаляет локальные файлы.
 
     Returns:
-        {"ok": bool, "downloaded": [...], "errors": [...], "skipped": int}
+        {
+          "ok": bool,
+          "downloaded": [...],         # реально скачанные (новые/изменённые)
+          "skipped_same_size": int,    # пропущены, потому что size совпал
+          "skipped": int,              # пропущены по фильтру расширений
+          "errors": [...],
+        }
     """
     out: Dict[str, Any] = {
         "ok": True,
         "downloaded": [],
-        "errors": [],
+        "skipped_same_size": 0,
         "skipped": 0,
+        "errors": [],
     }
     cfg = merge_ftp_config(config)
     if not cfg.get("host") or not cfg.get("user"):
@@ -105,6 +236,21 @@ def sync_ftp_to_web(
             "FTP не настроен: задайте host и user (BI_FTP_HOST, BI_FTP_USER или секреты)."
         )
         return out
+
+    if recursive is None:
+        recursive = str(os.environ.get("BI_FTP_RECURSIVE", "1")).strip().lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
+    if force_redownload is None:
+        force_redownload = str(os.environ.get("BI_FTP_FORCE_REDOWNLOAD", "0")).strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
 
     web_dir = Path(web_dir).resolve()
     web_dir.mkdir(parents=True, exist_ok=True)
@@ -124,49 +270,87 @@ def sync_ftp_to_web(
 
     def _log(msg: str) -> None:
         if progress:
-            progress(msg)
+            try:
+                progress(msg)
+            except Exception:
+                pass
 
     try:
-        # nlst быстрее, но на части серверов падает на кириллице — тогда LIST
         try:
-            names = [n for n in ftp.nlst() if n not in (".", "..")]
-        except error_perm:
-            lines: List[str] = []
-            ftp.retrlines("LIST", lines.append)
-            names = []
-            for line in lines:
-                parts = line.split(None, 8)
-                if len(parts) >= 9:
-                    names.append(parts[-1])
-            if not names:
-                names = lines
+            ftp.voidcmd("TYPE I")
+        except Exception:
+            pass
 
-        for raw_name in names:
-            name = Path(str(raw_name).strip().replace("\\", "/")).name
-            if not name or name in (".", ".."):
-                continue
-            low = name.lower()
-            if not any(low.endswith(ext) for ext in extensions):
-                out["skipped"] += 1
-                continue
-            local_path = web_dir / name
+        stack: List[str] = [""]
+        seen_dirs: set = set()
+        while stack:
+            rel = stack.pop()
             try:
-                _log(f"Скачивание {name!r}…")
-
-                with local_path.open("wb") as fh:
-                    cmd = f"RETR {name}"
-                    try:
-                        ftp.retrbinary(cmd, fh.write)
-                    except error_perm:
-                        # Имя с пробелами / спецсимволами — в кавычках
-                        fh.seek(0)
-                        fh.truncate()
-                        safe = name.replace('"', '\\"')
-                        ftp.retrbinary(f'RETR "{safe}"', fh.write)
-                out["downloaded"].append(str(local_path.relative_to(web_dir)))
+                if rel:
+                    ftp.cwd(remote_dir.rstrip("/") + "/" + rel)
+                else:
+                    ftp.cwd(remote_dir)
             except Exception as e:
-                out["errors"].append(f"{name}: {e}")
+                out["errors"].append(f"cwd {(remote_dir + '/' + rel).rstrip('/')!r}: {e}")
                 out["ok"] = False
+                continue
+
+            if rel in seen_dirs:
+                continue
+            seen_dirs.add(rel)
+
+            local_subdir = web_dir / rel if rel else web_dir
+            local_subdir.mkdir(parents=True, exist_ok=True)
+
+            entries = _list_dir(ftp)
+            for name, kind, size_hint in entries:
+                if not name or name in (".", ".."):
+                    continue
+
+                if kind == "unknown":
+                    try:
+                        ftp.cwd(name)
+                        ftp.cwd("..")
+                        kind = "dir"
+                    except error_perm:
+                        kind = "file"
+                    except Exception:
+                        kind = "file"
+
+                if kind == "dir":
+                    if recursive:
+                        sub_rel = (rel + "/" + name).lstrip("/") if rel else name
+                        stack.append(sub_rel)
+                    continue
+
+                low = name.lower()
+                if not any(low.endswith(ext) for ext in extensions):
+                    out["skipped"] += 1
+                    continue
+
+                local_path = local_subdir / name
+                rel_for_report = str(local_path.relative_to(web_dir)).replace("\\", "/")
+
+                remote_size: Optional[int] = size_hint
+                if remote_size is None:
+                    remote_size = _safe_size(ftp, name)
+
+                if (
+                    not force_redownload
+                    and remote_size is not None
+                    and local_path.exists()
+                    and local_path.stat().st_size == remote_size
+                ):
+                    out["skipped_same_size"] += 1
+                    continue
+
+                try:
+                    _log(f"Скачивание {rel_for_report!r}…")
+                    _retrieve(ftp, name, local_path)
+                    out["downloaded"].append(rel_for_report)
+                except Exception as e:
+                    out["errors"].append(f"{rel_for_report}: {e}")
+                    out["ok"] = False
     finally:
         try:
             if ftp:
@@ -216,7 +400,11 @@ def main_cli() -> int:
         print(msg, file=sys.stderr)
 
     r = sync_ftp_to_web(web, config=cfg, progress=_p)
-    print(f"ok={r['ok']} downloaded={len(r['downloaded'])} skipped={r['skipped']}")
+    print(
+        f"ok={r['ok']} downloaded={len(r['downloaded'])} "
+        f"skipped_same_size={r.get('skipped_same_size', 0)} "
+        f"skipped_ext={r.get('skipped', 0)}"
+    )
     for x in r["downloaded"]:
         print(x)
     for e in r["errors"]:

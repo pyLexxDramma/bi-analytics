@@ -831,9 +831,13 @@ def main():
                         for e in ftp_res["errors"]:
                             st.error(e)
                     else:
+                        _dl = len(ftp_res.get("downloaded", []))
+                        _ss = int(ftp_res.get("skipped_same_size", 0) or 0)
+                        _sk = int(ftp_res.get("skipped", 0) or 0)
                         st.success(
-                            f"С FTP скачано файлов: {len(ftp_res.get('downloaded', []))}, "
-                            f"пропуск (не CSV/JSON): {ftp_res.get('skipped', 0)}"
+                            f"С FTP: новых/обновлённых {_dl}, "
+                            f"пропущено по совпадению размера: {_ss}, "
+                            f"пропуск (не CSV/JSON): {_sk}"
                         )
                     with st.spinner("Читаю файлы из web/..."):
                         result = load_all_from_web()
