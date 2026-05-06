@@ -4985,6 +4985,12 @@ def dashboard_plan_fact_dates(df):
                 filtered_df[dates_building_col].astype(str).str.strip()
                 == str(selected_building_dates).strip()
             ]
+    # ТЗ заказчика 2026-05-06 (Блок 2): верхняя единая таблица «ЗОС» должна
+    # отображаться ВСЕГДА (независимо от выбранной «Детализации»), потому что
+    # ЗОС-задачи находятся на уровне 5 (детальный) и иначе пропадают при
+    # «Уровень 4». Сохраняем срез ДО фильтра уровня в `_zos_source_df`.
+    _zos_source_df = filtered_df.copy()
+
     # Фильтр по уровню иерархии (макет: сводные 1–3, верхний 4, детальный 5)
     _mask_lvl_col = plan_fact_dates_outline_col
     if _mask_lvl_col is None or _mask_lvl_col not in filtered_df.columns:
@@ -5233,14 +5239,19 @@ def dashboard_plan_fact_dates(df):
 
     table_df = df_after_hide.copy()
     _end = pd.to_numeric(table_df.get("plan_end_diff"), errors="coerce")
-    # По ТЗ: в таблице оставляем только задачи с положительным отклонением окончания.
-    _has_dev = _end.notna() & (_end > 1e-9)
+    # ТЗ заказчика 2026-05-06 (Блок 2): в таблице/диаграммах — ТОЛЬКО опаздывающие
+    # задачи, т.е. где «Базовое окончание − Окончание < 0» (формула совпадает с
+    # `plan_end_diff = base_end - plan_end`, см. L5060-5063). Раньше тут стоял
+    # `> 1e-9` — это пропускало только задачи с аномалией base_end > plan_end и
+    # отсекало классически опаздывающие (включая ЗОС).
+    _has_dev = _end.notna() & (_end < -1e-9)
     table_df = table_df[_has_dev].copy()
 
     if chart_df.empty and table_df.empty:
         st.info(
-            "Нет строк с положительным отклонением окончания для таблицы "
-            "или нет данных для графика при включённом фильтре «только отрицательное отклонение»."
+            "Нет опаздывающих задач (Базовое окончание − Окончание < 0) "
+            "для выбранных фильтров. Снимите чекбокс «Скрыть завершённые» или "
+            "расширьте фильтр по проекту/блоку."
         )
         return
 
@@ -5526,7 +5537,186 @@ def dashboard_plan_fact_dates(df):
             ),
         )
 
-    _render_stage_deviation_bar_chart(bar_df)
+    def _render_per_block_deviation_charts(source_df: pd.DataFrame):
+        """ТЗ заказчика 2026-05-06 (Блок 2): отдельная точечная диаграмма по
+        каждому функциональному блоку (кроме «Ковенанты»). Для каждой задачи —
+        две точки: «Базовое окончание» (синяя) и «Окончание» (красная), плюс
+        дата подписью. Сортировка по убыванию модуля отклонения окончания.
+        """
+        if source_df is None or source_df.empty:
+            return
+        if "block" not in source_df.columns or "plan_end_diff" not in source_df.columns:
+            return
+        # Только опаздывающие.
+        local = source_df.copy()
+        local["plan_end_diff"] = pd.to_numeric(local["plan_end_diff"], errors="coerce")
+        local = local[
+            local["plan_end_diff"].notna() & (local["plan_end_diff"] < -1e-9)
+        ]
+        # Исключаем Ковенанты — для них отдельный визуал ниже.
+        local = local[
+            ~local["block"].astype(str).str.contains(
+                "ковенант", case=False, na=False, regex=False
+            )
+        ]
+        if local.empty:
+            st.info(
+                "Нет опаздывающих задач (Базовое окончание − Окончание < 0) "
+                "по функциональным блокам (исключая «Ковенанты») "
+                "для выбранных фильтров и уровня детализации."
+            )
+            return
+
+        blocks = (
+            local["block"].astype(str).str.strip()
+            .pipe(lambda s: s[s.ne("") & ~s.str.lower().isin({"nan", "none", "—"})])
+            .unique()
+            .tolist()
+        )
+        # Сортируем блоки по максимуму |отклонения| внутри (опаздывающие сильнее — выше).
+        block_priority = (
+            local.assign(_abs=local["plan_end_diff"].abs())
+            .groupby(local["block"].astype(str).str.strip(), as_index=True)["_abs"]
+            .max()
+            .sort_values(ascending=False)
+        )
+        blocks = [b for b in block_priority.index.tolist() if b in blocks]
+
+        TOP_N_PER_BLOCK = 25  # ограничение для читаемости длинных блоков
+
+        for block_name in blocks:
+            block_df = local[
+                local["block"].astype(str).str.strip() == block_name
+            ].copy()
+            block_df = block_df.dropna(subset=["base end", "plan end"], how="any")
+            if block_df.empty:
+                continue
+            block_df = block_df.sort_values("plan_end_diff", ascending=True)
+            if len(block_df) > TOP_N_PER_BLOCK:
+                truncated = len(block_df) - TOP_N_PER_BLOCK
+                block_df = block_df.head(TOP_N_PER_BLOCK)
+            else:
+                truncated = 0
+
+            # Полное имя для tooltip + усечённое для оси Y (читаемость).
+            MAX_Y_LEN = 70
+
+            def _truncate_label(s: str, n: int = MAX_Y_LEN) -> str:
+                s = str(s)
+                return s if len(s) <= n else s[: max(0, n - 1)].rstrip() + "…"
+
+            if selected_project == "Все" and "project name" in block_df.columns:
+                full_labels = (
+                    block_df["task name"].astype(str).str.strip()
+                    + " ("
+                    + block_df["project name"].astype(str).str.strip()
+                    + ")"
+                )
+            else:
+                full_labels = block_df["task name"].astype(str).str.strip()
+            block_df["_y_full"] = full_labels
+            block_df["_y"] = full_labels.apply(_truncate_label)
+            # Гарантируем уникальность Y-значений (иначе несколько задач сольются в одну строку).
+            seen: dict[str, int] = {}
+            uniq_labels: list[str] = []
+            for lbl in block_df["_y"].tolist():
+                if lbl in seen:
+                    seen[lbl] += 1
+                    uniq_labels.append(f"{lbl} #{seen[lbl]}")
+                else:
+                    seen[lbl] = 1
+                    uniq_labels.append(lbl)
+            block_df["_y"] = uniq_labels
+
+            st.markdown(f"#### {block_name}")
+            fig_blk = go.Figure()
+            fig_blk.add_trace(
+                go.Scatter(
+                    x=block_df["base end"],
+                    y=block_df["_y"],
+                    mode="markers+text",
+                    name="Базовое окончание",
+                    marker=dict(
+                        symbol="diamond",
+                        size=11,
+                        color="#3B82F6",
+                        line=dict(width=1, color="#ffffff"),
+                    ),
+                    text=block_df["base end"].apply(
+                        lambda d: d.strftime("%d.%m.%Y") if pd.notna(d) else ""
+                    ),
+                    textposition="top center",
+                    textfont=dict(size=10, color="#bfdbfe"),
+                    cliponaxis=False,
+                    customdata=block_df["_y_full"],
+                    hovertemplate="%{customdata}<br>Базовое окончание: %{x|%d.%m.%Y}<extra></extra>",
+                )
+            )
+            fig_blk.add_trace(
+                go.Scatter(
+                    x=block_df["plan end"],
+                    y=block_df["_y"],
+                    mode="markers+text",
+                    name="Окончание",
+                    marker=dict(
+                        symbol="diamond",
+                        size=11,
+                        color="#EF4444",
+                        line=dict(width=1, color="#ffffff"),
+                    ),
+                    text=block_df["plan end"].apply(
+                        lambda d: d.strftime("%d.%m.%Y") if pd.notna(d) else ""
+                    ),
+                    textposition="bottom center",
+                    textfont=dict(size=10, color="#fecaca"),
+                    cliponaxis=False,
+                    customdata=block_df["_y_full"],
+                    hovertemplate="%{customdata}<br>Окончание: %{x|%d.%m.%Y}<extra></extra>",
+                )
+            )
+            n_rows = block_df["_y"].nunique()
+            # Левое поле под длинные названия задач + правое под текст последней даты.
+            left_margin = min(440, max(220, MAX_Y_LEN * 6))
+            fig_blk.update_layout(
+                xaxis_title="Дата",
+                yaxis_title=None,
+                height=max(420, int(n_rows) * 44),
+                xaxis=dict(
+                    type="date",
+                    tickformat="%d.%m.%Y",
+                    automargin=True,
+                ),
+                margin=dict(l=left_margin, r=80, t=40, b=50),
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="right",
+                    x=1,
+                ),
+            )
+            fig_blk.update_yaxes(
+                categoryorder="array",
+                categoryarray=block_df["_y"].tolist(),
+                autorange="reversed",
+                tickfont=dict(size=11, color="#e8eaed"),
+                automargin=True,
+            )
+            fig_blk = apply_chart_background(fig_blk, skip_uniformtext=True)
+            cap = (
+                f"Блок «{block_name}»: ромб — Базовое окончание (синий) и "
+                "Окончание (красный); сортировка по убыванию величины отклонения."
+            )
+            if truncated > 0:
+                cap += f" Показаны первые {TOP_N_PER_BLOCK} из {TOP_N_PER_BLOCK + truncated} задач."
+            render_chart(fig_blk, caption_below=cap)
+
+    # ТЗ заказчика 2026-05-06: новый вид диаграмм — отдельные точечные графики
+    # по каждому функциональному блоку (кроме «Ковенанты»). Старый агрегатный
+    # bar `_render_stage_deviation_bar_chart` оставлен для отладки/режима
+    # ковенантов, но в основном потоке не используется.
+    if not show_covenant_ui:
+        _render_per_block_deviation_charts(filtered_df)
 
     if show_covenant_ui:
         pe_col, fe_col = "plan end", "base end"
@@ -5837,19 +6027,18 @@ def dashboard_plan_fact_dates(df):
         rec = {
             "Проект": _clean_display_str(row.get("project name")),
             "Задача": task_show,
-            # R23-03 add-on (стр.10 п.2): переименования по макету —
-            # «План начало» → «Базовое начало», «Факт начало» → «Начало»,
-            # «План окончание» → «Базовое окончание», «Факт окончание» → «Окончание».
-            "Базовое начало": _format_date_cell(plan_start),
-            "Базовое окончание": _format_date_cell(plan_end),
-            "Начало": _format_date_cell(base_start),
-            "Окончание": _format_date_cell(base_end),
+            # ТЗ заказчика 2026-05-06 (Блок 2):
+            # «Базовое X» = исходный план MSP (`base_*`); «X» = текущий план MSP (`plan_*`).
+            # Так совпадает со стандартной семантикой MSP и расчётом
+            # «Отклонение X = Базовое X − X» (отрицательное = опоздание).
+            "Базовое начало": _format_date_cell(base_start),
+            "Базовое окончание": _format_date_cell(base_end),
+            "Начало": _format_date_cell(plan_start),
+            "Окончание": _format_date_cell(plan_end),
             "Отклонение начала": start_diff,
             "Отклонение окончания": end_diff,
-            # R23-03 add-on (стр.11 п.c): «Базовая длительность» / «Длительность» —
-            # отдельные столбцы с синей заливкой.
-            "Базовая длительность": pdur,
-            "Длительность": fdur,
+            "Базовая длительность": fdur,
+            "Длительность": pdur,
             "Отклонение длительности": dur_diff,
         }
         for disp, src in _msp_id_cols.items():
@@ -5902,24 +6091,19 @@ def dashboard_plan_fact_dates(df):
     except Exception:
         pass
 
-    # R23-03 add-on (стр.10 п.5): порядок столбцов по макету —
-    # Начало, Базовое начало, Отклонение начала, Окончание, Базовое окончание,
-    # Отклонение окончания, Базовая длительность, Длительность. Чекбоксы «Показывать
-    # отклонение начала/окончания/длительности» оставлены как раньше.
+    # ТЗ заказчика 2026-05-06 (Блок 2): порядок столбцов
+    # «Базовое начало | Начало | Отклонение начала | Базовое окончание | Окончание |
+    #  Отклонение окончания | Базовая длительность | Длительность | Отклонение длительности».
+    # «ID задачи» по ТЗ убран. Чекбоксы tbl_show_* оставлены: фолбэк для админ-режима.
     out_cols = ["Задача"] if selected_project != "Все" else ["Проект", "Задача"]
-    if "ID задачи" in summary_df.columns:
-        out_cols.append("ID задачи")
-    # Блок «Начало»: факт → базовое → отклонение.
-    out_cols.append("Начало")
     out_cols.append("Базовое начало")
+    out_cols.append("Начало")
     if tbl_show_start:
         out_cols.append("Отклонение начала")
-    # Блок «Окончание»: факт → базовое → отклонение.
-    out_cols.append("Окончание")
     out_cols.append("Базовое окончание")
+    out_cols.append("Окончание")
     if tbl_show_end:
         out_cols.append("Отклонение окончания")
-    # Блок «Длительность»: базовая → факт → отклонение (по чекбоксу).
     out_cols.append("Базовая длительность")
     out_cols.append("Длительность")
     if tbl_show_dur:
@@ -6016,20 +6200,48 @@ def dashboard_plan_fact_dates(df):
         "Отклонение начала": "dev",
         "Отклонение длительности": "dev",
     }
+    _ZOS_WORD_RE = re.compile(
+        r"(?<![а-яёa-z0-9])зос(?![а-яёa-z0-9])",
+        flags=re.IGNORECASE,
+    )
+
     def _is_zos_task_name(name):
+        # ТЗ заказчика 2026-05-06 (Блок 2): верхняя единая таблица берёт строки
+        # ИМЕННО по задаче ЗОС, а не по любому вхождению подстроки «зос».
+        # Без границ слова сюда падают «гаЗОСнабжения», «гаЗОСбытсервис» и др.
         if name is None or (isinstance(name, float) and pd.isna(name)):
             return False
-        s = str(name).lower()
-        if "зос" in s:
+        s = str(name).strip()
+        if not s:
+            return False
+        sl = s.lower()
+        if "заключение о соответствии" in sl:
             return True
-        return "заключение о соответствии" in s
+        return bool(_ZOS_WORD_RE.search(sl))
 
-    if "task name" in table_df.columns:
-        zos_subset = table_df[
-            table_df["task name"].astype(str).map(_is_zos_task_name)
+    # ТЗ 2026-05-06 (Блок 2): верхняя единая таблица «ЗОС» строится ВСЕГДА
+    # из `_zos_source_df` (срез ДО фильтра уровня), а не из `table_df`.
+    # Это нужно потому что ЗОС-задачи лежат на уровне 5, и при выборе фильтра
+    # «Уровень 4 (укрупнённо)» они выпадают из table_df → блок пропадал.
+    if "task name" in _zos_source_df.columns:
+        _zsrc = _zos_source_df.copy()
+        # Пересчитываем `plan_end_diff` на исходном срезе (его в _zos_source_df ещё нет).
+        if {"plan end", "base end"}.issubset(_zsrc.columns):
+            _zsrc["plan_end_diff"] = (
+                pd.to_datetime(_zsrc["base end"], errors="coerce", dayfirst=True)
+                - pd.to_datetime(_zsrc["plan end"], errors="coerce", dayfirst=True)
+            ).dt.total_seconds() / 86400.0
+        else:
+            _zsrc["plan_end_diff"] = float("nan")
+        _zos_mask = _zsrc["task name"].astype(str).map(_is_zos_task_name)
+        zos_subset = _zsrc[_zos_mask].copy()
+        # ТЗ: показываем только строки с реальным отклонением < 0 (опаздывающие);
+        # при = 0 (попало в срок) — тоже показываем, по ТЗ цвет зелёный.
+        zos_subset = zos_subset[
+            zos_subset["plan_end_diff"].notna() & (zos_subset["plan_end_diff"] <= 1e-9)
         ].copy()
     else:
-        zos_subset = table_df.iloc[0:0].copy()
+        zos_subset = _zos_source_df.iloc[0:0].copy()
 
     if not zos_subset.empty:
         st.subheader("ЗОС")
@@ -6044,16 +6256,20 @@ def dashboard_plan_fact_dates(df):
             and zos_proj_count > 1
         )
         if "plan_end_diff" in zos_subset.columns:
+            # ТЗ: сверху самое большое отклонение (по модулю).
+            # plan_end_diff < 0 для опаздывающих → ascending=True ставит -189 выше -1.
             zos_subset = zos_subset.sort_values(
-                "plan_end_diff", ascending=False, na_position="last"
+                "plan_end_diff", ascending=True, na_position="last"
             )
+        # ТЗ 2026-05-06 (Блок 2): Базовое X = base_*, X = plan_*.
+        # «Отклонение» = base_end − plan_end (см. plan_end_diff).
         zos_tbl_rows = []
         for _, zr in zos_subset.iterrows():
             row_out = {
                 "Задача": _sanitize_eng_networks(_clean_display_str(zr.get("task name"))),
-                "Базовое окончание": format_date_display(zr.get("plan end")),
-                "Окончание": format_date_display(zr.get("base end")),
-                "Отклонения": _format_int_days(zr.get("plan_end_diff")),
+                "Базовое окончание": format_date_display(zr.get("base end")),
+                "Окончание": format_date_display(zr.get("plan end")),
+                "Отклонение": _format_int_days(zr.get("plan_end_diff")),
             }
             if zos_show_project_col:
                 row_out = {
@@ -6136,27 +6352,21 @@ def dashboard_plan_fact_dates(df):
             return out
 
         try:
-            if "Отклонение начала" in summary_numeric.columns:
-                _styled = _styled.apply(
-                    lambda c: _dev_font_color(c, bad_positive=False)
-                    if c.name == "Отклонение начала"
-                    else [""] * len(c),
-                    axis=0,
-                )
-            if "Отклонение окончания" in summary_numeric.columns:
-                _styled = _styled.apply(
-                    lambda c: _dev_font_color(c, bad_positive=True)
-                    if c.name == "Отклонение окончания"
-                    else [""] * len(c),
-                    axis=0,
-                )
-            if "Отклонение длительности" in summary_numeric.columns:
-                _styled = _styled.apply(
-                    lambda c: _dev_font_color(c, bad_positive=True)
-                    if c.name == "Отклонение длительности"
-                    else [""] * len(c),
-                    axis=0,
-                )
+            # ТЗ 2026-05-06: после исправления семантики «Базовое X / X»
+            # формула «Отклонение = Базовое − Текущее»: отрицательное → опоздание → красный.
+            # Это применимо ко ВСЕМ трём столбцам отклонений (start/end/duration).
+            for _dev_col in (
+                "Отклонение начала",
+                "Отклонение окончания",
+                "Отклонение длительности",
+            ):
+                if _dev_col in summary_numeric.columns:
+                    _styled = _styled.apply(
+                        lambda c, _name=_dev_col: _dev_font_color(c, bad_positive=False)
+                        if c.name == _name
+                        else [""] * len(c),
+                        axis=0,
+                    )
         except Exception:
             pass
 
