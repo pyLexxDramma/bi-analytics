@@ -3010,9 +3010,19 @@ def _apply_control_points_msp_filters(
     labels_map: Dict[str, List[str]] = {}
     if "project name" in df.columns:
         ordered, labels_map = _control_points_project_filter_options(df)
-        preferred_projects = ["Дмитровский", "Есипово V", "Завод", "Ленинский"]
-        if any(p in ordered for p in preferred_projects):
-            ordered = [p for p in preferred_projects if p in ordered]
+        # Стабильный порядок «крупных» проектов сверху, затем остальное (если будут).
+        # Сравниваем по префиксу, иначе «Дмитровский 1» в данных не матчится с
+        # шаблоном «Дмитровский» и проект пропадает из выпадающего списка фильтра.
+        preferred_prefixes = ["Дмитровский", "Есипово", "Завод", "Ленинский"]
+        matched: list[str] = []
+        for pref in preferred_prefixes:
+            for o in ordered:
+                if o.lower().startswith(pref.lower()) and o not in matched:
+                    matched.append(o)
+                    break
+        if matched:
+            rest = [o for o in ordered if o not in matched]
+            ordered = matched + rest
         opts = ["Все"] + ordered
         from .ui_quiet import filters_panel
 
@@ -3030,8 +3040,52 @@ def _apply_control_points_msp_filters(
     return out, meta
 
 
+CONTROL_POINTS_GROUPS_DEFAULT_SLUGS: List[List[str]] = [
+    ["gpzu", "exp_pd", "fin_start", "rd_stage"],
+    ["rs", "smr_finish", "power_on", "gas_on"],
+    ["rv", "pravo1", "vykup_zu", "pravo2"],
+]
+
+
+def _control_points_split_groups(
+    ms_specs: List[Tuple[str, str]],
+) -> List[List[Tuple[str, str]]]:
+    """Разбивка списка вех на 3 блока по ТЗ заказчика 2026-05-06.
+
+    Если набор slug совпадает с CONTROL_POINTS_GROUPS_DEFAULT_SLUGS — используем
+    зафиксированную группировку. Иначе fallback: чанки по 4 в исходном порядке
+    (или одна большая таблица, если вех ≤ 4).
+    """
+    by_slug = {s: (t, s) for t, s in ms_specs}
+    if all(s in by_slug for grp in CONTROL_POINTS_GROUPS_DEFAULT_SLUGS for s in grp):
+        return [
+            [by_slug[s] for s in grp]
+            for grp in CONTROL_POINTS_GROUPS_DEFAULT_SLUGS
+        ]
+    if not ms_specs:
+        return []
+    if len(ms_specs) <= 4:
+        return [list(ms_specs)]
+    chunks: List[List[Tuple[str, str]]] = []
+    n = len(ms_specs)
+    size = (n + 2) // 3
+    for i in range(0, n, size):
+        chunks.append(list(ms_specs[i : i + size]))
+    return chunks
+
+
 def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> None:
-    """Таблица «Контрольные точки проектов»: фильтр по проекту, выгрузка CSV."""
+    """Таблица «Контрольные точки проектов»: 3 блока по 4 вехи.
+
+    ТЗ заказчика 2026-05-06:
+    - Дашборд разбит на 3 отдельные таблицы (по 4 вехи в каждой).
+    - В каждой таблице слева от названия проекта — общий **статус блока**
+      (зелёный, если все 4 вехи блока в срок; иначе красный). Колонка
+      «Статус» внутри ячеек вех **убрана**.
+    - В ячейке вехи остаются 3 колонки: План / Факт / Откл.
+    - При `% выполнения ≠ 100%` значения — узким шрифтом (`cp-td-pct-narrow`).
+    - При просрочке (Откл < 0) — красный текст `cp-otkl-late`.
+    """
     esc = html_module.escape
     if mdf is None or getattr(mdf, "empty", True):
         st.warning("Нет строк в данных MSP.")
@@ -3048,107 +3102,22 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
         return
     view = df.copy()
 
-    ms_specs = [(t, s) for t, s, _k in get_control_point_milestones_effective()]
-    project_w = "min-width:180px"
-    thead1 = [f'<th rowspan="2" class="cp-col-project" style="{project_w}">Проекты</th>']
-    for i, (title, slug) in enumerate(ms_specs):
-        hdr = title
-        gcls = "cp-ghead cp-group-start" if i == 0 else "cp-ghead"
-        thead1.append(f'<th colspan="4" class="{gcls}">{esc(hdr)}</th>')
-    sub_headers: List[str] = []
-    for i, (_title, slug) in enumerate(ms_specs):
-        plan_title = "План"
-        p_cls = "cp-sub cp-group-start" if i == 0 else "cp-sub"
-        sub_headers.extend(
-            [
-                f'<th class="{p_cls}">{esc(plan_title)}</th>',
-                f'<th class="cp-sub">{esc("Факт")}</th>',
-                f'<th class="cp-sub">{esc("Откл.")}</th>',
-                f'<th class="cp-sub">{esc("Статус")}</th>',
-            ]
-        )
-    thead_html = (
-        "<thead><tr>"
-        + "".join(thead1)
-        + "</tr><tr>"
-        + "".join(sub_headers)
-        + "</tr></thead>"
-    )
-    body: List[str] = ["<tbody>"]
-    for _, r in view.iterrows():
-        cells = [f'<td class="cp-col-project">{esc(str(r.get("project", "")))}</td>']
-        for _t, slug in ms_specs:
-            _is_orange_milestone = _is_orange_pct_milestone(slug, _t)
-            pct_inc = bool(r.get(f"{slug}_warn_pct"))
-            owarn = _is_orange_milestone and pct_inc
-            m_ok = bool(r.get(f"{slug}_ok", False))
-            # Оранжевый текст — только для ГПЗУ/Экспертизы и только если по датам норма.
-            pct_warn_cells = owarn and m_ok
-            otkl_txt = str(r.get(f"{slug}_otkl", "") or "")
-            _od = _parse_otkl_days_display(otkl_txt)
-            otk_late = _od is not None and _od < 0
-            plan_parts = ["cp-group-start"]
-            fact_parts: List[str] = []
-            otkl_parts: List[str] = []
-            if pct_inc:
-                plan_parts.append("cp-td-pct-narrow")
-                fact_parts.append("cp-td-pct-narrow")
-                otkl_parts.append("cp-td-pct-narrow")
-            if pct_warn_cells:
-                plan_parts.append("cp-td-warn")
-                fact_parts.append("cp-td-warn")
-                otkl_parts.append("cp-td-warn")
-            if otk_late:
-                otkl_parts.append("cp-otkl-late")
-            wc_plan = ' class="' + " ".join(plan_parts) + '"'
-            wc_fact = (' class="' + " ".join(fact_parts) + '"') if fact_parts else ""
-            wc_otkl = (' class="' + " ".join(otkl_parts) + '"') if otkl_parts else ""
-            cells.append(f"<td{wc_plan}>{esc(str(r.get(f'{slug}_plan', '')))}</td>")
-            cells.append(
-                f"<td{wc_fact}>{esc(str(r.get(f'{slug}_fact', '')))}</td>"
-                if wc_fact
-                else f"<td>{esc(str(r.get(f'{slug}_fact', '')))}</td>"
-            )
-            cells.append(
-                f"<td{wc_otkl}>{esc(otkl_txt)}</td>"
-                if wc_otkl
-                else f"<td>{esc(otkl_txt)}</td>"
-            )
-            # Индикатор «Статус» — только соблюдение сроков (зелёный/красный). При % выполнения ≠ 100%
-            # значения в План/Факт/Откл. — узкий шрифт по ТЗ; для ГПЗУ/Экспертизы стадии П — оранжевый текст.
-            if not m_ok:
-                st_cls = "cp-status-bad"
-                tip = "Отклонение по срокам (факт позже плана) или неполные даты."
-                al = "Отклонение по срокам"
-            else:
-                st_cls = "cp-status-ok"
-                tip = (
-                    "По срокам норма: факт не позже плана. Если в MSP «% выполнения» не 100%, "
-                    "значения в ячейках показываются узким шрифтом; для ГПЗУ и Экспертизы стадии П "
-                    "дополнительно оранжевым цветом текста."
-                )
-                al = "Норма по срокам"
-            st_extra = " cp-td-pct-narrow" if pct_inc else ""
-            cells.append(
-                f'<td class="cp-status-cell{st_extra}" title="{esc(tip)}">'
-                f'<span class="cp-status-dot {st_cls}" role="img" aria-label="{esc(al)}"></span></td>'
-            )
-        body.append("<tr>" + "".join(cells) + "</tr>")
-    body.append("</tbody>")
-    html_tbl = (
-        '<table class="rendered-table" border="0">'
-        + thead_html
-        + "".join(body)
-        + "</table>"
-    )
-    # iframe-рендер ради надёжной фиксации первой колонки «Проекты» при скролле.
+    ms_specs_full = [(t, s) for t, s, _k in get_control_point_milestones_effective()]
+    groups = _control_points_split_groups(ms_specs_full)
+
     import streamlit.components.v1 as _components
+
     _table_css_raw = (table_css or "").replace("<style>", "").replace("</style>", "")
     _cp_css_raw = _CONTROL_POINTS_CSS.replace("<style>", "").replace("</style>", "")
     _sticky_css = """
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;background:transparent;overflow:hidden}
-.cp-table-wrap{width:100%;max-width:100%;overflow-x:auto;overflow-y:hidden;
+/* Чтобы overflow-x:auto во внутреннем .cp-table-wrap реально срабатывал,
+   все flex-родители должны иметь min-width:0 (иначе flex-item с width:max-content
+   раздвигает родителя, и горизонтальный скролл не появляется). */
+.matrix-fs-root,.matrix-fs-body{min-width:0!important;max-width:100%!important;width:100%!important}
+.cp-table-wrap{width:100%!important;max-width:100%!important;min-width:0!important;
+  overflow-x:auto!important;overflow-y:hidden!important;
   -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;
   scrollbar-width:thin;scrollbar-color:rgba(121,154,192,0.5) #141820}
 .cp-table-wrap::-webkit-scrollbar{height:10px}
@@ -3164,19 +3133,126 @@ html,body{margin:0;padding:0;background:transparent;overflow:hidden}
 .cp-table-wrap .rendered-table th.cp-col-project,
 .cp-table-wrap .rendered-table td.cp-col-project{
   position:sticky!important;left:0!important;
-  border-right:1px solid rgba(190,214,242,0.8)!important;
-  box-shadow:2px 0 0 rgba(190,214,242,0.45)}
+  width:200px!important;min-width:200px!important;max-width:200px!important;
+  white-space:normal!important;word-break:break-word!important;
+  border-right:2px solid rgba(190,214,242,0.85)!important;
+  box-shadow:3px 0 6px rgba(0,0,0,0.45)!important}
 .cp-table-wrap .rendered-table th.cp-col-project{
   z-index:5!important;background:#17314b!important}
 .cp-table-wrap .rendered-table td.cp-col-project{
   z-index:4!important;background:#1a1c23!important}
+.cp-table-wrap .rendered-table th.cp-sub-status,
+.cp-table-wrap .rendered-table td.cp-col-cell-status{
+  width:34px!important;min-width:34px!important;
+  text-align:center!important;padding:4px 4px!important}
+/* Минимальные ширины подколонок План/Факт/Откл — гарантируют появление
+   горизонтального скролла на узких экранах (даты не сжимаются в "01.…"). */
+.cp-table-wrap .rendered-table th.cp-sub,
+.cp-table-wrap .rendered-table td{
+  min-width:96px;white-space:nowrap}
+.cp-table-wrap .rendered-table th.cp-sub-status,
+.cp-table-wrap .rendered-table td.cp-col-cell-status{
+  min-width:34px!important}
+.cp-table-wrap .rendered-table th.cp-col-project,
+.cp-table-wrap .rendered-table td.cp-col-project{
+  min-width:200px!important;white-space:normal!important}
 """
-    _n_rows = len(view)
-    _iframe_h = max(220, 110 + _n_rows * 38)
     _head_styles = _table_css_raw + _cp_css_raw + _sticky_css
-    _scroll_block = '<div class="rendered-table-wrap cp-table-wrap">' + html_tbl + "</div>"
-    _iframe_html = _matrix_iframe_html_document(_head_styles, _scroll_block)
-    _components.html(_iframe_html, height=_iframe_h, scrolling=False)
+
+    project_w = "width:200px;min-width:200px;max-width:200px"
+
+    for gi, grp in enumerate(groups, start=1):
+        if not grp:
+            continue
+
+        thead1 = [
+            f'<th rowspan="2" class="cp-col-project" style="{project_w}">Проект</th>',
+        ]
+        for i, (title, slug) in enumerate(grp):
+            gcls = "cp-ghead cp-group-start" if i == 0 else "cp-ghead"
+            # На каждую веху — 4 подколонки: ● (статус) | План | Факт | Откл.
+            thead1.append(f'<th colspan="4" class="{gcls}">{esc(title)}</th>')
+        sub_headers: List[str] = []
+        for i, (_title, _slug) in enumerate(grp):
+            d_cls = "cp-sub cp-sub-status cp-group-start" if i == 0 else "cp-sub cp-sub-status"
+            sub_headers.extend(
+                [
+                    f'<th class="{d_cls}" title="Статус вехи">●</th>',
+                    f'<th class="cp-sub">{esc("План")}</th>',
+                    f'<th class="cp-sub">{esc("Факт")}</th>',
+                    f'<th class="cp-sub">{esc("Откл.")}</th>',
+                ]
+            )
+        thead_html = (
+            "<thead><tr>"
+            + "".join(thead1)
+            + "</tr><tr>"
+            + "".join(sub_headers)
+            + "</tr></thead>"
+        )
+
+        body: List[str] = ["<tbody>"]
+        for _, r in view.iterrows():
+            cells = [
+                f'<td class="cp-col-project">{esc(str(r.get("project", "")))}</td>',
+            ]
+            for i, (_t, slug) in enumerate(grp):
+                pct_inc = bool(r.get(f"{slug}_warn_pct"))
+                m_ok = bool(r.get(f"{slug}_ok", False))
+                otkl_txt = str(r.get(f"{slug}_otkl", "") or "")
+                _od = _parse_otkl_days_display(otkl_txt)
+                otk_late = _od is not None and _od < 0
+                first_cls = "cp-group-start" if i == 0 else ""
+                # Колонка-статус вехи (кружок) — зелёный/красный.
+                dot_cls = "cp-status-ok" if m_ok else "cp-status-bad"
+                dot_al = (
+                    "Веха в срок: факт не позже плана."
+                    if m_ok
+                    else "Просрочка: факт позже плана или нет дат."
+                )
+                status_extra = ""
+                if pct_inc:
+                    status_extra = " cp-td-pct-narrow"
+                status_cell_cls = "cp-col-cell-status" + (
+                    f" {first_cls}" if first_cls else ""
+                ) + status_extra
+                cells.append(
+                    f'<td class="{status_cell_cls}" title="{esc(dot_al)}">'
+                    f'<span class="cp-status-dot {dot_cls}" role="img" aria-label="{esc(dot_al)}"></span></td>'
+                )
+                plan_parts: List[str] = []
+                fact_parts: List[str] = []
+                otkl_parts: List[str] = []
+                if pct_inc:
+                    plan_parts.append("cp-td-pct-narrow")
+                    fact_parts.append("cp-td-pct-narrow")
+                    otkl_parts.append("cp-td-pct-narrow")
+                if otk_late:
+                    otkl_parts.append("cp-otkl-late")
+                wc_plan = (' class="' + " ".join(plan_parts) + '"') if plan_parts else ""
+                wc_fact = (' class="' + " ".join(fact_parts) + '"') if fact_parts else ""
+                wc_otkl = (' class="' + " ".join(otkl_parts) + '"') if otkl_parts else ""
+                cells.append(f"<td{wc_plan}>{esc(str(r.get(f'{slug}_plan', '')))}</td>")
+                cells.append(f"<td{wc_fact}>{esc(str(r.get(f'{slug}_fact', '')))}</td>")
+                cells.append(f"<td{wc_otkl}>{esc(otkl_txt)}</td>")
+            body.append("<tr>" + "".join(cells) + "</tr>")
+        body.append("</tbody>")
+
+        html_tbl = (
+            '<table class="rendered-table" border="0">'
+            + thead_html
+            + "".join(body)
+            + "</table>"
+        )
+        _scroll_block = (
+            '<div class="rendered-table-wrap cp-table-wrap">' + html_tbl + "</div>"
+        )
+        _iframe_html = _matrix_iframe_html_document(_head_styles, _scroll_block)
+        _n_rows = len(view)
+        # +20px на горизонтальный scrollbar (.cp-table-wrap::-webkit-scrollbar=10px) и поле topbar.
+        _iframe_h = max(240, 130 + _n_rows * 38)
+        _components.html(_iframe_html, height=_iframe_h, scrolling=False)
+
     drop_ok = [
         c
         for c in view.columns
