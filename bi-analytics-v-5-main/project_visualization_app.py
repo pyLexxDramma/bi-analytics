@@ -827,18 +827,36 @@ def main():
                             extensions=(".csv", ".json"),
                             progress=lambda m: None,
                         )
+                    # Критические ошибки (connect / auth / unexpected) — красным
+                    # ВСЕГДА (в т.ч. на release: клиент должен знать, что FTP лёг).
                     if ftp_res.get("errors"):
                         for e in ftp_res["errors"]:
                             st.error(e)
-                    else:
+                    # Per-file 550 (1С пишет в файл прямо сейчас) — это НЕ
+                    # сбой пайплайна: атомарная запись через .tmp сохранила
+                    # локальный файл целым, на следующем sync скачается.
+                    # На dev — info, на release — молча (клиенту не надо).
+                    _transient = ftp_res.get("transient_errors") or []
+                    if _transient and not _is_release_client_mode():
+                        st.info(
+                            "Несколько файлов на FTP были временно заняты пишущим "
+                            "процессом (1С) и не скачались сейчас — на следующем "
+                            "обновлении подтянутся. Локальные данные не повреждены:\n\n• "
+                            + "\n• ".join(_transient)
+                        )
+                    if not ftp_res.get("errors"):
                         _dl = len(ftp_res.get("downloaded", []))
                         _ss = int(ftp_res.get("skipped_same_size", 0) or 0)
                         _sk = int(ftp_res.get("skipped", 0) or 0)
-                        st.success(
+                        _te = len(_transient)
+                        msg = (
                             f"С FTP: новых/обновлённых {_dl}, "
                             f"пропущено по совпадению размера: {_ss}, "
                             f"пропуск (не CSV/JSON): {_sk}"
                         )
+                        if _te:
+                            msg += f", временно заняты пишущим процессом: {_te}"
+                        st.success(msg)
                     with st.spinner("Читаю файлы из web/..."):
                         result = load_all_from_web()
                     try:

@@ -227,7 +227,8 @@ def sync_ftp_to_web(
         "downloaded": [],
         "skipped_same_size": 0,
         "skipped": 0,
-        "errors": [],
+        "errors": [],            # критичные (connect / auth / cwd / unexpected)
+        "transient_errors": [],  # per-file временные блокировки (550 на занятый файл и т.п.)
     }
     cfg = merge_ftp_config(config)
     if not cfg.get("host") or not cfg.get("user"):
@@ -355,8 +356,25 @@ def sync_ftp_to_web(
                     _retrieve(ftp, name, local_path)
                     out["downloaded"].append(rel_for_report)
                 except Exception as e:
-                    out["errors"].append(f"{rel_for_report}: {e}")
-                    out["ok"] = False
+                    msg = str(e)
+                    # «550 Failed to open file», «file busy», «temporarily
+                    # unavailable» — файл сейчас открыт пишущим процессом
+                    # (в нашем случае 1С каждые ~15 мин перезаписывает MSP).
+                    # Это НЕ критичная ошибка пайплайна: атомарная запись
+                    # через .tmp оставила локальный валидный файл нетронутым,
+                    # на следующем sync он скачается. Не помечаем ok=False.
+                    low = msg.lower()
+                    is_transient = (
+                        "550" in msg
+                        or "failed to open" in low
+                        or "file unavailable" in low
+                        or "busy" in low
+                    )
+                    if is_transient:
+                        out["transient_errors"].append(f"{rel_for_report}: {msg}")
+                    else:
+                        out["errors"].append(f"{rel_for_report}: {msg}")
+                        out["ok"] = False
     finally:
         try:
             if ftp:
