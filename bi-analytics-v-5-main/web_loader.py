@@ -423,15 +423,27 @@ def _apply_msp_column_mapping(df: pd.DataFrame, project_name: str) -> pd.DataFra
 
 def _load_resources_file(filepath: Path) -> Optional[pd.DataFrame]:
     """
-    Загружает файл ресурсов (other_*_resursi.csv) с 3-строчным заголовком.
+    Загружает файл ресурсов (other_*_resursi.csv) с многострочным заголовком.
 
-    Структура файла:
-      Строка 0: пустая или с лишними разделителями (пропускаем)
-      Строка 1: метки недель (пропускаем)
-      Строка 2: реальный заголовок: Проект;Подрядчик;тип ресурсов;01.01.2026;...
-      Строка 3+: данные
+    Поддерживаются ДВА варианта шапки:
+
+    Вариант A (старый):
+      Строка 0: пустая / разделители
+      Строка 1: метки недель
+      Строка 2: «Проект;Подрядчик;тип ресурсов;<даты>;…»
+
+    Вариант B (новый, AI/other_*__resursi.csv):
+      Строка 0: «?;;;;…» (мусор / BOM)
+      Строка 1: «;;;;;;1 неделя;1 неделя;…»
+      Строка 2: «ID Проекта;Наименование Проекта;ID Подрядчика;Подрядчик_new;Подрядчик_old;тип ресурсов;<даты>;тип ресурсов»
+
+    Поэтому проверяем «контрагент/подрядчик» по подстроке (а не равенством),
+    а «Проект» считаем найденным, если есть колонка «Наименование Проекта»
+    или «Проект» как подстрока. После распознавания нормализуем:
+      • Подрядчик_new (или Подрядчик / Подрядчик_old) → Контрагент;
+      • Наименование Проекта → Проект.
     """
-    encodings = ["utf-8", "utf-8-sig", "windows-1251", "cp1251"]
+    encodings = ["utf-8-sig", "utf-8", "windows-1251", "cp1251"]
     seps = [";", ","]
     # На FTP иногда 2 или 1 строка «служебных» строк — пробуем несколько header
     for header_row in (2, 1, 0):
@@ -456,14 +468,32 @@ def _load_resources_file(filepath: Path) -> Optional[pd.DataFrame]:
                     if df.empty or len(df.columns) < 3:
                         continue
                     cols_low = [str(c).lower() for c in df.columns]
+                    # substring match: «Подрядчик_new» / «ID Подрядчика» тоже считаются
                     has_contractor = any(
-                        x in cols_low
-                        for x in ("контрагент", "подрядчик", "contractor")
+                        any(s in cl for s in ("контрагент", "подрядчик", "contractor"))
+                        for cl in cols_low
                     )
-                    if not has_contractor:
+                    has_project = any(
+                        ("проект" in cl) for cl in cols_low
+                    )
+                    if not has_contractor or not has_project:
                         continue
-                    if "Подрядчик" in df.columns and "Контрагент" not in df.columns:
-                        df = df.rename(columns={"Подрядчик": "Контрагент"})
+
+                    # Нормализуем «Подрядчик*» → «Контрагент» (новый формат:
+                    # предпочитаем Подрядчик_new; иначе Подрядчик; иначе _old).
+                    if "Контрагент" not in df.columns:
+                        for cand in ("Подрядчик_new", "Подрядчик", "Подрядчик_old"):
+                            if cand in df.columns:
+                                df = df.rename(columns={cand: "Контрагент"})
+                                break
+
+                    # Нормализуем имя проекта: «Наименование Проекта» → «Проект».
+                    if "Проект" not in df.columns:
+                        for cand in ("Наименование Проекта", "Наименование проекта", "Название проекта"):
+                            if cand in df.columns:
+                                df = df.rename(columns={cand: "Проект"})
+                                break
+
                     _ru_res_aliases = {
                         "тип ресурса": "тип ресурсов",
                         "Тип ресурса": "тип ресурсов",
