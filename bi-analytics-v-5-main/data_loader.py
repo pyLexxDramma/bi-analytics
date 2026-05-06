@@ -432,16 +432,22 @@ def load_data(
             if "budget fact" not in df.columns and c in budget_fact_aliases:
                 df["budget fact"] = df[col].copy()
 
-        # Даты
+        # Даты — через smart-парсер (см. utils.smart_to_datetime_series).
+        # pandas 3.x с dayfirst=True/format='mixed' инвертирует ISO-строки
+        # ('2025-04-01' → 4 января 2025), а БЕЗ dayfirst инвертирует DMY-строки
+        # с двузначным годом ('01.11.24' → 11 января 2024). У нас в одной
+        # колонке могут одновременно быть ISO (из БД/1С) и DMY (из MSP-CSV),
+        # поэтому парсим ТОЛЬКО поэлементно с автоопределением формата.
+        from utils import smart_to_datetime_series
+
         date_columns = ["base start", "base end", "plan start", "plan end"]
         for col in date_columns:
             if col in df.columns:
-                if df[col].dtype == "object":
-                    df[col] = pd.to_datetime(
-                        df[col], errors="coerce", dayfirst=True, format="mixed"
-                    )
-                else:
-                    df[col] = pd.to_datetime(df[col], errors="coerce", dayfirst=True)
+                # Уже распарсенные datetime-колонки оставляем; всё остальное
+                # (object, string и пр.) гоним через smart-парсер.
+                if str(df[col].dtype).startswith("datetime64"):
+                    continue
+                df[col] = smart_to_datetime_series(df[col])
 
         # Периоды для группировки
         for date_col, prefix in [

@@ -310,6 +310,10 @@ def _norm_join_key(val: Any) -> str:
     return s
 
 
+from utils import smart_to_datetime as _smart_to_dt
+from utils import smart_to_datetime_series as _smart_to_dt_series
+
+
 def _fmt_date_ru(v: Any) -> str:
     if v is None:
         return "Н/Д"
@@ -342,11 +346,11 @@ def _fmt_date_ru(v: Any) -> str:
         if re.fullmatch(r"[-+]?\d+([.,]\d+)?", s.replace(" ", "").replace("\u00a0", "")):
             return "Н/Д"
         s2 = s.replace("/", ".").replace("\\", ".")
-        ts = pd.to_datetime(s2, errors="coerce", dayfirst=True)
+        ts = _smart_to_dt(s2)
         if pd.isna(ts):
             return "Н/Д"
         return ts.strftime("%d.%m.%Y")
-    ts = pd.to_datetime(v, errors="coerce", dayfirst=True)
+    ts = _smart_to_dt(v)
     if pd.isna(ts):
         return "Н/Д"
     return ts.strftime("%d.%m.%Y")
@@ -496,7 +500,13 @@ def _delta_days_plan_minus_fact(plan_d: Any, fact_d: Any) -> Optional[int]:
     if pd.isna(plan_d) or pd.isna(fact_d):
         return None
     try:
-        return int((pd.Timestamp(plan_d).normalize() - pd.Timestamp(fact_d).normalize()).days)
+        # smart-парсер: pd.Timestamp("01.04.2025") инвертировало бы DMY-строку,
+        # а _smart_to_dt отличает ISO от DMY.
+        pd_ts = _smart_to_dt(plan_d) if isinstance(plan_d, str) else pd.Timestamp(plan_d)
+        fd_ts = _smart_to_dt(fact_d) if isinstance(fact_d, str) else pd.Timestamp(fact_d)
+        if pd.isna(pd_ts) or pd.isna(fd_ts):
+            return None
+        return int((pd_ts.normalize() - fd_ts.normalize()).days)
     except Exception:
         return None
 
@@ -1125,7 +1135,8 @@ def _ds_plan_fact_otkl_mln(project_data: Optional[pd.DataFrame]) -> Tuple[Option
 
 
 def _tessa_to_dt(series: pd.Series) -> pd.Series:
-    return pd.to_datetime(series, errors="coerce", dayfirst=True)
+    """Smart-парсинг колонки дат: ISO 'YYYY-MM-DD' и DMY 'DD.MM.YYYY' одновременно."""
+    return _smart_to_dt_series(series)
 
 
 def _tessa_counts(ss: Any, project_name_hint: str = "") -> Tuple[str, str, str, str]:

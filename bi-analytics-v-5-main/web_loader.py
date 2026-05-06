@@ -320,16 +320,27 @@ def _apply_msp_column_mapping(df: pd.DataFrame, project_name: str) -> pd.DataFra
         Явные форматы надёжнее format='mixed' для 2-значного года."""
         if val is None or (isinstance(val, float) and math.isnan(val)):
             return pd.NaT
+        # Уже-распарсенный Timestamp/datetime (data_loader мог сделать это раньше).
+        # Никакого вторичного парсинга через str(val) — иначе pandas с dayfirst=True
+        # инвертирует ISO-строку '2025-04-01 00:00:00' в 4 января 2025.
+        if isinstance(val, pd.Timestamp):
+            return pd.NaT if pd.isna(val) else val
+        from datetime import date as _date, datetime as _dt
+        if isinstance(val, _dt):
+            return pd.Timestamp(val)
+        if isinstance(val, _date):
+            return pd.Timestamp(val)
         s = str(val).strip()
-        if not s or s.lower() in ("nan", "none", "нд", "nd", ""):
+        if not s or s.lower() in ("nan", "none", "нд", "nd", "nat", ""):
             return pd.NaT
-        for fmt in ("%d.%m.%Y", "%d.%m.%y", "%Y-%m-%d"):
+        for fmt in ("%d.%m.%Y", "%d.%m.%y", "%Y-%m-%d", "%Y-%m-%d %H:%M:%S"):
             try:
-                from datetime import datetime as _dt
                 return pd.Timestamp(_dt.strptime(s, fmt))
             except ValueError:
                 continue
-        return pd.to_datetime(s, dayfirst=True, errors="coerce")
+        # smart-парсер: ISO строки идут БЕЗ dayfirst, иначе pandas переворачивает.
+        from utils import smart_to_datetime
+        return smart_to_datetime(s)
 
     def _parse_days_str(val):
         """'5 дн' → 5.0, '-30 дн' → -30.0, '0 дн?' → 0.0, пустое → None."""

@@ -1,4 +1,4 @@
-
+﻿
 """
 Общие утилиты для дашбордов и приложения.
 """
@@ -6,13 +6,64 @@ import html as html_module
 import io
 import re
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
+import numpy as np
 import pandas as pd
 import pytz
 import streamlit as st
 
 from config import RUSSIAN_MONTHS
+
+# ── Smart datetime parsing ──────────────────────────────────────────────────
+# pandas (включая 3.x) с `dayfirst=True` для ISO-строки '2025-04-01' выдаёт
+# 4 января 2025 (переворачивает день/месяц), а с `format='mixed', dayfirst=True`
+# то же самое. У нас в данных одновременно встречаются оба формата:
+#   • CSV из 1С / MSP / TESSA — в основном DMY ('01.04.2025'),
+#   • поля JSON 1С и сохранённые в БД даты — ISO ('2025-04-01').
+# Этот helper парсит каждое значение по форме строки: ISO → без dayfirst,
+# DMY → с dayfirst=True. Иначе план/факт менялись местами в матрице вех.
+_ISO_DATE_PREFIX_RE = re.compile(r"^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}")
+
+
+def smart_to_datetime(value: Any) -> pd.Timestamp:
+    """Скаляр → ``pd.Timestamp`` с корректным определением ISO vs DMY."""
+    if value is None:
+        return pd.NaT
+    if isinstance(value, pd.Timestamp):
+        return value
+    if isinstance(value, (datetime,)):
+        return pd.Timestamp(value)
+    try:
+        if pd.isna(value):
+            return pd.NaT
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, str):
+        s = value.strip()
+        if not s or s.lower() in ("nan", "nat", "none"):
+            return pd.NaT
+        if _ISO_DATE_PREFIX_RE.match(s):
+            return pd.to_datetime(s, errors="coerce", dayfirst=False)
+        return pd.to_datetime(s, errors="coerce", dayfirst=True)
+    return pd.to_datetime(value, errors="coerce", dayfirst=True)
+
+
+def smart_to_datetime_series(
+    series: Union[pd.Series, list, tuple, np.ndarray, Any],
+) -> pd.Series:
+    """Серия → ``pd.Series[datetime64[ns]]`` с поэлементным smart-парсингом.
+
+    Векторизованная попытка через ``format='mixed'`` была бы быстрее, но
+    в pandas 3.0 она ломается на ISO-строках при ``dayfirst=True``.
+    Поэтому проходим apply’ом — для матрицы вех / контрольных точек
+    объёмы данных небольшие, потеря производительности приемлема.
+    """
+    if not isinstance(series, pd.Series):
+        series = pd.Series(series)
+    if series.empty:
+        return pd.to_datetime(series, errors="coerce")
+    return series.apply(smart_to_datetime)
 
 # Часовой пояс Москвы (UTC+3, без перехода на летнее время)
 MOSCOW_TZ = pytz.timezone("Europe/Moscow")
