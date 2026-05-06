@@ -70,6 +70,21 @@ from dashboard_diagnostics import render_dashboard_diagnostics_tab
 # Инициализация базы данных (все таблицы создаются в db.init_all_tables)
 init_db()
 
+# Авто-ingest при холодном старте инстанса (Streamlit Cloud / прод): за флагом
+# BI_ANALYTICS_AUTO_INGEST=1. См. docstring в auto_ingest.py — переменные:
+#   BI_ANALYTICS_AUTO_INGEST_FTP=1 (default)  → сначала FTP-sync в web/
+#   BI_ANALYTICS_AUTO_INGEST_AGE_H=12         → не повторять чаще раза в N часов
+#   BI_ANALYTICS_AUTO_INGEST_FORCE=1          → игнорировать маркер
+# Ошибки логируются в stderr; UI запустится в любом случае.
+try:
+    from auto_ingest import maybe_run_auto_ingest_on_startup
+
+    maybe_run_auto_ingest_on_startup()
+except Exception as _e:  # noqa: BLE001
+    import sys as _sys
+
+    print(f"[auto_ingest] init failed: {_e}", file=_sys.stderr)
+
 # Page configuration (должно быть первым)
 _sidebar_state = "expanded" if st.session_state.get("authenticated") else "collapsed"
 
