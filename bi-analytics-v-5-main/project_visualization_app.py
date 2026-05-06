@@ -440,20 +440,22 @@ def main():
                     st.markdown('<input type="password" style="display:none" autocomplete="new-password">', unsafe_allow_html=True)
 
                     username = st.text_input(
-                        "",
+                        "Имя пользователя",
                         key="login_username",
                         placeholder="Имя пользователя",
                         autocomplete="off",
-                        value=""
+                        value="",
+                        label_visibility="collapsed",
                     )
 
                     password = st.text_input(
-                        "",
+                        "Пароль",
                         type="password",
                         key="login_password",
                         placeholder="Пароль",
                         autocomplete="new-password",
-                        value=""
+                        value="",
+                        label_visibility="collapsed",
                     )
 
                     st.markdown("""

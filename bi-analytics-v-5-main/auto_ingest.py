@@ -281,9 +281,14 @@ def maybe_run_auto_ingest_on_startup() -> None:
         return
     # Inter-process lock: Streamlit Cloud стартует web и worker процессы
     # одновременно — без замка оба полезут в FTP и устроят гонку за .tmp.
+    # Также защищает от повторного захода в этом же процессе пока ingest идёт
+    # фоном (например, Streamlit делает rerun страницы во время начального
+    # ingest, и наш in-process flag ещё не выставлен).
     acquired, reason = _acquire_lock()
     if not acquired:
         print(f"[auto_ingest] skip: another process holds lock ({reason})", file=sys.stderr)
+        # Ставим in-process flag, чтобы при следующем rerun страницы
+        # этот же процесс не писал ту же строку повторно.
         _AUTO_INGEST_DONE_IN_PROCESS = True
         return
     print(f"[auto_ingest] START ({why}, pid={os.getpid()})", file=sys.stderr)
