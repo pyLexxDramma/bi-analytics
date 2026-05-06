@@ -653,7 +653,7 @@ def main():
         from web_schema import init_web_schema, get_all_versions, get_active_version_id, activate_version
         from web_loader import load_all_from_web, web_dir_exists, read_version_to_session, get_web_dir
 
-        if ignore_demo_data_files():
+        if ignore_demo_data_files() and not _is_release_client_mode():
             st.caption(
                 "На сервере задано BI_ANALYTICS_IGNORE_DEMO: не загружаются демо "
                 "sample_*.csv и файлы в каталогах new_csv/; используйте боевые MSP/1С/TESSA в web/."
@@ -734,6 +734,39 @@ def main():
             and st.session_state.get("project_data") is None
             and not st.session_state.get("_release_web_autoload_tried", False)
         ):
+            # Release-клиент при первом заходе: пробуем подтянуть свежие файлы с FTP
+            # (если в st.secrets[ftp] / env BI_FTP_* настроены host+user), затем читаем web/.
+            # Управление: BI_ANALYTICS_AUTO_FTP_ON_START=0 — отключить авто-FTP даже если настроен.
+            try:
+                _auto_ftp_off = str(os.environ.get("BI_ANALYTICS_AUTO_FTP_ON_START", "")).strip().lower() in (
+                    "0",
+                    "false",
+                    "no",
+                    "off",
+                )
+            except Exception:
+                _auto_ftp_off = False
+            if not _auto_ftp_off:
+                try:
+                    from ftp_sync import (
+                        merge_ftp_config,
+                        streamlit_secrets_to_config,
+                        sync_ftp_to_web,
+                    )
+
+                    _ftp_cfg = merge_ftp_config(streamlit_secrets_to_config())
+                    if _ftp_cfg.get("host") and _ftp_cfg.get("user"):
+                        with st.spinner("Загружаю свежие данные…"):
+                            sync_ftp_to_web(
+                                get_web_dir(),
+                                config=_ftp_cfg,
+                                extensions=(".csv", ".json"),
+                                progress=lambda _m: None,
+                            )
+                except Exception:
+                    # Без шумовых ошибок: на release клиенту нечего показывать,
+                    # упадём в чтение того, что уже лежит локально в web/.
+                    pass
             st.session_state["_pending_web_folder_load"] = True
             st.session_state["_release_web_autoload_tried"] = True
 
