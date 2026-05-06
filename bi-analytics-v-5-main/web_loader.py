@@ -1396,7 +1396,7 @@ def load_all_from_web() -> Dict:
                 if file_type_by_name == "rd_plan":
                     content = filepath.read_bytes()
                     wrapped = _FileWrapper(content, name)
-                    df = load_data(wrapped, file_name=name)
+                    df = load_data(wrapped, file_name=name, silent=True)
                     if df is not None and not df.empty:
                         file_type = "project"
                         df.attrs["data_type"] = "project"
@@ -1416,7 +1416,10 @@ def load_all_from_web() -> Dict:
                 # ── Загружаем через data_loader ─────────────────────────────
                 content = filepath.read_bytes()
                 wrapped = _FileWrapper(content, name)
-                df = load_data(wrapped, file_name=name)
+                # silent=True — пакетная загрузка из web/, любые ошибки
+                # должны попадать только в result["errors"], а не в st.error
+                # поверх UI клиента на release.
+                df = load_data(wrapped, file_name=name, silent=True)
 
                 if df is None or df.empty:
                     result["skipped"] += 1

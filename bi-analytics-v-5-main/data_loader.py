@@ -157,7 +157,13 @@ def _maybe_strip_gdrs_instruction_rows(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _read_csv_best_effort(uploaded_file) -> Optional[pd.DataFrame]:
-    """Перебор кодировок и разделителей; выбирается вариант с максимальной оценкой таблицы."""
+    """Перебор кодировок и разделителей; выбирается вариант с максимальной оценкой таблицы.
+
+    Никогда не пробрасывает UnicodeDecodeError наружу: финальные fallback'и
+    включают latin-1 (читает любой byte stream без UnicodeDecodeError) и
+    utf-8 с errors='replace'. Если ничего не вышло — возвращаем None,
+    чтобы caller сам решил, что показать пользователю.
+    """
     encodings = ["utf-8-sig", "utf-8", "windows-1251", "cp1251"]
     seps = [";", ",", "\t"]
     best_df = None
@@ -182,18 +188,51 @@ def _read_csv_best_effort(uploaded_file) -> Optional[pd.DataFrame]:
                     best_df = cand
             except Exception:
                 continue
-    if best_df is None:
-        for enc in encodings:
-            try:
-                uploaded_file.seek(0)
-                best_df = pd.read_csv(uploaded_file, encoding=enc)
-                break
-            except Exception:
-                continue
-        if best_df is None:
+    if best_df is not None:
+        return best_df
+
+    # Resort 1: те же кодировки, но без точного парсинга (sep=None, engine='python')
+    for enc in encodings:
+        try:
             uploaded_file.seek(0)
-            best_df = pd.read_csv(uploaded_file)
-    return best_df
+            return pd.read_csv(
+                uploaded_file,
+                encoding=enc,
+                sep=None,
+                engine="python",
+                on_bad_lines="skip",
+            )
+        except Exception:
+            continue
+
+    # Resort 2: latin-1 читает любой 8-битный поток без UnicodeDecodeError.
+    # Может дать «крякозябры» в редких ячейках, но всё лучше, чем падение
+    # с красным st.error поверх UI.
+    try:
+        uploaded_file.seek(0)
+        return pd.read_csv(
+            uploaded_file,
+            encoding="latin-1",
+            sep=None,
+            engine="python",
+            on_bad_lines="skip",
+        )
+    except Exception:
+        pass
+
+    # Resort 3: utf-8 с заменой битых байт на replacement char.
+    try:
+        uploaded_file.seek(0)
+        return pd.read_csv(
+            uploaded_file,
+            encoding="utf-8",
+            encoding_errors="replace",
+            sep=None,
+            engine="python",
+            on_bad_lines="skip",
+        )
+    except Exception:
+        return None
 
 
 def _read_excel_best_effort(
@@ -252,10 +291,19 @@ def _read_excel_best_effort(
     return best_df, note
 
 
-def load_data(uploaded_file, file_name: Optional[str] = None) -> Optional[pd.DataFrame]:
+def load_data(
+    uploaded_file,
+    file_name: Optional[str] = None,
+    silent: bool = False,
+) -> Optional[pd.DataFrame]:
     """
     Загрузка данных из загруженного файла (CSV/Excel).
     Возвращает DataFrame с attrs: data_type, file_name; при ошибке — None.
+
+    silent=True — НЕ вызывать st.error/st.warning при ошибках чтения
+    (нужно для пакетной загрузки из web_loader: там caller сам
+    собирает ошибки в result["errors"] и не должен мусорить
+    красными баннерами по верх UI клиента).
     """
     try:
         original_name = file_name if file_name else uploaded_file.name
@@ -266,10 +314,22 @@ def load_data(uploaded_file, file_name: Optional[str] = None) -> Optional[pd.Dat
             df, excel_note = _read_excel_best_effort(uploaded_file, original_name)
             if df is None:
                 uploaded_file.seek(0)
-                df = pd.read_excel(uploaded_file)
+                try:
+                    df = pd.read_excel(uploaded_file)
+                except Exception:
+                    df = None
                 excel_note = None
         else:
-            st.error("Неподдерживаемый формат файла. Загрузите CSV или Excel файл.")
+            if not silent:
+                st.error("Неподдерживаемый формат файла. Загрузите CSV или Excel файл.")
+            return None
+
+        if df is None:
+            if not silent:
+                st.error(
+                    f"Не удалось прочитать файл '{original_name}': "
+                    "ни одна из попыток (utf-8/cp1251/latin-1, разделители ; , \\t) не сработала."
+                )
             return None
 
         # Нормализация названий колонок (BOM, переносы, пробелы)
@@ -280,10 +340,11 @@ def load_data(uploaded_file, file_name: Optional[str] = None) -> Optional[pd.Dat
 
         # Валидация: пустой файл или нет колонок
         if df.empty or len(df.columns) == 0:
-            st.warning(
-                f"Файл '{original_name}' пуст или не содержит колонок. "
-                "Проверьте кодировку (UTF-8 или Windows-1251) и разделитель (; или ,)."
-            )
+            if not silent:
+                st.warning(
+                    f"Файл '{original_name}' пуст или не содержит колонок. "
+                    "Проверьте кодировку (UTF-8 или Windows-1251) и разделитель (; или ,)."
+                )
             return None
 
         # Маппинг по sample_project_data_fixed.csv (разделитель ;, кодировка UTF-8).
@@ -429,7 +490,8 @@ def load_data(uploaded_file, file_name: Optional[str] = None) -> Optional[pd.Dat
             df.attrs["excel_read_hint"] = excel_note
         return df
     except Exception as e:
-        st.error(f"Ошибка загрузки файла: {str(e)}")
+        if not silent:
+            st.error(f"Ошибка загрузки файла: {str(e)}")
         return None
 
 
