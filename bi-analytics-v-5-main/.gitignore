@@ -68,6 +68,10 @@ ehthumbs.db
 data/web_data.db
 users.db
 
+# Эфемерные маркеры auto_ingest (создаются runtime'ом рядом с web_data.db)
+data/.auto_ingest_done.txt
+data/.auto_ingest.lock
+
 # Рабочие выгрузки в web/ могут коммититься в репозиторий (CSV/JSON для демо и CI).
 
 # =====================================

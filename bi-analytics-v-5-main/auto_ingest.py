@@ -199,6 +199,73 @@ def _do_load_all() -> dict | None:
         return None
 
 
+def _lock_path() -> Path:
+    """Inter-process lock рядом с web_data.db (на эфемерном диске)."""
+    try:
+        from web_loader import WEB_DB_PATH
+
+        base = Path(WEB_DB_PATH).resolve().parent
+    except Exception:
+        base = Path(".").resolve()
+    base.mkdir(parents=True, exist_ok=True)
+    return base / ".auto_ingest.lock"
+
+
+def _acquire_lock(stale_seconds: int = 600) -> tuple[bool, str]:
+    """Атомарный inter-process lock через O_CREAT|O_EXCL.
+
+    Возвращает (acquired, reason). Если acquired=True — текущий процесс
+    обязан вызвать _release_lock() в finally.
+    Stale-lock (старше N секунд) автоматически удаляется и берётся заново
+    (на случай SIGKILL предыдущего инстанса).
+    """
+    lock = _lock_path()
+    if lock.exists():
+        try:
+            age = time.time() - lock.stat().st_mtime
+        except Exception:
+            age = 0.0
+        if age < stale_seconds:
+            try:
+                holder = lock.read_text(encoding="utf-8").strip()
+            except Exception:
+                holder = "?"
+            return False, f"locked by pid={holder} age={age:.0f}s"
+        # stale — удалим и попробуем взять заново.
+        try:
+            lock.unlink()
+            print(
+                f"[auto_ingest] removed stale lock (age={age:.0f}s > {stale_seconds}s)",
+                file=sys.stderr,
+            )
+        except Exception:
+            pass
+    try:
+        fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        try:
+            os.write(fd, f"{os.getpid()}\n".encode("utf-8"))
+        finally:
+            os.close(fd)
+        return True, "acquired"
+    except FileExistsError:
+        # Кто-то опередил между exists()-проверкой и open() — это и есть гонка
+        # двух процессов Streamlit Cloud. Отдаём управление победителю.
+        try:
+            holder = lock.read_text(encoding="utf-8").strip()
+        except Exception:
+            holder = "?"
+        return False, f"raced by pid={holder}"
+    except Exception as e:
+        return False, f"lock open failed: {e}"
+
+
+def _release_lock() -> None:
+    try:
+        _lock_path().unlink()
+    except Exception:
+        pass
+
+
 def maybe_run_auto_ingest_on_startup() -> None:
     """Запустить auto-ingest при первом старте процесса (idempotent в рамках процесса)."""
     global _AUTO_INGEST_DONE_IN_PROCESS
@@ -212,16 +279,26 @@ def maybe_run_auto_ingest_on_startup() -> None:
         print(f"[auto_ingest] skip: {why}", file=sys.stderr)
         _AUTO_INGEST_DONE_IN_PROCESS = True
         return
-    print(f"[auto_ingest] START ({why})", file=sys.stderr)
-    _do_ftp_sync()
-    res = _do_load_all()
+    # Inter-process lock: Streamlit Cloud стартует web и worker процессы
+    # одновременно — без замка оба полезут в FTP и устроят гонку за .tmp.
+    acquired, reason = _acquire_lock()
+    if not acquired:
+        print(f"[auto_ingest] skip: another process holds lock ({reason})", file=sys.stderr)
+        _AUTO_INGEST_DONE_IN_PROCESS = True
+        return
+    print(f"[auto_ingest] START ({why}, pid={os.getpid()})", file=sys.stderr)
     try:
-        marker = _marker_path()
-        marker.write_text(
-            f"{int(time.time())}\nversion_id={res.get('version_id') if res else None}\n",
-            encoding="utf-8",
-        )
-    except Exception as e:
-        print(f"[auto_ingest] marker write failed: {e}", file=sys.stderr)
-    _AUTO_INGEST_DONE_IN_PROCESS = True
-    print("[auto_ingest] DONE", file=sys.stderr)
+        _do_ftp_sync()
+        res = _do_load_all()
+        try:
+            marker = _marker_path()
+            marker.write_text(
+                f"{int(time.time())}\nversion_id={res.get('version_id') if res else None}\n",
+                encoding="utf-8",
+            )
+        except Exception as e:
+            print(f"[auto_ingest] marker write failed: {e}", file=sys.stderr)
+    finally:
+        _release_lock()
+        _AUTO_INGEST_DONE_IN_PROCESS = True
+        print("[auto_ingest] DONE", file=sys.stderr)
