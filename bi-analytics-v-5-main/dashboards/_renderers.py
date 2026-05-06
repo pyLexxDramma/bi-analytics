@@ -2478,11 +2478,11 @@ def dashboard_deviations_combined(df):
         "(стек долей, легенда и детальная таблица)."
     )
     filtered_shared, building_col = _render_deviations_combined_shared_filters(df)
-    tab_by_month, tab_dynamics, tab_reasons = st.tabs(
+    tab_by_month, tab_reasons, tab_dynamics = st.tabs(
         [
             "Доли причин отклонений по проекту",
+            "Динамика причин отклонений по месяцам",
             "Динамика отклонений по месяцам",
-            "Динамика причин",
         ]
     )
 
@@ -2516,18 +2516,18 @@ def dashboard_deviations_combined(df):
             hide_shared_filters=True,
             building_col=building_col,
         )
+    with tab_reasons:
+        _render_tab_safe(
+            dashboard_dynamics_of_reasons,
+            filtered_shared,
+            tab_label="Динамика причин отклонений по месяцам",
+            hide_shared_filters=True,
+        )
     with tab_dynamics:
         _render_tab_safe(
             dashboard_dynamics_of_deviations,
             filtered_shared,
             tab_label="Динамика отклонений по месяцам",
-            hide_shared_filters=True,
-        )
-    with tab_reasons:
-        _render_tab_safe(
-            dashboard_dynamics_of_reasons,
-            filtered_shared,
-            tab_label="Динамика причин",
             hide_shared_filters=True,
         )
 
@@ -6835,7 +6835,7 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
     selected_section = "Все"
 
     if hide_shared_filters:
-        st.subheader("Динамика причин отклонений")
+        st.subheader("Динамика причин отклонений по месяцам")
         col1, = st.columns(1)
         with col1:
             period_type = st.selectbox(
@@ -6844,7 +6844,7 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
             period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
             period_type_en = period_map.get(period_type, "Month")
     else:
-        st.header("Динамика причин отклонений")
+        st.header("Динамика причин отклонений по месяцам")
 
         col1, col2, col3, col4 = st.columns(4)
 
