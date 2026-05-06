@@ -44,15 +44,21 @@ def _flag(name: str, default: str = "") -> bool:
 
 def _maybe_secrets_to_env() -> None:
     """Streamlit Cloud отдаёт секреты через st.secrets, не через os.environ.
-    Прокинем в env только нужные ключи (host/user/password/...), чтобы
-    `ftp_sync.merge_ftp_config()` подхватил их единообразно с локальным режимом.
+    Прокинем в env нужные ключи, чтобы:
+      - ftp_sync.merge_ftp_config() подхватил их единообразно с локальным режимом;
+      - наш _flag() мог проверить BI_ANALYTICS_AUTO_INGEST через os.environ.
+
+    Поддерживаем три способа задания одного ключа в Streamlit Cloud Secrets:
+      1) полное имя на верхнем уровне:           BI_ANALYTICS_AUTO_INGEST = "1"
+      2) короткое имя в [ftp]:                   [ftp]\nauto_ingest = "1"
+      3) короткое имя на верхнем уровне:         auto_ingest = "1"
+    Первый вариант — рекомендованный (как привычные env-переменные).
     """
     try:
         import streamlit as st  # type: ignore
         secrets = getattr(st, "secrets", None)
         if not secrets:
             return
-        # Поддерживаем оба варианта: плоский и секцию [ftp].
         ftp_section: Any = None
         try:
             ftp_section = secrets.get("ftp")  # type: ignore[attr-defined]
@@ -70,25 +76,38 @@ def _maybe_secrets_to_env() -> None:
             "BI_ANALYTICS_AUTO_INGEST_AGE_H": ("auto_ingest_age_h",),
             "BI_ANALYTICS_AUTO_INGEST_FORCE": ("auto_ingest_force",),
             "BI_ANALYTICS_IGNORE_DEMO": ("ignore_demo",),
+            "BI_ANALYTICS_HIDE_DEV_DIAGNOSTICS": ("hide_dev_diagnostics",),
+            "BI_ANALYTICS_RELEASE_MODE": ("release_mode",),
+            "BI_ANALYTICS_AUTO_FTP_ON_START": ("auto_ftp_on_start",),
         }
-        for env_key, paths in env_map.items():
+        for env_key, short_aliases in env_map.items():
             if os.environ.get(env_key):
                 continue
             val: Any = None
-            for p in paths:
-                if ftp_section is not None:
+            # 1) полное имя на верхнем уровне (BI_ANALYTICS_AUTO_INGEST = "1")
+            try:
+                if env_key in secrets:  # type: ignore[operator]
+                    val = secrets[env_key]  # type: ignore[index]
+            except Exception:
+                pass
+            # 2) короткое имя в [ftp] (для ftp-полей и совместимости)
+            if val is None and ftp_section is not None:
+                for p in short_aliases:
                     try:
                         if p in ftp_section:
                             val = ftp_section[p]
                             break
                     except Exception:
                         pass
-                try:
-                    if p in secrets:  # type: ignore[operator]
-                        val = secrets[p]  # type: ignore[index]
-                        break
-                except Exception:
-                    pass
+            # 3) короткое имя на верхнем уровне (на всякий случай)
+            if val is None:
+                for p in short_aliases:
+                    try:
+                        if p in secrets:  # type: ignore[operator]
+                            val = secrets[p]  # type: ignore[index]
+                            break
+                    except Exception:
+                        pass
             if val is not None and str(val).strip() != "":
                 os.environ[env_key] = str(val)
     except Exception:
