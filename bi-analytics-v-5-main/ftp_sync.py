@@ -335,10 +335,16 @@ def sync_ftp_to_web(
                 if remote_size is None:
                     remote_size = _safe_size(ftp, name)
 
+                # Skip ТОЛЬКО если локальный файл существует, его размер > 0
+                # и совпадает с remote. Файлы 0 байт — это мусор от прошлых
+                # неудачных перекачек (до атомарной записи через .tmp), их
+                # форсированно перекачиваем.
                 if (
                     not force_redownload
                     and remote_size is not None
+                    and remote_size > 0
                     and local_path.exists()
+                    and local_path.stat().st_size > 0
                     and local_path.stat().st_size == remote_size
                 ):
                     out["skipped_same_size"] += 1

@@ -516,6 +516,133 @@ def _load_resources_file(filepath: Path) -> Optional[pd.DataFrame]:
                     continue
                 except Exception:
                     continue
+
+    # ── Fallback: «pivot-aware» сборка шапки из нескольких строк ────────
+    # Поддерживает третий формат other_*_resursi.csv (старая выгрузка):
+    #   0: Период;Февраль;2026;…
+    #   1: ;Подрядчик;;;Дмитров;…       ← подрядчик «спрятан» здесь
+    #   2: Проект;;тип ресурсов;1 неделя;2 неделя;…
+    #   3: ;;;01.02.26;02.02.26;…       ← даты как третий уровень шапки
+    #   4+: данные
+    # Никакой header=N такой формат не возьмёт, поэтому читаем raw и
+    # склеиваем имена колонок руками: дата → дата; иначе из строки 2;
+    # иначе из строки 1 (group label).
+    for encoding in encodings:
+        for sep in seps:
+            try:
+                raw = pd.read_csv(
+                    filepath,
+                    sep=sep,
+                    encoding=encoding,
+                    header=None,
+                    quoting=csv.QUOTE_MINIMAL,
+                    quotechar='"',
+                    doublequote=True,
+                    on_bad_lines="skip",
+                )
+            except Exception:
+                continue
+            if raw is None or raw.empty or len(raw) < 5:
+                continue
+
+            def _row(idx):
+                if idx >= len(raw):
+                    return [""] * len(raw.columns)
+                return [
+                    "" if pd.isna(v) else str(v).replace("\ufeff", "").strip()
+                    for v in raw.iloc[idx].tolist()
+                ]
+
+            r0, r1, r2, r3 = _row(0), _row(1), _row(2), _row(3)
+            ncols = len(raw.columns)
+            date_re = re.compile(r"^\d{1,2}[.-/]\d{1,2}[.-/]\d{2,4}$")
+
+            cols: List[str] = []
+            data_start = 4
+            for i in range(ncols):
+                cell3 = r3[i] if i < len(r3) else ""
+                cell2 = r2[i] if i < len(r2) else ""
+                cell1 = r1[i] if i < len(r1) else ""
+                cell0 = r0[i] if i < len(r0) else ""
+                if cell3 and date_re.match(cell3):
+                    cols.append(cell3)
+                elif cell2 and cell2.lower() not in ("nan", ""):
+                    cols.append(cell2)
+                elif cell1 and cell1.lower() not in ("nan", ""):
+                    cols.append(cell1)
+                elif cell0 and cell0.lower() not in ("nan", ""):
+                    cols.append(cell0)
+                else:
+                    cols.append(f"col_{i}")
+
+            cols_low = [c.lower() for c in cols]
+            has_proj = any("проект" in c for c in cols_low)
+            has_contr = any(
+                any(s in c for s in ("подрядчик", "контрагент", "contractor"))
+                for c in cols_low
+            )
+            has_dates = any(date_re.match(c) for c in cols)
+            if not (has_proj and has_contr and has_dates):
+                continue
+
+            cols_unique: List[str] = []
+            seen: Dict[str, int] = {}
+            for c in cols:
+                if c in seen:
+                    seen[c] += 1
+                    cols_unique.append(f"{c}.{seen[c]}")
+                else:
+                    seen[c] = 0
+                    cols_unique.append(c)
+
+            try:
+                data = raw.iloc[data_start:].reset_index(drop=True).copy()
+                data.columns = cols_unique
+            except Exception:
+                continue
+            data = data.dropna(how="all")
+            if data.empty:
+                continue
+
+            for cand in ("Подрядчик_new", "Подрядчик", "Подрядчик_old"):
+                if cand in data.columns and "Контрагент" not in data.columns:
+                    data = data.rename(columns={cand: "Контрагент"})
+                    break
+            if "Контрагент" not in data.columns:
+                for c in data.columns:
+                    if "подрядчик" in str(c).lower() or "контрагент" in str(c).lower():
+                        data = data.rename(columns={c: "Контрагент"})
+                        break
+
+            if "Проект" not in data.columns:
+                for cand in ("Наименование Проекта", "Наименование проекта", "Название проекта"):
+                    if cand in data.columns:
+                        data = data.rename(columns={cand: "Проект"})
+                        break
+                if "Проект" not in data.columns:
+                    for c in data.columns:
+                        if "проект" in str(c).lower():
+                            data = data.rename(columns={c: "Проект"})
+                            break
+
+            for a, b in (("тип ресурса", "тип ресурсов"), ("Тип ресурса", "тип ресурсов")):
+                if a in data.columns and b not in data.columns:
+                    data = data.rename(columns={a: b})
+
+            try:
+                from config import MSP_PROJECT_NAME_MAP
+                if "Проект" in data.columns:
+                    data["Проект"] = data["Проект"].apply(
+                        lambda x: MSP_PROJECT_NAME_MAP.get(
+                            str(x).strip().lower().replace(" ", ""), str(x).strip()
+                        ) if pd.notna(x) else x
+                    )
+            except Exception:
+                pass
+
+            data.attrs["data_type"] = "resources"
+            return data
+
     return None
 
 
