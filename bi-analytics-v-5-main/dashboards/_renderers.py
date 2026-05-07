@@ -21,8 +21,10 @@ from .ui_quiet import inject_unified_filters_css, filters_panel, suppress_captio
 
 
 def _inject_multiselect_ru_translations() -> None:
-    """Точечная локализация англоязычных подписей `st.multiselect` (Streamlit 1.50+):
-    «Choose options» / «Select all» / «Select N matches» / «No results».
+    """Точечная локализация англоязычных подписей Streamlit-виджетов (1.50+):
+    multiselect (Choose options / Select all / Select N matches / No results)
+    + date_input range presets (Past Week / Past Month / Past 3 Months / Past 6 Months /
+    Past Year / Past 2 Years / Choose a date range / None).
 
     Использует `st.components.v1.html` с MutationObserver, работающий через
     `window.parent.document` (iframe и родительская страница имеют одинаковый origin
@@ -41,7 +43,15 @@ def _inject_multiselect_ru_translations() -> None:
                     'Select all': 'Выбрать все',
                     'No results': 'Нет результатов',
                     'No options': 'Нет вариантов',
-                    'No matches': 'Нет совпадений'
+                    'No matches': 'Нет совпадений',
+                    'Choose a date range': 'Выберите диапазон дат',
+                    'Past Week': 'Прошлая неделя',
+                    'Past Month': 'Прошлый месяц',
+                    'Past 3 Months': 'Последние 3 месяца',
+                    'Past 6 Months': 'Последние 6 месяцев',
+                    'Past Year': 'Последний год',
+                    'Past 2 Years': 'Последние 2 года',
+                    'None': 'Не выбрано'
                 };
                 var SELECT_N_RE = /^Select (\\d+) matches$/;
                 function tr(node) {
@@ -17691,6 +17701,7 @@ def dashboard_executive_documentation(df):
     Исключаются строки KindName «Предписание» (отдельный отчёт «Предписания»).
     """
     st.header("Исполнительная документация")
+    _inject_multiselect_ru_translations()
     tessa_df = st.session_state.get("tessa_data", None)
     work = None
     _source_label = ""
@@ -17883,7 +17894,31 @@ def dashboard_executive_documentation(df):
         filtered = filtered[filtered["_cd"].notna() & (filtered["_cd"] >= ts_start) & (filtered["_cd"] <= ts_end)]
 
     if filtered.empty:
-        st.info("Нет данных при выбранных фильтрах.")
+        _empty_reasons = []
+        _full_n = int(len(work))
+        _base_n = int(len(filtered_base))
+        if _base_n == 0:
+            if sel_obj != "Все":
+                _empty_reasons.append(f"для объекта «{sel_obj}»")
+            if sel_contr != "Все":
+                _empty_reasons.append(f"для контрагента «{sel_contr}»")
+            if sel_kind != "Все":
+                _empty_reasons.append(f"для вида документа «{sel_kind}»")
+        else:
+            _date_str = (
+                f"{p_start.strftime('%d.%m.%Y') if hasattr(p_start, 'strftime') else p_start}"
+                f" — {p_end.strftime('%d.%m.%Y') if hasattr(p_end, 'strftime') else p_end}"
+            ) if (p_start is not None and p_end is not None) else "выбранный диапазон"
+            _empty_reasons.append(f"в периоде {_date_str}")
+        _why = " и ".join(_empty_reasons) if _empty_reasons else "при выбранных фильтрах"
+        _suggestion = (
+            "Сбросьте лишние фильтры или расширьте период"
+            if _base_n == 0 or pd.notna(dmin)
+            else "Загрузите свежие файлы tessa_*.csv через папку web/"
+        )
+        st.warning(
+            f"Нет документов {_why}. Всего в источнике: {_full_n} строк. {_suggestion}."
+        )
         return
 
     st.markdown('<div class="exec-doc-panel">', unsafe_allow_html=True)
@@ -18146,13 +18181,28 @@ def dashboard_executive_documentation(df):
         status_counts = filtered["Статус"].value_counts()
         status_df = status_counts.reset_index()
         status_df.columns = ["Статус", "Количество"]
+
+        def _exec_status_color(status_label: str) -> str:
+            sl = str(status_label).strip().lower()
+            if "подписан" in sl or "согласован" in sl or "принят" in sl:
+                return "#4caf50"
+            if "отказ" in sl or "не сдан" in sl:
+                return "#f44336"
+            if "доработ" in sl:
+                return "#ffc107"
+            if "согласовани" in sl or "у заказчик" in sl:
+                return "#ff9800"
+            return "#9e9e9e"
+
+        status_colors = [_exec_status_color(s) for s in status_df["Статус"].tolist()]
         fig = px.bar(
             status_df, x="Статус", y="Количество",
             text="Количество",
-            color_discrete_sequence=["#2E86AB"],
+            color="Статус",
+            color_discrete_map={s: c for s, c in zip(status_df["Статус"].tolist(), status_colors)},
         )
         fig.update_traces(textposition="outside", textfont=dict(size=13, color="white"))
-        fig.update_layout(xaxis_tickangle=-35)
+        fig.update_layout(xaxis_tickangle=-35, showlegend=False)
         fig = _apply_finance_bar_label_layout(fig)
         fig = _apply_vertical_category_bar_width(fig)
         fig = apply_chart_background(fig)
