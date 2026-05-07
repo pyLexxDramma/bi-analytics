@@ -23627,8 +23627,11 @@ def dashboard_predpisania(df):
         pred["Статус"] = "Неизвестно"
     # Исключение документов в статусе «Проект» (загружены, но процесс не запущен).
     # Заказчик 07.05.2026 (скрин 7): «нужно исключить из данных все документы
-    # в состоянии KrState=Проект». Делаем И по KrStateID=4 (надёжно), И по
-    # тексту «Статус» (на случай, если KrStateID отсутствует или другой).
+    # в состоянии KrState=Проект». Маппинг KrStateID в выгрузке TESSA
+    # (проверено на tessa_06-05-2026-00-07-id.csv):
+    #   0=Проект, 1=На согласовании, 2=Согласован, 4=На доработке,
+    #   8=Подписан, 9=Отказ, 10=На подписании, 12=На ознакомлении, 13=Снято.
+    # Исключаем по обоим признакам (надёжно): по KrStateID=0 И по тексту «Проект».
     _st_stat = pred["Статус"].astype(str).str.strip()
     _drop_mask_text = _st_stat.str.casefold().eq("проект") | _st_stat.str.fullmatch(
         r"\s*Проект\s*", case=False, na=False
@@ -23636,7 +23639,7 @@ def dashboard_predpisania(df):
     _drop_mask_id = pd.Series(False, index=pred.index)
     if "KrStateID" in pred.columns:
         _krs = pd.to_numeric(pred["KrStateID"], errors="coerce")
-        _drop_mask_id = _krs.eq(4)
+        _drop_mask_id = _krs.eq(0)
     pred = pred[~(_drop_mask_text | _drop_mask_id)].copy()
 
     contr_col = _tessa_find_column(pred, ["CONTR", "Контрагент", "contr"])
