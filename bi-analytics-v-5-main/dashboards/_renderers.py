@@ -10148,6 +10148,151 @@ def dashboard_bdr(df):
     render_quality_hints(_bdr_q_hints)
 
 
+# ==================== B-12/13.2 (2026-05-07): RD/PD plan fallback view =====================
+# Дашборды «Рабочая/Проектная документация» и «Просрочка выдачи РД/ПД» исторически
+# рассчитаны на `sample_project_data_fixed.csv` со столбцами «Количество разделов РД по
+# Договору», «На согласовании», «Выдано в производство работ», «Отклонение разделов РД».
+# В реальных выгрузках (`web/AI/other_*_rd.csv`, `other_*_pd.csv`) этих колонок нет ни в
+# старом 5-колоночном формате (Номер · Шифр · Наименование · Количество разделов по
+# Договору · Дата выдачи), ни в новом 10–29-колоночном (ID_проекта · Шифр · Дата выдачи
+# по Договору · Прогнозная дата · Статус РД · Загрузка в ЭДО Tessa · Выдан в
+# Производство работ подрядчикам …). Этот fallback показывает план выдачи разделов
+# и отклонение «Прогноз − План» в днях, чтобы дашборд не зиял пустотой при отсутствии
+# MSP-выгрузки с РД/ПД-полями. Параметр source_key переключает источник:
+# `rd_plan_data` — для РД, `pd_plan_data` — для ПД.
+def _rd_plan_fallback_view(
+    page_title: str = "",
+    doc_code: str = "РД",
+    source_key: str = "rd_plan_data",
+) -> bool:
+    try:
+        rd_plan = st.session_state.get(source_key) if hasattr(st, "session_state") else None
+    except Exception:
+        rd_plan = None
+    if rd_plan is None or getattr(rd_plan, "empty", True):
+        return False
+
+    df = rd_plan.copy()
+    df.columns = [str(c).strip() for c in df.columns]
+
+    def _pick(cols):
+        for c in cols:
+            if c in df.columns:
+                return c
+        return None
+
+    proj_col = _pick(["project name", "Проект", "ID_проекта"])
+    code_col = _pick(["Шифр", "Шифр полный", "section"])
+    name_col = _pick([
+        "Наименование  работ (разделов работ).",
+        "Наименование работ (разделов работ).",
+        "Наименование раздела",
+        "Наименование",
+    ])
+    plan_col = _pick(["Дата выдачи разделов по Договору", "Дата выдачи", "plan end"])
+    forecast_col = _pick([
+        "Прогнозная дата выдачи разделов",
+        "Прогнозная дата",
+        "actual finish",
+        "Выдан в Производство работ подрядчикам",
+    ])
+    status_col = _pick(["Статус РД", "Статус ПД", "Статус"])
+    block_col = _pick(["Блок", "block"])
+    contract_col = _pick(["№ Договора", "Договор"])
+
+    if not (code_col and plan_col):
+        return False
+
+    df["_plan_dt"] = pd.to_datetime(df[plan_col], errors="coerce", dayfirst=True, format="mixed")
+    if forecast_col:
+        df["_fact_dt"] = pd.to_datetime(df[forecast_col], errors="coerce", dayfirst=True, format="mixed")
+    else:
+        df["_fact_dt"] = pd.NaT
+
+    _src_glob = "other_*_pd.csv" if source_key == "pd_plan_data" else "other_*_rd.csv"
+    st.subheader(f"План выдачи {doc_code} (источник: `web/AI/{_src_glob}`)")
+
+    if proj_col and proj_col in df.columns:
+        try:
+            projects = sorted({str(x).strip() for x in df[proj_col].dropna() if str(x).strip()})
+        except Exception:
+            projects = []
+        if projects:
+            sel = st.multiselect(
+                "Проекты",
+                options=projects,
+                default=projects,
+                key=f"rd_fb_proj_{page_title or doc_code}",
+            )
+            if sel:
+                df = df[df[proj_col].astype(str).str.strip().isin(sel)]
+
+    if df.empty:
+        st.info("Нет строк после фильтра.")
+        return True
+
+    def _safe_str(series_or_default) -> pd.Series:
+        if isinstance(series_or_default, pd.Series):
+            s = series_or_default
+        else:
+            s = pd.Series([series_or_default] * len(df), index=df.index)
+        s = s.where(s.notna(), "")
+        s = s.astype(str).str.strip()
+        s = s.replace({"nan": "", "None": "", "<NA>": "", "NaT": ""})
+        return s
+
+    _status_label = f"Статус {doc_code}"
+    detail_rows = pd.DataFrame({
+        "№ п/п": _safe_str(df["№ п/п"]) if "№ п/п" in df.columns else _safe_str(""),
+        "Шифр": _safe_str(df[code_col]) if code_col else _safe_str(""),
+        "Наименование": _safe_str(df[name_col]) if name_col else _safe_str(""),
+        "Блок": _safe_str(df[block_col]) if block_col and block_col in df.columns else _safe_str(""),
+        "№ Договора": _safe_str(df[contract_col]) if contract_col and contract_col in df.columns else _safe_str(""),
+        "План выдачи (по Договору)": df["_plan_dt"].dt.strftime("%d.%m.%Y").fillna("—"),
+        "Прогноз/Факт выдачи": df["_fact_dt"].dt.strftime("%d.%m.%Y").fillna("—"),
+        "Отклонение, дн.": (df["_fact_dt"] - df["_plan_dt"]).dt.days,
+        _status_label: _safe_str(df[status_col]) if status_col and status_col in df.columns else _safe_str(""),
+    })
+
+    if proj_col and proj_col in df.columns:
+        detail_rows.insert(0, "Проект", _safe_str(df[proj_col]).to_numpy())
+
+    total_sections = int(len(detail_rows))
+    delta_num = pd.to_numeric(detail_rows["Отклонение, дн."], errors="coerce")
+    overdue = int((delta_num > 0).sum())
+    avg_delay = float(delta_num[delta_num > 0].mean()) if overdue > 0 else 0.0
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Всего разделов", f"{total_sections}")
+    m2.metric("С отклонением (дн. > 0)", f"{overdue}")
+    m3.metric("Ср. задержка, дн.", f"{avg_delay:.1f}" if overdue > 0 else "0")
+
+    detail_show = detail_rows.copy()
+    detail_show["Отклонение, дн."] = delta_num.apply(
+        lambda x: ("+" + str(int(x))) if pd.notna(x) and x > 0 else (str(int(x)) if pd.notna(x) else "—")
+    )
+
+    drop_cols = [
+        c
+        for c in ("№ п/п", "Блок", "№ Договора", _status_label)
+        if c in detail_show.columns and (detail_show[c].astype(str).str.strip() == "").all()
+    ]
+    if drop_cols:
+        detail_show = detail_show.drop(columns=drop_cols)
+
+    for c in detail_show.columns:
+        if detail_show[c].dtype == object:
+            detail_show[c] = detail_show[c].replace({"": "—"})
+
+    st.dataframe(detail_show, hide_index=True, use_container_width=True)
+    st.caption(
+        f"Этот вид строится из справочника `{_src_glob}` (план выдачи разделов). "
+        f"Полный отчёт со статусами «На согласовании», «Выдано в производство работ» "
+        f"доступен только при наличии MSP-выгрузки с соответствующими {doc_code}-колонками."
+    )
+    return True
+
+
 # ==================== DASHBOARD 8.6: RD Delay Chart ====================
 def dashboard_rd_delay(df, is_pd: bool = False):
     # R23-07 (стр.19): в контексте ПД все видимые лейблы используют «ПД».
@@ -10224,6 +10369,9 @@ def dashboard_rd_delay(df, is_pd: bool = False):
     dev_col = f"Отклонение разделов {doc_code}"
 
     if not rd_deviation_col:
+        _src_key = "pd_plan_data" if is_pd else "rd_plan_data"
+        if _rd_plan_fallback_view(page_title=f"Просрочка выдачи {doc_code}", doc_code=doc_code, source_key=_src_key):
+            return
         st.warning(f"⚠️ Колонка 'Отклонение разделов {doc_code}' не найдена.")
         return
 
@@ -10307,6 +10455,9 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         missing_cols.append("Задача (task name)")
 
     if missing_cols:
+        _src_key = "pd_plan_data" if is_pd else "rd_plan_data"
+        if _rd_plan_fallback_view(page_title=f"Просрочка выдачи {doc_code}", doc_code=doc_code, source_key=_src_key):
+            return
         st.warning(f"⚠️ Отсутствуют необходимые колонки: {', '.join(missing_cols)}")
         st.info("Пожалуйста, убедитесь, что файл содержит все необходимые колонки.")
         return
@@ -17617,6 +17768,12 @@ def dashboard_documentation(
     is_pd = page_title == "Проектная документация"
 
     if df is None or not hasattr(df, "columns") or df.empty:
+        if is_pd:
+            if _rd_plan_fallback_view(page_title=page_title, doc_code="ПД", source_key="pd_plan_data"):
+                return
+        else:
+            if _rd_plan_fallback_view(page_title=page_title, doc_code="РД", source_key="rd_plan_data"):
+                return
         st.warning(
             f"Для отчёта «{page_title}» загрузите файл с данными проекта (CSV/Excel с колонками по задачам и "
             + ("ПД / MS Project." if is_pd else "РД.")
@@ -17714,6 +17871,10 @@ def dashboard_documentation(
             missing_cols.append("Выдано в производство работ")
 
     if missing_cols:
+        _src_key = "pd_plan_data" if is_pd else "rd_plan_data"
+        _doc = "ПД" if is_pd else "РД"
+        if _rd_plan_fallback_view(page_title=page_title, doc_code=_doc, source_key=_src_key):
+            return
         st.warning(f"⚠️ Отсутствуют необходимые колонки: {', '.join(missing_cols)}")
         st.info("Пожалуйста, убедитесь, что файл содержит все необходимые колонки.")
         return

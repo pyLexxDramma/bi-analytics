@@ -1682,35 +1682,60 @@ def load_all_from_web() -> Dict:
                         result["skipped"] += 1
                     continue
 
-                # ── RD plan файлы (other_*_rd.csv) ──────────────────────────
+                # ── RD/PD plan файлы (other_*_rd.csv | other_*_pd.csv) ──────
                 # B-12/13 (2026-05-07): отдельный header-detect (`_load_rd_plan_file`).
                 # Раньше шли через `load_data → _read_csv_best_effort` с `header=0` —
                 # а в этих CSV 1-я строка это длинный заголовок проекта. Получали
                 # `Unnamed: 0..7` и план «РД по Договору» оставался пустым.
-                if file_type_by_name == "rd_plan":
+                # B-12/13.2: симметричная поддержка `pd_plan` (other_*_pd.csv) с
+                # тем же парсером — fallback в дашборде «Просрочка выдачи ПД».
+                if file_type_by_name in ("rd_plan", "pd_plan"):
+                    _doc_kind = file_type_by_name
                     df = _load_rd_plan_file(filepath)
                     if df is not None and not df.empty:
-                        file_type = "rd_plan"
-                        df.attrs["data_type"] = "rd_plan"
+                        file_type = _doc_kind
+                        df.attrs["data_type"] = _doc_kind
+                        # B-12/13.2 (2026-05-07): project name из имени файла
+                        # `other_<project>_<DD.MM.YYYY>_<rd|pd>.csv` — без него
+                        # dashboard не может развести строки по проектам (в самих
+                        # CSV нет колонки «project name»).
+                        try:
+                            from config import MSP_PROJECT_NAME_MAP as _MSP_NAME_MAP
+                            _stem = name.lower().replace(".csv", "")
+                            _parts = _stem.split("_")
+                            _proj_token = _parts[1] if len(_parts) > 2 and _parts[0] == "other" else ""
+                            _proj_label = _MSP_NAME_MAP.get(_proj_token, "")
+                            if _proj_label and "project name" not in df.columns:
+                                df["project name"] = _proj_label
+                            _snap = None
+                            for _p in reversed(_parts):
+                                _snap = _parse_snapshot_date(_p)
+                                if _snap is not None:
+                                    break
+                            if _snap is not None and "snapshot_date" not in df.columns:
+                                df["snapshot_date"] = pd.Timestamp(_snap)
+                        except Exception:
+                            pass
                         file_id = _register_file(cur, version_id, file_info, file_type, len(df))
                         _save_rows(cur, version_id, file_id, file_type, name, df)
                         total_rows += len(df)
                         result["loaded"] += 1
                         # update_session_with_loaded_file подставит df в session_state по типу;
                         # сохраним отдельный ключ для совместимости.
+                        _ss_key = "rd_plan_data" if _doc_kind == "rd_plan" else "pd_plan_data"
                         try:
-                            if st.session_state.get("rd_plan_data") is None:
-                                st.session_state["rd_plan_data"] = df
+                            if st.session_state.get(_ss_key) is None:
+                                st.session_state[_ss_key] = df
                             else:
-                                st.session_state["rd_plan_data"] = pd.concat(
-                                    [st.session_state["rd_plan_data"], df], ignore_index=True
+                                st.session_state[_ss_key] = pd.concat(
+                                    [st.session_state[_ss_key], df], ignore_index=True
                                 )
                         except Exception:
                             pass
                         update_session_with_loaded_file(df, rel_path)
                         result["diagnostics"].append({
                             "file": rel_path,
-                            "type": "rd_plan",
+                            "type": _doc_kind,
                             "rows": int(len(df)),
                             "columns": [str(c) for c in df.columns[:25]],
                             "header_note": str(df.attrs.get("rd_plan_header_note", "")),
@@ -1946,6 +1971,13 @@ def _infer_file_type_by_name(file_name: str) -> str:
     # ── Плановая выдача РД (other_*_rd.csv) ─────────────────────────────────
     if stem.startswith("other_") and stem.endswith("_rd"):
         return "rd_plan"
+
+    # ── Плановая выдача ПД (other_*_pd.csv) ─────────────────────────────────
+    # Симметрично «rd_plan»: если появятся файлы плана выдачи ПД с таким же
+    # шаблоном имени, их парсит тот же `_load_rd_plan_file` (header-detect),
+    # а UI берёт fallback-вью из `pd_plan_data`.
+    if stem.startswith("other_") and stem.endswith("_pd"):
+        return "pd_plan"
 
     # ── TESSA: задачи (CardId, KindName, …) — отдельный тип, чтобы join с Id по правкам ──
     # Имя «tessa_*_task.csv» (единственное task) должно считаться задачами, не только *_tasks*.
