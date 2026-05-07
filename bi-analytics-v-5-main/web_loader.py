@@ -432,6 +432,123 @@ def _apply_msp_column_mapping(df: pd.DataFrame, project_name: str) -> pd.DataFra
     return df
 
 
+def _load_rd_plan_file(filepath: Path) -> Optional[pd.DataFrame]:
+    """B-12/13 (2026-05-07): загрузка `other_*_rd.csv` (план выдачи РД).
+
+    В этих CSV 1-я строка обычно — длинное название проекта в одной
+    «ячейке-заголовке» (`;;;;…;ПРОИЗВОДСТВЕННО — СКЛАДСКОЙ КОМПЛЕКС…;;;;;;;`),
+    а реальные заголовки таблицы — на 2-й (`ID_проекта;№ п/п;Наименование…;
+    № Договора;Шифр;Номер шифра;Блок;Шифр полный;…`). При чтении с `header=0`
+    pandas получал `Unnamed: 0..7`, поэтому план «РД по Договору» / 12 / 13
+    оставался пустым. Здесь пробуем `header_row ∈ {0,1,2}` и берём вариант
+    с максимальным числом сигналов RD-колонок (ID_проекта / Шифр / Блок /
+    «Наименование работ» / № Договора) минус штраф за `Unnamed*` в шапке.
+    """
+    # cp866 — DOS-кириллица, иногда встречается в выгрузках от подрядчика
+    # (бьёт на cp1251 байтом 0x98). Без него `other_leninsky_30.04.2026_rd.csv`
+    # не читался ни одним из основных пресетов.
+    encodings = ["utf-8-sig", "utf-8", "windows-1251", "cp1251", "cp866"]
+    seps = [";", ","]
+    rd_signal_keys = (
+        "id_проекта",
+        "id проекта",
+        "id проект",
+        "шифр",
+        "наименование",
+        "блок",
+        "договор",
+        "загрузка в эдо",
+        "статус рд",
+    )
+    best_df: Optional[pd.DataFrame] = None
+    best_score = -1
+    best_note = ""
+    for header_row in (0, 1, 2, 3):
+        for enc in encodings:
+            for sep in seps:
+                try:
+                    df = pd.read_csv(
+                        filepath,
+                        sep=sep,
+                        encoding=enc,
+                        header=header_row,
+                        quoting=csv.QUOTE_MINIMAL,
+                        quotechar='"',
+                        doublequote=True,
+                        on_bad_lines="skip",
+                        low_memory=False,
+                    )
+                except Exception:
+                    continue
+                if df is None or getattr(df, "empty", True) or len(df.columns) < 4:
+                    continue
+                df.columns = [
+                    str(c).replace("\ufeff", "").replace("\n", " ").replace("\r", " ").strip()
+                    for c in df.columns
+                ]
+                cols_low = [str(c).lower() for c in df.columns]
+                signals = sum(
+                    1 for k in rd_signal_keys if any(k in c for c in cols_low)
+                )
+                unnamed = sum(1 for c in cols_low if c.startswith("unnamed"))
+                empty_names = sum(1 for c in cols_low if not c)
+                score = signals * 10 - unnamed - empty_names
+                if score > best_score:
+                    best_score = score
+                    best_df = df
+                    best_note = f"header_row={header_row}, enc={enc}, sep={sep!r}, signals={signals}, unnamed={unnamed}"
+    if best_df is None or best_score <= 0:
+        # Fallback: некоторые `other_*_rd.csv` приходят с битыми байтами
+        # (cp1251 0x98 и т.п.) и валятся на всех строгих кодировках. Берём
+        # cp1251 + windows-1251 с `encoding_errors='replace'` — теряем редкие
+        # «крякозябры» в шапке заголовка проекта, зато получаем нормальную
+        # таблицу заголовка в строке 2.
+        for header_row in (1, 2, 0):
+            for enc in ("cp866", "cp1251", "windows-1251", "utf-8"):
+                try:
+                    df = pd.read_csv(
+                        filepath,
+                        sep=";",
+                        encoding=enc,
+                        encoding_errors="replace",
+                        header=header_row,
+                        quoting=csv.QUOTE_MINIMAL,
+                        quotechar='"',
+                        doublequote=True,
+                        on_bad_lines="skip",
+                        low_memory=False,
+                    )
+                except Exception:
+                    continue
+                if df is None or getattr(df, "empty", True) or len(df.columns) < 4:
+                    continue
+                df.columns = [
+                    str(c).replace("\ufeff", "").replace("\n", " ").replace("\r", " ").strip()
+                    for c in df.columns
+                ]
+                cols_low = [str(c).lower() for c in df.columns]
+                signals = sum(
+                    1 for k in rd_signal_keys if any(k in c for c in cols_low)
+                )
+                if signals >= 3:
+                    df = df.dropna(how="all").reset_index(drop=True)
+                    if df.empty:
+                        continue
+                    df.attrs["data_type"] = "rd_plan"
+                    df.attrs["rd_plan_header_note"] = (
+                        f"FALLBACK header_row={header_row}, enc={enc}, sep=';', "
+                        f"encoding_errors=replace, signals={signals}"
+                    )
+                    return df
+        return None
+    best_df = best_df.dropna(how="all").reset_index(drop=True)
+    if best_df.empty:
+        return None
+    best_df.attrs["data_type"] = "rd_plan"
+    best_df.attrs["rd_plan_header_note"] = best_note
+    return best_df
+
+
 def _load_resources_file(filepath: Path) -> Optional[pd.DataFrame]:
     """
     Загружает файл ресурсов (other_*_resursi.csv) с многострочным заголовком.
@@ -1565,22 +1682,38 @@ def load_all_from_web() -> Dict:
                         result["skipped"] += 1
                     continue
 
-                # ── RD plan файлы ────────────────────────────────────────────
+                # ── RD plan файлы (other_*_rd.csv) ──────────────────────────
+                # B-12/13 (2026-05-07): отдельный header-detect (`_load_rd_plan_file`).
+                # Раньше шли через `load_data → _read_csv_best_effort` с `header=0` —
+                # а в этих CSV 1-я строка это длинный заголовок проекта. Получали
+                # `Unnamed: 0..7` и план «РД по Договору» оставался пустым.
                 if file_type_by_name == "rd_plan":
-                    content = filepath.read_bytes()
-                    wrapped = _FileWrapper(content, name)
-                    df = load_data(wrapped, file_name=name, silent=True)
+                    df = _load_rd_plan_file(filepath)
                     if df is not None and not df.empty:
-                        file_type = "project"
-                        df.attrs["data_type"] = "project"
+                        file_type = "rd_plan"
+                        df.attrs["data_type"] = "rd_plan"
                         file_id = _register_file(cur, version_id, file_info, file_type, len(df))
                         _save_rows(cur, version_id, file_id, file_type, name, df)
                         total_rows += len(df)
                         result["loaded"] += 1
+                        # update_session_with_loaded_file подставит df в session_state по типу;
+                        # сохраним отдельный ключ для совместимости.
+                        try:
+                            if st.session_state.get("rd_plan_data") is None:
+                                st.session_state["rd_plan_data"] = df
+                            else:
+                                st.session_state["rd_plan_data"] = pd.concat(
+                                    [st.session_state["rd_plan_data"], df], ignore_index=True
+                                )
+                        except Exception:
+                            pass
                         update_session_with_loaded_file(df, rel_path)
                         result["diagnostics"].append({
-                            "file": rel_path, "type": "rd_plan", "rows": int(len(df)),
+                            "file": rel_path,
+                            "type": "rd_plan",
+                            "rows": int(len(df)),
                             "columns": [str(c) for c in df.columns[:25]],
+                            "header_note": str(df.attrs.get("rd_plan_header_note", "")),
                         })
                     else:
                         result["skipped"] += 1
