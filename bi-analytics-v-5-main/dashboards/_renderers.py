@@ -16087,7 +16087,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
 
     tabs = st.tabs(["Таблица", "Динамика", "Сводка по контрагентам"])
 
-    # ---------- Таб 1: Таблица (Скрин 11) ----------
+    # ---------- Таб 1: Таблица + План/Факт по проектам ----------
     with tabs[0]:
         period_label = (
             f"{date_from.strftime('%d.%m.%Y')} — {date_to.strftime('%d.%m.%Y')}"
@@ -16102,6 +16102,60 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                 f"<div style='text-align:right; padding-top:8px; color:#888'>{date_to.strftime('%d.%m.%Y')}</div>",
                 unsafe_allow_html=True,
             )
+
+        # ---- Блок «План/Факт по проектам» (скрин 8/9 ТЗ) ----
+        proj_df = main_t[main_t["row_kind"] == "subtotal"][
+            ["project_name", "plan", "skud", "deviation", "delta_pct"]
+        ].copy()
+        if not proj_df.empty:
+            try:
+                import plotly.graph_objects as _go
+                cols = st.columns(max(1, len(proj_df)))
+                for i, (_, prow) in enumerate(proj_df.iterrows()):
+                    pname = str(prow["project_name"])
+                    pl = float(prow["plan"]) if _pd.notna(prow["plan"]) else 0.0
+                    fk = float(prow["skud"]) if _pd.notna(prow["skud"]) else 0.0
+                    dev = float(prow["deviation"]) if _pd.notna(prow["deviation"]) else 0.0
+                    pct = float(prow["delta_pct"]) if _pd.notna(prow["delta_pct"]) else 0.0
+                    fact_color = "#46d68a" if fk >= pl else "#ff5454"
+                    fig_p = _go.Figure()
+                    fig_p.add_bar(
+                        x=["План", "Факт"],
+                        y=[pl, fk],
+                        marker_color=["#29b6f6", fact_color],
+                        text=[f"{int(pl)}", f"{int(fk)}"],
+                        textposition="outside",
+                        showlegend=False,
+                    )
+                    fig_p.update_layout(
+                        title=dict(text=pname, font=dict(size=14, color="#eee")),
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        font_color="#eee",
+                        height=420,
+                        margin=dict(l=24, r=8, t=40, b=24),
+                        xaxis=dict(showgrid=False),
+                        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.08)"),
+                    )
+                    dev_color = "#ff5454" if dev > 0 else "#46d68a"
+                    indicator = "●"
+                    sign = "+" if dev > 0 else ("" if dev == 0 else "")
+                    with cols[i]:
+                        st.plotly_chart(fig_p, use_container_width=True)
+                        st.markdown(
+                            f"<div style='text-align:left; line-height:1.6; font-size:13px;'>"
+                            f"<b>План:</b> {int(pl)}<br>"
+                            f"<b>Факт:</b> {int(fk)}<br>"
+                            f"<b>Отклонение:</b> "
+                            f"<span style='color:{dev_color};'>{indicator} {sign}{int(dev)}</span><br>"
+                            f"<i>({pct:.1f}% — факт/план)</i>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+            except Exception as _e:
+                st.warning(f"Plotly недоступен: {_e}")
+
+        st.markdown("&nbsp;", unsafe_allow_html=True)
 
         period_days = max(1, (date_to - date_from).days + 1)
         if period_days > 45:
@@ -16133,12 +16187,12 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         for src, dst in (("w1", "1 неделя"), ("w2", "2 неделя"), ("w3", "3 неделя"),
                          ("w4", "4 неделя"), ("w5", "5 неделя"), ("w6", "6 неделя")):
             view[dst] = view[src].fillna(0).astype(int)
-        view["Дельта (%)"] = view["delta_pct"]
+        view["%"] = view["delta_pct"]
 
         view["__kind__"] = view["row_kind"]
         cols_order = ["Контрагент", "Вид работы", "План", "СКУД", "Отклонение",
                       "1 неделя", "2 неделя", "3 неделя", "4 неделя", "5 неделя", "6 неделя",
-                      "Дельта (%)", "__kind__"]
+                      "%", "__kind__"]
         view = view[cols_order]
 
         def _row_html(row):
@@ -16151,27 +16205,29 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             for col in cols_order[:-1]:
                 v = row[col]
                 if col == "Отклонение":
-                    color = "#ff5454" if (isinstance(v, (int, float)) and v < 0) else (
-                        "#46d68a" if (isinstance(v, (int, float)) and v > 0) else "#cccccc"
+                    color = "#ff5454" if (isinstance(v, (int, float)) and v > 0) else (
+                        "#46d68a" if (isinstance(v, (int, float)) and v <= 0) else "#cccccc"
                     )
                     txt = f"{int(v):+d}" if v else "0"
                     cells.append(f"<td style='text-align:right; color:{color}; font-weight:{weight};'>{txt}</td>")
-                elif col == "Дельта (%)":
+                elif col == "%":
                     if v is None or (isinstance(v, float) and _np.isnan(v)):
                         cells.append("<td style='text-align:right;'>—</td>")
                     else:
                         pct = float(v)
-                        if pct >= 0:
+                        if pct >= 100:
                             cell_bg = "#1c4426"
-                        elif pct >= -30:
-                            cell_bg = "#5a3a3a"
-                        elif pct >= -80:
+                        elif pct >= 70:
+                            cell_bg = "#3a4a26"
+                        elif pct >= 30:
+                            cell_bg = "#5a3a26"
+                        elif pct > 0:
                             cell_bg = "#7a2a2a"
                         else:
                             cell_bg = "#5a1212"
                         cells.append(
                             f"<td style='text-align:right; background:{cell_bg}; color:#fff; font-weight:{weight};'>"
-                            f"{pct:+.0f}%</td>"
+                            f"{pct:.0f}%</td>"
                         )
                 elif col in ("План", "СКУД", "1 неделя", "2 неделя", "3 неделя", "4 неделя", "5 неделя", "6 неделя"):
                     txt = f"{int(v):,}".replace(",", " ") if v else "0"
@@ -16200,6 +16256,33 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
     # ---------- Таб 2: Динамика ----------
     with tabs[1]:
         st.subheader("Динамика людей и техники")
+        dyn_cols = st.columns([1.0, 1.6, 1.6])
+        with dyn_cols[0]:
+            agg_kind = st.radio(
+                "Группировка", ["Неделя", "Месяц", "Год"], horizontal=True, index=0,
+                key=f"gdrs_dyn_kind_{vid_locked or 'any'}",
+            )
+        with dyn_cols[1]:
+            dyn_dates = st.date_input(
+                "Период (от — до)",
+                value=(date_from.date(), date_to.date()),
+                min_value=min_date.date(),
+                max_value=max_date.date(),
+                key=f"gdrs_dyn_dates_{vid_locked or 'any'}",
+            )
+        with dyn_cols[2]:
+            st.markdown(
+                "<div style='padding-top:32px; color:#888; font-size:12px;'>"
+                "План и факт пересчитываются по выбранному периоду; план = max снапшот ≤ конца периода."
+                "</div>",
+                unsafe_allow_html=True,
+            )
+        if isinstance(dyn_dates, (tuple, list)) and len(dyn_dates) == 2:
+            dyn_from, dyn_to = (_pd.to_datetime(dyn_dates[0]), _pd.to_datetime(dyn_dates[1]))
+        else:
+            dyn_from = _pd.to_datetime(dyn_dates if not isinstance(dyn_dates, (tuple, list)) else dyn_dates[0])
+            dyn_to = dyn_from
+
         fact = long_fact.copy()
         fact = fact[fact["vid_resursa"].astype(str).str.casefold() == sel_vid.casefold()]
         if sel_projects:
@@ -16207,44 +16290,84 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         if sel_contractors:
             fact = fact[fact["contractor_name"].isin(sel_contractors)]
         if not fact.empty:
-            fact = fact[(fact["date"] >= date_from) & (fact["date"] <= date_to)]
+            fact = fact[(fact["date"] >= dyn_from) & (fact["date"] <= dyn_to)]
+
+        from dashboards.gdrs_resursi import load_plan_aggregate as _lpa, _build_plan_lookup
+        plan_for_dyn = _lpa(dogovor_files, sprav_files, snapshot_date=dyn_to)
+        plan_col = "plan_workers" if sel_vid.casefold() == "рабочие" else "plan_equipment"
+        by_id_d, by_id_name_d, by_norm_d = _build_plan_lookup(plan_for_dyn, plan_col)
+
         if fact.empty:
             st.info("Нет данных для выбранных фильтров.")
         else:
-            agg_kind = st.radio(
-                "Группировка", ["Неделя", "Месяц", "Год"], horizontal=True, index=0, key="gdrs_dyn_kind",
-            )
             f2 = fact.copy()
             f2["date"] = _pd.to_datetime(f2["date"])
             if agg_kind == "Неделя":
                 f2["bucket"] = f2["date"].dt.to_period("W").apply(lambda p: p.start_time)
+                bucket_days = 7
             elif agg_kind == "Месяц":
                 f2["bucket"] = f2["date"].dt.to_period("M").apply(lambda p: p.start_time)
+                bucket_days = 30
             else:
                 f2["bucket"] = f2["date"].dt.to_period("Y").apply(lambda p: p.start_time)
-            dyn = f2.groupby("bucket")["fact"].mean().reset_index()
+                bucket_days = 365
+
+            dyn = f2.groupby("bucket").agg(
+                fact_sum=("fact", "sum"),
+                fact_days=("date", lambda s: s.dt.normalize().nunique()),
+            ).reset_index()
+            dyn["Факт"] = (dyn["fact_sum"] / dyn["fact_days"].clip(lower=1)).round(0).astype(int)
             dyn["Период"] = dyn["bucket"].dt.strftime("%d.%m.%Y")
-            dyn["Факт"] = dyn["fact"].round(0).astype(int)
-            try:
-                import plotly.express as _px
-                fig = _px.line(
-                    dyn, x="Период", y="Факт", markers=True,
-                    title=f"Фактическое количество — {sel_vid.lower()} (ресурсы)",
+
+            from dashboards.gdrs_resursi import _lookup_plan
+            uniq_pairs = f2[["project_id", "project_name", "contractor_id", "contractor_name"]].drop_duplicates()
+            plan_total_for_filter = 0.0
+            for _, pr in uniq_pairs.iterrows():
+                plan_total_for_filter += _lookup_plan(
+                    str(pr["project_id"]), str(pr["contractor_id"]),
+                    str(pr["project_name"]), str(pr["contractor_name"]),
+                    by_id_d, by_id_name_d, by_norm_d,
                 )
-                fig.update_traces(line=dict(color="#7eb8ff", width=2), marker=dict(size=8))
+            dyn["План"] = int(round(plan_total_for_filter))
+
+            try:
+                import plotly.graph_objects as _go
+                fig = _go.Figure()
+                fig.add_trace(_go.Scatter(
+                    x=dyn["Период"], y=dyn["План"], mode="lines+markers+text",
+                    line=dict(color="#29b6f6", width=2), marker=dict(size=8),
+                    name="План",
+                    text=[f"{v} (100.0%)" for v in dyn["План"]],
+                    textposition="top center", textfont=dict(color="#29b6f6"),
+                ))
+                pct_labels = []
+                for f, p in zip(dyn["Факт"], dyn["План"]):
+                    if p > 0:
+                        pct_labels.append(f"{f} ({f / p * 100:.1f}%)")
+                    else:
+                        pct_labels.append(f"{f}")
+                fig.add_trace(_go.Scatter(
+                    x=dyn["Период"], y=dyn["Факт"], mode="lines+markers+text",
+                    line=dict(color="#ff8c2d", width=2), marker=dict(size=8),
+                    name="Факт",
+                    text=pct_labels,
+                    textposition="bottom center", textfont=dict(color="#ff8c2d"),
+                ))
                 fig.update_layout(
+                    title=f"Фактическое количество — {sel_vid.lower()} (ресурсы)",
                     plot_bgcolor="rgba(0,0,0,0)",
                     paper_bgcolor="rgba(0,0,0,0)",
                     font_color="#eee",
                     xaxis_title=f"Период — {agg_kind.lower()}",
-                    yaxis_title="Факт (среднее в день)",
-                    height=380,
+                    yaxis_title="Количество",
+                    height=420,
                     margin=dict(l=48, r=32, t=64, b=64),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
                 )
                 st.plotly_chart(fig, use_container_width=True)
             except Exception as _e:
                 st.warning(f"Plotly недоступен: {_e}")
-                st.dataframe(dyn[["Период", "Факт"]], use_container_width=True)
+                st.dataframe(dyn[["Период", "План", "Факт"]], use_container_width=True)
 
             st.markdown("---")
             st.subheader("План / Факт / Отклонение по подрядчикам")
@@ -16259,14 +16382,20 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             try:
                 import plotly.graph_objects as _go
                 fig2 = _go.Figure()
-                fig2.add_bar(name="План", x=chart_df["Контрагент"], y=chart_df["План"], marker_color="#7eb8ff")
-                fig2.add_bar(name="Факт", x=chart_df["Контрагент"], y=chart_df["Факт"], marker_color="#46d68a")
+                fig2.add_bar(
+                    name="План", x=chart_df["Контрагент"], y=chart_df["План"],
+                    marker_color="#29b6f6",
+                )
+                fig2.add_bar(
+                    name="Факт", x=chart_df["Контрагент"], y=chart_df["Факт"],
+                    marker_color="#46d68a",
+                )
                 fig2.add_bar(
                     name="Отклонение",
                     x=chart_df["Контрагент"],
                     y=chart_df["Отклонение"].abs(),
                     marker_color=[
-                        "#ff8c2d" if v < 0 else "#46d68a"
+                        "#ff8c2d" if v > 0 else "#ff5454"
                         for v in chart_df["Отклонение"]
                     ],
                 )
@@ -16276,13 +16405,42 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                     paper_bgcolor="rgba(0,0,0,0)",
                     font_color="#eee",
                     xaxis_tickangle=-45,
-                    height=440,
-                    margin=dict(l=48, r=32, t=32, b=120),
+                    height=480,
+                    margin=dict(l=48, r=32, t=32, b=140),
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
                 )
                 st.plotly_chart(fig2, use_container_width=True)
             except Exception as _e:
                 st.warning(f"Plotly недоступен: {_e}")
+
+            st.markdown("---")
+            st.subheader("Распределение факта по подрядчикам")
+            pie_df = chart_df[chart_df["Факт"] > 0][["Контрагент", "Факт"]].copy()
+            if pie_df.empty:
+                st.info("Нет фактических данных для круговой диаграммы.")
+            else:
+                try:
+                    import plotly.graph_objects as _go
+                    fig3 = _go.Figure(data=[_go.Pie(
+                        labels=pie_df["Контрагент"],
+                        values=pie_df["Факт"],
+                        hole=0.0,
+                        textinfo="value+percent",
+                        textposition="inside",
+                        insidetextfont=dict(color="#fff", size=12),
+                        showlegend=True,
+                    )])
+                    fig3.update_layout(
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        font_color="#eee",
+                        height=460,
+                        margin=dict(l=24, r=24, t=24, b=24),
+                        legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.05),
+                    )
+                    st.plotly_chart(fig3, use_container_width=True)
+                except Exception as _e:
+                    st.warning(f"Plotly недоступен: {_e}")
 
     # ---------- Таб 3: Сводка по контрагентам ----------
     with tabs[2]:
@@ -16299,10 +16457,12 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             view2 = view2.sort_values("План", ascending=False)
 
             def _td_dev(v):
-                color = "#ff5454" if (isinstance(v, (int, float)) and v < 0) else (
-                    "#46d68a" if (isinstance(v, (int, float)) and v > 0) else "#cccccc"
+                color = "#ff5454" if (isinstance(v, (int, float)) and v > 0) else (
+                    "#46d68a" if (isinstance(v, (int, float)) and v <= 0) else "#cccccc"
                 )
-                return f"<td style='text-align:right; color:{color}; font-weight:600;'>{int(v):+d}</td>" if v else "<td style='text-align:right;'>0</td>"
+                if v is None or (isinstance(v, float) and _np.isnan(v)) or v == 0:
+                    return f"<td style='text-align:right; color:{color}; font-weight:600;'>0</td>"
+                return f"<td style='text-align:right; color:{color}; font-weight:600;'>{int(v):+d}</td>"
 
             head = (
                 "<thead><tr style='background:#1f2630; color:#bbb;'>"
@@ -16334,7 +16494,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             with mc1:
                 st.metric("Общий план", f"{int(view2['План'].sum())}")
             with mc2:
-                st.metric("Объём средних значений", f"{int(view2['Среднее за месяц'].sum())}")
+                st.metric("Общая средняя за месяц", f"{int(view2['Среднее за месяц'].sum())}")
             with mc3:
                 tot_dev = int(view2["Отклонение"].sum())
                 st.metric("Общее отклонение", f"{tot_dev:+d}")

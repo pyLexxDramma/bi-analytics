@@ -725,7 +725,10 @@ def main():
                 for err in result["errors"]:
                     st.error(err)
             elif not _release_quiet:
-                st.success(f"Загружено файлов: {result['loaded']}")
+                try:
+                    st.toast(f"Загружено файлов: {result['loaded']}", icon="✅")
+                except Exception:
+                    pass
             try:
                 from logger import log_action
                 u = get_current_user()
@@ -873,7 +876,10 @@ def main():
                         )
                         if _te:
                             msg += f", временно заняты пишущим процессом: {_te}"
-                        st.success(msg)
+                        try:
+                            st.toast(msg, icon="✅")
+                        except Exception:
+                            pass
                     with st.spinner("Читаю файлы из web/..."):
                         result = load_all_from_web()
                     try:
@@ -910,7 +916,10 @@ def main():
                         for err in result["errors"]:
                             st.error(err)
                     elif not _release_quiet_ftp:
-                        st.success(f"В БД загружено файлов: {result['loaded']}")
+                        try:
+                            st.toast(f"В БД загружено файлов: {result['loaded']}", icon="✅")
+                        except Exception:
+                            pass
                     try:
                         from logger import log_action
                         u = get_current_user()
