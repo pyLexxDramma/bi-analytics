@@ -25721,7 +25721,9 @@ def dashboard_project_schedule_chart(df):
             "Показывать все подписи",
         ),
         horizontal=True,
-        index=0,
+        # Дефолт по запросу заказчика 2026-05-07: «как референс-скрин MS Project» —
+        # минимум подписей у баров, даты/группа доступны через hover-карточку.
+        index=2,
         key="gantt_label_density_mode",
     )
     force_all_labels = label_density_mode == "Показывать все подписи"
@@ -26434,6 +26436,45 @@ def dashboard_project_schedule_chart(df):
         )
     )
 
+    # ── Палитра по функциональным блокам (запрошено заказчиком 2026-05-07) ──
+    # Каждому уникальному значению `block_col` присваиваем свой цвет из палитры.
+    # Палитра подобрана так, чтобы соседние блоки контрастировали на тёмном фоне приложения.
+    _GANTT_BLOCK_PALETTE = (
+        "#5DA9E9",  # blue
+        "#8FCB81",  # green
+        "#E8857A",  # coral / red
+        "#F0C24A",  # yellow
+        "#A48BD0",  # violet
+        "#48B6A7",  # teal
+        "#E5A1C2",  # pink
+        "#C8B27A",  # olive
+        "#7BB1F0",  # sky
+        "#D89B6F",  # ochre
+        "#9CCC65",  # lime
+        "#FF8A65",  # orange
+        "#BA68C8",  # magenta
+        "#4DD0E1",  # cyan
+    )
+    if block_col and block_col in plot_df.columns:
+        _blocks_series = plot_df[block_col].astype(str).fillna("Прочее")
+    else:
+        _blocks_series = pd.Series("Все", index=plot_df.index, dtype=object)
+    _block_values_unique: list = []
+    for _b in _blocks_series.tolist():
+        if _b not in _block_values_unique:
+            _block_values_unique.append(_b)
+    _block_color_map: dict = {
+        _b: _GANTT_BLOCK_PALETTE[i % len(_GANTT_BLOCK_PALETTE)]
+        for i, _b in enumerate(_block_values_unique)
+    }
+    _bar_colors_plan: list = [_block_color_map.get(_b, "#5DA9E9") for _b in _blocks_series.tolist()]
+
+    # Длительность задачи (для tooltip).
+    _dur_days_series = (
+        (pd.to_datetime(plot_df["plan end"], errors="coerce")
+         - pd.to_datetime(plot_df["plan start"], errors="coerce")).dt.days.fillna(0).astype(int)
+    )
+
     vis = pd.DataFrame(
         {
             "План: начало": plot_df["plan start"].values,
@@ -26445,13 +26486,16 @@ def dashboard_project_schedule_chart(df):
     vis["_полное_название"] = names.values
     vis["_начало_стр"] = pd.to_datetime(plot_df["plan start"], errors="coerce").dt.strftime("%d.%m.%Y")
     vis["_конец_стр"] = pd.to_datetime(plot_df["plan end"], errors="coerce").dt.strftime("%d.%m.%Y")
+    vis["_блок"] = _blocks_series.values
+    vis["_длит_дн"] = _dur_days_series.values
     # Не задаём color в px.timeline: иначе Express режет данные на несколько trace и
     # text=plan_texts не совпадает с рядами — подписи у полос пропадают.
+    # Цвета задаём массивом через marker.color после создания фигуры.
     _tl_kwargs = dict(
         x_start="План: начало",
         x_end="План: окончание",
         y="Название",
-        custom_data=["_полное_название", "_начало_стр", "_конец_стр"],
+        custom_data=["_полное_название", "_начало_стр", "_конец_стр", "_блок", "_длит_дн"],
     )
     try:
         fig_gantt = px.timeline(vis, **_tl_kwargs)
@@ -26467,18 +26511,46 @@ def dashboard_project_schedule_chart(df):
     _n_tasks = len(plot_df)
     try:
         fig_gantt.data[0].update(
+            name="План",
             hovertemplate=(
-                "%{customdata[0]}<br>"
-                "План: начало: %{customdata[1]}<br>"
-                "План: окончание: %{customdata[2]}<br>"
+                "<b>%{customdata[0]}</b><br>"
+                "<span style='color:#9aa6b2'>%{customdata[1]} → %{customdata[2]}</span><br>"
+                "Длительность: <b>%{customdata[4]} дн.</b><br>"
+                "Блок: <b>%{customdata[3]}</b>"
                 "<extra></extra>"
             ),
-            marker=dict(color="#2E86AB"),
+            marker=dict(
+                color=_bar_colors_plan,
+                line=dict(color="rgba(255,255,255,0.10)", width=0.5),
+            ),
             text=[""] * _n_tasks,
             textposition="none",
+            showlegend=False,
         )
     except Exception as e:
         st.warning(f"Не удалось настроить полосы плана: {e}")
+
+    # ── Легенда блоков (как на референс-скрине) — отдельные пустые traces для подписи ──
+    # Plotly не рисует легенду, если все полосы в одном trace; добавляем «invisible» Scatter
+    # для каждого блока, чтобы получить нативную легенду в правом верхнем углу.
+    if len(_block_values_unique) >= 2:
+        for _b in _block_values_unique:
+            fig_gantt.add_trace(
+                go.Scatter(
+                    x=[None],
+                    y=[None],
+                    mode="markers",
+                    marker=dict(
+                        color=_block_color_map[_b],
+                        size=12,
+                        symbol="square",
+                        line=dict(width=0),
+                    ),
+                    name=str(_b),
+                    showlegend=True,
+                    hoverinfo="skip",
+                )
+            )
 
     if base_tasks:
         fig_gantt.add_trace(
@@ -26574,7 +26646,26 @@ def dashboard_project_schedule_chart(df):
             b=int(round(78 * _GANTT_VIS_SCALE)),
         ),
         bargap=max(0.05, 0.32 / _GANTT_VIS_SCALE),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        # Легенда блоков справа сверху, вертикальная — как на референс-скрине MS Project.
+        legend=dict(
+            orientation="v",
+            yanchor="top", y=0.99,
+            xanchor="left", x=1.005,
+            bgcolor="rgba(15,30,48,0.85)",
+            bordercolor="rgba(255,255,255,0.18)",
+            borderwidth=1,
+            font=dict(size=12, color=TABLE_TEXT_COLOR),
+            itemsizing="constant",
+            tracegroupgap=2,
+        ),
+        # Hover-карточка в стиле «MS Project» — светлый фон, чёткая обводка.
+        hoverlabel=dict(
+            bgcolor="#ffffff",
+            bordercolor="#1f2937",
+            font=dict(color="#1f2937", family="Arial", size=12),
+            align="left",
+        ),
+        hovermode="closest",
     )
     # Запас по оси X + подписи сразу справа от конца полос этой строки (не одна общая колонка по max(hi)).
     try:
