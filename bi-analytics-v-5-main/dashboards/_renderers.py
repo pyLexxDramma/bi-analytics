@@ -25475,18 +25475,20 @@ def dashboard_project_schedule_chart(df):
     sel_block = "Все"
     sel_building = "Все"
 
-    _flt_cols = st.columns(5 if building_col else 4)
-    f1 = _flt_cols[0]
-    f2 = _flt_cols[1]
-    _ix = 2
-    f_building = None
-    if building_col:
-        f_building = _flt_cols[_ix]
-        _ix += 1
-    f_level = _flt_cols[_ix]
-    f_view = _flt_cols[_ix + 1]
+    # Layout по референс-скрину Power BI 2026-05-07: график слева, панель параметров справа.
+    # Все selectbox/checkbox/radio из этого режима рендерим в _flt_box (правая колонка),
+    # графики и таблицу — в _chart_box (левая колонка).
+    _gnt_left, _gnt_right = st.columns([4, 1], gap="medium")
+    _flt_box = _gnt_right.container()
+    _chart_box = _gnt_left.container()
+    with _flt_box:
+        st.markdown(
+            "<div style='margin:0 0 0.35rem;color:#e8eef5;font-weight:600;font-size:1.02rem;"
+            "border-bottom:1px solid rgba(148,163,184,0.35);padding-bottom:0.35rem;'>Параметры визуала</div>",
+            unsafe_allow_html=True,
+        )
 
-    with f1:
+    with _flt_box:
         if proj_col:
             projs = ["Все"] + sorted(plot_df[proj_col].dropna().astype(str).unique().tolist())
             sel_proj = st.selectbox("Проект (ур. 1)", projs, key="gantt_project_filter")
@@ -25494,7 +25496,7 @@ def dashboard_project_schedule_chart(df):
                 plot_df = plot_df[plot_df[proj_col].astype(str).str.strip() == str(sel_proj).strip()]
         else:
             suppress_caption("Колонка проекта не найдена.")
-    with f2:
+    with _flt_box:
         if block_col:
             _raw_blocks = sorted(plot_df[block_col].dropna().astype(str).map(str.strip).unique().tolist())
             _raw_blocks = [b for b in _raw_blocks if b and b.lower() != "nan"]
@@ -25566,15 +25568,15 @@ def dashboard_project_schedule_chart(df):
                 suppress_caption(f"Список блоков берётся из поля «{block_col}» (резервный режим).")
         else:
             suppress_caption("Нет колонки функционального блока.")
-    if f_building is not None:
-        with f_building:
+    if building_col:
+        with _flt_box:
             builds = ["Все"] + sorted(plot_df[building_col].dropna().astype(str).unique().tolist())
             sel_building = st.selectbox("Строение", builds, key="gantt_building_filter")
             if sel_building != "Все":
                 plot_df = plot_df[
                     plot_df[building_col].astype(str).str.strip() == str(sel_building).strip()
                 ]
-    with f_level:
+    with _flt_box:
         # ТЗ заказчика 2026-05-06: только два уровня для отображения задач —
         # «Верхний уровень (ур. 4)» и «Детальный уровень (ур. 5)». Дефолт — «Верхний (4)».
         # «Строения» вынесены в отдельный фильтр выше; «Все уровни» оставлено для отладки.
@@ -25593,7 +25595,7 @@ def dashboard_project_schedule_chart(df):
         )
         if not level_col:
             suppress_caption("Нет колонки уровня.")
-    with f_view:
+    with _flt_box:
         view_mode = st.selectbox(
             "Вид отображения",
             ("Гантт (полосы)", "Линии дат"),
@@ -25619,8 +25621,7 @@ def dashboard_project_schedule_chart(df):
         _blk_cov = False
     is_covenants = bool(force_covenant_points) or _blk_cov
 
-    lot_row_l, lot_row_r = st.columns(2)
-    with lot_row_l:
+    with _flt_box:
         show_reasons = st.checkbox(
             "Показать причины отклонений",
             value=False,
@@ -25631,7 +25632,6 @@ def dashboard_project_schedule_chart(df):
                 "задачи выше. Селектор «Уровень отображения задач» при этом игнорируется."
             ),
         )
-    with lot_row_r:
         show_lots = st.checkbox(
             "Отображать в лотах",
             value=False,
@@ -25707,49 +25707,52 @@ def dashboard_project_schedule_chart(df):
             )
     elif show_lots and not lot_col:
         suppress_caption("Колонка лота не найдена — фильтр «в лотах» недоступен.")
-    label_pct = st.checkbox(
-        "Подписи у конца задач: показывать % выполнения (вместо даты окончания)",
-        # Дефолт по референс-скрину Power BI 2026-05-07: справа от каждой полосы —
-        # доля выполнения (0.53, 0.35, …). Снять → даты окончания.
-        value=True,
-        key="gantt_bar_label_pct",
-    )
-    label_density_mode = st.radio(
-        "Плотность подписей",
-        (
-            "Умная плотность",
-            "Только сводные задачи",
-            "Только при наведении",
-            "Показывать все подписи",
-        ),
-        horizontal=True,
-        # Дефолт по референс-скрину Power BI 2026-05-07: подписи у каждой полосы.
-        index=3,
-        key="gantt_label_density_mode",
-    )
+    with _flt_box:
+        label_pct = st.checkbox(
+            "Подписи у конца задач: показывать % выполнения (вместо даты окончания)",
+            # Дефолт по референс-скрину Power BI 2026-05-07: справа от каждой полосы —
+            # доля выполнения (0.53, 0.35, …). Снять → даты окончания.
+            value=True,
+            key="gantt_bar_label_pct",
+        )
+        label_density_mode = st.radio(
+            "Плотность подписей",
+            (
+                "Умная плотность",
+                "Только сводные задачи",
+                "Только при наведении",
+                "Показывать все подписи",
+            ),
+            # В правой узкой колонке размещаем вертикально — горизонтальная раскладка не помещается.
+            horizontal=False,
+            # Дефолт по референс-скрину Power BI 2026-05-07: подписи у каждой полосы.
+            index=3,
+            key="gantt_label_density_mode",
+        )
     force_all_labels = label_density_mode == "Показывать все подписи"
     labels_hover_only = label_density_mode == "Только при наведении"
     labels_summary_only = label_density_mode == "Только сводные задачи"
-    auto_compact_on_zoom = st.toggle(
-        "Авто: защита от наложения при масштабировании страницы",
-        value=True,
-        key="gantt_auto_compact_on_zoom",
-    )
-    hide_completed = st.checkbox(
-        "Скрыть задачи с 100% выполнения",
-        value=False,
-        key="gantt_hide_completed",
-    )
-    only_finish_delay = st.checkbox(
-        "На диаграмме только просрочка по окончанию (базовое − факт/plan < 0 дн.)",
-        value=True,
-        key="gantt_only_finish_delay",
-        disabled=is_covenants,
-        help=(
-            "По ТЗ для блоков кроме «Ковенанты»: только задачи, где базовое окончание раньше фактического/планового "
-            "(просрочка по формуле «базовое окончание − окончание»)."
-        ),
-    )
+    with _flt_box:
+        auto_compact_on_zoom = st.toggle(
+            "Авто: защита от наложения при масштабировании страницы",
+            value=True,
+            key="gantt_auto_compact_on_zoom",
+        )
+        hide_completed = st.checkbox(
+            "Скрыть задачи с 100% выполнения",
+            value=False,
+            key="gantt_hide_completed",
+        )
+        only_finish_delay = st.checkbox(
+            "На диаграмме только просрочка по окончанию (базовое − факт/plan < 0 дн.)",
+            value=True,
+            key="gantt_only_finish_delay",
+            disabled=is_covenants,
+            help=(
+                "По ТЗ для блоков кроме «Ковенанты»: только задачи, где базовое окончание раньше фактического/планового "
+                "(просрочка по формуле «базовое окончание − окончание»)."
+            ),
+        )
     if is_covenants:
         only_finish_delay = False
 
@@ -26506,6 +26509,7 @@ def dashboard_project_schedule_chart(df):
             text=[""] * _n_tasks,
             textposition="none",
             showlegend=True,
+            width=0.6,
         )
     except Exception as e:
         st.warning(f"Не удалось настроить полосы плана: {e}")
@@ -26544,7 +26548,9 @@ def dashboard_project_schedule_chart(df):
                     orientation="h",
                     name="Факт",
                     marker_color=_GANTT_FACT_COLOR,
-                    width=0.55,  # тоньше плана — даёт «слой» сверху
+                    # ОДНА толщина с планом — single-bar look (Power BI):
+                    # «факт» и «план» должны лежать на одной высоте, отличаясь только цветом.
+                    width=0.6,
                     hovertemplate=(
                         "<b>%{y}</b><br>"
                         "Факт: %{base|%d.%m.%Y} + " + "%{x|%d.%m.%Y}<br>"
@@ -26966,18 +26972,19 @@ def dashboard_project_schedule_chart(df):
         except Exception:
             _h_cov = 0
         _gantt_render_h = _h_cov if _h_cov > 0 else _gantt_render_h
-        render_chart(
-            fig_cov,
-            key="gantt_project_schedule_covenants",
-            height=_gantt_render_h,
-            max_height=None,
-            caption_below=(
-                "Ковенанты: синяя точка — базовое окончание, красная — "
-                + _fact_label.lower()
-                + "; подписи рядом с точками — даты."
-            ),
-            skip_clamp_zoom=True,
-        )
+        with _chart_box:
+            render_chart(
+                fig_cov,
+                key="gantt_project_schedule_covenants",
+                height=_gantt_render_h,
+                max_height=None,
+                caption_below=(
+                    "Ковенанты: синяя точка — базовое окончание, красная — "
+                    + _fact_label.lower()
+                    + "; подписи рядом с точками — даты."
+                ),
+                skip_clamp_zoom=True,
+            )
     elif view_mode == "Линии дат":
         fig_lines = _build_date_lines_figure(
             plot_df,
@@ -26990,18 +26997,19 @@ def dashboard_project_schedule_chart(df):
         except Exception:
             _h_lines = 0
         _gantt_render_h = _h_lines if _h_lines > 0 else _gantt_render_h
-        render_chart(
-            fig_lines,
-            key="gantt_project_schedule_lines",
-            height=_gantt_render_h,
-            max_height=None,
-            caption_below=(
-                "Линии дат: План/База по началу и окончанию; подписи справа — "
-                + ("% выполнения" if label_pct else "дата окончания")
-                + ". Масштаб и панорама — колесом мыши или панелью (+/−, рамка)."
-            ),
-            skip_clamp_zoom=True,
-        )
+        with _chart_box:
+            render_chart(
+                fig_lines,
+                key="gantt_project_schedule_lines",
+                height=_gantt_render_h,
+                max_height=None,
+                caption_below=(
+                    "Линии дат: План/База по началу и окончанию; подписи справа — "
+                    + ("% выполнения" if label_pct else "дата окончания")
+                    + ". Масштаб и панорама — колесом мыши или панелью (+/−, рамка)."
+                ),
+                skip_clamp_zoom=True,
+            )
     else:
         # Гантт: не clamp’ить ось X; scrollZoom — как в общем _PLOTLY_CONFIG (колесо над графиком).
         try:
@@ -27009,20 +27017,22 @@ def dashboard_project_schedule_chart(df):
         except Exception:
             _h_g = 0
         _gantt_render_h = _h_g if _h_g > 0 else _gantt_render_h
-        render_chart(
-            fig_gantt,
-            key="gantt_project_schedule",
-            height=_gantt_render_h,
-            max_height=None,
-            caption_below="План (Начало–Окончание) и базовый план; подписи — справа от концов полос (план и при наличии — база). Масштаб и панорама — колесом мыши или панелью (+/−, рамка).",
-            skip_clamp_zoom=True,
-        )
+        with _chart_box:
+            render_chart(
+                fig_gantt,
+                key="gantt_project_schedule",
+                height=_gantt_render_h,
+                max_height=None,
+                caption_below="План (Начало–Окончание) и базовый план; подписи — справа от концов полос (план и при наличии — база). Масштаб и панорама — колесом мыши или панелью (+/−, рамка).",
+                skip_clamp_zoom=True,
+            )
 
-    st.markdown(
-        "<div style='margin:0.25rem 0 0.35rem;color:#e8eef5;font-weight:600;font-size:1.02rem;"
-        "border-top:1px solid rgba(148,163,184,0.35);padding-top:0.45rem;'>Таблица под графиком</div>",
-        unsafe_allow_html=True,
-    )
+    with _chart_box:
+        st.markdown(
+            "<div style='margin:0.25rem 0 0.35rem;color:#e8eef5;font-weight:600;font-size:1.02rem;"
+            "border-top:1px solid rgba(148,163,184,0.35);padding-top:0.45rem;'>Таблица под графиком</div>",
+            unsafe_allow_html=True,
+        )
 
     dev_start_src = _sched_col(
         plot_df,
@@ -27181,12 +27191,13 @@ def dashboard_project_schedule_chart(df):
         _ordered = [c for c in _gantt_tbl_order if c in tbl_view.columns]
         tbl_show = tbl_view[_ordered]
 
-    if tbl_show.empty:
-        st.info("Нет колонок для таблицы.")
-    else:
-        _render_gantt_schedule_html_table(tbl_show, max_rows=80)
-        if len(plot_df) > 80:
-            suppress_caption(f"Показано 80 из {len(plot_df)} строк (на диаграмме до 400 задач).")
+    with _chart_box:
+        if tbl_show.empty:
+            st.info("Нет колонок для таблицы.")
+        else:
+            _render_gantt_schedule_html_table(tbl_show, max_rows=80)
+            if len(plot_df) > 80:
+                suppress_caption(f"Показано 80 из {len(plot_df)} строк (на диаграмме до 400 задач).")
 
 
 def dashboard_pd_delay(df):
