@@ -17983,23 +17983,27 @@ def dashboard_executive_documentation(df):
         sl_ = s.lower()
         return any(p.lower() in sl_ for p in parts)
 
-    # ВАЖНО: «На согласовании» / «На подписании» — переходные статусы, НЕ финальные
-    # «Подписано/Согласовано». Без явного исключения подстрока «согласован» / «подписан»
-    # ловит и переходные статусы → метрика «Принято» становится завышенной.
-    is_on_agree = sl.str.contains("на согласовани", na=False)
-    is_on_sign = sl.str.contains("на подписани", na=False)
+    # ВАЖНО: переходные статусы («На согласовании», «На подписании», «У заказчика»)
+    # не финальные «Подписано/Согласовано». Без явного исключения подстрока «согласован»
+    # / «подписан» ловит и переходные статусы → метрика «Принято» становится завышенной,
+    # а «На согласовании» — заниженной (расходится с оранжевым баром).
+    is_on_agree = (
+        sl.str.contains("на согласовани", na=False)
+        | sl.str.contains("на подписани", na=False)
+        | sl.str.contains("у заказчик", na=False)
+    )
+    is_on_sign = pd.Series(False, index=sl.index)
     is_rework = sl.str.contains("доработ", na=False)
     is_declined = stu.map(lambda s: _has_status(s, "Отказ"))
     is_signed = (
         stu.map(lambda s: _has_status(s, "Подписан", "Согласован", "Принят"))
         & (~is_on_agree)
-        & (~is_on_sign)
     )
 
     if "KrState" in filtered.columns:
         kb = filtered["KrState"].map(_krstate_bucket)
-        # KrState bucket «active» = «На согласовании» (не финальный) → НЕ добавлять в is_signed.
-        is_signed = is_signed | ((kb == "signed") & (~is_on_agree) & (~is_on_sign))
+        # KrState bucket «active» = «На согласовании / у заказчика» (не финальный) → НЕ в is_signed.
+        is_signed = is_signed | ((kb == "signed") & (~is_on_agree))
         is_declined = is_declined | (kb == "declined")
         is_on_agree = is_on_agree | (kb == "active")
 
@@ -18051,20 +18055,22 @@ def dashboard_executive_documentation(df):
         dfp = _latest_snapshot(dfp)
         stu_loc = dfp["Статус"].astype(str)
         sl_loc = stu_loc.str.lower()
-        # См. фикс выше: переходные «На согласовании» / «На подписании» не должны
-        # учитываться в «Принято».
-        on_agree_loc = sl_loc.str.contains("на согласовани", na=False)
-        on_sign_loc = sl_loc.str.contains("на подписани", na=False)
+        # См. фикс выше: переходные «На согласовании» / «На подписании» / «У заказчика»
+        # не должны учитываться в «Принято».
+        on_agree_loc = (
+            sl_loc.str.contains("на согласовани", na=False)
+            | sl_loc.str.contains("на подписани", na=False)
+            | sl_loc.str.contains("у заказчик", na=False)
+        )
         rework_loc = sl_loc.str.contains("доработ", na=False)
         declined_loc = stu_loc.map(lambda s: _has_status(s, "Отказ"))
         signed_loc = (
             stu_loc.map(lambda s: _has_status(s, "Подписан", "Согласован", "Принят"))
             & (~on_agree_loc)
-            & (~on_sign_loc)
         )
         if "KrState" in dfp.columns:
             kb_loc = dfp["KrState"].map(_krstate_bucket)
-            signed_loc = signed_loc | ((kb_loc == "signed") & (~on_agree_loc) & (~on_sign_loc))
+            signed_loc = signed_loc | ((kb_loc == "signed") & (~on_agree_loc))
             declined_loc = declined_loc | (kb_loc == "declined")
             on_agree_loc = on_agree_loc | (kb_loc == "active")
         overdue_loc = (~signed_loc) & (~declined_loc)
@@ -18256,15 +18262,22 @@ def dashboard_executive_documentation(df):
         status_df.columns = ["Статус", "Количество"]
 
         def _exec_status_color(status_label: str) -> str:
+            """Семантические цвета согласованы с метриками карточек.
+
+            ВАЖНО: переходные статусы («На согласовании», «На подписании»)
+            должны проверяться РАНЬШЕ финальных «Подписан/Согласован», иначе
+            подстрока «согласован» поглотит «На согласовании» и подкрасит
+            переходный документ зелёным (фолс-мисматч с карточкой).
+            """
             sl = str(status_label).strip().lower()
-            if "подписан" in sl or "согласован" in sl or "принят" in sl:
-                return "#4caf50"
-            if "отказ" in sl or "не сдан" in sl:
-                return "#f44336"
+            if "на согласовани" in sl or "на подписани" in sl or "у заказчик" in sl:
+                return "#ff9800"
             if "доработ" in sl:
                 return "#ffc107"
-            if "согласовани" in sl or "у заказчик" in sl:
-                return "#ff9800"
+            if "отказ" in sl or "не сдан" in sl:
+                return "#f44336"
+            if "подписан" in sl or "согласован" in sl or "принят" in sl:
+                return "#4caf50"
             return "#9e9e9e"
 
         status_colors = [_exec_status_color(s) for s in status_df["Статус"].tolist()]
