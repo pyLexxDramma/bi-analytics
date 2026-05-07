@@ -25709,7 +25709,9 @@ def dashboard_project_schedule_chart(df):
         suppress_caption("Колонка лота не найдена — фильтр «в лотах» недоступен.")
     label_pct = st.checkbox(
         "Подписи у конца задач: показывать % выполнения (вместо даты окончания)",
-        value=False,
+        # Дефолт по референс-скрину Power BI 2026-05-07: справа от каждой полосы —
+        # доля выполнения (0.53, 0.35, …). Снять → даты окончания.
+        value=True,
         key="gantt_bar_label_pct",
     )
     label_density_mode = st.radio(
@@ -25721,9 +25723,8 @@ def dashboard_project_schedule_chart(df):
             "Показывать все подписи",
         ),
         horizontal=True,
-        # Дефолт по запросу заказчика 2026-05-07: «как референс-скрин MS Project» —
-        # минимум подписей у баров, даты/группа доступны через hover-карточку.
-        index=2,
+        # Дефолт по референс-скрину Power BI 2026-05-07: подписи у каждой полосы.
+        index=3,
         key="gantt_label_density_mode",
     )
     force_all_labels = label_density_mode == "Показывать все подписи"
@@ -26436,44 +26437,22 @@ def dashboard_project_schedule_chart(df):
         )
     )
 
-    # ── Палитра по функциональным блокам (запрошено заказчиком 2026-05-07) ──
-    # Каждому уникальному значению `block_col` присваиваем свой цвет из палитры.
-    # Палитра подобрана так, чтобы соседние блоки контрастировали на тёмном фоне приложения.
-    _GANTT_BLOCK_PALETTE = (
-        "#5DA9E9",  # blue
-        "#8FCB81",  # green
-        "#E8857A",  # coral / red
-        "#F0C24A",  # yellow
-        "#A48BD0",  # violet
-        "#48B6A7",  # teal
-        "#E5A1C2",  # pink
-        "#C8B27A",  # olive
-        "#7BB1F0",  # sky
-        "#D89B6F",  # ochre
-        "#9CCC65",  # lime
-        "#FF8A65",  # orange
-        "#BA68C8",  # magenta
-        "#4DD0E1",  # cyan
-    )
+    # ── Стиль Power BI (запрошено заказчиком 2026-05-07, референс — Power BI Gantt) ──
+    # Двухслойные полосы:
+    #   светлый «план» (вся длина задачи)
+    #   тёмный «факт» поверх, длина = plan_start + dur * pct/100
+    # Цвета фиксированные, без палитры по блокам — блок различим по фильтру/таблице.
+    _GANTT_PLAN_COLOR = "#7FD0C5"   # светло-бирюзовый — фон полосы (план)
+    _GANTT_FACT_COLOR = "#0E9C8E"   # тёмно-бирюзовый — наложение по % выполнения
     if block_col and block_col in plot_df.columns:
         _blocks_series = plot_df[block_col].astype(str).fillna("Прочее")
     else:
         _blocks_series = pd.Series("Все", index=plot_df.index, dtype=object)
-    _block_values_unique: list = []
-    for _b in _blocks_series.tolist():
-        if _b not in _block_values_unique:
-            _block_values_unique.append(_b)
-    _block_color_map: dict = {
-        _b: _GANTT_BLOCK_PALETTE[i % len(_GANTT_BLOCK_PALETTE)]
-        for i, _b in enumerate(_block_values_unique)
-    }
-    _bar_colors_plan: list = [_block_color_map.get(_b, "#5DA9E9") for _b in _blocks_series.tolist()]
 
-    # Длительность задачи (для tooltip).
-    _dur_days_series = (
-        (pd.to_datetime(plot_df["plan end"], errors="coerce")
-         - pd.to_datetime(plot_df["plan start"], errors="coerce")).dt.days.fillna(0).astype(int)
-    )
+    # Длительность задачи (для tooltip + расчёта факт-наложения).
+    _plan_start_dt = pd.to_datetime(plot_df["plan start"], errors="coerce")
+    _plan_end_dt = pd.to_datetime(plot_df["plan end"], errors="coerce")
+    _dur_days_series = (_plan_end_dt - _plan_start_dt).dt.days.fillna(0).astype(int)
 
     vis = pd.DataFrame(
         {
@@ -26506,7 +26485,8 @@ def dashboard_project_schedule_chart(df):
             use_container_width=True,
         )
         return
-    # Явно обновляем только trace плана (data[0]): подписи даты/% — отдельным текстовым trace справа (см. ниже),
+    # Явно обновляем только trace плана (data[0]): светло-бирюзовый фон полос.
+    # Подписи даты/% — отдельным текстовым trace справа (см. ниже),
     # т.к. text на Bar часто не виден при group/barmode и длинной оси X.
     _n_tasks = len(plot_df)
     try:
@@ -26514,45 +26494,75 @@ def dashboard_project_schedule_chart(df):
             name="План",
             hovertemplate=(
                 "<b>%{customdata[0]}</b><br>"
-                "<span style='color:#9aa6b2'>%{customdata[1]} → %{customdata[2]}</span><br>"
+                "<span style='color:#6b7280'>%{customdata[1]} → %{customdata[2]}</span><br>"
                 "Длительность: <b>%{customdata[4]} дн.</b><br>"
                 "Блок: <b>%{customdata[3]}</b>"
                 "<extra></extra>"
             ),
             marker=dict(
-                color=_bar_colors_plan,
-                line=dict(color="rgba(255,255,255,0.10)", width=0.5),
+                color=_GANTT_PLAN_COLOR,
+                line=dict(color="rgba(255,255,255,0.0)", width=0),
             ),
             text=[""] * _n_tasks,
             textposition="none",
-            showlegend=False,
+            showlegend=True,
         )
     except Exception as e:
         st.warning(f"Не удалось настроить полосы плана: {e}")
 
-    # ── Легенда блоков (как на референс-скрине) — отдельные пустые traces для подписи ──
-    # Plotly не рисует легенду, если все полосы в одном trace; добавляем «invisible» Scatter
-    # для каждого блока, чтобы получить нативную легенду в правом верхнем углу.
-    if len(_block_values_unique) >= 2:
-        for _b in _block_values_unique:
+    # ── Тёмный наложенный «факт» по % завершения (Power BI стиль) ──
+    # Длина факт-полосы = plan_start + duration * pct/100. Если pct отсутствует или 0 —
+    # полоса не рисуется (Bar с x=0 не виден).
+    try:
+        _pct_col_name = _gantt_find_percent_column(plot_df)
+        if _pct_col_name and _pct_col_name in plot_df.columns:
+            _pct_norm = _gantt_coerce_pct_series(plot_df[_pct_col_name]).fillna(0.0).clip(0, 100)
+        else:
+            _pct_norm = pd.Series(0.0, index=plot_df.index, dtype=float)
+        _dur_ts = _plan_end_dt - _plan_start_dt
+        _fact_dur_ts = pd.Series(
+            [
+                pd.Timedelta(seconds=int((d.total_seconds() if pd.notna(d) else 0) * (p / 100.0)))
+                for d, p in zip(_dur_ts, _pct_norm)
+            ],
+            index=plot_df.index,
+        )
+        # Plotly Bar по timeline: x = длительность (timedelta → ms), base = старт (datetime).
+        _fact_x_ms = [
+            int(d.total_seconds() * 1000) if pd.notna(d) and d.total_seconds() > 0 else 0
+            for d in _fact_dur_ts
+        ]
+        _fact_base = _plan_start_dt.tolist()
+        _fact_y = vis["Название"].tolist()
+        _pct_ints = [int(round(float(p))) if pd.notna(p) else 0 for p in _pct_norm]
+        if any(v > 0 for v in _fact_x_ms):
             fig_gantt.add_trace(
-                go.Scatter(
-                    x=[None],
-                    y=[None],
-                    mode="markers",
-                    marker=dict(
-                        color=_block_color_map[_b],
-                        size=12,
-                        symbol="square",
-                        line=dict(width=0),
+                go.Bar(
+                    x=_fact_x_ms,
+                    base=_fact_base,
+                    y=_fact_y,
+                    orientation="h",
+                    name="Факт",
+                    marker_color=_GANTT_FACT_COLOR,
+                    width=0.55,  # тоньше плана — даёт «слой» сверху
+                    hovertemplate=(
+                        "<b>%{y}</b><br>"
+                        "Факт: %{base|%d.%m.%Y} + " + "%{x|%d.%m.%Y}<br>"
+                        "<extra></extra>"
                     ),
-                    name=str(_b),
+                    customdata=[[v] for v in _pct_ints],
                     showlegend=True,
-                    hoverinfo="skip",
+                    cliponaxis=False,
                 )
             )
+            fig_gantt.update_layout(barmode="overlay")
+    except Exception as _e_fact:
+        # «Факт» — необязательный слой; план рисуется в любом случае.
+        suppress_caption(f"Слой «Факт» по % завершения не построен: {_e_fact}")
 
     if base_tasks:
+        # В overlay-режиме (для слоя «Факт» поверх «Плана») базовая полоса —
+        # тонкая (width=0.30), полупрозрачная фиолетовая, рисуется поверх обоих слоёв.
         fig_gantt.add_trace(
             go.Bar(
                 x=base_ends,
@@ -26560,15 +26570,17 @@ def dashboard_project_schedule_chart(df):
                 y=base_tasks,
                 orientation="h",
                 name="Базовое начало–окончание",
-                marker_color="#C084FC",
+                marker_color="rgba(192,132,252,0.55)",
+                width=0.30,
                 text=[""] * len(base_tasks),
                 textposition="none",
                 hovertemplate=(
                     "<b>%{y}</b><br>База: %{base|%d.%m.%Y} — %{x|%d.%m.%Y}<extra></extra>"
                 ),
+                showlegend=True,
             )
         )
-        fig_gantt.update_layout(barmode="group")
+        fig_gantt.update_layout(barmode="overlay")
 
     n = len(plot_df)
     row_h = int(round((40 if _readability.get("is_dense") else 36) * _GANTT_VIS_SCALE))
@@ -26811,6 +26823,34 @@ def dashboard_project_schedule_chart(df):
     # skip_uniformtext: глобальный apply_chart_background задаёт uniformtext mode=hide —
     # из‑за этого подписи у горизонтальных полос могут не отображаться.
     fig_gantt = apply_chart_background(fig_gantt, skip_uniformtext=True)
+
+    # Вертикальная пунктирная линия «Сегодня» (как на референс-скрине Power BI 2026-05-07).
+    try:
+        _today_ts = pd.Timestamp.today().normalize()
+        # Рисуем только если линия попадает в текущий range графика.
+        _draw_today = True
+        try:
+            _xr = getattr(fig_gantt.layout.xaxis, "range", None)
+            if _xr and len(_xr) == 2 and _xr[0] is not None and _xr[1] is not None:
+                _xr0 = pd.Timestamp(_xr[0])
+                _xr1 = pd.Timestamp(_xr[1])
+                if not (_xr0 <= _today_ts <= _xr1):
+                    _draw_today = False
+        except Exception:
+            pass
+        if _draw_today:
+            fig_gantt.add_vline(
+                x=_today_ts,
+                line_dash="dot",
+                line_color="rgba(255,255,255,0.55)",
+                line_width=1.5,
+                annotation_text="Сегодня",
+                annotation_position="top",
+                annotation_font_color="rgba(255,255,255,0.80)",
+                annotation_font_size=11,
+            )
+    except Exception:
+        pass
     try:
         fig_gantt.update_yaxes(automargin=False, fixedrange=True, showticklabels=False)
         fig_gantt.update_layout(
