@@ -25236,23 +25236,20 @@ def dashboard_project_schedule_chart(df):
     _view_mode = st.radio(
         "Вид отображения",
         (
+            "Диаграмма Ганта",
             "Иерархическая таблица (WBS)",
             "Таблица + мини-бары отклонений",
             "Ковенанты — вехи на шкале",
             "Сводный bar-chart отклонений",
             "Теплокарта по блокам/задачам",
-            "Диаграмма Ганта",
         ),
         index=0,
         horizontal=True,
         key="project_schedule_view_mode",
         help=(
-            "Иерархическая таблица: WBS-дерево с разворачиванием/сворачиванием. "
-            "Мини-бары: те же данные, но в столбцах отклонений горизонтальные индикаторы. "
-            "Ковенанты — вехи: точки «база/факт» на временной шкале (по ТЗ для блока «Ковенанты»). "
-            "Bar-chart: топ-N задач по абсолютной величине отклонения. "
-            "Теплокарта: блоки × задачи, цвет = знак и величина отклонения. "
-            "Гант: классическая диаграмма."
+            "Гант — основной вид по ТЗ заказчика 2026-05-06: фильтры по проекту/блоку/строению/уровню, "
+            "галочки «в лотах» и «причины отклонений», под графиком — таблица ИД/Название/% завершения/Окончание/База/Отклонение. "
+            "Остальные режимы — служебные (WBS-дерево, мини-бары, отдельный экран ковенантов и т.п.)."
         ),
     )
     if _view_mode == "Иерархическая таблица (WBS)":
@@ -25578,11 +25575,15 @@ def dashboard_project_schedule_chart(df):
                     plot_df[building_col].astype(str).str.strip() == str(sel_building).strip()
                 ]
     with f_level:
+        # ТЗ заказчика 2026-05-06: только два уровня для отображения задач —
+        # «Верхний уровень (ур. 4)» и «Детальный уровень (ур. 5)». Дефолт — «Верхний (4)».
+        # «Строения» вынесены в отдельный фильтр выше; «Все уровни» оставлено для отладки.
+        # Фильтр применяем ниже, после чтения чекбокса «Показать причины отклонений»,
+        # т.к. при включённой галочке выбор уровня переопределяется (ур. 5 + все родители).
         level_opts = (
-            "Все уровни",
             "Верхний уровень (4)",
             "Детальный уровень (5)",
-            "Строения (3)",
+            "Все уровни",
         )
         level_sel = st.selectbox(
             "Уровень отображения задач",
@@ -25590,23 +25591,7 @@ def dashboard_project_schedule_chart(df):
             index=0,
             key="gantt_level_display",
         )
-        if level_col and level_sel != "Все уровни":
-            lvl_map = {
-                "Верхний уровень (4)": 4,
-                "Детальный уровень (5)": 5,
-                "Строения (3)": 3,
-            }
-            target = int(lvl_map[level_sel])
-            ln = pd.to_numeric(plot_df[level_col], errors="coerce")
-            if ln.notna().any():
-                plot_df = plot_df[ln == float(target)]
-            else:
-                wbs_dep = plot_df[level_col].map(_sched_wbs_tuple).map(
-                    lambda t: int(len(t)) if t else np.nan
-                )
-                if wbs_dep.notna().any():
-                    plot_df = plot_df[wbs_dep == target]
-        elif not level_col:
+        if not level_col:
             suppress_caption("Нет колонки уровня.")
     with f_view:
         view_mode = st.selectbox(
@@ -25640,6 +25625,11 @@ def dashboard_project_schedule_chart(df):
             "Показать причины отклонений",
             value=False,
             key="gantt_show_deviation_cols",
+            help=(
+                "По ТЗ: при включении в выборку добавляются задачи уровня 5 "
+                "(только в них есть причины отклонений и заметки) + все их родительские "
+                "задачи выше. Селектор «Уровень отображения задач» при этом игнорируется."
+            ),
         )
     with lot_row_r:
         show_lots = st.checkbox(
@@ -25647,6 +25637,48 @@ def dashboard_project_schedule_chart(df):
             value=False,
             key="gantt_show_lots",
         )
+
+    # ── Применяем фильтр уровня (по селектору) или show_reasons-override (ур. 5 + предки) ──
+    # Делаем здесь, чтобы значение чекбокса show_reasons уже было известно и могло
+    # переопределить выбор уровня согласно ТЗ.
+    if show_reasons and level_col and level_col in plot_df.columns:
+        # Берём строки уровня 5 + всех их предков по WBS (если WBS-колонка есть),
+        # либо все строки уровней ≤ 5 как fallback.
+        ln_all = pd.to_numeric(plot_df[level_col], errors="coerce")
+        leaf_mask = ln_all == 5.0
+        if leaf_mask.any() and wbs_col and wbs_col in plot_df.columns:
+            wbs_all = plot_df[wbs_col].map(_sched_wbs_tuple)
+            ancestor_set: set = set()
+            for t in wbs_all[leaf_mask].tolist():
+                if not t:
+                    continue
+                for k in range(1, len(t) + 1):
+                    ancestor_set.add(t[:k])
+            if ancestor_set:
+                plot_df = plot_df[wbs_all.isin(ancestor_set)]
+            else:
+                plot_df = plot_df[leaf_mask | (ln_all <= 5)]
+        elif leaf_mask.any():
+            # Fallback без WBS: показываем уровни 1..5 — заведомо включает всех предков
+            # для иерархических MSP-выгрузок, где иерархия плоская по level.
+            plot_df = plot_df[ln_all.notna() & (ln_all <= 5)]
+        # если уровня 5 в выборке нет — оставляем плот как есть, чтобы не получить пустоту.
+    elif level_col and level_sel != "Все уровни":
+        lvl_map = {
+            "Верхний уровень (4)": 4,
+            "Детальный уровень (5)": 5,
+        }
+        target = int(lvl_map[level_sel])
+        ln = pd.to_numeric(plot_df[level_col], errors="coerce")
+        if ln.notna().any():
+            plot_df = plot_df[ln == float(target)]
+        else:
+            wbs_dep = plot_df[level_col].map(_sched_wbs_tuple).map(
+                lambda t: int(len(t)) if t else np.nan
+            )
+            if wbs_dep.notna().any():
+                plot_df = plot_df[wbs_dep == target]
+
     if show_lots and lot_col and lot_col in plot_df.columns:
         # Вытягиваем Series, даже если в df случайно оказались две одноимённые колонки.
         _lot_src = plot_df[lot_col]
@@ -26914,81 +26946,109 @@ def dashboard_project_schedule_chart(df):
         _rest = [c for c in cov_tbl.columns if c not in _ordered]
         tbl_show = cov_tbl[_ordered + _rest]
     else:
-        d_start_num = None
+        # ТЗ заказчика 2026-05-06 (Блок 4, рисунок 6/8): таблица под графиком имеет колонки
+        # ИД · Название задачи · % завершения · Окончание · Базовое окончание · Отклонение окончания
+        # При флажке «Показать причины отклонений» — добавляются колонки «Причина отклонения» и «Заметки».
+        # Старые колонки «Проект», «План начало», «База: начало», «Отклонение Начала» убраны (избыточны
+        # для гант-режима с фильтром по проекту).
         d_end_num = None
-        if dev_start_src and dev_start_src in plot_df.columns:
-            d_start_num = pd.to_numeric(plot_df[dev_start_src], errors="coerce")
-        else:
-            if "base start" in plot_df.columns:
-                d_start_num = (
-                    plot_df["plan start"] - pd.to_datetime(plot_df["base start"], errors="coerce")
-                ).dt.days
         if dev_end_src and dev_end_src in plot_df.columns:
             d_end_num = pd.to_numeric(plot_df[dev_end_src], errors="coerce")
-        else:
-            if "base end" in plot_df.columns:
-                d_end_num = (plot_df["plan end"] - pd.to_datetime(plot_df["base end"], errors="coerce")).dt.days
+        elif "base end" in plot_df.columns:
+            d_end_num = (
+                plot_df["plan end"] - pd.to_datetime(plot_df["base end"], errors="coerce")
+            ).dt.days
 
-        tbl_pairs = []
-        if proj_col and proj_col in plot_df.columns:
-            tbl_pairs.append((proj_col, "Проект"))
+        # ИД задачи MSP («Ид» в исходнике → canonical "task id seq" после web_loader._MSP_RENAME).
+        # Fallback на любые «id-подобные» поля (ID, Ид, task id, ID_задачи, Уникальный_идентификатор).
+        id_col = _sched_col(
+            plot_df,
+            [
+                "task id seq",
+                "Ид",
+                "ид",
+                "ID",
+                "id",
+                "task id",
+                "Task ID",
+                "task_id",
+                "ID_задачи",
+                "id задачи",
+            ],
+        ) or _sched_col(plot_df, ["unique id", "Уникальный_идентификатор"])
+
+        tbl_view = pd.DataFrame(index=plot_df.index)
+        if id_col and id_col in plot_df.columns:
+            _id_ser = plot_df[id_col]
+            if isinstance(_id_ser, pd.DataFrame):
+                _id_ser = _id_ser.iloc[:, 0]
+            # Целые числа без '.0', NaN → ""
+            _id_num = pd.to_numeric(_id_ser, errors="coerce")
+            if _id_num.notna().any():
+                tbl_view["ИД"] = _id_num.map(
+                    lambda v: "" if pd.isna(v) else f"{int(v)}"
+                )
+            else:
+                tbl_view["ИД"] = _id_ser.astype(str).where(_id_ser.notna(), "")
+        else:
+            tbl_view["ИД"] = pd.Series("", index=plot_df.index, dtype=object)
+
         if task_col and task_col in plot_df.columns:
-            tbl_pairs.append((task_col, "Задача"))
-        for src, ru in (
-            ("plan start", "План начало"),
-            ("plan end", "План окончание"),
-            ("base start", "База: начало"),
-            ("base end", "База: окончание"),
-            ("pct complete", "% выполнения"),
-        ):
-            if src in plot_df.columns:
-                tbl_pairs.append((src, ru))
+            tbl_view["Название задачи"] = (
+                plot_df[task_col].fillna("").astype(str).map(_gantt_clean_task_label)
+            )
+        else:
+            tbl_view["Название задачи"] = ""
 
-        tbl_view = plot_df[[c for c, _ in tbl_pairs]].copy() if tbl_pairs else plot_df.head(0).copy()
-        if d_start_num is not None:
-            tbl_view["Отклонение Начала"] = d_start_num.reindex(tbl_view.index).map(_fmt_dev_days)
+        if "pct complete" in plot_df.columns:
+            _pct = _gantt_coerce_pct_series(plot_df["pct complete"]).round().astype("Int64")
+            tbl_view["% завершения"] = _pct.map(lambda v: "" if pd.isna(v) else f"{int(v)}%")
         else:
-            tbl_view["Отклонение Начала"] = pd.Series("", index=tbl_view.index, dtype=object)
+            tbl_view["% завершения"] = ""
+
+        if "plan end" in plot_df.columns:
+            _pe = pd.to_datetime(plot_df["plan end"], errors="coerce")
+            tbl_view["Окончание"] = [x.strftime("%d.%m.%Y") if pd.notna(x) else "" for x in _pe]
+        else:
+            tbl_view["Окончание"] = ""
+
+        if "base end" in plot_df.columns:
+            _be = pd.to_datetime(plot_df["base end"], errors="coerce")
+            tbl_view["Базовое окончание"] = [
+                x.strftime("%d.%m.%Y") if pd.notna(x) else "" for x in _be
+            ]
+        else:
+            tbl_view["Базовое окончание"] = ""
+
         if d_end_num is not None:
-            tbl_view["Отклонение Окончания"] = d_end_num.reindex(tbl_view.index).map(_fmt_dev_days)
+            tbl_view["Отклонение окончания"] = d_end_num.reindex(tbl_view.index).map(_fmt_dev_days)
         else:
-            tbl_view["Отклонение Окончания"] = pd.Series("", index=tbl_view.index, dtype=object)
+            tbl_view["Отклонение окончания"] = ""
 
         if show_reasons:
             if reason_src and reason_src in plot_df.columns:
-                tbl_view["Причины отклонений"] = plot_df[reason_src].astype(str).fillna("")
+                _r = plot_df[reason_src].astype(str).fillna("")
+                tbl_view["Причина отклонения"] = _r.where(_r.str.lower() != "nan", "")
             else:
-                tbl_view["Причины отклонений"] = pd.Series("", index=tbl_view.index, dtype=object)
+                tbl_view["Причина отклонения"] = ""
             if notes_src and notes_src in plot_df.columns:
-                tbl_view["Заметки"] = plot_df[notes_src].astype(str).fillna("")
+                _n = plot_df[notes_src].astype(str).fillna("")
+                tbl_view["Заметки"] = _n.where(_n.str.lower() != "nan", "")
             else:
-                tbl_view["Заметки"] = pd.Series("", index=tbl_view.index, dtype=object)
+                tbl_view["Заметки"] = ""
 
-        for dc in ("plan start", "plan end", "base start", "base end"):
-            if dc in tbl_view.columns:
-                _ts = pd.to_datetime(tbl_view[dc], errors="coerce")
-                tbl_view[dc] = [x.strftime("%d.%m.%Y") if pd.notna(x) else "" for x in _ts]
-        if "pct complete" in tbl_view.columns:
-            tbl_view["pct complete"] = pd.to_numeric(tbl_view["pct complete"], errors="coerce")
-
-        rename_map = {c: ru for c, ru in tbl_pairs if c in tbl_view.columns}
-        tbl_show = tbl_view.rename(columns=rename_map)
         _gantt_tbl_order = [
-            "Проект",
-            "Задача",
-            "План начало",
-            "План окончание",
-            "База: начало",
-            "База: окончание",
-            "% выполнения",
-            "Отклонение Начала",
-            "Отклонение Окончания",
+            "ИД",
+            "Название задачи",
+            "% завершения",
+            "Окончание",
+            "Базовое окончание",
+            "Отклонение окончания",
         ]
         if show_reasons:
-            _gantt_tbl_order.extend(["Причины отклонений", "Заметки"])
-        _ordered = [c for c in _gantt_tbl_order if c in tbl_show.columns]
-        _rest = [c for c in tbl_show.columns if c not in _ordered]
-        tbl_show = tbl_show[_ordered + _rest]
+            _gantt_tbl_order.extend(["Причина отклонения", "Заметки"])
+        _ordered = [c for c in _gantt_tbl_order if c in tbl_view.columns]
+        tbl_show = tbl_view[_ordered]
 
     if tbl_show.empty:
         st.info("Нет колонок для таблицы.")
