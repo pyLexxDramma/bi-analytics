@@ -1139,19 +1139,42 @@ def _tessa_to_dt(series: pd.Series) -> pd.Series:
     return _smart_to_dt_series(series)
 
 
+def _resolve_tessa_pred_source(ss: Any) -> Tuple[pd.DataFrame, Optional[str], str]:
+    """B-2.1 (2026-05-07): источник предписаний для матрицы «Девелоперские проекты».
+
+    Старая логика брала только `tessa_tasks_data` (`*-task.csv`), но `KindName`
+    обычно лежит в `tessa_data` (`*-id.csv`) — отсюда вечное «Н/Д» в строке
+    «ПРЕДПИСАНИЯ». Здесь идём по двум источникам и берём первый, в котором есть
+    колонка `KindName` И хотя бы одна строка `KindName ~ предписани`.
+
+    Возвращает (DataFrame со строками предписаний, имя колонки KindName, ключ
+    источника `"tessa_tasks_data"` / `"tessa_data"` / `""`).
+    """
+    for key in ("tessa_tasks_data", "tessa_data"):
+        tdf = ss.get(key) if hasattr(ss, "get") else None
+        if tdf is None or getattr(tdf, "empty", True):
+            continue
+        tk = tdf.copy()
+        tk.columns = [str(c).strip() for c in tk.columns]
+        kk = _find_col(tk, ["KindName", "kindname", "Вид"])
+        if not kk:
+            continue
+        pred = tk[tk[kk].astype(str).str.contains(r"предписани", case=False, na=False, regex=True)].copy()
+        if not pred.empty:
+            return pred, kk, key
+    return pd.DataFrame(), None, ""
+
+
 def _tessa_counts(ss: Any, project_name_hint: str = "") -> Tuple[str, str, str, str]:
-    tdf = ss.get("tessa_tasks_data") if hasattr(ss, "get") else None
-    if tdf is None or getattr(tdf, "empty", True):
-        return "Н/Д", "Н/Д", "Н/Д", ""
-    tk = tdf.copy()
-    tk.columns = [str(c).strip() for c in tk.columns]
-    kk = _find_col(tk, ["KindName", "kindname", "Вид"])
-    if not kk:
-        return "Н/Д", "Н/Д", "Н/Д", ""
-    # ТЗ: KindName = «Предписание» / «Предписания» (Tessa.Tasks)
-    pred = tk[tk[kk].astype(str).str.contains(r"предписани", case=False, na=False, regex=True)].copy()
+    pred, kk, src_key = _resolve_tessa_pred_source(ss)
     if pred.empty:
-        return "0", "0", "0", ""
+        # Если хоть один из источников загружен, но без «Предписания» в KindName —
+        # это валидный «0»; если оба пусты — «Н/Д».
+        any_loaded = any(
+            (ss.get(k) is not None and not getattr(ss.get(k), "empty", True))
+            for k in ("tessa_tasks_data", "tessa_data") if hasattr(ss, "get")
+        )
+        return ("0", "0", "0", "") if any_loaded else ("Н/Д", "Н/Д", "Н/Д", "")
     hint = (project_name_hint or "").strip()
     if hint:
         pred_f = build_predpisaniya_detail_df(ss, hint)
@@ -1159,7 +1182,11 @@ def _tessa_counts(ss: Any, project_name_hint: str = "") -> Tuple[str, str, str, 
             pred = pred_f
         else:
             return "Н/Д", "Н/Д", "Н/Д", "Нет строк предписаний Tessa после фильтра по проекту."
-    card_c = _find_col(pred, ["CardId", "CardID", "cardId"])
+    # B-2.1 (2026-05-07): расширен список ключей идентификатора карточки —
+    # в `*-id.csv` (`tessa_data`) основной ключ называется `DocID`, в `*-task.csv`
+    # (`tessa_tasks_data`) — `CardId`/`CardID`. Ищем по обоим, чтобы фолбэк-ветка
+    # тоже могла посчитать «План = уникальные карточки».
+    card_c = _find_col(pred, ["CardId", "CardID", "cardId", "DocID", "DocId", "Doc Id"])
     state_c = _find_col(pred, ["KrStateName", "KrState", "State", "Состояние", "Статус"])
     due_c = _find_col(pred, ["PlanDate", "DueDate", "Срок", "Крайний срок"])
     if not card_c:
@@ -1210,20 +1237,17 @@ def _predpisaniya_combined(mdf: pd.DataFrame, ss: Any, project_name: str = "") -
             nov = 0
         warn_t = nfu > 0 or nov > 0
         return tp, tf, to, warn_t, hint
-    return tp, tf, to, False, (hint or "Нет данных Tessa по предписаниям или не загружён tessa_tasks_data.")
+    return tp, tf, to, False, (hint or "Нет данных Tessa по предписаниям (tessa_tasks_data / tessa_data не загружены или без KindName).")
 
 
 def build_predpisaniya_detail_df(ss: Any, project_name_hint: str = "") -> pd.DataFrame:
-    """Все строки предписаний из Tessa (tasks), опционально — фильтр по названию проекта/объекта."""
-    tdf = ss.get("tessa_tasks_data") if hasattr(ss, "get") else None
-    if tdf is None or getattr(tdf, "empty", True):
-        return pd.DataFrame()
-    tk = tdf.copy()
-    tk.columns = [str(c).strip() for c in tk.columns]
-    kk = _find_col(tk, ["KindName", "kindname", "Вид"])
-    if not kk:
-        return pd.DataFrame()
-    pred = tk[tk[kk].astype(str).str.contains(r"предписани", case=False, na=False, regex=True)].copy()
+    """Все строки предписаний из Tessa, опционально — фильтр по названию проекта/объекта.
+
+    B-2.1 (2026-05-07): источник определяется через `_resolve_tessa_pred_source` —
+    предпочитаем `tessa_tasks_data` (`*-task.csv`), фолбэк — `tessa_data`
+    (`*-id.csv`, обычно именно там KindName=«Предписания»).
+    """
+    pred, kk, _src = _resolve_tessa_pred_source(ss)
     if pred.empty:
         return pd.DataFrame()
     hint = (project_name_hint or "").strip()

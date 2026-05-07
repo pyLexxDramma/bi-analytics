@@ -62,7 +62,7 @@
 
 | ID | Дашборд | Симптом | Файл / функция | Действие |
 |----|---------|---------|----------------|----------|
-| **B-2.1** | 01 Девелоперские проекты (строка ПРЕДПИСАНИЯ) | в матрице всегда `Н/Д` | `dev_projects_tz_matrix.py · _tessa_counts / build_predpisaniya_detail_df` ищут `KindName` в `tessa_tasks_data` (`-task.csv`), а оно лежит в `tessa_data` (`-id.csv`) | Фолбэк на `ss.get("tessa_data")` при отсутствии `KindName` в task-таблице. |
+| ~~**B-2.1**~~ ✅ закрыт 2026-05-07 | 01 Девелоперские проекты (строка ПРЕДПИСАНИЯ) | в матрице всегда `Н/Д` | `dev_projects_tz_matrix.py · _tessa_counts / build_predpisaniya_detail_df` ищут `KindName` в `tessa_tasks_data` (`-task.csv`), а оно лежит в `tessa_data` (`-id.csv`) | **Фикс:** новый helper `_resolve_tessa_pred_source` — пробуем `tessa_tasks_data`, фолбэк на `tessa_data`; расширен список ключей идентификатора карточки (`DocID` рядом с `CardId`/`CardID`). Sanity: `scripts/_qa_b21_pred_fallback.py` — План=11, Факт=11 (на текущей версии БД 11 карточек: Есипово V — 10, Дмитровский 1 — 1). Откл=«Н/Д» (в id.csv нет колонки `PlanDate/DueDate`). |
 | **B-2.2** / **B-06** | 06 БДДС, 08 Бюджет план/факт, строка «Выборка ДС» в матрице | возвращает `None` или 0 / занижено в 1000× | `finance_from_1c.py · _turnover_article_has_lot_and_sublot` не распознаёт «Лот №NN» / «NN.M»; `dashboards/dev_projects_tz_matrix.py · _ds_plan_fact_otkl_mln` делит на `1e6` вместо `× 1000` | Расширить regex статьи; синхронизировать масштаб с БДДС-логикой. |
 | **B-12/13** | 12 РД, 13 ПД (план) | `Unnamed: 0..7` в плане `other_*_rd.csv` (заголовки не на 1-й строке) | парсер `other_*_rd.csv` (вероятно в `web_loader._load_resources_file` или новый `_load_rd_plan`) | Добавить `skiprows` или явный header-detect. |
 | **B-16/17** | 16/17 ГДРС | нет полей `КоличествоРаботников / КоличествоСпецТехники` в `1с_*_spravochniki.json` | источник данных | Запросить у заказчика свежий `spravochniki.json` с этими полями. |
@@ -78,7 +78,7 @@
 
 - **Логика:** `docs/логика/01_Девелоперские_проекты.md`. **UI:** «Девелоперские проекты». **Эталон:** `web/AI/msp_*.csv` + `web/1с_*_dannye.json` + `web/tessa_*-id.csv`.
 - **Статус E:** ✅ (см. отдельный план `DEV_PROJECTS_QA_VERIFICATION_PLAN.md`).
-- **Известные баги:** **B-2.1** (ПРЕДПИСАНИЯ), **B-2.2** (Выборка ДС). 1.5 — спорный pick-репрезентант % (требует ТЗ заказчика).
+- **Известные баги:** ~~**B-2.1**~~ ✅ закрыт 2026-05-07 (фолбэк tessa_data + ключ DocID), **B-2.2** (Выборка ДС). 1.5 — спорный pick-репрезентант % (требует ТЗ заказчика).
 - **A–I:** см. план `DEV_PROJECTS_QA_VERIFICATION_PLAN.md` пункты 1.1–1.5, 2.1–2.2, 3.1–3.2.
 
 ### 02 · Причины отклонений

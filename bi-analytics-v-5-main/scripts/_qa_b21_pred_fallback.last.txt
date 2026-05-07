@@ -1,0 +1,21 @@
+﻿== B-2.1 ╨Я╨а╨Х╨Ф╨Я╨Ш╨б╨Р╨Э╨Ш╨п fallback check ==
+WEB_DB_PATH = D:\AI_codding\Analitics\bi-analytics-v-5-main\bi-analytics-v-5-main\data\web_data.db (exists=True)
+  tessa_tasks_data rows = 2585 cols = ['imort_data', 'CardID', 'CardName', 'CardTypeCaption', 'TypeID', 'TypeCaption', 'OptionID', 'OptionCaption', 'Result', 'RoleID', 'RoleName', 'AuthorID']
+  tessa_data        rows = 862  cols = ['import_data', '1C_ID_OBJECT', '1C_ID_CONTR', '1C_ID_DOG', '1C_ID_LOT', 'DocID', 'DocDescription', 'InternalID', 'CreationDate', 'AuthorID', 'AuthorName', 'DocNumber']
+
+_resolve_tessa_pred_source тЖТ src='tessa_data', KindName col='KindName', rows=11
+  ╨┐╤А╨╕╨╝╨╡╤А ╨┐╨╡╤А╨▓╨╛╨╣ ╤Б╤В╤А╨╛╨║╨╕ (KindName, ObjectName/Lot/CardId/Status):
+    KindName = '╨Я╤А╨╡╨┤╨┐╨╕╤Б╨░╨╜╨╕╤П'
+    ObjectName = '╨Х╤Б╨╕╨┐╨╛╨▓╨╛ V'
+    Lot = nan
+    DocID = '9cec36ec-4f0e-4964-9031-2943d8ffefdf'
+    KrState = '╨Я╤А╨╛╨╡╨║╤В'
+
+_tessa_counts(ss, project_name_hint='') тЖТ
+  ╨Я╨╗╨░╨╜='11', ╨д╨░╨║╤В='11', ╨Ю╤В╨║╨╗='╨Э/╨Ф', hint=''
+  [╨Ф╨╝╨╕╤В╤А╨╛╨▓╤Б╨║╨╕╨╣ 1] ╨Я╨╗╨░╨╜='1', ╨д╨░╨║╤В='1', ╨Ю╤В╨║╨╗='╨Э/╨Ф', hint=''
+  [╨Х╤Б╨╕╨┐╨╛╨▓╨╛ V] ╨Я╨╗╨░╨╜='10', ╨д╨░╨║╤В='10', ╨Ю╤В╨║╨╗='╨Э/╨Ф', hint=''
+  [╨Ы╨╡╨╜╨╕╨╜╤Б╨║╨╕╨╣] ╨Я╨╗╨░╨╜='11', ╨д╨░╨║╤В='11', ╨Ю╤В╨║╨╗='╨Э/╨Ф', hint=''
+
+_predpisaniya_combined(empty_msp, ss, '') тЖТ
+  ╨Я╨╗╨░╨╜='11', ╨д╨░╨║╤В='11', ╨Ю╤В╨║╨╗='╨Э/╨Ф', warn=True, hint=''
