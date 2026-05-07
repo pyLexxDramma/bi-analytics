@@ -22616,35 +22616,54 @@ def _pred_dedupe_by_docid(
     p_bad = p.loc[~m]
     if not p_ok.empty:
         _meta_dt = pd.Series(pd.NaT, index=p_ok.index)
-        for _mc in ("snapshot_date", "loaded_at", "__loaded_at", "upload_date"):
+        # ВАЖНО: «Import_data» / «Import_date» — поле даты snapshot-файла TESSA
+        # (имя файла tessa_DD-MM-YYYY-HH-MM-id.csv). Без этого ключа dedup
+        # сортирует по CreationDate и tiebreak уходит в порядок строк df →
+        # при каждом обновлении страницы остаётся «случайная» запись из
+        # пары (отсюда непостоянство визуала: «один раз есть нули, другой
+        # раз нулей нет» — скрин заказчика от 07.05.2026, скрин 9).
+        for _mc in (
+            "Import_data",
+            "Import_date",
+            "import_data",
+            "import_date",
+            "snapshot_date",
+            "loaded_at",
+            "__loaded_at",
+            "upload_date",
+        ):
             if _mc in p_ok.columns:
                 _cand = pd.to_datetime(p_ok[_mc], errors="coerce", dayfirst=True)
                 if _cand.notna().any():
                     _meta_dt = _cand
                     break
+        # Финальный детерминированный tiebreaker = строковое представление
+        # ключа dedup → исключает дрожание набора строк при равных snapshot/created.
+        _tiebreak = p_ok["_dedupe_key"].astype(str)
         if creation_col_pred and creation_col_pred in p_ok.columns:
             _created_dt = pd.to_datetime(p_ok[creation_col_pred], errors="coerce", dayfirst=True)
-            p_ok = p_ok.assign(_meta_dt=_meta_dt, _created_dt=_created_dt).sort_values(
-                ["_meta_dt", "_created_dt", creation_col_pred],
+            p_ok = p_ok.assign(_meta_dt=_meta_dt, _created_dt=_created_dt, _tiebreak=_tiebreak).sort_values(
+                ["_meta_dt", "_created_dt", creation_col_pred, "_tiebreak"],
                 na_position="last",
                 kind="stable",
             )
             p_ok = p_ok.drop_duplicates(subset=["_dedupe_key"], keep="last").drop(
-                columns=["_meta_dt", "_created_dt", "_dedupe_key"], errors="ignore"
+                columns=["_meta_dt", "_created_dt", "_tiebreak", "_dedupe_key"], errors="ignore"
             )
         else:
             if _meta_dt.notna().any():
-                p_ok = p_ok.assign(_meta_dt=_meta_dt).sort_values(
-                    ["_meta_dt"],
+                p_ok = p_ok.assign(_meta_dt=_meta_dt, _tiebreak=_tiebreak).sort_values(
+                    ["_meta_dt", "_tiebreak"],
                     na_position="last",
                     kind="stable",
                 )
                 p_ok = p_ok.drop_duplicates(subset=["_dedupe_key"], keep="last").drop(
-                    columns=["_meta_dt", "_dedupe_key"], errors="ignore"
+                    columns=["_meta_dt", "_tiebreak", "_dedupe_key"], errors="ignore"
                 )
             else:
+                p_ok = p_ok.assign(_tiebreak=_tiebreak).sort_values(["_tiebreak"], kind="stable")
                 p_ok = p_ok.drop_duplicates(subset=["_dedupe_key"], keep="last").drop(
-                    columns=["_dedupe_key"], errors="ignore"
+                    columns=["_tiebreak", "_dedupe_key"], errors="ignore"
                 )
     if "_dedupe_key" in p_bad.columns:
         p_bad = p_bad.drop(columns=["_dedupe_key"], errors="ignore")
@@ -23606,10 +23625,19 @@ def dashboard_predpisania(df):
         )
     else:
         pred["Статус"] = "Неизвестно"
+    # Исключение документов в статусе «Проект» (загружены, но процесс не запущен).
+    # Заказчик 07.05.2026 (скрин 7): «нужно исключить из данных все документы
+    # в состоянии KrState=Проект». Делаем И по KrStateID=4 (надёжно), И по
+    # тексту «Статус» (на случай, если KrStateID отсутствует или другой).
     _st_stat = pred["Статус"].astype(str).str.strip()
-    pred = pred[
-        ~(_st_stat.str.casefold().eq("проект") | _st_stat.str.fullmatch(r"\s*Проект\s*", case=False, na=False))
-    ].copy()
+    _drop_mask_text = _st_stat.str.casefold().eq("проект") | _st_stat.str.fullmatch(
+        r"\s*Проект\s*", case=False, na=False
+    )
+    _drop_mask_id = pd.Series(False, index=pred.index)
+    if "KrStateID" in pred.columns:
+        _krs = pd.to_numeric(pred["KrStateID"], errors="coerce")
+        _drop_mask_id = _krs.eq(4)
+    pred = pred[~(_drop_mask_text | _drop_mask_id)].copy()
 
     contr_col = _tessa_find_column(pred, ["CONTR", "Контрагент", "contr"])
     curator_col = _tessa_find_column(
@@ -23630,6 +23658,12 @@ def dashboard_predpisania(df):
     contract_col = _tessa_find_column(
         pred,
         [
+            # ВАЖНО: поле «1C_ID_DOG» из TESSA-выгрузки = ID договора в 1С
+            # (в скринах заказчика 07.05.2026 указано как источник «№ договора»).
+            "1C_ID_DOG",
+            "1c_id_dog",
+            "ID_DOG",
+            "id_dog",
             "ContractNumber",
             "НомерДоговора",
             "Номер договора",
@@ -23651,13 +23685,17 @@ def dashboard_predpisania(df):
     due_col = _tessa_find_column(
         pred,
         [
+            # ВАЖНО: «id_Deadline» — фактическое имя поля срока устранения
+            # в текущей выгрузке tessa_*-id.csv (заказчик подтвердил, добавит
+            # ещё одно поле — но это уже работает для имеющихся данных).
+            "id_Deadline",
+            "id_deadline",
             "Deadline",
             "DueDate",
             "Срок устранения предписания",
             "Срок устранения",
             "СрокУстранения",
             "PlanEnd",
-            "Deadline",
             "Контрольный срок",
             "PlanDate",
             "ДатаПлановогоОкончания",
