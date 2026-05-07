@@ -21,14 +21,14 @@ from .ui_quiet import inject_unified_filters_css, filters_panel, suppress_captio
 
 
 def _inject_multiselect_ru_translations() -> None:
-    """Точечная локализация англоязычных подписей Streamlit-виджетов (1.50+):
-    multiselect (Choose options / Select all / Select N matches / No results)
-    + date_input range presets (Past Week / Past Month / Past 3 Months / Past 6 Months /
-    Past Year / Past 2 Years / Choose a date range / None).
+    """Локализация англоязычных подписей Streamlit-виджетов (1.50+):
+    multiselect (Choose options / Select all / Select N matches / No results),
+    date_input range presets (Past Week / Past Month / ...) и
+    подписи самого календаря (названия месяцев, сокращения дней недели).
 
     Использует `st.components.v1.html` с MutationObserver, работающий через
-    `window.parent.document` (iframe и родительская страница имеют одинаковый origin
-    при локальном/Streamlit-Cloud рендере).
+    `window.parent.document` (iframe и родительская страница имеют одинаковый
+    origin при локальном/Streamlit-Cloud рендере).
     """
     components.html(
         """
@@ -51,7 +51,28 @@ def _inject_multiselect_ru_translations() -> None:
                     'Past 6 Months': 'Последние 6 месяцев',
                     'Past Year': 'Последний год',
                     'Past 2 Years': 'Последние 2 года',
-                    'None': 'Не выбрано'
+                    'None': 'Не выбрано',
+                    /* Календарь — полные названия месяцев */
+                    'January': 'Январь', 'February': 'Февраль', 'March': 'Март',
+                    'April': 'Апрель', 'May': 'Май', 'June': 'Июнь',
+                    'July': 'Июль', 'August': 'Август', 'September': 'Сентябрь',
+                    'October': 'Октябрь', 'November': 'Ноябрь', 'December': 'Декабрь',
+                    /* Календарь — сокращения дней недели (BaseWeb DatePicker) */
+                    'Mo': 'Пн', 'Tu': 'Вт', 'We': 'Ср', 'Th': 'Чт',
+                    'Fr': 'Пт', 'Sa': 'Сб', 'Su': 'Вс',
+                    'Mon': 'Пн', 'Tue': 'Вт', 'Wed': 'Ср', 'Thu': 'Чт',
+                    'Fri': 'Пт', 'Sat': 'Сб', 'Sun': 'Вс',
+                    /* Кнопки навигации календаря */
+                    'Previous Month': 'Предыдущий месяц',
+                    'Next Month': 'Следующий месяц',
+                    'Previous Year': 'Предыдущий год',
+                    'Next Year': 'Следующий год'
+                };
+                var MONTH_RE = /^(January|February|March|April|May|June|July|August|September|October|November|December)\\s+(\\d{4})$/;
+                var MONTHS_FULL = {
+                    January:'Январь', February:'Февраль', March:'Март', April:'Апрель',
+                    May:'Май', June:'Июнь', July:'Июль', August:'Август',
+                    September:'Сентябрь', October:'Октябрь', November:'Ноябрь', December:'Декабрь'
                 };
                 var SELECT_N_RE = /^Select (\\d+) matches$/;
                 function tr(node) {
@@ -62,6 +83,11 @@ def _inject_multiselect_ru_translations() -> None:
                     if (!s) return;
                     if (TRANSLATIONS[s]) {
                         node.nodeValue = t.replace(s, TRANSLATIONS[s]);
+                        return;
+                    }
+                    var mm = s.match(MONTH_RE);
+                    if (mm) {
+                        node.nodeValue = t.replace(s, MONTHS_FULL[mm[1]] + ' ' + mm[2]);
                         return;
                     }
                     var m = s.match(SELECT_N_RE);
@@ -17893,6 +17919,33 @@ def dashboard_executive_documentation(df):
         ts_end = pd.Timestamp(p_end) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
         filtered = filtered[filtered["_cd"].notna() & (filtered["_cd"] >= ts_start) & (filtered["_cd"] <= ts_end)]
 
+    # tessa_data объединяет все snapshot-файлы → один документ может иметь несколько
+    # записей (по дате snapshot). Для «текущего состояния» (карточки, бар-чарт
+    # по статусам, по объектам) нужна одна запись на документ — последняя по snapshot.
+    # Колонка `Import_data` — дата snapshot файла (присутствует во всех TESSA-CSV).
+    def _latest_snapshot(dfp: pd.DataFrame) -> pd.DataFrame:
+        if dfp is None or dfp.empty or not card_col or card_col not in dfp.columns:
+            return dfp
+        sort_cols = []
+        if "Import_data" in dfp.columns:
+            dfp = dfp.assign(_imp_dt=pd.to_datetime(dfp["Import_data"], errors="coerce", dayfirst=True))
+            sort_cols.append("_imp_dt")
+        if "_cd" in dfp.columns:
+            sort_cols.append("_cd")
+        if not sort_cols:
+            return dfp.drop_duplicates(subset=[card_col], keep="last").reset_index(drop=True)
+        out = (
+            dfp.sort_values(sort_cols, kind="stable")
+            .drop_duplicates(subset=[card_col], keep="last")
+            .reset_index(drop=True)
+        )
+        if "_imp_dt" in out.columns:
+            out = out.drop(columns=["_imp_dt"], errors="ignore")
+        return out
+
+    filtered_history = filtered.copy()
+    filtered = _latest_snapshot(filtered)
+
     if filtered.empty:
         _empty_reasons = []
         _full_n = int(len(work))
@@ -17924,20 +17977,29 @@ def dashboard_executive_documentation(df):
     st.markdown('<div class="exec-doc-panel">', unsafe_allow_html=True)
 
     stu = filtered["Статус"].astype(str)
+    sl = stu.str.lower()
 
     def _has_status(s, *parts):
-        sl = s.lower()
-        return any(p.lower() in sl for p in parts)
+        sl_ = s.lower()
+        return any(p.lower() in sl_ for p in parts)
 
-    is_signed = stu.map(lambda s: _has_status(s, "Подписан", "Согласован"))
+    # ВАЖНО: «На согласовании» / «На подписании» — переходные статусы, НЕ финальные
+    # «Подписано/Согласовано». Без явного исключения подстрока «согласован» / «подписан»
+    # ловит и переходные статусы → метрика «Принято» становится завышенной.
+    is_on_agree = sl.str.contains("на согласовани", na=False)
+    is_on_sign = sl.str.contains("на подписани", na=False)
+    is_rework = sl.str.contains("доработ", na=False)
     is_declined = stu.map(lambda s: _has_status(s, "Отказ"))
-    sl = stu.str.lower()
-    is_on_agree = (sl == "на согласовании") | sl.str.contains("на согласовании", na=False)
-    is_rework = stu.map(lambda s: "доработ" in str(s).lower())
+    is_signed = (
+        stu.map(lambda s: _has_status(s, "Подписан", "Согласован", "Принят"))
+        & (~is_on_agree)
+        & (~is_on_sign)
+    )
 
     if "KrState" in filtered.columns:
         kb = filtered["KrState"].map(_krstate_bucket)
-        is_signed = is_signed | (kb == "signed")
+        # KrState bucket «active» = «На согласовании» (не финальный) → НЕ добавлять в is_signed.
+        is_signed = is_signed | ((kb == "signed") & (~is_on_agree) & (~is_on_sign))
         is_declined = is_declined | (kb == "declined")
         is_on_agree = is_on_agree | (kb == "active")
 
@@ -17984,14 +18046,25 @@ def dashboard_executive_documentation(df):
                 "Просрочка подрядчика": 0,
                 "Просрочка заказчика": 0,
             }
+        # Дедуплицируем по DocID (одна строка = один документ, последний snapshot
+        # в данной выборке) — иначе .sum() считает строки snapshot-истории.
+        dfp = _latest_snapshot(dfp)
         stu_loc = dfp["Статус"].astype(str)
-        signed_loc = stu_loc.map(lambda s: _has_status(s, "Подписан", "Согласован"))
+        sl_loc = stu_loc.str.lower()
+        # См. фикс выше: переходные «На согласовании» / «На подписании» не должны
+        # учитываться в «Принято».
+        on_agree_loc = sl_loc.str.contains("на согласовани", na=False)
+        on_sign_loc = sl_loc.str.contains("на подписани", na=False)
+        rework_loc = sl_loc.str.contains("доработ", na=False)
         declined_loc = stu_loc.map(lambda s: _has_status(s, "Отказ"))
-        on_agree_loc = stu_loc.str.lower().str.contains("на согласовании", na=False)
-        rework_loc = stu_loc.str.lower().str.contains("доработ", na=False)
+        signed_loc = (
+            stu_loc.map(lambda s: _has_status(s, "Подписан", "Согласован", "Принят"))
+            & (~on_agree_loc)
+            & (~on_sign_loc)
+        )
         if "KrState" in dfp.columns:
             kb_loc = dfp["KrState"].map(_krstate_bucket)
-            signed_loc = signed_loc | (kb_loc == "signed")
+            signed_loc = signed_loc | ((kb_loc == "signed") & (~on_agree_loc) & (~on_sign_loc))
             declined_loc = declined_loc | (kb_loc == "declined")
             on_agree_loc = on_agree_loc | (kb_loc == "active")
         overdue_loc = (~signed_loc) & (~declined_loc)
@@ -18240,7 +18313,12 @@ def dashboard_executive_documentation(df):
         rows_out = []
         for _, row in disp.iterrows():
             st_l = str(row.get("Статус", ""))
-            signed_row = _has_status(st_l, "Подписан", "Согласован")
+            st_low = st_l.lower()
+            _is_transitional = ("на согласовани" in st_low) or ("на подписани" in st_low)
+            signed_row = (
+                _has_status(st_l, "Подписан", "Согласован", "Принят")
+                and not _is_transitional
+            )
             hide_ov = hide_overdue_if_done and signed_row
             plan_d = row.get(plan_col) if plan_col else None
             fact_d = row.get(completed_col) if completed_col else None
