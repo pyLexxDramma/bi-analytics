@@ -6473,13 +6473,7 @@ def dashboard_plan_fact_dates(df):
         )
 
     if not show_covenant_ui:
-        st.markdown("**Таблица**")
-        st.subheader("Отклонение от базового плана (таблица)")
-        with st.expander("Сводка по таблице", expanded=False):
-            suppress_caption(
-                f"Записей: {len(summary_df)} · тип: {dates_value_type}. "
-                "Сортировка — блоком «Сортировка таблицы» выше (через `st.dataframe` клик по заголовку отключён)."
-            )
+        st.subheader("Отклонение от базового плана")
         _render_dates_main_table()
         render_dataframe_excel_csv_downloads(
             summary_display,
