@@ -18996,8 +18996,202 @@ def dashboard_project_documentation(df):
         dashboard_pd_delay(df)
 
 
+# ==================== DASHBOARD 8/9: «Утверждённый бюджет план/факт» (ТЗ заказчика 2026-05-07) ====================
+# Старая логика (gauge «Исполнение бюджета», KPI-метрики и большая гистограмма с типами «План/Факт/Корректировка/Отклонение»)
+# исключена — заказчик прямо указал «такой визуал нас не устраивает и не был ранее в правках».
+# Источник данных приоритетно — `try_approved_budget_from_1c_dannye` (БДДС/ПЛАН без «(БДР)» vs БДДС/ФАКТ).
+# Если 1С-выгрузки нет — fallback на MSP-колонки `budget plan / budget fact`.
+def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
+    """Утверждённый бюджет план/факт (ТЗ «ФИНАНСЫ» от 2026-05-07).
+
+    - Чарт: группированные столбцы по проектам (План=фиолетовый, Факт=малиновый), как на рис. 4 ТЗ.
+    - Раскрывающаяся таблица: Проект | Утверждённый бюджет | Фактические расходы | Отклонение.
+    - Цвет «Отклонение»: <0 — красный, >0 — зелёный (через `budget_table_to_html(deviation_red_if_negative=True)`).
+    - Фильтр Проект (по умолчанию «Все»).
+    """
+    st.header("Утверждённый бюджет план/факт")
+    df = df.copy()
+    from dashboards.finance_from_1c import (
+        ensure_budget_frame_with_fallback,
+        try_approved_budget_from_1c_dannye,
+    )
+
+    ref = st.session_state.get("reference_1c_dannye")
+    syn = try_approved_budget_from_1c_dannye(reference_1c_dannye=ref)
+    used_1c_approved = bool(syn is not None and not syn.empty)
+
+    if used_1c_approved:
+        budget_df = syn.copy()
+        st.caption(
+            "Источник: оборотно-сальдовая ведомость 1С (`*_dannye.json`); "
+            "ТипСтатьи=«БДДС», Сценарий ∈ {ПЛАН (без статей с маркером «(БДР)»), ФАКТ}; "
+            "сумма приведена к рублям (× 1000)."
+        )
+    else:
+        ensure_budget_columns(df)
+        df, _ = ensure_budget_frame_with_fallback(df, show_caption=True)
+        ensure_budget_columns(df)
+        budget_df = df
+
+    if "project name" in budget_df.columns:
+        budget_df = _project_column_apply_canonical(budget_df, "project name")
+
+    if "project name" in budget_df.columns:
+        projects = ["Все"] + _unique_project_labels_for_select(budget_df["project name"])
+        selected_project = st.selectbox(
+            "Фильтр по проекту", projects, key="approved_budget_project"
+        )
+    else:
+        selected_project = "Все"
+        st.info("Колонка 'project name' не найдена.")
+
+    filtered_df = budget_df.copy()
+    if selected_project != "Все" and "project name" in filtered_df.columns:
+        filtered_df = filtered_df[
+            filtered_df["project name"].map(_project_filter_norm_key)
+            == _project_filter_norm_key(selected_project)
+        ]
+
+    if (
+        "budget plan" not in filtered_df.columns
+        or "budget fact" not in filtered_df.columns
+    ):
+        st.warning(
+            "Столбцы бюджета (`budget plan` / `budget fact`) не найдены в данных. "
+            "Загрузите выгрузку 1С (`web/1с_*_dannye.json`) или MSP-фрейм с этими колонками."
+        )
+        return
+
+    filtered_df["budget plan"] = pd.to_numeric(filtered_df["budget plan"], errors="coerce").fillna(0.0)
+    filtered_df["budget fact"] = pd.to_numeric(filtered_df["budget fact"], errors="coerce").fillna(0.0)
+
+    if "project name" in filtered_df.columns:
+        agg = (
+            filtered_df.groupby("project name", dropna=False)
+            .agg(plan=("budget plan", "sum"), fact=("budget fact", "sum"))
+            .reset_index()
+        )
+    else:
+        agg = pd.DataFrame(
+            [
+                {
+                    "project name": "Итого",
+                    "plan": float(filtered_df["budget plan"].sum()),
+                    "fact": float(filtered_df["budget fact"].sum()),
+                }
+            ]
+        )
+    if agg.empty:
+        st.info("Нет данных для отображения по выбранному фильтру.")
+        return
+
+    plan_total = float(agg["plan"].sum())
+    fact_total = float(agg["fact"].sum())
+    dev_total = fact_total - plan_total
+
+    bar_rows = []
+    for _, r in agg.iterrows():
+        bar_rows.append(
+            {
+                "Проект": str(r["project name"]),
+                "Тип": "Утверждённый бюджет",
+                "Сумма_млн": float(r["plan"]) / 1e6,
+            }
+        )
+        bar_rows.append(
+            {
+                "Проект": str(r["project name"]),
+                "Тип": "Фактические расходы",
+                "Сумма_млн": float(r["fact"]) / 1e6,
+            }
+        )
+    bar_df = pd.DataFrame(bar_rows)
+    fig = px.bar(
+        bar_df,
+        x="Проект",
+        y="Сумма_млн",
+        color="Тип",
+        barmode="group",
+        text="Сумма_млн",
+        color_discrete_map={
+            "Утверждённый бюджет": "#5e35b1",
+            "Фактические расходы": "#d81b60",
+        },
+        labels={"Сумма_млн": "млн руб.", "Проект": "Проект"},
+    )
+    fig.update_traces(
+        texttemplate="%{text:,.2f} млн",
+        textposition="outside",
+        cliponaxis=False,
+    )
+    fig.update_layout(
+        height=480,
+        xaxis_title="Проект",
+        yaxis_title="млн руб.",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=56, r=24, t=72, b=120),
+        xaxis=dict(tickangle=-15, tickfont=dict(size=12)),
+    )
+    fig = apply_chart_background(fig)
+    render_chart(
+        fig,
+        caption_below="Сравнение «Утверждённый бюджет» (ПЛАН без БДР) и «Фактические расходы» (ФАКТ) по проектам",
+    )
+
+    with st.expander("Детальные данные", expanded=False):
+        table_df = agg.copy()
+        table_df["dev"] = table_df["fact"] - table_df["plan"]
+        table_display = pd.DataFrame(
+            {
+                "Проект": table_df["project name"].astype(str),
+                "Утверждённый бюджет, млн руб.": (table_df["plan"] / 1e6)
+                .round(2)
+                .map(lambda x: f"{x:.2f}"),
+                "Фактические расходы, млн руб.": (table_df["fact"] / 1e6)
+                .round(2)
+                .map(lambda x: f"{x:.2f}"),
+                "Отклонение, млн руб.": (table_df["dev"] / 1e6)
+                .round(2)
+                .map(lambda x: f"{x:.2f}"),
+            }
+        )
+        if len(agg) > 1:
+            total_row = pd.DataFrame(
+                [
+                    {
+                        "Проект": "Итого",
+                        "Утверждённый бюджет, млн руб.": f"{plan_total / 1e6:.2f}",
+                        "Фактические расходы, млн руб.": f"{fact_total / 1e6:.2f}",
+                        "Отклонение, млн руб.": f"{dev_total / 1e6:.2f}",
+                    }
+                ]
+            )
+            table_display = pd.concat([table_display, total_row], ignore_index=True)
+        st.markdown(
+            budget_table_to_html(
+                table_display,
+                finance_deviation_column="Отклонение, млн руб.",
+                deviation_red_if_negative=True,
+            ),
+            unsafe_allow_html=True,
+        )
+        render_dataframe_excel_csv_downloads(
+            table_display,
+            file_stem="approved_budget",
+            key_prefix="approved_budget",
+        )
+
+
 # ==================== DASHBOARD 8: Budget by Type (Plan/Fact/Reserve) ====================
 def dashboard_budget_by_type(df):
+    """Точка входа отчёта «Бюджет план/факт» / «Утверждённый бюджет план/факт».
+
+    Делегирует на `_render_approved_budget_plan_fact` (новая логика по ТЗ заказчика 2026-05-07).
+    Прежняя реализация (gauge «Исполнение бюджета» + KPI-метрики + group-bar c типами
+    «План/Факт/Корректировка/Перерасход/Экономия») удалена по явному требованию заказчика.
+    """
+    _render_approved_budget_plan_fact(df)
+    return
     st.header("Бюджет план/факт")
     df = df.copy()
     from dashboards.finance_from_1c import ensure_budget_frame_with_fallback

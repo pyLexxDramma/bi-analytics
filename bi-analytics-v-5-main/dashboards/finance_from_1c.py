@@ -230,6 +230,105 @@ def _bddds_impute_missing_plan_from_fact_ratio(odf: pd.DataFrame) -> pd.DataFram
     return out
 
 
+# ==================== B-08/09 (2026-05-07): Утверждённый бюджет план/факт ====================
+# ТЗ заказчика (скрин «ФИНАНСЫ» от 2026-05-07):
+#
+#     Утверждённый бюджет (=План)
+#         = строки  ТипСтатьи == «БДДС»  ∧  Сценарий == «ПЛАН»
+#                 ∧ «Статья оборотов»  БЕЗ маркера «(БДР)»
+#           SUM(Сумма) × 1000   (1С отдаёт в тыс.руб → приводим к руб)
+#
+#     Фактические расходы (=Факт)
+#         = строки  ТипСтатьи == «БДДС»  ∧  Сценарий == «ФАКТ»
+#           SUM(Сумма) × 1000
+#
+# В отличие от `try_synthetic_budget_from_1c_dannye` (БДДС/БДР) — НЕ применяется фильтр
+# `_turnover_article_has_lot_and_sublot` (заказчик хочет ВСЕ статьи, кроме (БДР)),
+# и НЕ выполняется article-split / impute по коэффициенту план/факт. Сводка идёт по проекту.
+def try_approved_budget_from_1c_dannye(
+    *,
+    reference_1c_dannye: Optional[pd.DataFrame] = None,
+) -> Optional[pd.DataFrame]:
+    """
+    Возвращает DataFrame для отчёта «Утверждённый бюджет план/факт»:
+    columns = [project name, budget plan, budget fact].
+    Один row per project (агрегат). Денежные значения — в РУБЛЯХ.
+
+    Возвращает None, если нет нужных колонок или нет ни одной БДДС-строки.
+    """
+    if reference_1c_dannye is not None:
+        ref = reference_1c_dannye
+    else:
+        import streamlit as st
+
+        ref = st.session_state.get("reference_1c_dannye")
+    if ref is None or not isinstance(ref, pd.DataFrame) or ref.empty:
+        return None
+
+    t = ref.copy()
+    c_typ = _pick_col(t, ("ТипСтатьи", "article_type", "Тип статьи"))
+    c_scen = _pick_col(t, ("Сценарий", "scenario"))
+    c_art = _pick_col(t, ("СтатьяОборотов", "Статья оборотов", "article"))
+    c_amt = _pick_col(t, ("Сумма", "amount"))
+    c_proj = _pick_col(
+        t,
+        ("Проект", "project", "проект", "проектдляотчетов", "проект для отчетов", "ИмяПроекта"),
+    )
+    if not (c_typ and c_scen and c_art and c_amt):
+        return None
+
+    typ_norm = t[c_typ].astype(str).str.strip().str.casefold()
+    bdds = t[typ_norm.eq("бддс")].copy()
+    if bdds.empty:
+        return None
+
+    scen = bdds[c_scen].astype(str).str.strip().str.casefold()
+    art_norm = (
+        bdds[c_art]
+        .astype(str)
+        .str.replace("\xa0", " ", regex=False)
+        .str.replace("\u200b", "", regex=False)
+        .str.strip()
+        .str.casefold()
+    )
+    has_bdr_marker = art_norm.str.contains(r"\(бдр\)", regex=True, na=False) | art_norm.eq("бдр")
+    amt = _coerce_1c_money_series(bdds[c_amt]).fillna(0.0) * 1000.0  # тыс.руб → руб
+
+    plan_mask = scen.eq("план") & ~has_bdr_marker
+    fact_mask = scen.eq("факт")
+
+    bdds["__plan"] = np.where(plan_mask.to_numpy(), amt.to_numpy(), 0.0)
+    bdds["__fact"] = np.where(fact_mask.to_numpy(), amt.to_numpy(), 0.0)
+
+    if c_proj and c_proj in bdds.columns:
+        grp = (
+            bdds.groupby(c_proj, dropna=False, sort=True)[["__plan", "__fact"]]
+            .sum()
+            .reset_index()
+            .rename(columns={c_proj: "project name"})
+        )
+    else:
+        grp = pd.DataFrame(
+            [
+                {
+                    "project name": "—",
+                    "__plan": float(bdds["__plan"].sum()),
+                    "__fact": float(bdds["__fact"].sum()),
+                }
+            ]
+        )
+
+    out = pd.DataFrame(
+        {
+            "project name": grp["project name"],
+            "budget plan": grp["__plan"].astype(float),
+            "budget fact": grp["__fact"].astype(float),
+        }
+    )
+    out.attrs["data_source_1c_approved_budget"] = True
+    return out
+
+
 def try_synthetic_budget_from_1c_dannye(
     *,
     reference_1c_dannye: Optional[pd.DataFrame] = None,
