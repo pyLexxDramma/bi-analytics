@@ -19023,8 +19023,8 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
     if used_1c_approved:
         budget_df = syn.copy()
         st.caption(
-            "Источник: оборотно-сальдовая ведомость 1С (`*_dannye.json`); "
-            "ТипСтатьи=«БДДС», Сценарий ∈ {ПЛАН (без статей с маркером «(БДР)»), ФАКТ}; "
+            "Источник: оборотно-сальдовая ведомость 1С (файлы web/1с\\_\\*\\_dannye.json); "
+            "ТипСтатьи = «БДДС», Сценарий ∈ {ПЛАН (без статей с маркером «(БДР)»), ФАКТ}; "
             "сумма приведена к рублям (× 1000)."
         )
     else:
@@ -19125,14 +19125,40 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
         cliponaxis=False,
     )
     fig.update_layout(
-        height=480,
+        height=520,
         xaxis_title="Проект",
         yaxis_title="млн руб.",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(l=56, r=24, t=72, b=120),
-        xaxis=dict(tickangle=-15, tickfont=dict(size=12)),
+        # ВАЖНО: orientation="v" — иначе apply_chart_background затирает позицию
+        # горизонтальной легенды на y=-0.25 (наезжает на подписи проектов).
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=1.0,
+            xanchor="left",
+            x=1.02,
+            title_text="",
+        ),
+        margin=dict(l=64, r=220, t=64, b=96),
+        xaxis=dict(tickangle=0, tickfont=dict(size=12)),
+        bargap=0.25,
+        bargroupgap=0.08,
     )
     fig = apply_chart_background(fig)
+    # Повторно фиксируем легенду/маржины ПОСЛЕ apply_chart_background — на случай, если
+    # глобальный стиль сбрасывает позицию (legend_base.y=-0.25 ломает вёрстку при 3 проектах).
+    fig.update_layout(
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=1.0,
+            xanchor="left",
+            x=1.02,
+            font=dict(color=TABLE_TEXT_COLOR, size=12),
+            bgcolor="rgba(0,0,0,0)",
+            title_text="",
+        ),
+        margin=dict(l=64, r=220, t=64, b=96),
+    )
     render_chart(
         fig,
         caption_below="Сравнение «Утверждённый бюджет» (ПЛАН без БДР) и «Фактические расходы» (ФАКТ) по проектам",
