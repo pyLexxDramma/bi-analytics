@@ -1117,12 +1117,21 @@ def _ds_plan_fact_otkl_mln(project_data: Optional[pd.DataFrame]) -> Tuple[Option
     art_s = b[art_col].astype(str) if art_col and art_col in b.columns else pd.Series("", index=b.index)
     # ТЗ (file-003): статьи оборотов — все, кроме содержащих «(БДР)» в названии
     bdr_in_article = art_s.str.contains(r"\(\s*бдр\s*\)", case=False, na=False, regex=True)
+    # B-2.2/B-06 (2026-05-07): план распознаётся не только по «бюджет», но и
+    # по «план/plan» — в выгрузках 1С `*_dannye.json` сценарии обозначаются
+    # значениями `ПЛАН/ФАКТ` (см. план-документ: «830 строк ТипСтатьи=БДДС,
+    # Сценарий: ФАКТ=731 / ПЛАН=99»). Раньше «ПЛАН» в Сценарии полностью
+    # игнорировался, отсюда «План=0.0» в матрице.
+    is_fact_scen = scen_s.str.contains(r"факт|fact", case=False, na=False, regex=True)
+    is_plan_scen = scen_s.str.contains(
+        r"бюджет|budget|\bплан\b|\bplan\b", case=False, na=False, regex=True
+    ) & ~is_fact_scen
     plan_mask = (
-        scen_s.str.contains("бюджет", case=False, na=False)
+        is_plan_scen
         & art_s.astype(str).str.strip().ne("")
         & ~bdr_in_article
     )
-    fact_mask = scen_s.str.contains("факт", case=False, na=False)
+    fact_mask = is_fact_scen
     if art_col and art_col in b.columns:
         fact_mask = (
             fact_mask
@@ -1131,7 +1140,14 @@ def _ds_plan_fact_otkl_mln(project_data: Optional[pd.DataFrame]) -> Tuple[Option
         )
     plan_sum = pd.to_numeric(b.loc[plan_mask, sum_col], errors="coerce").fillna(0).sum()
     fact_sum = pd.to_numeric(b.loc[fact_mask, sum_col], errors="coerce").fillna(0).sum()
-    return float(plan_sum) / 1e6, float(fact_sum) / 1e6, float(plan_sum - fact_sum) / 1e6
+    # B-2.2/B-06 (2026-05-07): обороты 1С приходят в **тыс. руб.** (см. эталон
+    # `finance_from_1c.try_synthetic_budget_from_1c_dannye`, L295: «1С обороты
+    # … передаются в тыс. руб.; приводим к рублям»). Раньше тут было `/ 1e6`
+    # без множителя × 1000 — значения матрицы оказывались занижены в 1000 раз.
+    # Корректная формула: `× 1000 (тыс.руб → руб) / 1e6 (руб → млн.руб) = / 1000`.
+    plan_mln = float(plan_sum) / 1000.0
+    fact_mln = float(fact_sum) / 1000.0
+    return plan_mln, fact_mln, plan_mln - fact_mln
 
 
 def _tessa_to_dt(series: pd.Series) -> pd.Series:
