@@ -56,10 +56,10 @@ REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
         ],
     ),
     (
-        "График движения рабочей силы",
+        "ГДРС",
         [
-            "График движения рабочей силы",
-            "ГДРС Техника",
+            "График движения рабочей силы (люди)",
+            "График движения рабочей силы (техника)",
         ],
     ),
     (
@@ -143,10 +143,26 @@ def _get_dashboards() -> Dict[str, Callable]:
     if dashboard_technique_tabs is None:
         dashboard_technique_tabs = _renderers.dashboard_technique
     dashboard_workforce_movement = _renderers.dashboard_workforce_movement
-    # R23-05 стр.14: восстановленный отчёт «Техника».
+    # R23-05 стр.14: восстановленный отчёт «Техника» (legacy, оставлен для совместимости).
     dashboard_gdrs_equipment = getattr(_renderers, "dashboard_gdrs_equipment", None)
     if dashboard_gdrs_equipment is None:
         dashboard_gdrs_equipment = dashboard_technique_tabs
+    # ТЗ заказчика 2026-05-07: новые дашборды ГДРС — люди и техника как отдельные пункты меню
+    # (см. docs/TZ_GDRS_2026-05-07.md). Общая реализация в dashboards/_renderers.dashboard_gdrs;
+    # обёртки dashboard_gdrs_people / dashboard_gdrs_equipment_v2 фиксируют параметр vid.
+    dashboard_gdrs = getattr(_renderers, "dashboard_gdrs", None)
+    dashboard_gdrs_people = getattr(_renderers, "dashboard_gdrs_people", None)
+    dashboard_gdrs_equipment_v2 = getattr(_renderers, "dashboard_gdrs_equipment_v2", None)
+    if dashboard_gdrs_people is None and dashboard_gdrs is not None:
+        dashboard_gdrs_people = lambda df: dashboard_gdrs(df)  # noqa: E731
+    if dashboard_gdrs_equipment_v2 is None and dashboard_gdrs is not None:
+        dashboard_gdrs_equipment_v2 = lambda df: dashboard_gdrs(df)  # noqa: E731
+    if dashboard_gdrs is None:
+        dashboard_gdrs = dashboard_technique_tabs
+    if dashboard_gdrs_people is None:
+        dashboard_gdrs_people = dashboard_technique_tabs
+    if dashboard_gdrs_equipment_v2 is None:
+        dashboard_gdrs_equipment_v2 = dashboard_gdrs_equipment
     dashboard_executive_documentation = getattr(_renderers, "dashboard_executive_documentation", None)
     if dashboard_executive_documentation is None:
 
@@ -222,10 +238,15 @@ def _get_dashboards() -> Dict[str, Callable]:
         "Рабочая/Проектная документация": dashboard_documentation,
         "Рабочая документация": dashboard_working_documentation,
         "Проектная документация": dashboard_project_documentation,
-        # ТЗ меню: «График движения рабочей силы» = бывший «ГДРС» (рабочие); «ГДРС» — синоним для deep-link и настроек.
-        "График движения рабочей силы": dashboard_technique_tabs,
-        "ГДРС": dashboard_technique_tabs,
-        "ГДРС Техника": dashboard_gdrs_equipment,
+        # ТЗ заказчика 2026-05-07 (уточнено 2026-05-07 v2): «ГДРС» — категория с двумя
+        # отдельными пунктами меню «График движения рабочей силы (люди)» и
+        # «График движения рабочей силы (техника)» (каждый = отдельный дашборд).
+        # Алиасы (старые deep-link/настройки) направлены в соответствующий пункт.
+        "График движения рабочей силы (люди)": dashboard_gdrs_people,
+        "График движения рабочей силы (техника)": dashboard_gdrs_equipment_v2,
+        "ГДРС": dashboard_gdrs_people,
+        "График движения рабочей силы": dashboard_gdrs_people,
+        "ГДРС Техника": dashboard_gdrs_equipment_v2,
         "Дебиторская и кредиторская задолженность подрядчиков": dashboard_debit_credit,
         "Исполнительная документация": dashboard_executive_documentation,
         "Просрочка выдачи РД": dashboard_rd_delay,
@@ -241,7 +262,7 @@ def _get_dashboards() -> Dict[str, Callable]:
 # Ленивая загрузка, чтобы при импорте dashboards не тянуть project_visualization_app
 # Увеличьте версию при изменении реестра отчётов — иначе долгоживущий процесс Streamlit
 # может держать устаревший словарь в памяти.
-_DASHBOARDS_REGISTRY_VERSION = 80
+_DASHBOARDS_REGISTRY_VERSION = 82
 _dashboards_cache: Dict[str, Callable] = {}
 _dashboards_cache_version: int = 0
 

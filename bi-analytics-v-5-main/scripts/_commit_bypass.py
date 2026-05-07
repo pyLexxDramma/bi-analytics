@@ -31,9 +31,14 @@ def run(args: list[str], cwd: Path | None = None, check: bool = True, capture: b
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("paths", nargs="+", help="paths to add (relative to repo root)")
-    ap.add_argument("-m", "--message", required=True)
+    ap.add_argument("paths", nargs="*", help="paths to add (relative to repo root)")
+    ap.add_argument("-m", "--message", default=None)
+    ap.add_argument("-F", "--file", default=None, help="read commit message from file")
     args = ap.parse_args()
+
+    if not args.message and not args.file:
+        print("Either -m MESSAGE or -F FILE is required", file=sys.stderr)
+        return 2
 
     top = Path(run(["git", "rev-parse", "--show-toplevel"]).stdout.strip())
 
@@ -42,7 +47,10 @@ def main() -> int:
 
     tree = run(["git", "write-tree"], cwd=top).stdout.strip()
     parent = run(["git", "rev-parse", "HEAD"], cwd=top).stdout.strip()
-    commit = run(["git", "commit-tree", tree, "-p", parent, "-m", args.message], cwd=top).stdout.strip()
+    if args.file:
+        commit = run(["git", "commit-tree", tree, "-p", parent, "-F", args.file], cwd=top).stdout.strip()
+    else:
+        commit = run(["git", "commit-tree", tree, "-p", parent, "-m", args.message], cwd=top).stdout.strip()
     run(["git", "update-ref", "HEAD", commit], cwd=top)
 
     log = run(["git", "log", "-1", "--pretty=%H%n%B"], cwd=top).stdout

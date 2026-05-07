@@ -19,6 +19,73 @@ from config import MSP_PROJECT_FILTER_EXCLUDE_NAMES, RUSSIAN_MONTHS
 
 from .ui_quiet import inject_unified_filters_css, filters_panel, suppress_caption
 
+
+def _inject_multiselect_ru_translations() -> None:
+    """Точечная локализация англоязычных подписей `st.multiselect` (Streamlit 1.50+):
+    «Choose options» / «Select all» / «Select N matches» / «No results».
+
+    Использует `st.components.v1.html` с MutationObserver, работающий через
+    `window.parent.document` (iframe и родительская страница имеют одинаковый origin
+    при локальном/Streamlit-Cloud рендере).
+    """
+    components.html(
+        """
+        <script>
+        (function(){
+            try {
+                var doc = window.parent && window.parent.document;
+                if (!doc) return;
+                var TRANSLATIONS = {
+                    'Choose options': 'Выберите варианты',
+                    'Choose an option': 'Выберите вариант',
+                    'Select all': 'Выбрать все',
+                    'No results': 'Нет результатов',
+                    'No options': 'Нет вариантов',
+                    'No matches': 'Нет совпадений'
+                };
+                var SELECT_N_RE = /^Select (\\d+) matches$/;
+                function tr(node) {
+                    if (node.nodeType !== 3) return;
+                    var t = node.nodeValue;
+                    if (!t) return;
+                    var s = t.trim();
+                    if (!s) return;
+                    if (TRANSLATIONS[s]) {
+                        node.nodeValue = t.replace(s, TRANSLATIONS[s]);
+                        return;
+                    }
+                    var m = s.match(SELECT_N_RE);
+                    if (m) {
+                        node.nodeValue = t.replace(s, 'Выбрать ' + m[1] + ' совпадений');
+                    }
+                }
+                function walk(root) {
+                    if (!root) return;
+                    if (root.nodeType === 3) { tr(root); return; }
+                    if (root.nodeType !== 1 && root.nodeType !== 9) return;
+                    var w = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+                    var n;
+                    while ((n = w.nextNode())) tr(n);
+                }
+                walk(doc.body);
+                var obs = new MutationObserver(function(muts){
+                    for (var i=0;i<muts.length;i++){
+                        var m = muts[i];
+                        if (m.type === 'characterData') tr(m.target);
+                        if (m.addedNodes) {
+                            for (var j=0;j<m.addedNodes.length;j++) walk(m.addedNodes[j]);
+                        }
+                    }
+                });
+                obs.observe(doc.body, {subtree:true, childList:true, characterData:true});
+            } catch(e) { /* noop */ }
+        })();
+        </script>
+        """,
+        height=0,
+    )
+
+
 from dashboards.dev_projects_tz_matrix import (
     build_dev_tz_matrix_rows,
     ensure_msp_df_for_dev_matrix,
@@ -15855,6 +15922,422 @@ def dashboard_gdrs_equipment(df):
     dashboard_workforce_movement(
         df, data_source_filter="Техника", show_header=False, key_prefix="gdrs_tech"
     )
+
+
+# ==================== DASHBOARD: ГДРС (новая реализация по ТЗ 2026-05-07) ====================
+def dashboard_gdrs_people(df):
+    """Подвкладка категории «ГДРС» — рабочие (люди)."""
+    return dashboard_gdrs(df, vid_locked="Рабочие")
+
+
+def dashboard_gdrs_equipment_v2(df):
+    """Подвкладка категории «ГДРС» — техника."""
+    return dashboard_gdrs(df, vid_locked="Техника")
+
+
+def dashboard_gdrs(df, vid_locked: str | None = None):
+    """
+    ГДРС — переписанный по ТЗ заказчика 2026-05-07 (см. docs/TZ_GDRS_2026-05-07.md).
+
+    Параметры:
+        vid_locked: "Рабочие" / "Техника" / None.
+            Если задан — radio-фильтр «Вид ресурсов» скрывается, дашборд работает в этом режиме
+            (используется обёртками dashboard_gdrs_people / dashboard_gdrs_equipment_v2).
+
+    Источники:
+      • web/AI/other_<DD-MM-YYYY>_resursi.csv  → план/факт по неделям, по контрагентам.
+      • web/1с_*_Dogovor.json (все snapshot)   → план (Количество_Людей / Количество_Техники)
+                                                 + Наименование_Договора (для «Вид работы»).
+      • web/1с_*_spravochniki.json (все)       → fallback план (КоличествоРаботников / СпецТехники).
+
+    UI: 3 таба «Таблица / Динамика / Сводка по контрагентам».
+    Фильтры сверху: Проект (multi), Контрагент (multi), [Вид ресурсов — только если не locked],
+                    Период (date range), «Только с планом» (checkbox).
+    """
+    import os
+    import sys
+    from pathlib import Path as _Path
+    import pandas as _pd
+    import numpy as _np
+
+    _this = os.path.dirname(os.path.abspath(__file__))
+    _root = os.path.dirname(_this)
+    if _root not in sys.path:
+        sys.path.insert(0, _root)
+    from dashboards.gdrs_resursi import (
+        build_main_table,
+        build_summary_table,
+        load_plan_aggregate,
+        load_resursi_files,
+    )
+
+    if vid_locked == "Рабочие":
+        st.header("График движения рабочей силы (люди)")
+    elif vid_locked == "Техника":
+        st.header("График движения рабочей силы (техника)")
+    else:
+        st.header("ГДРС")
+    st.caption("Источник: ресурсы CSV + 1С Договоры/Справочники (snapshot на дату последнего файла ресурсов)")
+
+    _inject_multiselect_ru_translations()
+
+    web_dir = _Path(_root) / "web"
+    ai_dir = web_dir / "AI"
+
+    resursi_files = sorted(ai_dir.glob("*resursi*.csv"))
+    if not resursi_files:
+        resursi_files = sorted(web_dir.glob("*resursi*.csv"))
+    dogovor_files = sorted(web_dir.glob("*_Dogovor.json"))
+    sprav_files = sorted(web_dir.glob("*_spravochniki.json"))
+
+    if not resursi_files:
+        st.warning(
+            "Не найдены файлы ресурсов «other_*_resursi.csv» в папке web/AI. "
+            "Загрузите ресурсный CSV через ETL или поместите в web/AI."
+        )
+        return
+
+    with st.spinner("Загрузка ресурсов и плана…"):
+        long_fact = load_resursi_files(resursi_files)
+    if long_fact is None or long_fact.empty:
+        st.error("Файлы ресурсов не распознаны (формат?). Проверьте структуру CSV.")
+        return
+
+    min_date = _pd.to_datetime(long_fact["date"]).min()
+    max_date = _pd.to_datetime(long_fact["date"]).max()
+    snapshot_date = max_date
+    default_from = max_date.replace(day=1)
+    default_to = max_date
+
+    plan = load_plan_aggregate(dogovor_files, sprav_files, snapshot_date=snapshot_date)
+
+    use_radio = vid_locked is None
+    fcol_specs = [1.4, 1.4, 1.0, 1.6, 1.0] if use_radio else [1.4, 1.4, 1.6, 1.0]
+    fcols = st.columns(fcol_specs)
+    project_options = sorted(long_fact["project_name"].dropna().unique().tolist())
+    with fcols[0]:
+        sel_projects = st.multiselect(
+            "Проект", project_options, default=project_options,
+            key=f"gdrs_filter_projects_{vid_locked or 'any'}",
+            placeholder="Выберите проекты",
+        )
+    contractor_options = sorted(
+        long_fact[long_fact["project_name"].isin(sel_projects)]["contractor_name"].dropna().unique().tolist()
+    )
+    with fcols[1]:
+        sel_contractors = st.multiselect(
+            "Контрагент", contractor_options, default=[],
+            key=f"gdrs_filter_contractors_{vid_locked or 'any'}",
+            help="Пусто = все контрагенты выбранных проектов",
+            placeholder="Выберите контрагентов",
+        )
+    if use_radio:
+        with fcols[2]:
+            sel_vid = st.radio(
+                "Вид ресурсов", ["Рабочие", "Техника"], horizontal=True,
+                key=f"gdrs_filter_vid_{vid_locked or 'any'}",
+            )
+        date_idx, plan_idx = 3, 4
+    else:
+        sel_vid = vid_locked
+        date_idx, plan_idx = 2, 3
+    with fcols[date_idx]:
+        sel_dates = st.date_input(
+            "Период (от — до)",
+            value=(default_from.date(), default_to.date()),
+            min_value=min_date.date(),
+            max_value=max_date.date(),
+            key=f"gdrs_filter_dates_{vid_locked or 'any'}",
+            help="По умолчанию — последний месяц с данными (6 колонок недель в ТЗ)",
+        )
+    with fcols[plan_idx]:
+        only_with_plan = st.checkbox(
+            "Только с планом", value=True,
+            key=f"gdrs_filter_only_plan_{vid_locked or 'any'}",
+            help="Скрыть подрядчиков без плана в активном договоре",
+        )
+
+    if isinstance(sel_dates, (tuple, list)) and len(sel_dates) == 2:
+        date_from, date_to = sel_dates
+    else:
+        date_from = sel_dates if not isinstance(sel_dates, (list, tuple)) else sel_dates[0]
+        date_to = date_from
+    date_from = _pd.to_datetime(date_from)
+    date_to = _pd.to_datetime(date_to)
+
+    main_t = build_main_table(
+        long_fact, plan,
+        vid=sel_vid,
+        date_from=date_from, date_to=date_to,
+        projects=sel_projects or None,
+        contractors=sel_contractors or None,
+        only_with_plan=only_with_plan,
+    )
+    summary_t = build_summary_table(
+        long_fact, plan,
+        vid=sel_vid,
+        date_from=date_from, date_to=date_to,
+        projects=sel_projects or None,
+        contractors=sel_contractors or None,
+    )
+
+    if main_t is None or main_t.empty:
+        st.info("Нет данных для выбранных фильтров.")
+        return
+
+    tabs = st.tabs(["Таблица", "Динамика", "Сводка по контрагентам"])
+
+    # ---------- Таб 1: Таблица (Скрин 11) ----------
+    with tabs[0]:
+        period_label = (
+            f"{date_from.strftime('%d.%m.%Y')} — {date_to.strftime('%d.%m.%Y')}"
+            if date_from != date_to else date_from.strftime("%d.%m.%Y")
+        )
+        unit = "люди" if sel_vid == "Рабочие" else "техника"
+        c_left, c_right = st.columns([3, 1])
+        with c_left:
+            st.subheader(f"График движения рабочей силы ({unit}), {period_label}")
+        with c_right:
+            st.markdown(
+                f"<div style='text-align:right; padding-top:8px; color:#888'>{date_to.strftime('%d.%m.%Y')}</div>",
+                unsafe_allow_html=True,
+            )
+
+        period_days = max(1, (date_to - date_from).days + 1)
+        if period_days > 45:
+            st.warning(
+                f"Выбран период {period_days} дн.: в таблице ниже отображаются только первые 6 ISO-недель "
+                f"({date_from.strftime('%d.%m.%Y')} — {(date_from + _pd.Timedelta(days=42)).strftime('%d.%m.%Y')}); "
+                f"неделя 7+ не помещается в макет ТЗ. Сократите период до месяца, чтобы увидеть все недели."
+            )
+
+        view = main_t.copy()
+        view["Контрагент"] = view.apply(
+            lambda r: (
+                r["project_name"] if r["row_kind"] == "subtotal"
+                else ("Итого" if r["row_kind"] == "grand_total" else r["contractor_name"])
+            ),
+            axis=1,
+        )
+        if "vid_raboty" in view.columns:
+            vid_col = view["vid_raboty"].fillna("").astype(str)
+            fallback = view["contract_name"].fillna("").astype(str)
+            view["Вид работы"] = [v if v else (f.split(" (")[0] if f else "—") for v, f in zip(vid_col, fallback)]
+        else:
+            view["Вид работы"] = view["contract_name"].fillna("").astype(str).apply(
+                lambda s: s if s else "—"
+            )
+        view["План"] = view["plan"].fillna(0).astype(int)
+        view["СКУД"] = view["skud"].fillna(0).astype(int)
+        view["Отклонение"] = view["deviation"].fillna(0).astype(int)
+        for src, dst in (("w1", "1 неделя"), ("w2", "2 неделя"), ("w3", "3 неделя"),
+                         ("w4", "4 неделя"), ("w5", "5 неделя"), ("w6", "6 неделя")):
+            view[dst] = view[src].fillna(0).astype(int)
+        view["Дельта (%)"] = view["delta_pct"]
+
+        view["__kind__"] = view["row_kind"]
+        cols_order = ["Контрагент", "Вид работы", "План", "СКУД", "Отклонение",
+                      "1 неделя", "2 неделя", "3 неделя", "4 неделя", "5 неделя", "6 неделя",
+                      "Дельта (%)", "__kind__"]
+        view = view[cols_order]
+
+        def _row_html(row):
+            kind = row["__kind__"]
+            is_subtotal = kind == "subtotal"
+            is_grand = kind == "grand_total"
+            bg = "#1f2630" if is_subtotal else ("#102b3a" if is_grand else "transparent")
+            weight = "700" if (is_subtotal or is_grand) else "400"
+            cells = []
+            for col in cols_order[:-1]:
+                v = row[col]
+                if col == "Отклонение":
+                    color = "#ff5454" if (isinstance(v, (int, float)) and v < 0) else (
+                        "#46d68a" if (isinstance(v, (int, float)) and v > 0) else "#cccccc"
+                    )
+                    txt = f"{int(v):+d}" if v else "0"
+                    cells.append(f"<td style='text-align:right; color:{color}; font-weight:{weight};'>{txt}</td>")
+                elif col == "Дельта (%)":
+                    if v is None or (isinstance(v, float) and _np.isnan(v)):
+                        cells.append("<td style='text-align:right;'>—</td>")
+                    else:
+                        pct = float(v)
+                        if pct >= 0:
+                            cell_bg = "#1c4426"
+                        elif pct >= -30:
+                            cell_bg = "#5a3a3a"
+                        elif pct >= -80:
+                            cell_bg = "#7a2a2a"
+                        else:
+                            cell_bg = "#5a1212"
+                        cells.append(
+                            f"<td style='text-align:right; background:{cell_bg}; color:#fff; font-weight:{weight};'>"
+                            f"{pct:+.0f}%</td>"
+                        )
+                elif col in ("План", "СКУД", "1 неделя", "2 неделя", "3 неделя", "4 неделя", "5 неделя", "6 неделя"):
+                    txt = f"{int(v):,}".replace(",", " ") if v else "0"
+                    cells.append(f"<td style='text-align:right; font-weight:{weight};'>{txt}</td>")
+                else:
+                    cells.append(f"<td style='font-weight:{weight};'>{str(v) if v is not None else ''}</td>")
+            return f"<tr style='background:{bg};'>" + "".join(cells) + "</tr>"
+
+        head_html = (
+            "<thead><tr style='background:#1f2630; color:#bbb;'>"
+            + "".join(
+                f"<th style='padding:6px 8px; border-bottom:1px solid #333; text-align:{('right' if h not in ('Контрагент', 'Вид работы') else 'left')};'>{h}</th>"
+                for h in cols_order[:-1]
+            )
+            + "</tr></thead>"
+        )
+        body_html = "<tbody>" + "".join(_row_html(r) for _, r in view.iterrows()) + "</tbody>"
+        table_html = (
+            "<div style='overflow-x:auto;'>"
+            "<table style='width:100%; border-collapse:collapse; color:#eee; font-size:13px; border:1px solid #333;'>"
+            + head_html + body_html
+            + "</table></div>"
+        )
+        st.markdown(table_html, unsafe_allow_html=True)
+
+    # ---------- Таб 2: Динамика ----------
+    with tabs[1]:
+        st.subheader("Динамика людей и техники")
+        fact = long_fact.copy()
+        fact = fact[fact["vid_resursa"].astype(str).str.casefold() == sel_vid.casefold()]
+        if sel_projects:
+            fact = fact[fact["project_name"].isin(sel_projects)]
+        if sel_contractors:
+            fact = fact[fact["contractor_name"].isin(sel_contractors)]
+        if not fact.empty:
+            fact = fact[(fact["date"] >= date_from) & (fact["date"] <= date_to)]
+        if fact.empty:
+            st.info("Нет данных для выбранных фильтров.")
+        else:
+            agg_kind = st.radio(
+                "Группировка", ["Неделя", "Месяц", "Год"], horizontal=True, index=0, key="gdrs_dyn_kind",
+            )
+            f2 = fact.copy()
+            f2["date"] = _pd.to_datetime(f2["date"])
+            if agg_kind == "Неделя":
+                f2["bucket"] = f2["date"].dt.to_period("W").apply(lambda p: p.start_time)
+            elif agg_kind == "Месяц":
+                f2["bucket"] = f2["date"].dt.to_period("M").apply(lambda p: p.start_time)
+            else:
+                f2["bucket"] = f2["date"].dt.to_period("Y").apply(lambda p: p.start_time)
+            dyn = f2.groupby("bucket")["fact"].mean().reset_index()
+            dyn["Период"] = dyn["bucket"].dt.strftime("%d.%m.%Y")
+            dyn["Факт"] = dyn["fact"].round(0).astype(int)
+            try:
+                import plotly.express as _px
+                fig = _px.line(
+                    dyn, x="Период", y="Факт", markers=True,
+                    title=f"Фактическое количество — {sel_vid.lower()} (ресурсы)",
+                )
+                fig.update_traces(line=dict(color="#7eb8ff", width=2), marker=dict(size=8))
+                fig.update_layout(
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font_color="#eee",
+                    xaxis_title=f"Период — {agg_kind.lower()}",
+                    yaxis_title="Факт (среднее в день)",
+                    height=380,
+                    margin=dict(l=48, r=32, t=64, b=64),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as _e:
+                st.warning(f"Plotly недоступен: {_e}")
+                st.dataframe(dyn[["Период", "Факт"]], use_container_width=True)
+
+            st.markdown("---")
+            st.subheader("План / Факт / Отклонение по подрядчикам")
+            chart_df = main_t[main_t["row_kind"] == "row"][
+                ["contractor_name", "plan", "skud", "deviation"]
+            ].copy()
+            chart_df.rename(columns={
+                "contractor_name": "Контрагент", "plan": "План",
+                "skud": "Факт", "deviation": "Отклонение",
+            }, inplace=True)
+            chart_df = chart_df.sort_values("План", ascending=False)
+            try:
+                import plotly.graph_objects as _go
+                fig2 = _go.Figure()
+                fig2.add_bar(name="План", x=chart_df["Контрагент"], y=chart_df["План"], marker_color="#7eb8ff")
+                fig2.add_bar(name="Факт", x=chart_df["Контрагент"], y=chart_df["Факт"], marker_color="#46d68a")
+                fig2.add_bar(
+                    name="Отклонение",
+                    x=chart_df["Контрагент"],
+                    y=chart_df["Отклонение"].abs(),
+                    marker_color=[
+                        "#ff8c2d" if v < 0 else "#46d68a"
+                        for v in chart_df["Отклонение"]
+                    ],
+                )
+                fig2.update_layout(
+                    barmode="group",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font_color="#eee",
+                    xaxis_tickangle=-45,
+                    height=440,
+                    margin=dict(l=48, r=32, t=32, b=120),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                )
+                st.plotly_chart(fig2, use_container_width=True)
+            except Exception as _e:
+                st.warning(f"Plotly недоступен: {_e}")
+
+    # ---------- Таб 3: Сводка по контрагентам ----------
+    with tabs[2]:
+        st.subheader("Сводка по контрагентам")
+        if summary_t is None or summary_t.empty:
+            st.info("Нет данных по контрагентам.")
+        else:
+            view2 = summary_t.copy().rename(columns={
+                "contractor_name": "Контрагент",
+                "plan": "План",
+                "mean_per_day": "Среднее за месяц",
+                "deviation": "Отклонение",
+            })
+            view2 = view2.sort_values("План", ascending=False)
+
+            def _td_dev(v):
+                color = "#ff5454" if (isinstance(v, (int, float)) and v < 0) else (
+                    "#46d68a" if (isinstance(v, (int, float)) and v > 0) else "#cccccc"
+                )
+                return f"<td style='text-align:right; color:{color}; font-weight:600;'>{int(v):+d}</td>" if v else "<td style='text-align:right;'>0</td>"
+
+            head = (
+                "<thead><tr style='background:#1f2630; color:#bbb;'>"
+                "<th style='padding:6px 8px; border-bottom:1px solid #333; text-align:left;'>Контрагент</th>"
+                "<th style='padding:6px 8px; border-bottom:1px solid #333; text-align:right;'>План</th>"
+                "<th style='padding:6px 8px; border-bottom:1px solid #333; text-align:right;'>Среднее за месяц</th>"
+                "<th style='padding:6px 8px; border-bottom:1px solid #333; text-align:right;'>Отклонение</th>"
+                "</tr></thead>"
+            )
+            rows = []
+            for _, r in view2.iterrows():
+                rows.append(
+                    "<tr>"
+                    f"<td style='padding:4px 8px;'>{r['Контрагент']}</td>"
+                    f"<td style='padding:4px 8px; text-align:right;'>{int(r['План'])}</td>"
+                    f"<td style='padding:4px 8px; text-align:right;'>{int(r['Среднее за месяц'])}</td>"
+                    f"{_td_dev(r['Отклонение'])}"
+                    "</tr>"
+                )
+            st.markdown(
+                "<div style='overflow-x:auto;'>"
+                "<table style='width:100%; border-collapse:collapse; color:#eee; font-size:13px; border:1px solid #333;'>"
+                + head + "<tbody>" + "".join(rows) + "</tbody></table></div>",
+                unsafe_allow_html=True,
+            )
+
+            st.markdown("&nbsp;", unsafe_allow_html=True)
+            mc1, mc2, mc3 = st.columns(3)
+            with mc1:
+                st.metric("Общий план", f"{int(view2['План'].sum())}")
+            with mc2:
+                st.metric("Объём средних значений", f"{int(view2['Среднее за месяц'].sum())}")
+            with mc3:
+                tot_dev = int(view2["Отклонение"].sum())
+                st.metric("Общее отклонение", f"{tot_dev:+d}")
 # ==================== DASHBOARD: Дебиторская и кредиторская задолженность подрядчиков ====================
 def _find_col(df, names):
     """Поиск колонки по частичному совпадению (без учёта регистра)."""
