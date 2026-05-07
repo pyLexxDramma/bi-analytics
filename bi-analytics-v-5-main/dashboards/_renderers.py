@@ -22052,8 +22052,10 @@ _PRED_DASH_MOCK_CSS = """
 .pred-detail-wrap .pred-col-date { width:12ch; min-width:12ch; max-width:13ch; }
 .pred-detail-wrap .pred-col-mid { width:12ch; min-width:11ch; max-width:16ch; }
 .pred-detail-wrap .pred-col-text { width:auto; min-width:12ch; }
-.pred-detail-wrap tr.pred-row-overdue td { background:rgba(255, 111, 145, 0.12); }
-.pred-detail-wrap tr.pred-row-resolved td { background:rgba(158, 255, 158, 0.11); }
+.pred-detail-wrap tr.pred-row-overdue td { background:rgba(255, 105, 145, 0.28); border-left:3px solid #ff5d8f; }
+.pred-detail-wrap tr.pred-row-resolved td { background:rgba(150, 255, 150, 0.22); border-left:3px solid #66dd66; }
+.pred-detail-wrap tr.pred-row-overdue td:first-child,
+.pred-detail-wrap tr.pred-row-resolved td:first-child { border-left:none; }
 .pred-detail-wrap tr:hover td { background:rgba(255,255,255,0.04); }
 .pred-chip { display:inline-block; padding:3px 8px; border-radius:999px; font-size:12px; font-weight:600; border:1px solid rgba(255,255,255,0.12); }
 .pred-chip-overdue { background:rgba(230,126,34,0.18); color:#fdba74; }
@@ -24113,14 +24115,69 @@ def dashboard_predpisania(df):
     with pm3:
         st.metric("Неустраненные", n_unresolved)
 
+    # Sanity-блок для сверки с эталоном (scripts/_qa_15_pred_check.py).
+    # Свёрнут по умолчанию — открывают только при расхождении цифр.
+    with st.expander("🔬 Сверка данных с эталоном (debug)", expanded=False):
+        _sanity_cols = st.columns(3)
+        with _sanity_cols[0]:
+            st.markdown("**Распределение по KrStateID**")
+            if "KrStateID" in filtered.columns and "KrState" in filtered.columns:
+                _sanity_krs = (
+                    filtered.groupby(["KrStateID", "KrState"], dropna=False)
+                    .size()
+                    .reset_index(name="Количество")
+                    .sort_values("KrStateID")
+                )
+                st.dataframe(_sanity_krs, hide_index=True, use_container_width=True)
+            else:
+                st.caption("Нет колонок KrStateID/KrState в выборке.")
+        with _sanity_cols[1]:
+            st.markdown("**Распределение по подрядчикам**")
+            if contr_col and contr_col in filtered.columns:
+                _sanity_contr = (
+                    filtered[contr_col].astype(str).str.strip().value_counts().reset_index()
+                )
+                _sanity_contr.columns = ["Подрядчик", "Количество"]
+                st.dataframe(_sanity_contr, hide_index=True, use_container_width=True)
+            else:
+                st.caption("Нет колонки подрядчика.")
+        with _sanity_cols[2]:
+            st.markdown("**Источники данных**")
+            _src_lines = []
+            _src_lines.append(f"• Всего строк после dedup: **{len(filtered)}**")
+            _src_lines.append(f"• card_col / DocID: `{pred_doc_col or '—'}`")
+            _src_lines.append(f"• contract_col (№ договора): `{contract_col or '—'}`")
+            _src_lines.append(f"• due_col (срок устранения): `{due_col or '—'}`")
+            _src_lines.append(f"• completion_col (факт устранения): `{completion_col or '—'}`")
+            _src_lines.append(f"• creation_col (дата выдачи): `{creation_col_pred or '—'}`")
+            if "1C_ID_DOG" in filtered.columns:
+                _n_dog = int(
+                    filtered["1C_ID_DOG"].astype(str).str.strip()
+                    .replace({"": pd.NA, "nan": pd.NA, "None": pd.NA, "NaN": pd.NA}).notna().sum()
+                )
+                _src_lines.append(f"• 1C_ID_DOG заполнено: **{_n_dog} / {len(filtered)}**")
+            if "id_Deadline" in filtered.columns:
+                _dl = pd.to_datetime(filtered["id_Deadline"], errors="coerce", dayfirst=True)
+                _src_lines.append(f"• id_Deadline (parsed): **{int(_dl.notna().sum())} / {len(filtered)}**")
+            st.markdown("\n".join(_src_lines))
+
     col_chart, col_kpi = st.columns([3, 1])
 
     with col_chart:
+        # Легенда визуала по макету заказчика 07.05.2026 (скрин 5):
+        # «Внутри столбца — просроченные» (оранжевые), «Синие цифры — все неустранённые».
         st.markdown(
             _PRED_DASH_MOCK_CSS
-            + '<div class="pred-leg"><span style="color:#3498db;font-weight:600;">■</span> Длина столбца — '
-            "<strong>неустранённые</strong> предписания; подпись на столбце — <strong>просроченные</strong>. "
-            "В подсказке — период <strong>дат выдачи</strong> по группе.</div>",
+            + '<div class="pred-leg">'
+            '<span style="display:inline-flex;align-items:center;gap:6px;">'
+            '<span style="display:inline-block;width:14px;height:14px;background:#E67E22;border-radius:3px;"></span>'
+            '<strong>Внутри столбца</strong> — просроченные предписания.'
+            '</span>'
+            '<span style="display:inline-flex;align-items:center;gap:6px;margin-left:14px;">'
+            '<span style="display:inline-block;width:18px;height:18px;background:#3498db;border-radius:50%;color:#fff;font-size:11px;font-weight:700;text-align:center;line-height:18px;">N</span>'
+            '<strong>Синий пузырёк справа</strong> — все неустранённые по подрядчику.'
+            '</span>'
+            '</div>',
             unsafe_allow_html=True,
         )
         if chart_group_col and not fu.empty:
@@ -24133,32 +24190,27 @@ def dashboard_predpisania(df):
                     Макс_дата=("_issue_date", "max"),
                 )
             )
-            # R23-10: устойчивый порядок групп — сперва по убыванию кол-ва неустранённых,
-            # при равенстве — по алфавиту (lower), стабильная сортировка. Это убирает
-            # «скачки порядка строк на одних и тех же данных после refresh».
             grp["_sort_name"] = grp[chart_group_col].astype(str).str.casefold()
             grp = grp.sort_values(
                 ["Неустранено", "_sort_name"],
                 ascending=[False, True],
                 kind="mergesort",
             ).drop(columns=["_sort_name"]).reset_index(drop=True)
-            _txt = [
-                (f"проср.: {int(o)}" if int(o) > 0 else "")
+            _total_overdue_all = int(grp["Просрочено"].sum())
+            _txt_inner = [
+                (f"{int(o)}" if int(o) > 0 else "")
                 for o in grp["Просрочено"]
             ]
-            _total_overdue_all = int(grp["Просрочено"].sum())
             fig1 = go.Figure()
+            # Слой 1: «фон» = всего неустранённых по подрядчику (приглушённый оранжевый,
+            # как в макете — светлая заливка контейнера).
             fig1.add_trace(
                 go.Bar(
                     y=grp[chart_group_col],
                     x=grp["Неустранено"],
-                    name=f"Неустраненные предписания (просроченных всего: {_total_overdue_all})",
+                    name="Всего неустранённых",
                     orientation="h",
-                    marker=dict(color="#3498db", line=dict(color="rgba(255,255,255,0.12)", width=1)),
-                    text=_txt,
-                    textposition="inside",
-                    insidetextanchor="middle",
-                    textfont=dict(color="#ffffff", size=max(12, min(15, 200 // max(1, len(grp))))),
+                    marker=dict(color="rgba(230,126,34,0.22)", line=dict(color="rgba(230,126,34,0.55)", width=1)),
                     customdata=np.stack(
                         [
                             grp["Просрочено"].astype(int),
@@ -24169,72 +24221,81 @@ def dashboard_predpisania(df):
                     ),
                     hovertemplate=(
                         "<b>%{y}</b><br>"
-                        "Неустраненных: %{x}<br>"
+                        "Неустранённых: %{x}<br>"
                         "Просроченных: %{customdata[0]}<br>"
                         "Дата выдачи (мин–макс): %{customdata[1]} — %{customdata[2]}<extra></extra>"
                     ),
+                    showlegend=False,
                 )
             )
+            # Слой 2: оранжевый бар = просроченные (поверх фона).
             fig1.add_trace(
                 go.Bar(
                     y=grp[chart_group_col],
                     x=grp["Просрочено"],
-                    name="Просроченные (внутри неустранённых)",
+                    name=f"Просроченные (всего по выборке: {_total_overdue_all})",
                     orientation="h",
-                    marker=dict(color="#E67E22", line=dict(color="rgba(255,255,255,0.16)", width=1)),
-                    opacity=0.95,
-                    width=0.48,
+                    marker=dict(color="#E67E22", line=dict(color="rgba(255,255,255,0.18)", width=1)),
+                    text=_txt_inner,
+                    textposition="inside",
+                    insidetextanchor="middle",
+                    textfont=dict(color="#ffffff", size=14, family="Inter, Arial, sans-serif"),
                     hovertemplate="<b>%{y}</b><br>Просроченных: %{x}<extra></extra>",
+                    showlegend=False,
                 )
             )
-            # R23-10: отдельный невидимый трейс в легенде — число просроченных по каждой группе.
-            # Даёт требование стр. 24 п.5: «в легенду — число просроченных по подрядчику».
-            if _total_overdue_all > 0:
-                for _y, _o in zip(grp[chart_group_col].tolist(), grp["Просрочено"].astype(int).tolist()):
-                    if _o <= 0:
-                        continue
-                    fig1.add_trace(
-                        go.Scatter(
-                            x=[None],
-                            y=[None],
-                            mode="markers",
-                            marker=dict(size=10, color="#E67E22", symbol="square"),
-                            name=f"{_y} · просроченных: {_o}",
-                            hoverinfo="skip",
-                            showlegend=True,
-                        )
-                    )
-            fig1.update_layout(
-                bargap=0.26,
-                showlegend=True,
-                barmode="overlay",
-                legend=dict(orientation="h", yanchor="bottom", y=1.04, xanchor="center", x=0.5),
-            )
+            # Слой 3: «синий пузырёк» справа от каждого бара = всего неустранённых.
+            # Реализовано через Scatter с большим круглым маркером и текстом по центру.
             xmax = max(
                 float(pd.to_numeric(grp["Неустранено"], errors="coerce").fillna(0).max()),
                 1.0,
             )
             axis_upper = _pred_axis_upper_bound(xmax)
-            _row_h = 58
+            # Сдвиг пузырька за конец бара (~6% от max), чтобы не перекрывал текст внутри.
+            _bub_shift = max(axis_upper * 0.06, 0.5)
+            fig1.add_trace(
+                go.Scatter(
+                    y=grp[chart_group_col],
+                    x=grp["Неустранено"] + _bub_shift,
+                    mode="markers+text",
+                    marker=dict(
+                        size=34,
+                        color="#3498db",
+                        line=dict(color="rgba(255,255,255,0.45)", width=2),
+                        symbol="circle",
+                    ),
+                    text=[str(int(v)) for v in grp["Неустранено"]],
+                    textfont=dict(color="#ffffff", size=13, family="Inter, Arial, sans-serif"),
+                    textposition="middle center",
+                    hovertemplate="<b>%{y}</b><br>Неустранённых (всего): %{text}<extra></extra>",
+                    name="Всего неустранённых",
+                    showlegend=False,
+                )
+            )
+            fig1.update_layout(
+                bargap=0.30,
+                showlegend=False,
+                barmode="overlay",
+            )
+            # Расширяем ось X, чтобы синий пузырёк не «вылезал» за границу.
+            axis_upper_with_bubble = axis_upper + _bub_shift * 2
+            _row_h = 64
             fig1.update_layout(
                 height=max(520, len(grp) * _row_h + 200),
                 yaxis_title="",
-                xaxis_title="Количество неустраненных предписаний",
-                margin=dict(l=12, r=140, t=72, b=88),
-                # R23-10 стр.26: детерминированная ось X — фиксируем диапазон и запрещаем
-                # пользовательский zoom; uirevision стабильный, чтобы zoom/pan/reset
-                # не менялись при повторном рендере (refresh страницы).
+                xaxis_title="Количество предписаний (длина — все, внутри — просроченные)",
+                margin=dict(l=12, r=80, t=64, b=72),
                 xaxis=dict(
-                    range=[0, axis_upper],
+                    range=[0, axis_upper_with_bubble],
                     title=dict(standoff=18),
                     automargin=True,
                     fixedrange=True,
                 ),
-                yaxis=dict(automargin=True, tickfont=dict(size=13), fixedrange=True),
+                yaxis=dict(automargin=True, tickfont=dict(size=14), fixedrange=True),
                 uirevision="pred_main_chart",
                 title=dict(
-                    text="Неустраненные предписания по группе (даты выдачи — в подсказке)",
-                    font=dict(size=15),
+                    text="Неустранённые предписания по подрядчикам",
+                    font=dict(size=16),
                     x=0.5,
                     xanchor="center",
                 ),
@@ -24247,77 +24308,10 @@ def dashboard_predpisania(df):
                 caption_below="",
             )
 
-            # R23-10 стр.27: второй график — разбивка по проектам. Даёт требование
-            # «должно быть 2 графика с разделением по подрядчикам и по неустранённым
-            # предписаниям». Если основной график уже по проектам — второй не нужен.
-            second_group_col = None
-            second_label = ""
-            if chart_group_col is contr_col and obj_col and obj_col in fu.columns:
-                second_group_col = obj_col
-                second_label = "проектам"
-            elif chart_group_col is obj_col and contr_col and contr_col in fu.columns:
-                second_group_col = contr_col
-                second_label = "подрядчикам"
-            if second_group_col and fu[second_group_col].astype(str).str.strip().ne("").any():
-                grp2 = (
-                    fu.groupby(second_group_col, as_index=False)
-                    .agg(
-                        Неустранено=(second_group_col, "size"),
-                        Просрочено=("_overdue_days", lambda x: int((x > 0).sum())),
-                    )
-                )
-                grp2["_sort_name"] = grp2[second_group_col].astype(str).str.casefold()
-                grp2 = grp2.sort_values(
-                    ["Неустранено", "_sort_name"],
-                    ascending=[False, True],
-                    kind="mergesort",
-                ).drop(columns=["_sort_name"]).reset_index(drop=True)
-                _txt2 = [
-                    (f"проср.: {int(o)}" if int(o) > 0 else "")
-                    for o in grp2["Просрочено"]
-                ]
-                fig1b = go.Figure()
-                fig1b.add_trace(
-                    go.Bar(
-                        y=grp2[second_group_col],
-                        x=grp2["Неустранено"],
-                        name=f"Неустраненные предписания — по {second_label}",
-                        orientation="h",
-                        marker=dict(color="#06A77D", line=dict(color="rgba(255,255,255,0.12)", width=1)),
-                        text=_txt2,
-                        textposition="inside",
-                        insidetextanchor="middle",
-                        textfont=dict(color="#ffffff", size=max(12, min(15, 200 // max(1, len(grp2))))),
-                        hovertemplate=(
-                            "<b>%{y}</b><br>"
-                            "Неустраненных: %{x}<br>"
-                            "Просроченных: %{customdata[0]}<extra></extra>"
-                        ),
-                        customdata=np.stack([grp2["Просрочено"].astype(int)], axis=1),
-                    )
-                )
-                xmax2 = max(float(pd.to_numeric(grp2["Неустранено"], errors="coerce").fillna(0).max()), 1.0)
-                axis_upper2 = _pred_axis_upper_bound(xmax2)
-                fig1b.update_layout(
-                    bargap=0.26,
-                    showlegend=False,
-                    height=max(360, len(grp2) * 56 + 160),
-                    yaxis_title="",
-                    xaxis_title=f"Количество неустраненных предписаний — по {second_label}",
-                    margin=dict(l=12, r=140, t=56, b=64),
-                    xaxis=dict(range=[0, axis_upper2], title=dict(standoff=14), automargin=True, fixedrange=True),
-                    yaxis=dict(automargin=True, tickfont=dict(size=13), fixedrange=True),
-                    uirevision="pred_bar_by_projects",
-                    title=dict(
-                        text=f"Неустраненные предписания — по {second_label}",
-                        font=dict(size=14),
-                        x=0.5,
-                        xanchor="center",
-                    ),
-                    uniformtext=dict(minsize=11, mode="show"),
-                )
-                fig1b = apply_chart_background(fig1b)
-                render_chart(fig1b, key="pred_bar_by_projects", caption_below="")
+            # Второй чарт «по проектам» (зелёный) убран по требованию заказчика
+            # 07.05.2026 (скрин 5): в макете один бар-чарт — по подрядчикам.
+            # Разрез по проектам остаётся доступен в свёрнутом блоке
+            # «По статусам и объектам» ниже (в expander).
         else:
             if hide_resolved and filtered.loc[~filtered["_resolved"]].empty:
                 st.info("Нет данных для диаграммы: по текущим фильтрам все предписания устранены.")
