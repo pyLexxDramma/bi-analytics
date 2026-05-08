@@ -24264,49 +24264,56 @@ def dashboard_predpisania(df):
 
     # Sanity-блок для сверки с эталоном (scripts/_qa_15_pred_check.py).
     # Свёрнут по умолчанию — открывают только при расхождении цифр.
-    with st.expander("🔬 Сверка данных с эталоном (debug)", expanded=False):
-        _sanity_cols = st.columns(3)
-        with _sanity_cols[0]:
-            st.markdown("**Распределение по KrStateID**")
-            if "KrStateID" in filtered.columns and "KrState" in filtered.columns:
-                _sanity_krs = (
-                    filtered.groupby(["KrStateID", "KrState"], dropna=False)
-                    .size()
-                    .reset_index(name="Количество")
-                    .sort_values("KrStateID")
-                )
-                st.dataframe(_sanity_krs, hide_index=True, use_container_width=True)
-            else:
-                st.caption("Нет колонок KrStateID/KrState в выборке.")
-        with _sanity_cols[1]:
-            st.markdown("**Распределение по подрядчикам**")
-            if contr_col and contr_col in filtered.columns:
-                _sanity_contr = (
-                    filtered[contr_col].astype(str).str.strip().value_counts().reset_index()
-                )
-                _sanity_contr.columns = ["Подрядчик", "Количество"]
-                st.dataframe(_sanity_contr, hide_index=True, use_container_width=True)
-            else:
-                st.caption("Нет колонки подрядчика.")
-        with _sanity_cols[2]:
-            st.markdown("**Источники данных**")
-            _src_lines = []
-            _src_lines.append(f"• Всего строк после dedup: **{len(filtered)}**")
-            _src_lines.append(f"• card_col / DocID: `{pred_doc_col or '—'}`")
-            _src_lines.append(f"• contract_col (№ договора): `{contract_col or '—'}`")
-            _src_lines.append(f"• due_col (срок устранения): `{due_col or '—'}`")
-            _src_lines.append(f"• completion_col (факт устранения): `{completion_col or '—'}`")
-            _src_lines.append(f"• creation_col (дата выдачи): `{creation_col_pred or '—'}`")
-            if "1C_ID_DOG" in filtered.columns:
-                _n_dog = int(
-                    filtered["1C_ID_DOG"].astype(str).str.strip()
-                    .replace({"": pd.NA, "nan": pd.NA, "None": pd.NA, "NaN": pd.NA}).notna().sum()
-                )
-                _src_lines.append(f"• 1C_ID_DOG заполнено: **{_n_dog} / {len(filtered)}**")
-            if "id_Deadline" in filtered.columns:
-                _dl = pd.to_datetime(filtered["id_Deadline"], errors="coerce", dayfirst=True)
-                _src_lines.append(f"• id_Deadline (parsed): **{int(_dl.notna().sum())} / {len(filtered)}**")
-            st.markdown("\n".join(_src_lines))
+    # Скрыт в release-режиме (флаг BI_ANALYTICS_HIDE_DEV_DIAGNOSTICS / ветка release).
+    try:
+        from config import is_release_client_mode as _cfg_is_release_pred
+        _hide_pred_debug = bool(_cfg_is_release_pred())
+    except Exception:
+        _hide_pred_debug = False
+    if not _hide_pred_debug:
+        with st.expander("🔬 Сверка данных с эталоном (debug)", expanded=False):
+            _sanity_cols = st.columns(3)
+            with _sanity_cols[0]:
+                st.markdown("**Распределение по KrStateID**")
+                if "KrStateID" in filtered.columns and "KrState" in filtered.columns:
+                    _sanity_krs = (
+                        filtered.groupby(["KrStateID", "KrState"], dropna=False)
+                        .size()
+                        .reset_index(name="Количество")
+                        .sort_values("KrStateID")
+                    )
+                    st.dataframe(_sanity_krs, hide_index=True, use_container_width=True)
+                else:
+                    st.caption("Нет колонок KrStateID/KrState в выборке.")
+            with _sanity_cols[1]:
+                st.markdown("**Распределение по подрядчикам**")
+                if contr_col and contr_col in filtered.columns:
+                    _sanity_contr = (
+                        filtered[contr_col].astype(str).str.strip().value_counts().reset_index()
+                    )
+                    _sanity_contr.columns = ["Подрядчик", "Количество"]
+                    st.dataframe(_sanity_contr, hide_index=True, use_container_width=True)
+                else:
+                    st.caption("Нет колонки подрядчика.")
+            with _sanity_cols[2]:
+                st.markdown("**Источники данных**")
+                _src_lines = []
+                _src_lines.append(f"• Всего строк после dedup: **{len(filtered)}**")
+                _src_lines.append(f"• card_col / DocID: `{pred_doc_col or '—'}`")
+                _src_lines.append(f"• contract_col (№ договора): `{contract_col or '—'}`")
+                _src_lines.append(f"• due_col (срок устранения): `{due_col or '—'}`")
+                _src_lines.append(f"• completion_col (факт устранения): `{completion_col or '—'}`")
+                _src_lines.append(f"• creation_col (дата выдачи): `{creation_col_pred or '—'}`")
+                if "1C_ID_DOG" in filtered.columns:
+                    _n_dog = int(
+                        filtered["1C_ID_DOG"].astype(str).str.strip()
+                        .replace({"": pd.NA, "nan": pd.NA, "None": pd.NA, "NaN": pd.NA}).notna().sum()
+                    )
+                    _src_lines.append(f"• 1C_ID_DOG заполнено: **{_n_dog} / {len(filtered)}**")
+                if "id_Deadline" in filtered.columns:
+                    _dl = pd.to_datetime(filtered["id_Deadline"], errors="coerce", dayfirst=True)
+                    _src_lines.append(f"• id_Deadline (parsed): **{int(_dl.notna().sum())} / {len(filtered)}**")
+                st.markdown("\n".join(_src_lines))
 
     col_chart, col_kpi = st.columns([3, 1])
 
