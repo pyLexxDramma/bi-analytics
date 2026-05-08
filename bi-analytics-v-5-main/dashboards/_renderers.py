@@ -17220,6 +17220,50 @@ def dashboard_debit_credit(df):
         if c:
             work[f"_num_{c}"] = _to_num(work[c])
 
+    # Правки куратора 08.05.2026: считаем «Выполнено (КС-2)» из 1С dannye.
+    # КС-2 = sum(amount) по строкам со СтатьяОборотов «Поступление товаров и услуг»
+    # или «Поступление услуг из переработки», ключ — название контрагента.
+    work["_num_ks2"] = 0.0
+    try:
+        ref_dannye = st.session_state.get("reference_1c_dannye")
+        if ref_dannye is not None and not getattr(ref_dannye, "empty", True):
+            _rd = ref_dannye.copy()
+            _rd.columns = [str(c).strip() for c in _rd.columns]
+            _so_col = _find_col(_rd, ["СтатьяОборотов", "Статья оборотов", "turnover item"])
+            _sum_col = _find_col(_rd, ["Сумма", "amount", "СуммаОборота"])
+            _kontr_col = _find_col(
+                _rd,
+                [
+                    "Контрагент",
+                    "Наименование_Контрагента",
+                    "Наименование Контрагента",
+                    "Подрядчик",
+                    "контрагент",
+                    "организация",
+                ],
+            )
+            if _so_col and _sum_col and _kontr_col:
+                _rd_ks2 = _rd[
+                    _rd[_so_col]
+                    .astype(str)
+                    .str.contains(
+                        r"Поступление\s+(?:товаров\s+и\s+услуг|услуг\s+из\s+переработки)",
+                        regex=True,
+                        na=False,
+                    )
+                ].copy()
+                _rd_ks2["_amt"] = _to_num(_rd_ks2[_sum_col])
+                _rd_ks2["_k"] = _rd_ks2[_kontr_col].map(norm_partner_join_key)
+                _ks2_by_partner = (
+                    _rd_ks2.groupby("_k", dropna=False)["_amt"].sum().to_dict()
+                )
+                if contractor_col and contractor_col in work.columns:
+                    work["_num_ks2"] = work[contractor_col].map(
+                        lambda x: float(_ks2_by_partner.get(norm_partner_join_key(x), 0.0))
+                    )
+    except Exception:
+        pass
+
     # Правки куратора 08.05.2026: фильтры в одну линию по ТЗ —
     # Проект | Функциональный блок | Строения | Подрядчик | № договора | Период | Отображение.
     # При отсутствии данных у каких-то фильтров (ФБ/Строения/Период/Отображение) — выводим
@@ -17354,17 +17398,16 @@ def dashboard_debit_credit(df):
     # Делим суммы на 1e6 уже на этапе агрегации, чтобы и подписи, и таблица работали в одних единицах.
     _SCALE_MLN = 1e6
     if total_col and f"_num_{total_col}" in filtered.columns:
-        built["Сумма в договоре"] = filtered.groupby(chart_group_col)[f"_num_{total_col}"].sum() / _SCALE_MLN
-    if paid_col and f"_num_{paid_col}" in filtered.columns:
-        built["Выплачено"] = filtered.groupby(chart_group_col)[f"_num_{paid_col}"].sum() / _SCALE_MLN
+        built["Договор стоимость"] = filtered.groupby(chart_group_col)[f"_num_{total_col}"].sum() / _SCALE_MLN
     if advance_col and f"_num_{advance_col}" in filtered.columns:
         built["Аванс"] = filtered.groupby(chart_group_col)[f"_num_{advance_col}"].sum() / _SCALE_MLN
-    if _dk_col_net_start and _dk_col_net_start in filtered.columns:
-        built["Остаток на начало (нетто)"] = filtered.groupby(chart_group_col)[_dk_col_net_start].sum() / _SCALE_MLN
-    if _dk_col_net_end and _dk_col_net_end in filtered.columns:
-        built["Остаток на конец (нетто)"] = filtered.groupby(chart_group_col)[_dk_col_net_end].sum() / _SCALE_MLN
-    elif balance_col and f"_num_{balance_col}" in filtered.columns:
-        built["Остаток на период"] = filtered.groupby(chart_group_col)[f"_num_{balance_col}"].sum() / _SCALE_MLN
+    if "_num_ks2" in filtered.columns:
+        _ks2_series = filtered.groupby(chart_group_col)["_num_ks2"].sum() / _SCALE_MLN
+        if float(_ks2_series.fillna(0).abs().sum()) > 0:
+            built["КС-2"] = _ks2_series
+    # Отклонение для визуала 1 = КС-2 − Аванс (по ТЗ заказчика, отдельный «зелёный/красный» столбец).
+    if "Аванс" in built and "КС-2" in built:
+        built["Отклонение"] = built["КС-2"] - built["Аванс"]
 
     if not built:
         st.warning("Нет числовых колонок для отображения (сумма в договоре, выплачено, аванс, остаток).")
@@ -17372,6 +17415,17 @@ def dashboard_debit_credit(df):
 
     chart_df = pd.DataFrame(built).reset_index()
     chart_df = chart_df.rename(columns={chart_group_col: chart_label})
+
+    # Правки куратора 08.05.2026: селектор визуала.
+    # Визуал 1 — групповая столбчатая (Договор/Аванс/КС-2/Отклонение).
+    # Визуал 2 — стек: Договор + Аванс поверх + КС-2 поверх Аванса.
+    visual_mode = st.radio(
+        "Визуал",
+        ["Визуал 1 (групповая)", "Визуал 2 (стек)"],
+        index=0,
+        horizontal=True,
+        key="debit_credit_visual_mode",
+    )
 
     st.subheader("Столбчатая диаграмма по подрядчикам" if contractor_col else "Столбчатая диаграмма по договорам")
     value_cols = [c for c in chart_df.columns if c != chart_label]
@@ -17386,18 +17440,44 @@ def dashboard_debit_credit(df):
         value_cols = [c for c in chart_df.columns if c != chart_label]
         fig = go.Figure()
         x = chart_df[chart_label].astype(str).map(_trunc_label)
+        # Правки куратора 08.05.2026: цвета по ТЗ.
+        # Договор стоимость = синий, Аванс = жёлтый, КС-2 = серый,
+        # Отклонение: ≥0 = зелёный, <0 = красный (вниз ниже 0).
         colors = {
-            "Сумма в договоре": "#2E86AB",
-            "Выплачено": "#27ae60",
-            "Аванс": "#F39C12",
-            "Остаток на период": "#e74c3c",
-            "Остаток на начало (нетто)": "#8e44ad",
-            "Остаток на конец (нетто)": "#e74c3c",
+            "Договор стоимость": "#2E86AB",  # синий
+            "Аванс": "#F1C40F",              # жёлтый
+            "КС-2": "#95A5A6",               # серый
+            # «Отклонение» рисуется отдельно с per-bar окраской ниже.
         }
-        _n_bars = int(len(chart_df))
-        # Правки куратора 08.05.2026: подписи значений всегда видны (без наведения),
-        # значения в млн руб. до десятых.
-        for col in value_cols:
+        _is_stack = visual_mode.startswith("Визуал 2")
+        # В Визуале 2 «Отклонение» отображать не нужно (по ТЗ — стек Договор/Аванс/КС-2).
+        _value_cols_for_chart = value_cols if not _is_stack else [
+            c for c in value_cols if c != "Отклонение"
+        ]
+        for col in _value_cols_for_chart:
+            if col == "Отклонение":
+                # per-bar цвета: ≥0 — зелёный, <0 — красный.
+                _bar_colors = chart_df[col].apply(
+                    lambda v: "#27ae60" if pd.notna(v) and float(v) >= 0 else "#e74c3c"
+                ).tolist()
+                fig.add_trace(
+                    go.Bar(
+                        name=col,
+                        x=x,
+                        y=chart_df[col],
+                        marker_color=_bar_colors,
+                        text=chart_df[col].apply(
+                            lambda v: f"{v:.1f}" if pd.notna(v) else ""
+                        ),
+                        textposition="outside",
+                        textfont=dict(size=10, color="#f0f4f8"),
+                        customdata=chart_df[col].apply(
+                            lambda v: f"{v:.1f} млн" if pd.notna(v) else "0,0 млн"
+                        ),
+                        hovertemplate=f"<b>{col}</b><br>%{{x}}<br>%{{customdata}}<extra></extra>",
+                    )
+                )
+                continue
             fig.add_trace(
                 go.Bar(
                     name=col,
@@ -17416,7 +17496,8 @@ def dashboard_debit_credit(df):
                 )
             )
         fig.update_layout(
-            barmode="group",
+            # Визуал 2 — стек (Аванс поверх Договор, КС-2 поверх Аванса).
+            barmode="stack" if _is_stack else "group",
             height=min(900, max(420, len(chart_df) * 28)),
             bargap=0.14,
             bargroupgap=0.06,
@@ -17434,9 +17515,13 @@ def dashboard_debit_credit(df):
         fig = _apply_finance_bar_label_layout(fig)
         fig = apply_chart_background(fig)
         if chart_label == "Проект | Подрядчик":
-            cap = "Суммы по проекту и подрядчику (проект из файла или справочника)"
+            cap = (
+                "Суммы по проекту и подрядчику. "
+                + ("Стек: Договор → Аванс → КС-2." if _is_stack else "Группа: Договор / Аванс / КС-2 / Отклонение (зел. ≥0, красн. <0).")
+            )
         else:
-            cap = "Суммы по подрядчику" if contractor_col else "Суммы по договору"
+            base = "Суммы по подрядчику" if contractor_col else "Суммы по договору"
+            cap = base + (". Стек: Договор → Аванс → КС-2." if _is_stack else ". Группа: Договор / Аванс / КС-2 / Отклонение (зел. ≥0, красн. <0).")
         render_chart(fig, caption_below=cap)
 
     st.subheader("Таблица по подрядчику и договору" if contractor_col else "Таблица по договорам")
@@ -17447,18 +17532,23 @@ def dashboard_debit_credit(df):
         table_group_cols = [project_col, contractor_col, contract_col]
     tbl_built = {}
     # Правки куратора 08.05.2026: всё в млн руб., до десятых.
+    # Структура столбцов по ТЗ:
+    #   Договор стоимость | Всего выполненных обязательств по платежам | Аванс |
+    #   Выполнено (КС-2) | Остаток | Отклонение (КС-2 − Договор) | КС-2 − Аванс
     if total_col and f"_num_{total_col}" in filtered.columns:
-        tbl_built["Сумма в договоре"] = filtered.groupby(table_group_cols)[f"_num_{total_col}"].sum() / _SCALE_MLN
+        tbl_built["Договор стоимость"] = filtered.groupby(table_group_cols)[f"_num_{total_col}"].sum() / _SCALE_MLN
     if paid_col and f"_num_{paid_col}" in filtered.columns:
-        tbl_built["Выплачено"] = filtered.groupby(table_group_cols)[f"_num_{paid_col}"].sum() / _SCALE_MLN
+        tbl_built["Всего выполненных обязательств по платежам"] = filtered.groupby(table_group_cols)[f"_num_{paid_col}"].sum() / _SCALE_MLN
     if advance_col and f"_num_{advance_col}" in filtered.columns:
         tbl_built["Аванс"] = filtered.groupby(table_group_cols)[f"_num_{advance_col}"].sum() / _SCALE_MLN
-    if _dk_col_net_start and _dk_col_net_start in filtered.columns:
-        tbl_built["Остаток на начало (нетто)"] = filtered.groupby(table_group_cols)[_dk_col_net_start].sum() / _SCALE_MLN
+    if "_num_ks2" in filtered.columns:
+        _t_ks2 = filtered.groupby(table_group_cols)["_num_ks2"].sum() / _SCALE_MLN
+        if float(_t_ks2.fillna(0).abs().sum()) > 0:
+            tbl_built["Выполнено (КС-2)"] = _t_ks2
     if _dk_col_net_end and _dk_col_net_end in filtered.columns:
-        tbl_built["Остаток на конец (нетто)"] = filtered.groupby(table_group_cols)[_dk_col_net_end].sum() / _SCALE_MLN
+        tbl_built["Остаток"] = filtered.groupby(table_group_cols)[_dk_col_net_end].sum() / _SCALE_MLN
     elif balance_col and f"_num_{balance_col}" in filtered.columns:
-        tbl_built["Остаток на период"] = filtered.groupby(table_group_cols)[f"_num_{balance_col}"].sum() / _SCALE_MLN
+        tbl_built["Остаток"] = filtered.groupby(table_group_cols)[f"_num_{balance_col}"].sum() / _SCALE_MLN
     if not tbl_built:
         st.warning("Нет числовых колонок для таблицы.")
         return
@@ -17490,10 +17580,25 @@ def dashboard_debit_credit(df):
         return
     group_dim_cols = [c for c in ("Проект", "Подрядчик", "Договор") if c in table_df.columns]
     value_cols_t = [c for c in table_df.columns if c not in group_dim_cols]
-    # Правки куратора 08.05.2026: индикатор «Аванс ≥60% от Договора».
-    # Считаем по числовым значениям ДО форматирования; добавляем колонку «Индикатор аванса»
-    # сразу после «Аванс» (если есть и Аванс, и Сумма в договоре).
-    if "Аванс" in value_cols_t and "Сумма в договоре" in value_cols_t:
+
+    # Правки куратора 08.05.2026: расчётные колонки «Отклонение» и «КС-2 − Аванс».
+    # «Отклонение» = «Выполнено (КС-2)» − «Договор стоимость» (≥0 — зел., <0 — красн.)
+    # «КС-2 − Аванс» = «Выполнено (КС-2)» − «Аванс».
+    if "Выполнено (КС-2)" in value_cols_t and "Договор стоимость" in value_cols_t:
+        table_df["Отклонение"] = pd.to_numeric(
+            table_df["Выполнено (КС-2)"], errors="coerce"
+        ).fillna(0.0) - pd.to_numeric(
+            table_df["Договор стоимость"], errors="coerce"
+        ).fillna(0.0)
+        value_cols_t.append("Отклонение")
+    if "Выполнено (КС-2)" in value_cols_t and "Аванс" in value_cols_t:
+        table_df["КС-2 − Аванс"] = pd.to_numeric(
+            table_df["Выполнено (КС-2)"], errors="coerce"
+        ).fillna(0.0) - pd.to_numeric(table_df["Аванс"], errors="coerce").fillna(0.0)
+        value_cols_t.append("КС-2 − Аванс")
+
+    # Индикатор «Аванс ≥60% от Договора».
+    if "Аванс" in value_cols_t and "Договор стоимость" in value_cols_t:
         # Индикатор подаётся текстом (без HTML), т.к. таблица рендерится через _render_html_table
         # с escape=True. Цветовое восприятие даёт круг (🔴/🟢) + слово.
         def _adv_indicator(plan_v: float, adv_v: float) -> str:
@@ -17510,7 +17615,7 @@ def dashboard_debit_credit(df):
                 return ""
         table_df["Аванс ≥60%"] = [
             _adv_indicator(p, a)
-            for p, a in zip(table_df["Сумма в договоре"], table_df["Аванс"])
+            for p, a in zip(table_df["Договор стоимость"], table_df["Аванс"])
         ]
         # Колонку «Аванс ≥60%» вставим в порядке после «Аванс» при выводе.
     total_row = {"Договор": "Итого"}
@@ -17523,7 +17628,7 @@ def dashboard_debit_credit(df):
     if "Аванс ≥60%" in table_df.columns:
         # Итог: общий процент по сумме всех договоров и авансов.
         try:
-            _tp = float(pd.to_numeric(table_df["Сумма в договоре"], errors="coerce").sum())
+            _tp = float(pd.to_numeric(table_df["Договор стоимость"], errors="coerce").sum())
             _ta = float(pd.to_numeric(table_df["Аванс"], errors="coerce").sum())
             if _tp > 0:
                 _pct = _ta / _tp * 100.0
@@ -17540,13 +17645,24 @@ def dashboard_debit_credit(df):
         display_df[col] = display_df[col].apply(
             lambda x: f"{float(x):.1f}" if pd.notna(x) and not isinstance(x, str) else x
         )
-    # Перестановка: «Аванс ≥60%» сразу после «Аванс».
-    if "Аванс ≥60%" in display_df.columns and "Аванс" in display_df.columns:
-        cols_order = list(display_df.columns)
-        cols_order.remove("Аванс ≥60%")
-        idx = cols_order.index("Аванс") + 1
-        cols_order.insert(idx, "Аванс ≥60%")
-        display_df = display_df[cols_order]
+    # Правки куратора 08.05.2026: финальный порядок колонок по ТЗ.
+    desired_order_value = [
+        "Договор стоимость",
+        "Всего выполненных обязательств по платежам",
+        "Аванс",
+        "Аванс ≥60%",
+        "Выполнено (КС-2)",
+        "Остаток",
+        "Отклонение",
+        "КС-2 − Аванс",
+    ]
+    final_order = [c for c in group_dim_cols if c in display_df.columns]
+    final_order += [c for c in desired_order_value if c in display_df.columns]
+    # Добавим хвостом любые прочие непустые колонки, чтобы ничего не потерять.
+    for c in display_df.columns:
+        if c not in final_order:
+            final_order.append(c)
+    display_df = display_df[final_order]
     suppress_caption(f"Записей: {len(display_df)} • Финансы — млн руб., до десятых")
     _render_html_table(display_df)
     render_dataframe_excel_csv_downloads(
