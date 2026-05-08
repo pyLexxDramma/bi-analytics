@@ -442,11 +442,13 @@ def _gantt_deviation_cell_style(v) -> str:
 
 
 def _render_gantt_schedule_html_table(df: pd.DataFrame, max_rows: int = 80):
-    """Таблица под графиком проекта: тёмная тема и подсветка «Отклонение Начала/Окончания» по дням (как в блоке отклонений)."""
+    """Таблица под графиком проекта: тёмная тема, подсветка «Отклонение Начала/Окончания» по дням
+    и зелёная подсветка непустых ячеек «Причины отклонений» / «Заметки» (как на скрине ТЗ заказчика)."""
     show = df.head(max_rows).copy()
     for col in show.columns:
         show[col] = [str(v) if pd.notna(v) else "" for v in show[col]]
     dev_names = [c for c in ("Отклонение Начала", "Отклонение Окончания") if c in show.columns]
+    reason_names = [c for c in ("Причины отклонений", "Причина отклонения", "Заметки") if c in show.columns]
     sty = show.style.set_properties(
         **{"background-color": TABLE_BG_COLOR, "color": TABLE_TEXT_COLOR, "font-size": "13px"}
     ).set_table_styles(
@@ -469,6 +471,19 @@ def _render_gantt_schedule_html_table(df: pd.DataFrame, max_rows: int = 80):
         sty = sty.apply(
             lambda s: s.map(_gantt_deviation_cell_style),
             subset=dev_names,
+            axis=0,
+        )
+    # ТЗ заказчика 2026-05-06 (скрин 2): непустые ячейки «Причины отклонений»
+    # и «Заметки» подсвечиваются светло-зелёным фоном.
+    if reason_names:
+        def _reason_cell_style(v):
+            s = str(v).strip()
+            if s and s.lower() not in ("nan", "none"):
+                return "background-color: #1f6b3b; color: #ffffff"
+            return ""
+        sty = sty.apply(
+            lambda s: s.map(_reason_cell_style),
+            subset=reason_names,
             axis=0,
         )
     # КРИТИЧНО: Styler.to_html() не принимает параметр index=False (в отличие
@@ -27024,15 +27039,16 @@ def dashboard_project_schedule_chart(df):
                                     break
                             plot_df = plot_df.iloc[_start:_end].copy()
     with f_level:
-        # ТЗ заказчика 2026-05-06: только два уровня для отображения задач —
-        # «Верхний уровень (ур. 4)» и «Детальный уровень (ур. 5)». Дефолт — «Верхний (4)».
-        # «Строения» вынесены в отдельный фильтр выше; «Все уровни» оставлено для отладки.
-        # Фильтр применяем ниже, после чтения чекбокса «Показать причины отклонений»,
-        # т.к. при включённой галочке выбор уровня переопределяется (ур. 5 + все родители).
+        # ТЗ заказчика 2026-05-06 + правки куратора 08.05.2026: только два
+        # уровня для отображения задач — «Верхний уровень (ур. 4)» и
+        # «Детальный уровень (ур. 5)». Дефолт — «Верхний (4)». Опция
+        # «Все уровни» убрана. «Строения» вынесены в отдельный фильтр выше.
+        # Фильтр применяем ниже, после чтения чекбокса «Показать причины
+        # отклонений» (при включённой галочке выбор уровня переопределяется
+        # на ур. 5 + все родители).
         level_opts = (
             "Верхний уровень (4)",
             "Детальный уровень (5)",
-            "Все уровни",
         )
         level_sel = st.selectbox(
             "Уровень отображения задач",
@@ -28568,6 +28584,16 @@ def dashboard_project_schedule_chart(df):
         else:
             tbl_view["ИД"] = pd.Series("", index=plot_df.index, dtype=object)
 
+        # ТЗ заказчика 2026-05-06 (скрин 1): после «Ид» в таблице идёт колонка
+        # «Ур» — уровень иерархии MSP (3/4/5). Берём из level_col, если есть.
+        if level_col and level_col in plot_df.columns:
+            _lvl_num = pd.to_numeric(plot_df[level_col], errors="coerce")
+            tbl_view["Ур"] = _lvl_num.map(
+                lambda v: "" if pd.isna(v) else f"{int(v)}"
+            )
+        else:
+            tbl_view["Ур"] = pd.Series("", index=plot_df.index, dtype=object)
+
         if task_col and task_col in plot_df.columns:
             tbl_view["Название задачи"] = (
                 plot_df[task_col].fillna("").astype(str).map(_gantt_clean_task_label)
@@ -28601,11 +28627,13 @@ def dashboard_project_schedule_chart(df):
             tbl_view["Отклонение окончания"] = ""
 
         if show_reasons:
+            # ТЗ заказчика 2026-05-06: «Причины отклонений» (множ. число),
+            # «Заметки». Подсветка непустых ячеек зелёным — в _render_gantt_schedule_html_table.
             if reason_src and reason_src in plot_df.columns:
                 _r = plot_df[reason_src].astype(str).fillna("")
-                tbl_view["Причина отклонения"] = _r.where(_r.str.lower() != "nan", "")
+                tbl_view["Причины отклонений"] = _r.where(_r.str.lower() != "nan", "")
             else:
-                tbl_view["Причина отклонения"] = ""
+                tbl_view["Причины отклонений"] = ""
             if notes_src and notes_src in plot_df.columns:
                 _n = plot_df[notes_src].astype(str).fillna("")
                 tbl_view["Заметки"] = _n.where(_n.str.lower() != "nan", "")
@@ -28614,6 +28642,7 @@ def dashboard_project_schedule_chart(df):
 
         _gantt_tbl_order = [
             "ИД",
+            "Ур",
             "Название задачи",
             "% завершения",
             "Окончание",
@@ -28621,7 +28650,7 @@ def dashboard_project_schedule_chart(df):
             "Отклонение окончания",
         ]
         if show_reasons:
-            _gantt_tbl_order.extend(["Причина отклонения", "Заметки"])
+            _gantt_tbl_order.extend(["Причины отклонений", "Заметки"])
         _ordered = [c for c in _gantt_tbl_order if c in tbl_view.columns]
         tbl_show = tbl_view[_ordered]
 
