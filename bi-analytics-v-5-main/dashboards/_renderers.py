@@ -17823,6 +17823,25 @@ def dashboard_executive_documentation(df):
         mask_pred = work[kind_col].astype(str).str.contains("Предписан", case=False, na=False)
         work = work[~mask_pred].reset_index(drop=True)
 
+    # КРИТИЧНЫЙ ФИКС B-14 (08.05.2026): web_loader сшивает в `tessa_data` строки
+    # из `tessa_*-id.csv` И `tessa_*-rd.csv` без разделения. Для дашборда ИД нужны
+    # ТОЛЬКО строки из -id.csv (документы Tessa). Признак: непустой `KrState` или
+    # `KrStateID` (поля присутствуют только в карточках документов, в rd/task их нет
+    # или они NaN после concat). Без этого фильтра «Всего документов» раздувается
+    # в ~4 раза и колонка `KrStateID` в debug-блоке видна как None.
+    _has_krs = "KrState" in work.columns
+    _has_krsid = "KrStateID" in work.columns
+    if _has_krs or _has_krsid:
+        _mask_id = pd.Series(False, index=work.index)
+        if _has_krs:
+            _mask_id = _mask_id | (
+                work["KrState"].notna()
+                & (~work["KrState"].astype(str).str.strip().isin(["", "nan", "None", "NaN"]))
+            )
+        if _has_krsid:
+            _mask_id = _mask_id | work["KrStateID"].notna()
+        work = work[_mask_id].reset_index(drop=True)
+
     obj_col = _tessa_find_column(work, ["ObjectName", "objectname", "Объект"])
     if obj_col:
         work = work[
