@@ -49,3 +49,46 @@ def filters_panel(st: Any, title: str = "Фильтры") -> Generator[None, Non
     st.subheader(title)
     with st.container(border=True):
         yield
+
+
+# --- Универсальный QA debug-блок (виден на dev/локалке, скрыт в release) ---------
+
+def _is_release_mode() -> bool:
+    """True, если запущен release-режим — debug-блоки должны быть скрыты."""
+    try:
+        from config import is_release_client_mode
+        return bool(is_release_client_mode())
+    except Exception:
+        import os
+        for key in ("BI_ANALYTICS_HIDE_DEV_DIAGNOSTICS", "BI_ANALYTICS_RELEASE_MODE"):
+            if str(os.environ.get(key, "")).strip().lower() in ("1", "true", "yes", "on"):
+                return True
+        return False
+
+
+@contextmanager
+def qa_debug_block(
+    st: Any,
+    title: str = "🔬 Сверка данных с эталоном (debug)",
+    expanded: bool = False,
+) -> Generator[bool, None, None]:
+    """
+    Контекст-менеджер для отладочного блока QA на дашборде.
+
+    - На localhost / dev (ветка main) — рендерит ``st.expander(title)``.
+    - На release (ветка release / env BI_ANALYTICS_HIDE_DEV_DIAGNOSTICS=1) —
+      ничего не рендерит, тело блока не выполняется (yield False).
+
+    Использование:
+
+        with qa_debug_block(st) as on:
+            if on:
+                st.dataframe(...)
+                st.markdown("...")
+    """
+    if _is_release_mode():
+        # Yield False, чтобы пользовательский код пропустил содержимое
+        yield False
+        return
+    with st.expander(title, expanded=expanded):
+        yield True

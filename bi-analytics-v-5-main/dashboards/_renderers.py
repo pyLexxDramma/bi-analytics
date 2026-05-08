@@ -17,7 +17,7 @@ from urllib.parse import urlencode
 
 from config import MSP_PROJECT_FILTER_EXCLUDE_NAMES, RUSSIAN_MONTHS
 
-from .ui_quiet import inject_unified_filters_css, filters_panel, suppress_caption
+from .ui_quiet import inject_unified_filters_css, filters_panel, suppress_caption, qa_debug_block
 
 
 def _inject_multiselect_ru_translations() -> None:
@@ -18097,6 +18097,49 @@ def dashboard_executive_documentation(df):
         unsafe_allow_html=True,
     )
 
+    # Sanity-блок для сверки с эталоном (scripts/_qa_14_id_check.py).
+    # Виден на dev/локалке, скрыт в release автоматически.
+    with qa_debug_block(st) as _qa_on_id:
+        if _qa_on_id:
+            _id_cols = st.columns(3)
+            with _id_cols[0]:
+                st.markdown("**Распределение по статусам (из выборки)**")
+                if "Статус" in filtered.columns:
+                    _id_st = (
+                        filtered["Статус"].astype(str).str.strip().value_counts().reset_index()
+                    )
+                    _id_st.columns = ["Статус", "Количество"]
+                    st.dataframe(_id_st, hide_index=True, use_container_width=True)
+                else:
+                    st.caption("Колонка «Статус» не найдена.")
+            with _id_cols[1]:
+                st.markdown("**Распределение по KrStateID (TESSA)**")
+                if "KrStateID" in filtered.columns and "KrState" in filtered.columns:
+                    _id_kr = (
+                        filtered.groupby(["KrStateID", "KrState"], dropna=False)
+                        .size()
+                        .reset_index(name="Количество")
+                        .sort_values("KrStateID")
+                    )
+                    st.dataframe(_id_kr, hide_index=True, use_container_width=True)
+                else:
+                    st.caption("Нет колонок KrStateID/KrState.")
+            with _id_cols[2]:
+                st.markdown("**Источники / поля**")
+                _id_src = []
+                _id_src.append(f"• Всего строк (после dedup): **{len(filtered)}**")
+                _id_src.append(f"• card_col / DocID: `{card_col or '—'}`")
+                _id_src.append(f"• contr_col (контрагент): `{contr_col or '—'}`")
+                _id_src.append(f"• obj_col (объект): `{obj_col or '—'}`")
+                _id_src.append(f"• kind_col (вид документа): `{kind_col or '—'}`")
+                _id_src.append(f"• creation_col (создан в TESSA): `{creation_col or '—'}`")
+                _id_src.append(f"• Всего документов (KPI): **{int(total_docs)}**")
+                _id_src.append(f"• Отказы / На согл. / Принято / Доработка / Просрочки: "
+                               f"**{int(is_declined.sum())} / {int(is_on_agree.sum())} / "
+                               f"{int(is_signed.sum())} / {int(is_rework.sum())} / "
+                               f"{int(total_overdue_two)}**")
+                st.markdown("\n".join(_id_src))
+
     def _exec_n_docs(dfp):
         if card_col and card_col in dfp.columns:
             return int(dfp[card_col].nunique())
@@ -18372,16 +18415,7 @@ def dashboard_executive_documentation(df):
             fig2 = _apply_vertical_category_bar_width(fig2)
             fig2 = apply_chart_background(fig2)
             fig2.update_layout(height=450, xaxis_title="Объект", yaxis_title="Количество", xaxis_tickangle=-45)
-            render_chart(fig2, caption_below="Количество документов по объектам", key="exec_obj_bar")
-
-        if creation_col and filtered["_cd"].notna().any():
-            rmin = filtered["_cd"].min()
-            rmax = filtered["_cd"].max()
-            with st.expander("Диапазон дат создания в выборке", expanded=False):
-                suppress_caption(
-                    f"{rmin.strftime('%d.%m.%Y') if pd.notna(rmin) else '—'} — "
-                    f"{rmax.strftime('%d.%m.%Y') if pd.notna(rmax) else '—'}"
-                )
+            render_chart(fig2, key="exec_obj_bar")
 
     with tab_detail:
         st.subheader("Детальный отчёт по сдаче и согласованию ИД")
@@ -24264,14 +24298,9 @@ def dashboard_predpisania(df):
 
     # Sanity-блок для сверки с эталоном (scripts/_qa_15_pred_check.py).
     # Свёрнут по умолчанию — открывают только при расхождении цифр.
-    # Скрыт в release-режиме (флаг BI_ANALYTICS_HIDE_DEV_DIAGNOSTICS / ветка release).
-    try:
-        from config import is_release_client_mode as _cfg_is_release_pred
-        _hide_pred_debug = bool(_cfg_is_release_pred())
-    except Exception:
-        _hide_pred_debug = False
-    if not _hide_pred_debug:
-        with st.expander("🔬 Сверка данных с эталоном (debug)", expanded=False):
+    # Скрыт в release-режиме автоматически через qa_debug_block.
+    with qa_debug_block(st) as _qa_on:
+        if _qa_on:
             _sanity_cols = st.columns(3)
             with _sanity_cols[0]:
                 st.markdown("**Распределение по KrStateID**")
