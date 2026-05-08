@@ -23957,12 +23957,18 @@ def dashboard_predpisania(df):
     if "KrStateID" in pred.columns:
         _krstate_num = pd.to_numeric(pred["KrStateID"], errors="coerce")
         pred["_resolved"] = pred["_resolved"] | (_krstate_num == 13)
-    pred["_resolved"] = (
-        pred["_resolved"]
-        | st_l.str.contains("устран", case=False, na=False)
-        | st_l.str.contains("выполн", case=False, na=False)
-        | st_l.str.contains("закрыт", case=False, na=False)
+    # Текстовый fallback (если KrStateID отсутствует или некорректен).
+    # Важно явно отфильтровать «Не устранено / Не выполнено / Не закрыт*»,
+    # иначе substring "устран" матчит обе формы и неустранённые попадают
+    # в resolved (см. QA-08.05, B-15: разница 5 vs 6 в KPI vs эталон).
+    _st_norm = st_l.str.casefold()
+    _is_negated = _st_norm.str.match(r"\s*не\s+", na=False)
+    _looks_resolved = (
+        _st_norm.str.contains("устран", na=False)
+        | _st_norm.str.contains("выполн", na=False)
+        | _st_norm.str.contains("закрыт", na=False)
     )
+    pred["_resolved"] = pred["_resolved"] | (_looks_resolved & ~_is_negated)
     if due_col:
         pred["_due"] = _tessa_to_datetime(pred[due_col])
     else:
