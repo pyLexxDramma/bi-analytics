@@ -24190,27 +24190,9 @@ def dashboard_predpisania(df):
         key="pred_hide_resolved",
     )
 
-    # §4.6 mapping_spec: диапазон дат по сроку устранения (в дополнение к периоду выдачи).
+    # Q08.05 (B-15): второй виджет «Период по сроку устранения» убран как
+    # дублирующий — основной фильтр периода уже задаётся в шапке (filters_panel).
     due_start, due_end = None, None
-    if due_col and pred["_due"].notna().any():
-        _due_series = pred["_due"]
-        _dmin = pd.to_datetime(_due_series, errors="coerce").min()
-        _dmax = pd.to_datetime(_due_series, errors="coerce").max()
-        if pd.notna(_dmin) and pd.notna(_dmax):
-            min_due = _dmin.date() if hasattr(_dmin, "date") else _dmin
-            max_due = _dmax.date() if hasattr(_dmax, "date") else _dmax
-            due_period = st.date_input(
-                "Период по сроку устранения",
-                value=(min_due, max_due),
-                min_value=min_due,
-                max_value=max_due,
-                key="pred_due_period",
-                format="DD.MM.YYYY",
-            )
-            if isinstance(due_period, tuple) and len(due_period) == 2:
-                due_start, due_end = due_period
-            else:
-                due_start = due_end = due_period
 
     filtered = pred.copy()
     if obj_col and sel_obj:
