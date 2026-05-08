@@ -18056,8 +18056,6 @@ def dashboard_executive_documentation(df):
         )
         return
 
-    st.markdown('<div class="exec-doc-panel">', unsafe_allow_html=True)
-
     stu = filtered["Статус"].astype(str)
     sl = stu.str.lower()
 
