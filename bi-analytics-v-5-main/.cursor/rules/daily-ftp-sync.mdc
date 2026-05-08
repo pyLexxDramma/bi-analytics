@@ -1,0 +1,58 @@
+---
+description: Каждое утро / в начале сессии синхронизировать локальный web/ с FTP, чтобы локалька, dev и release видели одни и те же данные при QA-проверках.
+alwaysApply: true
+---
+
+# Daily FTP sync (BI Analytics)
+
+В начале каждой новой сессии работы с этим проектом **первым делом**
+предлагай пользователю запустить FTP-синхронизацию свежих данных:
+
+```powershell
+python scripts/_qa_ftp_sync_local.py
+```
+
+После выполнения:
+1. Проверить вывод: `ok=True downloaded=N skipped_same_size=M`.
+2. Если `downloaded > 0` — закоммитить новые файлы:
+   - `git add web/`
+   - commit через `python scripts/_commit_bypass.py -F bi-analytics-v-5-main/.commit_msg.tmp` (без `Co-authored-by: Cursor`)
+   - `git push origin main`
+   - Мердж в release: в worktree `D:\AI_codding\Analitics\_release_push_wt`
+     запустить `git fetch origin; git merge --no-edit origin/main; git push origin release`
+
+## Зачем
+
+`pick_latest_snapshot_files()` в `web_loader.py` берёт самый свежий
+snapshot tessa/1С по дате+времени из имени. Если локально нет файлов
+07-08 мая, а на dev FTP их подтянул, активная версия БД и числа на
+дашбордах разойдутся → QA-сверки будут давать ложные отклонения.
+
+## Конфиг
+
+Креды FTP лежат в `.streamlit/secrets.toml` (НЕ коммитим — игнор по
+паттерну `*secret*` в `.gitignore`):
+
+```toml
+[ftp]
+host       = "web.conall.ru"
+user       = "ftp-ai"
+password   = "<секрет>"
+remote_dir = "/web"
+port       = 21
+use_tls    = false
+```
+
+Скрипт `scripts/_qa_ftp_sync_local.py` сам читает эту секцию через
+`tomllib`, передаёт в `merge_ftp_config()` → `sync_ftp_to_web()` и
+качает только новые/изменившиеся файлы (инкремент по `SIZE`).
+
+## Дополнительно
+
+- Если sync вернул `downloaded=0` — данные уже актуальны, идём дальше.
+- Если sync упал на `error_perm` или `timeout` — сначала проверить, что
+  VPN/сеть до `web.conall.ru:21` поднята, потом разбирать.
+- После любого ребута Streamlit-приложения локально рекомендуется
+  очистить активную версию БД (через виджет «Управление версиями» в
+  дашборде → «Загрузить из web/») или просто перезагрузить страницу,
+  чтобы пересобралась версия с уже свежими файлами.
