@@ -4997,9 +4997,11 @@ def dashboard_plan_fact_dates(df):
     # «отклонение длительности» — опционально (чекбокс), как и раньше.
     tbl_show_start = True
     tbl_show_end = True
+    # Q9 (08.05.2026): по ответу заказчика три колонки «Длительность» / «Базовая длительность» /
+    # «Отклонение длительности» нужны всегда, поэтому включено по умолчанию.
     tbl_show_dur = st.checkbox(
         "Показать «Отклонение длительности» в таблице",
-        value=False,
+        value=True,
         key="dates_tbl_dur",
     )
     selected_reason_bucket_dates = "Все"
@@ -16134,54 +16136,56 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             )
 
         # ---- Блок «План/Факт по проектам» (скрин 8/9 ТЗ) ----
+        # Q4 (08.05.2026): по ответу заказчика — собрать все проекты в одну общую диаграмму
+        # вместо отдельных карточек.
         proj_df = main_t[main_t["row_kind"] == "subtotal"][
             ["project_name", "plan", "skud", "deviation", "delta_pct"]
         ].copy()
         if not proj_df.empty:
             try:
                 import plotly.graph_objects as _go
-                cols = st.columns(max(1, len(proj_df)))
-                for i, (_, prow) in enumerate(proj_df.iterrows()):
-                    pname = str(prow["project_name"])
-                    pl = float(prow["plan"]) if _pd.notna(prow["plan"]) else 0.0
-                    fk = float(prow["skud"]) if _pd.notna(prow["skud"]) else 0.0
-                    dev = float(prow["deviation"]) if _pd.notna(prow["deviation"]) else 0.0
-                    pct = float(prow["delta_pct"]) if _pd.notna(prow["delta_pct"]) else 0.0
-                    fact_color = "#46d68a" if fk >= pl else "#ff5454"
-                    fig_p = _go.Figure()
-                    fig_p.add_bar(
-                        x=["План", "Факт"],
-                        y=[pl, fk],
-                        marker_color=["#29b6f6", fact_color],
-                        text=[f"{int(pl)}", f"{int(fk)}"],
-                        textposition="outside",
-                        showlegend=False,
-                    )
-                    fig_p.update_layout(
-                        title=dict(text=pname, font=dict(size=14, color="#eee")),
-                        plot_bgcolor="rgba(0,0,0,0)",
-                        paper_bgcolor="rgba(0,0,0,0)",
-                        font_color="#eee",
-                        height=420,
-                        margin=dict(l=24, r=8, t=40, b=24),
-                        xaxis=dict(showgrid=False),
-                        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.08)"),
-                    )
-                    dev_color = "#ff5454" if dev > 0 else "#46d68a"
-                    indicator = "●"
-                    sign = "+" if dev > 0 else ("" if dev == 0 else "")
-                    with cols[i]:
-                        st.plotly_chart(fig_p, use_container_width=True)
-                        st.markdown(
-                            f"<div style='text-align:left; line-height:1.6; font-size:13px;'>"
-                            f"<b>План:</b> {int(pl)}<br>"
-                            f"<b>Факт:</b> {int(fk)}<br>"
-                            f"<b>Отклонение:</b> "
-                            f"<span style='color:{dev_color};'>{indicator} {sign}{int(dev)}</span><br>"
-                            f"<i>({pct:.1f}% — факт/план)</i>"
-                            f"</div>",
-                            unsafe_allow_html=True,
-                        )
+                proj_df = proj_df.sort_values("plan", ascending=False).reset_index(drop=True)
+                # семантика «Отклонение» = факт − план (Q3 заказчика):
+                # >=0 опережение/выполнение → зелёный, <0 отставание → красный.
+                _dev_signed = (proj_df["skud"] - proj_df["plan"]).round(0).astype(int)
+                _dev_colors = ["#46d68a" if int(v) >= 0 else "#ff5454" for v in _dev_signed]
+                _proj_labels = proj_df["project_name"].astype(str).tolist()
+                _plan_vals = proj_df["plan"].fillna(0).astype(int).tolist()
+                _fact_vals = proj_df["skud"].fillna(0).astype(int).tolist()
+                _dev_abs = _dev_signed.abs().tolist()
+
+                fig_pf = _go.Figure()
+                fig_pf.add_bar(
+                    name="План", x=_proj_labels, y=_plan_vals,
+                    marker_color="#29b6f6",
+                    text=[f"{v}" for v in _plan_vals], textposition="outside",
+                    textfont=dict(color="#cfe9fa", size=12),
+                )
+                fig_pf.add_bar(
+                    name="Факт", x=_proj_labels, y=_fact_vals,
+                    marker_color="#46d68a",
+                    text=[f"{v}" for v in _fact_vals], textposition="outside",
+                    textfont=dict(color="#cfe9fa", size=12),
+                )
+                fig_pf.add_bar(
+                    name="Отклонение (|факт − план|)", x=_proj_labels, y=_dev_abs,
+                    marker_color=_dev_colors,
+                    text=[f"{int(v):+d}" for v in _dev_signed], textposition="outside",
+                    textfont=dict(color="#cfe9fa", size=12),
+                )
+                fig_pf.update_layout(
+                    title=dict(text="План / Факт / Отклонение по проектам", font=dict(size=15, color="#eee")),
+                    barmode="group",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font_color="#eee",
+                    xaxis=dict(showgrid=False),
+                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.08)"),
+                    height=460,
+                    margin=dict(l=48, r=24, t=56, b=64),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                )
+                st.plotly_chart(fig_pf, use_container_width=True)
             except Exception as _e:
                 st.warning(f"Plotly недоступен: {_e}")
 
@@ -16213,16 +16217,21 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             )
         view["План"] = view["plan"].fillna(0).astype(int)
         view["СКУД"] = view["skud"].fillna(0).astype(int)
-        view["Отклонение"] = view["deviation"].fillna(0).astype(int)
+        # Q3 + Q1 (08.05.2026): «Отклонение» = факт − план в шт. (положительное = опережение,
+        # отрицательное = отставание). В build_main_table по историческим причинам
+        # `deviation = plan - skud`, поэтому переворачиваем знак при отображении.
+        view["Отклонение"] = (view["skud"].fillna(0) - view["plan"].fillna(0)).round(0).astype(int)
+        # «Δ %» — процент отклонения (по ответу заказчика Q3): (факт − план) / план × 100.
+        _plan_safe = view["plan"].fillna(0).replace(0, _np.nan)
+        view["Δ %"] = ((view["skud"].fillna(0) - view["plan"].fillna(0)) / _plan_safe * 100.0)
         for src, dst in (("w1", "1 неделя"), ("w2", "2 неделя"), ("w3", "3 неделя"),
                          ("w4", "4 неделя"), ("w5", "5 неделя"), ("w6", "6 неделя")):
             view[dst] = view[src].fillna(0).astype(int)
-        view["%"] = view["delta_pct"]
 
         view["__kind__"] = view["row_kind"]
         cols_order = ["Контрагент", "Вид работы", "План", "СКУД", "Отклонение",
                       "1 неделя", "2 неделя", "3 неделя", "4 неделя", "5 неделя", "6 неделя",
-                      "%", "__kind__"]
+                      "Δ %", "__kind__"]
         view = view[cols_order]
 
         def _row_html(row):
@@ -16235,29 +16244,33 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             for col in cols_order[:-1]:
                 v = row[col]
                 if col == "Отклонение":
-                    color = "#ff5454" if (isinstance(v, (int, float)) and v > 0) else (
-                        "#46d68a" if (isinstance(v, (int, float)) and v <= 0) else "#cccccc"
+                    # Q1 (08.05.2026): отставание = красный, выполнение/опережение = зелёный.
+                    color = "#46d68a" if (isinstance(v, (int, float)) and v >= 0) else (
+                        "#ff5454" if (isinstance(v, (int, float)) and v < 0) else "#cccccc"
                     )
                     txt = f"{int(v):+d}" if v else "0"
                     cells.append(f"<td style='text-align:right; color:{color}; font-weight:{weight};'>{txt}</td>")
-                elif col == "%":
+                elif col == "Δ %":
                     if v is None or (isinstance(v, float) and _np.isnan(v)):
                         cells.append("<td style='text-align:right;'>—</td>")
                     else:
                         pct = float(v)
-                        if pct >= 100:
+                        # Семантика: pct >= 0 → выполнено/опережение (зелёная гамма);
+                        #            pct < 0 → отставание (красная гамма, насыщенность по глубине).
+                        if pct >= 10:
                             cell_bg = "#1c4426"
-                        elif pct >= 70:
-                            cell_bg = "#3a4a26"
-                        elif pct >= 30:
+                        elif pct >= 0:
+                            cell_bg = "#2b5234"
+                        elif pct >= -10:
                             cell_bg = "#5a3a26"
-                        elif pct > 0:
+                        elif pct >= -30:
                             cell_bg = "#7a2a2a"
                         else:
                             cell_bg = "#5a1212"
+                        sign = "+" if pct > 0 else ""
                         cells.append(
                             f"<td style='text-align:right; background:{cell_bg}; color:#fff; font-weight:{weight};'>"
-                            f"{pct:.0f}%</td>"
+                            f"{sign}{pct:.0f}%</td>"
                         )
                 elif col in ("План", "СКУД", "1 неделя", "2 неделя", "3 неделя", "4 неделя", "5 неделя", "6 неделя"):
                     txt = f"{int(v):,}".replace(",", " ") if v else "0"
@@ -16286,32 +16299,11 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
     # ---------- Таб 2: Динамика ----------
     with tabs[1]:
         st.subheader("Динамика людей и техники")
-        dyn_cols = st.columns([1.0, 1.6, 1.6])
-        with dyn_cols[0]:
-            agg_kind = st.radio(
-                "Группировка", ["Неделя", "Месяц", "Год"], horizontal=True, index=0,
-                key=f"gdrs_dyn_kind_{vid_locked or 'any'}",
-            )
-        with dyn_cols[1]:
-            dyn_dates = st.date_input(
-                "Период (от — до)",
-                value=(date_from.date(), date_to.date()),
-                min_value=min_date.date(),
-                max_value=max_date.date(),
-                key=f"gdrs_dyn_dates_{vid_locked or 'any'}",
-            )
-        with dyn_cols[2]:
-            st.markdown(
-                "<div style='padding-top:32px; color:#888; font-size:12px;'>"
-                "План и факт пересчитываются по выбранному периоду; план = max снапшот ≤ конца периода."
-                "</div>",
-                unsafe_allow_html=True,
-            )
-        if isinstance(dyn_dates, (tuple, list)) and len(dyn_dates) == 2:
-            dyn_from, dyn_to = (_pd.to_datetime(dyn_dates[0]), _pd.to_datetime(dyn_dates[1]))
-        else:
-            dyn_from = _pd.to_datetime(dyn_dates if not isinstance(dyn_dates, (tuple, list)) else dyn_dates[0])
-            dyn_to = dyn_from
+        agg_kind = st.radio(
+            "Группировка", ["Неделя", "Месяц", "Год"], horizontal=True, index=0,
+            key=f"gdrs_dyn_kind_{vid_locked or 'any'}",
+        )
+        dyn_from, dyn_to = _pd.to_datetime(date_from), _pd.to_datetime(date_to)
 
         fact = long_fact.copy()
         fact = fact[fact["vid_resursa"].astype(str).str.casefold() == sel_vid.casefold()]
@@ -16406,8 +16398,11 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             ].copy()
             chart_df.rename(columns={
                 "contractor_name": "Контрагент", "plan": "План",
-                "skud": "Факт", "deviation": "Отклонение",
+                "skud": "Факт",
             }, inplace=True)
+            # Q3 (08.05.2026): «Отклонение» в семантике заказчика = факт − план
+            # (положительное — опережение, отрицательное — отставание).
+            chart_df["Отклонение"] = (chart_df["Факт"] - chart_df["План"]).round(0).astype(int)
             chart_df = chart_df.sort_values("План", ascending=False)
             try:
                 import plotly.graph_objects as _go
@@ -16424,10 +16419,14 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                     name="Отклонение",
                     x=chart_df["Контрагент"],
                     y=chart_df["Отклонение"].abs(),
+                    # Q1 (08.05.2026): отставание = красный, выполнение/опережение = зелёный.
                     marker_color=[
-                        "#ff8c2d" if v > 0 else "#ff5454"
+                        "#46d68a" if v >= 0 else "#ff5454"
                         for v in chart_df["Отклонение"]
                     ],
+                    text=[f"{int(v):+d}" for v in chart_df["Отклонение"]],
+                    textposition="outside",
+                    textfont=dict(color="#cfe9fa", size=11),
                 )
                 fig2.update_layout(
                     barmode="group",
@@ -16482,13 +16481,15 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                 "contractor_name": "Контрагент",
                 "plan": "План",
                 "mean_per_day": "Среднее за месяц",
-                "deviation": "Отклонение",
             })
+            # Q3 (08.05.2026): «Отклонение» = факт − план (положительное = опережение).
+            view2["Отклонение"] = (view2["Среднее за месяц"].fillna(0) - view2["План"].fillna(0)).round(0).astype(int)
             view2 = view2.sort_values("План", ascending=False)
 
             def _td_dev(v):
-                color = "#ff5454" if (isinstance(v, (int, float)) and v > 0) else (
-                    "#46d68a" if (isinstance(v, (int, float)) and v <= 0) else "#cccccc"
+                # Q1 (08.05.2026): отставание = красный, выполнение/опережение = зелёный.
+                color = "#46d68a" if (isinstance(v, (int, float)) and v >= 0) else (
+                    "#ff5454" if (isinstance(v, (int, float)) and v < 0) else "#cccccc"
                 )
                 if v is None or (isinstance(v, float) and _np.isnan(v)) or v == 0:
                     return f"<td style='text-align:right; color:{color}; font-weight:600;'>0</td>"
@@ -17074,7 +17075,54 @@ def dashboard_debit_credit(df):
             project_from_reference = True
     type_col = _find_col(work, ["Тип подрядчика", "тип подрядчика", "contractor type"])
     contract_col = _find_col(work, ["Номер договора", "Договор", "договор", "contract"])
-    total_col = _find_col(work, ["Сумма в договоре", "сумма в договоре", "Общая сумма", "contract sum"])
+    # Q15 (08.05.2026): «Сумма договора» — заказчик подтвердил, что лежит в справочнике
+    # JSON. В выгрузке DK.json структура содержит вложенный объект `Договор.СуммаДоговора`,
+    # после flatten в work колонка может называться `Договор_СуммаДоговора` /
+    # `СуммаДоговора` / `Договор.СуммаДоговора` — расширяем кандидатов.
+    total_col = _find_col(
+        work,
+        [
+            "Сумма в договоре",
+            "сумма в договоре",
+            "Общая сумма",
+            "contract sum",
+            "Сумма_Договора",
+            "СуммаДоговора",
+            "Договор_СуммаДоговора",
+            "Договор.СуммаДоговора",
+            "Сумма договора",
+            "СуммаПоДоговору",
+            "Сумма по договору",
+        ],
+    )
+    # Если в DK ничего похожего нет — подтягиваем сумму из 1с_*_Dogovor.json
+    # по `ID_Договора` (Q15).
+    id_dog_col = _find_col(
+        work,
+        [
+            "ID_Договора",
+            "Договор_ID_Договора",
+            "Договор.ID_Договора",
+            "ID_Dogovor",
+            "1C_ID_DOG",
+        ],
+    )
+    if (not total_col) and id_dog_col and id_dog_col in work.columns:
+        try:
+            _dog_lookup = _load_dogovor_lookup() or {}
+        except Exception:
+            _dog_lookup = {}
+        if _dog_lookup:
+            def _resolve_summa(v):
+                if v is None or (isinstance(v, float) and pd.isna(v)):
+                    return None
+                rec = _dog_lookup.get(str(v).strip().lower())
+                if not rec:
+                    return None
+                return rec.get("Сумма_Договора")
+            work["_summa_dogovora_lookup"] = work[id_dog_col].map(_resolve_summa)
+            if work["_summa_dogovora_lookup"].notna().any():
+                total_col = "_summa_dogovora_lookup"
     paid_col = _find_col(work, ["Выплачено", "выплачено", "Выплаченная сумма", "ВсегоОплат", "paid"])
     advance_col = _find_col(work, ["Аванс", "аванс", "Авансированная сумма", "ВсегоОплат_Аванс", "advance"])
     balance_col = _find_col(work, ["Остаток на конец периода", "Остаток на период", "ОстатокНаКонецПериода", "остаток", "balance"])
@@ -22133,6 +22181,68 @@ def _pred_fmt_doc_full(val) -> str:
     return s
 
 
+@st.cache_data(show_spinner=False, ttl=600)
+def _load_dogovor_lookup() -> dict[str, dict]:
+    """Q15 + Q30 (08.05.2026): lookup `1C_ID_DOG → текстовый № договора + сумма + контрагент`
+    из всех `web/1с_*_Dogovor.json`.
+
+    Берём максимально свежий снимок: для каждого `ID_Договора` оставляем запись
+    из самого нового файла (по дате модификации). Поля:
+      - "Номер_Договора" — текстовый номер (заказчик подтвердил Q30).
+      - "Сумма_Договора" — сумма договора (заказчик подтвердил Q15).
+      - "Наименование_Договора" — полное название.
+      - "Наименование_Контрагента" — для перекрёстной проверки.
+    Возвращает dict[guid_lower → dict].
+    """
+    import json as _json
+    from pathlib import Path as _Path
+    out: dict[str, dict] = {}
+    try:
+        web_dir = _Path(__file__).resolve().parent.parent / "web"
+        files = sorted(web_dir.glob("1[сc]_*_Dogovor.json"), key=lambda p: p.stat().st_mtime)
+    except Exception:
+        return out
+    for fp in files:
+        try:
+            data = _json.loads(_Path(fp).read_text(encoding="utf-8-sig"))
+        except Exception:
+            try:
+                data = _json.loads(_Path(fp).read_text(encoding="utf-8", errors="ignore"))
+            except Exception:
+                continue
+        if not isinstance(data, list):
+            continue
+        for r in data:
+            if not isinstance(r, dict):
+                continue
+            guid = str(r.get("ID_Договора") or "").strip().lower()
+            if not guid:
+                continue
+            num = str(r.get("Номер_Договора") or "").strip()
+            name = str(r.get("Наименование_Договора") or "").strip()
+            contractor = str(r.get("Наименование_Контрагента") or "").strip()
+            try:
+                summa_raw = r.get("Сумма_Договора")
+                summa = float(summa_raw) if summa_raw not in (None, "", "null") else None
+            except (TypeError, ValueError):
+                summa = None
+            # Q21 (08.05.2026): «Дата выдачи ИД» — заказчик подтвердил, что есть
+            # в выгрузке (поле `Дата_Получения_ИД` в Dogovor.json).
+            issue_id = str(r.get("Дата_Получения_ИД") or "").strip()
+            date_start = str(r.get("Дата_Начала_Договора") or "").strip()
+            date_end = str(r.get("Дата_Окончания_Договора") or "").strip()
+            out[guid] = {
+                "Номер_Договора": num,
+                "Сумма_Договора": summa,
+                "Наименование_Договора": name,
+                "Наименование_Контрагента": contractor,
+                "Дата_Получения_ИД": issue_id,
+                "Дата_Начала_Договора": date_start,
+                "Дата_Окончания_Договора": date_end,
+            }
+    return out
+
+
 def _pred_guess_contract_column(df, exclude=None):
     """Если явного столбца договора нет — ищем по подстроке в имени колонки."""
     if df is None or not hasattr(df, "columns"):
@@ -23768,6 +23878,30 @@ def dashboard_predpisania(df):
             if "номер" in k and "договор" not in k and "contract" not in k:
                 doc_num_col = col
                 break
+
+    # Q30 (08.05.2026): «№ договора» в детальной таблице должен быть текстовым.
+    # В TESSA лежит GUID `1C_ID_DOG`; человекочитаемый № берём из `1с_*_Dogovor.json`
+    # по совпадению `ID_Договора` ↔ `1C_ID_DOG`. Если совпадений нет — оставляем GUID,
+    # чтобы не терять информацию о привязке (и видеть, что lookup не сработал).
+    if contract_col and contract_col in pred.columns:
+        try:
+            _dog_lookup = _load_dogovor_lookup() or {}
+        except Exception:
+            _dog_lookup = {}
+        if _dog_lookup:
+            def _resolve_contract_no(v):
+                if v is None or (isinstance(v, float) and pd.isna(v)):
+                    return v
+                key = str(v).strip().lower()
+                if not key:
+                    return v
+                rec = _dog_lookup.get(key)
+                if not rec:
+                    return v
+                num = (rec.get("Номер_Договора") or "").strip()
+                return num if num else v
+            pred[contract_col] = pred[contract_col].map(_resolve_contract_no)
+
     creation_col_pred = _tessa_find_column(pred, ["CreationDate", "creationdate", "Дата создания"])
     issue_block_col = _tessa_find_column(
         pred,
@@ -23834,11 +23968,19 @@ def dashboard_predpisania(df):
         return 0
 
     pred["_overdue_days"] = pred.apply(_overdue_days_row, axis=1)
+    # Q32 (08.05.2026): заказчик подтвердил, что «критическое предписание» помечается
+    # отдельным тегом в TESSA — поле `Tessa_Teg` со значением «КРИТИЧНЫЙ».
+    # Дополнительно проверяем `KindID == _KIND_ID_CRITICAL` (исторически).
+    # Порог «>30 дней» оставлен как fallback на время, пока теги не проставлены
+    # на все предписания (на 06.05.2026 в данных тег есть только у КС/Отказ).
     _tag_col = _tessa_find_column(pred, ["Tessa_Teg", "TessaTag", "Тег", "Тэг"])
     _kind_id_col = _tessa_find_column(pred, ["KindID", "KindId", "kindid"])
     _crit_tag = pd.Series(False, index=pred.index)
     if _tag_col and _tag_col in pred.columns:
-        _crit_tag = _crit_tag | pred[_tag_col].astype(str).str.strip().str.casefold().eq("критичный")
+        _tag_norm = pred[_tag_col].astype(str).str.strip().str.casefold()
+        _crit_tag = _crit_tag | _tag_norm.isin(
+            {"критичный", "критическое", "критичное", "critical", "крит"}
+        )
     if _kind_id_col and _kind_id_col in pred.columns:
         _crit_tag = _crit_tag | (
             pred[_kind_id_col].astype(str).str.strip().str.casefold()
@@ -25227,7 +25369,7 @@ def _prepare_project_schedule_data(
     with flt_cols[3]:
         sel_level = st.selectbox(
             "Уровень отображения",
-            ["Все уровни", "Верхний (≤4)", "Детальный (≤5)"],
+            ["Все уровни", "Верхний (Раздел, ур.4)", "Детальный (Задача, ур.5)"],
             index=2,
             key=f"{key_prefix}_level_mode",
         )
@@ -25269,9 +25411,11 @@ def _prepare_project_schedule_data(
     else:
         lvl_num = pd.Series([np.nan] * len(work), index=work.index)
     work["__lvl"] = lvl_num.fillna(99).astype(int)
-    if sel_level == "Верхний (≤4)":
+    # Q12 (08.05.2026): «Верхний» = ур.4 (Раздел) — всё до Раздела включительно, без задач ур.5;
+    # «Детальный» = ур.5 (Задача) — всё до задач включительно.
+    if sel_level == "Верхний (Раздел, ур.4)":
         work = work[work["__lvl"] <= 4]
-    elif sel_level == "Детальный (≤5)":
+    elif sel_level == "Детальный (Задача, ур.5)":
         work = work[work["__lvl"] <= 5]
 
     if only_lots and lot_col:
