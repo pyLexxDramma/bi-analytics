@@ -22115,11 +22115,15 @@ _PRED_DASH_MOCK_CSS = """
 .pred-detail-wrap .pred-col-date { width:12ch; min-width:12ch; max-width:13ch; }
 .pred-detail-wrap .pred-col-mid { width:12ch; min-width:11ch; max-width:16ch; }
 .pred-detail-wrap .pred-col-text { width:auto; min-width:12ch; }
-.pred-detail-wrap tr.pred-row-overdue td { background:rgba(255, 105, 145, 0.28); border-left:3px solid #ff5d8f; }
-.pred-detail-wrap tr.pred-row-resolved td { background:rgba(150, 255, 150, 0.22); border-left:3px solid #66dd66; }
-.pred-detail-wrap tr.pred-row-overdue td:first-child,
-.pred-detail-wrap tr.pred-row-resolved td:first-child { border-left:none; }
-.pred-detail-wrap tr:hover td { background:rgba(255,255,255,0.04); }
+/* Подсветка строк: !important нужен, потому что Streamlit-обертка
+   добавляет свой более специфичный фон, который перебивает rgba. */
+.pred-detail-wrap tbody tr.pred-row-overdue td { background:rgba(255, 105, 145, 0.32) !important; border-bottom:1px solid rgba(255, 93, 143, 0.45); }
+.pred-detail-wrap tbody tr.pred-row-overdue td:first-child { border-left:4px solid #ff5d8f !important; }
+.pred-detail-wrap tbody tr.pred-row-resolved td { background:rgba(102, 221, 102, 0.24) !important; border-bottom:1px solid rgba(102, 221, 102, 0.45); }
+.pred-detail-wrap tbody tr.pred-row-resolved td:first-child { border-left:4px solid #66dd66 !important; }
+.pred-detail-wrap tbody tr.pred-row-overdue:hover td { background:rgba(255, 105, 145, 0.42) !important; }
+.pred-detail-wrap tbody tr.pred-row-resolved:hover td { background:rgba(102, 221, 102, 0.34) !important; }
+.pred-detail-wrap tbody tr:not(.pred-row-overdue):not(.pred-row-resolved):hover td { background:rgba(255,255,255,0.04); }
 .pred-chip { display:inline-block; padding:3px 8px; border-radius:999px; font-size:12px; font-weight:600; border:1px solid rgba(255,255,255,0.12); }
 .pred-chip-overdue { background:rgba(230,126,34,0.18); color:#fdba74; }
 .pred-chip-ok { background:rgba(46,204,113,0.18); color:#86efac; }
@@ -23989,23 +23993,21 @@ def dashboard_predpisania(df):
         return 0
 
     pred["_overdue_days"] = pred.apply(_overdue_days_row, axis=1)
-    # Q32 (08.05.2026): заказчик подтвердил, что «критическое предписание» помечается
-    # отдельным тегом в TESSA — поле `Tessa_Teg` со значением «КРИТИЧНЫЙ».
-    # Дополнительно проверяем `KindID == _KIND_ID_CRITICAL` (исторически).
-    # Порог «>30 дней» оставлен как fallback на время, пока теги не проставлены
-    # на все предписания (на 06.05.2026 в данных тег есть только у КС/Отказ).
+    # Q32 (08.05.2026): «критическое предписание» помечается тегом в TESSA —
+    # поле `Tessa_Teg` со значением «КРИТИЧНЫЙ». Если тега нет — fallback по
+    # порогу просрочки > 30 дней.
+    #
+    # ВАЖНО: исторически здесь была дополнительная проверка
+    # `KindID == _KIND_ID_CRITICAL`. Это оказалось багом: эта константа
+    # `347986da-...` — это KindID самого вида документа «Предписание»,
+    # а не «Критическое предписание», поэтому `_crit_tag` становилось True
+    # абсолютно для всех 11 предписаний. Убрали (QA-08.05, B-15).
     _tag_col = _tessa_find_column(pred, ["Tessa_Teg", "TessaTag", "Тег", "Тэг"])
-    _kind_id_col = _tessa_find_column(pred, ["KindID", "KindId", "kindid"])
     _crit_tag = pd.Series(False, index=pred.index)
     if _tag_col and _tag_col in pred.columns:
         _tag_norm = pred[_tag_col].astype(str).str.strip().str.casefold()
         _crit_tag = _crit_tag | _tag_norm.isin(
             {"критичный", "критическое", "критичное", "critical", "крит"}
-        )
-    if _kind_id_col and _kind_id_col in pred.columns:
-        _crit_tag = _crit_tag | (
-            pred[_kind_id_col].astype(str).str.strip().str.casefold()
-            == str(_KIND_ID_CRITICAL).casefold()
         )
     pred["_critical"] = _crit_tag | (pred["_overdue_days"] > 30)
 
