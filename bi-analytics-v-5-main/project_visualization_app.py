@@ -968,18 +968,26 @@ def main():
                     return f"{base}  ✅"
                 return base
 
-            if "web_version_pick_id" not in st.session_state:
-                st.session_state["web_version_pick_id"] = (
-                    int(active_id)
-                    if active_id is not None and int(active_id) in ids_ordered
-                    else ids_ordered[0]
-                )
-            elif int(st.session_state["web_version_pick_id"]) not in ids_ordered:
-                st.session_state["web_version_pick_id"] = (
-                    int(active_id)
-                    if active_id is not None and int(active_id) in ids_ordered
-                    else ids_ordered[0]
-                )
+            # Безопасное приведение значения из session_state к int.
+            # Раньше падало ValueError, если в state оказывалось None или
+            # строка вида "" / "None" (наблюдалось при rerun после клика
+            # чекбокса в дашбордах).
+            def _safe_int(v):
+                try:
+                    if v is None:
+                        return None
+                    return int(v)
+                except (TypeError, ValueError):
+                    return None
+
+            _default_pick = (
+                int(active_id)
+                if active_id is not None and _safe_int(active_id) in ids_ordered
+                else ids_ordered[0]
+            )
+            _cur_pick = _safe_int(st.session_state.get("web_version_pick_id"))
+            if _cur_pick is None or _cur_pick not in ids_ordered:
+                st.session_state["web_version_pick_id"] = _default_pick
 
             selected_version_id = st.selectbox(
                 "Версия данных",
