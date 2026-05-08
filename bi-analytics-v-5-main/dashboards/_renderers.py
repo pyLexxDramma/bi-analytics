@@ -26429,13 +26429,15 @@ def _render_project_schedule_covenants(df: pd.DataFrame) -> None:
 
 def dashboard_project_schedule_chart(df):
     """График проекта: Гант по плану и базе MSP, фильтры, таблица с отклонениями."""
-    # Масштаб визуализации: высота строк графика и пропорционально шрифты/маркеры/пороги плотности подписей.
-    _GANTT_VIS_SCALE = 4.0
-    # Отдельные коэффициенты читаемости: визуальная высота остаётся x4,
-    # но текст/маркеры/обводки растут умеренно и не налезают друг на друга.
-    _GANTT_FONT_SCALE = 1.35
-    _GANTT_MARKER_SCALE = 1.6
-    _GANTT_STROKE_SCALE = 1.6
+    # Правки куратора 08.05.2026: «убрать пустоту». Масштаб визуализации
+    # снижен с 4.0 до 1.5 — раньше при малом числе строк график был
+    # высотой ~1200px (300*4) с верхним margin 192px и нижним 312px,
+    # из-за чего возникали огромные чёрные пустоты над/под полосами.
+    # Теперь min height ~450px, row height ~54px, margins разумные.
+    _GANTT_VIS_SCALE = 1.5
+    _GANTT_FONT_SCALE = 1.15
+    _GANTT_MARKER_SCALE = 1.2
+    _GANTT_STROKE_SCALE = 1.2
 
     def _norm_colname(s) -> str:
         """Жёсткая нормализация: BOM, NBSP, узкие пробелы, табы/переносы → один пробел; нижний регистр; trim."""
@@ -26640,40 +26642,12 @@ def dashboard_project_schedule_chart(df):
         return f"{sign}{n} дн."
 
     st.header("График проекта")
-    _view_mode = st.radio(
-        "Вид отображения",
-        (
-            "Диаграмма Ганта",
-            "Иерархическая таблица (WBS)",
-            "Таблица + мини-бары отклонений",
-            "Ковенанты — вехи на шкале",
-            "Сводный bar-chart отклонений",
-            "Теплокарта по блокам/задачам",
-        ),
-        index=0,
-        horizontal=True,
-        key="project_schedule_view_mode",
-        help=(
-            "Гант — основной вид по ТЗ заказчика 2026-05-06: фильтры по проекту/блоку/строению/уровню, "
-            "галочки «в лотах» и «причины отклонений», под графиком — таблица ИД/Название/% завершения/Окончание/База/Отклонение. "
-            "Остальные режимы — служебные (WBS-дерево, мини-бары, отдельный экран ковенантов и т.п.)."
-        ),
-    )
-    if _view_mode == "Иерархическая таблица (WBS)":
-        _render_project_schedule_hierarchical(df)
-        return
-    if _view_mode == "Таблица + мини-бары отклонений":
-        _render_project_schedule_minibars(df)
-        return
-    if _view_mode == "Ковенанты — вехи на шкале":
-        _render_project_schedule_covenants(df)
-        return
-    if _view_mode == "Сводный bar-chart отклонений":
-        _render_project_schedule_barchart(df)
-        return
-    if _view_mode == "Теплокарта по блокам/задачам":
-        _render_project_schedule_heatmap(df)
-        return
+    # Правки куратора 08.05.2026: верхний radio-селектор «Вид отображения»
+    # (Гант / Иерархическая таблица / Мини-бары / Ковенанты / Bar-chart /
+    # Теплокарта) скрыт. По умолчанию и единственно — «Диаграмма Ганта».
+    # Альтернативные виды (WBS-дерево, мини-бары, отдельный экран ковенантов,
+    # bar-chart, теплокарта) отключены в UI; их функции остаются в коде на
+    # случай возврата по запросу заказчика.
     with st.expander("Подсказка", expanded=False):
         suppress_caption(
             "Фильтры: проект (ур. 1), функциональный блок (ур. 2), уровень структуры MSP (3/4/5 или все), опционально — только лоты. "
@@ -28492,11 +28466,7 @@ def dashboard_project_schedule_chart(df):
             skip_clamp_zoom=True,
         )
 
-    st.markdown(
-        "<div style='margin:0.25rem 0 0.35rem;color:#e8eef5;font-weight:600;font-size:1.02rem;"
-        "border-top:1px solid rgba(148,163,184,0.35);padding-top:0.45rem;'>Таблица под графиком</div>",
-        unsafe_allow_html=True,
-    )
+    # Правки куратора 08.05.2026: подпись «Таблица под графиком» убрана.
 
     dev_start_src = _sched_col(
         plot_df,
