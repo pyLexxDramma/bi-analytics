@@ -1500,6 +1500,20 @@ def build_dev_tz_matrix_rows(
         phase: str = "",
         row_key: str = "",
     ) -> None:
+        # Sanity sync: если План и Факт — обычные даты вида ДД.ММ.ГГГГ, гарантируем,
+        # что «Откл.» = План − Факт (календарные дни) ровно по показанным датам.
+        # Это устраняет рассинхрон, когда исходник Δ берётся из иной строки матча.
+        try:
+            _ds = re.compile(r"^\s*(\d{1,2})\.(\d{1,2})\.(\d{4})\s*$")
+            mp = _ds.match(str(plan_s or ""))
+            mf = _ds.match(str(fact_s or ""))
+            if mp and mf:
+                pdt = pd.Timestamp(year=int(mp.group(3)), month=int(mp.group(2)), day=int(mp.group(1)))
+                fdt = pd.Timestamp(year=int(mf.group(3)), month=int(mf.group(2)), day=int(mf.group(1)))
+                d = int((pdt.normalize() - fdt.normalize()).days)
+                otkl_s = _fmt_delta_days(d)
+        except Exception:
+            pass
         rows.append(
             {
                 "group": group,
