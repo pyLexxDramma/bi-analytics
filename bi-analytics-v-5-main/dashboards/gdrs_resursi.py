@@ -826,13 +826,26 @@ def _lookup_contract_name(
     return str(contract_by_norm.get((pn, cn), "") or "")
 
 
+# ТЗ заказчика 2026-05-08 (скрин ГДРС): расширен список паттернов
+# для «Вид работы» — добавлены ЛЭП, АЦБ, ЗОМ и ГРЩ (через «и»),
+# Вертикальная планировка, ВК (наружные сети), ИИВ, Газопровод
+# (ГСВ/ГСН/ГСЗ), ИНК; добавлен fallback «БЛОК X» (без префикса «СМР»),
+# т.к. в реальных contract_name из 1С чаще встречается «АЛЬФА-С БЛОК А»,
+# «БЛОК U3U4», а не «СМР Блок A». Без fallback покрытие было ~2%.
 _VID_PATTERNS: list[tuple[str, "re.Pattern[str]"]] = [
     ("СМР Блок", re.compile(r"\b(?:смр|cmp)[\s\-_]*блок[\s\-_]*[a-zа-яёA-ZА-ЯЁ0-9]+", re.IGNORECASE)),
     ("АУПТ", re.compile(r"\bаупт\b", re.IGNORECASE)),
+    ("АЦБ", re.compile(r"\bацб\b", re.IGNORECASE)),
     ("ВОС", re.compile(r"\bв\.?\s?о\.?\s?с\b", re.IGNORECASE)),
-    ("ЗОМ + ГРЩ", re.compile(r"\bзом[\s\+]+грщ\b", re.IGNORECASE)),
+    ("ЛЭП", re.compile(r"\bлэп\b", re.IGNORECASE)),
+    ("ЗОМ и ГРЩ", re.compile(r"\bзом[\s\+иand]+грщ\b", re.IGNORECASE)),
     ("Вынос сетей", re.compile(r"вынос\s+сетей", re.IGNORECASE)),
     ("Газоразрядка котельной", re.compile(r"газоразрядк", re.IGNORECASE)),
+    ("Газопровод (ГСВ/ГСН)", re.compile(r"газопровод|\bгсв\b|\bгсн\b|\bгсз\b", re.IGNORECASE)),
+    ("Вертикальная планировка", re.compile(r"вертикальн\w*\s+планир", re.IGNORECASE)),
+    ("ВК (наружные сети)", re.compile(r"\bвк\b[\s\-_]*\(?\s*наруж", re.IGNORECASE)),
+    ("ИНК", re.compile(r"\bинк\b", re.IGNORECASE)),
+    ("ИИВ", re.compile(r"\bиив\b", re.IGNORECASE)),
     ("Огнезащита", re.compile(r"огнезащит", re.IGNORECASE)),
     ("Благоустройство", re.compile(r"благоустр", re.IGNORECASE)),
     ("Подпорные стены", re.compile(r"подпорн", re.IGNORECASE)),
@@ -842,6 +855,9 @@ _VID_PATTERNS: list[tuple[str, "re.Pattern[str]"]] = [
     ("Электрооборудование", re.compile(r"электрообор|эл\.\s?обор|электросн", re.IGNORECASE)),
     ("Монтаж резервуара", re.compile(r"монтаж\s+резервуар", re.IGNORECASE)),
     ("Мобилизация", re.compile(r"мобилизац", re.IGNORECASE)),
+    # Fallback: «БЛОК X» (X = A/B/C/D/E/F/G/U/U1/U2/U3U4/0/1/2/3/4/5).
+    # Должен идти ПОСЛЕДНИМ — иначе перехватит более точные «СМР Блок».
+    ("Блок", re.compile(r"\bблок[\s\-_]*[a-zа-яёA-ZА-ЯЁ0-9]+", re.IGNORECASE)),
 ]
 
 
@@ -861,9 +877,13 @@ def extract_vid_raboty(contract_name: str) -> str:
         return ""
     matches = []
     for label, pat in _VID_PATTERNS:
-        m = pat.search(s)
-        if m:
-            matches.append(m.group(0).strip() if "блок" in label.lower() else label)
+        for m in pat.finditer(s):
+            txt = m.group(0).strip()
+            # Для паттернов, содержащих «блок», возвращаем буквальный
+            # текст совпадения (например, «БЛОК A», «Блок U3U4») —
+            # чтобы различать разные блоки в рамках одного контрагента.
+            # Для остальных — фиксированный label.
+            matches.append(txt if "блок" in label.lower() else label)
     if matches:
         seen = []
         for m in matches:
@@ -994,7 +1014,11 @@ def build_main_table(
     )
     rows["vid_raboty"] = rows["contract_name"].astype(str).apply(extract_vid_raboty)
     rows["skud"] = rows["skud_avg"].fillna(0.0).round(0)
-    rows["deviation"] = (rows["plan"] - rows["skud"]).round(0)
+    # ТЗ заказчика 2026-05-08 (скрин ГДРС): «Отклонение = СКУД − План».
+    # Минус — недовыполнение (красный), плюс — перевыполнение (зелёный).
+    # Раньше формула была plan − skud (обратный знак), а UI пересчитывал
+    # на skud − plan — устранён технический долг с «двойной истиной».
+    rows["deviation"] = (rows["skud"] - rows["plan"]).round(0)
     rows["delta_pct"] = rows.apply(
         lambda r: (r["skud"] / r["plan"] * 100.0) if r["plan"] not in (0.0, None) else np.nan,
         axis=1,
@@ -1013,7 +1037,8 @@ def build_main_table(
         block = chunk.sort_values("contractor_name").copy()
         plan_sum = float(block["plan"].sum())
         skud_sum = float(block["skud"].sum())
-        dev_sum = plan_sum - skud_sum
+        # ТЗ заказчика 2026-05-08: dev = СКУД − План (см. комментарий выше).
+        dev_sum = skud_sum - plan_sum
         sub = pd.DataFrame(
             [{
                 "project_name": proj,
@@ -1044,7 +1069,8 @@ def build_main_table(
     sub_only = body[body["row_kind"] == "subtotal"]
     plan_total = float(sub_only["plan"].sum())
     skud_total_v = float(sub_only["skud"].sum())
-    dev_total = plan_total - skud_total_v
+    # ТЗ заказчика 2026-05-08: dev = СКУД − План (см. комментарий выше).
+    dev_total = skud_total_v - plan_total
     grand = pd.DataFrame(
         [{
             "project_name": "Итого",
@@ -1129,5 +1155,6 @@ def build_summary_table(
         summary.groupby("contractor_name", as_index=False)
         .agg(plan=("plan", "sum"), mean_per_day=("mean_per_day", "sum"))
     )
-    out["deviation"] = (out["plan"] - out["mean_per_day"]).round(0)
+    # ТЗ заказчика 2026-05-08: «Отклонение = СКУД − План» (mean_per_day − plan).
+    out["deviation"] = (out["mean_per_day"] - out["plan"]).round(0)
     return out[["contractor_name", "plan", "mean_per_day", "deviation"]]
