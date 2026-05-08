@@ -7980,13 +7980,16 @@ def dashboard_budget_by_period(df):
     )
     # После подстановки из 1С повторно применяем фильтр проекта,
     # чтобы в таблицы/графики не попадали другие проекты.
+    # Правки куратора 08.05.2026: при первом выборе проекта в БДДС иногда «залипал»
+    # фильтр и в таблице/графике показывались другие проекты (1С-fallback мог
+    # вернуть данные сразу по нескольким). Применяем СТРОГОЕ сравнение
+    # по нормализованному ключу, а не «нестрогое» соответствие через
+    # _project_norm_key_matches_msp_keys (которое допускало частичные совпадения).
     if selected_project != "Все" and "project name" in filtered_df.columns:
         _sel_pk = _project_filter_norm_key(selected_project)
         if _sel_pk:
             _rk_bdd = filtered_df["project name"].map(_project_filter_norm_key)
-            filtered_df = filtered_df[
-                _rk_bdd.map(lambda rk: _project_norm_key_matches_msp_keys(rk, {_sel_pk}))
-            ].copy()
+            filtered_df = filtered_df[_rk_bdd == _sel_pk].copy()
     ensure_date_columns(filtered_df)
     ensure_budget_columns(filtered_df)
     from dashboards.data_quality_hints import collect_budget_1c_hints, render_quality_hints
@@ -8269,6 +8272,16 @@ def dashboard_budget_by_period(df):
         if _n > 10:
             try:
                 fig.update_layout(uniformtext=dict(minsize=5, mode="hide"))
+            except Exception:
+                pass
+        # Правки куратора 08.05.2026: при малом числе периодов Plotly раздувает столбцы
+        # на всю ширину слота — выглядит как «толстенные» бары на полэкрана и
+        # ещё и накладываются друг на друга. Принудительно фиксируем узкую ширину
+        # (как при большом числе периодов «Дмитровский 1»), без наложения.
+        if _n <= 6:
+            try:
+                fig.update_layout(bargap=0.86, bargroupgap=0.12)
+                fig.update_traces(width=0.08, offsetgroup=None, selector=dict(type="bar"))
             except Exception:
                 pass
         # Легенда под графиком (margin b согласован с расчётом высоты _ch выше).
@@ -10186,6 +10199,14 @@ def dashboard_bdr(df):
                 nticks=min(64, max(12, _nb)),
             ),
         )
+        # Правки куратора 08.05.2026: фиксируем узкие столбцы при малом числе периодов
+        # (иначе Plotly растягивает 1-3 столбца на всю ширину графика).
+        if _nb <= 6:
+            try:
+                fig.update_layout(bargap=0.86, bargroupgap=0.12)
+                fig.update_traces(width=0.08, offsetgroup=None, selector=dict(type="bar"))
+            except Exception:
+                pass
         if not chart_df.empty:
             _ymax = float(
                 np.nanmax(
