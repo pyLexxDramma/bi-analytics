@@ -1622,6 +1622,43 @@ def _apply_finance_bar_label_layout(
     return fig
 
 
+def _apply_pie_layout(fig: go.Figure, *, height: int = 460) -> go.Figure:
+    """
+    Правки куратора 08.05.2026: единый layout для круговых диаграмм.
+    Решает проблему «съехавших» легенд: фиксирует ширину легенды справа,
+    задаёт читаемые отступы, скрывает переполненные подписи (подсказывая
+    Plotly не вылезать за пределы сектора), и ставит автомаргины.
+    """
+    try:
+        fig.update_layout(
+            height=height,
+            legend=dict(
+                orientation="v",
+                yanchor="middle",
+                y=0.5,
+                xanchor="left",
+                x=1.02,
+                font=dict(size=11, color="#e8eef5"),
+                itemsizing="constant",
+                itemwidth=30,
+            ),
+            margin=dict(l=24, r=220, t=48, b=32),
+            showlegend=True,
+        )
+        # Подписи внутри сектора, без выноса наружу — это устраняет
+        # «съезды» текстовых аннотаций за пределы графика.
+        fig.update_traces(
+            selector=dict(type="pie"),
+            textposition="inside",
+            textfont=dict(size=11, color="#ffffff"),
+            insidetextorientation="radial",
+            automargin=True,
+        )
+    except Exception:
+        pass
+    return fig
+
+
 def _apply_vertical_category_bar_width(fig: go.Figure) -> go.Figure:
     """
     Вертикальные bar по категориальной оси X: одинаковая визуальная ширина столбцов,
@@ -8304,7 +8341,8 @@ def dashboard_budget_by_period(df):
                     )
             _bdc["reserve budget"] = _bdc["budget fact"] - _bdc["budget plan"]
             _bdc = _bdc.drop(columns=["period_original", period_col, "project name"], errors="ignore")
-            _cols_bdd = ["_per_disp", "Проект", "budget plan", "budget fact", "reserve budget"]
+            # Правки куратора 08.05.2026: порядок колонок — Проект первый, Период второй.
+            _cols_bdd = ["Проект", "_per_disp", "budget plan", "budget fact", "reserve budget"]
             if adjusted_budget_col and adjusted_budget_col in _bdc.columns and not hide_adjusted:
                 _cols_bdd.append(adjusted_budget_col)
             _bdc = _bdc[_cols_bdd].copy()
@@ -8353,8 +8391,8 @@ def dashboard_budget_by_period(df):
                 if _fmt_body.empty:
                     continue
                 _hdr_cells: dict = {
-                    "_per_disp": "",
                     "Проект": str(_pl),
+                    "_per_disp": "",
                     "budget plan": "",
                     "budget fact": "",
                     "reserve budget": "",
@@ -8441,8 +8479,8 @@ def dashboard_budget_by_period(df):
             st.info("Нет строк для сводной таблицы по выбранным фильтрам.")
         else:
             _tot_vals_fmt: dict = {
-                "_per_disp": "Итого",
-                "Проект": "",
+                "Проект": "Итого",
+                "_per_disp": "",
                 "_row_kind": "total",
             }
             for _k, _v in _tot_raw.items():
@@ -9938,8 +9976,8 @@ def dashboard_bdr(df):
                     _hdr_b = pd.DataFrame(
                         [
                             {
-                                "Период": "",
                                 "Проект": str(_pl),
+                                "Период": "",
                                 "План расходов": "",
                                 "Факт расходов": "",
                                 "Отклонение": "",
@@ -9950,7 +9988,8 @@ def dashboard_bdr(df):
                     _body_b = _s[
                         ["Период", "План расходов", "Факт расходов", "Отклонение"]
                     ].copy()
-                    _body_b.insert(1, "Проект", "")
+                    # Правки куратора 08.05.2026: Проект — первый, Период — второй.
+                    _body_b.insert(0, "Проект", "")
                     _body_b["__rk"] = ""
                     _parts_bdr.extend([_hdr_b, _body_b])
                 tbl_raw = (
@@ -9961,7 +10000,8 @@ def dashboard_bdr(df):
                 tbl_raw = chart_df[
                     ["Период", "План расходов", "Факт расходов", "Отклонение"]
                 ].copy()
-                tbl_raw.insert(1, "Проект", _bdr_tz_proj)
+                # Правки куратора 08.05.2026: Проект — первый, Период — второй.
+                tbl_raw.insert(0, "Проект", _bdr_tz_proj)
 
             if tbl_raw.empty:
                 st.info("Нет данных для сводной таблицы по выбранным фильтрам.")
@@ -16505,10 +16545,8 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                         plot_bgcolor="rgba(0,0,0,0)",
                         paper_bgcolor="rgba(0,0,0,0)",
                         font_color="#eee",
-                        height=460,
-                        margin=dict(l=24, r=24, t=24, b=24),
-                        legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.05),
                     )
+                    fig3 = _apply_pie_layout(fig3, height=460)
                     st.plotly_chart(fig3, use_container_width=True)
                 except Exception as _e:
                     st.warning(f"Plotly недоступен: {_e}")
