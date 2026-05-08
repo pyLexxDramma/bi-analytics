@@ -471,7 +471,18 @@ def _render_gantt_schedule_html_table(df: pd.DataFrame, max_rows: int = 80):
             subset=dev_names,
             axis=0,
         )
-    html = sty.to_html(index=False, classes="rendered-table", escape=True, border=0)
+    # КРИТИЧНО: Styler.to_html() не принимает параметр index=False (в отличие
+    # от DataFrame.to_html). Без явного hide(axis="index") индекс DataFrame
+    # рендерится первой колонкой как «#» с числами 2146/2147/… (это смущало
+    # куратора 08.05.2026 — не соответствовало заливке строк).
+    try:
+        sty = sty.hide(axis="index")
+    except (AttributeError, TypeError):
+        try:
+            sty = sty.hide_index()
+        except Exception:
+            pass
+    html = sty.to_html(classes="rendered-table", escape=True, border=0)
     st.markdown(_TABLE_CSS + '<div class="rendered-table-wrap">' + html + "</div>", unsafe_allow_html=True)
     if len(df) > max_rows:
         with st.expander("Ограничение отображения таблицы", expanded=False):
@@ -26867,16 +26878,43 @@ def dashboard_project_schedule_chart(df):
         exclude=("приоритет", "риск", "severity"),
     )
 
+    # Правки куратора 08.05.2026: «Пропал фильтр по строениям (задачи уровня 3 MSP)».
+    # Если стандартной колонки building/строение нет — fallback: имена задач уровня 3
+    # (level == 3) из task_name. Тогда фильтр всё равно отображается.
+    _building_l3_values: list[str] = []
+    _building_l3_task_col: Optional[str] = None
+    if not building_col and level_col and level_col in plot_df.columns:
+        try:
+            _lvl_num_for_b = pd.to_numeric(plot_df[level_col], errors="coerce")
+            _b_task_col = _sched_col(plot_df, ["task name", "Task Name", "Название"])
+            if _b_task_col and _lvl_num_for_b.notna().any():
+                _l3_names_b = (
+                    plot_df.loc[_lvl_num_for_b == 3, _b_task_col]
+                    .dropna()
+                    .astype(str)
+                    .map(lambda x: _gantt_clean_task_label(x).strip())
+                )
+                _building_l3_values = sorted(
+                    {x for x in _l3_names_b.tolist() if x and x.lower() != "nan"}
+                )
+                if _building_l3_values:
+                    _building_l3_task_col = _b_task_col
+        except Exception:
+            _building_l3_values = []
+            _building_l3_task_col = None
+
+    _has_building_filter = bool(building_col) or bool(_building_l3_values)
+
     sel_proj = "Все"
     sel_block = "Все"
     sel_building = "Все"
 
-    _flt_cols = st.columns(5 if building_col else 4)
+    _flt_cols = st.columns(5 if _has_building_filter else 4)
     f1 = _flt_cols[0]
     f2 = _flt_cols[1]
     _ix = 2
     f_building = None
-    if building_col:
+    if _has_building_filter:
         f_building = _flt_cols[_ix]
         _ix += 1
     f_level = _flt_cols[_ix]
@@ -26964,12 +27002,53 @@ def dashboard_project_schedule_chart(df):
             suppress_caption("Нет колонки функционального блока.")
     if f_building is not None:
         with f_building:
-            builds = ["Все"] + sorted(plot_df[building_col].dropna().astype(str).unique().tolist())
-            sel_building = st.selectbox("Строение", builds, key="gantt_building_filter")
-            if sel_building != "Все":
-                plot_df = plot_df[
-                    plot_df[building_col].astype(str).str.strip() == str(sel_building).strip()
-                ]
+            if building_col:
+                builds = ["Все"] + sorted(
+                    plot_df[building_col].dropna().astype(str).unique().tolist()
+                )
+                sel_building = st.selectbox(
+                    "Строение", builds, key="gantt_building_filter"
+                )
+                if sel_building != "Все":
+                    plot_df = plot_df[
+                        plot_df[building_col].astype(str).str.strip()
+                        == str(sel_building).strip()
+                    ]
+            elif _building_l3_values and _building_l3_task_col:
+                # Fallback: «Строения» = имена задач уровня 3 MSP.
+                builds = ["Все"] + _building_l3_values
+                sel_building = st.selectbox(
+                    "Строение", builds, key="gantt_building_filter_l3"
+                )
+                if sel_building != "Все":
+                    _ln_b = pd.to_numeric(plot_df[level_col], errors="coerce")
+                    _name_b = plot_df[_building_l3_task_col].astype(str).map(
+                        lambda x: _gantt_clean_task_label(x).strip()
+                    )
+                    _mask_b3 = (_ln_b == 3) & (_name_b == sel_building)
+                    if not bool(_mask_b3.any()):
+                        suppress_caption(
+                            f"В выборке нет строк с задачей уровня 3 «{sel_building}»."
+                        )
+                    else:
+                        # Берём всё «дерево» под выбранной задачей L3:
+                        # из текущей выборки оставляем строки этого блока и его детей
+                        # (в MSP-таблице они идут подряд, поэтому проще — фильтр по
+                        # совпадению proj_col и block_col + обрезка по позиции).
+                        _idx_pos = plot_df.index.get_indexer(plot_df.index[_mask_b3])
+                        if len(_idx_pos) > 0:
+                            _start = int(min(_idx_pos))
+                            _next_l3 = pd.to_numeric(plot_df[level_col], errors="coerce")
+                            # Идём по позиционным индексам ниже start и ищем
+                            # следующую запись с уровнем <= 3 (это конец «строения»).
+                            _all_pos = list(range(len(plot_df)))
+                            _end = len(plot_df)
+                            for _pp in _all_pos[_start + 1:]:
+                                _lv = _next_l3.iloc[_pp]
+                                if pd.notna(_lv) and int(_lv) <= 3:
+                                    _end = _pp
+                                    break
+                            plot_df = plot_df.iloc[_start:_end].copy()
     with f_level:
         # ТЗ заказчика 2026-05-06: только два уровня для отображения задач —
         # «Верхний уровень (ур. 4)» и «Детальный уровень (ур. 5)». Дефолт — «Верхний (4)».
@@ -27001,19 +27080,16 @@ def dashboard_project_schedule_chart(df):
             value=False,
             key="gantt_force_covenant_points",
             help=(
-                "Как в ТЗ: синие маркеры — базовое окончание, красные — окончание (факт или план). "
-                "Также включается само, если в «Функциональном блоке» есть «ковенант» или «covenant» в названии."
+                "Синие маркеры — базовое окончание, красные — окончание (факт или план). "
+                "Включается ТОЛЬКО по этому селектору."
             ),
         )
 
-    _blk_cov = False
-    try:
-        _bs = str(sel_block).strip().lower()
-        if block_col and _bs not in ("", "все"):
-            _blk_cov = ("ковенант" in _bs) or ("covenant" in _bs)
-    except Exception:
-        _blk_cov = False
-    is_covenants = bool(force_covenant_points) or _blk_cov
+    # Правки куратора 08.05.2026: «График ковенант должен выводиться только когда
+    # прожат селектор, в остальных случаях — обычный гант по всем задачам проекта».
+    # Раньше is_covenants авто-включался, если в фильтре «Функциональный блок» было
+    # выбрано что-то со словом «ковенант»/«covenant» — этого больше не делаем.
+    is_covenants = bool(force_covenant_points)
 
     lot_row_l, lot_row_r = st.columns(2)
     with lot_row_l:
