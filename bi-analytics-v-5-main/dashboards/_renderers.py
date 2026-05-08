@@ -17823,23 +17823,23 @@ def dashboard_executive_documentation(df):
         mask_pred = work[kind_col].astype(str).str.contains("Предписан", case=False, na=False)
         work = work[~mask_pred].reset_index(drop=True)
 
-    # КРИТИЧНЫЙ ФИКС B-14 (08.05.2026): web_loader сшивает в `tessa_data` строки
-    # из `tessa_*-id.csv` И `tessa_*-rd.csv` без разделения. Для дашборда ИД нужны
-    # ТОЛЬКО строки из -id.csv (документы Tessa). Признак: непустой `KrState` или
-    # `KrStateID` (поля присутствуют только в карточках документов, в rd/task их нет
-    # или они NaN после concat). Без этого фильтра «Всего документов» раздувается
-    # в ~4 раза и колонка `KrStateID` в debug-блоке видна как None.
-    _has_krs = "KrState" in work.columns
+    # КРИТИЧНЫЙ ФИКС B-14 (08.05.2026 v2): web_loader сшивает в `tessa_data` строки
+    # из `tessa_*-id.csv` И `tessa_*-rd.csv` (рабочая документация) без разделения.
+    # Для B-14 «Исполнительная документация» нужны ТОЛЬКО строки из -id.csv.
+    # Точный признак строк -id.csv (отсутствуют в -rd.csv): **наличие KrStateID или
+    # KindName**. KrState заполнен и в rd-файлах (свои статусы РД: Проект/Отмена/
+    # На ознакомлении/Согласован/...), поэтому фильтрация по KrState не сработала.
     _has_krsid = "KrStateID" in work.columns
-    if _has_krs or _has_krsid:
+    _has_kind = kind_col is not None and kind_col in work.columns
+    if _has_krsid or _has_kind:
         _mask_id = pd.Series(False, index=work.index)
-        if _has_krs:
-            _mask_id = _mask_id | (
-                work["KrState"].notna()
-                & (~work["KrState"].astype(str).str.strip().isin(["", "nan", "None", "NaN"]))
-            )
         if _has_krsid:
             _mask_id = _mask_id | work["KrStateID"].notna()
+        if _has_kind:
+            _mask_id = _mask_id | (
+                work[kind_col].notna()
+                & (~work[kind_col].astype(str).str.strip().isin(["", "nan", "None", "NaN"]))
+            )
         work = work[_mask_id].reset_index(drop=True)
 
     obj_col = _tessa_find_column(work, ["ObjectName", "objectname", "Объект"])
