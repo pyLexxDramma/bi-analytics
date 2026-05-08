@@ -17232,22 +17232,196 @@ def dashboard_debit_credit(df):
             "1C_ID_DOG",
         ],
     )
-    if (not total_col) and id_dog_col and id_dog_col in work.columns:
+    # Загружаем lookup из Dogovor.json (используется для суммы и для проекта).
+    _dog_lookup_dc: dict = {}
+    try:
+        _dog_lookup_dc = _load_dogovor_lookup() or {}
+    except Exception:
+        _dog_lookup_dc = {}
+
+    # Правки куратора 08.05.2026: в DK поле «Договор» хранится словарём
+    # {id_договора, наименованиедоговора}, отдельной колонки ID_Договора может
+    # не быть. Универсально извлекаем guid договора из dict/строки/colonok.
+    _re_uuid = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+    def _extract_dogovor_id(v) -> str:
+        if v is None:
+            return ""
+        if isinstance(v, dict):
+            for k in ("id_договора", "ID_Договора", "id_dogovora", "id", "ID"):
+                if k in v and v[k]:
+                    return str(v[k]).strip().lower()
+            return ""
+        s = str(v)
+        m = re.search(r"id_договора\s*[:=]\s*([0-9a-fA-F\-]+)", s, flags=re.IGNORECASE)
+        if m:
+            return m.group(1).strip().lower()
+        m2 = _re_uuid.search(s)
+        if m2:
+            return m2.group(0).strip().lower()
+        return ""
+
+    # Гарантируем нормализованную колонку id договора.
+    work["_id_dogovor_norm"] = ""
+    _candidate_id_cols = [
+        c for c in (id_dog_col, contract_col, "Договор", "Договор_ID_Договора", "ID_Договора")
+        if c and c in work.columns
+    ]
+    for _cc in _candidate_id_cols:
         try:
-            _dog_lookup = _load_dogovor_lookup() or {}
+            _vals = work[_cc].map(_extract_dogovor_id)
+            mask_empty = work["_id_dogovor_norm"].astype(str).str.len() == 0
+            work.loc[mask_empty, "_id_dogovor_norm"] = _vals[mask_empty]
         except Exception:
-            _dog_lookup = {}
-        if _dog_lookup:
-            def _resolve_summa(v):
-                if v is None or (isinstance(v, float) and pd.isna(v)):
-                    return None
-                rec = _dog_lookup.get(str(v).strip().lower())
+            pass
+
+    if (not total_col) and _dog_lookup_dc:
+        def _resolve_summa(v):
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                return None
+            rec = _dog_lookup_dc.get(str(v).strip().lower())
+            if not rec:
+                return None
+            return rec.get("Сумма_Договора")
+        work["_summa_dogovora_lookup"] = work["_id_dogovor_norm"].map(_resolve_summa)
+        if work["_summa_dogovora_lookup"].notna().any():
+            total_col = "_summa_dogovora_lookup"
+
+    # «Проект» подтягиваем каскадом:
+    #   1) Dogovor.json по guid договора → Наименование_Проекта
+    #   2) reference_partner_to_project по ID_Контрагента / имени контрагента
+    #      (карта строится из 1С dannye группировкой по проекту)
+    # В DK контрагент хранится словарём — извлекаем id/имя.
+    def _extract_partner_name(v) -> str:
+        if v is None:
+            return ""
+        if isinstance(v, dict):
+            for k in ("наименованиеконтрагента", "НаименованиеКонтрагента", "Наименование_Контрагента", "Контрагент", "name"):
+                if k in v and v[k]:
+                    return str(v[k]).strip()
+            return ""
+        s = str(v)
+        m = re.search(r"наименованиеконтрагента\s*[:=]\s*([^,}]+)", s, flags=re.IGNORECASE)
+        if m:
+            return m.group(1).strip().strip("'\"")
+        return s.strip()
+
+    def _extract_partner_id_local(v) -> str:
+        if v is None:
+            return ""
+        if isinstance(v, dict):
+            for k in ("id_контрагента", "ID_Контрагента", "id_kontragenta", "id", "ID"):
+                if k in v and v[k]:
+                    return str(v[k]).strip().lower()
+            return ""
+        s = str(v)
+        m = re.search(r"id_контрагента\s*[:=]\s*([0-9a-fA-F\-]+)", s, flags=re.IGNORECASE)
+        if m:
+            return m.group(1).strip().lower()
+        m2 = _re_uuid.search(s)
+        if m2:
+            return m2.group(0).strip().lower()
+        return ""
+
+    if not project_col or project_col not in work.columns:
+        # Шаг 1 — из Dogovor.json
+        if _dog_lookup_dc:
+            def _resolve_project_name(v):
+                if not v:
+                    return ""
+                rec = _dog_lookup_dc.get(str(v).strip().lower())
                 if not rec:
-                    return None
-                return rec.get("Сумма_Договора")
-            work["_summa_dogovora_lookup"] = work[id_dog_col].map(_resolve_summa)
-            if work["_summa_dogovora_lookup"].notna().any():
-                total_col = "_summa_dogovora_lookup"
+                    return ""
+                return str(rec.get("Наименование_Проекта") or "").strip()
+            work["_project_from_dogovor"] = work["_id_dogovor_norm"].map(_resolve_project_name)
+        else:
+            work["_project_from_dogovor"] = ""
+
+        # Правки куратора 08.05.2026: только 5 из 121 ID_Договора в DK совпадают
+        # с Dogovor.json — поэтому добавляем основной маппинг по ID_Договора через
+        # 1С dannye (где «Проект» проставлен на каждой строке оборотов).
+        #   2.1) dannye: ID_Договора → Проект (по нашему опыту покрытие ~100%).
+        #   2.2) reference_partner_to_project (имя/ID контрагента) — на крайний случай.
+        ref_dn = st.session_state.get("reference_1c_dannye")
+        _dann_dog_to_project: dict = {}
+        _dann_partner_to_project: dict = {}
+        if ref_dn is not None and not getattr(ref_dn, "empty", True):
+            try:
+                _rdf = ref_dn.copy()
+                _rdf.columns = [str(c).strip() for c in _rdf.columns]
+                _id_dog_d = _find_col(_rdf, ["ID_Договора", "id_договора", "id_dogovora"])
+                _idc = _find_col(_rdf, ["ID_Контрагента", "id_контрагента"])
+                _prj = _find_col(_rdf, ["Проект", "project name", "Наименование_Проекта"])
+                if _prj and _id_dog_d:
+                    for _, r in _rdf[[_id_dog_d, _prj]].dropna().iterrows():
+                        kk = str(r[_id_dog_d]).strip().lower()
+                        vv = str(r[_prj]).strip()
+                        if kk and vv:
+                            _dann_dog_to_project.setdefault(kk, vv)
+                if _prj and _idc:
+                    for _, r in _rdf[[_idc, _prj]].dropna().iterrows():
+                        kk = str(r[_idc]).strip().lower()
+                        vv = str(r[_prj]).strip()
+                        if kk and vv:
+                            _dann_partner_to_project.setdefault(kk, vv)
+            except Exception:
+                pass
+
+        if _dann_dog_to_project:
+            work["_project_from_dannye_by_dog"] = work["_id_dogovor_norm"].map(
+                lambda v: _dann_dog_to_project.get(str(v).strip().lower(), "")
+            )
+        else:
+            work["_project_from_dannye_by_dog"] = ""
+
+        pmap = st.session_state.get("reference_partner_to_project") or {}
+        if contractor_col and contractor_col in work.columns and (pmap or _dann_partner_to_project):
+            def _project_from_partner(v) -> str:
+                pid = _extract_partner_id_local(v)
+                if pid and pid in _dann_partner_to_project:
+                    return _dann_partner_to_project[pid]
+                pname = _extract_partner_name(v)
+                k = norm_partner_join_key(pname)
+                if k and k in pmap:
+                    return str(pmap[k])
+                return ""
+            work["_project_from_partner"] = work[contractor_col].map(_project_from_partner)
+        else:
+            work["_project_from_partner"] = ""
+
+        # Также прямой ID_Контрагента из flatten DK (если есть отдельной колонкой).
+        _id_partner_col_dk = _find_col(
+            work,
+            [
+                "ID_Контрагента",
+                "Контрагент_ID_Контрагента",
+                "Контрагент.ID_Контрагента",
+            ],
+        )
+        if _id_partner_col_dk and _dann_partner_to_project:
+            work["_project_from_partner_id_dk"] = work[_id_partner_col_dk].map(
+                lambda v: _dann_partner_to_project.get(str(v).strip().lower(), "")
+            )
+        else:
+            work["_project_from_partner_id_dk"] = ""
+
+        # Финальная колонка: каскад dogovor → dannye(dogovor) → partner_id_dk → partner_name.
+        work["_project_resolved"] = work["_project_from_dogovor"].astype(str).str.strip()
+        _empty = work["_project_resolved"].eq("")
+        work.loc[_empty, "_project_resolved"] = (
+            work.loc[_empty, "_project_from_dannye_by_dog"].astype(str).str.strip()
+        )
+        _empty = work["_project_resolved"].eq("")
+        work.loc[_empty, "_project_resolved"] = (
+            work.loc[_empty, "_project_from_partner_id_dk"].astype(str).str.strip()
+        )
+        _empty = work["_project_resolved"].eq("")
+        work.loc[_empty, "_project_resolved"] = (
+            work.loc[_empty, "_project_from_partner"].astype(str).str.strip()
+        )
+        if (work["_project_resolved"].astype(str).str.strip() != "").any():
+            project_col = "_project_resolved"
+            project_from_reference = True
     paid_col = _find_col(work, ["Выплачено", "выплачено", "Выплаченная сумма", "ВсегоОплат", "paid"])
     advance_col = _find_col(work, ["Аванс", "аванс", "Авансированная сумма", "ВсегоОплат_Аванс", "advance"])
     balance_col = _find_col(work, ["Остаток на конец периода", "Остаток на период", "ОстатокНаКонецПериода", "остаток", "balance"])
@@ -17304,48 +17478,144 @@ def dashboard_debit_credit(df):
             work[f"_num_{c}"] = _to_num(work[c])
 
     # Правки куратора 08.05.2026: считаем «Выполнено (КС-2)» из 1С dannye.
-    # КС-2 = sum(amount) по строкам со СтатьяОборотов «Поступление товаров и услуг»
-    # или «Поступление услуг из переработки», ключ — название контрагента.
+    # КС-2 = sum(Сумма) по строкам, у которых СтатьяОборотов содержит
+    # «Поступление товаров и услуг» или «Поступление услуг из переработки».
+    # Привязка — по ID_Контрагента (в DK подрядчик хранится словарём
+    # {id_контрагента, наименованиеконтрагента}, поэтому матчинг по имени
+    # бесполезен — извлекаем id из строки/dict и ищем по нему).
     work["_num_ks2"] = 0.0
+    _ks2_diag: dict = {"reason": "", "rows": 0, "matched": 0}
+
+    def _extract_partner_id(v) -> str:
+        if v is None:
+            return ""
+        if isinstance(v, dict):
+            for k in (
+                "id_контрагента", "ID_Контрагента", "id_kontragenta",
+                "id", "ID",
+            ):
+                if k in v and v[k]:
+                    return str(v[k]).strip().lower()
+            return ""
+        s = str(v)
+        m = re.search(r"id_контрагента\s*[:=]\s*([0-9a-fA-F\-]+)", s, flags=re.IGNORECASE)
+        if m:
+            return m.group(1).strip().lower()
+        # Иногда v — это уже чистый UUID-id
+        m2 = re.fullmatch(r"\s*([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\s*", s)
+        if m2:
+            return m2.group(1).strip().lower()
+        return ""
+
     try:
         ref_dannye = st.session_state.get("reference_1c_dannye")
-        if ref_dannye is not None and not getattr(ref_dannye, "empty", True):
+        if ref_dannye is None or getattr(ref_dannye, "empty", True):
+            _ks2_diag["reason"] = "reference_1c_dannye отсутствует в session_state (загрузите 1С dannye через web/ или FTP)"
+        else:
             _rd = ref_dannye.copy()
             _rd.columns = [str(c).strip() for c in _rd.columns]
             _so_col = _find_col(_rd, ["СтатьяОборотов", "Статья оборотов", "turnover item"])
             _sum_col = _find_col(_rd, ["Сумма", "amount", "СуммаОборота"])
-            _kontr_col = _find_col(
+            _id_col_d = _find_col(_rd, ["ID_Контрагента", "id_контрагента", "id_kontragenta"])
+            _name_col_d = _find_col(
                 _rd,
-                [
-                    "Контрагент",
-                    "Наименование_Контрагента",
-                    "Наименование Контрагента",
-                    "Подрядчик",
-                    "контрагент",
-                    "организация",
-                ],
+                ["Контрагент", "Наименование_Контрагента", "Наименование Контрагента", "контрагент"],
             )
-            if _so_col and _sum_col and _kontr_col:
-                _rd_ks2 = _rd[
-                    _rd[_so_col]
-                    .astype(str)
-                    .str.contains(
-                        r"Поступление\s+(?:товаров\s+и\s+услуг|услуг\s+из\s+переработки)",
-                        regex=True,
-                        na=False,
-                    )
-                ].copy()
-                _rd_ks2["_amt"] = _to_num(_rd_ks2[_sum_col])
-                _rd_ks2["_k"] = _rd_ks2[_kontr_col].map(norm_partner_join_key)
-                _ks2_by_partner = (
-                    _rd_ks2.groupby("_k", dropna=False)["_amt"].sum().to_dict()
+            if not _so_col or not _sum_col:
+                _ks2_diag["reason"] = "в 1С dannye нет колонок «СтатьяОборотов» / «Сумма»"
+            else:
+                # Q-08.05.2026: фактическое значение в выгрузке dannye —
+                # «Поступление по основной деятельности» (а не "товаров и услуг").
+                # Оставляем оба варианта как синонимы КС-2.
+                _rgx_ks2 = re.compile(
+                    r"Поступление\s+(?:"
+                    r"товаров\s+и\s+услуг"
+                    r"|услуг\s+из\s+переработки"
+                    r"|по\s+основной\s+деятельности"
+                    r")",
+                    flags=re.IGNORECASE,
                 )
-                if contractor_col and contractor_col in work.columns:
-                    work["_num_ks2"] = work[contractor_col].map(
-                        lambda x: float(_ks2_by_partner.get(norm_partner_join_key(x), 0.0))
+                _rd_ks2 = _rd[_rd[_so_col].astype(str).apply(lambda s: bool(_rgx_ks2.search(s)))].copy()
+                _ks2_diag["rows"] = int(len(_rd_ks2))
+                if _rd_ks2.empty:
+                    _ks2_diag["reason"] = (
+                        "в 1С dannye нет строк со статьями «Поступление товаров и услуг» / "
+                        "«Поступление услуг из переработки» — их нужно выгружать из 1С"
                     )
-    except Exception:
-        pass
+                else:
+                    _rd_ks2["_amt"] = _to_num(_rd_ks2[_sum_col])
+                    # Q-08.05.2026: основной ключ — ID_Договора (есть и в DK, и в
+                    # dannye), вторичный — ID_Контрагента, на крайний случай — имя.
+                    _id_dog_col_d = _find_col(_rd_ks2, ["ID_Договора", "id_договора", "id_dogovora"])
+                    _ks2_by_dog: dict = {}
+                    if _id_dog_col_d and _id_dog_col_d in _rd_ks2.columns:
+                        _ks2_by_dog = (
+                            _rd_ks2.assign(_k=_rd_ks2[_id_dog_col_d].astype(str).str.strip().str.lower())
+                            .groupby("_k", dropna=False)["_amt"]
+                            .sum()
+                            .to_dict()
+                        )
+                    _ks2_by_partner_id: dict = {}
+                    if _id_col_d and _id_col_d in _rd_ks2.columns:
+                        _ks2_by_partner_id = (
+                            _rd_ks2.assign(_k=_rd_ks2[_id_col_d].astype(str).str.strip().str.lower())
+                            .groupby("_k", dropna=False)["_amt"]
+                            .sum()
+                            .to_dict()
+                        )
+                    _ks2_by_partner_name: dict = {}
+                    if _name_col_d and _name_col_d in _rd_ks2.columns:
+                        _ks2_by_partner_name = (
+                            _rd_ks2.assign(_k=_rd_ks2[_name_col_d].map(norm_partner_join_key))
+                            .groupby("_k", dropna=False)["_amt"]
+                            .sum()
+                            .to_dict()
+                        )
+
+                    # Готовим ключи в work: ID_Договора и ID_Контрагента уже
+                    # лежат отдельными колонками после flatten DK.
+                    _id_partner_col_dk2 = _find_col(
+                        work,
+                        [
+                            "ID_Контрагента",
+                            "Контрагент_ID_Контрагента",
+                            "Контрагент.ID_Контрагента",
+                        ],
+                    )
+                    _ks2_series = pd.Series(0.0, index=work.index)
+                    if "_id_dogovor_norm" in work.columns and _ks2_by_dog:
+                        _ks2_series = work["_id_dogovor_norm"].map(
+                            lambda v: float(_ks2_by_dog.get(str(v).strip().lower(), 0.0))
+                            if v
+                            else 0.0
+                        )
+                    if _id_partner_col_dk2 and _ks2_by_partner_id:
+                        _alt = work[_id_partner_col_dk2].map(
+                            lambda v: float(_ks2_by_partner_id.get(str(v).strip().lower(), 0.0))
+                            if pd.notna(v) and str(v).strip()
+                            else 0.0
+                        )
+                        # Дополняем нулевые значения партнёрским ключом.
+                        _ks2_series = _ks2_series.where(_ks2_series != 0, _alt)
+                    if contractor_col and contractor_col in work.columns and _ks2_by_partner_name:
+                        _alt2 = work[contractor_col].map(
+                            lambda v: float(_ks2_by_partner_name.get(norm_partner_join_key(v), 0.0))
+                        )
+                        _ks2_series = _ks2_series.where(_ks2_series != 0, _alt2)
+                    work["_num_ks2"] = _ks2_series.fillna(0.0).astype(float)
+                    _ks2_diag["matched"] = int((work["_num_ks2"] != 0).sum())
+                    if _ks2_diag["matched"] == 0 and _ks2_diag["rows"] > 0:
+                        _ks2_diag["reason"] = (
+                            "КС-2 в 1С есть, но не получилось сопоставить "
+                            "DK ↔ dannye по ID_Договора / ID_Контрагента / имени"
+                        )
+    except Exception as _e:
+        _ks2_diag["reason"] = f"ошибка расчёта КС-2: {_e!r}"
+
+    # Дружелюбное сообщение во вкладке.
+    if not (work["_num_ks2"].fillna(0).abs() > 0).any():
+        _msg = _ks2_diag.get("reason") or "КС-2 = 0 (нет данных в 1С dannye)"
+        st.info(f"Колонки «Выполнено (КС-2)», «Отклонение», «КС-2 − Аванс» и серый столбец «КС-2» не отображены: {_msg}.")
 
     # Правки куратора 08.05.2026: фильтры в одну линию по ТЗ —
     # Проект | Функциональный блок | Строения | Подрядчик | № договора | Период | Отображение.
@@ -17393,7 +17663,16 @@ def dashboard_debit_credit(df):
             sel_fb = st.selectbox("Функциональный блок", fb_opts, key="debit_credit_fb")
         else:
             sel_fb = "Все"
-            st.selectbox("Функциональный блок", ["—"], disabled=True, key="debit_credit_fb_dis")
+            st.selectbox(
+                "Функциональный блок",
+                ["Нет в источнике 1С DK"],
+                disabled=True,
+                key="debit_credit_fb_dis",
+                help=(
+                    "Поля «Функциональный блок» нет в выгрузке 1С (DK.json/Dogovor.json/dannye.json). "
+                    "Чтобы фильтр заработал, в 1С нужно дополнить выгрузку этим реквизитом."
+                ),
+            )
     with fc_cols[2]:
         if bld_col and bld_col in work.columns:
             bld_opts = ["Все"] + sorted(
@@ -17402,7 +17681,16 @@ def dashboard_debit_credit(df):
             sel_bld = st.selectbox("Строения", bld_opts, key="debit_credit_bld")
         else:
             sel_bld = "Все"
-            st.selectbox("Строения", ["—"], disabled=True, key="debit_credit_bld_dis")
+            st.selectbox(
+                "Строения",
+                ["Нет в источнике 1С DK"],
+                disabled=True,
+                key="debit_credit_bld_dis",
+                help=(
+                    "Поля «Строение» нет в выгрузке 1С (DK.json/Dogovor.json/dannye.json). "
+                    "Чтобы фильтр заработал, в 1С нужно дополнить выгрузку этим реквизитом."
+                ),
+            )
     with fc_cols[3]:
         if contractor_col and contractor_col in work.columns:
             all_contractors = ["Все"] + sorted(work[contractor_col].dropna().astype(str).unique().tolist())
@@ -22812,6 +23100,8 @@ def _load_dogovor_lookup() -> dict[str, dict]:
             issue_id = str(r.get("Дата_Получения_ИД") or "").strip()
             date_start = str(r.get("Дата_Начала_Договора") or "").strip()
             date_end = str(r.get("Дата_Окончания_Договора") or "").strip()
+            project_name = str(r.get("Наименование_Проекта") or "").strip()
+            project_id = str(r.get("ID_Проекта") or "").strip()
             out[guid] = {
                 "Номер_Договора": num,
                 "Сумма_Договора": summa,
@@ -22820,6 +23110,8 @@ def _load_dogovor_lookup() -> dict[str, dict]:
                 "Дата_Получения_ИД": issue_id,
                 "Дата_Начала_Договора": date_start,
                 "Дата_Окончания_Договора": date_end,
+                "Наименование_Проекта": project_name,
+                "ID_Проекта": project_id,
             }
     return out
 
