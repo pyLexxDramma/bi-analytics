@@ -9737,10 +9737,10 @@ def dashboard_bdr(df):
     _bdr_q_hints = collect_bdr_hints(dict(getattr(df_work, "attrs", {}) or {}))
 
     _bdr_tz_table_title = {
-        "Month": "Сводка бюджета по месяцам",
-        "Quarter": "Сводка бюджета по кварталам",
-        "Year": "Сводка бюджета по годам",
-    }.get(period_type_en, "Сводка бюджета по периоду")
+        "Month": "Сводка БДР по месяцам",
+        "Quarter": "Сводка БДР по кварталам",
+        "Year": "Сводка БДР по годам",
+    }.get(period_type_en, "Сводка БДР по периоду")
 
     @st.fragment
     def _bdr_chart():
