@@ -16174,16 +16174,31 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                     textfont=dict(color="#cfe9fa", size=12),
                 )
                 fig_pf.update_layout(
-                    title=dict(text="План / Факт / Отклонение по проектам", font=dict(size=15, color="#eee")),
+                    title=dict(
+                        text="План / Факт / Отклонение по проектам",
+                        font=dict(size=16, color="#eee"),
+                        x=0.0,
+                        xanchor="left",
+                        y=0.96,
+                        yanchor="top",
+                    ),
                     barmode="group",
                     plot_bgcolor="rgba(0,0,0,0)",
                     paper_bgcolor="rgba(0,0,0,0)",
                     font_color="#eee",
                     xaxis=dict(showgrid=False),
                     yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.08)"),
-                    height=460,
-                    margin=dict(l=48, r=24, t=56, b=64),
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                    height=520,
+                    margin=dict(l=56, r=24, t=72, b=110),
+                    # Легенда — снизу под графиком, чтобы не наезжать на заголовок.
+                    legend=dict(
+                        orientation="h",
+                        yanchor="top",
+                        y=-0.18,
+                        xanchor="left",
+                        x=0.0,
+                        bgcolor="rgba(0,0,0,0)",
+                    ),
                 )
                 st.plotly_chart(fig_pf, use_container_width=True)
             except Exception as _e:
