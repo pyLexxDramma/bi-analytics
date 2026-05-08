@@ -1145,14 +1145,54 @@ def _generic_stem_family(stem: str) -> str:
 
 
 def _tessa_kind_key(stem: str) -> str:
+    """
+    Формат имени:
+      старый  - tessa_DD_MM_YYYY_HH-MM_<kind>.csv  (через подчёркивания)
+      новый   - tessa_DD-MM-YYYY-HH-MM-<kind>.csv  (через дефисы)
+    Раньше функция искала только подстроки "_task"/"_rd"/"_id" → новый формат
+    с дефисом "-id"/"-rd"/"-task" попадал в bucket "other", из-за чего самый
+    свежий ID/RD/TASK снимок не выбирался, и активная версия зависала на
+    единственном "старом" файле tessa_27_03_2026_00-06_id.csv.
+    """
     s = stem.lower()
-    if "_task" in s or "tasks" in s:
+    if (
+        "tessa_tasks" in s
+        or s.endswith("_task") or s.endswith("-task")
+        or s.endswith("_tasks") or s.endswith("-tasks")
+    ):
         return "task"
-    if "_rd" in s:
+    if s.endswith("_rd") or s.endswith("-rd"):
         return "rd"
-    if "_id" in s:
+    if s.endswith("_id") or s.endswith("-id"):
         return "id"
     return "other"
+
+
+# Формат tessa: tessa_DD-MM-YYYY-HH-MM-<kind> (новый) и
+# tessa_DD_MM_YYYY_HH-MM_<kind> (старый).
+_TESSA_NEW_RE = re.compile(
+    r"^tessa[_-](\d{2})-(\d{2})-(\d{4})-(\d{2})-(\d{2})-(?:id|rd|task|tasks)$",
+    re.IGNORECASE,
+)
+_TESSA_OLD_RE = re.compile(
+    r"^tessa_(\d{2})_(\d{2})_(\d{4})_(\d{2})-(\d{2})_(?:id|rd|task|tasks)$",
+    re.IGNORECASE,
+)
+
+
+def _tessa_snapshot_sort_key(stem: str):
+    """Возвращает кортеж (date, hh-mm) для tessa-файла; None если имя не из шаблона."""
+    from datetime import date as dt_date
+    s = stem.lower()
+    for regex in (_TESSA_NEW_RE, _TESSA_OLD_RE):
+        m = regex.match(s)
+        if m:
+            try:
+                d = dt_date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+                return (d, f"{m.group(4)}-{m.group(5)}")
+            except (ValueError, TypeError):
+                pass
+    return None
 
 
 def _msp_project_bucket(stem: str) -> Optional[str]:
@@ -1244,8 +1284,11 @@ def pick_latest_snapshot_files(files: List[Dict]) -> Tuple[List[Dict], List[str]
         rated = []
         for f in lst:
             stem = Path(f["name"]).stem
-            md = _max_date_in_stem(stem)
-            rated.append(((md or dt_date.min, _file_mtime(f["path"])), f))
+            sk = _tessa_snapshot_sort_key(stem)
+            if sk is None:
+                md = _max_date_in_stem(stem)
+                sk = (md or dt_date.min, "00-00")
+            rated.append((sk + (_file_mtime(f["path"]),), f))
         best_f = max(rated, key=lambda x: x[0])[1]
         _add(best_f)
 
@@ -1981,9 +2024,15 @@ def _infer_file_type_by_name(file_name: str) -> str:
 
     # ── TESSA: задачи (CardId, KindName, …) — отдельный тип, чтобы join с Id по правкам ──
     # Имя «tessa_*_task.csv» (единственное task) должно считаться задачами, не только *_tasks*.
+    # Поддерживаются оба формата: старый (tessa_DD_MM_YYYY_HH-MM_task.csv) и новый
+    # (tessa_DD-MM-YYYY-HH-MM-task.csv) с дефисом перед kind.
     if (
         "tessa_tasks" in stem
-        or (stem.startswith("tessa_") and ("tasks" in stem or "_task" in stem))
+        or (stem.startswith("tessa_") and (
+            "tasks" in stem
+            or stem.endswith("_task") or stem.endswith("-task")
+            or stem.endswith("_tasks") or stem.endswith("-tasks")
+        ))
     ):
         return "tessa_tasks"
 
