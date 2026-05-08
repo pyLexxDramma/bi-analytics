@@ -7865,6 +7865,18 @@ def dashboard_budget_by_period(df):
                 _pe_max = _pe_series.max()
                 _def_start = _pe_min.date() if pd.notna(_pe_min) else None
                 _def_end = _pe_max.date() if pd.notna(_pe_max) else None
+                # Правки куратора 08.05.2026: min/max календаря брать из ВСЕГО df,
+                # иначе при единственной дате у проекта календарь «залипает»
+                # (min_value == max_value) и ничего нельзя выбрать.
+                try:
+                    _pe_all = pd.to_datetime(df["plan end"], errors="coerce")
+                    if _pe_all.notna().any():
+                        _bdds_min_all = _pe_all.min().date()
+                        _bdds_max_all = _pe_all.max().date()
+                    else:
+                        _bdds_min_all, _bdds_max_all = _def_start, _def_end
+                except Exception:
+                    _bdds_min_all, _bdds_max_all = _def_start, _def_end
                 _from_kw: dict = {
                     "label": "С",
                     "key": "budget_period_from",
@@ -7880,10 +7892,10 @@ def dashboard_budget_by_period(df):
                 if _def_start and _def_end and _def_start <= _def_end:
                     _from_kw["value"] = _def_start
                     _to_kw["value"] = _def_end
-                    _from_kw["min_value"] = _def_start
-                    _from_kw["max_value"] = _def_end
-                    _to_kw["min_value"] = _def_start
-                    _to_kw["max_value"] = _def_end
+                    _from_kw["min_value"] = _bdds_min_all or _def_start
+                    _from_kw["max_value"] = _bdds_max_all or _def_end
+                    _to_kw["min_value"] = _bdds_min_all or _def_start
+                    _to_kw["max_value"] = _bdds_max_all or _def_end
                 _bdds_pc_from, _bdds_pc_to = st.columns(2)
                 with _bdds_pc_from:
                     _period_from = st.date_input(**_from_kw)
@@ -9605,6 +9617,18 @@ def dashboard_bdr(df):
                 _bdr_max = _pe_series_bdr.max()
                 _bdr_start = _bdr_min.date() if pd.notna(_bdr_min) else None
                 _bdr_end = _bdr_max.date() if pd.notna(_bdr_max) else None
+                # Правки куратора 08.05.2026: min/max календаря брать из ВСЕГО df,
+                # а не из отфильтрованного по проекту, иначе при единственной дате
+                # у проекта календарь «залипает» (min_value == max_value).
+                try:
+                    _pe_all_bdr = pd.to_datetime(df["plan end"], errors="coerce")
+                    if _pe_all_bdr.notna().any():
+                        _bdr_min_all = _pe_all_bdr.min().date()
+                        _bdr_max_all = _pe_all_bdr.max().date()
+                    else:
+                        _bdr_min_all, _bdr_max_all = _bdr_start, _bdr_end
+                except Exception:
+                    _bdr_min_all, _bdr_max_all = _bdr_start, _bdr_end
                 _bdr_from_kw: dict = {
                     "label": "С",
                     "key": "bdr_period_from",
@@ -9620,10 +9644,10 @@ def dashboard_bdr(df):
                 if _bdr_start and _bdr_end and _bdr_start <= _bdr_end:
                     _bdr_from_kw["value"] = _bdr_start
                     _bdr_to_kw["value"] = _bdr_end
-                    _bdr_from_kw["min_value"] = _bdr_start
-                    _bdr_from_kw["max_value"] = _bdr_end
-                    _bdr_to_kw["min_value"] = _bdr_start
-                    _bdr_to_kw["max_value"] = _bdr_end
+                    _bdr_from_kw["min_value"] = _bdr_min_all or _bdr_start
+                    _bdr_from_kw["max_value"] = _bdr_max_all or _bdr_end
+                    _bdr_to_kw["min_value"] = _bdr_min_all or _bdr_start
+                    _bdr_to_kw["max_value"] = _bdr_max_all or _bdr_end
                 _bdr_pc_from, _bdr_pc_to = st.columns(2)
                 with _bdr_pc_from:
                     _bdr_period_from = st.date_input(**_bdr_from_kw)
