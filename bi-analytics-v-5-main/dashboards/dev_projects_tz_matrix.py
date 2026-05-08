@@ -1203,8 +1203,25 @@ def _tessa_counts(ss: Any, project_name_hint: str = "") -> Tuple[str, str, str, 
     # (`tessa_tasks_data`) — `CardId`/`CardID`. Ищем по обоим, чтобы фолбэк-ветка
     # тоже могла посчитать «План = уникальные карточки».
     card_c = _find_col(pred, ["CardId", "CardID", "cardId", "DocID", "DocId", "Doc Id"])
-    state_c = _find_col(pred, ["KrStateName", "KrState", "State", "Состояние", "Статус"])
-    due_c = _find_col(pred, ["PlanDate", "DueDate", "Срок", "Крайний срок"])
+    state_c = _find_col(pred, ["KrStateName", "KrState", "State", "Состояние", "Статус", "KrStateID"])
+    # Правки куратора 08.05.2026: «Отклонение» в строке предписаний должно
+    # быть вычисляемым (как План и Факт). Раньше выдавалось «Н/Д», т.к.
+    # в новой выгрузке Tessa (`tessa_*-id.csv`) поле срока называется
+    # `id_Deadline` — добавили его и его варианты к кандидатам.
+    due_c = _find_col(
+        pred,
+        [
+            "id_Deadline",
+            "id_deadline",
+            "PlanDate",
+            "DueDate",
+            "Срок",
+            "Крайний срок",
+            "Срок устранения",
+            "PlannedEnd",
+            "Deadline",
+        ],
+    )
     if not card_c:
         return str(len(pred)), "—", "Н/Д", ""
     pred = pred.assign(_card=pred[card_c].map(_norm_join_key))
@@ -1702,8 +1719,9 @@ def build_dev_tz_matrix_rows(
         _msp_row(phase, group, label, kw, row_key=str(next(_rk)))
 
     def _fmtml(v: float) -> str:
-        # ТЗ: млн руб., два знака после запятой
-        return f"{v:.2f}".replace(".", ",")
+        # Правки куратора 08.05.2026: финансовые показатели округляются до
+        # десятых (1 знак после запятой), а не до сотых.
+        return f"{v:.1f}".replace(".", ",")
 
     rk_ds = str(next(_rk))
     pm, fm, om = _dev_matrix_bddds_totals_mln(ss, cap, project_data, mdf)

@@ -24919,7 +24919,8 @@ def dashboard_developer_projects(df):
         else 1
     )
 
-    st.subheader("Матрица контрольных точек")
+    # Правки куратора 08.05.2026: подпись «Матрица контрольных точек» убрана
+    # (избыточная — заголовок дашборда уже есть выше).
 
     try:
         from dashboards.data_quality_hints import collect_developer_projects_hints, render_quality_hints
