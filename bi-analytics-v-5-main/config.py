@@ -107,12 +107,38 @@ def get_extra_web_dirs_from_env() -> List[Path]:
     return out
 
 
+def _read_env_or_secret(name: str) -> str:
+    """Значение переменной из ``os.environ`` или (fallback) из ``st.secrets``.
+
+    На Streamlit Cloud переменные верхнего уровня ``secrets.toml`` копируются
+    в ``os.environ`` только после первого обращения к ``st.secrets`` (lazy
+    load). До этого момента ``os.environ.get("BI_ANALYTICS_RELEASE_MODE")``
+    возвращает пустую строку — даже если в secrets написано ``= "1"``.
+    Из-за этого ``is_release_client_mode()`` возвращал False на release →
+    был виден тумблер «Подмешивать демо-данные» и в БД попадали sample_*.
+
+    Здесь сначала читаем env (быстро, без импорта streamlit при cold-start),
+    а если пусто — пытаемся прочитать ``st.secrets[name]`` (что заодно
+    тригерит lazy-load и заполняет os.environ для последующих вызовов).
+    """
+    val = os.environ.get(name, "")
+    if val:
+        return str(val).strip()
+    try:
+        import streamlit as st  # type: ignore
+        # st.secrets — Mapping; .get() безопасен при отсутствии ключа.
+        v = st.secrets.get(name, None) if hasattr(st, "secrets") else None
+    except Exception:
+        v = None
+    return str(v).strip() if v is not None else ""
+
+
 def _env_truthy(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+    return _read_env_or_secret(name).lower() in ("1", "true", "yes", "on")
 
 
 def _env_falsy(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in ("0", "false", "no", "off")
+    return _read_env_or_secret(name).lower() in ("0", "false", "no", "off")
 
 
 @lru_cache(maxsize=1)
