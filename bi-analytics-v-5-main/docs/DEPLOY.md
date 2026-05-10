@@ -132,6 +132,14 @@
 ### 2. На release-сервере (Streamlit Cloud → Settings → Secrets)
 
 ```toml
+# Обязательная заглушка для встроенного auth-middleware Streamlit (1.50+).
+# Без секции [auth] middleware падает с KeyError: 'auth' при первом запросе.
+# cookie_secret — обязательное поле; мы не используем st.login(), он нужен
+# только для подписи служебных cookie. Сгенерировать новый:
+#   python -c "import secrets; print(secrets.token_hex(32))"
+[auth]
+cookie_secret = "<сгенерированная строка длиной 64+ символа>"
+
 [ftp]
 host = "ftp.example.ru"
 user = "bi-client"
