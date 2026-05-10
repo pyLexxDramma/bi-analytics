@@ -482,16 +482,51 @@ def _is_pct_complete_not_100(pct: Any, *, pct_scale_max: Any = None) -> bool:
     return abs(v - 100.0) > 1e-3
 
 
+_MSP_NA_TOKENS = {"", "нд", "н/д", "n/d", "n/a", "—", "-", "nan", "nat", "none", "null"}
+
+
+def _msp_value_is_na(v: Any) -> bool:
+    """True для NaT/NaN/None/строк-плейсхолдеров «НД», «Н/Д», «—», «-», «N/A» и т.п.
+
+    В выгрузках MSP пустые даты часто пишутся словом «НД» (см. msp_esipovo5_*.csv:
+    «Базовое_окончание = НД» при заполненном «Окончание»). Без этой нормализации
+    условие `pd.isna(...)` возвращало False, и для «Плана» не подхватывался
+    fallback на «Окончание» — в матрице оба столбца становились «Н/Д».
+    """
+    try:
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return True
+        if pd.isna(v):
+            return True
+    except (TypeError, ValueError):
+        pass
+    if isinstance(v, str):
+        s = v.strip().lower().replace("\xa0", " ")
+        while "  " in s:
+            s = s.replace("  ", " ")
+        if s in _MSP_NA_TOKENS:
+            return True
+    return False
+
+
 def _msp_plan_fact_pct(row: pd.Series) -> Tuple[Any, Any, Any]:
     """
     ТЗ: План = «Базовое окончание» (base end); Факт = «Окончание» (после web_loader — plan end).
     Без подмены на «Фактическое окончание»: только колонка окончания срока из MSP.
     Если базовое окончание пусто — для «Плана» берём то же «Окончание».
+
+    Текстовые плейсхолдеры «НД» / «Н/Д» / «—» в base end и plan end считаются пустыми
+    (см. _msp_value_is_na): иначе для Есипово V / Ленинский строка «Регистрация
+    договора субаренды» давала «Н/Д» в обеих колонках, хотя в данных есть «Окончание».
     """
     be = _series_first_value(row, "base end")
-    if pd.isna(be):
-        be = _series_first_value(row, "plan end")
     fe = _series_first_value(row, "plan end")
+    if _msp_value_is_na(be):
+        be = pd.NaT
+    if _msp_value_is_na(fe):
+        fe = pd.NaT
+    if pd.isna(be):
+        be = fe
     pc = _series_first_value(row, "pct complete") if "pct complete" in row.index else pd.NaT
     return be, fe, pc
 
