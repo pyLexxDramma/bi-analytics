@@ -454,3 +454,43 @@ def maybe_run_auto_ingest_on_startup() -> None:
         _release_lock()
         # in-process flag уже выставлен в начале функции — повторно не нужно.
         print("[auto_ingest] DONE", file=sys.stderr)
+
+
+def force_run_auto_ingest_now() -> Dict[str, Any]:
+    """Принудительно запустить auto-ingest СЕЙЧАС, обходя in-process-flag и маркер.
+
+    Используется кнопкой «Обновить данные и кэш» (admin/superadmin), а также
+    из админки/CLI. Возвращает словарь с метаданными прогона: pid, why, ok.
+
+    Без этой функции повторный вызов ``maybe_run_auto_ingest_on_startup()`` в
+    том же процессе становится no-op (in-process flag уже True от первого
+    cold-start ingest), и кнопка ничего не делает.
+    """
+    global _AUTO_INGEST_DONE_IN_PROCESS
+    _AUTO_INGEST_DONE_IN_PROCESS = False
+    prev_force = os.environ.get("BI_ANALYTICS_AUTO_INGEST_FORCE", "")
+    prev_master = os.environ.get("BI_ANALYTICS_AUTO_INGEST", "")
+    os.environ["BI_ANALYTICS_AUTO_INGEST_FORCE"] = "1"
+    # Гарантируем, что мастер-флаг включён (иначе ранний return в начале
+    # maybe_run_auto_ingest_on_startup сделает функцию no-op).
+    if not _flag("BI_ANALYTICS_AUTO_INGEST"):
+        os.environ["BI_ANALYTICS_AUTO_INGEST"] = "1"
+    started_at = time.time()
+    try:
+        maybe_run_auto_ingest_on_startup()
+        return {
+            "ok": True,
+            "pid": os.getpid(),
+            "elapsed_s": round(time.time() - started_at, 2),
+        }
+    except Exception as e:
+        print(f"[auto_ingest] force_run failed: {e}", file=sys.stderr)
+        return {"ok": False, "error": str(e), "pid": os.getpid()}
+    finally:
+        # Восстанавливаем env как было — чтобы кнопка не оставила «вечный» FORCE=1.
+        if prev_force:
+            os.environ["BI_ANALYTICS_AUTO_INGEST_FORCE"] = prev_force
+        else:
+            os.environ.pop("BI_ANALYTICS_AUTO_INGEST_FORCE", None)
+        if prev_master:
+            os.environ["BI_ANALYTICS_AUTO_INGEST"] = prev_master

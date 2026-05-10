@@ -899,13 +899,19 @@ def render_sidebar_menu(current_page: str = "reports"):
                                 _obj.clear()
                         except Exception:
                             pass
+                    # force_run_auto_ingest_now сбрасывает in-process flag
+                    # и форсит FORCE=1 + AUTO_INGEST=1 для ОДНОГО прогона,
+                    # после чего восстанавливает env как было. Без этого
+                    # повторный вызов в том же процессе был no-op (флаг уже True
+                    # от cold-start ingest) → кнопка ничего не делала, кроме
+                    # очистки кэшей.
                     try:
-                        import os as _os
+                        from auto_ingest import force_run_auto_ingest_now
 
-                        _os.environ["BI_ANALYTICS_AUTO_INGEST_FORCE"] = "1"
-                        from auto_ingest import maybe_run_auto_ingest_on_startup as _force_ingest
                         with st.spinner("Принудительный refresh: ingest + кэш…"):
-                            _force_ingest()
+                            _ingest_meta = force_run_auto_ingest_now()
+                        if not _ingest_meta.get("ok"):
+                            st.warning(f"Ingest вернул ошибку: {_ingest_meta.get('error')}")
                     except Exception as _e:
                         st.warning(f"Не удалось перезапустить ingest: {_e}")
                     for _k in (
@@ -913,8 +919,25 @@ def render_sidebar_menu(current_page: str = "reports"):
                         "last_load_result",
                         "web_version_id",
                         "web_version_pick_id",
+                        # Сбрасываем «уже наполнен» — чтобы auto-hydrate
+                        # перечитал session_state из новой версии БД.
+                        "_auto_hydrated_from_db",
                     ):
                         st.session_state.pop(_k, None)
+                    # Обнуляем DataFrame'ы, иначе auto-hydrate увидит project_data
+                    # != None и не перечитает БД.
+                    for _k in (
+                        "project_data",
+                        "project_data_all_snapshots",
+                        "debit_credit_data",
+                        "tessa_data",
+                        "tessa_tasks_data",
+                        "reference_1c_dannye",
+                        "reference_partner_to_project",
+                        "resources_data",
+                        "technique_data",
+                    ):
+                        st.session_state[_k] = None
                     st.success("Кэш очищен. Загружу свежие данные…")
                     st.rerun()
                 except Exception as _e:
