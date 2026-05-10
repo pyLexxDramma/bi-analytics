@@ -766,8 +766,15 @@ def main():
         # st.session_state у него нет (нет ScriptRunContext). Без этого блока
         # клиент при первом script_run видит project_data/tessa_data/... = None,
         # и контракт данных жалуется «не найдены TESSA / 1C dannye», хотя
-        # в БД лежат свежие 24-29 файлов. Загрузка из БД — на порядок быстрее
-        # повторного load_all_from_web() из физических файлов.
+        # в БД лежат свежие 24-29 файлов.
+        #
+        # Стратегия:
+        # 1) Сначала читаем из БД (read_version_to_session) — быстро.
+        # 2) Строим псевдо-`last_load_result` с diagnostics из web_files,
+        #    чтобы evaluate_data_contract видел, какие типы файлов есть.
+        # 3) Если после (1) важные DataFrame'ы всё ещё пусты, а в БД
+        #    соответствующих типов нет — fallback: вызываем полноценный
+        #    load_all_from_web() (как кнопка «Загрузить из web/»).
         if (
             st.session_state.get("project_data") is None
             and st.session_state.get("debit_credit_data") is None
@@ -777,29 +784,112 @@ def main():
         ):
             try:
                 _hydrate_active_id = get_active_version_id()
-            except Exception:
+            except Exception as _e:
+                print(f"[auto_hydrate] get_active_version_id failed: {_e}", file=sys.stderr)
                 _hydrate_active_id = None
+
+            _hydrate_ok = False
             if _hydrate_active_id:
                 try:
                     read_version_to_session(int(_hydrate_active_id))
                     st.session_state["web_version_id"] = int(_hydrate_active_id)
                     st.session_state["web_version_pick_id"] = int(_hydrate_active_id)
-                    # Восстанавливаем last_load_result для контракта данных,
-                    # иначе в data_health он всё равно будет жаловаться, что
-                    # «нет diagnostics» — несмотря на наполненный session_state.
-                    try:
-                        from data_contract import evaluate_data_contract
-                        from data_health import build_environment_fingerprint
-                        from data_readiness import build_data_readiness_report
+                    _hydrate_ok = True
+                except Exception as _e:
+                    print(f"[auto_hydrate] read_version_to_session failed: {_e}", file=sys.stderr)
 
-                        st.session_state["last_data_contract"] = evaluate_data_contract(None)
-                        st.session_state["last_data_readiness"] = build_data_readiness_report()
-                        st.session_state["last_env_fingerprint"] = build_environment_fingerprint(None)
+            # Псевдо-`last_load_result` из БД: evaluate_data_contract проверяет
+            # наличие типов через diagnostics; без него считает что ничего
+            # не загружено и пишет «Не найдены tessa csv / 1C dannye».
+            if _hydrate_ok:
+                try:
+                    import sqlite3 as _sql
+                    from web_schema import WEB_DB_PATH as _WDP
+
+                    _conn = _sql.connect(_WDP)
+                    _conn.row_factory = _sql.Row
+                    _rows = _conn.execute(
+                        "SELECT file_name, rel_path, file_type, rows_count "
+                        "FROM web_files WHERE version_id=?",
+                        (int(_hydrate_active_id),),
+                    ).fetchall()
+                    _conn.close()
+                    _diags = []
+                    _types_in_db = set()
+                    for _r in _rows:
+                        _ft = str(_r["file_type"] or "")
+                        _types_in_db.add(_ft)
+                        _diags.append(
+                            {
+                                "file": str(_r["rel_path"] or _r["file_name"] or ""),
+                                "type": _ft,
+                                "rows": int(_r["rows_count"] or 0),
+                                "columns": [],
+                            }
+                        )
+                    _pseudo_lr = {
+                        "loaded": len(_rows),
+                        "skipped": 0,
+                        "errors": [],
+                        "warnings": [],
+                        "diagnostics": _diags,
+                        "version_id": int(_hydrate_active_id),
+                    }
+                    st.session_state["last_load_result"] = _pseudo_lr
+
+                    from data_contract import evaluate_data_contract
+                    from data_health import build_environment_fingerprint
+                    from data_readiness import build_data_readiness_report
+
+                    st.session_state["last_data_contract"] = evaluate_data_contract(_pseudo_lr)
+                    st.session_state["last_data_readiness"] = build_data_readiness_report(_pseudo_lr)
+                    st.session_state["last_env_fingerprint"] = build_environment_fingerprint(_pseudo_lr)
+                    st.session_state["_auto_hydrated_from_db"] = True
+                    print(
+                        f"[auto_hydrate] OK: version_id={_hydrate_active_id}, "
+                        f"types={sorted(_types_in_db)}, files={len(_rows)}",
+                        file=sys.stderr,
+                    )
+                except Exception as _e:
+                    print(f"[auto_hydrate] pseudo last_load_result failed: {_e}", file=sys.stderr)
+
+            # Fallback: если auto-hydrate не справился (нет active_id, или
+            # БД повреждена, или session_state по-прежнему пуст по всем типам)
+            # — делаем полноценный load_all_from_web(), как кнопка.
+            _need_fallback = (
+                (not _hydrate_ok)
+                or (
+                    st.session_state.get("project_data") is None
+                    and st.session_state.get("tessa_data") is None
+                    and st.session_state.get("reference_1c_dannye") is None
+                    and st.session_state.get("debit_credit_data") is None
+                    and st.session_state.get("resources_data") is None
+                )
+            )
+            if _need_fallback and web_dir_exists():
+                try:
+                    print("[auto_hydrate] fallback to load_all_from_web()", file=sys.stderr)
+                    with st.spinner("Первичная загрузка данных из web/…"):
+                        _fb_result = load_all_from_web()
+                    st.session_state["last_load_result"] = _fb_result
+                    try:
+                        st.session_state["last_data_readiness"] = build_data_readiness_report(_fb_result)
+                        st.session_state["last_env_fingerprint"] = build_environment_fingerprint(_fb_result)
+                        from data_contract import evaluate_data_contract as _edc
+                        st.session_state["last_data_contract"] = _edc(_fb_result)
                     except Exception:
                         pass
-                    st.session_state["_auto_hydrated_from_db"] = True
+                    try:
+                        from web_schema import get_active_version_id as _gav2
+                        _na2 = _gav2()
+                        if _na2 is not None:
+                            st.session_state["web_version_id"] = int(_na2)
+                            st.session_state["web_version_pick_id"] = int(_na2)
+                    except Exception:
+                        pass
+                    st.session_state["_auto_hydrated_from_web"] = True
                 except Exception as _e:
-                    print(f"[auto_hydrate] failed: {_e}", file=sys.stderr)
+                    print(f"[auto_hydrate] fallback load_all_from_web failed: {_e}", file=sys.stderr)
 
         def _perform_load_from_web_folder() -> None:
             """Сканирование web/, запись в SQLite и обновление session_state (как кнопка «Загрузить из web/»)."""
