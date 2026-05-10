@@ -761,6 +761,46 @@ def main():
 
         init_web_schema()
 
+        # Auto-hydrate сессии из активной версии БД.
+        # Зачем: auto_ingest при cold start пишет данные в web_data.db, но
+        # st.session_state у него нет (нет ScriptRunContext). Без этого блока
+        # клиент при первом script_run видит project_data/tessa_data/... = None,
+        # и контракт данных жалуется «не найдены TESSA / 1C dannye», хотя
+        # в БД лежат свежие 24-29 файлов. Загрузка из БД — на порядок быстрее
+        # повторного load_all_from_web() из физических файлов.
+        if (
+            st.session_state.get("project_data") is None
+            and st.session_state.get("debit_credit_data") is None
+            and st.session_state.get("tessa_data") is None
+            and st.session_state.get("reference_1c_dannye") is None
+            and st.session_state.get("web_version_id") is None
+        ):
+            try:
+                _hydrate_active_id = get_active_version_id()
+            except Exception:
+                _hydrate_active_id = None
+            if _hydrate_active_id:
+                try:
+                    read_version_to_session(int(_hydrate_active_id))
+                    st.session_state["web_version_id"] = int(_hydrate_active_id)
+                    st.session_state["web_version_pick_id"] = int(_hydrate_active_id)
+                    # Восстанавливаем last_load_result для контракта данных,
+                    # иначе в data_health он всё равно будет жаловаться, что
+                    # «нет diagnostics» — несмотря на наполненный session_state.
+                    try:
+                        from data_contract import evaluate_data_contract
+                        from data_health import build_environment_fingerprint
+                        from data_readiness import build_data_readiness_report
+
+                        st.session_state["last_data_contract"] = evaluate_data_contract(None)
+                        st.session_state["last_data_readiness"] = build_data_readiness_report()
+                        st.session_state["last_env_fingerprint"] = build_environment_fingerprint(None)
+                    except Exception:
+                        pass
+                    st.session_state["_auto_hydrated_from_db"] = True
+                except Exception as _e:
+                    print(f"[auto_hydrate] failed: {_e}", file=sys.stderr)
+
         def _perform_load_from_web_folder() -> None:
             """Сканирование web/, запись в SQLite и обновление session_state (как кнопка «Загрузить из web/»)."""
             if not web_dir_exists():

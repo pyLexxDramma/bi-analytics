@@ -285,6 +285,28 @@ def _do_load_all() -> dict | None:
             f"skipped={result.get('skipped', 0)}, version_id={result.get('version_id')}",
             file=sys.stderr,
         )
+        # Подсветим, что именно не подхватилось — иначе невозможно понять,
+        # почему контракт данных на release жалуется «нет TESSA / 1C dannye»
+        # при N>0 загруженных файлов. result["warnings"] содержит сообщения
+        # вида "<rel_path>: <причина>" для каждого пропущенного / битого файла.
+        warnings_list = result.get("warnings") or []
+        if isinstance(warnings_list, (list, tuple)) and warnings_list:
+            for w in list(warnings_list)[:20]:
+                print(f"[auto_ingest] warn: {w}", file=sys.stderr)
+        # Подсветим распределение типов в активной версии — упрощает диагностику
+        # «контракт данных не видит tessa/dannye» прямо из stderr Streamlit Cloud.
+        diags = result.get("diagnostics") or []
+        if isinstance(diags, list):
+            type_counts: Dict[str, int] = {}
+            for d in diags:
+                if isinstance(d, dict):
+                    t = str(d.get("type", "unknown"))
+                    type_counts[t] = type_counts.get(t, 0) + 1
+            if type_counts:
+                summary = ", ".join(
+                    f"{k}={v}" for k, v in sorted(type_counts.items(), key=lambda x: x[0])
+                )
+                print(f"[auto_ingest] loaded by type: {summary}", file=sys.stderr)
         for e in (result.get("errors") or [])[:5]:
             print(f"[auto_ingest] ingest err: {e}", file=sys.stderr)
         return result
@@ -314,17 +336,28 @@ def _acquire_lock(stale_seconds: int = 600) -> tuple[bool, str]:
     (на случай SIGKILL предыдущего инстанса).
     """
     lock = _lock_path()
+    my_pid = os.getpid()
     if lock.exists():
         try:
             age = time.time() - lock.stat().st_mtime
         except Exception:
             age = 0.0
+        try:
+            holder_raw = lock.read_text(encoding="utf-8").strip()
+        except Exception:
+            holder_raw = ""
+        try:
+            holder_pid = int(holder_raw.splitlines()[0]) if holder_raw else 0
+        except Exception:
+            holder_pid = 0
+        # Reentry в том же процессе (Streamlit Cloud делает несколько script_run
+        # подряд при cold start, а наш in-process flag _AUTO_INGEST_DONE_IN_PROCESS
+        # ещё не выставлен — потому что первый ingest идёт в фоне). Это НЕ гонка,
+        # тихо отдаём «уже идёт у нас же», вызывающая сторона должна выйти.
+        if holder_pid and holder_pid == my_pid:
+            return False, f"self_reentry pid={holder_pid} (ingest already running in this process)"
         if age < stale_seconds:
-            try:
-                holder = lock.read_text(encoding="utf-8").strip()
-            except Exception:
-                holder = "?"
-            return False, f"locked by pid={holder} age={age:.0f}s"
+            return False, f"locked by pid={holder_raw or '?'} age={age:.0f}s"
         # stale — удалим и попробуем взять заново.
         try:
             lock.unlink()
@@ -337,7 +370,7 @@ def _acquire_lock(stale_seconds: int = 600) -> tuple[bool, str]:
     try:
         fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
         try:
-            os.write(fd, f"{os.getpid()}\n".encode("utf-8"))
+            os.write(fd, f"{my_pid}\n".encode("utf-8"))
         finally:
             os.close(fd)
         return True, "acquired"
@@ -367,23 +400,27 @@ def maybe_run_auto_ingest_on_startup() -> None:
         return
     _maybe_secrets_to_env()
     if not _flag("BI_ANALYTICS_AUTO_INGEST"):
+        # Не помечаем DONE — если флаг включат через secrets без рестарта,
+        # следующий вызов попробует ещё раз (на практике не сработает без рестарта,
+        # но защищает от false positive при отложенной инициализации secrets).
         return
+    # In-process flag ставим СРАЗУ, до проверки маркера/лока. Иначе при cold
+    # start Streamlit Cloud делает несколько script_run подряд, второй
+    # script_run заходит сюда, видит «no marker» и пытается стартовать ingest
+    # параллельно нашему же первому проходу — что засоряет лог записями
+    # «another process holds lock (locked by pid=<self> age=0s)». Перенос флага
+    # выше делает повторный заход no-op'ом без шума.
+    _AUTO_INGEST_DONE_IN_PROCESS = True
+
     need, why = _need_ingest_by_marker()
     if not need:
         print(f"[auto_ingest] skip: {why}", file=sys.stderr)
-        _AUTO_INGEST_DONE_IN_PROCESS = True
         return
     # Inter-process lock: Streamlit Cloud стартует web и worker процессы
     # одновременно — без замка оба полезут в FTP и устроят гонку за .tmp.
-    # Также защищает от повторного захода в этом же процессе пока ingest идёт
-    # фоном (например, Streamlit делает rerun страницы во время начального
-    # ingest, и наш in-process flag ещё не выставлен).
     acquired, reason = _acquire_lock()
     if not acquired:
         print(f"[auto_ingest] skip: another process holds lock ({reason})", file=sys.stderr)
-        # Ставим in-process flag, чтобы при следующем rerun страницы
-        # этот же процесс не писал ту же строку повторно.
-        _AUTO_INGEST_DONE_IN_PROCESS = True
         return
     print(f"[auto_ingest] START ({why}, pid={os.getpid()})", file=sys.stderr)
     try:
@@ -415,5 +452,5 @@ def maybe_run_auto_ingest_on_startup() -> None:
             print(f"[auto_ingest] marker write failed: {e}", file=sys.stderr)
     finally:
         _release_lock()
-        _AUTO_INGEST_DONE_IN_PROCESS = True
+        # in-process flag уже выставлен в начале функции — повторно не нужно.
         print("[auto_ingest] DONE", file=sys.stderr)
