@@ -798,19 +798,24 @@ def _format_gdrs_month_year_title_ru(d_from, d_to, pdf: pd.DataFrame | None, per
 
 
 def _gdrs_delta_pct_cell_bg_style(raw) -> str:
-    """Фон ячейки «Итого (%)»: от светло-зелёного при малом |%| к красному при большом."""
+    """Фон ячейки «Отклонение %»: светло-салатовый при выполнении/перевыполнении (p≤0),
+    плавный переход к красному при росте недовыполнения (p>0, до 100%+)."""
     if raw is None or (isinstance(raw, float) and pd.isna(raw)):
         return ""
     try:
         p = float(raw)
     except Exception:
         return ""
-    t = min(abs(p), 100.0) / 100.0
-    r = int(72 + t * (229 - 72))
-    g = int(199 + t * (72 - 199))
-    b = int(116 + t * (96 - 116))
-    alpha = 0.14 + 0.26 * t
-    return f"background-color:rgba({r},{g},{b},{alpha:.3f});"
+    if p <= 0:
+        return "background-color:rgba(183,244,183,0.42);"
+    t = min(max(p, 0.0), 100.0) / 100.0
+    lo = (204, 248, 204)
+    hi = (192, 38, 42)
+    rr = int(lo[0] + (hi[0] - lo[0]) * t)
+    gg = int(lo[1] + (hi[1] - lo[1]) * t)
+    bb = int(lo[2] + (hi[2] - lo[2]) * t)
+    alpha = 0.28 + 0.38 * t
+    return f"background-color:rgba({rr},{gg},{bb},{alpha:.3f});"
 
 
 def _gdrs_period_series_to_year(series: pd.Series) -> pd.Series:
@@ -16258,10 +16263,12 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             try:
                 import plotly.graph_objects as _go
                 proj_df = proj_df.sort_values("plan", ascending=False).reset_index(drop=True)
-                # семантика «Отклонение» = факт − план (Q3 заказчика):
-                # >=0 опережение/выполнение → зелёный, <0 отставание → красный.
-                _dev_signed = (proj_df["skud"] - proj_df["plan"]).round(0).astype(int)
-                _dev_colors = ["#46d68a" if int(v) >= 0 else "#ff5454" for v in _dev_signed]
+                # Отклонение = План − Факт (СКУД); плюс — недовыполнение (красный), минус — перевыполнение (зелёный).
+                _dev_signed = proj_df["deviation"].round(0).astype(int)
+                _dev_colors = [
+                    "#ff5454" if int(v) > 0 else ("#46d68a" if int(v) < 0 else "#8899aa")
+                    for v in _dev_signed
+                ]
                 _proj_labels = proj_df["project_name"].astype(str).tolist()
                 _plan_vals = proj_df["plan"].fillna(0).astype(int).tolist()
                 _fact_vals = proj_df["skud"].fillna(0).astype(int).tolist()
@@ -16281,10 +16288,14 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                     textfont=dict(color="#cfe9fa", size=12),
                 )
                 fig_pf.add_bar(
-                    name="Отклонение (|факт − план|)", x=_proj_labels, y=_dev_abs,
+                    name="Отклонение (план − факт)", x=_proj_labels, y=_dev_abs,
                     marker_color=_dev_colors,
                     text=[f"{int(v):+d}" for v in _dev_signed], textposition="outside",
                     textfont=dict(color="#cfe9fa", size=12),
+                    customdata=_plan_vals,
+                    hovertemplate=(
+                        "<b>%{x}</b><br>План: %{customdata}<br>Отклонение: %{text}<extra></extra>"
+                    ),
                 )
                 fig_pf.update_layout(
                     title=dict(
@@ -16345,14 +16356,9 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             )
         view["План"] = view["plan"].fillna(0).astype(int)
         view["СКУД"] = view["skud"].fillna(0).astype(int)
-        # Q3 + Q1 (08.05.2026), ТЗ заказчика 2026-05-08: «Отклонение» = СКУД − План
-        # (положительное = перевыполнение, отрицательное = недовыполнение). Источник
-        # данных gdrs_resursi.build_main_table тоже считает в этой формуле; здесь
-        # пересчитываем для согласованности при возможной модификации DataFrame.
-        view["Отклонение"] = (view["skud"].fillna(0) - view["plan"].fillna(0)).round(0).astype(int)
-        # «Δ %» — процент отклонения (по ответу заказчика Q3): (факт − план) / план × 100.
-        _plan_safe = view["plan"].fillna(0).replace(0, _np.nan)
-        view["Δ %"] = ((view["skud"].fillna(0) - view["plan"].fillna(0)) / _plan_safe * 100.0)
+        # ТЗ ГДРС: Отклонение = План − Факт (СКУД); Отклонение % = (Отклонение / План) × 100.
+        view["Отклонение"] = view["deviation"].round(0).astype(int)
+        view["Отклонение %"] = view["delta_pct"]
         for src, dst in (("w1", "1 неделя"), ("w2", "2 неделя"), ("w3", "3 неделя"),
                          ("w4", "4 неделя"), ("w5", "5 неделя"), ("w6", "6 неделя")):
             view[dst] = view[src].fillna(0).astype(int)
@@ -16360,7 +16366,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         view["__kind__"] = view["row_kind"]
         cols_order = ["Контрагент", "Вид работы", "План", "СКУД", "Отклонение",
                       "1 неделя", "2 неделя", "3 неделя", "4 неделя", "5 неделя", "6 неделя",
-                      "Δ %", "__kind__"]
+                      "Отклонение %", "__kind__"]
         view = view[cols_order]
 
         def _row_html(row):
@@ -16373,32 +16379,25 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             for col in cols_order[:-1]:
                 v = row[col]
                 if col == "Отклонение":
-                    # Q1 (08.05.2026): отставание = красный, выполнение/опережение = зелёный.
-                    color = "#46d68a" if (isinstance(v, (int, float)) and v >= 0) else (
-                        "#ff5454" if (isinstance(v, (int, float)) and v < 0) else "#cccccc"
+                    # Положительное = недовыполнение → красный; отрицательное = перевыполнение → зелёный.
+                    color = "#ff5454" if (isinstance(v, (int, float)) and v > 0) else (
+                        "#46d68a" if (isinstance(v, (int, float)) and v < 0) else "#cccccc"
                     )
-                    txt = f"{int(v):+d}" if v else "0"
+                    txt = (
+                        "0"
+                        if isinstance(v, (int, float)) and int(round(float(v))) == 0
+                        else (f"{int(round(float(v))):+d}" if isinstance(v, (int, float)) else str(v))
+                    )
                     cells.append(f"<td style='text-align:right; color:{color}; font-weight:{weight};'>{txt}</td>")
-                elif col == "Δ %":
+                elif col == "Отклонение %":
                     if v is None or (isinstance(v, float) and _np.isnan(v)):
                         cells.append("<td style='text-align:right;'>—</td>")
                     else:
                         pct = float(v)
-                        # Семантика: pct >= 0 → выполнено/опережение (зелёная гамма);
-                        #            pct < 0 → отставание (красная гамма, насыщенность по глубине).
-                        if pct >= 10:
-                            cell_bg = "#1c4426"
-                        elif pct >= 0:
-                            cell_bg = "#2b5234"
-                        elif pct >= -10:
-                            cell_bg = "#5a3a26"
-                        elif pct >= -30:
-                            cell_bg = "#7a2a2a"
-                        else:
-                            cell_bg = "#5a1212"
+                        grad = _gdrs_delta_pct_cell_bg_style(pct)
                         sign = "+" if pct > 0 else ""
                         cells.append(
-                            f"<td style='text-align:right; background:{cell_bg}; color:#fff; font-weight:{weight};'>"
+                            f"<td style='text-align:right; color:#eee; font-weight:{weight};{grad}'>"
                             f"{sign}{pct:.0f}%</td>"
                         )
                 elif col in ("План", "СКУД", "1 неделя", "2 неделя", "3 неделя", "4 неделя", "5 неделя", "6 неделя"):
@@ -16529,9 +16528,8 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                 "contractor_name": "Контрагент", "plan": "План",
                 "skud": "Факт",
             }, inplace=True)
-            # Q3 (08.05.2026): «Отклонение» в семантике заказчика = факт − план
-            # (положительное — опережение, отрицательное — отставание).
-            chart_df["Отклонение"] = (chart_df["Факт"] - chart_df["План"]).round(0).astype(int)
+            # Отклонение = План − Факт (согласовано с gdrs_resursi.main_t.deviation).
+            chart_df["Отклонение"] = chart_df["deviation"].round(0).astype(int)
             chart_df = chart_df.sort_values("План", ascending=False)
             try:
                 import plotly.graph_objects as _go
@@ -16545,17 +16543,20 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                     marker_color="#46d68a",
                 )
                 fig2.add_bar(
-                    name="Отклонение",
+                    name="Отклонение (план − факт)",
                     x=chart_df["Контрагент"],
                     y=chart_df["Отклонение"].abs(),
-                    # Q1 (08.05.2026): отставание = красный, выполнение/опережение = зелёный.
                     marker_color=[
-                        "#46d68a" if v >= 0 else "#ff5454"
+                        "#ff5454" if v > 0 else ("#46d68a" if v < 0 else "#8899aa")
                         for v in chart_df["Отклонение"]
                     ],
                     text=[f"{int(v):+d}" for v in chart_df["Отклонение"]],
                     textposition="outside",
                     textfont=dict(color="#cfe9fa", size=11),
+                    customdata=chart_df["План"].tolist(),
+                    hovertemplate=(
+                        "<b>%{x}</b><br>План: %{customdata}<br>Отклонение: %{text}<extra></extra>"
+                    ),
                 )
                 fig2.update_layout(
                     barmode="group",
@@ -16568,6 +16569,56 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
                 )
                 st.plotly_chart(fig2, use_container_width=True)
+
+                st.subheader("Факт по подрядчикам (план · отклонение · % выполнения)")
+                _goal_df = chart_df.sort_values("План", ascending=False).reset_index(drop=True)
+                _xs = _goal_df["Контрагент"].astype(str).tolist()
+                _plans_f = _goal_df["План"].fillna(0.0).astype(float).tolist()
+                _facts_f = _goal_df["Факт"].fillna(0.0).astype(float).tolist()
+                _devs_i = _goal_df["Отклонение"].astype(int).tolist()
+                _labels = []
+                _bar_colors = []
+                _hover_lines = []
+                for _nm, _p, _f, _dev in zip(_xs, _plans_f, _facts_f, _devs_i):
+                    _bar_colors.append(_gdrs_fact_bar_color(_p, _f))
+                    if float(_p) > 0:
+                        _dv = int(round((_p - _f) / float(_p) * 100.0))
+                        _fl = int(round((_f / float(_p)) * 100.0))
+                        _labels.append(f"{int(round(_f))} ({_dv:+d}%)")
+                        _hover_lines.append(
+                            f"<b>{_nm}</b><br>План: {int(round(_p))}<br>Факт: {int(round(_f))}<br>"
+                            f"Отклонение (план−факт): {int(_dev)}<br>"
+                            f"% выполнения: {_fl}%<br>% откл. к цели: {_dv:+d}%"
+                        )
+                    else:
+                        _labels.append(f"{int(round(_f))}")
+                        _hover_lines.append(
+                            f"<b>{_nm}</b><br>План: {int(round(_p))}<br>Факт: {int(round(_f))}<br>"
+                            f"Отклонение: {int(_dev)}"
+                        )
+                fig_goal = _go.Figure()
+                fig_goal.add_bar(
+                    x=_xs,
+                    y=_facts_f,
+                    marker_color=_bar_colors,
+                    text=_labels,
+                    textposition="outside",
+                    textfont=dict(color="#cfe9fa", size=11),
+                    name="Факт",
+                    hovertext=_hover_lines,
+                    hoverinfo="text",
+                )
+                fig_goal.update_layout(
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font_color="#eee",
+                    xaxis_tickangle=-45,
+                    yaxis_title="Факт (средн./день)",
+                    height=460,
+                    margin=dict(l=48, r=32, t=32, b=140),
+                    showlegend=False,
+                )
+                st.plotly_chart(fig_goal, use_container_width=True)
             except Exception as _e:
                 st.warning(f"Plotly недоступен: {_e}")
 
@@ -16608,15 +16659,14 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                 "contractor_name": "Контрагент",
                 "plan": "План",
                 "mean_per_day": "Среднее за месяц",
+                "deviation": "Отклонение",
             })
-            # Q3 (08.05.2026): «Отклонение» = факт − план (положительное = опережение).
-            view2["Отклонение"] = (view2["Среднее за месяц"].fillna(0) - view2["План"].fillna(0)).round(0).astype(int)
+            view2["Отклонение"] = view2["Отклонение"].round(0).astype(int)
             view2 = view2.sort_values("План", ascending=False)
 
             def _td_dev(v):
-                # Q1 (08.05.2026): отставание = красный, выполнение/опережение = зелёный.
-                color = "#46d68a" if (isinstance(v, (int, float)) and v >= 0) else (
-                    "#ff5454" if (isinstance(v, (int, float)) and v < 0) else "#cccccc"
+                color = "#ff5454" if (isinstance(v, (int, float)) and v > 0) else (
+                    "#46d68a" if (isinstance(v, (int, float)) and v < 0) else "#cccccc"
                 )
                 if v is None or (isinstance(v, float) and _np.isnan(v)) or v == 0:
                     return f"<td style='text-align:right; color:{color}; font-weight:600;'>0</td>"

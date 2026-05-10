@@ -930,7 +930,8 @@ def build_main_table(
     Логика расчёта:
     - Неделя = ISO-неделя; нумерация в порядке возрастания внутри выборки (1..6 для месяца).
     - weekly_avg(подрядчик, неделя) = ∑ daily / N_дней_в_неделе_в_выборке.
-    - skud(подрядчик)              = ∑ daily / N_всех_дней_в_выборке.
+    - skud(подрядчик)              = ∑ daily / N_всех_дней_в_выборке (= «Факт / СКУД» среднее за день).
+    - deviation                       = План − skud; delta_pct = (deviation / План) × 100 (при План≠0).
     - subtotal(проект, неделя)     = ∑ weekly_avg по подрядчикам.
     - subtotal(проект, СКУД)       = ∑ skud по подрядчикам.
     """
@@ -1014,13 +1015,13 @@ def build_main_table(
     )
     rows["vid_raboty"] = rows["contract_name"].astype(str).apply(extract_vid_raboty)
     rows["skud"] = rows["skud_avg"].fillna(0.0).round(0)
-    # ТЗ заказчика 2026-05-08 (скрин ГДРС): «Отклонение = СКУД − План».
-    # Минус — недовыполнение (красный), плюс — перевыполнение (зелёный).
-    # Раньше формула была plan − skud (обратный знак), а UI пересчитывал
-    # на skud − plan — устранён технический долг с «двойной истиной».
-    rows["deviation"] = (rows["skud"] - rows["plan"]).round(0)
+    # ТЗ ГДРС (2026-05 + уточнение по скринам): Отклонение = План − Факт (СКУД);
+    # Отклонение % = (Отклонение / План) × 100. Положительное — недовыполнение.
+    rows["deviation"] = (rows["plan"] - rows["skud"]).round(0)
     rows["delta_pct"] = rows.apply(
-        lambda r: (r["skud"] / r["plan"] * 100.0) if r["plan"] not in (0.0, None) else np.nan,
+        lambda r: ((r["plan"] - r["skud"]) / r["plan"] * 100.0)
+        if r["plan"] not in (0.0, None) and float(r["plan"]) != 0.0
+        else np.nan,
         axis=1,
     )
     for w in ("w1", "w2", "w3", "w4", "w5", "w6"):
@@ -1037,8 +1038,7 @@ def build_main_table(
         block = chunk.sort_values("contractor_name").copy()
         plan_sum = float(block["plan"].sum())
         skud_sum = float(block["skud"].sum())
-        # ТЗ заказчика 2026-05-08: dev = СКУД − План (см. комментарий выше).
-        dev_sum = skud_sum - plan_sum
+        dev_sum = plan_sum - skud_sum
         sub = pd.DataFrame(
             [{
                 "project_name": proj,
@@ -1049,7 +1049,7 @@ def build_main_table(
                 "plan": plan_sum,
                 "skud": skud_sum,
                 "deviation": dev_sum,
-                "delta_pct": (skud_sum / plan_sum * 100.0) if plan_sum > 0 else np.nan,
+                "delta_pct": ((plan_sum - skud_sum) / plan_sum * 100.0) if plan_sum > 0 else np.nan,
                 "w1": float(block["w1"].sum()),
                 "w2": float(block["w2"].sum()),
                 "w3": float(block["w3"].sum()),
@@ -1069,8 +1069,7 @@ def build_main_table(
     sub_only = body[body["row_kind"] == "subtotal"]
     plan_total = float(sub_only["plan"].sum())
     skud_total_v = float(sub_only["skud"].sum())
-    # ТЗ заказчика 2026-05-08: dev = СКУД − План (см. комментарий выше).
-    dev_total = skud_total_v - plan_total
+    dev_total = plan_total - skud_total_v
     grand = pd.DataFrame(
         [{
             "project_name": "Итого",
@@ -1081,7 +1080,9 @@ def build_main_table(
             "plan": plan_total,
             "skud": skud_total_v,
             "deviation": dev_total,
-            "delta_pct": (skud_total_v / plan_total * 100.0) if plan_total > 0 else np.nan,
+            "delta_pct": ((plan_total - skud_total_v) / plan_total * 100.0)
+            if plan_total > 0
+            else np.nan,
             "w1": float(sub_only["w1"].sum()),
             "w2": float(sub_only["w2"].sum()),
             "w3": float(sub_only["w3"].sum()),
@@ -1155,6 +1156,6 @@ def build_summary_table(
         summary.groupby("contractor_name", as_index=False)
         .agg(plan=("plan", "sum"), mean_per_day=("mean_per_day", "sum"))
     )
-    # ТЗ заказчика 2026-05-08: «Отклонение = СКУД − План» (mean_per_day − plan).
-    out["deviation"] = (out["mean_per_day"] - out["plan"]).round(0)
+    # ТЗ: Отклонение = План − Факт (среднее за день для периода).
+    out["deviation"] = (out["plan"] - out["mean_per_day"]).round(0)
     return out[["contractor_name", "plan", "mean_per_day", "deviation"]]
