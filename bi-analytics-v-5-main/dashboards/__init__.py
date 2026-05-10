@@ -70,7 +70,7 @@ REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
             # Правки куратора 08.05.2026: вкладка «Утверждённый бюджет» удалена,
             # её графики перенесены в «Утверждённый бюджет план/факт».
             "Утверждённый бюджет план/факт",
-            "Прогнозный бюджет",
+            "БДДС (утверждённый/прогнозный)",
             "Дебиторская и кредиторская задолженность подрядчиков",
         ],
     ),
@@ -237,6 +237,8 @@ def _get_dashboards() -> Dict[str, Callable]:
         # сохранённые ссылки/закладки/настройки пользователей.
         "Утвержденный бюджет": dashboard_budget_by_type,
         "Бюджет по проекту": dashboard_budget_by_type,
+        "БДДС (утверждённый/прогнозный)": dashboard_forecast_budget,
+        "Прогнозный БДДС": dashboard_forecast_budget,
         "Прогнозный бюджет": dashboard_forecast_budget,
         "Отклонение от базового плана": dashboard_plan_fact_dates,
         "Значения отклонений от базового плана": dashboard_pravki_report_hidden,
@@ -267,7 +269,7 @@ def _get_dashboards() -> Dict[str, Callable]:
 # Ленивая загрузка, чтобы при импорте dashboards не тянуть project_visualization_app
 # Увеличьте версию при изменении реестра отчётов — иначе долгоживущий процесс Streamlit
 # может держать устаревший словарь в памяти.
-_DASHBOARDS_REGISTRY_VERSION = 82
+_DASHBOARDS_REGISTRY_VERSION = 84
 _dashboards_cache: Dict[str, Callable] = {}
 _dashboards_cache_version: int = 0
 

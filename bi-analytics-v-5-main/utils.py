@@ -577,13 +577,14 @@ def apply_chart_background(fig, *, skip_uniformtext: bool = False):
     return fig
 
 
-def format_million_rub(value) -> str:
-    """Форматирует сумму в рублях как млн руб. с двумя знаками: 940346 -> '0.94 млн. руб.'"""
+def format_million_rub(value, *, decimals: int = 2) -> str:
+    """Форматирует сумму в рублях как млн руб. (по умолчанию 2 знака)."""
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return ""
     try:
         x = float(value) / MILLION
-        return f"{x:.2f} млн. руб."
+        d = max(0, int(decimals))
+        return f"{x:.{d}f} млн. руб."
     except (TypeError, ValueError):
         return ""
 
@@ -890,13 +891,16 @@ def budget_table_to_html(
             except Exception:
                 row_kind = ""
         is_emphasized_row = row_kind in {str(x).strip().casefold() for x in emphasize_row_kinds}
+        is_total_row_st = row_kind == "total"
         _efs = float(emphasize_row_font_em) if emphasize_row_font_em and emphasize_row_font_em > 1 else 1.12
-        row_style = (
-            " style=\"font-weight:700; "
-            f"font-size:{_efs}em; border-top:1px solid rgba(255,255,255,0.35);\""
-            if is_emphasized_row
-            else ""
-        )
+        if is_emphasized_row:
+            _uc = "text-transform: uppercase;" if is_total_row_st else ""
+            row_style = (
+                " style=\"font-weight:700; "
+                f"{_uc} font-size:{_efs}em; border-top:1px solid rgba(255,255,255,0.35);\""
+            )
+        else:
+            row_style = ""
         parts.append(f"<tr{row_style}>")
         for col in visible_cols:
             val = row[col]
@@ -1130,10 +1134,16 @@ def format_dataframe_as_html(
     conditional_cols: Optional[Dict[str, Dict[str, str]]] = None,
     column_colors: Optional[Dict[str, str]] = None,
     cell_color: Optional[pd.DataFrame] = None,
+    *,
+    finance_decimal_places: int = 2,
+    bold_row_indices: Optional[set] = None,
 ) -> str:
     """Форматирует DataFrame в HTML-таблицу для отображения в Streamlit."""
     if df is None or df.empty:
         return "<p>Нет данных для отображения.</p>"
+
+    _fin_dec = max(0, int(finance_decimal_places))
+    _bold_ix = bold_row_indices or set()
 
     def _is_finance_like_column(col_name: Any) -> bool:
         s = str(col_name).lower()
@@ -1185,11 +1195,20 @@ def format_dataframe_as_html(
                 col_lower = str(col).lower()
                 if is_scalar and not (isinstance(value, (int, float)) and pd.isna(value)):
                     if isinstance(value, (int, float)):
-                        color = pos_color if value > 0 else neg_color
+                        if value > 0:
+                            color = pos_color
+                        elif value < 0:
+                            color = neg_color
+                        else:
+                            color = TABLE_TEXT_COLOR
                         if _ru_column_is_integer_days(col):
                             formatted_value = f"{int(round(float(value), 0))}"
                         elif isinstance(value, float):
-                            formatted_value = f"{value:.2f}"
+                            formatted_value = (
+                                f"{float(value):.{_fin_dec}f}"
+                                if _is_finance_like_column(col_lower)
+                                else f"{value:.2f}"
+                            )
                         else:
                             formatted_value = f"{int(value)}"
                     else:
@@ -1197,13 +1216,17 @@ def format_dataframe_as_html(
                             try:
                                 fv = float(str(value).replace(",", ".").replace(" ", ""))
                                 formatted_value = f"{int(round(fv, 0))}"
-                                color = pos_color if fv > 0 else neg_color
+                                color = (
+                                    pos_color
+                                    if fv > 0
+                                    else (neg_color if fv < 0 else TABLE_TEXT_COLOR)
+                                )
                             except (TypeError, ValueError):
                                 formatted_value = str(value) if value != "" else "0"
-                                color = neg_color
+                                color = TABLE_TEXT_COLOR
                         else:
                             formatted_value = str(value) if value != "" else "0"
-                            color = neg_color
+                            color = TABLE_TEXT_COLOR
                 else:
                     formatted_value = "0" if (is_scalar and pd.isna(value)) else str(value)
                     color = neg_color
@@ -1218,7 +1241,7 @@ def format_dataframe_as_html(
                     if _ru_column_is_integer_days(col):
                         formatted_value = f"{int(round(float(value), 0))}"
                     elif _is_finance_like_column(col_lower):
-                        formatted_value = f"{float(value):.2f}"
+                        formatted_value = f"{float(value):.{_fin_dec}f}"
                     elif "отклонен" in col_lower or "deviation" in col_lower:
                         formatted_value = f"{int(round(float(value), 0))}"
                     elif isinstance(value, float) and (value % 1 != 0 or abs(value) < 1):
@@ -1237,6 +1260,8 @@ def format_dataframe_as_html(
                     formatted_value = "" if (is_scalar and pd.isna(value)) else str(value)
                 formatted_value = html_module.escape(str(formatted_value))
                 cell_style = _td_base
+                if idx in _bold_ix:
+                    cell_style += "font-weight:700;text-transform:uppercase;"
                 if column_colors and col in column_colors:
                     cell_style += f"color:{column_colors[col]};"
                 if cell_color is not None and col in cell_color.columns:

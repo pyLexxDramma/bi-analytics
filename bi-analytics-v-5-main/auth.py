@@ -46,6 +46,8 @@ _ROLE_REPORT_DENYLIST: Dict[str, frozenset] = {
             "БДР",
             "Бюджет план/факт",
             "Утвержденный бюджет",
+            "БДДС (утверждённый/прогнозный)",
+            "Прогнозный БДДС",
             "Прогнозный бюджет",
             "Дебиторская и кредиторская задолженность подрядчиков",
         }
@@ -63,6 +65,8 @@ _REPORT_ROLE_ALLOWLIST: Dict[str, frozenset] = {
     "БДР": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "Бюджет план/факт": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "Утвержденный бюджет": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
+    "БДДС (утверждённый/прогнозный)": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
+    "Прогнозный БДДС": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "Прогнозный бюджет": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "Дебиторская и кредиторская задолженность подрядчиков": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "Причины отклонений": frozenset({"manager", "analyst", "rp", "gip", "financier", "admin", "superadmin"}),
