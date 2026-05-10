@@ -3374,3 +3374,132 @@ html,body{margin:0;padding:0;background:transparent;overflow:hidden}
         key_prefix="cp_msp_table",
         csv_label="Скачать таблицу (CSV, для Excel)",
     )
+
+
+# ── Session-level кэш для матрицы ───────────────────────────────────────────
+#
+# Зачем: пересчёт `dedupe_msp_for_developer_projects` + `build_dev_tz_matrix_rows`
+# на каждом изменении фильтра «Проект» был тяжёлым (десятки секунд на больших
+# выгрузках MSP) → пользователя успевало выкидывать по разрыву websocket.
+# Сами входные DataFrame не меняются между переключениями фильтра в рамках
+# одной сессии — кэшируем по «отпечатку» кадра + ключу проекта + версии prefs.
+
+_DEV_MATRIX_CACHE_KEY = "_dev_matrix_cache_v1"
+
+
+def _df_fingerprint(df: Optional[pd.DataFrame]) -> Tuple[Any, ...]:
+    """Дешёвый, но достаточно уникальный отпечаток DataFrame для in-session кэша.
+
+    Не использует hash содержимого (дорого на больших MSP). Берёт shape, id
+    объекта и хэш кортежа из (первый/последний индекс, первое/последнее
+    значение в первом столбце). Если DataFrame подменён — отпечаток меняется.
+    """
+    if df is None:
+        return ("none",)
+    try:
+        if getattr(df, "empty", True):
+            return ("empty", id(df))
+        cols = tuple(map(str, df.columns[:8]))
+        first_idx = df.index[0]
+        last_idx = df.index[-1]
+        c0 = df.columns[0] if len(df.columns) else None
+        first_val = "" if c0 is None else str(df.iloc[0, 0])[:64]
+        last_val = "" if c0 is None else str(df.iloc[-1, 0])[:64]
+        return (
+            id(df),
+            tuple(df.shape),
+            cols,
+            str(first_idx),
+            str(last_idx),
+            first_val,
+            last_val,
+        )
+    except Exception:
+        return ("err", id(df))
+
+
+def _prefs_fingerprint() -> str:
+    """Отпечаток текущих prefs матрицы (если поменяли подписи/маппинг — кэш сбросится)."""
+    try:
+        prefs = load_developer_projects_matrix_prefs()
+        return json.dumps(prefs, ensure_ascii=False, sort_keys=True)[:512]
+    except Exception:
+        return ""
+
+
+def _dev_matrix_cache(ss: Any) -> Dict[Any, Any]:
+    if ss is None:
+        return {}
+    try:
+        cache = ss.get(_DEV_MATRIX_CACHE_KEY)
+    except Exception:
+        return {}
+    if not isinstance(cache, dict):
+        cache = {}
+        try:
+            ss[_DEV_MATRIX_CACHE_KEY] = cache
+        except Exception:
+            pass
+    return cache
+
+
+def dedupe_msp_for_developer_projects_cached(
+    df: pd.DataFrame, ss: Any = None
+) -> pd.DataFrame:
+    """In-session кэш для dedupe — переключение фильтра «Проект» не пересчитывает дубли заново."""
+    if df is None or getattr(df, "empty", True):
+        return df
+    if ss is None:
+        return dedupe_msp_for_developer_projects(df)
+    cache = _dev_matrix_cache(ss)
+    key = ("dedupe", _df_fingerprint(df))
+    cached = cache.get(key)
+    if isinstance(cached, pd.DataFrame):
+        return cached
+    out = dedupe_msp_for_developer_projects(df)
+    try:
+        cache[key] = out
+    except Exception:
+        pass
+    return out
+
+
+def build_dev_tz_matrix_rows_cached(
+    mdf: pd.DataFrame,
+    project_data: Optional[pd.DataFrame],
+    ss: Any,
+    *,
+    project_label_for_scope: str = "",
+) -> Tuple[List[Dict[str, Any]], str]:
+    """In-session кэш для тяжёлой матрицы: ключ = отпечатки кадров + label + prefs."""
+    if mdf is None or getattr(mdf, "empty", True):
+        return [], ""
+    if ss is None:
+        return build_dev_tz_matrix_rows(
+            mdf,
+            project_data,
+            ss,
+            project_label_for_scope=project_label_for_scope,
+        )
+    cache = _dev_matrix_cache(ss)
+    key = (
+        "rows",
+        _df_fingerprint(mdf),
+        _df_fingerprint(project_data),
+        str(project_label_for_scope or ""),
+        _prefs_fingerprint(),
+    )
+    cached = cache.get(key)
+    if isinstance(cached, tuple) and len(cached) == 2:
+        return cached  # type: ignore[return-value]
+    res = build_dev_tz_matrix_rows(
+        mdf,
+        project_data,
+        ss,
+        project_label_for_scope=project_label_for_scope,
+    )
+    try:
+        cache[key] = res
+    except Exception:
+        pass
+    return res

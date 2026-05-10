@@ -145,6 +145,22 @@ def init_all_tables(st_callback=None):
         )
     """)
 
+    # Persistent-сессии: токен в URL ?sid=... позволяет восстановить логин
+    # при разрыве websocket Streamlit (длинная обработка → сессия пересоздаётся
+    # → пользователя «выкидывает»). Срок хранения по умолчанию — 7 дней.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS auth_sessions (
+            token TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions (expires_at)"
+    )
+
     conn.commit()
 
     # Дефолтный суперадминистратор (учитываем только активных — как в create_user).

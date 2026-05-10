@@ -31,6 +31,7 @@ from auth import (
     verify_reset_token,
     get_user_by_username,
     filter_reports_for_role,
+    restore_session_from_query_params,
 )
 from data_loader import (
     load_data,
@@ -84,6 +85,14 @@ except Exception as _e:  # noqa: BLE001
     import sys as _sys
 
     print(f"[auto_ingest] init failed: {_e}", file=_sys.stderr)
+
+# Persistent auth: если в URL ?sid=<token> валиден — восстанавливаем сессию
+# до set_page_config, чтобы корректно выбрать состояние сайдбара (expanded
+# для авторизованного пользователя). Безопасно при отсутствии токена / БД.
+try:
+    restore_session_from_query_params()
+except Exception:
+    pass
 
 # Page configuration (должно быть первым)
 _sidebar_state = "expanded" if st.session_state.get("authenticated") else "collapsed"
@@ -229,6 +238,15 @@ except Exception:
 
 # ==================== MAIN APP ====================
 def main():
+
+    # Persistent auth: восстанавливаем сессию из URL ?sid=<token>
+    # ДО первой проверки `check_authentication()`. Иначе при пересоздании
+    # websocket Streamlit Cloud (после долгой обработки) пользователя сбрасывает
+    # на форму входа.
+    try:
+        restore_session_from_query_params()
+    except Exception:
+        pass
 
     # Проверка авторизации - если не авторизован, показываем форму входа
     if not check_authentication():
@@ -505,6 +523,18 @@ def main():
                                 st.session_state.authenticated = True
 
                                 st.session_state.user = user
+
+                                # Persistent-сессия: токен в URL ?sid=...
+                                # позволит восстановить логин при разрыве
+                                # websocket Streamlit Cloud (длинная обработка
+                                # → сессия пересоздаётся → пользователя
+                                # выкидывало). См. auth.restore_session_from_query_params.
+                                try:
+                                    from auth import issue_session_token_for_user
+
+                                    issue_session_token_for_user(user)
+                                except Exception:
+                                    pass
 
                                 st.success(f"Добро пожаловать, {user['username']}!")
 

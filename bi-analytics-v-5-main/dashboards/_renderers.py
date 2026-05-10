@@ -124,6 +124,8 @@ def _inject_multiselect_ru_translations() -> None:
 
 from dashboards.dev_projects_tz_matrix import (
     build_dev_tz_matrix_rows,
+    build_dev_tz_matrix_rows_cached,
+    dedupe_msp_for_developer_projects_cached,
     ensure_msp_df_for_dev_matrix,
     load_developer_projects_matrix_prefs,
     render_dev_tz_matrix,
@@ -25610,224 +25612,230 @@ def dashboard_developer_projects(df):
         st.warning("Не найдены ключевые колонки (проект, задача). Проверьте формат файла.")
         return
 
-    # По правкам ТЗ: в фильтрах только проект — одна строка на логический объект (совпадает «Контрольные точки»).
-    if project_col and project_col in work.columns:
-        _session_reset_project_if_excluded("dev_proj")
-        try:
-            from dashboards.dev_projects_tz_matrix import (
-                _control_points_project_group_key as _cp_gk,
-                _control_points_project_label as _cp_lab,
-            )
-        except Exception:
-            _cp_gk = None  # type: ignore[assignment]
-            _cp_lab = None  # type: ignore[assignment]
-        if _cp_gk is not None and _cp_lab is not None:
-            gm: dict[str, list[str]] = defaultdict(list)
-            for raw in work[project_col].dropna().unique():
-                s = (
-                    str(raw)
-                    .replace("\xa0", " ")
-                    .replace("\u200b", "")
-                    .replace("\ufeff", "")
-                    .strip()
+    # ── Фильтр «Проект» + рендер матрицы вынесены в фрагмент, чтобы при смене
+    # проекта пересобиралась только эта часть страницы (без повторной фильтрации
+    # демо-файлов, перерисовки sidebar и т.п.). Ключевое: фрагмент исключает
+    # лишние ререндеры всего приложения и снижает риск разрыва websocket.
+    @st.fragment
+    def _render_dev_filter_and_matrix(work: pd.DataFrame, project_col: Optional[str]) -> None:
+        # По правкам ТЗ: в фильтрах только проект — одна строка на логический объект (совпадает «Контрольные точки»).
+        if project_col and project_col in work.columns:
+            _session_reset_project_if_excluded("dev_proj")
+            try:
+                from dashboards.dev_projects_tz_matrix import (
+                    _control_points_project_group_key as _cp_gk,
+                    _control_points_project_label as _cp_lab,
                 )
-                while "  " in s:
-                    s = s.replace("  ", " ")
-                if not s or s.lower() in ("nan", "none", "nat"):
-                    continue
-                if s in MSP_PROJECT_FILTER_EXCLUDE_NAMES:
-                    continue
-                gm[str(_cp_gk(s))].append(s)
-            labels = sorted(
-                (_cp_lab(gk, sorted(set(vs))) for gk, vs in gm.items()),
-                key=lambda x: str(x).casefold(),
-            )
-            projects = ["Все"] + labels
+            except Exception:
+                _cp_gk = None  # type: ignore[assignment]
+                _cp_lab = None  # type: ignore[assignment]
+            if _cp_gk is not None and _cp_lab is not None:
+                gm: dict[str, list[str]] = defaultdict(list)
+                for raw in work[project_col].dropna().unique():
+                    s = (
+                        str(raw)
+                        .replace("\xa0", " ")
+                        .replace("\u200b", "")
+                        .replace("\ufeff", "")
+                        .strip()
+                    )
+                    while "  " in s:
+                        s = s.replace("  ", " ")
+                    if not s or s.lower() in ("nan", "none", "nat"):
+                        continue
+                    if s in MSP_PROJECT_FILTER_EXCLUDE_NAMES:
+                        continue
+                    gm[str(_cp_gk(s))].append(s)
+                labels = sorted(
+                    (_cp_lab(gk, sorted(set(vs))) for gk, vs in gm.items()),
+                    key=lambda x: str(x).casefold(),
+                )
+                projects = ["Все"] + labels
+            else:
+                projects = ["Все"] + _unique_project_labels_for_select(work[project_col])
+            with filters_panel(st):
+                sel_proj = st.selectbox(
+                    "Проект",
+                    projects,
+                    index=0,
+                    key="dev_proj",
+                )
         else:
-            projects = ["Все"] + _unique_project_labels_for_select(work[project_col])
-        with filters_panel(st):
-            sel_proj = st.selectbox(
-                "Проект",
-                projects,
-                index=0,
-                key="dev_proj",
-            )
-    else:
-        sel_proj = "Все"
-    # Не фильтруем по «Уровень» в UI: в MSP это не outline; выбор не «Все» оставлял только часть строк —
-    # матрица ТЗ (вехи ур. 5 и т.д.) превращалась в сплошные Н/Д. Уровни отбора встроены в матрицу.
+            sel_proj = "Все"
+        # Не фильтруем по «Уровень» в UI: в MSP это не outline; выбор не «Все» оставлял только часть строк —
+        # матрица ТЗ (вехи ур. 5 и т.д.) превращалась в сплошные Н/Д. Уровни отбора встроены в матрицу.
 
-    filtered = work.copy()
-    if sel_proj != "Все" and project_col:
+        filtered = work.copy()
+        if sel_proj != "Все" and project_col:
+            try:
+                from dashboards.dev_projects_tz_matrix import _control_points_project_group_key as _cp_gk2
+            except Exception:
+                _cp_gk2 = None  # type: ignore[assignment]
+            if _cp_gk2 is not None:
+                tgt = str(_cp_gk2(sel_proj))
+                filtered = filtered[
+                    filtered[project_col].map(lambda x: str(_cp_gk2(x)) == tgt)
+                ]
+            else:
+                _pk = _project_filter_norm_key(sel_proj)
+                filtered = filtered[
+                    filtered[project_col].map(_project_filter_norm_key) == _pk
+                ]
+
+        if project_col and project_col in filtered.columns:
+            filtered = _project_column_apply_canonical(filtered, project_col)
+
+        # ТЗ: без дублирования задач/проектов; экспорт и матрица строятся из одного dedupe-набора MSP.
+        # Cached: переключение фильтра «Проект» не пересчитывает дубли заново.
         try:
-            from dashboards.dev_projects_tz_matrix import _control_points_project_group_key as _cp_gk2
+            filtered = dedupe_msp_for_developer_projects_cached(filtered, st.session_state)
         except Exception:
-            _cp_gk2 = None  # type: ignore[assignment]
-        if _cp_gk2 is not None:
-            tgt = str(_cp_gk2(sel_proj))
-            filtered = filtered[
-                filtered[project_col].map(lambda x: str(_cp_gk2(x)) == tgt)
-            ]
-        else:
-            _pk = _project_filter_norm_key(sel_proj)
-            filtered = filtered[
-                filtered[project_col].map(_project_filter_norm_key) == _pk
-            ]
+            pass
 
-    if project_col and project_col in filtered.columns:
-        filtered = _project_column_apply_canonical(filtered, project_col)
+        if filtered.empty:
+            st.info("Нет данных при выбранных фильтрах.")
+            return
 
-    # ТЗ: без дублирования задач/проектов; экспорт и матрица строятся из одного dedupe-набора MSP.
-    try:
-        from dashboards.dev_projects_tz_matrix import dedupe_msp_for_developer_projects
-
-        filtered = dedupe_msp_for_developer_projects(filtered)
-    except Exception:
-        pass
-
-    if filtered.empty:
-        st.info("Нет данных при выбранных фильтрах.")
-        return
-
-    uniq_proj_n = (
-        int(work[project_col].dropna().astype(str).str.strip().nunique())
-        if project_col and project_col in work.columns
-        else 1
-    )
-
-    # Правки куратора 08.05.2026: подпись «Матрица контрольных точек» убрана
-    # (избыточная — заголовок дашборда уже есть выше).
-
-    try:
-        from dashboards.data_quality_hints import collect_developer_projects_hints, render_quality_hints
-
-        render_quality_hints(collect_developer_projects_hints(st.session_state, filtered))
-    except Exception:
-        pass
-
-    # JSON префов подгружается внутри матрицы; вертикальные даты в UI отключены.
-    vert_dates = False
-    try:
-        from settings import get_setting as _get_admin_mail
-
-        _adm_m = (_get_admin_mail("admin_notification_email") or "").strip()
-    except Exception:
-        _adm_m = ""
-    if _adm_m:
-        with st.expander("Оформление отчёта", expanded=False):
-            st.caption(f"Email администратора: {_adm_m}")
-
-    matrix_df = filtered.copy()
-    if matrix_df.empty:
-        st.info("Нет строк MSP для выбранного проекта.")
-        return
-
-    rows_blocks_for_export: list = []
-    export_project_names: list = []
-
-    if sel_proj != "Все" or not project_col or uniq_proj_n <= 1:
-        plab_scope = str(sel_proj).strip() if (sel_proj and str(sel_proj).strip() != "Все") else ""
-        rows_tz, cap_tz = build_dev_tz_matrix_rows(
-            matrix_df,
-            st.session_state.get("project_data"),
-            st.session_state,
-            project_label_for_scope=plab_scope,
+        uniq_proj_n = (
+            int(work[project_col].dropna().astype(str).str.strip().nunique())
+            if project_col and project_col in work.columns
+            else 1
         )
-        plab = str(cap_tz or "").strip()
-        if (
-            not plab
-            and project_col
-            and project_col in matrix_df.columns
-            and matrix_df[project_col].notna().any()
-        ):
-            plab = str(matrix_df[project_col].dropna().astype(str).str.strip().iloc[0]).strip()
-        elif not plab and sel_proj and str(sel_proj).strip() != "Все":
-            plab = str(sel_proj).strip()
-        render_dev_tz_matrix(rows_tz, _TABLE_CSS, project_labels=[plab], vertical_dates=vert_dates)
-        rows_blocks_for_export = [rows_tz]
-        if project_col and project_col in matrix_df.columns and matrix_df[project_col].notna().any():
-            export_project_names = [
-                str(matrix_df[project_col].dropna().astype(str).str.strip().iloc[0]).strip()
-            ]
-        elif sel_proj and str(sel_proj).strip() != "Все":
-            export_project_names = [str(sel_proj).strip()]
-        else:
-            export_project_names = [""]
-    else:
-        raw_names = sorted(
-            matrix_df[project_col].dropna().astype(str).str.strip().unique().tolist()
-        )
+
+        # Правки куратора 08.05.2026: подпись «Матрица контрольных точек» убрана
+        # (избыточная — заголовок дашборда уже есть выше).
+
         try:
-            from dashboards.dev_projects_tz_matrix import (
-                _control_points_project_group_key,
-                _control_points_project_label,
-            )
+            from dashboards.data_quality_hints import collect_developer_projects_hints, render_quality_hints
+
+            render_quality_hints(collect_developer_projects_hints(st.session_state, filtered))
         except Exception:
-            _control_points_project_group_key = None  # type: ignore[assignment]
-            _control_points_project_label = None  # type: ignore[assignment]
-        grouped: dict[str, list[str]] = defaultdict(list)
-        if _control_points_project_group_key is not None:
-            for pname in raw_names:
-                grouped[str(_control_points_project_group_key(pname))].append(str(pname).strip())
-        else:
-            for pname in raw_names:
-                grouped[str(pname).strip()].append(str(pname).strip())
-        blocks: list = []
-        names: list = []
-        for gk in sorted(grouped.keys(), key=lambda x: (_control_points_project_label(x, grouped[x]).lower()) if (_control_points_project_label is not None) else x.lower()):
-            raws = sorted(set(grouped[gk]))
-            label = (_control_points_project_label(gk, raws)) if (_control_points_project_label is not None) else (raws[0] if raws else gk)
-            sub = matrix_df[matrix_df[project_col].astype(str).str.strip().isin(raws)]
-            if sub.empty:
-                continue
-            rows_p, _cap = build_dev_tz_matrix_rows(
-                sub,
+            pass
+
+        # JSON префов подгружается внутри матрицы; вертикальные даты в UI отключены.
+        vert_dates = False
+        try:
+            from settings import get_setting as _get_admin_mail
+
+            _adm_m = (_get_admin_mail("admin_notification_email") or "").strip()
+        except Exception:
+            _adm_m = ""
+        if _adm_m:
+            with st.expander("Оформление отчёта", expanded=False):
+                st.caption(f"Email администратора: {_adm_m}")
+
+        matrix_df = filtered.copy()
+        if matrix_df.empty:
+            st.info("Нет строк MSP для выбранного проекта.")
+            return
+
+        rows_blocks_for_export: list = []
+        export_project_names: list = []
+
+        if sel_proj != "Все" or not project_col or uniq_proj_n <= 1:
+            plab_scope = str(sel_proj).strip() if (sel_proj and str(sel_proj).strip() != "Все") else ""
+            rows_tz, cap_tz = build_dev_tz_matrix_rows_cached(
+                matrix_df,
                 st.session_state.get("project_data"),
                 st.session_state,
-                project_label_for_scope=str(label or "").strip(),
+                project_label_for_scope=plab_scope,
             )
-            blocks.append(rows_p)
-            names.append(label)
-        if not blocks:
-            st.info("Нет строк MSP для проектов в выборке.")
-            return
-        render_dev_tz_matrix(blocks, _TABLE_CSS, project_labels=names, vertical_dates=vert_dates)
-        rows_blocks_for_export = blocks
-        export_project_names = names
+            plab = str(cap_tz or "").strip()
+            if (
+                not plab
+                and project_col
+                and project_col in matrix_df.columns
+                and matrix_df[project_col].notna().any()
+            ):
+                plab = str(matrix_df[project_col].dropna().astype(str).str.strip().iloc[0]).strip()
+            elif not plab and sel_proj and str(sel_proj).strip() != "Все":
+                plab = str(sel_proj).strip()
+            render_dev_tz_matrix(rows_tz, _TABLE_CSS, project_labels=[plab], vertical_dates=vert_dates)
+            rows_blocks_for_export = [rows_tz]
+            if project_col and project_col in matrix_df.columns and matrix_df[project_col].notna().any():
+                export_project_names = [
+                    str(matrix_df[project_col].dropna().astype(str).str.strip().iloc[0]).strip()
+                ]
+            elif sel_proj and str(sel_proj).strip() != "Все":
+                export_project_names = [str(sel_proj).strip()]
+            else:
+                export_project_names = [""]
+        else:
+            raw_names = sorted(
+                matrix_df[project_col].dropna().astype(str).str.strip().unique().tolist()
+            )
+            try:
+                from dashboards.dev_projects_tz_matrix import (
+                    _control_points_project_group_key,
+                    _control_points_project_label,
+                )
+            except Exception:
+                _control_points_project_group_key = None  # type: ignore[assignment]
+                _control_points_project_label = None  # type: ignore[assignment]
+            grouped: dict[str, list[str]] = defaultdict(list)
+            if _control_points_project_group_key is not None:
+                for pname in raw_names:
+                    grouped[str(_control_points_project_group_key(pname))].append(str(pname).strip())
+            else:
+                for pname in raw_names:
+                    grouped[str(pname).strip()].append(str(pname).strip())
+            blocks: list = []
+            names: list = []
+            for gk in sorted(grouped.keys(), key=lambda x: (_control_points_project_label(x, grouped[x]).lower()) if (_control_points_project_label is not None) else x.lower()):
+                raws = sorted(set(grouped[gk]))
+                label = (_control_points_project_label(gk, raws)) if (_control_points_project_label is not None) else (raws[0] if raws else gk)
+                sub = matrix_df[matrix_df[project_col].astype(str).str.strip().isin(raws)]
+                if sub.empty:
+                    continue
+                rows_p, _cap = build_dev_tz_matrix_rows_cached(
+                    sub,
+                    st.session_state.get("project_data"),
+                    st.session_state,
+                    project_label_for_scope=str(label or "").strip(),
+                )
+                blocks.append(rows_p)
+                names.append(label)
+            if not blocks:
+                st.info("Нет строк MSP для проектов в выборке.")
+                return
+            render_dev_tz_matrix(blocks, _TABLE_CSS, project_labels=names, vertical_dates=vert_dates)
+            rows_blocks_for_export = blocks
+            export_project_names = names
 
-    try:
-        export_parts: list = []
-        for i, blk in enumerate(rows_blocks_for_export):
-            part = pd.DataFrame(blk)
-            if "warn" in part.columns:
-                part = part.rename(columns={"warn": "Флаг_внимание"})
-            if "warn_pct" in part.columns:
-                part = part.rename(columns={"warn_pct": "MSP_pct_менее_100"})
-            if "warn_directives" in part.columns:
-                part = part.rename(columns={"warn_directives": "Предписания_внимание"})
-            pname = export_project_names[i] if i < len(export_project_names) else ""
-            if pname:
-                part.insert(0, "проект", pname)
-            export_parts.append(part)
-        export_df = (
-            pd.concat(export_parts, ignore_index=True) if len(export_parts) > 1 else export_parts[0]
-        )
-        csv_name = "developer_projects_matrix.csv"
-        if len(export_parts) > 1:
-            csv_name = "developer_projects_matrix_all_projects.csv"
-        elif export_project_names and str(export_project_names[0]).strip():
-            p0 = str(export_project_names[0]).strip()
-            slug = re.sub(r"[\s<>:\"/\\|?*]+", "_", p0).strip("_")[:120] or "project"
-            csv_name = f"developer_projects_matrix_{slug}.csv"
-        render_dataframe_excel_csv_downloads(
-            export_df,
-            file_stem=csv_name,
-            key_prefix="dev_matrix",
-            csv_label="Скачать матрицу (CSV, для Excel)",
-        )
-    except Exception:
-        pass
+        try:
+            export_parts: list = []
+            for i, blk in enumerate(rows_blocks_for_export):
+                part = pd.DataFrame(blk)
+                if "warn" in part.columns:
+                    part = part.rename(columns={"warn": "Флаг_внимание"})
+                if "warn_pct" in part.columns:
+                    part = part.rename(columns={"warn_pct": "MSP_pct_менее_100"})
+                if "warn_directives" in part.columns:
+                    part = part.rename(columns={"warn_directives": "Предписания_внимание"})
+                pname = export_project_names[i] if i < len(export_project_names) else ""
+                if pname:
+                    part.insert(0, "проект", pname)
+                export_parts.append(part)
+            export_df = (
+                pd.concat(export_parts, ignore_index=True) if len(export_parts) > 1 else export_parts[0]
+            )
+            csv_name = "developer_projects_matrix.csv"
+            if len(export_parts) > 1:
+                csv_name = "developer_projects_matrix_all_projects.csv"
+            elif export_project_names and str(export_project_names[0]).strip():
+                p0 = str(export_project_names[0]).strip()
+                slug = re.sub(r"[\s<>:\"/\\|?*]+", "_", p0).strip("_")[:120] or "project"
+                csv_name = f"developer_projects_matrix_{slug}.csv"
+            render_dataframe_excel_csv_downloads(
+                export_df,
+                file_stem=csv_name,
+                key_prefix="dev_matrix",
+                csv_label="Скачать матрицу (CSV, для Excel)",
+            )
+        except Exception:
+            pass
 
+    _render_dev_filter_and_matrix(work, project_col)
 
 
 # ── Правки заказчика (Правки 1.pdf): скрытые и новые отчёты ─────────────────

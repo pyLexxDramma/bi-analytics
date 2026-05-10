@@ -421,8 +421,160 @@ def get_user_role_display(role: str) -> str:
     return ROLES.get(role, role)
 
 
+# ── Persistent sessions через query-param ?sid=<token> ──────────────────────
+#
+# Зачем: при долгой обработке (фильтр / FTP-sync / тяжёлая матрица) websocket
+# Streamlit Cloud разрывается → сессия пересоздаётся → st.session_state пустеет
+# → пользователя выкидывает на форму логина. Чтобы этого не происходило, при
+# успешном входе мы кладём в URL `?sid=<token>` и пишем токен в БД
+# (auth_sessions). При старте main() пытаемся восстановить сессию по токену.
+
+_SESSION_TOKEN_QPARAM = "sid"
+_SESSION_TTL_DAYS = 7
+
+
+def _create_session_token(user_id: int) -> str:
+    """Сгенерировать уникальный session-token и записать его в БД."""
+    token = "".join(
+        secrets.choice(string.ascii_letters + string.digits) for _ in range(48)
+    )
+    expires_at = datetime.now() + timedelta(days=_SESSION_TTL_DAYS)
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        # Чистим протухшие сессии оптимистично (раз в логин — не больно).
+        cursor.execute(
+            "DELETE FROM auth_sessions WHERE expires_at < ?",
+            (datetime.now().isoformat(),),
+        )
+        cursor.execute(
+            """
+            INSERT INTO auth_sessions (token, user_id, expires_at)
+            VALUES (?, ?, ?)
+            """,
+            (token, int(user_id), expires_at.isoformat()),
+        )
+        conn.commit()
+        conn.close()
+        return token
+    except Exception:
+        return ""
+
+
+def _user_by_session_token(token: str) -> Optional[dict]:
+    """Вернуть user-dict по валидному session-token, иначе None."""
+    if not token:
+        return None
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT s.user_id, s.expires_at, u.username, u.role, u.email, u.is_active
+            FROM auth_sessions s
+            JOIN users u ON u.id = s.user_id
+            WHERE s.token = ?
+            """,
+            (token,),
+        )
+        row = cursor.fetchone()
+        conn.close()
+    except Exception:
+        return None
+    if not row:
+        return None
+    user_id, expires_at, username, role, email, is_active = row
+    if not is_active:
+        return None
+    try:
+        if datetime.fromisoformat(str(expires_at)) < datetime.now():
+            return None
+    except Exception:
+        return None
+    return {"id": user_id, "username": username, "role": role, "email": email}
+
+
+def _invalidate_session_token(token: str) -> None:
+    if not token:
+        return
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM auth_sessions WHERE token = ?", (token,))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def _qp_get(name: str) -> str:
+    try:
+        v = st.query_params.get(name, "")
+    except Exception:
+        return ""
+    if isinstance(v, list):
+        return str(v[0]).strip() if v else ""
+    return str(v or "").strip()
+
+
+def _qp_set(name: str, value: str) -> None:
+    try:
+        if value:
+            st.query_params[name] = value
+        else:
+            try:
+                del st.query_params[name]
+            except KeyError:
+                pass
+    except Exception:
+        pass
+
+
+def issue_session_token_for_user(user: dict) -> str:
+    """Создать токен для уже аутентифицированного пользователя и положить в URL."""
+    if not user or not user.get("id"):
+        return ""
+    token = _create_session_token(int(user["id"]))
+    if token:
+        st.session_state["_auth_session_token"] = token
+        _qp_set(_SESSION_TOKEN_QPARAM, token)
+    return token
+
+
+def restore_session_from_query_params() -> bool:
+    """Если есть валидный ?sid=<token> — восстановить authenticated/user в session_state.
+
+    Безопасно вызывать при каждом старте main(): no-op, если уже авторизован
+    или токен невалиден.
+    """
+    if st.session_state.get("authenticated") and st.session_state.get("user"):
+        # Если в URL нет sid, но в session_state он есть — переустановим (например,
+        # после st.rerun() URL мог обнулиться у некоторых клиентов).
+        if not _qp_get(_SESSION_TOKEN_QPARAM) and st.session_state.get("_auth_session_token"):
+            _qp_set(_SESSION_TOKEN_QPARAM, str(st.session_state["_auth_session_token"]))
+        return True
+    token = _qp_get(_SESSION_TOKEN_QPARAM)
+    if not token:
+        return False
+    user = _user_by_session_token(token)
+    if not user:
+        # Токен протух/удалён — чистим URL, чтобы не зацикливаться на нём.
+        _qp_set(_SESSION_TOKEN_QPARAM, "")
+        return False
+    st.session_state["authenticated"] = True
+    st.session_state["user"] = user
+    st.session_state["_auth_session_token"] = token
+    return True
+
+
 def check_authentication() -> bool:
     """Проверка авторизации пользователя в сессии"""
+    if "authenticated" not in st.session_state:
+        # Восстанавливаем «на лету», чтобы вызовы из любых мест работали единообразно.
+        try:
+            restore_session_from_query_params()
+        except Exception:
+            pass
     if "authenticated" not in st.session_state:
         return False
     return st.session_state.get("authenticated", False)
@@ -449,8 +601,18 @@ def logout():
     except Exception:
         pass
 
+    # Удаляем persistent-сессию (если была) и чистим URL.
+    try:
+        tk = str(st.session_state.get("_auth_session_token") or _qp_get(_SESSION_TOKEN_QPARAM)).strip()
+        if tk:
+            _invalidate_session_token(tk)
+    except Exception:
+        pass
+    _qp_set(_SESSION_TOKEN_QPARAM, "")
+
     st.session_state.pop("authenticated", None)
     st.session_state.pop("user", None)
+    st.session_state.pop("_auth_session_token", None)
     st.session_state["hide_sidebar"] = True
 
 
