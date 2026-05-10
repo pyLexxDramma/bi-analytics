@@ -71,11 +71,25 @@ from dashboard_diagnostics import render_dashboard_diagnostics_tab
 # Инициализация базы данных (все таблицы создаются в db.init_all_tables)
 init_db()
 
+# Версия приложения (git-sha + время билда). Используется:
+#  1) auto_ingest для детекции «код обновился, надо перевыкачать данные»;
+#  2) для очистки st.cache_data / st.cache_resource в session_state, иначе
+#     кэшированные DataFrame'ы из старого деплоя «застревают» и клиент
+#     видит старые данные/правки;
+#  3) для показа бейджа версии в sidebar (диагностика).
+try:
+    from app_version import get_app_version
+
+    _APP_VERSION = get_app_version()
+except Exception:
+    _APP_VERSION = {"sha": "unknown", "ts": "", "label": "v unknown", "source": "fallback"}
+
 # Авто-ingest при холодном старте инстанса (Streamlit Cloud / прод): за флагом
 # BI_ANALYTICS_AUTO_INGEST=1. См. docstring в auto_ingest.py — переменные:
-#   BI_ANALYTICS_AUTO_INGEST_FTP=1 (default)  → сначала FTP-sync в web/
-#   BI_ANALYTICS_AUTO_INGEST_AGE_H=12         → не повторять чаще раза в N часов
-#   BI_ANALYTICS_AUTO_INGEST_FORCE=1          → игнорировать маркер
+#   BI_ANALYTICS_AUTO_INGEST_FTP=1 (default)        → сначала FTP-sync в web/
+#   BI_ANALYTICS_AUTO_INGEST_AGE_H=12               → не повторять чаще раза в N часов
+#   BI_ANALYTICS_AUTO_INGEST_FORCE=1                → игнорировать маркер
+#   BI_ANALYTICS_AUTO_INGEST_PURGE_DB=1 (default)   → удалять web_data.db при смене app_version
 # Ошибки логируются в stderr; UI запустится в любом случае.
 try:
     from auto_ingest import maybe_run_auto_ingest_on_startup
@@ -85,6 +99,45 @@ except Exception as _e:  # noqa: BLE001
     import sys as _sys
 
     print(f"[auto_ingest] init failed: {_e}", file=_sys.stderr)
+
+# Сессия с прошлой версии приложения → инвалидируем кэши и рабочее состояние,
+# чтобы клиент НЕ видел старые DataFrame'ы / данные после деплоя.
+# (Streamlit-кэш живёт на уровне процесса, session_state — на уровне сессии.)
+def _invalidate_caches_on_version_drift() -> None:
+    try:
+        prev = str(st.session_state.get("_bi_app_version_sha") or "")
+        cur = str(_APP_VERSION.get("sha") or "")
+        if not cur:
+            return
+        if prev and prev != cur:
+            for fn_name in ("cache_data", "cache_resource"):
+                try:
+                    obj = getattr(st, fn_name, None)
+                    clear = getattr(obj, "clear", None) if obj is not None else None
+                    if callable(clear):
+                        clear()
+                except Exception:
+                    pass
+            # Сбрасываем тяжёлые кэшированные DataFrame'ы (matrix-кэш и т.п.).
+            for k in [
+                "_dev_matrix_cache_v1",
+                "_pending_web_folder_load",
+                "_deeplink_applied_once",
+            ]:
+                st.session_state.pop(k, None)
+            try:
+                st.toast(
+                    f"Загружена новая версия приложения ({cur}). Кэши сброшены.",
+                    icon="🔄",
+                )
+            except Exception:
+                pass
+        st.session_state["_bi_app_version_sha"] = cur
+    except Exception:
+        pass
+
+
+_invalidate_caches_on_version_drift()
 
 # Persistent auth: если в URL ?sid=<token> валиден — восстанавливаем сессию
 # до set_page_config, чтобы корректно выбрать состояние сайдбара (expanded

@@ -193,6 +193,27 @@ BI_ANALYTICS_RELEASE_MODE = "1"
 | `BI_ANALYTICS_AUTO_INGEST_FTP` | `1` | `1` → перед `load_all_from_web` сделать FTP-sync (требует BI_FTP_HOST/USER). `0` → только из `web/`. |
 | `BI_ANALYTICS_AUTO_INGEST_AGE_H` | `12` | Не повторять чаще раза в N часов (защита от лишних рестартов в Streamlit Cloud). `0` → каждый раз при холодном старте. |
 | `BI_ANALYTICS_AUTO_INGEST_FORCE` | `0` | `1` → игнорировать маркер, ingest каждый старт (для отладки). |
+| `BI_ANALYTICS_AUTO_INGEST_PURGE_DB` | `1` | `1` → при смене `app_version` (см. ниже) удалять `web_data.db` перед ingest, чтобы заново построить SUCCESS-версию из текущих `web/*` файлов. |
+| `BI_ANALYTICS_BUILD_VERSION` | (auto) | Явно фиксированный sha сборки. Если не задано — берётся из `git rev-parse --short HEAD`, иначе из `_build_info.json`, иначе mtime `project_visualization_app.py`. |
+| `BI_ANALYTICS_BUILD_TS` | (auto) | Время сборки (ISO-8601). Используется только для бейджа версии в sidebar. |
+
+### Версионирование и автоматическая инвалидация старого деплоя
+
+Чтобы dev/release/localhost всегда показывали данные **именно текущей версии кода**, в системе добавлен идентификатор сборки `app_version` (`app_version.py`). Он меняется при каждом коммите (или при ручной смене `BI_ANALYTICS_BUILD_VERSION`). Поведение:
+
+1. **`auto_ingest`** при старте читает маркер `.auto_ingest_done.txt` — если в нём `app_version` отличается от текущего, **принудительно** перевыкачивает данные (`force ingest`), удаляет `web_data.db` (если включён `BI_ANALYTICS_AUTO_INGEST_PURGE_DB`) и очищает `st.cache_data` / `st.cache_resource`. Так клиент после деплоя НЕ видит данные, построенные предыдущей версией кода.
+2. **`project_visualization_app.py`** на каждом rerun сравнивает `_bi_app_version_sha` в `st.session_state` с текущим `app_version.sha`. При расхождении — `cache_data.clear()` + `cache_resource.clear()` + сброс session-кэшей (`_dev_matrix_cache_v1` и т.п.). Это страхует ситуацию «Streamlit перезагрузил воркер, но не убил процесс — кэш в памяти остался».
+3. **Бейдж версии** в sidebar (внизу) показывает текущий sha и время сборки. Если у клиента видна старая версия — это будет видно в бейдже сразу.
+4. **Кнопка «Обновить данные и кэш»** в sidebar (только admin/superadmin) форсирует `BI_ANALYTICS_AUTO_INGEST_FORCE=1` + `auto_ingest` + чистит кэши и перезагружает страницу.
+
+Рекомендованный набор для **production** (release) и **dev**:
+
+```toml
+BI_ANALYTICS_AUTO_INGEST = "1"
+BI_ANALYTICS_AUTO_INGEST_FTP = "1"
+BI_ANALYTICS_AUTO_INGEST_AGE_H = "1"   # каждый ребут / каждый час, что наступит раньше
+BI_ANALYTICS_AUTO_INGEST_PURGE_DB = "1"
+```
 
 ### Чем отличается от release-only `BI_ANALYTICS_AUTO_FTP_ON_START`
 

@@ -875,6 +875,77 @@ def render_sidebar_menu(current_page: str = "reports"):
                 st.session_state.pop("_pending_web_folder_load", None)
                 st.rerun()
 
+        # ── Принудительный refresh (для admin/superadmin): чистит кэши Streamlit
+        # и форсирует свежий ingest из web/ (опционально с FTP, если настроено).
+        # Чтобы клиент мгновенно увидел свежие данные после деплоя — без ожидания
+        # естественного истечения cache TTL.
+        if has_admin_access(user.get("role", "")):
+            st.markdown("---")
+            if st.button(
+                "Обновить данные и кэш",
+                width="stretch",
+                key="menu_force_refresh",
+                help=(
+                    "Очистить st.cache_data / st.cache_resource, удалить локальный "
+                    "web_data.db и заново загрузить web/. Используется после деплоя "
+                    "новой версии, если на dev/release клиент видит старые данные."
+                ),
+            ):
+                try:
+                    for _fn in ("cache_data", "cache_resource"):
+                        try:
+                            _obj = getattr(st, _fn, None)
+                            if _obj is not None and hasattr(_obj, "clear"):
+                                _obj.clear()
+                        except Exception:
+                            pass
+                    try:
+                        import os as _os
+
+                        _os.environ["BI_ANALYTICS_AUTO_INGEST_FORCE"] = "1"
+                        from auto_ingest import maybe_run_auto_ingest_on_startup as _force_ingest
+                        with st.spinner("Принудительный refresh: ingest + кэш…"):
+                            _force_ingest()
+                    except Exception as _e:
+                        st.warning(f"Не удалось перезапустить ingest: {_e}")
+                    for _k in (
+                        "_dev_matrix_cache_v1",
+                        "last_load_result",
+                        "web_version_id",
+                        "web_version_pick_id",
+                    ):
+                        st.session_state.pop(_k, None)
+                    st.success("Кэш очищен. Загружу свежие данные…")
+                    st.rerun()
+                except Exception as _e:
+                    st.error(f"Refresh failed: {_e}")
+
+        # ── Бейдж версии (видим всем): помогает диагностировать «старый деплой».
+        try:
+            from app_version import get_app_version as _gv
+
+            _vinfo = _gv()
+            _vsha = str(_vinfo.get("sha") or "")[:10]
+            _vts = str(_vinfo.get("ts") or "")
+            _short_ts = ""
+            if _vts:
+                try:
+                    from datetime import datetime as _dt
+
+                    _short_ts = _dt.fromisoformat(_vts.replace("Z", "+00:00")).strftime("%d.%m %H:%M")
+                except Exception:
+                    _short_ts = _vts[:16]
+            st.markdown("---")
+            st.caption(
+                f"<div style='opacity:.7;font-size:11px;line-height:1.3'>"
+                f"Версия: <code>{_vsha}</code>"
+                + (f" · {_short_ts}" if _short_ts else "")
+                + "</div>",
+                unsafe_allow_html=True,
+            )
+        except Exception:
+            pass
+
         # 3. Выход (для всех ролей)
         st.markdown("---")
 

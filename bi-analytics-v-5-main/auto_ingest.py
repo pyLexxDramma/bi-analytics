@@ -32,7 +32,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict
 
 _AUTO_INGEST_DONE_IN_PROCESS = False
 
@@ -127,12 +127,62 @@ def _marker_path() -> Path:
     return base / ".auto_ingest_done.txt"
 
 
+def _read_marker() -> Dict[str, str]:
+    """Прочитать маркер прошлого auto-ingest. Формат: ``key=value`` строки.
+    Первой строкой исторически писали int(time.time()) — обрабатываем и его.
+    """
+    out: Dict[str, str] = {}
+    marker = _marker_path()
+    if not marker.exists():
+        return out
+    try:
+        text = marker.read_text(encoding="utf-8")
+    except Exception:
+        return out
+    for line in text.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if "=" in s:
+            k, v = s.split("=", 1)
+            out[k.strip()] = v.strip()
+        else:
+            # legacy: первая строка — unix timestamp
+            out.setdefault("ts", s)
+    return out
+
+
+def _current_app_version_sha() -> str:
+    try:
+        from app_version import get_app_version_sha
+
+        return get_app_version_sha()
+    except Exception:
+        return "unknown"
+
+
 def _need_ingest_by_marker() -> tuple[bool, str]:
+    """Решить, нужно ли запускать auto-ingest при текущем cold-start процессе.
+
+    Триггеры (в порядке приоритета):
+      1. ``BI_ANALYTICS_AUTO_INGEST_FORCE=1`` — всегда.
+      2. Маркер отсутствует — первый старт инстанса.
+      3. В маркере другая ``app_version`` (поменялся git-sha / build) —
+         перевыкачиваем данные, чтобы не было «код новый, БД старая».
+      4. Маркер старше ``BI_ANALYTICS_AUTO_INGEST_AGE_H`` часов (default 12).
+    """
     if _flag("BI_ANALYTICS_AUTO_INGEST_FORCE"):
         return True, "FORCE=1"
     marker = _marker_path()
     if not marker.exists():
         return True, "no marker"
+
+    info = _read_marker()
+    cur_sha = _current_app_version_sha()
+    prev_sha = info.get("app_version") or info.get("sha") or ""
+    if cur_sha and prev_sha and cur_sha != prev_sha:
+        return True, f"app_version changed: {prev_sha} → {cur_sha}"
+
     try:
         age_h = (time.time() - marker.stat().st_mtime) / 3600.0
     except Exception:
@@ -145,7 +195,51 @@ def _need_ingest_by_marker() -> tuple[bool, str]:
         return True, "age limit = 0"
     if age_h >= max_age:
         return True, f"age {age_h:.1f}h >= {max_age:.1f}h"
-    return False, f"age {age_h:.1f}h < {max_age:.1f}h"
+    return False, f"age {age_h:.1f}h < {max_age:.1f}h, app_version={cur_sha}"
+
+
+def _clear_streamlit_caches() -> None:
+    """Очистить ``st.cache_data`` / ``st.cache_resource`` (если streamlit доступен)."""
+    try:
+        import streamlit as st  # type: ignore
+    except Exception:
+        return
+    for fn_name in ("cache_data", "cache_resource"):
+        try:
+            obj = getattr(st, fn_name, None)
+            if obj is None:
+                continue
+            clear = getattr(obj, "clear", None)
+            if callable(clear):
+                clear()
+                print(f"[auto_ingest] cleared st.{fn_name}", file=sys.stderr)
+        except Exception as e:
+            print(f"[auto_ingest] clear st.{fn_name} failed: {e}", file=sys.stderr)
+
+
+def _purge_web_dir_artifacts() -> None:
+    """Удалить устаревший snapshot БД (``web_data.db``), чтобы load_all_from_web()
+    с гарантией создал свежую SUCCESS-версию из текущих ``web/*`` файлов.
+
+    Сами CSV/JSON в ``web/`` не трогаем — они являются источником правды для
+    ingest, а очисткой устаревших файлов занимается ``ftp_sync`` (там уже
+    есть инкрементальная логика).
+    """
+    if not _flag("BI_ANALYTICS_AUTO_INGEST_PURGE_DB", default="1"):
+        return
+    try:
+        from web_loader import WEB_DB_PATH
+
+        p = Path(WEB_DB_PATH)
+        if p.exists():
+            p.unlink()
+            print(f"[auto_ingest] purged stale {p.name}", file=sys.stderr)
+        for sidecar in (".db-wal", ".db-shm"):
+            sp = p.with_suffix(p.suffix + sidecar) if not p.suffix.endswith(sidecar) else p
+            if sp.exists():
+                sp.unlink()
+    except Exception as e:
+        print(f"[auto_ingest] purge web_data.db failed: {e}", file=sys.stderr)
 
 
 def _do_ftp_sync() -> dict | None:
@@ -293,12 +387,28 @@ def maybe_run_auto_ingest_on_startup() -> None:
         return
     print(f"[auto_ingest] START ({why}, pid={os.getpid()})", file=sys.stderr)
     try:
+        # При смене версии приложения снапшот БД может быть «несовместим»
+        # (изменилась схема ingest, набор колонок, нормализация и т.п.) —
+        # удаляем web_data.db, чтобы заново построить SUCCESS-версию из web/*.
+        if "app_version changed" in why:
+            _purge_web_dir_artifacts()
         _do_ftp_sync()
         res = _do_load_all()
+        # После успешной загрузки данных чистим streamlit-кэши, иначе
+        # @st.cache_data будет отдавать старые DataFrame'ы из памяти процесса.
+        _clear_streamlit_caches()
         try:
             marker = _marker_path()
+            cur_sha = _current_app_version_sha()
             marker.write_text(
-                f"{int(time.time())}\nversion_id={res.get('version_id') if res else None}\n",
+                "\n".join(
+                    [
+                        f"ts={int(time.time())}",
+                        f"app_version={cur_sha}",
+                        f"version_id={res.get('version_id') if res else None}",
+                    ]
+                )
+                + "\n",
                 encoding="utf-8",
             )
         except Exception as e:
