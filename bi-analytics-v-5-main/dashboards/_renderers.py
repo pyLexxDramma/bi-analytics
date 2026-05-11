@@ -16621,11 +16621,21 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                     font_color="#eee",
                     xaxis_title=f"Период — {agg_kind.lower()}",
                     yaxis_title="Количество",
-                    height=420,
-                    margin=dict(l=48, r=32, t=64, b=64),
+                    height=380,
+                    margin=dict(l=48, r=32, t=58, b=44),
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
                 )
                 fig = apply_chart_background(fig)
+                _vals_y = _pd.concat([dyn["План"], dyn["Факт"]], ignore_index=True).astype(float)
+                _hi = float(_vals_y.max())
+                _lo = min(0.0, float(_vals_y.min()))
+                _span = max(_hi - _lo, 1.0)
+                _y1 = _hi + max(_span * 0.14, 14.0)
+                fig.update_layout(
+                    yaxis=dict(range=[_lo, _y1], autorange=False),
+                    margin=dict(l=52, r=28, t=72, b=40),
+                )
+                fig.update_xaxes(automargin=False, ticklabelstandoff=4)
                 st.plotly_chart(fig, use_container_width=True)
             except Exception as _e:
                 st.warning(f"Plotly недоступен: {_e}")
@@ -20722,8 +20732,10 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
         or "budget fact" not in filtered_df.columns
     ):
         st.warning(
-            "Столбцы бюджета (`budget plan` / `budget fact`) не найдены в данных. "
-            "Загрузите выгрузку 1С (`web/1с_*_dannye.json`) или MSP-фрейм с этими колонками."
+            "Столбцы бюджета (`budget plan` / `budget fact`) не найдены в MSP и не собраны из 1С. "
+            "Добавьте в web/ JSON оборотов (массив записей): предпочтительно `*_dannye.json` или файл с колонками "
+            "ТипСтатьи / Сценарий / СтатьяОборотов / Сумма — тогда загрузчик подхватит его даже при «нестандартном» имени; "
+            "либо выгрузку MSP с колонками budget plan и budget fact."
         )
         return
 

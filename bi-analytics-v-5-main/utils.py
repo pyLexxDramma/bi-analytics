@@ -586,7 +586,29 @@ def apply_chart_background(fig, *, skip_uniformtext: bool = False):
                         legend_base[key] = val
             if legend_above_plot:
                 margin_t = max(margin_t, 90.0)
-                margin_b = max(margin_b, 188.0)
+                tick_angle = 0.0
+                try:
+                    xa = fig.layout.xaxis
+                    ta = getattr(xa, "tickangle", None) if xa is not None else None
+                    if ta is not None:
+                        tick_angle = float(ta)
+                except (TypeError, ValueError):
+                    tick_angle = 0.0
+                need_x_pad = abs(tick_angle) >= 25
+                user_b = None
+                if prev_m is not None and getattr(prev_m, "b", None) is not None:
+                    try:
+                        user_b = float(prev_m.b)
+                    except (TypeError, ValueError):
+                        user_b = None
+                if need_x_pad:
+                    margin_b = max(margin_b, 188.0)
+                else:
+                    floor_b = 52.0
+                    if user_b is not None:
+                        margin_b = max(floor_b, user_b)
+                    else:
+                        margin_b = min(margin_b, 72.0)
         layout_kwargs["margin"] = dict(l=margin_l, r=margin_r, t=margin_t, b=margin_b)
         layout_kwargs["legend"] = legend_base
     fig.update_layout(**layout_kwargs)
