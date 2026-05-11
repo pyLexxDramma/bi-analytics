@@ -1510,6 +1510,66 @@ def _find_deviations_building_column(df):
     return None
 
 
+def _gantt_resolve_reason_column(df):
+    """Колонка причин отклонений MSP (канон `reason of deviation` + русские заголовки выгрузки)."""
+    if df is None or not hasattr(df, "columns"):
+        return None
+    c = _dev_tasks_find_column(
+        df,
+        [
+            "reason of deviation",
+            "reason_of_deviation",
+            "Причины отклонений",
+            "Причина отклонения",
+            "Причины_отклонений",
+            "причины отклонений",
+            "причина отклонения",
+        ],
+    )
+    if c:
+        return c
+    for col in df.columns:
+        s = str(col).replace("\n", " ").strip().lower()
+        s = re.sub(r"\s+", " ", s).replace("_", " ")
+        if "причин" in s and "отклон" in s:
+            if any(
+                x in s
+                for x in (
+                    "отклонение окончания",
+                    "отклонение начала",
+                    "отклонение_окончания",
+                    "отклонение_начала",
+                    "deviation in days",
+                    "deviation start",
+                )
+            ):
+                continue
+            return col
+        if "reason" in s and "deviat" in s and "day" not in s:
+            return col
+    return None
+
+
+def _gantt_resolve_notes_column(df):
+    """Колонка заметок MSP (notes / Заметки и типичные синонимы)."""
+    if df is None or not hasattr(df, "columns"):
+        return None
+    c = _dev_tasks_find_column(
+        df,
+        ["notes", "note", "Заметки", "заметки", "remarks", "комментарий", "Комментарии"],
+    )
+    if c:
+        return c
+    for col in df.columns:
+        s = str(col).replace("\n", " ").strip().lower()
+        s = re.sub(r"\s+", " ", s).replace("_", " ")
+        if s in ("заметки", "notes", "remarks", "note"):
+            return col
+        if "замет" in s and "причин" not in s:
+            return col
+    return None
+
+
 def _find_first_column_matching_keywords(df, keywords: tuple):
     """
     Ищет колонку по ключевым словам в порядке приоритета: сначала более специфичные
@@ -28939,8 +28999,10 @@ def dashboard_project_schedule_chart(df):
             )
 
         n = len(_df.index)
-        row_h = int(round((34 if policy.get("is_dense") else 30) * _GANTT_VIS_SCALE))
-        chart_h = min(int(round(2600 * _GANTT_VIS_SCALE)), max(int(round(220 * _GANTT_VIS_SCALE)), 96 + row_h * n))
+        # Больше высота строки — меньше наложение подписей дат/% у точек (режим «Линии дат»).
+        _row_px = 52 if policy.get("is_dense") else 46
+        row_h = int(round(_row_px * _GANTT_VIS_SCALE))
+        chart_h = min(int(round(4200 * _GANTT_VIS_SCALE)), max(int(round(220 * _GANTT_VIS_SCALE)), 96 + row_h * n))
         max_len = int(_df["_gantt_y_label"].astype(str).str.len().max() or 12)
         left_m = int(
             max(
@@ -28953,7 +29015,7 @@ def dashboard_project_schedule_chart(df):
             height=chart_h,
             margin=dict(
                 l=left_m,
-                r=int(round((140 if policy.get("is_dense") else 120) * _GANTT_VIS_SCALE)),
+                r=int(round((220 if policy.get("is_dense") else 200) * _GANTT_VIS_SCALE)),
                 t=int(round(48 * _GANTT_VIS_SCALE)),
                 b=int(round(96 * _GANTT_VIS_SCALE)),
             ),
@@ -29122,8 +29184,10 @@ def dashboard_project_schedule_chart(df):
         )
 
         n = len(_df.index)
-        row_h = int(round((34 if policy.get("is_dense") else 30) * _GANTT_VIS_SCALE))
-        chart_h = min(int(round(2600 * _GANTT_VIS_SCALE)), max(int(round(220 * _GANTT_VIS_SCALE)), 96 + row_h * n))
+        # Разреживаем строки — подписи «База/План» справа от точек перестают сливаться.
+        _row_px_cov = 52 if policy.get("is_dense") else 46
+        row_h = int(round(_row_px_cov * _GANTT_VIS_SCALE))
+        chart_h = min(int(round(4200 * _GANTT_VIS_SCALE)), max(int(round(220 * _GANTT_VIS_SCALE)), 96 + row_h * n))
         max_len = int(_df["_gantt_y_label"].astype(str).str.len().max() or 12)
         left_m = int(
             max(
@@ -29136,7 +29200,7 @@ def dashboard_project_schedule_chart(df):
             height=chart_h,
             margin=dict(
                 l=left_m,
-                r=int(round((160 if policy.get("is_dense") else 140) * _GANTT_VIS_SCALE)),
+                r=int(round((240 if policy.get("is_dense") else 220) * _GANTT_VIS_SCALE)),
                 t=int(round(48 * _GANTT_VIS_SCALE)),
                 b=int(round(96 * _GANTT_VIS_SCALE)),
             ),
@@ -29865,8 +29929,8 @@ def dashboard_project_schedule_chart(df):
         plot_df,
         ["deviation in days", "Отклонение_окончания"],
     )
-    reason_src = _sched_col(plot_df, ["reason of deviation", "Причины_отклонений", "причина"])
-    notes_src = _sched_col(plot_df, ["notes", "Заметки"])
+    reason_src = _gantt_resolve_reason_column(plot_df)
+    notes_src = _gantt_resolve_notes_column(plot_df)
 
     if is_covenants:
         base_end = (
@@ -29895,11 +29959,13 @@ def dashboard_project_schedule_chart(df):
         )
         if show_reasons:
             if reason_src and reason_src in plot_df.columns:
-                cov_tbl["Причины отклонений"] = plot_df[reason_src].astype(str).fillna("")
+                _rs = plot_df[reason_src].astype(str).fillna("")
+                cov_tbl["Причины отклонений"] = _rs.where(_rs.str.strip().str.lower().ne("nan"), "")
             else:
                 cov_tbl["Причины отклонений"] = pd.Series("", index=cov_tbl.index, dtype=object)
             if notes_src and notes_src in plot_df.columns:
-                cov_tbl["Заметки"] = plot_df[notes_src].astype(str).fillna("")
+                _ns = plot_df[notes_src].astype(str).fillna("")
+                cov_tbl["Заметки"] = _ns.where(_ns.str.strip().str.lower().ne("nan"), "")
             else:
                 cov_tbl["Заметки"] = pd.Series("", index=cov_tbl.index, dtype=object)
 
