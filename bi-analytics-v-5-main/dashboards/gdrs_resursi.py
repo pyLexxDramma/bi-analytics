@@ -239,6 +239,48 @@ def normalize_name(s: object) -> str:
     return txt
 
 
+_CONTRACT_SIG_RE = re.compile(
+    r"(?i)(?<![\w/])(\d{1,4})\s*[-_]\s*[СC]\s*[АA]\s*[/ _]?\s*(\d{2,4})(?![\w/])"
+)
+
+
+def contract_signatures(s: object) -> list[str]:
+    """Из строки договора извлечь сигнатуры «NN-СА/YY» → ключ «nn-са/yy».
+
+    Сопоставляет короткие строки оборотов («106-СА/25 от …») с длинными из Dogovor
+    («Дог. № 106-СА/25 …_ДС …»).
+    """
+    if s is None:
+        return []
+    txt = str(s).strip()
+    if not txt:
+        return []
+    return [
+        f"{m.group(1)}-са/{m.group(2)}".casefold()
+        for m in _CONTRACT_SIG_RE.finditer(txt)
+    ]
+
+
+def _pick_best_articles(arts: set[str], contract_hint: str) -> str:
+    """Если для одного договора несколько статей — предпочесть строку с «Лот» или номер лота из подсказки."""
+    if not arts:
+        return ""
+    if len(arts) == 1:
+        return next(iter(arts))
+    hint = str(contract_hint or "")
+    hm = re.search(r"лот\s*№?\s*0*(\d+)", hint, re.IGNORECASE)
+    if hm:
+        num = re.escape(hm.group(1))
+        rx = re.compile(rf"лот\s*№?\s*0*{num}\b", re.IGNORECASE)
+        matched = [a for a in arts if rx.search(a)]
+        if len(matched) == 1:
+            return matched[0]
+    lot_arts = {a for a in arts if "лот" in a.casefold()}
+    if len(lot_arts) == 1:
+        return next(iter(lot_arts))
+    return " · ".join(sorted(arts))
+
+
 def _normalize_vid(raw: object) -> str:
     """Нормализация значения «Тип ресурсов» → 'Рабочие' | 'Техника' | ''."""
     if raw is None or (isinstance(raw, float) and pd.isna(raw)):
@@ -727,18 +769,29 @@ def _pick_row_field_ci(row: dict, *aliases: str) -> str:
 
 def load_1c_dannye_article_maps(
     paths: Iterable[Path | str],
-) -> tuple[dict[str, str], dict[tuple[str, str], str]]:
+) -> tuple[
+    dict[str, str],
+    dict[tuple[str, str], str],
+    dict[tuple[str, str, str], set[str]],
+    dict[str, set[str]],
+    dict[tuple[str, str], set[str]],
+]:
     """
     Из `*dannye*.json` строит:
     1) По договору: normalize(ДоговорКонтрагента) → СтатьяОборотов (как в выгрузке 1С).
     2) Fallback по паре: (normalize(Проект), normalize(Контрагент)) → объединённые статьи,
        т.к. в данных «ДоговорКонтрагента» в оборотах часто не совпадает с «Наименование_Договора»
        в договорах (разные форматы строк).
+    3) По сигнатуре договора (`NN-СА/YY` / `NN-СА_YY`) + проект + контрагент — наборы статей
+       для сопоставления с длинными строками Dogovor.
+    4) По сигнатуре без контекста — запасной словарь наборов статей.
     """
     from collections import defaultdict
 
     acc_dog: dict[str, set[str]] = defaultdict(set)
     acc_pc: dict[tuple[str, str], set[str]] = defaultdict(set)
+    acc_sig: dict[str, set[str]] = defaultdict(set)
+    acc_sig_pc: dict[tuple[str, str, str], set[str]] = defaultdict(set)
     for raw_path in paths:
         p = Path(raw_path)
         if not p.is_file():
@@ -763,15 +816,24 @@ def load_1c_dannye_article_maps(
                 "ДоговорКонтрагента",
                 "Договор контрагента",
             )
-            if dog:
-                acc_dog[normalize_name(dog)].add(art_s)
             proj = _pick_row_field_ci(r, "Проект", "Project")
             contr = _pick_row_field_ci(r, "Контрагент", "Контрагенты", "Counterparty")
+            pn = normalize_name(proj) if proj else ""
+            cn = normalize_name(contr) if contr else ""
+            if dog:
+                acc_dog[normalize_name(dog)].add(art_s)
+                for sig in contract_signatures(dog):
+                    acc_sig[sig].add(art_s)
+                    if pn and cn:
+                        acc_sig_pc[(sig, pn, cn)].add(art_s)
             if proj and contr:
-                acc_pc[(normalize_name(proj), normalize_name(contr))].add(art_s)
+                acc_pc[(pn, cn)].add(art_s)
     out_dog = {k: " · ".join(sorted(v)) for k, v in acc_dog.items() if k}
     out_pc = {k: " · ".join(sorted(v)) for k, v in acc_pc.items() if k[0] and k[1]}
-    return out_dog, out_pc
+    out_sig_pc_sets = {k: set(v) for k, v in acc_sig_pc.items()}
+    out_sig_sets = {k: set(v) for k, v in acc_sig.items()}
+    pc_sets = {k: set(v) for k, v in acc_pc.items() if k[0] and k[1]}
+    return out_dog, out_pc, out_sig_pc_sets, out_sig_sets, pc_sets
 
 
 def load_1c_dannye_article_by_contract(paths: Iterable[Path | str]) -> dict[str, str]:
@@ -785,55 +847,127 @@ def load_1c_dannye_article_by_contract(paths: Iterable[Path | str]) -> dict[str,
     См. также `load_1c_dannye_article_maps` — при несовпадении строк договора используется
     пара (Проект, Контрагент) в `build_main_table`.
     """
-    d, _ = load_1c_dannye_article_maps(paths)
+    d, _, _, _, _ = load_1c_dannye_article_maps(paths)
     return d
 
 
-def _article_for_contract_name(
-    contract_name: str, article_by_norm: Optional[dict[str, str]]
+def _article_one_contract_part(
+    part: str,
+    article_by_norm: Optional[dict[str, str]],
+    article_sig_pc_sets: Optional[dict[tuple[str, str, str], set[str]]],
+    article_sig_sets: Optional[dict[str, set[str]]],
+    pn: str,
+    cn: str,
+    contract_hint: str,
 ) -> str:
-    if not article_by_norm or not str(contract_name or "").strip():
+    if not part:
         return ""
-    s = str(contract_name).strip()
-    for part in re.split(r"\s*·\s*", s):
-        p = part.strip()
-        if not p:
-            continue
-        nk = normalize_name(p)
-        if nk in article_by_norm:
-            return article_by_norm[nk]
-    whole = normalize_name(s)
-    if whole in article_by_norm:
-        return article_by_norm[whole]
+    nk = normalize_name(part)
+    if article_by_norm and nk in article_by_norm:
+        raw = article_by_norm[nk]
+        if " · " in raw:
+            return _pick_best_articles(set(re.split(r"\s*·\s*", raw)), contract_hint)
+        return raw
+    for sig in contract_signatures(part):
+        if article_sig_pc_sets and pn and cn:
+            k3 = (sig, pn, cn)
+            if k3 in article_sig_pc_sets:
+                return _pick_best_articles(article_sig_pc_sets[k3], contract_hint)
+    for sig in contract_signatures(part):
+        if article_sig_sets and sig in article_sig_sets:
+            return _pick_best_articles(article_sig_sets[sig], contract_hint)
     return ""
 
 
-def _article_for_project_contractor(
+def _article_for_contract_name(
+    contract_name: str,
+    article_by_norm: Optional[dict[str, str]],
+    article_sig_pc_sets: Optional[dict[tuple[str, str, str], set[str]]],
+    article_sig_sets: Optional[dict[str, set[str]]],
+    project_name: str,
+    contractor_name: str,
+) -> str:
+    if not str(contract_name or "").strip():
+        return ""
+    s = str(contract_name).strip()
+    pn = normalize_name(project_name or "")
+    cn = normalize_name(contractor_name or "")
+    hint = s
+    parts = re.split(r"\s*·\s*", s)
+    got: list[str] = []
+    for part in parts:
+        one = _article_one_contract_part(
+            part.strip(),
+            article_by_norm,
+            article_sig_pc_sets,
+            article_sig_sets,
+            pn,
+            cn,
+            hint,
+        )
+        if one:
+            got.append(one)
+    if not got:
+        whole = normalize_name(s)
+        if article_by_norm and whole in article_by_norm:
+            raw = article_by_norm[whole]
+            if " · " in raw:
+                return _pick_best_articles(set(re.split(r"\s*·\s*", raw)), hint)
+            return raw
+        return ""
+    if len(got) == 1:
+        return got[0]
+    return _pick_best_articles(set(got), hint)
+
+
+def _article_from_project_contractor(
     project_name: str,
     contractor_name: str,
     article_pc: Optional[dict[tuple[str, str], str]],
+    article_pc_sets: Optional[dict[tuple[str, str], set[str]]],
+    contract_hint: str,
 ) -> str:
-    if not article_pc:
-        return ""
     pn = normalize_name(project_name or "")
     cn = normalize_name(contractor_name or "")
-    if pn and cn and (pn, cn) in article_pc:
-        return article_pc[(pn, cn)]
+    if not pn or not cn:
+        return ""
+    key = (pn, cn)
+    if article_pc_sets and key in article_pc_sets:
+        return _pick_best_articles(article_pc_sets[key], contract_hint)
+    if article_pc and key in article_pc:
+        raw = article_pc[key]
+        if " · " in raw:
+            return _pick_best_articles(set(re.split(r"\s*·\s*", raw)), contract_hint)
+        return raw
     return ""
 
 
 def _vid_raboty_display(
     contract_name: str,
     article_by_norm: Optional[dict[str, str]],
+    article_sig_pc_sets: Optional[dict[tuple[str, str, str], set[str]]] = None,
+    article_sig_sets: Optional[dict[str, set[str]]] = None,
     article_by_project_contractor: Optional[dict[tuple[str, str], str]] = None,
+    article_pc_sets: Optional[dict[tuple[str, str], set[str]]] = None,
     project_name: str = "",
     contractor_name: str = "",
 ) -> str:
-    art = _article_for_contract_name(contract_name, article_by_norm)
+    art = _article_for_contract_name(
+        contract_name,
+        article_by_norm,
+        article_sig_pc_sets,
+        article_sig_sets,
+        project_name,
+        contractor_name,
+    )
     if art:
         return art
-    art2 = _article_for_project_contractor(
-        project_name, contractor_name, article_by_project_contractor
+    art2 = _article_from_project_contractor(
+        project_name,
+        contractor_name,
+        article_by_project_contractor,
+        article_pc_sets,
+        str(contract_name or ""),
     )
     if art2:
         return art2
@@ -1069,7 +1203,10 @@ def build_main_table(
     contractors: Optional[list[str]] = None,
     only_with_plan: bool = False,
     article_by_contract_norm: Optional[dict[str, str]] = None,
+    article_sig_pc_sets: Optional[dict[tuple[str, str, str], set[str]]] = None,
+    article_sig_sets: Optional[dict[str, set[str]]] = None,
     article_by_project_contractor: Optional[dict[tuple[str, str], str]] = None,
+    article_pc_sets: Optional[dict[tuple[str, str], set[str]]] = None,
 ) -> pd.DataFrame:
     """Сборка главной таблицы (Скрин 11): Контрагент × недели × отклонение × дельта.
 
@@ -1167,7 +1304,10 @@ def build_main_table(
         lambda r: _vid_raboty_display(
             str(r.get("contract_name", "")),
             article_by_contract_norm,
+            article_sig_pc_sets,
+            article_sig_sets,
             article_by_project_contractor,
+            article_pc_sets,
             str(r.get("project_name", "")),
             str(r.get("contractor_name", "")),
         ),

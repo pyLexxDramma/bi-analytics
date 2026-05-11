@@ -16255,7 +16255,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         if _base.is_dir():
             for _pat in ("*dannye*.json", "*Dannye*.json"):
                 _dannye_paths.extend(_base.glob(_pat))
-    _by_dog, _by_pc = load_1c_dannye_article_maps(
+    _by_dog, _by_pc, _by_sig_pc, _by_sig, _by_pc_sets = load_1c_dannye_article_maps(
         sorted({_p.resolve() for _p in _dannye_paths if _p.is_file()})
     )
 
@@ -16267,7 +16267,10 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         contractors=sel_contractors or None,
         only_with_plan=only_with_plan,
         article_by_contract_norm=_by_dog if _by_dog else None,
+        article_sig_pc_sets=_by_sig_pc if _by_sig_pc else None,
+        article_sig_sets=_by_sig if _by_sig else None,
         article_by_project_contractor=_by_pc if _by_pc else None,
+        article_pc_sets=_by_pc_sets if _by_pc_sets else None,
     )
     summary_t = build_summary_table(
         long_fact, plan,
@@ -16391,8 +16394,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         )
         if "vid_raboty" in view.columns:
             vid_col = view["vid_raboty"].fillna("").astype(str)
-            fallback = view["contract_name"].fillna("").astype(str)
-            view["Вид работ"] = [v if v else (f.split(" (")[0] if f else "—") for v, f in zip(vid_col, fallback)]
+            view["Вид работ"] = [v if v.strip() else "—" for v in vid_col]
         else:
             view["Вид работ"] = view["contract_name"].fillna("").astype(str).apply(
                 lambda s: s if s else "—"

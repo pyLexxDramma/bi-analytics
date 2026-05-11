@@ -1436,7 +1436,11 @@ def render_developer_predpisaniya_expander(
 def dedupe_msp_for_developer_projects(df: pd.DataFrame) -> pd.DataFrame:
     """
     ТЗ: нет дублирования проектов и задач в «Девелоперские проекты».
-    Сначала по идентификатору задачи MSP (если колонка есть и не пустая), иначе по (проект, задача) / по задаче.
+    Сначала по идентификатору задачи MSP (если колонка есть и не пустая).
+    При **нескольких проектах** в одном кадре дедупликация по id ведётся в паре
+    с колонкой проекта — иначе совпадающие номера id у разных проектов схлопываются
+    и вехи пропадают (режим «Все проекты»).
+    Иначе по (проект, задача) / по задаче.
 
     Если в колонке id часть строк без значения, нельзя делать ``drop_duplicates`` по всему кадру:
     строки без id считаются дубликатами друг друга и схлопываются в одну (матрица уходит в Н/Д).
@@ -1458,6 +1462,30 @@ def dedupe_msp_for_developer_projects(df: pd.DataFrame) -> pd.DataFrame:
         part_miss = frame.loc[~ok]
         return pd.concat([part_miss, part_ok]).sort_index()
 
+    def _dedupe_by_id_and_project_nonempty(
+        frame: pd.DataFrame, id_col: str, proj_col: str
+    ) -> pd.DataFrame:
+        """Составной ключ (проект, id): при объединении нескольких проектов в одном кадре ID MSP
+        могут совпадать между проектами — глобальный drop_duplicates(id) «съедает» вехи."""
+        ok = _series_id_valid(frame[id_col])
+        if int(ok.sum()) == 0:
+            return frame
+        sub = frame.loc[ok]
+        if proj_col in sub.columns:
+            part_ok = sub.drop_duplicates(subset=[proj_col, id_col], keep="first")
+        else:
+            part_ok = sub.drop_duplicates(subset=[id_col], keep="first")
+        part_miss = frame.loc[~ok]
+        return pd.concat([part_miss, part_ok]).sort_index()
+
+    pc_for_id = _find_col(out, ["project name", "Проект", "Project", "проект"])
+    _multi_proj = False
+    if pc_for_id and pc_for_id in out.columns:
+        try:
+            _multi_proj = int(out[pc_for_id].dropna().astype(str).str.strip().nunique()) > 1
+        except Exception:
+            _multi_proj = False
+
     for id_c in (
         "unique id",
         "Уникальный_идентификатор",
@@ -1468,7 +1496,10 @@ def dedupe_msp_for_developer_projects(df: pd.DataFrame) -> pd.DataFrame:
             continue
         if int(_series_id_valid(out[id_c]).sum()) == 0:
             continue
-        out = _dedupe_by_id_nonempty(out, id_c).reset_index(drop=True)
+        if _multi_proj and pc_for_id and pc_for_id in out.columns:
+            out = _dedupe_by_id_and_project_nonempty(out, id_c, pc_for_id).reset_index(drop=True)
+        else:
+            out = _dedupe_by_id_nonempty(out, id_c).reset_index(drop=True)
         return out
     pc = _find_col(out, ["project name", "Проект", "Project", "проект"])
     tc = _task_name_col(out)
@@ -3627,6 +3658,8 @@ html,body{margin:0;padding:0;background:transparent;overflow:hidden}
 # одной сессии — кэшируем по «отпечатку» кадра + ключу проекта + версии prefs.
 
 _DEV_MATRIX_CACHE_KEY = "_dev_matrix_cache_v1"
+# Инкремент при изменении логики `dedupe_msp_for_developer_projects` (сброс session-кэша dedupe).
+_DEV_DEDUPE_CACHE_VER = 2
 
 
 def _matrix_project_scope_tag(df: pd.DataFrame) -> str:
@@ -3708,7 +3741,7 @@ def dedupe_msp_for_developer_projects_cached(
     if ss is None:
         return dedupe_msp_for_developer_projects(df)
     cache = _dev_matrix_cache(ss)
-    key = ("dedupe", _df_fingerprint(df))
+    key = ("dedupe", _DEV_DEDUPE_CACHE_VER, _df_fingerprint(df))
     cached = cache.get(key)
     if isinstance(cached, pd.DataFrame):
         return cached
