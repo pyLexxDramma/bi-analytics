@@ -198,6 +198,15 @@ def _project_filter_norm_key(val) -> str:
     while "  " in s:
         s = s.replace("  ", " ")
     s = _project_name_fusion_base(s)
+    # Выгрузки 1С/склейки без пробела: «Дмитровский1» → тот же ключ, что «Дмитровский 1» / «Дмитровский-1»,
+    # иначе groupby по сырому «project name» даёт строку в «сводке по проекту», а отбор по _pl в «по периодам» — пустой.
+    if s:
+        try:
+            s2 = re.sub(r"([А-Яа-яЁёA-Za-z])(\d{1,4})$", r"\1 \2", s)
+        except re.error:
+            s2 = s
+        if s2 != s:
+            s = re.sub(r"\s+", " ", str(s2)).strip()
     sl = s.casefold()
     if sl in ("", "nan", "none", "nat"):
         return ""
@@ -216,17 +225,33 @@ def _project_norm_key_matches_msp_keys(row_key: str, msp_keys: set[str]) -> bool
         return True
     if not row_key:
         return False
-    if row_key in msp_keys:
+    rk = str(row_key).strip()
+    try:
+        rk2 = re.sub(r"([а-яёa-z])(\d{1,4})$", r"\1 \2", rk)
+        if rk2 != rk:
+            rk = re.sub(r"\s+", " ", rk2).strip()
+    except re.error:
+        pass
+    if rk in msp_keys:
         return True
     for k in msp_keys:
         if not k:
             continue
         pref = k + " "
-        if not row_key.startswith(pref):
+        if not rk.startswith(pref):
             continue
-        rest = row_key[len(pref) :]
+        rest = rk[len(pref) :]
         if rest and _PROJECT_CHILD_SUFFIX_RE.fullmatch(rest):
             return True
+    # Обратно: в фильтре ключ «дмитровский 1», в строке — только «дмитровский» (1С без номера).
+    for k in msp_keys:
+        if not k:
+            continue
+        pref = rk + " "
+        if rk and k.startswith(pref):
+            rest = k[len(pref) :]
+            if rest and _PROJECT_CHILD_SUFFIX_RE.fullmatch(rest):
+                return True
     return False
 
 
@@ -273,8 +298,15 @@ def _project_column_apply_canonical(df: pd.DataFrame, col: str | None) -> pd.Dat
     return out
 
 
-def _unique_project_labels_for_select(series: pd.Series) -> list[str]:
-    """Уникальные подписи для selectbox: один пункт на один нормализованный ключ (короче имя — приоритет)."""
+def _unique_project_labels_for_select(
+    series: pd.Series, *, apply_exclude_names: bool = True
+) -> list[str]:
+    """Уникальные подписи проекта: один пункт на norm-key (короче имя — приоритет).
+
+    ``apply_exclude_names=False`` — для сводок по периодам при «Все проекты»:
+    иначе строки из ``MSP_PROJECT_FILTER_EXCLUDE_NAMES`` не попадают в цикл,
+    но остаются в ``groupby`` и исчезают только из помесячной таблицы.
+    """
     if series is None or getattr(series, "empty", True):
         return []
     by_key: dict[str, str] = {}
@@ -291,7 +323,7 @@ def _unique_project_labels_for_select(series: pd.Series) -> list[str]:
         # Исключаем из выпадающего списка только точное написание из конфига (напр. «Дмитровский-1»).
         # Нельзя резать по norm-key: «Дмитровский-1» и «Дмитровский 1» после fusion дают один ключ «дмитровский 1»,
         # из‑за чего второй вариант ошибочно пропадал из фильтра при «Все», но оставался в таблице.
-        if s in MSP_PROJECT_FILTER_EXCLUDE_NAMES:
+        if apply_exclude_names and s in MSP_PROJECT_FILTER_EXCLUDE_NAMES:
             continue
         k = _project_filter_norm_key(s)
         if not k:
@@ -8468,7 +8500,9 @@ def dashboard_budget_by_period(df):
             return _bdc_fmt, _tot_block
 
         if _bdds_all_projects and "project name" in budget_summary.columns:
-            _proj_labels_bdd = _unique_project_labels_for_select(budget_summary["project name"])
+            _proj_labels_bdd = _unique_project_labels_for_select(
+                budget_summary["project name"], apply_exclude_names=False
+            )
             _parts_bdd: list[pd.DataFrame] = []
             for _pl in _proj_labels_bdd:
                 _pk2 = _project_filter_norm_key(_pl)
@@ -10048,7 +10082,9 @@ def dashboard_bdr(df):
 
             if _bdr_show_all_split:
                 _parts_bdr: list[pd.DataFrame] = []
-                for _pl in _unique_project_labels_for_select(filtered_df["project name"]):
+                for _pl in _unique_project_labels_for_select(
+                    filtered_df["project name"], apply_exclude_names=False
+                ):
                     _pk_b = _project_filter_norm_key(_pl)
                     _sub_b = filtered_df[
                         filtered_df["project name"]
