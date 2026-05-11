@@ -2351,7 +2351,7 @@ def _dev_tz_matrix_cell_classes(
     return " ".join(parts).strip()
 
 
-# Кнопка «на весь экран» в iframe-матрице — аналог панели Plotly (отчёт «Финансы»), Fullscreen API.
+# Кнопка «на весь экран» в iframe-матрице — Fullscreen API + fallback для iOS/Safari (нет Fullscreen у div).
 _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS = """
 .matrix-fs-root{display:flex;flex-direction:column;min-height:100%;width:100%}
 .matrix-fs-topbar{flex:0 0 auto;display:flex;justify-content:flex-end;align-items:center;
@@ -2361,22 +2361,41 @@ _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS = """
   border:1px solid rgba(68,84,108,0.55);border-radius:2px;
   background:rgba(35,43,56,0.96);color:#e8eef5;
   cursor:pointer;font-size:17px;line-height:1;text-align:center;
+  touch-action:manipulation;-webkit-tap-highlight-color:transparent;
 }
 .matrix-fs-btn:hover{background:rgba(55,65,82,0.98);color:#fff;border-color:rgba(121,154,192,0.55)}
 .matrix-fs-btn:focus-visible{outline:2px solid rgba(121,154,192,0.75);outline-offset:1px}
 .matrix-fs-body{flex:1 1 auto;min-height:0;width:100%}
-#matrix-fs-root:fullscreen,#matrix-fs-root:-webkit-full-screen{
+#matrix-fs-root:fullscreen,#matrix-fs-root:-webkit-full-screen,#matrix-fs-root:-moz-full-screen{
   background:#0e1520;padding:10px;box-sizing:border-box;
-  width:100vw!important;height:100vh!important;overflow:hidden!important;display:flex!important;flex-direction:column!important;
+  width:100vw!important;height:100vh!important;max-height:-webkit-fill-available!important;
+  overflow:hidden!important;display:flex!important;flex-direction:column!important;
 }
-#matrix-fs-root:fullscreen .matrix-fs-body,#matrix-fs-root:-webkit-full-screen .matrix-fs-body{
+#matrix-fs-root:fullscreen .matrix-fs-body,#matrix-fs-root:-webkit-full-screen .matrix-fs-body,
+#matrix-fs-root:-moz-full-screen .matrix-fs-body{
   flex:1 1 auto;min-height:0;overflow:hidden!important;
 }
 #matrix-fs-root:fullscreen .dev-tz-matrix-wrap,
 #matrix-fs-root:-webkit-full-screen .dev-tz-matrix-wrap,
+#matrix-fs-root:-moz-full-screen .dev-tz-matrix-wrap,
 #matrix-fs-root:fullscreen .cp-table-wrap,
-#matrix-fs-root:-webkit-full-screen .cp-table-wrap{
-  max-height:calc(100vh - 64px)!important;overflow:auto!important;
+#matrix-fs-root:-webkit-full-screen .cp-table-wrap,
+#matrix-fs-root:-moz-full-screen .cp-table-wrap{
+  max-height:calc(100vh - 64px)!important;max-height:calc(100dvh - 64px)!important;
+  overflow:auto!important;-webkit-overflow-scrolling:touch!important;
+}
+/* Fallback без Fullscreen API: разворот на весь iframe (если родитель недоступен). */
+#matrix-fs-root.matrix-fs-pseudo-on{
+  position:fixed!important;top:0!important;left:0!important;right:0!important;bottom:0!important;
+  width:100%!important;height:100%!important;max-height:-webkit-fill-available!important;
+  z-index:2147483647!important;background:#0e1520!important;padding:10px!important;
+  box-sizing:border-box!important;display:flex!important;flex-direction:column!important;
+  overflow:hidden!important;
+}
+#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body{flex:1 1 auto;min-height:0;overflow:hidden!important;}
+#matrix-fs-root.matrix-fs-pseudo-on .dev-tz-matrix-wrap,
+#matrix-fs-root.matrix-fs-pseudo-on .cp-table-wrap{
+  max-height:calc(100% - 48px)!important;overflow:auto!important;-webkit-overflow-scrolling:touch!important;
 }
 """
 
@@ -2386,27 +2405,150 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
   var root=document.getElementById("matrix-fs-root");
   var btn=document.getElementById("matrix-fs-btn");
   if(!root||!btn) return;
-  function active(){
-    return document.fullscreenElement===root||document.webkitFullscreenElement===root;
+
+  var parentDoc=null;
+  try{
+    if(window.parent&&window.parent!==window&&window.parent.document){parentDoc=window.parent.document;}
+  }catch(err){parentDoc=null;}
+
+  var pseudoShell=null;
+  var prevParentOverflow="";
+  var prevIframeOverflow="";
+
+  function cloneHeadStyles(target){
+    var styles=document.head.querySelectorAll("style");
+    for(var i=0;i<styles.length;i++){
+      var s=document.createElement("style");
+      s.type="text/css";
+      s.textContent=styles[i].textContent||"";
+      target.appendChild(s);
+    }
   }
+
+  function exitPseudo(){
+    if(pseudoShell&&pseudoShell.parentNode){
+      pseudoShell.parentNode.removeChild(pseudoShell);
+    }
+    pseudoShell=null;
+    try{
+      if(parentDoc&&parentDoc.body){
+        parentDoc.body.style.overflow=prevParentOverflow;
+      }
+    }catch(e1){}
+    try{
+      document.body.style.overflow=prevIframeOverflow;
+    }catch(e2){}
+    root.classList.remove("matrix-fs-pseudo-on");
+  }
+
+  function enterPseudoParent(){
+    exitPseudo();
+    var doc=parentDoc;
+    var bodyEl=document.querySelector(".matrix-fs-body");
+    if(!doc||!doc.body||!bodyEl){enterPseudoIframe();return;}
+    pseudoShell=doc.createElement("div");
+    pseudoShell.id="matrix-fs-pseudo-shell";
+    pseudoShell.setAttribute("style",
+      "position:fixed!important;z-index:2147483646!important;left:0!important;top:0!important;right:0!important;bottom:0!important;"
+      +"width:100%!important;height:100%!important;max-height:-webkit-fill-available!important;"
+      +"background:#0e1520!important;display:flex!important;flex-direction:column!important;"
+      +"padding:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right))"
+      +" max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left))!important;"
+      +"box-sizing:border-box!important;overflow:hidden!important;");
+    cloneHeadStyles(pseudoShell);
+    var tb=doc.createElement("div");
+    tb.setAttribute("style","flex:0 0 auto;display:flex;justify-content:flex-end;align-items:center;padding:2px 0 8px 0;");
+    var xb=doc.createElement("button");
+    xb.type="button";
+    xb.textContent="\\u2715";
+    xb.setAttribute("style","width:40px;height:40px;font-size:18px;border-radius:4px;"
+      +"border:1px solid rgba(121,154,192,0.55);background:rgba(35,43,56,0.96);color:#e8eef5;"
+      +"touch-action:manipulation;-webkit-tap-highlight-color:transparent;");
+    xb.addEventListener("click",function(ev){ev.preventDefault();exitPseudo();sync();});
+    tb.appendChild(xb);
+    var scroll=doc.createElement("div");
+    scroll.setAttribute("style","flex:1 1 auto;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;");
+    scroll.innerHTML=bodyEl.innerHTML;
+    pseudoShell.appendChild(tb);
+    pseudoShell.appendChild(scroll);
+    prevParentOverflow=doc.body.style.overflow||"";
+    doc.body.appendChild(pseudoShell);
+    doc.body.style.overflow="hidden";
+    sync();
+  }
+
+  function enterPseudoIframe(){
+    exitPseudo();
+    prevIframeOverflow=document.body.style.overflow||"";
+    root.classList.add("matrix-fs-pseudo-on");
+    try{document.body.style.overflow="hidden";}catch(e){}
+    sync();
+  }
+
+  function isPseudo(){
+    return !!(pseudoShell&&pseudoShell.parentNode)||root.classList.contains("matrix-fs-pseudo-on");
+  }
+
+  function activeNative(){
+    return document.fullscreenElement===root||document.webkitFullscreenElement===root
+      ||document.mozFullScreenElement===root||document.msFullscreenElement===root;
+  }
+
+  function active(){return activeNative()||isPseudo();}
+
   function sync(){
-    btn.textContent=active()?"\u2715":"\u26F6";
-    btn.setAttribute("title", active()?
-      "\u0412\u044b\u0439\u0442\u0438 \u0438\u0437 \u043f\u043e\u043b\u043d\u043e\u044d\u043a\u0440\u0430\u043d\u043d\u043e\u0433\u043e \u0440\u0435\u0436\u0438\u043c\u0430":
-      "\u041d\u0430 \u0432\u0435\u0441\u044c \u044d\u043a\u0440\u0430\u043d (\u043a\u0430\u043a \u0433\u0440\u0430\u0444\u0438\u043a\u0438 \u0424\u0438\u043d\u0430\u043d\u0441\u044b)");
+    var on=active();
+    btn.textContent=on?"\\u2715":"\\u26F6";
+    btn.setAttribute("title", on?
+      "\\u0412\\u044b\\u0439\\u0442\\u0438 \\u0438\\u0437 \\u043f\\u043e\\u043b\\u043d\\u043e\\u044d\\u043a\\u0440\\u0430\\u043d\\u043d\\u043e\\u0433\\u043e \\u0440\\u0435\\u0436\\u0438\\u043c\\u0430":
+      "\\u041d\\u0430 \\u0432\\u0435\\u0441\\u044c \\u044d\\u043a\\u0440\\u0430\\u043d");
   }
+
+  function exitNative(){
+    if(document.exitFullscreen) document.exitFullscreen();
+    else if(document.webkitExitFullscreen) document.webkitExitFullscreen();
+    else if(document.mozCancelFullScreen) document.mozCancelFullScreen();
+    else if(document.msExitFullscreen) document.msExitFullscreen();
+  }
+
+  function enterNative(){
+    var req=root.requestFullscreen||root.webkitRequestFullscreen||root.mozRequestFullScreen||root.msRequestFullscreen;
+    if(!req){return Promise.reject(new Error("no fullscreen api"));}
+    try{return req.call(root);}catch(e){return Promise.reject(e);}
+  }
+
   btn.addEventListener("click",function(e){
     e.preventDefault();
     e.stopPropagation();
     if(active()){
-      if(document.exitFullscreen) document.exitFullscreen();
-      else if(document.webkitExitFullscreen) document.webkitExitFullscreen();
+      exitPseudo();
+      if(activeNative()) exitNative();
+      sync();
+      return;
+    }
+    var p=enterNative();
+    if(p&&p.then){
+      p.then(function(){sync();}).catch(function(){
+        if(parentDoc){enterPseudoParent();}
+        else{enterPseudoIframe();}
+      });
     }else{
-      (root.requestFullscreen||root.webkitRequestFullscreen||function(){}).call(root);
+      if(parentDoc){enterPseudoParent();}
+      else{enterPseudoIframe();}
     }
   });
+
   document.addEventListener("fullscreenchange",sync);
   document.addEventListener("webkitfullscreenchange",sync);
+  document.addEventListener("mozfullscreenchange",sync);
+  document.addEventListener("MSFullscreenChange",sync);
+
+  function escClose(ev){
+    if(ev.key==="Escape"&&isPseudo()){exitPseudo();if(activeNative()) exitNative();sync();}
+  }
+  document.addEventListener("keydown",escClose);
+  try{if(parentDoc){parentDoc.addEventListener("keydown",escClose);}}catch(e3){}
+
   sync();
 })();
 </script>
@@ -2425,7 +2567,9 @@ def _matrix_iframe_html_document(
     ``extra_body_suffix`` — доп. HTML/скрипты перед ``</body>`` (напр. поповер «Контрольные точки»).
     """
     return (
-        '<!DOCTYPE html><html><head><meta charset="utf-8"><style>'
+        '<!DOCTYPE html><html><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5,viewport-fit=cover">'
+        "<style>"
         + head_styles
         + _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS
         + "</style></head><body>"
@@ -2794,24 +2938,31 @@ def save_control_point_milestones_json(json_str: str, updated_by: str) -> Tuple[
 
 def _control_points_project_filter_options(
     df: pd.DataFrame,
-) -> Tuple[List[str], Dict[str, List[str]]]:
-    """Подписи для фильтра «Проект» и карта подпись → список сырых project name (без дублей логического проекта)."""
-    if df is None or df.empty or "project name" not in df.columns:
-        return [], {}
-    raws = df["project name"].dropna().astype(str).str.strip().unique().tolist()
+) -> Tuple[List[str], Dict[str, List[str]], Dict[str, str]]:
+    """Список ключей группы проекта, карта gk→сырые значения в колонке проекта, gk→подпись в UI.
+
+    Раньше опции строились по человекочитаемой подписи: при совпадении подписи у двух разных
+    групп (одинаковый `lab`) списки raw_name сливались — фильтр «один проект» оставлял строки
+    нескольких проектов. Теперь в selectbox значения — уникальные `gk`, подпись только через
+    `format_func`.
+    """
+    if df is None or df.empty:
+        return [], {}, {}
+    pcol = _project_name_column(df)
+    if not pcol or pcol not in df.columns:
+        return [], {}, {}
+    raws = df[pcol].dropna().astype(str).str.strip().unique().tolist()
     groups: Dict[str, List[str]] = defaultdict(list)
     for p in raws:
         groups[_control_points_project_group_key(p)].append(str(p).strip())
-    labels_map: Dict[str, List[str]] = {}
+    gk_to_raws: Dict[str, List[str]] = {}
+    gk_to_lab: Dict[str, str] = {}
     for gk, rlist in groups.items():
         rlist = sorted(set(rlist))
-        lab = _control_points_project_label(gk, rlist)
-        if lab in labels_map:
-            labels_map[lab] = sorted(set(labels_map[lab] + rlist))
-        else:
-            labels_map[lab] = rlist
-    ordered = sorted(labels_map.keys(), key=lambda x: x.lower())
-    return ordered, labels_map
+        gk_to_raws[gk] = rlist
+        gk_to_lab[gk] = _control_points_project_label(gk, rlist)
+    ordered_gks = sorted(gk_to_raws.keys(), key=lambda gk: (gk_to_lab.get(gk, gk).lower(), str(gk)))
+    return ordered_gks, gk_to_raws, gk_to_lab
 
 
 def _control_points_prepare_msp_dates(df: pd.DataFrame) -> pd.DataFrame:
@@ -3168,34 +3319,50 @@ def _apply_control_points_msp_filters(
     if mdf is None or getattr(mdf, "empty", True):
         return pd.DataFrame(), meta
     df = mdf.copy()
-    labels_map: Dict[str, List[str]] = {}
-    if "project name" in df.columns:
-        ordered, labels_map = _control_points_project_filter_options(df)
+    pcol = _project_name_column(df)
+    gk_to_raws: Dict[str, List[str]] = {}
+    gk_to_lab: Dict[str, str] = {}
+    ordered_gks: List[str] = []
+    if pcol and pcol in df.columns:
+        ordered_gks, gk_to_raws, gk_to_lab = _control_points_project_filter_options(df)
         # Стабильный порядок «крупных» проектов сверху, затем остальное (если будут).
-        # Сравниваем по префиксу, иначе «Дмитровский 1» в данных не матчится с
+        # Сравниваем по префиксу подписи (gk_to_lab), иначе «Дмитровский 1» в данных не матчится с
         # шаблоном «Дмитровский» и проект пропадает из выпадающего списка фильтра.
         preferred_prefixes = ["Дмитровский", "Есипово", "Завод", "Ленинский"]
         matched: list[str] = []
         for pref in preferred_prefixes:
-            for o in ordered:
-                if o.lower().startswith(pref.lower()) and o not in matched:
-                    matched.append(o)
+            for gk in ordered_gks:
+                lab = str(gk_to_lab.get(gk, "") or "")
+                if lab.lower().startswith(pref.lower()) and gk not in matched:
+                    matched.append(gk)
                     break
         if matched:
-            rest = [o for o in ordered if o not in matched]
-            ordered = matched + rest
-        opts = ["Все"] + ordered
+            rest = [gk for gk in ordered_gks if gk not in matched]
+            ordered_gks = matched + rest
+        opts = ["Все"] + ordered_gks
+
+        def _cp_proj_select_label(opt: str) -> str:
+            if opt == "Все":
+                return "Все"
+            return str(gk_to_lab.get(opt, opt))
+
         from .ui_quiet import filters_panel
 
         with filters_panel(st):
-            sel_proj = st.selectbox("Проект", opts, key="cp_msp_filter_project")
+            sel_gk = st.selectbox(
+                "Проект",
+                opts,
+                format_func=_cp_proj_select_label,
+                key="cp_msp_filter_project_gk",
+            )
     else:
-        sel_proj = "Все"
+        sel_gk = "Все"
 
     out = df
-    if sel_proj != "Все" and "project name" in out.columns:
-        raws = labels_map.get(str(sel_proj).strip(), [str(sel_proj).strip()])
-        out = out[out["project name"].astype(str).str.strip().isin(raws)]
+    if sel_gk != "Все" and pcol and pcol in out.columns and gk_to_raws:
+        raws = gk_to_raws.get(str(sel_gk).strip())
+        if raws:
+            out = out[out[pcol].astype(str).str.strip().isin(raws)]
 
     meta["subtree_rows"] = int(len(out))
     return out, meta
