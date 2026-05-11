@@ -122,8 +122,33 @@ TABLE_BG_COLOR = "hsl(209,67%,12%)"
 CHART_BG_COLOR = "rgba(18, 56, 92, 0.88)"
 TABLE_TEXT_COLOR = "#ffffff"
 
+# Единый размер колонок HTML-таблиц (format_dataframe_as_html, plan_fact_dates и т.д.)
+HTML_TABLE_TH_MAX_EM = 18
+HTML_TABLE_TD_MAX_EM = 16
+HTML_TABLE_COL_MIN_EM = 8
+
 # Размерность сумм: млн рублей
 MILLION = 1_000_000
+
+
+def sanitize_display_label(value: Any) -> str:
+    """
+    Убирает хвостовые точки/многоточие в подписях («Проект.», «Название..») для UI.
+    Не трогает чисто числовые значения.
+    """
+    if value is None:
+        return ""
+    s = str(value).strip()
+    if not s or s.lower() in ("nan", "nat", "none"):
+        return s
+    try:
+        _t = s.replace(" ", "").replace("\u00a0", "").replace(",", ".")
+        if re.match(r"^[-+]?\d+(?:[.,]\d+)?$", _t):
+            return s
+    except Exception:
+        pass
+    s = re.sub(r"[.\u2026…]+$", "", s).strip()
+    return s
 
 
 def norm_partner_join_key(val: Any) -> str:
@@ -483,8 +508,8 @@ def apply_chart_background(fig, *, skip_uniformtext: bool = False):
     )
     margin_l = 60
     margin_r = 30
-    margin_t = 55
-    margin_b = 100
+    margin_t = 62
+    margin_b = 118
     if prev_m is not None:
         for attr, default in (("l", margin_l), ("r", margin_r), ("t", margin_t), ("b", margin_b)):
             v = getattr(prev_m, attr, None)
@@ -544,14 +569,36 @@ def apply_chart_background(fig, *, skip_uniformtext: bool = False):
                 py_f = float(py) if py is not None else None
             except (TypeError, ValueError):
                 py_f = None
+            # Легенда под графиком (y<0) или спец. якорь — не затираем.
             custom_below = (py_f is not None and py_f < 0) or ya == "top"
-            if custom_below:
+            # Легенда НАД графиком (типично y≈1…1.15, yanchor=bottom) — тоже сохраняем,
+            # иначе глобальный y=-0.25 наезжает на наклонные подписи оси X (ГДРС и т.п.).
+            legend_above_plot = (
+                py_f is not None
+                and py_f >= 0.85
+                and str(ya or "").lower() == "bottom"
+                and getattr(prev_leg, "orientation", None) == "h"
+            )
+            if custom_below or legend_above_plot:
                 for key in ("x", "y", "xanchor", "yanchor", "xref", "yref", "orientation"):
                     val = getattr(prev_leg, key, None)
                     if val is not None:
                         legend_base[key] = val
+            if legend_above_plot:
+                margin_t = max(margin_t, 90.0)
+                margin_b = max(margin_b, 188.0)
+        layout_kwargs["margin"] = dict(l=margin_l, r=margin_r, t=margin_t, b=margin_b)
         layout_kwargs["legend"] = legend_base
     fig.update_layout(**layout_kwargs)
+    # Подписи на графике — без всплывающих подсказок (требование UX).
+    fig.update_layout(hovermode=False)
+    try:
+        fig.update_traces(hovertemplate="", hoverinfo="skip")
+    except Exception:
+        try:
+            fig.update_traces(hoverinfo="skip")
+        except Exception:
+            pass
 
     # Оси X
     fig.update_xaxes(
@@ -1041,7 +1088,7 @@ def plan_fact_dates_table_to_html(
     for col in df.columns:
         col_esc = html_module.escape(str(col))
         parts.append(
-            f'<th style="border: 1px solid rgba(255,255,255,0.3); padding: 6px 8px; max-width: 18em; overflow: hidden; '
+            f'<th style="border: 1px solid rgba(255,255,255,0.3); padding: 6px 8px; min-width: {HTML_TABLE_COL_MIN_EM}em; max-width: {HTML_TABLE_TH_MAX_EM}em; overflow: hidden; '
             f'text-overflow: ellipsis; white-space: nowrap; background-color: {TABLE_BG_COLOR};">{col_esc}</th>'
         )
     parts.append("</tr></thead><tbody>")
@@ -1055,12 +1102,12 @@ def plan_fact_dates_table_to_html(
             if col == fact_date_column and row_style:
                 text_color = red_color if row_style == "red" else green_color
                 parts.append(
-                    f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 5px 8px; max-width: 16em; overflow: hidden; '
+                    f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 5px 8px; min-width: {HTML_TABLE_COL_MIN_EM}em; max-width: {HTML_TABLE_TD_MAX_EM}em; overflow: hidden; '
                     f'text-overflow: ellipsis; white-space: nowrap; background-color: {TABLE_BG_COLOR}; color: {text_color}; font-weight: bold;">{val_esc}</td>'
                 )
             else:
                 parts.append(
-                    f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 5px 8px; max-width: 16em; overflow: hidden; '
+                    f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 5px 8px; min-width: {HTML_TABLE_COL_MIN_EM}em; max-width: {HTML_TABLE_TD_MAX_EM}em; overflow: hidden; '
                     f'text-overflow: ellipsis; white-space: nowrap; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
                 )
         parts.append("</tr>")
@@ -1164,14 +1211,35 @@ def format_dataframe_as_html(
             )
         )
 
+    def _sanitize_if_name_column(col_name: Any, text: str) -> str:
+        cl = str(col_name).lower()
+        if any(
+            k in cl
+            for k in (
+                "проект",
+                "project",
+                "задача",
+                "task",
+                "назван",
+                "name",
+                "контрагент",
+                "подряд",
+                "объект",
+            )
+        ):
+            return sanitize_display_label(text)
+        return text
+
     # §4.8: плотные ячейки — как `budget_table_to_html` / `style_dataframe_for_dark_theme`
     _th = (
         f"padding:6px 8px;background-color:rgba(18,56,92,0.95);color:{TABLE_TEXT_COLOR};"
-        "font-size:13px;max-width:18em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+        f"font-size:13px;min-width:{HTML_TABLE_COL_MIN_EM}em;max-width:{HTML_TABLE_TH_MAX_EM}em;"
+        "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
     )
     _td_base = (
         f"padding:5px 8px;border:1px solid rgba(255,255,255,0.15);background-color:{TABLE_BG_COLOR};"
-        f"color:{TABLE_TEXT_COLOR};font-size:13px;max-width:16em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+        f"color:{TABLE_TEXT_COLOR};font-size:13px;min-width:{HTML_TABLE_COL_MIN_EM}em;max-width:{HTML_TABLE_TD_MAX_EM}em;"
+        "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
     )
     html_table = (
         "<div class='bd-table-wrap' style='width:100%;overflow-x:auto;min-width:0;-webkit-overflow-scrolling:touch;'>"
@@ -1230,7 +1298,9 @@ def format_dataframe_as_html(
                 else:
                     formatted_value = "0" if (is_scalar and pd.isna(value)) else str(value)
                     color = neg_color
-                formatted_value = html_module.escape(str(formatted_value))
+                formatted_value = html_module.escape(
+                    _sanitize_if_name_column(col, str(formatted_value))
+                )
                 html_table += (
                     f"<td style='{_td_base}color:{color};font-weight:bold;'>{formatted_value}</td>"
                 )
@@ -1258,7 +1328,9 @@ def format_dataframe_as_html(
                         formatted_value = "" if pd.isna(value) else str(value)
                 else:
                     formatted_value = "" if (is_scalar and pd.isna(value)) else str(value)
-                formatted_value = html_module.escape(str(formatted_value))
+                formatted_value = html_module.escape(
+                    _sanitize_if_name_column(col, str(formatted_value))
+                )
                 cell_style = _td_base
                 if idx in _bold_ix:
                     cell_style += "font-weight:700;text-transform:uppercase;"

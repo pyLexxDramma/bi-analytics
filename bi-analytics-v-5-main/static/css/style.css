@@ -135,11 +135,18 @@ header[data-testid="stHeader"] *,
 .stCheckbox > label {
     color: #ffffff !important;
 }
-/* Стилизация date input */
+/* Стилизация date input — один визуальный стиль с number/select */
 .stDateInput > div > div > input {
     background-color: #2a2a3a !important;
     color: #ffffff !important;
     border: 1px solid #4a5568 !important;
+    border-radius: 4px !important;
+    min-width: 10.5rem !important;
+    font-size: 14px !important;
+}
+/* Popover календаря (Streamlit / BaseWeb) — тот же токен границы */
+[data-baseweb="popover"] [data-baseweb="datepicker"] {
+    font-family: Inter, system-ui, sans-serif !important;
 }
 /* Стилизация number input */
 .stNumberInput > div > div > input {

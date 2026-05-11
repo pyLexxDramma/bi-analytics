@@ -511,6 +511,43 @@ def _invalidate_session_token(token: str) -> None:
         pass
 
 
+def touch_session_activity() -> None:
+    """Продлевает срок session-token при активности пользователя (скольжение TTL)."""
+    token = ""
+    try:
+        token = str(st.session_state.get("_auth_session_token") or "").strip()
+    except Exception:
+        token = ""
+    if not token:
+        try:
+            token = _qp_get(_SESSION_TOKEN_QPARAM)
+        except Exception:
+            token = ""
+    if not token:
+        return
+    # Не пишем в SQLite на каждом rerun — не чаще раза в 5 минут.
+    try:
+        now_ts = datetime.now().timestamp()
+        last = float(st.session_state.get("_auth_session_touched_ts") or 0.0)
+        if now_ts - last < 300.0:
+            return
+        st.session_state["_auth_session_touched_ts"] = now_ts
+    except Exception:
+        pass
+    try:
+        new_exp = (datetime.now() + timedelta(days=_SESSION_TTL_DAYS)).isoformat()
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE auth_sessions SET expires_at = ? WHERE token = ?",
+            (new_exp, token),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
 def _qp_get(name: str) -> str:
     try:
         v = st.query_params.get(name, "")
@@ -581,7 +618,10 @@ def check_authentication() -> bool:
             pass
     if "authenticated" not in st.session_state:
         return False
-    return st.session_state.get("authenticated", False)
+    ok = bool(st.session_state.get("authenticated", False))
+    if ok:
+        touch_session_activity()
+    return ok
 
 
 def get_current_user() -> Optional[dict]:

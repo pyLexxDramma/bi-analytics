@@ -531,6 +531,7 @@ from utils import (
     render_dataframe_excel_csv_downloads,
     dataframe_to_csv_bytes_for_excel,
     dataframe_to_xlsx_bytes,
+    sanitize_display_label,
 )
 
 # Максимальное число строк, передаваемых в Plotly для scatter/line-графиков.
@@ -16337,10 +16338,6 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                     marker_color=_dev_colors,
                     text=[f"{int(v):+d}" for v in _dev_signed], textposition="outside",
                     textfont=dict(color="#cfe9fa", size=12),
-                    customdata=_plan_vals,
-                    hovertemplate=(
-                        "<b>%{x}</b><br>План: %{customdata}<br>Отклонение: %{text}<extra></extra>"
-                    ),
                 )
                 fig_pf.update_layout(
                     title=dict(
@@ -16369,6 +16366,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                         bgcolor="rgba(0,0,0,0)",
                     ),
                 )
+                fig_pf = apply_chart_background(fig_pf)
                 st.plotly_chart(fig_pf, use_container_width=True)
             except Exception as _e:
                 st.warning(f"Plotly недоступен: {_e}")
@@ -16565,6 +16563,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                     margin=dict(l=48, r=32, t=64, b=64),
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
                 )
+                fig = apply_chart_background(fig)
                 st.plotly_chart(fig, use_container_width=True)
             except Exception as _e:
                 st.warning(f"Plotly недоступен: {_e}")
@@ -16610,10 +16609,6 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                     text=[f"{int(v):+d}" for v in chart_df["Отклонение"]],
                     textposition="outside",
                     textfont=dict(color="#cfe9fa", size=11),
-                    customdata=chart_df["План"].tolist(),
-                    hovertemplate=(
-                        "<b>%{x}</b><br>План: %{customdata}<br>Отклонение: %{text}<extra></extra>"
-                    ),
                 )
                 fig2.update_layout(
                     barmode="group",
@@ -16625,6 +16620,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                     margin=dict(l=48, r=32, t=32, b=140),
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
                 )
+                fig2 = apply_chart_background(fig2)
                 st.plotly_chart(fig2, use_container_width=True)
 
                 st.subheader("Факт по подрядчикам (план · отклонение · % выполнения)")
@@ -16635,24 +16631,13 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                 _devs_i = _goal_df["Отклонение"].astype(int).tolist()
                 _labels = []
                 _bar_colors = []
-                _hover_lines = []
-                for _nm, _p, _f, _dev in zip(_xs, _plans_f, _facts_f, _devs_i):
+                for _, _p, _f, _ in zip(_xs, _plans_f, _facts_f, _devs_i):
                     _bar_colors.append(_gdrs_fact_bar_color(_p, _f))
                     if float(_p) > 0:
                         _dv = int(round((_p - _f) / float(_p) * 100.0))
-                        _fl = int(round((_f / float(_p)) * 100.0))
                         _labels.append(f"{int(round(_f))} ({_dv:+d}%)")
-                        _hover_lines.append(
-                            f"<b>{_nm}</b><br>План: {int(round(_p))}<br>Факт: {int(round(_f))}<br>"
-                            f"Отклонение (план−факт): {int(_dev)}<br>"
-                            f"% выполнения: {_fl}%<br>% откл. к цели: {_dv:+d}%"
-                        )
                     else:
                         _labels.append(f"{int(round(_f))}")
-                        _hover_lines.append(
-                            f"<b>{_nm}</b><br>План: {int(round(_p))}<br>Факт: {int(round(_f))}<br>"
-                            f"Отклонение: {int(_dev)}"
-                        )
                 fig_goal = _go.Figure()
                 fig_goal.add_bar(
                     x=_xs,
@@ -16662,8 +16647,6 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                     textposition="outside",
                     textfont=dict(color="#cfe9fa", size=11),
                     name="Факт",
-                    hovertext=_hover_lines,
-                    hoverinfo="text",
                 )
                 fig_goal.update_layout(
                     plot_bgcolor="rgba(0,0,0,0)",
@@ -16675,6 +16658,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                     margin=dict(l=48, r=32, t=32, b=140),
                     showlegend=False,
                 )
+                fig_goal = apply_chart_background(fig_goal)
                 st.plotly_chart(fig_goal, use_container_width=True)
             except Exception as _e:
                 st.warning(f"Plotly недоступен: {_e}")
@@ -16703,6 +16687,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                         font_color="#eee",
                     )
                     fig3 = _apply_pie_layout(fig3, height=460)
+                    fig3 = apply_chart_background(fig3)
                     st.plotly_chart(fig3, use_container_width=True)
                 except Exception as _e:
                     st.warning(f"Plotly недоступен: {_e}")
@@ -27886,7 +27871,7 @@ def dashboard_project_schedule_chart(df):
             return ""
         t = re.sub(r"(?i)^\s*задача\s+\d+\s+", "", t)
         t = re.sub(r"(?i)^\s*задача\s+", "", t)
-        return t.strip()
+        return sanitize_display_label(t.strip())
 
     def _gantt_find_percent_column(d: pd.DataFrame):
         """Колонка % выполнения MSP: разные имена в выгрузках / Excel."""
