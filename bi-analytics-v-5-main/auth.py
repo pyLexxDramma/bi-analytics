@@ -68,6 +68,7 @@ _REPORT_ROLE_ALLOWLIST: Dict[str, frozenset] = {
     "БДДС (утверждённый/прогнозный)": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "Прогнозный БДДС": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "Прогнозный бюджет": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
+    "Дебиторская и кредиторская задолженность": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "Дебиторская и кредиторская задолженность подрядчиков": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "Причины отклонений": frozenset({"manager", "analyst", "rp", "gip", "financier", "admin", "superadmin"}),
     "Отклонение от базового плана": frozenset({"manager", "analyst", "rp", "gip", "financier", "admin", "superadmin"}),
@@ -78,6 +79,8 @@ _REPORT_ROLE_ALLOWLIST: Dict[str, frozenset] = {
     "ГДРС": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "График движения рабочей силы": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "ГДРС Техника": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
+    "ГДРС (люди)": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
+    "ГДРС (техника)": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "Исполнительная документация": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "Предписания по подрядчикам": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "Неустраненные предписания": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
@@ -835,7 +838,7 @@ def render_sidebar_menu(current_page: str = "reports"):
                             "primary" if current_dashboard == report else "secondary"
                         )
                         if st.button(
-                            f"• {report}",
+                            report,
                             width="stretch",
                             key=f"menu_report_{report}",
                             type=button_type,

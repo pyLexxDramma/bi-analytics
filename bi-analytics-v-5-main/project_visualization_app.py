@@ -1413,7 +1413,11 @@ def main():
 
         if "current_dashboard" not in st.session_state:
             if (has_resources_data or has_technique_data) and not has_project_data:
-                if "ГДРС" in all_allowed_set:
+                if has_technique_data and "ГДРС (техника)" in all_allowed_set:
+                    st.session_state.current_dashboard = "ГДРС (техника)"
+                elif has_resources_data and "ГДРС (люди)" in all_allowed_set:
+                    st.session_state.current_dashboard = "ГДРС (люди)"
+                elif "ГДРС" in all_allowed_set:
                     st.session_state.current_dashboard = "ГДРС"
                 elif "ГДРС Техника" in all_allowed_set and has_technique_data:
                     st.session_state.current_dashboard = "ГДРС Техника"
@@ -1427,7 +1431,9 @@ def main():
                 else:
                     st.session_state.current_dashboard = all_allowed[0]
             elif not has_project_data and has_debit_credit:
-                if "Дебиторская и кредиторская задолженность подрядчиков" in all_allowed_set:
+                if "Дебиторская и кредиторская задолженность" in all_allowed_set:
+                    st.session_state.current_dashboard = "Дебиторская и кредиторская задолженность"
+                elif "Дебиторская и кредиторская задолженность подрядчиков" in all_allowed_set:
                     st.session_state.current_dashboard = (
                         "Дебиторская и кредиторская задолженность подрядчиков"
                     )
@@ -1450,22 +1456,38 @@ def main():
 
         dashboards_using_technique = (
             "ГДРС",
+            "ГДРС (люди)",
+            "ГДРС (техника)",
             "ГДРС Техника",
         )
 
         if selected_dashboard in dashboards_using_technique:
-            df_for_render = resources_data if has_resources_data else (
-                technique_data if has_technique_data else df
-            )
+            if selected_dashboard in ("ГДРС (техника)", "ГДРС Техника"):
+                df_for_render = (
+                    technique_data
+                    if has_technique_data
+                    else (resources_data if has_resources_data else df)
+                )
+            elif selected_dashboard == "ГДРС (люди)":
+                df_for_render = (
+                    resources_data
+                    if has_resources_data
+                    else (technique_data if has_technique_data else df)
+                )
+            else:
+                df_for_render = resources_data if has_resources_data else (
+                    technique_data if has_technique_data else df
+                )
         elif selected_dashboard in (
             "Неустраненные предписания",
             "Предписания по подрядчикам",
             "Исполнительная документация",
         ) and (not has_project_data) and has_tessa_data:
             df_for_render = tessa_data
-        elif selected_dashboard == "Дебиторская и кредиторская задолженность подрядчиков" and (
-            not has_project_data
-        ) and has_debit_credit:
+        elif selected_dashboard in (
+            "Дебиторская и кредиторская задолженность",
+            "Дебиторская и кредиторская задолженность подрядчиков",
+        ) and (not has_project_data) and has_debit_credit:
             df_for_render = debit_credit_data
         else:
             df_for_render = df
