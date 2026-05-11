@@ -1486,6 +1486,29 @@ def _find_column_by_keywords(df, keywords: tuple):
     return None
 
 
+def _find_deviations_building_column(df):
+    """
+    Колонка «строение» для отчётов по отклонениям: не путать с «лот», если в файле оба столбца.
+    Порядок ключей — от более специфичных к общим (лот в конце).
+    """
+    if df is None or not hasattr(df, "columns"):
+        return None
+    priority = (
+        "строение",
+        "корпус",
+        "здание",
+        "building",
+        "bldg",
+        "лот",
+        "lot",
+    )
+    for kw in priority:
+        for col in df.columns:
+            if kw in str(col).lower():
+                return col
+    return None
+
+
 def _find_first_column_matching_keywords(df, keywords: tuple):
     """
     Ищет колонку по ключевым словам в порядке приоритета: сначала более специфичные
@@ -2377,9 +2400,7 @@ def _apply_deviations_combined_filters(
     if df is None or getattr(df, "empty", True):
         return df
     if building_col is None:
-        building_col = _find_column_by_keywords(
-            df, ("building", "строение", "лот", "lot", "bldg")
-        )
+        building_col = _find_deviations_building_column(df)
     filtered_df = df.copy()
     if "project name" in filtered_df.columns:
         filtered_df = _project_column_apply_canonical(filtered_df, "project name")
@@ -2471,9 +2492,7 @@ def _apply_deviations_combined_filters(
 def _render_deviations_combined_shared_filters(df):
     ensure_msp_hierarchy_columns(df)
     inject_unified_filters_css(st)
-    building_col = _find_column_by_keywords(
-        df, ("building", "строение", "лот", "lot", "bldg")
-    )
+    building_col = _find_deviations_building_column(df)
     level_col = _deviations_effective_level_col(df)
     task_col = (
         "task name"
@@ -2730,11 +2749,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
     selected_project = "Все"
 
     if building_col is None:
-        building_col = _find_column_by_keywords(
-            df, ("building", "строение", "лот", "lot", "bldg")
-        )
-
-    # ТЗ: доли причин — по полной истории снимков CSV (до дедупликации), при наличии в session_state.
+        building_col = _find_deviations_building_column(df)
     if hide_shared_filters:
         snap = st.session_state.get("project_data_all_snapshots")
         if snap is not None and not getattr(snap, "empty", True):
@@ -2745,9 +2760,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             if building_col is None or (
                 building_col not in getattr(_snap_df, "columns", [])
             ):
-                building_col = _find_column_by_keywords(
-                    _snap_df, ("building", "строение", "лот", "lot", "bldg")
-                )
+                building_col = _find_deviations_building_column(_snap_df)
             df = _apply_deviations_combined_filters(_snap_df, building_col=building_col)
 
     if not hide_shared_filters:
@@ -3196,20 +3209,21 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         fig = apply_chart_background(fig)
         render_chart(fig, caption_below="")
 
-    # Подпись текущего проекта (макет правок); в комбинированном отчёте — из общих фильтров
+    # Подпись текущего проекта (макет правок); при «Все» не показываем — дублирует фильтр
     if hide_shared_filters:
         _pl = st.session_state.get("devcombo_project", "Все")
-        proj_lbl = str(_pl).strip() if _pl != "Все" else "Все проекты"
+        proj_lbl = str(_pl).strip() if _pl != "Все" else ""
     else:
         proj_lbl = (
             str(selected_project).strip()
             if selected_project != "Все"
-            else "Все проекты"
+            else ""
         )
-    st.markdown(
-        f"<div style='text-align:right;font-size:2.35rem;font-weight:700;color:#d8dee9;margin:1rem 0 0 0'>{html_module.escape(proj_lbl)}</div>",
-        unsafe_allow_html=True,
-    )
+    if proj_lbl:
+        st.markdown(
+            f"<div style='text-align:right;font-size:2.35rem;font-weight:700;color:#d8dee9;margin:1rem 0 0 0'>{html_module.escape(proj_lbl)}</div>",
+            unsafe_allow_html=True,
+        )
 
     # Детальная таблица по макету (п. 11): уровень 5, причина заполнена, отклонение окончания < 0
     st.subheader("Детальные данные")
@@ -4699,9 +4713,7 @@ def dashboard_plan_fact_dates(df):
                     return col
         return None
 
-    dates_building_col = _find_column_by_keywords(
-        df, ("building", "строение", "лот", "lot", "bldg")
-    )
+    dates_building_col = _find_deviations_building_column(df)
     dates_pct_col = _find_first_column_matching_keywords(
         df,
         (
@@ -8495,9 +8507,29 @@ def dashboard_budget_by_period(df):
         elif _bdc_fmt.empty:
             st.info("Нет строк для сводной таблицы по выбранным фильтрам.")
         else:
+            def _bdds_period_total_disp() -> str:
+                if _bdds_cal_start is not None and _bdds_cal_end is not None:
+                    try:
+                        _s = pd.Timestamp(_bdds_cal_start).date()
+                        _e = pd.Timestamp(_bdds_cal_end).date()
+                        return f"{_s.strftime('%d.%m.%Y')} — {_e.strftime('%d.%m.%Y')}"
+                    except Exception:
+                        pass
+                if not budget_summary.empty and "period_original" in budget_summary.columns:
+                    try:
+                        _po = budget_summary["period_original"].dropna()
+                        if not _po.empty:
+                            _p_min, _p_max = _po.min(), _po.max()
+                            _fm = format_period_ru(_p_min)
+                            _fx = format_period_ru(_p_max)
+                            return _fm if _fm == _fx else f"{_fm} — {_fx}"
+                    except Exception:
+                        pass
+                return ""
+
             _tot_vals_fmt: dict = {
                 "Проект": "ИТОГО",
-                "_per_disp": "",
+                "_per_disp": _bdds_period_total_disp(),
                 "_row_kind": "total",
             }
             for _k, _v in _tot_raw.items():
@@ -9538,6 +9570,8 @@ def dashboard_bdr(df):
             )
             return
 
+    _bdr_cal_start = None
+    _bdr_cal_end = None
     # Как БДДС: период / проект / год — список проектов из MSP; год после фильтра по проекту.
     with filters_panel(st):
         col1, col2, col3 = st.columns(3)
@@ -9696,6 +9730,8 @@ def dashboard_bdr(df):
                             (_pe_series_bdr >= _bdr_from)
                             & (_pe_series_bdr <= (_bdr_to + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)))
                         ].copy()
+                        _bdr_cal_start = _bdr_from
+                        _bdr_cal_end = _bdr_to
     
     if bdr_tz_mode:
         filtered_df["_plan_exp"] = _coerce_bdr_amount_series(filtered_df[plan_ec]).fillna(0.0)
@@ -10022,11 +10058,33 @@ def dashboard_bdr(df):
                 st.info("Нет данных для сводной таблицы по выбранным фильтрам.")
                 return
 
+            def _bdr_tz_period_total_disp(_cdf: pd.DataFrame) -> str:
+                if _bdr_cal_start is not None and _bdr_cal_end is not None:
+                    try:
+                        _s = pd.Timestamp(_bdr_cal_start).date()
+                        _e = pd.Timestamp(_bdr_cal_end).date()
+                        return f"{_s.strftime('%d.%m.%Y')} — {_e.strftime('%d.%m.%Y')}"
+                    except Exception:
+                        pass
+                if not _cdf.empty and period_col in _cdf.columns:
+                    try:
+                        _po = _cdf[period_col].dropna()
+                        if not _po.empty:
+                            _p_min, _p_max = _po.min(), _po.max()
+                            _fm = format_period_ru(_p_min)
+                            _fx = format_period_ru(_p_max)
+                            return _fm if _fm == _fx else f"{_fm} — {_fx}"
+                    except Exception:
+                        pass
+                return ""
+
+            _tz_per_total = _bdr_tz_period_total_disp(chart_df)
+
             if view_type == "Накопительно":
                 _lr_tz = chart_df.iloc[-1]
                 tot_row_tz = {
-                    "Период": "ИТОГО",
-                    "Проект": "",
+                    "Период": _tz_per_total,
+                    "Проект": "ИТОГО",
                     "__rk": "total",
                     "План расходов": float(_lr_tz["План расходов"]),
                     "Факт расходов": float(_lr_tz["Факт расходов"]),
@@ -10035,8 +10093,8 @@ def dashboard_bdr(df):
             else:
                 _sums = chart_df[["План расходов", "Факт расходов", "Отклонение"]].sum()
                 tot_row_tz = {
-                    "Период": "ИТОГО",
-                    "Проект": "",
+                    "Период": _tz_per_total,
+                    "Проект": "ИТОГО",
                     "__rk": "total",
                     "План расходов": float(_sums["План расходов"]),
                     "Факт расходов": float(_sums["Факт расходов"]),
@@ -16088,6 +16146,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
     from dashboards.gdrs_resursi import (
         build_main_table,
         build_summary_table,
+        load_1c_dannye_article_maps,
         load_plan_aggregate,
         load_resursi_files,
     )
@@ -16098,7 +16157,11 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         st.header("График движения рабочей силы (техника)")
     else:
         st.header("ГДРС")
-    st.caption("Источник: ресурсы CSV + 1С Договоры/Справочники (snapshot на дату последнего файла ресурсов)")
+    st.caption(
+        "Источник: ресурсы CSV + 1С Договоры/Справочники (snapshot на дату последнего файла ресурсов). "
+        "Колонка «Вид работ»: при наличии `*dannye*.json` — «СтатьяОборотов» по совпадению договора "
+        "с «Наименование_Договора»; если строки разные — по паре «Проект» + «Контрагент» из того же файла."
+    )
 
     _inject_multiselect_ru_translations()
 
@@ -16186,6 +16249,15 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
     date_from = _pd.to_datetime(date_from)
     date_to = _pd.to_datetime(date_to)
 
+    _dannye_paths: list[_Path] = []
+    for _base in (web_dir, ai_dir):
+        if _base.is_dir():
+            for _pat in ("*dannye*.json", "*Dannye*.json"):
+                _dannye_paths.extend(_base.glob(_pat))
+    _by_dog, _by_pc = load_1c_dannye_article_maps(
+        sorted({_p.resolve() for _p in _dannye_paths if _p.is_file()})
+    )
+
     main_t = build_main_table(
         long_fact, plan,
         vid=sel_vid,
@@ -16193,6 +16265,8 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         projects=sel_projects or None,
         contractors=sel_contractors or None,
         only_with_plan=only_with_plan,
+        article_by_contract_norm=_by_dog if _by_dog else None,
+        article_by_project_contractor=_by_pc if _by_pc else None,
     )
     summary_t = build_summary_table(
         long_fact, plan,
@@ -16320,9 +16394,9 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         if "vid_raboty" in view.columns:
             vid_col = view["vid_raboty"].fillna("").astype(str)
             fallback = view["contract_name"].fillna("").astype(str)
-            view["Вид работы"] = [v if v else (f.split(" (")[0] if f else "—") for v, f in zip(vid_col, fallback)]
+            view["Вид работ"] = [v if v else (f.split(" (")[0] if f else "—") for v, f in zip(vid_col, fallback)]
         else:
-            view["Вид работы"] = view["contract_name"].fillna("").astype(str).apply(
+            view["Вид работ"] = view["contract_name"].fillna("").astype(str).apply(
                 lambda s: s if s else "—"
             )
         view["План"] = view["plan"].fillna(0).astype(int)
@@ -16335,7 +16409,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             view[dst] = view[src].fillna(0).astype(int)
 
         view["__kind__"] = view["row_kind"]
-        cols_order = ["Контрагент", "Вид работы", "План", "СКУД", "Отклонение",
+        cols_order = ["Контрагент", "Вид работ", "План", "СКУД", "Отклонение",
                       "1 неделя", "2 неделя", "3 неделя", "4 неделя", "5 неделя", "6 неделя",
                       "Отклонение %", "__kind__"]
         view = view[cols_order]
@@ -16381,7 +16455,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         head_html = (
             "<thead><tr style='background:#1f2630; color:#bbb;'>"
             + "".join(
-                f"<th style='padding:6px 8px; border-bottom:1px solid #333; text-align:{('right' if h not in ('Контрагент', 'Вид работы') else 'left')};'>{h}</th>"
+                f"<th style='padding:6px 8px; border-bottom:1px solid #333; text-align:{('right' if h not in ('Контрагент', 'Вид работ') else 'left')};'>{h}</th>"
                 for h in cols_order[:-1]
             )
             + "</tr></thead>"
@@ -16397,7 +16471,13 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
 
     # ---------- Таб 2: Динамика ----------
     with tabs[1]:
-        st.subheader("Динамика людей и техники")
+        if str(sel_vid).casefold() == "рабочие":
+            _dyn_title = "Динамика (люди)"
+        elif str(sel_vid).casefold() == "техника":
+            _dyn_title = "Динамика (техника)"
+        else:
+            _dyn_title = "Динамика людей и техники"
+        st.subheader(_dyn_title)
         agg_kind = st.radio(
             "Группировка", ["Неделя", "Месяц", "Год"], horizontal=True, index=0,
             key=f"gdrs_dyn_kind_{vid_locked or 'any'}",
@@ -16508,10 +16588,16 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                 fig2.add_bar(
                     name="План", x=chart_df["Контрагент"], y=chart_df["План"],
                     marker_color="#29b6f6",
+                    text=[f"{int(v)}" for v in chart_df["План"]],
+                    textposition="outside",
+                    textfont=dict(color="#cfe9fa", size=11),
                 )
                 fig2.add_bar(
                     name="Факт", x=chart_df["Контрагент"], y=chart_df["Факт"],
                     marker_color="#46d68a",
+                    text=[f"{int(v)}" for v in chart_df["Факт"]],
+                    textposition="outside",
+                    textfont=dict(color="#cfe9fa", size=11),
                 )
                 fig2.add_bar(
                     name="Отклонение (план − факт)",
@@ -16605,9 +16691,10 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                         labels=pie_df["Контрагент"],
                         values=pie_df["Факт"],
                         hole=0.0,
-                        textinfo="value+percent",
-                        textposition="inside",
+                        textinfo="label+value+percent",
+                        textposition="outside",
                         insidetextfont=dict(color="#fff", size=12),
+                        textfont=dict(color="#e0e0e0", size=11),
                         showlegend=True,
                     )])
                     fig3.update_layout(
@@ -17640,10 +17727,8 @@ def dashboard_debit_credit(df):
         _msg = _ks2_diag.get("reason") or "КС-2 = 0 (нет данных в 1С dannye)"
         st.info(f"Колонки «Выполнено (КС-2)», «Отклонение», «КС-2 − Аванс» и серый столбец «КС-2» не отображены: {_msg}.")
 
-    # Правки куратора 08.05.2026: фильтры в одну линию по ТЗ —
-    # Проект | Функциональный блок | Строения | Подрядчик | № договора | Период | Отображение.
-    # При отсутствии данных у каких-то фильтров (ФБ/Строения/Период/Отображение) — выводим
-    # отключённый плейсхолдер, чтобы каркас не «съезжал» при разной полноте данных.
+    # Правки куратора 08.05.2026 + выравнивание (12): фильтры в две строки —
+    # иначе подпись помощи у «Функциональный блок» увеличивает высоту колонки и ряд «пляшет».
     st.subheader("Фильтры")
     # Поиск опциональных колонок Функциональный блок / Строения в исходнике.
     fb_col = _find_col(
@@ -17670,15 +17755,15 @@ def dashboard_debit_credit(df):
             "building",
         ],
     )
-    fc_cols = st.columns(7, gap="small")
-    with fc_cols[0]:
+    row1 = st.columns(4, gap="small")
+    with row1[0]:
         if project_col and project_col in work.columns:
             all_projects = ["Все"] + _unique_project_labels_for_select(work[project_col])
             sel_project = st.selectbox("Проект", all_projects, key="debit_credit_project")
         else:
             sel_project = "Все"
             st.selectbox("Проект", ["—"], disabled=True, key="debit_credit_project_dis")
-    with fc_cols[1]:
+    with row1[1]:
         if fb_col and fb_col in work.columns:
             fb_opts = ["Все"] + sorted(
                 {str(v).strip() for v in work[fb_col].dropna().astype(str).tolist() if str(v).strip()}
@@ -17696,7 +17781,7 @@ def dashboard_debit_credit(df):
                     "Чтобы фильтр заработал, в 1С нужно дополнить выгрузку этим реквизитом."
                 ),
             )
-    with fc_cols[2]:
+    with row1[2]:
         if bld_col and bld_col in work.columns:
             bld_opts = ["Все"] + sorted(
                 {str(v).strip() for v in work[bld_col].dropna().astype(str).tolist() if str(v).strip()}
@@ -17714,24 +17799,25 @@ def dashboard_debit_credit(df):
                     "Чтобы фильтр заработал, в 1С нужно дополнить выгрузку этим реквизитом."
                 ),
             )
-    with fc_cols[3]:
+    with row1[3]:
         if contractor_col and contractor_col in work.columns:
             all_contractors = ["Все"] + sorted(work[contractor_col].dropna().astype(str).unique().tolist())
             sel_contractor = st.selectbox("Подрядчик", all_contractors, key="debit_credit_contractor")
         else:
             sel_contractor = "Все"
             st.selectbox("Подрядчик", ["—"], disabled=True, key="debit_credit_contractor_dis")
-    with fc_cols[4]:
+    row2 = st.columns(3, gap="small")
+    with row2[0]:
         if contract_col:
             all_contracts = ["Все"] + sorted(work[contract_col].dropna().astype(str).unique().tolist())
             sel_contract = st.selectbox("№ договора", all_contracts, key="debit_credit_contract")
         else:
             sel_contract = "Все"
             st.selectbox("№ договора", ["—"], disabled=True, key="debit_credit_contract_dis")
-    with fc_cols[5]:
+    with row2[1]:
         # Период — пока без фильтрации (данные DK/Dogovor агрегированы), оставляем «Все».
         sel_period = st.selectbox("Период", ["Все"], key="debit_credit_period_dis")
-    with fc_cols[6]:
+    with row2[2]:
         sel_show = st.selectbox(
             "Отображение", ["Месяц", "Год", "Накопительно"], index=0, key="debit_credit_show"
         )
@@ -20741,7 +20827,9 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
 
     # Правки куратора 08.05.2026: перенесены графики из старого таба «Утверждённый бюджет»
     # в текущий «Утверждённый бюджет план/факт» (план/факт по месяцам + сводная таблица).
-    _render_approved_budget_monthly_block(df, selected_project)
+    # Месячный график/таблица — из того же среза, что и верхняя диаграмма (1С или MSP),
+    # иначе при синтетике из dannye остаётся сырой MSP «все проекты».
+    _render_approved_budget_monthly_block(filtered_df, selected_project)
 
 
 def _render_approved_budget_monthly_block(df: pd.DataFrame, selected_project: str) -> None:

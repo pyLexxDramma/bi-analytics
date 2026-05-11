@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import base64
 import copy
 import html as html_module
 import json
@@ -1283,8 +1284,13 @@ def _tessa_counts(ss: Any, project_name_hint: str = "") -> Tuple[str, str, str, 
         overdue_n = int(((dts.dt.normalize() < now) & dts.notna()).sum())
         if overdue_n:
             tail_hint = f"Просрочено (не устранено, срок прошёл): {overdue_n}"
-    # ТЗ: План = «Количество» (уник. cardId); Факт = «Не устранено»; Откл. = «Просрочено»
-    otkl_s = str(overdue_n) if (due_c and due_c in pred.columns and state_c and state_c in pred.columns) else "Н/Д"
+    # План = число уникальных предписаний; Факт = число не устранённых (не «подписано»).
+    # «Откл.» — отклонение по объёму: |План − Факт| (при равных План и Факт → 0), а не
+    # число просроченных (иначе при План=Факт=25 в колонке «Откл.» оказывалось 23 и т.п.).
+    try:
+        otkl_s = str(abs(int(n_cards) - int(n_open)))
+    except Exception:
+        otkl_s = "Н/Д"
     return str(n_cards), str(n_open), otkl_s, tail_hint
 
 
@@ -1303,7 +1309,15 @@ def _predpisaniya_combined(mdf: pd.DataFrame, ss: Any, project_name: str = "") -
             nov = int(str(to).strip())
         except (TypeError, ValueError):
             nov = 0
-        warn_t = nfu > 0 or nov > 0
+        _oh = 0
+        if hint and "Просрочено" in str(hint):
+            try:
+                _m = re.search(r"(\d+)\s*$", str(hint))
+                if _m:
+                    _oh = int(_m.group(1))
+            except Exception:
+                _oh = 0
+        warn_t = nfu > 0 or nov > 0 or _oh > 0
         return tp, tf, to, warn_t, hint
     return tp, tf, to, False, (hint or "Нет данных Tessa по предписаниям (tessa_tasks_data / tessa_data не загружены или без KindName).")
 
@@ -1567,6 +1581,8 @@ def build_dev_tz_matrix_rows(
     cap = ""
     if "project name" in mdf.columns and mdf["project name"].notna().any():
         cap = str(mdf["project name"].dropna().astype(str).iloc[0]).strip()
+    # Подпись блока (фильтр «Все» → по проектам): для TESSA/1С не брать случайный iloc[0].
+    scope_label = (plab or cap).strip()
 
     def _msp_row(
         phase: str,
@@ -1773,7 +1789,7 @@ def build_dev_tz_matrix_rows(
         return f"{v:.1f}".replace(".", ",")
 
     rk_ds = str(next(_rk))
-    pm, fm, om = _dev_matrix_bddds_totals_mln(ss, cap, project_data, mdf)
+    pm, fm, om = _dev_matrix_bddds_totals_mln(ss, scope_label, project_data, mdf)
     if pm is None:
         add_row(
             "Финансы",
@@ -1796,7 +1812,7 @@ def build_dev_tz_matrix_rows(
         )
 
     rk_tp = str(next(_rk))
-    tp, tf, to, warn_t, _tessa_hint = _predpisaniya_combined(mdf, ss, cap)
+    tp, tf, to, warn_t, _tessa_hint = _predpisaniya_combined(mdf, ss, scope_label)
     add_row(
         "ТЕССА",
         effective_title(rk_tp, "ПРЕДПИСАНИЯ"),
@@ -2090,7 +2106,7 @@ def build_dev_tz_matrix_rows(
     else:
         raise RuntimeError("_DEV_MATRIX_ROW_KEYS не совпадает с генерацией строк матрицы")
 
-    return rows, cap
+    return rows, scope_label or cap
 
 
 _DEV_TZ_MATRIX_CSS = """
@@ -2366,10 +2382,16 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
 """
 
 
-def _matrix_iframe_html_document(head_styles: str, scroll_block_inner: str) -> str:
+def _matrix_iframe_html_document(
+    head_styles: str,
+    scroll_block_inner: str,
+    *,
+    extra_body_suffix: str = "",
+) -> str:
     """
     Полный HTML-документ для st.components.v1.html: матрица + кнопка полноэкранного режима.
     ``scroll_block_inner`` — готовый блок с обёрткой (.dev-tz-matrix-wrap / .cp-table-wrap) и таблицей.
+    ``extra_body_suffix`` — доп. HTML/скрипты перед ``</body>`` (напр. поповер «Контрольные точки»).
     """
     return (
         '<!DOCTYPE html><html><head><meta charset="utf-8"><style>'
@@ -2384,6 +2406,7 @@ def _matrix_iframe_html_document(head_styles: str, scroll_block_inner: str) -> s
         + scroll_block_inner
         + "</div></div>"
         + _MATRIX_IFRAME_FULLSCREEN_SCRIPT
+        + (extra_body_suffix or "")
         + "</body></html>"
     )
 
@@ -3181,6 +3204,186 @@ def _control_points_split_groups(
     return chunks
 
 
+def _control_points_project_label_to_raw_names(mdf: pd.DataFrame) -> Dict[str, List[str]]:
+    """Как в build_control_points_df: подпись проекта → список исходных имён в колонке проекта."""
+    out: Dict[str, List[str]] = {}
+    pcol = _project_name_column(mdf)
+    if pcol is None or mdf is None or mdf.empty:
+        return out
+    work = mdf.copy()
+    raw_vals = work[pcol].dropna().astype(str).str.strip().unique().tolist()
+    key_to_raws: Dict[str, List[str]] = defaultdict(list)
+    for p in raw_vals:
+        key_to_raws[_control_points_project_group_key(p)].append(str(p).strip())
+    for gk, raws in key_to_raws.items():
+        raws_u = sorted(set(raws))
+        lab = _control_points_project_label(gk, raws_u)
+        out[lab] = raws_u
+    return out
+
+
+def _cp_detail_panel_inner_html(
+    hit: pd.DataFrame,
+    milestone_title: str,
+    *,
+    pct_scale_max: Any = None,
+) -> str:
+    """HTML фрагмент для модального окна: задачи MSP, попавшие под веху."""
+    esc = html_module.escape
+    title = esc(str(milestone_title or "").strip() or "Веха")
+    if hit is None or getattr(hit, "empty", True):
+        return (
+            f'<div class="cp-tip-hdr">{title}</div>'
+            f'<p class="cp-tip-empty">{esc("Нет строк MSP, попадающих под правило этой вехи.")}</p>'
+        )
+
+    tc = _task_name_col(hit)
+    rows_html: List[str] = []
+    for _, rr in hit.iterrows():
+        tnm = esc(str(rr.get(tc, "") or "")) if tc and tc in hit.columns else ""
+        be = rr.get("base end") if "base end" in hit.columns else None
+        pe = rr.get("plan end") if "plan end" in hit.columns else None
+        pbe = _fmt_date_ru(be)
+        ppe = _fmt_date_ru(pe)
+        pct_s = ""
+        if "pct complete" in hit.columns:
+            raw_pct = rr.get("pct complete")
+            try:
+                pv = _normalized_pct_0_100(raw_pct, pct_scale_max=pct_scale_max)
+            except Exception:
+                pv = None
+            if pv is not None:
+                pct_s = f"{pv:.0f}%"
+        rows_html.append(
+            "<tr>"
+            f"<td>{tnm}</td>"
+            f"<td>{esc(pbe)}</td>"
+            f"<td>{esc(ppe)}</td>"
+            f"<td>{esc(pct_s)}</td>"
+            "</tr>"
+        )
+    thead = (
+        "<tr>"
+        "<th>Задача</th><th>Базовое окончание</th><th>Окончание (факт)</th><th>% выполнения</th>"
+        "</tr>"
+    )
+    return (
+        f'<div class="cp-tip-hdr">{title}</div>'
+        f'<table class="cp-tip-tbl"><thead>{thead}</thead><tbody>'
+        + "".join(rows_html)
+        + "</tbody></table>"
+    )
+
+
+_CONTROL_POINTS_POPOVER_FRAGMENT = (
+    """
+<style>
+.cp-tip-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.58);z-index:2147483000;
+  display:none;align-items:center;justify-content:center;padding:max(10px,2vw);
+  box-sizing:border-box;-webkit-overflow-scrolling:touch}
+.cp-tip-overlay.is-open{display:flex!important}
+.cp-tip-panel{position:relative;width:min(1120px,96vw);max-height:min(92vh,900px);
+  display:flex;flex-direction:column;background:#0f141c;border:1px solid rgba(121,154,192,0.55);
+  border-radius:12px;box-shadow:0 18px 60px rgba(0,0,0,0.55);overflow:hidden}
+.cp-tip-toolbar{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;
+  gap:10px;padding:10px 12px;border-bottom:1px solid rgba(121,154,192,0.35);
+  background:linear-gradient(180deg,rgba(32,58,92,0.95),rgba(20,32,48,0.92))}
+.cp-tip-title{font:600 14px/1.2 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#eaf2fb}
+.cp-tip-close{box-sizing:border-box;width:34px;height:34px;margin:0;padding:0;border-radius:8px;
+  border:1px solid rgba(121,154,192,0.45);background:rgba(35,43,56,0.96);color:#e8eef5;cursor:pointer;font-size:18px;line-height:1}
+.cp-tip-close:hover{background:rgba(55,65,82,0.98)}
+.cp-tip-content{flex:1 1 auto;min-height:0;overflow:auto;padding:12px 14px;color:#e8eef5;font-size:12px}
+.cp-tip-hdr{font:700 13px/1.35 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#cfe9fa;margin:0 0 10px 0}
+.cp-tip-tbl{width:100%;border-collapse:separate;border-spacing:0}
+.cp-tip-tbl th,.cp-tip-tbl td{border:1px solid rgba(121,154,192,0.38);padding:6px 8px;text-align:left;vertical-align:top}
+.cp-tip-tbl th{background:#17314b;color:#eaf2fb;font-weight:700}
+.cp-tip-tbl tr:nth-child(even) td{background:rgba(255,255,255,0.02)}
+.cp-tip-empty{opacity:0.92;margin:0}
+.cp-status-hit{display:inline-flex;align-items:center;justify-content:center;min-width:28px;min-height:28px;
+  cursor:pointer;border-radius:6px;padding:2px}
+.cp-status-hit:hover,.cp-status-hit:focus-visible{outline:2px solid rgba(121,154,192,0.65);outline-offset:1px;background:rgba(121,154,192,0.08)}
+</style>
+<div id="cp-tip-overlay" class="cp-tip-overlay" aria-hidden="true">
+  <div class="cp-tip-panel" role="dialog" aria-modal="true">
+    <div class="cp-tip-toolbar">
+      <span class="cp-tip-title">Детализация по вехе</span>
+      <button type="button" class="cp-tip-close" id="cp-tip-close" title="Закрыть">×</button>
+    </div>
+    <div id="cp-tip-content" class="cp-tip-content"></div>
+  </div>
+</div>
+<script>
+(function(){
+  function padB64(s){ var p=s.length%4; if(!p) return s; return s+'===='.slice(p); }
+  function utf8FromB64(b64){
+    try{
+      b64=padB64(String(b64).replace(/-/g,'+').replace(/_/g,'/'));
+      var bin=atob(b64);
+      var bytes=new Uint8Array(bin.length);
+      for(var i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+      return new TextDecoder('utf-8').decode(bytes);
+    }catch(e){
+      return '<p class="cp-tip-empty">Не удалось открыть детализацию.</p>';
+    }
+  }
+  function openTip(html){
+    var ov=document.getElementById('cp-tip-overlay');
+    var bd=document.getElementById('cp-tip-content');
+    if(!ov||!bd) return;
+    bd.innerHTML=html;
+    ov.classList.add('is-open');
+    ov.setAttribute('aria-hidden','false');
+  }
+  function closeTip(){
+    var ov=document.getElementById('cp-tip-overlay');
+    if(!ov) return;
+    ov.classList.remove('is-open');
+    ov.setAttribute('aria-hidden','true');
+  }
+  function openFromEl(el){
+    var b64=el.getAttribute('data-cp-b64');
+    if(!b64) return;
+    openTip(utf8FromB64(b64));
+  }
+  document.addEventListener('click',function(e){
+    var t=e.target;
+    if(t&&t.id==='cp-tip-overlay'){ closeTip(); }
+  },true);
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape') closeTip();
+  },true);
+  document.addEventListener('click',function(e){
+    var x=e.target&&e.target.closest&&e.target.closest('#cp-tip-close');
+    if(x) closeTip();
+  },true);
+  document.addEventListener('click',function(e){
+    var el=e.target&&e.target.closest&&e.target.closest('.cp-status-hit');
+    if(!el) return;
+    e.preventDefault(); e.stopPropagation();
+    openFromEl(el);
+  },true);
+  document.addEventListener('keydown',function(e){
+    if(e.key!=='Enter'&&e.key!==' ') return;
+    var el=e.target&&e.target.closest&&e.target.closest('.cp-status-hit');
+    if(!el) return;
+    e.preventDefault();
+    openFromEl(el);
+  },true);
+  try{
+    if(window.matchMedia && window.matchMedia('(hover:hover) and (pointer:fine)').matches){
+      document.addEventListener('mouseenter',function(e){
+        var el=e.target&&e.target.closest&&e.target.closest('.cp-status-hit');
+        if(!el) return;
+        openFromEl(el);
+      },true);
+    }
+  }catch(_e){}
+})();
+</script>
+"""
+)
+
+
 def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> None:
     """Таблица «Контрольные точки проектов»: 3 блока по 4 вехи.
 
@@ -3192,6 +3395,8 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
     - В ячейке вехи остаются 3 колонки: План / Факт / Откл.
     - При `% выполнения ≠ 100%` значения — узким шрифтом (`cp-td-pct-narrow`).
     - При просрочке (Откл < 0) — красный текст `cp-otkl-late`.
+    - Индикатор ●: по клику/Enter (и на узком экране — по касанию) открывается
+      таблица задач MSP по вехе; на устройствах с hover — то же при наведении.
     """
     esc = html_module.escape
     if mdf is None or getattr(mdf, "empty", True):
@@ -3208,6 +3413,17 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
         st.warning("Нет строк проектов в данных MSP.")
         return
     view = df.copy()
+    st.caption(
+        "Колонка ● у вехи: клик или Enter — таблица задач MSP по вехе; на ПК с мышью также "
+        "работает наведение (hover). На macOS Safari обычно надёжнее открывать по клику."
+    )
+    _proj_lab_to_raws = _control_points_project_label_to_raw_names(filtered_mdf)
+    pcol_cp = _project_name_column(filtered_mdf)
+    try:
+        _cp_pct_global_max = _pct_scale_max_from_frame(filtered_mdf)
+    except Exception:
+        _cp_pct_global_max = None
+    slug_kw_map = {s: (t, kw) for t, s, kw in get_control_point_milestones_effective()}
 
     ms_specs_full = [(t, s) for t, s, _k in get_control_point_milestones_effective()]
     groups = _control_points_split_groups(ms_specs_full)
@@ -3317,6 +3533,26 @@ html,body{margin:0;padding:0;background:transparent;overflow:hidden}
                     if m_ok
                     else "Просрочка: факт позже плана или нет дат."
                 )
+                if pcol_cp and pcol_cp in getattr(filtered_mdf, "columns", []):
+                    _raws = _proj_lab_to_raws.get(str(r.get("project", "")).strip(), [])
+                    sub_proj = filtered_mdf[
+                        filtered_mdf[pcol_cp].astype(str).str.strip().isin(_raws)
+                    ]
+                else:
+                    sub_proj = filtered_mdf
+                skel = slug_kw_map.get(slug)
+                if skel:
+                    mhit = _match_milestone_tasks(sub_proj, skel[1])
+                else:
+                    mhit = pd.DataFrame()
+                _detail_html = _cp_detail_panel_inner_html(
+                    mhit, _t, pct_scale_max=_cp_pct_global_max
+                )
+                _b64_attr = html_module.escape(
+                    base64.b64encode(_detail_html.encode("utf-8")).decode("ascii"),
+                    quote=True,
+                )
+                _tip = f"Таблица задач по вехе. {dot_al} Откройте кликом, Enter или наведением мыши."
                 status_extra = ""
                 if pct_inc:
                     status_extra = " cp-td-pct-narrow"
@@ -3324,8 +3560,10 @@ html,body{margin:0;padding:0;background:transparent;overflow:hidden}
                     f" {first_cls}" if first_cls else ""
                 ) + status_extra
                 cells.append(
-                    f'<td class="{status_cell_cls}" title="{esc(dot_al)}">'
-                    f'<span class="cp-status-dot {dot_cls}" role="img" aria-label="{esc(dot_al)}"></span></td>'
+                    f'<td class="{status_cell_cls}" title="{esc(_tip)}">'
+                    f'<span class="cp-status-hit" data-cp-b64="{_b64_attr}" tabindex="0" role="button" '
+                    f'aria-label="{esc(_tip)}">'
+                    f'<span class="cp-status-dot {dot_cls}" aria-hidden="true"></span></span></td>'
                 )
                 plan_parts: List[str] = []
                 fact_parts: List[str] = []
@@ -3354,7 +3592,11 @@ html,body{margin:0;padding:0;background:transparent;overflow:hidden}
         _scroll_block = (
             '<div class="rendered-table-wrap cp-table-wrap">' + html_tbl + "</div>"
         )
-        _iframe_html = _matrix_iframe_html_document(_head_styles, _scroll_block)
+        _iframe_html = _matrix_iframe_html_document(
+            _head_styles,
+            _scroll_block,
+            extra_body_suffix=_CONTROL_POINTS_POPOVER_FRAGMENT,
+        )
         _n_rows = len(view)
         # +20px на горизонтальный scrollbar (.cp-table-wrap::-webkit-scrollbar=10px) и поле topbar.
         _iframe_h = max(240, 130 + _n_rows * 38)
@@ -3385,6 +3627,20 @@ html,body{margin:0;padding:0;background:transparent;overflow:hidden}
 # одной сессии — кэшируем по «отпечатку» кадра + ключу проекта + версии prefs.
 
 _DEV_MATRIX_CACHE_KEY = "_dev_matrix_cache_v1"
+
+
+def _matrix_project_scope_tag(df: pd.DataFrame) -> str:
+    """Уникальный тег набора проектов в куске MSP — усиливает ключ кэша матрицы (обход ложных попаданий)."""
+    if df is None or getattr(df, "empty", True):
+        return ""
+    pc = _find_col(df, ["project name", "Проект", "Project", "проект"])
+    if not pc or pc not in df.columns:
+        return ""
+    try:
+        u = sorted({str(x).strip() for x in df[pc].dropna().astype(str).tolist() if str(x).strip()})
+        return "|".join(u)[:800]
+    except Exception:
+        return ""
 
 
 def _df_fingerprint(df: Optional[pd.DataFrame]) -> Tuple[Any, ...]:
@@ -3485,6 +3741,7 @@ def build_dev_tz_matrix_rows_cached(
     key = (
         "rows",
         _df_fingerprint(mdf),
+        _matrix_project_scope_tag(mdf),
         _df_fingerprint(project_data),
         str(project_label_for_scope or ""),
         _prefs_fingerprint(),

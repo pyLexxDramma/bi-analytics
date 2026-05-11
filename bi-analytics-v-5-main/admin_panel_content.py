@@ -556,126 +556,38 @@ def format_russian_datetime(dt_str):
 
         return dt_str
 
-# ┌──────────────────────────────────────────────────────────────────────────┐ #
 
-def render_admin_panel_tabs(user: dict) -> None:
-    """Скрипт автоскролла вкладок + шесть вкладок админки."""
+# ── Админка: кэш справочников логов + изоляция вкладок (st.fragment) ─────────
 
-    # JavaScript для автоматического скролла к содержимому выбранной вкладки
-    st.markdown(
-        """
-        <script>
-        (function() {
-            function scrollToActiveTabContent() {
-                setTimeout(function() {
-                    // Находим активную панель вкладки (содержимое, не заголовок)
-                    const activePanel = document.querySelector('[role="tabpanel"][aria-hidden="false"]');
-                    if (!activePanel) return;
 
-                    // Находим первый значимый элемент контента внутри панели
-                    // Пропускаем заголовки вкладок и ищем реальное содержимое
-                    const contentElements = activePanel.querySelectorAll('div[data-testid="stVerticalBlock"] > div, h1, h2, h3, .stSubheader');
-                    let targetElement = null;
+@st.cache_data(ttl=45, show_spinner=False)
+def _cached_activity_log_filter_lists() -> tuple[list[str], list[str]]:
+    """Списки для фильтров вкладки «Логи»: один коннект к SQLite, короткий TTL."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        usernames = (
+            pd.read_sql_query(
+                "SELECT DISTINCT username FROM user_activity_logs ORDER BY username",
+                conn,
+            )["username"]
+            .astype(str)
+            .tolist()
+        )
+        actions = (
+            pd.read_sql_query(
+                "SELECT DISTINCT action FROM user_activity_logs ORDER BY action",
+                conn,
+            )["action"]
+            .astype(str)
+            .tolist()
+        )
+        return usernames, actions
+    finally:
+        conn.close()
 
-                    // Ищем первый элемент, который не является частью заголовка вкладки
-                    for (let i = 0; i < contentElements.length; i++) {
-                        const elem = contentElements[i];
-                        // Проверяем, что элемент не находится в заголовке вкладки
-                        if (!elem.closest('[data-baseweb="tab-list"]') &&
-                            !elem.closest('[data-baseweb="tab"]')) {
-                            targetElement = elem;
-                            break;
-                        }
-                    }
 
-                    // Если не нашли, используем саму панель, но с отступом
-                    if (!targetElement) {
-                        targetElement = activePanel;
-                    }
-
-                    // Вычисляем позицию с учетом отступа от верха
-                    const elementPosition = targetElement.getBoundingClientRect().top;
-                    const offsetPosition = elementPosition + window.pageYOffset - 100; // 100px отступ от верха
-
-                    // Плавный скролл
-                    window.scrollTo({
-                        top: offsetPosition,
-                        behavior: 'smooth'
-                    });
-                }, 200);
-            }
-
-            // Выполняем скролл при загрузке
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', scrollToActiveTabContent);
-            } else {
-                scrollToActiveTabContent();
-            }
-
-            // Отслеживаем клики по вкладкам
-            document.addEventListener('click', function(e) {
-                if (e.target.closest('[data-baseweb="tab"]')) {
-                    scrollToActiveTabContent();
-                }
-            });
-
-            // Отслеживаем изменения активной вкладки через MutationObserver
-            const observer = new MutationObserver(function(mutations) {
-                mutations.forEach(function(mutation) {
-                    if (mutation.type === 'attributes') {
-                        // Проверяем изменения aria-selected или aria-hidden
-                        if ((mutation.attributeName === 'aria-selected' &&
-                             mutation.target.getAttribute('aria-selected') === 'true') ||
-                            (mutation.attributeName === 'aria-hidden' &&
-                             mutation.target.getAttribute('aria-hidden') === 'false' &&
-                             mutation.target.getAttribute('role') === 'tabpanel')) {
-                            scrollToActiveTabContent();
-                        }
-                    }
-                });
-            });
-
-            // Наблюдаем за вкладками и панелями
-            setTimeout(function() {
-                const tabs = document.querySelectorAll('[data-baseweb="tab"]');
-                const panels = document.querySelectorAll('[role="tabpanel"]');
-
-                tabs.forEach(tab => {
-                    observer.observe(tab, {
-                        attributes: true,
-                        attributeFilter: ['aria-selected']
-                    });
-                });
-
-                panels.forEach(panel => {
-                    observer.observe(panel, {
-                        attributes: true,
-                        attributeFilter: ['aria-hidden']
-                    });
-                });
-            }, 500);
-        })();
-        </script>
-        """,
-        unsafe_allow_html=True,
-    )
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
-        [
-            "Пользователи",
-            "Статистика",
-            "Логи",
-            "Права доступа",
-            "Benchmark LLM",
-            "MSP: задача для метрик",
-        ]
-    )
-
-    # ┌──────────────────────────────────────────────────────────────────────┐ #
-    # │ ⊗ TAB 1: Управление пользователями ¤ Start                           │ #
-    # └──────────────────────────────────────────────────────────────────────┘ #
-
-    with tab1:
-
+@st.fragment
+def _admin_tab1_users_fragment(user: dict) -> None:
         st.markdown("<h2 class='Duquhununee'>Управление пользователями</h2>", unsafe_allow_html=True)
 
         # Список пользователей
@@ -916,8 +828,10 @@ def render_admin_panel_tabs(user: dict) -> None:
     # │ ⊗ TAB 2: Статистика ¤ Start                                          │ #
     # └──────────────────────────────────────────────────────────────────────┘ #
 
-    with tab2:
 
+
+@st.fragment
+def _admin_tab2_stats_fragment() -> None:
         st.markdown("<h2 class='Duquhununee'>Статистика системы</h2>", unsafe_allow_html=True)
 
         conn = sqlite3.connect(DB_PATH)
@@ -990,39 +904,25 @@ def render_admin_panel_tabs(user: dict) -> None:
     # │ ⊗ TAB 3: Логи действий ¤ Start                                       │ #
     # └──────────────────────────────────────────────────────────────────────┘ #
 
-    with tab3:
 
+
+@st.fragment
+def _admin_tab3_logs_fragment() -> None:
         st.markdown("<h2 class='Duquhununee'>Логи действий пользователей</h2>", unsafe_allow_html=True)
 
         # Фильтры
+        _u, _a = _cached_activity_log_filter_lists()
         col1, col2, col3 = st.columns(3)
         col4, col5 = st.columns(2)
 
         with col1:
-
-            conn = sqlite3.connect(DB_PATH)
-
-            usernames = pd.read_sql_query(
-                "SELECT DISTINCT username FROM user_activity_logs ORDER BY username",
-                conn
-            )["username"].tolist()
-
-            conn.close()
-
-            filter_username = st.selectbox("Фильтр по пользователю", ["Все"] + usernames)
+            filter_username = st.selectbox(
+                "Фильтр по пользователю",
+                ["Все"] + list(_u),
+            )
 
         with col2:
-
-            conn = sqlite3.connect(DB_PATH)
-
-            actions = pd.read_sql_query(
-                "SELECT DISTINCT action FROM user_activity_logs ORDER BY action",
-                conn
-            )["action"].tolist()
-
-            conn.close()
-
-            filter_action = st.selectbox("Фильтр по действию", ["Все"] + actions)
+            filter_action = st.selectbox("Фильтр по действию", ["Все"] + list(_a))
 
         with col3:
 
@@ -1101,7 +1001,10 @@ def render_admin_panel_tabs(user: dict) -> None:
     # │ ⊗ TAB 4: Права доступа к проектам ¤ Start                            │ #
     # └──────────────────────────────────────────────────────────────────────┘ #
 
-    with tab4:
+
+
+@st.fragment
+def _admin_tab4_access_fragment() -> None:
         st.markdown("<h2 class='Duquhununee'>Права доступа</h2>", unsafe_allow_html=True)
         st.info(
             "Разрезка прав по отдельным проектам отключена. "
@@ -1123,16 +1026,144 @@ def render_admin_panel_tabs(user: dict) -> None:
     # │ ⊗ TAB 5: Benchmark LLM ¤ Start                                       │ #
     # └──────────────────────────────────────────────────────────────────────┘ #
 
-    with tab5:
-        _render_benchmark_tab(user)
 
-    # ┌──────────────────────────────────────────────────────────────────────┐ #
-    # │ ⊗ TAB 5: Benchmark LLM ¤ End                                         │ #
-    # └──────────────────────────────────────────────────────────────────────┘ #
 
-    # ┌──────────────────────────────────────────────────────────────────────┐ #
-    # │ ⊗ TAB 6: MSP — задача для метрик отчёта «Отклонение от базового плана»│ #
-    # └──────────────────────────────────────────────────────────────────────┘ #
+@st.fragment
+def _admin_tab5_benchmark_fragment(user: dict) -> None:
+    _render_benchmark_tab(user)
 
-    with tab6:
+
+@st.fragment
+def _admin_tab6_msp_fragment(user: dict) -> None:
         _render_control_points_msp_tab(user)
+
+
+
+def render_admin_panel_tabs(user: dict) -> None:
+    """Скрипт автоскролла вкладок + шесть вкладок админки."""
+
+    # JavaScript для автоматического скролла к содержимому выбранной вкладки
+    st.markdown(
+        """
+        <script>
+        (function() {
+            function scrollToActiveTabContent() {
+                setTimeout(function() {
+                    // Находим активную панель вкладки (содержимое, не заголовок)
+                    const activePanel = document.querySelector('[role="tabpanel"][aria-hidden="false"]');
+                    if (!activePanel) return;
+
+                    // Находим первый значимый элемент контента внутри панели
+                    // Пропускаем заголовки вкладок и ищем реальное содержимое
+                    const contentElements = activePanel.querySelectorAll('div[data-testid="stVerticalBlock"] > div, h1, h2, h3, .stSubheader');
+                    let targetElement = null;
+
+                    // Ищем первый элемент, который не является частью заголовка вкладки
+                    for (let i = 0; i < contentElements.length; i++) {
+                        const elem = contentElements[i];
+                        // Проверяем, что элемент не находится в заголовке вкладки
+                        if (!elem.closest('[data-baseweb="tab-list"]') &&
+                            !elem.closest('[data-baseweb="tab"]')) {
+                            targetElement = elem;
+                            break;
+                        }
+                    }
+
+                    // Если не нашли, используем саму панель, но с отступом
+                    if (!targetElement) {
+                        targetElement = activePanel;
+                    }
+
+                    // Вычисляем позицию с учетом отступа от верха
+                    const elementPosition = targetElement.getBoundingClientRect().top;
+                    const offsetPosition = elementPosition + window.pageYOffset - 100; // 100px отступ от верха
+
+                    // Плавный скролл
+                    window.scrollTo({
+                        top: offsetPosition,
+                        behavior: 'smooth'
+                    });
+                }, 200);
+            }
+
+            // Выполняем скролл при загрузке
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', scrollToActiveTabContent);
+            } else {
+                scrollToActiveTabContent();
+            }
+
+            // Отслеживаем клики по вкладкам
+            document.addEventListener('click', function(e) {
+                if (e.target.closest('[data-baseweb="tab"]')) {
+                    scrollToActiveTabContent();
+                }
+            });
+
+            // Отслеживаем изменения активной вкладки через MutationObserver
+            const observer = new MutationObserver(function(mutations) {
+                mutations.forEach(function(mutation) {
+                    if (mutation.type === 'attributes') {
+                        // Проверяем изменения aria-selected или aria-hidden
+                        if ((mutation.attributeName === 'aria-selected' &&
+                             mutation.target.getAttribute('aria-selected') === 'true') ||
+                            (mutation.attributeName === 'aria-hidden' &&
+                             mutation.target.getAttribute('aria-hidden') === 'false' &&
+                             mutation.target.getAttribute('role') === 'tabpanel')) {
+                            scrollToActiveTabContent();
+                        }
+                    }
+                });
+            });
+
+            // Наблюдаем за вкладками и панелями
+            setTimeout(function() {
+                const tabs = document.querySelectorAll('[data-baseweb="tab"]');
+                const panels = document.querySelectorAll('[role="tabpanel"]');
+
+                tabs.forEach(tab => {
+                    observer.observe(tab, {
+                        attributes: true,
+                        attributeFilter: ['aria-selected']
+                    });
+                });
+
+                panels.forEach(panel => {
+                    observer.observe(panel, {
+                        attributes: true,
+                        attributeFilter: ['aria-hidden']
+                    });
+                });
+            }, 500);
+        })();
+        </script>
+        """,
+        unsafe_allow_html=True,
+    )
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+        [
+            "Пользователи",
+            "Статистика",
+            "Логи",
+            "Права доступа",
+            "Benchmark LLM",
+            "MSP: задача для метрик",
+        ]
+    )
+
+    # ┌──────────────────────────────────────────────────────────────────────┐ #
+    # │ ⊗ TAB 1: Управление пользователями ¤ Start                           │ #
+    # └──────────────────────────────────────────────────────────────────────┘ #
+
+    with tab1:
+        _admin_tab1_users_fragment(user)
+    with tab2:
+        _admin_tab2_stats_fragment()
+    with tab3:
+        _admin_tab3_logs_fragment()
+    with tab4:
+        _admin_tab4_access_fragment()
+    with tab5:
+        _admin_tab5_benchmark_fragment(user)
+    with tab6:
+        _admin_tab6_msp_fragment(user)
