@@ -53,7 +53,11 @@ def collect_contract_file_checks(load_result: dict[str, Any] | None) -> list[dic
             return ""
         t = str(target).lower()
         if "1c dannye" in t:
-            return "Положите `*_dannye.json` (UTF-8, массив объектов) с полями Сценарий/Сумма/Период."
+            return (
+                "Положите JSON оборотов 1С в web/: имя с `dannye` / `данные` / `1c_*`+«оборот|бюджет|бддс» "
+                "или любое имя `.json`, если внутри массив объектов с полями ТипСтатьи, Сценарий, "
+                "СтатьяОборотов, Сумма (UTF-8)."
+            )
         if "tessa task" in t:
             return "Положите `tessa_*_task.csv` (разделитель `;` или `,`) с CardID и полями статуса задачи."
         if "tessa id/rd" in t:

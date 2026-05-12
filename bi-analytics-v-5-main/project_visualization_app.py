@@ -5,6 +5,17 @@ from pathlib import Path
 _app_dir = Path(__file__).resolve().parent
 sys.path.insert(0, str(_app_dir))
 
+# .env до импорта auth/config (иначе при прямом ``streamlit run project_visualization_app.py`` корневой .env не читается).
+try:
+    from dotenv import load_dotenv as _pv_load_dotenv
+
+    _root_env = _app_dir.parent / ".env"
+    if _root_env.is_file():
+        _pv_load_dotenv(_root_env, override=False)
+    _pv_load_dotenv(_app_dir / ".env", override=True)
+except ImportError:
+    pass
+
 import streamlit as st
 import pandas as pd
 import os
@@ -1198,6 +1209,28 @@ def main():
                     return int(v)
                 except (TypeError, ValueError):
                     return None
+
+            # Выбор в session_state мог остаться на версии, которая уже не is_active
+            # (например после отката «бедной» success в get_active_version_id / web_loader).
+            _pick_align = _safe_int(st.session_state.get("web_version_pick_id"))
+            if (
+                active_id is not None
+                and _pick_align is not None
+                and int(_pick_align) != int(active_id)
+                and _pick_align in ids_ordered
+            ):
+                try:
+                    from web_schema import get_web_connection as _gwc_pick_align
+
+                    with _gwc_pick_align() as _conn_pa:
+                        _r_ia = _conn_pa.execute(
+                            "SELECT is_active FROM web_versions WHERE id=?",
+                            (int(_pick_align),),
+                        ).fetchone()
+                    if _r_ia is not None and int(_r_ia["is_active"] or 0) == 0:
+                        st.session_state["web_version_pick_id"] = int(active_id)
+                except Exception:
+                    pass
 
             _default_pick = (
                 int(active_id)

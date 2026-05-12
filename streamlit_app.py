@@ -20,6 +20,17 @@ if not _MAIN.is_file():
         f"Не найден {_MAIN}. Проверьте структуру репозитория на GitHub."
     )
 
+# Переменные для кнопки «ИИ помощник» и прочего: корневой .env (рядом с этим файлом),
+# затем .env в каталоге приложения (перекрывает корень). Иначе при запуске
+# ``streamlit run streamlit_app.py`` не подхватится только вложенный ``.env``.
+try:
+    from dotenv import load_dotenv as _load_dotenv
+
+    _load_dotenv(_ROOT / ".env", override=False)
+    _load_dotenv(_APP_DIR / ".env", override=True)
+except ImportError:
+    pass
+
 # Главной точкой входа остаётся этот файл; multipage-страницы Streamlit видит в
 # <корень>/pages/ — см. прокси рядом с этим скриптом (делегирование в bi-analytics-v-5-main/pages/).
 

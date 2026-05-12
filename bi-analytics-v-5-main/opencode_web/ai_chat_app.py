@@ -76,7 +76,7 @@ AI_SSH_PORT = int(os.getenv("AI_SSH_PORT", "22"))
 AI_SSH_USER = os.getenv("AI_SSH_USER", "").strip()
 AI_SSH_PASSWORD = os.getenv("AI_SSH_PASSWORD", "").strip()
 AI_OPENCODE_REMOTE_PORT = int(os.getenv("AI_OPENCODE_REMOTE_PORT", "4096"))
-AI_LOCAL_TUNNEL_PORT = int(os.getenv("AI_LOCAL_TUNNEL_PORT", "4096"))
+AI_LOCAL_TUNNEL_PORT = int(os.getenv("AI_LOCAL_TUNNEL_PORT", "0"))
 APP_LOGO_PATH = Path(__file__).resolve().parent / "logo.svg"
 
 XCA_THEME_CSS = """
@@ -199,16 +199,19 @@ def open_ssh_tunnel() -> SSHTunnelForwarder:
         "SSH tunnel: connecting",
         f"{AI_SSH_USER}@{AI_SSH_HOST}:{int(AI_SSH_PORT)} -> 127.0.0.1:{AI_OPENCODE_REMOTE_PORT}",
     )
+    # Локальный порт: 0 = выбрать свободный (на Windows фиксированный 4096 часто занят).
+    _local_port = AI_LOCAL_TUNNEL_PORT if AI_LOCAL_TUNNEL_PORT > 0 else 0
     forwarder = SSHTunnelForwarder(
         ssh_address_or_host=AI_SSH_HOST,
         ssh_port=int(AI_SSH_PORT),
         ssh_username=AI_SSH_USER,
         ssh_password=AI_SSH_PASSWORD,
         ssh_config_file=None,
+        ssh_proxy_enabled=False,
         allow_agent=False,
         host_pkey_directories=[],
         remote_bind_address=("127.0.0.1", AI_OPENCODE_REMOTE_PORT),
-        local_bind_address=("127.0.0.1", AI_LOCAL_TUNNEL_PORT),
+        local_bind_address=("127.0.0.1", _local_port),
     )
     try:
         forwarder.start()

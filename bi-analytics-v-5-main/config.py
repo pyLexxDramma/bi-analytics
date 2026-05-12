@@ -8,6 +8,51 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Dict, FrozenSet, List, Optional
 
+try:
+    from dotenv import load_dotenv as _load_dotenv
+except ImportError:  # pragma: no cover
+    _load_dotenv = None  # type: ignore[misc, assignment]
+
+
+def _apply_simple_env_file(path: Path, *, override: bool) -> None:
+    """Минимальная подстановка KEY=VALUE из .env без пакета python-dotenv."""
+    if not path.is_file():
+        return
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].strip()
+        if "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        if not key:
+            continue
+        val = val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+            val = val[1:-1]
+        if override or key not in os.environ:
+            os.environ[key] = val
+
+
+_APP_DIR = Path(__file__).resolve().parent
+_parent_env = _APP_DIR.parent / ".env"
+_local_env = _APP_DIR / ".env"
+if _load_dotenv is not None:
+    # Родительский .env (корень репо рядом с корневым streamlit_app.py), затем каталог приложения — второй перекрывает ключи.
+    if _parent_env.is_file():
+        _load_dotenv(_parent_env, override=False)
+    _load_dotenv(_local_env, override=True)
+else:
+    _apply_simple_env_file(_parent_env, override=False)
+    _apply_simple_env_file(_local_env, override=True)
+
 
 def switch_page_app(path: str) -> None:
     """
@@ -184,6 +229,25 @@ def is_dev_branch() -> bool:
     """Текущая git-ветка = ``dev`` (или содержит «dev» в начале/как префикс)."""
     br = _git_current_branch()
     return br == "dev" or br.startswith("dev/") or br.startswith("dev-")
+
+
+def get_ai_assistant_open_url() -> str:
+    """
+    URL страницы **XCA AI** (чат), открываемый из BI в **новой вкладке** браузера.
+
+    Задаётся отдельно от SSH-переменных сервиса ``opencode_web``: те нужны только
+    процессу чата (см. ``opencode_web/AI_INTEGRATION_GUIDE.md``), а здесь —
+    публичный ``https://…`` (или ``http://`` в LAN), по которому пользователь
+    реально открывает UI чата.
+
+    Приоритет ключей (первый непустой): ``AI_ASSISTANT_URL``, ``XCA_AI_CHAT_URL``,
+    ``AI_CHAT_PUBLIC_URL``.
+    """
+    for key in ("AI_ASSISTANT_URL", "XCA_AI_CHAT_URL", "AI_CHAT_PUBLIC_URL"):
+        u = _read_env_or_secret(key).strip()
+        if u:
+            return u
+    return ""
 
 
 def ignore_demo_data_files() -> bool:

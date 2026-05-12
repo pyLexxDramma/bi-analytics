@@ -115,6 +115,7 @@ test_*.py       # если это одноразовые тесты
 .env
 .env.*
 *.env
+env.txt
 *secret*
 *key*
 *password*

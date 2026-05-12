@@ -835,6 +835,25 @@ def _load_1c_json_spravochniki(filepath: Path) -> Optional[pd.DataFrame]:
         return None
 
 
+def _json_df_matches_1c_turnover_columns(df: Optional[pd.DataFrame]) -> bool:
+    """
+    True, если JSON — массив оборотов 1С в духе *_dannye.json (поля для БДДС-план/факт).
+    Используется, когда имя файла не попало под шаблоны _infer_file_type_by_name.
+    """
+    try:
+        from dashboards.finance_from_1c import _pick_col
+    except Exception:
+        return False
+    if df is None or getattr(df, "empty", True):
+        return False
+    return bool(
+        _pick_col(df, ("ТипСтатьи", "article_type", "Тип статьи"))
+        and _pick_col(df, ("Сценарий", "scenario"))
+        and _pick_col(df, ("СтатьяОборотов", "Статья оборотов", "article"))
+        and _pick_col(df, ("Сумма", "amount"))
+    )
+
+
 def _find_dannye_contractor_column(df: pd.DataFrame) -> Optional[str]:
     """Колонка контрагента в JSON «данные» 1С (обороты): Контрагент, Наименование…"""
     if df is None or df.empty:
@@ -1559,6 +1578,13 @@ def load_all_from_web() -> Dict:
                 # ── Определяем тип файла через ETL-парсер ──────────────────
                 # Сначала определяем тип по имени файла (не нужен DataFrame)
                 file_type_by_name = _infer_file_type_by_name(name)
+                name_lower = name.lower()
+                # JSON с «неузнаваемым» именем, но содержимым как обороты 1С (dannye):
+                # иначе _infer_file_type_by_name даёт skip и файл никогда не попадает в reference_1c_dannye.
+                if name_lower.endswith(".json") and file_type_by_name == "skip":
+                    probe = _load_1c_json_spravochniki(filepath)
+                    if _json_df_matches_1c_turnover_columns(probe):
+                        file_type_by_name = "budget_json"
 
                 # ── Особый случай: файлы ресурсов (multi-level header) ──────
                 if file_type_by_name == "resources":
@@ -1901,10 +1927,38 @@ def load_all_from_web() -> Dict:
         # Получалось, что клиент годами сидел на устаревшей версии,
         # хотя 26 из 27 файлов в новой выгрузке корректные.
         if status == "success":
-            cur.execute("UPDATE web_versions SET is_active=0")
-            cur.execute(
-                "UPDATE web_versions SET is_active=1 WHERE id=?", (version_id,)
+            # Не активировать «успешную», но более бедную выгрузку, если предыдущая
+            # success-версия содержит строго больше файлов И строк (как у partial ниже).
+            prev_success = cur.execute(
+                "SELECT id, files_count, rows_count FROM web_versions "
+                "WHERE status='success' AND id<>? ORDER BY id DESC LIMIT 1",
+                (version_id,),
+            ).fetchone()
+            curr_files = int(len(files))
+            curr_rows = int(total_rows or 0)
+            prev_files = int(prev_success["files_count"] or 0) if prev_success else 0
+            prev_rows = int(prev_success["rows_count"] or 0) if prev_success else 0
+            keep_prev = (
+                prev_success is not None
+                and curr_files < prev_files
+                and curr_rows < prev_rows
             )
+            cur.execute("UPDATE web_versions SET is_active=0")
+            if keep_prev:
+                cur.execute(
+                    "UPDATE web_versions SET is_active=1 WHERE id=?",
+                    (int(prev_success["id"]),),
+                )
+                result.setdefault("warnings", []).append(
+                    f"Версия {version_id} загружена как success, но НЕ сделана активной: "
+                    f"меньше данных, чем версия id={prev_success['id']} "
+                    f"({curr_files}/{prev_files} файлов в скане, {curr_rows}/{prev_rows} строк). "
+                    f"Активной оставлена прежняя полная выгрузка. Выберите новую версию вручную в «Версия данных», если это снимок нужен."
+                )
+            else:
+                cur.execute(
+                    "UPDATE web_versions SET is_active=1 WHERE id=?", (version_id,)
+                )
         else:
             prev_success = cur.execute(
                 "SELECT id, files_count, rows_count FROM web_versions "

@@ -16,8 +16,9 @@ import string
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import streamlit as st
+from html import escape as _html_escape_attr
 
-from config import DB_PATH, switch_page_app
+from config import DB_PATH, get_ai_assistant_open_url, switch_page_app
 
 # Роли пользователей
 ROLES = {
@@ -814,6 +815,23 @@ def render_sidebar_menu(current_page: str = "reports"):
         )
         # Меню навигации
         st.markdown("### Меню")
+        _ai_open = (get_ai_assistant_open_url() or "").strip()
+        if _ai_open and has_report_access(user["role"]):
+            if hasattr(st, "link_button"):
+                st.link_button(
+                    "ИИ помощник",
+                    _ai_open,
+                    width="stretch",
+                    help="Открывает чат XCA AI в новой вкладке браузера.",
+                    icon="🤖",
+                    key="sidebar_ai_assistant",
+                )
+            else:
+                st.markdown(
+                    f'<p><a href="{_html_escape_attr(_ai_open)}" target="_blank" rel="noopener noreferrer">🤖 ИИ помощник</a></p>',
+                    unsafe_allow_html=True,
+                )
+            st.markdown("---")
 
         # 1. Отчёты (отдельный визуальный блок от настроек)
         if has_report_access(user["role"]) and current_page != "reports":

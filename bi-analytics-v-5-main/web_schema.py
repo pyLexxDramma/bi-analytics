@@ -104,17 +104,39 @@ def get_active_version_id() -> int | None:
     1) явно помеченная `is_active=1` — но только если её статус `success`
        (чтобы случайно оставшаяся активной `partial`-версия не блокировала
         показ последней корректной загрузки);
+       Страховка: если активна последняя по id success, но она строго «беднее»
+       предыдущей success (меньше и files_count, и rows_count), возвращаем
+       предыдущую — исправляет уже записанные в БД случаи до правки web_loader.
     2) иначе — последняя `status='success'`;
     3) в крайнем случае — последняя любая (включая `partial`).
     """
     with get_web_connection() as conn:
         cur = conn.cursor()
         row = cur.execute(
-            "SELECT id, status FROM web_versions WHERE is_active = 1 "
+            "SELECT id, status, files_count, rows_count FROM web_versions WHERE is_active = 1 "
             "ORDER BY id DESC LIMIT 1"
         ).fetchone()
         if row and row["status"] == "success":
-            return row["id"]
+            aid = int(row["id"])
+            max_s = cur.execute(
+                "SELECT id, files_count, rows_count FROM web_versions "
+                "WHERE status='success' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            if max_s and int(max_s["id"]) == aid:
+                prev = cur.execute(
+                    "SELECT id, files_count, rows_count FROM web_versions "
+                    "WHERE status='success' AND id < ? ORDER BY id DESC LIMIT 1",
+                    (aid,),
+                ).fetchone()
+                if prev:
+                    af, ar = int(row["files_count"] or 0), int(row["rows_count"] or 0)
+                    pf, pr = int(prev["files_count"] or 0), int(prev["rows_count"] or 0)
+                    if af < pf and ar < pr:
+                        pid = int(prev["id"])
+                        cur.execute("UPDATE web_versions SET is_active=0")
+                        cur.execute("UPDATE web_versions SET is_active=1 WHERE id=?", (pid,))
+                        return pid
+            return aid
         last_success = cur.execute(
             "SELECT id FROM web_versions WHERE status='success' "
             "ORDER BY id DESC LIMIT 1"
