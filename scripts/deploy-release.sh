@@ -17,13 +17,22 @@ git fetch origin
 git checkout release
 git pull --ff-only origin release
 
-if [[ -x .venv/bin/pip ]]; then
+if [[ -x .venv/bin/python ]]; then
+  if ! .venv/bin/python -m pip --version &>/dev/null; then
+    curl -fsSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip-gha.py
+    .venv/bin/python /tmp/get-pip-gha.py --no-warn-script-location
+    rm -f /tmp/get-pip-gha.py
+  fi
+  .venv/bin/python -m pip install --quiet -r requirements.txt
+elif [[ -x .venv/bin/pip ]]; then
   .venv/bin/pip install --quiet -r requirements.txt
-elif command -v python3 >/dev/null 2>&1; then
+elif python3 -m pip --version &>/dev/null; then
   python3 -m pip install --quiet -r requirements.txt
 else
-  echo "ERROR: нет .venv/bin/pip и нет python3" >&2
-  exit 1
+  curl -fsSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip-gha.py
+  python3 /tmp/get-pip-gha.py --user --no-warn-script-location
+  rm -f /tmp/get-pip-gha.py
+  python3 -m pip install --quiet -r requirements.txt
 fi
 
 systemctl --user restart "${UNIT}"
