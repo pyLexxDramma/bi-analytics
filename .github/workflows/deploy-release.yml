@@ -4,9 +4,9 @@
 #   DEPLOY_HOST       — 94.141.105.174 (или DNS)
 #   DEPLOY_USER       — dashai
 #   DEPLOY_SSH_KEY    — приватный ключ (полный PEM), пара публичного в ~/.ssh/authorized_keys на сервере
-#   DEPLOY_SSH_KEY_PASSPHRASE — обязателен, если приватный ключ с паролем (имя секрета без опечаток)
-#   DEPLOY_SSH_PORT   — опционально, например 2299 (если не 22)
-#   DEPLOY_APP_DIR    — опционально, по умолчанию на сервере: ~/apps/bi-analytics
+#   DEPLOY_SSH_KEY_PASSPHRASE — если ключ с паролем; для CI лучше отдельный ключ без пароля
+#   DEPLOY_SSH_PORT   — опционально, если не 22
+#   DEPLOY_APP_DIR    — опционально, по умолчанию: $HOME/apps/bi-analytics
 #
 name: Deploy release
 
@@ -19,7 +19,6 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      # Иначе первый SSH с runner падает на проверке host key (~20–30 с).
       - name: Add SSH host key
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
@@ -31,6 +30,8 @@ jobs:
           chmod 644 ~/.ssh/known_hosts
 
       - name: SSH deploy
+        env:
+          REMOTE_APP_DIR: ${{ secrets.DEPLOY_APP_DIR }}
         uses: appleboy/ssh-action@v1.2.4
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -39,8 +40,18 @@ jobs:
           passphrase: ${{ secrets.DEPLOY_SSH_KEY_PASSPHRASE }}
           port: ${{ secrets.DEPLOY_SSH_PORT || 22 }}
           command_timeout: 20m
-          script_stop: true
+          envs: REMOTE_APP_DIR
           script: |
             set -euo pipefail
-            export DEPLOY_APP_DIR="${{ secrets.DEPLOY_APP_DIR }}"
-            bash "${HOME}/apps/bi-analytics/scripts/deploy-release.sh"
+            APP_DIR="${REMOTE_APP_DIR:-$HOME/apps/bi-analytics}"
+            UNIT="bi-analytics.service"
+            export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+            cd "$APP_DIR"
+            git fetch origin
+            git checkout release
+            git pull --ff-only origin release
+            if [[ -d .venv ]]; then source .venv/bin/activate; fi
+            pip install --quiet -r requirements.txt
+            systemctl --user restart "$UNIT"
+            systemctl --user is-active "$UNIT" >/dev/null
+            echo "Deploy OK: $(git rev-parse --short HEAD) in $APP_DIR"
