@@ -4,7 +4,7 @@
 #   DEPLOY_HOST       — 94.141.105.174 (или DNS)
 #   DEPLOY_USER       — dashai
 #   DEPLOY_SSH_KEY    — приватный ключ (полный PEM), пара публичного в ~/.ssh/authorized_keys на сервере
-#   DEPLOY_SSH_KEY_PASSPHRASE — если ключ с паролем; лучше отдельный ключ без пароля только для CI
+#   DEPLOY_SSH_KEY_PASSPHRASE — обязателен, если приватный ключ с паролем (имя секрета без опечаток)
 #   DEPLOY_SSH_PORT   — опционально, например 2299 (если не 22)
 #   DEPLOY_APP_DIR    — опционально, по умолчанию на сервере: ~/apps/bi-analytics
 #
@@ -31,7 +31,7 @@ jobs:
           chmod 644 ~/.ssh/known_hosts
 
       - name: SSH deploy
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.2.4
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
