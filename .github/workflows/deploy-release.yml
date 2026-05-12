@@ -12,11 +12,23 @@ name: Deploy release
 on:
   push:
     branches: [release]
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      # Иначе первый SSH с runner падает на проверке host key (~20–30 с).
+      - name: Add SSH host key
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
+        run: |
+          mkdir -p ~/.ssh
+          PORT="${DEPLOY_SSH_PORT:-22}"
+          ssh-keyscan -p "$PORT" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
       - name: SSH deploy
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -24,6 +36,7 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_SSH_PORT || 22 }}
+          command_timeout: 20m
           script_stop: true
           script: |
             set -euo pipefail
