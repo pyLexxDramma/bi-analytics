@@ -7,7 +7,7 @@
 #   DEPLOY_SSH_KEY_PASSPHRASE — если ключ с паролем; для CI лучше отдельный ключ без пароля
 #   DEPLOY_SSH_PORT   — опционально, если не 22
 #   DEPLOY_APP_DIR    — полный путь к клону на сервере (где streamlit_app.py). Если нет — по умолчанию $HOME/apps/bi-analytics
-#
+#   DEPLOY_SYSTEMD_UNIT — имя юнита (например bi-analytics.service) или skip|none — без перезапуска systemd
 name: Deploy release
 
 on:
@@ -32,6 +32,7 @@ jobs:
       - name: SSH deploy
         env:
           REMOTE_APP_DIR: ${{ secrets.DEPLOY_APP_DIR }}
+          REMOTE_SYSTEMD_UNIT: ${{ secrets.DEPLOY_SYSTEMD_UNIT }}
         uses: appleboy/ssh-action@v1.2.4
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -40,11 +41,11 @@ jobs:
           passphrase: ${{ secrets.DEPLOY_SSH_KEY_PASSPHRASE }}
           port: ${{ secrets.DEPLOY_SSH_PORT || 22 }}
           command_timeout: 20m
-          envs: REMOTE_APP_DIR
+          envs: REMOTE_APP_DIR,REMOTE_SYSTEMD_UNIT
           script: |
             set -euo pipefail
             APP_DIR="${REMOTE_APP_DIR:-$HOME/apps/bi-analytics}"
-            UNIT="bi-analytics.service"
+            UNIT="${REMOTE_SYSTEMD_UNIT:-bi-analytics.service}"
             export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
             if [[ ! -d "$APP_DIR" ]]; then
               echo "ERROR: каталог не существует: $APP_DIR"
@@ -72,6 +73,15 @@ jobs:
               rm -f /tmp/get-pip-gha.py
               python3 -m pip install --quiet -r requirements.txt
             fi
-            systemctl --user restart "$UNIT"
-            systemctl --user is-active "$UNIT" >/dev/null
+            if [[ "$UNIT" == "skip" || "$UNIT" == "none" ]]; then
+              echo "SKIP: systemctl (DEPLOY_SYSTEMD_UNIT=skip|none). Перезапустите приложение вручную."
+            else
+              LOAD="$(systemctl --user show "$UNIT" --property=LoadState --value 2>/dev/null || echo not-found)"
+              if [[ "$LOAD" == "not-found" ]]; then
+                echo "ERROR: unit не найден: $UNIT. Создайте ~/.config/systemd/user/$UNIT или задайте секрет DEPLOY_SYSTEMD_UNIT=skip."
+                exit 5
+              fi
+              systemctl --user restart "$UNIT"
+              systemctl --user is-active "$UNIT" >/dev/null
+            fi
             echo "Deploy OK: $(git rev-parse --short HEAD) in $APP_DIR"

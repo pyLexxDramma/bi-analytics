@@ -35,7 +35,16 @@ else
   python3 -m pip install --quiet -r requirements.txt
 fi
 
-systemctl --user restart "${UNIT}"
-systemctl --user is-active "${UNIT}" >/dev/null
+if [[ "$UNIT" == "skip" || "$UNIT" == "none" ]]; then
+  echo "SKIP: systemctl (DEPLOY_SYSTEMD_UNIT=skip|none)"
+else
+  LOAD="$(systemctl --user show "$UNIT" --property=LoadState --value 2>/dev/null || echo not-found)"
+  if [[ "$LOAD" == "not-found" ]]; then
+    echo "ERROR: unit не найден: $UNIT" >&2
+    exit 5
+  fi
+  systemctl --user restart "${UNIT}"
+  systemctl --user is-active "${UNIT}" >/dev/null
+fi
 
 echo "Deploy OK: $(git rev-parse --short HEAD) on $(hostname)"
