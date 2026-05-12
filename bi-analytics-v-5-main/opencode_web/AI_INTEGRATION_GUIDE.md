@@ -165,9 +165,9 @@ AI_ASSISTANT_URL=http://<хост-где-крутится-чат>:8501/
 | Приложение в Cloud | Main file path | Requirements (Advanced) |
 |--------------------|----------------|-------------------------|
 | **BI (дашборды)** | `streamlit_app.py` | по умолчанию корневой `requirements.txt` |
-| **XCA AI chat** | `bi-analytics-v-5-main/opencode_web/streamlit_app.py` | `requirements-opencode-chat.txt` (в корне репозитория) |
+| **XCA AI chat** | `bi-analytics-v-5-main/opencode_web/streamlit_app.py` | **`opencode_web/requirements.txt`** (рядом с entrypoint; Cloud находит его сам) **или** вручную `requirements-opencode-chat.txt` в корне, если в UI есть поле requirements |
 
-В настройках приложения чата в **Advanced** обязательно укажите этот файл requirements; иначе Cloud поставит только цепочку BI и при импорте будет **`ModuleNotFoundError: sshtunnel`**.
+В каталоге **`opencode_web/`** лежит **`requirements.txt`** с теми же пакетами, что **`requirements.web.txt`** (в т.ч. `sshtunnel`): Community Cloud сначала ищет зависимости **в папке entrypoint**, иначе подтянулся бы корневой `requirements.txt` от BI → **`ModuleNotFoundError: sshtunnel`**. Если в вашей версии Cloud есть **Advanced** при деплое — можно дополнительно указать файл requirements вручную.
 
 У каждого приложения свой URL вида `https://*.streamlit.app`. В **secrets** приложения BI задай `AI_ASSISTANT_URL` = **публичный URL второго приложения** (чата).
 
