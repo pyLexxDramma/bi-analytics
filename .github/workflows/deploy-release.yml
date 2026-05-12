@@ -6,7 +6,7 @@
 #   DEPLOY_SSH_KEY    — приватный ключ (полный PEM), пара публичного в ~/.ssh/authorized_keys на сервере
 #   DEPLOY_SSH_KEY_PASSPHRASE — если ключ с паролем; для CI лучше отдельный ключ без пароля
 #   DEPLOY_SSH_PORT   — опционально, если не 22
-#   DEPLOY_APP_DIR    — опционально, по умолчанию: $HOME/apps/bi-analytics
+#   DEPLOY_APP_DIR    — полный путь к клону на сервере (где streamlit_app.py). Если нет — по умолчанию $HOME/apps/bi-analytics
 #
 name: Deploy release
 
@@ -46,6 +46,11 @@ jobs:
             APP_DIR="${REMOTE_APP_DIR:-$HOME/apps/bi-analytics}"
             UNIT="bi-analytics.service"
             export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+            if [[ ! -d "$APP_DIR" ]]; then
+              echo "ERROR: каталог не существует: $APP_DIR"
+              echo "В GitHub → Settings → Secrets → Actions создайте DEPLOY_APP_DIR со значением полного пути к клону (pwd в каталоге с streamlit_app.py)."
+              exit 1
+            fi
             cd "$APP_DIR"
             git fetch origin
             git checkout release
