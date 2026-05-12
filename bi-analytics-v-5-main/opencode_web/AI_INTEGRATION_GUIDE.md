@@ -167,6 +167,8 @@ AI_ASSISTANT_URL=http://<хост-где-крутится-чат>:8501/
 | **BI (дашборды)** | `streamlit_app.py` | по умолчанию корневой `requirements.txt` |
 | **XCA AI chat** | `bi-analytics-v-5-main/opencode_web/streamlit_app.py` | `requirements-opencode-chat.txt` (в корне репозитория) |
 
+В настройках приложения чата в **Advanced** обязательно укажите этот файл requirements; иначе Cloud поставит только цепочку BI и при импорте будет **`ModuleNotFoundError: sshtunnel`**.
+
 У каждого приложения свой URL вида `https://*.streamlit.app`. В **secrets** приложения BI задай `AI_ASSISTANT_URL` = **публичный URL второго приложения** (чата).
 
 В **secrets** приложения чата задай переменные из раздела 3 (как минимум для удалённого OpenCode):

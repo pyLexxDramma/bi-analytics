@@ -1,0 +1,10 @@
+# Streamlit Community Cloud — приложение «XCA AI chat»
+# Advanced → Requirements file: requirements-opencode-chat.txt (в корне репо).
+# Зависимости перечислены явно: Cloud не всегда подхватывает -r к вложенному пути.
+streamlit>=1.44.0
+requests>=2.32.0
+pandas>=2.2.0
+matplotlib>=3.8.0
+python-dotenv>=1.0.1
+sshtunnel>=0.4.0
+paramiko>=3.4.0,<4.0.0
