@@ -1,0 +1,163 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <defs>
+    <style>
+      .pixel { shape-rendering: crispEdges; }
+    </style>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="400" height="400" fill="#1a1a1a" rx="24"/>
+  
+  <!-- Pixel grid brain/circuit icon -->
+  <!-- Top section -->
+  <rect class="pixel" x="160" y="60" width="16" height="16" fill="#888"/>
+  <rect class="pixel" x="176" y="60" width="16" height="16" fill="#aaa"/>
+  <rect class="pixel" x="192" y="60" width="16" height="16" fill="#ccc"/>
+  <rect class="pixel" x="208" y="60" width="16" height="16" fill="#aaa"/>
+  <rect class="pixel" x="224" y="60" width="16" height="16" fill="#888"/>
+  
+  <!-- Second row -->
+  <rect class="pixel" x="128" y="76" width="16" height="16" fill="#777"/>
+  <rect class="pixel" x="144" y="76" width="16" height="16" fill="#bbb"/>
+  <rect class="pixel" x="240" y="76" width="16" height="16" fill="#bbb"/>
+  <rect class="pixel" x="256" y="76" width="16" height="16" fill="#777"/>
+  
+  <!-- Third row -->
+  <rect class="pixel" x="112" y="92" width="16" height="16" fill="#999"/>
+  <rect class="pixel" x="272" y="92" width="16" height="16" fill="#999"/>
+  
+  <!-- Left column -->
+  <rect class="pixel" x="96" y="108" width="16" height="16" fill="#aaa"/>
+  <rect class="pixel" x="96" y="124" width="16" height="16" fill="#bbb"/>
+  <rect class="pixel" x="96" y="140" width="16" height="16" fill="#ccc"/>
+  <rect class="pixel" x="96" y="156" width="16" height="16" fill="#bbb"/>
+  <rect class="pixel" x="96" y="172" width="16" height="16" fill="#aaa"/>
+  
+  <!-- Right column -->
+  <rect class="pixel" x="288" y="108" width="16" height="16" fill="#aaa"/>
+  <rect class="pixel" x="288" y="124" width="16" height="16" fill="#bbb"/>
+  <rect class="pixel" x="288" y="140" width="16" height="16" fill="#ccc"/>
+  <rect class="pixel" x="288" y="156" width="16" height="16" fill="#bbb"/>
+  <rect class="pixel" x="288" y="172" width="16" height="16" fill="#aaa"/>
+  
+  <!-- Center cross/circuit pattern -->
+  <rect class="pixel" x="176" y="108" width="16" height="16" fill="#fff"/>
+  <rect class="pixel" x="192" y="108" width="16" height="16" fill="#eee"/>
+  <rect class="pixel" x="208" y="108" width="16" height="16" fill="#fff"/>
+  
+  <rect class="pixel" x="144" y="124" width="16" height="16" fill="#ddd"/>
+  <rect class="pixel" x="160" y="124" width="16" height="16" fill="#eee"/>
+  <rect class="pixel" x="192" y="124" width="16" height="16" fill="#fff"/>
+  <rect class="pixel" x="224" y="124" width="16" height="16" fill="#eee"/>
+  <rect class="pixel" x="240" y="124" width="16" height="16" fill="#ddd"/>
+  
+  <rect class="pixel" x="128" y="140" width="16" height="16" fill="#ccc"/>
+  <rect class="pixel" x="160" y="140" width="16" height="16" fill="#eee"/>
+  <rect class="pixel" x="176" y="140" width="16" height="16" fill="#fff"/>
+  <rect class="pixel" x="192" y="140" width="16" height="16" fill="#fff"/>
+  <rect class="pixel" x="208" y="140" width="16" height="16" fill="#fff"/>
+  <rect class="pixel" x="224" y="140" width="16" height="16" fill="#eee"/>
+  <rect class="pixel" x="256" y="140" width="16" height="16" fill="#ccc"/>
+  
+  <rect class="pixel" x="144" y="156" width="16" height="16" fill="#ddd"/>
+  <rect class="pixel" x="160" y="156" width="16" height="16" fill="#eee"/>
+  <rect class="pixel" x="192" y="156" width="16" height="16" fill="#fff"/>
+  <rect class="pixel" x="224" y="156" width="16" height="16" fill="#eee"/>
+  <rect class="pixel" x="240" y="156" width="16" height="16" fill="#ddd"/>
+  
+  <rect class="pixel" x="176" y="172" width="16" height="16" fill="#fff"/>
+  <rect class="pixel" x="192" y="172" width="16" height="16" fill="#eee"/>
+  <rect class="pixel" x="208" y="172" width="16" height="16" fill="#fff"/>
+  
+  <!-- Bottom arc -->
+  <rect class="pixel" x="112" y="188" width="16" height="16" fill="#999"/>
+  <rect class="pixel" x="272" y="188" width="16" height="16" fill="#999"/>
+  
+  <rect class="pixel" x="128" y="204" width="16" height="16" fill="#777"/>
+  <rect class="pixel" x="144" y="204" width="16" height="16" fill="#bbb"/>
+  <rect class="pixel" x="240" y="204" width="16" height="16" fill="#bbb"/>
+  <rect class="pixel" x="256" y="204" width="16" height="16" fill="#777"/>
+  
+  <rect class="pixel" x="160" y="220" width="16" height="16" fill="#888"/>
+  <rect class="pixel" x="176" y="220" width="16" height="16" fill="#aaa"/>
+  <rect class="pixel" x="192" y="220" width="16" height="16" fill="#ccc"/>
+  <rect class="pixel" x="208" y="220" width="16" height="16" fill="#aaa"/>
+  <rect class="pixel" x="224" y="220" width="16" height="16" fill="#888"/>
+  
+  <!-- Corner accent pixels -->
+  <rect class="pixel" x="144" y="108" width="8" height="8" fill="#666"/>
+  <rect class="pixel" x="248" y="108" width="8" height="8" fill="#666"/>
+  <rect class="pixel" x="144" y="172" width="8" height="8" fill="#666"/>
+  <rect class="pixel" x="248" y="172" width="8" height="8" fill="#666"/>
+  
+  <!-- Scanning line effect -->
+  <rect class="pixel" x="192" y="92" width="16" height="16" fill="#ddd" opacity="0.5"/>
+  <rect class="pixel" x="192" y="204" width="16" height="16" fill="#ddd" opacity="0.5"/>
+  
+  <!-- Text: XCA -->
+  <!-- X -->
+  <rect class="pixel" x="100" y="280" width="10" height="10" fill="#e0e0e0"/>
+  <rect class="pixel" x="130" y="280" width="10" height="10" fill="#e0e0e0"/>
+  <rect class="pixel" x="108" y="290" width="10" height="10" fill="#d0d0d0"/>
+  <rect class="pixel" x="122" y="290" width="10" height="10" fill="#d0d0d0"/>
+  <rect class="pixel" x="115" y="300" width="10" height="10" fill="#fff"/>
+  <rect class="pixel" x="108" y="310" width="10" height="10" fill="#d0d0d0"/>
+  <rect class="pixel" x="122" y="310" width="10" height="10" fill="#d0d0d0"/>
+  <rect class="pixel" x="100" y="320" width="10" height="10" fill="#e0e0e0"/>
+  <rect class="pixel" x="130" y="320" width="10" height="10" fill="#e0e0e0"/>
+  
+  <!-- C -->
+  <rect class="pixel" x="160" y="280" width="10" height="10" fill="#d0d0d0"/>
+  <rect class="pixel" x="170" y="280" width="10" height="10" fill="#e0e0e0"/>
+  <rect class="pixel" x="180" y="280" width="10" height="10" fill="#e0e0e0"/>
+  <rect class="pixel" x="150" y="290" width="10" height="10" fill="#e0e0e0"/>
+  <rect class="pixel" x="150" y="300" width="10" height="10" fill="#fff"/>
+  <rect class="pixel" x="150" y="310" width="10" height="10" fill="#e0e0e0"/>
+  <rect class="pixel" x="160" y="320" width="10" height="10" fill="#d0d0d0"/>
+  <rect class="pixel" x="170" y="320" width="10" height="10" fill="#e0e0e0"/>
+  <rect class="pixel" x="180" y="320" width="10" height="10" fill="#e0e0e0"/>
+  
+  <!-- A -->
+  <rect class="pixel" x="215" y="280" width="10" height="10" fill="#e0e0e0"/>
+  <rect class="pixel" x="225" y="280" width="10" height="10" fill="#fff"/>
+  <rect class="pixel" x="205" y="290" width="10" height="10" fill="#d0d0d0"/>
+  <rect class="pixel" x="235" y="290" width="10" height="10" fill="#d0d0d0"/>
+  <rect class="pixel" x="205" y="300" width="10" height="10" fill="#e0e0e0"/>
+  <rect class="pixel" x="215" y="300" width="10" height="10" fill="#e0e0e0"/>
+  <rect class="pixel" x="225" y="300" width="10" height="10" fill="#e0e0e0"/>
+  <rect class="pixel" x="235" y="300" width="10" height="10" fill="#e0e0e0"/>
+  <rect class="pixel" x="205" y="310" width="10" height="10" fill="#fff"/>
+  <rect class="pixel" x="235" y="310" width="10" height="10" fill="#fff"/>
+  <rect class="pixel" x="205" y="320" width="10" height="10" fill="#e0e0e0"/>
+  <rect class="pixel" x="235" y="320" width="10" height="10" fill="#e0e0e0"/>
+  
+  <!-- "AI" text -->
+  <!-- A -->
+  <rect class="pixel" x="268" y="286" width="8" height="8" fill="#888"/>
+  <rect class="pixel" x="276" y="286" width="8" height="8" fill="#999"/>
+  <rect class="pixel" x="260" y="294" width="8" height="8" fill="#777"/>
+  <rect class="pixel" x="284" y="294" width="8" height="8" fill="#777"/>
+  <rect class="pixel" x="260" y="302" width="8" height="8" fill="#888"/>
+  <rect class="pixel" x="268" y="302" width="8" height="8" fill="#888"/>
+  <rect class="pixel" x="276" y="302" width="8" height="8" fill="#888"/>
+  <rect class="pixel" x="284" y="302" width="8" height="8" fill="#888"/>
+  <rect class="pixel" x="260" y="310" width="8" height="8" fill="#999"/>
+  <rect class="pixel" x="284" y="310" width="8" height="8" fill="#999"/>
+  <rect class="pixel" x="260" y="318" width="8" height="8" fill="#888"/>
+  <rect class="pixel" x="284" y="318" width="8" height="8" fill="#888"/>
+  
+  <!-- I -->
+  <rect class="pixel" x="302" y="286" width="8" height="8" fill="#999"/>
+  <rect class="pixel" x="302" y="294" width="8" height="8" fill="#888"/>
+  <rect class="pixel" x="302" y="302" width="8" height="8" fill="#999"/>
+  <rect class="pixel" x="302" y="310" width="8" height="8" fill="#888"/>
+  <rect class="pixel" x="302" y="318" width="8" height="8" fill="#999"/>
+  
+  <!-- Decorative bottom line -->
+  <rect x="80" y="350" width="240" height="2" fill="#444" rx="1"/>
+  <rect x="120" y="356" width="160" height="1" fill="#333" rx="0.5"/>
+  
+  <!-- Small decorative pixels -->
+  <rect class="pixel" x="80" y="348" width="4" height="4" fill="#555"/>
+  <rect class="pixel" x="316" y="348" width="4" height="4" fill="#555"/>
+</svg>

@@ -1,0 +1,8 @@
+{
+  "name": "opencode-web-ui",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>XCA AI</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, Arial, sans-serif;
+      margin: 0;
+      background: #0f1115;
+      color: #e9eef6;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 300px 1fr;
+      height: 100vh;
+    }
+    .sidebar {
+      border-right: 1px solid #202632;
+      background: #11151d;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    .sidebar-header {
+      padding: 14px;
+      border-bottom: 1px solid #202632;
+      display: grid;
+      gap: 10px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #d94f4f;
+    }
+    .dot.ok { background: #28c76f; }
+    .small { opacity: 0.75; font-size: 12px; }
+    .session-list {
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      overflow: auto;
+    }
+    .session-item {
+      background: #151c26;
+      border: 1px solid #273246;
+      color: #d7e0ee;
+      width: 100%;
+      text-align: left;
+      border-radius: 10px;
+      padding: 10px 12px;
+      cursor: pointer;
+    }
+    .session-item:hover { border-color: #4069b9; }
+    .session-item.active {
+      border-color: #5f8ff0;
+      background: #1a2538;
+    }
+    .session-title {
+      display: block;
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 5px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .main {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      min-width: 0;
+    }
+    header {
+      padding: 12px 16px;
+      border-bottom: 1px solid #202632;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #121722;
+      gap: 10px;
+    }
+    #chat {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow: auto;
+    }
+    .msg {
+      max-width: min(900px, 90%);
+      padding: 10px 12px;
+      border: 1px solid #2a3446;
+      border-radius: 10px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .msg.user {
+      align-self: flex-end;
+      background: #173457;
+      border-color: #2d5f95;
+    }
+    .msg.ai {
+      align-self: flex-start;
+      background: #171d28;
+    }
+    footer {
+      padding: 12px 16px;
+      border-top: 1px solid #202632;
+      display: flex;
+      gap: 10px;
+      background: #121722;
+      align-items: flex-end;
+    }
+    textarea {
+      flex: 1;
+      min-height: 44px;
+      max-height: 180px;
+      resize: vertical;
+      background: #0f131b;
+      color: #e9eef6;
+      border: 1px solid #2a3446;
+      border-radius: 10px;
+      padding: 10px;
+      font: inherit;
+    }
+    button {
+      background: #2d6ded;
+      color: #fff;
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font: inherit;
+      white-space: nowrap;
+    }
+    button.secondary { background: #253246; }
+    button:disabled {
+      background: #2f3542;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="brand">
+        <span id="dot" class="dot"></span>
+        <span>XCA AI</span>
+      </div>
+      <button id="newSessionBtn">+ Новая сессия</button>
+      <div id="healthLabel" class="small">Проверка XCA AI...</div>
+    </div>
+    <div id="sessionList" class="session-list"></div>
+  </aside>
+
+  <main class="main">
+    <header>
+      <div>
+        <div><strong id="sessionTitle">Сессия не активна</strong></div>
+        <div id="sessionLabel" class="small">Ожидание создания сессии</div>
+      </div>
+      <button id="clearHistoryBtn" class="secondary">Очистить историю</button>
+    </header>
+
+    <div id="chat">
+      <div class="msg ai">Автосоздание сессии...</div>
+    </div>
+
+    <footer>
+      <textarea id="input" placeholder="Enter - отправить, Shift+Enter - новая строка"></textarea>
+      <button id="sendBtn" disabled>Отправить</button>
+    </footer>
+  </main>
+</div>
+
+<script>
+  const API_BASE = "/api/v1";
+  const STORAGE_KEY = "opencode-web-session-history-v1";
+  let sessionHistory = [];
+  let activeSessionKey = null;
+  let busy = false;
+
+  const dot = document.getElementById("dot");
+  const chat = document.getElementById("chat");
+  const input = document.getElementById("input");
+  const sendBtn = document.getElementById("sendBtn");
+  const newSessionBtn = document.getElementById("newSessionBtn");
+  const clearHistoryBtn = document.getElementById("clearHistoryBtn");
+  const sessionLabel = document.getElementById("sessionLabel");
+  const sessionTitle = document.getElementById("sessionTitle");
+  const healthLabel = document.getElementById("healthLabel");
+  const sessionList = document.getElementById("sessionList");
+
+  function getActiveSession() {
+    return sessionHistory.find((item) => item.localId === activeSessionKey) || null;
+  }
+
+  function saveHistory() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessionHistory));
+  }
+
+  function loadHistory() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+      return parsed
+        .filter((entry) => entry && typeof entry.localId === "string" && typeof entry.serverSessionId === "string")
+        .map((entry) => ({
+          localId: entry.localId,
+          serverSessionId: entry.serverSessionId,
+          title: typeof entry.title === "string" && entry.title.trim() ? entry.title : "Новая сессия",
+          createdAt: typeof entry.createdAt === "number" ? entry.createdAt : Date.now(),
+          messages: Array.isArray(entry.messages) ? entry.messages : []
+        }));
+    } catch {
+      return [];
+    }
+  }
+
+  function formatTime(value) {
+    return new Date(value).toLocaleString("ru-RU", {
+      hour: "2-digit",
+      minute: "2-digit",
+      day: "2-digit",
+      month: "2-digit"
+    });
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
+  }
+
+  function renderSessionList() {
+    sessionList.innerHTML = "";
+    if (sessionHistory.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "small";
+      empty.textContent = "История пока пуста.";
+      sessionList.appendChild(empty);
+      return;
+    }
+
+    for (const item of sessionHistory) {
+      const button = document.createElement("button");
+      button.className = "session-item" + (item.localId === activeSessionKey ? " active" : "");
+      button.type = "button";
+      button.dataset.localId = item.localId;
+      button.innerHTML = `
+        <span class="session-title">${escapeHtml(item.title)}</span>
+        <span class="small">${formatTime(item.createdAt)}</span>
+      `;
+      button.addEventListener("click", () => {
+        activeSessionKey = item.localId;
+        renderAll();
+      });
+      sessionList.appendChild(button);
+    }
+  }
+
+  function renderChat() {
+    const active = getActiveSession();
+    chat.innerHTML = "";
+    if (!active) {
+      const placeholder = document.createElement("div");
+      placeholder.className = "msg ai";
+      placeholder.textContent = "Нет активной сессии.";
+      chat.appendChild(placeholder);
+      return;
+    }
+
+    if (active.messages.length === 0) {
+      const hint = document.createElement("div");
+      hint.className = "msg ai";
+      hint.textContent = "Сессия создана автоматически. Напиши сообщение.";
+      chat.appendChild(hint);
+      return;
+    }
+
+    for (const msg of active.messages) {
+      const div = document.createElement("div");
+      div.className = `msg ${msg.role === "user" ? "user" : "ai"}`;
+      div.textContent = msg.text;
+      chat.appendChild(div);
+    }
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  function renderHeader() {
+    const active = getActiveSession();
+    if (!active) {
+      sessionTitle.textContent = "Сессия не активна";
+      sessionLabel.textContent = "Ожидание создания сессии";
+      return;
+    }
+    sessionTitle.textContent = active.title;
+    sessionLabel.textContent = `ID: ${active.serverSessionId.slice(0, 12)}...`;
+  }
+
+  function refreshSend() {
+    const active = getActiveSession();
+    sendBtn.disabled = !(active && input.value.trim().length > 0 && !busy);
+  }
+
+  function renderAll() {
+    renderSessionList();
+    renderHeader();
+    renderChat();
+    refreshSend();
+  }
+
+  function addMessage(session, role, text) {
+    session.messages.push({ role, text, ts: Date.now() });
+    if (role === "user" && session.title === "Новая сессия") {
+      const normalized = text.trim().replace(/\s+/g, " ");
+      session.title = normalized.slice(0, 40) || "Новая сессия";
+    }
+    saveHistory();
+  }
+
+  async function readJsonOrText(resp) {
+    const txt = await resp.text();
+    try {
+      return { json: JSON.parse(txt), text: txt };
+    } catch {
+      return { json: null, text: txt };
+    }
+  }
+
+  async function createSessionAndSelect() {
+    busy = true;
+    renderAll();
+    try {
+      const r = await fetch(`${API_BASE}/sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      const body = await readJsonOrText(r);
+      if (!r.ok) {
+        throw new Error(`Ошибка создания сессии (HTTP ${r.status}): ${body.text || "(empty body)"}`);
+      }
+
+      const sessionId = body.json?.data?.sessionId;
+      if (!sessionId) {
+        throw new Error("XCA AI вернул ответ без sessionId");
+      }
+
+      const model = {
+        localId: crypto.randomUUID(),
+        serverSessionId: String(sessionId),
+        title: "Новая сессия",
+        createdAt: Date.now(),
+        messages: []
+      };
+      sessionHistory.unshift(model);
+      activeSessionKey = model.localId;
+      saveHistory();
+      renderAll();
+      return model;
+    } finally {
+      busy = false;
+      renderAll();
+    }
+  }
+
+  input.addEventListener("input", refreshSend);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      if (!sendBtn.disabled) {
+        sendBtn.click();
+      }
+    }
+  });
+
+  newSessionBtn.addEventListener("click", async () => {
+    try {
+      await createSessionAndSelect();
+    } catch (error) {
+      const active = getActiveSession();
+      if (active) {
+        addMessage(active, "ai", `Не удалось создать сессию: ${error.message || String(error)}`);
+      } else {
+        chat.innerHTML = `<div class="msg ai">Не удалось создать сессию: ${error.message || String(error)}</div>`;
+      }
+      renderAll();
+    }
+  });
+
+  clearHistoryBtn.addEventListener("click", () => {
+    const shouldClear = window.confirm("Удалить всю локальную историю сессий из браузера?");
+    if (!shouldClear) {
+      return;
+    }
+    sessionHistory = [];
+    activeSessionKey = null;
+    saveHistory();
+    renderAll();
+    void ensureSession();
+  });
+
+  sendBtn.addEventListener("click", async () => {
+    const active = getActiveSession();
+    const message = input.value.trim();
+    if (!active || !message) {
+      return;
+    }
+
+    input.value = "";
+    busy = true;
+    addMessage(active, "user", message);
+    addMessage(active, "ai", "Думаю...");
+    renderAll();
+
+    try {
+      const encodedSessionId = encodeURIComponent(active.serverSessionId);
+      const r = await fetch(`${API_BASE}/chats/${encodedSessionId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message
+        })
+      });
+
+      const body = await readJsonOrText(r);
+      if (!r.ok) {
+        throw new Error(`Ошибка (HTTP ${r.status}): ${body.text || "(empty body)"}`);
+      }
+
+      const placeholderIndex = active.messages.length - 1;
+      active.messages[placeholderIndex] = {
+        role: "ai",
+        text: body.json?.data?.reply ?? "(пустой ответ)",
+        ts: Date.now()
+      };
+      saveHistory();
+      renderAll();
+    } catch (error) {
+      const placeholderIndex = active.messages.length - 1;
+      active.messages[placeholderIndex] = {
+        role: "ai",
+        text: `Ошибка: ${error.message || String(error)}`,
+        ts: Date.now()
+      };
+      saveHistory();
+      renderAll();
+    } finally {
+      busy = false;
+      renderAll();
+    }
+  });
+
+  async function checkHealth() {
+    try {
+      const r = await fetch(`${API_BASE}/health`);
+      if (r.ok) {
+        dot.classList.add("ok");
+        healthLabel.textContent = "XCA AI доступен";
+      } else {
+        healthLabel.textContent = "XCA AI недоступен";
+      }
+    } catch {
+      healthLabel.textContent = "XCA AI недоступен";
+    }
+  }
+
+  async function ensureSession() {
+    if (getActiveSession()) {
+      return;
+    }
+    await createSessionAndSelect();
+  }
+
+  async function init() {
+    sessionHistory = loadHistory();
+    activeSessionKey = sessionHistory[0]?.localId || null;
+    renderAll();
+    await checkHealth();
+    try {
+      await ensureSession();
+    } catch (error) {
+      chat.innerHTML = `<div class="msg ai">Ошибка автосоздания сессии: ${error.message || String(error)}</div>`;
+    }
+    renderAll();
+  }
+
+  void init();
+</script>
+</body>
+</html>

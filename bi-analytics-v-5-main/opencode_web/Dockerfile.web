@@ -1,0 +1,14 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+COPY requirements.web.txt ./
+RUN pip install --no-cache-dir -r requirements.web.txt
+
+COPY streamlit_app.py ./
+
+EXPOSE 4098
+CMD ["sh", "-c", "streamlit run streamlit_app.py --server.address=0.0.0.0 --server.port=${WEB_PORT:-4098} --browser.gatherUsageStats=false"]

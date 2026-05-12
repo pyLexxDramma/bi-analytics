@@ -1,0 +1,72 @@
+services:
+  opencode:
+    build:
+      context: .
+      dockerfile: Dockerfile.opencode
+    container_name: opencode
+    restart: unless-stopped
+    working_dir: /workspace
+    volumes:
+      # OpenCode state/cache/config (RW)
+      - opencode_config:/root/.config/opencode
+      - opencode_share:/root/.local/share/opencode
+      - opencode_state:/root/.local/state
+      - opencode_cache:/root/.cache
+
+      # Твой workspace (здесь лежит opencode.json)
+      - ./workspace:/workspace
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4096/global/health >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 4s
+      retries: 30
+    ports:
+      # Публикуем OpenCode только на loopback хоста для SSH-туннеля (снаружи не открыт).
+      - "127.0.0.1:${AI_OPENCODE_REMOTE_PORT:-4096}:4096"
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.webapi
+    container_name: opencode-web
+    restart: unless-stopped
+    environment:
+      - WEB_PORT=${WEB_PORT:-4098}
+      - OPENCODE_URL=http://opencode:4096
+      - WEB_AUTH_TOKEN=${WEB_AUTH_TOKEN:-}
+      - EMBED_ALLOWED_ORIGINS=${EMBED_ALLOWED_ORIGINS:-}
+    volumes:
+      - ./workspace:/workspace
+    ports:
+      # Публикуем только на loopback: доступ снаружи только через VPN/reverse-proxy на хосте.
+      - "127.0.0.1:${WEB_PORT:-4098}:4098"
+    depends_on:
+      opencode:
+        condition: service_healthy
+
+  # Streamlit UI: ходит напрямую в OpenCode (нужны prompt_async, /question и т.д.).
+  # Внешним сайтам используйте сервис web (API /api/v1), а не этот порт напрямую.
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: opencode-streamlit
+    restart: unless-stopped
+    environment:
+      - WEB_PORT=${STREAMLIT_PORT:-8501}
+      - OPENCODE_URL=http://opencode:4096
+      - WEB_AUTH_TOKEN=${WEB_AUTH_TOKEN:-}
+      - SESSIONS_DB_PATH=/workspace/analytics/sessions.db
+    volumes:
+      - ./workspace:/workspace
+    ports:
+      - "127.0.0.1:${STREAMLIT_PORT:-8501}:${STREAMLIT_PORT:-8501}"
+    depends_on:
+      opencode:
+        condition: service_healthy
+
+volumes:
+  opencode_config:
+  opencode_share:
+  opencode_state:
+  opencode_cache:
