@@ -1,0 +1,31 @@
+# Автодеплой при push в ветку release.
+#
+# Secrets (Settings → Secrets and variables → Actions):
+#   DEPLOY_HOST       — 94.141.105.174 (или DNS)
+#   DEPLOY_USER       — dashai
+#   DEPLOY_SSH_KEY    — приватный ключ (полный PEM), пара публичного в ~/.ssh/authorized_keys на сервере
+#   DEPLOY_SSH_PORT   — опционально, например 2299 (если не 22)
+#   DEPLOY_APP_DIR    — опционально, по умолчанию на сервере: ~/apps/bi-analytics
+#
+name: Deploy release
+
+on:
+  push:
+    branches: [release]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_SSH_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            export DEPLOY_APP_DIR="${{ secrets.DEPLOY_APP_DIR }}"
+            bash "${HOME}/apps/bi-analytics/scripts/deploy-release.sh"
