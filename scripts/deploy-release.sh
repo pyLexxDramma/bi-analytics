@@ -17,12 +17,14 @@ git fetch origin
 git checkout release
 git pull --ff-only origin release
 
-if [[ -d .venv ]]; then
-  # shellcheck source=/dev/null
-  source .venv/bin/activate
+if [[ -x .venv/bin/pip ]]; then
+  .venv/bin/pip install --quiet -r requirements.txt
+elif command -v python3 >/dev/null 2>&1; then
+  python3 -m pip install --quiet -r requirements.txt
+else
+  echo "ERROR: нет .venv/bin/pip и нет python3" >&2
+  exit 1
 fi
-
-pip install --quiet -r requirements.txt
 
 systemctl --user restart "${UNIT}"
 systemctl --user is-active "${UNIT}" >/dev/null

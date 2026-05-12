@@ -55,8 +55,14 @@ jobs:
             git fetch origin
             git checkout release
             git pull --ff-only origin release
-            if [[ -d .venv ]]; then source .venv/bin/activate; fi
-            pip install --quiet -r requirements.txt
+            if [[ -x .venv/bin/pip ]]; then
+              .venv/bin/pip install --quiet -r requirements.txt
+            elif command -v python3 >/dev/null 2>&1; then
+              python3 -m pip install --quiet -r requirements.txt
+            else
+              echo "ERROR: нет .venv/bin/pip и нет python3"
+              exit 1
+            fi
             systemctl --user restart "$UNIT"
             systemctl --user is-active "$UNIT" >/dev/null
             echo "Deploy OK: $(git rev-parse --short HEAD) in $APP_DIR"
