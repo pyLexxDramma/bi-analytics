@@ -5655,7 +5655,46 @@ def dashboard_plan_fact_dates(df):
                 _pfd3[pf_dates_block_filter_col].astype(str).str.strip()
                 == str(selected_block_dates).strip()
             ].copy()
+        # «Строение»: как в «Причины отклонений» — сначала L3 по plan-строкам ганта,
+        # затем MSP-колонка building/Строение; иначе запасные варианты (уровни/outline).
+        _l3_b_opts_pf: list[str] = []
         if (
+            pf_dates_level_col
+            and pf_dates_task_col
+            and pf_dates_level_col in _pfd3.columns
+            and pf_dates_task_col in _pfd3.columns
+        ):
+            _l3_b_opts_pf = _deviations_l3_building_option_labels(
+                _pfd3, pf_dates_level_col, pf_dates_task_col
+            )
+        _msp_bld_pf = _deviations_msp_gantt_style_building_col(_pfd3)
+
+        if _l3_b_opts_pf:
+            pf_dates_building_filter_mode = "l3_plan_slice"
+            pf_dates_building_filter_col = None
+            bopts = ["Все"] + _l3_b_opts_pf
+            selected_building_dates = st.selectbox(
+                "Строение",
+                bopts,
+                key="dates_building_l3_gantt",
+            )
+        elif _msp_bld_pf and _msp_bld_pf in _pfd3.columns:
+            pf_dates_building_filter_mode = "column"
+            pf_dates_building_filter_col = _msp_bld_pf
+            bopts = ["Все"] + sorted(
+                _pfd3[_msp_bld_pf]
+                .dropna()
+                .astype(str)
+                .str.strip()
+                .unique()
+                .tolist()
+            )
+            selected_building_dates = st.selectbox(
+                "Строение",
+                bopts,
+                key="dates_building_msp_col",
+            )
+        elif (
             pf_dates_building_col_res
             and pf_dates_building_col_res in _pfd3.columns
         ):
@@ -5672,7 +5711,7 @@ def dashboard_plan_fact_dates(df):
             selected_building_dates = st.selectbox(
                 "Строение",
                 bopts,
-                key="dates_building_msp_col",
+                key="dates_building_msp_res",
             )
         elif (
             pf_dates_level_col
@@ -5680,6 +5719,7 @@ def dashboard_plan_fact_dates(df):
             and pf_dates_level_col in pf_dates_work_proj.columns
         ):
             pf_dates_building_filter_mode = "l3_key"
+            pf_dates_building_filter_col = None
             _ln_g = _dev_outline_level_numeric(
                 pf_dates_work_proj[pf_dates_level_col]
             )
@@ -5745,6 +5785,8 @@ def dashboard_plan_fact_dates(df):
                 key="dates_building",
             )
         else:
+            pf_dates_building_filter_mode = "none"
+            pf_dates_building_filter_col = None
             selected_building_dates = "Все"
     _detail_unavailable_note = ""
     with fl_main4:
@@ -5951,8 +5993,13 @@ def dashboard_plan_fact_dates(df):
                 filtered_df[pf_dates_building_filter_col].astype(str).str.strip()
                 == str(selected_building_dates).strip()
             ]
+        elif pf_dates_building_filter_mode == "l3_plan_slice":
+            filtered_df = _deviations_filter_df_under_l3_building(
+                filtered_df, selected_building_dates
+            )
         elif (
-            _pf_lvl_col
+            pf_dates_building_filter_mode == "l3_key"
+            and _pf_lvl_col
             and _pf_task_col
             and "_dt_lvl3_key" in filtered_df.columns
         ):
