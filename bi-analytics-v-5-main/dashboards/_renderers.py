@@ -3851,6 +3851,14 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         filtered_df, ("note", "заметк", "comment", "remark", "notes")
     )
     work_m = table_reason_df.copy()
+    if "_dt_lvl3_key" not in work_m.columns or "_dt_lvl2_key" not in work_m.columns:
+        _lc_m = _dev_tasks_resolve_level_column(work_m)
+        _tc_m = (
+            "task name" if "task name" in work_m.columns
+            else find_column(work_m, ["Задача", "task", "Task Name", "Название"])
+        )
+        if _lc_m and _tc_m:
+            work_m = _dev_tasks_build_ancestor_keys(work_m, _lc_m, _tc_m)
     try:
         ensure_date_columns(work_m)
     except Exception:
@@ -3883,6 +3891,13 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         mask_l = _ln == 5
     mask_neg = work_m["_end_diff"].notna() & (work_m["_end_diff"] < 0)
     maket_df = work_m[mask_r & mask_l & mask_neg].copy()
+    _dd_key_cols = [c for c in ["project name", "task name", "plan end", "base end", "reason of deviation"] if c in maket_df.columns]
+    if _dd_key_cols and not maket_df.empty:
+        _dd_tmp = maket_df.copy()
+        for _ddc in _dd_key_cols:
+            _dd_tmp[_ddc] = _dd_tmp[_ddc].astype(str).str.strip()
+        _dd_mask = ~_dd_tmp.duplicated(subset=_dd_key_cols, keep="first")
+        maket_df = maket_df[_dd_mask.values].copy()
     maket_df = maket_df.sort_values("_end_diff", ascending=True)
 
     if maket_df.empty:
@@ -3900,7 +3915,8 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         _hdrs = ["№", "Проект"]
         if "block" in maket_df.columns:
             _hdrs.append("Функциональный блок")
-        if building_col and building_col in maket_df.columns:
+        _has_bld_data = (building_col and building_col in maket_df.columns) or ("_dt_lvl3_key" in maket_df.columns)
+        if _has_bld_data:
             _hdrs.append("Строение")
         _hdrs.extend(
             [
@@ -3922,11 +3938,13 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                 if "block" in maket_df.columns
                 else ""
             )
-            stv = (
-                _clean_display_str(rr.get(building_col))
-                if building_col and building_col in maket_df.columns
-                else ""
-            )
+            if not fb and "_dt_lvl2_key" in maket_df.columns:
+                fb = _clean_display_str(rr.get("_dt_lvl2_key"))
+            stv = ""
+            if "_dt_lvl3_key" in maket_df.columns:
+                stv = _clean_display_str(rr.get("_dt_lvl3_key"))
+            if not stv and building_col and building_col in maket_df.columns:
+                stv = _clean_display_str(rr.get(building_col))
             pe = rr.get("plan end")
             fe = rr.get("base end")
             ed = rr.get("_end_diff")
@@ -3945,7 +3963,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             _tbl_m.append(f"<td>{html_module.escape(pr)}</td>")
             if "block" in maket_df.columns:
                 _tbl_m.append(f"<td>{html_module.escape(fb)}</td>")
-            if building_col and building_col in maket_df.columns:
+            if _has_bld_data:
                 _tbl_m.append(f"<td>{html_module.escape(stv)}</td>")
             _tbl_m.append(
                 f'<td style="background:{_date_bg_m}">{html_module.escape(pe_s)}</td>'
@@ -5590,6 +5608,7 @@ def render_plan_fact_dates_metric_plates(
 # ==================== DASHBOARD 3: Plan/Fact Dates for Tasks ====================
 def dashboard_plan_fact_dates(df):
     st.header("Отклонение от базового плана")
+
     if df is None or not hasattr(df, "columns") or df.empty:
         st.warning("Нет данных для отображения. Загрузите файл с задачами MSP.")
         return
@@ -7397,13 +7416,22 @@ def dashboard_plan_fact_dates(df):
         else:
             task_show = _sanitize_eng_networks(_clean_display_str(row.get("task name")))
 
+        _fb_val = ""
+        if pf_dates_block_filter_col and pf_dates_block_filter_col in table_df.columns:
+            _fb_val = _clean_display_str(row.get(pf_dates_block_filter_col))
+        elif pf_dates_block_col_res and pf_dates_block_col_res in table_df.columns:
+            _fb_val = _clean_display_str(row.get(pf_dates_block_col_res))
+        if not _fb_val and "_dt_lvl2_key" in table_df.columns:
+            _fb_val = _clean_display_str(row.get("_dt_lvl2_key"))
+        _bld_val = ""
+        if "_dt_lvl3_key" in table_df.columns:
+            _bld_val = _clean_display_str(row.get("_dt_lvl3_key"))
+
         rec = {
             "Проект": _clean_display_str(row.get("project name")),
+            "Функциональный блок": _fb_val,
+            "Строение": _bld_val,
             "Задача": task_show,
-            # ТЗ заказчика 2026-05-06 (Блок 2):
-            # «Базовое X» = исходный план MSP (`base_*`); «X» = текущий план MSP (`plan_*`).
-            # Так совпадает со стандартной семантикой MSP и расчётом
-            # «Отклонение X = Базовое X − X» (отрицательное = опоздание).
             "Базовое начало": _format_date_cell(base_start),
             "Базовое окончание": _format_date_cell(base_end),
             "Начало": _format_date_cell(plan_start),
@@ -7431,6 +7459,12 @@ def dashboard_plan_fact_dates(df):
         summary_data.append(rec)
 
     summary_df = pd.DataFrame(summary_data)
+    _dedup_cols = [c for c in [
+        "Проект", "Задача", "Базовое начало", "Базовое окончание",
+        "Начало", "Окончание",
+    ] if c in summary_df.columns]
+    if _dedup_cols:
+        summary_df = summary_df.drop_duplicates(subset=_dedup_cols, keep="first").reset_index(drop=True)
     for col in (
         "Отклонение начала",
         "Отклонение окончания",
@@ -7469,6 +7503,10 @@ def dashboard_plan_fact_dates(df):
     #  Отклонение окончания | Базовая длительность | Длительность | Отклонение длительности».
     # «ID задачи» по ТЗ убран. Чекбоксы tbl_show_* оставлены: фолбэк для админ-режима.
     out_cols = ["Задача"] if selected_project != "Все" else ["Проект", "Задача"]
+    if "Функциональный блок" in summary_df.columns:
+        out_cols.append("Функциональный блок")
+    if "Строение" in summary_df.columns:
+        out_cols.append("Строение")
     out_cols.append("Базовое начало")
     out_cols.append("Начало")
     if tbl_show_start:
@@ -7489,13 +7527,26 @@ def dashboard_plan_fact_dates(df):
     out_cols = [c for c in out_cols if c in summary_df.columns]
     summary_df = summary_df[out_cols]
 
+    _col_short = {
+        "Функциональный блок": "Функц. блок",
+        "Базовое начало": "Баз. начало",
+        "Базовое окончание": "Баз. окончание",
+        "Отклонение начала": "Откл. начала",
+        "Отклонение окончания": "Откл. окончания",
+        "Базовая длительность": "Баз. длит.",
+        "Отклонение длительности": "Откл. длит.",
+        "Причина отклонения": "Причина откл.",
+    }
+    _rename_map = {k: v for k, v in _col_short.items() if k in summary_df.columns}
+    summary_df = summary_df.rename(columns=_rename_map)
+
     summary_numeric = summary_df.copy()
     summary_display = summary_df.copy()
     _int_day_cols = (
-        "Отклонение начала",
-        "Отклонение окончания",
-        "Отклонение длительности",
-        "Базовая длительность",
+        "Откл. начала",
+        "Откл. окончания",
+        "Откл. длит.",
+        "Баз. длит.",
         "Длительность",
     )
     for col in _int_day_cols:
@@ -7511,8 +7562,8 @@ def dashboard_plan_fact_dates(df):
             )
 
     _sort_default_col = (
-        "Отклонение окончания"
-        if "Отклонение окончания" in summary_numeric.columns
+        "Откл. окончания"
+        if "Откл. окончания" in summary_numeric.columns
         else (summary_numeric.columns[0] if len(summary_numeric.columns) else None)
     )
     _sort_col = _sort_default_col
@@ -7548,30 +7599,29 @@ def dashboard_plan_fact_dates(df):
 
     _dates_table_tooltips = {
         "Проект": "Название проекта из выгрузки MSP.",
-        "Задача": "Наименование задачи MSP или лот (режим «По лоту» — см. блок «Подписи на графике и в таблице»).",
-        "ID задачи": "Идентификатор задачи из выгрузки MSP (Task ID / Identifier / UID — что найдено в файле).",
-        "Базовое начало": "Плановая дата начала из MSP (колонка plan start / аналог).",
-        "Базовое окончание": "Плановая дата окончания из MSP (колонка plan end / аналог).",
-        "Начало": "Фактическая дата начала (base start / аналог).",
-        "Окончание": "Фактическая дата окончания (base end / аналог).",
-        "Отклонение начала": "В днях: base start − plan start (при наличии обеих дат).",
-        "Отклонение окончания": "В днях: base end − plan end (при наличии обеих дат).",
-        "Базовая длительность": "Плановая длительность задачи в днях (plan end − plan start).",
-        "Длительность": "Фактическая длительность задачи в днях (base end − base start).",
-        "Отклонение длительности": "Разница длительностей факт vs план (в днях).",
-        "Причина отклонения": "Поле причины отклонения из выгрузки MSP (если есть).",
-        "Заметки": "Заметки / комментарии из выгрузки MSP (если есть).",
+        "Задача": "Наименование задачи MSP.",
+        "Баз. начало": "Плановая дата начала из MSP.",
+        "Баз. окончание": "Плановая дата окончания из MSP.",
+        "Начало": "Фактическая дата начала.",
+        "Окончание": "Фактическая дата окончания.",
+        "Откл. начала": "В днях: base start − plan start.",
+        "Откл. окончания": "В днях: base end − plan end.",
+        "Баз. длит.": "Плановая длительность (дней).",
+        "Длительность": "Фактическая длительность (дней).",
+        "Откл. длит.": "Разница длительностей (дней).",
+        "Причина откл.": "Причина отклонения из MSP.",
+        "Заметки": "Заметки из MSP.",
     }
     _dates_column_role = {
-        "Базовое начало": "baseline",
-        "Базовое окончание": "baseline",
+        "Баз. начало": "baseline",
+        "Баз. окончание": "baseline",
         "Начало": "fact",
         "Окончание": "fact",
-        "Базовая длительность": "duration",
+        "Баз. длит.": "duration",
         "Длительность": "duration",
-        "Отклонение окончания": "dev",
-        "Отклонение начала": "dev",
-        "Отклонение длительности": "dev",
+        "Откл. окончания": "dev",
+        "Откл. начала": "dev",
+        "Откл. длит.": "dev",
     }
 
     # В режиме ковенантов узкая таблица «Ковенанты (таблица)» уже даёт сроки/отклонения по ковенантам;
@@ -7590,13 +7640,13 @@ def dashboard_plan_fact_dates(df):
         _styled = style_dataframe_for_dark_theme(summary_numeric)
 
         _teal_cols = [
-            c for c in ("Начало", "Базовое начало") if c in summary_numeric.columns
+            c for c in ("Начало", "Баз. начало") if c in summary_numeric.columns
         ]
         _cyan_cols = [
-            c for c in ("Окончание", "Базовое окончание") if c in summary_numeric.columns
+            c for c in ("Окончание", "Баз. окончание") if c in summary_numeric.columns
         ]
         _blue_cols = [
-            c for c in ("Базовая длительность", "Длительность") if c in summary_numeric.columns
+            c for c in ("Баз. длит.", "Длительность") if c in summary_numeric.columns
         ]
         try:
             if _teal_cols:
@@ -7649,9 +7699,9 @@ def dashboard_plan_fact_dates(df):
             # формула «Отклонение = Базовое − Текущее»: отрицательное → опоздание → красный.
             # Это применимо ко ВСЕМ трём столбцам отклонений (start/end/duration).
             for _dev_col in (
-                "Отклонение начала",
-                "Отклонение окончания",
-                "Отклонение длительности",
+                "Откл. начала",
+                "Откл. окончания",
+                "Откл. длит.",
             ):
                 if _dev_col in summary_numeric.columns:
                     _styled = _styled.apply(
@@ -7663,16 +7713,12 @@ def dashboard_plan_fact_dates(df):
         except Exception:
             pass
 
-        # R23-03 add-on: форматирование целых дней переносим в Styler.format,
-        # а НЕ в st.column_config.NumberColumn — column_config заставляет Streamlit
-        # рендерить колонку встроенным виджетом, который игнорирует background-color
-        # из Pandas Styler (именно поэтому заливки «не было видно»).
         _int_day_fmt_cols = [
             _c for _c in (
-                "Отклонение начала",
-                "Отклонение окончания",
-                "Отклонение длительности",
-                "Базовая длительность",
+                "Откл. начала",
+                "Откл. окончания",
+                "Откл. длит.",
+                "Баз. длит.",
                 "Длительность",
             ) if _c in summary_numeric.columns
         ]
