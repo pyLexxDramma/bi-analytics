@@ -15569,7 +15569,13 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         d = _gdrs_plan_fact_data_slice(pdf)
         if d is None or d.empty or "План_numeric" not in d.columns or "week_sum" not in d.columns:
             return None, None
-        plan_sum = float(pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0).sum())
+        _plan_per_c = pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0)
+        if "Контрагент" in d.columns:
+            _d_tmp = d[["Контрагент"]].copy()
+            _d_tmp["_pn"] = _plan_per_c
+            plan_sum = float(_d_tmp.groupby("Контрагент")["_pn"].max().sum())
+        else:
+            plan_sum = float(_plan_per_c.max())
         _ws_pf = pd.to_numeric(d["week_sum"], errors="coerce").fillna(0.0)
         fact_sum = float((_ws_pf / week_fact_den).sum())
         if plan_sum <= 0 and fact_sum <= 0:
@@ -15729,7 +15735,14 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         )
         fig_cf = apply_chart_background(fig_cf, skip_uniformtext=True)
 
-        plan_sum = float(pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0).sum()) if "План_numeric" in d.columns else 0.0
+        if "План_numeric" in d.columns and "Контрагент" in d.columns:
+            _dp = d[["Контрагент"]].copy()
+            _dp["_pn"] = pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0)
+            plan_sum = float(_dp.groupby("Контрагент")["_pn"].max().sum())
+        elif "План_numeric" in d.columns:
+            plan_sum = float(pd.to_numeric(d["План_numeric"], errors="coerce").fillna(0).max())
+        else:
+            plan_sum = 0.0
         fact_sum = float(by_c["_f"].sum())
         dev = plan_sum - fact_sum
         fp_pct = (fact_sum / plan_sum * 100.0) if plan_sum else None
@@ -15748,21 +15761,30 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
     # Сводные KPI по текущим фильтрам (PDF / docs 17 — суммы план/факт/отклонение).
     if "week_sum" in filtered_df.columns:
         _ws_kpi = pd.to_numeric(filtered_df["week_sum"], errors="coerce").fillna(0.0)
-        # Как в эталонной таблице ГДРС: «СКУД» = сумма недель по строке / 6, не сырая сумма недель.
         _kp_fact = float((_ws_kpi / week_fact_den).sum())
-        _kp_plan = (
-            float(pd.to_numeric(filtered_df["План_numeric"], errors="coerce").fillna(0.0).sum())
-            if "План_numeric" in filtered_df.columns
-            else 0.0
-        )
+        if "План_numeric" in filtered_df.columns and "Контрагент" in filtered_df.columns:
+            _kpi_tmp = filtered_df[["Контрагент"]].copy()
+            _kpi_tmp["_pn"] = pd.to_numeric(filtered_df["План_numeric"], errors="coerce").fillna(0.0)
+            _kp_plan = float(_kpi_tmp.groupby("Контрагент")["_pn"].max().sum())
+        elif "План_numeric" in filtered_df.columns:
+            _kp_plan = float(pd.to_numeric(filtered_df["План_numeric"], errors="coerce").fillna(0.0).max())
+        else:
+            _kp_plan = 0.0
         _kp_dev = _kp_plan - _kp_fact
+        _kp_dev_color = "#ff5454" if _kp_dev > 0 else ("#46d68a" if _kp_dev <= 0 else "#cccccc")
         _km1, _km2, _km3 = st.columns(3)
         with _km1:
             st.metric("План (сумма)", f"{int(round(_kp_plan))}")
         with _km2:
             st.metric("Факт (сумма)", f"{int(round(_kp_fact))}")
         with _km3:
-            st.metric("Отклонение (план − факт)", f"{int(round(_kp_dev))}")
+            _kp_dev_i = int(round(_kp_dev))
+            _kp_dev_txt = f"{_kp_dev_i:+d}" if _kp_dev_i != 0 else "0"
+            st.markdown(
+                f"<div><span style='color:#aaa;font-size:13px;'>Отклонение (план − факт)</span><br>"
+                f"<span style='font-size:24px;font-weight:700;color:{_kp_dev_color};'>{_kp_dev_txt}</span></div>",
+                unsafe_allow_html=True,
+            )
 
     # Референсная таблица ГДРС: проект -> контрагент -> вид работ.
     # По PDF: Отклонение = План − Факт (Факт ≈ СКУД / недели по методике экрана).
@@ -15890,7 +15912,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             if _work_type_col and _work_type_col in _tbl.columns:
                 _group_cols.append(_work_type_col)
 
-            _agg = {"_plan_ref_numeric": "sum"}
+            _agg = {"_plan_ref_numeric": "max"}
             for _w in _week_cols_out:
                 _agg[f"{_w}_numeric"] = "sum"
             _ref = _tbl.groupby(_group_cols, as_index=False, dropna=False).agg(_agg)
@@ -16034,7 +16056,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 parts = [
                     f'<div id="{wrap_id}" style="overflow-x:auto;min-width:0;margin:0.75em 0;">',
                     f"<style>"
-                    f"#{wrap_id} table{{width:100%;border-collapse:collapse;background-color:{TABLE_BG_COLOR};color:{TABLE_TEXT_COLOR};font-size:13px;border:1px solid rgba(255,255,255,0.45);}}"
+                    f"#{wrap_id} table{{border-collapse:collapse;background-color:{TABLE_BG_COLOR};color:{TABLE_TEXT_COLOR};font-size:13px;border:1px solid rgba(255,255,255,0.45);}}"
                     f"#{wrap_id} th,#{wrap_id} td{{border:1px solid rgba(255,255,255,0.45);padding:4px 6px;white-space:nowrap;}}"
                     f"#{wrap_id} thead th{{background-color:{TABLE_BG_COLOR};font-weight:700;border:1px solid rgba(255,255,255,0.45)!important;}}"
                     f"#{wrap_id} thead tr{{border-bottom:1px solid rgba(255,255,255,0.45)!important;}}"
@@ -16083,12 +16105,12 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                         if c == "Отклонение":
                             num = pd.to_numeric(val, errors="coerce")
                             if pd.notna(num):
-                                cls = "neg" if float(num) < 0 else ("pos" if float(num) > 0 else "")
+                                cls = "neg" if float(num) > 0 else ("pos" if float(num) < 0 else "")
                         elif c == "Дельта (%)":
                             raw_pct = row.get("_delta_pct_raw")
                             num = pd.to_numeric(raw_pct, errors="coerce")
                             if pd.notna(num):
-                                cls = "neg" if float(num) < 0 else ("pos" if float(num) > 0 else "")
+                                cls = "neg" if float(num) > 0 else ("pos" if float(num) < 0 else "")
                                 td_style = _gdrs_delta_pct_cell_bg_style(raw_pct)
                         tcenter = " t-center" if c not in ("Контрагент", "Вид работы") else ""
                         parts.append(
@@ -17419,7 +17441,6 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             try:
                 import plotly.graph_objects as _go
                 proj_df = proj_df.sort_values("plan", ascending=False).reset_index(drop=True)
-                # Отклонение = План − Факт (СКУД); плюс — недовыполнение (красный), минус — перевыполнение (зелёный).
                 _dev_signed = proj_df["deviation"].round(0).astype(int)
                 _dev_colors = [
                     "#ff5454" if int(v) > 0 else ("#46d68a" if int(v) < 0 else "#8899aa")
@@ -17466,7 +17487,6 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                     yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.08)"),
                     height=520,
                     margin=dict(l=56, r=24, t=72, b=110),
-                    # Легенда — снизу под графиком, чтобы не наезжать на заголовок.
                     legend=dict(
                         orientation="h",
                         yanchor="top",
@@ -17477,7 +17497,13 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                     ),
                 )
                 fig_pf = apply_chart_background(fig_pf)
-                st.plotly_chart(fig_pf, use_container_width=True)
+                _n_projs = len(_proj_labels)
+                if _n_projs <= 2:
+                    _chart_col, _ = st.columns([1, 1])
+                    with _chart_col:
+                        st.plotly_chart(fig_pf, use_container_width=True)
+                else:
+                    st.plotly_chart(fig_pf, use_container_width=True)
             except Exception as _e:
                 st.warning(f"Plotly недоступен: {_e}")
 
@@ -17531,9 +17557,8 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             for col in cols_order[:-1]:
                 v = row[col]
                 if col == "Отклонение":
-                    # Положительное = недовыполнение → красный; отрицательное = перевыполнение → зелёный.
                     color = "#ff5454" if (isinstance(v, (int, float)) and v > 0) else (
-                        "#46d68a" if (isinstance(v, (int, float)) and v < 0) else "#cccccc"
+                        "#46d68a" if (isinstance(v, (int, float)) and v <= 0) else "#cccccc"
                     )
                     txt = (
                         "0"
@@ -17547,9 +17572,10 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                     else:
                         pct = float(v)
                         grad = _gdrs_delta_pct_cell_bg_style(pct)
+                        pct_color = "#ff5454" if pct > 0 else ("#46d68a" if pct <= 0 else "#cccccc")
                         sign = "+" if pct > 0 else ""
                         cells.append(
-                            f"<td style='text-align:right; color:#eee; font-weight:{weight};{grad}'>"
+                            f"<td style='text-align:right; color:{pct_color}; font-weight:{weight};{grad}'>"
                             f"{sign}{pct:.0f}%</td>"
                         )
                 elif col in ("План", "СКУД", "1 неделя", "2 неделя", "3 неделя", "4 неделя", "5 неделя", "6 неделя"):
@@ -17559,10 +17585,18 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                     cells.append(f"<td style='font-weight:{weight};'>{str(v) if v is not None else ''}</td>")
             return f"<tr style='background:{bg};'>" + "".join(cells) + "</tr>"
 
+        _col_widths = {
+            "Контрагент": "90px", "Вид работ": "100px",
+            "План": "30px", "СКУД": "30px", "Отклонение": "45px",
+            "1 неделя": "32px", "2 неделя": "32px", "3 неделя": "32px",
+            "4 неделя": "32px", "5 неделя": "32px", "6 неделя": "32px",
+            "Отклонение %": "48px",
+        }
         head_html = (
             "<thead><tr style='background:#1f2630; color:#bbb;'>"
             + "".join(
-                f"<th style='padding:6px 8px; border-bottom:1px solid #333; text-align:{('right' if h not in ('Контрагент', 'Вид работ') else 'left')};'>{h}</th>"
+                f"<th style='padding:6px 8px; border-bottom:1px solid #333; width:{_col_widths.get(h, 'auto')}; "
+                f"text-align:{('right' if h not in ('Контрагент', 'Вид работ') else 'left')};'>{h}</th>"
                 for h in cols_order[:-1]
             )
             + "</tr></thead>"
@@ -17570,11 +17604,17 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         body_html = "<tbody>" + "".join(_row_html(r) for _, r in view.iterrows()) + "</tbody>"
         table_html = (
             "<div style='overflow-x:auto;'>"
-            "<table style='width:100%; border-collapse:collapse; color:#eee; font-size:13px; border:1px solid #333;'>"
+            "<table style='border-collapse:collapse; color:#eee; font-size:13px; border:1px solid #333;'>"
             + head_html + body_html
             + "</table></div>"
         )
-        st.markdown(table_html, unsafe_allow_html=True)
+        _n_data_rows = sum(1 for _, r in view.iterrows() if r.get("__kind__") == "row")
+        if _n_data_rows <= 4:
+            _tbl_col, _ = st.columns([1, 1])
+            with _tbl_col:
+                st.markdown(table_html, unsafe_allow_html=True)
+        else:
+            st.markdown(table_html, unsafe_allow_html=True)
 
     # ---------- Таб 2: Динамика ----------
     with tabs[1]:
@@ -17852,6 +17892,20 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                     f"{_td_dev(r['Отклонение'])}"
                     "</tr>"
                 )
+            _sum_plan = int(view2["План"].sum())
+            _sum_mean = int(view2["Среднее за месяц"].sum())
+            _sum_dev = int(view2["Отклонение"].sum())
+            _sum_dev_color = "#ff5454" if _sum_dev > 0 else ("#46d68a" if _sum_dev <= 0 else "#cccccc")
+            _sum_dev_txt = "0" if _sum_dev == 0 else f"{_sum_dev:+d}"
+            rows.append(
+                "<tr style='background:#102b3a; font-weight:700;'>"
+                f"<td style='padding:4px 8px; border-top:2px solid #456;'>Общий итог</td>"
+                f"<td style='padding:4px 8px; text-align:right; border-top:2px solid #456;'>{_sum_plan}</td>"
+                f"<td style='padding:4px 8px; text-align:right; border-top:2px solid #456;'>{_sum_mean}</td>"
+                f"<td style='text-align:right; padding:4px 8px; border-top:2px solid #456; color:{_sum_dev_color}; font-weight:700;'>"
+                f"{_sum_dev_txt}</td>"
+                "</tr>"
+            )
             st.markdown(
                 "<div style='overflow-x:auto;'>"
                 "<table style='width:100%; border-collapse:collapse; color:#eee; font-size:13px; border:1px solid #333;'>"
@@ -17859,15 +17913,22 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                 unsafe_allow_html=True,
             )
 
-            st.markdown("&nbsp;", unsafe_allow_html=True)
-            mc1, mc2, mc3 = st.columns(3)
-            with mc1:
-                st.metric("Общий план", f"{int(view2['План'].sum())}")
-            with mc2:
-                st.metric("Общая средняя за месяц", f"{int(view2['Среднее за месяц'].sum())}")
-            with mc3:
-                tot_dev = int(view2["Отклонение"].sum())
-                st.metric("Общее отклонение", f"{tot_dev:+d}")
+            _tot_plan = int(view2["План"].sum())
+            _tot_mean = int(view2["Среднее за месяц"].sum())
+            _tot_dev = int(view2["Отклонение"].sum())
+            _tot_dev_color = "#ff5454" if _tot_dev > 0 else ("#46d68a" if _tot_dev <= 0 else "#cccccc")
+            _tot_dev_txt = f"{_tot_dev:+d}" if _tot_dev != 0 else "0"
+            _summary_html = (
+                "<div style='display:flex;gap:24px;flex-wrap:wrap;margin:16px 0;'>"
+                f"<div><span style='color:#aaa;font-size:13px;'>Общий план</span><br>"
+                f"<span style='font-size:24px;font-weight:700;color:#eee;'>{_tot_plan}</span></div>"
+                f"<div><span style='color:#aaa;font-size:13px;'>Общая средняя за месяц</span><br>"
+                f"<span style='font-size:24px;font-weight:700;color:#eee;'>{_tot_mean}</span></div>"
+                f"<div><span style='color:#aaa;font-size:13px;'>Общее отклонение</span><br>"
+                f"<span style='font-size:24px;font-weight:700;color:{_tot_dev_color};'>{_tot_dev_txt}</span></div>"
+                "</div>"
+            )
+            st.markdown(_summary_html, unsafe_allow_html=True)
 # ==================== DASHBOARD: Дебиторская и кредиторская задолженность подрядчиков ====================
 def _find_col(df, names):
     """Поиск колонки по частичному совпадению (без учёта регистра)."""
