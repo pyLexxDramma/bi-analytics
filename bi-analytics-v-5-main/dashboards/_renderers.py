@@ -17565,7 +17565,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                         if isinstance(v, (int, float)) and int(round(float(v))) == 0
                         else (f"{int(round(float(v))):+d}" if isinstance(v, (int, float)) else str(v))
                     )
-                    cells.append(f"<td style='text-align:right; color:{color}; font-weight:{weight};'>{txt}</td>")
+                    cells.append(f"<td style='text-align:right; color:{color} !important; font-weight:{weight};'>{txt}</td>")
                 elif col == "Отклонение %":
                     if v is None or (isinstance(v, float) and _np.isnan(v)):
                         cells.append("<td style='text-align:right;'>—</td>")
@@ -17575,7 +17575,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                         pct_color = "#ff5454" if pct < 0 else ("#46d68a" if pct >= 0 else "#cccccc")
                         sign = "+" if pct > 0 else ""
                         cells.append(
-                            f"<td style='text-align:right; color:{pct_color}; font-weight:{weight};{grad}'>"
+                            f"<td style='text-align:right; color:{pct_color} !important; font-weight:{weight};{grad}'>"
                             f"{sign}{pct:.0f}%</td>"
                         )
                 elif col in ("План", "СКУД", "1 неделя", "2 неделя", "3 неделя", "4 неделя", "5 неделя", "6 неделя"):
@@ -17865,8 +17865,8 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                     "#46d68a" if (isinstance(v, (int, float)) and v >= 0) else "#cccccc"
                 )
                 if v is None or (isinstance(v, float) and _np.isnan(v)) or v == 0:
-                    return f"<td style='text-align:right; color:{color}; font-weight:600;'>0</td>"
-                return f"<td style='text-align:right; color:{color}; font-weight:600;'>{int(v):+d}</td>"
+                    return f"<td style='text-align:right; color:{color} !important; font-weight:600;'>0</td>"
+                return f"<td style='text-align:right; color:{color} !important; font-weight:600;'>{int(v):+d}</td>"
 
             head = (
                 "<thead><tr style='background:#1f2630; color:#bbb;'>"
@@ -17896,7 +17896,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                 f"<td style='padding:4px 8px; border-top:2px solid #456;'>Общий итог</td>"
                 f"<td style='padding:4px 8px; text-align:right; border-top:2px solid #456;'>{_sum_plan}</td>"
                 f"<td style='padding:4px 8px; text-align:right; border-top:2px solid #456;'>{_sum_mean}</td>"
-                f"<td style='text-align:right; padding:4px 8px; border-top:2px solid #456; color:{_sum_dev_color}; font-weight:700;'>"
+                f"<td style='text-align:right; padding:4px 8px; border-top:2px solid #456; color:{_sum_dev_color} !important; font-weight:700;'>"
                 f"{_sum_dev_txt}</td>"
                 "</tr>"
             )
