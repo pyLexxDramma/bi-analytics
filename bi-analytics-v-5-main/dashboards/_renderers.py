@@ -17608,13 +17608,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             + head_html + body_html
             + "</table></div>"
         )
-        _n_data_rows = sum(1 for _, r in view.iterrows() if r.get("__kind__") == "row")
-        if _n_data_rows <= 4:
-            _tbl_col, _ = st.columns([1, 1])
-            with _tbl_col:
-                st.markdown(table_html, unsafe_allow_html=True)
-        else:
-            st.markdown(table_html, unsafe_allow_html=True)
+        st.markdown(table_html, unsafe_allow_html=True)
 
     # ---------- Таб 2: Динамика ----------
     with tabs[1]:
