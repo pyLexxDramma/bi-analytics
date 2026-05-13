@@ -17860,49 +17860,67 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             view2["Отклонение"] = view2["Отклонение"].round(0).astype(int)
             view2 = view2.sort_values("План", ascending=False)
 
+            _svod_id = f"svod_{id(view2)}"
+
+            def _td_dev_cls(v):
+                if isinstance(v, (int, float)) and v < 0:
+                    return "dev-neg"
+                if isinstance(v, (int, float)) and v >= 0:
+                    return "dev-pos"
+                return ""
+
             def _td_dev(v):
-                color = "#ff5454" if (isinstance(v, (int, float)) and v < 0) else (
-                    "#46d68a" if (isinstance(v, (int, float)) and v >= 0) else "#cccccc"
-                )
+                cls = _td_dev_cls(v)
                 if v is None or (isinstance(v, float) and _np.isnan(v)) or v == 0:
-                    return f"<td style='text-align:right; color:{color} !important; font-weight:600;'>0</td>"
-                return f"<td style='text-align:right; color:{color} !important; font-weight:600;'>{int(v):+d}</td>"
+                    return f'<td class="{cls}">0</td>'
+                return f'<td class="{cls}">{int(v):+d}</td>'
+
+            _svod_css = (
+                f"<style>"
+                f"#{_svod_id} table{{width:100%;border-collapse:collapse;color:#eee;font-size:13px;border:1px solid #333;}}"
+                f"#{_svod_id} th,#{_svod_id} td{{padding:6px 8px;border-bottom:1px solid #333;}}"
+                f"#{_svod_id} thead tr{{background:#1f2630;color:#bbb;}}"
+                f"#{_svod_id} .dev-neg{{color:#ff5454!important;font-weight:600;text-align:right;}}"
+                f"#{_svod_id} .dev-pos{{color:#46d68a!important;font-weight:600;text-align:right;}}"
+                f"#{_svod_id} .rk-total td{{font-weight:700;background:#102b3a;border-top:2px solid #456;}}"
+                f"#{_svod_id} .ar{{text-align:right;}}"
+                f"</style>"
+            )
 
             head = (
-                "<thead><tr style='background:#1f2630; color:#bbb;'>"
-                "<th style='padding:6px 8px; border-bottom:1px solid #333; text-align:left;'>Контрагент</th>"
-                "<th style='padding:6px 8px; border-bottom:1px solid #333; text-align:right;'>План</th>"
-                "<th style='padding:6px 8px; border-bottom:1px solid #333; text-align:right;'>Среднее за месяц</th>"
-                "<th style='padding:6px 8px; border-bottom:1px solid #333; text-align:right;'>Отклонение</th>"
+                "<thead><tr>"
+                "<th style='text-align:left;'>Контрагент</th>"
+                "<th class='ar'>План</th>"
+                "<th class='ar'>Среднее за месяц</th>"
+                "<th class='ar'>Отклонение</th>"
                 "</tr></thead>"
             )
             rows = []
             for _, r in view2.iterrows():
                 rows.append(
                     "<tr>"
-                    f"<td style='padding:4px 8px;'>{r['Контрагент']}</td>"
-                    f"<td style='padding:4px 8px; text-align:right;'>{int(r['План'])}</td>"
-                    f"<td style='padding:4px 8px; text-align:right;'>{int(r['Среднее за месяц'])}</td>"
+                    f"<td>{r['Контрагент']}</td>"
+                    f"<td class='ar'>{int(r['План'])}</td>"
+                    f"<td class='ar'>{int(r['Среднее за месяц'])}</td>"
                     f"{_td_dev(r['Отклонение'])}"
                     "</tr>"
                 )
             _sum_plan = int(view2["План"].sum())
             _sum_mean = int(view2["Среднее за месяц"].sum())
             _sum_dev = int(view2["Отклонение"].sum())
-            _sum_dev_color = "#ff5454" if _sum_dev < 0 else ("#46d68a" if _sum_dev >= 0 else "#cccccc")
+            _sum_dev_cls = _td_dev_cls(_sum_dev)
             _sum_dev_txt = "0" if _sum_dev == 0 else f"{_sum_dev:+d}"
             rows.append(
-                "<tr style='background:#102b3a; font-weight:700;'>"
-                f"<td style='padding:4px 8px; border-top:2px solid #456;'>Общий итог</td>"
-                f"<td style='padding:4px 8px; text-align:right; border-top:2px solid #456;'>{_sum_plan}</td>"
-                f"<td style='padding:4px 8px; text-align:right; border-top:2px solid #456;'>{_sum_mean}</td>"
-                f"<td style='text-align:right; padding:4px 8px; border-top:2px solid #456; color:{_sum_dev_color} !important; font-weight:700;'>"
-                f"{_sum_dev_txt}</td>"
+                f'<tr class="rk-total">'
+                f"<td>Общий итог</td>"
+                f"<td class='ar'>{_sum_plan}</td>"
+                f"<td class='ar'>{_sum_mean}</td>"
+                f'<td class="{_sum_dev_cls}">{_sum_dev_txt}</td>'
                 "</tr>"
             )
             st.markdown(
-                "<div style='overflow-x:auto;'>"
-                "<table style='width:100%; border-collapse:collapse; color:#eee; font-size:13px; border:1px solid #333;'>"
+                f'{_svod_css}<div id="{_svod_id}" style="overflow-x:auto;">'
+                "<table>"
                 + head + "<tbody>" + "".join(rows) + "</tbody></table></div>",
                 unsafe_allow_html=True,
             )
