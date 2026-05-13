@@ -5255,6 +5255,338 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         )
 
 
+_PLAN_FACT_ZOS_WORD_RE = re.compile(
+    r"(?<![а-яёa-z0-9])зос(?![а-яёa-z0-9])",
+    flags=re.IGNORECASE,
+)
+
+
+def _plan_fact_zos_task_name_match(name) -> bool:
+    if name is None or (isinstance(name, float) and pd.isna(name)):
+        return False
+    s = str(name).strip()
+    if not s:
+        return False
+    sl = s.lower()
+    if "заключение о соответствии" in sl:
+        return True
+    return bool(_PLAN_FACT_ZOS_WORD_RE.search(sl))
+
+
+def _plan_fact_covenant_row_mask(
+    frame: pd.DataFrame,
+    dates_notes_col,
+    dates_milestone_col,
+) -> pd.Series:
+    _covenant_tokens = (
+        "ковенант",
+        "ковенанты",
+        "ковен",
+        "финковенант",
+        "covenant",
+        "covenants",
+        "coven",
+    )
+
+    def _text_indicates_covenant(val):
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            return False
+        t = str(val).lower()
+        return any(tok in t for tok in _covenant_tokens)
+
+    m = pd.Series(False, index=frame.index)
+    _cov_cols = ["section", "block", "task name", "reason of deviation"]
+    if dates_notes_col:
+        _cov_cols.append(dates_notes_col)
+    if dates_milestone_col:
+        _cov_cols.append(dates_milestone_col)
+    _kw = ("reason", "причин", "note", "notes", "comment", "remark", "milestone", "вех")
+    for _c in frame.columns:
+        _lc = str(_c).strip().lower()
+        if any(k in _lc for k in _kw):
+            _cov_cols.append(_c)
+    _cov_cols = list(dict.fromkeys(_cov_cols))
+    for col in _cov_cols:
+        if col in frame.columns:
+            m = m | frame[col].astype(str).map(_text_indicates_covenant)
+    return m
+
+
+def _plan_fact_zos_format_date_cell(date_val) -> str:
+    if pd.isna(date_val):
+        return ""
+    if isinstance(date_val, pd.Timestamp):
+        return date_val.strftime("%d.%m.%Y")
+    try:
+        dt = pd.to_datetime(date_val, errors="coerce", dayfirst=True)
+        if pd.notna(dt):
+            return dt.strftime("%d.%m.%Y")
+    except Exception:
+        pass
+    s = str(date_val).strip() if date_val else ""
+    return s if s and s.lower() not in ("nan", "nat", "none") else ""
+
+
+def _plan_fact_zos_sanitize_task_label(s: str) -> str:
+    if s is None or (isinstance(s, float) and pd.isna(s)):
+        return ""
+    t = str(s).strip()
+    return re.sub(
+        r"(?i)(инженерн[а-яё]*\s+сет[а-яё]*)\s*№\s*[12]\b",
+        r"\1",
+        t,
+    ).strip()
+
+
+def render_plan_fact_zos_covenant_table(
+    zsrc: pd.DataFrame,
+    *,
+    dates_notes_col,
+    dates_milestone_col,
+) -> None:
+    """
+    Таблица «ЗОС»: пересечение маркеров «Ковенанты» и имени ЗОС; отклонение (дней) =
+    базовое окончание (plan end) − окончание (base end).
+    """
+    if zsrc is None or getattr(zsrc, "empty", True):
+        st.subheader("ЗОС")
+        st.caption("Нет данных для таблицы ЗОС при текущих фильтрах.")
+        st.markdown("---")
+        return
+    if "task name" not in zsrc.columns:
+        st.subheader("ЗОС")
+        st.caption("В выгрузке нет колонки «Название задачи» для таблицы ЗОС.")
+        st.markdown("---")
+        return
+    w = zsrc.copy()
+    ensure_date_columns(w)
+    if "plan end" not in w.columns or "base end" not in w.columns:
+        st.subheader("ЗОС")
+        st.caption("Нет колонок дат «plan end» / «base end» для расчёта ЗОС.")
+        st.markdown("---")
+        return
+
+    w["_pe"] = pd.to_datetime(w["plan end"], errors="coerce", dayfirst=True)
+    w["_be"] = pd.to_datetime(w["base end"], errors="coerce", dayfirst=True)
+    w["_zos_dev"] = (w["_pe"] - w["_be"]).dt.total_seconds() / 86400.0
+
+    cm = _plan_fact_covenant_row_mask(w, dates_notes_col, dates_milestone_col)
+    zm = w["task name"].astype(str).map(_plan_fact_zos_task_name_match)
+    sub = w.loc[cm & zm].copy()
+    sub = sub[sub["_pe"].notna() & sub["_be"].notna()].copy()
+
+    st.subheader("ЗОС")
+    st.caption(
+        "Контрольные точки: задачи ЗОС в функциональном блоке «Ковенанты». "
+        "Отклонение (дней) = базовое окончание − окончание."
+    )
+    if sub.empty:
+        st.caption(
+            "Нет строк ЗОС с заполненными «Базовое окончание» и «Окончание» для текущих фильтров."
+        )
+        st.markdown("---")
+        return
+
+    sub = sub.sort_values("_zos_dev", ascending=True, na_position="last")
+
+    _RED = "#ff6b6b"
+    _GRN = "#00e676"
+    _DEF = "#e8eef5"
+
+    def _dev_html(v):
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return ""
+        try:
+            n = int(round(float(v)))
+        except (TypeError, ValueError):
+            return html_module.escape(str(v))
+        col = _RED if n < 0 else (_GRN if n == 0 else _DEF)
+        fw = "700" if n < 0 else ("600" if n == 0 else "400")
+        return f'<span style="color:{col};font-weight:{fw}">{n}</span>'
+
+    show_proj = "project name" in sub.columns
+    cols_order: list[str] = []
+    if show_proj:
+        cols_order.append("Проект")
+    cols_order.extend(
+        [
+            'Наименование задачи («ЗОС»)',
+            "Базовое окончание",
+            "Окончание",
+            "Отклонение",
+        ]
+    )
+
+    export_rows: list[dict] = []
+    parts = [
+        '<div class="rendered-table-wrap">',
+        '<table class="rendered-table" style="border-collapse:collapse;width:100%">',
+        "<thead><tr>",
+    ]
+    for c in cols_order:
+        parts.append(f"<th>{html_module.escape(c)}</th>")
+    parts.append("</tr></thead><tbody>")
+    for _, zr in sub.iterrows():
+        parts.append("<tr>")
+        er: dict = {}
+        if show_proj:
+            pv = _clean_display_str(zr.get("project name"))
+            parts.append(f"<td>{html_module.escape(pv)}</td>")
+            er["Проект"] = pv
+        tn = _plan_fact_zos_sanitize_task_label(_clean_display_str(zr.get("task name")))
+        parts.append(f"<td>{html_module.escape(str(tn))}</td>")
+        er['Наименование задачи («ЗОС»)'] = str(tn)
+        btxt = _plan_fact_zos_format_date_cell(zr.get("_pe"))
+        otxt = _plan_fact_zos_format_date_cell(zr.get("_be"))
+        parts.append(f"<td>{html_module.escape(btxt)}</td>")
+        parts.append(f"<td>{html_module.escape(otxt)}</td>")
+        parts.append(f"<td style='text-align:right'>{_dev_html(zr.get('_zos_dev'))}</td>")
+        parts.append("</tr>")
+        er["Базовое окончание"] = zr.get("_pe")
+        er["Окончание"] = zr.get("_be")
+        er["Отклонение (дней)"] = zr.get("_zos_dev")
+        export_rows.append(er)
+    parts.append("</tbody></table></div>")
+    st.markdown(_TABLE_CSS + "".join(parts), unsafe_allow_html=True)
+    suppress_caption(f"Записей: {len(sub)}")
+    render_dataframe_excel_csv_downloads(
+        pd.DataFrame(export_rows),
+        file_stem="zos_covenant_plan_fact",
+        key_prefix="zos_covenant_table",
+        csv_label="Скачать CSV (ЗОС, для Excel)",
+    )
+    st.markdown("---")
+
+
+_PLAN_FACT_KPI_PLATES_CSS = """
+<style>
+.pf-kpi-wrap{background:#152238;border-radius:10px;padding:14px 18px;margin:10px 0 16px 0;border:1px solid rgba(148,163,184,.22);}
+.pf-kpi-row{display:flex;gap:14px;flex-wrap:wrap;border-bottom:1px solid rgba(148,163,184,.16);padding:12px 0;}
+.pf-kpi-row:last-child{border-bottom:none;padding-bottom:4px;}
+.pf-kpi-cell{flex:1 1 200px;min-width:160px;}
+.pf-kpi-lbl{font-size:12px;color:#c7d2fe;font-weight:500;line-height:1.3;margin:0 0 10px 0;}
+.pf-kpi-val{font-size:30px;font-weight:700;color:#fafafa;line-height:1.1;letter-spacing:.01em;}
+</style>
+"""
+
+
+def _plan_fact_pick_metric_task_row(
+    frame: pd.DataFrame,
+    *,
+    selected_project: str,
+    metric_task: str,
+    dates_notes_col,
+    dates_milestone_col,
+) -> Optional[pd.Series]:
+    if frame is None or getattr(frame, "empty", True) or "task name" not in frame.columns:
+        return None
+    w = frame.copy()
+    if selected_project != "Все" and "project name" in w.columns:
+        _k = _project_filter_norm_key(selected_project)
+        if _k:
+            w = w[w["project name"].map(_project_filter_norm_key) == _k]
+    if w.empty:
+        return None
+    mt = (metric_task or "").strip()
+    if mt:
+        key = mt.casefold()
+        tn = w["task name"].astype(str).str.strip()
+        cand = w.loc[tn.str.casefold() == key]
+        if cand.empty:
+            try:
+                rx = re.compile(re.escape(mt), flags=re.IGNORECASE)
+                cand = w.loc[tn.map(lambda x: bool(rx.search(str(x))))]
+            except re.error:
+                cand = w.iloc[0:0]
+        if not cand.empty:
+            return cand.iloc[0]
+    cm = _plan_fact_covenant_row_mask(w, dates_notes_col, dates_milestone_col)
+    zm = w["task name"].astype(str).map(_plan_fact_zos_task_name_match)
+    z = w.loc[cm & zm]
+    if not z.empty:
+        return z.iloc[0]
+    return None
+
+
+def render_plan_fact_dates_metric_plates(
+    scope_df: pd.DataFrame,
+    *,
+    selected_project: str,
+    dates_notes_col,
+    dates_milestone_col,
+) -> None:
+    """
+    Верхние плашки: максимальное |отклонение окончания| (дней), план/факт окончания проекта
+    по задаче из админки `baseline_plan_task_for_metrics` (или эвристика ЗОС в ковенантах).
+    """
+    from settings import get_setting
+
+    nd = "Н/Д"
+    metric_task = (get_setting("baseline_plan_task_for_metrics") or "").strip()
+
+    def _one_row_html(max_lbl: str, plan_lbl: str, fact_lbl: str) -> str:
+        return (
+            '<div class="pf-kpi-row">'
+            f'<div class="pf-kpi-cell"><div class="pf-kpi-lbl">Максимальное отклонение (дней)</div>'
+            f'<div class="pf-kpi-val">{html_module.escape(max_lbl)}</div></div>'
+            f'<div class="pf-kpi-cell"><div class="pf-kpi-lbl">План окончания проекта</div>'
+            f'<div class="pf-kpi-val">{html_module.escape(plan_lbl)}</div></div>'
+            f'<div class="pf-kpi-cell"><div class="pf-kpi-lbl">Факт окончания проекта</div>'
+            f'<div class="pf-kpi-val">{html_module.escape(fact_lbl)}</div></div>'
+            "</div>"
+        )
+
+    parts: list[str] = [_PLAN_FACT_KPI_PLATES_CSS, '<div class="pf-kpi-wrap">']
+
+    if scope_df is None or getattr(scope_df, "empty", True):
+        parts.append(_one_row_html(nd, nd, nd))
+        parts.append("</div>")
+        st.markdown("".join(parts), unsafe_allow_html=True)
+        return
+
+    w = scope_df.copy()
+    ensure_date_columns(w)
+    if "plan end" not in w.columns or "base end" not in w.columns:
+        parts.append(_one_row_html(nd, nd, nd))
+        parts.append("</div>")
+        st.markdown("".join(parts), unsafe_allow_html=True)
+        return
+
+    pe = pd.to_datetime(w["plan end"], errors="coerce", dayfirst=True)
+    be = pd.to_datetime(w["base end"], errors="coerce", dayfirst=True)
+    both = pe.notna() & be.notna()
+    max_lbl = nd
+    if bool(both.any()):
+        diff_days = ((be - pe).dt.total_seconds() / 86400.0).loc[both]
+        try:
+            max_lbl = str(int(round(float(diff_days.abs().max()))))
+        except (TypeError, ValueError):
+            max_lbl = nd
+
+    row = _plan_fact_pick_metric_task_row(
+        w,
+        selected_project=selected_project,
+        metric_task=metric_task,
+        dates_notes_col=dates_notes_col,
+        dates_milestone_col=dates_milestone_col,
+    )
+    plan_lbl = fact_lbl = nd
+    if row is not None:
+        ps = _plan_fact_zos_format_date_cell(row.get("plan end"))
+        fs = _plan_fact_zos_format_date_cell(row.get("base end"))
+        plan_lbl = ps if str(ps).strip() else nd
+        fact_lbl = fs if str(fs).strip() else nd
+
+    parts.append(_one_row_html(max_lbl, plan_lbl, fact_lbl))
+    parts.append("</div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
+    suppress_caption(
+        "Максимум — среди строк среза с обеими датами окончания (|факт − план|, дней). "
+        "План/факт окончания проекта — по задаче из админки «Задача для расчёта окончания проекта (MSP)», "
+        "если не задано — эвристика ЗОС в блоке ковенантов."
+    )
+
+
 # ==================== DASHBOARD 3: Plan/Fact Dates for Tasks ====================
 def dashboard_plan_fact_dates(df):
     st.header("Отклонение от базового плана")
@@ -6020,6 +6352,17 @@ def dashboard_plan_fact_dates(df):
     # ЗОС-задачи находятся на уровне 5 (детальный) и иначе пропадают при
     # «Уровень 4». Сохраняем срез ДО фильтра уровня в `_zos_source_df`.
     _zos_source_df = filtered_df.copy()
+    render_plan_fact_dates_metric_plates(
+        _zos_source_df,
+        selected_project=selected_project,
+        dates_notes_col=dates_notes_col,
+        dates_milestone_col=dates_milestone_col,
+    )
+    render_plan_fact_zos_covenant_table(
+        _zos_source_df,
+        dates_notes_col=dates_notes_col,
+        dates_milestone_col=dates_milestone_col,
+    )
 
     # Фильтр по уровню иерархии (макет: сводные 1–3, верхний 4, детальный 5)
     _mask_lvl_col = plan_fact_dates_outline_col
@@ -6972,7 +7315,7 @@ def dashboard_plan_fact_dates(df):
         s = str(date_val).strip() if date_val else ""
         return s if s and s.lower() not in ("nan", "nat", "none") else ""
 
-    # Верхние KPI и блок «РС» скрыты по правкам; задача для метрик в других отчётах — в админке (baseline_plan_task_for_metrics).
+    # Верхние плашки KPI — `render_plan_fact_dates_metric_plates`; задача для дат окончания проекта — в админке (`baseline_plan_task_for_metrics`).
 
     # Summary table — макет: даты / отклонения, видимые столбцы, сортировка
     summary_data = []
@@ -7230,86 +7573,6 @@ def dashboard_plan_fact_dates(df):
         "Отклонение начала": "dev",
         "Отклонение длительности": "dev",
     }
-    _ZOS_WORD_RE = re.compile(
-        r"(?<![а-яёa-z0-9])зос(?![а-яёa-z0-9])",
-        flags=re.IGNORECASE,
-    )
-
-    def _is_zos_task_name(name):
-        # ТЗ заказчика 2026-05-06 (Блок 2): верхняя единая таблица берёт строки
-        # ИМЕННО по задаче ЗОС, а не по любому вхождению подстроки «зос».
-        # Без границ слова сюда падают «гаЗОСнабжения», «гаЗОСбытсервис» и др.
-        if name is None or (isinstance(name, float) and pd.isna(name)):
-            return False
-        s = str(name).strip()
-        if not s:
-            return False
-        sl = s.lower()
-        if "заключение о соответствии" in sl:
-            return True
-        return bool(_ZOS_WORD_RE.search(sl))
-
-    # ТЗ 2026-05-06 (Блок 2): верхняя единая таблица «ЗОС» строится ВСЕГДА
-    # из `_zos_source_df` (срез ДО фильтра уровня), а не из `table_df`.
-    # Это нужно потому что ЗОС-задачи лежат на уровне 5, и при выборе фильтра
-    # «Уровень 4 (укрупнённо)» они выпадают из table_df → блок пропадал.
-    if "task name" in _zos_source_df.columns:
-        _zsrc = _zos_source_df.copy()
-        # Пересчитываем `plan_end_diff` на исходном срезе (его в _zos_source_df ещё нет).
-        if {"plan end", "base end"}.issubset(_zsrc.columns):
-            _zsrc["plan_end_diff"] = (
-                pd.to_datetime(_zsrc["base end"], errors="coerce", dayfirst=True)
-                - pd.to_datetime(_zsrc["plan end"], errors="coerce", dayfirst=True)
-            ).dt.total_seconds() / 86400.0
-        else:
-            _zsrc["plan_end_diff"] = float("nan")
-        _zos_mask = _zsrc["task name"].astype(str).map(_is_zos_task_name)
-        zos_subset = _zsrc[_zos_mask].copy()
-        # ТЗ: показываем только строки с реальным отклонением < 0 (опаздывающие);
-        # при = 0 (попало в срок) — тоже показываем, по ТЗ цвет зелёный.
-        zos_subset = zos_subset[
-            zos_subset["plan_end_diff"].notna() & (zos_subset["plan_end_diff"] <= 1e-9)
-        ].copy()
-    else:
-        zos_subset = _zos_source_df.iloc[0:0].copy()
-
-    if not zos_subset.empty:
-        st.subheader("ЗОС")
-        zos_proj_count = (
-            zos_subset["project name"].dropna().astype(str).str.strip().nunique()
-            if "project name" in zos_subset.columns
-            else 0
-        )
-        zos_show_project_col = (
-            "project name" in zos_subset.columns
-            and selected_project == "Все"
-            and zos_proj_count > 1
-        )
-        if "plan_end_diff" in zos_subset.columns:
-            # ТЗ: сверху самое большое отклонение (по модулю).
-            # plan_end_diff < 0 для опаздывающих → ascending=True ставит -189 выше -1.
-            zos_subset = zos_subset.sort_values(
-                "plan_end_diff", ascending=True, na_position="last"
-            )
-        # ТЗ 2026-05-06 (Блок 2): Базовое X = base_*, X = plan_*.
-        # «Отклонение» = base_end − plan_end (см. plan_end_diff).
-        zos_tbl_rows = []
-        for _, zr in zos_subset.iterrows():
-            row_out = {
-                "Задача": _sanitize_eng_networks(_clean_display_str(zr.get("task name"))),
-                "Базовое окончание": format_date_display(zr.get("base end")),
-                "Окончание": format_date_display(zr.get("plan end")),
-                "Отклонение": _format_int_days(zr.get("plan_end_diff")),
-            }
-            if zos_show_project_col:
-                row_out = {
-                    "Проект": _clean_display_str(zr.get("project name")),
-                    **row_out,
-                }
-            zos_tbl_rows.append(row_out)
-        zos_tbl = pd.DataFrame(zos_tbl_rows)
-        _render_html_table(zos_tbl)
-        st.markdown("---")
 
     # В режиме ковенантов узкая таблица «Ковенанты (таблица)» уже даёт сроки/отклонения по ковенантам;
     # полная таблица по filtered_df дублировала бы те же строки — показываем её только свёрнуто.
