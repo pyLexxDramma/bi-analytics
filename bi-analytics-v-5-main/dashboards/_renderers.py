@@ -15771,7 +15771,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         else:
             _kp_plan = 0.0
         _kp_dev = _kp_plan - _kp_fact
-        _kp_dev_color = "#ff5454" if _kp_dev > 0 else ("#46d68a" if _kp_dev <= 0 else "#cccccc")
+        _kp_dev_color = "#ff5454" if _kp_dev < 0 else ("#46d68a" if _kp_dev >= 0 else "#cccccc")
         _km1, _km2, _km3 = st.columns(3)
         with _km1:
             st.metric("План (сумма)", f"{int(round(_kp_plan))}")
@@ -17557,8 +17557,8 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             for col in cols_order[:-1]:
                 v = row[col]
                 if col == "Отклонение":
-                    color = "#ff5454" if (isinstance(v, (int, float)) and v > 0) else (
-                        "#46d68a" if (isinstance(v, (int, float)) and v <= 0) else "#cccccc"
+                    color = "#ff5454" if (isinstance(v, (int, float)) and v < 0) else (
+                        "#46d68a" if (isinstance(v, (int, float)) and v >= 0) else "#cccccc"
                     )
                     txt = (
                         "0"
@@ -17572,7 +17572,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                     else:
                         pct = float(v)
                         grad = _gdrs_delta_pct_cell_bg_style(pct)
-                        pct_color = "#ff5454" if pct > 0 else ("#46d68a" if pct <= 0 else "#cccccc")
+                        pct_color = "#ff5454" if pct < 0 else ("#46d68a" if pct >= 0 else "#cccccc")
                         sign = "+" if pct > 0 else ""
                         cells.append(
                             f"<td style='text-align:right; color:{pct_color}; font-weight:{weight};{grad}'>"
@@ -17861,8 +17861,8 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             view2 = view2.sort_values("План", ascending=False)
 
             def _td_dev(v):
-                color = "#ff5454" if (isinstance(v, (int, float)) and v > 0) else (
-                    "#46d68a" if (isinstance(v, (int, float)) and v < 0) else "#cccccc"
+                color = "#ff5454" if (isinstance(v, (int, float)) and v < 0) else (
+                    "#46d68a" if (isinstance(v, (int, float)) and v >= 0) else "#cccccc"
                 )
                 if v is None or (isinstance(v, float) and _np.isnan(v)) or v == 0:
                     return f"<td style='text-align:right; color:{color}; font-weight:600;'>0</td>"
@@ -17889,7 +17889,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             _sum_plan = int(view2["План"].sum())
             _sum_mean = int(view2["Среднее за месяц"].sum())
             _sum_dev = int(view2["Отклонение"].sum())
-            _sum_dev_color = "#ff5454" if _sum_dev > 0 else ("#46d68a" if _sum_dev <= 0 else "#cccccc")
+            _sum_dev_color = "#ff5454" if _sum_dev < 0 else ("#46d68a" if _sum_dev >= 0 else "#cccccc")
             _sum_dev_txt = "0" if _sum_dev == 0 else f"{_sum_dev:+d}"
             rows.append(
                 "<tr style='background:#102b3a; font-weight:700;'>"
@@ -17910,15 +17910,18 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             _tot_plan = int(view2["План"].sum())
             _tot_mean = int(view2["Среднее за месяц"].sum())
             _tot_dev = int(view2["Отклонение"].sum())
-            _tot_dev_color = "#ff5454" if _tot_dev > 0 else ("#46d68a" if _tot_dev <= 0 else "#cccccc")
+            _tot_dev_color = "#ff5454" if _tot_dev < 0 else ("#46d68a" if _tot_dev >= 0 else "#cccccc")
             _tot_dev_txt = f"{_tot_dev:+d}" if _tot_dev != 0 else "0"
             _summary_html = (
-                "<div style='display:flex;gap:24px;flex-wrap:wrap;margin:16px 0;'>"
-                f"<div><span style='color:#aaa;font-size:13px;'>Общий план</span><br>"
+                "<div style='display:flex;gap:0;margin:16px 0; width:100%; border:1px solid #333; border-radius:4px; overflow:hidden;'>"
+                f"<div style='flex:1; padding:12px 16px; border-right:1px solid #333;'>"
+                f"<span style='color:#aaa;font-size:13px;'>Общий план</span><br>"
                 f"<span style='font-size:24px;font-weight:700;color:#eee;'>{_tot_plan}</span></div>"
-                f"<div><span style='color:#aaa;font-size:13px;'>Общая средняя за месяц</span><br>"
+                f"<div style='flex:1; padding:12px 16px; border-right:1px solid #333;'>"
+                f"<span style='color:#aaa;font-size:13px;'>Общая средняя за месяц</span><br>"
                 f"<span style='font-size:24px;font-weight:700;color:#eee;'>{_tot_mean}</span></div>"
-                f"<div><span style='color:#aaa;font-size:13px;'>Общее отклонение</span><br>"
+                f"<div style='flex:1; padding:12px 16px;'>"
+                f"<span style='color:#aaa;font-size:13px;'>Общее отклонение</span><br>"
                 f"<span style='font-size:24px;font-weight:700;color:{_tot_dev_color};'>{_tot_dev_txt}</span></div>"
                 "</div>"
             )
