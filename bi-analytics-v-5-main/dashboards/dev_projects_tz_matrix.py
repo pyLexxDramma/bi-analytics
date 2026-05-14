@@ -1387,7 +1387,6 @@ def render_developer_predpisaniya_expander(
         if not raw_names:
             df_all = build_predpisaniya_detail_df(ss, "")
             if df_all.empty:
-                st.caption("Нет данных Tessa по предписаниям (KindName) или файл не загружен.")
                 return
             st.dataframe(df_all, use_container_width=True, hide_index=True)
             render_dataframe_excel_csv_downloads(
@@ -1407,10 +1406,6 @@ def render_developer_predpisaniya_expander(
                 chunks.append(c2)
 
         if not chunks:
-            st.caption(
-                "Для выбранных проектов не найдено строк предписаний по объекту/проекту в Tessa. "
-                "Показываются все предписания без фильтра."
-            )
             df_fallback = build_predpisaniya_detail_df(ss, "")
             if df_fallback.empty:
                 return
@@ -3611,10 +3606,6 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
         st.warning("Нет строк проектов в данных MSP.")
         return
     view = df.copy()
-    st.caption(
-        "Колонка ● у вехи: клик или Enter — таблица задач MSP по вехе; на ПК с мышью также "
-        "работает наведение (hover). На macOS Safari обычно надёжнее открывать по клику."
-    )
     _proj_lab_to_raws = _control_points_project_label_to_raw_names(filtered_mdf)
     pcol_cp = _project_name_column(filtered_mdf)
     try:

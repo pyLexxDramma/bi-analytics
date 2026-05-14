@@ -5469,44 +5469,35 @@ def render_plan_fact_zos_covenant_table(
 ) -> None:
     """
     Таблица «ЗОС»: пересечение маркеров «Ковенанты» и имени ЗОС; отклонение (дней) =
-    базовое окончание (plan end) − окончание (base end).
+    базовое окончание (поле ``base end``) − окончание (поле ``plan end``),
+    как в основной таблице отчёта (``plan_end_diff``).
     """
     if zsrc is None or getattr(zsrc, "empty", True):
         st.subheader("ЗОС")
-        st.caption("Нет данных для таблицы ЗОС при текущих фильтрах.")
         st.markdown("---")
         return
     if "task name" not in zsrc.columns:
         st.subheader("ЗОС")
-        st.caption("В выгрузке нет колонки «Название задачи» для таблицы ЗОС.")
         st.markdown("---")
         return
     w = zsrc.copy()
     ensure_date_columns(w)
     if "plan end" not in w.columns or "base end" not in w.columns:
         st.subheader("ЗОС")
-        st.caption("Нет колонок дат «plan end» / «base end» для расчёта ЗОС.")
         st.markdown("---")
         return
 
-    w["_pe"] = pd.to_datetime(w["plan end"], errors="coerce", dayfirst=True)
-    w["_be"] = pd.to_datetime(w["base end"], errors="coerce", dayfirst=True)
-    w["_zos_dev"] = (w["_pe"] - w["_be"]).dt.total_seconds() / 86400.0
+    w["_plan_end"] = pd.to_datetime(w["plan end"], errors="coerce", dayfirst=True)
+    w["_base_end"] = pd.to_datetime(w["base end"], errors="coerce", dayfirst=True)
+    w["_zos_dev"] = (w["_base_end"] - w["_plan_end"]).dt.total_seconds() / 86400.0
 
     cm = _plan_fact_covenant_row_mask(w, dates_notes_col, dates_milestone_col)
     zm = w["task name"].astype(str).map(_plan_fact_zos_task_name_match)
     sub = w.loc[cm & zm].copy()
-    sub = sub[sub["_pe"].notna() & sub["_be"].notna()].copy()
+    sub = sub[sub["_plan_end"].notna() & sub["_base_end"].notna()].copy()
 
     st.subheader("ЗОС")
-    st.caption(
-        "Контрольные точки: задачи ЗОС в функциональном блоке «Ковенанты». "
-        "Отклонение (дней) = базовое окончание − окончание."
-    )
     if sub.empty:
-        st.caption(
-            "Нет строк ЗОС с заполненными «Базовое окончание» и «Окончание» для текущих фильтров."
-        )
         st.markdown("---")
         return
 
@@ -5559,14 +5550,14 @@ def render_plan_fact_zos_covenant_table(
         tn = _plan_fact_zos_sanitize_task_label(_clean_display_str(zr.get("task name")))
         parts.append(f"<td>{html_module.escape(str(tn))}</td>")
         er['Наименование задачи («ЗОС»)'] = str(tn)
-        btxt = _plan_fact_zos_format_date_cell(zr.get("_pe"))
-        otxt = _plan_fact_zos_format_date_cell(zr.get("_be"))
+        btxt = _plan_fact_zos_format_date_cell(zr.get("_base_end"))
+        otxt = _plan_fact_zos_format_date_cell(zr.get("_plan_end"))
         parts.append(f"<td>{html_module.escape(btxt)}</td>")
         parts.append(f"<td>{html_module.escape(otxt)}</td>")
         parts.append(f"<td style='text-align:right'>{_dev_html(zr.get('_zos_dev'))}</td>")
         parts.append("</tr>")
-        er["Базовое окончание"] = zr.get("_pe")
-        er["Окончание"] = zr.get("_be")
+        er["Базовое окончание"] = zr.get("_base_end")
+        er["Окончание"] = zr.get("_plan_end")
         er["Отклонение (дней)"] = zr.get("_zos_dev")
         export_rows.append(er)
     parts.append("</tbody></table></div>")
@@ -5703,11 +5694,6 @@ def render_plan_fact_dates_metric_plates(
     parts.append(_one_row_html(max_lbl, plan_lbl, fact_lbl))
     parts.append("</div>")
     st.markdown("".join(parts), unsafe_allow_html=True)
-    suppress_caption(
-        "Максимум — среди строк среза с обеими датами окончания (|факт − план|, дней). "
-        "План/факт окончания проекта — по задаче из админки «Задача для расчёта окончания проекта (MSP)», "
-        "если не задано — эвристика ЗОС в блоке ковенантов."
-    )
 
 
 # ==================== DASHBOARD 3: Plan/Fact Dates for Tasks ====================
@@ -6245,7 +6231,6 @@ def dashboard_plan_fact_dates(df):
             pf_dates_building_filter_mode = "none"
             pf_dates_building_filter_col = None
             selected_building_dates = "Все"
-    _detail_unavailable_note = ""
     with fl_main4:
         _lvl_opts_tz = [
             "Уровень 4 (укрупнённо)",
@@ -6271,9 +6256,6 @@ def dashboard_plan_fact_dates(df):
             )
         else:
             selected_level = _lvl_opts_tz[0]
-            _detail_unavailable_note = (
-                "Детализация недоступна: нет колонки уровня MSP в выгрузке."
-            )
 
     # R23-03: чекбоксы — отдельным блоком ниже фильтров; равномерный ряд,
     # без «висящих» одиночных чекбоксов и без серых fallback-подсказок между
@@ -6321,35 +6303,6 @@ def dashboard_plan_fact_dates(df):
         )
     else:
         task_label_mode = "По наименованию MSP"
-
-    # R23-03: все серые fallback-подсказки убраны из основного потока и
-    # собраны в один свёрнутый expander, чтобы не «лезли» между фильтрами.
-    _diag_msgs = []
-    if pf_dates_block_filter_mode == "section":
-        _diag_msgs.append(
-            "Иерархия MSP не дала списка задач ур.2 — «Функциональный блок» фильтрует по полю «Раздел»."
-        )
-    elif pf_dates_block_filter_mode == "block":
-        _diag_msgs.append(
-            "В данных нет пригодной иерархии MSP для ур.2 — список берётся из поля «Блок». "
-            "Для настоящих задач ур.2 добавьте в файл «Уровень_структуры»/«Уровень» и «Название задачи»."
-        )
-    elif pf_dates_block_filter_mode == "column" and pf_dates_block_filter_col:
-        _diag_msgs.append(
-            f"«Функциональный блок» — по полю «{pf_dates_block_filter_col}» (как в отчёте «График проекта»)."
-        )
-    elif not (pf_dates_level_col and pf_dates_task_col):
-        _diag_msgs.append(
-            "Колонка уровня MSP или имя задачи не найдены — «Строение» заполняется из колонок выгрузки (если есть)."
-        )
-    if _detail_unavailable_note:
-        _diag_msgs.append(_detail_unavailable_note)
-    if not dates_lot_col:
-        _diag_msgs.append("Колонка лота не найдена — подписи только по наименованию MSP.")
-    if _diag_msgs:
-        with st.expander("Пояснения к фильтрам и подписям", expanded=False):
-            for _m in _diag_msgs:
-                st.write(f"• {_m}")
 
     dates_value_type = "Даты (план/факт)"
     # R23-03 add-on (стр.10-11): обе пары «отклонений» показываем по умолчанию,
@@ -6728,7 +6681,8 @@ def dashboard_plan_fact_dates(df):
             st.info("Нет строк с заполненным лотом для выбранных фильтров.")
             return
 
-    chart_df = df_after_hide.copy()
+    chart_df_all = df_after_hide.copy()
+    chart_df = chart_df_all.copy()
     if only_negative_dev_dates:
         chart_df = chart_df[
             chart_df["plan_end_diff"].notna()
@@ -6965,6 +6919,7 @@ def dashboard_plan_fact_dates(df):
     covenant_chart_df = chart_df.copy()
 
     if force_covenant_ui:
+        covenant_chart_df = chart_df_all.copy()
         covenant_rows_df = table_df.loc[_covenant_row_mask(table_df)].copy()
         if covenant_chart_df.empty:
             show_covenant_ui = False
@@ -7004,27 +6959,55 @@ def dashboard_plan_fact_dates(df):
             return
 
         TOP_N = 50
-        MAX_Y_LEN = 70
         local = local.sort_values("plan_end_diff", ascending=True, na_position="last")
         truncated = max(0, len(local) - TOP_N)
         local = local.head(TOP_N)
 
-        def _trunc(s, n=MAX_Y_LEN):
-            s = str(s)
-            return s if len(s) <= n else s[:n-1].rstrip() + "…"
+        def _pf_fmt_day_short(d):
+            if d is None or (isinstance(d, float) and pd.isna(d)):
+                return "—"
+            try:
+                ts = pd.Timestamp(d)
+                if pd.isna(ts):
+                    return "—"
+                return ts.strftime("%d.%m.%y")
+            except Exception:
+                return "—"
 
-        if selected_project == "Все" and "project name" in local.columns:
-            full_labels = local["task name"].astype(str).str.strip() + " (" + local["project name"].astype(str).str.strip() + ")"
-        else:
-            full_labels = local["task name"].astype(str).str.strip()
-        local["_y_full"] = full_labels
-        local["_y"] = full_labels.apply(_trunc)
+        def _pf_join_lines(parts: list[str]) -> str:
+            esc_lines = [html_module.escape(p) for p in parts if str(p).strip() != ""]
+            return "<br>".join(esc_lines) if esc_lines else ""
+
+        def _pf_build_y_label(row: pd.Series) -> str:
+            tn = row.get("task name", "")
+            disp = _bar_task_label_from_row(row, tn)
+            if selected_project == "Все" and "project name" in row.index:
+                pn = str(row.get("project name", "")).strip()
+                if pn:
+                    disp = f"{disp} ({pn})"
+            title_chunks: list[str] = []
+            for chunk in textwrap.wrap(str(disp), width=34, break_long_words=False):
+                title_chunks.append(chunk)
+            title_chunks = title_chunks[:4]
+            bs = row.get("base start")
+            be = row.get("base end")
+            ps = row.get("plan start")
+            pe = row.get("plan end")
+            line_base = (
+                f"БН {_pf_fmt_day_short(bs)} · БО {_pf_fmt_day_short(be)}"
+            )
+            line_plan = f"Н {_pf_fmt_day_short(ps)} · О {_pf_fmt_day_short(pe)}"
+            wrapped_base = textwrap.wrap(line_base, width=38, break_long_words=False) or [line_base]
+            wrapped_plan = textwrap.wrap(line_plan, width=38, break_long_words=False) or [line_plan]
+            return _pf_join_lines([*title_chunks, *wrapped_base, *wrapped_plan])
+
+        local["_y_full"] = local.apply(_pf_build_y_label, axis=1)
         seen: dict[str, int] = {}
         uniq: list[str] = []
-        for lbl in local["_y"].tolist():
+        for lbl in local["_y_full"].tolist():
             if lbl in seen:
                 seen[lbl] += 1
-                uniq.append(f"{lbl} #{seen[lbl]}")
+                uniq.append(f"{lbl}<br>#{seen[lbl]}")
             else:
                 seen[lbl] = 1
                 uniq.append(lbl)
@@ -7033,20 +7016,16 @@ def dashboard_plan_fact_dates(df):
         fig = go.Figure()
         if is_covenant:
             fig.add_trace(go.Scatter(
-                x=local[fe_col], y=local["_y"], mode="markers+text",
+                x=local[fe_col], y=local["_y"], mode="markers",
                 name="Базовое окончание",
                 marker=dict(symbol="diamond", size=12, color="#3B82F6", line=dict(width=1, color="#fff")),
-                text=local[fe_col].apply(lambda d: d.strftime("%d.%m.%Y") if pd.notna(d) else ""),
-                textposition="middle right", textfont=dict(size=10, color="#bfdbfe"),
                 customdata=local["_y_full"],
                 hovertemplate="%{customdata}<br>Базовое окончание: %{x|%d.%m.%Y}<extra></extra>",
             ))
             fig.add_trace(go.Scatter(
-                x=local[pe_col], y=local["_y"], mode="markers+text",
+                x=local[pe_col], y=local["_y"], mode="markers",
                 name="Окончание",
                 marker=dict(symbol="diamond", size=12, color="#EF4444", line=dict(width=1, color="#fff")),
-                text=local[pe_col].apply(lambda d: d.strftime("%d.%m.%Y") if pd.notna(d) else ""),
-                textposition="middle right", textfont=dict(size=10, color="#fecaca"),
                 customdata=local["_y_full"],
                 hovertemplate="%{customdata}<br>Окончание: %{x|%d.%m.%Y}<extra></extra>",
             ))
@@ -7061,7 +7040,7 @@ def dashboard_plan_fact_dates(df):
                         x=[bs, pe], y=[y_lbl, y_lbl], mode="lines",
                         line=dict(color="#3B82F6", width=14),
                         showlegend=False,
-                        hovertemplate=f"{y_full}<br>Баз. оконч.: {bs.strftime('%d.%m.%Y') if pd.notna(bs) else ''}<br>Окончание: {pe.strftime('%d.%m.%Y') if pd.notna(pe) else ''}<extra></extra>",
+                        hovertemplate=f"{y_full}<extra></extra>",
                     ))
             fig.add_trace(go.Scatter(
                 x=local[fe_col], y=local["_y"], mode="markers",
@@ -7077,22 +7056,35 @@ def dashboard_plan_fact_dates(df):
             ))
 
         n_rows = local["_y"].nunique()
-        left_margin = min(440, max(220, MAX_Y_LEN * 6))
+        _max_chars = 12
+        _max_lines = 1
+        for lbl in local["_y"].tolist():
+            for seg in str(lbl).split("<br>"):
+                _max_chars = max(_max_chars, len(seg))
+                _max_lines = max(_max_lines, len(str(lbl).split("<br>")))
+        left_margin = int(min(780, max(300, _max_chars * 6.6 + 72)))
         fig.update_layout(
             xaxis_title="Период", yaxis_title=None,
-            height=max(420, n_rows * 44),
+            height=max(520, int(n_rows * (36 + _max_lines * 15))),
             xaxis=dict(type="date", tickformat="%d.%m.%Y", automargin=True),
             margin=dict(l=left_margin, r=80, t=40, b=50),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         )
         fig.update_yaxes(
             categoryorder="array", categoryarray=local["_y"].tolist(),
-            autorange="reversed", tickfont=dict(size=11, color="#e8eaed"), automargin=True,
+            autorange="reversed",
+            tickfont=dict(size=10, color="#e8eaed"),
+            automargin=True,
         )
         fig = apply_chart_background(fig, skip_uniformtext=True)
-        cap = "Ромб — Базовое окончание (синий) и Окончание (красный); сортировка по убыванию отклонения."
+        cap = (
+            "Подписи слева многострочные (перенос через Plotly): задача, затем строки БН/БО и Н/О с датами (дд.мм.гг). "
+            "Ромбы — окончания."
+        )
         if not is_covenant:
-            cap = "Гант: синяя полоса от Базового окончания до Окончания; сортировка по убыванию отклонения."
+            cap = (
+                "Слева — задача и даты начала/окончания (базовые и текущие); синяя полоса между базовым и текущим окончанием."
+            )
         if truncated > 0:
             cap += f" Показаны первые {TOP_N} из {TOP_N + truncated} задач."
         render_chart(fig, caption_below=cap)
@@ -7155,7 +7147,7 @@ def dashboard_plan_fact_dates(df):
             with st.expander("Примечание к таблице ковенантов", expanded=False):
                 suppress_caption(
                     "Сортировка: по убыванию отклонения окончания. "
-                    "Красный — отклонение > 0, зелёный — ≤ 0."
+                    "Красный — отклонение < 0 (опоздание), зелёный — = 0."
                 )
             _date_bg = "rgba(46, 134, 171, 0.22)"
             _tbl_parts = [
@@ -7192,9 +7184,10 @@ def dashboard_plan_fact_dates(df):
                                     f"<td>{esc}</td>"
                                 )
                             else:
-                                clr = "#c0392b" if pv > 0 else "#27ae60"
+                                clr = "#ff6b6b" if pv < -1e-9 else ("#00e676" if abs(pv) <= 1e-9 else "#e8eef5")
+                                fw = "700" if pv < -1e-9 else ("600" if abs(pv) <= 1e-9 else "400")
                                 _tbl_parts.append(
-                                    f'<td style="color:{clr};font-weight:600">{esc}</td>'
+                                    f'<td style="color:{clr};font-weight:{fw}">{esc}</td>'
                                 )
                     else:
                         _tbl_parts.append(f"<td>{esc}</td>")
@@ -11548,11 +11541,6 @@ def _rd_plan_fallback_view(
             detail_show[c] = detail_show[c].replace({"": "—"})
 
     st.dataframe(detail_show, hide_index=True, use_container_width=True)
-    st.caption(
-        f"Этот вид строится из справочника `{_src_glob}` (план выдачи разделов). "
-        f"Полный отчёт со статусами «На согласовании», «Выдано в производство работ» "
-        f"доступен только при наличии MSP-выгрузки с соответствующими {doc_code}-колонками."
-    )
     return True
 
 
@@ -17125,7 +17113,6 @@ def dashboard_technique_tabs(df):
     R23-05 стр.14: отдельный пункт меню «ГДРС Техника» вынесен в dashboard_gdrs_equipment.
     """
     st.header("ГДРС")
-    st.caption("График движения рабочей силы · рабочие")
     dashboard_workforce_movement(
         df, data_source_filter="Ресурсы", show_header=False, key_prefix="gdrs_people"
     )
@@ -17136,7 +17123,6 @@ def dashboard_gdrs_equipment(df):
     R23-05 стр.14: восстановленный отчёт «Техника» (параллельно с «Рабочие»).
     """
     st.header("ГДРС")
-    st.caption("График движения рабочей силы · техника")
     dashboard_workforce_movement(
         df, data_source_filter="Техника", show_header=False, key_prefix="gdrs_tech"
     )
@@ -17196,11 +17182,6 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         st.header("График движения рабочей силы (техника)")
     else:
         st.header("ГДРС")
-    st.caption(
-        "Источник: ресурсы CSV + 1С Договоры/Справочники (snapshot на дату последнего файла ресурсов). "
-        "Колонка «Вид работ»: при наличии `*dannye*.json` — «СтатьяОборотов» по совпадению договора "
-        "с «Наименование_Договора»; если строки разные — по паре «Проект» + «Контрагент» из того же файла."
-    )
 
     _inject_multiselect_ru_translations()
 
@@ -19924,10 +19905,7 @@ def dashboard_executive_documentation(df):
         {"title": "Всего просрочек", "value": int(total_overdue_two), "subtitle": "Подрядчик + заказчик", "tone": "alert"},
     ]
     st.markdown(
-        _exec_metric_cards_html(
-            summary_cards,
-            caption="Показатель «Всего просрочек» = просрочка подрядчика (доработка) + просрочка заказчика (на согласовании).",
-        ),
+        _exec_metric_cards_html(summary_cards),
         unsafe_allow_html=True,
     )
 
@@ -19945,7 +19923,7 @@ def dashboard_executive_documentation(df):
                     _id_st.columns = ["Статус", "Количество"]
                     st.dataframe(_id_st, hide_index=True, use_container_width=True)
                 else:
-                    st.caption("Колонка «Статус» не найдена.")
+                    pass
             with _id_cols[1]:
                 st.markdown("**Распределение по KrStateID (TESSA)**")
                 if "KrStateID" in filtered.columns and "KrState" in filtered.columns:
@@ -19957,7 +19935,7 @@ def dashboard_executive_documentation(df):
                     )
                     st.dataframe(_id_kr, hide_index=True, use_container_width=True)
                 else:
-                    st.caption("Нет колонок KrStateID/KrState.")
+                    pass
             with _id_cols[2]:
                 st.markdown("**Источники / поля**")
                 _id_src = []
@@ -21731,14 +21709,9 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
 
     if used_1c_approved:
         budget_df = syn.copy()
-        st.caption(
-            "Источник: оборотно-сальдовая ведомость 1С (файлы web/1с\\_\\*\\_dannye.json); "
-            "ТипСтатьи = «БДДС», Сценарий ∈ {ПЛАН (без статей с маркером «(БДР)»), ФАКТ}; "
-            "сумма приведена к рублям (× 1000)."
-        )
     else:
         ensure_budget_columns(df)
-        df, _ = ensure_budget_frame_with_fallback(df, show_caption=True)
+        df, _ = ensure_budget_frame_with_fallback(df, show_caption=False)
         ensure_budget_columns(df)
         budget_df = df
 
@@ -24165,16 +24138,10 @@ def dashboard_forecast_budget(df):
     _tot_approved_mln = 0.0
 
     if _many_projects_fc:
-        suppress_caption(
-            "Режим **«Все проекты»**: автоматическое **равномерное** распределение по датам MSP; суммы берутся из MSP/оборотов 1С. "
-            "Чтобы задать **% распределения (A/B/C)** по лотам — выберите один проект."
-        )
         forecast_budget_df, _tot_approved_mln, _combine_note = _forecast_combine_monthly_all_projects(
             filtered_scope, project_col
         )
         calc_error = None if not forecast_budget_df.empty else (_combine_note or "Нет данных для расчёта.")
-        if _combine_note and forecast_budget_df is not None and not forecast_budget_df.empty:
-            st.caption(str(_combine_note))
     else:
         project_df, prep_err = _forecast_prepare_msp_slice(filtered_scope, str(selected_project_scope))
         if project_df is None or prep_err:
@@ -24217,11 +24184,6 @@ def dashboard_forecast_budget(df):
             )
 
         st.subheader("Редактирование данных задач")
-        suppress_caption(
-            "Колонка **Лот** (бывший «Раздел»); **План начало / окончание** — «Начало»/«Окончание» MSP; "
-            "**БДДС план (утверждённый)** и **БДДС факт** при загрузке подставляются из оборотов 1С по сценарию "
-            "«Бюджет» (статьи без БДР); если по «Бюджет» сумм нет — факт подстраховывается по сценарию «Факт»."
-        )
 
         _sess_key = f"forecast_edit_v7_{_npk_fc}"
         if _sess_key not in st.session_state:
@@ -24504,9 +24466,6 @@ def dashboard_forecast_budget(df):
         )
 
     st.subheader("Таблица прогнозного БДДС")
-    st.caption(
-        f"Сводка по **{period_label.lower()}**, представление «{_view_type_fc}». Суммы в млн руб., один знак после запятой."
-    )
     _period_hdr = period_label
     _dev_col_fc = "Отклонение (план − прогноз), млн руб."
     try:
@@ -26828,7 +26787,7 @@ def dashboard_predpisania(df):
                     )
                     st.dataframe(_sanity_krs, hide_index=True, use_container_width=True)
                 else:
-                    st.caption("Нет колонок KrStateID/KrState в выборке.")
+                    pass
             with _sanity_cols[1]:
                 st.markdown("**Распределение по подрядчикам**")
                 if contr_col and contr_col in filtered.columns:
@@ -26838,7 +26797,7 @@ def dashboard_predpisania(df):
                     _sanity_contr.columns = ["Подрядчик", "Количество"]
                     st.dataframe(_sanity_contr, hide_index=True, use_container_width=True)
                 else:
-                    st.caption("Нет колонки подрядчика.")
+                    pass
             with _sanity_cols[2]:
                 st.markdown("**Источники данных**")
                 _src_lines = []
@@ -27407,15 +27366,6 @@ def dashboard_developer_projects(df):
 
         # JSON префов подгружается внутри матрицы; вертикальные даты в UI отключены.
         vert_dates = False
-        try:
-            from settings import get_setting as _get_admin_mail
-
-            _adm_m = (_get_admin_mail("admin_notification_email") or "").strip()
-        except Exception:
-            _adm_m = ""
-        if _adm_m:
-            with st.expander("Оформление отчёта", expanded=False):
-                st.caption(f"Email администратора: {_adm_m}")
 
         matrix_df = filtered.copy()
         if matrix_df.empty:

@@ -180,8 +180,4 @@ def render_contract_banner(contract: Dict[str, Any]) -> None:
             "</p>",
             unsafe_allow_html=True,
         )
-        st.caption(
-            "Перечислено только то, из‑за чего не загружены данные или распознан некорректный формат для отчётов. "
-            "Исправьте выгрузки на стороне 1С / MSP / TESSA и повторите загрузку."
-        )
         _render_contract_alert_lines(lines)

@@ -55,7 +55,6 @@ if is_streamlit_context():
     render_sidebar_menu(current_page="admin")
 
     st.markdown("<h1 class='Buquhununee'>Административная панель</h1>", unsafe_allow_html=True)
-    st.caption("Раздел доступен также на вкладке «Административная панель» в Настройках профиля.")
     if st.button("Открыть настройки профиля", key="admin_to_profile_btn"):
         switch_page_app("pages/profile.py")
 

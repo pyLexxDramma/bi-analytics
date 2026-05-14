@@ -124,22 +124,5 @@ def collect_developer_projects_hints(
     return _dedupe_preserve(hints)
 
 
-def render_quality_hints(hints: list[str]) -> None:
-    import html
-
-    import streamlit as st
-
-    h = _dedupe_preserve(hints)
-    if not h:
-        return
-    body = "\n\n".join(h)
-    safe = html.escape(body).replace("\n\n", "<br/><br/>").replace("\n", "<br/>")
-    st.markdown(
-        (
-            '<div style="color:#ff2b2b;font-weight:600;line-height:1.45;padding:0.65rem 0.85rem;'
-            "border:1px solid rgba(255,70,70,0.55);border-radius:0.45rem;"
-            'background:rgba(255,60,60,0.08);">'
-            f"{safe}</div>"
-        ),
-        unsafe_allow_html=True,
-    )
+def render_quality_hints(_hints: list[str]) -> None:
+    return

@@ -162,7 +162,6 @@ def build_dashboard_diagnostics(selected_dashboard: str, df: pd.DataFrame, state
 def render_dashboard_diagnostics_tab(selected_dashboard: str, df: pd.DataFrame, state: Any) -> None:
     report = build_dashboard_diagnostics(selected_dashboard, df, state)
     rows = report.get("rows", [])
-    st.caption("Проверка обновляется при каждом изменении фильтров/вкладок (перезапуск Streamlit-цикла).")
     if not rows:
         st.info("Нет данных для диагностики.")
         return

@@ -193,12 +193,6 @@ def render_data_readiness_expander() -> None:
             f"TESSA={s.get('tessa_rows', 0)}, TESSA task={s.get('tessa_tasks_rows', 0)}, "
             f"DK={s.get('debit_credit_rows', 0)}."
         )
-        lo = rep.get("load") or {}
-        if lo:
-            st.caption(
-                f"Последняя загрузка: файлов={lo.get('loaded')}, пропущено={lo.get('skipped')}, "
-                f"version_id={lo.get('version_id')}, предупреждений={lo.get('n_warnings', 0)}."
-            )
         rows = rep.get("reports") or []
         if rows:
             # Показываем таблицу полностью (без внутреннего скролла), чтобы
@@ -212,7 +206,3 @@ def render_data_readiness_expander() -> None:
                 hide_index=True,
                 height=_table_h,
             )
-        st.caption(
-            "ok — данные для отчёта в целом есть; warn — есть риск пустых/частичных графиков; "
-            "err — для отчёта не хватает выгрузки. Детализация колонок: см. expander «Справка: колонки загрузки»."
-        )

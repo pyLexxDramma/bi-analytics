@@ -1008,31 +1008,6 @@ def render_sidebar_menu(current_page: str = "reports"):
                 except Exception as _e:
                     st.error(f"Refresh failed: {_e}")
 
-        # ── Бейдж версии (видим всем): помогает диагностировать «старый деплой».
-        try:
-            from app_version import get_app_version as _gv
-
-            _vinfo = _gv()
-            _vsha = str(_vinfo.get("sha") or "")[:10]
-            _vts = str(_vinfo.get("ts") or "")
-            _short_ts = ""
-            if _vts:
-                try:
-                    from datetime import datetime as _dt
-
-                    _short_ts = _dt.fromisoformat(_vts.replace("Z", "+00:00")).strftime("%d.%m %H:%M")
-                except Exception:
-                    _short_ts = _vts[:16]
-            st.markdown("---")
-            st.caption(
-                f"<div style='opacity:.7;font-size:11px;line-height:1.3'>"
-                f"Версия: <code>{_vsha}</code>"
-                + (f" · {_short_ts}" if _short_ts else "")
-                + "</div>",
-                unsafe_allow_html=True,
-            )
-        except Exception:
-            pass
 
         # 3. Выход (для всех ролей)
         st.markdown("---")

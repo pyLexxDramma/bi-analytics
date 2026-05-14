@@ -427,9 +427,6 @@ def _render_control_points_msp_tab(user: dict) -> None:
         return options, task_col, None
 
     st.subheader("Email администратора")
-    st.caption(
-        "Используется как контактный email в отчёте «Девелоперские проекты» и может применяться в уведомлениях."
-    )
     cur_em = (get_setting("admin_notification_email") or "").strip()
     new_em = st.text_input(
         "Email администратора",
@@ -467,11 +464,7 @@ def _render_control_points_msp_tab(user: dict) -> None:
     st.divider()
     st.markdown("<h2 class='Duquhununee'>MSP: задача для метрик</h2>", unsafe_allow_html=True)
 
-    st.markdown("### Отчёт «Отклонение от базового плана»")
-    st.markdown(
-        "Название задачи MSP для верхних метрик **«окончание проекта»** в отчёте «Отклонение от базового плана». "
-        "Доступно только администраторам. Оставьте пустым — используется эвристика (ЗОС / ввод в эксплуатацию)."
-    )
+    st.markdown("### Отчёт «Отклонение от базового плана» — задача для KPI")
     _cur_task = (get_setting("baseline_plan_task_for_metrics") or "").strip()
     task_options, task_col, task_options_hint = _msp_metric_task_options()
     if task_options:
@@ -1021,12 +1014,6 @@ def _admin_tab4_access_fragment() -> None:
     # │ ⊗ TAB 4: Права доступа к проектам ¤ End                              │ #
     # └──────────────────────────────────────────────────────────────────────┘ #
 
-    # ┌──────────────────────────────────────────────────────────────────────┐ #
-    # │ ⊗ TAB 5: Benchmark LLM ¤ Start                                       │ #
-    # └──────────────────────────────────────────────────────────────────────┘ #
-
-
-
 @st.fragment
 def _admin_tab5_benchmark_fragment(user: dict) -> None:
     _render_benchmark_tab(user)
@@ -1039,7 +1026,7 @@ def _admin_tab6_msp_fragment(user: dict) -> None:
 
 
 def render_admin_panel_tabs(user: dict) -> None:
-    """Скрипт автоскролла вкладок + шесть вкладок админки."""
+    """Скрипт автоскролла вкладок + вкладки админки."""
 
     # JavaScript для автоматического скролла к содержимому выбранной вкладки
     st.markdown(
@@ -1139,13 +1126,12 @@ def render_admin_panel_tabs(user: dict) -> None:
         """,
         unsafe_allow_html=True,
     )
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
         [
             "Пользователи",
             "Статистика",
             "Логи",
             "Права доступа",
-            "Benchmark LLM",
             "MSP: задача для метрик",
         ]
     )
@@ -1163,6 +1149,4 @@ def render_admin_panel_tabs(user: dict) -> None:
     with tab4:
         _admin_tab4_access_fragment()
     with tab5:
-        _admin_tab5_benchmark_fragment(user)
-    with tab6:
         _admin_tab6_msp_fragment(user)

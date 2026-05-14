@@ -765,17 +765,10 @@ def main():
 
     if data_mode in ("Из папки web/", "FTP → web/"):
 
-        from config import ignore_demo_data_files
         from data_health import save_schema_health_report, build_environment_fingerprint
         from data_readiness import build_data_readiness_report, render_data_readiness_expander
         from web_schema import init_web_schema, get_all_versions, get_active_version_id, activate_version
         from web_loader import load_all_from_web, web_dir_exists, read_version_to_session, get_web_dir
-
-        if ignore_demo_data_files() and not _is_release_client_mode():
-            st.caption(
-                "На сервере задано BI_ANALYTICS_IGNORE_DEMO: не загружаются демо "
-                "sample_*.csv и файлы в каталогах new_csv/; используйте боевые MSP/1С/TESSA в web/."
-            )
 
         init_web_schema()
 
@@ -1042,18 +1035,6 @@ def main():
         if data_mode == "FTP → web/":
             from ftp_sync import merge_ftp_config, streamlit_secrets_to_config, sync_ftp_to_web
 
-            st.caption(
-                "**Как обновить данные с FTP для клиента:**  \n"
-                "1) Задайте доступ: секреты Streamlit `[ftp]`, либо переменные окружения "
-                "`BI_FTP_HOST`, `BI_FTP_USER`, `BI_FTP_PASSWORD` (или пароль в `FTP_AI_PASSWORD`). "
-                "Каталог на сервере — `BI_FTP_REMOTE_DIR` (типично **`/web`**).  \n"
-                "2) Режим **«FTP → web/»** → кнопка **«Скачать CSV и JSON с FTP в web/ и загрузить в БД»** "
-                "скачивает файлы в локальную папку `web/` и сразу выполняет то же чтение в SQLite, что и кнопка ниже.  \n"
-                "3) **«Загрузить из web/»** — только перечитать уже лежащие на диске файлы (без FTP).  \n"
-                "Актуальные снимки по дате в именах файлов включаются политикой `BI_ANALYTICS_WEB_LATEST_ONLY` "
-                "(по умолчанию последний снимок; полная история — `=0`)."
-            )
-
             with st.expander("Параметры FTP вручную (если нет secrets)", expanded=False):
                 _h = st.text_input("FTP host", key="ftp_host_override")
                 _u = st.text_input("FTP user", key="ftp_user_override")
@@ -1307,7 +1288,6 @@ def main():
         if _panel_tab == "Проверка данных":
             render_data_readiness_expander()
             if st.session_state.get("last_data_schema_health"):
-                st.caption("Сформирован отчёт схем: `data_health_report.md` и `data_health_report.json` в корне приложения.")
                 _fsch = (st.session_state.get("last_data_schema_health") or {}).get("file_checks") or []
                 if _fsch:
                     with st.expander("Проверка файлов и колонок (что отсутствует/не распознано)", expanded=True):

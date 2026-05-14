@@ -824,12 +824,6 @@ def ensure_budget_frame_with_fallback(
     if syn.empty:
         return work, False
 
-    if show_caption:
-        if not force_from_1c:
-            st.caption(
-                "Использован fallback: бюджетные суммы взяты из 1С (`*_dannye.json`), "
-                "потому что в MSP нет непустых budget plan / budget fact."
-            )
     return syn, True
 
 
