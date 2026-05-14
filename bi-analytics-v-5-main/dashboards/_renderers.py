@@ -11678,6 +11678,106 @@ def _rd_plan_fallback_view(
     m2.metric("С отклонением (дн. > 0)", f"{overdue}")
     m3.metric("Ср. задержка, дн.", f"{avg_delay:.1f}" if overdue > 0 else "0")
 
+    # Накопительная динамика по строкам CSV (аналог основного отчёта РД), если нет MSP-колонок.
+    if source_key == "rd_plan_data":
+        try:
+            _dyn_parts: list[pd.DataFrame] = []
+            _pm = df["_plan_dt"].notna()
+            if _pm.any():
+                _gp = df.loc[_pm].copy()
+                _gp["_dn"] = _gp["_plan_dt"].dt.normalize()
+                _pg = _gp.groupby("_dn").size().reset_index(name="Количество")
+                _pg.columns = ["Дата", "Количество"]
+                _pg["Тип"] = "План"
+                _dyn_parts.append(_pg)
+            _fm = df["_fact_dt"].notna()
+            if _fm.any():
+                _gf = df.loc[_fm].copy()
+                _gf["_dn"] = _gf["_fact_dt"].dt.normalize()
+                _fg = _gf.groupby("_dn").size().reset_index(name="Количество")
+                _fg.columns = ["Дата", "Количество"]
+                _fg["Тип"] = "Факт"
+                _dyn_parts.append(_fg)
+            if _dyn_parts:
+                dynamics_df = pd.concat(_dyn_parts, ignore_index=True)
+                all_dates = pd.to_datetime(dynamics_df["Дата"], errors="coerce").dropna()
+                if not all_dates.empty:
+                    start_anchor = (all_dates.min() - pd.Timedelta(days=1)).normalize()
+                    dynamics_df = pd.concat(
+                        [
+                            pd.DataFrame(
+                                {
+                                    "Дата": [start_anchor, start_anchor],
+                                    "Количество": [0.0, 0.0],
+                                    "Тип": ["План", "Факт"],
+                                }
+                            ),
+                            dynamics_df,
+                        ],
+                        ignore_index=True,
+                    )
+                dynamics_df = dynamics_df.sort_values(["Тип", "Дата"])
+                for _typ in dynamics_df["Тип"].unique():
+                    _mk = dynamics_df["Тип"] == _typ
+                    dynamics_df.loc[_mk, "Количество"] = dynamics_df.loc[
+                        _mk, "Количество"
+                    ].cumsum()
+                dynamics_df["Текст"] = dynamics_df["Количество"].apply(
+                    lambda x: f"{float(x):.0f}" if pd.notna(x) and float(x) != 0.0 else ""
+                )
+                fig_fb = px.line(
+                    dynamics_df,
+                    x="Дата",
+                    y="Количество",
+                    color="Тип",
+                    title=None,
+                    markers=True,
+                    labels={"Количество": "Количество разделов", "Дата": "Дата"},
+                    text="Текст",
+                    color_discrete_map={"План": "#2E86AB", "Факт": "#F39C12"},
+                )
+                fig_fb.update_layout(
+                    xaxis_title="Дата (Старт План)",
+                    yaxis_title="Количество",
+                    hovermode="x unified",
+                    height=550,
+                    xaxis=dict(tickangle=-45, tickfont=dict(size=10)),
+                    yaxis=dict(rangemode="tozero"),
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="right",
+                        x=1,
+                        title_text="",
+                    ),
+                )
+                fig_fb.update_traces(
+                    line=dict(width=2),
+                    marker=dict(size=6),
+                    mode="lines+markers+text",
+                    textposition="top center",
+                    textfont=dict(size=10, color="white"),
+                )
+                fig_fb.for_each_trace(
+                    lambda t: t.update(
+                        name=(
+                            "План (РД по Договору)"
+                            if str(t.name) == "План"
+                            else (
+                                "Факт (Выдано в производство работ)"
+                                if str(t.name) == "Факт"
+                                else t.name
+                            )
+                        )
+                    )
+                )
+                fig_fb = apply_chart_background(fig_fb)
+                st.subheader("Динамика выдачи РД")
+                render_chart(fig_fb, caption_below="Динамика выдачи РД")
+        except Exception:
+            pass
+
     detail_show = detail_rows.copy()
     detail_show["Отклонение, дн."] = delta_num.apply(
         lambda x: ("+" + str(int(x))) if pd.notna(x) and x > 0 else (str(int(x)) if pd.notna(x) else "—")
@@ -20753,13 +20853,13 @@ def dashboard_documentation(
         else find_column(df, ["Конец Факт", "Факт Конец"])
     )
 
-    # Для РД — колонки выгрузки; для ПД достаточно задач MS Project
+    # Для РД — колонки выгрузки; для ПД достаточно задач MS Project.
+    # «На согласовании» не блокирует отчёт: в многих MSP-выгрузках колонки нет —
+    # иначе включается только fallback по CSV без графика «Динамика выдачи РД».
     missing_cols = []
     if not is_pd:
         if not rd_count_col:
             missing_cols.append("Количество разделов РД по Договору")
-        if not on_approval_col:
-            missing_cols.append("На согласовании")
         if not in_production_col:
             missing_cols.append("Выдано в производство работ")
 
@@ -21259,7 +21359,11 @@ def dashboard_documentation(
                 else 0.0
             )
             issued_sum = float(_to_numeric_series(df[in_production_col]).sum())
-            on_ap_sum = float(_to_numeric_series(df[on_approval_col]).sum())
+            on_ap_sum = (
+                float(_to_numeric_series(df[on_approval_col]).sum())
+                if on_approval_col and on_approval_col in df.columns
+                else 0.0
+            )
             rework_sum = (
                 float(_to_numeric_series(df[rework_col]).sum())
                 if rework_col and rework_col in df.columns
@@ -21788,7 +21892,7 @@ def dashboard_documentation(
                 )
 
                 fig_dynamics.update_layout(
-                    xaxis_title="Период",
+                    xaxis_title="Дата (Старт План)",
                     yaxis_title="Количество",
                     hovermode="x unified",
                     height=550,
@@ -21807,11 +21911,11 @@ def dashboard_documentation(
                 fig_dynamics.for_each_trace(
                     lambda t: t.update(
                         name=(
-                            "План"
-                            if t.name == "План"
+                            "План (РД по Договору)"
+                            if str(t.name) == "План"
                             else (
-                                "Факт"
-                                if t.name == "Факт"
+                                "Факт (Выдано в производство работ)"
+                                if str(t.name) == "Факт"
                                 else t.name
                             )
                         )
