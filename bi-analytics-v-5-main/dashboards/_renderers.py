@@ -11465,7 +11465,10 @@ def _rd_plan_fallback_view(
         return False
 
     df = rd_plan.copy()
-    df.columns = [str(c).strip() for c in df.columns]
+    df.columns = [
+        re.sub(r"\s+", " ", str(c).replace("\r", " ").replace("\n", " ").replace("\u00a0", " ")).strip()
+        for c in df.columns
+    ]
 
     def _pick(cols):
         for c in cols:
@@ -11473,15 +11476,38 @@ def _rd_plan_fallback_view(
                 return c
         return None
 
+    def _pick_fuzzy(must_have: tuple[str, ...]):
+        lows = tuple(str(w).lower() for w in must_have)
+        best = None
+        best_len = 10**9
+        for c in df.columns:
+            cl = str(c).strip().lower()
+            if all(w in cl for w in lows):
+                ln = len(cl)
+                if ln < best_len:
+                    best_len = ln
+                    best = c
+        return best
+
     proj_col = _pick(["project name", "Проект", "ID_проекта"])
-    code_col = _pick(["Шифр", "Шифр полный", "section"])
-    name_col = _pick([
-        "Наименование  работ (разделов работ).",
-        "Наименование работ (разделов работ).",
-        "Наименование раздела",
-        "Наименование",
-    ])
-    plan_col = _pick(["Дата выдачи разделов по Договору", "Дата выдачи", "plan end"])
+    code_col = (
+        _pick(["Шифр", "Шифр полный", "Шифр раздела", "section"]) or _pick_fuzzy(("шифр",))
+    )
+    name_col = (
+        _pick([
+            "Наименование  работ (разделов работ).",
+            "Наименование работ (разделов работ).",
+            "Наименование раздела",
+            "Наименование",
+        ])
+        or _pick_fuzzy(("наименование", "раздел"))
+        or _pick_fuzzy(("наименование",))
+    )
+    plan_col = (
+        _pick(["Дата выдачи разделов по Договору", "Дата выдачи", "plan end"])
+        or _pick_fuzzy(("дата", "выдачи", "договор"))
+        or _pick_fuzzy(("дата", "выдачи"))
+    )
     forecast_col = _pick([
         "Прогнозная дата выдачи разделов",
         "Прогнозная дата",
@@ -11518,6 +11544,99 @@ def _rd_plan_fallback_view(
             )
             if sel:
                 df = df[df[proj_col].astype(str).str.strip().isin(sel)]
+
+    fb_k = f"{source_key}_{doc_code}_{page_title or 'doc'}"
+
+    nm_s = (
+        df[name_col].fillna("").astype(str).str.strip()
+        if name_col and name_col in df.columns
+        else pd.Series("", index=df.index)
+    )
+    cd_s = df[code_col].fillna("").astype(str).str.strip()
+    nm_s = nm_s.where(~nm_s.str.lower().isin({"nan", "none"}), "")
+    cd_s = cd_s.where(~cd_s.str.lower().isin({"nan", "none", "-", "—"}), "")
+    _sec_lbl = (cd_s + " " + nm_s).str.replace(r"\s+", " ", regex=True).str.strip()
+    _sec_lbl = _sec_lbl.mask(_sec_lbl.eq(""), "(не указано)")
+    sec_opts = sorted(
+        {str(v).strip() for v in _sec_lbl.tolist() if str(v).strip()},
+        key=lambda x: x.casefold(),
+    )
+
+    stat_vals: list[str] = []
+    if status_col and status_col in df.columns:
+        stat_vals = sorted(
+            {
+                str(v).strip()
+                for v in df[status_col].dropna().tolist()
+                if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
+            },
+            key=lambda x: x.casefold(),
+        )
+
+    st.markdown("##### Фильтры")
+    f2a, f2b, f2c = st.columns(3, gap="small")
+    with f2a:
+        sel_sec = st.multiselect(
+            "Фильтр по разделу",
+            options=sec_opts,
+            default=sec_opts,
+            key=f"rd_fb_sec_{fb_k}",
+            placeholder="Все разделы",
+            help="Подпись: шифр раздела и наименование через пробел.",
+        )
+    d_start = None
+    d_end = None
+    with f2b:
+        dm = st.selectbox(
+            "Период (по плановой дате выдачи)",
+            ["Весь период (за всё время)", "Выбор диапазона дат"],
+            index=0,
+            key=f"rd_fb_per_mode_{fb_k}",
+        )
+        _pv = df["_plan_dt"].dropna()
+        if dm != "Весь период (за всё время)" and not _pv.empty:
+            mn_d = _pv.min().date()
+            mx_d = _pv.max().date()
+            dr = st.date_input(
+                "Диапазон дат",
+                value=(mn_d, mx_d),
+                min_value=mn_d,
+                max_value=mx_d,
+                key=f"rd_fb_dr_{fb_k}",
+                format="DD.MM.YYYY",
+            )
+            if isinstance(dr, tuple) and len(dr) == 2:
+                d_start, d_end = dr[0], dr[1]
+            else:
+                d_start = d_end = dr
+        elif dm != "Весь период (за всё время)" and _pv.empty:
+            suppress_caption("Нет валидных плановых дат для фильтра периода.")
+    with f2c:
+        sel_st: list[str] = []
+        if stat_vals:
+            sel_st = st.multiselect(
+                "Фильтр по статусу",
+                options=stat_vals,
+                default=stat_vals,
+                key=f"rd_fb_st_{fb_k}",
+                placeholder="Все статусы",
+            )
+        else:
+            suppress_caption("В источнике нет заполненной колонки статуса.")
+
+    if sel_sec and sec_opts and set(sel_sec) != set(sec_opts):
+        df = df[_sec_lbl.isin(sel_sec)].copy()
+
+    if (
+        d_start is not None
+        and d_end is not None
+        and dm != "Весь период (за всё время)"
+    ):
+        _pn = df["_plan_dt"].dt.normalize().dt.date
+        df = df[df["_plan_dt"].notna() & (_pn >= d_start) & (_pn <= d_end)].copy()
+
+    if sel_st and stat_vals and set(sel_st) != set(stat_vals):
+        df = df[df[status_col].astype(str).str.strip().isin(sel_st)].copy()
 
     if df.empty:
         st.info("Нет строк после фильтра.")
@@ -20685,6 +20804,58 @@ def dashboard_documentation(
     if project_col and project_col in df.columns:
         df = _project_column_apply_canonical(df, project_col)
 
+    # РД: подпись раздела для фильтра — «Шифр раздела» + «Наименование раздела» (через пробел).
+    _rd_cipher_col = None
+    _rd_section_name_col = None
+    rd_section_labels_series: Optional[pd.Series] = None
+    if not is_pd:
+        _rd_cipher_col = find_column(
+            df,
+            [
+                "Шифр",
+                "Шифр полный",
+                "Шифр раздела",
+                "шифр раздела",
+                "Шифр раздела РД",
+                "Шифр РД",
+                "Шифр ПД РД",
+                "DivisionCipher",
+                "Cipher",
+            ],
+        )
+        _rd_section_name_col = find_column(
+            df,
+            [
+                "Наименование раздела",
+                "наименование раздела",
+                "Название раздела",
+                "Наименование раздела РД",
+            ],
+        )
+        _has_cipher = bool(_rd_cipher_col and _rd_cipher_col in df.columns)
+        _name_src = None
+        if _rd_section_name_col and _rd_section_name_col in df.columns:
+            _name_src = _rd_section_name_col
+        elif section_col and section_col in df.columns:
+            _name_src = section_col
+        if _has_cipher or _name_src:
+            ciph = pd.Series("", index=df.index, dtype=object)
+            nm = pd.Series("", index=df.index, dtype=object)
+            if _has_cipher:
+                ciph = df[_rd_cipher_col].fillna("").astype(str).str.strip()
+                ciph = ciph.where(
+                    ~ciph.str.lower().isin({"nan", "none", "-", "—"}), ""
+                )
+            if _name_src:
+                nm = df[_name_src].fillna("").astype(str).str.strip()
+                nm = nm.where(~nm.str.lower().isin({"nan", "none"}), "")
+            lab = (
+                (ciph.astype(str).str.strip() + " " + nm.astype(str).str.strip())
+                .str.replace(r"\s+", " ", regex=True)
+                .str.strip()
+            )
+            rd_section_labels_series = lab.mask(lab.eq(""), "(не указано)")
+
     # Add filters
     st.subheader("Фильтры")
     st.markdown(
@@ -20718,43 +20889,49 @@ def dashboard_documentation(
                 placeholder="Все проекты",
             )
 
-    # Filter by date period
     selected_date_start = None
     selected_date_end = None
-    if period_source_col and period_source_col in df.columns:
-        with filter_col2:
-            df_dates = _to_datetime_series(df[period_source_col])
-            valid_dates = df_dates[df_dates.notna()]
-
-            if not valid_dates.empty:
-                min_date = valid_dates.min().date()
-                max_date = valid_dates.max().date()
-                selected_period_mode = st.selectbox(
-                    "Период",
-                    ["Весь период (за всё время)", "Выбор диапазона дат"],
-                    index=0,
-                    key=f"{_doc_fk}period_mode",
-                )
-                if selected_period_mode == "Выбор диапазона дат":
-                    selected_period = st.date_input(
-                        ("Диапазон дат (по дате сдачи ПД в плане)" if is_pd else "Диапазон дат (по дате сдачи РД в плане)"),
-                        value=(min_date, max_date),
-                        min_value=min_date,
-                        max_value=max_date,
-                        key=f"{_doc_fk}date_range",
-                        format="DD.MM.YYYY",
-                    )
-                    if isinstance(selected_period, tuple) and len(selected_period) == 2:
-                        selected_date_start, selected_date_end = selected_period
-                    else:
-                        selected_date_start = selected_period
-                        selected_date_end = selected_period
-                else:
-                    suppress_caption(f"Весь период: {min_date:%d.%m.%Y} - {max_date:%d.%m.%Y}")
-
-    # Filter by RD section kind (несколько значений; пусто = все)
     selected_sections_doc: list[str] = []
-    with filter_col3:
+
+    def _period_filter_widgets() -> None:
+        nonlocal selected_date_start, selected_date_end
+        if not period_source_col or period_source_col not in df.columns:
+            suppress_caption(
+                "Колонка плановой даты для периода не найдена (plan end / plan start)."
+            )
+            return
+        df_dates = _to_datetime_series(df[period_source_col])
+        valid_dates = df_dates[df_dates.notna()]
+        if valid_dates.empty:
+            suppress_caption("Нет валидных дат для фильтра периода.")
+            return
+        min_date = valid_dates.min().date()
+        max_date = valid_dates.max().date()
+        selected_period_mode = st.selectbox(
+            "Период",
+            ["Весь период (за всё время)", "Выбор диапазона дат"],
+            index=0,
+            key=f"{_doc_fk}period_mode",
+        )
+        if selected_period_mode == "Выбор диапазона дат":
+            selected_period = st.date_input(
+                ("Диапазон дат (по дате сдачи ПД в плане)" if is_pd else "Диапазон дат (по дате сдачи РД в плане)"),
+                value=(min_date, max_date),
+                min_value=min_date,
+                max_value=max_date,
+                key=f"{_doc_fk}date_range",
+                format="DD.MM.YYYY",
+            )
+            if isinstance(selected_period, tuple) and len(selected_period) == 2:
+                selected_date_start, selected_date_end = selected_period
+            else:
+                selected_date_start = selected_period
+                selected_date_end = selected_period
+        else:
+            suppress_caption(f"Весь период: {min_date:%d.%m.%Y} - {max_date:%d.%m.%Y}")
+
+    def _section_filter_widgets_pd() -> None:
+        nonlocal selected_sections_doc
         if section_col and section_col in df.columns:
             section_options = sorted(
                 {
@@ -20766,17 +20943,77 @@ def dashboard_documentation(
             )
             _sec_default = st.session_state.get(
                 f"{_doc_fk}section_filter_ms",
-                section_options if is_pd else [],
+                section_options,
             )
             selected_sections_doc = st.multiselect(
-                "Фильтр по виду раздела ПД" if is_pd else "Фильтр по виду раздела РД",
+                "Фильтр по виду раздела ПД",
                 options=section_options,
                 default=_sec_default,
                 key=f"{_doc_fk}section_filter_ms",
                 placeholder="Все разделы",
             )
         else:
-            suppress_caption("Колонка раздела РД не найдена.")
+            suppress_caption("Колонка раздела ПД не найдена.")
+
+    def _section_filter_widgets_rd() -> None:
+        nonlocal selected_sections_doc
+        if rd_section_labels_series is not None:
+            section_options = sorted(
+                {
+                    str(v).strip()
+                    for v in rd_section_labels_series.tolist()
+                    if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
+                },
+                key=lambda x: x.casefold(),
+            )
+            _sec_default = st.session_state.get(
+                f"{_doc_fk}section_filter_ms",
+                section_options,
+            )
+            selected_sections_doc = st.multiselect(
+                "Фильтр по разделу",
+                options=section_options,
+                default=_sec_default,
+                key=f"{_doc_fk}section_filter_ms",
+                placeholder="Все разделы",
+                help="Подпись: шифр раздела и наименование через пробел.",
+            )
+        elif section_col and section_col in df.columns:
+            section_options = sorted(
+                {
+                    str(v).strip()
+                    for v in df[section_col].dropna().tolist()
+                    if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
+                },
+                key=lambda x: x.casefold(),
+            )
+            _sec_default = st.session_state.get(
+                f"{_doc_fk}section_filter_ms",
+                section_options,
+            )
+            selected_sections_doc = st.multiselect(
+                "Фильтр по разделу",
+                options=section_options,
+                default=_sec_default,
+                key=f"{_doc_fk}section_filter_ms",
+                placeholder="Все разделы",
+            )
+        else:
+            suppress_caption(
+                "Колонки раздела РД не найдены (шифр/наименование или колонка «Раздел»)."
+            )
+
+    # РД: проект | раздел (шифр + наименование) | период. ПД: без изменений — проект | период | раздел.
+    if not is_pd:
+        with filter_col2:
+            _section_filter_widgets_rd()
+        with filter_col3:
+            _period_filter_widgets()
+    else:
+        with filter_col2:
+            _period_filter_widgets()
+        with filter_col3:
+            _section_filter_widgets_pd()
 
     # Filter by RD status — отдельной строкой, чтобы не ломать сетку selectbox’ов
     selected_statuses: list[str] = []
@@ -20838,24 +21075,33 @@ def dashboard_documentation(
                 filtered_df[project_col].map(_project_filter_norm_key).isin(_pk_set_doc)
             ]
 
-    if (
-        selected_sections_doc
-        and section_col
-        and section_col in filtered_df.columns
-    ):
+    if selected_sections_doc:
         _sset = {str(x).strip() for x in selected_sections_doc if str(x).strip()}
-        try:
-            _all_sec_opts = {
-                str(v).strip()
-                for v in df[section_col].dropna().tolist()
-                if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
-            }
-        except Exception:
-            _all_sec_opts = set()
-        if _sset and _sset != _all_sec_opts:
-            filtered_df = filtered_df[
-                filtered_df[section_col].astype(str).str.strip().isin(_sset)
-            ]
+        if not is_pd and rd_section_labels_series is not None:
+            _lbl = rd_section_labels_series.reindex(filtered_df.index)
+            try:
+                _all_rd_labels = {
+                    str(v).strip()
+                    for v in rd_section_labels_series.tolist()
+                    if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
+                }
+            except Exception:
+                _all_rd_labels = set()
+            if _sset and _sset != _all_rd_labels:
+                filtered_df = filtered_df[_lbl.isin(_sset)]
+        elif section_col and section_col in filtered_df.columns:
+            try:
+                _all_sec_opts = {
+                    str(v).strip()
+                    for v in df[section_col].dropna().tolist()
+                    if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
+                }
+            except Exception:
+                _all_sec_opts = set()
+            if _sset and _sset != _all_sec_opts:
+                filtered_df = filtered_df[
+                    filtered_df[section_col].astype(str).str.strip().isin(_sset)
+                ]
 
     # Apply date filter
     if (
