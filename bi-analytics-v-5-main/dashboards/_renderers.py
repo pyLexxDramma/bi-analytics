@@ -18928,7 +18928,7 @@ def _gdrs_merge_plan_from_1c_spravochniki(
 
 def dashboard_debit_credit(df):
     """Дебиторская и кредиторская задолженность подрядчиков: график и таблица по данным из файла."""
-    st.header("Дебиторская и кредиторская задолженность подрядчиков")
+    st.header("Дебиторская и кредиторская задолженность")
 
     data = st.session_state.get("debit_credit_data", None)
     if (data is None or data.empty) and (df is not None and not df.empty):
@@ -19014,7 +19014,6 @@ def dashboard_debit_credit(df):
             )
             project_col = "_project_mapped"
             project_from_reference = True
-    type_col = _find_col(work, ["Тип подрядчика", "тип подрядчика", "contractor type"])
     contract_col = _find_col(work, ["Номер договора", "Договор", "договор", "contract"])
     # Q15 (08.05.2026): «Сумма договора» — заказчик подтвердил, что лежит в справочнике
     # JSON. В выгрузке DK.json структура содержит вложенный объект `Договор.СуммаДоговора`,
@@ -19293,6 +19292,11 @@ def dashboard_debit_credit(df):
         if c:
             work[f"_num_{c}"] = _to_num(work[c])
 
+    _dc_date_contract = _find_col(work, ["Дата договора", "ДатаДоговора", "Дата Договора"])
+    work["_dc_period_dt"] = pd.NaT
+    if _dc_date_contract and _dc_date_contract in work.columns:
+        work["_dc_period_dt"] = pd.to_datetime(work[_dc_date_contract], errors="coerce", dayfirst=True)
+
     # Правки куратора 08.05.2026: считаем «Выполнено (КС-2)» из 1С dannye.
     # КС-2 = sum(Сумма) по строкам, у которых СтатьяОборотов содержит
     # «Поступление товаров и услуг» или «Поступление услуг из переработки».
@@ -19340,23 +19344,18 @@ def dashboard_debit_credit(df):
             if not _so_col or not _sum_col:
                 _ks2_diag["reason"] = "в 1С dannye нет колонок «СтатьяОборотов» / «Сумма»"
             else:
-                # Q-08.05.2026: фактическое значение в выгрузке dannye —
-                # «Поступление по основной деятельности» (а не "товаров и услуг").
-                # Оставляем оба варианта как синонимы КС-2.
-                _rgx_ks2 = re.compile(
-                    r"Поступление\s+(?:"
-                    r"товаров\s+и\s+услуг"
-                    r"|услуг\s+из\s+переработки"
-                    r"|по\s+основной\s+деятельности"
-                    r")",
-                    flags=re.IGNORECASE,
-                )
-                _rd_ks2 = _rd[_rd[_so_col].astype(str).apply(lambda s: bool(_rgx_ks2.search(s)))].copy()
+                # КС-2: только точные значения «СтатьяОборотов» из ТЗ (без синонимов «основная деятельность»).
+                _ks2_articles_cf = {
+                    "поступление товаров и услуг",
+                    "поступление услуг из переработки",
+                }
+                _so_cf = _rd[_so_col].astype(str).str.strip().str.casefold()
+                _rd_ks2 = _rd[_so_cf.isin(_ks2_articles_cf)].copy()
                 _ks2_diag["rows"] = int(len(_rd_ks2))
                 if _rd_ks2.empty:
                     _ks2_diag["reason"] = (
-                        "в 1С dannye нет строк со статьями «Поступление товаров и услуг» / "
-                        "«Поступление услуг из переработки» — их нужно выгружать из 1С"
+                        "в 1С dannye нет строк с точными статьями "
+                        "«Поступление товаров и услуг» / «Поступление услуг из переработки»"
                     )
                 else:
                     _rd_ks2["_amt"] = _to_num(_rd_ks2[_sum_col])
@@ -19428,125 +19427,88 @@ def dashboard_debit_credit(df):
     except Exception as _e:
         _ks2_diag["reason"] = f"ошибка расчёта КС-2: {_e!r}"
 
-    # Дружелюбное сообщение во вкладке.
-    if not (work["_num_ks2"].fillna(0).abs() > 0).any():
-        _msg = _ks2_diag.get("reason") or "КС-2 = 0 (нет данных в 1С dannye)"
-        st.info(f"Колонки «Выполнено (КС-2)», «Отклонение», «КС-2 − Аванс» и серый столбец «КС-2» не отображены: {_msg}.")
+    if _ks2_diag.get("reason"):
+        suppress_caption(f"КС-2 (из dannye): {_ks2_diag['reason']}")
 
-    # Правки куратора 08.05.2026 + выравнивание (12): фильтры в две строки —
-    # иначе подпись помощи у «Функциональный блок» увеличивает высоту колонки и ряд «пляшет».
+    issue_start = None
+    issue_end = None
+
     st.subheader("Фильтры")
-    # Поиск опциональных колонок Функциональный блок / Строения в исходнике.
-    fb_col = _find_col(
-        work,
-        [
-            "Функциональный блок",
-            "функциональный блок",
-            "ФБ",
-            "БЛОК",
-            "Блок",
-            "functional_block",
-            "func_block",
-        ],
-    )
-    bld_col = _find_col(
-        work,
-        [
-            "Строение",
-            "Строения",
-            "строение",
-            "Здание",
-            "Корпус",
-            "Building",
-            "building",
-        ],
-    )
-    row1 = st.columns(4, gap="small")
-    with row1[0]:
-        if project_col and project_col in work.columns:
-            all_projects = ["Все"] + _unique_project_labels_for_select(work[project_col])
-            sel_project = st.selectbox("Проект", all_projects, key="debit_credit_project")
-        else:
-            sel_project = "Все"
-            st.selectbox("Проект", ["—"], disabled=True, key="debit_credit_project_dis")
-    with row1[1]:
-        if fb_col and fb_col in work.columns:
-            fb_opts = ["Все"] + sorted(
-                {str(v).strip() for v in work[fb_col].dropna().astype(str).tolist() if str(v).strip()}
+    with filters_panel(st):
+        fp1, fp2, fp3, fp4 = st.columns([2, 2, 2, 2])
+        with fp1:
+            if project_col and project_col in work.columns:
+                _proj_series = work[project_col].replace("", pd.NA).dropna()
+                all_projects = ["Все"] + _unique_project_labels_for_select(
+                    _proj_series, apply_exclude_names=False
+                )
+                sel_project = st.selectbox("Проект", all_projects, key="debit_credit_project")
+            else:
+                sel_project = "Все"
+                st.selectbox("Проект", ["—"], disabled=True, key="debit_credit_project_dis")
+        with fp2:
+            if contractor_col and contractor_col in work.columns:
+                all_contractors = ["Все"] + sorted(
+                    {
+                        str(v).strip()
+                        for v in work[contractor_col].dropna().astype(str).tolist()
+                        if str(v).strip()
+                    },
+                    key=lambda x: x.casefold(),
+                )
+                sel_contractor = st.selectbox("Подрядчик", all_contractors, key="debit_credit_contractor")
+            else:
+                sel_contractor = "Все"
+                st.selectbox("Подрядчик", ["—"], disabled=True, key="debit_credit_contractor_dis")
+        with fp3:
+            contract_q = st.text_input(
+                "№ договора (частичный поиск)",
+                key="debit_credit_contract_q",
+                placeholder="Все договоры",
             )
-            sel_fb = st.selectbox("Функциональный блок", fb_opts, key="debit_credit_fb")
-        else:
-            sel_fb = "Все"
-            st.selectbox(
-                "Функциональный блок",
-                ["Нет в источнике 1С DK"],
-                disabled=True,
-                key="debit_credit_fb_dis",
-                help=(
-                    "Поля «Функциональный блок» нет в выгрузке 1С (DK.json/Dogovor.json/dannye.json). "
-                    "Чтобы фильтр заработал, в 1С нужно дополнить выгрузку этим реквизитом."
-                ),
-            )
-    with row1[2]:
-        if bld_col and bld_col in work.columns:
-            bld_opts = ["Все"] + sorted(
-                {str(v).strip() for v in work[bld_col].dropna().astype(str).tolist() if str(v).strip()}
-            )
-            sel_bld = st.selectbox("Строения", bld_opts, key="debit_credit_bld")
-        else:
-            sel_bld = "Все"
-            st.selectbox(
-                "Строения",
-                ["Нет в источнике 1С DK"],
-                disabled=True,
-                key="debit_credit_bld_dis",
-                help=(
-                    "Поля «Строение» нет в выгрузке 1С (DK.json/Dogovor.json/dannye.json). "
-                    "Чтобы фильтр заработал, в 1С нужно дополнить выгрузку этим реквизитом."
-                ),
-            )
-    with row1[3]:
-        if contractor_col and contractor_col in work.columns:
-            all_contractors = ["Все"] + sorted(work[contractor_col].dropna().astype(str).unique().tolist())
-            sel_contractor = st.selectbox("Подрядчик", all_contractors, key="debit_credit_contractor")
-        else:
-            sel_contractor = "Все"
-            st.selectbox("Подрядчик", ["—"], disabled=True, key="debit_credit_contractor_dis")
-    row2 = st.columns(3, gap="small")
-    with row2[0]:
-        if contract_col:
-            all_contracts = ["Все"] + sorted(work[contract_col].dropna().astype(str).unique().tolist())
-            sel_contract = st.selectbox("№ договора", all_contracts, key="debit_credit_contract")
-        else:
-            sel_contract = "Все"
-            st.selectbox("№ договора", ["—"], disabled=True, key="debit_credit_contract_dis")
-    with row2[1]:
-        # Период — пока без фильтрации (данные DK/Dogovor агрегированы), оставляем «Все».
-        sel_period = st.selectbox("Период", ["Все"], key="debit_credit_period_dis")
-    with row2[2]:
-        sel_show = st.selectbox(
-            "Отображение", ["Месяц", "Год", "Накопительно"], index=0, key="debit_credit_show"
-        )
-
-    # Тип подрядчика — больше не фильтр по ТЗ, оставляем переменную для обратной совместимости.
-    sel_type = "Все"
+        with fp4:
+            if work["_dc_period_dt"].notna().any():
+                mn = work["_dc_period_dt"].min().date()
+                mx = work["_dc_period_dt"].max().date()
+                dr = st.date_input(
+                    "Период (дата договора)",
+                    value=(mn, mx),
+                    min_value=mn,
+                    max_value=mx,
+                    key="debit_credit_period_range",
+                    format="DD.MM.YYYY",
+                )
+                if isinstance(dr, tuple) and len(dr) == 2:
+                    issue_start, issue_end = dr[0], dr[1]
+                elif hasattr(dr, "year"):
+                    issue_start = issue_end = dr
+            else:
+                st.caption("Нет колонки «Дата договора» — период не применяется.")
 
     filtered = work.copy()
     if sel_contractor != "Все" and contractor_col:
         filtered = filtered[filtered[contractor_col].astype(str).str.strip() == str(sel_contractor).strip()]
-    if sel_type != "Все" and type_col:
-        filtered = filtered[filtered[type_col].astype(str).str.strip() == str(sel_type).strip()]
-    if sel_contract != "Все" and contract_col:
-        filtered = filtered[filtered[contract_col].astype(str).str.strip() == str(sel_contract).strip()]
+    q = (contract_q or "").strip() if isinstance(contract_q, str) else ""
+    if q and contract_col:
+        ql = q.casefold()
+        filtered = filtered[
+            filtered[contract_col].astype(str).apply(lambda s: ql in str(s).casefold())
+        ]
     if sel_project != "Все" and project_col:
         filtered = filtered[
             filtered[project_col].map(_project_filter_norm_key)
             == _project_filter_norm_key(sel_project)
         ]
-    if sel_fb != "Все" and fb_col and fb_col in filtered.columns:
-        filtered = filtered[filtered[fb_col].astype(str).str.strip() == str(sel_fb).strip()]
-    if sel_bld != "Все" and bld_col and bld_col in filtered.columns:
-        filtered = filtered[filtered[bld_col].astype(str).str.strip() == str(sel_bld).strip()]
+    if issue_start is not None and issue_end is not None and "_dc_period_dt" in filtered.columns:
+        _pd = filtered["_dc_period_dt"]
+        filtered = filtered[
+            _pd.isna()
+            | (
+                _pd.notna()
+                & (_pd.dt.normalize().dt.date >= issue_start)
+                & (_pd.dt.normalize().dt.date <= issue_end)
+            )
+        ]
 
     if filtered.empty:
         st.info("Нет данных при выбранных фильтрах.")
@@ -19560,23 +19522,7 @@ def dashboard_debit_credit(df):
 
     chart_group_col = contractor_col if contractor_col else contract_col
     chart_label = "Подрядчик" if contractor_col else "Договор"
-    # По ТЗ: на графике должен быть виден проект; при наличии маппинга из справочников — ось X: «Проект | Подрядчик»
-    if (
-        project_col
-        and project_col in filtered.columns
-        and contractor_col
-        and contractor_col in filtered.columns
-    ):
-        _fc = filtered.copy()
-        _fc["_chart_x"] = (
-            _fc[project_col].astype(str).str.strip()
-            + " | "
-            + _fc[contractor_col].astype(str).str.strip()
-        )
-        filtered = _fc
-        chart_group_col = "_chart_x"
-        chart_label = "Проект | Подрядчик"
-    if not contractor_col and chart_group_col != "_chart_x":
+    if not contractor_col:
         st.warning("Колонка подрядчика не найдена — диаграмма сгруппирована по договору.")
 
     built = {}
@@ -19588,9 +19534,7 @@ def dashboard_debit_credit(df):
     if advance_col and f"_num_{advance_col}" in filtered.columns:
         built["Аванс"] = filtered.groupby(chart_group_col)[f"_num_{advance_col}"].sum() / _SCALE_MLN
     if "_num_ks2" in filtered.columns:
-        _ks2_series = filtered.groupby(chart_group_col)["_num_ks2"].sum() / _SCALE_MLN
-        if float(_ks2_series.fillna(0).abs().sum()) > 0:
-            built["КС-2"] = _ks2_series
+        built["КС-2"] = filtered.groupby(chart_group_col)["_num_ks2"].sum() / _SCALE_MLN
     # Отклонение для визуала 1 = КС-2 − Аванс (по ТЗ заказчика, отдельный «зелёный/красный» столбец).
     if "Аванс" in built and "КС-2" in built:
         built["Отклонение"] = built["КС-2"] - built["Аванс"]
@@ -19602,18 +19546,8 @@ def dashboard_debit_credit(df):
     chart_df = pd.DataFrame(built).reset_index()
     chart_df = chart_df.rename(columns={chart_group_col: chart_label})
 
-    # Правки куратора 08.05.2026: селектор визуала.
-    # Визуал 1 — групповая столбчатая (Договор/Аванс/КС-2/Отклонение).
-    # Визуал 2 — стек: Договор + Аванс поверх + КС-2 поверх Аванса.
-    visual_mode = st.radio(
-        "Визуал",
-        ["Визуал 1 (групповая)", "Визуал 2 (стек)"],
-        index=0,
-        horizontal=True,
-        key="debit_credit_visual_mode",
-    )
+    _is_stack = True
 
-    st.subheader("Столбчатая диаграмма по подрядчикам" if contractor_col else "Столбчатая диаграмма по договорам")
     value_cols = [c for c in chart_df.columns if c != chart_label]
     if not value_cols:
         st.info("Нет данных для графика.")
@@ -19635,11 +19569,7 @@ def dashboard_debit_credit(df):
             "КС-2": "#95A5A6",               # серый
             # «Отклонение» рисуется отдельно с per-bar окраской ниже.
         }
-        _is_stack = visual_mode.startswith("Визуал 2")
-        # В Визуале 2 «Отклонение» отображать не нужно (по ТЗ — стек Договор/Аванс/КС-2).
-        _value_cols_for_chart = value_cols if not _is_stack else [
-            c for c in value_cols if c != "Отклонение"
-        ]
+        _value_cols_for_chart = [c for c in value_cols if c != "Отклонение"]
         for col in _value_cols_for_chart:
             if col == "Отклонение":
                 # per-bar цвета: ≥0 — зелёный, <0 — красный.
@@ -19682,7 +19612,13 @@ def dashboard_debit_credit(df):
                 )
             )
         fig.update_layout(
-            # Визуал 2 — стек (Аванс поверх Договор, КС-2 поверх Аванса).
+            title=dict(
+                text="Дебиторская и кредиторская задолженность",
+                x=0.5,
+                xanchor="center",
+                font=dict(size=16, color="#f0f4f8"),
+            ),
+            # Стек: Аванс поверх Договор, КС-2 поверх Аванса.
             barmode="stack" if _is_stack else "group",
             height=min(900, max(420, len(chart_df) * 28)),
             bargap=0.14,
@@ -19696,18 +19632,12 @@ def dashboard_debit_credit(df):
                 x=1.02,
             ),
             xaxis=dict(tickangle=-55, tickfont=dict(size=9), categoryorder="total descending"),
-            margin=dict(r=230, b=140),
+            margin=dict(r=230, b=140, t=72),
         )
         fig = _apply_finance_bar_label_layout(fig)
         fig = apply_chart_background(fig)
-        if chart_label == "Проект | Подрядчик":
-            cap = (
-                "Суммы по проекту и подрядчику. "
-                + ("Стек: Договор → Аванс → КС-2." if _is_stack else "Группа: Договор / Аванс / КС-2 / Отклонение (зел. ≥0, красн. <0).")
-            )
-        else:
-            base = "Суммы по подрядчику" if contractor_col else "Суммы по договору"
-            cap = base + (". Стек: Договор → Аванс → КС-2." if _is_stack else ". Группа: Договор / Аванс / КС-2 / Отклонение (зел. ≥0, красн. <0).")
+        base = "Суммы по подрядчику" if contractor_col else "Суммы по договору"
+        cap = base + ". Стек: Договор → Аванс → КС-2."
         render_chart(fig, caption_below=cap)
 
     st.subheader("Таблица по подрядчику и договору" if contractor_col else "Таблица по договорам")
@@ -19728,9 +19658,7 @@ def dashboard_debit_credit(df):
     if advance_col and f"_num_{advance_col}" in filtered.columns:
         tbl_built["Аванс"] = filtered.groupby(table_group_cols)[f"_num_{advance_col}"].sum() / _SCALE_MLN
     if "_num_ks2" in filtered.columns:
-        _t_ks2 = filtered.groupby(table_group_cols)["_num_ks2"].sum() / _SCALE_MLN
-        if float(_t_ks2.fillna(0).abs().sum()) > 0:
-            tbl_built["Выполнено (КС-2)"] = _t_ks2
+        tbl_built["Выполнено (КС-2)"] = filtered.groupby(table_group_cols)["_num_ks2"].sum() / _SCALE_MLN
     if _dk_col_net_end and _dk_col_net_end in filtered.columns:
         tbl_built["Остаток"] = filtered.groupby(table_group_cols)[_dk_col_net_end].sum() / _SCALE_MLN
     elif balance_col and f"_num_{balance_col}" in filtered.columns:
@@ -26634,11 +26562,22 @@ def _pred_build_detail_table_df(
         critical_raw = row.get("_critical")
         overdue_raw = row.get("_overdue_days")
         resolved_raw = bool(row.get("_resolved", False))
-        critical_text = "Да" if bool(critical_raw) else "—"
+        if isinstance(critical_raw, (bool, np.bool_)):
+            is_crit = bool(critical_raw)
+        else:
+            try:
+                if critical_raw is None or pd.isna(critical_raw):
+                    is_crit = False
+                else:
+                    is_crit = bool(critical_raw)
+            except Exception:
+                is_crit = False
+        critical_text = "Да" if is_crit else "—"
         try:
             overdue_num = int(round(float(overdue_raw)))
         except (TypeError, ValueError):
             overdue_num = 0
+        overdue_display = str(overdue_num)
         if full_doc_col and full_doc_col in show.columns:
             doc_full_s = _pred_fmt_doc_full(row.get(full_doc_col))
         elif doc_num_col and doc_num_col in show.columns:
@@ -26657,7 +26596,7 @@ def _pred_build_detail_table_df(
                 "Блок выдачи предписания": _clean_display_str(block_raw, empty="—"),
                 "Срок устранения": _pred_fmt_due(due_raw),
                 "Фактическая дата устранения предписания": _pred_fmt_due(comp_raw),
-                "Дней просрочки": str(max(overdue_num, 0)),
+                "Дней просрочки": overdue_display,
                 "Критические предписания": critical_text,
                 "_resolved_flag": "1" if resolved_raw else "",
             }
@@ -26752,7 +26691,7 @@ def _pred_kpi_circles_html(
         + '</span><span class="s">всего</span></div><div class="pred-kpi-info"><h4>Просроченные предписания</h4><p>Требуют немедленного внимания</p></div></div>'
         + '<div class="pred-kpi-item"><div class="pred-kpi-circle red"><span class="n">'
         + e(str(n_critical))
-        + '</span><span class="s">всего</span></div><div class="pred-kpi-info"><h4>Критические предписания</h4><p>Просрочка более 30 дней</p></div></div>'
+        + '</span><span class="s">всего</span></div><div class="pred-kpi-info"><h4>Критические предписания</h4><p>TESSA: тег «КРИТИЧНЫЙ» и вид «Предписания»</p></div></div>'
         + "</div></div>"
     )
 
@@ -26976,7 +26915,11 @@ def _pred_build_overdue_mock_blocks(
     return blocks
 
 
-_KIND_ID_CRITICAL = "347986da-8964-4307-8973-28c22842005c"
+_KIND_ID_PREDPISE = "347986da-8964-4307-8973-28c22842005c"
+
+
+def _pred_norm_uuid_str(v: object) -> str:
+    return "".join(ch for ch in str(v or "").strip().lower() if ch not in " \t\r\n{}")
 
 
 def _pred_dedupe_by_docid(
@@ -28314,10 +28257,31 @@ def _build_tessa_rd_detail_table(
 
 
 # ==================== DASHBOARD: Неустраненные предписания (TESSA) ====================
+_PRED_FILTERS_ROW_CSS = """
+<style>
+/* Строка фильтров: нижнее выравнивание виджетов (date_input часто визуально «выше» select). */
+section.main div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stHorizontalBlock"] {
+    align-items: flex-end !important;
+}
+section.main div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"] label[data-testid="stWidgetLabel"] {
+    min-height: auto !important;
+    padding-bottom: 0.35rem !important;
+}
+section.main div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"] div[data-testid="stVerticalBlock"] > div[data-testid="element-container"] {
+    margin-top: 0 !important;
+}
+</style>
+"""
+
+
 def dashboard_predpisania(df):
     """
-    Отчёт «Неустраненные предписания» — TESSA, KindName содержит «Предписан»; устранение: KrStateID=13 («Снято»).
-    Оформление в общей тёмной теме дашборда (как остальные отчёты).
+    «Неустраненные предписания» / «Предписания по подрядчикам»: TESSA `tessa_*-id.csv`,
+    KindName «Предписания»; без строк KrState/KrStateID «Проект». Устранено = KrStateID=13.
+    Срок — `id_Deadline`; факт устранения — задача «Проверка» / «Принято» (`*-task.csv`, Completed).
+    Просрочка (дней): для открытых — сегодня минус дедлайн; для снятых — дата устранения минус дедлайн.
+    Критичность — при теге «КРИТИЧНЫЙ» в Tessa_Teg (синонимы см. код); KindID вида «Предписания»
+    проверяется только если поле в строке заполнено (иначе допускается — выборка уже по KindName).
     """
     st.header("Неустраненные предписания")
     tessa_df = st.session_state.get("tessa_data", None)
@@ -28341,11 +28305,7 @@ def dashboard_predpisania(df):
     kind_col = _tessa_find_column(work, ["KindName", "kindname", "Вид"])
     if kind_col:
         _kind_series = work[kind_col].astype(str).str.strip().str.casefold()
-        pred = work[
-            _kind_series.eq("предписания")
-            | _kind_series.eq("предписание")
-            | _kind_series.str.startswith("предпис")
-        ].copy()
+        pred = work[_kind_series.eq("предписания")].copy()
     else:
         pred = pd.DataFrame()
 
@@ -28592,61 +28552,93 @@ def dashboard_predpisania(df):
         else pd.Series(pd.NaT, index=pred.index)
     )
     _task_comp = _tessa_to_datetime(pred["_completion_from_task"]) if "_completion_from_task" in pred.columns else pd.Series(pd.NaT, index=pred.index)
-    pred["_completion_dt"] = _base_comp.where(_base_comp.notna(), _task_comp)
-    pred["_signed"] = st_l.str.contains("Подписан", case=False, na=False) | st_l.str.contains("Согласован", case=False, na=False)
+    # Устранено строго по маппингу: KrStateID=13 («Снято») в tessa_*-id.csv — до расчёта _completion_dt.
     pred["_resolved"] = False
     if "KrStateID" in pred.columns:
         _krstate_num = pd.to_numeric(pred["KrStateID"], errors="coerce")
-        pred["_resolved"] = pred["_resolved"] | (_krstate_num == 13)
-    # Текстовый fallback (если KrStateID отсутствует или некорректен).
-    # Важно явно отфильтровать «Не устранено / Не выполнено / Не закрыт*»,
-    # иначе substring "устран" матчит обе формы и неустранённые попадают
-    # в resolved (см. QA-08.05, B-15: разница 5 vs 6 в KPI vs эталон).
-    _st_norm = st_l.str.casefold()
-    _is_negated = _st_norm.str.match(r"\s*не\s+", na=False)
-    _looks_resolved = (
-        _st_norm.str.contains("устран", na=False)
-        | _st_norm.str.contains("выполн", na=False)
-        | _st_norm.str.contains("закрыт", na=False)
-    )
-    pred["_resolved"] = pred["_resolved"] | (_looks_resolved & ~_is_negated)
+        pred["_resolved"] = _krstate_num == 13
+    pred["_signed"] = st_l.str.contains("Подписан", case=False, na=False) | st_l.str.contains("Согласован", case=False, na=False)
+    pred["_completion_dt"] = pd.Series(pd.NaT, index=pred.index)
+    _rm = pred["_resolved"].astype(bool)
+    pred.loc[_rm, "_completion_dt"] = _task_comp.loc[_rm].combine_first(_base_comp.loc[_rm])
+    pred.loc[~_rm, "_completion_dt"] = _base_comp.loc[~_rm].combine_first(_task_comp.loc[~_rm])
     if due_col:
         pred["_due"] = _tessa_to_datetime(pred[due_col])
     else:
         pred["_due"] = pd.NaT
 
+    def _pred_row_calendar_date(ts) -> Optional[date]:
+        if ts is None or (isinstance(ts, float) and pd.isna(ts)):
+            return None
+        if hasattr(ts, "date") and callable(getattr(ts, "date")):
+            try:
+                out = ts.date()
+                return out if isinstance(out, date) else None
+            except Exception:
+                pass
+        parsed = pd.to_datetime(ts, errors="coerce")
+        if pd.isna(parsed):
+            return None
+        try:
+            return parsed.date()
+        except Exception:
+            return None
+
     def _overdue_days_row(r):
+        d_due = _pred_row_calendar_date(r.get("_due"))
         if r["_resolved"]:
+            d_comp = _pred_row_calendar_date(r.get("_completion_dt"))
+            if d_due and d_comp:
+                return (d_comp - d_due).days
             return 0
-        if pd.notna(r["_due"]):
-            d = r["_due"]
-            if hasattr(d, "date"):
-                dd = d.date()
-            else:
-                dd = pd.to_datetime(d, errors="coerce")
-                dd = dd.date() if pd.notna(dd) else None
-            if dd and date.today() > dd:
-                return (date.today() - dd).days
+        if d_due and date.today() > d_due:
+            return (date.today() - d_due).days
         return 0
 
     pred["_overdue_days"] = pred.apply(_overdue_days_row, axis=1)
-    # Q32 (08.05.2026): «критическое предписание» помечается тегом в TESSA —
-    # поле `Tessa_Teg` со значением «КРИТИЧНЫЙ». Если тега нет — fallback по
-    # порогу просрочки > 30 дней.
-    #
-    # ВАЖНО: исторически здесь была дополнительная проверка
-    # `KindID == _KIND_ID_CRITICAL`. Это оказалось багом: эта константа
-    # `347986da-...` — это KindID самого вида документа «Предписание»,
-    # а не «Критическое предписание», поэтому `_crit_tag` становилось True
-    # абсолютно для всех 11 предписаний. Убрали (QA-08.05, B-15).
-    _tag_col = _tessa_find_column(pred, ["Tessa_Teg", "TessaTag", "Тег", "Тэг"])
+    # Критичность: тег «КРИТИЧНЫЙ» в Tessa_Teg (+ синонимы). KindID вида «Предписания»
+    # проверяем только если в строке есть непустое значение KindID; иначе допускаем
+    # (набор уже отфильтрован по KindName «Предписания»).
+    _tag_col = _tessa_find_column(
+        pred,
+        [
+            "Tessa_Teg",
+            "TessaTag",
+            "TESSA_TEG",
+            "tessa_teg",
+            "ТегТесса",
+            "Тег Тесса",
+            "Тег",
+            "Тэг",
+        ],
+    )
+    if not _tag_col:
+        for _cn in pred.columns:
+            _compact = "".join(str(_cn).strip().casefold().replace("\xa0", " ").split())
+            if "tessa" in _compact and "teg" in _compact:
+                _tag_col = _cn
+                break
+    _kind_id_col = _tessa_find_column(pred, ["KindID", "KindId", "kindId"])
+    _kind_target = _pred_norm_uuid_str(_KIND_ID_PREDPISE)
+    _kind_ok = pd.Series(True, index=pred.index)
+    if _kind_id_col and _kind_id_col in pred.columns:
+        raw_k = pred[_kind_id_col]
+        sk = raw_k.astype(str).str.strip()
+        has_kind = raw_k.notna() & sk.ne("") & ~sk.str.casefold().isin({"nan", "none", "<na>", "nat"})
+        kid_norm = raw_k.map(_pred_norm_uuid_str)
+        _kind_ok = (~has_kind) | kid_norm.eq(_kind_target)
     _crit_tag = pd.Series(False, index=pred.index)
     if _tag_col and _tag_col in pred.columns:
-        _tag_norm = pred[_tag_col].astype(str).str.strip().str.casefold()
-        _crit_tag = _crit_tag | _tag_norm.isin(
-            {"критичный", "критическое", "критичное", "critical", "крит"}
+        _tag_norm = (
+            pred[_tag_col]
+            .astype(str)
+            .str.replace("\ufeff", "", regex=False)
+            .str.replace("\xa0", " ", regex=False)
+            .str.strip()
+            .str.casefold()
         )
-    pred["_critical"] = _crit_tag | (pred["_overdue_days"] > 30)
+        _crit_tag = _tag_norm.isin({"критичный", "критическое", "критичное", "critical"})
+    pred["_critical"] = _crit_tag & _kind_ok
 
     def _pred_axis_upper_bound(xmax: float) -> float:
         try:
@@ -28664,6 +28656,10 @@ def dashboard_predpisania(df):
         if val <= 100:
             return float(int(np.ceil(val / 10.0)) * 10)
         return float(int(np.ceil(val / 25.0)) * 25)
+
+    if not st.session_state.get("_pred_filters_align_css_once"):
+        st.markdown(_PRED_FILTERS_ROW_CSS, unsafe_allow_html=True)
+        st.session_state["_pred_filters_align_css_once"] = True
 
     with filters_panel(st):
         projects = pred_project_options
@@ -28683,9 +28679,9 @@ def dashboard_predpisania(df):
             curators = ["Все кураторы"]
     
         if curator_col:
-            fc1, fc2, fc3, fc4, fc5, fb1, fb2 = st.columns([2, 2, 2, 2, 2, 1, 1])
+            fc1, fc2, fc3, fc4, fc5 = st.columns([2, 2, 2, 2, 2])
         else:
-            fc1, fc2, fc3, fc4, fb1, fb2 = st.columns([2, 2, 2, 2, 1, 1])
+            fc1, fc2, fc3, fc4 = st.columns([2, 2, 2, 2])
             fc5 = None
     
         with fc1:
@@ -28695,7 +28691,7 @@ def dashboard_predpisania(df):
                     projects,
                     default=st.session_state.get("pred_m_p", []),
                     key="pred_m_p",
-                    placeholder="Выберите проект",
+                    placeholder="Выберите один или несколько проектов",
                 )
             else:
                 sel_obj = []
@@ -28741,27 +28737,6 @@ def dashboard_predpisania(df):
             else:
                 issue_start = issue_end = None
                 suppress_caption("Нет даты выдачи в данных.")
-        with fb1:
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.button("Применить", key="pred_m_apply", type="primary", use_container_width=True)
-        with fb2:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("Сбросить", key="pred_m_reset", use_container_width=True):
-                if obj_col:
-                    st.session_state.pred_m_p = []
-                if contr_col:
-                    st.session_state.pred_m_c_ms = []
-                if curator_col:
-                    st.session_state.pred_m_curator = "Все кураторы"
-                st.session_state.pred_m_contract = ""
-                if pred["_issue_date"].notna().any():
-                    st.session_state.pred_issue_period = (min_issue, max_issue)
-                if due_col and pred["_due"].notna().any():
-                    _dmn = pd.to_datetime(pred["_due"], errors="coerce").min()
-                    _dmx = pd.to_datetime(pred["_due"], errors="coerce").max()
-                    if pd.notna(_dmn) and pd.notna(_dmx):
-                        st.session_state.pred_due_period = (_dmn.date(), _dmx.date())
-                st.rerun()
     # Локализация встроенных подписей st.multiselect (Select all / Select N matches / No results).
     components.html(
         """
@@ -28870,8 +28845,22 @@ def dashboard_predpisania(df):
             "Укажите DueDate или «Срок устранения» в TESSA."
         )
 
-    unres_mask = ~filtered["_resolved"]
-    resolved_mask = filtered["_resolved"]
+    # Страховка от частичного df / старого кэша функции без служебных колонок (KeyError `_resolved`).
+    if "_resolved" not in filtered.columns:
+        filtered = filtered.copy()
+        filtered["_resolved"] = False
+        if "KrStateID" in filtered.columns:
+            _kr_fb = pd.to_numeric(filtered["KrStateID"], errors="coerce")
+            filtered["_resolved"] = _kr_fb == 13
+    if "_critical" not in filtered.columns:
+        filtered = filtered.copy()
+        filtered["_critical"] = False
+    if "_overdue_days" not in filtered.columns:
+        filtered = filtered.copy()
+        filtered["_overdue_days"] = 0
+
+    unres_mask = ~filtered["_resolved"].astype(bool)
+    resolved_mask = filtered["_resolved"].astype(bool)
     n_total = int(len(filtered))
     n_unresolved = int(unres_mask.sum())
     n_resolved = int(resolved_mask.sum())
@@ -29110,8 +29099,9 @@ def dashboard_predpisania(df):
             unsafe_allow_html=True,
         )
         suppress_caption(
-            "Маппинг KPI: «Всего предписаний» = все записи, «Устраненные» = закрытые/устраненные, "
-            "«Неустраненные» = открытые, «Просроченные» = открытые с просроченным сроком."
+            "Маппинг KPI: «Всего» и «Устраненные» — из id.csv (KindName «Предписания», KrStateID=13); "
+            "«Неустраненные» = всего − устранённые; «Просроченные» — открытые с истёкшим id_Deadline; "
+            "«Критические» — тег «КРИТИЧНЫЙ» и указанный KindID."
         )
 
     st.subheader("Детальная таблица по предписаниям")
@@ -29122,8 +29112,10 @@ def dashboard_predpisania(df):
         show = show.loc[unres_mask].copy()
     show = show.sort_values(["_critical", "_overdue_days"], ascending=[False, False])
 
+    show_tbl = show.copy()
+    show_tbl["__completion_eff__"] = show_tbl["_completion_dt"]
     table_df = _pred_build_detail_table_df(
-        show,
+        show_tbl,
         contr_col,
         obj_col,
         contract_col,
@@ -29132,7 +29124,7 @@ def dashboard_predpisania(df):
         creation_col_pred,
         issue_block_col,
         due_col,
-        completion_col,
+        "__completion_eff__",
     )
     sort_col = _pred_query_param_value("pred_sort", "Дней просрочки")
     sort_order = _pred_query_param_value("pred_order", "desc")

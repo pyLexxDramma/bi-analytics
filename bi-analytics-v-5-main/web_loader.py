@@ -2132,7 +2132,8 @@ def _infer_file_type_by_name(file_name: str) -> str:
     # ── 1C JSON файлы ──────────────────────────────────────────────────────────
     if name_lower.endswith(".json"):
         sl = stem  # уже lower-case (из name_lower)
-        if "dk" in sl:
+        # Дебиторка: отдельные выгрузки *_DK.json и *_DK1.json (оба должны загружаться и concat в session).
+        if re.search(r"(?:^|_)dk1?$", sl):
             return "debit_credit_json"
         if "dtkttpopodryad" in sl or "dtkt" in sl or "дткт" in sl:
             return "debit_credit_json"

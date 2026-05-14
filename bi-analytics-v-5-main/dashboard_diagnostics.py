@@ -147,7 +147,7 @@ def build_dashboard_diagnostics(selected_dashboard: str, df: pd.DataFrame, state
     if selected_dashboard in ("ГДРС", "ГДРС Техника"):
         has_res = state.get("resources_data") is not None and not getattr(state.get("resources_data"), "empty", True)
         rows.append({"level": "ok" if has_res else "err", "check": "source_dataset", "target": "resources_data", "detail": "доступен" if has_res else "не загружен"})
-    if selected_dashboard in ("Исполнительная документация", "Неустраненные предписания"):
+    if selected_dashboard in ("Исполнительная документация", "Неустраненные предписания", "Предписания по подрядчикам"):
         has_tessa = state.get("tessa_data") is not None and not getattr(state.get("tessa_data"), "empty", True)
         has_task = state.get("tessa_tasks_data") is not None and not getattr(state.get("tessa_tasks_data"), "empty", True)
         rows.append({"level": "ok" if has_tessa else "err", "check": "source_dataset", "target": "tessa_data", "detail": "доступен" if has_tessa else "не загружен"})
