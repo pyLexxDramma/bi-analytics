@@ -17289,12 +17289,14 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                 )
                 fig_pf = apply_chart_background(fig_pf)
                 _n_projs = len(_proj_labels)
+                # При малом числе проектов столбцы растягиваются на всю ширину —
+                # увеличиваем bargap/bargroupgap чтобы столбцы были узкими,
+                # а диаграмма оставалась полноширинной.
                 if _n_projs <= 2:
-                    _chart_col, _ = st.columns([1, 1])
-                    with _chart_col:
-                        st.plotly_chart(fig_pf, use_container_width=True)
-                else:
-                    st.plotly_chart(fig_pf, use_container_width=True)
+                    fig_pf.update_layout(bargap=0.65, bargroupgap=0.15)
+                elif _n_projs <= 4:
+                    fig_pf.update_layout(bargap=0.45, bargroupgap=0.1)
+                st.plotly_chart(fig_pf, use_container_width=True)
             except Exception as _e:
                 st.warning(f"Plotly недоступен: {_e}")
 
