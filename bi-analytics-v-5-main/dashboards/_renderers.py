@@ -2159,8 +2159,9 @@ def _pie_apply_percent_inside_legend_left(
     clear_annotations=False,
     showlegend=True,
     extra_layout=None,
+    text_show_value_and_percent: bool = False,
 ) -> go.Figure:
-    """В секторе — только проценты (крупный шрифт); названия секторов — вертикальная легенда слева."""
+    """В секторе — проценты (крупный шрифт) или значение+процент; названия секторов — вертикальная легенда слева."""
     if fig is None:
         return fig
     try:
@@ -2174,20 +2175,36 @@ def _pie_apply_percent_inside_legend_left(
     dx = domain_x if domain_x is not None else (0.32, 0.97)
     dy = domain_y if domain_y is not None else (0.06, 0.93)
     try:
-        fig.update_traces(
-            selector=dict(type="pie"),
-            textinfo="percent",
-            texttemplate="%{percent:.0%}",
-            textposition="inside",
-            insidetextorientation="horizontal",
-            textfont=dict(
-                size=int(pct_fontsize),
-                color="#ffffff",
-                family="Inter, system-ui, Arial, sans-serif",
-            ),
-            marker_line_width=0,
-            domain=dict(x=[float(dx[0]), float(dx[1])], y=[float(dy[0]), float(dy[1])]),
-        )
+        if text_show_value_and_percent:
+            fig.update_traces(
+                selector=dict(type="pie"),
+                textinfo="text",
+                texttemplate="<b>%{value}</b><br>%{percent:.2%}",
+                textposition="outside",
+                textfont=dict(
+                    size=max(11, int(pct_fontsize) - 4),
+                    color="#f0f4f8",
+                    family="Inter, system-ui, Arial, sans-serif",
+                ),
+                marker_line_width=1,
+                marker_line_color="rgba(15,23,42,0.85)",
+                domain=dict(x=[float(dx[0]), float(dx[1])], y=[float(dy[0]), float(dy[1])]),
+            )
+        else:
+            fig.update_traces(
+                selector=dict(type="pie"),
+                textinfo="percent",
+                texttemplate="%{percent:.0%}",
+                textposition="inside",
+                insidetextorientation="horizontal",
+                textfont=dict(
+                    size=int(pct_fontsize),
+                    color="#ffffff",
+                    family="Inter, system-ui, Arial, sans-serif",
+                ),
+                marker_line_width=0,
+                domain=dict(x=[float(dx[0]), float(dx[1])], y=[float(dy[0]), float(dy[1])]),
+            )
     except Exception:
         pass
     layout = dict(
@@ -2206,7 +2223,12 @@ def _pie_apply_percent_inside_legend_left(
             tracegroupgap=4,
         ),
         uniformtext=dict(minsize=max(10, int(pct_fontsize) - 5), mode="show"),
-        margin=dict(l=lm, r=36, t=44, b=44),
+        margin=dict(
+            l=lm,
+            r=int(180 if text_show_value_and_percent else 36),
+            t=44,
+            b=44,
+        ),
     )
     if height is not None:
         layout["height"] = int(height)
@@ -11654,30 +11676,346 @@ def _rd_plan_fallback_view(
         return s
 
     _status_label = f"Статус {doc_code}"
-    detail_rows = pd.DataFrame({
-        "№ п/п": _safe_str(df["№ п/п"]) if "№ п/п" in df.columns else _safe_str(""),
-        "Шифр": _safe_str(df[code_col]) if code_col else _safe_str(""),
-        "Наименование": _safe_str(df[name_col]) if name_col else _safe_str(""),
-        "Блок": _safe_str(df[block_col]) if block_col and block_col in df.columns else _safe_str(""),
-        "№ Договора": _safe_str(df[contract_col]) if contract_col and contract_col in df.columns else _safe_str(""),
-        "План выдачи (по Договору)": df["_plan_dt"].dt.strftime("%d.%m.%Y").fillna("—"),
-        "Прогноз/Факт выдачи": df["_fact_dt"].dt.strftime("%d.%m.%Y").fillna("—"),
-        "Отклонение, дн.": (df["_fact_dt"] - df["_plan_dt"]).dt.days,
-        _status_label: _safe_str(df[status_col]) if status_col and status_col in df.columns else _safe_str(""),
-    })
 
-    if proj_col and proj_col in df.columns:
-        detail_rows.insert(0, "Проект", _safe_str(df[proj_col]).to_numpy())
+    qty_col = _pick(
+        [
+            "Количество разделов по Договору",
+            "Количество разделов РД по Договору",
+            "Количество разделов РД",
+        ]
+    )
+    try:
+        if qty_col and qty_col in df.columns:
+            df["_rd_plan_n"] = pd.to_numeric(df[qty_col], errors="coerce").fillna(1.0)
+        else:
+            df["_rd_plan_n"] = 1.0
+    except Exception:
+        df["_rd_plan_n"] = 1.0
+    df["_rd_plan_n"] = df["_rd_plan_n"].clip(lower=0.0)
+    df.loc[df["_rd_plan_n"].eq(0) | df["_rd_plan_n"].isna(), "_rd_plan_n"] = 1.0
 
-    total_sections = int(len(detail_rows))
-    delta_num = pd.to_numeric(detail_rows["Отклонение, дн."], errors="coerce")
-    overdue = int((delta_num > 0).sum())
-    avg_delay = float(delta_num[delta_num > 0].mean()) if overdue > 0 else 0.0
+    _sec_allow: set[str] | None = None
+    if sel_sec and sec_opts and set(sel_sec) != set(sec_opts):
+        _sec_allow = {str(x).strip() for x in sel_sec}
+
+    _detail_tbl_rd = pd.DataFrame()
+    _tessa_loaded = False
+    if source_key == "rd_plan_data":
+        try:
+            _td0 = st.session_state.get("tessa_data")
+        except Exception:
+            _td0 = None
+        _tessa_loaded = _td0 is not None and not getattr(_td0, "empty", True)
+        if _tessa_loaded:
+            _sel_projects_fb = list(sel) if proj_col and sel else None
+            _detail_tbl_rd = _build_tessa_rd_detail_table(
+                selected_projects=_sel_projects_fb,
+                selected_section=None,
+            )
+            if not _detail_tbl_rd.empty and _sec_allow is not None:
+                _lbl_d = (
+                    _detail_tbl_rd["Шифр"].fillna("").astype(str).str.strip()
+                    + " "
+                    + _detail_tbl_rd["Наименование разделов работ"]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                ).str.replace(r"\s+", " ", regex=True).str.strip()
+                _detail_tbl_rd = _detail_tbl_rd.loc[_lbl_d.isin(_sec_allow)].reset_index(
+                    drop=True
+                )
+
+    use_tessa_detail = source_key == "rd_plan_data" and not _detail_tbl_rd.empty
+
+    if use_tessa_detail:
+        total_sections = int(len(_detail_tbl_rd))
+        delta_num = pd.to_numeric(_detail_tbl_rd["Отклонение, дн"], errors="coerce")
+        overdue = int((delta_num > 0).sum())
+        avg_delay = float(delta_num[delta_num > 0].mean()) if overdue > 0 else 0.0
+        detail_rows = _detail_tbl_rd.copy()
+    else:
+        detail_rows = pd.DataFrame(
+            {
+                "№ п/п": _safe_str(df["№ п/п"]) if "№ п/п" in df.columns else _safe_str(""),
+                "Шифр": _safe_str(df[code_col]) if code_col else _safe_str(""),
+                "Наименование": _safe_str(df[name_col]) if name_col else _safe_str(""),
+                "Блок": (
+                    _safe_str(df[block_col])
+                    if block_col and block_col in df.columns
+                    else _safe_str("")
+                ),
+                "№ Договора": (
+                    _safe_str(df[contract_col])
+                    if contract_col and contract_col in df.columns
+                    else _safe_str("")
+                ),
+                "План выдачи (по Договору)": df["_plan_dt"].dt.strftime("%d.%m.%Y").fillna(
+                    "—"
+                ),
+                "Прогноз/Факт выдачи": df["_fact_dt"].dt.strftime("%d.%m.%Y").fillna("—"),
+                "Отклонение, дн.": (df["_fact_dt"] - df["_plan_dt"]).dt.days,
+                _status_label: (
+                    _safe_str(df[status_col])
+                    if status_col and status_col in df.columns
+                    else _safe_str("")
+                ),
+            }
+        )
+
+        if proj_col and proj_col in df.columns:
+            detail_rows.insert(0, "Проект", _safe_str(df[proj_col]).to_numpy())
+
+        total_sections = int(len(detail_rows))
+        delta_num = pd.to_numeric(detail_rows["Отклонение, дн."], errors="coerce")
+        overdue = int((delta_num > 0).sum())
+        avg_delay = float(delta_num[delta_num > 0].mean()) if overdue > 0 else 0.0
+
+    try:
+        df["_bucket"] = pd.Series(pd.NA, index=df.index, dtype="object")
+        if (
+            source_key == "rd_plan_data"
+            and _tessa_loaded
+            and proj_col
+            and proj_col in df.columns
+            and code_col
+            and not _detail_tbl_rd.empty
+        ):
+            _dt_b = _detail_tbl_rd.copy()
+            _dt_b["_bucket"] = _dt_b["Статус"].map(_tessa_krstate_to_pie_bucket)
+            _mk_proj = _dt_b["Проект"].map(_project_filter_norm_key)
+            _mk_cipher = _dt_b["Шифр"].astype(str).str.strip().str.casefold()
+            _mk_sec = _dt_b["Наименование разделов работ"].astype(str).str.strip().str.casefold()
+            _dt_b["_mk"] = list(zip(_mk_proj.tolist(), _mk_cipher.tolist(), _mk_sec.tolist()))
+            _buck_map = _dt_b.drop_duplicates("_mk").set_index("_mk")["_bucket"]
+            _rp = df[proj_col].map(_project_filter_norm_key)
+            _rc = df[code_col].astype(str).str.strip().str.casefold()
+            _rn = (
+                df[name_col].astype(str).str.strip().str.casefold()
+                if name_col and name_col in df.columns
+                else pd.Series("", index=df.index)
+            )
+            df["_mk"] = list(zip(_rp.tolist(), _rc.tolist(), _rn.tolist()))
+            df["_bucket"] = df["_mk"].map(_buck_map)
+            # Фолбэк по «Шифр полный» / InternalID (имена разделов в CSV и TESSA часто расходятся).
+            full_cipher_fb = _pick(["Шифр полный", "InternalID", "Internal Id", "internalid"])
+            if (
+                full_cipher_fb
+                and full_cipher_fb in df.columns
+                and "Шифр полный" in _detail_tbl_rd.columns
+            ):
+                _fc_src = _detail_tbl_rd.copy()
+                _fc_src["_bucket_fc"] = _fc_src["Статус"].map(_tessa_krstate_to_pie_bucket)
+                _fc_src["_fk"] = (
+                    _fc_src["Шифр полный"].astype(str).str.strip().str.casefold()
+                )
+                _fc_src = _fc_src[_fc_src["_fk"].ne("")].drop_duplicates("_fk", keep="first")
+                _buck_fc = _fc_src.set_index("_fk")["_bucket_fc"]
+                _fk_df = df[full_cipher_fb].astype(str).str.strip().str.casefold()
+                df["_bucket"] = df["_bucket"].fillna(_fk_df.map(_buck_fc))
+            # Фолбэк (проект + шифр) — если на шифр одна строка в TESSA после фильтров.
+            _miss = df["_bucket"].isna()
+            if _miss.any():
+                _pc_src = _detail_tbl_rd.copy()
+                _pc_src["_bucket_pc"] = _pc_src["Статус"].map(_tessa_krstate_to_pie_bucket)
+                _pc_src["_pk"] = list(
+                    zip(
+                        _pc_src["Проект"].map(_project_filter_norm_key).tolist(),
+                        _pc_src["Шифр"].astype(str).str.strip().str.casefold().tolist(),
+                    )
+                )
+                _pc_first = _pc_src.drop_duplicates("_pk", keep="first")
+                _buck_pc = _pc_first.set_index("_pk")["_bucket_pc"]
+                _pk_df = pd.Series(
+                    list(zip(_rp.tolist(), _rc.tolist())), index=df.index
+                ).map(_buck_pc)
+                df["_bucket"] = df["_bucket"].fillna(_pk_df)
+        df["_rd_fact_n"] = np.where(
+            (
+                df["_bucket"].notna()
+                & df["_bucket"].isin(["Принято", "Передано подрядчику"])
+            )
+            | (df["_bucket"].isna() & df["_fact_dt"].notna()),
+            df["_rd_plan_n"],
+            0.0,
+        )
+    except Exception:
+        df["_rd_fact_n"] = 0.0
 
     m1, m2, m3 = st.columns(3)
     m1.metric("Всего разделов", f"{total_sections}")
     m2.metric("С отклонением (дн. > 0)", f"{overdue}")
     m3.metric("Ср. задержка, дн.", f"{avg_delay:.1f}" if overdue > 0 else "0")
+
+    if source_key == "rd_plan_data" and _tessa_loaded:
+        try:
+            _counts_fb = _count_tessa_rd_krstates(
+                list(sel) if proj_col and sel else None,
+                section_labels_allowlist=_sec_allow,
+            )
+            _total_units = int(total_sections)
+            if _total_units <= 0:
+                _total_units = max(int(len(df)), 1)
+            _sum_parts = sum(int(v) for v in _counts_fb.values())
+            if _sum_parts > _total_units > 0:
+                _scale = float(_total_units) / float(_sum_parts)
+                _counts_fb = {
+                    k: max(int(round(float(v) * _scale)), 0)
+                    for k, v in _counts_fb.items()
+                }
+                _drift = _total_units - sum(_counts_fb.values())
+                if _drift != 0:
+                    _big_k = max(_counts_fb, key=lambda kk: _counts_fb.get(kk, 0))
+                    _counts_fb[_big_k] = max(int(_counts_fb.get(_big_k, 0) + _drift), 0)
+            _active_fb = sum(int(v) for v in _counts_fb.values())
+            _not_issued_fb = max(_total_units - _active_fb, 0)
+            _pie_fb = {
+                "Принято": int(_counts_fb.get("Принято", 0)),
+                "На рассм.": int(_counts_fb.get("На рассм.", 0)),
+                "Возвр.": int(_counts_fb.get("Возвр.", 0)),
+                "Не принято": int(_counts_fb.get("Не принято", 0)),
+                "Передано подрядчику": int(_counts_fb.get("Передано подрядчику", 0)),
+                "Не выдано": int(_not_issued_fb),
+            }
+            _pie_fb = {k: v for k, v in _pie_fb.items() if v > 0}
+            if _pie_fb:
+                st.subheader("Исполнение РД")
+                suppress_caption(
+                    "Статусы Принято/На рассм./Возвр./Не принято — из TESSA (KrState); "
+                    "«Не выдано» — остаток к показателю «Всего разделов» (строки плана после фильтров)."
+                )
+                _nk_fb = len(_pie_fb)
+                fig_pie_fb = px.pie(
+                    values=list(_pie_fb.values()),
+                    names=list(_pie_fb.keys()),
+                    title=None,
+                    color_discrete_map={
+                        "Принято": "#27AE60",
+                        "На рассм.": "#F1C40F",
+                        "Возвр.": "#E67E22",
+                        "Не принято": "#C0392B",
+                        "Передано подрядчику": "#8E44AD",
+                        "Не выдано": "#7F8C8D",
+                    },
+                )
+                fig_pie_fb = _pie_apply_percent_inside_legend_left(
+                    fig_pie_fb,
+                    height=500,
+                    pct_fontsize=17 if _nk_fb <= 5 else 14,
+                    legend_fontsize=11,
+                    left_margin=min(380, max(236, int(218 + _nk_fb * 26))),
+                    text_show_value_and_percent=True,
+                )
+                fig_pie_fb.update_traces(
+                    hovertemplate=(
+                        "<b>%{label}</b><br>Значение: %{value}<br>Доля: %{percent}<br><extra></extra>"
+                    ),
+                )
+                fig_pie_fb = apply_chart_background(fig_pie_fb)
+                render_chart(fig_pie_fb, caption_below="Исполнение РД")
+        except Exception:
+            pass
+
+        try:
+            month_df_fb = df[df["_plan_dt"].notna()].copy()
+            if (
+                not month_df_fb.empty
+                and "_rd_plan_n" in month_df_fb.columns
+                and "_rd_fact_n" in month_df_fb.columns
+            ):
+                today_ts_fb = pd.Timestamp(date.today())
+                month_df_fb["_plan_end_dt"] = month_df_fb["_plan_dt"]
+                month_df_fb["_month"] = month_df_fb["_plan_end_dt"].dt.to_period("M")
+                month_df_fb["_done_n"] = np.where(
+                    month_df_fb["_rd_fact_n"] > 0,
+                    np.minimum(month_df_fb["_rd_plan_n"], month_df_fb["_rd_fact_n"]),
+                    0.0,
+                )
+                month_df_fb["_remaining_n"] = (
+                    month_df_fb["_rd_plan_n"] - month_df_fb["_done_n"]
+                ).clip(lower=0.0)
+                month_df_fb["_overdue_n"] = np.where(
+                    (month_df_fb["_remaining_n"] > 0)
+                    & (month_df_fb["_plan_end_dt"] < today_ts_fb),
+                    month_df_fb["_remaining_n"],
+                    0.0,
+                )
+                month_df_fb["_delta_n"] = (
+                    month_df_fb["_remaining_n"] - month_df_fb["_overdue_n"]
+                ).clip(lower=0.0)
+
+                monthly_fb = (
+                    month_df_fb.groupby("_month", as_index=False)
+                    .agg(
+                        plan=("_rd_plan_n", "sum"),
+                        done=("_done_n", "sum"),
+                        delta=("_delta_n", "sum"),
+                        overdue=("_overdue_n", "sum"),
+                    )
+                    .sort_values("_month")
+                )
+                monthly_fb = monthly_fb[monthly_fb["plan"] > 0].copy()
+                if not monthly_fb.empty:
+                    monthly_fb["Месяц"] = monthly_fb["_month"].apply(
+                        lambda p: f"{RUSSIAN_MONTHS.get(p.month, str(p.month))} {p.year}"
+                    )
+                    monthly_fb["Выполнено"] = (
+                        monthly_fb["done"] / monthly_fb["plan"] * 100
+                    ).round(2)
+                    monthly_fb["Разница план/факт"] = (
+                        monthly_fb["delta"] / monthly_fb["plan"] * 100
+                    ).round(2)
+                    monthly_fb["Просрочено"] = (
+                        monthly_fb["overdue"] / monthly_fb["plan"] * 100
+                    ).round(2)
+
+                    monthly_plot_fb = monthly_fb.melt(
+                        id_vars=["Месяц", "_month"],
+                        value_vars=["Выполнено", "Разница план/факт", "Просрочено"],
+                        var_name="Статус",
+                        value_name="Процент",
+                    )
+                    monthly_plot_fb["Подпись"] = monthly_plot_fb["Процент"].apply(
+                        lambda v: f"{v:.2f}%" if pd.notna(v) and float(v) > 0 else ""
+                    )
+                    _month_cat_desc = monthly_fb.sort_values("_month", ascending=False)[
+                        "Месяц"
+                    ].tolist()
+                    st.subheader("Динамика по месяцам (% по плану)")
+                    fig_m_fb = px.bar(
+                        monthly_plot_fb,
+                        y="Месяц",
+                        x="Процент",
+                        color="Статус",
+                        orientation="h",
+                        barmode="stack",
+                        text="Подпись",
+                        category_orders={"Месяц": _month_cat_desc},
+                        color_discrete_map={
+                            "Выполнено": "#27AE60",
+                            "Разница план/факт": "#F39C12",
+                            "Просрочено": "#C0392B",
+                        },
+                    )
+                    fig_m_fb.update_layout(
+                        xaxis_title="% РД (по месяцу плановой даты)",
+                        yaxis_title="Месяц",
+                        xaxis=dict(range=[0, 100], ticksuffix="%"),
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.02,
+                            xanchor="left",
+                            x=0,
+                            title_text="",
+                        ),
+                        height=max(520, min(900, len(_month_cat_desc) * 36)),
+                    )
+                    fig_m_fb.update_traces(textposition="inside", textfont=dict(size=10))
+                    fig_m_fb = _apply_bar_uniformtext(fig_m_fb)
+                    fig_m_fb = apply_chart_background(fig_m_fb)
+                    render_chart(fig_m_fb, caption_below="Структура план/факт по месяцам")
+        except Exception:
+            pass
 
     # Накопительная динамика по строкам CSV (аналог основного отчёта РД), если нет MSP-колонок.
     if source_key == "rd_plan_data":
@@ -11780,22 +12118,62 @@ def _rd_plan_fallback_view(
             pass
 
     detail_show = detail_rows.copy()
-    detail_show["Отклонение, дн."] = delta_num.apply(
-        lambda x: ("+" + str(int(x))) if pd.notna(x) and x > 0 else (str(int(x)) if pd.notna(x) else "—")
-    )
+    if use_tessa_detail:
+        _dn_col = "Отклонение, дн"
+        if _dn_col in detail_show.columns:
+            _dn_series = pd.to_numeric(detail_show[_dn_col], errors="coerce")
+            detail_show[_dn_col] = _dn_series.apply(
+                lambda x: ("+" + str(int(x)))
+                if pd.notna(x) and x > 0
+                else (str(int(x)) if pd.notna(x) else "—")
+            )
+        _drop_task = [
+            c
+            for c in ("Задача",)
+            if c in detail_show.columns
+            and (detail_show[c].astype(str).str.strip() == "").all()
+        ]
+        if _drop_task:
+            detail_show = detail_show.drop(columns=_drop_task)
+        _prefer_cols = [
+            "Проект",
+            "Наименование разделов работ",
+            "Номер договора",
+            "Шифр",
+            "Номер шифра",
+            "Блок",
+            "Шифр полный",
+            "Дата выдачи разделов по Договору",
+            "Прогнозная дата выдачи разделов",
+            _dn_col,
+            "Статус",
+        ]
+        detail_show = detail_show[[c for c in _prefer_cols if c in detail_show.columns]]
+        drop_cols = [
+            c
+            for c in ("Блок", "Номер договора")
+            if c in detail_show.columns and (detail_show[c].astype(str).str.strip() == "").all()
+        ]
+        if drop_cols:
+            detail_show = detail_show.drop(columns=drop_cols)
+    else:
+        detail_show["Отклонение, дн."] = delta_num.apply(
+            lambda x: ("+" + str(int(x))) if pd.notna(x) and x > 0 else (str(int(x)) if pd.notna(x) else "—")
+        )
 
-    drop_cols = [
-        c
-        for c in ("№ п/п", "Блок", "№ Договора", _status_label)
-        if c in detail_show.columns and (detail_show[c].astype(str).str.strip() == "").all()
-    ]
-    if drop_cols:
-        detail_show = detail_show.drop(columns=drop_cols)
+        drop_cols = [
+            c
+            for c in ("№ п/п", "Блок", "№ Договора", _status_label)
+            if c in detail_show.columns and (detail_show[c].astype(str).str.strip() == "").all()
+        ]
+        if drop_cols:
+            detail_show = detail_show.drop(columns=drop_cols)
 
     for c in detail_show.columns:
         if detail_show[c].dtype == object:
             detail_show[c] = detail_show[c].replace({"": "—"})
 
+    st.subheader("Детальная таблица")
     st.dataframe(detail_show, hide_index=True, use_container_width=True)
     return True
 
@@ -21441,6 +21819,7 @@ def dashboard_documentation(
                         pct_fontsize=17 if _nk <= 5 else 15,
                         legend_fontsize=11,
                         left_margin=min(380, max(236, int(218 + _nk * 26))),
+                        text_show_value_and_percent=True,
                     )
                     fig_pie.update_traces(
                         hovertemplate="<b>%{label}</b><br>Значение: %{value}<br>Доля: %{percent}<br><extra></extra>",
@@ -26955,6 +27334,7 @@ _TESSA_KRSTATE_TO_PIE = {
     "согласован": "Принято",
     "approved": "Принято",
     "подписан": "Принято",
+    "принят": "Принято",
     "signed": "Принято",
     "зарегистрирован": "Принято",
     "registered": "Принято",
@@ -26971,6 +27351,7 @@ _TESSA_KRSTATE_TO_PIE = {
     # Не принято — отказ / не согласован / отмена.
     "отказ": "Не принято",
     "declined": "Не принято",
+    "не принято": "Не принято",
     "не согласован": "Не принято",
     "not approved": "Не принято",
     "disapproved": "Не принято",
@@ -26984,7 +27365,47 @@ _TESSA_KRSTATE_TO_PIE = {
 }
 
 
-def _count_tessa_rd_krstates(selected_projects: list[str] | None = None) -> dict[str, int]:
+def _tessa_krstate_to_pie_bucket(raw: object) -> str | None:
+    """KrState из выгрузки TESSA → категория круговой «Исполнение РД» (учёт синонимов и подстрок)."""
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return None
+    key = str(raw).strip().casefold()
+    if not key or key in ("nan", "none", "<na>", "nat"):
+        return None
+    if key in _TESSA_KRSTATE_TO_PIE:
+        return _TESSA_KRSTATE_TO_PIE[key]
+    for needle, bucket in sorted(
+        _TESSA_KRSTATE_TO_PIE.items(), key=lambda kv: len(kv[0]), reverse=True
+    ):
+        if needle and needle in key:
+            return bucket
+    return None
+
+
+def _tessa_rd_dedupe_cards_latest(t: pd.DataFrame) -> pd.DataFrame:
+    """Одна строка на документ (последняя загрузка карточки): по DocID/CardID, сортировка по CreationDate."""
+    if t is None or getattr(t, "empty", True):
+        return t
+    try:
+        work = t.copy()
+    except Exception:
+        return t
+    doc_id_col = _tessa_find_column(work, ["DocID", "DocId", "CardID", "CardId"])
+    if not doc_id_col or doc_id_col not in work.columns:
+        return work
+    creation_col = _tessa_find_column(work, ["CreationDate", "creationdate", "Дата создания"])
+    if creation_col and creation_col in work.columns:
+        cd = pd.to_datetime(work[creation_col], errors="coerce", dayfirst=True)
+        work = work.assign(_cd_sort=cd).sort_values("_cd_sort", ascending=False, na_position="last")
+        work = work.drop(columns=["_cd_sort"], errors="ignore")
+    return work.drop_duplicates(subset=[doc_id_col], keep="first")
+
+
+def _count_tessa_rd_krstates(
+    selected_projects: list[str] | None = None,
+    *,
+    section_labels_allowlist: set[str] | None = None,
+) -> dict[str, int]:
     """
     Счётчики TESSA (tessa_*_rd.csv) для круговой «Исполнение РД»:
     Принято / На рассм. / Возвр. / Не принято / Передано подрядчику.
@@ -27014,6 +27435,9 @@ def _count_tessa_rd_krstates(selected_projects: list[str] | None = None) -> dict
     )
     cipher_col = _tessa_find_column(t, ["DivisionCipher", "Cipher"])
     kr_state_col = _tessa_find_column(t, ["KrState"])
+    section_col = _tessa_find_column(
+        t, ["SubDivisionVersionName", "SectionName", "DivisionName"]
+    )
     if not project_col or not cipher_col or not kr_state_col:
         return result
     # Считаем только строки-карточки РД (где задан шифр раздела).
@@ -27026,13 +27450,30 @@ def _count_tessa_rd_krstates(selected_projects: list[str] | None = None) -> dict
         t = t[t[project_col].map(_project_filter_norm_key).isin(_pk_set)]
     if t.empty:
         return result
+    t = _tessa_rd_dedupe_cards_latest(t)
+    if t.empty:
+        return result
+    if section_labels_allowlist is not None:
+        try:
+            _c_lbl = t[cipher_col].fillna("").astype(str).str.strip()
+            _s_lbl = (
+                t[section_col].fillna("").astype(str).str.strip()
+                if section_col and section_col in t.columns
+                else ""
+            )
+            if isinstance(_s_lbl, str):
+                _join_lbl = _c_lbl
+            else:
+                _join_lbl = (_c_lbl + " " + _s_lbl.astype(str)).str.replace(
+                    r"\s+", " ", regex=True
+                ).str.strip()
+            t = t.loc[_join_lbl.isin(section_labels_allowlist)].copy()
+        except Exception:
+            pass
+        if t.empty:
+            return result
     for _v in t[kr_state_col].tolist():
-        if _v is None or (isinstance(_v, float) and pd.isna(_v)):
-            continue
-        key = str(_v).strip().casefold()
-        if not key or key in ("nan", "none", "<na>", "nat"):
-            continue
-        bucket = _TESSA_KRSTATE_TO_PIE.get(key)
+        bucket = _tessa_krstate_to_pie_bucket(_v)
         if bucket:
             result[bucket] += 1
     return result
@@ -27550,6 +27991,17 @@ def _build_tessa_rd_detail_table(
     if t.empty:
         return pd.DataFrame()
 
+    try:
+        mask_card = t[cipher_col].map(_tessa_cell_has_value).fillna(False)
+        t = t[mask_card]
+    except Exception:
+        pass
+    if t.empty:
+        return pd.DataFrame()
+    t = _tessa_rd_dedupe_cards_latest(t)
+    if t.empty:
+        return pd.DataFrame()
+
     # R23-12: lookup «Дата выдачи разделов по Договору» из other_<slug>_*_rd.csv
     # и «Прогнозная дата выдачи» из tessa_tasks (OptionCaption=Подписан, Role=Проектировщик).
     try:
@@ -27644,7 +28096,26 @@ def _build_tessa_rd_detail_table(
                 "Статус": _safe(kr_state_col, r) if kr_state_col else "",
             }
         )
-    return pd.DataFrame(rows)
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    try:
+        plan_dt = pd.to_datetime(
+            out["Дата выдачи разделов по Договору"].astype(str),
+            errors="coerce",
+            dayfirst=True,
+            format="mixed",
+        )
+        fc_dt = pd.to_datetime(
+            out["Прогнозная дата выдачи разделов"].astype(str),
+            errors="coerce",
+            dayfirst=True,
+            format="mixed",
+        )
+        out["Отклонение, дн"] = (fc_dt - plan_dt).dt.days
+    except Exception:
+        out["Отклонение, дн"] = pd.NA
+    return out
 
 
 # ==================== DASHBOARD: Неустраненные предписания (TESSA) ====================
