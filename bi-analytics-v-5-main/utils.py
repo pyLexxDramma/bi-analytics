@@ -1203,6 +1203,7 @@ def format_dataframe_as_html(
     conditional_cols: Optional[Dict[str, Dict[str, str]]] = None,
     column_colors: Optional[Dict[str, str]] = None,
     cell_color: Optional[pd.DataFrame] = None,
+    cell_background: Optional[pd.DataFrame] = None,
     *,
     finance_decimal_places: int = 2,
     bold_row_indices: Optional[set] = None,
@@ -1323,8 +1324,18 @@ def format_dataframe_as_html(
                 formatted_value = html_module.escape(
                     _sanitize_if_name_column(col, str(formatted_value))
                 )
+                _bg_extra = ""
+                if cell_background is not None and col in cell_background.columns:
+                    try:
+                        _bg = cell_background.at[idx, col]
+                        if isinstance(_bg, str):
+                            _bg_s = _bg.strip()
+                            if _bg_s.startswith("#") or _bg_s.startswith("rgba") or _bg_s.startswith("rgb"):
+                                _bg_extra = f"background-color:{_bg_s}!important;"
+                    except Exception:
+                        pass
                 html_table += (
-                    f"<td style='{_td_base}color:{color};font-weight:bold;'>{formatted_value}</td>"
+                    f"<td style='{_td_base}{_bg_extra}color:{color};font-weight:bold;'>{formatted_value}</td>"
                 )
             else:
                 if isinstance(value, (int, float)) and is_scalar and not pd.isna(value):
@@ -1363,6 +1374,15 @@ def format_dataframe_as_html(
                         _cc = cell_color.at[idx, col]
                         if isinstance(_cc, str) and _cc.startswith("#"):
                             cell_style += f"color:{_cc};font-weight:600;"
+                    except Exception:
+                        pass
+                if cell_background is not None and col in cell_background.columns:
+                    try:
+                        _bg = cell_background.at[idx, col]
+                        if isinstance(_bg, str):
+                            _bg_s = _bg.strip()
+                            if _bg_s.startswith("#") or _bg_s.startswith("rgba") or _bg_s.startswith("rgb"):
+                                cell_style += f"background-color:{_bg_s}!important;"
                     except Exception:
                         pass
                 html_table += f"<td style='{cell_style}'>{formatted_value}</td>"

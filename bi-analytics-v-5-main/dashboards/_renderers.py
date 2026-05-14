@@ -26,7 +26,7 @@ def _inject_multiselect_ru_translations() -> None:
     date_input range presets (Past Week / Past Month / ...) и
     подписи самого календаря (названия месяцев, сокращения дней недели).
 
-    Также подписи контекстного меню столбцов ``st.dataframe`` (Glide Data Grid).
+    Также подписи контекстного меню столбцов ``st.dataframe`` / ``st.data_editor`` (Glide Data Grid).
 
     Использует `st.components.v1.html` с MutationObserver. На каждом rerun Streamlit
     без этого iframe скрипт пропадает — вызываем ``components.html`` каждый раз;
@@ -37,7 +37,7 @@ def _inject_multiselect_ru_translations() -> None:
         <script>
         (function(){
             try {
-                var HANDLE_KEY = '__BI_RU_TRANSLATIONS_HANDLE_V6__';
+                var HANDLE_KEY = '__BI_RU_TRANSLATIONS_HANDLE_V7__';
                 function resolveDoc() {
                     try {
                         if (window.parent && window.parent.document && window.parent.document.body)
@@ -95,15 +95,28 @@ def _inject_multiselect_ru_translations() -> None:
                     'Next Month': 'Следующий месяц',
                     'Previous Year': 'Предыдущий год',
                     'Next Year': 'Следующий год',
-                    /* st.dataframe — меню столбца */
+                    /* st.dataframe / st.data_editor — контекстное меню столбца (Glide Data Grid) */
                     'Sort ascending': 'Сортировать по возрастанию',
                     'Sort descending': 'Сортировать по убыванию',
+                    'Sort Ascending': 'Сортировать по возрастанию',
+                    'Sort Descending': 'Сортировать по убыванию',
                     'Autosize': 'Автоподбор ширины',
+                    'Auto-size': 'Автоподбор ширины',
+                    'Auto size': 'Автоподбор ширины',
                     'Pin column': 'Закрепить столбец',
+                    'Pin Column': 'Закрепить столбец',
                     'Unpin column': 'Открепить столбец',
+                    'Unpin Column': 'Открепить столбец',
                     'Hide column': 'Скрыть столбец',
+                    'Hide Column': 'Скрыть столбец',
                     'Format': 'Формат'
                 };
+                var MENU_PHRASE_KEYS = [
+                    'Sort descending','Sort ascending','Sort Descending','Sort Ascending',
+                    'Auto-size','Auto size','Autosize',
+                    'Unpin column','Unpin Column','Pin column','Pin Column',
+                    'Hide column','Hide Column','Format'
+                ];
                 var MONTH_RE = /^(January|February|March|April|May|June|July|August|September|October|November|December)\\s+(\\d{4})$/;
                 var MONTHS_FULL = {
                     January:'Январь', February:'Февраль', March:'Март', April:'Апрель',
@@ -163,6 +176,19 @@ def _inject_multiselect_ru_translations() -> None:
                             node.nodeValue = t.replace(s, TRANSLATIONS[key]);
                             return;
                         }
+                    }
+                    /* Контекстное меню столбца: фразы могут быть в одном узле с другим текстом */
+                    var glued = t;
+                    var mkOrder = MENU_PHRASE_KEYS.slice().sort(function(a,b){return String(b).length - String(a).length;});
+                    for (var sj = 0; sj < mkOrder.length; sj++) {
+                        var kk = mkOrder[sj];
+                        var rv = TRANSLATIONS[kk];
+                        if (!rv) continue;
+                        if (glued.indexOf(kk) !== -1) glued = glued.split(kk).join(rv);
+                    }
+                    if (glued !== t) {
+                        node.nodeValue = glued;
+                        return;
                     }
                     var mm = s.match(MONTH_RE);
                     if (mm) {
@@ -23046,6 +23072,91 @@ def compute_bddcs_forecast_monthly(
     return out, None
 
 
+def _forecast_per_lot_distribution_totals(
+    work_df: pd.DataFrame,
+    *,
+    abc_source=None,
+    row_modes: Optional[pd.Series] = None,
+    distribution_mode: str = "uniform",
+) -> pd.DataFrame:
+    """По каждой строке лота: суммы план/факт и итог распределённого БДДС прогноза (руб. → млн в таблице)."""
+    if work_df is None or getattr(work_df, "empty", True):
+        return pd.DataFrame()
+    df = work_df.copy().reset_index(drop=True)
+    abc_src = abc_source.reset_index(drop=True) if abc_source is not None else None
+    rm = row_modes.reset_index(drop=True) if row_modes is not None else None
+
+    mode = (distribution_mode or "uniform").strip().lower()
+    use_abc_default = mode in ("abc", "%", "процент", "a/b/c", "a b c")
+
+    def _row_use_abc(pos: int) -> bool:
+        if rm is None or len(rm) <= pos:
+            return use_abc_default
+        row_m = str(rm.iloc[pos]).strip()
+        sl = row_m.casefold()
+        if not row_m:
+            return use_abc_default
+        if sl.startswith("%") or "a/b/c" in sl or "распредел" in sl:
+            return True
+        if "равном" in sl:
+            return False
+        return use_abc_default
+
+    def _fmt_d(ts) -> str:
+        if ts is None or (isinstance(ts, float) and pd.isna(ts)):
+            return ""
+        try:
+            tt = pd.Timestamp(ts)
+            return "" if pd.isna(tt) else tt.strftime("%d.%m.%Y")
+        except Exception:
+            return ""
+
+    rows_out: List[dict] = []
+    for pos in range(len(df)):
+        r = df.iloc[pos]
+        ps = pd.to_datetime(r.get("plan start"), errors="coerce", dayfirst=True)
+        pe = pd.to_datetime(r.get("plan end"), errors="coerce", dayfirst=True)
+        plan_amt = float(pd.to_numeric(r.get("budget plan"), errors="coerce") or 0.0)
+        fact_amt = float(pd.to_numeric(r.get("budget fact"), errors="coerce") or 0.0)
+        lot = _clean_display_str(r.get("section", ""))
+
+        use_abc_row = _row_use_abc(pos)
+        a, b, c = 34.0, 33.0, 33.0
+        if use_abc_row and abc_src is not None and len(abc_src) > 0:
+            row_abc = abc_src.iloc[min(pos, len(abc_src) - 1)]
+            for ca, cb, cc in (
+                ("A %", "B %", "C %"),
+                ("A, %", "B, %", "C, %"),
+                ("A_", "B_", "C_"),
+            ):
+                if ca in row_abc.index and cb in row_abc.index and cc in row_abc.index:
+                    a = row_abc[ca]
+                    b = row_abc[cb]
+                    c = row_abc[cc]
+                    break
+
+        if use_abc_row:
+            dp = _bdds_distribute_row_abc(plan_amt, ps, pe, a, b, c)
+        else:
+            dp = _bdds_distribute_row_uniform(plan_amt, ps, pe)
+
+        fc_sum = float(sum(dp.values())) if dp else 0.0
+
+        rows_out.append(
+            {
+                "Лот": lot,
+                "План. начало": _fmt_d(ps),
+                "План. окончание": _fmt_d(pe),
+                "БДДС план (утверждённый), млн руб.": round(plan_amt / 1e6, 4),
+                "БДДС факт, млн руб.": round(fact_amt / 1e6, 4),
+                "БДДС прогноз (итого), млн руб.": round(fc_sum / 1e6, 4),
+                "Отклонение (план − прогноз), млн руб.": round((plan_amt - fc_sum) / 1e6, 4),
+            }
+        )
+
+    return pd.DataFrame(rows_out)
+
+
 # ==================== DASHBOARD: Approved Budget ====================
 def calculate_approved_budget(df, rule_name="default"):
     """
@@ -23670,12 +23781,12 @@ def _forecast_merge_bddcs_from_1c(project_df: pd.DataFrame, project_name: str) -
     """
     Подставляет суммы из оборотов 1С (БДДС):
 
-    - **БДДС план (утверждённый)** и **БДДС факт** берутся по строкам со сценарием «Бюджет» / «Budget»
-      (ТЗ отчёта «БДДС (утверждённый/прогнозный)» для обоих рядов). Статьи исключаются по правилу «без БДР».
-    - Если по «Бюджет» не найдено сумм для состава факта в старых выгрузках, подстраховка: сценарии
-      «Факт» / «Fact» (как было раньше).
+    - **БДДС план**: по возможности строки с **ТипСтатьи**, содержащим «БДДС», сценарий с «ПЛАН»,
+      статья оборотов без «БДР».
+    - **БДДС факт**: те же ограничения по типу/статье, сценарий «ФАКТ» / Fact.
+    - Подстраховка для старых выгрузок: сумма по сценарию «Бюджет» / Budget на план и (если нужно) на факт.
 
-    Распределение по лотам — пропорционально текущему budget plan в MSP для проекта.
+    Распределение по лотам — пропорционально текущему budget plan в MSP для проекта (или поровну).
     """
     bdf = _forecast_find_turnover_dataframe()
     if bdf is None or bdf.empty or project_df is None or project_df.empty:
@@ -23721,26 +23832,44 @@ def _forecast_merge_bddcs_from_1c(project_df: pd.DataFrame, project_name: str) -
                 return False
         return True
 
-    t = t[t.apply(_no_bdr, axis=1)]
-    if t.empty:
+    t_base = t[t.apply(_no_bdr, axis=1)]
+    if t_base.empty:
         return out
 
-    sser = t[scen].astype(str)
+    t_bd = t_base
+    if typ:
+        _tls = t_base[typ].astype(str).str.casefold()
+        _bdds_rows = _tls.str.contains("бддс", na=False)
+        if bool(_bdds_rows.any()):
+            t_bd = t_base.loc[_bdds_rows]
+    if t_bd.empty:
+        t_bd = t_base
+
+    sser = t_bd[scen].astype(str)
+    amt_num = pd.to_numeric(t_bd[amt], errors="coerce").fillna(0.0)
+
+    plan_mask = sser.str.contains("план", case=False, na=False)
+    fact_mask = sser.str.contains("факт", case=False, na=False) | sser.str.contains(
+        "fact", case=False, na=False
+    )
     budget_mask = sser.str.contains("бюджет", case=False, na=False) | sser.str.contains(
         "budget", case=False, na=False
     )
-    budget_tot = pd.to_numeric(t.loc[budget_mask, amt], errors="coerce").fillna(0.0).sum()
-    plan_sum = float(budget_tot)
-    # ТЗ «БДДС (утверждённый/прогнозный)»: факт в подстановке из оборотов — тот же сценарий «Бюджет».
-    fact_sum = float(budget_tot)
-    legacy_fact_mask = sser.str.contains("факт", case=False, na=False) | sser.str.contains(
-        "fact", case=False, na=False
-    )
-    legacy_fact_sum = float(
-        pd.to_numeric(t.loc[legacy_fact_mask, amt], errors="coerce").fillna(0.0).sum()
-    )
-    if legacy_fact_sum > 0 and fact_sum <= 0.0:
-        fact_sum = legacy_fact_sum
+
+    plan_sum = float(amt_num.loc[plan_mask].sum())
+    fact_sum = float(amt_num.loc[fact_mask].sum())
+    budget_tot = float(amt_num.loc[budget_mask].sum())
+
+    if plan_sum <= 0.0 and budget_tot > 0.0:
+        plan_sum = budget_tot
+    if fact_sum <= 0.0:
+        if budget_tot > 0.0:
+            fact_sum = budget_tot
+        else:
+            legacy_fact_mask = sser.str.contains("факт", case=False, na=False) | sser.str.contains(
+                "fact", case=False, na=False
+            )
+            fact_sum = float(amt_num.loc[legacy_fact_mask].sum())
 
     if "budget plan" in out.columns:
         w = pd.to_numeric(out["budget plan"], errors="coerce").fillna(0.0)
@@ -23944,9 +24073,208 @@ def _forecast_combine_monthly_all_projects(scope_df: pd.DataFrame, project_col: 
     return summed, float(approved_mln), note
 
 
+def _forecast_financier_status_dataset(
+    *,
+    filtered_scope: pd.DataFrame,
+    project_col: str,
+    all_projects: bool,
+    selected_project_label: Optional[str],
+    period_type_en: str,
+    date_from,
+    date_to,
+    single_updated_data: Optional[pd.DataFrame],
+    abc_source,
+    row_modes,
+) -> pd.DataFrame:
+    """Строки для таблицы «Статус»: отклонение = БДДС (прогноз) − БДДС (план), млн."""
+    rows: List[dict] = []
+    if all_projects:
+        labs = sorted(
+            {_clean_display_str(x) for x in filtered_scope[project_col].dropna().unique() if str(x).strip()},
+            key=lambda s: str(s).casefold(),
+        )
+        for lab in labs:
+            sub = filtered_scope[
+                filtered_scope[project_col].map(_project_filter_norm_key) == _project_filter_norm_key(str(lab))
+            ].copy()
+            if sub.empty:
+                continue
+            prep, prep_err = _forecast_prepare_msp_slice(sub, str(lab))
+            if prep is None or prep_err:
+                continue
+            mdf, merr = calculate_forecast_budget(
+                sub,
+                edited_data=prep,
+                distribution_mode="uniform",
+                abc_source=None,
+                row_modes=None,
+            )
+            if merr or mdf is None or getattr(mdf, "empty", True):
+                continue
+            mf = mdf.sort_values("month").copy()
+            if date_from is not None and date_to is not None:
+                _keep_m = mf["month"].map(
+                    lambda m: _forecast_month_calendar_intersects(m, date_from=date_from, date_to=date_to)
+                )
+                mf = mf.loc[_keep_m].reset_index(drop=True)
+            mf = _forecast_resample_monthly_dataframe(mf, period_type_en)
+            if mf is None or mf.empty:
+                continue
+            for _, rr in mf.iterrows():
+                rows.append(
+                    {
+                        "_period": rr["month"],
+                        "Проект": str(lab),
+                        "plan_rub": float(rr["bdds_plan_msp"]),
+                        "forecast_rub": float(rr["bdds_forecast"]),
+                    }
+                )
+    else:
+        lab = str(selected_project_label or "").strip()
+        if not lab:
+            return pd.DataFrame()
+        sub = filtered_scope.copy()
+        prep, prep_err = _forecast_prepare_msp_slice(sub, lab)
+        if prep is None or prep_err:
+            return pd.DataFrame()
+        ed = single_updated_data if single_updated_data is not None else prep
+        mdf, merr = calculate_forecast_budget(
+            sub,
+            edited_data=ed,
+            distribution_mode="uniform",
+            abc_source=abc_source,
+            row_modes=row_modes,
+        )
+        if merr or mdf is None or getattr(mdf, "empty", True):
+            return pd.DataFrame()
+        mf = mdf.sort_values("month").copy()
+        if date_from is not None and date_to is not None:
+            _keep_m = mf["month"].map(
+                lambda m: _forecast_month_calendar_intersects(m, date_from=date_from, date_to=date_to)
+            )
+            mf = mf.loc[_keep_m].reset_index(drop=True)
+        mf = _forecast_resample_monthly_dataframe(mf, period_type_en)
+        if mf is None or mf.empty:
+            return pd.DataFrame()
+        for _, rr in mf.iterrows():
+            rows.append(
+                {
+                    "_period": rr["month"],
+                    "Проект": lab,
+                    "plan_rub": float(rr["bdds_plan_msp"]),
+                    "forecast_rub": float(rr["bdds_forecast"]),
+                }
+            )
+
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+
+    def _stat_txt(v: float) -> str:
+        try:
+            x = float(v)
+        except (TypeError, ValueError):
+            return ""
+        if x < 0:
+            return "Экономия"
+        if x > 0:
+            return "Перерасход"
+        return "Без отклонения"
+
+    out["Месяц"] = out["_period"].apply(format_period_ru)
+    out["БДДС (план), млн"] = out["plan_rub"] / 1e6
+    out["БДДС (прогноз), млн"] = out["forecast_rub"] / 1e6
+    out["Отклонение по сумме, млн"] = out["БДДС (прогноз), млн"] - out["БДДС (план), млн"]
+    out["Статус для финансиста"] = out["Отклонение по сумме, млн"].map(_stat_txt)
+    disp = (
+        out[["Месяц", "Проект", "БДДС (план), млн", "БДДС (прогноз), млн", "Отклонение по сумме, млн", "Статус для финансиста"]]
+        .sort_values(["Месяц", "Проект"])
+        .reset_index(drop=True)
+    )
+    return disp.round(2)
+
+
+def _forecast_financier_status_table_html(df: pd.DataFrame) -> str:
+    """«Статус»: ● зелёный при экономии (прогноз < план), красный при перерасходе."""
+    if df is None or getattr(df, "empty", True):
+        return "<p>Нет данных для статуса.</p>"
+    _col_dev = "Отклонение по сумме, млн"
+    _col_stat = "Статус для финансиста"
+    green = "hsl(148,100%,63%)"
+    red = "hsl(348,100%,63%)"
+    neutral_bullet = "#94a3b8"
+    parts = [
+        "<style>"
+        ".fc-st-cell-red, .fc-st-cell-red * { color: hsl(348,100%,63%) !important; }"
+        ".fc-st-cell-green, .fc-st-cell-green * { color: hsl(148,100%,63%) !important; }"
+        "</style>",
+        '<div style="overflow-x:auto; min-width:0; margin: 1em 0;">',
+        f'<table style="width:100%; border-collapse:collapse; background-color:{TABLE_BG_COLOR}; color:{TABLE_TEXT_COLOR}; font-size:14px;">',
+        "<thead><tr>",
+    ]
+    for c in df.columns:
+        parts.append(
+            f'<th style="border:1px solid rgba(255,255,255,0.25); padding:6px 8px; text-align:left;">'
+            f"{html_module.escape(str(c))}</th>"
+        )
+    parts.append("</tr></thead><tbody>")
+    for _, row in df.iterrows():
+        parts.append("<tr>")
+        for col in df.columns:
+            raw = row[col]
+            val_esc = html_module.escape("" if pd.isna(raw) else str(raw))
+            if col == _col_dev:
+                try:
+                    num = float(raw)
+                except (TypeError, ValueError):
+                    num = None
+                if num is None or pd.isna(num):
+                    parts.append(
+                        f'<td style="border:1px solid rgba(255,255,255,0.15); padding:5px 8px;">{val_esc}</td>'
+                    )
+                elif abs(float(num)) < 1e-9:
+                    parts.append(
+                        f'<td style="border:1px solid rgba(255,255,255,0.15); padding:5px 8px;">'
+                        f'<span style="font-weight:700">{html_module.escape(f"{float(num):.2f}")}</span></td>'
+                    )
+                else:
+                    txt = f"{float(num):+.2f}"
+                    txt_esc = html_module.escape(txt)
+                    _cls = "fc-st-cell-green" if float(num) < 0 else "fc-st-cell-red"
+                    parts.append(
+                        f'<td class="{_cls}" style="border:1px solid rgba(255,255,255,0.15); padding:5px 8px; '
+                        f'font-weight:700;"><span>{txt_esc}</span></td>'
+                    )
+            elif col == _col_stat:
+                try:
+                    dv = float(row.get(_col_dev, float("nan")))
+                except (TypeError, ValueError):
+                    dv = float("nan")
+                if pd.isna(dv) or abs(float(dv)) < 1e-9:
+                    bullet = neutral_bullet
+                elif dv < 0:
+                    bullet = green
+                else:
+                    bullet = red
+                parts.append(
+                    f'<td style="border:1px solid rgba(255,255,255,0.15); padding:5px 8px;">'
+                    f'<span style="color:{bullet};font-weight:700;font-size:1.12em;margin-right:6px">●</span>'
+                    f'<span style="color:{TABLE_TEXT_COLOR};font-weight:600">{val_esc}</span>'
+                    "</td>"
+                )
+            else:
+                parts.append(
+                    f'<td style="border:1px solid rgba(255,255,255,0.15); padding:5px 8px;">{val_esc}</td>'
+                )
+        parts.append("</tr>")
+    parts.append("</tbody></table></div>")
+    return "".join(parts)
+
+
 def dashboard_forecast_budget(df):
     """Панель «БДДС (утверждённый/прогнозный)» (ранее «Прогнозный бюджет»)."""
     st.header("БДДС (утверждённый/прогнозный)")
+    _inject_multiselect_ru_translations()
 
     # Check English name first (alias created in load_data), then Russian
     project_col = None
@@ -24123,6 +24451,21 @@ def dashboard_forecast_budget(df):
         else _project_filter_norm_key(str(selected_project_scope))
     )
     _tot_approved_mln = 0.0
+    _fc_updated_data = None
+    _fc_abc_src = None
+    _fc_row_modes = None
+
+    _dev_base_fc = st.radio(
+        "Отклонение от БДДС прогноз считать к",
+        ["БДДС план", "БДДС факт"],
+        horizontal=True,
+        key=f"forecast_bddcs_dev_base_{_npk_fc}",
+    )
+    _hide_dev_fc = st.checkbox(
+        "Скрыть отклонение",
+        value=False,
+        key=f"forecast_bddcs_hide_dev_{_npk_fc}",
+    )
 
     if _many_projects_fc:
         forecast_budget_df, _tot_approved_mln, _combine_note = _forecast_combine_monthly_all_projects(
@@ -24171,6 +24514,11 @@ def dashboard_forecast_budget(df):
             )
 
         st.subheader("Редактирование данных задач")
+        st.info(
+            "Измените **План. начало / План. окончание**, **БДДС план (утверждённый)** и **БДДС факт** "
+            "(млн руб.), при необходимости — **Условие распределения денежных средств** и доли **A/B/C** (%). "
+            "Итог пересчёта по каждому лоту — во второй таблице ниже; график и помесячная сводка обновляются автоматически."
+        )
 
         _sess_key = f"forecast_edit_v7_{_npk_fc}"
         if _sess_key not in st.session_state:
@@ -24200,7 +24548,7 @@ def dashboard_forecast_budget(df):
 
         _row_px = 44
         _editor_h = max(220, min(560, _row_px * (max(1, len(edit_df_fc)) + 2)))
-        _dist_options = ["Равномерно", "% распределения"]
+        _dist_options = ["Равномерно", "% Распределения"]
         _col_cfg_fc = {
             "Лот": st.column_config.TextColumn("Лот", width="medium"),
             "Условие распределения": st.column_config.SelectboxColumn(
@@ -24256,8 +24604,15 @@ def dashboard_forecast_budget(df):
         sums_fc = abc_src.sum(axis=1)
         if (sums_fc - 100).abs().max() > 0.5 and row_modes.astype(str).str.contains("%", na=False).any():
             st.warning(
-                "Сумма A+B+C по строкам с «% распределения» должна быть **100%** (допуск ±0.5%). Нормализуется при расчёте."
+                "Сумма A+B+C по строкам с «% Распределения» должна быть **100%** (допуск ±0.5%). Нормализуется при расчёте."
             )
+
+        _lot_res_fc = _forecast_per_lot_distribution_totals(
+            updated_data,
+            abc_source=abc_src,
+            row_modes=row_modes,
+            distribution_mode="uniform",
+        )
 
         forecast_budget_df, calc_error = calculate_forecast_budget(
             df,
@@ -24267,6 +24622,16 @@ def dashboard_forecast_budget(df):
             row_modes=row_modes,
         )
         _tot_approved_mln = float(pd.to_numeric(ed_rows["БДДС план (утверждённый), млн руб."], errors="coerce").fillna(0.0).sum())
+        _fc_updated_data = updated_data
+        _fc_abc_src = abc_src
+        _fc_row_modes = row_modes
+
+        if _lot_res_fc is not None and not getattr(_lot_res_fc, "empty", True):
+            st.subheader("Результат пересчёта по лотам")
+            st.caption(
+                "Без колонок условия распределения и A/B/C — только лот, даты периода и суммы после распределения БДДС прогноза."
+            )
+            st.dataframe(_lot_res_fc, hide_index=True, use_container_width=True)
 
     if calc_error:
         st.error(calc_error)
@@ -24293,7 +24658,10 @@ def dashboard_forecast_budget(df):
         mf_fc = _forecast_apply_view_cumulative(mf_fc)
 
     mf_fc["Период"] = mf_fc["month"].apply(format_period_ru)
-    mf_fc["_dev"] = mf_fc["bdds_plan_msp"] - mf_fc["bdds_forecast"]
+    if _dev_base_fc == "БДДС факт":
+        mf_fc["_dev"] = mf_fc["bdds_fact"] - mf_fc["bdds_forecast"]
+    else:
+        mf_fc["_dev"] = mf_fc["bdds_plan_msp"] - mf_fc["bdds_forecast"]
 
     chart_title_fc = (
         "БДДС план / факт / прогноз"
@@ -24454,39 +24822,156 @@ def dashboard_forecast_budget(df):
             max_height=None,
         )
 
-    st.subheader("Таблица прогнозного БДДС")
+    if not _chart_df.empty:
+        st.subheader(
+            "БДДС план / факт / прогноз — как в отчёте БДДС"
+            + (" (накопительно)" if _view_type_fc == "Накопительно" else "")
+        )
+        _nfc_bd = len(_chart_df)
+        _tf_bd = 8 if _nfc_bd > 32 else 9 if _nfc_bd > 20 else 10 if _nfc_bd > 12 else 11
+        if _nfc_bd > 32:
+            _bg_bd, _bgg_bd = 0.04, 0.01
+        elif _nfc_bd > 18:
+            _bg_bd, _bgg_bd = 0.06, 0.02
+        else:
+            _bg_bd, _bgg_bd = 0.1, 0.04
+        _chart_h_bd = 600 if _nfc_bd <= 20 else int(min(900, 520 + int(_nfc_bd * 1.4)))
+        _tick_angle_bd = -45 if _nfc_bd <= 18 else -50 if _nfc_bd <= 36 else -55
+        _tick_fs_bd = 8 if _nfc_bd > 28 else 9 if _nfc_bd > 18 else 10
+        fig_bd = go.Figure()
+        x_bd = _chart_df["Период"].astype(str)
+        fig_bd.add_trace(
+            go.Bar(
+                x=x_bd,
+                y=_chart_df["bdds_plan_msp"].div(1e6),
+                name="БДДС план",
+                marker_color="#2E86AB",
+                text=_finance_bar_text_mln_rub(_chart_df["bdds_plan_msp"], min_abs_mln=0.005),
+                textposition="outside",
+                textfont=dict(size=_tf_bd, color="#f0f4f8"),
+                hovertemplate="<b>%{x}</b><br>БДДС план: %{customdata}<extra></extra>",
+                customdata=_chart_df["bdds_plan_msp"].apply(format_million_rub),
+            )
+        )
+        fig_bd.add_trace(
+            go.Bar(
+                x=x_bd,
+                y=_chart_df["bdds_fact"].div(1e6),
+                name="БДДС факт",
+                marker_color="#A23B72",
+                text=_finance_bar_text_mln_rub(_chart_df["bdds_fact"], min_abs_mln=0.005),
+                textposition="outside",
+                textfont=dict(size=_tf_bd, color="#f0f4f8"),
+                hovertemplate="<b>%{x}</b><br>БДДС факт: %{customdata}<extra></extra>",
+                customdata=_chart_df["bdds_fact"].apply(format_million_rub),
+            )
+        )
+        fig_bd.add_trace(
+            go.Bar(
+                x=x_bd,
+                y=_chart_df["bdds_forecast"].div(1e6),
+                name="БДДС прогноз",
+                marker_color="#F18F01",
+                text=_finance_bar_text_mln_rub(_chart_df["bdds_forecast"], min_abs_mln=0.005),
+                textposition="outside",
+                textfont=dict(size=_tf_bd, color="#f0f4f8"),
+                hovertemplate="<b>%{x}</b><br>БДДС прогноз: %{customdata}<extra></extra>",
+                customdata=_chart_df["bdds_forecast"].apply(format_million_rub),
+            )
+        )
+        fig_bd.update_layout(
+            title_text="",
+            yaxis_title="млн. руб.",
+            barmode="group",
+            bargap=_bg_bd,
+            bargroupgap=_bgg_bd,
+            hovermode="x unified",
+            height=_chart_h_bd,
+            xaxis=dict(
+                title=dict(text=x_label_fc, standoff=26),
+                tickangle=_tick_angle_bd,
+                tickfont=dict(size=_tick_fs_bd),
+                nticks=min(64, max(12, _nfc_bd)),
+            ),
+        )
+        fig_bd = _apply_finance_bar_label_layout(fig_bd)
+        if _nfc_bd <= 6:
+            try:
+                fig_bd.update_layout(bargap=0.86, bargroupgap=0.12)
+                fig_bd.update_traces(width=0.08, offsetgroup=None, selector=dict(type="bar"))
+            except Exception:
+                pass
+        _ymax_bd = float(
+            np.nanmax(
+                np.concatenate(
+                    [
+                        _chart_df["bdds_plan_msp"].div(1e6).to_numpy(),
+                        _chart_df["bdds_fact"].div(1e6).to_numpy(),
+                        _chart_df["bdds_forecast"].div(1e6).to_numpy(),
+                    ]
+                )
+            )
+        )
+        if np.isfinite(_ymax_bd) and _ymax_bd > 0:
+            fig_bd.update_layout(yaxis=dict(range=[0, _ymax_bd * 1.22]))
+        fig_bd = _plotly_legend_horizontal_below_plot(fig_bd)
+        fig_bd = apply_chart_background(fig_bd)
+        render_chart(fig_bd, caption_below="Только три показателя; подписи как в сводной таблице БДДС.", height=_chart_h_bd)
+
+        bdds_like_tbl = pd.DataFrame(
+            {
+                period_label: _chart_df["Период"].astype(str),
+                "БДДС план, млн руб.": (_chart_df["bdds_plan_msp"] / 1e6).map(lambda x: f"{float(x):.2f}"),
+                "БДДС факт, млн руб.": (_chart_df["bdds_fact"] / 1e6).map(lambda x: f"{float(x):.2f}"),
+                "БДДС прогноз, млн руб.": (_chart_df["bdds_forecast"] / 1e6).map(lambda x: f"{float(x):.2f}"),
+            }
+        )
+        st.markdown(
+            budget_table_to_html(bdds_like_tbl, finance_deviation_column=None),
+            unsafe_allow_html=True,
+        )
+        render_dataframe_excel_csv_downloads(
+            bdds_like_tbl,
+            file_stem="forecast_bddcs_bddstyle_table",
+            key_prefix=f"fcast_bddstyle_{_npk_fc}_{period_type_en}",
+        )
+
+    st.subheader("Таблица")
     _period_hdr = period_label
-    _dev_col_fc = "Отклонение (план − прогноз), млн руб."
+    _dev_col_fc = "Отклонение, млн руб."
     try:
         _tot_fact_mln = float(pd.to_numeric(mf_tot_snapshot["bdds_fact"], errors="coerce").fillna(0.0).sum() / 1e6)
     except Exception:
         _tot_fact_mln = float("nan")
-    summary_numeric = pd.DataFrame(
-        {
-            _period_hdr: mf_fc["Период"].astype(str),
-            "БДДС план": (mf_fc["bdds_plan_msp"] / 1e6).astype(float),
-            "БДДС факт": (mf_fc["bdds_fact"] / 1e6).astype(float),
-            "БДДС прогноз": (mf_fc["bdds_forecast"] / 1e6).astype(float),
-            _dev_col_fc: (mf_fc["_dev"] / 1e6).astype(float),
-        }
-    )
+    _sum_rows = {
+        _period_hdr: mf_fc["Период"].astype(str),
+        "БДДС план": (mf_fc["bdds_plan_msp"] / 1e6).astype(float),
+        "БДДС факт": (mf_fc["bdds_fact"] / 1e6).astype(float),
+        "БДДС прогноз": (mf_fc["bdds_forecast"] / 1e6).astype(float),
+    }
+    if not _hide_dev_fc:
+        _sum_rows[_dev_col_fc] = (mf_fc["_dev"] / 1e6).astype(float)
+    summary_numeric = pd.DataFrame(_sum_rows)
 
     _total_row = {
         _period_hdr: "ИТОГО",
         "БДДС план": float(_tot_approved_mln),
         "БДДС факт": float(_tot_fact_mln) if pd.notna(_tot_fact_mln) else 0.0,
         "БДДС прогноз": float(_tot_approved_mln),
-        _dev_col_fc: 0.0,
     }
+    if not _hide_dev_fc:
+        _total_row[_dev_col_fc] = float((mf_fc["_dev"] / 1e6).sum())
     summary_numeric = pd.concat([summary_numeric, pd.DataFrame([_total_row])], ignore_index=True)
 
     _prev_key_fc = (
         f"forecast_summary_prev_v8_{_npk_fc}_{period_type_en}_{_project_filter_norm_key(_view_type_fc)}"
+        f"_{_project_filter_norm_key(str(_dev_base_fc))}_{int(bool(_hide_dev_fc))}"
     )
-    _color_cols_fc = [
-        c for c in summary_numeric.columns if c not in (_period_hdr, _dev_col_fc)
-    ]
-    _cell_color_fc = pd.DataFrame("", index=summary_numeric.index, columns=summary_numeric.columns)
+    _skip_cols_fc = {_period_hdr}
+    if not _hide_dev_fc:
+        _skip_cols_fc.add(_dev_col_fc)
+    _color_cols_fc = [c for c in summary_numeric.columns if c not in _skip_cols_fc]
+    _cell_background_fc = pd.DataFrame("", index=summary_numeric.index, columns=summary_numeric.columns)
     _prev_fc_map = st.session_state.get(_prev_key_fc) or {}
     for _i_fc, _r_fc in summary_numeric.iterrows():
         _pk_fc = str(_r_fc[_period_hdr])
@@ -24501,9 +24986,9 @@ def dashboard_forecast_budget(df):
                     continue
                 _old_v = float(_old_v)
                 if _cur_v < _old_v - 1e-9:
-                    _cell_color_fc.at[_i_fc, _cn_fc] = "#6ee7b7"
+                    _cell_background_fc.at[_i_fc, _cn_fc] = "rgba(110,231,183,0.28)"
                 elif _cur_v > _old_v + 1e-9:
-                    _cell_color_fc.at[_i_fc, _cn_fc] = "#f87171"
+                    _cell_background_fc.at[_i_fc, _cn_fc] = "rgba(248,113,113,0.28)"
             except (TypeError, ValueError):
                 continue
     try:
@@ -24519,13 +25004,14 @@ def dashboard_forecast_budget(df):
         pass
 
     summary_table_dl = summary_numeric.round(1)
+    _cond_fc = None
+    if not _hide_dev_fc:
+        _cond_fc = {_dev_col_fc: {"positive_color": "#6ee7b7", "negative_color": "#f87171"}}
     st.markdown(
         format_dataframe_as_html(
             summary_numeric,
-            conditional_cols={
-                _dev_col_fc: {"positive_color": "#6ee7b7", "negative_color": "#f87171"},
-            },
-            cell_color=_cell_color_fc,
+            conditional_cols=_cond_fc,
+            cell_background=_cell_background_fc,
             finance_decimal_places=1,
             bold_row_indices={summary_numeric.index[-1]},
         ),
@@ -24543,6 +25029,26 @@ def dashboard_forecast_budget(df):
             key_prefix=f"fcast_detail_{_npk_fc}",
             csv_label="Скачать CSV (лоты, ввод для расчёта)",
         )
+
+    _status_disp = _forecast_financier_status_dataset(
+        filtered_scope=filtered_scope,
+        project_col=project_col,
+        all_projects=_many_projects_fc,
+        selected_project_label=None if _many_projects_fc else str(selected_project_scope),
+        period_type_en=period_type_en,
+        date_from=_cal_from_eff,
+        date_to=_cal_to_eff,
+        single_updated_data=_fc_updated_data,
+        abc_source=_fc_abc_src,
+        row_modes=_fc_row_modes,
+    )
+    st.subheader("Статус")
+    st.markdown(_forecast_financier_status_table_html(_status_disp), unsafe_allow_html=True)
+    render_dataframe_excel_csv_downloads(
+        _status_disp,
+        file_stem="forecast_bddcs_financier_status",
+        key_prefix=f"fcast_status_{_npk_fc}_{period_type_en}",
+    )
 
     with st.expander(
         "Формирование БДДС прогноза. Порядок расчёта данных",
