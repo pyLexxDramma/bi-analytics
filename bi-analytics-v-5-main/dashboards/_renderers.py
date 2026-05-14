@@ -4,6 +4,7 @@
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
+from pandas.api.types import is_datetime64tz_dtype
 from typing import Any, Dict, List, Optional
 from collections import defaultdict
 import plotly.express as px
@@ -21736,7 +21737,15 @@ def dashboard_documentation(
                         else 0.0
                     )
 
-                _rd_summ = _compute_rd_exec_summary_from_csv_tessa(selected_projects_doc)
+                _rd_summ = None
+                try:
+                    _rd_summ = _compute_rd_exec_summary_from_csv_tessa(selected_projects_doc)
+                except Exception as _e_rd_kpi:
+                    suppress_caption(
+                        "Сводные KPI (CSV/Tessa): ошибка расчёта — показаны только данные MSP. "
+                        + str(_e_rd_kpi)[:220]
+                    )
+
                 if _rd_summ:
                     plan_total = float(_rd_summ["plan_total"])
                     plan_to_date = float(_rd_summ["plan_to_date"])
@@ -21885,10 +21894,23 @@ def dashboard_documentation(
                 def _rd_last_cum_on_or_before(sdf: pd.DataFrame, dt) -> float:
                     if sdf is None or getattr(sdf, "empty", True):
                         return 0.0
-                    d = pd.to_datetime(dt, errors="coerce")
+                    d = pd.to_datetime(dt, errors="coerce", dayfirst=True, format="mixed")
                     if pd.isna(d):
                         return 0.0
-                    sub = sdf[sdf["Дата"] <= d]
+                    try:
+                        if getattr(d, "tzinfo", None) is not None:
+                            d = pd.Timestamp(d).tz_convert(None)
+                    except Exception:
+                        pass
+                    sub_dates = pd.to_datetime(
+                        sdf["Дата"], errors="coerce", dayfirst=True, format="mixed"
+                    )
+                    try:
+                        if is_datetime64tz_dtype(sub_dates.dtype):
+                            sub_dates = sub_dates.dt.tz_convert(None)
+                    except Exception:
+                        pass
+                    sub = sdf[sub_dates <= d]
                     if sub.empty:
                         return 0.0
                     return float(sub["Количество"].iloc[-1])
@@ -27158,6 +27180,17 @@ def _r23_12_match_slug_for_project(project_name: str, lookup: dict) -> str:
     return ""
 
 
+def _rd_naive_datetime_series(s: pd.Series) -> pd.Series:
+    """Приводит серию дат к naive Timestamp для сравнения с date.today() без ошибок tz-aware/naive."""
+    out = pd.to_datetime(s, errors="coerce", dayfirst=True, format="mixed")
+    try:
+        if is_datetime64tz_dtype(out.dtype):
+            out = out.dt.tz_convert(None)
+    except Exception:
+        pass
+    return out
+
+
 def _fmt_rd_whole_metric(v: Any) -> str:
     """Отображение целых метрик РД (математическое округление)."""
     if v is None:
@@ -27260,9 +27293,9 @@ def _compute_rd_exec_summary_from_csv_tessa(selected_projects: list[str] | None)
     if float(qty_tot.sum()) <= 0.0:
         qty_tot = pd.Series(1.0, index=rd.index)
     qty_plan = _num_series(qty_plan_col)
-    plan_dt = pd.to_datetime(rd[plan_dt_col], errors="coerce", dayfirst=True, format="mixed")
+    plan_dt = _rd_naive_datetime_series(rd[plan_dt_col])
     fcst_dt = (
-        pd.to_datetime(rd[fcst_col], errors="coerce", dayfirst=True, format="mixed")
+        _rd_naive_datetime_series(rd[fcst_col])
         if fcst_col and fcst_col in rd.columns
         else pd.Series(pd.NaT, index=rd.index)
     )
@@ -27349,7 +27382,7 @@ def _compute_rd_exec_summary_from_csv_tessa(selected_projects: list[str] | None)
         if card_col and opt_col and role_col and done_col:
             ids_set = set(doc_ids)
             sub = tk[tk[card_col].astype(str).str.strip().isin(ids_set)].copy()
-            ts_done = pd.to_datetime(sub[done_col], errors="coerce", dayfirst=True)
+            ts_done = _rd_naive_datetime_series(sub[done_col])
 
             def _event_kind(opt_raw, role_raw) -> Optional[str]:
                 o = str(opt_raw or "").strip().casefold()
