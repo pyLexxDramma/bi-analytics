@@ -37,7 +37,7 @@ def _inject_multiselect_ru_translations() -> None:
         <script>
         (function(){
             try {
-                var HANDLE_KEY = '__BI_RU_TRANSLATIONS_HANDLE_V7__';
+                var HANDLE_KEY = '__BI_RU_TRANSLATIONS_HANDLE_V8__';
                 function resolveDoc() {
                     try {
                         if (window.parent && window.parent.document && window.parent.document.body)
@@ -162,10 +162,33 @@ def _inject_multiselect_ru_translations() -> None:
                         });
                     } catch (e2) {}
                 }
+                var MULTI_PATCH_PHRASES = [
+                    ['Select All', 'Выбрать все'],
+                    ['Select all', 'Выбрать все'],
+                    ['select all', 'Выбрать все'],
+                    ['Clear All', 'Снять выбор'],
+                    ['Clear all', 'Снять выбор'],
+                    ['clear all', 'Снять выбор']
+                ];
+                function patchMultiselectPhrases(raw) {
+                    var glued = raw;
+                    for (var pi = 0; pi < MULTI_PATCH_PHRASES.length; pi++) {
+                        var src = MULTI_PATCH_PHRASES[pi][0];
+                        var dst = MULTI_PATCH_PHRASES[pi][1];
+                        if (!src || glued.indexOf(src) === -1) continue;
+                        glued = glued.split(src).join(dst);
+                    }
+                    return glued;
+                }
                 function tr(node) {
                     if (node.nodeType !== 3) return;
                     var t = node.nodeValue;
                     if (!t) return;
+                    var patchedMs = patchMultiselectPhrases(t);
+                    if (patchedMs !== t) {
+                        node.nodeValue = patchedMs;
+                        return;
+                    }
                     var s = t.trim();
                     if (!s) return;
                     var slo = s.toLowerCase();
@@ -20460,6 +20483,8 @@ def dashboard_documentation(
 ):
     st.header(page_title)
 
+    _inject_multiselect_ru_translations()
+
     _doc_fk = (
         "rd_work_"
         if page_title == "Рабочая документация"
@@ -24698,7 +24723,7 @@ def dashboard_forecast_budget(df):
             _bg_fc, _bgg_fc = 0.06, 0.02
         else:
             _bg_fc, _bgg_fc = 0.1, 0.04
-        _hide_bar_value_labels = _view_type_fc == "Накопительно" and _nfc > 10
+        _hide_bar_value_labels = False
         _txt_pos_fc = "none" if _hide_bar_value_labels else "outside"
         _txt_ang_fc = -90 if not _hide_bar_value_labels else 0
         _leg_fc_pre = max(300, min(460, 280 + int(_nfc * 3.5))) if _nfc > 24 else 300
@@ -24828,14 +24853,28 @@ def dashboard_forecast_budget(df):
             + (" (накопительно)" if _view_type_fc == "Накопительно" else "")
         )
         _nfc_bd = len(_chart_df)
-        _tf_bd = 8 if _nfc_bd > 32 else 9 if _nfc_bd > 20 else 10 if _nfc_bd > 12 else 11
+        _tf_bd = _tfs_fc
+        _txt_pos_bd = "outside"
+        _txt_ang_bd = -90
+        _fmt_hover_bd = lambda v: format_million_rub(v, decimals=1)  # noqa: E731
+        _plan_txt_bd = _forecast_bdd_bar_value_labels(_chart_df["bdds_plan_msp"], min_abs_rub=0.0)
+        _fact_txt_bd = _forecast_bdd_bar_value_labels(_chart_df["bdds_fact"], min_abs_rub=0.0)
+        _frc_txt_bd = _forecast_bdd_bar_value_labels(_chart_df["bdds_forecast"], min_abs_rub=0.0)
         if _nfc_bd > 32:
             _bg_bd, _bgg_bd = 0.04, 0.01
         elif _nfc_bd > 18:
             _bg_bd, _bgg_bd = 0.06, 0.02
         else:
             _bg_bd, _bgg_bd = 0.1, 0.04
-        _chart_h_bd = 600 if _nfc_bd <= 20 else int(min(900, 520 + int(_nfc_bd * 1.4)))
+        _leg_bd_pre = _leg_fc_pre
+        _top_px_bd = _top_px_fc
+        _leg_y_bd = _leg_y_fc
+        _xs_bd = _xs_fc
+        _xs_standoff_bd = int(_xs_bd) + 22
+        _leg_bd_bottom = int(_leg_bd_pre) + 108
+        _leg_y_bd_draw = float(_leg_y_bd) - 0.12
+        _chart_h_bd_base = 600 if _nfc_bd <= 20 else int(min(900, 520 + int(_nfc_bd * 1.4)))
+        _chart_h_bd = int(min(1400, max(_chart_h_bd_base, _top_px_bd + _leg_bd_bottom + 400)))
         _tick_angle_bd = -45 if _nfc_bd <= 18 else -50 if _nfc_bd <= 36 else -55
         _tick_fs_bd = 8 if _nfc_bd > 28 else 9 if _nfc_bd > 18 else 10
         fig_bd = go.Figure()
@@ -24846,11 +24885,13 @@ def dashboard_forecast_budget(df):
                 y=_chart_df["bdds_plan_msp"].div(1e6),
                 name="БДДС план",
                 marker_color="#2E86AB",
-                text=_finance_bar_text_mln_rub(_chart_df["bdds_plan_msp"], min_abs_mln=0.005),
-                textposition="outside",
+                text=_plan_txt_bd,
+                textposition=_txt_pos_bd,
+                textangle=_txt_ang_bd,
+                cliponaxis=False,
                 textfont=dict(size=_tf_bd, color="#f0f4f8"),
                 hovertemplate="<b>%{x}</b><br>БДДС план: %{customdata}<extra></extra>",
-                customdata=_chart_df["bdds_plan_msp"].apply(format_million_rub),
+                customdata=_chart_df["bdds_plan_msp"].apply(_fmt_hover_bd),
             )
         )
         fig_bd.add_trace(
@@ -24859,11 +24900,13 @@ def dashboard_forecast_budget(df):
                 y=_chart_df["bdds_fact"].div(1e6),
                 name="БДДС факт",
                 marker_color="#A23B72",
-                text=_finance_bar_text_mln_rub(_chart_df["bdds_fact"], min_abs_mln=0.005),
-                textposition="outside",
+                text=_fact_txt_bd,
+                textposition=_txt_pos_bd,
+                textangle=_txt_ang_bd,
+                cliponaxis=False,
                 textfont=dict(size=_tf_bd, color="#f0f4f8"),
                 hovertemplate="<b>%{x}</b><br>БДДС факт: %{customdata}<extra></extra>",
-                customdata=_chart_df["bdds_fact"].apply(format_million_rub),
+                customdata=_chart_df["bdds_fact"].apply(_fmt_hover_bd),
             )
         )
         fig_bd.add_trace(
@@ -24872,11 +24915,13 @@ def dashboard_forecast_budget(df):
                 y=_chart_df["bdds_forecast"].div(1e6),
                 name="БДДС прогноз",
                 marker_color="#F18F01",
-                text=_finance_bar_text_mln_rub(_chart_df["bdds_forecast"], min_abs_mln=0.005),
-                textposition="outside",
+                text=_frc_txt_bd,
+                textposition=_txt_pos_bd,
+                textangle=_txt_ang_bd,
+                cliponaxis=False,
                 textfont=dict(size=_tf_bd, color="#f0f4f8"),
                 hovertemplate="<b>%{x}</b><br>БДДС прогноз: %{customdata}<extra></extra>",
-                customdata=_chart_df["bdds_forecast"].apply(format_million_rub),
+                customdata=_chart_df["bdds_forecast"].apply(_fmt_hover_bd),
             )
         )
         fig_bd.update_layout(
@@ -24888,10 +24933,11 @@ def dashboard_forecast_budget(df):
             hovermode="x unified",
             height=_chart_h_bd,
             xaxis=dict(
-                title=dict(text=x_label_fc, standoff=26),
+                title=dict(text=x_label_fc, standoff=_xs_standoff_bd),
                 tickangle=_tick_angle_bd,
                 tickfont=dict(size=_tick_fs_bd),
                 nticks=min(64, max(12, _nfc_bd)),
+                automargin=False,
             ),
         )
         fig_bd = _apply_finance_bar_label_layout(fig_bd)
@@ -24913,10 +24959,22 @@ def dashboard_forecast_budget(df):
             )
         )
         if np.isfinite(_ymax_bd) and _ymax_bd > 0:
-            fig_bd.update_layout(yaxis=dict(range=[0, _ymax_bd * 1.22]))
-        fig_bd = _plotly_legend_horizontal_below_plot(fig_bd)
+            fig_bd.update_layout(yaxis=dict(range=[0, _ymax_bd * 1.52]))
+        fig_bd = _plotly_legend_horizontal_below_plot(
+            fig_bd,
+            bottom_px=_leg_bd_bottom,
+            legend_y=_leg_y_bd_draw,
+            top_px=_top_px_bd,
+        )
+        try:
+            fig_bd.update_xaxes(
+                title=dict(text=x_label_fc, standoff=_xs_standoff_bd),
+                automargin=False,
+            )
+        except Exception:
+            pass
         fig_bd = apply_chart_background(fig_bd)
-        render_chart(fig_bd, caption_below="Только три показателя; подписи как в сводной таблице БДДС.", height=_chart_h_bd)
+        render_chart(fig_bd, caption_below="Только три показателя; подписи как на основном графике выше.", height=_chart_h_bd)
 
         bdds_like_tbl = pd.DataFrame(
             {
