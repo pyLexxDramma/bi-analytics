@@ -21716,18 +21716,45 @@ def dashboard_documentation(
                 fact_df = dynamics_df[dynamics_df["Тип"] == "Факт"].sort_values("Дата")
                 today = date.today()
 
-                plan_total = float(plan_df["Количество"].max()) if not plan_df.empty else 0.0
-                plan_to_date = 0.0
+                plan_total_msp = float(plan_df["Количество"].max()) if not plan_df.empty else 0.0
+                plan_to_date_msp = 0.0
                 if not plan_df.empty:
-                    dt_plan = pd.to_datetime(plan_df["Дата"])
-                    past_plan = plan_df[dt_plan.dt.date <= today]
-                    plan_to_date = float(past_plan["Количество"].iloc[-1]) if not past_plan.empty else 0.0
-                fact_to_date = 0.0
+                    dt_plan_msp = pd.to_datetime(plan_df["Дата"])
+                    past_plan_msp = plan_df[dt_plan_msp.dt.date <= today]
+                    plan_to_date_msp = (
+                        float(past_plan_msp["Количество"].iloc[-1])
+                        if not past_plan_msp.empty
+                        else 0.0
+                    )
+                fact_to_date_msp = 0.0
                 if not fact_df.empty:
-                    dt_fact = pd.to_datetime(fact_df["Дата"])
-                    past_fact = fact_df[dt_fact.dt.date <= today]
-                    fact_to_date = float(past_fact["Количество"].iloc[-1]) if not past_fact.empty else 0.0
-                deviation_to_date = fact_to_date - plan_to_date
+                    dt_fact_msp = pd.to_datetime(fact_df["Дата"])
+                    past_fact_msp = fact_df[dt_fact_msp.dt.date <= today]
+                    fact_to_date_msp = (
+                        float(past_fact_msp["Количество"].iloc[-1])
+                        if not past_fact_msp.empty
+                        else 0.0
+                    )
+
+                _rd_summ = _compute_rd_exec_summary_from_csv_tessa(selected_projects_doc)
+                if _rd_summ:
+                    plan_total = float(_rd_summ["plan_total"])
+                    plan_to_date = float(_rd_summ["plan_to_date"])
+                    fact_to_date = float(_rd_summ["fact_to_date"])
+                    if fact_to_date <= 0.0 and fact_to_date_msp > 0.0:
+                        fact_to_date = fact_to_date_msp
+                    deviation_to_date = float(plan_to_date - fact_to_date)
+                    _mpp = _rd_summ.get("max_plan_date")
+                    _mff = _rd_summ.get("max_fact_date")
+                    if _mpp is not None:
+                        max_plan_end_date = _mpp
+                    if _mff is not None:
+                        max_fact_end_date = _mff
+                else:
+                    plan_total = plan_total_msp
+                    plan_to_date = plan_to_date_msp
+                    fact_to_date = fact_to_date_msp
+                    deviation_to_date = float(plan_to_date - fact_to_date)
 
                 first_plan_date = plan_df["Дата"].min() if not plan_df.empty else None
                 last_plan_date = plan_df["Дата"].max() if not plan_df.empty else None
@@ -21748,76 +21775,85 @@ def dashboard_documentation(
 
                 c1, c2, c3, c4 = st.columns(4)
                 with c1:
-                    st.metric("План по проекту", f"{plan_total:,.0f}".replace(",", " "))
+                    st.metric("План по проекту", _fmt_rd_whole_metric(plan_total))
                 with c2:
-                    st.metric("План на текущую дату", f"{plan_to_date:,.0f}".replace(",", " "))
+                    st.metric("План на текущую дату", _fmt_rd_whole_metric(plan_to_date))
                 with c3:
-                    st.metric("Факт на текущую дату", f"{fact_to_date:,.0f}".replace(",", " "))
+                    st.metric("Факт на текущую дату", _fmt_rd_whole_metric(fact_to_date))
                 with c4:
-                    st.metric("Отклонение на текущую дату", f"{deviation_to_date:+,.0f}".replace(",", " "))
+                    try:
+                        _dev_i = int(round(float(deviation_to_date)))
+                        _dev_disp = f"{_dev_i:+d}"
+                    except Exception:
+                        _dev_disp = "—"
+                    st.metric("Отклонение на текущую дату", _dev_disp)
 
                 if page_title == "Рабочая документация":
-                    if max_plan_end_date is not None:
-                        plan_end_ref = max_plan_end_date
-                        use_approx_plan_end = False
-                    elif last_plan_date is not None:
-                        plan_end_ref = last_d
-                        use_approx_plan_end = True
-                    else:
-                        plan_end_ref = None
-                        use_approx_plan_end = False
-                    days_to_plan_end = (
-                        (plan_end_ref - today).days if plan_end_ref is not None else None
-                    )
-                    if days_to_plan_end is not None and days_to_plan_end > 0:
-                        nec_rd = deviation_to_date / days_to_plan_end * 7.0
-                    else:
-                        nec_rd = None
-
                     planned_weekly = None
-                    if max_plan_end_date is not None and max_fact_end_date is not None:
-                        d12 = (max_plan_end_date - max_fact_end_date).days
-                        if d12 > 0:
-                            planned_weekly = plan_to_date / d12 * 7.0
-
                     fact_weekly = None
-                    if max_fact_end_date is not None:
-                        d13 = (today - max_fact_end_date).days
-                        if d13 > 0:
-                            fact_weekly = fact_to_date / d13 * 7.0
-
-                    suppress_caption("Производительность разделов в неделю (п.12–14 ТЗ)")
-                    if use_approx_plan_end:
+                    nec_rd = None
+                    use_approx_plan_end = False
+                    if _rd_summ:
                         suppress_caption(
-                            "Дата окончания плановая: в колонке планового окончания нет валидных дат — "
-                            "используется дата по правому краю кривой динамики (приблизительно)."
+                            "Производительность разделов в неделю (п.12–14 ТЗ): расчёт из other_*_rd.csv "
+                            "и журналов Tessa task (CardID↔DocID)."
                         )
+                        planned_weekly = _rd_summ.get("planned_weekly")
+                        fact_weekly = _rd_summ.get("fact_weekly")
+                        nec_rd = _rd_summ.get("nec_weekly")
+                    else:
+                        if max_plan_end_date is not None:
+                            plan_end_ref = max_plan_end_date
+                            use_approx_plan_end = False
+                        elif last_plan_date is not None:
+                            plan_end_ref = last_d
+                            use_approx_plan_end = True
+                        else:
+                            plan_end_ref = None
+                            use_approx_plan_end = False
+                        days_to_plan_end = (
+                            (plan_end_ref - today).days if plan_end_ref is not None else None
+                        )
+                        if days_to_plan_end is not None and days_to_plan_end > 0:
+                            nec_rd = deviation_to_date / days_to_plan_end * 7.0
+                        else:
+                            nec_rd = None
+
+                        planned_weekly = None
+                        if max_plan_end_date is not None and max_fact_end_date is not None:
+                            d12 = (max_plan_end_date - max_fact_end_date).days
+                            if d12 > 0:
+                                planned_weekly = plan_to_date / d12 * 7.0
+
+                        fact_weekly = None
+                        if max_fact_end_date is not None:
+                            d13 = (today - max_fact_end_date).days
+                            if d13 > 0:
+                                fact_weekly = fact_to_date / d13 * 7.0
+
+                        suppress_caption("Производительность разделов в неделю (п.12–14 ТЗ)")
+                        if use_approx_plan_end:
+                            suppress_caption(
+                                "Дата окончания плановая: в колонке планового окончания нет валидных дат — "
+                                "используется дата по правому краю кривой динамики (приблизительно)."
+                            )
+
                     pw1, pw2, pw3 = st.columns(3)
                     with pw1:
                         st.metric(
                             "Плановая производительность",
-                            "—"
-                            if planned_weekly is None
-                            else f"{round(planned_weekly):,.0f}".replace(",", " "),
+                            _fmt_rd_whole_metric(planned_weekly),
                         )
                     with pw2:
                         st.metric(
                             "Фактическая производительность",
-                            "—"
-                            if fact_weekly is None
-                            else f"{round(fact_weekly):,.0f}".replace(",", " "),
+                            _fmt_rd_whole_metric(fact_weekly),
                         )
                     with pw3:
-                        if nec_rd is None:
-                            st.metric(
-                                "Необходимая производительность",
-                                "—",
-                            )
-                        else:
-                            st.metric(
-                                "Необходимая производительность",
-                                f"{round(nec_rd):,.0f}".replace(",", " "),
-                            )
+                        st.metric(
+                            "Необходимая производительность",
+                            _fmt_rd_whole_metric(nec_rd),
+                        )
                 else:
                     suppress_caption("Прогноз производительности (РД в неделю)")
                     p1, p2 = st.columns(2)
@@ -27120,6 +27156,284 @@ def _r23_12_match_slug_for_project(project_name: str, lookup: dict) -> str:
         if base and len(base) >= 5 and norm.startswith(base[:6]):
             return slug
     return ""
+
+
+def _fmt_rd_whole_metric(v: Any) -> str:
+    """Отображение целых метрик РД (математическое округление)."""
+    if v is None:
+        return "—"
+    try:
+        fv = float(v)
+        if np.isnan(fv) or np.isinf(fv):
+            return "—"
+        return f"{int(round(fv)):,}".replace(",", " ")
+    except Exception:
+        return "—"
+
+
+def _compute_rd_exec_summary_from_csv_tessa(selected_projects: list[str] | None) -> Optional[dict[str, Any]]:
+    """
+    Сводные KPI для «Динамика выдачи РД» из `rd_plan_data` (other_*_rd.csv)
+    и цепочек `tessa_tasks_data`/`tessa_data` по правилам ТЗ (DocID↔CardID,
+    подписи ГИП/Проектировщика, возврат на доработку).
+
+    Возвращает None, если по CSV нельзя посчитать даже суммарный план.
+    """
+    try:
+        rd_csv = st.session_state.get("rd_plan_data")
+    except Exception:
+        rd_csv = None
+    if rd_csv is None or getattr(rd_csv, "empty", True):
+        return None
+    try:
+        rd = rd_csv.copy()
+    except Exception:
+        return None
+    rd.columns = [str(c).replace("\r", " ").replace("\n", " ").strip() for c in rd.columns]
+
+    def _pick_col(predicate):
+        best = None
+        best_len = 10**9
+        for c in rd.columns:
+            lc = str(c).strip().casefold()
+            if predicate(lc):
+                ln = len(lc)
+                if ln < best_len:
+                    best_len = ln
+                    best = c
+        return best
+
+    plan_dt_col = _pick_col(
+        lambda lc: ("дата" in lc and "выдач" in lc and "договор" in lc)
+    )
+    qty_plan_col = _pick_col(lambda lc: ("количество" in lc and "план" in lc))
+    qty_total_col = None
+    for c in rd.columns:
+        if str(c).strip().casefold() == "количество":
+            qty_total_col = c
+            break
+    if qty_total_col is None:
+        for c in rd.columns:
+            lc = c.casefold()
+            if qty_plan_col and c == qty_plan_col:
+                continue
+            if "количество" not in lc:
+                continue
+            if "план" in lc or "прогноз" in lc:
+                continue
+            qty_total_col = c
+            break
+    fcst_col = _pick_col(lambda lc: ("прогноз" in lc and "дата" in lc))
+    full_cipher_col = _pick_col(lambda lc: ("шифр" in lc and "полный" in lc))
+
+    if not plan_dt_col or plan_dt_col not in rd.columns:
+        return None
+
+    proj_csv = (
+        "project name"
+        if "project name" in rd.columns
+        else _pick_col(lambda lc: lc in ("проект",) or ("проект" in lc and "name" in lc))
+    )
+    if selected_projects:
+        _pk_set = {_project_filter_norm_key(p) for p in selected_projects}
+        if proj_csv and proj_csv in rd.columns:
+            rd = rd[rd[proj_csv].map(_project_filter_norm_key).isin(_pk_set)].copy()
+        elif proj_csv:
+            pass
+        else:
+            pass
+    if rd.empty:
+        return None
+
+    def _num_series(col_name: str | None) -> pd.Series:
+        if not col_name or col_name not in rd.columns:
+            return pd.Series(1.0, index=rd.index)
+        return pd.to_numeric(
+            rd[col_name]
+            .astype(str)
+            .str.replace(" ", "", regex=False)
+            .str.replace(",", ".", regex=False),
+            errors="coerce",
+        ).fillna(0.0)
+
+    qty_tot = _num_series(qty_total_col)
+    if float(qty_tot.sum()) <= 0.0:
+        qty_tot = pd.Series(1.0, index=rd.index)
+    qty_plan = _num_series(qty_plan_col)
+    plan_dt = pd.to_datetime(rd[plan_dt_col], errors="coerce", dayfirst=True, format="mixed")
+    fcst_dt = (
+        pd.to_datetime(rd[fcst_col], errors="coerce", dayfirst=True, format="mixed")
+        if fcst_col and fcst_col in rd.columns
+        else pd.Series(pd.NaT, index=rd.index)
+    )
+
+    today_d = date.today()
+    ts_today = pd.Timestamp(today_d)
+
+    plan_total = float(qty_tot.sum())
+    m_plan_to = plan_dt.notna() & (plan_dt.dt.normalize() <= ts_today)
+    plan_to_date = float(qty_plan[m_plan_to].sum())
+    if plan_to_date <= 0.0 and m_plan_to.any():
+        plan_to_date = float(qty_tot[m_plan_to].sum())
+
+    max_plan_date = None
+    if plan_dt.notna().any():
+        max_plan_date = plan_dt.max().date()
+    max_fcst_date = None
+    if isinstance(fcst_dt, pd.Series) and fcst_dt.notna().any():
+        max_fcst_date = fcst_dt.max().date()
+
+    try:
+        trd = st.session_state.get("tessa_data")
+    except Exception:
+        trd = None
+    try:
+        tt = st.session_state.get("tessa_tasks_data")
+    except Exception:
+        tt = None
+
+    internal_ids: set[str] = set()
+    doc_ids: list[str] = []
+    if trd is not None and not getattr(trd, "empty", True):
+        t = trd.copy()
+        t.columns = [str(c).strip() for c in t.columns]
+        tp = _tessa_find_column(t, ["ObjectProjectName", "ProjectName", "ObjectName"])
+        ti = _tessa_find_column(t, ["InternalID", "InternalId", "Internal Id"])
+        tdid = _tessa_find_column(t, ["DocID", "DocId", "CardID", "CardId"])
+        tk = _tessa_find_column(t, ["DivisionCipher", "Cipher"])
+        if tp and tp in t.columns and selected_projects:
+            _pk_set = {_project_filter_norm_key(p) for p in selected_projects}
+            t = t[t[tp].map(_project_filter_norm_key).isin(_pk_set)]
+        if tk and tk in t.columns:
+            mask_card = t[tk].map(_tessa_cell_has_value).fillna(False)
+            t = t[mask_card]
+        if ti and ti in t.columns:
+            for _v in t[ti].tolist():
+                s = str(_v or "").strip()
+                if s and s.lower() not in ("nan", "none", "<na>", "nat"):
+                    internal_ids.add(s.casefold())
+        if tdid and tdid in t.columns:
+            for _v in t[tdid].tolist():
+                s = str(_v or "").strip()
+                if s and s.lower() not in ("nan", "none", "<na>", "nat"):
+                    doc_ids.append(s)
+
+    not_issued = 0.0
+    if full_cipher_col and full_cipher_col in rd.columns:
+        for _i, row in rd.iterrows():
+            cf = str(row.get(full_cipher_col, "") or "").strip()
+            q = float(qty_tot.loc[_i]) if _i in qty_tot.index else 1.0
+            if not cf or cf.lower() in ("nan", "none"):
+                continue
+            if cf.casefold() not in internal_ids:
+                not_issued += max(q, 0.0)
+    else:
+        not_issued = max(plan_total - float(len(internal_ids)), 0.0)
+
+    fact_to_date = 0.0
+    returned_rework = 0.0
+    max_fact_date = None
+    fact_weekly = None
+
+    card_col = None
+    opt_col = None
+    role_col = None
+    done_col = None
+    if tt is not None and not getattr(tt, "empty", True) and doc_ids:
+        tk = tt.copy()
+        tk.columns = [str(c).strip() for c in tk.columns]
+        card_col = _tessa_find_column(tk, ["CardID", "CardId", "DocID", "DocId"])
+        opt_col = _tessa_find_column(tk, ["OptionCaption"])
+        role_col = _tessa_find_column(tk, ["RoleName"])
+        done_col = _tessa_find_column(tk, ["Completed", "CompletedDate"])
+        if card_col and opt_col and role_col and done_col:
+            ids_set = set(doc_ids)
+            sub = tk[tk[card_col].astype(str).str.strip().isin(ids_set)].copy()
+            ts_done = pd.to_datetime(sub[done_col], errors="coerce", dayfirst=True)
+
+            def _event_kind(opt_raw, role_raw) -> Optional[str]:
+                o = str(opt_raw or "").strip().casefold()
+                r = str(role_raw or "").strip().casefold()
+                if "вернуть" in o and "доработ" in o:
+                    return "ret"
+                if "подписан" in o:
+                    if "гип" in r:
+                        return "gip"
+                    if "проектировщ" in r:
+                        return "des"
+                return None
+
+            prod_dates: list[pd.Timestamp] = []
+            win_lo = ts_today - pd.Timedelta(days=6)
+            weekly_cards: set[str] = set()
+
+            for cid in ids_set:
+                m = sub[card_col].astype(str).str.strip() == cid
+                if not m.any():
+                    continue
+                evs = []
+                for _j in sub.index[m]:
+                    _kind = _event_kind(sub.at[_j, opt_col], sub.at[_j, role_col])
+                    _ts = ts_done.loc[_j]
+                    if _kind is None or pd.isna(_ts):
+                        continue
+                    evs.append((_ts, _kind))
+                if not evs:
+                    continue
+                evs.sort(key=lambda x: x[0])
+                for _ts, _kind in evs:
+                    if _kind == "gip":
+                        prod_dates.append(pd.Timestamp(_ts))
+                lk = evs[-1][1]
+                if lk == "gip" or lk == "des":
+                    fact_to_date += 1.0
+                elif lk == "ret":
+                    returned_rework += 1.0
+                for _ts, _kind in evs:
+                    if _kind not in ("gip", "des"):
+                        continue
+                    if pd.isna(_ts):
+                        continue
+                    if win_lo.normalize() <= _ts.normalize() <= ts_today.normalize():
+                        weekly_cards.add(cid)
+
+            fact_weekly = float(len(weekly_cards))
+            if prod_dates:
+                mx = pd.Timestamp(max(prod_dates))
+                max_fact_date = mx.date()
+
+    deviation_to_date = float(plan_to_date - fact_to_date)
+
+    planned_weekly = None
+    if max_plan_date is not None and max_fact_date is not None:
+        d12 = (max_plan_date - max_fact_date).days
+        if d12 > 0:
+            planned_weekly = float(plan_to_date) / (d12 / 7.0)
+
+    nec_weekly = None
+    if max_plan_date is not None and max_plan_date >= today_d:
+        denom_days = (max_plan_date - today_d).days
+    elif max_fcst_date is not None:
+        denom_days = (max_fcst_date - today_d).days
+    else:
+        denom_days = None
+    if denom_days is not None and denom_days > 0:
+        nec_weekly = (float(not_issued) + float(returned_rework)) / (denom_days / 7.0)
+
+    return {
+        "plan_total": plan_total,
+        "plan_to_date": plan_to_date,
+        "fact_to_date": fact_to_date,
+        "deviation_to_date": deviation_to_date,
+        "max_plan_date": max_plan_date,
+        "max_fact_date": max_fact_date,
+        "max_forecast_date": max_fcst_date,
+        "planned_weekly": planned_weekly,
+        "fact_weekly": fact_weekly,
+        "nec_weekly": nec_weekly,
+        "not_issued": float(not_issued),
+        "returned_rework": float(returned_rework),
+    }
 
 
 def _r23_12_build_forecast_date_lookup() -> dict[str, str]:
