@@ -26,21 +26,49 @@ def _inject_multiselect_ru_translations() -> None:
     date_input range presets (Past Week / Past Month / ...) и
     подписи самого календаря (названия месяцев, сокращения дней недели).
 
-    Использует `st.components.v1.html` с MutationObserver, работающий через
-    `window.parent.document` (iframe и родительская страница имеют одинаковый
-    origin при локальном/Streamlit-Cloud рендере).
+    Также подписи контекстного меню столбцов ``st.dataframe`` (Glide Data Grid).
+
+    Использует `st.components.v1.html` с MutationObserver. На каждом rerun Streamlit
+    без этого iframe скрипт пропадает — вызываем ``components.html`` каждый раз;
+    один наблюдатель на вкладку через флаг на ``window.parent``.
     """
     components.html(
         """
         <script>
         (function(){
             try {
-                var doc = window.parent && window.parent.document;
-                if (!doc) return;
+                var HANDLE_KEY = '__BI_RU_TRANSLATIONS_HANDLE_V6__';
+                function resolveDoc() {
+                    try {
+                        if (window.parent && window.parent.document && window.parent.document.body)
+                            return window.parent.document;
+                    } catch (e0) {}
+                    try {
+                        if (window.top && window.top.document && window.top.document.body)
+                            return window.top.document;
+                    } catch (e1) {}
+                    return document.body ? document : null;
+                }
+                var doc = resolveDoc();
+                if (!doc || !doc.body) return;
+                var hostWin = doc.defaultView || window.parent || window;
+                try {
+                    var prev = hostWin[HANDLE_KEY];
+                    if (prev) {
+                        if (prev.obs && prev.obs.disconnect) prev.obs.disconnect();
+                        if (prev.tmr) clearInterval(prev.tmr);
+                    }
+                } catch (eDisc) {}
                 var TRANSLATIONS = {
                     'Choose options': 'Выберите варианты',
+                    'Choose or add options': 'Выберите или добавьте варианты',
                     'Choose an option': 'Выберите вариант',
+                    'Choose or add an option': 'Выберите или добавьте вариант',
                     'Select all': 'Выбрать все',
+                    'Select All': 'Выбрать все',
+                    'Clear all': 'Снять выбор',
+                    'Clear All': 'Снять выбор',
+                    'Search': 'Поиск',
                     'No results': 'Нет результатов',
                     'No options': 'Нет вариантов',
                     'No matches': 'Нет совпадений',
@@ -66,7 +94,15 @@ def _inject_multiselect_ru_translations() -> None:
                     'Previous Month': 'Предыдущий месяц',
                     'Next Month': 'Следующий месяц',
                     'Previous Year': 'Предыдущий год',
-                    'Next Year': 'Следующий год'
+                    'Next Year': 'Следующий год',
+                    /* st.dataframe — меню столбца */
+                    'Sort ascending': 'Сортировать по возрастанию',
+                    'Sort descending': 'Сортировать по убыванию',
+                    'Autosize': 'Автоподбор ширины',
+                    'Pin column': 'Закрепить столбец',
+                    'Unpin column': 'Открепить столбец',
+                    'Hide column': 'Скрыть столбец',
+                    'Format': 'Формат'
                 };
                 var MONTH_RE = /^(January|February|March|April|May|June|July|August|September|October|November|December)\\s+(\\d{4})$/;
                 var MONTHS_FULL = {
@@ -75,15 +111,58 @@ def _inject_multiselect_ru_translations() -> None:
                     September:'Сентябрь', October:'Октябрь', November:'Ноябрь', December:'Декабрь'
                 };
                 var SELECT_N_RE = /^Select (\\d+) matches$/;
+                function fixPlaceholders(root) {
+                    try {
+                        if (!root || !root.querySelectorAll) return;
+                        root.querySelectorAll("[placeholder]").forEach(function (node) {
+                            var p = node.getAttribute("placeholder");
+                            if (!p) return;
+                            var pt = p.trim();
+                            var slo = pt.toLowerCase();
+                            var keys = Object.keys(TRANSLATIONS);
+                            for (var ai = 0; ai < keys.length; ai++) {
+                                var key = keys[ai];
+                                if (pt === key || slo === String(key).toLowerCase()) {
+                                    node.setAttribute("placeholder", TRANSLATIONS[key]);
+                                    break;
+                                }
+                            }
+                        });
+                    } catch (e) {}
+                }
+                function fixAriaLabels(root) {
+                    try {
+                        if (!root || !root.querySelectorAll) return;
+                        root.querySelectorAll("[aria-label]").forEach(function (node) {
+                            var p = node.getAttribute("aria-label");
+                            if (!p) return;
+                            var pt = p.trim();
+                            var slo = pt.toLowerCase();
+                            var keys = Object.keys(TRANSLATIONS);
+                            for (var bi = 0; bi < keys.length; bi++) {
+                                var key = keys[bi];
+                                if (pt === key || slo === String(key).toLowerCase()) {
+                                    node.setAttribute("aria-label", TRANSLATIONS[key]);
+                                    break;
+                                }
+                            }
+                        });
+                    } catch (e2) {}
+                }
                 function tr(node) {
                     if (node.nodeType !== 3) return;
                     var t = node.nodeValue;
                     if (!t) return;
                     var s = t.trim();
                     if (!s) return;
-                    if (TRANSLATIONS[s]) {
-                        node.nodeValue = t.replace(s, TRANSLATIONS[s]);
-                        return;
+                    var slo = s.toLowerCase();
+                    var keys = Object.keys(TRANSLATIONS);
+                    for (var ki = 0; ki < keys.length; ki++) {
+                        var key = keys[ki];
+                        if (s === key || slo === String(key).toLowerCase()) {
+                            node.nodeValue = t.replace(s, TRANSLATIONS[key]);
+                            return;
+                        }
                     }
                     var mm = s.match(MONTH_RE);
                     if (mm) {
@@ -98,22 +177,48 @@ def _inject_multiselect_ru_translations() -> None:
                 function walk(root) {
                     if (!root) return;
                     if (root.nodeType === 3) { tr(root); return; }
-                    if (root.nodeType !== 1 && root.nodeType !== 9) return;
+                    if (root.nodeType !== 1 && root.nodeType !== 9 && root.nodeType !== 11) return;
                     var w = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
                     var n;
                     while ((n = w.nextNode())) tr(n);
                 }
-                walk(doc.body);
+                function walkDeep(root) {
+                    if (!root) return;
+                    if (root.nodeType === 3) {
+                        tr(root);
+                        return;
+                    }
+                    walk(root);
+                    fixPlaceholders(root);
+                    fixAriaLabels(root);
+                    try {
+                        var nodes = root.querySelectorAll("*");
+                        for (var i = 0; i < nodes.length; i++) {
+                            var el = nodes[i];
+                            if (el.shadowRoot) walkDeep(el.shadowRoot);
+                        }
+                    } catch (e) {}
+                }
+                walkDeep(doc.body);
                 var obs = new MutationObserver(function(muts){
                     for (var i=0;i<muts.length;i++){
                         var m = muts[i];
                         if (m.type === 'characterData') tr(m.target);
                         if (m.addedNodes) {
-                            for (var j=0;j<m.addedNodes.length;j++) walk(m.addedNodes[j]);
+                            for (var j=0;j<m.addedNodes.length;j++) walkDeep(m.addedNodes[j]);
                         }
                     }
                 });
                 obs.observe(doc.body, {subtree:true, childList:true, characterData:true});
+                var sweepCount = 0;
+                var tmr = setInterval(function(){
+                    try { walkDeep(doc.body); } catch (eSw) {}
+                    sweepCount++;
+                    if (sweepCount >= 120) {
+                        try { clearInterval(tmr); } catch (eC) {}
+                    }
+                }, 250);
+                try { hostWin[HANDLE_KEY] = {obs: obs, tmr: tmr}; } catch (eH) {}
             } catch(e) { /* noop */ }
         })();
         </script>
@@ -5608,6 +5713,7 @@ def render_plan_fact_dates_metric_plates(
 # ==================== DASHBOARD 3: Plan/Fact Dates for Tasks ====================
 def dashboard_plan_fact_dates(df):
     st.header("Отклонение от базового плана")
+    _inject_multiselect_ru_translations()
 
     if df is None or not hasattr(df, "columns") or df.empty:
         st.warning("Нет данных для отображения. Загрузите файл с задачами MSP.")
@@ -6856,15 +6962,25 @@ def dashboard_plan_fact_dates(df):
             break
     show_covenant_ui = force_covenant_ui or covenant_filter_selected or covenant_auto_from_data
     covenant_rows_df = table_df
+    covenant_chart_df = chart_df.copy()
+
     if force_covenant_ui:
         covenant_rows_df = table_df.loc[_covenant_row_mask(table_df)].copy()
-        if covenant_rows_df.empty:
+        if covenant_chart_df.empty:
             show_covenant_ui = False
             st.info("Нет ковенантных строк для отображения.")
+        elif covenant_rows_df.empty:
+            suppress_caption(
+                "Нет опаздывающих ковенантных задач для узкой таблицы «Ковенанты»; "
+                "график ниже показывает все выбранные ковенанты (вехи по датам окончания)."
+            )
     elif covenant_auto_from_data and not covenant_filter_selected:
         covenant_rows_df = table_df.loc[_covenant_row_mask(table_df)].copy()
+        covenant_chart_df = covenant_rows_df.copy()
         if covenant_rows_df.empty:
             show_covenant_ui = False
+    else:
+        covenant_chart_df = covenant_rows_df.copy()
 
     # Единый гант-график: ковенанты = ромбы, остальные = полосы (гант)
     def _render_unified_gantt(source_df: pd.DataFrame, is_covenant: bool):
@@ -6982,7 +7098,7 @@ def dashboard_plan_fact_dates(df):
         render_chart(fig, caption_below=cap)
 
     if show_covenant_ui:
-        _render_unified_gantt(covenant_rows_df, is_covenant=True)
+        _render_unified_gantt(covenant_chart_df, is_covenant=True)
     else:
         _render_unified_gantt(filtered_df, is_covenant=False)
 
@@ -7000,7 +7116,8 @@ def dashboard_plan_fact_dates(df):
                 return str(val).strip()
 
         cov_rows = []
-        for _, crow in covenant_rows_df.iterrows():
+        _cov_tbl_df = covenant_rows_df if not covenant_rows_df.empty else covenant_chart_df
+        for _, crow in _cov_tbl_df.iterrows():
             ped = crow.get("plan_end_diff")
             ped_num = pd.to_numeric(ped, errors="coerce")
             pev = crow.get(pe_col)
@@ -7008,20 +7125,21 @@ def dashboard_plan_fact_dates(df):
             cov_rows.append(
                 {
                     "Проект": _clean_display_str(crow.get("project name"))
-                    if selected_project == "Все" and "project name" in covenant_rows_df.columns
+                    if selected_project == "Все" and "project name" in _cov_tbl_df.columns
                     else "",
                     "Задача": _clean_display_str(crow.get("task name")),
-                    "Базовое окончание": _cov_fmt_date_cell(pev),
-                    "Окончание": _cov_fmt_date_cell(fev),
+                    "Базовое окончание": _cov_fmt_date_cell(fev),
+                    "Окончание": _cov_fmt_date_cell(pev),
                     "Отклонение окончания (дней)": ped_num,
                 }
             )
         cov_df = pd.DataFrame(cov_rows)
-        if selected_project != "Все" or "project name" not in covenant_rows_df.columns:
+        if selected_project != "Все" or "project name" not in _cov_tbl_df.columns:
             cov_df = cov_df.drop(columns=["Проект"], errors="ignore")
-        cov_df = cov_df.sort_values(
-            "Отклонение окончания (дней)", ascending=False, na_position="last"
-        ).reset_index(drop=True)
+        if not cov_df.empty:
+            cov_df = cov_df.sort_values(
+                "Отклонение окончания (дней)", ascending=False, na_position="last"
+            ).reset_index(drop=True)
         if cov_df.empty:
             st.info("Нет строк для таблицы ковенантов.")
         else:

@@ -296,6 +296,13 @@ try:
 except Exception:
     pass
 
+try:
+    from dashboards._renderers import _inject_multiselect_ru_translations
+
+    _inject_multiselect_ru_translations()
+except Exception:
+    pass
+
 # ┌──────────────────────────────────────────────────────────────────────────┐ #
 # │ ⊗ CSS CONNECT ¤ End                                                      │ #
 # └──────────────────────────────────────────────────────────────────────────┘ #
