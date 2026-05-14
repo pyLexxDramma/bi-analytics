@@ -55,7 +55,7 @@ jobs:
             cd "$APP_DIR"
             git fetch origin
             git checkout release
-            git pull --ff-only origin release
+            git reset --hard origin/release
             if [[ -x .venv/bin/python ]]; then
               if ! .venv/bin/python -m pip --version &>/dev/null; then
                 curl -fsSL https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip-gha.py
