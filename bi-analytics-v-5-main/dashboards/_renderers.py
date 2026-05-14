@@ -20215,6 +20215,141 @@ def _exec_detail_table_html(
     )
 
 
+def _exec_granularity_freq_map() -> dict[str, str]:
+    """Подпись UI → код частоты pandas Period."""
+    return {
+        "День": "D",
+        "Неделя": "W-MON",
+        "Месяц": "M",
+        "Квартал": "Q-DEC",
+        "Год": "Y-DEC",
+    }
+
+
+def _exec_period_human_label(p: pd.Period) -> str:
+    """Человекочитаемая метка периода для сравнения «к предыдущему»."""
+    try:
+        if not isinstance(p, pd.Period):
+            return str(p)
+        f = str(getattr(p, "freqstr", "") or getattr(p.freq, "freqstr", "") or "")
+        fs = f.upper()
+        if fs.startswith("Y"):
+            return str(int(p.year))
+        if fs.startswith("Q"):
+            return f"{int(p.year)} Q{int(p.quarter)}"
+        if fs.startswith("W"):
+            st_d = p.start_time.strftime("%d.%m.%Y")
+            en_d = p.end_time.strftime("%d.%m.%Y")
+            return f"Неделя {int(p.week)} ({st_d}—{en_d})"
+        if fs.startswith("D"):
+            return p.strftime("%d.%m.%Y")
+        return f"{RUSSIAN_MONTHS.get(p.month, str(p.month))} {p.year}"
+    except Exception:
+        return str(p)
+
+
+def _exec_enrich_task_and_contract_dates(work: pd.DataFrame) -> pd.DataFrame:
+    """Даты из `tessa_*task*.csv` и договорные даты ИД из `1с_*_Dogovor.json` (ТЗ ИД)."""
+    out = work.copy()
+    out["_exec_transfer_customer_dt"] = pd.NaT
+    out["_exec_accept_print_dt"] = pd.NaT
+    out["_dog_contract_end_dt"] = pd.NaT
+    out["_dog_id_received_dt"] = pd.NaT
+
+    doc_side_col = _tessa_find_column(
+        out,
+        ["DocID", "DocId", "DocumentID", "DocumentId", "ИдДокумента"],
+    )
+    card_side_col = _tessa_find_column(
+        out,
+        ["CardId", "CardID", "cardId", "ИдКарточки"],
+    )
+
+    try:
+        tasks = st.session_state.get("tessa_tasks_data")
+    except Exception:
+        tasks = None
+    if tasks is not None and not getattr(tasks, "empty", True):
+        try:
+            t = tasks.copy()
+        except Exception:
+            t = None
+        if t is not None:
+            t.columns = [str(c).strip() for c in t.columns]
+            oc = _tessa_find_column(t, ["OptionCaption", "optioncaption", "Option"])
+            comp = _tessa_find_column(
+                t, ["Completed", "CompletionDate", "ДатаЗавершения", "Дата завершения"]
+            )
+            cid = _tessa_find_column(t, ["CardId", "CardID", "cardId", "ИдКарточки"])
+            if oc and comp and cid:
+                toc = t[oc].astype(str).str.strip().str.casefold()
+                tcomp = pd.to_datetime(t[comp], errors="coerce", dayfirst=True)
+                agree_mask = toc.str.contains("на согласование", na=False)
+                print_mask = toc.str.contains("печатн", na=False) & toc.str.contains(
+                    "форм", na=False
+                )
+
+                def _agg_min_dates(mask: pd.Series) -> dict[str, pd.Timestamp]:
+                    sub = t.loc[mask].copy()
+                    sub["_tc"] = tcomp.loc[mask]
+                    sub = sub[sub["_tc"].notna()]
+                    if sub.empty:
+                        return {}
+                    gb = sub.groupby(cid, dropna=False)["_tc"].min()
+                    mp: dict[str, pd.Timestamp] = {}
+                    for raw_k, dt in zip(gb.index.tolist(), gb.values.tolist()):
+                        nk = _tessa_norm_join_key(raw_k)
+                        if not nk or pd.isna(dt):
+                            continue
+                        if nk not in mp or dt < mp[nk]:
+                            mp[nk] = dt
+                    return mp
+
+                mp_ag = _agg_min_dates(agree_mask)
+                mp_pf = _agg_min_dates(print_mask)
+
+                def _pick_dt(row, mp: dict[str, pd.Timestamp]):
+                    for c in (doc_side_col, card_side_col):
+                        if c and c in row.index:
+                            nk = _tessa_norm_join_key(row.get(c))
+                            if nk and nk in mp:
+                                return mp[nk]
+                    return pd.NaT
+
+                if mp_ag:
+                    out["_exec_transfer_customer_dt"] = out.apply(
+                        lambda r: _pick_dt(r, mp_ag), axis=1
+                    )
+                if mp_pf:
+                    out["_exec_accept_print_dt"] = out.apply(
+                        lambda r: _pick_dt(r, mp_pf), axis=1
+                    )
+
+    try:
+        lk_dog = _load_dogovor_lookup() or {}
+    except Exception:
+        lk_dog = {}
+    dog_id_col = _tessa_find_column(out, ["1C_ID_DOG", "1C_ID_Dog", "1c_id_dog"])
+    if lk_dog and dog_id_col and dog_id_col in out.columns:
+
+        def _dog_pair(v) -> tuple[pd.Timestamp, pd.Timestamp]:
+            key = str(v or "").strip().lower()
+            rec = lk_dog.get(key) if key else None
+            if not isinstance(rec, dict):
+                return (pd.NaT, pd.NaT)
+            end_raw = rec.get("Дата_Окончания_Договора") or ""
+            recv_raw = rec.get("Дата_Получения_ИД") or ""
+            end_dt = pd.to_datetime(end_raw, errors="coerce", dayfirst=True)
+            recv_dt = pd.to_datetime(recv_raw, errors="coerce", dayfirst=True)
+            return (end_dt, recv_dt)
+
+        pairs = out[dog_id_col].apply(_dog_pair)
+        out["_dog_contract_end_dt"] = pairs.map(lambda x: x[0])
+        out["_dog_id_received_dt"] = pairs.map(lambda x: x[1])
+
+    return out
+
+
 # ==================== DASHBOARD: Исполнительная документация (отдельный отчёт в группе «Прочее») ====================
 def dashboard_executive_documentation(df):
     """
@@ -20285,6 +20420,11 @@ def dashboard_executive_documentation(df):
         st.info("Нет данных по исполнительной документации (после исключения предписаний и пустых объектов).")
         return
 
+    try:
+        work = _exec_enrich_task_and_contract_dates(work)
+    except Exception:
+        pass
+
     krstates_df = st.session_state.get("reference_krstates", None)
     status_map = {}
     if krstates_df is not None and not krstates_df.empty:
@@ -20308,7 +20448,9 @@ def dashboard_executive_documentation(df):
     card_col = _tessa_find_column(work, ["CardId", "CardID", "cardId", "DocID", "DocId"])
     creation_col = _tessa_find_column(work, ["CreationDate", "creationdate", "Дата создания"])
     completed_col = _tessa_find_column(work, ["Completed", "completed", "CompletionDate", "Дата завершения"])
-    plan_col = _tessa_find_column(work, ["PlanDate", "DueDate", "Срок", "Плановая дата"])
+    plan_col = _tessa_find_column(work, ["id_Deadline", "id_deadline"])
+    if not plan_col:
+        plan_col = _tessa_find_column(work, ["PlanDate", "DueDate", "Срок", "Плановая дата"])
     transfer_col = _tessa_find_column(
         work,
         ["TransferToCustomer", "Дата передачи", "Передача заказчику", "DateToCustomer", "ПереданоЗаказчику"],
@@ -20317,6 +20459,22 @@ def dashboard_executive_documentation(df):
         work,
         ["AgreementDate", "Дата согласования", "Согласовано", "ApprovalDate", "Дата подписания заказчиком"],
     )
+
+    _fce = pd.Series(pd.NaT, index=work.index)
+    if "_exec_accept_print_dt" in work.columns:
+        _fce = pd.to_datetime(work["_exec_accept_print_dt"], errors="coerce", dayfirst=True)
+    if completed_col and completed_col in work.columns:
+        _fce = _fce.fillna(pd.to_datetime(work[completed_col], errors="coerce", dayfirst=True))
+    work["_fact_completed_eff"] = _fce
+    completed_eff_col = "_fact_completed_eff"
+
+    _tre = pd.Series(pd.NaT, index=work.index)
+    if "_exec_transfer_customer_dt" in work.columns:
+        _tre = pd.to_datetime(work["_exec_transfer_customer_dt"], errors="coerce", dayfirst=True)
+    if transfer_col and transfer_col in work.columns:
+        _tre = _tre.fillna(pd.to_datetime(work[transfer_col], errors="coerce", dayfirst=True))
+    work["_transfer_eff"] = _tre
+    transfer_eff_col = "_transfer_eff"
 
     if creation_col:
         work["_cd"] = _tessa_to_datetime(work[creation_col])
@@ -20348,57 +20506,14 @@ def dashboard_executive_documentation(df):
         else:
             sel_kind = "Все"
 
-    fp1, fp2 = st.columns(2)
+    fp1, fp2, fp3 = st.columns([2, 1, 2])
     with fp1:
         if pd.notna(dmin) and pd.notna(dmax):
-            preset_options = [
-                "Без пресета",
-                "Прошлая неделя",
-                "Прошлый месяц",
-                "Последние 3 месяца",
-                "Последние 6 месяцев",
-                "Последний год",
-                "Последние 2 года",
-            ]
-            selected_preset = st.selectbox(
-                "Быстрый период",
-                preset_options,
-                index=0,
-                key="exec_doc_period_preset",
-            )
-            preset_start = dmin.date() if hasattr(dmin, "date") else dmin
-            preset_end = dmax.date() if hasattr(dmax, "date") else dmax
-            today_ts = pd.Timestamp(today)
-            if selected_preset == "Прошлая неделя":
-                week_start = today_ts - pd.Timedelta(days=today_ts.weekday() + 7)
-                week_end = week_start + pd.Timedelta(days=6)
-                preset_start = week_start.date()
-                preset_end = week_end.date()
-            elif selected_preset == "Прошлый месяц":
-                prev_month = (today_ts.to_period("M") - 1).to_timestamp()
-                preset_start = prev_month.date()
-                preset_end = (prev_month + pd.offsets.MonthEnd(0)).date()
-            elif selected_preset == "Последние 3 месяца":
-                preset_start = (today_ts - pd.DateOffset(months=3)).date()
-                preset_end = today
-            elif selected_preset == "Последние 6 месяцев":
-                preset_start = (today_ts - pd.DateOffset(months=6)).date()
-                preset_end = today
-            elif selected_preset == "Последний год":
-                preset_start = (today_ts - pd.DateOffset(years=1)).date()
-                preset_end = today
-            elif selected_preset == "Последние 2 года":
-                preset_start = (today_ts - pd.DateOffset(years=2)).date()
-                preset_end = today
             min_date = dmin.date() if hasattr(dmin, "date") else dmin
             max_date = dmax.date() if hasattr(dmax, "date") else dmax
-            if preset_start < min_date:
-                preset_start = min_date
-            if preset_end > max_date:
-                preset_end = max_date
             dr = st.date_input(
                 "Период (по дате создания в TESSA)",
-                value=(preset_start, preset_end),
+                value=(min_date, max_date),
                 min_value=min_date,
                 max_value=max_date,
                 key="exec_doc_period",
@@ -20413,11 +20528,31 @@ def dashboard_executive_documentation(df):
             with st.expander("Период по дате создания", expanded=False):
                 suppress_caption("В данных нет распознанной колонки даты создания — период не применяется.")
     with fp2:
+        _gran_opts = list(_exec_granularity_freq_map().keys())
+        try:
+            _gi = _gran_opts.index("Месяц")
+        except ValueError:
+            _gi = min(2, max(len(_gran_opts) - 1, 0))
+        st.selectbox(
+            "Гранулярность",
+            options=_gran_opts,
+            index=_gi,
+            key="exec_doc_granularity",
+            help="Шаг агрегации для блока «Изменения к предыдущему периоду» и вкладки «Динамика».",
+        )
+    with fp3:
         hide_overdue_if_done = st.checkbox(
             "Не отображать просрочку, если ИД сдана (подписана/согласована)",
             value=True,
             key="exec_doc_hide_overdue_signed",
         )
+
+    suppress_caption(
+        "Маппинг ИД: тип и статус — из `tessa_*-id.csv` (`KindName`, `KrState`); крайний срок подписания — `id_Deadline`; "
+        "передача заказчику — задача «На согласование» в `tessa_*-task.csv` (`Completed`); приёмка комплекта — "
+        "«Печатная форма создана» (`Completed`); просрочка сдачи по договору — `Дата_Окончания_Договора` vs "
+        "`Дата_Получения_ИД` в `1с_*_Dogovor.json` (поле связи `1C_ID_DOG`). Просрочка заказчика — уточняется (TBD)."
+    )
 
     filtered_base = work.copy()
     if sel_obj != "Все" and obj_col:
@@ -20639,26 +20774,31 @@ def dashboard_executive_documentation(df):
     compare_panel_payload: tuple[str, str] | None = None
     if creation_col and filtered_base["_cd"].notna().any():
         cmp_source = filtered_base[filtered_base["_cd"].notna()].copy()
-        cmp_source["_cmp_month"] = cmp_source["_cd"].dt.to_period("M")
-        cmp_months = sorted(cmp_source["_cmp_month"].dropna().unique().tolist())
-        if cmp_months:
-            cmp_labels = {
-                f"{RUSSIAN_MONTHS.get(m.month, str(m.month))} {m.year}": m for m in cmp_months
-            }
+        _gran_map = _exec_granularity_freq_map()
+        _g_label = str(st.session_state.get("exec_doc_granularity") or "Месяц")
+        _freq = _gran_map.get(_g_label, "M")
+        try:
+            cmp_source["_cmp_period"] = cmp_source["_cd"].dt.to_period(_freq)
+        except Exception:
+            cmp_source["_cmp_period"] = cmp_source["_cd"].dt.to_period("M")
+            _g_label = "Месяц"
+        cmp_periods = sorted(cmp_source["_cmp_period"].dropna().unique().tolist())
+        if cmp_periods:
+            cmp_labels = {_exec_period_human_label(p): p for p in cmp_periods}
             cmp_col1, cmp_col2 = st.columns([3, 1])
             with cmp_col1:
-                st.subheader("Изменения за месяц к предыдущему")
+                st.subheader("Изменения за период к предыдущему")
             with cmp_col2:
                 selected_cmp_label = st.selectbox(
-                    "Выберите месяц",
+                    "Выберите период",
                     list(cmp_labels.keys()),
                     index=len(cmp_labels) - 1,
                     key="exec_doc_compare_month",
                 )
-            selected_cmp_month = cmp_labels[selected_cmp_label]
-            prev_cmp_month = selected_cmp_month - 1
-            cur_cmp_df = cmp_source[cmp_source["_cmp_month"] == selected_cmp_month]
-            prev_cmp_df = cmp_source[cmp_source["_cmp_month"] == prev_cmp_month]
+            selected_cmp_period = cmp_labels[selected_cmp_label]
+            prev_cmp_period = selected_cmp_period - 1
+            cur_cmp_df = cmp_source[cmp_source["_cmp_period"] == selected_cmp_period]
+            prev_cmp_df = cmp_source[cmp_source["_cmp_period"] == prev_cmp_period]
             cur_metrics = _exec_metrics_snapshot(cur_cmp_df)
             prev_metrics = _exec_metrics_snapshot(prev_cmp_df)
 
@@ -20696,22 +20836,43 @@ def dashboard_executive_documentation(df):
                     }
                 )
             prev_cmp_label = (
-                f"{RUSSIAN_MONTHS.get(prev_cmp_month.month, str(prev_cmp_month.month))} {prev_cmp_month.year}"
-                if prev_cmp_month in cmp_months
-                else "предыдущим месяцем"
+                _exec_period_human_label(prev_cmp_period)
+                if prev_cmp_period in cmp_periods
+                else "предыдущим периодом"
             )
             compare_panel_payload = (
                 f"Изменения за {selected_cmp_label} по сравнению с {prev_cmp_label}",
                 _exec_metric_cards_html(
                     compare_cards,
                     caption=(
-                        "Показывает абсолютное изменение и процент относительно предыдущего месяца "
-                        "в текущей выборке по фильтрам."
+                        "Показывает абсолютное изменение и процент относительно предыдущего периода "
+                        f"(гранулярность: {_g_label}) в текущей выборке по фильтрам."
                     ),
                 ),
             )
 
     oc1, oc2 = st.columns(2)
+
+    def _exec_ts_naive_norm(ts) -> pd.Timestamp:
+        """Приводит значение к timezone-naive Timestamp (полночь), чтобы безопасно вычитать даты."""
+        if ts is None or pd.isna(ts):
+            return pd.NaT
+        try:
+            t = pd.Timestamp(ts)
+        except Exception:
+            return pd.NaT
+        if getattr(t, "tzinfo", None) is not None:
+            try:
+                t = t.tz_convert("UTC").replace(tzinfo=None)
+            except Exception:
+                try:
+                    t = pd.Timestamp(ts.to_pydatetime().replace(tzinfo=None))
+                except Exception:
+                    return pd.NaT
+        try:
+            return t.normalize()
+        except Exception:
+            return pd.NaT
 
     def _row_days_late_plan(r):
         if not plan_col:
@@ -20720,19 +20881,38 @@ def dashboard_executive_documentation(df):
         if pd.isna(pdt):
             return np.nan
         pday = pdt.date() if hasattr(pdt, "date") else pdt
-        if completed_col:
-            fdt = _tessa_to_datetime(pd.Series([r.get(completed_col)])).iloc[0]
+        eff_c = completed_eff_col if completed_eff_col in r.index else None
+        if eff_c:
+            fdt = _tessa_to_datetime(pd.Series([r.get(eff_c)])).iloc[0]
             if pd.notna(fdt):
                 fday = fdt.date() if hasattr(fdt, "date") else fdt
                 return max(0, (fday - pday).days)
         return max(0, (today - pday).days)
+
+    def _row_contractor_late_days(r):
+        ed = r.get("_dog_contract_end_dt")
+        if pd.notna(ed):
+            ed_ts = _exec_ts_naive_norm(ed)
+            if pd.isna(ed_ts):
+                pass
+            else:
+                rd = r.get("_dog_id_received_dt")
+                if pd.notna(rd):
+                    rd_ts = _exec_ts_naive_norm(rd)
+                    if not pd.isna(rd_ts):
+                        return float(max(0, (rd_ts - ed_ts).days))
+                today_n = _exec_ts_naive_norm(pd.Timestamp.combine(today, datetime.min.time()))
+                if not pd.isna(today_n):
+                    return float(max(0, (today_n - ed_ts).days))
+        base = _row_days_late_plan(r)
+        return float(base) if pd.notna(base) else np.nan
 
     with oc1:
         st.subheader("Просрочка подрядчика (сдача ИД)")
         st.metric("Документов на доработке у подрядчика", cnt_c)
         sub_c = filtered.loc[overdue_mask & is_rework].copy()
         if plan_col and not sub_c.empty:
-            sub_c["_late_days"] = sub_c.apply(_row_days_late_plan, axis=1)
+            sub_c["_late_days"] = sub_c.apply(_row_contractor_late_days, axis=1)
             b1 = int(((sub_c["_late_days"] >= 0) & (sub_c["_late_days"] <= 7)).sum())
             b2 = int(((sub_c["_late_days"] > 7) & (sub_c["_late_days"] <= 30)).sum())
             b3 = int((sub_c["_late_days"] > 30).sum())
@@ -20745,14 +20925,14 @@ def dashboard_executive_documentation(df):
                     suppress_caption(f"Средняя просрочка (дней): {sub_c['_late_days'].mean():.1f}")
                 elif cnt_c > 0:
                     suppress_caption(
-                        "Для сегментации 0–7 / 7–30 / >30 дней укажите в TESSA плановую дату "
-                        "(PlanDate / DueDate / Срок)."
+                        "Сегменты: при наличии договора в `1с_*_Dogovor.json` — по "
+                        "`Дата_Окончания_Договора` vs `Дата_Получения_ИД`; иначе по `id_Deadline`/плановой дате и факту сдачи."
                     )
         elif cnt_c > 0:
             with st.expander("Подсказка по сегментам (подрядчик)", expanded=False):
                 suppress_caption(
-                    "Для сегментации 0–7 / 7–30 / >30 дней укажите в TESSA плановую дату "
-                    "(PlanDate / DueDate / Срок)."
+                    "Сегменты: при наличии договора в `1с_*_Dogovor.json` — по полям окончания договора и получения ИД; "
+                    "иначе укажите `id_Deadline`/плановую дату и факт сдачи."
                 )
 
         if contr_col and contr_col in filtered.columns and cnt_c > 0:
@@ -20805,7 +20985,7 @@ def dashboard_executive_documentation(df):
         st.subheader(compare_title)
         st.markdown(compare_html, unsafe_allow_html=True)
 
-    tab_sum, tab_detail, tab_dyn = st.tabs(["Накопительным итогом", "Детальный отчёт", "Динамика по месяцам"])
+    tab_sum, tab_detail, tab_dyn = st.tabs(["Накопительным итогом", "Детальный отчёт", "Динамика"])
 
     with tab_sum:
         st.subheader("Распределение по статусам")
@@ -20877,9 +21057,13 @@ def dashboard_executive_documentation(df):
             )
             hide_ov = hide_overdue_if_done and signed_row
             plan_d = row.get(plan_col) if plan_col else None
-            fact_d = row.get(completed_col) if completed_col else None
+            fact_d = (
+                row.get(completed_eff_col)
+                if completed_eff_col in row.index
+                else row.get(completed_col)
+            )
             plan_dt = _tessa_to_datetime(pd.Series([plan_d])).iloc[0] if plan_col else pd.NaT
-            fact_dt = _tessa_to_datetime(pd.Series([fact_d])).iloc[0] if completed_col else pd.NaT
+            fact_dt = _tessa_to_datetime(pd.Series([fact_d])).iloc[0]
             pr_sub = ""
             pr_cust = ""
             if not hide_ov and pd.notna(plan_dt):
@@ -20890,9 +21074,13 @@ def dashboard_executive_documentation(df):
             if hide_ov:
                 pr_sub = "—"
                 pr_cust = "—"
-            tr = row.get(transfer_col) if transfer_col else None
+            tr = (
+                row.get(transfer_eff_col)
+                if transfer_eff_col in row.index
+                else row.get(transfer_col)
+            )
             ag = row.get(agree_col) if agree_col else None
-            t1 = _tessa_to_datetime(pd.Series([tr])).iloc[0] if transfer_col else pd.NaT
+            t1 = _tessa_to_datetime(pd.Series([tr])).iloc[0]
             t2 = _tessa_to_datetime(pd.Series([ag])).iloc[0] if agree_col else pd.NaT
             if not hide_ov and pd.notna(t1):
                 if pd.notna(t2):
@@ -20946,27 +21134,30 @@ def dashboard_executive_documentation(df):
         )
 
     with tab_dyn:
-        st.subheader("Динамика по месяцам (по дате создания)")
+        _gran_map_d = _exec_granularity_freq_map()
+        _g_label_d = str(st.session_state.get("exec_doc_granularity") or "Месяц")
+        _freq_d = _gran_map_d.get(_g_label_d, "M")
+        st.subheader(f"Динамика ({_g_label_d.lower()}, по дате создания)")
         if not creation_col or filtered["_cd"].isna().all():
             st.info("Нет колонки даты создания для построения динамики.")
         else:
-            dyn = filtered.assign(_m=filtered["_cd"].dt.to_period("M"))
+            try:
+                dyn = filtered.assign(_m=filtered["_cd"].dt.to_period(_freq_d))
+            except Exception:
+                dyn = filtered.assign(_m=filtered["_cd"].dt.to_period("M"))
+                _g_label_d = "Месяц"
             dyn = dyn[dyn["_m"].notna()]
             if dyn.empty:
                 st.info("Недостаточно дат для динамики.")
             else:
                 cnt = dyn.groupby("_m", sort=True).size().reset_index(name="Новых документов")
                 cnt = cnt.sort_values("_m")
-                cnt["Месяц"] = cnt["_m"].map(
-                    lambda p: (
-                        f"{(RUSSIAN_MONTHS.get(p.month, '') or '')[:3].lower()} {p.year}".strip()
-                        if isinstance(p, pd.Period)
-                        else str(p)
-                    )
+                cnt["Период"] = cnt["_m"].map(
+                    lambda p: _exec_period_human_label(p) if isinstance(p, pd.Period) else str(p)
                 )
                 fig3 = px.bar(
                     cnt,
-                    x="Месяц",
+                    x="Период",
                     y="Новых документов",
                     text="Новых документов",
                     color_discrete_sequence=["#60a5fa"],
@@ -20977,11 +21168,15 @@ def dashboard_executive_documentation(df):
                 fig3 = apply_chart_background(fig3)
                 fig3.update_layout(
                     height=400,
-                    xaxis_title="Месяц",
+                    xaxis_title="Период",
                     yaxis_title="Количество",
-                    xaxis=dict(tickangle=-35, categoryorder="array", categoryarray=list(cnt["Месяц"])),
+                    xaxis=dict(tickangle=-35, categoryorder="array", categoryarray=list(cnt["Период"])),
                 )
-                render_chart(fig3, caption_below="Поступление документов по месяцам", key="exec_month_dyn")
+                render_chart(
+                    fig3,
+                    caption_below=f"Поступление документов по выбранной гранулярности ({_g_label_d}).",
+                    key="exec_month_dyn",
+                )
     st.markdown("</div>", unsafe_allow_html=True)
 
 
