@@ -1956,6 +1956,42 @@ def _finance_bar_text_mln_rub(
     return out
 
 
+def _forecast_bdd_bar_value_labels(
+    values_rub: pd.Series,
+    *,
+    min_abs_rub: float = 0.0,
+) -> list[str]:
+    """Подписи к столбцам прогнозного БДДС (млн ₽, одна строка). Пусто только у нулей/NaN."""
+    out: list[str] = []
+    floor = float(min_abs_rub) if min_abs_rub else 0.0
+    for v in values_rub:
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            out.append("")
+            continue
+        try:
+            rv = float(v)
+        except (TypeError, ValueError):
+            out.append("")
+            continue
+        if floor > 0.0 and abs(rv) < floor:
+            out.append("")
+            continue
+        if abs(rv) < 1e-9:
+            out.append("")
+            continue
+        x = rv / 1e6
+        ax = abs(x)
+        if ax >= 100.0:
+            out.append(f"{x:.1f}")
+        elif ax >= 1.0:
+            out.append(f"{x:.2f}")
+        elif ax >= 0.01:
+            out.append(f"{x:.3f}")
+        else:
+            out.append(f"{x:.4f}")
+    return out
+
+
 def _apply_bar_uniformtext(fig: go.Figure) -> go.Figure:
     """
     Подписи bar: uniformtext + automargin по осям без перезаписи margin
@@ -24287,7 +24323,6 @@ def dashboard_forecast_budget(df):
         )
     else:
         _nfc = len(_chart_df)
-        _tlbl_fc = 0.005
         _tfs_fc = 8 if _nfc > 32 else 9 if _nfc > 20 else 10 if _nfc > 12 else 11
         if _nfc > 32:
             _bg_fc, _bgg_fc = 0.04, 0.01
@@ -24295,29 +24330,30 @@ def dashboard_forecast_budget(df):
             _bg_fc, _bgg_fc = 0.06, 0.02
         else:
             _bg_fc, _bgg_fc = 0.1, 0.04
+        _hide_bar_value_labels = _view_type_fc == "Накопительно" and _nfc > 10
+        _txt_pos_fc = "none" if _hide_bar_value_labels else "outside"
+        _txt_ang_fc = -90 if not _hide_bar_value_labels else 0
         _leg_fc_pre = max(300, min(460, 280 + int(_nfc * 3.5))) if _nfc > 24 else 300
-        _top_px_fc = 88
+        _top_px_fc = 140 if (not _hide_bar_value_labels and _nfc > 12) else (120 if not _hide_bar_value_labels else 88)
         _ch_fc_base = 600 if _nfc <= 20 else int(min(1100, 520 + int(_nfc * 1.4)))
         _ch_fc = int(min(1400, max(_ch_fc_base, _top_px_fc + _leg_fc_pre + 400)))
         _xa_fc = -45 if _nfc <= 18 else -50 if _nfc <= 36 else -55
         _xs_fc = 30 if _nfc <= 18 else (44 if _nfc <= 36 else 56)
-        _hide_bar_value_labels = _view_type_fc == "Накопительно" and _nfc > 10
-        _txt_pos_fc = "none" if _hide_bar_value_labels else "outside"
         _fmt_hover1 = lambda v: format_million_rub(v, decimals=1)  # noqa: E731
         _plan_txt_fc = (
             None
             if _hide_bar_value_labels
-            else _finance_bar_text_mln_rub(_chart_df["bdds_plan_msp"], min_abs_mln=_tlbl_fc, decimals=1)
+            else _forecast_bdd_bar_value_labels(_chart_df["bdds_plan_msp"], min_abs_rub=0.0)
         )
         _fact_txt_fc = (
             None
             if _hide_bar_value_labels
-            else _finance_bar_text_mln_rub(_chart_df["bdds_fact"], min_abs_mln=_tlbl_fc, decimals=1)
+            else _forecast_bdd_bar_value_labels(_chart_df["bdds_fact"], min_abs_rub=0.0)
         )
         _frc_txt_fc = (
             None
             if _hide_bar_value_labels
-            else _finance_bar_text_mln_rub(_chart_df["bdds_forecast"], min_abs_mln=_tlbl_fc, decimals=1)
+            else _forecast_bdd_bar_value_labels(_chart_df["bdds_forecast"], min_abs_rub=0.0)
         )
         fig_fc = go.Figure()
         x_fc = _chart_df["Период"].astype(str)
@@ -24329,6 +24365,8 @@ def dashboard_forecast_budget(df):
                 marker_color="#2E86AB",
                 text=_plan_txt_fc,
                 textposition=_txt_pos_fc,
+                textangle=_txt_ang_fc,
+                cliponaxis=False,
                 textfont=dict(size=_tfs_fc, color="#f0f4f8"),
                 customdata=_chart_df["bdds_plan_msp"].apply(_fmt_hover1),
                 hovertemplate="<b>%{x}</b><br>БДДС план: %{customdata}<extra></extra>",
@@ -24342,6 +24380,8 @@ def dashboard_forecast_budget(df):
                 marker_color="#A23B72",
                 text=_fact_txt_fc,
                 textposition=_txt_pos_fc,
+                textangle=_txt_ang_fc,
+                cliponaxis=False,
                 textfont=dict(size=_tfs_fc, color="#f0f4f8"),
                 customdata=_chart_df["bdds_fact"].apply(_fmt_hover1),
                 hovertemplate="<b>%{x}</b><br>БДДС факт: %{customdata}<extra></extra>",
@@ -24355,6 +24395,8 @@ def dashboard_forecast_budget(df):
                 marker_color="#F18F01",
                 text=_frc_txt_fc,
                 textposition=_txt_pos_fc,
+                textangle=_txt_ang_fc,
+                cliponaxis=False,
                 textfont=dict(size=_tfs_fc, color="#f0f4f8"),
                 customdata=_chart_df["bdds_forecast"].apply(_fmt_hover1),
                 hovertemplate="<b>%{x}</b><br>БДДС прогноз: %{customdata}<extra></extra>",
@@ -24375,11 +24417,6 @@ def dashboard_forecast_budget(df):
             ),
         )
         fig_fc = _apply_finance_bar_label_layout(fig_fc)
-        if _nfc > 10:
-            try:
-                fig_fc.update_layout(uniformtext=dict(minsize=5, mode="hide"))
-            except Exception:
-                pass
         if _nfc <= 6:
             try:
                 fig_fc.update_layout(bargap=0.86, bargroupgap=0.12)
@@ -24399,7 +24436,8 @@ def dashboard_forecast_budget(df):
                 )
             )
             if np.isfinite(_ymax_fc) and _ymax_fc > 0:
-                fig_fc.update_layout(yaxis=dict(range=[0, _ymax_fc * 1.22]))
+                _ypad_fc = 1.52 if not _hide_bar_value_labels else 1.22
+                fig_fc.update_layout(yaxis=dict(range=[0, _ymax_fc * _ypad_fc]))
         _leg_y_fc = -0.34 if _nfc <= 20 else (-0.38 if _nfc <= 36 else -0.44)
         fig_fc = _plotly_legend_horizontal_below_plot(
             fig_fc, bottom_px=_leg_fc_pre, legend_y=_leg_y_fc, top_px=_top_px_fc
