@@ -1349,8 +1349,12 @@ _DEV_REASONS_FULL_TABLE_CSS = """
 .dev-bg-blue { background:rgba(52,152,219,0.22) !important; }
 .dev-bg-dblue { background:rgba(26,82,118,0.38) !important; }
 .dev-bg-lblue { background:rgba(214,234,248,0.14) !important; }
-.dev-txt-ok { color:#27ae60 !important; font-weight:600; }
-.dev-txt-bad { color:#c0392b !important; font-weight:600; }
+.dev-txt-ok { color:#46d68a !important; font-weight:600; }
+.dev-txt-bad { color:#ff5454 !important; font-weight:600; }
+.dev-txt-zero { color:#8899aa !important; font-weight:600; }
+.dev-reasons-table td.dev-bg-lblue.dev-txt-bad,
+.dev-reasons-table td.dev-bg-lblue.dev-txt-ok,
+.dev-reasons-table td.dev-bg-lblue.dev-txt-zero { background:rgba(214,234,248,0.14) !important; }
 </style>
 """
 
@@ -1480,10 +1484,16 @@ def _deviations_full_table_build(table_reason_df, notes_col=None):
                 ("dev-bg-dblue", _fmt_int_days(dur_b)),
                 ("dev-bg-dblue", _fmt_int_days(dur_f)),
                 (
-                    "",
+                    "dev-reason-cell",
                     _clean_display_str(row.get(reason_col))
                     if reason_col and reason_col in d.columns
                     else "",
+                    "reason_label",
+                    (
+                        _deviations_reason_bucket_label(row.get(reason_col))
+                        if reason_col and reason_col in d.columns
+                        else ""
+                    ),
                 ),
                 (
                     "",
@@ -1633,17 +1643,50 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
         for ent in cells:
             if len(ent) == 4:
                 cls, txt, _kind, raw = ent
+                extra_style = ""
                 fg = ""
-                if _kind == "start_dev" and not (
-                    raw is None or (isinstance(raw, float) and pd.isna(raw))
-                ):
-                    fg = " dev-txt-bad" if float(raw) < 0 else " dev-txt-ok"
-                elif _kind == "end_dev" and not (
-                    raw is None or (isinstance(raw, float) and pd.isna(raw))
-                ):
-                    fg = " dev-txt-bad" if float(raw) > 0 else " dev-txt-ok"
+                if _kind == "start_dev":
+                    # start_dev = plan_start − base_start: >0 — позже базы (хуже), <0 — раньше (лучше).
+                    if not (raw is None or (isinstance(raw, float) and pd.isna(raw))):
+                        try:
+                            fv = float(raw)
+                        except (TypeError, ValueError):
+                            fv = None
+                        if fv is not None:
+                            fg = (
+                                " dev-txt-bad"
+                                if fv > 0
+                                else (" dev-txt-zero" if fv == 0 else " dev-txt-ok")
+                            )
+                            c_txt = "#ff5454" if fv > 0 else ("#8899aa" if fv == 0 else "#46d68a")
+                            extra_style = f"color:{c_txt} !important;font-weight:600;"
+                elif _kind == "end_dev":
+                    # end_dev = base_end − plan_end (как _end_diff): <0 — план позже базы (хуже), >0 — раньше (лучше).
+                    if not (raw is None or (isinstance(raw, float) and pd.isna(raw))):
+                        try:
+                            fv = float(raw)
+                        except (TypeError, ValueError):
+                            fv = None
+                        if fv is not None:
+                            fg = (
+                                " dev-txt-bad"
+                                if fv < 0
+                                else (" dev-txt-zero" if fv == 0 else " dev-txt-ok")
+                            )
+                            c_txt = "#ff5454" if fv < 0 else ("#8899aa" if fv == 0 else "#46d68a")
+                            extra_style = f"color:{c_txt} !important;font-weight:600;"
+                elif _kind == "reason_label":
+                    bucket_key = str(raw or "").strip()
+                    bx = _deviations_reason_bucket_colors().get(bucket_key, "")
+                    if bx:
+                        tc = _deviations_contrast_text_on_fill(bx)
+                        extra_style = (
+                            f"border-left:4px solid {bx};padding-left:6px;"
+                            f"font-weight:600;color:{tc} !important;"
+                        )
                 esc = html_module.escape(txt) if str(txt).strip() != "" else ""
-                parts.append(f'<td class="{cls.strip()}{fg}">{esc}</td>')
+                _st = f' style="{extra_style}"' if extra_style else ""
+                parts.append(f'<td class="{cls.strip()}{fg}"{_st}>{esc}</td>')
             else:
                 cls, txt = ent[0], ent[1]
                 esc = html_module.escape(txt) if str(txt).strip() != "" else ""
@@ -1950,6 +1993,44 @@ def _apply_vertical_category_bar_width(fig: go.Figure) -> go.Figure:
     return fig
 
 
+def _plotly_bargaps_sparse_x_like_gdrs(n_x_categories: int) -> dict[str, float]:
+    """
+    Как «ГДРС — люди и техника» (dashboard_gdrs): при малом числе меток по оси X
+    столбцы не растягиваются на всю ширину контейнера — растёт доля промежутков
+    (bargap/bargroupgap), высота и ширина макета не уменьшаются.
+    """
+    nx = max(1, int(n_x_categories))
+    if nx <= 2:
+        return dict(bargap=0.84, bargroupgap=0.24)
+    if nx <= 4:
+        return dict(bargap=0.66, bargroupgap=0.17)
+    return {}
+
+
+def _plotly_n_x_categories_from_bar_figure(fig: go.Figure) -> int | None:
+    """Число уникальных меток оси X у первого bar-трейса (для узких столбцов при малой выборке)."""
+    try:
+        for tr in fig.data:
+            if getattr(tr, "type", None) != "bar":
+                continue
+            xv = getattr(tr, "x", None)
+            if xv is None:
+                continue
+            try:
+                nu = int(len(pd.Series(xv).drop_duplicates()))
+            except Exception:
+                try:
+                    nu = int(len(set(xv)))
+                except Exception:
+                    continue
+            if nu <= 0:
+                continue
+            return nu
+        return None
+    except Exception:
+        return None
+
+
 def _plotly_legend_horizontal_below_plot(
     fig: go.Figure,
     *,
@@ -2051,6 +2132,25 @@ def _apply_bar_uniformtext(fig: go.Figure) -> go.Figure:
         fig.update_layout(uniformtext=dict(minsize=8, mode="show"))
         fig.update_xaxes(automargin=True)
         fig.update_yaxes(automargin=True)
+    except Exception:
+        pass
+    return fig
+
+
+def _plotly_bar_hide_legacy_textfont(fig: go.Figure) -> go.Figure:
+    """
+    У некоторых тем/режимов Plotly базовый textfont рисуется вместе с insidetextfont/
+    outsidetextfont для Bar — получаются «удвоенные» цифры. Прозрачный базовый
+    слой оставляет видимым только явно заданные inside/outside шрифты.
+    """
+    try:
+        for tr in getattr(fig, "data", ()) or []:
+            if getattr(tr, "type", None) != "bar":
+                continue
+            try:
+                tr.update(textfont=dict(color="rgba(0,0,0,0)", size=1))
+            except Exception:
+                continue
     except Exception:
         pass
     return fig
@@ -3955,7 +4055,8 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         n = len(reason_counts)
         _bar_h = max(480, int(140 + n * 56))
         _y_top = max(1.0, _ymax * 1.42 + 8.0)
-        fig.update_layout(
+        _gdrs_rc = _plotly_bargaps_sparse_x_like_gdrs(n)
+        _ly_rc = dict(
             height=_bar_h,
             margin=dict(l=24, r=24, t=96, b=140 if n > 6 else 100),
             yaxis=dict(
@@ -3964,6 +4065,9 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                 automargin=True,
             ),
         )
+        if _gdrs_rc:
+            _ly_rc.update(_gdrs_rc)
+        fig.update_layout(**_ly_rc)
         if n > 6:
             fig.update_xaxes(tickangle=-45)
         else:
@@ -4122,8 +4226,9 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         )
     else:
         _date_bg_m = "rgba(46, 134, 171, 0.22)"
+        _maket_wrap_id = f"dev_reason_maket_{abs(id(maket_df))}"
         _tbl_m = [
-            '<div class="rendered-table-wrap" style="margin-top:0.5rem">',
+            f'<div id="{_maket_wrap_id}" class="rendered-table-wrap">',
             '<table class="rendered-table" style="border-collapse:collapse;width:100%">',
             "<thead><tr>",
         ]
@@ -4191,23 +4296,74 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                     f'<td style="background:{_date_bg_m}">{html_module.escape("—")}</td>'
                 )
             else:
-                try:
-                    ev = float(ed)
-                except (TypeError, ValueError):
+                ev = pd.to_numeric(ed, errors="coerce")
+                if pd.isna(ev):
                     _tbl_m.append(
                         f'<td style="background:{_date_bg_m}">{html_module.escape(ed_s)}</td>'
                     )
                 else:
-                    clr = "#c0392b" if ev < 0 else "#27ae60"
+                    ev = float(ev)
+                    if ev < 0:
+                        _dv_cls = "dev-mak-u"
+                        _c_sp = "#ff5454"
+                    elif ev > 0:
+                        _dv_cls = "dev-mak-o"
+                        _c_sp = "#46d68a"
+                    else:
+                        _dv_cls = "dev-mak-z"
+                        _c_sp = "#8899aa"
                     _tbl_m.append(
-                        f'<td style="background:{_date_bg_m};color:{clr};font-weight:600">{html_module.escape(ed_s)}</td>'
+                        f'<td class="{_dv_cls}" style="background:{_date_bg_m};text-align:right">'
+                        f'<span style="color:{_c_sp}!important;font-weight:600">{html_module.escape(ed_s)}</span></td>'
                     )
-            _tbl_m.append(f"<td>{html_module.escape(rs)}</td>")
+            _bk_tbl = (
+                _deviations_reason_bucket_label(rr.get("reason of deviation"))
+                if "reason of deviation" in maket_df.columns
+                else "Прочее"
+            )
+            _clr_map_rt = _deviations_reason_bucket_colors()
+            _clr_tbl = _clr_map_rt.get(str(_bk_tbl).strip(), "") if _clr_map_rt else ""
+            _rs_esc = html_module.escape(rs)
+            if _clr_tbl:
+                _tc_rs = _deviations_contrast_text_on_fill(_clr_tbl)
+                _tbl_m.append(
+                    f'<td style="border-left:4px solid {_clr_tbl};padding-left:6px;color:{_tc_rs};font-weight:600">{_rs_esc}</td>'
+                )
+            else:
+                _tbl_m.append(f"<td>{_rs_esc}</td>")
             _tbl_m.append(f"<td>{html_module.escape(nt)}</td>")
             _tbl_m.append("</tr>")
 
         _tbl_m.append("</tbody></table></div>")
-        st.markdown(_TABLE_CSS + "".join(_tbl_m), unsafe_allow_html=True)
+        # st.markdown может вырезать class/style у ячеек — выводим таблицу в iframe.
+        _maket_iframe_css = (
+            "<style>"
+            "html,body{margin:0;padding:6px 8px;background:#0e1117;color:#e0e0e0;"
+            "font-family:Inter,system-ui,sans-serif;font-size:13px;}"
+            f"#{_maket_wrap_id} .rendered-table td.dev-mak-u,"
+            f"#{_maket_wrap_id} .rendered-table td.dev-mak-u *"
+            "{color:#ff5454!important;font-weight:600!important;}"
+            f"#{_maket_wrap_id} .rendered-table td.dev-mak-o,"
+            f"#{_maket_wrap_id} .rendered-table td.dev-mak-o *"
+            "{color:#46d68a!important;font-weight:600!important;}"
+            f"#{_maket_wrap_id} .rendered-table td.dev-mak-z,"
+            f"#{_maket_wrap_id} .rendered-table td.dev-mak-z *"
+            "{color:#8899aa!important;font-weight:600!important;}"
+            "</style>"
+        )
+        _maket_html_doc = (
+            "<!DOCTYPE html><html><head><meta charset=\"utf-8\"/>"
+            + _maket_iframe_css
+            + _TABLE_CSS
+            + "</head><body>"
+            + "".join(_tbl_m)
+            + "</body></html>"
+        )
+        _ifr_h = int(min(1200, max(200, 88 + len(maket_df) * 30)))
+        try:
+            components.html(_maket_html_doc, height=_ifr_h, scrolling=True, width=None)
+        except TypeError:
+            components.html(_maket_html_doc, height=_ifr_h, scrolling=True)
         st.markdown(f"**Записей (по макету):** {len(maket_df)}")
         maket_csv_df = build_deviations_maket_export_df(
             table_reason_df, building_col, notes_col_m
@@ -4679,7 +4835,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         )
         fig_tz.update_layout(
             barmode="stack",
-            bargap=0.08,
+            bargap=0.32,
             legend=dict(
                 title=dict(text="Типовая причина"),
                 orientation="v",
@@ -4689,15 +4845,20 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 xanchor="left",
                 font=dict(size=12),
             ),
-            margin=dict(l=64, r=280, t=48, b=160),
+            margin=dict(l=64, r=280, t=52, b=180),
             height=_h_tz,
-            xaxis=dict(title=str(period_label), tickangle=-45, automargin=True),
+            xaxis=dict(
+                title=str(period_label),
+                tickangle=-45,
+                automargin=True,
+                title_standoff=22,
+            ),
             yaxis=dict(title="Количество", automargin=True),
         )
         if _n_per_tz > 18:
             fig_tz.update_xaxes(ticklabelstep=2)
         fig_tz.update_traces(
-            texttemplate="%{y}",
+            texttemplate="%{text}",
             textposition="inside",
             insidetextanchor="middle",
             textangle=0,
@@ -4708,7 +4869,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 mc = getattr(tr.marker, "color", None)
                 if isinstance(mc, str):
                     tc = _deviations_contrast_text_on_fill(mc)
-                    tr.update(textfont=dict(color=tc, size=12))
+                    tr.update(insidetextfont=dict(color=tc, size=12))
         _tot_tz = (
             _agg_tz.groupby("_per_lbl", observed=False)["Количество"]
             .sum()
@@ -4741,12 +4902,8 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     yshift=8,
                     font=dict(color="#ffcdd2", size=14),
                 )
-        fig_tz = _apply_bar_uniformtext(fig_tz)
-        try:
-            fig_tz.update_layout(uniformtext=dict(minsize=10, mode="show"))
-        except Exception:
-            pass
-        fig_tz = apply_chart_background(fig_tz)
+        fig_tz = _plotly_bar_hide_legacy_textfont(fig_tz)
+        fig_tz = apply_chart_background(fig_tz, skip_uniformtext=True)
         render_chart(fig_tz, caption_below=_dynamics_caption(""))
 
     # Visualizations
@@ -4909,6 +5066,9 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 yaxis=dict(title="Дни отклонений", automargin=True, tickfont=dict(size=12)),
                 height=_top_h,
             )
+            _sparse_top = _plotly_bargaps_sparse_x_like_gdrs(_n_per_top)
+            if _sparse_top:
+                fig.update_layout(**_sparse_top)
             if _n_per_top > 18:
                 fig.update_xaxes(ticklabelstep=2)
             # Один выброс по сумме дней растягивает Y — остальные столбцы сливаются с нулём.
@@ -4921,11 +5081,12 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     _y0 = _lo if _lo < 0 else 0.0
                     fig.update_yaxes(range=[_y0, _cap], autorange=False)
             fig.update_traces(
+                texttemplate="%{text}",
                 textposition="outside",
-                textfont=dict(size=14, color="white"),
+                outsidetextfont=dict(size=14, color="white"),
             )
-            fig = _apply_bar_uniformtext(fig)
-            fig = apply_chart_background(fig)
+            _plotly_bar_hide_legacy_textfont(fig)
+            fig = apply_chart_background(fig, skip_uniformtext=True)
             render_chart(
                 fig,
                 caption_below=_dynamics_caption("Дни отклонений по периоду"),
@@ -5057,6 +5218,8 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     color="_reason_bucket",
                     facet_col="project name",
                     facet_col_wrap=_wrap,
+                    facet_row_spacing=0.12,
+                    facet_col_spacing=0.06,
                     title=None,
                     color_discrete_map=_clr_map or None,
                     category_orders={
@@ -5071,9 +5234,10 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     },
                     text="_seg_lbl",
                 )
-                fig.update_layout(
+                _facet_ly = dict(
                     barmode="stack",
-                    bargap=0.06,
+                    bargap=0.34,
+                    bargroupgap=0.06,
                     legend=dict(
                         title=dict(text="Причина отклонения"),
                         orientation="v",
@@ -5085,14 +5249,23 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         traceorder="normal",
                         itemsizing="constant",
                     ),
-                    margin=dict(l=72, r=300, t=96, b=220),
-                    height=min(2600, 96 + _facet_rows * _panel_h),
+                    margin=dict(l=72, r=300, t=120, b=318),
+                    height=min(
+                        3200,
+                        120 + _facet_rows * (_panel_h + 64),
+                    ),
                 )
+                _g_f = _plotly_bargaps_sparse_x_like_gdrs(_n_per_facet)
+                if _g_f:
+                    _facet_ly.update(_g_f)
+                fig.update_layout(**_facet_ly)
                 fig.update_xaxes(
                     tickangle=-45,
                     title=_period_x_title,
                     automargin=True,
                     tickfont=dict(size=11),
+                    title_standoff=42,
+                    ticklabelstandoff=10,
                 )
                 fig.update_yaxes(
                     title="Количество отклонений",
@@ -5128,9 +5301,10 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 )
                 _n_per_single = int(len(_periods_grid) if _periods_grid else reason_data["period"].nunique(dropna=True) or 0)
                 _single_h = int(max(600, 440 + min(_n_per_single, 36) * 20))
-                fig.update_layout(
+                _single_ly = dict(
                     barmode="stack",
-                    bargap=0.06,
+                    bargap=0.34,
+                    bargroupgap=0.06,
                     legend=dict(
                         title=dict(text="Причина отклонения"),
                         orientation="v",
@@ -5142,12 +5316,13 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         traceorder="normal",
                         itemsizing="constant",
                     ),
-                    margin=dict(l=64, r=300, t=48, b=200),
+                    margin=dict(l=64, r=300, t=54, b=236),
                     xaxis=dict(
                         title=_period_x_title,
                         tickangle=-45,
                         tickfont=dict(size=12),
                         automargin=True,
+                        title_standoff=28,
                     ),
                     yaxis=dict(
                         title="Количество отклонений",
@@ -5156,6 +5331,10 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     ),
                     height=_single_h,
                 )
+                _g_s = _plotly_bargaps_sparse_x_like_gdrs(_n_per_single)
+                if _g_s:
+                    _single_ly.update(_g_s)
+                fig.update_layout(**_single_ly)
                 if _n_per_single > 18:
                     fig.update_xaxes(ticklabelstep=2)
                 # Один «взрывной» период по сумме стека — остальные не видны.
@@ -5176,10 +5355,12 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 except Exception:
                     pass
             fig.update_traces(
+                texttemplate="%{text}",
                 textposition="inside",
                 insidetextanchor="middle",
                 textangle=0,
                 cliponaxis=False,
+                selector=dict(type="bar"),
             )
             # R23-04 page_10: hover включает проект (даже для одного проекта),
             # чтобы было очевидно, из какого проекта данные.
@@ -5206,10 +5387,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 mc = getattr(tr.marker, "color", None)
                 if isinstance(mc, str):
                     tc = _deviations_contrast_text_on_fill(mc)
-                    tr.update(
-                        textfont=dict(color=tc, size=13),
-                        insidetextfont=dict(color=tc, size=13),
-                    )
+                    tr.update(insidetextfont=dict(color=tc, size=13))
                 tr.update(hovertemplate=_hover_tpl_single)
 
             if not _multi_proj:
@@ -5219,11 +5397,22 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     .reset_index()
                 )
                 for _, row in tot_period.iterrows():
+                    x_pos = row["period"]
+                    _sub_pd = reason_data[
+                        reason_data["period"].astype(str) == str(x_pos)
+                    ]
+                    _nz = _sub_pd[
+                        pd.to_numeric(
+                            _sub_pd["Количество задач"], errors="coerce"
+                        ).fillna(0)
+                        != 0
+                    ]
+                    if len(_nz) <= 1:
+                        continue
                     v = row["Количество задач"]
                     if pd.isna(v):
                         continue
                     txt = str(int(round(float(v), 0)))
-                    x_pos = row["period"]
                     fv = float(v)
                     if fv >= 0:
                         fig.add_annotation(
@@ -5252,14 +5441,8 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                             font=dict(color="#f5f5f5", size=14),
                         )
 
-            fig = _apply_bar_uniformtext(fig)
-            # R23-04 page_10: промежуточные значения должны быть видимыми всегда;
-            # поднимаем минимальный размер шрифта и оставляем mode=show.
-            try:
-                fig.update_layout(uniformtext=dict(minsize=11, mode="show"))
-            except Exception:
-                pass
-            fig = apply_chart_background(fig)
+            fig = _plotly_bar_hide_legacy_textfont(fig)
+            fig = apply_chart_background(fig, skip_uniformtext=True)
             _cap_dyn = (
                 "Каждый столбец — период; стек по причинам; при нескольких проектах — отдельная панель на проект. "
                 "В сегменте — число отклонений по причине; над столбцом — итог за период. "
@@ -8539,6 +8722,9 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
                 .reset_index()
             )
             reason_summary = reason_summary.sort_values("Количество", ascending=False)
+            reason_summary = reason_summary.drop_duplicates(
+                subset=["_reason_bucket"], keep="first"
+            )
 
             # Visualization - vertical bar chart with reasons on X-axis
             fig = px.bar(
@@ -8558,9 +8744,16 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
             # fig.update_traces(
             #     textposition="outside", textfont=dict(size=12, color="white")
             # )
-            fig.update_xaxes(tickangle=-45)
+            fig.update_xaxes(
+                tickangle=-40,
+                title_text="",
+                automargin=True,
+                tickfont=dict(size=12),
+            )
             fig.update_traces(
-                textposition="outside", textfont=dict(size=12, color="white")
+                texttemplate="%{text}",
+                textposition="outside",
+                outsidetextfont=dict(size=12, color="white"),
             )
             fig = _apply_finance_bar_label_layout(fig)
             n_rs = int(len(reason_summary))
@@ -8571,18 +8764,27 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
             # R23-04 follow-up (user screenshot): легенда в «По причинам» избыточна —
             # каждая категория уже есть на оси X; горизонтальная легенда снизу накладывается
             # с подписями оси. Скрываем легенду полностью в этом режиме.
-            fig.update_layout(
+            _gdrs_gap_rs = _plotly_bargaps_sparse_x_like_gdrs(n_rs)
+            _ly_rs = dict(
                 height=max(520, int(180 + n_rs * 52)),
-                margin=dict(l=28, r=28, t=110, b=200),
+                margin=dict(l=28, r=28, t=110, b=246),
                 yaxis=dict(
                     range=[0, _y_top_rs],
                     title="Количество отклонений",
                     automargin=True,
                 ),
-                xaxis=dict(automargin=True),
+                xaxis=dict(automargin=True, title_standoff=16),
                 showlegend=False,
                 legend=dict(orientation="v"),
             )
+            if _gdrs_gap_rs:
+                _ly_rs.update(_gdrs_gap_rs)
+            else:
+                _ly_rs["bargap"] = min(
+                    0.62, float(max(0.35, 0.82 - n_rs * 0.065))
+                )
+                _ly_rs["bargroupgap"] = 0.06
+            fig.update_layout(**_ly_rs)
         else:
             # View 2: By months - month on X-axis, count on Y-axis, reasons as colors (stacked)
             # If "Все" projects selected, show aggregated view (one column per period)
@@ -8656,7 +8858,7 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
                 # Отодвигаем легенду ещё ниже оси X и увеличиваем нижнее поле,
                 # чтобы «Линия тренда» и подписи месяцев гарантированно не пересекались.
                 fig.update_layout(
-                    margin=dict(l=56, r=36, t=72, b=160),
+                    margin=dict(l=56, r=36, t=72, b=208),
                     legend=dict(
                         orientation="h",
                         x=0.5,
@@ -8669,15 +8871,42 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
                 )
             except Exception:
                 pass
-            # Show values inside bars for each reason - horizontal text (same as other charts)
+            # Подписи сегментов: только столбец text=… (без дубля из %{y}).
             fig.update_traces(
-                textposition="inside", textfont=dict(size=12, color="white")
+                texttemplate="%{text}",
+                textposition="inside",
+                textangle=0,
+                cliponaxis=False,
+                selector=dict(type="bar"),
             )
-            # Set text angle to horizontal (0 degrees) for inside bar labels - same as other charts
-            for i, trace in enumerate(fig.data):
-                fig.data[i].update(textangle=0)
 
-            # Add total values above bars and trend line
+            try:
+                for tr in fig.data:
+                    if getattr(tr, "type", None) != "bar":
+                        continue
+                    mc = getattr(tr.marker, "color", None)
+                    if isinstance(mc, str):
+                        tc = _deviations_contrast_text_on_fill(mc)
+                        tr.update(
+                            textfont=dict(color=tc, size=12),
+                            insidetextfont=dict(color=tc, size=12),
+                        )
+            except Exception:
+                pass
+
+            try:
+                _nx_rr = _plotly_n_x_categories_from_bar_figure(fig)
+                _g_mr = (
+                    _plotly_bargaps_sparse_x_like_gdrs(_nx_rr)
+                    if _nx_rr is not None and _nx_rr > 0
+                    else {}
+                )
+                if _g_mr:
+                    fig.update_layout(**_g_mr)
+                else:
+                    fig.update_layout(bargap=0.38, bargroupgap=0.05)
+            except Exception:
+                pass
             if chart_project_scope == "Все":
                 # For "Все проекты": use chart_data for annotations and trend
                 total_by_period = (
@@ -8759,12 +8988,7 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
 
         fig = _apply_bar_uniformtext(fig)
         fig = apply_chart_background(fig)
-        _reasons_chart_caption = (
-            "Динамика причин отклонений по причинам"
-            if view_type == "По причинам"
-            else "Динамика причин отклонений по периодам"
-        )
-        render_chart(fig, caption_below=_reasons_chart_caption)
+        render_chart(fig, caption_below=None)
 
         # Summary table - always show by reason (summarized values)
         # Group by reason and sum across all periods
