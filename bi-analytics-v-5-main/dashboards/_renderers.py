@@ -16302,7 +16302,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         else:
             _kp_plan = 0.0
         _kp_dev = _kp_plan - _kp_fact
-        _kp_dev_color = "#ff5454" if _kp_dev < 0 else ("#46d68a" if _kp_dev >= 0 else "#cccccc")
+        _kp_dev_color = (
+            "#ff5454" if _kp_dev > 0 else ("#46d68a" if _kp_dev < 0 else "#8899aa")
+        )
         _km1, _km2, _km3 = st.columns(3)
         with _km1:
             st.metric("План (сумма)", f"{int(round(_kp_plan))}")
@@ -16601,8 +16603,10 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     f"#{wrap_id} .rk-total td{{font-weight:700;background-color:rgba(80,180,255,0.18)!important;border-top:2px solid rgba(160,220,255,0.9)!important;border-bottom:2px solid rgba(160,220,255,0.9)!important;}}"
                     f"#{wrap_id} .rk-total td:first-child{{border-left:2px solid rgba(160,220,255,0.9)!important;}}"
                     f"#{wrap_id} .rk-total td:last-child{{border-right:2px solid rgba(160,220,255,0.9)!important;}}"
-                    f"#{wrap_id} .neg{{color:hsl(348,100%,63%);font-weight:700;}}"
-                    f"#{wrap_id} .pos{{color:hsl(148,100%,63%);font-weight:700;}}"
+                    # Отклонение / Дельта %: та же семантика, что у подписей План/Факт на экране
+                    # (красный при «недовыполнении» плана, зелёный при выполнении/перевыполнении).
+                    f"#{wrap_id} td.neg{{color:#e74c3c !important;font-weight:700;}}"
+                    f"#{wrap_id} td.pos{{color:#27ae60 !important;font-weight:700;}}"
                     f"</style>",
                     "<table>",
                     "<thead>",
@@ -16633,16 +16637,31 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                         esc = html_module.escape(s)
                         cls = ""
                         td_style = ""
+                        _span_style = ""
                         if c == "Отклонение":
                             num = pd.to_numeric(val, errors="coerce")
                             if pd.notna(num):
-                                cls = "neg" if float(num) > 0 else ("pos" if float(num) < 0 else "")
+                                fn = float(num)
+                                if fn > 0:
+                                    cls = "neg"
+                                    _span_style = "color:#e74c3c !important;font-weight:700;"
+                                elif fn < 0:
+                                    cls = "pos"
+                                    _span_style = "color:#27ae60 !important;font-weight:700;"
                         elif c == "Дельта (%)":
                             raw_pct = row.get("_delta_pct_raw")
                             num = pd.to_numeric(raw_pct, errors="coerce")
                             if pd.notna(num):
-                                cls = "neg" if float(num) > 0 else ("pos" if float(num) < 0 else "")
-                                td_style = _gdrs_delta_pct_cell_bg_style(raw_pct)
+                                fn = float(num)
+                                td_style = _gdrs_delta_pct_cell_bg_style(raw_pct) or ""
+                                if fn > 0:
+                                    cls = "neg"
+                                    _span_style = "color:#e74c3c !important;font-weight:700;"
+                                elif fn < 0:
+                                    cls = "pos"
+                                    _span_style = "color:#27ae60 !important;font-weight:700;"
+                        if _span_style:
+                            esc = f'<span style="{_span_style}">{esc}</span>'
                         tcenter = " t-center" if c not in ("Контрагент", "Вид работы") else ""
                         parts.append(
                             f'<td class="{(cls + tcenter).strip()}" style="{td_style}">{esc}</td>'
@@ -18073,6 +18092,8 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                       "Отклонение %", "__kind__"]
         view = view[cols_order]
 
+        _wrap_id = "gdrs_main_tbl_" + str(abs(id(view)))
+
         def _row_html(row):
             kind = row["__kind__"]
             is_subtotal = kind == "subtotal"
@@ -18083,26 +18104,53 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             for col in cols_order[:-1]:
                 v = row[col]
                 if col == "Отклонение":
-                    color = "#ff5454" if (isinstance(v, (int, float)) and v < 0) else (
-                        "#46d68a" if (isinstance(v, (int, float)) and v >= 0) else "#cccccc"
+                    # Как диаграмма выше: План−Факт > 0 → недовыполнение (#ff5454), < 0 → перевыполнение (#46d68a).
+                    if isinstance(v, (int, float, _np.integer, _np.floating)) and not (
+                        isinstance(v, float) and _np.isnan(v)
+                    ):
+                        fv = float(v)
+                        if fv > 0:
+                            color = "#ff5454"
+                            dev_cls = "gdrs-u"
+                        elif fv < 0:
+                            color = "#46d68a"
+                            dev_cls = "gdrs-o"
+                        else:
+                            color = "#8899aa"
+                            dev_cls = "gdrs-z"
+                    else:
+                        color = "#cccccc"
+                        dev_cls = "gdrs-x"
+                    if isinstance(v, (int, float, _np.integer, _np.floating)) and not (
+                        isinstance(v, float) and _np.isnan(v)
+                    ):
+                        fv = float(v)
+                        inner = "0" if int(round(fv)) == 0 else f"{int(round(fv)):+d}"
+                    else:
+                        inner = html_module.escape(str(v))
+                    cells.append(
+                        f"<td class='{dev_cls}' style='text-align:right;font-weight:{weight};'>"
+                        f"<span style='color:{color} !important'>{inner}</span></td>"
                     )
-                    txt = (
-                        "0"
-                        if isinstance(v, (int, float)) and int(round(float(v))) == 0
-                        else (f"{int(round(float(v))):+d}" if isinstance(v, (int, float)) else str(v))
-                    )
-                    cells.append(f"<td style='text-align:right; color:{color} !important; font-weight:{weight};'>{txt}</td>")
                 elif col == "Отклонение %":
                     if v is None or (isinstance(v, float) and _np.isnan(v)):
                         cells.append("<td style='text-align:right;'>—</td>")
                     else:
                         pct = float(v)
                         grad = _gdrs_delta_pct_cell_bg_style(pct)
-                        pct_color = "#ff5454" if pct < 0 else ("#46d68a" if pct >= 0 else "#cccccc")
+                        if pct > 0:
+                            pct_color = "#ff5454"
+                            pct_cls = "gdrs-u"
+                        elif pct < 0:
+                            pct_color = "#46d68a"
+                            pct_cls = "gdrs-o"
+                        else:
+                            pct_color = "#8899aa"
+                            pct_cls = "gdrs-z"
                         sign = "+" if pct > 0 else ""
                         cells.append(
-                            f"<td style='text-align:right; color:{pct_color} !important; font-weight:{weight};{grad}'>"
-                            f"{sign}{pct:.0f}%</td>"
+                            f"<td class='{pct_cls}' style='text-align:right;font-weight:{weight};{grad}'>"
+                            f"<span style='color:{pct_color} !important'>{sign}{pct:.0f}%</span></td>"
                         )
                 elif col in ("План", "СКУД", "1 неделя", "2 неделя", "3 неделя", "4 неделя", "5 неделя", "6 неделя"):
                     txt = f"{int(v):,}".replace(",", " ") if v else "0"
@@ -18128,10 +18176,27 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             + "</tr></thead>"
         )
         body_html = "<tbody>" + "".join(_row_html(r) for _, r in view.iterrows()) + "</tbody>"
+        _css_u = "#ff5454"
+        _css_o = "#46d68a"
+        _css_z = "#8899aa"
+        _css_x = "#cccccc"
         table_html = (
-            "<div style='overflow-x:auto;'>"
-            "<table style='border-collapse:collapse; color:#eee; font-size:13px; border:1px solid #333;'>"
-            + head_html + body_html
+            f'<div id="{_wrap_id}" style="overflow-x:auto;">'
+            "<style>"
+            f"#{_wrap_id} table{{border-collapse:collapse;font-size:13px;border:1px solid #333;}}"
+            f"#{_wrap_id} td{{color:#eee;}}"
+            f"#{_wrap_id} td.gdrs-u,"
+            f"#{_wrap_id} td.gdrs-u span{{color:{_css_u}!important;}}"
+            f"#{_wrap_id} td.gdrs-o,"
+            f"#{_wrap_id} td.gdrs-o span{{color:{_css_o}!important;}}"
+            f"#{_wrap_id} td.gdrs-z,"
+            f"#{_wrap_id} td.gdrs-z span{{color:{_css_z}!important;}}"
+            f"#{_wrap_id} td.gdrs-x,"
+            f"#{_wrap_id} td.gdrs-x span{{color:{_css_x}!important;}}"
+            "</style>"
+            "<table>"
+            + head_html
+            + body_html
             + "</table></div>"
         )
         st.markdown(table_html, unsafe_allow_html=True)
