@@ -29549,7 +29549,7 @@ def dashboard_developer_projects(df):
                 plab = str(matrix_df[project_col].dropna().astype(str).str.strip().iloc[0]).strip()
             elif not plab and sel_proj and str(sel_proj).strip() != "Все":
                 plab = str(sel_proj).strip()
-            render_dev_tz_matrix(rows_tz, _TABLE_CSS, project_labels=[plab], vertical_dates=vert_dates)
+            render_dev_tz_matrix(rows_tz, "", project_labels=[plab], vertical_dates=vert_dates)
             rows_blocks_for_export = [rows_tz]
             if project_col and project_col in matrix_df.columns and matrix_df[project_col].notna().any():
                 export_project_names = [
@@ -29597,7 +29597,7 @@ def dashboard_developer_projects(df):
             if not blocks:
                 st.info("Нет строк MSP для проектов в выборке.")
                 return
-            render_dev_tz_matrix(blocks, _TABLE_CSS, project_labels=names, vertical_dates=vert_dates)
+            render_dev_tz_matrix(blocks, "", project_labels=names, vertical_dates=vert_dates)
             rows_blocks_for_export = blocks
             export_project_names = names
 

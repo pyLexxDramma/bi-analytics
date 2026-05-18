@@ -2241,12 +2241,15 @@ _DEV_TZ_MATRIX_CSS = """
   background: rgba(121, 154, 192, 0.65);
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide {
-  border: 2px solid rgba(220, 228, 240, 0.45);
+  border: 3px solid #ffffff;
   border-collapse: separate;
   border-spacing: 0;
   width: max-content !important;
   min-width: max(720px, 100%) !important;
   max-width: none !important;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 700;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th {
   border: 1px solid rgba(200, 210, 225, 0.5) !important;
@@ -2264,11 +2267,11 @@ _DEV_TZ_MATRIX_CSS = """
   border-top: 1px solid rgba(200, 210, 225, 0.45) !important;
   vertical-align: middle !important;
   text-align: center !important;
-  font-size: 14px;
-  line-height: 1.45;
-  padding: 10px 8px !important;
-  min-height: 2.75em;
-  color: #e6edf3;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+  padding: 6px 8px !important;
+  color: #fafafa;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody tr:hover td {
   background: inherit;
@@ -2279,33 +2282,50 @@ _DEV_TZ_MATRIX_CSS = """
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project {
   text-align: center !important;
   vertical-align: middle !important;
-  font-weight: 800;
-  font-size: 15px;
-  padding: 10px 12px;
-  color: #f0f7f2;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 6px 10px;
+  color: #ffffff;
   box-sizing: border-box;
   background: #1a3328 !important;
+  border-top: 3px solid #ffffff !important;
+  border-left: 3px solid #ffffff !important;
+  border-right: 3px solid #ffffff !important;
+  border-bottom: 3px solid #ffffff !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead {
   text-align: center !important;
   vertical-align: middle !important;
-  font-weight: 800;
-  font-size: 15px;
-  padding: 10px 10px;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 6px 10px;
   background: linear-gradient(180deg, rgba(34, 139, 34, 0.35) 0%, rgba(25, 90, 25, 0.25) 100%) !important;
-  color: #f0f7f2;
+  color: #ffffff;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead {
+  border-top: 3px solid #ffffff !important;
+  border-bottom: 3px solid #ffffff !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-inv {
+  border-right: 3px solid #ffffff !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead-life {
   text-align: center !important;
   vertical-align: middle !important;
+  font-weight: 700;
+  font-size: 13px;
   background: linear-gradient(180deg, rgba(92, 100, 115, 0.58) 0%, rgba(55, 61, 72, 0.48) 100%) !important;
-  color: #e8eaed !important;
+  color: #ffffff !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-life {
+  border-left: 3px solid #ffffff !important;
+  border-right: 3px solid #ffffff !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone {
   text-align: center !important;
   vertical-align: middle !important;
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 700;
   line-height: 1.35;
   min-width: 6.5em;
   max-width: none !important;
@@ -2315,16 +2335,16 @@ _DEV_TZ_MATRIX_CSS = """
   hyphens: manual;
   overflow: visible !important;
   text-overflow: clip !important;
-  padding: 8px 10px;
-  color: #e8eef5;
+  padding: 6px 8px;
+  color: #ffffff;
   background: rgba(26, 28, 35, 0.92) !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub {
   text-align: center !important;
   vertical-align: middle !important;
-  font-size: 12px;
-  font-weight: 600;
-  color: #c8d6e8;
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffffff;
   min-width: 4.5em;
   max-width: none !important;
   white-space: normal !important;
@@ -2332,52 +2352,52 @@ _DEV_TZ_MATRIX_CSS = """
   overflow-wrap: anywhere;
   overflow: visible !important;
   text-overflow: clip !important;
-  padding: 7px 8px;
+  padding: 6px 8px;
   background: rgba(22, 24, 32, 0.95) !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-inv-block,
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-inv-block {
   background: linear-gradient(180deg, rgba(34, 139, 34, 0.35) 0%, rgba(25, 90, 25, 0.25) 100%) !important;
-  color: #e8f5e9 !important;
+  color: #ffffff !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-inv-block {
   text-align: center !important;
   vertical-align: middle !important;
-  font-weight: 600;
+  font-weight: 700;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-life-block,
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-life-block {
   background: linear-gradient(180deg, rgba(92, 100, 115, 0.58) 0%, rgba(55, 61, 72, 0.48) 100%) !important;
-  color: #e8eaed !important;
+  color: #ffffff !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-life-block {
   text-align: center !important;
   vertical-align: middle !important;
-  font-weight: 600;
+  font-weight: 700;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-td-project {
-  text-align: center !important;
-  font-weight: 800;
-  font-size: 14px;
-  padding: 10px 12px;
+  text-align: left !important;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 6px 10px !important;
   background: #161f2b !important;
-  color: #e6edf3;
+  color: #ffffff;
   word-wrap: break-word;
   overflow-wrap: anywhere;
   vertical-align: middle !important;
-  border-right: 1px solid rgba(190, 214, 242, 0.35) !important;
+  border-right: 3px solid #ffffff !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-text-pct-warn {
-  color: #fb923c !important;
+  color: #e8912d !important;
   font-weight: 700 !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-otkl-ok {
-  color: #22c55e !important;
-  font-weight: 600 !important;
+  color: #28a745 !important;
+  font-weight: 700 !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-otkl-bad {
-  color: #ef4444 !important;
-  font-weight: 600 !important;
+  color: #d9534f !important;
+  font-weight: 700 !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-date-vert {
   writing-mode: vertical-rl;
@@ -2391,18 +2411,19 @@ _DEV_TZ_MATRIX_CSS = """
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-directives-warn {
   background: rgba(234, 88, 12, 0.15) !important;
 }
-/* Блок вехи (План / Факт / Откл.): толстая белая рамка по краям группы */
+/* Блок вехи (План / Факт / Откл.): толстая непрозрачная белая рамка (без rgba — иначе
+   на фоне оранжевых дат граница визуально «персиковая») */
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-ms-block {
-  border-left: 3px solid rgba(255, 255, 255, 0.92) !important;
-  border-right: 3px solid rgba(255, 255, 255, 0.92) !important;
+  border-left: 3px solid #ffffff !important;
+  border-right: 3px solid #ffffff !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-first,
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-first {
-  border-left: 3px solid rgba(255, 255, 255, 0.92) !important;
+  border-left: 3px solid #ffffff !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-last,
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-last {
-  border-right: 3px solid rgba(255, 255, 255, 0.92) !important;
+  border-right: 3px solid #ffffff !important;
 }
 </style>
 """
@@ -2764,7 +2785,7 @@ def render_dev_tz_matrix(
     head_rows: List[str] = [
         "<tr>"
         '<th rowspan="3" class="dev-tz-th-project">Проект</th>'
-        f'<th colspan="{col_span_inv}" class="dev-tz-ghead" style="text-align:center;vertical-align:middle;">Инвестиционная фаза</th>'
+        f'<th colspan="{col_span_inv}" class="dev-tz-ghead dev-tz-ghead-inv" style="text-align:center;vertical-align:middle;">Инвестиционная фаза</th>'
         f'<th colspan="{col_span_life}" class="dev-tz-ghead dev-tz-ghead-life" style="text-align:center;vertical-align:middle;">Жизнь проекта</th>'
         "</tr>"
     ]
@@ -2820,11 +2841,12 @@ def render_dev_tz_matrix(
     # фиксацию первой колонки при горизонтальном скролле в Streamlit, так как
     # внешние контейнеры st.markdown/st.html ломают position:sticky.
     import streamlit.components.v1 as _components
-    _table_css_raw = (table_css or "").replace("<style>", "").replace("</style>", "")
+    # Общий _TABLE_CSS из _renderers (color:#e0e0e0, col-fact с оранжевым фоном) в iframe
+    # матрицы не подмешиваем — иначе на dev/release цвета блекнут и границы «оранжевят».
     _dev_css_raw = _DEV_TZ_MATRIX_CSS.replace("<style>", "").replace("</style>", "")
     _sticky_css = """
 *{box-sizing:border-box}
-html,body{margin:0;padding:0;background:transparent;overflow:hidden}
+html,body{margin:0;padding:0;background:#0e1520;color:#e6edf3;overflow:hidden}
 .dev-tz-matrix-wrap{width:100%;max-width:100%;overflow-x:auto;overflow-y:hidden;
   -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;
   scrollbar-width:thin;scrollbar-color:rgba(121,154,192,0.5) #141820}
@@ -2834,35 +2856,45 @@ html,body{margin:0;padding:0;background:transparent;overflow:hidden}
 .dev-tz-matrix-wrap::-webkit-scrollbar-thumb:hover{background:rgba(121,154,192,0.65)}
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide{
   border-collapse:separate!important;border-spacing:0!important;
-  width:max-content!important;min-width:100%!important}
+  width:max-content!important;min-width:100%!important;
+  font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif!important;
+  font-size:13px!important;font-weight:700!important}
 /* Чёткие границы ячеек: при separate каждой ячейке нужны все четыре стороны */
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th,
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td{
   border:1px solid rgba(121,154,192,0.55)!important}
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-ms-block{
-  border-left:3px solid rgba(255,255,255,0.92)!important;
-  border-right:3px solid rgba(255,255,255,0.92)!important}
+  border-left:3px solid #ffffff!important;
+  border-right:3px solid #ffffff!important}
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-first,
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-first{
-  border-left:3px solid rgba(255,255,255,0.92)!important}
+  border-left:3px solid #ffffff!important}
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-last,
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-last{
-  border-right:3px solid rgba(255,255,255,0.92)!important}
-/* Sticky-колонка «Проект»: фон + правый бордер через box-shadow,
-   чтобы не «съезжал» вместе с ячейкой */
+  border-right:3px solid #ffffff!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead{
+  border-top:3px solid #ffffff!important;border-bottom:3px solid #ffffff!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-inv{
+  border-right:3px solid #ffffff!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-life{
+  border-left:3px solid #ffffff!important;border-right:3px solid #ffffff!important}
+/* Sticky-колонка «Проект» */
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project,
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project{
   position:sticky!important;left:0!important;
-  border-right:1px solid rgba(190,214,242,0.8)!important;
-  box-shadow:2px 0 0 rgba(190,214,242,0.45)}
+  border-right:3px solid #ffffff!important;
+  box-shadow:3px 0 0 #ffffff}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project{
+  border-top:3px solid #ffffff!important;border-left:3px solid #ffffff!important;
+  border-bottom:3px solid #ffffff!important}
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project{
   z-index:5!important;background:#1a3328!important}
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project{
   z-index:4!important;background:#161f2b!important}
 """
     _n_rows = len(blocks)
-    _iframe_h = max(300, 160 + _n_rows * 52)
-    _head_styles = _table_css_raw + _dev_css_raw + _sticky_css
+    _iframe_h = max(280, 140 + _n_rows * 44)
+    _head_styles = _dev_css_raw + _sticky_css
     _scroll_block = '<div class="dev-tz-matrix-wrap">' + html_tbl + "</div>"
     _iframe_html = _matrix_iframe_html_document(_head_styles, _scroll_block)
     _components.html(_iframe_html, height=_iframe_h, scrolling=False)
