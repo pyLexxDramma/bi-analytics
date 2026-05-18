@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Матрица «Девелоперские проекты» по ТЗ (правки): строки-показатели, колонки План / Факт / Откл.
+Матрица «Девелоперские проекты» по ТЗ (правки): строки-показатели; у вех — План / Факт / Откл.,
+у блока «ПРЕДПИСАНИЯ» — Всего / Критические / Неустраненные предписания.
 Источники: MSP (canonical колонки после web_loader), project_data (БДДС), tessa_tasks_data.
 """
 from __future__ import annotations
@@ -21,6 +22,13 @@ from utils import outline_level_numeric
 from settings import SETTING_KEYS
 
 DEV_MATRIX_JSON_KEY = "developer_projects_matrix_json"
+
+# Подколонки вехи «ПРЕДПИСАНИЯ» (ТЗ 04.05): без План/Факт/Откл.
+_DEV_MATRIX_PREDS_SUBCOLS: Dict[str, str] = {
+    "plan": "Всего предписаний",
+    "fact": "Критические предписания",
+    "otkl": "Неустраненные предписания",
+}
 
 # Стабильные ключи строк матрицы (порядок = порядок колонок отчёта), для titles/matches в JSON.
 _DEV_MATRIX_ROW_KEYS: List[str] = [
@@ -1217,7 +1225,58 @@ def _resolve_tessa_pred_source(ss: Any) -> Tuple[pd.DataFrame, Optional[str], st
     return pd.DataFrame(), None, ""
 
 
+def _tessa_pred_exclude_project_rows(pred: pd.DataFrame) -> pd.DataFrame:
+    """Исключить документы в статусе «Проект» (KrStateID=0), как в отчёте «Предписания»."""
+    if pred is None or pred.empty:
+        return pred
+    out = pred.copy()
+    drop = pd.Series(False, index=out.index)
+    if "KrStateID" in out.columns:
+        drop = drop | pd.to_numeric(out["KrStateID"], errors="coerce").eq(0)
+    state_c = _find_col(out, ["KrState", "KrStateName", "State", "Состояние", "Статус"])
+    if state_c and state_c in out.columns:
+        st_s = out[state_c].astype(str).str.strip().str.casefold()
+        drop = drop | st_s.eq("проект")
+    return out.loc[~drop.fillna(False)].copy()
+
+
+def _tessa_pred_critical_series(pred: pd.DataFrame) -> pd.Series:
+    """Критичность: тег «КРИТИЧНЫЙ» в Tessa_Teg (как dashboard_predpisania)."""
+    crit = pd.Series(False, index=pred.index)
+    tag_col = _find_col(
+        pred,
+        [
+            "Tessa_Teg",
+            "TessaTag",
+            "TESSA_TEG",
+            "tessa_teg",
+            "ТегТесса",
+            "Тег Тесса",
+            "Тег",
+            "Тэг",
+        ],
+    )
+    if not tag_col:
+        for _cn in pred.columns:
+            _compact = "".join(str(_cn).strip().casefold().replace("\xa0", " ").split())
+            if "tessa" in _compact and "teg" in _compact:
+                tag_col = _cn
+                break
+    if tag_col and tag_col in pred.columns:
+        _tag_norm = (
+            pred[tag_col]
+            .astype(str)
+            .str.replace("\ufeff", "", regex=False)
+            .str.replace("\xa0", " ", regex=False)
+            .str.strip()
+            .str.casefold()
+        )
+        crit = _tag_norm.isin({"критичный", "критическое", "критичное", "critical"})
+    return crit
+
+
 def _tessa_counts(ss: Any, project_name_hint: str = "") -> Tuple[str, str, str, str]:
+    """Метрики вехи «ПРЕДПИСАНИЯ»: всего / критические / неустранённые (по уникальным карточкам)."""
     pred, kk, src_key = _resolve_tessa_pred_source(ss)
     if pred.empty:
         # Если хоть один из источников загружен, но без «Предписания» в KindName —
@@ -1234,16 +1293,11 @@ def _tessa_counts(ss: Any, project_name_hint: str = "") -> Tuple[str, str, str, 
             pred = pred_f
         else:
             return "Н/Д", "Н/Д", "Н/Д", "Нет строк предписаний Tessa после фильтра по проекту."
-    # B-2.1 (2026-05-07): расширен список ключей идентификатора карточки —
-    # в `*-id.csv` (`tessa_data`) основной ключ называется `DocID`, в `*-task.csv`
-    # (`tessa_tasks_data`) — `CardId`/`CardID`. Ищем по обоим, чтобы фолбэк-ветка
-    # тоже могла посчитать «План = уникальные карточки».
+    pred = _tessa_pred_exclude_project_rows(pred)
+    if pred.empty:
+        return "0", "0", "0", ""
     card_c = _find_col(pred, ["CardId", "CardID", "cardId", "DocID", "DocId", "Doc Id"])
     state_c = _find_col(pred, ["KrStateName", "KrState", "State", "Состояние", "Статус", "KrStateID"])
-    # Правки куратора 08.05.2026: «Отклонение» в строке предписаний должно
-    # быть вычисляемым (как План и Факт). Раньше выдавалось «Н/Д», т.к.
-    # в новой выгрузке Tessa (`tessa_*-id.csv`) поле срока называется
-    # `id_Deadline` — добавили его и его варианты к кандидатам.
     due_c = _find_col(
         pred,
         [
@@ -1259,56 +1313,57 @@ def _tessa_counts(ss: Any, project_name_hint: str = "") -> Tuple[str, str, str, 
         ],
     )
     if not card_c:
-        return str(len(pred)), "—", "Н/Д", ""
+        n_rows = len(pred)
+        return str(n_rows), "0", str(n_rows), ""
     pred = pred.assign(_card=pred[card_c].map(_norm_join_key))
     pred = pred[pred["_card"].astype(str).str.len() > 0]
-    n_cards = int(pred["_card"].nunique())
-    if state_c and state_c in pred.columns:
-        signed_any = pred.groupby("_card", group_keys=False)[state_c].agg(
-            lambda s: any(_krstate_bucket(x) == "signed" for x in s.astype(str))
-        )
-        n_signed = int(signed_any.sum())
+    if pred.empty:
+        return "0", "0", "0", ""
+
+    pred["_critical"] = _tessa_pred_critical_series(pred)
+    if "KrStateID" in pred.columns:
+        _krs = pd.to_numeric(pred["KrStateID"], errors="coerce")
+        pred["_resolved"] = _krs.eq(13)
+    elif state_c and state_c in pred.columns:
+        pred["_resolved"] = pred[state_c].map(lambda x: _krstate_bucket(x) == "signed")
     else:
-        n_signed = 0
-    n_open = int(max(0, n_cards - n_signed))
+        pred["_resolved"] = False
+
+    card_resolved = pred.groupby("_card", group_keys=False)["_resolved"].agg(lambda s: bool(s.any()))
+    card_critical = pred.groupby("_card", group_keys=False)["_critical"].agg(lambda s: bool(s.any()))
+    n_total = int(len(card_resolved))
+    n_unresolved = int((~card_resolved).sum())
+    n_critical = int((~card_resolved & card_critical).sum())
+
     tail_hint = ""
     overdue_n = 0
-    if due_c and due_c in pred.columns and state_c and state_c in pred.columns:
+    if due_c and due_c in pred.columns:
         now = pd.Timestamp.now().normalize()
+        open_rows = pred.loc[~pred["_resolved"].astype(bool)]
+        if not open_rows.empty:
+            dts = _tessa_to_dt(open_rows[due_c])
+            overdue_n = int(((dts.dt.normalize() < now) & dts.notna()).sum())
+            if overdue_n:
+                tail_hint = f"Просрочено (не устранено, срок прошёл): {overdue_n}"
 
-        def _open_row(r: pd.Series) -> bool:
-            return _krstate_bucket(r.get(state_c)) != "signed"
-
-        om = pred.apply(_open_row, axis=1)
-        dts = _tessa_to_dt(pred.loc[om, due_c])
-        overdue_n = int(((dts.dt.normalize() < now) & dts.notna()).sum())
-        if overdue_n:
-            tail_hint = f"Просрочено (не устранено, срок прошёл): {overdue_n}"
-    # План = число уникальных предписаний; Факт = число не устранённых (не «подписано»).
-    # «Откл.» — отклонение по объёму: |План − Факт| (при равных План и Факт → 0), а не
-    # число просроченных (иначе при План=Факт=25 в колонке «Откл.» оказывалось 23 и т.п.).
-    try:
-        otkl_s = str(abs(int(n_cards) - int(n_open)))
-    except Exception:
-        otkl_s = "Н/Д"
-    return str(n_cards), str(n_open), otkl_s, tail_hint
+    return str(n_total), str(n_critical), str(n_unresolved), tail_hint
 
 
 def _predpisaniya_combined(mdf: pd.DataFrame, ss: Any, project_name: str = "") -> Tuple[str, str, str, bool, str]:
     """
     Строка «ПРЕДПИСАНИЯ»: только TESSA (как смежные отчёты по tessa_*), с фильтром по проекту MSP.
-    Подстановка дат из MSP/фазы по предписаниям отключена.
+    Колонки: всего / критические / неустранённые предписания (ТЗ 04.05).
     """
-    tp, tf, to, hint = _tessa_counts(ss, project_name)
-    if not (tp == "Н/Д" and tf == "Н/Д" and to == "Н/Д"):
+    n_total, n_critical, n_unresolved, hint = _tessa_counts(ss, project_name)
+    if not (n_total == "Н/Д" and n_critical == "Н/Д" and n_unresolved == "Н/Д"):
         try:
-            nfu = int(str(tf).strip())
+            nu = int(str(n_unresolved).strip())
         except (TypeError, ValueError):
-            nfu = 0
+            nu = 0
         try:
-            nov = int(str(to).strip())
+            nc = int(str(n_critical).strip())
         except (TypeError, ValueError):
-            nov = 0
+            nc = 0
         _oh = 0
         if hint and "Просрочено" in str(hint):
             try:
@@ -1317,9 +1372,15 @@ def _predpisaniya_combined(mdf: pd.DataFrame, ss: Any, project_name: str = "") -
                     _oh = int(_m.group(1))
             except Exception:
                 _oh = 0
-        warn_t = nfu > 0 or nov > 0 or _oh > 0
-        return tp, tf, to, warn_t, hint
-    return tp, tf, to, False, (hint or "Нет данных Tessa по предписаниям (tessa_tasks_data / tessa_data не загружены или без KindName).")
+        warn_t = nu > 0 or nc > 0 or _oh > 0
+        return n_total, n_critical, n_unresolved, warn_t, hint
+    return (
+        n_total,
+        n_critical,
+        n_unresolved,
+        False,
+        (hint or "Нет данных Tessa по предписаниям (tessa_tasks_data / tessa_data не загружены или без KindName)."),
+    )
 
 
 def build_predpisaniya_detail_df(ss: Any, project_name_hint: str = "") -> pd.DataFrame:
@@ -1573,6 +1634,7 @@ def build_dev_tz_matrix_rows(
         warn_pct: bool = False,
         warn_directives: bool = False,
         otkl_fact_lt_plan: bool = False,
+        subcolumn_labels: Optional[Dict[str, str]] = None,
         phase: str = "",
         row_key: str = "",
     ) -> None:
@@ -1601,6 +1663,7 @@ def build_dev_tz_matrix_rows(
                 "warn_pct": bool(warn_pct),
                 "warn_directives": bool(warn_directives),
                 "otkl_fact_lt_plan": bool(otkl_fact_lt_plan),
+                "subcolumn_labels": dict(subcolumn_labels) if subcolumn_labels else None,
                 "phase": phase,
                 "row_key": str(row_key or "").strip(),
             }
@@ -1841,14 +1904,15 @@ def build_dev_tz_matrix_rows(
         )
 
     rk_tp = str(next(_rk))
-    tp, tf, to, warn_t, _tessa_hint = _predpisaniya_combined(mdf, ss, scope_label)
+    n_total, n_critical, n_unresolved, warn_t, _tessa_hint = _predpisaniya_combined(mdf, ss, scope_label)
     add_row(
         "ТЕССА",
         effective_title(rk_tp, "ПРЕДПИСАНИЯ"),
-        tp,
-        tf,
-        to,
+        n_total,
+        n_critical,
+        n_unresolved,
         warn_directives=warn_t,
+        subcolumn_labels=dict(_DEV_MATRIX_PREDS_SUBCOLS),
         phase="life",
         row_key=rk_tp,
     )
@@ -2341,14 +2405,26 @@ def _dev_tz_matrix_cell_classes(
     if _dev_tz_apply_vert_date(vertical_dates, col, v):
         parts.append("dev-tz-date-vert")
     if col == "otkl":
-        if warn_dir:
+        if warn_dir and not r.get("subcolumn_labels"):
             parts.append("dev-tz-directives-warn")
         if bool(r.get("otkl_fact_lt_plan")):
             parts.append("dev-tz-otkl-bad")
+        elif r.get("subcolumn_labels"):
+            try:
+                if int(str(v or "").strip()) > 0:
+                    parts.append("dev-tz-otkl-bad")
+            except (TypeError, ValueError):
+                pass
         else:
             dd = _parse_otkl_days_display(v)
             if dd is not None:
                 parts.append("dev-tz-otkl-ok" if dd >= 0 else "dev-tz-otkl-bad")
+    if col == "fact" and r.get("subcolumn_labels"):
+        try:
+            if int(str(v or "").strip()) > 0:
+                parts.append("dev-tz-otkl-bad")
+        except (TypeError, ValueError):
+            pass
     return " ".join(parts).strip()
 
 
@@ -2646,11 +2722,15 @@ def render_dev_tz_matrix(
         mline.append(
             f'<th colspan="3" class="dev-tz-milestone {band}" title="{esc(str(lab))}">{esc(str(lab))}</th>'
         )
+        row_sc = r.get("subcolumn_labels") if isinstance(r.get("subcolumn_labels"), dict) else {}
+        lbl_plan = str(row_sc.get("plan") or l_plan).strip() or l_plan
+        lbl_fact = str(row_sc.get("fact") or l_fact).strip() or l_fact
+        lbl_otkl = str(row_sc.get("otkl") or l_otkl).strip() or l_otkl
         subline.extend(
             [
-                f'<th class="dev-tz-sub {band}">{esc(l_plan)}</th>',
-                f'<th class="dev-tz-sub {band}">{esc(l_fact)}</th>',
-                f'<th class="dev-tz-sub {band}">{esc(l_otkl)}</th>',
+                f'<th class="dev-tz-sub {band}">{esc(lbl_plan)}</th>',
+                f'<th class="dev-tz-sub {band}">{esc(lbl_fact)}</th>',
+                f'<th class="dev-tz-sub {band}">{esc(lbl_otkl)}</th>',
             ]
         )
 
