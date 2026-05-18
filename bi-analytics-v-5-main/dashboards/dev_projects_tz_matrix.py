@@ -2391,6 +2391,19 @@ _DEV_TZ_MATRIX_CSS = """
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-directives-warn {
   background: rgba(234, 88, 12, 0.15) !important;
 }
+/* Блок вехи (План / Факт / Откл.): толстая белая рамка по краям группы */
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-ms-block {
+  border-left: 3px solid rgba(255, 255, 255, 0.92) !important;
+  border-right: 3px solid rgba(255, 255, 255, 0.92) !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-first,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-first {
+  border-left: 3px solid rgba(255, 255, 255, 0.92) !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-last,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-last {
+  border-right: 3px solid rgba(255, 255, 255, 0.92) !important;
+}
 </style>
 """
 
@@ -2734,7 +2747,7 @@ def render_dev_tz_matrix(
         ph = str(r.get("phase") or "life").strip().lower()
         band = "dev-tz-inv-block" if ph == "invest" else "dev-tz-life-block"
         mline.append(
-            f'<th colspan="3" class="dev-tz-milestone {band}" title="{esc(str(lab))}">{esc(str(lab))}</th>'
+            f'<th colspan="3" class="dev-tz-milestone dev-tz-ms-block {band}" title="{esc(str(lab))}">{esc(str(lab))}</th>'
         )
         row_sc = r.get("subcolumn_labels") if isinstance(r.get("subcolumn_labels"), dict) else {}
         lbl_plan = str(row_sc.get("plan") or l_plan).strip() or l_plan
@@ -2742,9 +2755,9 @@ def render_dev_tz_matrix(
         lbl_otkl = str(row_sc.get("otkl") or l_otkl).strip() or l_otkl
         subline.extend(
             [
-                f'<th class="dev-tz-sub {band}">{esc(lbl_plan)}</th>',
+                f'<th class="dev-tz-sub dev-tz-ms-first {band}">{esc(lbl_plan)}</th>',
                 f'<th class="dev-tz-sub {band}">{esc(lbl_fact)}</th>',
-                f'<th class="dev-tz-sub {band}">{esc(lbl_otkl)}</th>',
+                f'<th class="dev-tz-sub dev-tz-ms-last {band}">{esc(lbl_otkl)}</th>',
             ]
         )
 
@@ -2767,12 +2780,18 @@ def render_dev_tz_matrix(
         for k in tmpl_keys:
             r = row_by_key.get(k)
             if r is None:
-                for _ in ("plan", "fact", "otkl"):
-                    body_cells.append("<td>Н/Д</td>")
+                for key in ("plan", "fact", "otkl"):
+                    ms = "dev-tz-ms-first" if key == "plan" else ("dev-tz-ms-last" if key == "otkl" else "")
+                    oc = f' class="{ms}"' if ms else ""
+                    body_cells.append(f"<td{oc}>Н/Д</td>")
                 continue
             for key in ("plan", "fact", "otkl"):
                 v = r.get(key) or ""
                 cls = _dev_tz_matrix_cell_classes(r, key, vertical_dates=vertical_dates)
+                if key == "plan":
+                    cls = (cls + " dev-tz-ms-first").strip()
+                elif key == "otkl":
+                    cls = (cls + " dev-tz-ms-last").strip()
                 oc = f' class="{esc(cls)}"' if cls else ""
                 iv = ""
                 if _dev_tz_apply_vert_date(vertical_dates, key, v):
@@ -2820,6 +2839,15 @@ html,body{margin:0;padding:0;background:transparent;overflow:hidden}
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th,
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td{
   border:1px solid rgba(121,154,192,0.55)!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-ms-block{
+  border-left:3px solid rgba(255,255,255,0.92)!important;
+  border-right:3px solid rgba(255,255,255,0.92)!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-first,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-first{
+  border-left:3px solid rgba(255,255,255,0.92)!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-last,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-last{
+  border-right:3px solid rgba(255,255,255,0.92)!important}
 /* Sticky-колонка «Проект»: фон + правый бордер через box-shadow,
    чтобы не «съезжал» вместе с ячейкой */
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project,
