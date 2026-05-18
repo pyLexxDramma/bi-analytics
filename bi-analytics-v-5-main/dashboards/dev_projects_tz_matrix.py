@@ -491,6 +491,14 @@ def _is_pct_complete_not_100(pct: Any, *, pct_scale_max: Any = None) -> bool:
     return abs(v - 100.0) > 1e-3
 
 
+def _is_pct_complete_not_100_dev_matrix(pct: Any, *, pct_scale_max: Any = None) -> bool:
+    """Девелоперские проекты: оранжевый текст ячейки, если % выполнения в MSP задан и ≠ 100%."""
+    v = _normalized_pct_0_100(pct, pct_scale_max=pct_scale_max)
+    if v is None:
+        return False
+    return abs(v - 100.0) > 1e-3
+
+
 _MSP_NA_TOKENS = {"", "нд", "н/д", "n/d", "n/a", "—", "-", "nan", "nat", "none", "null"}
 
 
@@ -2255,6 +2263,12 @@ _DEV_TZ_MATRIX_CSS = """
   border: 1px solid rgba(200, 210, 225, 0.38) !important;
   border-top: 1px solid rgba(200, 210, 225, 0.45) !important;
   vertical-align: middle !important;
+  text-align: center !important;
+  font-size: 14px;
+  line-height: 1.45;
+  padding: 10px 8px !important;
+  min-height: 2.75em;
+  color: #e6edf3;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody tr:hover td {
   background: inherit;
@@ -2266,9 +2280,9 @@ _DEV_TZ_MATRIX_CSS = """
   text-align: center !important;
   vertical-align: middle !important;
   font-weight: 800;
-  font-size: 13px;
-  padding: 6px 10px;
-  color: #e8f5e9;
+  font-size: 15px;
+  padding: 10px 12px;
+  color: #f0f7f2;
   box-sizing: border-box;
   background: #1a3328 !important;
 }
@@ -2276,10 +2290,10 @@ _DEV_TZ_MATRIX_CSS = """
   text-align: center !important;
   vertical-align: middle !important;
   font-weight: 800;
-  font-size: 13px;
-  padding: 6px 8px;
+  font-size: 15px;
+  padding: 10px 10px;
   background: linear-gradient(180deg, rgba(34, 139, 34, 0.35) 0%, rgba(25, 90, 25, 0.25) 100%) !important;
-  color: #e8f5e9;
+  color: #f0f7f2;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead-life {
   text-align: center !important;
@@ -2290,7 +2304,7 @@ _DEV_TZ_MATRIX_CSS = """
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone {
   text-align: center !important;
   vertical-align: middle !important;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 800;
   line-height: 1.35;
   min-width: 6.5em;
@@ -2301,16 +2315,16 @@ _DEV_TZ_MATRIX_CSS = """
   hyphens: manual;
   overflow: visible !important;
   text-overflow: clip !important;
-  padding: 6px 8px;
-  color: #c9d1d9;
+  padding: 8px 10px;
+  color: #e8eef5;
   background: rgba(26, 28, 35, 0.92) !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub {
   text-align: center !important;
   vertical-align: middle !important;
-  font-size: 11px;
-  font-weight: 500;
-  color: #9aa4b2;
+  font-size: 12px;
+  font-weight: 600;
+  color: #c8d6e8;
   min-width: 4.5em;
   max-width: none !important;
   white-space: normal !important;
@@ -2318,7 +2332,7 @@ _DEV_TZ_MATRIX_CSS = """
   overflow-wrap: anywhere;
   overflow: visible !important;
   text-overflow: clip !important;
-  padding: 5px 6px;
+  padding: 7px 8px;
   background: rgba(22, 24, 32, 0.95) !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-inv-block,
@@ -2344,8 +2358,8 @@ _DEV_TZ_MATRIX_CSS = """
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-td-project {
   text-align: center !important;
   font-weight: 800;
-  font-size: 12px;
-  padding: 6px 10px;
+  font-size: 14px;
+  padding: 10px 12px;
   background: #161f2b !important;
   color: #e6edf3;
   word-wrap: break-word;
@@ -2355,7 +2369,7 @@ _DEV_TZ_MATRIX_CSS = """
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-text-pct-warn {
   color: #fb923c !important;
-  font-weight: 600 !important;
+  font-weight: 700 !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-otkl-ok {
   color: #22c55e !important;
@@ -2400,7 +2414,7 @@ def _dev_tz_matrix_cell_classes(
     v = r.get(col) or ""
     warn_pct = bool(r.get("warn_pct"))
     warn_dir = bool(r.get("warn_directives"))
-    if col in ("plan", "fact") and warn_pct and _looks_like_ru_date_cell(v):
+    if warn_pct and col in ("plan", "fact") and not r.get("subcolumn_labels"):
         parts.append("dev-tz-text-pct-warn")
     if _dev_tz_apply_vert_date(vertical_dates, col, v):
         parts.append("dev-tz-date-vert")
@@ -2819,7 +2833,7 @@ html,body{margin:0;padding:0;background:transparent;overflow:hidden}
   z-index:4!important;background:#161f2b!important}
 """
     _n_rows = len(blocks)
-    _iframe_h = max(260, 130 + _n_rows * 44)
+    _iframe_h = max(300, 160 + _n_rows * 52)
     _head_styles = _table_css_raw + _dev_css_raw + _sticky_css
     _scroll_block = '<div class="dev-tz-matrix-wrap">' + html_tbl + "</div>"
     _iframe_html = _matrix_iframe_html_document(_head_styles, _scroll_block)
@@ -3187,15 +3201,15 @@ def _one_milestone_cell(
         v = rr["pct complete"]
         if isinstance(v, pd.Series):
             for _x in v.tolist():
-                if _is_pct_complete_not_100(_x, pct_scale_max=pct_scale_max):
+                if _is_pct_complete_not_100_dev_matrix(_x, pct_scale_max=pct_scale_max):
                     return True
             return False
-        return _is_pct_complete_not_100(v, pct_scale_max=pct_scale_max)
+        return _is_pct_complete_not_100_dev_matrix(v, pct_scale_max=pct_scale_max)
 
     try:
         warn_pct = bool(_row_has_pct_lt_100(r))
     except Exception:
-        warn_pct = bool(_is_pct_complete_not_100(pct, pct_scale_max=pct_scale_max))
+        warn_pct = bool(_is_pct_complete_not_100_dev_matrix(pct, pct_scale_max=pct_scale_max))
     pl = _fmt_date_ru(pdt)
     fl = _fmt_date_ru(fdt)
     if pd.isna(pdt) or pd.isna(fdt):
