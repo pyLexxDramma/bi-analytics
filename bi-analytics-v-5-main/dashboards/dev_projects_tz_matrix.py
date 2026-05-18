@@ -3646,15 +3646,27 @@ def _apply_control_points_msp_filters(
                 return "Все"
             return str(gk_to_lab.get(opt, opt))
 
-        from .ui_quiet import filters_panel
+        from .ui_quiet import filters_grid, filters_popover
 
-        with filters_panel(st):
-            sel_gk = st.selectbox(
-                "Проект",
-                opts,
-                format_func=_cp_proj_select_label,
-                key="cp_msp_filter_project_gk",
-            )
+        _cp_reset_keys = ["cp_msp_filter_project_gk"]
+        _pre_gk = str(st.session_state.get("cp_msp_filter_project_gk", "Все") or "Все")
+        with filters_popover(
+            st,
+            reset_keys=_cp_reset_keys,
+            active_count=1 if _pre_gk != "Все" else 0,
+        ) as _fp:
+            with filters_grid(st, 1) as _cols:
+                with _cols[0]:
+                    sel_gk = st.selectbox(
+                        "Проект",
+                        opts,
+                        format_func=_cp_proj_select_label,
+                        key="cp_msp_filter_project_gk",
+                    )
+            _chips = []
+            if sel_gk != "Все":
+                _chips.append(("Проект", _cp_proj_select_label(sel_gk)))
+            _fp.set_chips(_chips)
     else:
         sel_gk = "Все"
 

@@ -3,13 +3,30 @@
 Вынесено из ``dashboards._renderers``, чтобы ``project_visualization_app`` не тянул тяжёлый модуль
 только ради одного вызова ``components.html``.
 
-Public API: ``inject_multiselect_ru_translations``.
+Public API: ``inject_multiselect_ru_translations``, ``ru_inject_enabled``.
+
+По умолчанию выключено (``BI_ANALYTICS_RU_INJECT=1`` включает): MutationObserver сильно тормозит rerun.
 """
+
+from __future__ import annotations
+
+import os
 
 import streamlit.components.v1 as components
 
 
+def ru_inject_enabled() -> bool:
+    return os.environ.get("BI_ANALYTICS_RU_INJECT", "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
 def inject_multiselect_ru_translations() -> None:
+    if not ru_inject_enabled():
+        return
     """Локализация англоязычных подписей Streamlit-виджетов (1.50+):
     multiselect (Choose options / Select all / Select N matches / No results),
     date_input range presets (Past Week / Past Month / ...) и
@@ -26,7 +43,7 @@ def inject_multiselect_ru_translations() -> None:
         <script>
         (function(){
             try {
-                var HANDLE_KEY = '__BI_RU_TRANSLATIONS_HANDLE_V8__';
+                var HANDLE_KEY = '__BI_RU_TRANSLATIONS_HANDLE_V9__';
                 function resolveDoc() {
                     try {
                         if (window.parent && window.parent.document && window.parent.document.body)
@@ -229,34 +246,9 @@ def inject_multiselect_ru_translations() -> None:
                     walk(root);
                     fixPlaceholders(root);
                     fixAriaLabels(root);
-                    try {
-                        var nodes = root.querySelectorAll("*");
-                        for (var i = 0; i < nodes.length; i++) {
-                            var el = nodes[i];
-                            if (el.shadowRoot) walkDeep(el.shadowRoot);
-                        }
-                    } catch (e) {}
                 }
                 walkDeep(doc.body);
-                var obs = new MutationObserver(function(muts){
-                    for (var i=0;i<muts.length;i++){
-                        var m = muts[i];
-                        if (m.type === 'characterData') tr(m.target);
-                        if (m.addedNodes) {
-                            for (var j=0;j<m.addedNodes.length;j++) walkDeep(m.addedNodes[j]);
-                        }
-                    }
-                });
-                obs.observe(doc.body, {subtree:true, childList:true, characterData:true});
-                var sweepCount = 0;
-                var tmr = setInterval(function(){
-                    try { walkDeep(doc.body); } catch (eSw) {}
-                    sweepCount++;
-                    if (sweepCount >= 120) {
-                        try { clearInterval(tmr); } catch (eC) {}
-                    }
-                }, 250);
-                try { hostWin[HANDLE_KEY] = {obs: obs, tmr: tmr}; } catch (eH) {}
+                try { hostWin[HANDLE_KEY] = {obs: null, tmr: null}; } catch (eH) {}
             } catch(e) { /* noop */ }
         })();
         </script>

@@ -107,14 +107,20 @@ def filter_reports_for_role(role: str, report_names: List[str]) -> List[str]:
     return [n for n in report_names if user_can_open_report(role, n)]
 
 
-def init_db():
+def init_db(*, quiet: bool = True) -> None:
     """Инициализация базы данных: создание всех таблиц (делегируется в db)."""
     from db import init_all_tables
+
+    if quiet:
+        init_all_tables(None)
+        return
+
     def _show(msg):
         try:
             st.info(msg)
         except Exception:
             pass
+
     init_all_tables(_show)
 
 

@@ -19,10 +19,6 @@ from urllib.parse import urlencode
 from config import MSP_PROJECT_FILTER_EXCLUDE_NAMES, RUSSIAN_MONTHS
 
 from .ui_quiet import inject_unified_filters_css, filters_panel, suppress_caption, qa_debug_block
-from .streamlit_ru_inject import (
-    inject_multiselect_ru_translations as _inject_multiselect_ru_translations,
-)
-
 from dashboards.dev_projects_tz_matrix import (
     build_dev_tz_matrix_rows,
     build_dev_tz_matrix_rows_cached,
@@ -5738,8 +5734,6 @@ def render_plan_fact_dates_metric_plates(
 # ==================== DASHBOARD 3: Plan/Fact Dates for Tasks ====================
 def dashboard_plan_fact_dates(df):
     st.header("Отклонение от базового плана")
-    _inject_multiselect_ru_translations()
-
     if df is None or not hasattr(df, "columns") or df.empty:
         st.warning("Нет данных для отображения. Загрузите файл с задачами MSP.")
         return
@@ -8931,12 +8925,15 @@ def dashboard_budget_by_period(df):
                     "format": "DD.MM.YYYY",
                 }
                 if _def_start and _def_end and _def_start <= _def_end:
-                    _from_kw["value"] = _def_start
-                    _to_kw["value"] = _def_end
                     _from_kw["min_value"] = _bdds_min_all or _def_start
                     _from_kw["max_value"] = _bdds_max_all or _def_end
                     _to_kw["min_value"] = _bdds_min_all or _def_start
                     _to_kw["max_value"] = _bdds_max_all or _def_end
+                    # value только при первом показе виджета — иначе цикл rerun при смене проекта.
+                    if "budget_period_from" not in st.session_state:
+                        _from_kw["value"] = _def_start
+                    if "budget_period_to" not in st.session_state:
+                        _to_kw["value"] = _def_end
                 _bdds_pc_from, _bdds_pc_to = st.columns(2)
                 with _bdds_pc_from:
                     _period_from = st.date_input(**_from_kw)
@@ -12332,146 +12329,133 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         return pd.to_datetime(series.astype(str), errors="coerce", dayfirst=True, format="mixed")
 
     # Add filters
-    st.subheader("Фильтры")
-    st.markdown(
-        """
-        <style>
-        div[data-testid="stHorizontalBlock"]:has(div[data-testid="column"]) div[data-testid="column"] {
-            flex: 1 1 0% !important;
-            min-width: 0 !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-    filter_col1, filter_col2 = st.columns(2, gap="small")
+    with filters_panel(st):
 
-    # Project filter (несколько проектов)
-    selected_projects: list[str] = []
-    with filter_col1:
-        try:
-            projects = _unique_project_labels_for_select(df[project_col])
-            selected_projects = st.multiselect(
-                "Фильтр по проектам",
-                options=projects,
-                default=projects,
-                key="rd_delay_projects",
-                placeholder="Выберите проекты",
-            )
-        except Exception as e:
-            st.error(f"Ошибка при загрузке списка проектов: {str(e)}")
-            return
+        # Project filter (несколько проектов)
+        selected_projects: list[str] = []
+        with filter_col1:
+            try:
+                projects = _unique_project_labels_for_select(df[project_col])
+                selected_projects = st.multiselect(
+                    "Фильтр по проектам",
+                    options=projects,
+                    default=projects,
+                    key="rd_delay_projects",
+                    placeholder="Выберите проекты",
+                )
+            except Exception as e:
+                st.error(f"Ошибка при загрузке списка проектов: {str(e)}")
+                return
 
-    # R23-07/TESSA: ключ MSP-разделов — колонка «Шифр_ПД_и_РД» / «Шифр».
-    # По ней делаем join с TESSA (DivisionCipher, в рамках проекта) и строим
-    # фильтр «Шифр + Наименование раздела» из MSP (Шифр + section_col/task_col).
-    _msp_cipher_col = find_column(
-        df,
-        [
-            "Шифр_ПД_и_РД",
-            "Шифр ПД и РД",
-            "Шифр ПД/РД",
-            "Шифр раздела",
-            "Шифр",
-            "DivisionCipher",
-            "Cipher",
-        ],
-    )
-    # Наименование раздела: MSP "Наименование разделов работ" / section_col / task_col.
-    _msp_section_name_col = find_column(
-        df, ["Наименование разделов работ", "Наименование раздела", "Раздел"]
-    )
-    _msp_name_col_for_label = (
-        _msp_section_name_col
-        if _msp_section_name_col and _msp_section_name_col in df.columns
-        else (section_col if section_col and section_col in df.columns else task_col)
-    )
-    # R23-07: «иной путь». В текущих MSP-файлах РД-шифры не задаются (только ПД: АР/КР/ПЗ…),
-    # а в TESSA — только РД (АС/КЖ/КМ…). Прямой join MSP↔TESSA по (Проект, Шифр) не даёт
-    # совпадений → колонки «Задача»/«Шифр» оставались пустыми, а попутные обращения к
-    # TESSA могли ронять построение графика. Поэтому для «Просрочки выдачи РД/ПД»
-    # берём всё из MSP, а TESSA-карточки используются в отдельных отчётах
-    # («Исполнение РД», круговая статусов) там, где они применимы.
-
-    # Filter by RD section kind
-    selected_section = "Все"
-    with filter_col2:
-        if _msp_cipher_col and _msp_cipher_col in df.columns:
-            # R23-07 (стр.17/21): значения = «Шифр — Наименование раздела» из MSP.
-            _cip = df[_msp_cipher_col].astype(str).str.strip()
-            _cip = _cip.where(~_cip.str.lower().isin({"nan", "none", "<na>"}), other="")
-            if _msp_name_col_for_label and _msp_name_col_for_label in df.columns:
-                _nm = df[_msp_name_col_for_label].astype(str).str.strip()
-                _nm = _nm.where(~_nm.str.lower().isin({"nan", "none", "<na>"}), other="")
-            else:
-                _nm = pd.Series([""] * len(df), index=df.index)
-            _combined = pd.Series([""] * len(df), index=df.index, dtype=object)
-            _both = _cip.ne("") & _nm.ne("")
-            _only_cip = _cip.ne("") & ~_both
-            _only_nm = _nm.ne("") & ~_both
-            _combined.loc[_both] = _cip[_both] + " — " + _nm[_both]
-            _combined.loc[_only_cip] = _cip[_only_cip]
-            _combined.loc[_only_nm] = _nm[_only_nm]
-            _combined = _combined.astype(str).replace(
-                {"nan": "", "None": "", "<NA>": "", "NaT": ""}
-            )
-            section_options = sorted(
-                {
-                    v.strip()
-                    for v in _combined.tolist()
-                    if isinstance(v, str) and v.strip()
-                },
-                key=lambda x: x.casefold(),
-            )
-            selected_section = st.selectbox(
-                ("Фильтр по виду раздела ПД" if is_pd else "Фильтр по виду раздела РД"),
-                ["Все"] + section_options,
-                key="rd_delay_section",
-            )
-            df["_tessa_section_label"] = _combined
-        elif section_col and section_col in df.columns:
-            section_options = sorted(
-                {
-                    str(v).strip()
-                    for v in df[section_col].dropna().tolist()
-                    if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
-                },
-                key=lambda x: x.casefold(),
-            )
-            selected_section = st.selectbox(
-                ("Фильтр по виду раздела ПД" if is_pd else "Фильтр по виду раздела РД"),
-                ["Все"] + section_options,
-                key="rd_delay_section",
-            )
-        else:
-            suppress_caption("Колонка раздела ПД не найдена." if is_pd else "Колонка раздела РД не найдена.")
-
-    selected_statuses_rd: list[str] = []
-    rd_status_options_rd: list[str] = []
-    if on_approval_col_rd and on_approval_col_rd in df.columns:
-        rd_status_options_rd.append("На согласовании")
-    if in_production_col_rd and in_production_col_rd in df.columns:
-        rd_status_options_rd.append("Выдано в производство работ")
-    if contractor_transfer_col_rd and contractor_transfer_col_rd in df.columns:
-        rd_status_options_rd.append("Передано подрядчику")
-    if rework_col_rd and rework_col_rd in df.columns:
-        rd_status_options_rd.append("На доработке")
-    # R23-06 (стр.17): добавить статус «Просрочено подрядчиком» и в «Просрочке выдачи РД/ПД».
-    if "Просрочено подрядчиком" not in rd_status_options_rd:
-        rd_status_options_rd.append("Просрочено подрядчиком")
-    if rd_status_options_rd:
-        selected_statuses_rd = st.pills(
-            "Фильтр по статусу ПД" if is_pd else "Фильтр по статусу РД",
-            rd_status_options_rd,
-            selection_mode="multi",
-            default=rd_status_options_rd,
-            key="rd_delay_status_filter",
+        # R23-07/TESSA: ключ MSP-разделов — колонка «Шифр_ПД_и_РД» / «Шифр».
+        # По ней делаем join с TESSA (DivisionCipher, в рамках проекта) и строим
+        # фильтр «Шифр + Наименование раздела» из MSP (Шифр + section_col/task_col).
+        _msp_cipher_col = find_column(
+            df,
+            [
+                "Шифр_ПД_и_РД",
+                "Шифр ПД и РД",
+                "Шифр ПД/РД",
+                "Шифр раздела",
+                "Шифр",
+                "DivisionCipher",
+                "Cipher",
+            ],
         )
-        if selected_statuses_rd is None:
-            selected_statuses_rd = []
-    else:
-        suppress_caption("Нет колонок статусов РД для фильтра.")
+        # Наименование раздела: MSP "Наименование разделов работ" / section_col / task_col.
+        _msp_section_name_col = find_column(
+            df, ["Наименование разделов работ", "Наименование раздела", "Раздел"]
+        )
+        _msp_name_col_for_label = (
+            _msp_section_name_col
+            if _msp_section_name_col and _msp_section_name_col in df.columns
+            else (section_col if section_col and section_col in df.columns else task_col)
+        )
+        # R23-07: «иной путь». В текущих MSP-файлах РД-шифры не задаются (только ПД: АР/КР/ПЗ…),
+        # а в TESSA — только РД (АС/КЖ/КМ…). Прямой join MSP↔TESSA по (Проект, Шифр) не даёт
+        # совпадений → колонки «Задача»/«Шифр» оставались пустыми, а попутные обращения к
+        # TESSA могли ронять построение графика. Поэтому для «Просрочки выдачи РД/ПД»
+        # берём всё из MSP, а TESSA-карточки используются в отдельных отчётах
+        # («Исполнение РД», круговая статусов) там, где они применимы.
 
+        # Filter by RD section kind
+        selected_section = "Все"
+        with filter_col2:
+            if _msp_cipher_col and _msp_cipher_col in df.columns:
+                # R23-07 (стр.17/21): значения = «Шифр — Наименование раздела» из MSP.
+                _cip = df[_msp_cipher_col].astype(str).str.strip()
+                _cip = _cip.where(~_cip.str.lower().isin({"nan", "none", "<na>"}), other="")
+                if _msp_name_col_for_label and _msp_name_col_for_label in df.columns:
+                    _nm = df[_msp_name_col_for_label].astype(str).str.strip()
+                    _nm = _nm.where(~_nm.str.lower().isin({"nan", "none", "<na>"}), other="")
+                else:
+                    _nm = pd.Series([""] * len(df), index=df.index)
+                _combined = pd.Series([""] * len(df), index=df.index, dtype=object)
+                _both = _cip.ne("") & _nm.ne("")
+                _only_cip = _cip.ne("") & ~_both
+                _only_nm = _nm.ne("") & ~_both
+                _combined.loc[_both] = _cip[_both] + " — " + _nm[_both]
+                _combined.loc[_only_cip] = _cip[_only_cip]
+                _combined.loc[_only_nm] = _nm[_only_nm]
+                _combined = _combined.astype(str).replace(
+                    {"nan": "", "None": "", "<NA>": "", "NaT": ""}
+                )
+                section_options = sorted(
+                    {
+                        v.strip()
+                        for v in _combined.tolist()
+                        if isinstance(v, str) and v.strip()
+                    },
+                    key=lambda x: x.casefold(),
+                )
+                selected_section = st.selectbox(
+                    ("Фильтр по виду раздела ПД" if is_pd else "Фильтр по виду раздела РД"),
+                    ["Все"] + section_options,
+                    key="rd_delay_section",
+                )
+                df["_tessa_section_label"] = _combined
+            elif section_col and section_col in df.columns:
+                section_options = sorted(
+                    {
+                        str(v).strip()
+                        for v in df[section_col].dropna().tolist()
+                        if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
+                    },
+                    key=lambda x: x.casefold(),
+                )
+                selected_section = st.selectbox(
+                    ("Фильтр по виду раздела ПД" if is_pd else "Фильтр по виду раздела РД"),
+                    ["Все"] + section_options,
+                    key="rd_delay_section",
+                )
+            else:
+                suppress_caption("Колонка раздела ПД не найдена." if is_pd else "Колонка раздела РД не найдена.")
+
+        selected_statuses_rd: list[str] = []
+        rd_status_options_rd: list[str] = []
+        if on_approval_col_rd and on_approval_col_rd in df.columns:
+            rd_status_options_rd.append("На согласовании")
+        if in_production_col_rd and in_production_col_rd in df.columns:
+            rd_status_options_rd.append("Выдано в производство работ")
+        if contractor_transfer_col_rd and contractor_transfer_col_rd in df.columns:
+            rd_status_options_rd.append("Передано подрядчику")
+        if rework_col_rd and rework_col_rd in df.columns:
+            rd_status_options_rd.append("На доработке")
+        # R23-06 (стр.17): добавить статус «Просрочено подрядчиком» и в «Просрочке выдачи РД/ПД».
+        if "Просрочено подрядчиком" not in rd_status_options_rd:
+            rd_status_options_rd.append("Просрочено подрядчиком")
+        if rd_status_options_rd:
+            selected_statuses_rd = st.pills(
+                "Фильтр по статусу ПД" if is_pd else "Фильтр по статусу РД",
+                rd_status_options_rd,
+                selection_mode="multi",
+                default=rd_status_options_rd,
+                key="rd_delay_status_filter",
+            )
+            if selected_statuses_rd is None:
+                selected_statuses_rd = []
+        else:
+            suppress_caption("Нет колонок статусов РД для фильтра.")
     # Apply filters
     filtered_df = df.copy()
 
@@ -17806,8 +17790,6 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
     else:
         st.header("ГДРС")
 
-    _inject_multiselect_ru_translations()
-
     web_dir = _Path(_root) / "web"
     ai_dir = web_dir / "AI"
 
@@ -19468,7 +19450,6 @@ def dashboard_debit_credit(df):
     issue_start = None
     issue_end = None
 
-    st.subheader("Фильтры")
     with filters_panel(st):
         fp1, fp2, fp3, fp4 = st.columns([2, 2, 2, 2])
         with fp1:
@@ -20320,7 +20301,6 @@ def dashboard_executive_documentation(df):
     Исключаются строки KindName «Предписание» (отдельный отчёт «Предписания»).
     """
     st.header("Исполнительная документация")
-    _inject_multiselect_ru_translations()
     tessa_df = st.session_state.get("tessa_data", None)
     work = None
     _source_label = ""
@@ -20883,21 +20863,6 @@ def dashboard_executive_documentation(df):
             bc1.metric("До 7 дней", b1)
             bc2.metric("7–30 дней", b2)
             bc3.metric("> 30 дней", b3)
-            with st.expander("Подсказка по сегментам (подрядчик)", expanded=False):
-                if sub_c["_late_days"].notna().any():
-                    suppress_caption(f"Средняя просрочка (дней): {sub_c['_late_days'].mean():.1f}")
-                elif cnt_c > 0:
-                    suppress_caption(
-                        "Сегменты: при наличии договора в `1с_*_Dogovor.json` — по "
-                        "`Дата_Окончания_Договора` vs `Дата_Получения_ИД`; иначе по `id_Deadline`/плановой дате и факту сдачи."
-                    )
-        elif cnt_c > 0:
-            with st.expander("Подсказка по сегментам (подрядчик)", expanded=False):
-                suppress_caption(
-                    "Сегменты: при наличии договора в `1с_*_Dogovor.json` — по полям окончания договора и получения ИД; "
-                    "иначе укажите `id_Deadline`/плановую дату и факт сдачи."
-                )
-
         if contr_col and contr_col in filtered.columns and cnt_c > 0:
             sub = filtered[overdue_mask & is_rework]
             by_c = sub.groupby(contr_col).size().reset_index(name="Количество").sort_values("Количество", ascending=True)
@@ -20910,12 +20875,6 @@ def dashboard_executive_documentation(df):
         suppress_caption("Блок показывает просрочку сдачи исполнительной документации со стороны подрядчика.")
     with oc2:
         st.subheader("Просрочка заказчика (согласование)")
-        with st.expander("Пояснение по показателю", expanded=False):
-            st.markdown(
-                "Показатель «Просрочка согласования Заказчиком»: документы на согласовании у заказчика; "
-                "сегменты по дням и диаграмма относятся к этапу согласования заказчиком "
-                "(колонка «Просрочка соглас.» в детальном отчёте)."
-            )
         st.metric("Документов на согласовании у заказчика", cnt_u)
         sub_u = filtered.loc[overdue_mask & is_on_agree].copy()
         if plan_col and not sub_u.empty:
@@ -20924,10 +20883,6 @@ def dashboard_executive_documentation(df):
             u1.metric("До 7 дней", int(((sub_u["_late_days"] >= 0) & (sub_u["_late_days"] <= 7)).sum()))
             u2.metric("7–30 дней", int(((sub_u["_late_days"] > 7) & (sub_u["_late_days"] <= 30)).sum()))
             u3.metric("> 30 дней", int((sub_u["_late_days"] > 30).sum()))
-        elif cnt_u > 0:
-            with st.expander("Подсказка по сегментам (заказчик)", expanded=False):
-                suppress_caption("Для сегментации по дням укажите плановую дату в данных.")
-
         if contr_col and contr_col in filtered.columns and cnt_u > 0:
             sub = filtered[overdue_mask & is_on_agree]
             by_u = sub.groupby(contr_col).size().reset_index(name="Количество").sort_values("Количество", ascending=True)
@@ -21288,8 +21243,6 @@ def dashboard_documentation(
 ):
     st.header(page_title)
 
-    _inject_multiselect_ru_translations()
-
     _doc_fk = (
         "rd_work_"
         if page_title == "Рабочая документация"
@@ -21494,200 +21447,181 @@ def dashboard_documentation(
             rd_section_labels_series = lab.mask(lab.eq(""), "(не указано)")
 
     # Add filters
-    st.subheader("Фильтры")
-    st.markdown(
-        """
-        <style>
-        div[data-testid="stHorizontalBlock"]:has(div[data-testid="column"]) div[data-testid="column"] {
-            flex: 1 1 0% !important;
-            min-width: 0 !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-    filter_col1, filter_col2, filter_col3 = st.columns(3, gap="small")
-
-    # Filter by project (несколько проектов; пусто = все)
-    # R23-06 (стр.17): в ПД по умолчанию выбраны все проекты («Все» вместо «Select all»).
-    selected_projects_doc: list[str] = []
-    if project_col and project_col in df.columns:
-        with filter_col1:
-            _proj_opts = _unique_project_labels_for_select(df[project_col])
-            _proj_default = st.session_state.get(
-                f"{_doc_fk}project_filter_ms",
-                _proj_opts if is_pd else [],
+    with filters_panel(st):
+        filter_col1, filter_col2, filter_col3 = st.columns(3, gap="small")
+        # Filter by project (несколько проектов; пусто = все)
+        # R23-06 (стр.17): в ПД по умолчанию выбраны все проекты («Все» вместо «Select all»).
+        selected_projects_doc: list[str] = []
+        if project_col and project_col in df.columns:
+            with filter_col1:
+                _proj_opts = _unique_project_labels_for_select(df[project_col])
+                _proj_default = st.session_state.get(
+                    f"{_doc_fk}project_filter_ms",
+                    _proj_opts if is_pd else [],
+                )
+                selected_projects_doc = st.multiselect(
+                    "Фильтр по проекту",
+                    options=_proj_opts,
+                    default=_proj_default,
+                    key=f"{_doc_fk}project_filter_ms",
+                    placeholder="Все проекты",
+                )
+        selected_date_start = None
+        selected_date_end = None
+        selected_sections_doc: list[str] = []
+        def _period_filter_widgets() -> None:
+            nonlocal selected_date_start, selected_date_end
+            if not period_source_col or period_source_col not in df.columns:
+                suppress_caption(
+                    "Колонка плановой даты для периода не найдена (plan end / plan start)."
+                )
+                return
+            df_dates = _to_datetime_series(df[period_source_col])
+            valid_dates = df_dates[df_dates.notna()]
+            if valid_dates.empty:
+                suppress_caption("Нет валидных дат для фильтра периода.")
+                return
+            min_date = valid_dates.min().date()
+            max_date = valid_dates.max().date()
+            selected_period_mode = st.selectbox(
+                "Период",
+                ["Весь период (за всё время)", "Выбор диапазона дат"],
+                index=0,
+                key=f"{_doc_fk}period_mode",
             )
-            selected_projects_doc = st.multiselect(
-                "Фильтр по проекту",
-                options=_proj_opts,
-                default=_proj_default,
-                key=f"{_doc_fk}project_filter_ms",
-                placeholder="Все проекты",
-            )
-
-    selected_date_start = None
-    selected_date_end = None
-    selected_sections_doc: list[str] = []
-
-    def _period_filter_widgets() -> None:
-        nonlocal selected_date_start, selected_date_end
-        if not period_source_col or period_source_col not in df.columns:
-            suppress_caption(
-                "Колонка плановой даты для периода не найдена (plan end / plan start)."
-            )
-            return
-        df_dates = _to_datetime_series(df[period_source_col])
-        valid_dates = df_dates[df_dates.notna()]
-        if valid_dates.empty:
-            suppress_caption("Нет валидных дат для фильтра периода.")
-            return
-        min_date = valid_dates.min().date()
-        max_date = valid_dates.max().date()
-        selected_period_mode = st.selectbox(
-            "Период",
-            ["Весь период (за всё время)", "Выбор диапазона дат"],
-            index=0,
-            key=f"{_doc_fk}period_mode",
-        )
-        if selected_period_mode == "Выбор диапазона дат":
-            selected_period = st.date_input(
-                ("Диапазон дат (по дате сдачи ПД в плане)" if is_pd else "Диапазон дат (по дате сдачи РД в плане)"),
-                value=(min_date, max_date),
-                min_value=min_date,
-                max_value=max_date,
-                key=f"{_doc_fk}date_range",
-                format="DD.MM.YYYY",
-            )
-            if isinstance(selected_period, tuple) and len(selected_period) == 2:
-                selected_date_start, selected_date_end = selected_period
+            if selected_period_mode == "Выбор диапазона дат":
+                selected_period = st.date_input(
+                    ("Диапазон дат (по дате сдачи ПД в плане)" if is_pd else "Диапазон дат (по дате сдачи РД в плане)"),
+                    value=(min_date, max_date),
+                    min_value=min_date,
+                    max_value=max_date,
+                    key=f"{_doc_fk}date_range",
+                    format="DD.MM.YYYY",
+                )
+                if isinstance(selected_period, tuple) and len(selected_period) == 2:
+                    selected_date_start, selected_date_end = selected_period
+                else:
+                    selected_date_start = selected_period
+                    selected_date_end = selected_period
             else:
-                selected_date_start = selected_period
-                selected_date_end = selected_period
+                suppress_caption(f"Весь период: {min_date:%d.%m.%Y} - {max_date:%d.%m.%Y}")
+        def _section_filter_widgets_pd() -> None:
+            nonlocal selected_sections_doc
+            if section_col and section_col in df.columns:
+                section_options = sorted(
+                    {
+                        str(v).strip()
+                        for v in df[section_col].dropna().tolist()
+                        if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
+                    },
+                    key=lambda x: x.casefold(),
+                )
+                _sec_default = st.session_state.get(
+                    f"{_doc_fk}section_filter_ms",
+                    section_options,
+                )
+                selected_sections_doc = st.multiselect(
+                    "Фильтр по виду раздела ПД",
+                    options=section_options,
+                    default=_sec_default,
+                    key=f"{_doc_fk}section_filter_ms",
+                    placeholder="Все разделы",
+                )
+            else:
+                suppress_caption("Колонка раздела ПД не найдена.")
+        def _section_filter_widgets_rd() -> None:
+            nonlocal selected_sections_doc
+            if rd_section_labels_series is not None:
+                section_options = sorted(
+                    {
+                        str(v).strip()
+                        for v in rd_section_labels_series.tolist()
+                        if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
+                    },
+                    key=lambda x: x.casefold(),
+                )
+                _sec_default = st.session_state.get(
+                    f"{_doc_fk}section_filter_ms",
+                    section_options,
+                )
+                selected_sections_doc = st.multiselect(
+                    "Фильтр по разделу",
+                    options=section_options,
+                    default=_sec_default,
+                    key=f"{_doc_fk}section_filter_ms",
+                    placeholder="Все разделы",
+                    help="Подпись: шифр раздела и наименование через пробел.",
+                )
+            elif section_col and section_col in df.columns:
+                section_options = sorted(
+                    {
+                        str(v).strip()
+                        for v in df[section_col].dropna().tolist()
+                        if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
+                    },
+                    key=lambda x: x.casefold(),
+                )
+                _sec_default = st.session_state.get(
+                    f"{_doc_fk}section_filter_ms",
+                    section_options,
+                )
+                selected_sections_doc = st.multiselect(
+                    "Фильтр по разделу",
+                    options=section_options,
+                    default=_sec_default,
+                    key=f"{_doc_fk}section_filter_ms",
+                    placeholder="Все разделы",
+                )
+            else:
+                suppress_caption(
+                    "Колонки раздела РД не найдены (шифр/наименование или колонка «Раздел»)."
+                )
+        # РД: проект | раздел (шифр + наименование) | период. ПД: без изменений — проект | период | раздел.
+        if not is_pd:
+            with filter_col2:
+                _section_filter_widgets_rd()
+            with filter_col3:
+                _period_filter_widgets()
         else:
-            suppress_caption(f"Весь период: {min_date:%d.%m.%Y} - {max_date:%d.%m.%Y}")
-
-    def _section_filter_widgets_pd() -> None:
-        nonlocal selected_sections_doc
-        if section_col and section_col in df.columns:
-            section_options = sorted(
-                {
-                    str(v).strip()
-                    for v in df[section_col].dropna().tolist()
-                    if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
-                },
-                key=lambda x: x.casefold(),
+            with filter_col2:
+                _period_filter_widgets()
+            with filter_col3:
+                _section_filter_widgets_pd()
+        # Filter by RD status — отдельной строкой, чтобы не ломать сетку selectbox’ов
+        selected_statuses: list[str] = []
+        rd_status_options: list[str] = []
+        if on_approval_col and on_approval_col in df.columns:
+            rd_status_options.append("На согласовании")
+        if in_production_col and in_production_col in df.columns:
+            rd_status_options.append("Выдано в производство работ")
+        if contractor_col and contractor_col in df.columns:
+            rd_status_options.append(
+                "Передано подрядчику"
+                if page_title == "Рабочая документация"
+                else "Выдана подрядчику"
             )
-            _sec_default = st.session_state.get(
-                f"{_doc_fk}section_filter_ms",
-                section_options,
-            )
-            selected_sections_doc = st.multiselect(
-                "Фильтр по виду раздела ПД",
-                options=section_options,
-                default=_sec_default,
-                key=f"{_doc_fk}section_filter_ms",
-                placeholder="Все разделы",
-            )
-        else:
-            suppress_caption("Колонка раздела ПД не найдена.")
-
-    def _section_filter_widgets_rd() -> None:
-        nonlocal selected_sections_doc
-        if rd_section_labels_series is not None:
-            section_options = sorted(
-                {
-                    str(v).strip()
-                    for v in rd_section_labels_series.tolist()
-                    if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
-                },
-                key=lambda x: x.casefold(),
-            )
-            _sec_default = st.session_state.get(
-                f"{_doc_fk}section_filter_ms",
-                section_options,
-            )
-            selected_sections_doc = st.multiselect(
-                "Фильтр по разделу",
-                options=section_options,
-                default=_sec_default,
-                key=f"{_doc_fk}section_filter_ms",
-                placeholder="Все разделы",
-                help="Подпись: шифр раздела и наименование через пробел.",
-            )
-        elif section_col and section_col in df.columns:
-            section_options = sorted(
-                {
-                    str(v).strip()
-                    for v in df[section_col].dropna().tolist()
-                    if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
-                },
-                key=lambda x: x.casefold(),
-            )
-            _sec_default = st.session_state.get(
-                f"{_doc_fk}section_filter_ms",
-                section_options,
-            )
-            selected_sections_doc = st.multiselect(
-                "Фильтр по разделу",
-                options=section_options,
-                default=_sec_default,
-                key=f"{_doc_fk}section_filter_ms",
-                placeholder="Все разделы",
-            )
-        else:
-            suppress_caption(
-                "Колонки раздела РД не найдены (шифр/наименование или колонка «Раздел»)."
-            )
-
-    # РД: проект | раздел (шифр + наименование) | период. ПД: без изменений — проект | период | раздел.
-    if not is_pd:
-        with filter_col2:
-            _section_filter_widgets_rd()
-        with filter_col3:
-            _period_filter_widgets()
-    else:
-        with filter_col2:
-            _period_filter_widgets()
-        with filter_col3:
-            _section_filter_widgets_pd()
-
-    # Filter by RD status — отдельной строкой, чтобы не ломать сетку selectbox’ов
-    selected_statuses: list[str] = []
-    rd_status_options: list[str] = []
-    if on_approval_col and on_approval_col in df.columns:
-        rd_status_options.append("На согласовании")
-    if in_production_col and in_production_col in df.columns:
-        rd_status_options.append("Выдано в производство работ")
-    if contractor_col and contractor_col in df.columns:
-        rd_status_options.append(
-            "Передано подрядчику"
-            if page_title == "Рабочая документация"
-            else "Выдана подрядчику"
+        if rework_col and rework_col in df.columns:
+            rd_status_options.append("На доработке")
+        # R23-06 (стр.17): статус «Просрочено подрядчиком» — и для РД, и для ПД.
+        if "Просрочено подрядчиком" not in rd_status_options:
+            rd_status_options.append("Просрочено подрядчиком")
+        _status_label = (
+            "Фильтр по статусу ПД"
+            if page_title == "Проектная документация"
+            else "Фильтр по статусу РД"
         )
-    if rework_col and rework_col in df.columns:
-        rd_status_options.append("На доработке")
-    # R23-06 (стр.17): статус «Просрочено подрядчиком» — и для РД, и для ПД.
-    if "Просрочено подрядчиком" not in rd_status_options:
-        rd_status_options.append("Просрочено подрядчиком")
-
-    _status_label = (
-        "Фильтр по статусу ПД"
-        if page_title == "Проектная документация"
-        else "Фильтр по статусу РД"
-    )
-    if rd_status_options:
-        selected_statuses = st.pills(
-            _status_label,
-            rd_status_options,
-            selection_mode="multi",
-            default=rd_status_options,
-            key=f"{_doc_fk}status_filter",
-        )
-        if selected_statuses is None:
-            selected_statuses = []
-    else:
-        suppress_caption("Нет колонок статусов РД/ПД для фильтра.")
+        if rd_status_options:
+            selected_statuses = st.pills(
+                _status_label,
+                rd_status_options,
+                selection_mode="multi",
+                default=rd_status_options,
+                key=f"{_doc_fk}status_filter",
+            )
+            if selected_statuses is None:
+                selected_statuses = []
+        else:
+            suppress_caption("Нет колонок статусов РД/ПД для фильтра.")
 
     # Apply filters to data
     filtered_df = df.copy()
@@ -25457,8 +25391,6 @@ def _forecast_financier_status_table_html(df: pd.DataFrame) -> str:
 def dashboard_forecast_budget(df):
     """Панель «БДДС (утверждённый/прогнозный)» (ранее «Прогнозный бюджет»)."""
     st.header("БДДС (утверждённый/прогнозный)")
-    _inject_multiselect_ru_translations()
-
     # Check English name first (alias created in load_data), then Russian
     project_col = None
     if "project name" in df.columns:
@@ -29666,8 +29598,6 @@ def dashboard_id_tessa_placeholder(df):
 
     suppress_caption(f"Источник данных: **{_source_label}**.")
     st.metric("Строк в наборе TESSA", int(len(work)))
-    with st.expander("Справка: колонки набора TESSA", expanded=False):
-        st.code(", ".join(str(c) for c in work.columns))
     st.success("Источник TESSA доступен. Основная аналитика находится в отчётах «Исполнительная документация» и «Неустраненные предписания».")
 
 
@@ -29772,19 +29702,6 @@ def render_control_points_milestones_admin_settings(*, key_prefix: str = "cp_das
                 "application/json",
                 key=f"{_kp}_dl_tpl",
             )
-        with st.expander("Подсказка по полю match", expanded=False):
-            st.markdown(
-                "- **level** — уровень задачи MSP (например 5.0).\n"
-                "- **names_any** — список подстрок для названия задачи.\n"
-                "- **names_exact_any** — точное совпадение имени задачи (после trim), напр. «РВ» без ложных вхождений в «КРП».\n"
-                "- **name_contains** — одна подстрока в названии.\n"
-                "- **parent_l2_contains** — родитель уровня 2 (часто «Ковенанты»).\n"
-                "- **block_contains** — подстрока функционального блока.\n"
-                "- **phase_needles** / **phase_exclude_needles** — если в файле есть колонка «Фаза».\n\n"
-                "Пустое сохранение через «Сбросить» восстанавливает встроенный список из кода."
-            )
-
-
 def render_developer_projects_matrix_admin_settings(*, key_prefix: str = "admin_dev_mx") -> None:
     """Администратор: заголовки вех, правила MSP (partial match), подписи План/Факт/Откл., вертикальные даты по умолчанию."""
     _kp = key_prefix
@@ -29890,15 +29807,6 @@ def render_developer_projects_matrix_admin_settings(*, key_prefix: str = "admin_
             )
         with st.expander("Ключи строк матрицы (titles / matches)", expanded=False):
             st.code("\n".join(_DEV_MATRIX_ROW_KEYS), language="text")
-        with st.expander("Подсказка по полю matches", expanded=False):
-            st.markdown(
-                "Для ключа `row_key` укажите объект с полями **match** из кода (частичная подмена по верхнему уровню): "
-                "`level`, `names_any`, `name_contains`, `parent_l2_contains`, `block_contains`, "
-                "`phase_needles`, `phase_exclude_needles`, `names_exact_any`. "
-                "Списки (`names_any`, `phase_needles`, …) при подмене **заменяются целиком**."
-            )
-
-
 def dashboard_control_points(df):
     """
     Контрольные точки (MSP): матрица проектов × вехи по макету правок (скрин file-009).
@@ -29915,31 +29823,8 @@ def dashboard_control_points(df):
     if "base end" not in work.columns or not has_fact_col:
         st.warning(
             "Нужны колонки базового и фактического окончания задачи: **base end** и **plan end** "
-            "(или **actual finish**). После загрузки через web/ они обычно уже переименованы; "
-            "для «сырого» CSV см. список колонок ниже."
+            "(или **actual finish**). После загрузки через web/ они обычно уже переименованы."
         )
-        with st.expander("Справка: колонки в загруженных данных", expanded=False):
-            suppress_caption("Имена колонок в текущем наборе данных:")
-            st.code(", ".join(str(c) for c in work.columns))
-            hints = [
-                c
-                for c in work.columns
-                if any(
-                    k in str(c).lower()
-                    for k in (
-                        "нач",
-                        "окон",
-                        "finish",
-                        "base",
-                        "план",
-                        "факт",
-                        "baseline",
-                    )
-                )
-            ]
-            if hints:
-                suppress_caption("Колонки, похожие на даты окончания:")
-                st.code(", ".join(str(c) for c in hints))
         return
     render_control_points_dashboard(st, work, "")
 
@@ -31170,6 +31055,23 @@ def _project_schedule_gantt_apply_y_labels(
     return left_m
 
 
+@st.cache_data(show_spinner=False, ttl=300)
+def _gantt_distinct_str_values(values: tuple) -> list:
+    """Уникальные подписи для selectbox (кэш — ускоряет rerun «Графика проекта»)."""
+    seen: set = set()
+    out: list = []
+    for v in values:
+        s = str(v).strip()
+        if not s or s.lower() == "nan" or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return sorted(out)
+
+
+_GANTT_MAX_ROWS = 100
+
+
 def dashboard_project_schedule_chart(df):
     """График проекта: Гант по плану и базе MSP, фильтры, таблица с отклонениями."""
     # Правки куратора 08.05.2026: «убрать пустоту». Масштаб визуализации
@@ -31178,7 +31080,7 @@ def dashboard_project_schedule_chart(df):
     # из-за чего возникали огромные чёрные пустоты над/под полосами.
     # Теперь min height ~450px, row height ~54px, margins разумные.
     _GANTT_VIS_SCALE = 1.5
-    _GANTT_ROW_BLOCK_SCALE = 3.0  # высота блока «название + план/факт + даты» (×3 к базовой)
+    _GANTT_ROW_BLOCK_SCALE = 2.0  # высота блока «название + план/факт + даты» (меньше = быстрее Plotly)
     _GANTT_FONT_SCALE = 1.15
     _GANTT_MARKER_SCALE = 1.2
     _GANTT_STROKE_SCALE = 1.2
@@ -31392,17 +31294,6 @@ def dashboard_project_schedule_chart(df):
     # Альтернативные виды (WBS-дерево, мини-бары, отдельный экран ковенантов,
     # bar-chart, теплокарта) отключены в UI; их функции остаются в коде на
     # случай возврата по запросу заказчика.
-    with st.expander("Подсказка", expanded=False):
-        suppress_caption(
-            "Фильтры: проект (ур. 1), функциональный блок (ур. 2), уровень структуры MSP (3/4/5 или все), опционально — только лоты. "
-            "График ковенантов по ТЗ (синие/красные точки на шкале дат): включите флажок «Ковенанты по ТЗ» в колонке «Вид отображения» или выберите блок, в названии которого есть «ковенант» / «covenant». "
-            "Две полосы в строке (как «Отклонение от базового плана»): бирюзовая — план (начало–окончание), "
-            "оранжевая — факт (в MSP: «Старт/Конец факт» — base start / base end, при отсутствии — actual). "
-            "Фиолетовый ромб — базовое окончание (ковенанта), только при галочке «Ковенанты по ТЗ». "
-            "Дата начала — у левого края полосы, дата окончания (и при включённой галочке — %) — справа."
-            "Масштаб и панорама колесом мыши (scroll) включены; при странном поведении подписей — панель инструментов (+/−, рамка). "
-            "Названия задач — в полосе слева от полей дат (xaxis.domain + аннотации xref x domain), чтобы не наезжали на полосы."
-        )
     if df is None or df.empty:
         st.warning("Загрузите данные MSP.")
         return
@@ -31625,83 +31516,65 @@ def dashboard_project_schedule_chart(df):
 
     _has_building_filter = bool(building_col) or bool(_building_l3_values)
 
-    sel_proj = "Все"
-    sel_block = "Все"
-    sel_building = "Все"
+    with filters_panel(st):
+        sel_proj = "Все"
+        sel_block = "Все"
+        sel_building = "Все"
 
-    _flt_cols = st.columns(5 if _has_building_filter else 4)
-    f1 = _flt_cols[0]
-    f2 = _flt_cols[1]
-    _ix = 2
-    f_building = None
-    if _has_building_filter:
-        f_building = _flt_cols[_ix]
-        _ix += 1
-    f_level = _flt_cols[_ix]
-    f_view = _flt_cols[_ix + 1]
+        _flt_cols = st.columns(5 if _has_building_filter else 4)
+        f1 = _flt_cols[0]
+        f2 = _flt_cols[1]
+        _ix = 2
+        f_building = None
+        if _has_building_filter:
+            f_building = _flt_cols[_ix]
+            _ix += 1
+        f_level = _flt_cols[_ix]
+        f_view = _flt_cols[_ix + 1]
 
-    with f1:
-        if proj_col:
-            projs = ["Все"] + sorted(plot_df[proj_col].dropna().astype(str).unique().tolist())
-            sel_proj = st.selectbox("Проект", projs, key="gantt_project_filter")
-            if sel_proj != "Все":
-                plot_df = plot_df[plot_df[proj_col].astype(str).str.strip() == str(sel_proj).strip()]
-        else:
-            suppress_caption("Колонка проекта не найдена.")
-    with f2:
-        if block_col:
-            _raw_blocks = sorted(plot_df[block_col].dropna().astype(str).map(str.strip).unique().tolist())
-            _raw_blocks = [b for b in _raw_blocks if b and b.lower() != "nan"]
-            _non_generic_blocks = [b for b in _raw_blocks if not _is_generic_block_value(b)]
-            _block_values = _non_generic_blocks if _non_generic_blocks else _raw_blocks
-
-            # R23-02: если найдено MSP-поле «БЛОК», список фильтра берётся из него как есть
-            # (включая значения вида «Блок 1/2/3/4»). Никаких фолбэков на «Раздел» или
-            # имена задач L2 («Продукт», «Суммарная задача» и т.п.) — это было источником
-            # «некорректных блоков» по правкам клиента.
-            if block_col_msp:
-                _block_values = _raw_blocks
+        with f1:
+            if proj_col:
+                projs = ["Все"] + _gantt_distinct_str_values(
+                    tuple(plot_df[proj_col].dropna().astype(str).tolist())
+                )
+                sel_proj = st.selectbox("Проект", projs, key="gantt_project_filter")
+                if sel_proj != "Все":
+                    plot_df = plot_df[plot_df[proj_col].astype(str).str.strip() == str(sel_proj).strip()]
             else:
-                # Если поле блока не из MSP и содержит только «Блок N», пробуем «Раздел».
-                if (not _non_generic_blocks) and section_col and section_col in plot_df.columns:
-                    _sec_vals = (
-                        plot_df[section_col].dropna().astype(str).map(str.strip).unique().tolist()
-                    )
-                    _sec_vals = [s for s in _sec_vals if s and s.lower() != "nan"]
-                    _sec_non_generic = [s for s in _sec_vals if not _is_generic_block_value(s)]
-                    if _sec_non_generic:
-                        _block_values = sorted(_sec_non_generic)
-                        block_col = section_col
+                suppress_caption("Колонка проекта не найдена.")
+        with f2:
+            if block_col:
+                _raw_blocks = sorted(plot_df[block_col].dropna().astype(str).map(str.strip).unique().tolist())
+                _raw_blocks = [b for b in _raw_blocks if b and b.lower() != "nan"]
+                _non_generic_blocks = [b for b in _raw_blocks if not _is_generic_block_value(b)]
+                _block_values = _non_generic_blocks if _non_generic_blocks else _raw_blocks
 
-                # Если и там нет, подставляем имена задач уровня 2.
-                if (not _non_generic_blocks) and level_col and block_col != section_col:
-                    try:
-                        _lvl_num = pd.to_numeric(plot_df[level_col], errors="coerce")
-                        _task_name_col = _sched_col(plot_df, ["task name", "Task Name", "Название"])
-                        if _task_name_col and _lvl_num.notna().any():
-                            _l2_names = (
-                                plot_df.loc[_lvl_num == 2, _task_name_col]
-                                .dropna()
-                                .astype(str)
-                                .map(lambda x: _gantt_clean_task_label(x).strip())
-                            )
-                            _l2_values = sorted({x for x in _l2_names.tolist() if x and x.lower() != "nan"})
-                            if _l2_values:
-                                _block_values = _l2_values
-                                block_col = _task_name_col
-                    except Exception:
-                        pass
-                # Если колонки уровня нет, пробуем определить L2 по WBS/Outline Number (глубина = 2).
-                if (not _non_generic_blocks) and (not level_col) and wbs_col:
-                    try:
-                        _task_name_col = _sched_col(plot_df, ["task name", "Task Name", "Название"])
-                        if _task_name_col:
-                            _wbs_depth = plot_df[wbs_col].map(_sched_wbs_tuple).map(
-                                lambda t: int(len(t)) if t else np.nan
-                            )
-                            if _wbs_depth.notna().any():
+                # R23-02: если найдено MSP-поле «БЛОК», список фильтра берётся из него как есть
+                # (включая значения вида «Блок 1/2/3/4»). Никаких фолбэков на «Раздел» или
+                # имена задач L2 («Продукт», «Суммарная задача» и т.п.) — это было источником
+                # «некорректных блоков» по правкам клиента.
+                if block_col_msp:
+                    _block_values = _raw_blocks
+                else:
+                    # Если поле блока не из MSP и содержит только «Блок N», пробуем «Раздел».
+                    if (not _non_generic_blocks) and section_col and section_col in plot_df.columns:
+                        _sec_vals = (
+                            plot_df[section_col].dropna().astype(str).map(str.strip).unique().tolist()
+                        )
+                        _sec_vals = [s for s in _sec_vals if s and s.lower() != "nan"]
+                        _sec_non_generic = [s for s in _sec_vals if not _is_generic_block_value(s)]
+                        if _sec_non_generic:
+                            _block_values = sorted(_sec_non_generic)
+                            block_col = section_col
+
+                    # Если и там нет, подставляем имена задач уровня 2.
+                    if (not _non_generic_blocks) and level_col and block_col != section_col:
+                        try:
+                            _lvl_num = pd.to_numeric(plot_df[level_col], errors="coerce")
+                            _task_name_col = _sched_col(plot_df, ["task name", "Task Name", "Название"])
+                            if _task_name_col and _lvl_num.notna().any():
                                 _l2_names = (
-                                    plot_df.loc[_wbs_depth == 2, _task_name_col]
+                                    plot_df.loc[_lvl_num == 2, _task_name_col]
                                     .dropna()
                                     .astype(str)
                                     .map(lambda x: _gantt_clean_task_label(x).strip())
@@ -31710,87 +31583,106 @@ def dashboard_project_schedule_chart(df):
                                 if _l2_values:
                                     _block_values = _l2_values
                                     block_col = _task_name_col
-                    except Exception:
-                        pass
-            blocks = ["Все"] + _block_values
-            sel_block = st.selectbox("Функциональный блок", blocks, key="gantt_block_filter")
-            if sel_block != "Все":
-                plot_df = plot_df[plot_df[block_col].astype(str).str.strip() == str(sel_block).strip()]
-            if not block_col_msp:
-                suppress_caption(f"Список блоков берётся из поля «{block_col}» (резервный режим).")
-        else:
-            suppress_caption("Нет колонки функционального блока.")
-    if f_building is not None:
-        with f_building:
-            if building_col:
-                builds = ["Все"] + sorted(
-                    plot_df[building_col].dropna().astype(str).unique().tolist()
-                )
-                sel_building = st.selectbox(
-                    "Строение", builds, key="gantt_building_filter"
-                )
-                if sel_building != "Все":
-                    plot_df = plot_df[
-                        plot_df[building_col].astype(str).str.strip()
-                        == str(sel_building).strip()
-                    ]
-            elif _building_l3_values and _building_l3_task_col:
-                # Fallback: «Строения» = имена задач уровня 3 MSP.
-                builds = ["Все"] + _building_l3_values
-                sel_building = st.selectbox(
-                    "Строение", builds, key="gantt_building_filter_l3"
-                )
-                if sel_building != "Все":
-                    _ln_b = pd.to_numeric(plot_df[level_col], errors="coerce")
-                    _name_b = plot_df[_building_l3_task_col].astype(str).map(
-                        lambda x: _gantt_clean_task_label(x).strip()
+                        except Exception:
+                            pass
+                    # Если колонки уровня нет, пробуем определить L2 по WBS/Outline Number (глубина = 2).
+                    if (not _non_generic_blocks) and (not level_col) and wbs_col:
+                        try:
+                            _task_name_col = _sched_col(plot_df, ["task name", "Task Name", "Название"])
+                            if _task_name_col:
+                                _wbs_depth = plot_df[wbs_col].map(_sched_wbs_tuple).map(
+                                    lambda t: int(len(t)) if t else np.nan
+                                )
+                                if _wbs_depth.notna().any():
+                                    _l2_names = (
+                                        plot_df.loc[_wbs_depth == 2, _task_name_col]
+                                        .dropna()
+                                        .astype(str)
+                                        .map(lambda x: _gantt_clean_task_label(x).strip())
+                                    )
+                                    _l2_values = sorted({x for x in _l2_names.tolist() if x and x.lower() != "nan"})
+                                    if _l2_values:
+                                        _block_values = _l2_values
+                                        block_col = _task_name_col
+                        except Exception:
+                            pass
+                blocks = ["Все"] + _block_values
+                sel_block = st.selectbox("Функциональный блок", blocks, key="gantt_block_filter")
+                if sel_block != "Все":
+                    plot_df = plot_df[plot_df[block_col].astype(str).str.strip() == str(sel_block).strip()]
+                if not block_col_msp:
+                    suppress_caption(f"Список блоков берётся из поля «{block_col}» (резервный режим).")
+            else:
+                suppress_caption("Нет колонки функционального блока.")
+        if f_building is not None:
+            with f_building:
+                if building_col:
+                    builds = ["Все"] + _gantt_distinct_str_values(
+                        tuple(plot_df[building_col].dropna().astype(str).tolist())
                     )
-                    _mask_b3 = (_ln_b == 3) & (_name_b == sel_building)
-                    if not bool(_mask_b3.any()):
-                        suppress_caption(
-                            f"В выборке нет строк с задачей уровня 3 «{sel_building}»."
+                    sel_building = st.selectbox(
+                        "Строение", builds, key="gantt_building_filter"
+                    )
+                    if sel_building != "Все":
+                        plot_df = plot_df[
+                            plot_df[building_col].astype(str).str.strip()
+                            == str(sel_building).strip()
+                        ]
+                elif _building_l3_values and _building_l3_task_col:
+                    # Fallback: «Строения» = имена задач уровня 3 MSP.
+                    builds = ["Все"] + _building_l3_values
+                    sel_building = st.selectbox(
+                        "Строение", builds, key="gantt_building_filter_l3"
+                    )
+                    if sel_building != "Все":
+                        _ln_b = pd.to_numeric(plot_df[level_col], errors="coerce")
+                        _name_b = plot_df[_building_l3_task_col].astype(str).map(
+                            lambda x: _gantt_clean_task_label(x).strip()
                         )
-                    else:
-                        # Берём всё «дерево» под выбранной задачей L3:
-                        # из текущей выборки оставляем строки этого блока и его детей
-                        # (в MSP-таблице они идут подряд, поэтому проще — фильтр по
-                        # совпадению proj_col и block_col + обрезка по позиции).
-                        _idx_pos = plot_df.index.get_indexer(plot_df.index[_mask_b3])
-                        if len(_idx_pos) > 0:
-                            _start = int(min(_idx_pos))
-                            _next_l3 = pd.to_numeric(plot_df[level_col], errors="coerce")
-                            # Идём по позиционным индексам ниже start и ищем
-                            # следующую запись с уровнем <= 3 (это конец «строения»).
-                            _all_pos = list(range(len(plot_df)))
-                            _end = len(plot_df)
-                            for _pp in _all_pos[_start + 1:]:
-                                _lv = _next_l3.iloc[_pp]
-                                if pd.notna(_lv) and int(_lv) <= 3:
-                                    _end = _pp
-                                    break
-                            plot_df = plot_df.iloc[_start:_end].copy()
-    with f_level:
-        # ТЗ заказчика 2026-05-06 + правки куратора 08.05.2026: два уровня задач —
-        # верхний (уровень MSP 4 в данных) и детальный (5). На UI без «(ур.N)». Опция
-        # «Все уровни» не используется. «Строения» — отдельный фильтр выше.
-        level_opts = ("Верхний уровень", "Детальный уровень")
-        level_sel = st.selectbox(
-            "Уровень отображения задач",
-            level_opts,
-            index=0,
-            key="gantt_level_display",
-        )
-        if not level_col:
-            suppress_caption("Нет колонки уровня.")
-    with f_view:
-        view_mode = st.selectbox(
-            "Вид отображения",
-            ("Гантт (полосы)", "Линии дат"),
-            index=0,
-            key="gantt_view_mode",
-        )
-
-    inject_unified_filters_css(st)
+                        _mask_b3 = (_ln_b == 3) & (_name_b == sel_building)
+                        if not bool(_mask_b3.any()):
+                            suppress_caption(
+                                f"В выборке нет строк с задачей уровня 3 «{sel_building}»."
+                            )
+                        else:
+                            # Берём всё «дерево» под выбранной задачей L3:
+                            # из текущей выборки оставляем строки этого блока и его детей
+                            # (в MSP-таблице они идут подряд, поэтому проще — фильтр по
+                            # совпадению proj_col и block_col + обрезка по позиции).
+                            _idx_pos = plot_df.index.get_indexer(plot_df.index[_mask_b3])
+                            if len(_idx_pos) > 0:
+                                _start = int(min(_idx_pos))
+                                _next_l3 = pd.to_numeric(plot_df[level_col], errors="coerce")
+                                # Идём по позиционным индексам ниже start и ищем
+                                # следующую запись с уровнем <= 3 (это конец «строения»).
+                                _all_pos = list(range(len(plot_df)))
+                                _end = len(plot_df)
+                                for _pp in _all_pos[_start + 1:]:
+                                    _lv = _next_l3.iloc[_pp]
+                                    if pd.notna(_lv) and int(_lv) <= 3:
+                                        _end = _pp
+                                        break
+                                plot_df = plot_df.iloc[_start:_end].copy()
+        with f_level:
+            # ТЗ заказчика 2026-05-06 + правки куратора 08.05.2026: два уровня задач —
+            # верхний (уровень MSP 4 в данных) и детальный (5). На UI без «(ур.N)». Опция
+            # «Все уровни» не используется. «Строения» — отдельный фильтр выше.
+            level_opts = ("Верхний уровень", "Детальный уровень")
+            level_sel = st.selectbox(
+                "Уровень отображения задач",
+                level_opts,
+                index=0,
+                key="gantt_level_display",
+            )
+            if not level_col:
+                suppress_caption("Нет колонки уровня.")
+        with f_view:
+            view_mode = st.selectbox(
+                "Вид отображения",
+                ("Гантт (полосы)", "Линии дат"),
+                index=0,
+                key="gantt_view_mode",
+            )
 
     _gcb_a, _gcb_b, _gcb_c = st.columns((1, 1, 1), gap="small")
     with _gcb_a:
@@ -32015,87 +31907,9 @@ def dashboard_project_schedule_chart(df):
                      f" Колонки файла: {', '.join(str(c) for c in _orig_cols_pct_diag[:15])}…")
             st.warning("Не найдена колонка процента выполнения — у концов полос будет «н/д»." + _hint)
         elif not _has_data:
-            suppress_caption(
-                f"Колонка процента выполнения найдена («{_gantt_pct_col_used}»), "
-                "но все значения пустые — у концов полос будет «н/д»."
+            st.warning(
+                f"Колонка «{_gantt_pct_col_used}» найдена, но значения пустые — у полос будет «н/д»."
             )
-        # Диагностический блок (открытый по умолчанию только при отсутствии данных).
-        with st.expander("Справка по колонке «% выполнения»", expanded=(not _has_data)):
-            _all_pct_like = [
-                c for c in _orig_cols_pct_diag
-                if "%" in str(c)
-                or any(w in str(c).lower() for w in ("percent", "complete", "процент", "выполн", "заверш", "готовн"))
-            ]
-            st.write(f"Использованная колонка: **{_gantt_pct_col_used or '— не найдена —'}**")
-            st.write(f"Не-пустых значений после парсинга: **{int(_pct_series.notna().sum())}** из {len(_pct_series)}")
-            st.write(f"Все колонки с признаками %: {_all_pct_like or '—'}")
-            # B2: какой источник реально попал в отчёт — уникальные __source_file и их доля.
-            try:
-                if "__source_file" in plot_df.columns:
-                    _src_counts = (
-                        plot_df["__source_file"].astype(str).replace({"nan": "—"}).value_counts(dropna=False)
-                    )
-                    st.write("**Источники строк (`__source_file`):**")
-                    st.dataframe(
-                        style_dataframe_for_dark_theme(
-                            _src_counts.rename("строк").to_frame()
-                        ),
-                        use_container_width=True,
-                    )
-                else:
-                    st.write("Колонка `__source_file` отсутствует — невозможно определить исходный файл.")
-            except Exception as _src_err:
-                st.write(f"Не удалось прочитать список исходных файлов: {_src_err}")
-            # B2: какая колонка «Блок» фактически используется и первые её значения.
-            try:
-                st.write(f"Колонка «Блок» (использ.): **{block_col or '— не найдена —'}**  "
-                         f"· MSP-«БЛОК»: **{block_col_msp or '—'}**")
-                if block_col and block_col in plot_df.columns:
-                    _blk_uniq = (
-                        plot_df[block_col].astype(str).map(str.strip)
-                        .replace({"": None, "nan": None}).dropna()
-                        .value_counts().head(15)
-                    )
-                    if not _blk_uniq.empty:
-                        st.dataframe(
-                            style_dataframe_for_dark_theme(
-                                _blk_uniq.rename("строк").to_frame()
-                            ),
-                            use_container_width=True,
-                        )
-            except Exception as _blk_err:
-                st.write(f"Не удалось прочитать значения колонки «Блок»: {_blk_err}")
-            # Скрытые символы в именах колонок: repr() — видно \xa0, \ufeff и пр.
-            _hidden = []
-            for c in _all_pct_like:
-                raw = str(c)
-                if any(ch in raw for ch in ("\xa0", "\ufeff", "\u202f", "\u2007")) or raw != raw.strip():
-                    _hidden.append({"имя (repr)": repr(raw), "коды": [hex(ord(ch)) for ch in raw]})
-            if _hidden:
-                st.warning("В именах колонок-кандидатов найдены скрытые символы:")
-                st.json(_hidden)
-            # Подсказка про дубликаты после ремапа MSP-колонок.
-            _dups = [c for c in set(map(str, plot_df.columns)) if list(plot_df.columns).count(c) > 1]
-            if _dups:
-                st.warning(
-                    f"Найдены **дублирующиеся колонки** после загрузки: {_dups}. "
-                    "Это типично, когда исходный файл уже содержит «pct complete», "
-                    "а маппинг MSP добавляет вторую копию из «Процент_завершения». "
-                    "Сейчас берётся колонка с большим числом непустых значений."
-                )
-            if _gantt_pct_col_used and _pc_raw:
-                _src = plot_df[_pc_raw]
-                if isinstance(_src, pd.DataFrame):
-                    _src = _src.iloc[:, 0]
-                st.dataframe(
-                    style_dataframe_for_dark_theme(
-                        _src.dropna()
-                        .astype(str)
-                        .head(10)
-                        .to_frame(name="первые 10 непустых значений")
-                    ),
-                    use_container_width=True,
-                )
 
     # Фильтры и лимит строк после назначения «% выполнения» (ТЗ: скрыть 100%; только просрочка по окончанию).
     if hide_completed:
@@ -32145,7 +31959,12 @@ def dashboard_project_schedule_chart(df):
         )
     else:
         plot_df = plot_df.sort_values(sort_cols, ascending=sort_asc, na_position="last")
-    plot_df = plot_df.head(400)
+    if len(plot_df) > _GANTT_MAX_ROWS:
+        plot_df = plot_df.head(_GANTT_MAX_ROWS)
+        suppress_caption(
+            f"На диаграмме показаны первые {_GANTT_MAX_ROWS} строк после фильтров "
+            "(для скорости отрисовки). Уточните фильтры, чтобы сузить выборку."
+        )
 
     lvl_for_indent = None
     if level_col:
@@ -33266,9 +33085,12 @@ def dashboard_project_schedule_chart(df):
     if tbl_show.empty:
         st.info("Нет колонок для таблицы.")
     else:
-        _render_gantt_schedule_html_table(tbl_show, max_rows=80)
-        if len(plot_df) > 80:
-            suppress_caption(f"Показано 80 из {len(plot_df)} строк (на диаграмме до 400 задач).")
+        with st.expander("Таблица задач", expanded=False):
+            _render_gantt_schedule_html_table(tbl_show, max_rows=50)
+            if len(plot_df) > 50:
+                suppress_caption(
+                    f"Показано 50 из {len(plot_df)} строк (на диаграмме до {_GANTT_MAX_ROWS} задач)."
+                )
 
 
 def dashboard_pd_delay(df):

@@ -79,8 +79,19 @@ from dashboard_diagnostics import render_dashboard_diagnostics_tab
 # │ ⊗ CSS CONNECT ¤ End                                                      │ #
 # └──────────────────────────────────────────────────────────────────────────┘ #
 
-# Инициализация базы данных (все таблицы создаются в db.init_all_tables)
-init_db()
+# Инициализация БД — один раз на процесс (без st.info на каждом rerun).
+_DB_INITIALIZED = False
+
+
+def _ensure_db_initialized() -> None:
+    global _DB_INITIALIZED
+    if _DB_INITIALIZED:
+        return
+    init_db(quiet=True)
+    _DB_INITIALIZED = True
+
+
+_ensure_db_initialized()
 
 # Версия приложения (git-sha + время билда). Используется:
 #  1) auto_ingest для детекции «код обновился, надо перевыкачать данные»;
@@ -224,51 +235,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# R23-08: перевод подписей встроенных пресетов st.date_input на русский.
-# Streamlit вырезает <script> из st.markdown, поэтому используем components.html
-# с height=0 — невидимый iframe, внутри которого скрипт меняет текст у родителя.
-try:
-    import streamlit.components.v1 as _components
-    _components.html(
-        """
-        <script>
-        (function() {
-            try {
-                const root = window.parent && window.parent.document ? window.parent.document : document;
-                const map = {
-                    'Choose a date range': 'Выберите период',
-                    'Past Week': 'Прошлая неделя',
-                    'Past Month': 'Прошлый месяц',
-                    'Past 3 Months': 'Последние 3 месяца',
-                    'Past 6 Months': 'Последние 6 месяцев',
-                    'Past Year': 'Последний год',
-                    'Past 2 Years': 'Последние 2 года'
-                };
-                const translate = (r) => {
-                    if (!r || !r.body) return;
-                    const walker = r.createTreeWalker(r.body, NodeFilter.SHOW_TEXT, null);
-                    let node;
-                    while ((node = walker.nextNode())) {
-                        const val = (node.nodeValue || '').trim();
-                        if (val && Object.prototype.hasOwnProperty.call(map, val)) {
-                            node.nodeValue = node.nodeValue.replace(val, map[val]);
-                        }
-                    }
-                };
-                translate(root);
-                if (window._ruDateObs) { try { window._ruDateObs.disconnect(); } catch (e) {} }
-                const obs = new MutationObserver(() => translate(root));
-                obs.observe(root.body, { childList: true, subtree: true });
-                window._ruDateObs = obs;
-            } catch (e) { /* cross-origin or unsupported */ }
-        })();
-        </script>
-        """,
-        height=0,
-    )
-except Exception:
-    pass
-
 # Скрываем сайдбар полностью если не авторизован
 if not st.session_state.get("authenticated"):
     st.markdown("""
@@ -289,19 +255,67 @@ if not st.session_state.get("authenticated"):
 
 load_custom_css()
 
-try:
-    from dashboards.ui_quiet import inject_unified_filters_css
+_RU_LABELS_INJECTED_THIS_RUN = False
 
-    inject_unified_filters_css(st)
-except Exception:
-    pass
 
-try:
-    from dashboards.streamlit_ru_inject import inject_multiselect_ru_translations
+def _inject_ru_labels_once() -> None:
+    """Один iframe на rerun; по умолчанию выключено (BI_ANALYTICS_RU_INJECT=1)."""
+    global _RU_LABELS_INJECTED_THIS_RUN
+    if _RU_LABELS_INJECTED_THIS_RUN:
+        return
+    try:
+        from dashboards.streamlit_ru_inject import inject_multiselect_ru_translations, ru_inject_enabled
 
-    inject_multiselect_ru_translations()
-except Exception:
-    pass
+        if not ru_inject_enabled():
+            return
+        inject_multiselect_ru_translations()
+        _RU_LABELS_INJECTED_THIS_RUN = True
+    except Exception:
+        pass
+
+
+def _render_active_dashboard(
+    selected_dashboard: str,
+    df_for_render: "pd.DataFrame",
+    *,
+    release_mode: bool,
+) -> None:
+    """Тело отчёта (в st.fragment — фильтры не перезапускают всё приложение)."""
+    from dashboards import get_dashboards
+
+    dashboards = get_dashboards()
+    render_fn = dashboards.get(selected_dashboard)
+    if not render_fn:
+        st.warning(
+            f"График '{selected_dashboard}' не найден. Выберите другой отчёт в боковом меню."
+        )
+        st.info(f"Текущий выбор: {selected_dashboard}")
+        return
+    if df_for_render is None or (
+        isinstance(df_for_render, pd.DataFrame) and df_for_render.empty
+    ):
+        st.warning(
+            f"Нет данных для отчёта «{selected_dashboard}». "
+            "Загрузите данные (вручную, web/ или FTP) или выберите другой отчёт "
+            "в боковом меню."
+        )
+        return
+    if release_mode:
+        render_fn(df_for_render)
+        return
+    tab_dash, tab_diag = st.tabs(["Дашборд", "Диагностика (dev)"])
+    with tab_dash:
+        render_fn(df_for_render)
+    with tab_diag:
+        render_dashboard_diagnostics_tab(
+            selected_dashboard,
+            df_for_render,
+            st.session_state,
+        )
+
+
+if hasattr(st, "fragment"):
+    _render_active_dashboard = st.fragment(_render_active_dashboard)
 
 # ┌──────────────────────────────────────────────────────────────────────────┐ #
 # │ ⊗ CSS CONNECT ¤ End                                                      │ #
@@ -661,6 +675,8 @@ def main():
             logout()
             st.rerun()
         st.stop()
+
+    _inject_ru_labels_once()
 
     _dash_title = str(st.session_state.get("current_dashboard") or "").strip()
     _h1_text = (
@@ -1513,35 +1529,12 @@ def main():
             df_for_render = df
 
         try:
-            dashboards = get_dashboards()
-            render_fn = dashboards.get(selected_dashboard)
-            if render_fn:
-                if df_for_render is None or (
-                    isinstance(df_for_render, pd.DataFrame) and df_for_render.empty
-                ):
-                    st.warning(
-                        f"Нет данных для отчёта «{selected_dashboard}». "
-                        "Загрузите данные (вручную, web/ или FTP) или выберите другой отчёт "
-                        "в боковом меню."
-                    )
-                else:
-                    if _is_release_client_mode():
-                        render_fn(df_for_render)
-                    else:
-                        tab_dash, tab_diag = st.tabs(["Дашборд", "Диагностика (dev)"])
-                        with tab_dash:
-                            render_fn(df_for_render)
-                        with tab_diag:
-                            render_dashboard_diagnostics_tab(
-                                selected_dashboard,
-                                df_for_render,
-                                st.session_state,
-                            )
-            else:
-                st.warning(
-                    f"График '{selected_dashboard}' не найден. Выберите другой отчёт в боковом меню."
+            with st.spinner("Загрузка отчёта…"):
+                _render_active_dashboard(
+                    selected_dashboard,
+                    df_for_render,
+                    release_mode=_is_release_client_mode(),
                 )
-                st.info(f"Текущий выбор: {selected_dashboard}")
         except Exception as e:
             st.error(f"Ошибка при отображении графика '{selected_dashboard}': {str(e)}")
             st.exception(e)
