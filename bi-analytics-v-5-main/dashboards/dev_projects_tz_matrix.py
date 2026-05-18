@@ -1572,6 +1572,7 @@ def build_dev_tz_matrix_rows(
         *,
         warn_pct: bool = False,
         warn_directives: bool = False,
+        otkl_fact_lt_plan: bool = False,
         phase: str = "",
         row_key: str = "",
     ) -> None:
@@ -1599,6 +1600,7 @@ def build_dev_tz_matrix_rows(
                 "warn": bool(warn_pct or warn_directives),
                 "warn_pct": bool(warn_pct),
                 "warn_directives": bool(warn_directives),
+                "otkl_fact_lt_plan": bool(otkl_fact_lt_plan),
                 "phase": phase,
                 "row_key": str(row_key or "").strip(),
             }
@@ -1833,6 +1835,7 @@ def build_dev_tz_matrix_rows(
             _fmtml(pm),
             _fmtml(fm),
             _fmtml(om),
+            otkl_fact_lt_plan=bool(fm < pm),
             phase="life",
             row_key=rk_ds,
         )
@@ -2340,9 +2343,12 @@ def _dev_tz_matrix_cell_classes(
     if col == "otkl":
         if warn_dir:
             parts.append("dev-tz-directives-warn")
-        dd = _parse_otkl_days_display(v)
-        if dd is not None:
-            parts.append("dev-tz-otkl-ok" if dd >= 0 else "dev-tz-otkl-bad")
+        if bool(r.get("otkl_fact_lt_plan")):
+            parts.append("dev-tz-otkl-bad")
+        else:
+            dd = _parse_otkl_days_display(v)
+            if dd is not None:
+                parts.append("dev-tz-otkl-ok" if dd >= 0 else "dev-tz-otkl-bad")
     return " ".join(parts).strip()
 
 
