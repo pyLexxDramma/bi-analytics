@@ -31289,6 +31289,7 @@ def dashboard_project_schedule_chart(df):
     # из-за чего возникали огромные чёрные пустоты над/под полосами.
     # Теперь min height ~450px, row height ~54px, margins разумные.
     _GANTT_VIS_SCALE = 1.5
+    _GANTT_ROW_BLOCK_SCALE = 3.0  # высота блока «название + план/факт + даты» (×3 к базовой)
     _GANTT_FONT_SCALE = 1.15
     _GANTT_MARKER_SCALE = 1.2
     _GANTT_STROKE_SCALE = 1.2
@@ -31506,8 +31507,10 @@ def dashboard_project_schedule_chart(df):
         suppress_caption(
             "Фильтры: проект (ур. 1), функциональный блок (ур. 2), уровень структуры MSP (3/4/5 или все), опционально — только лоты. "
             "График ковенантов по ТЗ (синие/красные точки на шкале дат): включите флажок «Ковенанты по ТЗ» в колонке «Вид отображения» или выберите блок, в названии которого есть «ковенант» / «covenant». "
-            "Полосы: план и базовый план (если есть данные). "
-            "Переключатель подписей: дата окончания или % выполнения — подпись сразу справа от конца полос этой строки (план и при наличии — база). "
+            "Две полосы в строке (как «Отклонение от базового плана»): бирюзовая — план (начало–окончание), "
+            "оранжевая — факт (в MSP: «Старт/Конец факт» — base start / base end, при отсутствии — actual). "
+            "Фиолетовый ромб — базовое окончание (ковенанта), только при галочке «Ковенанты по ТЗ». "
+            "Дата начала — у левого края полосы, дата окончания (и при включённой галочке — %) — справа."
             "Масштаб и панорама колесом мыши (scroll) включены; при странном поведении подписей — панель инструментов (+/−, рамка). "
             "Названия задач — в полосе слева от полей дат (xaxis.domain + аннотации xref x domain), чтобы не наезжали на полосы."
         )
@@ -31751,7 +31754,7 @@ def dashboard_project_schedule_chart(df):
     with f1:
         if proj_col:
             projs = ["Все"] + sorted(plot_df[proj_col].dropna().astype(str).unique().tolist())
-            sel_proj = st.selectbox("Проект (ур. 1)", projs, key="gantt_project_filter")
+            sel_proj = st.selectbox("Проект", projs, key="gantt_project_filter")
             if sel_proj != "Все":
                 plot_df = plot_df[plot_df[proj_col].astype(str).str.strip() == str(sel_proj).strip()]
         else:
@@ -31821,7 +31824,7 @@ def dashboard_project_schedule_chart(df):
                     except Exception:
                         pass
             blocks = ["Все"] + _block_values
-            sel_block = st.selectbox("Функциональный блок (ур. 2)", blocks, key="gantt_block_filter")
+            sel_block = st.selectbox("Функциональный блок", blocks, key="gantt_block_filter")
             if sel_block != "Все":
                 plot_df = plot_df[plot_df[block_col].astype(str).str.strip() == str(sel_block).strip()]
             if not block_col_msp:
@@ -31878,17 +31881,10 @@ def dashboard_project_schedule_chart(df):
                                     break
                             plot_df = plot_df.iloc[_start:_end].copy()
     with f_level:
-        # ТЗ заказчика 2026-05-06 + правки куратора 08.05.2026: только два
-        # уровня для отображения задач — «Верхний уровень (ур. 4)» и
-        # «Детальный уровень (ур. 5)». Дефолт — «Верхний (4)». Опция
-        # «Все уровни» убрана. «Строения» вынесены в отдельный фильтр выше.
-        # Фильтр применяем ниже, после чтения чекбокса «Показать причины
-        # отклонений» (при включённой галочке выбор уровня переопределяется
-        # на ур. 5 + все родители).
-        level_opts = (
-            "Верхний уровень (4)",
-            "Детальный уровень (5)",
-        )
+        # ТЗ заказчика 2026-05-06 + правки куратора 08.05.2026: два уровня задач —
+        # верхний (уровень MSP 4 в данных) и детальный (5). На UI без «(ур.N)». Опция
+        # «Все уровни» не используется. «Строения» — отдельный фильтр выше.
+        level_opts = ("Верхний уровень", "Детальный уровень")
         level_sel = st.selectbox(
             "Уровень отображения задач",
             level_opts,
@@ -31904,40 +31900,66 @@ def dashboard_project_schedule_chart(df):
             index=0,
             key="gantt_view_mode",
         )
+
+    inject_unified_filters_css(st)
+
+    _gcb_a, _gcb_b, _gcb_c = st.columns((1, 1, 1), gap="small")
+    with _gcb_a:
         force_covenant_points = st.checkbox(
             "Ковенанты по ТЗ: точки на шкале (базовое и окончание)",
             value=False,
             key="gantt_force_covenant_points",
             help=(
                 "Синие маркеры — базовое окончание, красные — окончание (факт или план). "
-                "Включается ТОЛЬКО по этому селектору."
+                "Включается только по этой галочке."
             ),
         )
-
-    # Правки куратора 08.05.2026: «График ковенант должен выводиться только когда
-    # прожат селектор, в остальных случаях — обычный гант по всем задачам проекта».
-    # Раньше is_covenants авто-включался, если в фильтре «Функциональный блок» было
-    # выбрано что-то со словом «ковенант»/«covenant» — этого больше не делаем.
-    is_covenants = bool(force_covenant_points)
-
-    lot_row_l, lot_row_r = st.columns(2)
-    with lot_row_l:
         show_reasons = st.checkbox(
             "Показать причины отклонений",
             value=False,
             key="gantt_show_deviation_cols",
             help=(
                 "По ТЗ: при включении в выборку добавляются задачи уровня 5 "
-                "(только в них есть причины отклонений и заметки) + все их родительские "
-                "задачи выше. Селектор «Уровень отображения задач» при этом игнорируется."
+                "(только в них есть причины отклонений и заметки) и все родительские "
+                "задачи выше. Селектор «Уровень отображения задач» игнорируется."
             ),
         )
-    with lot_row_r:
+    with _gcb_b:
         show_lots = st.checkbox(
             "Отображать в лотах",
             value=False,
             key="gantt_show_lots",
         )
+        label_pct = st.checkbox(
+            "Показывать % выполнения",
+            value=True,
+            key="gantt_bar_label_pct",
+            help=(
+                "В подписи у конца полосы добавляются проценты; даты начала и окончания "
+                "плана показываются всегда."
+            ),
+        )
+    with _gcb_c:
+        hide_completed = st.checkbox(
+            "Скрыть задачи с 100% выполнения",
+            value=False,
+            key="gantt_hide_completed",
+        )
+        only_finish_delay = st.checkbox(
+            "На диаграмме только просрочка по окончанию (базовое − факт/plan < 0 дн.)",
+            value=True,
+            key="gantt_only_finish_delay",
+            disabled=bool(force_covenant_points),
+            help=(
+                "По ТЗ для режима без «Ковенанты»: только задачи, где базовое окончание раньше "
+                "планового/фактического (просрочка по «базовое окончание − окончание»)."
+            ),
+        )
+
+    # Правки куратора 08.05.2026: график ковенант — только явная галочка.
+    is_covenants = bool(force_covenant_points)
+    if is_covenants:
+        only_finish_delay = False
 
     # ── Применяем фильтр уровня (по селектору) или show_reasons-override (ур. 5 + предки) ──
     # Делаем здесь, чтобы значение чекбокса show_reasons уже было известно и могло
@@ -31966,8 +31988,8 @@ def dashboard_project_schedule_chart(df):
         # если уровня 5 в выборке нет — оставляем плот как есть, чтобы не получить пустоту.
     elif level_col and level_sel != "Все уровни":
         lvl_map = {
-            "Верхний уровень (4)": 4,
-            "Детальный уровень (5)": 5,
+            "Верхний уровень": 4,
+            "Детальный уровень": 5,
         }
         target = int(lvl_map[level_sel])
         ln = pd.to_numeric(plot_df[level_col], errors="coerce")
@@ -32008,40 +32030,11 @@ def dashboard_project_schedule_chart(df):
             )
     elif show_lots and not lot_col:
         suppress_caption("Колонка лота не найдена — фильтр «в лотах» недоступен.")
-    label_pct = st.checkbox(
-        "Показывать % выполнения",
-        # По правкам куратора 2026-05-08: галочка переименована («Подписи у конца задач:
-        # показывать % выполнения» → «Показывать % выполнения»). Семантика та же —
-        # подписи справа от полос: доля выполнения (вместо даты окончания).
-        value=True,
-        key="gantt_bar_label_pct",
-    )
-    # По правкам куратора 2026-05-08: убраны селекторы «Плотность подписей» и
-    # toggle «Авто защита от наложения при масштабировании» (не работали должным
-    # образом). Фиксированный режим — показывать ВСЕ подписи у каждой полосы,
-    # без авто-сжатия при масштабе страницы. Корректное отображение без наложения
-    # обеспечивается логикой рендера ниже (укорочение, расстановка справа от баров).
+    # Подписи слева/в режимах линий: параметры уплотнения (без дубля чекбоксов выше).
     force_all_labels = True
     labels_hover_only = False
     labels_summary_only = False
     auto_compact_on_zoom = False
-    hide_completed = st.checkbox(
-        "Скрыть задачи с 100% выполнения",
-        value=False,
-        key="gantt_hide_completed",
-    )
-    only_finish_delay = st.checkbox(
-        "На диаграмме только просрочка по окончанию (базовое − факт/plan < 0 дн.)",
-        value=True,
-        key="gantt_only_finish_delay",
-        disabled=is_covenants,
-        help=(
-            "По ТЗ для блоков кроме «Ковенанты»: только задачи, где базовое окончание раньше фактического/планового "
-            "(просрочка по формуле «базовое окончание − окончание»)."
-        ),
-    )
-    if is_covenants:
-        only_finish_delay = False
 
     if plot_df.empty:
         st.info("Нет строк после фильтров.")
@@ -32502,6 +32495,401 @@ def dashboard_project_schedule_chart(df):
                 return c
         return None
 
+    def _gantt_find_fact_start_column(d: pd.DataFrame):
+        """Колонка фактического начала (если есть) для полосы «Факт»."""
+        if d is None or getattr(d, "empty", True):
+            return None
+        hit = _sched_col(
+            d,
+            [
+                "actual start",
+                "Actual Start",
+                "fact start",
+                "Fact Start",
+                "факт начало",
+                "Факт начало",
+                "факт: начало",
+            ],
+        )
+        if hit:
+            return hit
+        for c in d.columns:
+            sl = str(c).strip().lower().replace("_", " ")
+            if ("actual" in sl or "факт" in sl) and any(x in sl for x in ("start", "begin", "начал")):
+                return c
+        return None
+
+    def _build_grouped_plan_fact_gantt_figure(
+        d: pd.DataFrame,
+        policy: dict,
+        *,
+        label_pct: bool,
+        pct_values: list,
+        date_fmt: str,
+        show_covenant_markers: bool = False,
+    ) -> go.Figure:
+        """Две полосы (план / факт); ромб ковенанты — только при включённой галочке."""
+        local = d.copy()
+        for _dc in ("plan start", "plan end", "base start", "base end"):
+            if _dc in local.columns:
+                local[_dc] = pd.to_datetime(local[_dc], errors="coerce", dayfirst=True)
+
+        fact_end_col = _gantt_find_fact_end_column(local)
+        fact_start_col = _gantt_find_fact_start_column(local)
+        if fact_end_col and fact_end_col in local.columns:
+            local[fact_end_col] = pd.to_datetime(local[fact_end_col], errors="coerce", dayfirst=True)
+        if fact_start_col and fact_start_col in local.columns:
+            local[fact_start_col] = pd.to_datetime(local[fact_start_col], errors="coerce", dayfirst=True)
+
+        def _epoch_ms(ts) -> Optional[float]:
+            if ts is None or (isinstance(ts, float) and pd.isna(ts)):
+                return None
+            t = pd.Timestamp(ts)
+            if pd.isna(t):
+                return None
+            return float(t.timestamp() * 1000.0)
+
+        def _fmt_bar_date(ts, *, long_fmt: bool = False) -> str:
+            if ts is None or (isinstance(ts, float) and pd.isna(ts)):
+                return ""
+            try:
+                tt = pd.Timestamp(ts)
+                if pd.isna(tt):
+                    return ""
+                return tt.strftime("%d.%m.%Y" if long_fmt else date_fmt)
+            except Exception:
+                return ""
+
+        def _resolve_fact_interval(row) -> tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]]:
+            """Факт в MSP-выгрузках: base start/end (Старт/Конец факт); запас — actual start/finish."""
+            bs = row.get("base start")
+            be = row.get("base end")
+            fs = row.get(fact_start_col) if fact_start_col else None
+            fe = row.get(fact_end_col) if fact_end_col else None
+            start = bs if pd.notna(bs) else fs
+            end = be if pd.notna(be) else fe
+            ps = row.get("plan start")
+            if pd.notna(end) and pd.isna(start) and pd.notna(ps):
+                start = ps
+            if pd.notna(start) and pd.notna(end):
+                try:
+                    if pd.Timestamp(end) < pd.Timestamp(start):
+                        return (None, None)
+                except Exception:
+                    return (None, None)
+                return (pd.Timestamp(start), pd.Timestamp(end))
+            return (None, None)
+
+        y_labels: list[str] = []
+        plan_len_ms: list[float] = []
+        plan_base_ms: list[float] = []
+        fact_len_ms: list[float] = []
+        fact_base_ms: list[float] = []
+        cust_plan: list[tuple[str, str]] = []
+        cust_fact: list[tuple[str, str]] = []
+        base_end_x: list = []
+        base_end_y: list[str] = []
+        _row_meta: list[dict] = []
+        _seen_y: dict[str, int] = {}
+        _n_fact_ok = 0
+
+        for i, (_, row) in enumerate(local.iterrows()):
+            y = str(row["_gantt_y_label"])
+            if y in _seen_y:
+                _seen_y[y] += 1
+                y = f"{y} #{_seen_y[y]}"
+            else:
+                _seen_y[y] = 1
+            ps = row.get("plan start")
+            pe = row.get("plan end")
+            if pd.isna(ps) or pd.isna(pe):
+                continue
+            y_labels.append(y)
+
+            p0 = _epoch_ms(ps)
+            p1 = _epoch_ms(pe)
+            plan_base_ms.append(float(p0) if p0 is not None else 0.0)
+            plan_len_ms.append(max(0.0, float(p1 - p0)) if p0 is not None and p1 is not None else 0.0)
+            cust_plan.append((_fmt_bar_date(ps, long_fmt=True), _fmt_bar_date(pe, long_fmt=True)))
+
+            fs, fe = _resolve_fact_interval(row)
+            f0 = _epoch_ms(fs)
+            f1 = _epoch_ms(fe)
+            if f0 is not None and f1 is not None and f1 >= f0:
+                fact_base_ms.append(float(f0))
+                fact_len_ms.append(max(0.0, float(f1 - f0)))
+                cust_fact.append((_fmt_bar_date(fs, long_fmt=True), _fmt_bar_date(fe, long_fmt=True)))
+                _n_fact_ok += 1
+            else:
+                fact_base_ms.append(0.0)
+                fact_len_ms.append(0.0)
+                cust_fact.append(("—", "—"))
+
+            if show_covenant_markers:
+                be = row.get("base end")
+                if pd.notna(be):
+                    base_end_x.append(pd.Timestamp(be))
+                    base_end_y.append(y)
+
+            pv = pct_values[i] if i < len(pct_values) else np.nan
+            _row_meta.append(
+                {
+                    "y": y,
+                    "ps": pd.Timestamp(ps) if pd.notna(ps) else None,
+                    "pe": pd.Timestamp(pe) if pd.notna(pe) else None,
+                    "fs": fs,
+                    "fe": fe,
+                    "pct": pv,
+                }
+            )
+
+        fig = go.Figure()
+        if not y_labels:
+            return fig
+
+        fig.add_trace(
+            go.Bar(
+                name="План",
+                orientation="h",
+                x=plan_len_ms,
+                y=y_labels,
+                base=plan_base_ms,
+                marker=dict(color="#14b8a6"),
+                text=[""] * len(y_labels),
+                textposition="none",
+                cliponaxis=False,
+                hovertemplate="%{y}<br>План: %{customdata[0]} — %{customdata[1]}<extra></extra>",
+                customdata=cust_plan,
+            )
+        )
+        if _n_fact_ok > 0:
+            fig.add_trace(
+                go.Bar(
+                    name="Факт",
+                    orientation="h",
+                    x=fact_len_ms,
+                    y=y_labels,
+                    base=fact_base_ms,
+                    marker=dict(color="#fb923c"),
+                    text=[""] * len(y_labels),
+                    textposition="none",
+                    cliponaxis=False,
+                    hovertemplate="%{y}<br>Факт: %{customdata[0]} — %{customdata[1]}<extra></extra>",
+                    customdata=cust_fact,
+                )
+            )
+        else:
+            suppress_caption(
+                "Полоса «Факт» не построена: в выборке нет пар дат "
+                "«Старт факт / Конец факт» (base start / base end) или actual start / actual finish."
+            )
+        fig.update_layout(barmode="group")
+
+        _lbl_font = max(10, int(policy.get("label_font", 11)))
+        label_left_x: list = []
+        label_left_y: list[str] = []
+        label_left_txt: list[str] = []
+        label_right_x: list = []
+        label_right_y: list[str] = []
+        label_right_txt: list[str] = []
+
+        try:
+            _lo = pd.to_datetime(local["plan start"], errors="coerce").min()
+            _hi = pd.to_datetime(local["plan end"], errors="coerce").max()
+            if "base end" in local.columns:
+                _be = pd.to_datetime(local["base end"], errors="coerce")
+                if _be.notna().any():
+                    _hi = max(_hi, _be.max()) if pd.notna(_hi) else _be.max()
+            span = max(((_hi - _lo).total_seconds() / 86400.0) if pd.notna(_lo) and pd.notna(_hi) else 120.0, 1.0)
+        except Exception:
+            span = 120.0
+
+        off_left = timedelta(days=max(8.0, span * 0.028))
+        off_right = timedelta(days=max(10.0, span * 0.034))
+        stagger_step = max(0.45, span * 0.0028)
+        _n_rows_lbl = max(1, len(_row_meta))
+        _label_step = 1
+        if policy.get("is_very_dense") and _n_rows_lbl > 150:
+            _label_step = 3
+        elif policy.get("is_dense") and _n_rows_lbl > 110:
+            _label_step = 2
+        _left_stagger: dict[str, int] = {}
+        _right_stagger: dict[str, int] = {}
+
+        for idx, meta in enumerate(_row_meta):
+            if idx % _label_step != 0:
+                continue
+            y = meta["y"]
+            ps, pe = meta["ps"], meta["pe"]
+            fs, fe = meta["fs"], meta["fe"]
+            left_lines: list[str] = []
+            right_lines: list[str] = []
+            if ps is not None:
+                left_lines.append(_fmt_bar_date(ps, long_fmt=True))
+            if fs is not None and (ps is None or fs.normalize() != ps.normalize()):
+                left_lines.append(f"Ф {_fmt_bar_date(fs, long_fmt=True)}")
+            if pe is not None:
+                end_s = _fmt_bar_date(pe, long_fmt=True)
+                if label_pct and pd.notna(meta["pct"]):
+                    try:
+                        end_s = f"{end_s} · {int(round(float(meta['pct'])))}%"
+                    except (TypeError, ValueError):
+                        pass
+                right_lines.append(end_s)
+            if fe is not None and (pe is None or fe.normalize() != pe.normalize()):
+                right_lines.append(f"Ф {_fmt_bar_date(fe, long_fmt=True)}")
+            if not left_lines and not right_lines:
+                continue
+            if left_lines:
+                anchor = ps if ps is not None else fs
+                if anchor is not None:
+                    k = anchor.strftime("%Y-%m-%d")
+                    rank = int(_left_stagger.get(k, 0))
+                    _left_stagger[k] = rank + 1
+                    label_left_x.append(anchor - off_left - timedelta(days=stagger_step * rank))
+                    label_left_y.append(y)
+                    label_left_txt.append("<br>".join(left_lines))
+            if right_lines:
+                anchor = pe if pe is not None else fe
+                if anchor is not None:
+                    k = anchor.strftime("%Y-%m-%d")
+                    rank = int(_right_stagger.get(k, 0))
+                    _right_stagger[k] = rank + 1
+                    label_right_x.append(anchor + off_right + timedelta(days=stagger_step * rank))
+                    label_right_y.append(y)
+                    label_right_txt.append("<br>".join(right_lines))
+
+        if label_left_x:
+            fig.add_trace(
+                go.Scatter(
+                    x=label_left_x,
+                    y=label_left_y,
+                    mode="text",
+                    text=label_left_txt,
+                    textposition="middle right",
+                    textfont=dict(size=_lbl_font, color="#e8eaed", family="Arial"),
+                    showlegend=False,
+                    hoverinfo="skip",
+                    cliponaxis=False,
+                )
+            )
+        if label_right_x:
+            fig.add_trace(
+                go.Scatter(
+                    x=label_right_x,
+                    y=label_right_y,
+                    mode="text",
+                    text=label_right_txt,
+                    textposition="middle left",
+                    textfont=dict(size=_lbl_font, color="#f8fafc", family="Arial"),
+                    showlegend=False,
+                    hoverinfo="skip",
+                    cliponaxis=False,
+                )
+            )
+        if show_covenant_markers and base_end_x:
+            fig.add_trace(
+                go.Scatter(
+                    x=base_end_x,
+                    y=base_end_y,
+                    mode="markers",
+                    name="Базовое окончание (ковенанта)",
+                    marker=dict(
+                        symbol="diamond",
+                        size=int(policy.get("marker_size", 10)) + 2,
+                        color="#C084FC",
+                        line=dict(color="rgba(255,255,255,0.75)", width=1),
+                    ),
+                    hovertemplate="%{y}<br>Базовое окончание: %{x|%d.%m.%Y}<extra></extra>",
+                    showlegend=True,
+                )
+            )
+
+        n_rows = len(y_labels)
+        _row_base_px = 52 if policy.get("is_dense") else 46
+        row_px = int(round(_row_base_px * _GANTT_ROW_BLOCK_SCALE))
+        chart_h = min(
+            int(round(14000 * _GANTT_VIS_SCALE)),
+            max(
+                int(round(400 * _GANTT_VIS_SCALE)),
+                int(n_rows * row_px * _GANTT_VIS_SCALE),
+            ),
+        )
+        fig.update_layout(
+            autosize=True,
+            width=None,
+            height=chart_h,
+            xaxis_title="Период",
+            yaxis_title=None,
+            margin=dict(l=64, r=120, t=48, b=56),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            bargap=0.12,
+            bargroupgap=0.14,
+        )
+        fig.update_yaxes(
+            categoryorder="array",
+            categoryarray=y_labels,
+            autorange="reversed",
+            tickfont=dict(size=policy.get("task_font", 11), color=TABLE_TEXT_COLOR),
+            automargin=True,
+            side="left",
+        )
+        fig.update_xaxes(type="date", tickformat="%d.%m.%Y", automargin=True)
+
+        try:
+            _lo = pd.to_datetime(local["plan start"], errors="coerce").min()
+            _hi = pd.to_datetime(local["plan end"], errors="coerce").max()
+            if "base end" in local.columns:
+                _be = pd.to_datetime(local["base end"], errors="coerce")
+                if _be.notna().any():
+                    _hi = max(_hi, _be.max()) if pd.notna(_hi) else _be.max()
+            if fact_end_col and fact_end_col in local.columns:
+                _fe = pd.to_datetime(local[fact_end_col], errors="coerce")
+                if _fe.notna().any():
+                    _hi = max(_hi, _fe.max()) if pd.notna(_hi) else _fe.max()
+            if pd.notna(_lo) and pd.notna(_hi):
+                span = max((_hi - _lo).total_seconds() / 86400.0, 1.0)
+                pad = timedelta(days=max(18.0, span * 0.08))
+                lo_pad = _lo - pad
+                hi_pad = _hi + pad
+                if label_left_x:
+                    lo_pad = min(lo_pad, min(pd.Timestamp(x) for x in label_left_x) - pad)
+                if label_right_x:
+                    hi_pad = max(hi_pad, max(pd.Timestamp(x) for x in label_right_x) + pad)
+                fig.update_xaxes(range=[lo_pad, hi_pad], autorange=False)
+                tvals, ttext = _gantt_ru_date_ticks(
+                    lo_pad,
+                    hi_pad,
+                    max_ticks=int(policy.get("max_ticks", 22)),
+                )
+                if tvals and ttext and len(tvals) == len(ttext):
+                    fig.update_xaxes(
+                        tickmode="array",
+                        tickvals=[pd.Timestamp(t).strftime("%Y-%m-%d") for t in tvals],
+                        ticktext=ttext,
+                        tickangle=-25,
+                        tickformat="",
+                    )
+        except Exception:
+            pass
+
+        try:
+            _today_ts = pd.Timestamp.today().normalize()
+            fig.add_vline(
+                x=_today_ts,
+                line_dash="dot",
+                line_color="rgba(255,255,255,0.45)",
+                line_width=1.2,
+                annotation_text="Сегодня",
+                annotation_position="top",
+                annotation_font_color="rgba(255,255,255,0.75)",
+                annotation_font_size=10,
+            )
+        except Exception:
+            pass
+
+        return apply_chart_background(fig, skip_uniformtext=True)
+
     def _build_covenants_points_figure(d: pd.DataFrame, policy: dict):
         """Режим «Ковенанты»: базовое окончание (синяя точка) и окончание (красная) с подписями дат."""
         _df = d.copy()
@@ -32652,7 +33040,7 @@ def dashboard_project_schedule_chart(df):
         fig = apply_chart_background(fig, skip_uniformtext=True)
         return fig, fact_end_col, fact_label
 
-    plot_df["_gantt_y_label"] = [_gantt_trunc_label(s) for s in y_labels]
+    plot_df["_gantt_y_label"] = [_gantt_trunc_label(s, 165) for s in y_labels]
     _readability = _gantt_readability_policy(plot_df)
     _effective_force_all = bool(
         force_all_labels and not (auto_compact_on_zoom and _readability.get("is_dense"))
@@ -32666,12 +33054,11 @@ def dashboard_project_schedule_chart(df):
     if has_base:
         has_base = plot_df["base start"].notna().any() and plot_df["base end"].notna().any()
     if not has_base:
-        st.info("В данных нет заполненных «Базовое начало» / «Базовое окончание» — на диаграмме только текущий план.")
+        st.info(
+            "В данных нет заполненных «Базовое начало» / «Базовое окончание» — "
+            "ромб ковенанты (базовое окончание) может не отображаться."
+        )
 
-    plan_texts = []
-    base_tasks, base_starts, base_ends = [], [], []
-
-    # Подготовим pct complete как гарантированную Series (на случай дубликатов колонок).
     if "pct complete" in plot_df.columns:
         _pc_obj = plot_df["pct complete"]
         if isinstance(_pc_obj, pd.DataFrame):
@@ -32680,576 +33067,17 @@ def dashboard_project_schedule_chart(df):
     else:
         _pct_values = [np.nan] * len(plot_df)
 
-    for _i, (_idx, row) in enumerate(plot_df.iterrows()):
-        ps, pe = row["plan start"], row["plan end"]
-        pe_d = pe.strftime(_readability["date_fmt"]) if hasattr(pe, "strftime") else str(pe)
-        pv = _pct_values[_i] if _i < len(_pct_values) else np.nan
-        if label_pct:
-            if pd.notna(pv):
-                try:
-                    plan_texts.append(f"{int(round(float(pv)))}%")
-                except (TypeError, ValueError):
-                    plan_texts.append("н/д")
-            else:
-                plan_texts.append("н/д")
-        else:
-            plan_texts.append(pe_d)
-        if has_base:
-            y = row["_gantt_y_label"]
-            bs, be = row.get("base start"), row.get("base end")
-            if pd.notna(bs) and pd.notna(be):
-                base_tasks.append(y)
-                base_starts.append(bs)
-                base_ends.append(be)
-
-    # Подписи у правого края каждой строки: одна строка текста (без второй строки "база"),
-    # чтобы уменьшить наложение при масштабировании страницы.
-    right_labels = []
-    for i, (_, row) in enumerate(plot_df.iterrows()):
-        top = str(plan_texts[i]) if i < len(plan_texts) else ""
-        if has_base and not label_pct:
-            # Для даты показываем правый конец (макс. из план/база), чтобы подпись стояла у крайнего столбца.
-            pev = row.get("plan end")
-            bev = row.get("base end")
-            ends = []
-            if pd.notna(pev):
-                ends.append(pd.Timestamp(pev))
-            if pd.notna(bev):
-                ends.append(pd.Timestamp(bev))
-            if ends:
-                top = max(ends).strftime(_readability["date_fmt"])
-        right_labels.append(top)
-
-    _rl_lens = [len(str(s).replace("\n", " ")) for s in right_labels if str(s).strip()]
-    _max_rl = max(_rl_lens, default=0)
-    # Запас справа под подписи у концов полос (дата / %).
-    # При 15-16px шрифте нужно больше пространства.
-    right_m = int(
-        min(
-            int(round(300 * _GANTT_VIS_SCALE)),
-            max(int(round(110 * _GANTT_VIS_SCALE)), int(round((80 + min(_max_rl, 20) * 9) * _GANTT_VIS_SCALE))),
-        )
+    _dfmt_lbl = _readability["date_fmt"]
+    fig_gantt = _build_grouped_plan_fact_gantt_figure(
+        plot_df,
+        _readability,
+        label_pct=label_pct,
+        pct_values=_pct_values,
+        date_fmt=_dfmt_lbl,
+        show_covenant_markers=bool(is_covenants),
     )
+    chart_h = int(getattr(fig_gantt.layout, "height", None) or 520)
 
-    # ── Стиль Power BI (запрошено заказчиком 2026-05-07, референс — Power BI Gantt) ──
-    # Двухслойные полосы:
-    #   светлый «план» (вся длина задачи)
-    #   тёмный «факт» поверх, длина = plan_start + dur * pct/100
-    # Цвета фиксированные, без палитры по блокам — блок различим по фильтру/таблице.
-    _GANTT_PLAN_COLOR = "#7FD0C5"   # светло-бирюзовый — фон полосы (план)
-    _GANTT_FACT_COLOR = "#0E9C8E"   # тёмно-бирюзовый — наложение по % выполнения
-    if block_col and block_col in plot_df.columns:
-        _blocks_series = plot_df[block_col].astype(str).fillna("Прочее")
-    else:
-        _blocks_series = pd.Series("Все", index=plot_df.index, dtype=object)
-
-    # Длительность задачи (для tooltip + расчёта факт-наложения).
-    _plan_start_dt = pd.to_datetime(plot_df["plan start"], errors="coerce")
-    _plan_end_dt = pd.to_datetime(plot_df["plan end"], errors="coerce")
-    _dur_days_series = (_plan_end_dt - _plan_start_dt).dt.days.fillna(0).astype(int)
-
-    vis = pd.DataFrame(
-        {
-            "План: начало": plot_df["plan start"].values,
-            "План: окончание": plot_df["plan end"].values,
-            "Название": plot_df["_gantt_y_label"].values,
-        },
-        index=plot_df.index,
-    )
-    vis["_полное_название"] = names.values
-    vis["_начало_стр"] = pd.to_datetime(plot_df["plan start"], errors="coerce").dt.strftime("%d.%m.%Y")
-    vis["_конец_стр"] = pd.to_datetime(plot_df["plan end"], errors="coerce").dt.strftime("%d.%m.%Y")
-    vis["_блок"] = _blocks_series.values
-    vis["_длит_дн"] = _dur_days_series.values
-    # Не задаём color в px.timeline: иначе Express режет данные на несколько trace и
-    # text=plan_texts не совпадает с рядами — подписи у полос пропадают.
-    # Цвета задаём массивом через marker.color после создания фигуры.
-    _tl_kwargs = dict(
-        x_start="План: начало",
-        x_end="План: окончание",
-        y="Название",
-        custom_data=["_полное_название", "_начало_стр", "_конец_стр", "_блок", "_длит_дн"],
-    )
-    try:
-        fig_gantt = px.timeline(vis, **_tl_kwargs)
-    except Exception as e:
-        st.warning(f"Не удалось построить диаграмму: {e}")
-        st.dataframe(
-            style_dataframe_for_dark_theme(plot_df.head(50)),
-            use_container_width=True,
-        )
-        return
-    # Явно обновляем только trace плана (data[0]): светло-бирюзовый фон полос.
-    # Подписи даты/% — отдельным текстовым trace справа (см. ниже),
-    # т.к. text на Bar часто не виден при group/barmode и длинной оси X.
-    _n_tasks = len(plot_df)
-    try:
-        fig_gantt.data[0].update(
-            name="План",
-            hovertemplate=(
-                "<b>%{customdata[0]}</b><br>"
-                "<span style='color:#6b7280'>%{customdata[1]} → %{customdata[2]}</span><br>"
-                "Длительность: <b>%{customdata[4]} дн.</b><br>"
-                "Блок: <b>%{customdata[3]}</b>"
-                "<extra></extra>"
-            ),
-            marker=dict(
-                color=_GANTT_PLAN_COLOR,
-                line=dict(color="rgba(255,255,255,0.0)", width=0),
-            ),
-            text=[""] * _n_tasks,
-            textposition="none",
-            showlegend=True,
-            width=0.5,
-        )
-    except Exception as e:
-        st.warning(f"Не удалось настроить полосы плана: {e}")
-
-    # ── Тёмный наложенный «факт» по % завершения (Power BI стиль) ──
-    # Длина факт-полосы = plan_start + duration * pct/100. Если pct отсутствует или 0 —
-    # полоса не рисуется (Bar с x=0 не виден).
-    try:
-        _pct_col_name = _gantt_find_percent_column(plot_df)
-        if _pct_col_name and _pct_col_name in plot_df.columns:
-            _pct_norm = _gantt_coerce_pct_series(plot_df[_pct_col_name]).fillna(0.0).clip(0, 100)
-        else:
-            _pct_norm = pd.Series(0.0, index=plot_df.index, dtype=float)
-        _dur_ts = _plan_end_dt - _plan_start_dt
-        _fact_dur_ts = pd.Series(
-            [
-                pd.Timedelta(seconds=int((d.total_seconds() if pd.notna(d) else 0) * (p / 100.0)))
-                for d, p in zip(_dur_ts, _pct_norm)
-            ],
-            index=plot_df.index,
-        )
-        # Plotly Bar по timeline: x = длительность (timedelta → ms), base = старт (datetime).
-        _fact_x_ms = [
-            int(d.total_seconds() * 1000) if pd.notna(d) and d.total_seconds() > 0 else 0
-            for d in _fact_dur_ts
-        ]
-        _fact_base = _plan_start_dt.tolist()
-        _fact_y = vis["Название"].tolist()
-        _pct_ints = [int(round(float(p))) if pd.notna(p) else 0 for p in _pct_norm]
-        if any(v > 0 for v in _fact_x_ms):
-            fig_gantt.add_trace(
-                go.Bar(
-                    x=_fact_x_ms,
-                    base=_fact_base,
-                    y=_fact_y,
-                    orientation="h",
-                    name="Факт",
-                    marker_color=_GANTT_FACT_COLOR,
-                    # Та же толщина, что и у плана — single-bar look (Power BI):
-                    # «факт» и «план» лежат на одной высоте, отличаются только цветом.
-                    width=0.5,
-                    hovertemplate=(
-                        "<b>%{y}</b><br>"
-                        "Факт: %{base|%d.%m.%Y} + " + "%{x|%d.%m.%Y}<br>"
-                        "<extra></extra>"
-                    ),
-                    customdata=[[v] for v in _pct_ints],
-                    showlegend=True,
-                    cliponaxis=False,
-                )
-            )
-            fig_gantt.update_layout(barmode="overlay")
-    except Exception as _e_fact:
-        # «Факт» — необязательный слой; план рисуется в любом случае.
-        suppress_caption(f"Слой «Факт» по % завершения не построен: {_e_fact}")
-
-    if base_tasks:
-        # 2026-05-07: убрана толстая фиолетовая полоса «Базовое начало–окончание»
-        # (визуально перебивала «План/Факт» и сливалась в одну сплошную ленту).
-        # Теперь базовое окончание показывается компактным ромб-маркером — цвет
-        # сохранён (фиолетовый), плюс фактическое и плановое окончания не закрываются.
-        # Базовое начало в визуале не показываем — оно читается через таблицу
-        # «Базовое окончание» / «Отклонение окончания» под графиком.
-        try:
-            _base_end_dates = [pd.Timestamp(_e) for _e, _s in zip(base_ends, base_starts)]
-            fig_gantt.add_trace(
-                go.Scatter(
-                    x=_base_end_dates,
-                    y=list(base_tasks),
-                    mode="markers",
-                    name="Базовое окончание",
-                    marker=dict(
-                        symbol="diamond",
-                        size=11,
-                        color="#C084FC",
-                        line=dict(color="rgba(255,255,255,0.6)", width=1),
-                    ),
-                    hovertemplate=(
-                        "<b>%{y}</b><br>База: %{x|%d.%m.%Y}<extra></extra>"
-                    ),
-                    showlegend=True,
-                    cliponaxis=False,
-                )
-            )
-        except Exception as _e_base:
-            suppress_caption(f"Маркер «Базовое окончание» не построен: {_e_base}")
-        fig_gantt.update_layout(barmode="overlay")
-
-    n = len(plot_df)
-    row_h = int(round((40 if _readability.get("is_dense") else 36) * _GANTT_VIS_SCALE))
-    chart_h = min(int(round(3200 * _GANTT_VIS_SCALE)), max(int(round(300 * _GANTT_VIS_SCALE)), 100 + row_h * n))
-    max_len = int(plot_df["_gantt_y_label"].astype(str).str.len().max() or 12)
-
-    # Доля ширины под левую панель с названиями задач (xaxis2).
-    # Scatter-trace рендерится на xaxis2 (anchor="y") — стабильно при прокрутке/зуме дат.
-    _x_lo = float(min(0.44, max(0.24, 0.16 + min(max_len, 140) * 0.00175)))
-    left_m = 6   # margin слева маленький: метки внутри xaxis2, не в margin
-
-    _task_font_size = max(12, int(round((_readability.get("task_font", 11) + 1) * _GANTT_FONT_SCALE)))
-
-    # Y-ось: категории без нативных подписей (заменяем Scatter-trace на xaxis2).
-    fig_gantt.update_yaxes(
-        autorange="reversed",
-        title=dict(text=""),
-        side="left",
-        showticklabels=False,
-        categoryorder="array",
-        categoryarray=vis["Название"].tolist(),
-        automargin=False,
-        fixedrange=True,
-    )
-    fig_gantt.update_layout(xaxis=dict(
-        domain=[_x_lo, 1.0],
-        title_text="",
-        automargin=False,
-        showgrid=True,
-    ))
-
-    # Левовыровненные названия задач: Scatter на xaxis2 (домен [0, x_lo], anchor="y").
-    # Позиции по Y совпадают с барами, т.к. оба trace делят один yaxis.
-    # Позиции по X (xaxis2, fixedrange=True) не сдвигаются при панировании дат.
-    fig_gantt.add_trace(
-        go.Scatter(
-            x=[0.018] * len(plot_df),
-            y=plot_df["_gantt_y_label"].tolist(),
-            mode="text",
-            text=[_gantt_trunc_label(s, 55) for s in plot_df["_gantt_y_label"].tolist()],
-            textposition="middle right",
-            textfont=dict(size=_task_font_size, color=TABLE_TEXT_COLOR, family="Arial"),
-            xaxis="x2",
-            yaxis="y",
-            showlegend=False,
-            hoverinfo="skip",
-            cliponaxis=False,
-        )
-    )
-    fig_gantt.update_layout(
-        xaxis2=dict(
-            domain=[0.0, _x_lo],
-            range=[0, 1],
-            fixedrange=True,
-            showticklabels=False,
-            showgrid=False,
-            zeroline=False,
-            showline=False,
-            visible=False,
-            anchor="y",          # ключевой параметр: делит yaxis с xaxis
-        ),
-    )
-
-    _lo_pad = _hi_pad = None
-    # Подписи у концов полос — отдельный Scatter(mode=text): на date-оси надёжнее, чем layout.annotations.
-    end_label_x: list = []
-    end_label_y: list = []
-    end_label_text: list = []
-    fig_gantt.update_layout(
-        height=chart_h,
-        margin=dict(
-            l=left_m,
-            r=right_m,
-            t=int(round(48 * _GANTT_VIS_SCALE)),
-            b=int(round(78 * _GANTT_VIS_SCALE)),
-        ),
-        bargap=max(0.05, 0.32 / _GANTT_VIS_SCALE),
-        # Легенда блоков справа сверху, вертикальная — как на референс-скрине MS Project.
-        legend=dict(
-            orientation="v",
-            yanchor="top", y=0.99,
-            xanchor="left", x=1.005,
-            bgcolor="rgba(15,30,48,0.85)",
-            bordercolor="rgba(255,255,255,0.18)",
-            borderwidth=1,
-            font=dict(size=12, color=TABLE_TEXT_COLOR),
-            itemsizing="constant",
-            tracegroupgap=2,
-        ),
-        # Hover-карточка в стиле «MS Project» — светлый фон, чёткая обводка.
-        hoverlabel=dict(
-            bgcolor="#ffffff",
-            bordercolor="#1f2937",
-            font=dict(color="#1f2937", family="Arial", size=12),
-            align="left",
-        ),
-        hovermode="closest",
-    )
-    # Запас по оси X + подписи сразу справа от конца полос этой строки (не одна общая колонка по max(hi)).
-    try:
-        ps = pd.to_datetime(plot_df["plan start"], errors="coerce")
-        pe = pd.to_datetime(plot_df["plan end"], errors="coerce")
-        lo = ps.min()
-        hi = pe.max()
-        if has_base and "base start" in plot_df.columns and "base end" in plot_df.columns:
-            bs = pd.to_datetime(plot_df["base start"], errors="coerce")
-            be = pd.to_datetime(plot_df["base end"], errors="coerce")
-            lo = pd.concat([pd.Series([lo]), bs]).min()
-            hi = pd.concat([pd.Series([hi]), be]).max()
-        if pd.notna(lo) and pd.notna(hi):
-            span_days = max((hi - lo).total_seconds() / 86400.0, 1.0)
-            pad = timedelta(days=max(45.0, span_days * 0.09))
-            off_ann = timedelta(days=max(4.0, span_days * 0.018))  # отступ увеличен: метка правее баров
-            tail = timedelta(days=max(18.0, span_days * 0.09))
-            # Политика подписей у концов полос.
-            # Приоритеты:
-            #  1) «Только при наведении»  — никаких inline-подписей, даты/% в hover.
-            #  2) «Показывать все подписи» — принудительно step=1 (возможны наложения).
-            #  3) «Только сводные задачи» — подписи только у строк с level ≤ 2
-            #     (суммарных задач), независимо от плотности.
-            #  4) «Умная плотность» (по умолчанию) — step по пикселям +
-            #     авто-ограничение до сводных задач, если даже с макс. step
-            #     подписи физически не умещаются (row_px < label_px).
-            _n_rows_here = max(1, int(len(plot_df)))
-            _row_h = int(round((40 if _readability.get("is_dense") else 36) * _GANTT_VIS_SCALE))
-            _chart_h = min(int(round(3200 * _GANTT_VIS_SCALE)), max(int(round(300 * _GANTT_VIS_SCALE)), 100 + _row_h * _n_rows_here))
-            _row_px = float(_chart_h) / float(_n_rows_here)
-            _label_px = (15.0 if label_pct else 17.0) * _GANTT_FONT_SCALE
-
-            _summary_only = labels_summary_only
-            if labels_hover_only:
-                _step = 10**9  # ничего не показывать
-            elif _effective_force_all:
-                _step = 1
-            else:
-                _step = int(max(1, _readability.get("text_step", 1)))
-                if _row_px > 0:
-                    _need_step = int(-(-int(_label_px * 1000) // max(1, int(_row_px * 1000))))
-                    _step = max(_step, _need_step)
-                if _readability.get("is_dense") and not label_pct:
-                    _step = max(_step, 2)
-                if not label_pct and len(plot_df) > 120:
-                    _step = max(_step, 3)
-                # Авто-переключение в «сводные» режим, когда даже с пропусками
-                # подписи всё равно будут накладываться (строк > полос высоты/шрифт).
-                if _row_px > 0 and (_label_px / _row_px) > 6:
-                    _summary_only = True
-
-            # Серия значений уровня иерархии (для summary-режима).
-            _lvl_series_for_labels = None
-            if _summary_only and level_col and level_col in plot_df.columns:
-                _lvl_series_for_labels = pd.to_numeric(
-                    plot_df[level_col], errors="coerce"
-                ).to_numpy()
-
-            # Если summary-режим включён, но уровней нет — подстрахуемся по WBS
-            # (глубина ≤ 2 ⇒ сводная).
-            _wbs_depth_arr = None
-            if (
-                _summary_only
-                and _lvl_series_for_labels is None
-                and wbs_col
-                and wbs_col in plot_df.columns
-            ):
-                try:
-                    _wbs_depth_arr = (
-                        plot_df[wbs_col]
-                        .map(_sched_wbs_tuple)
-                        .map(lambda t: int(len(t)) if t else np.nan)
-                        .to_numpy()
-                    )
-                except Exception:
-                    _wbs_depth_arr = None
-
-            _labels_drawn = 0
-            for i, (_, row) in enumerate(plot_df.iterrows()):
-                if _summary_only:
-                    # Подписываем только сводные/корневые задачи.
-                    _lvl = None
-                    if _lvl_series_for_labels is not None and i < len(_lvl_series_for_labels):
-                        _lvl = _lvl_series_for_labels[i]
-                    elif _wbs_depth_arr is not None and i < len(_wbs_depth_arr):
-                        _lvl = _wbs_depth_arr[i]
-                    if _lvl is None or (isinstance(_lvl, float) and np.isnan(_lvl)):
-                        # Нет уровня — пропускаем, чтобы не засорять график.
-                        continue
-                    try:
-                        if int(_lvl) > 2:
-                            continue
-                    except (TypeError, ValueError):
-                        continue
-                else:
-                    if i % _step != 0:
-                        continue
-                y = row["_gantt_y_label"]
-                ends = []
-                pev = row.get("plan end")
-                if pd.notna(pev):
-                    ends.append(pd.Timestamp(pev))
-                if has_base:
-                    bs, be = row.get("base start"), row.get("base end")
-                    if pd.notna(bs) and pd.notna(be):
-                        ends.append(pd.Timestamp(be))
-                if not ends:
-                    continue
-                txt = right_labels[i] if i < len(right_labels) else ""
-                if not str(txt).strip():
-                    continue
-                x_mark = max(ends) + off_ann
-                end_label_x.append(x_mark)
-                end_label_y.append(y)
-                end_label_text.append(str(txt))
-                _labels_drawn += 1
-
-            # Человекочитаемый caption: что именно нарисовано.
-            if labels_hover_only:
-                suppress_caption(
-                    "Подписи у концов полос отключены — значения доступны при наведении на полосу."
-                )
-            elif _summary_only:
-                _why_auto = (
-                    " (авто: график слишком плотный для построчных подписей)"
-                    if (not labels_summary_only and not _effective_force_all)
-                    else ""
-                )
-                suppress_caption(
-                    f"Подписи у концов полос: только сводные задачи (L≤2){_why_auto}. "
-                    f"Нарисовано меток: {_labels_drawn} из {_n_rows_here} строк. "
-                    "Полные даты/% — при наведении."
-                )
-            _lo_pad = lo - pad
-            if end_label_x:
-                ann_x_max = max(pd.Timestamp(x) for x in end_label_x)
-                _hi_pad = max(hi + pad, ann_x_max + tail)
-            else:
-                _hi_pad = hi + pad
-            fig_gantt.update_layout(xaxis=dict(range=[_lo_pad, _hi_pad], autorange=False))
-    except Exception:
-        pass
-    # skip_uniformtext: глобальный apply_chart_background задаёт uniformtext mode=hide —
-    # из‑за этого подписи у горизонтальных полос могут не отображаться.
-    fig_gantt = apply_chart_background(fig_gantt, skip_uniformtext=True)
-
-    # Вертикальная пунктирная линия «Сегодня» (как на референс-скрине Power BI 2026-05-07).
-    try:
-        _today_ts = pd.Timestamp.today().normalize()
-        # Рисуем только если линия попадает в текущий range графика.
-        _draw_today = True
-        try:
-            _xr = getattr(fig_gantt.layout.xaxis, "range", None)
-            if _xr and len(_xr) == 2 and _xr[0] is not None and _xr[1] is not None:
-                _xr0 = pd.Timestamp(_xr[0])
-                _xr1 = pd.Timestamp(_xr[1])
-                if not (_xr0 <= _today_ts <= _xr1):
-                    _draw_today = False
-        except Exception:
-            pass
-        if _draw_today:
-            fig_gantt.add_vline(
-                x=_today_ts,
-                line_dash="dot",
-                line_color="rgba(255,255,255,0.55)",
-                line_width=1.5,
-                annotation_text="Сегодня",
-                annotation_position="top",
-                annotation_font_color="rgba(255,255,255,0.80)",
-                annotation_font_size=11,
-            )
-    except Exception:
-        pass
-    try:
-        fig_gantt.update_yaxes(automargin=False, fixedrange=True, showticklabels=False)
-        fig_gantt.update_layout(
-            height=chart_h,
-            margin=dict(
-                l=left_m,
-                r=right_m,
-                t=int(round(48 * _GANTT_VIS_SCALE)),
-                b=int(round(48 * _GANTT_VIS_SCALE)),
-            ),
-            uirevision="gantt_project_schedule",
-            xaxis=dict(domain=[_x_lo, 1.0]),
-            xaxis2=dict(
-                domain=[0.0, _x_lo],
-                range=[0, 1],
-                fixedrange=True,
-                showticklabels=False,
-                showgrid=False,
-                zeroline=False,
-                showline=False,
-                visible=False,
-                anchor="y",
-            ),
-        )
-    except Exception:
-        pass
-    try:
-        if len(fig_gantt.data) > 0:
-            fig_gantt.data[0].name = "План (начало–окончание)"
-    except Exception:
-        pass
-    # Русские подписи месяцев на оси X (tickvals в ISO — иначе Plotly оставляет англ. локаль).
-    try:
-        if _lo_pad is not None and _hi_pad is not None:
-            tvals, ttext = _gantt_ru_date_ticks(
-                _lo_pad,
-                _hi_pad,
-                max_ticks=int(min(_readability.get("max_ticks", 26), 18)),
-            )
-            if tvals and ttext and len(tvals) == len(ttext):
-                tickvals_iso = [pd.Timestamp(t).strftime("%Y-%m-%d") for t in tvals]
-                fig_gantt.update_layout(xaxis=dict(
-                    type="date",
-                    tickmode="array",
-                    tickvals=tickvals_iso,
-                    ticktext=ttext,
-                    tickangle=-30,
-                    tickformat="",
-                ))
-    except Exception:
-        pass
-    if _lo_pad is not None and _hi_pad is not None:
-        try:
-            fig_gantt.update_layout(xaxis=dict(range=[_lo_pad, _hi_pad], autorange=False))
-        except Exception:
-            pass
-    if end_label_x:
-        try:
-            # Базовый размер шрифта подписи у конца полосы.
-            # В плотном графике (is_dense) — уменьшаем, иначе подписи лепятся друг к другу.
-            _base_font = int(_readability.get("label_font", 11))
-            if label_pct:
-                # «5%» / «100%» — короткий текст, можно безопасно уменьшить в плотных графиках.
-                if _readability.get("is_dense"):
-                    _lbl_size = max(10, _base_font)
-                else:
-                    _lbl_size = max(13, _base_font + 2)
-            else:
-                # Даты вроде «30.10.26» — длинный текст, при плотном Ганте сильнее
-                # наезжают на соседние строки, поэтому уменьшаем чуть агрессивнее.
-                if _readability.get("is_dense"):
-                    _lbl_size = max(10, _base_font)
-                else:
-                    _lbl_size = max(12, _base_font + 1)
-            fig_gantt.add_trace(
-                go.Scatter(
-                    x=end_label_x,
-                    y=end_label_y,
-                    mode="text",
-                    text=end_label_text,
-                    textfont=dict(size=_lbl_size, color="#ffffff", family="Arial"),
-                    textposition="middle right",
-                    showlegend=False,
-                    hoverinfo="skip",
-                )
-            )
-            try:
-                fig_gantt.data[-1].update(cliponaxis=False)
-            except Exception:
-                pass
-        except Exception as e:
-            st.warning(f"Подписи у концов полос: {e}")
     # Названия задач отображаются нативными tick labels Y-оси (showticklabels=True),
     # что гарантирует корректное позиционирование при любом масштабе страницы.
 
@@ -33321,7 +33149,15 @@ def dashboard_project_schedule_chart(df):
             key="gantt_project_schedule",
             height=_gantt_render_h,
             max_height=None,
-            caption_below="План (Начало–Окончание) и базовый план; подписи — справа от концов полос (план и при наличии — база). Масштаб и панорама — колесом мыши или панелью (+/−, рамка).",
+            caption_below=(
+                "План (бирюзовая полоса) и факт (оранжевая). "
+                + (
+                    "Ромб ковенанты — при включённой галочке «Ковенанты по ТЗ». "
+                    if is_covenants
+                    else ""
+                )
+                + "Подписи: начало слева, окончание справа. Масштаб — колесом мыши или панелью (+/−, рамка)."
+            ),
             skip_clamp_zoom=True,
         )
 
