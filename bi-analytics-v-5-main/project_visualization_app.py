@@ -297,9 +297,9 @@ except Exception:
     pass
 
 try:
-    from dashboards._renderers import _inject_multiselect_ru_translations
+    from dashboards.streamlit_ru_inject import inject_multiselect_ru_translations
 
-    _inject_multiselect_ru_translations()
+    inject_multiselect_ru_translations()
 except Exception:
     pass
 

@@ -19,263 +19,9 @@ from urllib.parse import urlencode
 from config import MSP_PROJECT_FILTER_EXCLUDE_NAMES, RUSSIAN_MONTHS
 
 from .ui_quiet import inject_unified_filters_css, filters_panel, suppress_caption, qa_debug_block
-
-
-def _inject_multiselect_ru_translations() -> None:
-    """Локализация англоязычных подписей Streamlit-виджетов (1.50+):
-    multiselect (Choose options / Select all / Select N matches / No results),
-    date_input range presets (Past Week / Past Month / ...) и
-    подписи самого календаря (названия месяцев, сокращения дней недели).
-
-    Также подписи контекстного меню столбцов ``st.dataframe`` / ``st.data_editor`` (Glide Data Grid).
-
-    Использует `st.components.v1.html` с MutationObserver. На каждом rerun Streamlit
-    без этого iframe скрипт пропадает — вызываем ``components.html`` каждый раз;
-    один наблюдатель на вкладку через флаг на ``window.parent``.
-    """
-    components.html(
-        """
-        <script>
-        (function(){
-            try {
-                var HANDLE_KEY = '__BI_RU_TRANSLATIONS_HANDLE_V8__';
-                function resolveDoc() {
-                    try {
-                        if (window.parent && window.parent.document && window.parent.document.body)
-                            return window.parent.document;
-                    } catch (e0) {}
-                    try {
-                        if (window.top && window.top.document && window.top.document.body)
-                            return window.top.document;
-                    } catch (e1) {}
-                    return document.body ? document : null;
-                }
-                var doc = resolveDoc();
-                if (!doc || !doc.body) return;
-                var hostWin = doc.defaultView || window.parent || window;
-                try {
-                    var prev = hostWin[HANDLE_KEY];
-                    if (prev) {
-                        if (prev.obs && prev.obs.disconnect) prev.obs.disconnect();
-                        if (prev.tmr) clearInterval(prev.tmr);
-                    }
-                } catch (eDisc) {}
-                var TRANSLATIONS = {
-                    'Choose options': 'Выберите варианты',
-                    'Choose or add options': 'Выберите или добавьте варианты',
-                    'Choose an option': 'Выберите вариант',
-                    'Choose or add an option': 'Выберите или добавьте вариант',
-                    'Select all': 'Выбрать все',
-                    'Select All': 'Выбрать все',
-                    'Clear all': 'Снять выбор',
-                    'Clear All': 'Снять выбор',
-                    'Search': 'Поиск',
-                    'No results': 'Нет результатов',
-                    'No options': 'Нет вариантов',
-                    'No matches': 'Нет совпадений',
-                    'Choose a date range': 'Выберите диапазон дат',
-                    'Past Week': 'Прошлая неделя',
-                    'Past Month': 'Прошлый месяц',
-                    'Past 3 Months': 'Последние 3 месяца',
-                    'Past 6 Months': 'Последние 6 месяцев',
-                    'Past Year': 'Последний год',
-                    'Past 2 Years': 'Последние 2 года',
-                    'None': 'Не выбрано',
-                    /* Календарь — полные названия месяцев */
-                    'January': 'Январь', 'February': 'Февраль', 'March': 'Март',
-                    'April': 'Апрель', 'May': 'Май', 'June': 'Июнь',
-                    'July': 'Июль', 'August': 'Август', 'September': 'Сентябрь',
-                    'October': 'Октябрь', 'November': 'Ноябрь', 'December': 'Декабрь',
-                    /* Календарь — сокращения дней недели (BaseWeb DatePicker) */
-                    'Mo': 'Пн', 'Tu': 'Вт', 'We': 'Ср', 'Th': 'Чт',
-                    'Fr': 'Пт', 'Sa': 'Сб', 'Su': 'Вс',
-                    'Mon': 'Пн', 'Tue': 'Вт', 'Wed': 'Ср', 'Thu': 'Чт',
-                    'Fri': 'Пт', 'Sat': 'Сб', 'Sun': 'Вс',
-                    /* Кнопки навигации календаря */
-                    'Previous Month': 'Предыдущий месяц',
-                    'Next Month': 'Следующий месяц',
-                    'Previous Year': 'Предыдущий год',
-                    'Next Year': 'Следующий год',
-                    /* st.dataframe / st.data_editor — контекстное меню столбца (Glide Data Grid) */
-                    'Sort ascending': 'Сортировать по возрастанию',
-                    'Sort descending': 'Сортировать по убыванию',
-                    'Sort Ascending': 'Сортировать по возрастанию',
-                    'Sort Descending': 'Сортировать по убыванию',
-                    'Autosize': 'Автоподбор ширины',
-                    'Auto-size': 'Автоподбор ширины',
-                    'Auto size': 'Автоподбор ширины',
-                    'Pin column': 'Закрепить столбец',
-                    'Pin Column': 'Закрепить столбец',
-                    'Unpin column': 'Открепить столбец',
-                    'Unpin Column': 'Открепить столбец',
-                    'Hide column': 'Скрыть столбец',
-                    'Hide Column': 'Скрыть столбец',
-                    'Format': 'Формат'
-                };
-                var MENU_PHRASE_KEYS = [
-                    'Sort descending','Sort ascending','Sort Descending','Sort Ascending',
-                    'Auto-size','Auto size','Autosize',
-                    'Unpin column','Unpin Column','Pin column','Pin Column',
-                    'Hide column','Hide Column','Format'
-                ];
-                var MONTH_RE = /^(January|February|March|April|May|June|July|August|September|October|November|December)\\s+(\\d{4})$/;
-                var MONTHS_FULL = {
-                    January:'Январь', February:'Февраль', March:'Март', April:'Апрель',
-                    May:'Май', June:'Июнь', July:'Июль', August:'Август',
-                    September:'Сентябрь', October:'Октябрь', November:'Ноябрь', December:'Декабрь'
-                };
-                var SELECT_N_RE = /^Select (\\d+) matches$/;
-                function fixPlaceholders(root) {
-                    try {
-                        if (!root || !root.querySelectorAll) return;
-                        root.querySelectorAll("[placeholder]").forEach(function (node) {
-                            var p = node.getAttribute("placeholder");
-                            if (!p) return;
-                            var pt = p.trim();
-                            var slo = pt.toLowerCase();
-                            var keys = Object.keys(TRANSLATIONS);
-                            for (var ai = 0; ai < keys.length; ai++) {
-                                var key = keys[ai];
-                                if (pt === key || slo === String(key).toLowerCase()) {
-                                    node.setAttribute("placeholder", TRANSLATIONS[key]);
-                                    break;
-                                }
-                            }
-                        });
-                    } catch (e) {}
-                }
-                function fixAriaLabels(root) {
-                    try {
-                        if (!root || !root.querySelectorAll) return;
-                        root.querySelectorAll("[aria-label]").forEach(function (node) {
-                            var p = node.getAttribute("aria-label");
-                            if (!p) return;
-                            var pt = p.trim();
-                            var slo = pt.toLowerCase();
-                            var keys = Object.keys(TRANSLATIONS);
-                            for (var bi = 0; bi < keys.length; bi++) {
-                                var key = keys[bi];
-                                if (pt === key || slo === String(key).toLowerCase()) {
-                                    node.setAttribute("aria-label", TRANSLATIONS[key]);
-                                    break;
-                                }
-                            }
-                        });
-                    } catch (e2) {}
-                }
-                var MULTI_PATCH_PHRASES = [
-                    ['Select All', 'Выбрать все'],
-                    ['Select all', 'Выбрать все'],
-                    ['select all', 'Выбрать все'],
-                    ['Clear All', 'Снять выбор'],
-                    ['Clear all', 'Снять выбор'],
-                    ['clear all', 'Снять выбор']
-                ];
-                function patchMultiselectPhrases(raw) {
-                    var glued = raw;
-                    for (var pi = 0; pi < MULTI_PATCH_PHRASES.length; pi++) {
-                        var src = MULTI_PATCH_PHRASES[pi][0];
-                        var dst = MULTI_PATCH_PHRASES[pi][1];
-                        if (!src || glued.indexOf(src) === -1) continue;
-                        glued = glued.split(src).join(dst);
-                    }
-                    return glued;
-                }
-                function tr(node) {
-                    if (node.nodeType !== 3) return;
-                    var t = node.nodeValue;
-                    if (!t) return;
-                    var patchedMs = patchMultiselectPhrases(t);
-                    if (patchedMs !== t) {
-                        node.nodeValue = patchedMs;
-                        return;
-                    }
-                    var s = t.trim();
-                    if (!s) return;
-                    var slo = s.toLowerCase();
-                    var keys = Object.keys(TRANSLATIONS);
-                    for (var ki = 0; ki < keys.length; ki++) {
-                        var key = keys[ki];
-                        if (s === key || slo === String(key).toLowerCase()) {
-                            node.nodeValue = t.replace(s, TRANSLATIONS[key]);
-                            return;
-                        }
-                    }
-                    /* Контекстное меню столбца: фразы могут быть в одном узле с другим текстом */
-                    var glued = t;
-                    var mkOrder = MENU_PHRASE_KEYS.slice().sort(function(a,b){return String(b).length - String(a).length;});
-                    for (var sj = 0; sj < mkOrder.length; sj++) {
-                        var kk = mkOrder[sj];
-                        var rv = TRANSLATIONS[kk];
-                        if (!rv) continue;
-                        if (glued.indexOf(kk) !== -1) glued = glued.split(kk).join(rv);
-                    }
-                    if (glued !== t) {
-                        node.nodeValue = glued;
-                        return;
-                    }
-                    var mm = s.match(MONTH_RE);
-                    if (mm) {
-                        node.nodeValue = t.replace(s, MONTHS_FULL[mm[1]] + ' ' + mm[2]);
-                        return;
-                    }
-                    var m = s.match(SELECT_N_RE);
-                    if (m) {
-                        node.nodeValue = t.replace(s, 'Выбрать ' + m[1] + ' совпадений');
-                    }
-                }
-                function walk(root) {
-                    if (!root) return;
-                    if (root.nodeType === 3) { tr(root); return; }
-                    if (root.nodeType !== 1 && root.nodeType !== 9 && root.nodeType !== 11) return;
-                    var w = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
-                    var n;
-                    while ((n = w.nextNode())) tr(n);
-                }
-                function walkDeep(root) {
-                    if (!root) return;
-                    if (root.nodeType === 3) {
-                        tr(root);
-                        return;
-                    }
-                    walk(root);
-                    fixPlaceholders(root);
-                    fixAriaLabels(root);
-                    try {
-                        var nodes = root.querySelectorAll("*");
-                        for (var i = 0; i < nodes.length; i++) {
-                            var el = nodes[i];
-                            if (el.shadowRoot) walkDeep(el.shadowRoot);
-                        }
-                    } catch (e) {}
-                }
-                walkDeep(doc.body);
-                var obs = new MutationObserver(function(muts){
-                    for (var i=0;i<muts.length;i++){
-                        var m = muts[i];
-                        if (m.type === 'characterData') tr(m.target);
-                        if (m.addedNodes) {
-                            for (var j=0;j<m.addedNodes.length;j++) walkDeep(m.addedNodes[j]);
-                        }
-                    }
-                });
-                obs.observe(doc.body, {subtree:true, childList:true, characterData:true});
-                var sweepCount = 0;
-                var tmr = setInterval(function(){
-                    try { walkDeep(doc.body); } catch (eSw) {}
-                    sweepCount++;
-                    if (sweepCount >= 120) {
-                        try { clearInterval(tmr); } catch (eC) {}
-                    }
-                }, 250);
-                try { hostWin[HANDLE_KEY] = {obs: obs, tmr: tmr}; } catch (eH) {}
-            } catch(e) { /* noop */ }
-        })();
-        </script>
-        """,
-        height=0,
-    )
-
+from .streamlit_ru_inject import (
+    inject_multiselect_ru_translations as _inject_multiselect_ru_translations,
+)
 
 from dashboards.dev_projects_tz_matrix import (
     build_dev_tz_matrix_rows,
@@ -31281,6 +31027,149 @@ def _render_project_schedule_covenants(df: pd.DataFrame) -> None:
     )
 
 
+def _gantt_wrap_task_label(name: str, width: int = 38, max_lines: int = 3) -> str:
+    """Перенос длинного названия задачи для tick labels оси Y (Plotly: <br>)."""
+    s = str(name).strip()
+    if not s:
+        return ""
+    parts = textwrap.wrap(s, width=width, break_long_words=False, break_on_hyphens=False)
+    if len(parts) > max_lines:
+        parts = parts[:max_lines]
+        tail = parts[-1]
+        parts[-1] = (tail[: max(1, width - 1)] + "…") if len(tail) >= width else tail + "…"
+    return "<br>".join(parts) if len(parts) > 1 else (parts[0] if parts else s)
+
+
+def _render_project_schedule_gantt_legend(*, show_covenant: bool = False) -> None:
+    """Легенда между фильтрами и чекбоксами (вне Plotly-iframe)."""
+    items = [("#14b8a6", "План"), ("#fb923c", "Факт")]
+    if show_covenant:
+        items.append(("#C084FC", "Ковенанта (базовое окончание)"))
+    parts = []
+    for color, label in items:
+        esc = html_module.escape(label)
+        parts.append(
+            '<span style="display:inline-flex;align-items:center;margin-right:1.35rem;">'
+            f'<span style="display:inline-block;width:16px;height:10px;background:{color};'
+            f'border-radius:2px;margin-right:7px;"></span>'
+            f'<span style="color:#e8eef5;font-size:0.92rem;">{esc}</span></span>'
+        )
+    st.markdown(
+        '<div style="margin:0.15rem 0 0.5rem;">' + "".join(parts) + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _project_schedule_gantt_x_range(
+    bar_dates: list,
+    *,
+    label_right_x: list | None = None,
+    label_left_x: list | None = None,
+) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
+    """Узкий диапазон оси X по датам полос; запас только под подписи слева/справа от краёв."""
+    pts = [pd.Timestamp(x) for x in (bar_dates or []) if x is not None]
+    if not pts:
+        return None, None
+    lo_bars = min(pts)
+    hi_bars = max(pts)
+    span = max((hi_bars - lo_bars).total_seconds() / 86400.0, 1.0)
+    text_pad_l = timedelta(days=max(4.0, span * 0.008))
+    text_pad_r = timedelta(days=max(6.0, span * 0.012))
+    lo_pad = lo_bars - timedelta(days=max(2.0, span * 0.012))
+    hi_pad = hi_bars + timedelta(days=max(6.0, span * 0.025))
+    if label_left_x:
+        try:
+            lo_pad = min(lo_pad, min(pd.Timestamp(x) for x in label_left_x) - text_pad_l)
+        except Exception:
+            pass
+    if label_right_x:
+        try:
+            hi_pad = max(hi_pad, max(pd.Timestamp(x) for x in label_right_x) + text_pad_r)
+        except Exception:
+            pass
+    return lo_pad, hi_pad
+
+
+def _project_schedule_gantt_max_label_lines(y_labels) -> int:
+    if not y_labels:
+        return 1
+    return max(1, max(str(y).count("<br>") + 1 for y in y_labels))
+
+
+def _project_schedule_gantt_chart_height(
+    n_rows: int,
+    *,
+    dense: bool = False,
+    row_block_scale: float = 3.0,
+    y_labels=None,
+    task_font: int = 11,
+    max_px: int = 42000,
+    min_px: int = 320,
+) -> int:
+    """Высота ганта: каждая категория должна быть не ниже суммы подписи Y и полос, иначе <br>-метки налезают."""
+    n = max(0, int(n_rows))
+    if n == 0:
+        return max(280, min_px)
+    nl = _project_schedule_gantt_max_label_lines(y_labels)
+    lh = float(max(14.0, float(task_font) * 1.48))
+    # Подпись слева: nl строк + отступ между соседними категориями (аннотации дат — внутри полос).
+    label_block = nl * lh + (18.0 if nl > 1 else 10.0)
+    bars_block = 46.0 + max(0.0, float(row_block_scale) - 3.0) * 9.0
+    if dense:
+        bars_block += 8.0
+    pad_between = 10.0
+    row_px = int(round(max(label_block + bars_block + pad_between, 96.0 + (nl - 1) * lh * 1.1)))
+    # Верх/низ: оси X, заголовки, поля Plotly (~150–165 px суммарно).
+    margins_v = 168
+    return int(min(max_px, max(min_px, margins_v + n * row_px)))
+
+
+def _project_schedule_gantt_left_margin(
+    y_labels,
+    *,
+    dense: bool = False,
+    task_font: int = 11,
+) -> int:
+    max_line_len = 12
+    max_lines = 1
+    for y in y_labels or [""]:
+        lines = str(y).split("<br>")
+        max_lines = max(max_lines, len(lines))
+        if lines:
+            max_line_len = max(max_line_len, max(len(line) for line in lines))
+    px_per_char = max(6.2, float(task_font) * 0.58)
+    est = int(92 + max_line_len * px_per_char)
+    floor = 170 if dense else 160
+    return int(min(800, max(floor, est)))
+
+
+def _project_schedule_gantt_apply_y_labels(
+    fig,
+    y_labels,
+    *,
+    dense: bool,
+    task_font: int,
+) -> int:
+    """Подписи задач слева, выравнивание по левому краю блока имён."""
+    left_m = _project_schedule_gantt_left_margin(y_labels, dense=dense, task_font=task_font)
+    n = len(y_labels or [])
+    fig.update_yaxes(
+        categoryorder="array",
+        categoryarray=list(y_labels),
+        autorange="reversed",
+        range=[n - 0.5, -0.5] if n > 0 else None,
+        fixedrange=True,
+        tickfont=dict(size=task_font, color=TABLE_TEXT_COLOR),
+        ticklabelposition="outside left",
+        ticklabeloverflow="allow",
+        ticklabelstandoff=6,
+        side="left",
+        automargin=True,
+        showticklabels=True,
+    )
+    return left_m
+
+
 def dashboard_project_schedule_chart(df):
     """График проекта: Гант по плану и базе MSP, фильтры, таблица с отклонениями."""
     # Правки куратора 08.05.2026: «убрать пустоту». Масштаб визуализации
@@ -31961,6 +31850,8 @@ def dashboard_project_schedule_chart(df):
     if is_covenants:
         only_finish_delay = False
 
+    _render_project_schedule_gantt_legend(show_covenant=is_covenants)
+
     # ── Применяем фильтр уровня (по селектору) или show_reasons-override (ур. 5 + предки) ──
     # Делаем здесь, чтобы значение чекбокса show_reasons уже было известно и могло
     # переопределить выбор уровня согласно ТЗ.
@@ -32277,7 +32168,7 @@ def dashboard_project_schedule_chart(df):
     y_labels = []
     for name, d in zip(names.tolist(), indents):
         prefix = ("  " * d) + ("— " if d > 0 else "")
-        y_labels.append(prefix + name)
+        y_labels.append(_gantt_wrap_task_label(prefix + name))
 
     def _gantt_trunc_label(s, n=86):
         s = str(s)
@@ -32398,62 +32289,50 @@ def dashboard_project_schedule_chart(df):
             )
 
         n = len(_df.index)
-        # Больше высота строки — меньше наложение подписей дат/% у точек (режим «Линии дат»).
-        _row_px = 52 if policy.get("is_dense") else 46
-        row_h = int(round(_row_px * _GANTT_VIS_SCALE))
-        chart_h = min(int(round(4200 * _GANTT_VIS_SCALE)), max(int(round(220 * _GANTT_VIS_SCALE)), 96 + row_h * n))
-        max_len = int(_df["_gantt_y_label"].astype(str).str.len().max() or 12)
-        left_m = int(
-            max(
-                170 if policy.get("is_dense") else 160,
-                min(560, 110 + int(min(max_len, 150) * (3.0 if policy.get("is_dense") else 3.15))),
-            )
+        _y_list = _y.tolist()
+        _task_font = int(policy.get("task_font", 11))
+        chart_h = _project_schedule_gantt_chart_height(
+            n,
+            dense=bool(policy.get("is_dense")),
+            row_block_scale=_GANTT_ROW_BLOCK_SCALE,
+            y_labels=_y_list,
+            task_font=_task_font,
         )
-
+        left_m = _project_schedule_gantt_left_margin(
+            _y_list, dense=bool(policy.get("is_dense")), task_font=_task_font
+        )
+        _lines_margin = dict(
+            l=left_m,
+            r=220 if policy.get("is_dense") else 200,
+            t=36,
+            b=88,
+        )
         fig.update_layout(
             height=chart_h,
-            margin=dict(
-                l=left_m,
-                r=int(round((220 if policy.get("is_dense") else 200) * _GANTT_VIS_SCALE)),
-                t=int(round(48 * _GANTT_VIS_SCALE)),
-                b=int(round(96 * _GANTT_VIS_SCALE)),
-            ),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            margin=_lines_margin,
+            showlegend=False,
             uirevision="gantt_project_schedule_lines",
         )
-        fig.update_yaxes(
-            autorange="reversed",
-            title=dict(text=""),
-            tickfont=dict(size=policy.get("task_font", 11), color=TABLE_TEXT_COLOR),
-            showticklabels=True,
-            ticklabelposition="outside",
-            ticklabeloverflow="allow",
-            automargin=True,
-            fixedrange=True,
-            categoryorder="array",
-            categoryarray=_y.tolist(),
+        _project_schedule_gantt_apply_y_labels(
+            fig,
+            _y_list,
+            dense=bool(policy.get("is_dense")),
+            task_font=int(policy.get("task_font", 11)),
         )
+        fig.update_yaxes(title=dict(text=""))
         fig.update_xaxes(title_text="Дата", automargin=True, showgrid=True)
 
         try:
-            _lo = pd.to_datetime(_df["plan start"], errors="coerce").min()
-            _hi = pd.to_datetime(_df["plan end"], errors="coerce").max()
-            if has_base_dates:
-                if "base start" in _df.columns:
-                    _bs = pd.to_datetime(_df["base start"], errors="coerce")
-                    if _bs.notna().any():
-                        _lo = min(_lo, _bs.min()) if pd.notna(_lo) else _bs.min()
-                if "base end" in _df.columns:
-                    _be = pd.to_datetime(_df["base end"], errors="coerce")
-                    if _be.notna().any():
-                        _hi = max(_hi, _be.max()) if pd.notna(_hi) else _be.max()
-            if pd.notna(_lo) and pd.notna(_hi):
-                _span = max((_hi - _lo).total_seconds() / 86400.0, 1.0)
-                _pad = timedelta(days=max(24.0, _span * 0.07))
-                _lo_pad = _lo - _pad
-                _hi_pad = _hi + _pad
-                fig.update_xaxes(range=[_lo_pad, _hi_pad], autorange=False)
-                tvals, ttext = _gantt_ru_date_ticks(_lo_pad, _hi_pad, max_ticks=policy.get("max_ticks", 22))
+            _bar_dates: list = []
+            for _col in ("plan start", "plan end", "base start", "base end"):
+                if _col in _df.columns:
+                    _bar_dates.extend(
+                        pd.to_datetime(_df[_col], errors="coerce").dropna().tolist()
+                    )
+            lo_pad, hi_pad = _project_schedule_gantt_x_range(_bar_dates)
+            if lo_pad is not None and hi_pad is not None:
+                fig.update_xaxes(range=[lo_pad, hi_pad], autorange=False)
+                tvals, ttext = _gantt_ru_date_ticks(lo_pad, hi_pad, max_ticks=policy.get("max_ticks", 22))
                 if tvals and ttext and len(tvals) == len(ttext):
                     fig.update_xaxes(
                         type="date",
@@ -32467,6 +32346,14 @@ def dashboard_project_schedule_chart(df):
             pass
 
         fig = apply_chart_background(fig, skip_uniformtext=True)
+        left_m = _project_schedule_gantt_apply_y_labels(
+            fig,
+            _y_list,
+            dense=bool(policy.get("is_dense")),
+            task_font=_task_font,
+        )
+        _lines_margin["l"] = left_m
+        fig.update_layout(margin=_lines_margin, showlegend=False)
         return fig
 
     def _gantt_find_fact_end_column(d: pd.DataFrame):
@@ -32657,6 +32544,7 @@ def dashboard_project_schedule_chart(df):
                 marker=dict(color="#14b8a6"),
                 text=[""] * len(y_labels),
                 textposition="none",
+                showlegend=False,
                 cliponaxis=False,
                 hovertemplate="%{y}<br>План: %{customdata[0]} — %{customdata[1]}<extra></extra>",
                 customdata=cust_plan,
@@ -32673,6 +32561,7 @@ def dashboard_project_schedule_chart(df):
                     marker=dict(color="#fb923c"),
                     text=[""] * len(y_labels),
                     textposition="none",
+                    showlegend=False,
                     cliponaxis=False,
                     hovertemplate="%{y}<br>Факт: %{customdata[0]} — %{customdata[1]}<extra></extra>",
                     customdata=cust_fact,
@@ -32686,35 +32575,96 @@ def dashboard_project_schedule_chart(df):
         fig.update_layout(barmode="group")
 
         _lbl_font = max(10, int(policy.get("label_font", 11)))
-        label_left_x: list = []
-        label_left_y: list[str] = []
-        label_left_txt: list[str] = []
-        label_right_x: list = []
-        label_right_y: list[str] = []
-        label_right_txt: list[str] = []
+        _date_ann: list[dict] = []
+        _bar_edge_x: list = []
 
-        try:
-            _lo = pd.to_datetime(local["plan start"], errors="coerce").min()
-            _hi = pd.to_datetime(local["plan end"], errors="coerce").max()
-            if "base end" in local.columns:
-                _be = pd.to_datetime(local["base end"], errors="coerce")
-                if _be.notna().any():
-                    _hi = max(_hi, _be.max()) if pd.notna(_hi) else _be.max()
-            span = max(((_hi - _lo).total_seconds() / 86400.0) if pd.notna(_lo) and pd.notna(_hi) else 120.0, 1.0)
-        except Exception:
-            span = 120.0
+        _GANTT_PLAN_COLOR = "#14b8a6"
+        _GANTT_FACT_COLOR = "#fb923c"
 
-        off_left = timedelta(days=max(8.0, span * 0.028))
-        off_right = timedelta(days=max(10.0, span * 0.034))
-        stagger_step = max(0.45, span * 0.0028)
+        def _px_shift_for_text(text: str, *, side: str) -> int:
+            # Примерная ширина подписи в px (дата + «· N%»), чтобы не наезжать на полосу.
+            w = int(10 + len(str(text)) * float(_lbl_font) * 0.62)
+            w = max(44, min(160, w))
+            return -w if side == "start" else w
+
+        def _dur_days_days(a, b) -> float:
+            if a is None or b is None:
+                return float("inf")
+            try:
+                return (pd.Timestamp(b) - pd.Timestamp(a)).total_seconds() / 86400.0
+            except Exception:
+                return float("inf")
+
+        # Псевдо-обводки глифов: Plotly не умеет stroke у шрифта — белые «тени» по кругу, сверху цветной текст.
+        _HALO_OFFS = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)]
+
+        def _add_date_label(
+            x_edge: pd.Timestamp,
+            y_cat: str,
+            text: str,
+            *,
+            side: str,
+            lane: str,
+            stack_index: int,
+            stack_total: int,
+        ) -> None:
+            """Подпись строго до/после края полосы; вертикально — середина строки категории (как центр полосы)."""
+            if not text or x_edge is None:
+                return
+            _bar_edge_x.append(x_edge)
+            _txt_color = _GANTT_FACT_COLOR if lane == "fact" else _GANTT_PLAN_COLOR
+            _ax = _px_shift_for_text(text, side=side)
+            _xanchor = "right" if side == "start" else "left"
+            # Лёгкое вертикальное расслоение только если на одной стороне две подписи (план+факт).
+            _stack_ay = 0
+            if stack_total > 1:
+                _stack_ay = int(round((stack_index - (stack_total - 1) / 2.0) * 10))
+
+            ann_base = dict(
+                x=x_edge,
+                y=y_cat,
+                text=text,
+                xref="x",
+                yref="y",
+                xanchor=_xanchor,
+                yanchor="middle",
+                axref="pixel",
+                ayref="pixel",
+                showarrow=False,
+            )
+            for _dx, _dy in ((2, 0), (-2, 0), (0, 2), (0, -2)):
+                _date_ann.append(
+                    dict(
+                        **ann_base,
+                        ax=_ax + _dx,
+                        ay=_stack_ay + _dy,
+                        font=dict(size=_lbl_font, color="rgba(255,255,255,0.95)", family="Arial"),
+                    )
+                )
+            for _dx, _dy in _HALO_OFFS:
+                _date_ann.append(
+                    dict(
+                        **ann_base,
+                        ax=_ax + _dx,
+                        ay=_stack_ay + _dy,
+                        font=dict(size=_lbl_font, color="rgba(255,255,255,0.98)", family="Arial"),
+                    )
+                )
+            _date_ann.append(
+                dict(
+                    **ann_base,
+                    ax=_ax,
+                    ay=_stack_ay,
+                    font=dict(size=_lbl_font, color=_txt_color, family="Arial"),
+                )
+            )
+
         _n_rows_lbl = max(1, len(_row_meta))
         _label_step = 1
         if policy.get("is_very_dense") and _n_rows_lbl > 150:
             _label_step = 3
         elif policy.get("is_dense") and _n_rows_lbl > 110:
             _label_step = 2
-        _left_stagger: dict[str, int] = {}
-        _right_stagger: dict[str, int] = {}
 
         for idx, meta in enumerate(_row_meta):
             if idx % _label_step != 0:
@@ -32722,71 +32672,49 @@ def dashboard_project_schedule_chart(df):
             y = meta["y"]
             ps, pe = meta["ps"], meta["pe"]
             fs, fe = meta["fs"], meta["fe"]
-            left_lines: list[str] = []
-            right_lines: list[str] = []
-            if ps is not None:
-                left_lines.append(_fmt_bar_date(ps, long_fmt=True))
-            if fs is not None and (ps is None or fs.normalize() != ps.normalize()):
-                left_lines.append(f"Ф {_fmt_bar_date(fs, long_fmt=True)}")
-            if pe is not None:
-                end_s = _fmt_bar_date(pe, long_fmt=True)
+            _has_fact_lane = fs is not None and fe is not None
+            dur_p = _dur_days_days(ps, pe)
+            dur_f = _dur_days_days(fs, fe)
+            show_plan_lbl = bool(ps is not None and pe is not None and dur_p >= 1.0)
+            show_fact_lbl = bool(fs is not None and fe is not None and dur_f >= 1.0)
+
+            starts: list[tuple[str, pd.Timestamp, str]] = []
+            if show_plan_lbl and ps is not None:
+                starts.append(("plan", ps, _fmt_bar_date(ps, long_fmt=True)))
+            if (
+                show_fact_lbl
+                and fs is not None
+                and (ps is None or fs.normalize() != ps.normalize())
+            ):
+                starts.append(
+                    ("fact" if _has_fact_lane else "plan", fs, _fmt_bar_date(fs, long_fmt=True))
+                )
+            ns = len(starts)
+            for si, (ln, xv, txt) in enumerate(starts):
+                _add_date_label(
+                    xv, y, txt, side="start", lane=ln, stack_index=si, stack_total=ns
+                )
+
+            ends: list[tuple[str, pd.Timestamp, str]] = []
+            if show_plan_lbl and pe is not None:
+                end_p = _fmt_bar_date(pe, long_fmt=True)
                 if label_pct and pd.notna(meta["pct"]):
                     try:
-                        end_s = f"{end_s} · {int(round(float(meta['pct'])))}%"
+                        end_p = f"{end_p} · {int(round(float(meta['pct'])))}%"
                     except (TypeError, ValueError):
                         pass
-                right_lines.append(end_s)
-            if fe is not None and (pe is None or fe.normalize() != pe.normalize()):
-                right_lines.append(f"Ф {_fmt_bar_date(fe, long_fmt=True)}")
-            if not left_lines and not right_lines:
-                continue
-            if left_lines:
-                anchor = ps if ps is not None else fs
-                if anchor is not None:
-                    k = anchor.strftime("%Y-%m-%d")
-                    rank = int(_left_stagger.get(k, 0))
-                    _left_stagger[k] = rank + 1
-                    label_left_x.append(anchor - off_left - timedelta(days=stagger_step * rank))
-                    label_left_y.append(y)
-                    label_left_txt.append("<br>".join(left_lines))
-            if right_lines:
-                anchor = pe if pe is not None else fe
-                if anchor is not None:
-                    k = anchor.strftime("%Y-%m-%d")
-                    rank = int(_right_stagger.get(k, 0))
-                    _right_stagger[k] = rank + 1
-                    label_right_x.append(anchor + off_right + timedelta(days=stagger_step * rank))
-                    label_right_y.append(y)
-                    label_right_txt.append("<br>".join(right_lines))
-
-        if label_left_x:
-            fig.add_trace(
-                go.Scatter(
-                    x=label_left_x,
-                    y=label_left_y,
-                    mode="text",
-                    text=label_left_txt,
-                    textposition="middle right",
-                    textfont=dict(size=_lbl_font, color="#e8eaed", family="Arial"),
-                    showlegend=False,
-                    hoverinfo="skip",
-                    cliponaxis=False,
+                ends.append(("plan", pe, end_p))
+            if (
+                show_fact_lbl
+                and fe is not None
+                and (pe is None or fe.normalize() != pe.normalize())
+            ):
+                ends.append(("fact" if _has_fact_lane else "plan", fe, _fmt_bar_date(fe, long_fmt=True)))
+            ne = len(ends)
+            for ei, (ln, xv, txt) in enumerate(ends):
+                _add_date_label(
+                    xv, y, txt, side="end", lane=ln, stack_index=ei, stack_total=ne
                 )
-            )
-        if label_right_x:
-            fig.add_trace(
-                go.Scatter(
-                    x=label_right_x,
-                    y=label_right_y,
-                    mode="text",
-                    text=label_right_txt,
-                    textposition="middle left",
-                    textfont=dict(size=_lbl_font, color="#f8fafc", family="Arial"),
-                    showlegend=False,
-                    hoverinfo="skip",
-                    cliponaxis=False,
-                )
-            )
         if show_covenant_markers and base_end_x:
             fig.add_trace(
                 go.Scatter(
@@ -32801,61 +32729,53 @@ def dashboard_project_schedule_chart(df):
                         line=dict(color="rgba(255,255,255,0.75)", width=1),
                     ),
                     hovertemplate="%{y}<br>Базовое окончание: %{x|%d.%m.%Y}<extra></extra>",
-                    showlegend=True,
+                    showlegend=False,
                 )
             )
 
         n_rows = len(y_labels)
-        _row_base_px = 52 if policy.get("is_dense") else 46
-        row_px = int(round(_row_base_px * _GANTT_ROW_BLOCK_SCALE))
-        chart_h = min(
-            int(round(14000 * _GANTT_VIS_SCALE)),
-            max(
-                int(round(400 * _GANTT_VIS_SCALE)),
-                int(n_rows * row_px * _GANTT_VIS_SCALE),
-            ),
+        _ylines = _project_schedule_gantt_max_label_lines(y_labels)
+        chart_h = _project_schedule_gantt_chart_height(
+            n_rows,
+            dense=bool(policy.get("is_dense")),
+            row_block_scale=_GANTT_ROW_BLOCK_SCALE,
+            y_labels=y_labels,
+            task_font=int(policy.get("task_font", 11)),
         )
+        left_m = _project_schedule_gantt_apply_y_labels(
+            fig,
+            y_labels,
+            dense=bool(policy.get("is_dense")),
+            task_font=int(policy.get("task_font", 11)),
+        )
+        _bargap = min(0.28, 0.12 + 0.05 * (_ylines - 1))
         fig.update_layout(
             autosize=True,
             width=None,
             height=chart_h,
             xaxis_title="Период",
             yaxis_title=None,
-            margin=dict(l=64, r=120, t=48, b=56),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            bargap=0.12,
-            bargroupgap=0.14,
+            margin=dict(l=left_m, r=148, t=36, b=88),
+            showlegend=False,
+            bargap=min(0.38, _bargap + 0.08),
+            bargroupgap=0.16,
+            uirevision="gantt_project_schedule_bars",
         )
-        fig.update_yaxes(
-            categoryorder="array",
-            categoryarray=y_labels,
-            autorange="reversed",
-            tickfont=dict(size=policy.get("task_font", 11), color=TABLE_TEXT_COLOR),
-            automargin=True,
-            side="left",
-        )
+        for _ann in _date_ann:
+            fig.add_annotation(**_ann)
         fig.update_xaxes(type="date", tickformat="%d.%m.%Y", automargin=True)
 
         try:
-            _lo = pd.to_datetime(local["plan start"], errors="coerce").min()
-            _hi = pd.to_datetime(local["plan end"], errors="coerce").max()
-            if "base end" in local.columns:
-                _be = pd.to_datetime(local["base end"], errors="coerce")
-                if _be.notna().any():
-                    _hi = max(_hi, _be.max()) if pd.notna(_hi) else _be.max()
-            if fact_end_col and fact_end_col in local.columns:
-                _fe = pd.to_datetime(local[fact_end_col], errors="coerce")
-                if _fe.notna().any():
-                    _hi = max(_hi, _fe.max()) if pd.notna(_hi) else _fe.max()
-            if pd.notna(_lo) and pd.notna(_hi):
-                span = max((_hi - _lo).total_seconds() / 86400.0, 1.0)
-                pad = timedelta(days=max(18.0, span * 0.08))
-                lo_pad = _lo - pad
-                hi_pad = _hi + pad
-                if label_left_x:
-                    lo_pad = min(lo_pad, min(pd.Timestamp(x) for x in label_left_x) - pad)
-                if label_right_x:
-                    hi_pad = max(hi_pad, max(pd.Timestamp(x) for x in label_right_x) + pad)
+            _bar_dates: list = []
+            for _meta in _row_meta:
+                for _dk in ("ps", "pe", "fs", "fe"):
+                    _dv = _meta.get(_dk)
+                    if _dv is not None:
+                        _bar_dates.append(_dv)
+            _bar_dates.extend(base_end_x)
+            _bar_dates.extend(_bar_edge_x)
+            lo_pad, hi_pad = _project_schedule_gantt_x_range(_bar_dates)
+            if lo_pad is not None and hi_pad is not None:
                 fig.update_xaxes(range=[lo_pad, hi_pad], autorange=False)
                 tvals, ttext = _gantt_ru_date_ticks(
                     lo_pad,
@@ -32888,7 +32808,15 @@ def dashboard_project_schedule_chart(df):
         except Exception:
             pass
 
-        return apply_chart_background(fig, skip_uniformtext=True)
+        fig = apply_chart_background(fig, skip_uniformtext=True)
+        left_m = _project_schedule_gantt_apply_y_labels(
+            fig,
+            y_labels,
+            dense=bool(policy.get("is_dense")),
+            task_font=int(policy.get("task_font", 11)),
+        )
+        fig.update_layout(showlegend=False, margin=dict(l=left_m, r=148, t=36, b=88))
+        return fig
 
     def _build_covenants_points_figure(d: pd.DataFrame, policy: dict):
         """Режим «Ковенанты»: базовое окончание (синяя точка) и окончание (красная) с подписями дат."""
@@ -32978,53 +32906,45 @@ def dashboard_project_schedule_chart(df):
         )
 
         n = len(_df.index)
-        # Разреживаем строки — подписи «База/План» справа от точек перестают сливаться.
-        _row_px_cov = 52 if policy.get("is_dense") else 46
-        row_h = int(round(_row_px_cov * _GANTT_VIS_SCALE))
-        chart_h = min(int(round(4200 * _GANTT_VIS_SCALE)), max(int(round(220 * _GANTT_VIS_SCALE)), 96 + row_h * n))
-        max_len = int(_df["_gantt_y_label"].astype(str).str.len().max() or 12)
-        left_m = int(
-            max(
-                170 if policy.get("is_dense") else 160,
-                min(560, 110 + int(min(max_len, 150) * (3.0 if policy.get("is_dense") else 3.15))),
-            )
+        _y_list = _y.tolist()
+        _task_font = int(policy.get("task_font", 11))
+        chart_h = _project_schedule_gantt_chart_height(
+            n,
+            dense=bool(policy.get("is_dense")),
+            row_block_scale=_GANTT_ROW_BLOCK_SCALE,
+            y_labels=_y_list,
+            task_font=_task_font,
         )
-
+        left_m = _project_schedule_gantt_left_margin(
+            _y_list, dense=bool(policy.get("is_dense")), task_font=_task_font
+        )
+        _cov_margin = dict(
+            l=left_m,
+            r=240 if policy.get("is_dense") else 220,
+            t=36,
+            b=88,
+        )
         fig.update_layout(
             height=chart_h,
-            margin=dict(
-                l=left_m,
-                r=int(round((240 if policy.get("is_dense") else 220) * _GANTT_VIS_SCALE)),
-                t=int(round(48 * _GANTT_VIS_SCALE)),
-                b=int(round(96 * _GANTT_VIS_SCALE)),
-            ),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            margin=_cov_margin,
+            showlegend=False,
             uirevision="gantt_project_schedule_covenants",
         )
-        fig.update_yaxes(
-            autorange="reversed",
-            title=dict(text=""),
-            tickfont=dict(size=policy.get("task_font", 11), color=TABLE_TEXT_COLOR),
-            showticklabels=True,
-            ticklabelposition="outside",
-            ticklabeloverflow="allow",
-            automargin=True,
-            fixedrange=True,
-            categoryorder="array",
-            categoryarray=_y.tolist(),
+        _project_schedule_gantt_apply_y_labels(
+            fig,
+            _y_list,
+            dense=bool(policy.get("is_dense")),
+            task_font=int(policy.get("task_font", 11)),
         )
+        fig.update_yaxes(title=dict(text=""))
         fig.update_xaxes(title_text="Дата", automargin=True, showgrid=True)
 
         try:
-            _lo = pd.concat([base_end, fact_end]).min()
-            _hi = pd.concat([base_end, fact_end]).max()
-            if pd.notna(_lo) and pd.notna(_hi):
-                _span = max((_hi - _lo).total_seconds() / 86400.0, 1.0)
-                _pad = timedelta(days=max(24.0, _span * 0.07))
-                _lo_pad = _lo - _pad
-                _hi_pad = _hi + _pad
-                fig.update_xaxes(range=[_lo_pad, _hi_pad], autorange=False)
-                tvals, ttext = _gantt_ru_date_ticks(_lo_pad, _hi_pad, max_ticks=policy.get("max_ticks", 22))
+            _bar_dates = pd.concat([base_end, fact_end]).dropna().tolist()
+            lo_pad, hi_pad = _project_schedule_gantt_x_range(_bar_dates)
+            if lo_pad is not None and hi_pad is not None:
+                fig.update_xaxes(range=[lo_pad, hi_pad], autorange=False)
+                tvals, ttext = _gantt_ru_date_ticks(lo_pad, hi_pad, max_ticks=policy.get("max_ticks", 22))
                 if tvals and ttext and len(tvals) == len(ttext):
                     fig.update_xaxes(
                         type="date",
@@ -33038,9 +32958,17 @@ def dashboard_project_schedule_chart(df):
             pass
 
         fig = apply_chart_background(fig, skip_uniformtext=True)
+        left_m = _project_schedule_gantt_apply_y_labels(
+            fig,
+            _y_list,
+            dense=bool(policy.get("is_dense")),
+            task_font=_task_font,
+        )
+        _cov_margin["l"] = left_m
+        fig.update_layout(margin=_cov_margin, showlegend=False)
         return fig, fact_end_col, fact_label
 
-    plot_df["_gantt_y_label"] = [_gantt_trunc_label(s, 165) for s in y_labels]
+    plot_df["_gantt_y_label"] = [_gantt_wrap_task_label(_gantt_trunc_label(s, 165)) for s in y_labels]
     _readability = _gantt_readability_policy(plot_df)
     _effective_force_all = bool(
         force_all_labels and not (auto_compact_on_zoom and _readability.get("is_dense"))
