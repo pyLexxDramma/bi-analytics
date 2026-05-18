@@ -29941,7 +29941,7 @@ def dashboard_control_points(df):
                 suppress_caption("Колонки, похожие на даты окончания:")
                 st.code(", ".join(str(c) for c in hints))
         return
-    render_control_points_dashboard(st, work, _TABLE_CSS)
+    render_control_points_dashboard(st, work, "")
 
 
 def _prepare_project_schedule_data(

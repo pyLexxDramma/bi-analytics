@@ -2567,6 +2567,29 @@ _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS = """
 #matrix-fs-root.matrix-fs-pseudo-on .cp-table-wrap{
   max-height:calc(100% - 48px)!important;overflow:auto!important;-webkit-overflow-scrolling:touch!important;
 }
+/* Контрольные точки: несколько таблиц в одном iframe, по центру в полноэкранном режиме */
+.cp-tables-stack{display:flex;flex-direction:column;align-items:center;gap:14px;width:100%;
+  padding:0 6px 10px;box-sizing:border-box}
+.matrix-fs-body.cp-body-stack{overflow-x:hidden!important;overflow-y:auto!important;
+  -webkit-overflow-scrolling:touch}
+#matrix-fs-root:fullscreen .matrix-fs-body.cp-body-stack,
+#matrix-fs-root:-webkit-full-screen .matrix-fs-body.cp-body-stack,
+#matrix-fs-root:-moz-full-screen .matrix-fs-body.cp-body-stack,
+#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body.cp-body-stack{
+  display:flex!important;flex-direction:column!important;align-items:center!important;
+  overflow:auto!important;-webkit-overflow-scrolling:touch!important}
+#matrix-fs-root:fullscreen .cp-tables-stack,
+#matrix-fs-root:-webkit-full-screen .cp-tables-stack,
+#matrix-fs-root:-moz-full-screen .cp-tables-stack,
+#matrix-fs-root.matrix-fs-pseudo-on .cp-tables-stack{
+  align-items:center!important;width:100%!important;max-width:100%!important;
+  padding:12px 16px 24px!important}
+#matrix-fs-root:fullscreen .cp-tables-stack .cp-table-wrap,
+#matrix-fs-root:-webkit-full-screen .cp-tables-stack .cp-table-wrap,
+#matrix-fs-root:-moz-full-screen .cp-tables-stack .cp-table-wrap,
+#matrix-fs-root.matrix-fs-pseudo-on .cp-tables-stack .cp-table-wrap{
+  max-height:none!important;overflow-x:auto!important;overflow-y:visible!important;
+  width:max-content!important;max-width:min(100%,max-content)!important}
 """
 
 _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
@@ -2730,6 +2753,7 @@ def _matrix_iframe_html_document(
     scroll_block_inner: str,
     *,
     extra_body_suffix: str = "",
+    body_class: str = "",
 ) -> str:
     """
     Полный HTML-документ для st.components.v1.html: матрица + кнопка полноэкранного режима.
@@ -2748,7 +2772,9 @@ def _matrix_iframe_html_document(
         + '<div class="matrix-fs-topbar" role="toolbar" aria-label="Таблица">'
         + '<button type="button" class="matrix-fs-btn" id="matrix-fs-btn" title="На весь экран">\u26F6</button>'
         + "</div>"
-        + '<div class="matrix-fs-body">'
+        + '<div class="matrix-fs-body'
+        + ((" " + body_class.strip()) if body_class and body_class.strip() else "")
+        + '">'
         + scroll_block_inner
         + "</div></div>"
         + _MATRIX_IFRAME_FULLSCREEN_SCRIPT
@@ -3432,45 +3458,66 @@ _CONTROL_POINTS_CSS = """
 }
 /* border-collapse:separate обязателен для position:sticky на ячейках */
 .cp-table-wrap .rendered-table {
+  border: 3px solid #ffffff;
   border-collapse: separate !important;
   border-spacing: 0 !important;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+  font-size: 13px;
+  font-weight: 700;
 }
 .cp-table-wrap .rendered-table th,
 .cp-table-wrap .rendered-table td {
-  border: 1px solid rgba(121, 154, 192, 0.55) !important;
+  border-width: 1px !important;
+  border-style: solid !important;
+  border-color: #5a6f82 !important;
+  background-clip: padding-box;
+}
+.cp-table-wrap .rendered-table tbody td {
+  background-color: #0c1219 !important;
 }
 .cp-table-wrap .rendered-table th {
-  font-size: 12px !important;
-  color: #eaf2fb !important;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  color: #4ade80 !important;
   background: #17314b !important;
+  padding: 6px 8px !important;
+  text-align: center !important;
+  vertical-align: middle !important;
 }
 .cp-table-wrap .rendered-table td {
-  font-size: 12px !important;
-  color: #f3f7fc !important;
-  line-height: 1.25;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  color: #fafafa !important;
+  line-height: 1.35 !important;
+  padding: 6px 8px !important;
+  text-align: center !important;
+  vertical-align: middle !important;
 }
 .rendered-table th.cp-tophead {
   text-align: center !important;
   background: #17314b !important;
-  color: #f5f9ff !important;
-  font-size: 14px;
-  font-weight: 800;
+  color: #ffffff !important;
+  font-size: 15px !important;
+  font-weight: 700 !important;
 }
-/* Центрирование заголовков вех и подстолбцов (глобальный _TABLE_CSS задаёт th { text-align:left }) */
+/* Центрирование заголовков вех и подстолбцов */
 .cp-table-wrap .rendered-table th.cp-ghead {
   text-align: center !important;
   vertical-align: middle !important;
-  background: #1f232d !important;
-  font-size: 13px !important;
-  padding: 7px 9px !important;
-  color: #f5f9ff !important;
+  background: #1a3328 !important;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  padding: 6px 8px !important;
+  color: #4ade80 !important;
 }
 .cp-table-wrap .rendered-table th.cp-sub {
   text-align: center !important;
   vertical-align: middle !important;
-  font-size: 12px !important;
-  color: #dde8f5 !important;
-  font-weight: 600 !important;
+  font-size: 15px !important;
+  color: #86efac !important;
+  font-weight: 700 !important;
+  padding: 6px 8px !important;
+  background: #17314b !important;
 }
 .cp-table-wrap .rendered-table th.cp-col-project {
   text-align: center !important;
@@ -3478,46 +3525,79 @@ _CONTROL_POINTS_CSS = """
   position: sticky !important;
   left: 0 !important;
   z-index: 3 !important;
-  background: #17314b !important;
+  background: #161f2b !important;
+  color: #4ade80 !important;
+  font-size: 15px !important;
 }
 .cp-col-project {
   position: sticky !important;
   left: 0 !important;
   z-index: 2 !important;
-  background: #1a1c23 !important;
-  border-right: 2px solid rgba(190, 214, 242, 0.8) !important;
+  background: #161f2b !important;
+  border-right: 3px solid #ffffff !important;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  color: #ffffff !important;
+  text-align: left !important;
+  padding: 6px 10px !important;
 }
-.cp-table-wrap .rendered-table tr:nth-child(even) td.cp-col-project {
-  background: #1e2230 !important;
+.cp-table-wrap .rendered-table tbody td.cp-col-project {
+  font-size: 15px !important;
 }
-.cp-table-wrap .rendered-table tr:hover td.cp-col-project {
-  background: #262833 !important;
+.cp-table-wrap .rendered-table thead th.cp-col-project {
+  border-top: 3px solid #ffffff !important;
+  border-left: 3px solid #ffffff !important;
+  border-bottom: 3px solid #ffffff !important;
 }
-.cp-group-start {
-  border-left: 2px solid rgba(190, 214, 242, 0.8) !important;
+/* Блок вехи (● / План / Факт / Откл.): толстая белая рамка по краям группы */
+.cp-table-wrap .rendered-table th.cp-ghead.cp-ms-block {
+  border-left: 3px solid #ffffff !important;
+  border-right: 3px solid #ffffff !important;
 }
-/* ТЗ «Контрольные точки»: при % выполнения ≠ 100% — значение ячейки узким шрифтом */
-.cp-td-pct-narrow {
-  font-family: "Arial Narrow", "Roboto Condensed", "Helvetica Neue Condensed", "Segoe UI Variable",
-    "Segoe UI", ui-sans-serif, system-ui, sans-serif !important;
-  font-stretch: condensed;
-  font-synthesis: none;
-  font-weight: 400 !important;
-  letter-spacing: -0.04em;
+.cp-table-wrap .rendered-table th.cp-ms-first,
+.cp-table-wrap .rendered-table td.cp-ms-first {
+  border-left: 3px solid #ffffff !important;
 }
-/* ГПЗУ / Экспертиза стадии П: только оранжевый текст (селектор сильнее общего td { color }) */
+.cp-table-wrap .rendered-table th.cp-ms-last,
+.cp-table-wrap .rendered-table td.cp-ms-last {
+  border-right: 3px solid #ffffff !important;
+}
+.cp-table-wrap .rendered-table th.cp-ghead.cp-ms-block {
+  box-shadow: inset 3px 0 0 #ffffff, inset -3px 0 0 #ffffff;
+}
+.cp-table-wrap .rendered-table th.cp-ms-first,
+.cp-table-wrap .rendered-table td.cp-ms-first {
+  box-shadow: inset 3px 0 0 #ffffff;
+}
+.cp-table-wrap .rendered-table th.cp-ms-last,
+.cp-table-wrap .rendered-table td.cp-ms-last {
+  box-shadow: inset -3px 0 0 #ffffff;
+}
+.cp-table-wrap .rendered-table thead th.cp-col-project,
+.cp-table-wrap .rendered-table tbody td.cp-col-project {
+  box-shadow: inset -3px 0 0 #ffffff;
+}
+/* При % выполнения ≠ 100% — оранжевый текст (как в «Девелоперских проектах») */
+.cp-table-wrap .rendered-table td.cp-td-pct-narrow,
 .cp-table-wrap .rendered-table td.cp-td-warn {
   background: transparent !important;
-  color: #fb923c !important;
-  font-weight: 600 !important;
-}
-.cp-table-wrap .rendered-table td.cp-td-warn.cp-td-pct-narrow {
-  font-weight: 400 !important;
-}
-/* Просрочка по План−Факт (отрицательные дни в «Откл.») — красный текст */
-.cp-table-wrap .rendered-table td.cp-otkl-late {
-  color: #f87171 !important;
+  color: #e8912d !important;
   font-weight: 700 !important;
+}
+/* Отклонение: зелёный / красный (как dev-tz-otkl-ok / dev-tz-otkl-bad) */
+.cp-table-wrap .rendered-table td.cp-otkl-ok {
+  color: #28a745 !important;
+  font-weight: 700 !important;
+}
+.cp-table-wrap .rendered-table td.cp-otkl-late {
+  color: #d9534f !important;
+  font-weight: 700 !important;
+}
+.cp-table-wrap .rendered-table td.cp-otkl-ok.cp-td-pct-narrow {
+  color: #28a745 !important;
+}
+.cp-table-wrap .rendered-table td.cp-otkl-late.cp-td-pct-narrow {
+  color: #d9534f !important;
 }
 .cp-status-cell { text-align: center; vertical-align: middle; }
 .cp-status-dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; vertical-align: middle; }
@@ -3706,13 +3786,15 @@ _CONTROL_POINTS_POPOVER_FRAGMENT = (
 .cp-tip-toolbar{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;
   gap:10px;padding:10px 12px;border-bottom:1px solid rgba(121,154,192,0.35);
   background:linear-gradient(180deg,rgba(32,58,92,0.95),rgba(20,32,48,0.92))}
-.cp-tip-title{font:600 14px/1.2 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#eaf2fb}
+.cp-tip-title{font:600 14px/1.2 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#eaf2fb}
 .cp-tip-close{box-sizing:border-box;width:34px;height:34px;margin:0;padding:0;border-radius:8px;
   border:1px solid rgba(121,154,192,0.45);background:rgba(35,43,56,0.96);color:#e8eef5;cursor:pointer;font-size:18px;line-height:1}
 .cp-tip-close:hover{background:rgba(55,65,82,0.98)}
-.cp-tip-content{flex:1 1 auto;min-height:0;overflow:auto;padding:12px 14px;color:#e8eef5;font-size:12px}
-.cp-tip-hdr{font:700 13px/1.35 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#cfe9fa;margin:0 0 10px 0}
-.cp-tip-tbl{width:100%;border-collapse:separate;border-spacing:0}
+.cp-tip-content{flex:1 1 auto;min-height:0;overflow:auto;padding:12px 14px;color:#e8eef5;font-size:12px;
+  font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.cp-tip-hdr{font:700 13px/1.35 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#cfe9fa;margin:0 0 10px 0}
+.cp-tip-tbl{width:100%;border-collapse:separate;border-spacing:0;
+  font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
 .cp-tip-tbl th,.cp-tip-tbl td{border:1px solid rgba(121,154,192,0.38);padding:6px 8px;text-align:left;vertical-align:top}
 .cp-tip-tbl th{background:#17314b;color:#eaf2fb;font-weight:700}
 .cp-tip-tbl tr:nth-child(even) td{background:rgba(255,255,255,0.02)}
@@ -3787,15 +3869,6 @@ _CONTROL_POINTS_POPOVER_FRAGMENT = (
     e.preventDefault();
     openFromEl(el);
   },true);
-  try{
-    if(window.matchMedia && window.matchMedia('(hover:hover) and (pointer:fine)').matches){
-      document.addEventListener('mouseenter',function(e){
-        var el=e.target&&e.target.closest&&e.target.closest('.cp-status-hit');
-        if(!el) return;
-        openFromEl(el);
-      },true);
-    }
-  }catch(_e){}
 })();
 </script>
 """
@@ -3813,8 +3886,8 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
     - В ячейке вехи остаются 3 колонки: План / Факт / Откл.
     - При `% выполнения ≠ 100%` значения — узким шрифтом (`cp-td-pct-narrow`).
     - При просрочке (Откл < 0) — красный текст `cp-otkl-late`.
-    - Индикатор ●: по клику/Enter (и на узком экране — по касанию) открывается
-      таблица задач MSP по вехе; на устройствах с hover — то же при наведении.
+    - Индикатор ●: по клику или Enter/Пробел открывается таблица задач MSP по вехе
+      (без открытия при наведении мыши).
     """
     esc = html_module.escape
     if mdf is None or getattr(mdf, "empty", True):
@@ -3844,11 +3917,12 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
 
     import streamlit.components.v1 as _components
 
-    _table_css_raw = (table_css or "").replace("<style>", "").replace("</style>", "")
     _cp_css_raw = _CONTROL_POINTS_CSS.replace("<style>", "").replace("</style>", "")
     _sticky_css = """
 *{box-sizing:border-box}
-html,body{margin:0;padding:0;background:transparent;overflow:hidden}
+html,body{margin:0;padding:0;background:#0e1520;overflow-x:hidden;overflow-y:auto;
+  font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  opacity:1!important;filter:none!important;isolation:isolate}
 /* Чтобы overflow-x:auto во внутреннем .cp-table-wrap реально срабатывал,
    все flex-родители должны иметь min-width:0 (иначе flex-item с width:max-content
    раздвигает родителя, и горизонтальный скролл не появляется). */
@@ -3863,21 +3937,41 @@ html,body{margin:0;padding:0;background:transparent;overflow:hidden}
 .cp-table-wrap::-webkit-scrollbar-thumb:hover{background:rgba(121,154,192,0.65)}
 .cp-table-wrap .rendered-table{
   border-collapse:separate!important;border-spacing:0!important;
-  width:max-content!important;min-width:100%!important}
+  width:max-content!important;min-width:100%!important;
+  font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif!important;
+  font-size:13px!important;font-weight:700!important}
+.cp-table-wrap .rendered-table tbody td{
+  font-size:13px!important;font-weight:700!important;line-height:1.35!important;
+  color:#fafafa!important;padding:6px 8px!important;text-align:center!important}
+.cp-table-wrap .rendered-table th{
+  font-size:15px!important;font-weight:700!important;color:#4ade80!important;padding:6px 8px!important}
+.cp-table-wrap .rendered-table th.cp-sub{color:#86efac!important;font-size:15px!important}
+.cp-table-wrap .rendered-table th.cp-ghead{font-size:15px!important}
+.cp-table-wrap .rendered-table thead th.cp-col-project{font-size:15px!important}
+.cp-table-wrap .rendered-table{border:3px solid #ffffff!important}
 .cp-table-wrap .rendered-table th,
 .cp-table-wrap .rendered-table td{
-  border:1px solid rgba(121,154,192,0.55)!important}
+  border-width:1px!important;border-style:solid!important;
+  border-color:#5a6f82!important;background-clip:padding-box!important}
+.cp-table-wrap .rendered-table tbody td{background-color:#0c1219!important}
 .cp-table-wrap .rendered-table th.cp-col-project,
 .cp-table-wrap .rendered-table td.cp-col-project{
   position:sticky!important;left:0!important;
   width:200px!important;min-width:200px!important;max-width:200px!important;
   white-space:normal!important;word-break:break-word!important;
-  border-right:2px solid rgba(190,214,242,0.85)!important;
-  box-shadow:3px 0 6px rgba(0,0,0,0.45)!important}
+  border-right:3px solid #ffffff!important}
+.cp-table-wrap .rendered-table thead th.cp-col-project{
+  border-top:3px solid #ffffff!important;border-left:3px solid #ffffff!important;
+  border-bottom:3px solid #ffffff!important}
 .cp-table-wrap .rendered-table th.cp-col-project{
-  z-index:5!important;background:#17314b!important}
+  z-index:5!important;background:#161f2b!important}
 .cp-table-wrap .rendered-table td.cp-col-project{
-  z-index:4!important;background:#1a1c23!important}
+  z-index:4!important;background:#161f2b!important;
+  text-align:left!important;color:#ffffff!important;padding:6px 10px!important;
+  font-size:15px!important}
+.cp-table-wrap .rendered-table td.cp-td-pct-narrow{color:#e8912d!important}
+.cp-table-wrap .rendered-table td.cp-otkl-ok{color:#28a745!important}
+.cp-table-wrap .rendered-table td.cp-otkl-late{color:#d9534f!important}
 .cp-table-wrap .rendered-table th.cp-sub-status,
 .cp-table-wrap .rendered-table td.cp-col-cell-status{
   width:34px!important;min-width:34px!important;
@@ -3893,10 +3987,24 @@ html,body{margin:0;padding:0;background:transparent;overflow:hidden}
 .cp-table-wrap .rendered-table th.cp-col-project,
 .cp-table-wrap .rendered-table td.cp-col-project{
   min-width:200px!important;white-space:normal!important}
+.cp-table-wrap .rendered-table th.cp-ghead.cp-ms-block{
+  border-left:3px solid #ffffff!important;border-right:3px solid #ffffff!important;
+  box-shadow:inset 3px 0 0 #fff,inset -3px 0 0 #fff}
+.cp-table-wrap .rendered-table th.cp-ms-first,
+.cp-table-wrap .rendered-table td.cp-ms-first{
+  border-left:3px solid #ffffff!important;box-shadow:inset 3px 0 0 #fff}
+.cp-table-wrap .rendered-table th.cp-ms-last,
+.cp-table-wrap .rendered-table td.cp-ms-last{
+  border-right:3px solid #ffffff!important;box-shadow:inset -3px 0 0 #fff}
+.cp-table-wrap .rendered-table thead th.cp-col-project,
+.cp-table-wrap .rendered-table tbody td.cp-col-project{box-shadow:inset -3px 0 0 #fff}
 """
-    _head_styles = _table_css_raw + _cp_css_raw + _sticky_css
+    _head_styles = _cp_css_raw + _sticky_css
 
     project_w = "width:200px;min-width:200px;max-width:200px"
+    table_blocks: List[str] = []
+    _n_rows = len(view)
+    _table_h_each = max(130, 96 + _n_rows * 38)
 
     for gi, grp in enumerate(groups, start=1):
         if not grp:
@@ -3905,19 +4013,19 @@ html,body{margin:0;padding:0;background:transparent;overflow:hidden}
         thead1 = [
             f'<th rowspan="2" class="cp-col-project" style="{project_w}">Проект</th>',
         ]
-        for i, (title, slug) in enumerate(grp):
-            gcls = "cp-ghead cp-group-start" if i == 0 else "cp-ghead"
+        for _i, (title, _slug) in enumerate(grp):
             # На каждую веху — 4 подколонки: ● (статус) | План | Факт | Откл.
-            thead1.append(f'<th colspan="4" class="{gcls}">{esc(title)}</th>')
+            thead1.append(
+                f'<th colspan="4" class="cp-ghead cp-ms-block">{esc(title)}</th>'
+            )
         sub_headers: List[str] = []
-        for i, (_title, _slug) in enumerate(grp):
-            d_cls = "cp-sub cp-sub-status cp-group-start" if i == 0 else "cp-sub cp-sub-status"
+        for _i, (_title, _slug) in enumerate(grp):
             sub_headers.extend(
                 [
-                    f'<th class="{d_cls}" title="Статус вехи">●</th>',
+                    '<th class="cp-sub cp-sub-status cp-ms-first" title="Статус вехи">●</th>',
                     f'<th class="cp-sub">{esc("План")}</th>',
                     f'<th class="cp-sub">{esc("Факт")}</th>',
-                    f'<th class="cp-sub">{esc("Откл.")}</th>',
+                    f'<th class="cp-sub cp-ms-last">{esc("Откл.")}</th>',
                 ]
             )
         thead_html = (
@@ -3939,7 +4047,6 @@ html,body{margin:0;padding:0;background:transparent;overflow:hidden}
                 otkl_txt = str(r.get(f"{slug}_otkl", "") or "")
                 _od = _parse_otkl_days_display(otkl_txt)
                 otk_late = _od is not None and _od < 0
-                first_cls = "cp-group-start" if i == 0 else ""
                 # Колонка-статус вехи (кружок) — зелёный/красный.
                 dot_cls = "cp-status-ok" if m_ok else "cp-status-bad"
                 dot_al = (
@@ -3966,13 +4073,11 @@ html,body{margin:0;padding:0;background:transparent;overflow:hidden}
                     base64.b64encode(_detail_html.encode("utf-8")).decode("ascii"),
                     quote=True,
                 )
-                _tip = f"Таблица задач по вехе. {dot_al} Откройте кликом, Enter или наведением мыши."
+                _tip = f"Таблица задач по вехе. {dot_al} Откройте кликом или клавишей Enter."
                 status_extra = ""
                 if pct_inc:
                     status_extra = " cp-td-pct-narrow"
-                status_cell_cls = "cp-col-cell-status" + (
-                    f" {first_cls}" if first_cls else ""
-                ) + status_extra
+                status_cell_cls = "cp-col-cell-status cp-ms-first" + status_extra
                 cells.append(
                     f'<td class="{status_cell_cls}" title="{esc(_tip)}">'
                     f'<span class="cp-status-hit" data-cp-b64="{_b64_attr}" tabindex="0" role="button" '
@@ -3985,12 +4090,14 @@ html,body{margin:0;padding:0;background:transparent;overflow:hidden}
                 if pct_inc:
                     plan_parts.append("cp-td-pct-narrow")
                     fact_parts.append("cp-td-pct-narrow")
-                    otkl_parts.append("cp-td-pct-narrow")
                 if otk_late:
                     otkl_parts.append("cp-otkl-late")
+                elif m_ok or (_od is not None and _od >= 0):
+                    otkl_parts.append("cp-otkl-ok")
+                otkl_parts.append("cp-ms-last")
                 wc_plan = (' class="' + " ".join(plan_parts) + '"') if plan_parts else ""
                 wc_fact = (' class="' + " ".join(fact_parts) + '"') if fact_parts else ""
-                wc_otkl = (' class="' + " ".join(otkl_parts) + '"') if otkl_parts else ""
+                wc_otkl = ' class="' + " ".join(otkl_parts) + '"'
                 cells.append(f"<td{wc_plan}>{esc(str(r.get(f'{slug}_plan', '')))}</td>")
                 cells.append(f"<td{wc_fact}>{esc(str(r.get(f'{slug}_fact', '')))}</td>")
                 cells.append(f"<td{wc_otkl}>{esc(otkl_txt)}</td>")
@@ -4003,18 +4110,24 @@ html,body{margin:0;padding:0;background:transparent;overflow:hidden}
             + "".join(body)
             + "</table>"
         )
-        _scroll_block = (
+        table_blocks.append(
             '<div class="rendered-table-wrap cp-table-wrap">' + html_tbl + "</div>"
         )
-        _iframe_html = _matrix_iframe_html_document(
-            _head_styles,
-            _scroll_block,
-            extra_body_suffix=_CONTROL_POINTS_POPOVER_FRAGMENT,
-        )
-        _n_rows = len(view)
-        # +20px на горизонтальный scrollbar (.cp-table-wrap::-webkit-scrollbar=10px) и поле topbar.
-        _iframe_h = max(240, 130 + _n_rows * 38)
-        _components.html(_iframe_html, height=_iframe_h, scrolling=False)
+
+    if not table_blocks:
+        st.info("Нет блоков вех для отображения.")
+        return
+
+    _scroll_block = '<div class="cp-tables-stack">' + "".join(table_blocks) + "</div>"
+    _iframe_html = _matrix_iframe_html_document(
+        _head_styles,
+        _scroll_block,
+        extra_body_suffix=_CONTROL_POINTS_POPOVER_FRAGMENT,
+        body_class="cp-body-stack",
+    )
+    _gap = 14 * max(0, len(table_blocks) - 1)
+    _iframe_h = min(3200, 52 + len(table_blocks) * _table_h_each + _gap)
+    _components.html(_iframe_html, height=_iframe_h, scrolling=False)
 
     drop_ok = [
         c
