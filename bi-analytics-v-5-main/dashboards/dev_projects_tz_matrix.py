@@ -2210,6 +2210,19 @@ def build_dev_tz_matrix_rows(
     return rows, scope_label or cap
 
 
+# Streamlit Cloud: родительская страница иногда даёт iframe opacity/filter — сбрасываем.
+_DEV_MATRIX_STREAMLIT_HOST_CSS = """
+<style>
+div[data-testid="stElementContainer"] iframe,
+div[data-testid="stHtml"] iframe,
+iframe[title="streamlit_components_v1"] {
+  opacity: 1 !important;
+  filter: none !important;
+  mix-blend-mode: normal !important;
+}
+</style>
+"""
+
 _DEV_TZ_MATRIX_CSS = """
 <style>
 /* Одна таблица: горизонтальный скролл целиком; колонка «Проект» не закреплена. */
@@ -2252,9 +2265,13 @@ _DEV_TZ_MATRIX_CSS = """
   font-weight: 700;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th {
-  border: 1px solid rgba(200, 210, 225, 0.5) !important;
-  border-bottom: 2px solid rgba(200, 210, 225, 0.6) !important;
+  border-width: 1px !important;
+  border-style: solid !important;
+  border-color: #5a6f82 !important;
+  border-bottom-width: 2px !important;
+  border-bottom-color: #6b7f94 !important;
   box-sizing: border-box;
+  background-clip: padding-box;
   position: relative !important;
   top: auto !important;
   white-space: normal !important;
@@ -2263,8 +2280,9 @@ _DEV_TZ_MATRIX_CSS = """
   max-width: none !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td {
-  border: 1px solid rgba(200, 210, 225, 0.38) !important;
-  border-top: 1px solid rgba(200, 210, 225, 0.45) !important;
+  border-width: 1px !important;
+  border-style: solid !important;
+  border-color: #5a6f82 !important;
   vertical-align: middle !important;
   text-align: center !important;
   font-size: 13px;
@@ -2272,6 +2290,8 @@ _DEV_TZ_MATRIX_CSS = """
   line-height: 1.35;
   padding: 6px 8px !important;
   color: #fafafa;
+  background-color: #0c1219 !important;
+  background-clip: padding-box;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody tr:hover td {
   background: inherit;
@@ -2424,6 +2444,31 @@ _DEV_TZ_MATRIX_CSS = """
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-last,
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-last {
   border-right: 3px solid #ffffff !important;
+}
+/* Дублируем белые разделители через inset box-shadow (устойчиво на Streamlit Cloud). */
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-ms-block {
+  box-shadow: inset 3px 0 0 #ffffff, inset -3px 0 0 #ffffff;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-first,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-first {
+  box-shadow: inset 3px 0 0 #ffffff;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-last,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-last {
+  box-shadow: inset -3px 0 0 #ffffff;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project {
+  box-shadow: inset -3px 0 0 #ffffff;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead {
+  box-shadow: inset 0 3px 0 #ffffff, inset 0 -3px 0 #ffffff;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-inv {
+  box-shadow: inset -3px 0 0 #ffffff, inset 0 3px 0 #ffffff, inset 0 -3px 0 #ffffff;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-life {
+  box-shadow: inset 3px 0 0 #ffffff, inset -3px 0 0 #ffffff, inset 0 3px 0 #ffffff, inset 0 -3px 0 #ffffff;
 }
 </style>
 """
@@ -2693,6 +2738,7 @@ def _matrix_iframe_html_document(
     """
     return (
         '<!DOCTYPE html><html><head><meta charset="utf-8">'
+        '<meta name="color-scheme" content="dark">'
         '<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5,viewport-fit=cover">'
         "<style>"
         + head_styles
@@ -2846,7 +2892,8 @@ def render_dev_tz_matrix(
     _dev_css_raw = _DEV_TZ_MATRIX_CSS.replace("<style>", "").replace("</style>", "")
     _sticky_css = """
 *{box-sizing:border-box}
-html,body{margin:0;padding:0;background:#0e1520;color:#e6edf3;overflow:hidden}
+html,body{margin:0;padding:0;background:#0e1520;color:#e6edf3;overflow:hidden;
+  opacity:1!important;filter:none!important;isolation:isolate}
 .dev-tz-matrix-wrap{width:100%;max-width:100%;overflow-x:auto;overflow-y:hidden;
   -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;
   scrollbar-width:thin;scrollbar-color:rgba(121,154,192,0.5) #141820}
@@ -2859,10 +2906,13 @@ html,body{margin:0;padding:0;background:#0e1520;color:#e6edf3;overflow:hidden}
   width:max-content!important;min-width:100%!important;
   font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif!important;
   font-size:13px!important;font-weight:700!important}
-/* Чёткие границы ячеек: при separate каждой ячейке нужны все четыре стороны */
+/* Сетка: только непрозрачные границы (без border-shorthand — не сбрасывает белые 3px). */
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th,
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td{
-  border:1px solid rgba(121,154,192,0.55)!important}
+  border-width:1px!important;border-style:solid!important;
+  border-color:#5a6f82!important;background-clip:padding-box!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td{
+  background-color:#0c1219!important}
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-ms-block{
   border-left:3px solid #ffffff!important;
   border-right:3px solid #ffffff!important}
@@ -2883,7 +2933,7 @@ html,body{margin:0;padding:0;background:#0e1520;color:#e6edf3;overflow:hidden}
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project{
   position:sticky!important;left:0!important;
   border-right:3px solid #ffffff!important;
-  box-shadow:3px 0 0 #ffffff}
+}
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project{
   border-top:3px solid #ffffff!important;border-left:3px solid #ffffff!important;
   border-bottom:3px solid #ffffff!important}
@@ -2891,12 +2941,27 @@ html,body{margin:0;padding:0;background:#0e1520;color:#e6edf3;overflow:hidden}
   z-index:5!important;background:#1a3328!important}
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project{
   z-index:4!important;background:#161f2b!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-ms-block{
+  box-shadow:inset 3px 0 0 #fff,inset -3px 0 0 #fff}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-first,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-first{box-shadow:inset 3px 0 0 #fff}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-last,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-last{box-shadow:inset -3px 0 0 #fff}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project{box-shadow:inset -3px 0 0 #fff}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead{
+  box-shadow:inset 0 3px 0 #fff,inset 0 -3px 0 #fff}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-inv{
+  box-shadow:inset -3px 0 0 #fff,inset 0 3px 0 #fff,inset 0 -3px 0 #fff}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-life{
+  box-shadow:inset 3px 0 0 #fff,inset -3px 0 0 #fff,inset 0 3px 0 #fff,inset 0 -3px 0 #fff}
 """
     _n_rows = len(blocks)
     _iframe_h = max(280, 140 + _n_rows * 44)
     _head_styles = _dev_css_raw + _sticky_css
     _scroll_block = '<div class="dev-tz-matrix-wrap">' + html_tbl + "</div>"
     _iframe_html = _matrix_iframe_html_document(_head_styles, _scroll_block)
+    st.markdown(_DEV_MATRIX_STREAMLIT_HOST_CSS, unsafe_allow_html=True)
     _components.html(_iframe_html, height=_iframe_h, scrolling=False)
 
 
