@@ -18156,6 +18156,52 @@ def _gdrs_dynamics_chart_panel(
 
 
 # ==================== DASHBOARD: ГДРС (новая реализация по ТЗ 2026-05-07) ====================
+def _gdrs_projects_summary_display(proj_df: pd.DataFrame) -> pd.DataFrame:
+    d = proj_df.sort_values("plan", ascending=False).copy()
+    out = pd.DataFrame({
+        "Проект": d["project_name"].astype(str),
+        "План": d["plan"].fillna(0).round(0).astype(int),
+        "Факт": d["skud"].fillna(0).round(0).astype(int),
+        "Отклонение": d["deviation"].round(0).astype(int),
+    })
+    if "delta_pct" in d.columns:
+        out["Отклонение %"] = d["delta_pct"].apply(
+            lambda x: f"{float(x):.1f}%" if pd.notna(x) else "—"
+        )
+    return out
+
+
+def _gdrs_contractors_summary_display(chart_df: pd.DataFrame) -> pd.DataFrame:
+    d = chart_df.sort_values("План", ascending=False).copy()
+    return d[["Контрагент", "План", "Факт", "Отклонение"]].copy()
+
+
+def _gdrs_render_plan_fact_summary_table(
+    st,
+    display_df: pd.DataFrame,
+    *,
+    table_title: str,
+) -> None:
+    if display_df is None or display_df.empty:
+        st.info("Нет данных для таблицы.")
+        return
+    render_table_subheader(st, table_title)
+    tbl = display_df.copy()
+    for col in ("План", "Факт", "Отклонение"):
+        if col in tbl.columns:
+            tbl[col] = tbl[col].apply(
+                lambda x: f"{int(x)}" if pd.notna(pd.to_numeric(x, errors="coerce")) else "0"
+            )
+    st.markdown(
+        budget_table_to_html(
+            tbl,
+            finance_deviation_column="Отклонение",
+            deviation_red_if_positive_only=True,
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def dashboard_gdrs_people(df):
     """Подвкладка категории «ГДРС» — рабочие (люди)."""
     return dashboard_gdrs(df, vid_locked="Рабочие")
@@ -18394,7 +18440,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
     chart_df["Отклонение"] = chart_df["deviation"].round(0).astype(int)
     chart_df = chart_df.sort_values("План", ascending=False)
 
-    render_table_subheader(st, "ГДРС по выбранным проектам")
+    st.subheader("ГДРС по выбранным проектам")
     proj_df = main_t[main_t["row_kind"] == "subtotal"][
         ["project_name", "plan", "skud", "deviation", "delta_pct"]
     ].copy()
@@ -18458,9 +18504,16 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             st.plotly_chart(fig_pf, use_container_width=True)
         except Exception as _e:
             st.warning(f"Plotly недоступен: {_e}")
+        _gdrs_render_plan_fact_summary_table(
+            st,
+            _gdrs_projects_summary_display(proj_df),
+            table_title="ГДРС по выбранным проектам",
+        )
+    else:
+        st.info("Нет данных по проектам.")
 
     st.markdown("---")
-    render_table_subheader(st, "ГДРС по выбранным контрагентам")
+    st.subheader("ГДРС по выбранным контрагентам")
     if chart_df.empty:
         st.info("Нет данных по контрагентам.")
     else:
@@ -18507,6 +18560,11 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             st.plotly_chart(fig2, use_container_width=True)
         except Exception as _e:
             st.warning(f"Plotly недоступен: {_e}")
+        _gdrs_render_plan_fact_summary_table(
+            st,
+            _gdrs_contractors_summary_display(chart_df),
+            table_title="ГДРС по выбранным контрагентам",
+        )
 
     st.markdown("---")
     if str(sel_vid).casefold() == "рабочие":
@@ -18542,7 +18600,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         )
 
     st.markdown("---")
-    render_table_subheader(st, f"Распределение {_unit_gen} по контрагентам")
+    st.subheader(f"Распределение {_unit_gen} по контрагентам")
     pie_df = chart_df[chart_df["Факт"] > 0][["Контрагент", "Факт"]].copy()
     if pie_df.empty:
         st.info("Нет фактических данных для круговой диаграммы.")
