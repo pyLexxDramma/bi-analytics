@@ -752,42 +752,14 @@ def main():
         if _dl_source or _dl.get("report"):
             st.session_state["_deeplink_applied_once"] = True
 
-    _data_ops_visible = _show_data_ops_ui()
+    _admin_data_ops_sidebar = _show_data_ops_ui()
 
-    # Переключатель режима источника данных (на release для клиента скрыт — тихая загрузка из web/).
-    if not _data_ops_visible:
-        st.session_state.setdefault("data_mode_radio", "Из папки web/")
-        data_mode = "Из папки web/"
+    # Источник данных: UI только в сайдбаре у admin; клиент release — тихий web/.
+    st.session_state.setdefault("data_mode_radio", "Из папки web/")
+    data_mode = str(st.session_state.get("data_mode_radio") or "Из папки web/")
+    if not _admin_data_ops_sidebar and data_mode in ("Из папки web/", "FTP → web/"):
         if st.session_state.get("project_data") is None:
             st.session_state["_pending_web_folder_load"] = True
-    else:
-        data_mode_options = ["Загрузить вручную", "Из папки web/", "FTP → web/"]
-        if _is_release_client_mode():
-            try:
-                _u = get_current_user()
-                _is_admin = bool(_u and has_admin_access(_u.get("role", "")))
-            except Exception:
-                _is_admin = False
-            if _is_admin:
-                data_mode_options = ["Из папки web/", "FTP → web/", "Загрузить вручную"]
-            else:
-                data_mode_options = ["Из папки web/", "FTP → web/"]
-
-        def _queue_web_folder_load_on_mode_change():
-            try:
-                v = st.session_state.get("data_mode_radio")
-                if v in ("Из папки web/", "FTP → web/"):
-                    st.session_state["_pending_web_folder_load"] = True
-            except Exception:
-                pass
-
-        data_mode = st.radio(
-            "Источник данных",
-            data_mode_options,
-            horizontal=True,
-            key="data_mode_radio",
-            on_change=_queue_web_folder_load_on_mode_change,
-        )
 
     if data_mode in ("Из папки web/", "FTP → web/"):
 
@@ -1059,255 +1031,16 @@ def main():
             data_mode in ("Из папки web/", "FTP → web/")
             and st.session_state.pop("_pending_web_folder_load", False)
         ):
-            _perform_load_from_web_folder(quiet=not _data_ops_visible)
+            _load_quiet = bool(st.session_state.pop("_pending_web_load_quiet", True))
+            _perform_load_from_web_folder(quiet=_load_quiet)
 
-        if _data_ops_visible and data_mode == "FTP → web/":
-            from ftp_sync import merge_ftp_config, streamlit_secrets_to_config, sync_ftp_to_web
+        if _admin_data_ops_sidebar:
+            try:
+                from data_ops_sidebar import apply_web_version_pick
 
-            with st.expander("Параметры FTP вручную (если нет secrets)", expanded=False):
-                _h = st.text_input("FTP host", key="ftp_host_override")
-                _u = st.text_input("FTP user", key="ftp_user_override")
-                _p = st.text_input("FTP password", type="password", key="ftp_pass_override")
-                _d = st.text_input("Удалённая папка", value="/web", key="ftp_remote_dir_override")
-
-            cfg = merge_ftp_config(streamlit_secrets_to_config())
-            if _h.strip():
-                cfg["host"] = _h.strip()
-            if _u.strip():
-                cfg["user"] = _u.strip()
-            if _p:
-                cfg["password"] = _p
-            if _d.strip():
-                cfg["remote_dir"] = _d.strip()
-
-            b_ftp = st.button("Скачать CSV и JSON с FTP в web/ и загрузить в БД")
-            if b_ftp:
-                if not cfg.get("host") or not cfg.get("user"):
-                    st.error("Задайте host и user (secrets, env BI_FTP_* или поля выше).")
-                else:
-                    web_p = get_web_dir()
-                    web_p.mkdir(parents=True, exist_ok=True)
-                    with st.spinner("FTP: скачивание в web/…"):
-                        ftp_res = sync_ftp_to_web(
-                            web_p,
-                            config=cfg,
-                            extensions=(".csv", ".json"),
-                            progress=lambda m: None,
-                        )
-                    # Критические ошибки (connect / auth / unexpected) — красным
-                    # ВСЕГДА (в т.ч. на release: клиент должен знать, что FTP лёг).
-                    if ftp_res.get("errors"):
-                        for e in ftp_res["errors"]:
-                            st.error(e)
-                    # Per-file 550 (1С пишет в файл прямо сейчас) — это НЕ
-                    # сбой пайплайна: атомарная запись через .tmp сохранила
-                    # локальный файл целым, на следующем sync скачается.
-                    # На dev — info, на release — молча (клиенту не надо).
-                    _transient = ftp_res.get("transient_errors") or []
-                    if _transient and not _is_release_client_mode():
-                        st.info(
-                            "Несколько файлов на FTP были временно заняты пишущим "
-                            "процессом (1С) и не скачались сейчас — на следующем "
-                            "обновлении подтянутся. Локальные данные не повреждены:\n\n• "
-                            + "\n• ".join(_transient)
-                        )
-                    if not ftp_res.get("errors"):
-                        _dl = len(ftp_res.get("downloaded", []))
-                        _ss = int(ftp_res.get("skipped_same_size", 0) or 0)
-                        _sk = int(ftp_res.get("skipped", 0) or 0)
-                        _te = len(_transient)
-                        msg = (
-                            f"С FTP: новых/обновлённых {_dl}, "
-                            f"пропущено по совпадению размера: {_ss}, "
-                            f"пропуск (не CSV/JSON): {_sk}"
-                        )
-                        if _te:
-                            msg += f", временно заняты пишущим процессом: {_te}"
-                        try:
-                            st.toast(msg, icon="✅")
-                        except Exception:
-                            pass
-                    with st.spinner("Читаю файлы из web/..."):
-                        result = load_all_from_web()
-                    try:
-                        st.session_state["last_load_result"] = result
-                        st.session_state["last_data_readiness"] = build_data_readiness_report(result)
-                        st.session_state["last_data_schema_health"] = save_schema_health_report(load_result=result)
-                        st.session_state["last_env_fingerprint"] = build_environment_fingerprint(result)
-                        from data_contract import evaluate_data_contract
-
-                        st.session_state["last_data_contract"] = evaluate_data_contract(result)
-                    except Exception:
-                        st.session_state["last_data_readiness"] = None
-                        st.session_state["last_data_schema_health"] = None
-                        st.session_state["last_env_fingerprint"] = None
-                        st.session_state["last_data_contract"] = None
-                    st.cache_data.clear()
-                    st.session_state.pop("web_version_id", None)
-                    try:
-                        from web_schema import get_active_version_id as _gav_ftp
-
-                        _na_ftp = _gav_ftp()
-                        if _na_ftp is not None:
-                            st.session_state["web_version_pick_id"] = int(_na_ftp)
-                    except Exception:
-                        pass
-                    _release_quiet_ftp = _is_release_client_mode()
-                    if not _release_quiet_ftp:
-                        for w in result.get("warnings", []):
-                            st.warning(w)
-                    if result.get("errors"):
-                        st.warning(
-                            f"Загружено: {result['loaded']}, пропущено: {result['skipped']}"
-                        )
-                        for err in result["errors"]:
-                            st.error(err)
-                    elif not _release_quiet_ftp:
-                        try:
-                            st.toast(f"В БД загружено файлов: {result['loaded']}", icon="✅")
-                        except Exception:
-                            pass
-                    try:
-                        from logger import log_action
-                        u = get_current_user()
-                        if u:
-                            log_action(
-                                u["username"],
-                                "data_loaded",
-                                f"web+FTP: loaded={result.get('loaded')}, skipped={result.get('skipped')}",
-                            )
-                    except Exception:
-                        pass
-                    if not _release_quiet_ftp:
-                        with st.expander("Справка: колонки загрузки (первые файлы)", expanded=False):
-                            for row in result.get("diagnostics", [])[:40]:
-                                st.json(row)
-                    st.rerun()
-
-        if _data_ops_visible:
-            col1, col2 = st.columns([1, 3])
-
-            with col1:
-                if data_mode in ("Из папки web/", "FTP → web/") and st.button(
-                    "Загрузить из web/"
-                ):
-                    _perform_load_from_web_folder()
-
-            # Селектор версий
-            versions = get_all_versions()
-        else:
-            versions = get_all_versions()
-
-        if _data_ops_visible and versions:
-            # Опции — по id: стабильные подписи (без «✅» в ключе), иначе при смене active все строки
-            # пересобираются и selectbox теряет выбор.
-            active_id = get_active_version_id()
-            ids_ordered = [int(v["id"]) for v in versions]
-            by_id = {int(v["id"]): v for v in versions}
-
-            def _fmt_version_option(vid: int) -> str:
-                v = by_id.get(int(vid)) or {}
-                base = (
-                    f"{v.get('created_at', '')}  |  файлов: {v.get('files_count', 0)}, "
-                    f"строк: {v.get('rows_count', 0)}"
-                )
-                try:
-                    cur = get_active_version_id()
-                except Exception:
-                    cur = active_id
-                if cur is not None and int(vid) == int(cur):
-                    return f"{base}  ✅"
-                return base
-
-            # Безопасное приведение значения из session_state к int.
-            # Раньше падало ValueError, если в state оказывалось None или
-            # строка вида "" / "None" (наблюдалось при rerun после клика
-            # чекбокса в дашбордах).
-            def _safe_int(v):
-                try:
-                    if v is None:
-                        return None
-                    return int(v)
-                except (TypeError, ValueError):
-                    return None
-
-            # Выбор в session_state мог остаться на версии, которая уже не is_active
-            # (например после отката «бедной» success в get_active_version_id / web_loader).
-            _pick_align = _safe_int(st.session_state.get("web_version_pick_id"))
-            if (
-                active_id is not None
-                and _pick_align is not None
-                and int(_pick_align) != int(active_id)
-                and _pick_align in ids_ordered
-            ):
-                try:
-                    from web_schema import get_web_connection as _gwc_pick_align
-
-                    with _gwc_pick_align() as _conn_pa:
-                        _r_ia = _conn_pa.execute(
-                            "SELECT is_active FROM web_versions WHERE id=?",
-                            (int(_pick_align),),
-                        ).fetchone()
-                    if _r_ia is not None and int(_r_ia["is_active"] or 0) == 0:
-                        st.session_state["web_version_pick_id"] = int(active_id)
-                except Exception:
-                    pass
-
-            _default_pick = (
-                int(active_id)
-                if active_id is not None and _safe_int(active_id) in ids_ordered
-                else ids_ordered[0]
-            )
-            _cur_pick = _safe_int(st.session_state.get("web_version_pick_id"))
-            if _cur_pick is None or _cur_pick not in ids_ordered:
-                st.session_state["web_version_pick_id"] = _default_pick
-
-            selected_version_id = st.selectbox(
-                "Версия данных",
-                ids_ordered,
-                format_func=_fmt_version_option,
-                key="web_version_pick_id",
-            )
-
-            # Загружаем данные версии в session_state если ещё не загружены или версия сменилась
-            if selected_version_id != st.session_state.get("web_version_id") or st.session_state.get("project_data") is None:
-                activate_version(selected_version_id)
-                read_version_to_session(selected_version_id)
-                st.session_state["web_version_id"] = selected_version_id
-                # Без обновления last_load_result контракт данных будет
-                # жаловаться «не найдены TESSA / 1C dannye» — потому что
-                # evaluate_data_contract проверяет наличие типов через
-                # diagnostics в last_load_result. Здесь используем тот же
-                # helper что и в auto-hydrate (читает web_files из БД).
-                try:
-                    _pseudo_lr_sb = _build_pseudo_lr_from_db(int(selected_version_id))
-                    if _pseudo_lr_sb:
-                        st.session_state["last_load_result"] = _pseudo_lr_sb
-                except Exception as _e:
-                    print(f"[selectbox-hydrate] pseudo_lr failed: {_e}", file=sys.stderr)
-                try:
-                    st.session_state["last_data_readiness"] = build_data_readiness_report(
-                        st.session_state.get("last_load_result")
-                    )
-                    st.session_state["last_data_schema_health"] = save_schema_health_report(
-                        load_result=st.session_state.get("last_load_result")
-                    )
-                    st.session_state["last_env_fingerprint"] = build_environment_fingerprint(
-                        st.session_state.get("last_load_result")
-                    )
-                    from data_contract import evaluate_data_contract
-
-                    st.session_state["last_data_contract"] = evaluate_data_contract(
-                        st.session_state.get("last_load_result")
-                    )
-                except Exception:
-                    pass
-
-        elif _data_ops_visible:
-            st.info(
-                "При первом включении режима файлы считываются автоматически. "
-                "Повторно нажмите «Загрузить из web/», если обновили файлы на диске."
-            )
+                apply_web_version_pick(st, build_pseudo_lr_from_db=_build_pseudo_lr_from_db)
+            except Exception:
+                pass
 
         if _is_release_client_mode():
             _panel_tab = "Дашборды"
@@ -1418,7 +1151,7 @@ def main():
         if _had_data_attempt:
             _ctr = evaluate_data_contract(st.session_state.get("last_load_result"))
             st.session_state["last_data_contract"] = _ctr
-            if _show_data_ops_ui():
+            if _admin_data_ops_sidebar:
                 render_contract_banner(_ctr)
             elif not _ctr.get("ok"):
                 for _bl in (_ctr.get("blocking") or [])[:5]:

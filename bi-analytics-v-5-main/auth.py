@@ -1014,6 +1014,12 @@ def render_sidebar_menu(current_page: str = "reports"):
                 except Exception as _e:
                     st.error(f"Refresh failed: {_e}")
 
+            try:
+                from data_ops_sidebar import render_admin_data_ops_sidebar
+
+                render_admin_data_ops_sidebar(st)
+            except Exception:
+                pass
 
         # 3. Выход (для всех ролей)
         st.markdown("---")
