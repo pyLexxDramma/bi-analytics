@@ -197,6 +197,7 @@ def filters_panel(
 
 
 PROJECT_FILTER_PLACEHOLDER = "Все"
+PROJECT_FILTER_LABEL = "Проект"
 
 
 def migrate_project_multiselect_state(
@@ -234,10 +235,10 @@ def migrate_project_multiselect_state(
 
 def project_filter_multiselect(
     st: Any,
-    label: str,
     options: Sequence[str],
     key: str,
     *,
+    label: str = PROJECT_FILTER_LABEL,
     help: Optional[str] = None,
 ) -> tuple[list[str], bool]:
     """
