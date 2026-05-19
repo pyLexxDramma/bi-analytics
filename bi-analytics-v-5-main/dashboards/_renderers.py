@@ -8912,6 +8912,13 @@ def dashboard_budget_by_period(df):
                         _bdds_min_all, _bdds_max_all = _def_start, _def_end
                 except Exception:
                     _bdds_min_all, _bdds_max_all = _def_start, _def_end
+                # По умолчанию — весь период проекта; при смене проекта сбрасываем диапазон.
+                if _def_start and _def_end:
+                    _bdds_scope = str(selected_project)
+                    if st.session_state.get("_bdds_period_scope") != _bdds_scope:
+                        st.session_state["_bdds_period_scope"] = _bdds_scope
+                        st.session_state["budget_period_from"] = _def_start
+                        st.session_state["budget_period_to"] = _def_end
                 _from_kw: dict = {
                     "label": "С",
                     "key": "budget_period_from",
@@ -9152,6 +9159,47 @@ def dashboard_budget_by_period(df):
                 project_data = project_data.sort_values("period_original").copy()
         else:
             project_data = project_data.sort_values("period_original").copy()
+        # По умолчанию: все месяцы выбранного периода проекта (в т.ч. с нулевым планом/фактом).
+        if (
+            period_type_en == "Month"
+            and view_type == "По месяцам"
+            and not project_data.empty
+        ):
+            try:
+                if _bdds_cal_start is not None and _bdds_cal_end is not None:
+                    _grid_p0 = pd.Timestamp(_bdds_cal_start).to_period("M")
+                    _grid_p1 = pd.Timestamp(_bdds_cal_end).to_period("M")
+                else:
+                    _po = project_data["period_original"].dropna()
+                    if _po.empty:
+                        raise ValueError("no periods")
+                    _grid_p0 = _po.min()
+                    _grid_p1 = _po.max()
+                    if not isinstance(_grid_p0, pd.Period):
+                        _grid_p0 = pd.Period(str(_grid_p0), freq="M")
+                    if not isinstance(_grid_p1, pd.Period):
+                        _grid_p1 = pd.Period(str(_grid_p1), freq="M")
+                if _grid_p0 is not None and _grid_p1 is not None and _grid_p0 <= _grid_p1:
+                    _month_idx = pd.period_range(_grid_p0, _grid_p1, freq="M")
+                    project_data = (
+                        project_data.set_index("period_original")
+                        .reindex(_month_idx)
+                        .reset_index()
+                    )
+                    for _zc in ("budget plan", "budget fact", "reserve budget"):
+                        if _zc in project_data.columns:
+                            project_data[_zc] = pd.to_numeric(
+                                project_data[_zc], errors="coerce"
+                            ).fillna(0.0)
+                    if adjusted_budget_col and adjusted_budget_col in project_data.columns:
+                        project_data[adjusted_budget_col] = pd.to_numeric(
+                            project_data[adjusted_budget_col], errors="coerce"
+                        ).fillna(0.0)
+                    project_data[period_col] = project_data["period_original"].apply(
+                        format_period_ru
+                    )
+            except Exception:
+                pass
         if view_type == "Накопительно":
             project_data["budget plan"] = project_data["budget plan"].cumsum()
             project_data["budget fact"] = project_data["budget fact"].cumsum()
@@ -9167,7 +9215,7 @@ def dashboard_budget_by_period(df):
         if period_type_en == "Month" and view_type == "По месяцам":
             _hide_zero_months = st.checkbox(
                 "Скрывать месяцы, где план и факт равны 0",
-                value=True,
+                value=False,
                 key="budget_period_hide_zero_months",
             )
         if (
