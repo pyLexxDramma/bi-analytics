@@ -118,9 +118,12 @@ try:
 
     maybe_run_auto_ingest_on_startup()
 except Exception as _e:  # noqa: BLE001
-    import sys as _sys
+    try:
+        from auto_ingest import safe_stderr_log
 
-    print(f"[auto_ingest] init failed: {_e}", file=_sys.stderr)
+        safe_stderr_log(f"[auto_ingest] init failed: {_e!r}")
+    except Exception:
+        pass
 
 # Сессия с прошлой версии приложения → инвалидируем кэши и рабочее состояние,
 # чтобы клиент НЕ видел старые DataFrame'ы / данные после деплоя.

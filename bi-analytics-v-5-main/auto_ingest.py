@@ -37,6 +37,24 @@ from typing import Any, Dict
 _AUTO_INGEST_DONE_IN_PROCESS = False
 
 
+def safe_stderr_log(message: str) -> None:
+    """Пишет в stderr; под Streamlit на Windows print(..., file=sys.stderr) даёт OSError 22."""
+    line = message if message.endswith("\n") else message + "\n"
+    try:
+        buf = getattr(sys.stderr, "buffer", None)
+        if buf is not None:
+            buf.write(line.encode("utf-8", errors="replace"))
+            buf.flush()
+            return
+    except Exception:
+        pass
+    try:
+        sys.stderr.write(line)
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
 def _flag(name: str, default: str = "") -> bool:
     raw = str(os.environ.get(name, default)).strip().lower()
     return raw in ("1", "true", "yes", "on")
@@ -212,9 +230,9 @@ def _clear_streamlit_caches() -> None:
             clear = getattr(obj, "clear", None)
             if callable(clear):
                 clear()
-                print(f"[auto_ingest] cleared st.{fn_name}", file=sys.stderr)
+                safe_stderr_log(f"[auto_ingest] cleared st.{fn_name}")
         except Exception as e:
-            print(f"[auto_ingest] clear st.{fn_name} failed: {e}", file=sys.stderr)
+            safe_stderr_log(f"[auto_ingest] clear st.{fn_name} failed: {e}")
 
 
 def _purge_web_dir_artifacts() -> None:
@@ -233,20 +251,20 @@ def _purge_web_dir_artifacts() -> None:
         p = Path(WEB_DB_PATH)
         if p.exists():
             p.unlink()
-            print(f"[auto_ingest] purged stale {p.name}", file=sys.stderr)
+            safe_stderr_log(f"[auto_ingest] purged stale {p.name}")
         for sidecar in (".db-wal", ".db-shm"):
             sp = p.with_suffix(p.suffix + sidecar) if not p.suffix.endswith(sidecar) else p
             if sp.exists():
                 sp.unlink()
     except Exception as e:
-        print(f"[auto_ingest] purge web_data.db failed: {e}", file=sys.stderr)
+        safe_stderr_log(f"[auto_ingest] purge web_data.db failed: {e}")
 
 
 def _do_ftp_sync() -> dict | None:
     if not _flag("BI_ANALYTICS_AUTO_INGEST_FTP", default="1"):
         return None
     if not (os.environ.get("BI_FTP_HOST") and os.environ.get("BI_FTP_USER")):
-        print("[auto_ingest] FTP host/user not set → пропуск FTP-sync", file=sys.stderr)
+        safe_stderr_log("[auto_ingest] FTP host/user not set → пропуск FTP-sync")
         return None
     try:
         from ftp_sync import sync_ftp_to_web
@@ -257,16 +275,15 @@ def _do_ftp_sync() -> dict | None:
         downloaded = len(result.get("downloaded", []))
         same = result.get("skipped_same_size", 0)
         errs = result.get("errors", [])
-        print(
+        safe_stderr_log(
             f"[auto_ingest] ftp_sync: downloaded={downloaded}, "
-            f"skipped_same_size={same}, errors={len(errs)}",
-            file=sys.stderr,
+            f"skipped_same_size={same}, errors={len(errs)}"
         )
         for e in errs[:5]:
-            print(f"[auto_ingest] ftp err: {e}", file=sys.stderr)
+            safe_stderr_log(f"[auto_ingest] ftp err: {e}")
         return result
     except Exception as e:
-        print(f"[auto_ingest] ftp_sync exception: {e}", file=sys.stderr)
+        safe_stderr_log(f"[auto_ingest] ftp_sync exception: {e}")
         return None
 
 
@@ -277,13 +294,12 @@ def _do_load_all() -> dict | None:
 
         init_web_schema()
         if not web_dir_exists():
-            print("[auto_ingest] web/ dir not found → пропуск load_all_from_web", file=sys.stderr)
+            safe_stderr_log("[auto_ingest] web/ dir not found → пропуск load_all_from_web")
             return None
         result = load_all_from_web()
-        print(
+        safe_stderr_log(
             f"[auto_ingest] load_all_from_web: loaded={result.get('loaded', 0)}, "
-            f"skipped={result.get('skipped', 0)}, version_id={result.get('version_id')}",
-            file=sys.stderr,
+            f"skipped={result.get('skipped', 0)}, version_id={result.get('version_id')}"
         )
         # Подсветим, что именно не подхватилось — иначе невозможно понять,
         # почему контракт данных на release жалуется «нет TESSA / 1C dannye»
@@ -292,7 +308,7 @@ def _do_load_all() -> dict | None:
         warnings_list = result.get("warnings") or []
         if isinstance(warnings_list, (list, tuple)) and warnings_list:
             for w in list(warnings_list)[:20]:
-                print(f"[auto_ingest] warn: {w}", file=sys.stderr)
+                safe_stderr_log(f"[auto_ingest] warn: {w}")
         # Подсветим распределение типов в активной версии — упрощает диагностику
         # «контракт данных не видит tessa/dannye» прямо из stderr Streamlit Cloud.
         diags = result.get("diagnostics") or []
@@ -306,12 +322,12 @@ def _do_load_all() -> dict | None:
                 summary = ", ".join(
                     f"{k}={v}" for k, v in sorted(type_counts.items(), key=lambda x: x[0])
                 )
-                print(f"[auto_ingest] loaded by type: {summary}", file=sys.stderr)
+                safe_stderr_log(f"[auto_ingest] loaded by type: {summary}")
         for e in (result.get("errors") or [])[:5]:
-            print(f"[auto_ingest] ingest err: {e}", file=sys.stderr)
+            safe_stderr_log(f"[auto_ingest] ingest err: {e}")
         return result
     except Exception as e:
-        print(f"[auto_ingest] load_all_from_web exception: {e}", file=sys.stderr)
+        safe_stderr_log(f"[auto_ingest] load_all_from_web exception: {e}")
         return None
 
 
@@ -361,9 +377,8 @@ def _acquire_lock(stale_seconds: int = 600) -> tuple[bool, str]:
         # stale — удалим и попробуем взять заново.
         try:
             lock.unlink()
-            print(
-                f"[auto_ingest] removed stale lock (age={age:.0f}s > {stale_seconds}s)",
-                file=sys.stderr,
+            safe_stderr_log(
+                f"[auto_ingest] removed stale lock (age={age:.0f}s > {stale_seconds}s)"
             )
         except Exception:
             pass
@@ -414,15 +429,15 @@ def maybe_run_auto_ingest_on_startup() -> None:
 
     need, why = _need_ingest_by_marker()
     if not need:
-        print(f"[auto_ingest] skip: {why}", file=sys.stderr)
+        safe_stderr_log(f"[auto_ingest] skip: {why}")
         return
     # Inter-process lock: Streamlit Cloud стартует web и worker процессы
     # одновременно — без замка оба полезут в FTP и устроят гонку за .tmp.
     acquired, reason = _acquire_lock()
     if not acquired:
-        print(f"[auto_ingest] skip: another process holds lock ({reason})", file=sys.stderr)
+        safe_stderr_log(f"[auto_ingest] skip: another process holds lock ({reason})")
         return
-    print(f"[auto_ingest] START ({why}, pid={os.getpid()})", file=sys.stderr)
+    safe_stderr_log(f"[auto_ingest] START ({why}, pid={os.getpid()})")
     try:
         # При смене версии приложения снапшот БД может быть «несовместим»
         # (изменилась схема ingest, набор колонок, нормализация и т.п.) —
@@ -449,11 +464,11 @@ def maybe_run_auto_ingest_on_startup() -> None:
                 encoding="utf-8",
             )
         except Exception as e:
-            print(f"[auto_ingest] marker write failed: {e}", file=sys.stderr)
+            safe_stderr_log(f"[auto_ingest] marker write failed: {e}")
     finally:
         _release_lock()
         # in-process flag уже выставлен в начале функции — повторно не нужно.
-        print("[auto_ingest] DONE", file=sys.stderr)
+        safe_stderr_log("[auto_ingest] DONE")
 
 
 def force_run_auto_ingest_now() -> Dict[str, Any]:
@@ -484,7 +499,7 @@ def force_run_auto_ingest_now() -> Dict[str, Any]:
             "elapsed_s": round(time.time() - started_at, 2),
         }
     except Exception as e:
-        print(f"[auto_ingest] force_run failed: {e}", file=sys.stderr)
+        safe_stderr_log(f"[auto_ingest] force_run failed: {e}")
         return {"ok": False, "error": str(e), "pid": os.getpid()}
     finally:
         # Восстанавливаем env как было — чтобы кнопка не оставила «вечный» FORCE=1.

@@ -2213,12 +2213,23 @@ def build_dev_tz_matrix_rows(
 # Streamlit Cloud: родительская страница иногда даёт iframe opacity/filter — сбрасываем.
 _DEV_MATRIX_STREAMLIT_HOST_CSS = """
 <style>
-div[data-testid="stElementContainer"] iframe,
-div[data-testid="stHtml"] iframe,
-iframe[title="streamlit_components_v1"] {
+div[data-testid="stElementContainer"] iframe.dev-tz-matrix-iframe,
+div[data-testid="stHtml"] iframe.dev-tz-matrix-iframe,
+iframe.dev-tz-matrix-iframe[title="streamlit_components_v1"] {
   opacity: 1 !important;
   filter: none !important;
   mix-blend-mode: normal !important;
+  background: transparent !important;
+  display: block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  vertical-align: top !important;
+  overflow: hidden !important;
+}
+div[data-testid="stElementContainer"]:has(iframe.dev-tz-matrix-iframe) {
+  margin-bottom: 0 !important;
+  padding-bottom: 0 !important;
 }
 </style>
 """
@@ -2523,9 +2534,11 @@ def _dev_tz_matrix_cell_classes(
 
 # Кнопка «на весь экран» в iframe-матрице — Fullscreen API + fallback для iOS/Safari (нет Fullscreen у div).
 _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS = """
-.matrix-fs-root{display:flex;flex-direction:column;min-height:100%;width:100%}
-.matrix-fs-topbar{flex:0 0 auto;display:flex;justify-content:flex-end;align-items:center;
-  padding:2px 2px 6px 0;min-height:34px}
+.matrix-fs-root{position:relative;display:flex;flex-direction:column;width:100%;min-height:0}
+.matrix-fs-topbar{position:absolute;top:6px;right:6px;z-index:30;display:flex;justify-content:flex-end;
+  align-items:center;padding:0;min-height:0;pointer-events:none}
+.matrix-fs-topbar .matrix-fs-btn{pointer-events:auto}
+.matrix-fs-body{flex:0 0 auto;width:100%}
 .matrix-fs-btn{
   box-sizing:border-box;width:32px;height:32px;margin:0;padding:0;
   border:1px solid rgba(68,84,108,0.55);border-radius:2px;
@@ -2535,8 +2548,8 @@ _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS = """
 }
 .matrix-fs-btn:hover{background:rgba(55,65,82,0.98);color:#fff;border-color:rgba(121,154,192,0.55)}
 .matrix-fs-btn:focus-visible{outline:2px solid rgba(121,154,192,0.75);outline-offset:1px}
-.matrix-fs-body{flex:1 1 auto;min-height:0;width:100%}
 #matrix-fs-root:fullscreen,#matrix-fs-root:-webkit-full-screen,#matrix-fs-root:-moz-full-screen{
+  min-height:100%!important;
   background:#0e1520;padding:10px;box-sizing:border-box;
   width:100vw!important;height:100vh!important;max-height:-webkit-fill-available!important;
   overflow:hidden!important;display:flex!important;flex-direction:column!important;
@@ -2747,6 +2760,53 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
 </script>
 """
 
+_MATRIX_IFRAME_FIT_HEIGHT_SCRIPT = """
+<script>
+(function(){
+  function measure(){
+    var root=document.getElementById("matrix-fs-root");
+    if(!root) return 0;
+    var wrap=root.querySelector(".dev-tz-matrix-wrap,.cp-tables-stack,.cp-table-wrap");
+    if(wrap){
+      var rr=wrap.getBoundingClientRect();
+      var rt=root.getBoundingClientRect();
+      return Math.ceil(rr.bottom-rt.top+2);
+    }
+    return Math.ceil(root.getBoundingClientRect().height);
+  }
+  function apply(){
+    var h=measure();
+    if(h<40) return;
+    try{
+      var fe=window.frameElement;
+      if(!fe) return;
+      fe.style.height=h+"px";
+      fe.style.minHeight="0";
+      fe.style.overflow="hidden";
+      fe.classList.add("dev-tz-matrix-iframe");
+      var p=fe.parentElement;
+      while(p){
+        if(p.getAttribute&&p.getAttribute("data-testid")==="stElementContainer"){
+          p.style.marginBottom="0";
+          p.style.paddingBottom="0";
+          break;
+        }
+        p=p.parentElement;
+      }
+    }catch(e){}
+  }
+  function schedule(){requestAnimationFrame(apply);}
+  if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",schedule);
+  else schedule();
+  window.addEventListener("load",schedule);
+  try{
+    var w=document.querySelector(".dev-tz-matrix-wrap,.cp-tables-stack");
+    if(w&&typeof ResizeObserver!=="undefined") new ResizeObserver(schedule).observe(w);
+  }catch(e){}
+})();
+</script>
+"""
+
 
 def _matrix_iframe_html_document(
     head_styles: str,
@@ -2778,6 +2838,7 @@ def _matrix_iframe_html_document(
         + scroll_block_inner
         + "</div></div>"
         + _MATRIX_IFRAME_FULLSCREEN_SCRIPT
+        + _MATRIX_IFRAME_FIT_HEIGHT_SCRIPT
         + (extra_body_suffix or "")
         + "</body></html>"
     )
@@ -2918,13 +2979,14 @@ def render_dev_tz_matrix(
     _dev_css_raw = _DEV_TZ_MATRIX_CSS.replace("<style>", "").replace("</style>", "")
     _sticky_css = """
 *{box-sizing:border-box}
-html,body{margin:0;padding:0;background:#0e1520;color:#e6edf3;overflow:hidden;
+html,body{margin:0;padding:0;background:transparent;color:#e6edf3;overflow:hidden;
   opacity:1!important;filter:none!important;isolation:isolate}
-.dev-tz-matrix-wrap{width:100%;max-width:100%;overflow-x:auto;overflow-y:hidden;
+.dev-tz-matrix-wrap{width:100%;max-width:100%;margin:0!important;padding:0!important;
+  overflow-x:auto;overflow-y:hidden;
   -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;
-  scrollbar-width:thin;scrollbar-color:rgba(121,154,192,0.5) #141820}
+  scrollbar-width:thin;scrollbar-color:rgba(121,154,192,0.5) transparent}
 .dev-tz-matrix-wrap::-webkit-scrollbar{height:10px}
-.dev-tz-matrix-wrap::-webkit-scrollbar-track{background:#141820;border-radius:5px}
+.dev-tz-matrix-wrap::-webkit-scrollbar-track{background:transparent;border-radius:5px}
 .dev-tz-matrix-wrap::-webkit-scrollbar-thumb{background:rgba(121,154,192,0.42);border-radius:5px;border:2px solid #141820}
 .dev-tz-matrix-wrap::-webkit-scrollbar-thumb:hover{background:rgba(121,154,192,0.65)}
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide{
@@ -2983,7 +3045,8 @@ html,body{margin:0;padding:0;background:#0e1520;color:#e6edf3;overflow:hidden;
   box-shadow:inset 3px 0 0 #fff,inset -3px 0 0 #fff,inset 0 3px 0 #fff,inset 0 -3px 0 #fff}
 """
     _n_rows = len(blocks)
-    _iframe_h = max(280, 140 + _n_rows * 44)
+    # Стартовая высота iframe; точная подгонка — _MATRIX_IFRAME_FIT_HEIGHT_SCRIPT (без полосы снизу).
+    _iframe_h = max(160, 6 + 3 * 38 + _n_rows * 38 + 12)
     _head_styles = _dev_css_raw + _sticky_css
     _scroll_block = '<div class="dev-tz-matrix-wrap">' + html_tbl + "</div>"
     _iframe_html = _matrix_iframe_html_document(_head_styles, _scroll_block)
