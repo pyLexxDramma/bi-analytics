@@ -428,6 +428,12 @@ def _canonicalize_project_names(df: pd.DataFrame) -> pd.DataFrame:
 
     work["project_name"] = work.apply(_resolve, axis=1)
     work = work.drop(columns="__name_norm__")
+    try:
+        from dashboards.project_labels import apply_unified_project_column
+
+        work = apply_unified_project_column(work, "project_name")
+    except Exception:
+        pass
     return work
 
 
@@ -736,7 +742,15 @@ def load_plan_aggregate(
             sprav_all.groupby(["project_id", "contractor_id"], dropna=False, as_index=False)
             .agg(plan_workers=("plan_workers", "max"), plan_equipment=("plan_equipment", "max"))
         )
-    return merge_plan(dog_all, sprav_all)
+    merged = merge_plan(dog_all, sprav_all)
+    if merged is not None and not merged.empty and "project_name" in merged.columns:
+        try:
+            from dashboards.project_labels import apply_unified_project_column
+
+            merged = apply_unified_project_column(merged, "project_name")
+        except Exception:
+            pass
+    return merged
 
 
 def _norm_header_key(k: object) -> str:
@@ -1192,6 +1206,159 @@ def _iso_week_groups(dates: pd.Series) -> tuple[pd.Series, dict[int, int]]:
     return week_idx, days_per_week
 
 
+GDRS_AGG_MONTH = "month_avg"
+GDRS_AGG_LABELS: dict[str, str] = {
+    GDRS_AGG_MONTH: "Среднее за месяц",
+    "week:1": "1 неделя",
+    "week:2": "2 неделя",
+    "week:3": "3 неделя",
+    "week:4": "4 неделя",
+    "week:5": "5 неделя",
+    "week:6": "6 неделя",
+}
+
+
+def gdrs_agg_select_options() -> list[str]:
+    return list(GDRS_AGG_LABELS.values())
+
+
+def gdrs_agg_label_to_key(label: str) -> str:
+    for key, text in GDRS_AGG_LABELS.items():
+        if text == label:
+            return key
+    return GDRS_AGG_MONTH
+
+
+def gdrs_agg_week_num(agg_key: str) -> Optional[int]:
+    if not str(agg_key).startswith("week:"):
+        return None
+    try:
+        n = int(str(agg_key).split(":", 1)[1])
+    except (IndexError, ValueError):
+        return None
+    return n if 1 <= n <= 6 else None
+
+
+def _filter_fact_slice(
+    long_fact: pd.DataFrame,
+    *,
+    vid: str,
+    date_from: Optional[pd.Timestamp],
+    date_to: Optional[pd.Timestamp],
+    projects: Optional[list[str]] = None,
+    contractors: Optional[list[str]] = None,
+) -> pd.DataFrame:
+    if long_fact is None or long_fact.empty:
+        return pd.DataFrame()
+    fact = long_fact[long_fact["vid_resursa"].astype(str).str.casefold() == vid.casefold()].copy()
+    if fact.empty:
+        return fact
+    if date_from is not None:
+        fact = fact[fact["date"] >= pd.to_datetime(date_from)]
+    if date_to is not None:
+        fact = fact[fact["date"] <= pd.to_datetime(date_to)]
+    if projects:
+        try:
+            from dashboards.project_labels import filter_dataframe_by_project_labels
+
+            fact = filter_dataframe_by_project_labels(fact, list(projects), col="project_name")
+        except Exception:
+            proj_keys = {p.strip().casefold() for p in projects}
+            fact = fact[fact["project_name"].astype(str).str.strip().str.casefold().isin(proj_keys)]
+    if contractors:
+        c_keys = {c.strip().casefold() for c in contractors}
+        fact = fact[fact["contractor_name"].astype(str).str.strip().str.casefold().isin(c_keys)]
+    return fact
+
+
+def week_end_in_filtered_fact(
+    long_fact: pd.DataFrame,
+    *,
+    vid: str,
+    date_from: pd.Timestamp,
+    date_to: pd.Timestamp,
+    week_num: int,
+    projects: Optional[list[str]] = None,
+    contractors: Optional[list[str]] = None,
+) -> Optional[pd.Timestamp]:
+    """Последний календарный день N-й ISO-недели в выборке (нумерация как в таблице w1..w6)."""
+    fact = _filter_fact_slice(
+        long_fact,
+        vid=vid,
+        date_from=date_from,
+        date_to=date_to,
+        projects=projects,
+        contractors=contractors,
+    )
+    if fact.empty:
+        return None
+    dates = pd.to_datetime(fact["date"])
+    week_idx, _ = _iso_week_groups(dates)
+    mask = week_idx == int(week_num)
+    if not mask.any():
+        return None
+    return pd.to_datetime(dates[mask]).max()
+
+
+def gdrs_plan_snapshot_date(
+    long_fact: pd.DataFrame,
+    *,
+    vid: str,
+    date_from: pd.Timestamp,
+    date_to: pd.Timestamp,
+    plan_agg: str,
+    projects: Optional[list[str]] = None,
+    contractors: Optional[list[str]] = None,
+) -> pd.Timestamp:
+    """Дата среза плана из 1С: конец выбранной недели или конец периода (среднее за месяц)."""
+    wn = gdrs_agg_week_num(plan_agg)
+    if wn is not None:
+        end = week_end_in_filtered_fact(
+            long_fact,
+            vid=vid,
+            date_from=date_from,
+            date_to=date_to,
+            week_num=wn,
+            projects=projects,
+            contractors=contractors,
+        )
+        if end is not None and pd.notna(end):
+            return pd.to_datetime(end)
+    return pd.to_datetime(date_to)
+
+
+def _skud_agg_per_pair(
+    fact: pd.DataFrame,
+    skud_agg: str,
+) -> pd.DataFrame:
+    """СКУД (среднее за день) по паре проект×контрагент для режима month_avg или week:N."""
+    total_days = int(fact["date"].dt.normalize().nunique())
+    skud_sum = (
+        fact.groupby(["project_name", "contractor_name"], dropna=False)["fact"]
+        .sum()
+        .reset_index(name="skud_sum")
+    )
+    wn = gdrs_agg_week_num(skud_agg)
+    if wn is None:
+        skud_sum["skud_val"] = skud_sum["skud_sum"] / max(1, total_days)
+        return skud_sum[["project_name", "contractor_name", "skud_val"]]
+
+    week_idx, days_per_week = _iso_week_groups(fact["date"])
+    fact = fact.assign(week=week_idx)
+    week_sum = (
+        fact.groupby(["project_name", "contractor_name", "week"], dropna=False)["fact"]
+        .sum()
+        .reset_index(name="daily_sum")
+    )
+    week_sum["skud_val"] = week_sum.apply(
+        lambda r: r["daily_sum"] / max(1, days_per_week.get(int(r["week"]), 1)), axis=1
+    )
+    week_only = week_sum[week_sum["week"] == wn][["project_name", "contractor_name", "skud_val"]]
+    return skud_sum[["project_name", "contractor_name"]].merge(
+        week_only, on=["project_name", "contractor_name"], how="left"
+    ).assign(skud_val=lambda d: d["skud_val"].fillna(0.0))
+
+
 def build_main_table(
     long_fact: pd.DataFrame,
     plan: pd.DataFrame,
@@ -1207,6 +1374,7 @@ def build_main_table(
     article_sig_sets: Optional[dict[str, set[str]]] = None,
     article_by_project_contractor: Optional[dict[tuple[str, str], str]] = None,
     article_pc_sets: Optional[dict[tuple[str, str], set[str]]] = None,
+    skud_agg: str = GDRS_AGG_MONTH,
 ) -> pd.DataFrame:
     """Сборка главной таблицы (Скрин 11): Контрагент × недели × отклонение × дельта.
 
@@ -1217,26 +1385,20 @@ def build_main_table(
     Логика расчёта:
     - Неделя = ISO-неделя; нумерация в порядке возрастания внутри выборки (1..6 для месяца).
     - weekly_avg(подрядчик, неделя) = ∑ daily / N_дней_в_неделе_в_выборке.
-    - skud(подрядчик)              = ∑ daily / N_всех_дней_в_выборке (= «Факт / СКУД» среднее за день).
-    - deviation                       = План − skud; delta_pct = (deviation / План) × 100 (при План≠0).
-    - subtotal(проект, неделя)     = ∑ weekly_avg по подрядчикам.
-    - subtotal(проект, СКУД)       = ∑ skud по подрядчикам.
-    """
+    - skud: по `skud_agg` — среднее за день за период (month_avg) или weekly_avg выбранной недели (week:N).
+    - plan: из переданной plan-таблицы (1С); для week:N план грузится на дату конца недели снаружи.
+    - deviation = План − skud; delta_pct = (deviation / План) × 100 (при План≠0).
+  """
     if long_fact is None or long_fact.empty:
         return pd.DataFrame()
-    fact = long_fact[long_fact["vid_resursa"].astype(str).str.casefold() == vid.casefold()].copy()
-    if fact.empty:
-        return pd.DataFrame()
-    if date_from is not None:
-        fact = fact[fact["date"] >= pd.to_datetime(date_from)]
-    if date_to is not None:
-        fact = fact[fact["date"] <= pd.to_datetime(date_to)]
-    if projects:
-        proj_keys = {p.strip().casefold() for p in projects}
-        fact = fact[fact["project_name"].astype(str).str.strip().str.casefold().isin(proj_keys)]
-    if contractors:
-        c_keys = {c.strip().casefold() for c in contractors}
-        fact = fact[fact["contractor_name"].astype(str).str.strip().str.casefold().isin(c_keys)]
+    fact = _filter_fact_slice(
+        long_fact,
+        vid=vid,
+        date_from=date_from,
+        date_to=date_to,
+        projects=projects,
+        contractors=contractors,
+    )
     if fact.empty:
         return pd.DataFrame()
 
@@ -1278,12 +1440,7 @@ def build_main_table(
             pivot[w] = 0.0
     pivot.rename(columns={1: "w1", 2: "w2", 3: "w3", 4: "w4", 5: "w5", 6: "w6"}, inplace=True)
 
-    skud_per = (
-        fact.groupby(["project_name", "contractor_name"], dropna=False)["fact"]
-        .sum()
-        .reset_index(name="skud_sum")
-    )
-    skud_per["skud_avg"] = skud_per["skud_sum"] / max(1, total_days)
+    skud_per = _skud_agg_per_pair(fact, skud_agg).rename(columns={"skud_val": "skud_avg"})
 
     rows = pivot.merge(skud_per, on=["project_name", "contractor_name"], how="left")
     rows = rows.merge(id_pick, on=["project_name", "contractor_name"], how="left")
@@ -1325,6 +1482,8 @@ def build_main_table(
     )
     for w in ("w1", "w2", "w3", "w4", "w5", "w6"):
         rows[w] = rows[w].fillna(0.0).round(0)
+    for p in ("p1", "p2", "p3", "p4", "p5", "p6"):
+        rows[p] = rows["plan"].fillna(0.0).round(0)
     rows["row_kind"] = "row"
 
     if only_with_plan:
@@ -1355,6 +1514,12 @@ def build_main_table(
                 "w4": float(block["w4"].sum()),
                 "w5": float(block["w5"].sum()),
                 "w6": float(block["w6"].sum()),
+                "p1": plan_sum,
+                "p2": plan_sum,
+                "p3": plan_sum,
+                "p4": plan_sum,
+                "p5": plan_sum,
+                "p6": plan_sum,
                 "row_kind": "subtotal",
             }]
         )
@@ -1388,6 +1553,12 @@ def build_main_table(
             "w4": float(sub_only["w4"].sum()),
             "w5": float(sub_only["w5"].sum()),
             "w6": float(sub_only["w6"].sum()),
+            "p1": plan_total,
+            "p2": plan_total,
+            "p3": plan_total,
+            "p4": plan_total,
+            "p5": plan_total,
+            "p6": plan_total,
             "row_kind": "grand_total",
         }]
     )
@@ -1404,30 +1575,26 @@ def build_summary_table(
     date_to: Optional[pd.Timestamp] = None,
     projects: Optional[list[str]] = None,
     contractors: Optional[list[str]] = None,
+    skud_agg: str = GDRS_AGG_MONTH,
 ) -> pd.DataFrame:
     """Сводка по контрагентам (Скрин 5): Контрагент / План / Среднее за месяц / Отклонение."""
     if long_fact is None or long_fact.empty:
         return pd.DataFrame()
-    fact = long_fact[long_fact["vid_resursa"].astype(str).str.casefold() == vid.casefold()].copy()
-    if fact.empty:
-        return pd.DataFrame()
-    if date_from is not None:
-        fact = fact[fact["date"] >= pd.to_datetime(date_from)]
-    if date_to is not None:
-        fact = fact[fact["date"] <= pd.to_datetime(date_to)]
-    if projects:
-        proj_keys = {p.strip().casefold() for p in projects}
-        fact = fact[fact["project_name"].astype(str).str.strip().str.casefold().isin(proj_keys)]
-    if contractors:
-        c_keys = {c.strip().casefold() for c in contractors}
-        fact = fact[fact["contractor_name"].astype(str).str.strip().str.casefold().isin(c_keys)]
+    fact = _filter_fact_slice(
+        long_fact,
+        vid=vid,
+        date_from=date_from,
+        date_to=date_to,
+        projects=projects,
+        contractors=contractors,
+    )
     if fact.empty:
         return pd.DataFrame()
 
     plan_col = "plan_workers" if vid.casefold() == "рабочие" else "plan_equipment"
     by_id, by_id_name, by_norm = _build_plan_lookup(plan, plan_col)
 
-    total_days = int(fact["date"].dt.normalize().nunique())
+    fact["date"] = pd.to_datetime(fact["date"])
     id_pick = (
         fact.groupby(["project_name", "contractor_name"], dropna=False)
         .agg(
@@ -1436,13 +1603,9 @@ def build_summary_table(
         )
         .reset_index()
     )
-    summary = (
-        fact.groupby(["project_name", "contractor_name"], dropna=False)["fact"]
-        .sum()
-        .reset_index(name="skud_sum")
-    )
-    summary = summary.merge(id_pick, on=["project_name", "contractor_name"], how="left")
-    summary["mean_per_day"] = (summary["skud_sum"] / max(1, total_days)).round(0)
+    skud_vals = _skud_agg_per_pair(fact, skud_agg)
+    summary = skud_vals.merge(id_pick, on=["project_name", "contractor_name"], how="left")
+    summary["mean_per_day"] = summary["skud_val"].round(0)
     summary["plan"] = summary.apply(
         lambda r: _lookup_plan(
             str(r.get("project_id", "")), str(r.get("contractor_id", "")),
@@ -1458,3 +1621,414 @@ def build_summary_table(
     # ТЗ: Отклонение = План − Факт (среднее за день для периода).
     out["deviation"] = (out["plan"] - out["mean_per_day"]).round(0)
     return out[["contractor_name", "plan", "mean_per_day", "deviation"]]
+
+
+GDRS_WEEK_LABELS: tuple[str, ...] = tuple(f"{i} неделя" for i in range(1, 7))
+GDRS_WEEK_PLAN_KEYS: tuple[str, ...] = ("p1", "p2", "p3", "p4", "p5", "p6")
+GDRS_WEEK_SKUD_KEYS: tuple[str, ...] = ("w1", "w2", "w3", "w4", "w5", "w6")
+
+
+def gdrs_delta_pct_cell_bg_style(raw) -> str:
+    """Фон ячейки «Отклонение %» / «Дельта (%)» по значению отклонения."""
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return ""
+    try:
+        p = float(raw)
+    except Exception:
+        return ""
+    if p <= 0:
+        return "background-color:rgba(183,244,183,0.48) !important;"
+    t = min(max(p, 0.0), 100.0) / 100.0
+    lo = (204, 248, 204)
+    hi = (192, 38, 42)
+    rr = int(lo[0] + (hi[0] - lo[0]) * t)
+    gg = int(lo[1] + (hi[1] - lo[1]) * t)
+    bb = int(lo[2] + (hi[2] - lo[2]) * t)
+    alpha = 0.32 + 0.42 * t
+    return f"background-color:rgba({rr},{gg},{bb},{alpha:.3f}) !important;"
+
+
+def _gdrs_matrix_table_css(wrap_id: str) -> str:
+    """Сетка и рамки как в «Девелоперских проектах»; цвета колонок по ТЗ ГДРС."""
+    w = wrap_id
+    return f"""
+<style>
+#{w}.gdrs-table-wrap {{
+  overflow-x: auto;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0.5rem 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(121,154,192,0.5) #141820;
+}}
+#{w} .gdrs-matrix-table {{
+  border: 3px solid #ffffff;
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+  width: 100%;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+}}
+#{w} .gdrs-matrix-table th,
+#{w} .gdrs-matrix-table td {{
+  border: 1px solid #5a6f82 !important;
+  padding: 6px 8px !important;
+  vertical-align: middle !important;
+  background-clip: padding-box;
+  white-space: nowrap;
+}}
+#{w} .gdrs-matrix-table thead th {{
+  background: #17314b !important;
+  color: #86efac !important;
+  font-size: 16px !important;
+  font-weight: 800 !important;
+  text-align: center !important;
+}}
+#{w} .gdrs-matrix-table thead tr.gdrs-h-title th,
+#{w} .gdrs-matrix-table thead tr.gdrs-h-period th {{
+  background: #161f2b !important;
+  color: #ffffff !important;
+  font-size: 16px !important;
+  font-weight: 800 !important;
+}}
+#{w} .gdrs-matrix-table thead tr.gdrs-h-title th {{
+  border-bottom: none !important;
+}}
+#{w} .gdrs-matrix-table thead tr.gdrs-h-period th {{
+  border-top: none !important;
+}}
+#{w} .gdrs-matrix-table thead th.gdrs-h-plan-group {{
+  background: #1e3d2f !important;
+  color: #bbf7d0 !important;
+  font-size: 17px !important;
+  font-weight: 800 !important;
+}}
+#{w} .gdrs-matrix-table thead th.gdrs-h-skud-group {{
+  background: #2a3440 !important;
+  color: #e2e8f0 !important;
+  font-size: 17px !important;
+  font-weight: 800 !important;
+}}
+#{w} .gdrs-matrix-table thead th.gdrs-h-week {{
+  font-size: 15px !important;
+  font-weight: 800 !important;
+  text-align: center !important;
+}}
+#{w} .gdrs-matrix-table thead th.gdrs-h-week-plan {{
+  background: #1a3328 !important;
+  color: #86efac !important;
+}}
+#{w} .gdrs-matrix-table thead th.gdrs-h-week-skud {{
+  background: #252d38 !important;
+  color: #cbd5e1 !important;
+}}
+#{w} .gdrs-matrix-table tbody td {{
+  background-color: #0c1219 !important;
+  color: #fafafa !important;
+  font-weight: 700 !important;
+  text-align: center !important;
+}}
+#{w} .gdrs-matrix-table tbody td.gdrs-col-plan {{
+  background-color: rgba(134, 239, 172, 0.14) !important;
+}}
+#{w} .gdrs-matrix-table tbody td.gdrs-col-skud {{
+  background-color: rgba(148, 163, 184, 0.16) !important;
+}}
+#{w} .gdrs-matrix-table tbody td.gdrs-col-dev {{
+  background-color: rgba(148, 163, 184, 0.22) !important;
+}}
+#{w} .gdrs-matrix-table tbody td.gdrs-td-contractor {{
+  color: #7dd3fc !important;
+  font-weight: 700 !important;
+}}
+#{w} .gdrs-matrix-table tbody td.gdrs-td-text {{
+  text-align: left !important;
+}}
+#{w} .gdrs-sep-l-strong {{
+  box-shadow: inset 3px 0 0 #ffffff;
+}}
+#{w} .gdrs-sep-r-strong {{
+  box-shadow: inset -3px 0 0 #ffffff;
+}}
+#{w} tr.gdrs-rk-project td,
+#{w} tr.gdrs-rk-subtotal td {{
+  font-size: 16px !important;
+  font-weight: 800 !important;
+}}
+#{w} tr.gdrs-rk-project td.gdrs-col-plan,
+#{w} tr.gdrs-rk-subtotal td.gdrs-col-plan {{
+  background-color: rgba(134, 239, 172, 0.22) !important;
+}}
+#{w} tr.gdrs-rk-project td.gdrs-col-skud,
+#{w} tr.gdrs-rk-subtotal td.gdrs-col-skud {{
+  background-color: rgba(148, 163, 184, 0.24) !important;
+}}
+#{w} tr.gdrs-rk-project td.gdrs-col-dev,
+#{w} tr.gdrs-rk-subtotal td.gdrs-col-dev {{
+  background-color: rgba(148, 163, 184, 0.3) !important;
+}}
+#{w} tr.gdrs-rk-project td:not(.gdrs-col-plan):not(.gdrs-col-skud):not(.gdrs-col-dev),
+#{w} tr.gdrs-rk-subtotal td:not(.gdrs-col-plan):not(.gdrs-col-skud):not(.gdrs-col-dev) {{
+  background: #1f2630 !important;
+}}
+#{w} tr.gdrs-rk-project td:first-child,
+#{w} tr.gdrs-rk-subtotal td:first-child {{
+  color: #ffffff !important;
+  font-size: 17px !important;
+}}
+#{w} tr.gdrs-rk-project td {{
+  border-top: 2px solid rgba(255,255,255,0.75) !important;
+  border-bottom: 2px solid rgba(255,255,255,0.75) !important;
+}}
+#{w} tr.gdrs-rk-total td,
+#{w} tr.gdrs-rk-grand td {{
+  font-size: 16px !important;
+  font-weight: 800 !important;
+  border-top: 2px solid rgba(160,220,255,0.9) !important;
+  border-bottom: 2px solid rgba(160,220,255,0.9) !important;
+}}
+#{w} tr.gdrs-rk-total td.gdrs-col-plan,
+#{w} tr.gdrs-rk-grand td.gdrs-col-plan {{
+  background-color: rgba(134, 239, 172, 0.22) !important;
+}}
+#{w} tr.gdrs-rk-total td.gdrs-col-skud,
+#{w} tr.gdrs-rk-grand td.gdrs-col-skud {{
+  background-color: rgba(148, 163, 184, 0.24) !important;
+}}
+#{w} tr.gdrs-rk-total td.gdrs-col-dev,
+#{w} tr.gdrs-rk-grand td.gdrs-col-dev {{
+  background-color: rgba(148, 163, 184, 0.3) !important;
+}}
+#{w} tr.gdrs-rk-total td:not(.gdrs-col-plan):not(.gdrs-col-skud):not(.gdrs-col-dev),
+#{w} tr.gdrs-rk-grand td:not(.gdrs-col-plan):not(.gdrs-col-skud):not(.gdrs-col-dev) {{
+  background: #102b3a !important;
+}}
+#{w} td.gdrs-u, #{w} td.gdrs-u span {{ color: #ff5454 !important; font-weight: 800 !important; }}
+#{w} td.gdrs-o, #{w} td.gdrs-o span {{ color: #46d68a !important; font-weight: 800 !important; }}
+#{w} td.gdrs-z, #{w} td.gdrs-z span {{ color: #8899aa !important; }}
+</style>
+"""
+
+
+def render_gdrs_matrix_table_html(
+    view: "pd.DataFrame",
+    *,
+    fixed_cols: list[str],
+    delta_col: str,
+    kind_col: str = "__kind__",
+    wrap_id: str | None = None,
+    title_line: str = "",
+    period_line: str = "",
+    delta_bg_style=None,
+) -> str:
+    """HTML-таблица ГДРС: двухуровневая шапка «План» / «СКУД» над неделями 1–6."""
+    import html as html_module
+
+    if view is None or getattr(view, "empty", True):
+        return ""
+
+    if delta_bg_style is None:
+        delta_bg_style = gdrs_delta_pct_cell_bg_style
+
+    wk_n = len(GDRS_WEEK_LABELS)
+    plan_keys = list(GDRS_WEEK_PLAN_KEYS)
+    skud_keys = list(GDRS_WEEK_SKUD_KEYS)
+    show_cols = list(fixed_cols) + plan_keys + skud_keys + [delta_col]
+    ncols = len(show_cols)
+    wid = wrap_id or ("gdrs_mtx_" + str(abs(id(view))))
+    n_fixed = len(fixed_cols)
+    i_plan0 = n_fixed
+    i_plan1 = n_fixed + wk_n - 1
+    i_skud0 = n_fixed + wk_n
+    i_skud1 = n_fixed + 2 * wk_n - 1
+    i_delta = n_fixed + 2 * wk_n
+    text_cols = {"Контрагент", "Вид работ", "Вид работы"}
+    numeric_cols = set(fixed_cols[2:]) | set(plan_keys) | set(skud_keys)
+
+    def _border_cls(ci: int) -> str:
+        parts = ["gdrs-cell"]
+        if ci == 1:
+            parts.append("gdrs-sep-r-strong")
+        if ci == n_fixed - 1:
+            parts.append("gdrs-sep-r-strong")
+        if ci == i_plan0:
+            parts.append("gdrs-sep-l-strong")
+        if ci == i_plan1:
+            parts.append("gdrs-sep-r-strong")
+        if ci == i_skud0:
+            parts.append("gdrs-sep-l-strong")
+        if ci == i_skud1:
+            parts.append("gdrs-sep-r-strong")
+        if ci == i_delta:
+            parts.append("gdrs-sep-l-strong")
+        return " ".join(parts)
+
+    def _fmt_num(v) -> str:
+        try:
+            return f"{int(v):,}".replace(",", " ")
+        except (TypeError, ValueError):
+            return "0"
+
+    plan_keys_set = set(plan_keys)
+    skud_keys_set = set(skud_keys)
+
+    def _metric_cls(col: str) -> str:
+        if col == "План" or col in plan_keys_set:
+            return "gdrs-col-plan"
+        if col == "СКУД" or col in skud_keys_set:
+            return "gdrs-col-skud"
+        if col == "Отклонение":
+            return "gdrs-col-dev"
+        return ""
+
+    def _th_metric_cls(col: str) -> str:
+        if col == "План":
+            return "gdrs-col-plan"
+        if col == "СКУД":
+            return "gdrs-col-skud"
+        if col == "Отклонение":
+            return "gdrs-col-dev"
+        return ""
+
+    def _td_html(
+        ci: int,
+        col: str,
+        inner: str,
+        *,
+        extra_cls: str = "",
+        extra_style: str = "",
+        is_detail: bool = False,
+    ) -> str:
+        cls = _border_cls(ci)
+        mc = _metric_cls(col)
+        if mc:
+            cls += f" {mc}"
+        if col in text_cols:
+            cls += " gdrs-td-text"
+            if is_detail and col in ("Контрагент",):
+                cls += " gdrs-td-contractor"
+        if extra_cls:
+            cls += f" {extra_cls}"
+        st = extra_style or ""
+        return f'<td class="{cls.strip()}" style="{st}">{inner}</td>'
+
+    def _row_html(row) -> str:
+        kind = str(row.get(kind_col, "") or "").strip().casefold()
+        is_detail = kind not in ("project", "subtotal", "grand_total", "total")
+        tr_cls = ""
+        if kind == "project":
+            tr_cls = ' class="gdrs-rk-project"'
+        elif kind == "subtotal":
+            tr_cls = ' class="gdrs-rk-subtotal"'
+        elif kind == "grand_total":
+            tr_cls = ' class="gdrs-rk-grand"'
+        elif kind == "total":
+            tr_cls = ' class="gdrs-rk-total"'
+        cells: list[str] = []
+        for ci, col in enumerate(show_cols):
+            v = row.get(col, "")
+            if col == "Отклонение":
+                try:
+                    fv = float(v)
+                except (TypeError, ValueError):
+                    fv = None
+                if fv is not None and fv == fv:
+                    dev_cls = "gdrs-u" if fv > 0 else ("gdrs-o" if fv < 0 else "gdrs-z")
+                    inner = "0" if int(round(fv)) == 0 else f"{int(round(fv)):+d}"
+                    cells.append(
+                        _td_html(ci, col, html_module.escape(inner), extra_cls=dev_cls, is_detail=is_detail)
+                    )
+                else:
+                    cells.append(_td_html(ci, col, "—", is_detail=is_detail))
+            elif col == delta_col:
+                raw_pct = row.get("_delta_pct_raw", v)
+                try:
+                    pct = float(raw_pct)
+                except (TypeError, ValueError):
+                    pct = float("nan")
+                if pct == pct:
+                    grad = (delta_bg_style(raw_pct) if delta_bg_style else "") or ""
+                    pct_cls = "gdrs-u" if pct > 0 else ("gdrs-o" if pct < 0 else "gdrs-z")
+                    sign = "+" if pct > 0 else ""
+                    cells.append(
+                        _td_html(
+                            ci,
+                            col,
+                            html_module.escape(f"{sign}{pct:.0f}%"),
+                            extra_cls=pct_cls,
+                            extra_style=grad,
+                            is_detail=is_detail,
+                        )
+                    )
+                elif isinstance(v, str) and str(v).strip() and str(v).strip() != "—":
+                    cells.append(_td_html(ci, col, html_module.escape(str(v)), is_detail=is_detail))
+                else:
+                    cells.append(_td_html(ci, col, "—", is_detail=is_detail))
+            elif col in numeric_cols:
+                cells.append(_td_html(ci, col, html_module.escape(_fmt_num(v)), is_detail=is_detail))
+            else:
+                cells.append(
+                    _td_html(
+                        ci,
+                        col,
+                        html_module.escape(str(v) if v is not None else ""),
+                        is_detail=is_detail,
+                    )
+                )
+        return f"<tr{tr_cls}>" + "".join(cells) + "</tr>"
+
+    thead_parts: list[str] = []
+    if title_line:
+        thead_parts.append(
+            f'<tr class="gdrs-h-title"><th colspan="{ncols}">'
+            f"{html_module.escape(title_line)}</th></tr>"
+        )
+    if period_line:
+        thead_parts.append(
+            f'<tr class="gdrs-h-period"><th colspan="{ncols}">'
+            f"{html_module.escape(period_line)}</th></tr>"
+        )
+    thead_parts.append("<tr>")
+    for ci, col in enumerate(fixed_cols):
+        hmc = _th_metric_cls(col)
+        hcls = _border_cls(ci) + (f" {hmc}" if hmc else "")
+        thead_parts.append(
+            f'<th rowspan="2" class="{hcls.strip()}">{html_module.escape(col)}</th>'
+        )
+    thead_parts.append(
+        f'<th colspan="{wk_n}" class="gdrs-h-plan-group gdrs-sep-l-strong gdrs-sep-r-strong">План</th>'
+    )
+    thead_parts.append(
+        f'<th colspan="{wk_n}" class="gdrs-h-skud-group gdrs-sep-l-strong gdrs-sep-r-strong">СКУД</th>'
+    )
+    delta_title = "Итого (%)" if delta_col == "Дельта (%)" else delta_col
+    thead_parts.append(
+        f'<th rowspan="2" class="{_border_cls(i_delta)}">{html_module.escape(delta_title)}</th>'
+    )
+    thead_parts.append("</tr><tr>")
+    for wi, lbl in enumerate(GDRS_WEEK_LABELS):
+        wcls = "gdrs-h-week gdrs-h-week-plan gdrs-col-plan"
+        if wi == 0:
+            wcls += " gdrs-sep-l-strong"
+        if wi == wk_n - 1:
+            wcls += " gdrs-sep-r-strong"
+        thead_parts.append(f'<th class="{wcls}">{html_module.escape(lbl)}</th>')
+    for wi, lbl in enumerate(GDRS_WEEK_LABELS):
+        wcls = "gdrs-h-week gdrs-h-week-skud gdrs-col-skud"
+        if wi == 0:
+            wcls += " gdrs-sep-l-strong"
+        if wi == wk_n - 1:
+            wcls += " gdrs-sep-r-strong"
+        thead_parts.append(f'<th class="{wcls}">{html_module.escape(lbl)}</th>')
+    thead_parts.append("</tr>")
+
+    body = "".join(_row_html(r) for _, r in view.iterrows())
+    return (
+        f'<div id="{wid}" class="gdrs-table-wrap">'
+        + _gdrs_matrix_table_css(wid)
+        + '<table class="gdrs-matrix-table"><thead>'
+        + "".join(thead_parts)
+        + "</thead><tbody>"
+        + body
+        + "</tbody></table></div>"
+    )
