@@ -8852,7 +8852,6 @@ def dashboard_budget_by_period(df):
         df = _project_column_apply_canonical(df, "project name")
 
     hide_adjusted = True
-    hide_reserve = False
 
     filtered_df = df.copy()
     with filters_panel(st):
@@ -9014,7 +9013,16 @@ def dashboard_budget_by_period(df):
                         ].copy()
                         _bdds_cal_start = _start_dt
                         _bdds_cal_end = _end_dt
-    
+
+    # П.9 ТЗ: чекбоксы после фильтров; отклонение на графике — только по явному включению.
+    show_deviation = st.checkbox(
+        "Показать отклонение",
+        value=False,
+        key="budget_period_show_deviation",
+        help="По умолчанию на графике только план и факт; при включении добавляются столбцы отклонения.",
+    )
+    hide_reserve = not show_deviation
+
     # Единый fallback бюджета: MSP -> 1С dannye при пустых budget колонках.
     ensure_budget_columns(filtered_df)
     from dashboards.finance_from_1c import ensure_budget_frame_with_fallback
@@ -9309,6 +9317,10 @@ def dashboard_budget_by_period(df):
             )
         )
         if not hide_reserve:
+            _dev_mln = project_data["reserve budget"].div(1e6)
+            _dev_colors = [
+                "#e74c3c" if float(v) >= 0 else "#27ae60" for v in _dev_mln.fillna(0.0)
+            ]
             _dev_txt = (
                 None
                 if _hide_bar_value_labels
@@ -9317,15 +9329,14 @@ def dashboard_budget_by_period(df):
             fig.add_trace(
                 go.Bar(
                     x=project_data[period_col],
-                    y=project_data["reserve budget"].div(1e6),
+                    y=_dev_mln,
                     name="Отклонение",
-                    marker_color="#e74c3c",
+                    marker_color=_dev_colors,
                     text=_dev_txt,
                     textposition=_txt_pos,
                     textfont=dict(size=_tfs, color="#f0f4f8"),
                     customdata=project_data["reserve budget"].apply(format_million_rub),
                     hovertemplate="<b>%{x}</b><br>Отклонение: %{customdata}<br><extra></extra>",
-                    visible="legendonly",
                 )
             )
         if (
@@ -9401,13 +9412,23 @@ def dashboard_budget_by_period(df):
                         [
                             project_data["budget plan"].div(1e6).to_numpy(),
                             project_data["budget fact"].div(1e6).to_numpy(),
-                            project_data["reserve budget"].div(1e6).to_numpy(),
+                            *(
+                                [project_data["reserve budget"].div(1e6).to_numpy()]
+                                if not hide_reserve
+                                else []
+                            ),
                         ]
                     )
                 )
             )
-            if np.isfinite(_ymax) and _ymax > 0:
-                fig.update_layout(yaxis=dict(range=[0, _ymax * 1.22]))
+            _ymin = 0.0
+            if not hide_reserve:
+                _ymin_dev = float(np.nanmin(_dev_mln.to_numpy()))
+                if np.isfinite(_ymin_dev) and _ymin_dev < 0:
+                    _ymin = _ymin_dev * 1.15
+            if np.isfinite(_ymax):
+                if _ymax > 0 or _ymin < 0:
+                    fig.update_layout(yaxis=dict(range=[_ymin, max(_ymax * 1.22, 0.01)]))
         fig = apply_chart_background(fig)
         # Не clamp’ить к 900: при больших margin и длинной шкале нужна полная высота.
         render_chart(
