@@ -1664,6 +1664,50 @@ def _apply_finance_bar_label_layout(
     return fig
 
 
+def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame) -> go.Figure:
+    """Круговая «распределение по контрагентам»: без наложения — % внутри, названия в легенде."""
+    df = pie_df.sort_values("Факт", ascending=False).reset_index(drop=True)
+    n = int(len(df))
+    height = int(min(780, max(520, 460 + n * 7)))
+    r_margin = int(min(440, max(260, 210 + n * 7)))
+    fig = go.Figure(
+        data=[
+            go.Pie(
+                labels=df["Контрагент"].astype(str),
+                values=df["Факт"],
+                sort=False,
+                direction="clockwise",
+                textinfo="percent",
+                texttemplate="%{percent:.0%}",
+                textposition="inside",
+                insidetextorientation="horizontal",
+                textfont=dict(size=13 if n <= 8 else 11, color="#ffffff"),
+                hovertemplate=(
+                    "<b>%{label}</b><br>Факт: %{value}<br>%{percent}<extra></extra>"
+                ),
+                marker=dict(line=dict(color="rgba(15,23,42,0.9)", width=1)),
+            )
+        ]
+    )
+    fig.update_layout(
+        height=height,
+        uniformtext=dict(minsize=9, mode="hide"),
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=1.0,
+            xanchor="left",
+            x=1.01,
+            font=dict(size=11, color="#e8eef5"),
+            tracegroupgap=3,
+            itemsizing="constant",
+        ),
+        margin=dict(l=28, r=r_margin, t=44, b=36),
+        showlegend=True,
+    )
+    return fig
+
+
 def _apply_pie_layout(fig: go.Figure, *, height: int = 460) -> go.Figure:
     """
     Правки куратора 08.05.2026: единый layout для круговых диаграмм.
@@ -17902,6 +17946,215 @@ def dashboard_gdrs_equipment(df):
     )
 
 
+# ==================== ГДРС: кэш тяжёлых загрузок ====================
+def _gdrs_paths_mtime_sig(paths) -> tuple:
+    from pathlib import Path as _P
+
+    sig: list[tuple] = []
+    for p in sorted({str(_P(x).resolve()) for x in paths}):
+        pp = _P(p)
+        if pp.is_file():
+            stt = pp.stat()
+            sig.append((p, stt.st_mtime_ns, stt.st_size))
+    return tuple(sig)
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _gdrs_cached_load_resursi(paths_sig: tuple) -> pd.DataFrame:
+    from pathlib import Path as _P
+    from dashboards.gdrs_resursi import load_resursi_files
+
+    return load_resursi_files([_P(p[0]) for p in paths_sig])
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _gdrs_cached_plan_aggregate(
+    dog_sig: tuple,
+    spr_sig: tuple,
+    snapshot_iso: str,
+) -> pd.DataFrame:
+    from pathlib import Path as _P
+    from dashboards.gdrs_resursi import load_plan_aggregate
+
+    snap = pd.Timestamp(snapshot_iso) if snapshot_iso else None
+    return load_plan_aggregate(
+        [_P(p[0]) for p in dog_sig],
+        [_P(p[0]) for p in spr_sig],
+        snapshot_date=snap,
+    )
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _gdrs_cached_dannye_maps(dannye_sig: tuple):
+    from pathlib import Path as _P
+    from dashboards.gdrs_resursi import load_1c_dannye_article_maps
+
+    return load_1c_dannye_article_maps([_P(p[0]) for p in dannye_sig])
+
+
+def _gdrs_plan_loader(dog_sig: tuple, spr_sig: tuple):
+    def _load(snap: pd.Timestamp) -> pd.DataFrame:
+        iso = pd.Timestamp(snap).normalize().isoformat()
+        return _gdrs_cached_plan_aggregate(dog_sig, spr_sig, iso)
+
+    return _load
+
+
+_gdrs_fragment = getattr(st, "fragment", None)
+
+
+@(_gdrs_fragment if _gdrs_fragment else (lambda f: f))
+def _gdrs_dynamics_chart_panel(
+    fact_dyn,
+    dyn_from_iso: str,
+    dyn_to_iso: str,
+    dog_sig: tuple,
+    spr_sig: tuple,
+    plan_col: str,
+    sel_vid: str,
+    dyn_title: str,
+    vid_locked: str | None,
+    month_periods: list | None = None,
+):
+    """Линейный график динамики — fragment: смена группировки без полной перезагрузки страницы."""
+    import plotly.graph_objects as _go
+    from dashboards.gdrs_resursi import gdrs_dynamics_build_series
+
+    dyn_from = pd.Timestamp(dyn_from_iso)
+    dyn_to = pd.Timestamp(dyn_to_iso)
+    st.subheader(dyn_title)
+    _span_days = int((dyn_to - dyn_from).days) + 1
+    if _span_days <= 62:
+        _agg_default = 0
+    elif _span_days <= 800:
+        _agg_default = 1
+    else:
+        _agg_default = 2
+    agg_kind = st.radio(
+        "Группировка", ["Неделя", "Месяц", "Год"], horizontal=True,
+        index=_agg_default,
+        key=f"gdrs_dyn_kind_{vid_locked or 'any'}",
+    )
+    st.caption(
+        f"По всем загруженным датам: **{dyn_from.strftime('%d.%m.%Y')} — "
+        f"{dyn_to.strftime('%d.%m.%Y')}** "
+        f"(по выбранным месяцам в фильтре «Месяц»)."
+    )
+    uniq_pairs = fact_dyn[
+        ["project_id", "project_name", "contractor_id", "contractor_name"]
+    ].drop_duplicates()
+    dyn = gdrs_dynamics_build_series(
+        fact_dyn, dyn_from, dyn_to, agg_kind,
+        [], [], uniq_pairs, plan_col,
+        plan_aggregate_loader=_gdrs_plan_loader(dog_sig, spr_sig),
+        month_periods=month_periods,
+    )
+    if len(dyn) < 2:
+        st.warning(
+            "Для выбранной группировки доступен только один период. "
+            "Переключите на «Неделя» или загрузите CSV за несколько месяцев."
+        )
+    try:
+        _x = dyn["bucket"]
+        _pct_hover = [
+            f"{int(round(float(f) / float(p) * 100))}% от плана"
+            if int(p) > 0 else "—"
+            for f, p in zip(dyn["Факт"], dyn["План"])
+        ]
+        _n_pts = len(dyn)
+        _lbl_sz = 11 if _n_pts <= 16 else (10 if _n_pts <= 24 else 9)
+        _ann_sz = 10 if _n_pts <= 16 else 9
+        fig = _go.Figure()
+        fig.add_trace(_go.Scatter(
+            x=_x, y=dyn["План"], mode="lines+markers+text",
+            line=dict(color="#29b6f6", width=2.5), marker=dict(size=7),
+            name="План",
+            text=[f"{int(v)}" for v in dyn["План"]],
+            textposition="top center",
+            textfont=dict(color="#29b6f6", size=_lbl_sz),
+            cliponaxis=False,
+            yaxis="y2",
+            hovertemplate="План: %{y}<br>%{x|%d.%m.%Y}<extra></extra>",
+        ))
+        fig.add_trace(_go.Scatter(
+            x=_x, y=dyn["Факт"], mode="lines+markers+text",
+            line=dict(color="#ff8c2d", width=2.5), marker=dict(size=7),
+            name="Факт",
+            text=[f"{int(f)}" for f in dyn["Факт"]],
+            textposition="bottom center",
+            textfont=dict(color="#ff8c2d", size=_lbl_sz),
+            cliponaxis=False,
+            yaxis="y",
+            customdata=_pct_hover,
+            hovertemplate="Факт: %{y}<br>%{customdata}<br>%{x|%d.%m.%Y}<extra></extra>",
+        ))
+        for _xb, _f, _p in zip(_x, dyn["Факт"], dyn["План"]):
+            if int(_p) <= 0:
+                continue
+            _pct = int(round(float(_f) / float(_p) * 100.0))
+            _pct_color = "#46d68a" if _pct >= 100 else "#ff5454"
+            fig.add_annotation(
+                x=_xb,
+                y=int(_f),
+                text=f"({_pct}%)",
+                showarrow=False,
+                xref="x",
+                yref="y",
+                xanchor="center",
+                yanchor="top",
+                yshift=-18 if _n_pts <= 16 else -14,
+                font=dict(size=_ann_sz, color=_pct_color),
+            )
+        _chart_h = int(min(620, max(400, 36 * _n_pts)))
+        fig.update_layout(
+            title=f"Фактическое количество — {sel_vid.lower()} (ресурсы)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+            font_color="#eee",
+            xaxis_title=f"Период — {agg_kind.lower()}",
+            height=_chart_h,
+            margin=dict(l=52, r=56, t=88, b=88),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        )
+        _fact = dyn["Факт"].astype(float)
+        _plan = dyn["План"].astype(float)
+        _f_lo, _f_hi = float(_fact.min()), float(_fact.max())
+        _f_span = max(_f_hi - _f_lo, 1.0)
+        _f_pad = max(_f_span * 0.28, 18.0)
+        _p_lo, _p_hi = float(_plan.min()), float(_plan.max())
+        _p_span = max(_p_hi - _p_lo, 1.0)
+        _p_pad = max(_p_span * 0.24, 18.0)
+        fig.update_layout(
+            xaxis=dict(
+                type="date",
+                tickformat="%d.%m.%Y",
+                tickangle=-35 if len(dyn) > 6 else 0,
+                showgrid=True,
+                gridcolor="rgba(255,255,255,0.06)",
+            ),
+            yaxis=dict(
+                title="Факт",
+                range=[max(0.0, _f_lo - _f_pad), _f_hi + _f_pad],
+                autorange=False,
+                showgrid=True,
+                gridcolor="rgba(255,255,255,0.08)",
+            ),
+            yaxis2=dict(
+                title="План",
+                overlaying="y",
+                side="right",
+                range=[max(0.0, _p_lo - _p_pad), _p_hi + _p_pad],
+                autorange=False,
+                showgrid=False,
+            ),
+        )
+        fig = apply_chart_background(fig)
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as _e:
+        st.warning(f"Plotly недоступен: {_e}")
+        st.dataframe(dyn[["Период", "План", "Факт"]], use_container_width=True)
+
+
 # ==================== DASHBOARD: ГДРС (новая реализация по ТЗ 2026-05-07) ====================
 def dashboard_gdrs_people(df):
     """Подвкладка категории «ГДРС» — рабочие (люди)."""
@@ -17928,7 +18181,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                                                  + Наименование_Договора (для «Вид работы»).
       • web/1с_*_spravochniki.json (все)       → fallback план (КоличествоРаботников / СпецТехники).
 
-    UI: 3 таба «Таблица / Динамика / Сводка по контрагентам».
+    UI: одна страница — 4 визуала (проекты, контрагенты, динамика, круговая) и таблица.
     Фильтры сверху: Проект (multi), Контрагент (multi), [Вид ресурсов — только если не locked],
                     Период (date range), «Только с планом» (checkbox).
     """
@@ -17944,9 +18197,11 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         sys.path.insert(0, _root)
     from dashboards.gdrs_resursi import (
         build_main_table,
-        build_summary_table,
         gdrs_agg_label_to_key,
         gdrs_agg_select_options,
+        gdrs_filter_fact_by_months,
+        gdrs_month_select_options,
+        gdrs_months_date_range,
         gdrs_plan_snapshot_date,
         load_1c_dannye_article_maps,
         load_plan_aggregate,
@@ -17976,24 +18231,27 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         )
         return
 
-    with st.spinner("Загрузка ресурсов и плана…"):
-        long_fact = load_resursi_files(resursi_files)
+    _res_sig = _gdrs_paths_mtime_sig(resursi_files)
+    _dog_sig = _gdrs_paths_mtime_sig(dogovor_files)
+    _spr_sig = _gdrs_paths_mtime_sig(sprav_files)
+
+    with st.spinner("Загрузка ресурсов…"):
+        long_fact = _gdrs_cached_load_resursi(_res_sig)
     if long_fact is None or long_fact.empty:
         st.error("Файлы ресурсов не распознаны (формат?). Проверьте структуру CSV.")
         return
     long_fact = apply_unified_project_column(long_fact, "project_name")
 
-    min_date = _pd.to_datetime(long_fact["date"]).min()
-    max_date = _pd.to_datetime(long_fact["date"]).max()
-    default_from = max_date.replace(day=1)
-    default_to = max_date
+    _month_options = gdrs_month_select_options(long_fact)
+    _month_labels = [lbl for lbl, _ in _month_options]
+    _month_label_to_period = {lbl: per for lbl, per in _month_options}
 
     use_radio = vid_locked is None
     _gdrs_vid_key = vid_locked or "any"
     _gdrs_reset_keys = [
         f"gdrs_filter_projects_{_gdrs_vid_key}",
         f"gdrs_filter_contractors_{_gdrs_vid_key}",
-        f"gdrs_filter_dates_{_gdrs_vid_key}",
+        f"gdrs_filter_months_{_gdrs_vid_key}",
         f"gdrs_filter_only_plan_{_gdrs_vid_key}",
         f"gdrs_filter_plan_agg_{_gdrs_vid_key}",
         f"gdrs_filter_skud_agg_{_gdrs_vid_key}",
@@ -18032,13 +18290,14 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             sel_vid = vid_locked
             date_idx, plan_idx = 2, 3
         with fcols[date_idx]:
-            sel_dates = st.date_input(
-                "Период (от — до)",
-                value=(default_from.date(), default_to.date()),
-                min_value=min_date.date(),
-                max_value=max_date.date(),
-                key=f"gdrs_filter_dates_{_gdrs_vid_key}",
-                help="По умолчанию — последний месяц с данными (6 колонок недель в ТЗ)",
+            _default_months = [_month_labels[-1]] if _month_labels else []
+            sel_month_labels = st.multiselect(
+                "Месяц",
+                _month_labels,
+                default=_default_months,
+                key=f"gdrs_filter_months_{_gdrs_vid_key}",
+                placeholder="Все месяцы",
+                help="Один или несколько календарных месяцев. Пусто — все месяцы с данными.",
             )
         with fcols[plan_idx]:
             only_with_plan = st.checkbox(
@@ -18067,18 +18326,19 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                 "N неделя — среднее факт/день только в выбранной неделе",
             )
 
-    if isinstance(sel_dates, (tuple, list)) and len(sel_dates) == 2:
-        date_from, date_to = sel_dates
+    if sel_month_labels:
+        _sel_periods = [_month_label_to_period[lbl] for lbl in sel_month_labels if lbl in _month_label_to_period]
     else:
-        date_from = sel_dates if not isinstance(sel_dates, (list, tuple)) else sel_dates[0]
-        date_to = date_from
+        _sel_periods = [per for _, per in _month_options]
+    date_from, date_to = gdrs_months_date_range(_sel_periods)
     date_from = _pd.to_datetime(date_from)
     date_to = _pd.to_datetime(date_to)
+    long_fact_period = gdrs_filter_fact_by_months(long_fact, _sel_periods)
 
     _plan_agg = gdrs_agg_label_to_key(_plan_lbl)
     _skud_agg = gdrs_agg_label_to_key(_skud_lbl)
     _plan_snap = gdrs_plan_snapshot_date(
-        long_fact,
+        long_fact_period,
         vid=sel_vid,
         date_from=date_from,
         date_to=date_to,
@@ -18086,19 +18346,22 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         projects=sel_projects or None,
         contractors=sel_contractors or None,
     )
-    plan = load_plan_aggregate(dogovor_files, sprav_files, snapshot_date=_plan_snap)
+    plan = _gdrs_cached_plan_aggregate(
+        _dog_sig, _spr_sig, pd.Timestamp(_plan_snap).normalize().isoformat(),
+    )
 
     _dannye_paths: list[_Path] = []
     for _base in (web_dir, ai_dir):
         if _base.is_dir():
             for _pat in ("*dannye*.json", "*Dannye*.json"):
                 _dannye_paths.extend(_base.glob(_pat))
-    _by_dog, _by_pc, _by_sig_pc, _by_sig, _by_pc_sets = load_1c_dannye_article_maps(
+    _dannye_sig = _gdrs_paths_mtime_sig(
         sorted({_p.resolve() for _p in _dannye_paths if _p.is_file()})
     )
+    _by_dog, _by_pc, _by_sig_pc, _by_sig, _by_pc_sets = _gdrs_cached_dannye_maps(_dannye_sig)
 
     main_t = build_main_table(
-        long_fact, plan,
+        long_fact_period, plan,
         vid=sel_vid,
         date_from=date_from, date_to=date_to,
         projects=sel_projects or None,
@@ -18111,504 +18374,242 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         article_pc_sets=_by_pc_sets if _by_pc_sets else None,
         skud_agg=_skud_agg,
     )
-    summary_t = build_summary_table(
-        long_fact, plan,
-        vid=sel_vid,
-        date_from=date_from, date_to=date_to,
-        projects=sel_projects or None,
-        contractors=sel_contractors or None,
-        skud_agg=_skud_agg,
-    )
-
     if main_t is None or main_t.empty:
         st.info("Нет данных для выбранных фильтров.")
         return
 
-    tabs = st.tabs(["Таблица", "Динамика", "Сводка по контрагентам"])
+    period_label = (
+        f"{date_from.strftime('%d.%m.%Y')} — {date_to.strftime('%d.%m.%Y')}"
+        if date_from != date_to else date_from.strftime("%d.%m.%Y")
+    )
+    unit = "люди" if sel_vid == "Рабочие" else "техника"
+    _unit_gen = "людей" if sel_vid == "Рабочие" else "техники"
 
-    # ---------- Таб 1: Таблица + План/Факт по проектам ----------
-    with tabs[0]:
-        period_label = (
-            f"{date_from.strftime('%d.%m.%Y')} — {date_to.strftime('%d.%m.%Y')}"
-            if date_from != date_to else date_from.strftime("%d.%m.%Y")
+    chart_df = main_t[main_t["row_kind"] == "row"][
+        ["contractor_name", "plan", "skud", "deviation"]
+    ].copy()
+    chart_df.rename(columns={
+        "contractor_name": "Контрагент", "plan": "План", "skud": "Факт",
+    }, inplace=True)
+    chart_df["Отклонение"] = chart_df["deviation"].round(0).astype(int)
+    chart_df = chart_df.sort_values("План", ascending=False)
+
+    render_table_subheader(st, "ГДРС по выбранным проектам")
+    proj_df = main_t[main_t["row_kind"] == "subtotal"][
+        ["project_name", "plan", "skud", "deviation", "delta_pct"]
+    ].copy()
+    if not proj_df.empty:
+        try:
+            import plotly.graph_objects as _go
+            proj_df = proj_df.sort_values("plan", ascending=False).reset_index(drop=True)
+            _dev_signed = proj_df["deviation"].round(0).astype(int)
+            _dev_colors = [
+                "#ff5454" if int(v) > 0 else ("#46d68a" if int(v) < 0 else "#8899aa")
+                for v in _dev_signed
+            ]
+            _proj_labels = proj_df["project_name"].astype(str).tolist()
+            _plan_vals = proj_df["plan"].fillna(0).astype(int).tolist()
+            _fact_vals = proj_df["skud"].fillna(0).astype(int).tolist()
+            _dev_abs = _dev_signed.abs().tolist()
+            fig_pf = _go.Figure()
+            fig_pf.add_bar(
+                name="План", x=_proj_labels, y=_plan_vals,
+                marker_color="#29b6f6",
+                text=[f"{v}" for v in _plan_vals], textposition="outside",
+                textfont=dict(color="#cfe9fa", size=12),
+            )
+            fig_pf.add_bar(
+                name="Факт", x=_proj_labels, y=_fact_vals,
+                marker_color="#46d68a",
+                text=[f"{v}" for v in _fact_vals], textposition="outside",
+                textfont=dict(color="#cfe9fa", size=12),
+            )
+            fig_pf.add_bar(
+                name="Отклонение (план − факт)", x=_proj_labels, y=_dev_abs,
+                marker_color=_dev_colors,
+                text=[f"{int(v):+d}" for v in _dev_signed], textposition="outside",
+                textfont=dict(color="#cfe9fa", size=12),
+            )
+            fig_pf.update_layout(
+                title=dict(
+                    text="План / Факт / Отклонение по проектам",
+                    font=dict(size=16, color="#eee"),
+                    x=0.0, xanchor="left", y=0.96, yanchor="top",
+                ),
+                barmode="group",
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                font_color="#eee",
+                xaxis=dict(showgrid=False),
+                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.08)"),
+                height=520,
+                margin=dict(l=56, r=24, t=72, b=110),
+                legend=dict(
+                    orientation="h", yanchor="top", y=-0.18,
+                    xanchor="left", x=0.0, bgcolor="rgba(0,0,0,0)",
+                ),
+            )
+            fig_pf = apply_chart_background(fig_pf)
+            _n_projs = len(_proj_labels)
+            if _n_projs <= 2:
+                fig_pf.update_layout(bargap=0.65, bargroupgap=0.15)
+            elif _n_projs <= 4:
+                fig_pf.update_layout(bargap=0.45, bargroupgap=0.1)
+            st.plotly_chart(fig_pf, use_container_width=True)
+        except Exception as _e:
+            st.warning(f"Plotly недоступен: {_e}")
+
+    st.markdown("---")
+    render_table_subheader(st, "ГДРС по выбранным контрагентам")
+    if chart_df.empty:
+        st.info("Нет данных по контрагентам.")
+    else:
+        try:
+            import plotly.graph_objects as _go
+            fig2 = _go.Figure()
+            fig2.add_bar(
+                name="План", x=chart_df["Контрагент"], y=chart_df["План"],
+                marker_color="#29b6f6",
+                text=[f"{int(v)}" for v in chart_df["План"]],
+                textposition="outside",
+                textfont=dict(color="#cfe9fa", size=11),
+            )
+            fig2.add_bar(
+                name="Факт", x=chart_df["Контрагент"], y=chart_df["Факт"],
+                marker_color="#46d68a",
+                text=[f"{int(v)}" for v in chart_df["Факт"]],
+                textposition="outside",
+                textfont=dict(color="#cfe9fa", size=11),
+            )
+            fig2.add_bar(
+                name="Отклонение (план − факт)",
+                x=chart_df["Контрагент"],
+                y=chart_df["Отклонение"].abs(),
+                marker_color=[
+                    "#ff5454" if v > 0 else ("#46d68a" if v < 0 else "#8899aa")
+                    for v in chart_df["Отклонение"]
+                ],
+                text=[f"{int(v):+d}" for v in chart_df["Отклонение"]],
+                textposition="outside",
+                textfont=dict(color="#cfe9fa", size=11),
+            )
+            fig2.update_layout(
+                barmode="group",
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                font_color="#eee",
+                xaxis_tickangle=-45,
+                height=480,
+                margin=dict(l=48, r=32, t=32, b=140),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            )
+            fig2 = apply_chart_background(fig2)
+            st.plotly_chart(fig2, use_container_width=True)
+        except Exception as _e:
+            st.warning(f"Plotly недоступен: {_e}")
+
+    st.markdown("---")
+    if str(sel_vid).casefold() == "рабочие":
+        _dyn_title = "Динамика людей"
+    elif str(sel_vid).casefold() == "техника":
+        _dyn_title = "Динамика техники"
+    else:
+        _dyn_title = "Динамика людей и техники"
+    fact_dyn = long_fact_period.copy()
+    fact_dyn = fact_dyn[fact_dyn["vid_resursa"].astype(str).str.casefold() == sel_vid.casefold()]
+    if sel_projects:
+        fact_dyn = fact_dyn[fact_dyn["project_name"].isin(sel_projects)]
+    if sel_contractors:
+        fact_dyn = fact_dyn[fact_dyn["contractor_name"].isin(sel_contractors)]
+    plan_col = "plan_workers" if sel_vid.casefold() == "рабочие" else "plan_equipment"
+    if fact_dyn.empty:
+        st.info("Нет данных для графика динамики.")
+    else:
+        fact_dyn["date"] = _pd.to_datetime(fact_dyn["date"])
+        _dyn_from = date_from.normalize() if _pd.notna(date_from) else fact_dyn["date"].min().normalize()
+        _dyn_to = date_to.normalize() if _pd.notna(date_to) else fact_dyn["date"].max().normalize()
+        _gdrs_dynamics_chart_panel(
+            fact_dyn,
+            _dyn_from.isoformat(),
+            _dyn_to.isoformat(),
+            _dog_sig,
+            _spr_sig,
+            plan_col,
+            sel_vid,
+            _dyn_title,
+            vid_locked,
+            month_periods=_sel_periods,
         )
-        unit = "люди" if sel_vid == "Рабочие" else "техника"
-        c_left, c_right = st.columns([3, 1])
-        with c_left:
-            st.subheader(f"График движения рабочей силы ({unit}), {period_label}")
-        with c_right:
-            st.markdown(
-                f"<div style='text-align:right; padding-top:8px; color:#888'>{date_to.strftime('%d.%m.%Y')}</div>",
-                unsafe_allow_html=True,
+
+    st.markdown("---")
+    render_table_subheader(st, f"Распределение {_unit_gen} по контрагентам")
+    pie_df = chart_df[chart_df["Факт"] > 0][["Контрагент", "Факт"]].copy()
+    if pie_df.empty:
+        st.info("Нет фактических данных для круговой диаграммы.")
+    else:
+        try:
+            fig3 = _gdrs_pie_contractors_figure(pie_df)
+            fig3.update_layout(
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                font_color="#eee",
             )
+            fig3 = apply_chart_background(fig3)
+            st.plotly_chart(fig3, use_container_width=True)
+        except Exception as _e:
+            st.warning(f"Plotly недоступен: {_e}")
 
-        # ---- Блок «План/Факт по проектам» (скрин 8/9 ТЗ) ----
-        # Q4 (08.05.2026): по ответу заказчика — собрать все проекты в одну общую диаграмму
-        # вместо отдельных карточек.
-        proj_df = main_t[main_t["row_kind"] == "subtotal"][
-            ["project_name", "plan", "skud", "deviation", "delta_pct"]
-        ].copy()
-        if not proj_df.empty:
-            try:
-                import plotly.graph_objects as _go
-                proj_df = proj_df.sort_values("plan", ascending=False).reset_index(drop=True)
-                _dev_signed = proj_df["deviation"].round(0).astype(int)
-                _dev_colors = [
-                    "#ff5454" if int(v) > 0 else ("#46d68a" if int(v) < 0 else "#8899aa")
-                    for v in _dev_signed
-                ]
-                _proj_labels = proj_df["project_name"].astype(str).tolist()
-                _plan_vals = proj_df["plan"].fillna(0).astype(int).tolist()
-                _fact_vals = proj_df["skud"].fillna(0).astype(int).tolist()
-                _dev_abs = _dev_signed.abs().tolist()
-
-                fig_pf = _go.Figure()
-                fig_pf.add_bar(
-                    name="План", x=_proj_labels, y=_plan_vals,
-                    marker_color="#29b6f6",
-                    text=[f"{v}" for v in _plan_vals], textposition="outside",
-                    textfont=dict(color="#cfe9fa", size=12),
-                )
-                fig_pf.add_bar(
-                    name="Факт", x=_proj_labels, y=_fact_vals,
-                    marker_color="#46d68a",
-                    text=[f"{v}" for v in _fact_vals], textposition="outside",
-                    textfont=dict(color="#cfe9fa", size=12),
-                )
-                fig_pf.add_bar(
-                    name="Отклонение (план − факт)", x=_proj_labels, y=_dev_abs,
-                    marker_color=_dev_colors,
-                    text=[f"{int(v):+d}" for v in _dev_signed], textposition="outside",
-                    textfont=dict(color="#cfe9fa", size=12),
-                )
-                fig_pf.update_layout(
-                    title=dict(
-                        text="План / Факт / Отклонение по проектам",
-                        font=dict(size=16, color="#eee"),
-                        x=0.0,
-                        xanchor="left",
-                        y=0.96,
-                        yanchor="top",
-                    ),
-                    barmode="group",
-                    plot_bgcolor="rgba(0,0,0,0)",
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    font_color="#eee",
-                    xaxis=dict(showgrid=False),
-                    yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.08)"),
-                    height=520,
-                    margin=dict(l=56, r=24, t=72, b=110),
-                    legend=dict(
-                        orientation="h",
-                        yanchor="top",
-                        y=-0.18,
-                        xanchor="left",
-                        x=0.0,
-                        bgcolor="rgba(0,0,0,0)",
-                    ),
-                )
-                fig_pf = apply_chart_background(fig_pf)
-                _n_projs = len(_proj_labels)
-                # При малом числе проектов столбцы растягиваются на всю ширину —
-                # увеличиваем bargap/bargroupgap чтобы столбцы были узкими,
-                # а диаграмма оставалась полноширинной.
-                if _n_projs <= 2:
-                    fig_pf.update_layout(bargap=0.65, bargroupgap=0.15)
-                elif _n_projs <= 4:
-                    fig_pf.update_layout(bargap=0.45, bargroupgap=0.1)
-                st.plotly_chart(fig_pf, use_container_width=True)
-            except Exception as _e:
-                st.warning(f"Plotly недоступен: {_e}")
-
-        st.markdown("&nbsp;", unsafe_allow_html=True)
-
-        period_days = max(1, (date_to - date_from).days + 1)
-        if period_days > 45:
-            st.warning(
-                f"Выбран период {period_days} дн.: в таблице ниже отображаются только первые 6 ISO-недель "
-                f"({date_from.strftime('%d.%m.%Y')} — {(date_from + _pd.Timedelta(days=42)).strftime('%d.%m.%Y')}); "
-                f"неделя 7+ не помещается в макет ТЗ. Сократите период до месяца, чтобы увидеть все недели."
-            )
-
-        view = main_t.copy()
-        view["Контрагент"] = view.apply(
-            lambda r: (
-                r["project_name"] if r["row_kind"] == "subtotal"
-                else ("Итого" if r["row_kind"] == "grand_total" else r["contractor_name"])
-            ),
-            axis=1,
+    st.markdown("---")
+    render_table_subheader(st, f"График движения рабочей силы ({unit}), {period_label}")
+    period_days = max(1, (date_to - date_from).days + 1)
+    if period_days > 45:
+        st.warning(
+            f"Выбран период {period_days} дн.: в таблице отображаются только первые 6 ISO-недель "
+            f"({date_from.strftime('%d.%m.%Y')} — {(date_from + _pd.Timedelta(days=42)).strftime('%d.%m.%Y')}); "
+            f"неделя 7+ не помещается в макет ТЗ. Сократите период до месяца, чтобы увидеть все недели."
         )
-        if "vid_raboty" in view.columns:
-            vid_col = view["vid_raboty"].fillna("").astype(str)
-            view["Вид работ"] = [v if v.strip() else "—" for v in vid_col]
-        else:
-            view["Вид работ"] = view["contract_name"].fillna("").astype(str).apply(
-                lambda s: s if s else "—"
-            )
-        view["План"] = view["plan"].fillna(0).astype(int)
-        view["СКУД"] = view["skud"].fillna(0).astype(int)
-        view["Отклонение"] = view["deviation"].round(0).astype(int)
-        view["__kind__"] = view["row_kind"]
-        view["_delta_pct_raw"] = view["delta_pct"]
-        for _pk in ("p1", "p2", "p3", "p4", "p5", "p6"):
-            if _pk in view.columns:
-                view[_pk] = view[_pk].fillna(0).astype(int)
-        for _wk in ("w1", "w2", "w3", "w4", "w5", "w6"):
-            view[_wk] = view[_wk].fillna(0).astype(int)
-
-        from dashboards.gdrs_resursi import render_gdrs_matrix_table_html
-
-        _tbl_title = f"График движения рабочей силы ({unit})"
-        _tbl_period = (
-            _format_gdrs_month_year_title_ru(date_from, date_to, long_fact, None) or period_label
+    view = main_t.copy()
+    view["Контрагент"] = view.apply(
+        lambda r: (
+            r["project_name"] if r["row_kind"] == "subtotal"
+            else ("Итого" if r["row_kind"] == "grand_total" else r["contractor_name"])
+        ),
+        axis=1,
+    )
+    if "vid_raboty" in view.columns:
+        vid_col = view["vid_raboty"].fillna("").astype(str)
+        view["Вид работ"] = [v if v.strip() else "—" for v in vid_col]
+    else:
+        view["Вид работ"] = view["contract_name"].fillna("").astype(str).apply(
+            lambda s: s if s else "—"
         )
-        st.markdown(
-            render_gdrs_matrix_table_html(
-                view,
-                fixed_cols=["Контрагент", "Вид работ", "План", "СКУД", "Отклонение"],
-                delta_col="Отклонение %",
-                kind_col="__kind__",
-                title_line=_tbl_title,
-                period_line=_tbl_period,
-                delta_bg_style=_gdrs_delta_pct_cell_bg_style,
-            ),
-            unsafe_allow_html=True,
-        )
-
-    # ---------- Таб 2: Динамика ----------
-    with tabs[1]:
-        if str(sel_vid).casefold() == "рабочие":
-            _dyn_title = "Динамика (люди)"
-        elif str(sel_vid).casefold() == "техника":
-            _dyn_title = "Динамика (техника)"
-        else:
-            _dyn_title = "Динамика людей и техники"
-        st.subheader(_dyn_title)
-        agg_kind = st.radio(
-            "Группировка", ["Неделя", "Месяц", "Год"], horizontal=True, index=0,
-            key=f"gdrs_dyn_kind_{vid_locked or 'any'}",
-        )
-        dyn_from, dyn_to = _pd.to_datetime(date_from), _pd.to_datetime(date_to)
-
-        fact = long_fact.copy()
-        fact = fact[fact["vid_resursa"].astype(str).str.casefold() == sel_vid.casefold()]
-        if sel_projects:
-            fact = fact[fact["project_name"].isin(sel_projects)]
-        if sel_contractors:
-            fact = fact[fact["contractor_name"].isin(sel_contractors)]
-        if not fact.empty:
-            fact = fact[(fact["date"] >= dyn_from) & (fact["date"] <= dyn_to)]
-
-        from dashboards.gdrs_resursi import load_plan_aggregate as _lpa, _build_plan_lookup
-        plan_for_dyn = _lpa(dogovor_files, sprav_files, snapshot_date=dyn_to)
-        plan_col = "plan_workers" if sel_vid.casefold() == "рабочие" else "plan_equipment"
-        by_id_d, by_id_name_d, by_norm_d = _build_plan_lookup(plan_for_dyn, plan_col)
-
-        if fact.empty:
-            st.info("Нет данных для выбранных фильтров.")
-        else:
-            f2 = fact.copy()
-            f2["date"] = _pd.to_datetime(f2["date"])
-            if agg_kind == "Неделя":
-                f2["bucket"] = f2["date"].dt.to_period("W").apply(lambda p: p.start_time)
-                bucket_days = 7
-            elif agg_kind == "Месяц":
-                f2["bucket"] = f2["date"].dt.to_period("M").apply(lambda p: p.start_time)
-                bucket_days = 30
-            else:
-                f2["bucket"] = f2["date"].dt.to_period("Y").apply(lambda p: p.start_time)
-                bucket_days = 365
-
-            dyn = f2.groupby("bucket").agg(
-                fact_sum=("fact", "sum"),
-                fact_days=("date", lambda s: s.dt.normalize().nunique()),
-            ).reset_index()
-            dyn["Факт"] = (dyn["fact_sum"] / dyn["fact_days"].clip(lower=1)).round(0).astype(int)
-            dyn["Период"] = dyn["bucket"].dt.strftime("%d.%m.%Y")
-
-            from dashboards.gdrs_resursi import _lookup_plan
-            uniq_pairs = f2[["project_id", "project_name", "contractor_id", "contractor_name"]].drop_duplicates()
-            plan_total_for_filter = 0.0
-            for _, pr in uniq_pairs.iterrows():
-                plan_total_for_filter += _lookup_plan(
-                    str(pr["project_id"]), str(pr["contractor_id"]),
-                    str(pr["project_name"]), str(pr["contractor_name"]),
-                    by_id_d, by_id_name_d, by_norm_d,
-                )
-            dyn["План"] = int(round(plan_total_for_filter))
-
-            try:
-                import plotly.graph_objects as _go
-                fig = _go.Figure()
-                fig.add_trace(_go.Scatter(
-                    x=dyn["Период"], y=dyn["План"], mode="lines+markers+text",
-                    line=dict(color="#29b6f6", width=2), marker=dict(size=8),
-                    name="План",
-                    text=[f"{v} (100.0%)" for v in dyn["План"]],
-                    textposition="top center", textfont=dict(color="#29b6f6"),
-                ))
-                pct_labels = []
-                for f, p in zip(dyn["Факт"], dyn["План"]):
-                    if p > 0:
-                        pct_labels.append(f"{f} ({f / p * 100:.1f}%)")
-                    else:
-                        pct_labels.append(f"{f}")
-                fig.add_trace(_go.Scatter(
-                    x=dyn["Период"], y=dyn["Факт"], mode="lines+markers+text",
-                    line=dict(color="#ff8c2d", width=2), marker=dict(size=8),
-                    name="Факт",
-                    text=pct_labels,
-                    textposition="bottom center", textfont=dict(color="#ff8c2d"),
-                ))
-                fig.update_layout(
-                    title=f"Фактическое количество — {sel_vid.lower()} (ресурсы)",
-                    plot_bgcolor="rgba(0,0,0,0)",
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    font_color="#eee",
-                    xaxis_title=f"Период — {agg_kind.lower()}",
-                    yaxis_title="Количество",
-                    height=380,
-                    margin=dict(l=48, r=32, t=58, b=44),
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-                )
-                fig = apply_chart_background(fig)
-                _vals_y = _pd.concat([dyn["План"], dyn["Факт"]], ignore_index=True).astype(float)
-                _hi = float(_vals_y.max())
-                _lo = min(0.0, float(_vals_y.min()))
-                _span = max(_hi - _lo, 1.0)
-                _y1 = _hi + max(_span * 0.14, 14.0)
-                fig.update_layout(
-                    yaxis=dict(range=[_lo, _y1], autorange=False),
-                    margin=dict(l=52, r=28, t=72, b=40),
-                )
-                fig.update_xaxes(automargin=False, ticklabelstandoff=4)
-                st.plotly_chart(fig, use_container_width=True)
-            except Exception as _e:
-                st.warning(f"Plotly недоступен: {_e}")
-                st.dataframe(dyn[["Период", "План", "Факт"]], use_container_width=True)
-
-            st.markdown("---")
-            st.subheader("План / Факт / Отклонение по подрядчикам")
-            chart_df = main_t[main_t["row_kind"] == "row"][
-                ["contractor_name", "plan", "skud", "deviation"]
-            ].copy()
-            chart_df.rename(columns={
-                "contractor_name": "Контрагент", "plan": "План",
-                "skud": "Факт",
-            }, inplace=True)
-            # Отклонение = План − Факт (согласовано с gdrs_resursi.main_t.deviation).
-            chart_df["Отклонение"] = chart_df["deviation"].round(0).astype(int)
-            chart_df = chart_df.sort_values("План", ascending=False)
-            try:
-                import plotly.graph_objects as _go
-                fig2 = _go.Figure()
-                fig2.add_bar(
-                    name="План", x=chart_df["Контрагент"], y=chart_df["План"],
-                    marker_color="#29b6f6",
-                    text=[f"{int(v)}" for v in chart_df["План"]],
-                    textposition="outside",
-                    textfont=dict(color="#cfe9fa", size=11),
-                )
-                fig2.add_bar(
-                    name="Факт", x=chart_df["Контрагент"], y=chart_df["Факт"],
-                    marker_color="#46d68a",
-                    text=[f"{int(v)}" for v in chart_df["Факт"]],
-                    textposition="outside",
-                    textfont=dict(color="#cfe9fa", size=11),
-                )
-                fig2.add_bar(
-                    name="Отклонение (план − факт)",
-                    x=chart_df["Контрагент"],
-                    y=chart_df["Отклонение"].abs(),
-                    marker_color=[
-                        "#ff5454" if v > 0 else ("#46d68a" if v < 0 else "#8899aa")
-                        for v in chart_df["Отклонение"]
-                    ],
-                    text=[f"{int(v):+d}" for v in chart_df["Отклонение"]],
-                    textposition="outside",
-                    textfont=dict(color="#cfe9fa", size=11),
-                )
-                fig2.update_layout(
-                    barmode="group",
-                    plot_bgcolor="rgba(0,0,0,0)",
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    font_color="#eee",
-                    xaxis_tickangle=-45,
-                    height=480,
-                    margin=dict(l=48, r=32, t=32, b=140),
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-                )
-                fig2 = apply_chart_background(fig2)
-                st.plotly_chart(fig2, use_container_width=True)
-
-                st.subheader("Факт по подрядчикам (план · отклонение · % выполнения)")
-                _goal_df = chart_df.sort_values("План", ascending=False).reset_index(drop=True)
-                _xs = _goal_df["Контрагент"].astype(str).tolist()
-                _plans_f = _goal_df["План"].fillna(0.0).astype(float).tolist()
-                _facts_f = _goal_df["Факт"].fillna(0.0).astype(float).tolist()
-                _devs_i = _goal_df["Отклонение"].astype(int).tolist()
-                _labels = []
-                _bar_colors = []
-                for _, _p, _f, _ in zip(_xs, _plans_f, _facts_f, _devs_i):
-                    _bar_colors.append(_gdrs_fact_bar_color(_p, _f))
-                    if float(_p) > 0:
-                        _dv = int(round((_p - _f) / float(_p) * 100.0))
-                        _labels.append(f"{int(round(_f))} ({_dv:+d}%)")
-                    else:
-                        _labels.append(f"{int(round(_f))}")
-                fig_goal = _go.Figure()
-                fig_goal.add_bar(
-                    x=_xs,
-                    y=_facts_f,
-                    marker_color=_bar_colors,
-                    text=_labels,
-                    textposition="outside",
-                    textfont=dict(color="#cfe9fa", size=11),
-                    name="Факт",
-                )
-                fig_goal.update_layout(
-                    plot_bgcolor="rgba(0,0,0,0)",
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    font_color="#eee",
-                    xaxis_tickangle=-45,
-                    yaxis_title="Факт (средн./день)",
-                    height=460,
-                    margin=dict(l=48, r=32, t=32, b=140),
-                    showlegend=False,
-                )
-                fig_goal = apply_chart_background(fig_goal)
-                st.plotly_chart(fig_goal, use_container_width=True)
-            except Exception as _e:
-                st.warning(f"Plotly недоступен: {_e}")
-
-            st.markdown("---")
-            st.subheader("Распределение факта по подрядчикам")
-            pie_df = chart_df[chart_df["Факт"] > 0][["Контрагент", "Факт"]].copy()
-            if pie_df.empty:
-                st.info("Нет фактических данных для круговой диаграммы.")
-            else:
-                try:
-                    import plotly.graph_objects as _go
-                    fig3 = _go.Figure(data=[_go.Pie(
-                        labels=pie_df["Контрагент"],
-                        values=pie_df["Факт"],
-                        hole=0.0,
-                        textinfo="label+value+percent",
-                        textposition="outside",
-                        insidetextfont=dict(color="#fff", size=12),
-                        textfont=dict(color="#e0e0e0", size=11),
-                        showlegend=True,
-                    )])
-                    fig3.update_layout(
-                        plot_bgcolor="rgba(0,0,0,0)",
-                        paper_bgcolor="rgba(0,0,0,0)",
-                        font_color="#eee",
-                    )
-                    fig3 = _apply_pie_layout(fig3, height=460)
-                    fig3 = apply_chart_background(fig3)
-                    st.plotly_chart(fig3, use_container_width=True)
-                except Exception as _e:
-                    st.warning(f"Plotly недоступен: {_e}")
-
-    # ---------- Таб 3: Сводка по контрагентам ----------
-    with tabs[2]:
-        render_table_subheader(st, "Сводка по контрагентам")
-        if summary_t is None or summary_t.empty:
-            st.info("Нет данных по контрагентам.")
-        else:
-            view2 = summary_t.copy().rename(columns={
-                "contractor_name": "Контрагент",
-                "plan": "План",
-                "mean_per_day": "Среднее за месяц",
-                "deviation": "Отклонение",
-            })
-            view2["Отклонение"] = view2["Отклонение"].round(0).astype(int)
-            view2 = view2.sort_values("План", ascending=False)
-
-            _svod_id = f"svod_{id(view2)}"
-
-            def _td_dev_cls(v):
-                if isinstance(v, (int, float)) and v < 0:
-                    return "dev-neg"
-                if isinstance(v, (int, float)) and v >= 0:
-                    return "dev-pos"
-                return ""
-
-            def _td_dev(v):
-                cls = _td_dev_cls(v)
-                if v is None or (isinstance(v, float) and _np.isnan(v)) or v == 0:
-                    return f'<td class="{cls}">0</td>'
-                return f'<td class="{cls}">{int(v):+d}</td>'
-
-            _svod_css = (
-                f"<style>"
-                f"#{_svod_id} table{{width:100%;border-collapse:collapse;color:#eee;font-size:13px;border:1px solid #333;}}"
-                f"#{_svod_id} th,#{_svod_id} td{{padding:6px 8px;border-bottom:1px solid #333;}}"
-                f"#{_svod_id} thead tr{{background:#1f2630;color:#bbb;}}"
-                f"#{_svod_id} .dev-neg{{color:#ff5454!important;font-weight:600;text-align:right;}}"
-                f"#{_svod_id} .dev-pos{{color:#46d68a!important;font-weight:600;text-align:right;}}"
-                f"#{_svod_id} .rk-total td{{font-weight:700;background:#102b3a;border-top:2px solid #456;}}"
-                f"#{_svod_id} .ar{{text-align:right;}}"
-                f"</style>"
-            )
-
-            head = (
-                "<thead><tr>"
-                "<th style='text-align:left;'>Контрагент</th>"
-                "<th class='ar'>План</th>"
-                "<th class='ar'>Среднее за месяц</th>"
-                "<th class='ar'>Отклонение</th>"
-                "</tr></thead>"
-            )
-            rows = []
-            for _, r in view2.iterrows():
-                rows.append(
-                    "<tr>"
-                    f"<td>{r['Контрагент']}</td>"
-                    f"<td class='ar'>{int(r['План'])}</td>"
-                    f"<td class='ar'>{int(r['Среднее за месяц'])}</td>"
-                    f"{_td_dev(r['Отклонение'])}"
-                    "</tr>"
-                )
-            _sum_plan = int(view2["План"].sum())
-            _sum_mean = int(view2["Среднее за месяц"].sum())
-            _sum_dev = int(view2["Отклонение"].sum())
-            _sum_dev_cls = _td_dev_cls(_sum_dev)
-            _sum_dev_txt = "0" if _sum_dev == 0 else f"{_sum_dev:+d}"
-            rows.append(
-                f'<tr class="rk-total">'
-                f"<td>Общий итог</td>"
-                f"<td class='ar'>{_sum_plan}</td>"
-                f"<td class='ar'>{_sum_mean}</td>"
-                f'<td class="{_sum_dev_cls}">{_sum_dev_txt}</td>'
-                "</tr>"
-            )
-            st.markdown(
-                f'{_svod_css}<div id="{_svod_id}" style="overflow-x:auto;">'
-                "<table>"
-                + head + "<tbody>" + "".join(rows) + "</tbody></table></div>",
-                unsafe_allow_html=True,
-            )
-
-            _tot_plan = int(view2["План"].sum())
-            _tot_mean = int(view2["Среднее за месяц"].sum())
-            _tot_dev = int(view2["Отклонение"].sum())
-            _tot_dev_color = "#ff5454" if _tot_dev < 0 else ("#46d68a" if _tot_dev >= 0 else "#cccccc")
-            _tot_dev_txt = f"{_tot_dev:+d}" if _tot_dev != 0 else "0"
-            _summary_html = (
-                "<div style='display:flex;gap:0;margin:16px 0; width:100%; border:1px solid #333; border-radius:4px; overflow:hidden;'>"
-                f"<div style='flex:1; padding:12px 16px; border-right:1px solid #333;'>"
-                f"<span style='color:#aaa;font-size:13px;'>Общий план</span><br>"
-                f"<span style='font-size:24px;font-weight:700;color:#eee;'>{_tot_plan}</span></div>"
-                f"<div style='flex:1; padding:12px 16px; border-right:1px solid #333;'>"
-                f"<span style='color:#aaa;font-size:13px;'>Общая средняя за месяц</span><br>"
-                f"<span style='font-size:24px;font-weight:700;color:#eee;'>{_tot_mean}</span></div>"
-                f"<div style='flex:1; padding:12px 16px;'>"
-                f"<span style='color:#aaa;font-size:13px;'>Общее отклонение</span><br>"
-                f"<span style='font-size:24px;font-weight:700;color:{_tot_dev_color};'>{_tot_dev_txt}</span></div>"
-                "</div>"
-            )
-            st.markdown(_summary_html, unsafe_allow_html=True)
+    view["План"] = view["plan"].fillna(0).astype(int)
+    view["СКУД"] = view["skud"].fillna(0).astype(int)
+    view["Отклонение"] = view["deviation"].round(0).astype(int)
+    view["__kind__"] = view["row_kind"]
+    view["_delta_pct_raw"] = view["delta_pct"]
+    for _pk in ("p1", "p2", "p3", "p4", "p5", "p6"):
+        if _pk in view.columns:
+            view[_pk] = view[_pk].fillna(0).astype(int)
+    for _wk in ("w1", "w2", "w3", "w4", "w5", "w6"):
+        view[_wk] = view[_wk].fillna(0).astype(int)
+    from dashboards.gdrs_resursi import render_gdrs_matrix_table_html
+    _tbl_title = f"График движения рабочей силы ({unit})"
+    _tbl_period = (
+            _format_gdrs_month_year_title_ru(date_from, date_to, long_fact_period, None) or period_label
+    )
+    st.markdown(
+        render_gdrs_matrix_table_html(
+            view,
+            fixed_cols=["Контрагент", "Вид работ", "План", "СКУД", "Отклонение"],
+            delta_col="Отклонение %",
+            kind_col="__kind__",
+            title_line=_tbl_title,
+            period_line=_tbl_period,
+            delta_bg_style=_gdrs_delta_pct_cell_bg_style,
+        ),
+        unsafe_allow_html=True,
+    )
 # ==================== DASHBOARD: Дебиторская и кредиторская задолженность подрядчиков ====================
 def _find_col(df, names):
     """Поиск колонки по частичному совпадению (без учёта регистра)."""

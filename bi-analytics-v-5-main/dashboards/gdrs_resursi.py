@@ -1073,6 +1073,166 @@ def _build_plan_lookup(plan: Optional[pd.DataFrame], plan_col: str) -> tuple[dic
     return by_id, by_id_name, by_norm_name
 
 
+def _gdrs_dynamics_period_freq(agg_kind: str) -> str:
+    k = str(agg_kind or "").strip().casefold()
+    if k == "неделя":
+        return "W"
+    if k == "месяц":
+        return "M"
+    if k == "год":
+        return "Y"
+    return "W"
+
+
+def gdrs_dynamics_assign_buckets(dates: pd.Series, agg_kind: str) -> pd.Series:
+    """Начало периода (неделя/месяц/год) для каждой даты факта — как в groupby динамики."""
+    freq = _gdrs_dynamics_period_freq(agg_kind)
+    return pd.to_datetime(dates).dt.to_period(freq).apply(lambda p: p.start_time.normalize())
+
+
+def gdrs_dynamics_bucket_starts(
+    date_from: pd.Timestamp,
+    date_to: pd.Timestamp,
+    agg_kind: str,
+) -> pd.DatetimeIndex:
+    """Все периоды в выбранном фильтре дат (включая без факта в CSV)."""
+    start = pd.Timestamp(date_from).normalize()
+    end = pd.Timestamp(date_to).normalize()
+    if end < start:
+        start, end = end, start
+    freq = _gdrs_dynamics_period_freq(agg_kind)
+    p0, p1 = start.to_period(freq), end.to_period(freq)
+    periods = pd.period_range(p0, p1, freq=freq)
+    buckets = pd.DatetimeIndex([p.start_time.normalize() for p in periods])
+    return buckets.unique().sort_values()
+
+
+def gdrs_plan_sum_for_pairs(
+    pairs: pd.DataFrame,
+    by_id: dict,
+    by_id_name: dict,
+    by_norm: dict,
+) -> int:
+    """Сумма плана по уникальным парам проект×подрядчик (без повторного матчинга)."""
+    if pairs is None or pairs.empty:
+        return 0
+    total = 0.0
+    seen: set[tuple] = set()
+    for _, pr in pairs.iterrows():
+        pid = str(pr.get("project_id", "")).strip()
+        cid = str(pr.get("contractor_id", "")).strip()
+        pn = str(pr.get("project_name", ""))
+        cn = str(pr.get("contractor_name", ""))
+        key = (pid, cid, normalize_name(pn), normalize_name(cn))
+        if key in seen:
+            continue
+        seen.add(key)
+        total += _lookup_plan(pid, cid, pn, cn, by_id, by_id_name, by_norm)
+    return int(round(total))
+
+
+def gdrs_dynamics_build_series(
+    fact_df: pd.DataFrame,
+    date_from: pd.Timestamp,
+    date_to: pd.Timestamp,
+    agg_kind: str,
+    dogovor_paths: Iterable[Path | str],
+    sprav_paths: Iterable[Path | str],
+    pairs: pd.DataFrame,
+    plan_col: str,
+    *,
+    plan_aggregate_loader=None,
+    month_periods: Optional[Iterable[pd.Period]] = None,
+) -> pd.DataFrame:
+    """Факт по периодам + план из 1С на конец каждого периода; сетка по всему диапазону фильтра.
+
+    plan_aggregate_loader: optional (snapshot_date) -> plan_df; для кэширования в Streamlit.
+    """
+    _load_plan = plan_aggregate_loader
+    if _load_plan is None:
+        def _load_plan(snap: pd.Timestamp) -> pd.DataFrame:
+            return load_plan_aggregate(dogovor_paths, sprav_paths, snapshot_date=snap)
+    f2 = fact_df.copy()
+    f2["date"] = pd.to_datetime(f2["date"])
+    f2["bucket"] = gdrs_dynamics_assign_buckets(f2["date"], agg_kind)
+
+    agg = (
+        f2.groupby("bucket", as_index=False)
+        .agg(
+            fact_sum=("fact", "sum"),
+            fact_days=("date", lambda s: s.dt.normalize().nunique()),
+        )
+    )
+    agg["Факт"] = (agg["fact_sum"] / agg["fact_days"].clip(lower=1)).round(0).astype(int)
+
+    grid = pd.DataFrame({"bucket": gdrs_dynamics_bucket_starts(date_from, date_to, agg_kind)})
+    if month_periods:
+        _mset = set(month_periods)
+        grid = grid[grid["bucket"].dt.to_period("M").isin(_mset)].reset_index(drop=True)
+    dyn = grid.merge(agg[["bucket", "Факт"]], on="bucket", how="left")
+    dyn["Факт"] = dyn["Факт"].fillna(0).astype(int)
+    dyn["Период"] = dyn["bucket"].dt.strftime("%d.%m.%Y")
+
+    plan_cache: dict = {}
+    plans: list[int] = []
+    dyn_to = pd.Timestamp(date_to).normalize()
+    for bkt in dyn["bucket"]:
+        snap = gdrs_dynamics_bucket_snapshot_end(bkt, agg_kind, dyn_to)
+        sk = pd.Timestamp(snap).normalize()
+        if sk not in plan_cache:
+            plan_df = _load_plan(sk)
+            plan_cache[sk] = _build_plan_lookup(plan_df, plan_col)
+        plans.append(gdrs_plan_sum_for_pairs(pairs, *plan_cache[sk]))
+    dyn["План"] = plans
+    return dyn
+
+
+def gdrs_dynamics_bucket_snapshot_end(
+    bucket_start: pd.Timestamp,
+    agg_kind: str,
+    period_end: pd.Timestamp,
+) -> pd.Timestamp:
+    """Конец периода группировки (неделя/месяц/год) для snapshot плана из 1С."""
+    b = pd.Timestamp(bucket_start).normalize()
+    end = pd.Timestamp(period_end).normalize()
+    kind = str(agg_kind or "").strip().casefold()
+    if kind == "неделя":
+        snap = b + pd.Timedelta(days=6)
+    elif kind == "месяц":
+        snap = (b + pd.offsets.MonthEnd(0)).normalize()
+    elif kind == "год":
+        snap = (b + pd.offsets.YearEnd(0)).normalize()
+    else:
+        snap = b
+    return min(snap, end)
+
+
+def gdrs_dynamics_plan_total_for_pairs(
+    dogovor_paths: Iterable[Path | str],
+    sprav_paths: Iterable[Path | str],
+    pairs: pd.DataFrame,
+    plan_col: str,
+    snapshot_date: pd.Timestamp,
+) -> int:
+    """Сумма плана по выбранным парам проект×подрядчик на дату snapshot из 1С."""
+    plan_df = load_plan_aggregate(dogovor_paths, sprav_paths, snapshot_date=snapshot_date)
+    by_id, by_id_name, by_norm = _build_plan_lookup(plan_df, plan_col)
+    total = 0.0
+    if pairs is None or pairs.empty:
+        return 0
+    for _, pr in pairs.iterrows():
+        total += _lookup_plan(
+            str(pr.get("project_id", "")),
+            str(pr.get("contractor_id", "")),
+            str(pr.get("project_name", "")),
+            str(pr.get("contractor_name", "")),
+            by_id,
+            by_id_name,
+            by_norm,
+        )
+    return int(round(total))
+
+
 def _lookup_plan(
     project_id: str,
     contractor_id: str,
@@ -1237,6 +1397,67 @@ def gdrs_agg_week_num(agg_key: str) -> Optional[int]:
     except (IndexError, ValueError):
         return None
     return n if 1 <= n <= 6 else None
+
+
+_GDRS_MONTH_NAMES_RU = (
+    "",
+    "Январь",
+    "Февраль",
+    "Март",
+    "Апрель",
+    "Май",
+    "Июнь",
+    "Июль",
+    "Август",
+    "Сентябрь",
+    "Октябрь",
+    "Ноябрь",
+    "Декабрь",
+)
+
+
+def gdrs_month_select_options(long_fact: pd.DataFrame) -> list[tuple[str, pd.Period]]:
+    """Список (подпись «Апрель 2026», Period[M]) по датам факта, от старых к новым."""
+    if long_fact is None or long_fact.empty or "date" not in long_fact.columns:
+        return []
+    periods = pd.to_datetime(long_fact["date"], errors="coerce").dt.to_period("M").dropna().unique()
+    out: list[tuple[str, pd.Period]] = []
+    for p in sorted(periods):
+        try:
+            m = int(p.month)
+            y = int(p.year)
+            name = _GDRS_MONTH_NAMES_RU[m] if 1 <= m <= 12 else str(m)
+            out.append((f"{name} {y}", p))
+        except Exception:
+            continue
+    return out
+
+
+def gdrs_months_date_range(periods: Iterable[pd.Period]) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Календарные границы выбранных месяцев (для плана/подписей)."""
+    plist = list(periods)
+    if not plist:
+        return pd.NaT, pd.NaT
+    starts = [pd.Timestamp(p.start_time).normalize() for p in plist]
+    ends = [pd.Timestamp(p.end_time).normalize() for p in plist]
+    return min(starts), max(ends)
+
+
+def gdrs_filter_fact_by_months(
+    long_fact: pd.DataFrame,
+    periods: Iterable[pd.Period],
+) -> pd.DataFrame:
+    """Оставить строки факта только в выбранных календарных месяцах."""
+    if long_fact is None or long_fact.empty:
+        return long_fact
+    plist = list(periods)
+    if not plist:
+        return long_fact
+    fact = long_fact.copy()
+    fact["date"] = pd.to_datetime(fact["date"], errors="coerce")
+    pset = set(plist)
+    mask = fact["date"].dt.to_period("M").isin(pset)
+    return fact[mask].copy()
 
 
 def _filter_fact_slice(
