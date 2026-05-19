@@ -121,9 +121,12 @@ TABLE_BG_COLOR = "hsl(209,67%,12%)"
 # Шапка и строки-разделители проектов — темнее, чтобы блоки визуально отделялись
 TABLE_HEADER_BG_COLOR = "hsl(209, 72%, 6%)"
 TABLE_GROUP_ROW_BG_COLOR = "hsl(209, 70%, 7%)"
-TABLE_TOTAL_ROW_BG_COLOR = "hsl(209, 65%, 10%)"
+TABLE_TOTAL_ROW_BG_COLOR = "hsl(208, 58%, 18%)"
 TABLE_HEADER_FONT_CSS = "font-weight:700;font-size:1.05em;"
-TABLE_TOTAL_ROW_FONT_CSS = "font-weight:700;font-size:1.15em;text-transform:uppercase;"
+TABLE_TOTAL_ROW_FONT_CSS = (
+    "font-weight:800;font-size:1.32em;text-transform:uppercase;"
+    "letter-spacing:0.05em;color:#f8fbff;"
+)
 # Фон области графиков Plotly — как карточка контента (.main .block-container: rgba(18,56,92,0.8))
 CHART_BG_COLOR = "rgba(18, 56, 92, 0.88)"
 TABLE_TEXT_COLOR = "#ffffff"
@@ -1070,6 +1073,7 @@ def budget_table_to_html(
         f'#{wrap_id} thead th {{ background-color: {TABLE_HEADER_BG_COLOR} !important; {TABLE_HEADER_FONT_CSS} }}'
         f'#{wrap_id} tr.bd-group-row td {{ background-color: {TABLE_GROUP_ROW_BG_COLOR} !important; }}'
         f'#{wrap_id} tr.bd-total-row td {{ background-color: {TABLE_TOTAL_ROW_BG_COLOR} !important; {TABLE_TOTAL_ROW_FONT_CSS} }}'
+        f'#{wrap_id} tr.bd-total-row td, #{wrap_id} tr.bd-total-row td * {{ {TABLE_TOTAL_ROW_FONT_CSS} }}'
         f'</style>',
         f'<table class="bi-sortable-table" style="width:100%; border-collapse: collapse; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; font-size: 15px;">',
         "<thead><tr>",
@@ -1104,7 +1108,8 @@ def budget_table_to_html(
         if is_total_row_st:
             row_style = (
                 ' class="bd-total-row bd-group-row" style="'
-                f"{TABLE_TOTAL_ROW_FONT_CSS} border-top:2px solid rgba(255,255,255,0.45);\""
+                f"{TABLE_TOTAL_ROW_FONT_CSS} border-top:3px solid rgba(255,255,255,0.55);"
+                'border-bottom:2px solid rgba(255,255,255,0.35);"'
             )
         elif is_emphasized_row:
             row_style = (

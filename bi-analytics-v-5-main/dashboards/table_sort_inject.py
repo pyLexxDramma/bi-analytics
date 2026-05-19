@@ -35,7 +35,11 @@ def inject_sortable_tables_script() -> None:
               if (window.parent && window.parent.document && window.parent.document.body)
                 return window.parent.document;
             } catch (e1) {}
-            return document;
+            try {
+              if (window.top && window.top.document && window.top.document.body)
+                return window.top.document;
+            } catch (e2) {}
+            return document.body ? document : null;
           }
 
           function parseNum(t) {
@@ -43,6 +47,60 @@ def inject_sortable_tables_script() -> None:
             var m = s.match(/-?\\d+[.,]?\\d*/);
             if (!m) return NaN;
             return parseFloat(m[0].replace(",", "."));
+          }
+
+          function rowKind(tr) {
+            if (!tr) return "data";
+            if (tr.classList.contains("bd-total-row")) return "total";
+            if (tr.classList.contains("bd-group-row")) return "group";
+            return "data";
+          }
+
+          function cellText(tr, colIdx) {
+            if (!tr || !tr.cells || !tr.cells[colIdx]) return "";
+            return (tr.cells[colIdx].textContent || "").trim();
+          }
+
+          function compareCells(at, bt, sortDir) {
+            var an = parseNum(at), bn = parseNum(bt);
+            var cmp = 0;
+            if (!isNaN(an) && !isNaN(bn)) cmp = an - bn;
+            else cmp = at.localeCompare(bt, "ru", { numeric: true, sensitivity: "base" });
+            return sortDir > 0 ? cmp : -cmp;
+          }
+
+          function splitGroupedRows(rows) {
+            var blocks = [];
+            var totals = [];
+            var cur = null;
+            rows.forEach(function (r) {
+              var k = rowKind(r);
+              if (k === "total") {
+                totals.push(r);
+                return;
+              }
+              if (k === "group") {
+                if (cur) blocks.push(cur);
+                cur = { header: r, body: [] };
+                return;
+              }
+              if (!cur) cur = { header: null, body: [] };
+              cur.body.push(r);
+            });
+            if (cur) blocks.push(cur);
+            return { blocks: blocks, totals: totals };
+          }
+
+          function tableHasProjectBlocks(rows) {
+            return rows.some(function (r) {
+              return r.classList.contains("bd-group-row") && !r.classList.contains("bd-total-row");
+            });
+          }
+
+          function isProjectColumn(th, colIdx) {
+            var t = (th && th.textContent) ? th.textContent.trim().toLowerCase() : "";
+            if (t.indexOf("проект") >= 0) return true;
+            return colIdx === 0;
           }
 
           function initTable(tbl) {
@@ -84,27 +142,70 @@ def inject_sortable_tables_script() -> None:
                 var tbody = tbl.querySelector("tbody");
                 if (!tbody) return;
                 var rows = Array.prototype.slice.call(tbody.querySelectorAll("tr"));
-                if (sortDir !== 0) {
-                  rows.sort(function (a, b) {
-                    var ac = a.cells[colIdx], bc = b.cells[colIdx];
-                    var at = ac ? ac.textContent.trim() : "";
-                    var bt = bc ? bc.textContent.trim() : "";
-                    var an = parseNum(at), bn = parseNum(bt);
-                    var cmp = 0;
-                    if (!isNaN(an) && !isNaN(bn)) cmp = an - bn;
-                    else cmp = at.localeCompare(bt, "ru", { numeric: true, sensitivity: "base" });
-                    return sortDir > 0 ? cmp : -cmp;
+                var grouped = tableHasProjectBlocks(rows);
+                var byProject = isProjectColumn(th, colIdx);
+
+                function rowVisible(r) {
+                  var cell = r.cells[colIdx];
+                  if (!signFilter || !cell) return true;
+                  var n = parseNum(cell.textContent);
+                  if (signFilter === "pos") return !isNaN(n) && n > 0;
+                  if (signFilter === "neg") return !isNaN(n) && n < 0;
+                  return true;
+                }
+
+                if (grouped) {
+                  var split = splitGroupedRows(rows);
+                  if (sortDir !== 0) {
+                    if (byProject) {
+                      split.blocks.sort(function (a, b) {
+                        var at = cellText(a.header, colIdx) || cellText(a.body[0], colIdx);
+                        var bt = cellText(b.header, colIdx) || cellText(b.body[0], colIdx);
+                        return compareCells(at, bt, sortDir);
+                      });
+                    } else {
+                      split.blocks.forEach(function (blk) {
+                        blk.body.sort(function (a, b) {
+                          return compareCells(cellText(a, colIdx), cellText(b, colIdx), sortDir);
+                        });
+                      });
+                    }
+                  }
+                  var ordered = [];
+                  split.blocks.forEach(function (blk) {
+                    if (blk.header) ordered.push(blk.header);
+                    blk.body.forEach(function (r) { ordered.push(r); });
                   });
+                  split.totals.forEach(function (r) { ordered.push(r); });
+                  ordered.forEach(function (r) {
+                    r.style.display = rowVisible(r) ? "" : "none";
+                    tbody.appendChild(r);
+                  });
+                  return;
+                }
+
+                if (sortDir !== 0) {
+                  var totals = [];
+                  var dataRows = [];
+                  rows.forEach(function (r) {
+                    if (rowKind(r) === "total") totals.push(r);
+                    else dataRows.push(r);
+                  });
+                  dataRows.sort(function (a, b) {
+                    return compareCells(cellText(a, colIdx), cellText(b, colIdx), sortDir);
+                  });
+                  dataRows.forEach(function (r) {
+                    r.style.display = rowVisible(r) ? "" : "none";
+                    tbody.appendChild(r);
+                  });
+                  totals.forEach(function (r) {
+                    r.style.display = rowVisible(r) ? "" : "none";
+                    tbody.appendChild(r);
+                  });
+                  return;
                 }
                 rows.forEach(function (r) {
-                  var cell = r.cells[colIdx];
-                  var show = true;
-                  if (signFilter && cell) {
-                    var n = parseNum(cell.textContent);
-                    if (signFilter === "pos") show = !isNaN(n) && n > 0;
-                    else if (signFilter === "neg") show = !isNaN(n) && n < 0;
-                  }
-                  r.style.display = show ? "" : "none";
+                  r.style.display = rowVisible(r) ? "" : "none";
                   tbody.appendChild(r);
                 });
               }
@@ -134,10 +235,11 @@ def inject_sortable_tables_script() -> None:
           }
 
           var doc = docRoot();
-          scan(doc.body || doc);
+          if (!doc || !doc.body) return;
+          scan(doc.body);
           try {
             var obs = new MutationObserver(function () { scan(doc.body); });
-            if (doc.body) obs.observe(doc.body, { childList: true, subtree: true });
+            obs.observe(doc.body, { childList: true, subtree: true });
           } catch (eObs) {}
         })();
         </script>
