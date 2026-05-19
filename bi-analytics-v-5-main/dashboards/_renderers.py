@@ -9318,27 +9318,57 @@ def dashboard_budget_by_period(df):
         )
         if not hide_reserve:
             _dev_mln = project_data["reserve budget"].div(1e6)
-            _dev_colors = [
-                "#e74c3c" if float(v) >= 0 else "#27ae60" for v in _dev_mln.fillna(0.0)
-            ]
-            _dev_txt = (
-                None
-                if _hide_bar_value_labels
-                else project_data["reserve budget"].apply(format_million_rub)
-            )
-            fig.add_trace(
-                go.Bar(
-                    x=project_data[period_col],
-                    y=_dev_mln,
-                    name="Отклонение",
-                    marker_color=_dev_colors,
-                    text=_dev_txt,
-                    textposition=_txt_pos,
-                    textfont=dict(size=_tfs, color="#f0f4f8"),
-                    customdata=project_data["reserve budget"].apply(format_million_rub),
-                    hovertemplate="<b>%{x}</b><br>Отклонение: %{customdata}<br><extra></extra>",
+            _dev_x = project_data[period_col]
+            # Как в таблице: факт − план; ≥0 — перерасход (вверх, красный), <0 — экономия (вниз, зелёный).
+            _dev_thr_mln = 0.01
+            _y_over = _dev_mln.where(_dev_mln > _dev_thr_mln)
+            _y_save = _dev_mln.where(_dev_mln < -_dev_thr_mln)
+            if _y_over.notna().any():
+                _txt_over = (
+                    None
+                    if _hide_bar_value_labels
+                    else _y_over.map(
+                        lambda v: format_million_rub(float(v) * 1e6) if pd.notna(v) else ""
+                    )
                 )
-            )
+                fig.add_trace(
+                    go.Bar(
+                        x=_dev_x,
+                        y=_y_over,
+                        name="Отклонение (перерасход)",
+                        marker_color="#e74c3c",
+                        text=_txt_over,
+                        textposition=_txt_pos,
+                        textfont=dict(size=_tfs, color="#f0f4f8"),
+                        customdata=_y_over.map(
+                            lambda v: format_million_rub(float(v) * 1e6) if pd.notna(v) else ""
+                        ),
+                        hovertemplate="<b>%{x}</b><br>Перерасход (факт − план): %{customdata}<br><extra></extra>",
+                    )
+                )
+            if _y_save.notna().any():
+                _txt_save = (
+                    None
+                    if _hide_bar_value_labels
+                    else _y_save.map(
+                        lambda v: format_million_rub(float(v) * 1e6) if pd.notna(v) else ""
+                    )
+                )
+                fig.add_trace(
+                    go.Bar(
+                        x=_dev_x,
+                        y=_y_save,
+                        name="Отклонение (экономия)",
+                        marker_color="#27ae60",
+                        text=_txt_save,
+                        textposition=_txt_pos,
+                        textfont=dict(size=_tfs, color="#f0f4f8"),
+                        customdata=_y_save.map(
+                            lambda v: format_million_rub(float(v) * 1e6) if pd.notna(v) else ""
+                        ),
+                        hovertemplate="<b>%{x}</b><br>Экономия (факт − план): %{customdata}<br><extra></extra>",
+                    )
+                )
         if (
             adjusted_budget_col
             and adjusted_budget_col in project_data.columns
