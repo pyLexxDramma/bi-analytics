@@ -225,6 +225,23 @@ def is_release_client_mode() -> bool:
     return _git_current_branch() == "release"
 
 
+def show_data_ops_ui_for_role(role: Optional[str]) -> bool:
+    """
+    Показывать панель «Источник данных», FTP, «Загрузить из web/», «Версия данных».
+
+    На release для обычного клиента — False (данные подгружаются тихо через auto-ingest / hydrate).
+    Админам на release — True (страховка при сбое FTP).
+    """
+    if not is_release_client_mode():
+        return True
+    try:
+        from auth import has_admin_access
+
+        return bool(role and has_admin_access(str(role)))
+    except Exception:
+        return False
+
+
 def is_dev_branch() -> bool:
     """Текущая git-ветка = ``dev`` (или содержит «dev» в начале/как префикс)."""
     br = _git_current_branch()

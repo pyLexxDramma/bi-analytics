@@ -701,6 +701,14 @@ def main():
                 "BI_ANALYTICS_HIDE_DEV_DIAGNOSTICS", ""
             ).strip().lower() in ("1", "true", "yes", "on")
 
+    def _show_data_ops_ui() -> bool:
+        try:
+            from config import show_data_ops_ui_for_role
+
+            return bool(show_data_ops_ui_for_role(user.get("role")))
+        except Exception:
+            return not _is_release_client_mode()
+
     def _read_deeplink_params() -> dict:
         """
         Deep-link для автотестов/быстрого открытия:
@@ -744,40 +752,42 @@ def main():
         if _dl_source or _dl.get("report"):
             st.session_state["_deeplink_applied_once"] = True
 
-    # Переключатель режима источника данных
-    data_mode_options = ["Загрузить вручную", "Из папки web/", "FTP → web/"]
-    if _is_release_client_mode():
-        # На release: ручная загрузка убрана для обычных пользователей
-        # (грузит файл только в session_state — клиент путается, куда «делись» данные).
-        # Админу/суперадмину оставляем «Загрузить вручную» как страховку,
-        # если FTP/web/ недоступны и нужно срочно подсунуть свежий MSP/1С/TESSA.
-        try:
-            _u = get_current_user()
-            _is_admin = bool(_u and has_admin_access(_u.get("role", "")))
-        except Exception:
-            _is_admin = False
-        if _is_admin:
-            data_mode_options = ["Из папки web/", "FTP → web/", "Загрузить вручную"]
-        else:
-            data_mode_options = ["Из папки web/", "FTP → web/"]
+    _data_ops_visible = _show_data_ops_ui()
 
-    def _queue_web_folder_load_on_mode_change():
-        try:
-            v = st.session_state.get("data_mode_radio")
-            # Локальная папка web/ читается и в режиме «Из папки web/», и в «FTP → web/»
-            # (FTP-скачивание — отдельная кнопка; до неё показываем уже лежащие в web/ файлы).
-            if v in ("Из папки web/", "FTP → web/"):
-                st.session_state["_pending_web_folder_load"] = True
-        except Exception:
-            pass
+    # Переключатель режима источника данных (на release для клиента скрыт — тихая загрузка из web/).
+    if not _data_ops_visible:
+        st.session_state.setdefault("data_mode_radio", "Из папки web/")
+        data_mode = "Из папки web/"
+        if st.session_state.get("project_data") is None:
+            st.session_state["_pending_web_folder_load"] = True
+    else:
+        data_mode_options = ["Загрузить вручную", "Из папки web/", "FTP → web/"]
+        if _is_release_client_mode():
+            try:
+                _u = get_current_user()
+                _is_admin = bool(_u and has_admin_access(_u.get("role", "")))
+            except Exception:
+                _is_admin = False
+            if _is_admin:
+                data_mode_options = ["Из папки web/", "FTP → web/", "Загрузить вручную"]
+            else:
+                data_mode_options = ["Из папки web/", "FTP → web/"]
 
-    data_mode = st.radio(
-        "Источник данных",
-        data_mode_options,
-        horizontal=True,
-        key="data_mode_radio",
-        on_change=_queue_web_folder_load_on_mode_change,
-    )
+        def _queue_web_folder_load_on_mode_change():
+            try:
+                v = st.session_state.get("data_mode_radio")
+                if v in ("Из папки web/", "FTP → web/"):
+                    st.session_state["_pending_web_folder_load"] = True
+            except Exception:
+                pass
+
+        data_mode = st.radio(
+            "Источник данных",
+            data_mode_options,
+            horizontal=True,
+            key="data_mode_radio",
+            on_change=_queue_web_folder_load_on_mode_change,
+        )
 
     if data_mode in ("Из папки web/", "FTP → web/"):
 
@@ -924,7 +934,7 @@ def main():
                 except Exception as _e:
                     print(f"[auto_hydrate] fallback load_all_from_web failed: {_e}", file=sys.stderr)
 
-        def _perform_load_from_web_folder() -> None:
+        def _perform_load_from_web_folder(*, quiet: bool = False) -> None:
             """Сканирование web/, запись в SQLite и обновление session_state (как кнопка «Загрузить из web/»)."""
             if not web_dir_exists():
                 st.error(
@@ -934,8 +944,11 @@ def main():
                 )
                 return
 
-            with st.spinner("Читаю файлы из web/..."):
+            if quiet:
                 result = load_all_from_web()
+            else:
+                with st.spinner("Читаю файлы из web/..."):
+                    result = load_all_from_web()
             try:
                 st.session_state["last_load_result"] = result
                 st.session_state["last_data_readiness"] = build_data_readiness_report(result)
@@ -1046,9 +1059,9 @@ def main():
             data_mode in ("Из папки web/", "FTP → web/")
             and st.session_state.pop("_pending_web_folder_load", False)
         ):
-            _perform_load_from_web_folder()
+            _perform_load_from_web_folder(quiet=not _data_ops_visible)
 
-        if data_mode == "FTP → web/":
+        if _data_ops_visible and data_mode == "FTP → web/":
             from ftp_sync import merge_ftp_config, streamlit_secrets_to_config, sync_ftp_to_web
 
             with st.expander("Параметры FTP вручную (если нет secrets)", expanded=False):
@@ -1171,17 +1184,21 @@ def main():
                                 st.json(row)
                     st.rerun()
 
-        col1, col2 = st.columns([1, 3])
+        if _data_ops_visible:
+            col1, col2 = st.columns([1, 3])
 
-        with col1:
+            with col1:
+                if data_mode in ("Из папки web/", "FTP → web/") and st.button(
+                    "Загрузить из web/"
+                ):
+                    _perform_load_from_web_folder()
 
-            if data_mode in ("Из папки web/", "FTP → web/") and st.button("Загрузить из web/"):
-                _perform_load_from_web_folder()
+            # Селектор версий
+            versions = get_all_versions()
+        else:
+            versions = get_all_versions()
 
-        # Селектор версий
-        versions = get_all_versions()
-
-        if versions:
+        if _data_ops_visible and versions:
             # Опции — по id: стабильные подписи (без «✅» в ключе), иначе при смене active все строки
             # пересобираются и selectbox теряет выбор.
             active_id = get_active_version_id()
@@ -1286,7 +1303,7 @@ def main():
                 except Exception:
                     pass
 
-        else:
+        elif _data_ops_visible:
             st.info(
                 "При первом включении режима файлы считываются автоматически. "
                 "Повторно нажмите «Загрузить из web/», если обновили файлы на диске."
@@ -1401,7 +1418,11 @@ def main():
         if _had_data_attempt:
             _ctr = evaluate_data_contract(st.session_state.get("last_load_result"))
             st.session_state["last_data_contract"] = _ctr
-            render_contract_banner(_ctr)
+            if _show_data_ops_ui():
+                render_contract_banner(_ctr)
+            elif not _ctr.get("ok"):
+                for _bl in (_ctr.get("blocking") or [])[:5]:
+                    st.error(str(_bl))
             if should_enforce_data_contract_stop(release_client_mode=_is_release_client_mode()) and not _ctr.get(
                 "ok"
             ):
