@@ -192,6 +192,15 @@ table tbody td {
     font-size: 14px !important;
 }
 
+/* Шапка и строки проектов в сводных таблицах (БДДС и др.) */
+.budget-deviation-table-wrap thead th,
+.bd-table-wrap thead th {
+    background-color: hsl(209, 72%, 6%) !important;
+}
+.budget-deviation-table-wrap tr.bd-group-row td {
+    background-color: hsl(209, 70%, 7%) !important;
+}
+
 table td.bd-cell-red,
 table tbody td.bd-cell-red,
 table tbody tr:nth-child(odd) td.bd-cell-red,

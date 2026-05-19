@@ -18,7 +18,13 @@ from urllib.parse import urlencode
 
 from config import MSP_PROJECT_FILTER_EXCLUDE_NAMES, RUSSIAN_MONTHS
 
-from .ui_quiet import inject_unified_filters_css, filters_panel, suppress_caption, qa_debug_block
+from .ui_quiet import (
+    inject_unified_filters_css,
+    filters_panel,
+    suppress_caption,
+    qa_debug_block,
+    project_filter_multiselect,
+)
 from dashboards.dev_projects_tz_matrix import (
     build_dev_tz_matrix_rows,
     build_dev_tz_matrix_rows_cached,
@@ -231,12 +237,40 @@ def _unique_project_labels_for_select(
 
 
 def _session_reset_project_if_excluded(state_key: str) -> None:
-    """Если в session_state сохранён исключённый проект — сброс на «Все»."""
+    """Если в session_state сохранён исключённый проект — сброс (пустой список = все)."""
     try:
-        if state_key in st.session_state and st.session_state[state_key] in MSP_PROJECT_FILTER_EXCLUDE_NAMES:
+        if state_key not in st.session_state:
+            return
+        raw = st.session_state[state_key]
+        if state_key == "budget_project":
+            if isinstance(raw, str) and raw in MSP_PROJECT_FILTER_EXCLUDE_NAMES:
+                st.session_state[state_key] = []
+            elif isinstance(raw, list) and any(x in MSP_PROJECT_FILTER_EXCLUDE_NAMES for x in raw):
+                st.session_state[state_key] = []
+        elif raw in MSP_PROJECT_FILTER_EXCLUDE_NAMES:
             st.session_state[state_key] = "Все"
     except Exception:
         pass
+
+
+def _filter_df_by_project_labels(
+    df: pd.DataFrame,
+    selected_labels: list[str],
+    *,
+    col: str = "project name",
+) -> pd.DataFrame:
+    """Оставить строки выбранных проектов (сопоставление по norm-key)."""
+    if df is None or getattr(df, "empty", True) or col not in df.columns:
+        return df
+    labels = [str(x).strip() for x in (selected_labels or []) if str(x).strip()]
+    if not labels:
+        return df.copy()
+    keys = {_project_filter_norm_key(x) for x in labels}
+    keys.discard("")
+    if not keys:
+        return df.copy()
+    rk = df[col].map(_project_filter_norm_key)
+    return df[rk.map(lambda k: _project_norm_key_matches_msp_keys(k, keys))].copy()
 
 
 _TABLE_CSS = """
@@ -248,10 +282,11 @@ _TABLE_CSS = """
   font-family:Inter,system-ui,sans-serif; table-layout:auto;
 }
 .rendered-table th {
-  position:sticky; top:0; background:#1a1c23; color:#fafafa;
+  position:sticky; top:0; background:hsl(209, 72%, 6%); color:#fafafa;
   padding:6px 8px; text-align:left; border-bottom:2px solid #444;
   font-weight:600; white-space:nowrap; max-width:18em; overflow:hidden; text-overflow:ellipsis;
 }
+.rendered-table tr.bd-group-row td { background:hsl(209, 70%, 7%) !important; }
 .rendered-table td {
   padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0;
   white-space:nowrap; max-width:16em; overflow:hidden; text-overflow:ellipsis;
@@ -387,7 +422,7 @@ def _render_gantt_schedule_html_table(df: pd.DataFrame, max_rows: int = 80):
             {
                 "selector": "th",
                 "props": [
-                    ("background-color", TABLE_BG_COLOR),
+                    ("background-color", TABLE_HEADER_BG_COLOR),
                     ("color", TABLE_TEXT_COLOR),
                     ("font-weight", "600"),
                     ("border-bottom", "2px solid #444"),
@@ -439,6 +474,8 @@ def _render_gantt_schedule_html_table(df: pd.DataFrame, max_rows: int = 80):
 
 from utils import (
     TABLE_BG_COLOR,
+    TABLE_HEADER_BG_COLOR,
+    TABLE_GROUP_ROW_BG_COLOR,
     TABLE_TEXT_COLOR,
     get_russian_month_name,
     format_period_ru,
@@ -8866,18 +8903,23 @@ def dashboard_budget_by_period(df):
 
         with col2:
             if "project name" in filtered_df.columns:
-                projects = ["Все"] + _unique_project_labels_for_select(filtered_df["project name"])
-                selected_project = st.selectbox(
-                    "Фильтр по проекту", projects, key="budget_project"
+                _project_opts = _unique_project_labels_for_select(
+                    filtered_df["project name"]
+                )
+                selected_projects, _bdds_all_projects = project_filter_multiselect(
+                    st,
+                    "Фильтр по проекту",
+                    _project_opts,
+                    key="budget_project",
                 )
             else:
-                selected_project = "Все"
+                selected_projects = []
+                _bdds_all_projects = True
 
-        if selected_project != "Все" and "project name" in filtered_df.columns:
-            filtered_df = filtered_df[
-                filtered_df["project name"].map(_project_filter_norm_key)
-                == _project_filter_norm_key(selected_project)
-            ].copy()
+        if selected_projects and "project name" in filtered_df.columns:
+            filtered_df = _filter_df_by_project_labels(
+                filtered_df, selected_projects
+            )
 
         with col3:
             st.selectbox(
@@ -8913,7 +8955,7 @@ def dashboard_budget_by_period(df):
                     _bdds_min_all, _bdds_max_all = _def_start, _def_end
                 # По умолчанию — весь период проекта; при смене проекта сбрасываем диапазон.
                 if _def_start and _def_end:
-                    _bdds_scope = str(selected_project)
+                    _bdds_scope = tuple(sorted(selected_projects)) if selected_projects else ("__all__",)
                     if st.session_state.get("_bdds_period_scope") != _bdds_scope:
                         st.session_state["_bdds_period_scope"] = _bdds_scope
                         st.session_state["budget_period_from"] = _def_start
@@ -9028,8 +9070,8 @@ def dashboard_budget_by_period(df):
     from dashboards.finance_from_1c import ensure_budget_frame_with_fallback
 
     _bdds_narrow_pk = (
-        _project_filter_norm_key(selected_project)
-        if selected_project != "Все"
+        _project_filter_norm_key(selected_projects[0])
+        if (not _bdds_all_projects) and len(selected_projects) == 1
         else ""
     )
     _bdds_narrow_pk = (_bdds_narrow_pk or "").strip() or None
@@ -9050,11 +9092,8 @@ def dashboard_budget_by_period(df):
     # вернуть данные сразу по нескольким). Применяем СТРОГОЕ сравнение
     # по нормализованному ключу, а не «нестрогое» соответствие через
     # _project_norm_key_matches_msp_keys (которое допускало частичные совпадения).
-    if selected_project != "Все" and "project name" in filtered_df.columns:
-        _sel_pk = _project_filter_norm_key(selected_project)
-        if _sel_pk:
-            _rk_bdd = filtered_df["project name"].map(_project_filter_norm_key)
-            filtered_df = filtered_df[_rk_bdd == _sel_pk].copy()
+    if not _bdds_all_projects and "project name" in filtered_df.columns:
+        filtered_df = _filter_df_by_project_labels(filtered_df, selected_projects)
     ensure_date_columns(filtered_df)
     ensure_budget_columns(filtered_df)
     from dashboards.data_quality_hints import collect_budget_1c_hints, render_quality_hints
@@ -9134,13 +9173,26 @@ def dashboard_budget_by_period(df):
     @st.fragment
     def _budget_period_chart():
         view_type = str(st.session_state.get("budget_period_view", "По месяцам"))
-        if selected_project != "Все":
-            _sel_pk_chart = _project_filter_norm_key(selected_project)
+        if not _bdds_all_projects:
+            _sel_keys = {_project_filter_norm_key(p) for p in selected_projects}
+            _sel_keys.discard("")
             project_data = budget_summary[
                 budget_summary["project name"]
                 .map(_project_filter_norm_key)
-                .map(lambda rk: _project_norm_key_matches_msp_keys(rk, {_sel_pk_chart}))
+                .map(lambda rk: _project_norm_key_matches_msp_keys(rk, _sel_keys))
             ].copy()
+            if len(selected_projects) > 1:
+                agg_dict_all = {
+                    "budget plan": "sum",
+                    "budget fact": "sum",
+                    "reserve budget": "sum",
+                    "period_original": "first",
+                }
+                if adjusted_budget_col:
+                    agg_dict_all[adjusted_budget_col] = "sum"
+                project_data = (
+                    project_data.groupby(period_col).agg(agg_dict_all).reset_index()
+                )
         else:
             agg_dict_all = {
                 "budget plan": "sum",
@@ -9475,8 +9527,9 @@ def dashboard_budget_by_period(df):
             + f" ({period_label.lower()})"
         )
         _bdds_dev_tbl = "Отклонение, млн. руб."
-        _bdds_sel = st.session_state.get("budget_project", selected_project)
-        _bdds_all_projects = str(_bdds_sel).strip() == "Все"
+        _bdds_sel = (
+            ", ".join(selected_projects) if selected_projects else "Все"
+        )
 
         def _bdds_fmt_cell_rub(val) -> str:
             return format_million_rub(val, decimals=1)
@@ -9537,10 +9590,16 @@ def dashboard_budget_by_period(df):
                     _tot_block[adjusted_budget_col] = float(_bdc[adjusted_budget_col].fillna(0.0).sum())
             return _bdc_fmt, _tot_block
 
-        if _bdds_all_projects and "project name" in budget_summary.columns:
-            _proj_labels_bdd = _unique_project_labels_for_select(
-                budget_summary["project name"], apply_exclude_names=False
-            )
+        if (
+            (_bdds_all_projects or len(selected_projects) > 1)
+            and "project name" in budget_summary.columns
+        ):
+            if _bdds_all_projects:
+                _proj_labels_bdd = _unique_project_labels_for_select(
+                    budget_summary["project name"], apply_exclude_names=False
+                )
+            else:
+                _proj_labels_bdd = list(selected_projects)
             _parts_bdd: list[pd.DataFrame] = []
             for _pl in _proj_labels_bdd:
                 _pk2 = _project_filter_norm_key(_pl)
@@ -9565,6 +9624,11 @@ def dashboard_budget_by_period(df):
                 _parts_bdd.append(pd.DataFrame([_hdr_cells]))
                 _parts_bdd.append(_fmt_body)
             _bdc_fmt = pd.concat(_parts_bdd, ignore_index=True) if _parts_bdd else pd.DataFrame()
+            _bs_for_tot = budget_summary
+            if not _bdds_all_projects:
+                _bs_for_tot = _filter_df_by_project_labels(
+                    budget_summary, selected_projects
+                )
             if view_type == "Накопительно":
                 _agg_tbl_tot = {
                     "budget plan": "sum",
@@ -9574,7 +9638,7 @@ def dashboard_budget_by_period(df):
                 }
                 if adjusted_budget_col and adjusted_budget_col in budget_summary.columns:
                     _agg_tbl_tot[adjusted_budget_col] = "sum"
-                _ag_tot = budget_summary.groupby(period_col, dropna=False).agg(_agg_tbl_tot).reset_index()
+                _ag_tot = _bs_for_tot.groupby(period_col, dropna=False).agg(_agg_tbl_tot).reset_index()
                 _ag_tot = _ag_tot.sort_values("period_original").reset_index(drop=True)
                 for _cn in ["budget plan", "budget fact", "reserve budget"]:
                     _ag_tot[_cn] = _ag_tot[_cn].fillna(0.0).cumsum()
@@ -9593,17 +9657,17 @@ def dashboard_budget_by_period(df):
                     _tot_raw[adjusted_budget_col] = float(_lr_gr[adjusted_budget_col])
             else:
                 _tot_raw = {
-                    "budget plan": float(budget_summary["budget plan"].fillna(0.0).sum()),
-                    "budget fact": float(budget_summary["budget fact"].fillna(0.0).sum()),
+                    "budget plan": float(_bs_for_tot["budget plan"].fillna(0.0).sum()),
+                    "budget fact": float(_bs_for_tot["budget fact"].fillna(0.0).sum()),
                     "reserve budget": float(
-                        budget_summary["budget fact"].fillna(0.0).sum()
-                        - budget_summary["budget plan"].fillna(0.0).sum()
+                        _bs_for_tot["budget fact"].fillna(0.0).sum()
+                        - _bs_for_tot["budget plan"].fillna(0.0).sum()
                     ),
                 }
                 if adjusted_budget_col and adjusted_budget_col in budget_summary.columns and not hide_adjusted:
-                    _tot_raw[adjusted_budget_col] = float(budget_summary[adjusted_budget_col].fillna(0.0).sum())
-        elif not _bdds_all_projects:
-            _tbl_pk2 = _project_filter_norm_key(selected_project)
+                    _tot_raw[adjusted_budget_col] = float(_bs_for_tot[adjusted_budget_col].fillna(0.0).sum())
+        elif not _bdds_all_projects and len(selected_projects) == 1:
+            _tbl_pk2 = _project_filter_norm_key(selected_projects[0])
             _tbl_src2 = budget_summary[
                 budget_summary["project name"]
                 .map(_project_filter_norm_key)
@@ -9614,7 +9678,7 @@ def dashboard_budget_by_period(df):
                 _bdc_fmt = pd.DataFrame()
                 _tot_raw = {}
             else:
-                _proj_one = str(selected_project)
+                _proj_one = str(selected_projects[0])
                 _bdc_fmt, _tot_one = _bdds_build_formatted_block(_tbl_src2, project_col_label=_proj_one)
                 _tot_raw = _tot_one
         else:
@@ -9689,6 +9753,7 @@ def dashboard_budget_by_period(df):
                 budget_table_to_html(
                     table_display,
                     finance_deviation_column=_bdds_dev_tbl,
+                    deviation_red_if_negative=True,
                     row_kind_column="_row_kind",
                     emphasize_row_kinds=("project", "total"),
                 ),
@@ -9735,6 +9800,7 @@ def dashboard_budget_by_period(df):
             budget_table_to_html(
                 _proj_tbl,
                 finance_deviation_column="Отклонение, млн. руб.",
+                deviation_red_if_negative=True,
                 row_kind_column="_row_kind",
                 emphasize_row_kinds=("total",),
             ),
@@ -9945,6 +10011,7 @@ def dashboard_budget_cumulative(df):
         budget_table_to_html(
             tbl_period_disp,
             finance_deviation_column="Отклонение (факт − план), млн. руб.",
+            deviation_red_if_negative=True,
         ),
         unsafe_allow_html=True,
     )
@@ -10122,6 +10189,7 @@ def dashboard_budget_cumulative(df):
         budget_table_to_html(
             tbl_c,
             finance_deviation_column="Отклонение (факт − план, накоп.), млн. руб.",
+            deviation_red_if_negative=True,
         ),
         unsafe_allow_html=True,
     )
@@ -10386,7 +10454,11 @@ def dashboard_budget_by_section(df):
         "reserve budget": "Отклонение, млн руб.",
     })
     st.markdown(
-        budget_table_to_html(table_section, finance_deviation_column="Отклонение, млн руб."),
+        budget_table_to_html(
+            table_section,
+            finance_deviation_column="Отклонение, млн руб.",
+            deviation_red_if_negative=True,
+        ),
         unsafe_allow_html=True,
     )
     render_quality_hints(_bss_q_hints)
@@ -11625,10 +11697,10 @@ def _rd_plan_fallback_view(
         except Exception:
             projects = []
         if projects:
-            sel = st.multiselect(
+            sel, _ = project_filter_multiselect(
+                st,
                 "Проекты",
-                options=projects,
-                default=projects,
+                projects,
                 key=f"rd_fb_proj_{page_title or doc_code}",
             )
             if sel:
@@ -12435,12 +12507,11 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         with filter_col1:
             try:
                 projects = _unique_project_labels_for_select(df[project_col])
-                selected_projects = st.multiselect(
+                selected_projects, _ = project_filter_multiselect(
+                    st,
                     "Фильтр по проектам",
-                    options=projects,
-                    default=projects,
+                    projects,
                     key="rd_delay_projects",
-                    placeholder="Выберите проекты",
                 )
             except Exception as e:
                 st.error(f"Ошибка при загрузке списка проектов: {str(e)}")
@@ -13911,12 +13982,11 @@ def dashboard_technique(df):
     with col1:
         if project_col and project_col in work_df.columns:
             all_projects = _unique_project_labels_for_select(work_df[project_col])
-            selected_projects = st.multiselect(
+            selected_projects, _ = project_filter_multiselect(
+                st,
                 "Фильтр по проектам (можно выбрать несколько)",
                 all_projects,
-                default=all_projects if len(all_projects) <= 3 else all_projects[:3],
                 key="technique_projects",
-                placeholder="Выберите проекты",
             )
         else:
             selected_projects = []
@@ -15879,12 +15949,11 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
     with col1:
         if project_col and project_col in work_df.columns:
             all_projects = sorted(work_df[project_col].dropna().unique().tolist())
-            selected_projects = st.multiselect(
+            selected_projects, _ = project_filter_multiselect(
+                st,
                 "Фильтр по проектам (можно выбрать несколько)",
                 all_projects,
-                default=all_projects if len(all_projects) <= 3 else all_projects[:3],
                 key=f"{key_prefix}_projects",
-                placeholder="Выберите проекты",
             )
         else:
             selected_projects = []
@@ -17924,13 +17993,19 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
     fcols = st.columns(fcol_specs)
     project_options = sorted(long_fact["project_name"].dropna().unique().tolist())
     with fcols[0]:
-        sel_projects = st.multiselect(
-            "Проект", project_options, default=project_options,
+        sel_projects, _ = project_filter_multiselect(
+            st,
+            "Проект",
+            project_options,
             key=f"gdrs_filter_projects_{vid_locked or 'any'}",
-            placeholder="Выберите проекты",
         )
+    _lf_proj = (
+        long_fact
+        if not sel_projects
+        else long_fact[long_fact["project_name"].isin(sel_projects)]
+    )
     contractor_options = sorted(
-        long_fact[long_fact["project_name"].isin(sel_projects)]["contractor_name"].dropna().unique().tolist()
+        _lf_proj["contractor_name"].dropna().unique().tolist()
     )
     with fcols[1]:
         sel_contractors = st.multiselect(
@@ -21554,16 +21629,11 @@ def dashboard_documentation(
         if project_col and project_col in df.columns:
             with filter_col1:
                 _proj_opts = _unique_project_labels_for_select(df[project_col])
-                _proj_default = st.session_state.get(
-                    f"{_doc_fk}project_filter_ms",
-                    _proj_opts if is_pd else [],
-                )
-                selected_projects_doc = st.multiselect(
+                selected_projects_doc, _ = project_filter_multiselect(
+                    st,
                     "Фильтр по проекту",
-                    options=_proj_opts,
-                    default=_proj_default,
+                    _proj_opts,
                     key=f"{_doc_fk}project_filter_ms",
-                    placeholder="Все проекты",
                 )
         selected_date_start = None
         selected_date_end = None
@@ -21733,17 +21803,11 @@ def dashboard_documentation(
         selected_projects_doc
         and project_col
         and project_col in df.columns
-        and project_col in df.columns
     ):
-        try:
-            _all_proj_opts = set(_unique_project_labels_for_select(df[project_col]))
-        except Exception:
-            _all_proj_opts = set()
-        if set(selected_projects_doc) != _all_proj_opts:
-            _pk_set_doc = {_project_filter_norm_key(p) for p in selected_projects_doc}
-            filtered_df = filtered_df[
-                filtered_df[project_col].map(_project_filter_norm_key).isin(_pk_set_doc)
-            ]
+        _pk_set_doc = {_project_filter_norm_key(p) for p in selected_projects_doc}
+        filtered_df = filtered_df[
+            filtered_df[project_col].map(_project_filter_norm_key).isin(_pk_set_doc)
+        ]
 
     if selected_sections_doc:
         _sset = {str(x).strip() for x in selected_sections_doc if str(x).strip()}
@@ -28752,12 +28816,11 @@ def dashboard_predpisania(df):
     
         with fc1:
             if obj_col:
-                sel_obj = st.multiselect(
+                sel_obj, _ = project_filter_multiselect(
+                    st,
                     "Проект",
                     projects,
-                    default=st.session_state.get("pred_m_p", []),
                     key="pred_m_p",
-                    placeholder="Выберите один или несколько проектов",
                 )
             else:
                 sel_obj = []

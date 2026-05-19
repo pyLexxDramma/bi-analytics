@@ -118,6 +118,9 @@ def ru_column_header(col: Any) -> str:
 
 # Фон HTML-таблиц (чуть темнее карточки контента для контраста)
 TABLE_BG_COLOR = "hsl(209,67%,12%)"
+# Шапка и строки-разделители проектов — темнее, чтобы блоки визуально отделялись
+TABLE_HEADER_BG_COLOR = "hsl(209, 72%, 6%)"
+TABLE_GROUP_ROW_BG_COLOR = "hsl(209, 70%, 7%)"
 # Фон области графиков Plotly — как карточка контента (.main .block-container: rgba(18,56,92,0.8))
 CHART_BG_COLOR = "rgba(18, 56, 92, 0.88)"
 TABLE_TEXT_COLOR = "#ffffff"
@@ -739,7 +742,7 @@ def style_dataframe_for_dark_theme(
             {
                 "selector": "th",
                 "props": [
-                    ("background-color", TABLE_BG_COLOR),
+                    ("background-color", TABLE_HEADER_BG_COLOR),
                     ("color", TABLE_TEXT_COLOR),
                     ("border", "0"),
                     ("font-size", "13px"),
@@ -924,8 +927,8 @@ def budget_table_to_html(
     Если ``deviation_semaphore_style=True`` вместе с ``deviation_red_if_positive_only=True``:
     индикатор ● зелёный при отклонении ≥ 0, красный при < 0; цвет числа — красный при > 0, зелёный при ≤ 0.
 
-    Если ``deviation_red_if_negative=True`` (ТЗ «Утверждённый бюджет»: отклонение = план − факт):
-    значение < 0 — красный, ≥ 0 — зелёный.
+    Если ``deviation_red_if_negative=True`` (БДДС при отклонении = факт − план; утверждённый бюджет при план − факт):
+    значение < 0 — красный, ≥ 0 — зелёный. Для БДДС: факт < план — красный, факт ≥ план — зелёный.
 
     Если ``|число| < deviation_abs_min_mln`` (по умолчанию 0.01 млн руб.), ячейка без акцентного цвета — как обычный текст.
     """
@@ -940,6 +943,8 @@ def budget_table_to_html(
         f'#{wrap_id} th, #{wrap_id} td {{ max-width: 11em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}'
         f'#{wrap_id} td.bd-cell-red, #{wrap_id} td.bd-cell-red * {{ color: hsl(348,100%,63%) !important; }} '
         f'#{wrap_id} td.bd-cell-green, #{wrap_id} td.bd-cell-green * {{ color: hsl(148,100%,63%) !important; }}'
+        f'#{wrap_id} thead th {{ background-color: {TABLE_HEADER_BG_COLOR} !important; }}'
+        f'#{wrap_id} tr.bd-group-row td {{ background-color: {TABLE_GROUP_ROW_BG_COLOR} !important; }}'
         f'</style>',
         f'<table style="width:100%; border-collapse: collapse; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; font-size: 15px;">',
         "<thead><tr>",
@@ -948,7 +953,7 @@ def budget_table_to_html(
     for col in header_cols:
         col_esc = html_module.escape(str(col))
         parts.append(
-            f'<th style="border: 1px solid rgba(255,255,255,0.3); padding: 4px 5px; background-color: {TABLE_BG_COLOR};">{col_esc}</th>'
+            f'<th style="border: 1px solid rgba(255,255,255,0.3); padding: 4px 5px; background-color: {TABLE_HEADER_BG_COLOR};">{col_esc}</th>'
         )
     parts.append("</tr></thead><tbody>")
     visible_cols = [c for c in df.columns if c != row_kind_column]
@@ -961,11 +966,12 @@ def budget_table_to_html(
                 row_kind = ""
         is_emphasized_row = row_kind in {str(x).strip().casefold() for x in emphasize_row_kinds}
         is_total_row_st = row_kind == "total"
+        _cell_bg = TABLE_GROUP_ROW_BG_COLOR if is_emphasized_row else TABLE_BG_COLOR
         _efs = float(emphasize_row_font_em) if emphasize_row_font_em and emphasize_row_font_em > 1 else 1.12
         if is_emphasized_row:
             _uc = "text-transform: uppercase;" if is_total_row_st else ""
             row_style = (
-                " style=\"font-weight:700; "
+                ' class="bd-group-row" style="font-weight:700; '
                 f"{_uc} font-size:{_efs}em; border-top:1px solid rgba(255,255,255,0.35);\""
             )
         else:
@@ -984,12 +990,12 @@ def budget_table_to_html(
                     ):
                         parts.append(
                             f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 4px 5px; '
-                            f'background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
+                            f'background-color: {_cell_bg}; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
                         )
                     elif deviation_red_if_negative:
                         cell_class = "bd-cell-red" if num < 0 else "bd-cell-green"
                         parts.append(
-                            f'<td class="{cell_class}" style="padding: 4px 5px; font-weight: bold;"><span>{val_esc}</span></td>'
+                            f'<td class="{cell_class}" style="padding: 4px 5px; font-weight: bold; background-color: {_cell_bg};"><span>{val_esc}</span></td>'
                         )
                     elif deviation_red_if_positive_only:
                         nf = float(num)
@@ -1002,7 +1008,7 @@ def budget_table_to_html(
                             )
                             parts.append(
                                 f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 4px 5px; '
-                                f'background-color: {TABLE_BG_COLOR};">'
+                                f'background-color: {_cell_bg};">'
                                 f'<span style="color:{bullet_color};font-weight:700;font-size:1.12em;margin-right:6px">●</span>'
                                 f'<span style="color:{text_color}!important;font-weight:700">{val_esc}</span>'
                                 f"</td>"
@@ -1010,18 +1016,18 @@ def budget_table_to_html(
                         else:
                             cell_class = "bd-cell-red" if nf > 0 else "bd-cell-green"
                             parts.append(
-                                f'<td class="{cell_class}" style="padding: 4px 5px; font-weight: bold;"><span>{val_esc}</span></td>'
+                                f'<td class="{cell_class}" style="padding: 4px 5px; font-weight: bold; background-color: {_cell_bg};"><span>{val_esc}</span></td>'
                             )
                     else:
                         cell_class = "bd-cell-red" if num >= 0 else "bd-cell-green"
                         parts.append(
-                            f'<td class="{cell_class}" style="padding: 4px 5px; font-weight: bold;"><span>{val_esc}</span></td>'
+                            f'<td class="{cell_class}" style="padding: 4px 5px; font-weight: bold; background-color: {_cell_bg};"><span>{val_esc}</span></td>'
                         )
                 else:
                     s = val_str.strip()
                     if not s:
                         parts.append(
-                            f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 4px 5px; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
+                            f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 4px 5px; background-color: {_cell_bg}; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
                         )
                     else:
                         num_fallback = _parse_finance_value(s)
@@ -1032,7 +1038,7 @@ def budget_table_to_html(
                         ):
                             parts.append(
                                 f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 4px 5px; '
-                                f'background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
+                                f'background-color: {_cell_bg}; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
                             )
                         elif (
                             deviation_red_if_positive_only
@@ -1048,7 +1054,7 @@ def budget_table_to_html(
                             )
                             parts.append(
                                 f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 4px 5px; '
-                                f'background-color: {TABLE_BG_COLOR};">'
+                                f'background-color: {_cell_bg};">'
                                 f'<span style="color:{bullet_color};font-weight:700;font-size:1.12em;margin-right:6px">●</span>'
                                 f'<span style="color:{text_color}!important;font-weight:700">{val_esc}</span>'
                                 f"</td>"
@@ -1062,11 +1068,11 @@ def budget_table_to_html(
                             else:
                                 cell_class = "bd-cell-green" if is_neg else "bd-cell-red"
                             parts.append(
-                                f'<td class="{cell_class}" style="padding: 4px 5px; font-weight: bold;"><span>{val_esc}</span></td>'
+                                f'<td class="{cell_class}" style="padding: 4px 5px; font-weight: bold; background-color: {_cell_bg};"><span>{val_esc}</span></td>'
                             )
             else:
                 parts.append(
-                    f'<td style="padding: 4px 5px; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
+                    f'<td style="padding: 4px 5px; color: {TABLE_TEXT_COLOR}; background-color: {_cell_bg};">{val_esc}</td>'
                 )
         parts.append("</tr>")
     parts.append("</tbody></table></div>")
@@ -1111,7 +1117,7 @@ def plan_fact_dates_table_to_html(
         col_esc = html_module.escape(str(col))
         parts.append(
             f'<th style="border: 1px solid rgba(255,255,255,0.3); padding: 6px 8px; min-width: {HTML_TABLE_COL_MIN_EM}em; max-width: {HTML_TABLE_TH_MAX_EM}em; overflow: hidden; '
-            f'text-overflow: ellipsis; white-space: nowrap; background-color: {TABLE_BG_COLOR};">{col_esc}</th>'
+            f'text-overflow: ellipsis; white-space: nowrap; background-color: {TABLE_HEADER_BG_COLOR};">{col_esc}</th>'
         )
     parts.append("</tr></thead><tbody>")
     for i, (_, row) in enumerate(df.iterrows()):
@@ -1255,7 +1261,7 @@ def format_dataframe_as_html(
 
     # §4.8: плотные ячейки — как `budget_table_to_html` / `style_dataframe_for_dark_theme`
     _th = (
-        f"padding:6px 8px;background-color:rgba(18,56,92,0.95);color:{TABLE_TEXT_COLOR};"
+        f"padding:6px 8px;background-color:{TABLE_HEADER_BG_COLOR};color:{TABLE_TEXT_COLOR};"
         f"font-size:13px;min-width:{HTML_TABLE_COL_MIN_EM}em;max-width:{HTML_TABLE_TH_MAX_EM}em;"
         "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
     )
@@ -1264,6 +1270,7 @@ def format_dataframe_as_html(
         f"color:{TABLE_TEXT_COLOR};font-size:13px;min-width:{HTML_TABLE_COL_MIN_EM}em;max-width:{HTML_TABLE_TD_MAX_EM}em;"
         "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
     )
+    _td_group = _td_base.replace(TABLE_BG_COLOR, TABLE_GROUP_ROW_BG_COLOR)
     html_table = (
         "<div class='bd-table-wrap' style='width:100%;overflow-x:auto;min-width:0;-webkit-overflow-scrolling:touch;'>"
         f"<table style='width:100%;min-width:max-content;border-collapse:collapse;background-color:{TABLE_BG_COLOR};"
@@ -1364,7 +1371,7 @@ def format_dataframe_as_html(
                 formatted_value = html_module.escape(
                     _sanitize_if_name_column(col, str(formatted_value))
                 )
-                cell_style = _td_base
+                cell_style = _td_group if idx in _bold_ix else _td_base
                 if idx in _bold_ix:
                     cell_style += "font-weight:700;text-transform:uppercase;"
                 if column_colors and col in column_colors:

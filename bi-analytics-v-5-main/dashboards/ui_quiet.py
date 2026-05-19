@@ -196,6 +196,67 @@ def filters_panel(
         _fp.set_chips([])
 
 
+PROJECT_FILTER_PLACEHOLDER = "Все"
+
+
+def migrate_project_multiselect_state(
+    st: Any, key: str, options: Sequence[str]
+) -> None:
+    """Пустой список в session_state = все проекты (placeholder «Все»)."""
+    if not hasattr(st, "session_state"):
+        return
+    opts_set = {str(o).strip() for o in options if str(o).strip()}
+    try:
+        raw = st.session_state.get(key)
+        if isinstance(raw, str):
+            s = raw.strip()
+            st.session_state[key] = (
+                []
+                if s in ("", PROJECT_FILTER_PLACEHOLDER, "Все", "Все проекты")
+                else [s]
+            )
+        elif isinstance(raw, list):
+            cleaned = [x for x in raw if str(x).strip() in opts_set]
+            raw_labels = {str(x).strip() for x in raw}
+            if raw_labels & {
+                PROJECT_FILTER_PLACEHOLDER,
+                "Все",
+                "Все проекты",
+            }:
+                st.session_state[key] = []
+            elif cleaned and opts_set and set(cleaned) == opts_set:
+                st.session_state[key] = []
+            else:
+                st.session_state[key] = cleaned
+    except Exception:
+        pass
+
+
+def project_filter_multiselect(
+    st: Any,
+    label: str,
+    options: Sequence[str],
+    key: str,
+    *,
+    help: Optional[str] = None,
+) -> tuple[list[str], bool]:
+    """
+    Фильтр проектов: пустой выбор → все проекты, в поле показывается «Все»;
+    при выборе — теги с крестиком (стандартный st.multiselect).
+    """
+    opts = [str(o).strip() for o in options if str(o).strip()]
+    migrate_project_multiselect_state(st, key, opts)
+    selected = st.multiselect(
+        label,
+        options=opts,
+        key=key,
+        placeholder=PROJECT_FILTER_PLACEHOLDER,
+        help=help or "По умолчанию — все проекты. Отметьте один или несколько.",
+    )
+    sel = list(selected) if selected else []
+    return sel, not bool(sel)
+
+
 def count_chips(chips: Optional[Sequence[Chip]]) -> int:
     """Число непустых чипов для подписи на кнопке popover."""
     if not chips:

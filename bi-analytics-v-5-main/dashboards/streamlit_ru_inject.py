@@ -5,7 +5,7 @@
 
 Public API: ``inject_multiselect_ru_translations``, ``ru_inject_enabled``.
 
-По умолчанию выключено (``BI_ANALYTICS_RU_INJECT=1`` включает): MutationObserver сильно тормозит rerun.
+По умолчанию включено (``BI_ANALYTICS_RU_INJECT=0`` отключает). MutationObserver с debounce.
 """
 
 from __future__ import annotations
@@ -16,11 +16,11 @@ import streamlit.components.v1 as components
 
 
 def ru_inject_enabled() -> bool:
-    return os.environ.get("BI_ANALYTICS_RU_INJECT", "0").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
+    return os.environ.get("BI_ANALYTICS_RU_INJECT", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
 
@@ -237,6 +237,22 @@ def inject_multiselect_ru_translations() -> None:
                     var n;
                     while ((n = w.nextNode())) tr(n);
                 }
+                function fixLeafLabels(root) {
+                    try {
+                        if (!root || !root.querySelectorAll) return;
+                        root.querySelectorAll("li, [role='option'], [role='menuitem'], label, span, div, p").forEach(function (el) {
+                            if (!el || el.childElementCount > 0) return;
+                            var tx = (el.textContent || "").trim();
+                            if (!tx) return;
+                            var ru = TRANSLATIONS[tx];
+                            if (!ru) {
+                                var patched = patchMultiselectPhrases(tx);
+                                if (patched !== tx) ru = patched;
+                            }
+                            if (ru && ru !== tx) el.textContent = ru;
+                        });
+                    } catch (eLeaf) {}
+                }
                 function walkDeep(root) {
                     if (!root) return;
                     if (root.nodeType === 3) {
@@ -246,9 +262,23 @@ def inject_multiselect_ru_translations() -> None:
                     walk(root);
                     fixPlaceholders(root);
                     fixAriaLabels(root);
+                    fixLeafLabels(root);
+                }
+                var debounceTmr = null;
+                function scheduleWalkDeep() {
+                    if (debounceTmr) clearTimeout(debounceTmr);
+                    debounceTmr = setTimeout(function () {
+                        debounceTmr = null;
+                        walkDeep(doc.body);
+                    }, 80);
                 }
                 walkDeep(doc.body);
-                try { hostWin[HANDLE_KEY] = {obs: null, tmr: null}; } catch (eH) {}
+                var obs = null;
+                try {
+                    obs = new MutationObserver(function () { scheduleWalkDeep(); });
+                    if (doc.body) obs.observe(doc.body, { childList: true, subtree: true, characterData: true });
+                } catch (eObs) {}
+                try { hostWin[HANDLE_KEY] = {obs: obs, tmr: debounceTmr}; } catch (eH) {}
             } catch(e) { /* noop */ }
         })();
         </script>

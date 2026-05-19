@@ -259,7 +259,7 @@ _RU_LABELS_INJECTED_THIS_RUN = False
 
 
 def _inject_ru_labels_once() -> None:
-    """Один iframe на rerun; по умолчанию выключено (BI_ANALYTICS_RU_INJECT=1)."""
+    """Один iframe на rerun: multiselect Select all → Выбрать все (BI_ANALYTICS_RU_INJECT=0 отключает)."""
     global _RU_LABELS_INJECTED_THIS_RUN
     if _RU_LABELS_INJECTED_THIS_RUN:
         return
