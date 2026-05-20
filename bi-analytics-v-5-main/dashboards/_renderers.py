@@ -5683,6 +5683,17 @@ _PLAN_FACT_KPI_PLATES_CSS = """
 </style>
 """
 
+_PLAN_FACT_DISPLAY_OPTS_CSS = """
+<style>
+.pf-dates-opts-block{margin:0.35rem 0 1rem 0;padding:0.65rem 0 0.25rem 0;border-top:1px solid rgba(148,163,184,.18);}
+.pf-dates-opts-block [data-testid="stCheckbox"]{min-height:2.75rem;display:flex;align-items:flex-start;}
+.pf-dates-opts-block [data-testid="stCheckbox"] label{align-items:flex-start;width:100%;}
+.pf-dates-opts-block [data-testid="stCheckbox"] label p{font-size:0.92rem;line-height:1.35;margin:0;}
+.pf-dates-opts-block [data-testid="stRadio"] label p{font-size:0.92rem;line-height:1.35;}
+.pf-dates-opts-block [data-testid="column"]{min-height:2.75rem;}
+</style>
+"""
+
 
 def _plan_fact_pick_metric_task_row(
     frame: pd.DataFrame,
@@ -6348,43 +6359,45 @@ def dashboard_plan_fact_dates(df):
             else:
                 selected_level = _lvl_opts_tz[0]
 
-    # R23-03: чекбоксы — отдельным блоком ниже фильтров; равномерный ряд,
-    # без «висящих» одиночных чекбоксов и без серых fallback-подсказок между
-    # элементами управления.
+    # Чекбоксы и radio — отдельным блоком ниже фильтров (фильтры в expander выше).
+    st.markdown(_PLAN_FACT_DISPLAY_OPTS_CSS, unsafe_allow_html=True)
+    st.markdown('<div class="pf-dates-opts-block">', unsafe_allow_html=True)
     st.markdown("**Параметры отображения**")
 
-    # R23-03 page_5.4: чекбокс «только отклонение < 0» вынесен ОТДЕЛЬНОЙ строкой
-    # ниже (влияет только на графики); в основном ряду — фильтры, общие для таблицы и графиков.
-    cb_c1, cb_c2, cb_c3 = st.columns(3)
-    with cb_c1:
+    _cb_r1_1, _cb_r1_2, _cb_r1_3 = st.columns(3)
+    with _cb_r1_1:
         dates_show_reason_notes = st.checkbox(
             "Показать причины отклонений",
             value=True,
             key="dates_show_reason_notes",
         )
-    with cb_c2:
-        # R23-03: галочка больше не блокируется из-за отсутствующей колонки —
-        # при включении без %-колонки просто не применит фильтр (не ломает UI).
+    with _cb_r1_2:
         hide_completed_dates = st.checkbox(
             "Скрыть завершённые (100%)",
             value=False,
             key="dates_hide_done",
         )
-    with cb_c3:
+    with _cb_r1_3:
         force_covenant_ui = st.checkbox(
             "Только ковенанты",
             value=False,
             key="dates_only_covenants",
         )
 
-    # Отдельный ряд под общими чекбоксами: влияет только на графики.
-    only_negative_dev_dates = st.checkbox(
-        "Отображать только диаграммы, где отклонение окончания < 0",
-        value=False,
-        key="dates_only_neg_end",
-    )
+    _cb_r2_1, _cb_r2_2, _cb_r2_3 = st.columns(3)
+    with _cb_r2_1:
+        only_negative_dev_dates = st.checkbox(
+            "Отображать только диаграммы, где отклонение окончания < 0",
+            value=False,
+            key="dates_only_neg_end",
+        )
+    with _cb_r2_2:
+        tbl_show_dur = st.checkbox(
+            "Показать «Отклонение длительности» в таблице",
+            value=True,
+            key="dates_tbl_dur",
+        )
 
-    # Radio с подписью — отдельной строкой, чтобы не ломал сетку чекбоксов.
     if dates_lot_col:
         task_label_mode = st.radio(
             "Подписи на графике и в таблице",
@@ -6396,18 +6409,11 @@ def dashboard_plan_fact_dates(df):
         task_label_mode = "По наименованию MSP"
 
     dates_value_type = "Даты (план/факт)"
-    # R23-03 add-on (стр.10-11): обе пары «отклонений» показываем по умолчанию,
-    # «отклонение длительности» — опционально (чекбокс), как и раньше.
     tbl_show_start = True
     tbl_show_end = True
-    # Q9 (08.05.2026): по ответу заказчика три колонки «Длительность» / «Базовая длительность» /
-    # «Отклонение длительности» нужны всегда, поэтому включено по умолчанию.
-    tbl_show_dur = st.checkbox(
-        "Показать «Отклонение длительности» в таблице",
-        value=True,
-        key="dates_tbl_dur",
-    )
+
     selected_reason_bucket_dates = "Все"
+    _rbuckets: list[str] = []
     if (not force_covenant_ui) and dates_show_reason_notes and "reason of deviation" in df.columns:
         _rvals = (
             df["reason of deviation"]
@@ -6423,12 +6429,23 @@ def dashboard_plan_fact_dates(df):
                 if _deviations_reason_bucket_label(v)
             }
         )
+    _rsb_col, _ = st.columns([2, 3])
+    with _rsb_col:
         if _rbuckets:
             selected_reason_bucket_dates = st.selectbox(
                 "Причина отклонения (категория)",
                 ["Все"] + _rbuckets,
                 key="dates_reason_bucket_filter",
             )
+        else:
+            st.selectbox(
+                "Причина отклонения (категория)",
+                ["Все"],
+                key="dates_reason_bucket_filter_idle",
+                disabled=True,
+            )
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
     # По ТЗ в таблице показываем только строки, где есть отклонение (|дней| > 0) по началу или окончанию.
 
@@ -7125,20 +7142,6 @@ def dashboard_plan_fact_dates(df):
                     _uniq_fc.append(lbl)
             local["_y"] = _uniq_fc
         else:
-            for _dc in ("plan start", "base start"):
-                if _dc in local.columns:
-                    local[_dc] = pd.to_datetime(local[_dc], errors="coerce", dayfirst=True)
-            _bs = local["base start"] if "base start" in local.columns else pd.Series(pd.NaT, index=local.index)
-            _ps = local["plan start"] if "plan start" in local.columns else pd.Series(pd.NaT, index=local.index)
-            _be = local[fe_col]
-            _pe = local[pe_col]
-            _ok = _bs.notna() & _be.notna() & _ps.notna() & _pe.notna()
-            local = local[_ok].copy()
-            if local.empty:
-                st.info(
-                    "Нет задач с полными датами базового и текущего интервалов для диаграммы Ганта."
-                )
-                return
             local["_y_simple"] = local.apply(_pf_simple_task_label, axis=1)
             _seen_br: dict[str, int] = {}
             _uniq_br: list[str] = []
@@ -7151,97 +7154,95 @@ def dashboard_plan_fact_dates(df):
                     _uniq_br.append(lbl)
             local["_y"] = _uniq_br
 
+        def _epoch_ms(ts) -> Optional[float]:
+            if ts is None or (isinstance(ts, float) and pd.isna(ts)):
+                return None
+            t = pd.Timestamp(ts)
+            if pd.isna(t):
+                return None
+            return float(t.timestamp() * 1000.0)
+
+        _finish_cols = [fe_col, pe_col]
+        _aux_cols = [c for c in ("base start", "plan start") if c in local.columns]
+        _timeline_pts: list = []
+        for _dc in _finish_cols + _aux_cols:
+            _timeline_pts.extend(pd.to_datetime(local[_dc], errors="coerce").dropna().tolist())
+        if not _timeline_pts:
+            st.info("Нет задач с датами «Базовое окончание» или «Окончание» для диаграммы.")
+            return
+        _origin_ts = pd.Timestamp(min(_timeline_pts)).normalize()
+        _origin_ms = _epoch_ms(_origin_ts)
+        if _origin_ms is None:
+            st.warning("Не удалось определить начало шкалы для диаграммы.")
+            return
+
+        y_labels: list[str] = []
+        base_len_ms: list[float] = []
+        base_base_ms: list[float] = []
+        base_txt: list[str] = []
+        cur_len_ms: list[float] = []
+        cur_base_ms: list[float] = []
+        cur_txt: list[str] = []
+        cust_b: list[tuple[str, str]] = []
+        cust_p: list[tuple[str, str]] = []
+
+        for _, row in local.iterrows():
+            y_labels.append(str(row["_y"]))
+            be = row.get(fe_col)
+            pe = row.get(pe_col)
+            be_ms = _epoch_ms(be) if pd.notna(be) else None
+            pe_ms = _epoch_ms(pe) if pd.notna(pe) else None
+            base_base_ms.append(float(_origin_ms))
+            cur_base_ms.append(float(_origin_ms))
+            base_len_ms.append(
+                max(0.0, float(be_ms - _origin_ms)) if be_ms is not None else 0.0
+            )
+            cur_len_ms.append(
+                max(0.0, float(pe_ms - _origin_ms)) if pe_ms is not None else 0.0
+            )
+            base_txt.append(pd.Timestamp(be).strftime("%d.%m.%Y") if pd.notna(be) else "")
+            cur_txt.append(pd.Timestamp(pe).strftime("%d.%m.%Y") if pd.notna(pe) else "")
+            cust_b.append(
+                (
+                    _pf_fmt_day_short(_origin_ts),
+                    pd.Timestamp(be).strftime("%d.%m.%Y") if pd.notna(be) else "—",
+                )
+            )
+            cust_p.append(
+                (
+                    _pf_fmt_day_short(_origin_ts),
+                    pd.Timestamp(pe).strftime("%d.%m.%Y") if pd.notna(pe) else "—",
+                )
+            )
+
         fig = go.Figure()
-        if is_covenant:
-            fig.add_trace(go.Scatter(
-                x=local[fe_col], y=local["_y"], mode="markers",
-                name="Базовое окончание",
-                marker=dict(symbol="diamond", size=12, color="#3B82F6", line=dict(width=1, color="#fff")),
-                customdata=local["_y_full"],
-                hovertemplate="%{customdata}<br>Базовое окончание: %{x|%d.%m.%Y}<extra></extra>",
-            ))
-            fig.add_trace(go.Scatter(
-                x=local[pe_col], y=local["_y"], mode="markers",
-                name="Окончание",
-                marker=dict(symbol="diamond", size=12, color="#EF4444", line=dict(width=1, color="#fff")),
-                customdata=local["_y_full"],
-                hovertemplate="%{customdata}<br>Окончание: %{x|%d.%m.%Y}<extra></extra>",
-            ))
-        else:
-            def _epoch_ms(ts) -> Optional[float]:
-                if ts is None or (isinstance(ts, float) and pd.isna(ts)):
-                    return None
-                t = pd.Timestamp(ts)
-                if pd.isna(t):
-                    return None
-                return float(t.timestamp() * 1000.0)
-
-            y_labels: list[str] = []
-            base_len_ms: list[float] = []
-            base_base_ms: list[float] = []
-            base_txt: list[str] = []
-            cur_len_ms: list[float] = []
-            cur_base_ms: list[float] = []
-            cur_txt: list[str] = []
-            cust_b: list[tuple[str, str]] = []
-            cust_p: list[tuple[str, str]] = []
-
-            for _, row in local.iterrows():
-                y_labels.append(str(row["_y"]))
-                bs = row.get("base start")
-                be = row.get(fe_col)
-                ps = row.get("plan start")
-                pe = row.get(pe_col)
-                b0 = _epoch_ms(bs)
-                b1 = _epoch_ms(be)
-                p0 = _epoch_ms(ps)
-                p1 = _epoch_ms(pe)
-                base_base_ms.append(float(b0) if b0 is not None else 0.0)
-                base_len_ms.append(max(0.0, float(b1 - b0)) if b0 is not None and b1 is not None else 0.0)
-                base_txt.append(pd.Timestamp(be).strftime("%d.%m.%Y") if pd.notna(be) else "")
-                cur_base_ms.append(float(p0) if p0 is not None else 0.0)
-                cur_len_ms.append(max(0.0, float(p1 - p0)) if p0 is not None and p1 is not None else 0.0)
-                cur_txt.append(pd.Timestamp(pe).strftime("%d.%m.%Y") if pd.notna(pe) else "")
-                cust_b.append(
-                    (
-                        pd.Timestamp(bs).strftime("%d.%m.%Y") if pd.notna(bs) else "—",
-                        pd.Timestamp(be).strftime("%d.%m.%Y") if pd.notna(be) else "—",
-                    )
-                )
-                cust_p.append(
-                    (
-                        pd.Timestamp(ps).strftime("%d.%m.%Y") if pd.notna(ps) else "—",
-                        pd.Timestamp(pe).strftime("%d.%m.%Y") if pd.notna(pe) else "—",
-                    )
-                )
-
-            fig.add_trace(go.Bar(
-                name="Базовый план",
-                orientation="h",
-                x=base_len_ms,
-                y=y_labels,
-                base=base_base_ms,
-                marker=dict(color="#14b8a6"),
-                text=base_txt,
-                textposition="outside",
-                cliponaxis=False,
-                hovertemplate="%{y}<br>Базовый: %{customdata[0]} — %{customdata[1]}<extra></extra>",
-                customdata=cust_b,
-            ))
-            fig.add_trace(go.Bar(
-                name="Текущий план",
-                orientation="h",
-                x=cur_len_ms,
-                y=y_labels,
-                base=cur_base_ms,
-                marker=dict(color="#fb923c"),
-                text=cur_txt,
-                textposition="outside",
-                cliponaxis=False,
-                hovertemplate="%{y}<br>Текущий: %{customdata[0]} — %{customdata[1]}<extra></extra>",
-                customdata=cust_p,
-            ))
-            fig.update_layout(barmode="group")
+        fig.add_trace(go.Bar(
+            name="Базовое окончание",
+            orientation="h",
+            x=base_len_ms,
+            y=y_labels,
+            base=base_base_ms,
+            marker=dict(color="#14b8a6"),
+            text=base_txt,
+            textposition="outside",
+            cliponaxis=False,
+            hovertemplate="%{y}<br>Базовое окончание: %{customdata[1]}<extra></extra>",
+            customdata=cust_b,
+        ))
+        fig.add_trace(go.Bar(
+            name="Окончание",
+            orientation="h",
+            x=cur_len_ms,
+            y=y_labels,
+            base=cur_base_ms,
+            marker=dict(color="#fb923c"),
+            text=cur_txt,
+            textposition="outside",
+            cliponaxis=False,
+            hovertemplate="%{y}<br>Окончание: %{customdata[1]}<extra></extra>",
+            customdata=cust_p,
+        ))
+        fig.update_layout(barmode="group")
 
         n_rows = int(local["_y"].nunique()) if "_y" in local.columns else 0
         _max_lines = 1
@@ -7250,7 +7251,7 @@ def dashboard_plan_fact_dates(df):
         fig.update_layout(
             autosize=True,
             width=None,
-            xaxis_title="Период",
+            xaxis_title="Дата (от начала шкалы до окончания)",
             yaxis_title=None,
             height=max(520, int(n_rows * (34 + _max_lines * 14))),
             xaxis=dict(type="date", tickformat="%d.%m.%Y", automargin=True),
