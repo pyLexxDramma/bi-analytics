@@ -1214,6 +1214,90 @@ def _tessa_snapshot_sort_key(stem: str):
     return None
 
 
+def _quick_csv_data_row_count(filepath: Path) -> int:
+    """Быстрая оценка числа строк данных в CSV (без парсинга)."""
+    try:
+        with open(filepath, "rb") as fh:
+            n = sum(1 for _ in fh)
+        return max(0, n - 1)
+    except OSError:
+        return 0
+
+
+def _pick_best_tessa_bucket_file(
+    lst: List[Dict], kind_key: str
+) -> Tuple[Dict, Optional[str]]:
+    """
+    Выбор одного TESSA-файла из bucket (id/rd/task/…).
+
+    Для id: свежая выгрузка иногда приходит урезанной (десятки строк вместо сотен).
+    Берём самый полный снимок среди файлов с датой не старше 14 дней от max даты.
+    """
+    from datetime import date as dt_date, timedelta
+
+    rated: List[Tuple[tuple, float, Dict]] = []
+    for f in lst:
+        stem = Path(f["name"]).stem
+        sk = _tessa_snapshot_sort_key(stem)
+        if sk is None:
+            md = _max_date_in_stem(stem)
+            sk = (md or dt_date.min, "00-00")
+        rated.append((sk, _file_mtime(f["path"]), f))
+    if not rated:
+        raise ValueError("empty tessa bucket")
+
+    rated.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    best_sk, _, best_f = rated[0]
+
+    if kind_key != "id" or len(rated) < 2:
+        return best_f, None
+
+    max_date = best_sk[0]
+    window = [r for r in rated if (max_date - r[0][0]) <= timedelta(days=14)]
+    scored: List[Tuple[Tuple[tuple, float, Dict], int]] = []
+    for item in window:
+        n = _quick_csv_data_row_count(item[2]["path"])
+        if n > 0:
+            scored.append((item, n))
+    if not scored:
+        return best_f, None
+
+    richest_item, richest_rows = max(scored, key=lambda x: (x[1], x[0][0], x[0][1]))
+    richest_f = richest_item[2]
+    if richest_f["path"] == best_f["path"]:
+        return best_f, None
+
+    latest_rows = next((n for item, n in scored if item[2]["path"] == best_f["path"]), 0)
+    warn = (
+        f"TESSA id: «{best_f['name']}» ({latest_rows} строк) похожа на неполную выгрузку; "
+        f"к загрузке выбран «{richest_f['name']}» ({richest_rows} строк)."
+    )
+    return richest_f, warn
+
+
+def load_richest_tessa_id_from_web() -> Optional[pd.DataFrame]:
+    """
+    Самый полный tessa_*-id.csv из web/ (та же логика, что при pick_latest для id).
+    Для fallback в дашбордах, если в session_state остался урезанный снимок из БД.
+    """
+    web = get_web_dir()
+    if not web.is_dir():
+        return None
+    id_files = [
+        {"name": p.name, "path": p, "rel_path": p.name}
+        for p in web.glob("tessa_*-id.csv")
+    ]
+    if not id_files:
+        return None
+    best, _warn = _pick_best_tessa_bucket_file(id_files, "id")
+    df = _load_tessa_file(best["path"])
+    if df is None or df.empty:
+        return None
+    df = df.copy()
+    df["__source_file"] = best["name"]
+    return df
+
+
 def _msp_project_bucket(stem: str) -> Optional[str]:
     s = stem.lower().replace(".csv", "")
     if not (s.startswith("msp_") or s.startswith("msp-")):
@@ -1299,16 +1383,10 @@ def pick_latest_snapshot_files(files: List[Dict]) -> Tuple[List[Dict], List[str]
     buckets_t: Dict[str, List[Dict]] = {}
     for f in tessa:
         buckets_t.setdefault(_tessa_kind_key(Path(f["name"]).stem), []).append(f)
-    for lst in buckets_t.values():
-        rated = []
-        for f in lst:
-            stem = Path(f["name"]).stem
-            sk = _tessa_snapshot_sort_key(stem)
-            if sk is None:
-                md = _max_date_in_stem(stem)
-                sk = (md or dt_date.min, "00-00")
-            rated.append((sk + (_file_mtime(f["path"]),), f))
-        best_f = max(rated, key=lambda x: x[0])[1]
+    for kind_key, lst in buckets_t.items():
+        best_f, tessa_warn = _pick_best_tessa_bucket_file(lst, kind_key)
+        if tessa_warn:
+            warns.append(tessa_warn)
         _add(best_f)
 
     buckets_m: Dict[str, List[Dict]] = {}

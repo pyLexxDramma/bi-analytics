@@ -11736,9 +11736,9 @@ def _rd_plan_fallback_view(
         if projects:
             sel, _ = project_filter_multiselect(
                 st,
-                "Проекты",
                 projects,
                 key=f"rd_fb_proj_{page_title or doc_code}",
+                label="Проекты",
             )
             if sel:
                 df = df[df[proj_col].astype(str).str.strip().isin(sel)]
@@ -21493,16 +21493,26 @@ def _pd_cumsum_by_date(dates, row_mask):
 
 
 def _pd_cipher_filled_mask(df: pd.DataFrame) -> tuple[Optional[str], pd.Series]:
-    """Задачи ПД по ТЗ: признак — непустой «шифр ПД РД» (разные подписи колонки в выгрузках)."""
+    """Задачи ПД по ТЗ: признак — непустой «шифр ПД РД» (разные подписи колонки в выгрузках).
+
+    После ``web_loader._MSP_COLUMN_REMAP`` исходный «Шифр_ПД_и_РД» → canonical ``abbreviation``.
+    """
     cipher_col = _dev_tasks_find_column(
         df,
         [
+            "abbreviation",
+            "Шифр_ПД_и_РД",
+            "Шифр ПД и РД",
+            "шифр пд и рд",
             "Шифр ПД РД",
             "шифр ПД РД",
             "Шифр ПД/РД",
             "шифр ПД/РД",
             "ШифрПДРД",
             "Cipher PD RD",
+            "Шифр",
+            "Cipher",
+            "DivisionCipher",
         ],
     )
     if not cipher_col or cipher_col not in df.columns:
@@ -26539,21 +26549,24 @@ _PRED_DASH_MOCK_CSS = """
 .pred-detail-wrap th a { color:#fafafa; text-decoration:none; display:inline-flex; gap:6px; align-items:center; }
 .pred-detail-wrap th a:hover { color:#93c5fd; }
 .pred-sort-icon { color:#8fb4da; font-size:10px; }
-.pred-detail-wrap td { padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0; vertical-align:top; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pred-detail-wrap td { padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0; vertical-align:top; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; background:#1a1c23 !important; }
 .pred-detail-wrap .pred-col-num { width:9ch; min-width:9ch; max-width:11ch; }
 .pred-detail-wrap .pred-col-dly { width:11ch; min-width:11ch; max-width:12ch; font-variant-numeric:tabular-nums; }
-.pred-detail-wrap .pred-col-st { width:13ch; min-width:13ch; max-width:17ch; }
+.pred-detail-wrap .pred-col-st { width:22ch; min-width:22ch; max-width:26ch; }
+.pred-detail-wrap td.pred-col-st { white-space:normal; overflow:visible; text-overflow:clip; }
+.pred-detail-wrap td.pred-col-st .pred-chip { white-space:nowrap; }
+.pred-detail-wrap .pred-col-contr { width:14ch; min-width:12ch; max-width:18ch; }
 .pred-detail-wrap .pred-col-date { width:12ch; min-width:12ch; max-width:13ch; }
 .pred-detail-wrap .pred-col-mid { width:12ch; min-width:11ch; max-width:16ch; }
 .pred-detail-wrap .pred-col-text { width:auto; min-width:12ch; }
 /* Подсветка строк: !important нужен, потому что Streamlit-обертка
    добавляет свой более специфичный фон, который перебивает rgba. */
-.pred-detail-wrap tbody tr.pred-row-overdue td { background:rgba(255, 105, 145, 0.32) !important; border-bottom:1px solid rgba(255, 93, 143, 0.45); }
+.pred-detail-wrap tbody tr.pred-row-overdue td { background:rgba(255, 105, 145, 0.14) !important; border-bottom:1px solid rgba(255, 93, 143, 0.28); }
 .pred-detail-wrap tbody tr.pred-row-overdue td:first-child { border-left:4px solid #ff5d8f !important; }
-.pred-detail-wrap tbody tr.pred-row-resolved td { background:rgba(102, 221, 102, 0.24) !important; border-bottom:1px solid rgba(102, 221, 102, 0.45); }
+.pred-detail-wrap tbody tr.pred-row-resolved td { background:rgba(102, 221, 102, 0.14) !important; border-bottom:1px solid rgba(102, 221, 102, 0.28); }
 .pred-detail-wrap tbody tr.pred-row-resolved td:first-child { border-left:4px solid #66dd66 !important; }
-.pred-detail-wrap tbody tr.pred-row-overdue:hover td { background:rgba(255, 105, 145, 0.42) !important; }
-.pred-detail-wrap tbody tr.pred-row-resolved:hover td { background:rgba(102, 221, 102, 0.34) !important; }
+.pred-detail-wrap tbody tr.pred-row-overdue:hover td { background:rgba(255, 105, 145, 0.22) !important; }
+.pred-detail-wrap tbody tr.pred-row-resolved:hover td { background:rgba(102, 221, 102, 0.22) !important; }
 .pred-detail-wrap tbody tr:not(.pred-row-overdue):not(.pred-row-resolved):hover td { background:rgba(255,255,255,0.04); }
 .pred-chip { display:inline-block; padding:3px 8px; border-radius:999px; font-size:12px; font-weight:600; border:1px solid rgba(255,255,255,0.12); }
 .pred-chip-overdue { background:rgba(230,126,34,0.18); color:#fdba74; }
@@ -26622,12 +26635,18 @@ def _pred_fmt_num(val) -> str:
 
 
 def _pred_fmt_doc_full(val) -> str:
-    """Полный номер документа из файла без приведения к int (сохраняет «12/24», суффиксы)."""
+    """Полный номер документа из файла без «73.0» для целых чисел."""
     if val is None or (isinstance(val, float) and pd.isna(val)):
         return "—"
     s = str(val).strip()
     if not s or s.lower() in ("nan", "none", "nat"):
         return "—"
+    try:
+        nf = float(s.replace(",", "."))
+        if nf == int(nf):
+            return str(int(nf))
+    except (TypeError, ValueError):
+        pass
     return s
 
 
@@ -26828,7 +26847,7 @@ def _pred_build_detail_table_df(
             overdue_num = int(round(float(overdue_raw)))
         except (TypeError, ValueError):
             overdue_num = 0
-        overdue_display = str(overdue_num)
+        overdue_display = _pred_fmt_days_display(overdue_raw)
         if full_doc_col and full_doc_col in show.columns:
             doc_full_s = _pred_fmt_doc_full(row.get(full_doc_col))
         elif doc_num_col and doc_num_col in show.columns:
@@ -26850,10 +26869,11 @@ def _pred_build_detail_table_df(
                 "Дней просрочки": overdue_display,
                 "Критические предписания": critical_text,
                 "_resolved_flag": "1" if resolved_raw else "",
+                "_overdue_num": overdue_num,
             }
         )
     df_out = pd.DataFrame(rows)
-    ordered = list(_PRED_DETAIL_TABLE_COLUMNS) + ["_resolved_flag"]
+    ordered = list(_PRED_DETAIL_TABLE_COLUMNS) + ["_resolved_flag", "_overdue_num"]
     for c in ordered:
         if c not in df_out.columns:
             df_out[c] = ""
@@ -26979,6 +26999,8 @@ def _pred_sort_series(df: pd.DataFrame, column: str) -> pd.Series:
     }:
         return pd.to_datetime(df[column], errors="coerce", dayfirst=True)
     if column in {"Дней просрочки"}:
+        if "_overdue_num" in df.columns:
+            return pd.to_numeric(df["_overdue_num"], errors="coerce")
         return (
             df[column]
             .astype(str)
@@ -27019,6 +27041,8 @@ def _pred_detail_col_class(col_name: str) -> str:
     cl = c.casefold()
     if c == "Статус предписания":
         return "pred-col-st"
+    if c == "Подрядчик":
+        return "pred-col-contr"
     if c in {"№ договора", "№ предписания"} or c.startswith("№ "):
         return "pred-col-mid"
     if c == "№ документа":
@@ -27029,7 +27053,7 @@ def _pred_detail_col_class(col_name: str) -> str:
         return "pred-col-dly"
     if c == "Критические предписания" or c.startswith("критич"):
         return "pred-col-num"
-    if c in {"Подрядчик", "Проект", "Блок выдачи предписания"}:
+    if c in {"Проект", "Блок выдачи предписания"}:
         return "pred-col-text"
     return "pred-col-text"
 
@@ -27059,7 +27083,7 @@ def _pred_detail_table_html(
     if df is None or df.empty:
         return f'<p style="color:#a0a0a0;padding:16px;">{esc("Нет строк для отображения.")}</p>'
     show = df.head(max_rows)
-    render_cols = [c for c in show.columns if c != "_resolved_flag"]
+    render_cols = [c for c in show.columns if c not in ("_resolved_flag", "_overdue_num")]
     parts = ['<div class="pred-detail-wrap"><table><thead><tr>']
     for col in render_cols:
         c_cls = _pred_detail_col_class(col)
@@ -27075,7 +27099,7 @@ def _pred_detail_table_html(
     parts.append("</tr></thead><tbody>")
     for _, row in show.iterrows():
         is_resolved = str(row.get("_resolved_flag", "")).strip() == "1"
-        overdue_days = pd.to_numeric(row.get("Дней просрочки"), errors="coerce")
+        overdue_days = pd.to_numeric(row.get("_overdue_num"), errors="coerce")
         tr_cls = "pred-row-resolved" if is_resolved else ("pred-row-overdue" if pd.notna(overdue_days) and float(overdue_days) > 0 else "")
         parts.append(f'<tr class="{tr_cls}">')
         for col in render_cols:
@@ -27083,7 +27107,9 @@ def _pred_detail_table_html(
             if pd.isna(val):
                 val = ""
             if col == "Статус предписания":
-                inner = _pred_status_chip_html(str(val), row.get("Дней просрочки"), is_resolved)
+                inner = _pred_status_chip_html(str(val), row.get("_overdue_num"), is_resolved)
+            elif col == "Дней просрочки" and str(val).strip():
+                inner = f'<span class="pred-days-neg">{esc(str(val))}</span>'
             else:
                 inner = esc(str(val))
             c_cls = _pred_detail_col_class(col)
@@ -28554,11 +28580,41 @@ def dashboard_predpisania(df):
     work = _tessa_fill_card_from_doc_lookup(work)
 
     kind_col = _tessa_find_column(work, ["KindName", "kindname", "Вид"])
+    # Только строки id.csv (KindName/KrStateID); rd/task без KindName не участвуют.
+    if kind_col or "KrStateID" in work.columns:
+        _mask_id = pd.Series(False, index=work.index)
+        if "KrStateID" in work.columns:
+            _mask_id = _mask_id | work["KrStateID"].notna()
+        if kind_col and kind_col in work.columns:
+            _mask_id = _mask_id | (
+                work[kind_col].notna()
+                & (~work[kind_col].astype(str).str.strip().isin(["", "nan", "None", "NaN"]))
+            )
+        work = work[_mask_id].reset_index(drop=True)
+
     if kind_col:
         _kind_series = work[kind_col].astype(str).str.strip().str.casefold()
         pred = work[_kind_series.eq("предписания")].copy()
     else:
         pred = pd.DataFrame()
+
+    if pred.empty:
+        try:
+            from web_loader import load_richest_tessa_id_from_web
+
+            _fallback_id = load_richest_tessa_id_from_web()
+        except Exception:
+            _fallback_id = None
+        if _fallback_id is not None and not _fallback_id.empty:
+            _fallback_id.columns = [str(c).strip() for c in _fallback_id.columns]
+            _fallback_id = _tessa_fill_card_from_doc_lookup(_fallback_id)
+            kind_col = _tessa_find_column(_fallback_id, ["KindName", "kindname", "Вид"])
+            if kind_col:
+                _kind_series = _fallback_id[kind_col].astype(str).str.strip().str.casefold()
+                pred = _fallback_id[_kind_series.eq("предписания")].copy()
+                if not pred.empty:
+                    work = _fallback_id
+                    _source_label = "TESSA (web/: полный id-снимок)"
 
     if pred.empty:
         st.info("Нет данных по предписаниям в загруженных файлах TESSA.")
@@ -29388,7 +29444,7 @@ def dashboard_predpisania(df):
         unsafe_allow_html=True,
     )
     render_dataframe_excel_csv_downloads(
-        table_df.drop(columns=["_resolved_flag"], errors="ignore"),
+        table_df.drop(columns=["_resolved_flag", "_overdue_num"], errors="ignore"),
         file_stem="predpisania",
         key_prefix="predpisania",
     )
