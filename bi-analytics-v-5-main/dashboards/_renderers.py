@@ -31337,7 +31337,10 @@ def _project_schedule_gantt_apply_y_labels(
 
 @st.cache_data(show_spinner=False, ttl=300)
 def _gantt_distinct_str_values(values: tuple) -> list:
-    """Уникальные подписи для selectbox (кэш — ускоряет rerun «Графика проекта»)."""
+    """Уникальные подписи для selectbox (кэш — ускоряет rerun «Графика проекта»).
+
+    В ``values`` передают только `.unique()` — иначе ключ кэша раздувается до числа строк MSP.
+    """
     seen: set = set()
     out: list = []
     for v in values:
@@ -31349,7 +31352,15 @@ def _gantt_distinct_str_values(values: tuple) -> list:
     return sorted(out)
 
 
-_GANTT_MAX_ROWS = 100
+def _gantt_distinct_str_values_from_series(series: pd.Series) -> list:
+    """Уникальные значения колонки для фильтра (без O(n) ключа кэша)."""
+    uniq = series.dropna().astype(str).map(str.strip).unique()
+    return _gantt_distinct_str_values(tuple(uniq))
+
+
+_GANTT_MAX_ROWS = 60
+_GANTT_CHART_MAX_HEIGHT = 1200
+_GANTT_TABLE_MAX_ROWS = 50
 
 
 def dashboard_project_schedule_chart(df):
@@ -31364,6 +31375,11 @@ def dashboard_project_schedule_chart(df):
     _GANTT_FONT_SCALE = 1.15
     _GANTT_MARKER_SCALE = 1.2
     _GANTT_STROKE_SCALE = 1.2
+
+    st.header("График проекта")
+    if df is None or df.empty:
+        st.warning("Загрузите данные MSP.")
+        return
 
     def _norm_colname(s) -> str:
         """Жёсткая нормализация: BOM, NBSP, узкие пробелы, табы/переносы → один пробел; нижний регистр; trim."""
@@ -31567,16 +31583,12 @@ def dashboard_project_schedule_chart(df):
         sign = "+" if n > 0 else ""
         return f"{sign}{n} дн."
 
-    st.header("График проекта")
     # Правки куратора 08.05.2026: верхний radio-селектор «Вид отображения»
     # (Гант / Иерархическая таблица / Мини-бары / Ковенанты / Bar-chart /
     # Теплокарта) скрыт. По умолчанию и единственно — «Диаграмма Ганта».
     # Альтернативные виды (WBS-дерево, мини-бары, отдельный экран ковенантов,
     # bar-chart, теплокарта) отключены в UI; их функции остаются в коде на
     # случай возврата по запросу заказчика.
-    if df is None or df.empty:
-        st.warning("Загрузите данные MSP.")
-        return
     work = df.copy()
     # B2: в «График проекта» должны попадать только настоящие MSP-выгрузки (msp_*.csv).
     # Демо-файл `sample_project_data_fixed.csv` и справочники разделов `other_*_rd.csv`
@@ -31814,9 +31826,7 @@ def dashboard_project_schedule_chart(df):
 
         with f1:
             if proj_col:
-                projs = ["Все"] + _gantt_distinct_str_values(
-                    tuple(plot_df[proj_col].dropna().astype(str).tolist())
-                )
+                projs = ["Все"] + _gantt_distinct_str_values_from_series(plot_df[proj_col])
                 sel_proj = st.selectbox("Проект", projs, key="gantt_project_filter")
                 if sel_proj != "Все":
                     plot_df = plot_df[plot_df[proj_col].astype(str).str.strip() == str(sel_proj).strip()]
@@ -31897,9 +31907,7 @@ def dashboard_project_schedule_chart(df):
         if f_building is not None:
             with f_building:
                 if building_col:
-                    builds = ["Все"] + _gantt_distinct_str_values(
-                        tuple(plot_df[building_col].dropna().astype(str).tolist())
-                    )
+                    builds = ["Все"] + _gantt_distinct_str_values_from_series(plot_df[building_col])
                     sel_building = st.selectbox(
                         "Строение", builds, key="gantt_building_filter"
                     )
@@ -32016,8 +32024,19 @@ def dashboard_project_schedule_chart(df):
                 "планового/фактического (просрочка по «базовое окончание − окончание»)."
             ),
         )
+        lift_display_limits = st.checkbox(
+            "Снять лимит отображения (все строки, полная высота)",
+            value=False,
+            key="gantt_lift_display_limits",
+            help=(
+                f"По умолчанию — до {_GANTT_MAX_ROWS} строк на диаграмме и высота до "
+                f"{_GANTT_CHART_MAX_HEIGHT} px. При снятии лимита отображаются все строки "
+                "после фильтров; загрузка может занять больше времени."
+            ),
+        )
 
-    # Правки куратора 08.05.2026: график ковенант — только явная галочка.
+    _gantt_row_cap = None if lift_display_limits else _GANTT_MAX_ROWS
+    _gantt_chart_max_height = None if lift_display_limits else _GANTT_CHART_MAX_HEIGHT
     is_covenants = bool(force_covenant_points)
     if is_covenants:
         only_finish_delay = False
@@ -32239,11 +32258,15 @@ def dashboard_project_schedule_chart(df):
         )
     else:
         plot_df = plot_df.sort_values(sort_cols, ascending=sort_asc, na_position="last")
-    if len(plot_df) > _GANTT_MAX_ROWS:
-        plot_df = plot_df.head(_GANTT_MAX_ROWS)
+    if _gantt_row_cap is not None and len(plot_df) > _gantt_row_cap:
+        plot_df = plot_df.head(_gantt_row_cap)
         suppress_caption(
-            f"На диаграмме показаны первые {_GANTT_MAX_ROWS} строк после фильтров "
-            "(для скорости отрисовки). Уточните фильтры, чтобы сузить выборку."
+            f"На диаграмме показаны первые {_gantt_row_cap} строк после фильтров "
+            "(для скорости отрисовки). Включите «Снять лимит отображения» или уточните фильтры."
+        )
+    elif lift_display_limits and len(plot_df) > _GANTT_MAX_ROWS:
+        suppress_caption(
+            f"Полный режим: {len(plot_df)} строк на диаграмме — отрисовка может занять больше времени."
         )
 
     lvl_for_indent = None
@@ -32694,9 +32717,8 @@ def dashboard_project_schedule_chart(df):
             except Exception:
                 return float("inf")
 
-        # Псевдо-обводки глифов: Plotly не умеет stroke у шрифта — белые «тени» по кругу, сверху цветной текст.
-        _HALO_OFFS = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)]
-
+        # Подписи дат у полос: одна annotation на метку (без «halo» — иначе Plotly
+        # тратит минуты на тысячи fig.add_annotation при 50+ строках).
         def _add_date_label(
             x_edge: pd.Timestamp,
             y_cat: str,
@@ -32719,51 +32741,36 @@ def dashboard_project_schedule_chart(df):
             if stack_total > 1:
                 _stack_ay = int(round((stack_index - (stack_total - 1) / 2.0) * 10))
 
-            ann_base = dict(
-                x=x_edge,
-                y=y_cat,
-                text=text,
-                xref="x",
-                yref="y",
-                xanchor=_xanchor,
-                yanchor="middle",
-                axref="pixel",
-                ayref="pixel",
-                showarrow=False,
-            )
-            for _dx, _dy in ((2, 0), (-2, 0), (0, 2), (0, -2)):
-                _date_ann.append(
-                    dict(
-                        **ann_base,
-                        ax=_ax + _dx,
-                        ay=_stack_ay + _dy,
-                        font=dict(size=_lbl_font, color="rgba(255,255,255,0.95)", family="Arial"),
-                    )
-                )
-            for _dx, _dy in _HALO_OFFS:
-                _date_ann.append(
-                    dict(
-                        **ann_base,
-                        ax=_ax + _dx,
-                        ay=_stack_ay + _dy,
-                        font=dict(size=_lbl_font, color="rgba(255,255,255,0.98)", family="Arial"),
-                    )
-                )
             _date_ann.append(
                 dict(
-                    **ann_base,
+                    x=x_edge,
+                    y=y_cat,
+                    text=text,
+                    xref="x",
+                    yref="y",
+                    xanchor=_xanchor,
+                    yanchor="middle",
+                    axref="pixel",
+                    ayref="pixel",
                     ax=_ax,
                     ay=_stack_ay,
+                    showarrow=False,
                     font=dict(size=_lbl_font, color=_txt_color, family="Arial"),
+                    bgcolor="rgba(14,19,25,0.78)",
+                    borderpad=2,
                 )
             )
 
         _n_rows_lbl = max(1, len(_row_meta))
         _label_step = 1
-        if policy.get("is_very_dense") and _n_rows_lbl > 150:
+        if _n_rows_lbl > 50:
             _label_step = 3
-        elif policy.get("is_dense") and _n_rows_lbl > 110:
+        elif _n_rows_lbl > 25:
             _label_step = 2
+        if policy.get("is_very_dense") and _n_rows_lbl > 150:
+            _label_step = max(_label_step, 4)
+        elif policy.get("is_dense") and _n_rows_lbl > 110:
+            _label_step = max(_label_step, 3)
 
         for idx, meta in enumerate(_row_meta):
             if idx % _label_step != 0:
@@ -32860,8 +32867,8 @@ def dashboard_project_schedule_chart(df):
             bargroupgap=0.16,
             uirevision="gantt_project_schedule_bars",
         )
-        for _ann in _date_ann:
-            fig.add_annotation(**_ann)
+        if _date_ann:
+            fig.update_layout(annotations=list(_date_ann))
         fig.update_xaxes(type="date", tickformat="%d.%m.%Y", automargin=True)
 
         try:
@@ -33132,7 +33139,7 @@ def dashboard_project_schedule_chart(df):
             fig_cov,
             key="gantt_project_schedule_covenants",
             height=_gantt_render_h,
-            max_height=None,
+            max_height=_gantt_chart_max_height,
             caption_below=(
                 "Ковенанты: синяя точка — базовое окончание, красная — "
                 + _fact_label.lower()
@@ -33156,7 +33163,7 @@ def dashboard_project_schedule_chart(df):
             fig_lines,
             key="gantt_project_schedule_lines",
             height=_gantt_render_h,
-            max_height=None,
+            max_height=_gantt_chart_max_height,
             caption_below=(
                 "Линии дат: План/База по началу и окончанию; подписи справа — "
                 + ("% выполнения" if label_pct else "дата окончания")
@@ -33175,7 +33182,7 @@ def dashboard_project_schedule_chart(df):
             fig_gantt,
             key="gantt_project_schedule",
             height=_gantt_render_h,
-            max_height=None,
+            max_height=_gantt_chart_max_height,
             caption_below=(
                 "План (бирюзовая полоса) и факт (оранжевая). "
                 + (
@@ -33366,10 +33373,15 @@ def dashboard_project_schedule_chart(df):
         st.info("Нет колонок для таблицы.")
     else:
         with st.expander("Таблица задач", expanded=False):
-            _render_gantt_schedule_html_table(tbl_show, max_rows=50)
-            if len(plot_df) > 50:
+            _render_gantt_schedule_html_table(tbl_show, max_rows=_GANTT_TABLE_MAX_ROWS)
+            if len(plot_df) > _GANTT_TABLE_MAX_ROWS:
+                _cap_hint = (
+                    "все строки на диаграмме"
+                    if lift_display_limits
+                    else f"на диаграмме до {_gantt_row_cap or len(plot_df)} задач"
+                )
                 suppress_caption(
-                    f"Показано 50 из {len(plot_df)} строк (на диаграмме до {_GANTT_MAX_ROWS} задач)."
+                    f"Показано {_GANTT_TABLE_MAX_ROWS} из {len(plot_df)} строк таблицы ({_cap_hint})."
                 )
 
 
