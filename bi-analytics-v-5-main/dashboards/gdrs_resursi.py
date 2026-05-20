@@ -1869,6 +1869,23 @@ def gdrs_delta_pct_cell_bg_style(raw) -> str:
     return f"background-color:rgba({rr},{gg},{bb},{alpha:.3f}) !important;"
 
 
+def gdrs_deviation_cell_bg_style(raw) -> str:
+    """Фон ячейки «Отклонение» (План − Факт): >0 красный, <0 зелёный, 0 нейтральный."""
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return ""
+    try:
+        v = float(raw)
+    except Exception:
+        return ""
+    if v > 0:
+        t = min(max(v, 0.0), 100.0) / 100.0
+        alpha = 0.24 + 0.36 * t
+        return f"background-color:rgba(255,84,84,{alpha:.3f}) !important;"
+    if v < 0:
+        return "background-color:rgba(70,214,138,0.32) !important;"
+    return "background-color:rgba(136,153,170,0.18) !important;"
+
+
 def _gdrs_matrix_table_css(wrap_id: str) -> str:
     """Сетка и рамки как в «Девелоперских проектах»; цвета колонок по ТЗ ГДРС."""
     w = wrap_id
@@ -2155,9 +2172,17 @@ def render_gdrs_matrix_table_html(
                     fv = None
                 if fv is not None and fv == fv:
                     dev_cls = "gdrs-u" if fv > 0 else ("gdrs-o" if fv < 0 else "gdrs-z")
+                    dev_bg = gdrs_deviation_cell_bg_style(fv)
                     inner = "0" if int(round(fv)) == 0 else f"{int(round(fv)):+d}"
                     cells.append(
-                        _td_html(ci, col, html_module.escape(inner), extra_cls=dev_cls, is_detail=is_detail)
+                        _td_html(
+                            ci,
+                            col,
+                            html_module.escape(inner),
+                            extra_cls=dev_cls,
+                            extra_style=dev_bg,
+                            is_detail=is_detail,
+                        )
                     )
                 else:
                     cells.append(_td_html(ci, col, "—", is_detail=is_detail))

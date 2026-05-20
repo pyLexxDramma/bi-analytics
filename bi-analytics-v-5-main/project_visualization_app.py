@@ -778,7 +778,10 @@ def main():
     st.session_state.setdefault("data_mode_radio", "Из папки web/")
     data_mode = str(st.session_state.get("data_mode_radio") or "Из папки web/")
     if not _admin_data_ops_sidebar and data_mode in ("Из папки web/", "FTP → web/"):
-        if st.session_state.get("project_data") is None:
+        if (
+            st.session_state.get("project_data") is None
+            and not st.session_state.get("_auto_hydrated_from_db")
+        ):
             st.session_state["_pending_web_folder_load"] = True
 
     if data_mode in ("Из папки web/", "FTP → web/"):
@@ -902,31 +905,94 @@ def main():
                 )
             )
             if _need_fallback and web_dir_exists():
-                try:
-                    print("[auto_hydrate] fallback to load_all_from_web()", file=sys.stderr)
-                    with st.spinner("Первичная загрузка данных из web/…"):
-                        _fb_result = load_all_from_web()
-                    st.session_state["last_load_result"] = _fb_result
+                _fb_from_db = False
+                if _hydrate_active_id:
                     try:
-                        st.session_state["last_data_readiness"] = build_data_readiness_report(_fb_result)
-                        st.session_state["last_env_fingerprint"] = build_environment_fingerprint(_fb_result)
-                        from data_contract import evaluate_data_contract as _edc
-                        st.session_state["last_data_contract"] = _edc(_fb_result)
-                    except Exception:
-                        pass
+                        read_version_to_session(int(_hydrate_active_id))
+                        _fb_from_db = st.session_state.get("project_data") is not None or (
+                            st.session_state.get("tessa_data") is not None
+                            or st.session_state.get("reference_1c_dannye") is not None
+                            or st.session_state.get("debit_credit_data") is not None
+                            or st.session_state.get("resources_data") is not None
+                        )
+                        if _fb_from_db:
+                            st.session_state["web_version_id"] = int(_hydrate_active_id)
+                            st.session_state["web_version_pick_id"] = int(_hydrate_active_id)
+                            _pseudo_lr = _build_pseudo_lr_from_db(int(_hydrate_active_id))
+                            if _pseudo_lr:
+                                st.session_state["last_load_result"] = _pseudo_lr
+                            print(
+                                f"[auto_hydrate] hydrated from DB version {_hydrate_active_id}",
+                                file=sys.stderr,
+                            )
+                    except Exception as _e:
+                        print(f"[auto_hydrate] DB fallback failed: {_e}", file=sys.stderr)
+                if _fb_from_db:
+                    st.session_state["_auto_hydrated_from_db"] = True
+                else:
                     try:
-                        from web_schema import get_active_version_id as _gav2
-                        _na2 = _gav2()
-                        if _na2 is not None:
-                            st.session_state["web_version_id"] = int(_na2)
-                            st.session_state["web_version_pick_id"] = int(_na2)
-                    except Exception:
-                        pass
-                    st.session_state["_auto_hydrated_from_web"] = True
-                except Exception as _e:
-                    print(f"[auto_hydrate] fallback load_all_from_web failed: {_e}", file=sys.stderr)
+                        print("[auto_hydrate] fallback to load_all_from_web()", file=sys.stderr)
+                        with st.spinner("Первичная загрузка данных из web/…"):
+                            _fb_result = load_all_from_web()
+                        st.session_state["last_load_result"] = _fb_result
+                        try:
+                            st.session_state["last_data_readiness"] = build_data_readiness_report(_fb_result)
+                            st.session_state["last_env_fingerprint"] = build_environment_fingerprint(_fb_result)
+                            from data_contract import evaluate_data_contract as _edc
+                            st.session_state["last_data_contract"] = _edc(_fb_result)
+                        except Exception:
+                            pass
+                        try:
+                            from web_schema import get_active_version_id as _gav2
+                            _na2 = _gav2()
+                            if _na2 is not None:
+                                st.session_state["web_version_id"] = int(_na2)
+                                st.session_state["web_version_pick_id"] = int(_na2)
+                        except Exception:
+                            pass
+                        st.session_state["_auto_hydrated_from_web"] = True
+                    except Exception as _e:
+                        print(f"[auto_hydrate] fallback load_all_from_web failed: {_e}", file=sys.stderr)
 
-        def _perform_load_from_web_folder(*, quiet: bool = False) -> None:
+        def _session_has_loaded_data() -> bool:
+            return bool(
+                (st.session_state.get("project_data") is not None and not getattr(st.session_state.project_data, "empty", True))
+                or (st.session_state.get("tessa_data") is not None and not getattr(st.session_state.get("tessa_data"), "empty", True))
+                or (st.session_state.get("reference_1c_dannye") is not None and not getattr(st.session_state.get("reference_1c_dannye"), "empty", True))
+                or (st.session_state.get("debit_credit_data") is not None and not getattr(st.session_state.get("debit_credit_data"), "empty", True))
+                or (st.session_state.get("resources_data") is not None and not getattr(st.session_state.get("resources_data"), "empty", True))
+            )
+
+        def _hydrate_from_active_db(*, quiet: bool) -> bool:
+            """Быстро: SQLite → session_state без повторного сканирования web/."""
+            try:
+                _vid = get_active_version_id()
+            except Exception:
+                return False
+            if not _vid:
+                return False
+            try:
+                if not _session_has_loaded_data():
+                    read_version_to_session(int(_vid))
+                st.session_state["web_version_id"] = int(_vid)
+                st.session_state["web_version_pick_id"] = int(_vid)
+                _plr = _build_pseudo_lr_from_db(int(_vid))
+                if _plr:
+                    st.session_state["last_load_result"] = _plr
+                    try:
+                        from data_contract import evaluate_data_contract
+                        st.session_state["last_data_contract"] = evaluate_data_contract(_plr)
+                        st.session_state["last_data_readiness"] = build_data_readiness_report(_plr)
+                        st.session_state["last_env_fingerprint"] = build_environment_fingerprint(_plr)
+                    except Exception:
+                        pass
+                st.session_state["_auto_hydrated_from_db"] = True
+                return _session_has_loaded_data()
+            except Exception as _e:
+                print(f"[web_load] hydrate from DB failed: {_e}", file=sys.stderr)
+                return False
+
+        def _perform_load_from_web_folder(*, quiet: bool = False, force_rescan: bool = False) -> None:
             """Сканирование web/, запись в SQLite и обновление session_state (как кнопка «Загрузить из web/»)."""
             if not web_dir_exists():
                 st.error(
@@ -935,6 +1001,13 @@ def main():
                     "ни пути из переменной BI_ANALYTICS_WEB_EXTRA_PATHS."
                 )
                 return
+
+            if not force_rescan:
+                try:
+                    if get_all_versions() and _hydrate_from_active_db(quiet=quiet):
+                        return
+                except Exception:
+                    pass
 
             if quiet:
                 result = load_all_from_web()
@@ -996,63 +1069,60 @@ def main():
                     for row in result.get("diagnostics", [])[:40]:
                         st.json(row)
 
-            st.rerun()
+            if not quiet:
+                st.rerun()
 
         if (
             _is_release_client_mode()
             and data_mode == "Из папки web/"
-            and not get_all_versions()
-            and st.session_state.get("project_data") is None
             and not st.session_state.get("_release_web_autoload_tried", False)
         ):
-            # Release-клиент при первом заходе: ставим флаги первыми, чтобы при любом
-            # сбое FTP / зависании не зацикливаться и не блокировать UI на каждом
-            # rerun. Если FTP сработает — данные подтянутся; если нет — клиент увидит
-            # данные из локального web/ (закоммиченные снимки).
-            #
-            # Управление: BI_ANALYTICS_AUTO_FTP_ON_START=0 — отключить авто-FTP даже если настроен.
             st.session_state["_release_web_autoload_tried"] = True
-            st.session_state["_pending_web_folder_load"] = True
-            try:
-                _auto_ftp_off = str(os.environ.get("BI_ANALYTICS_AUTO_FTP_ON_START", "")).strip().lower() in (
-                    "0",
-                    "false",
-                    "no",
-                    "off",
-                )
-            except Exception:
-                _auto_ftp_off = False
-            if not _auto_ftp_off:
+            if not _session_has_loaded_data():
+                _has_db_versions = False
                 try:
-                    from ftp_sync import (
-                        merge_ftp_config,
-                        streamlit_secrets_to_config,
-                        sync_ftp_to_web,
-                    )
-
-                    _ftp_cfg = merge_ftp_config(streamlit_secrets_to_config())
-                    # Жёсткий потолок таймаута, чтобы при недоступном FTP клиент
-                    # не висел на спиннере вечно (по умолчанию ftplib timeout=60s).
-                    _ftp_cfg["timeout"] = float(_ftp_cfg.get("timeout") or 30) or 30
-                    if _ftp_cfg.get("host") and _ftp_cfg.get("user"):
-                        with st.spinner("Загружаю свежие данные…"):
-                            sync_ftp_to_web(
-                                get_web_dir(),
-                                config=_ftp_cfg,
-                                extensions=(".csv", ".json"),
-                                progress=lambda _m: None,
-                            )
+                    _has_db_versions = bool(get_all_versions())
                 except Exception:
-                    # Без шумовых ошибок: на release клиенту нечего показывать,
-                    # упадём в чтение того, что уже лежит локально в web/.
                     pass
+                if not _has_db_versions:
+                    st.session_state["_pending_web_folder_load"] = True
+                    st.session_state["_pending_web_load_quiet"] = True
+                    try:
+                        _auto_ftp_off = str(
+                            os.environ.get("BI_ANALYTICS_AUTO_FTP_ON_START", "")
+                        ).strip().lower() in ("0", "false", "no", "off")
+                    except Exception:
+                        _auto_ftp_off = False
+                    if not _auto_ftp_off:
+                        try:
+                            from ftp_sync import (
+                                merge_ftp_config,
+                                streamlit_secrets_to_config,
+                                sync_ftp_to_web,
+                            )
+
+                            _ftp_cfg = merge_ftp_config(streamlit_secrets_to_config())
+                            _ftp_cfg["timeout"] = float(_ftp_cfg.get("timeout") or 30) or 30
+                            if _ftp_cfg.get("host") and _ftp_cfg.get("user"):
+                                with st.spinner("Загружаю свежие данные…"):
+                                    sync_ftp_to_web(
+                                        get_web_dir(),
+                                        config=_ftp_cfg,
+                                        extensions=(".csv", ".json"),
+                                        progress=lambda _m: None,
+                                    )
+                        except Exception:
+                            pass
+                else:
+                    st.session_state["_pending_web_folder_load"] = True
+                    st.session_state["_pending_web_load_quiet"] = True
 
         if (
             data_mode in ("Из папки web/", "FTP → web/")
             and st.session_state.pop("_pending_web_folder_load", False)
         ):
             _load_quiet = bool(st.session_state.pop("_pending_web_load_quiet", True))
-            _perform_load_from_web_folder(quiet=_load_quiet)
+            _perform_load_from_web_folder(quiet=_load_quiet, force_rescan=not _load_quiet)
 
         if _admin_data_ops_sidebar:
             try:
@@ -1303,12 +1373,19 @@ def main():
             df_for_render = df
 
         try:
-            with st.spinner("Загрузка отчёта…"):
+            if _is_release_client_mode():
                 _render_active_dashboard(
                     selected_dashboard,
                     df_for_render,
-                    release_mode=_is_release_client_mode(),
+                    release_mode=True,
                 )
+            else:
+                with st.spinner("Загрузка отчёта…"):
+                    _render_active_dashboard(
+                        selected_dashboard,
+                        df_for_render,
+                        release_mode=False,
+                    )
         except Exception as e:
             st.error(f"Ошибка при отображении графика '{selected_dashboard}': {str(e)}")
             st.exception(e)

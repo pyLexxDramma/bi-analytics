@@ -415,8 +415,10 @@ def _render_gantt_schedule_html_table(df: pd.DataFrame, max_rows: int = 80):
 from utils import (
     TABLE_BG_COLOR,
     TABLE_HEADER_BG_COLOR,
+    TABLE_HEADER_FONT_CSS,
     TABLE_GROUP_ROW_BG_COLOR,
     TABLE_TEXT_COLOR,
+    CHART_BG_COLOR,
     get_russian_month_name,
     format_period_ru,
     apply_chart_background,
@@ -430,6 +432,7 @@ from utils import (
     plan_fact_dates_table_to_html,
     render_styled_table_to_html,
     budget_table_to_html,
+    mark_html_table_sortable,
     format_table_title,
     render_table_subheader,
     format_million_rub,
@@ -1665,23 +1668,46 @@ def _apply_finance_bar_label_layout(
 
 
 def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame) -> go.Figure:
-    """Круговая «распределение по контрагентам»: без наложения — % внутри, названия в легенде."""
+    """Круговая «распределение по контрагентам»: абсолют и % на секторе, названия в легенде."""
     df = pie_df.sort_values("Факт", ascending=False).reset_index(drop=True)
     n = int(len(df))
     height = int(min(780, max(520, 460 + n * 7)))
     r_margin = int(min(440, max(260, 210 + n * 7)))
+    values = pd.to_numeric(df["Факт"], errors="coerce").fillna(0).astype(float).tolist()
+    total_v = float(sum(values)) if values else 0.0
+    slice_text: list[str] = []
+    slice_pos: list[str] = []
+    slice_pull: list[float] = []
+    for val in values:
+        if total_v <= 0:
+            slice_text.append("")
+            slice_pos.append("inside")
+            slice_pull.append(0.0)
+            continue
+        frac = float(val) / total_v
+        abs_txt = f"{int(round(val))}"
+        pct_txt = f"{frac * 100:.1f}%" if 0 < frac < 0.03 else f"{frac * 100:.0f}%"
+        slice_text.append(f"{abs_txt}<br>{pct_txt}")
+        if frac < 0.045:
+            slice_pos.append("outside")
+            slice_pull.append(0.04)
+        else:
+            slice_pos.append("inside")
+            slice_pull.append(0.0)
     fig = go.Figure(
         data=[
             go.Pie(
                 labels=df["Контрагент"].astype(str),
-                values=df["Факт"],
+                values=values,
                 sort=False,
                 direction="clockwise",
-                textinfo="percent",
-                texttemplate="%{percent:.0%}",
-                textposition="inside",
+                text=slice_text,
+                textinfo="text",
+                textposition=slice_pos,
                 insidetextorientation="horizontal",
+                pull=slice_pull,
                 textfont=dict(size=13 if n <= 8 else 11, color="#ffffff"),
+                outsidetextfont=dict(size=11 if n <= 10 else 10, color="#e8eef5"),
                 hovertemplate=(
                     "<b>%{label}</b><br>Факт: %{value}<br>%{percent}<extra></extra>"
                 ),
@@ -1691,7 +1717,7 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame) -> go.Figure:
     )
     fig.update_layout(
         height=height,
-        uniformtext=dict(minsize=9, mode="hide"),
+        uniformtext=dict(minsize=8, mode="show"),
         legend=dict(
             orientation="v",
             yanchor="top",
@@ -1702,9 +1728,15 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame) -> go.Figure:
             tracegroupgap=3,
             itemsizing="constant",
         ),
-        margin=dict(l=28, r=r_margin, t=44, b=36),
+        margin=dict(l=28, r=r_margin, t=44, b=56),
         showlegend=True,
+        plot_bgcolor=CHART_BG_COLOR,
+        paper_bgcolor=CHART_BG_COLOR,
     )
+    try:
+        fig.update_traces(domain=dict(x=[0.0, 0.72], y=[0.05, 0.95]))
+    except Exception:
+        pass
     return fig
 
 
@@ -18165,9 +18197,7 @@ def _gdrs_projects_summary_display(proj_df: pd.DataFrame) -> pd.DataFrame:
         "Отклонение": d["deviation"].round(0).astype(int),
     })
     if "delta_pct" in d.columns:
-        out["Отклонение %"] = d["delta_pct"].apply(
-            lambda x: f"{float(x):.1f}%" if pd.notna(x) else "—"
-        )
+        out["Отклонение %"] = d["delta_pct"]
     return out
 
 
@@ -18175,6 +18205,113 @@ def _gdrs_contractors_summary_display(chart_df: pd.DataFrame) -> pd.DataFrame:
     d = chart_df.sort_values("План", ascending=False).copy()
     return d[["Контрагент", "План", "Факт", "Отклонение"]].copy()
 
+
+
+def _gdrs_pie_distribution_display(pie_df: pd.DataFrame) -> pd.DataFrame:
+    d = pie_df.sort_values("Факт", ascending=False).copy()
+    total = float(pd.to_numeric(d["Факт"], errors="coerce").fillna(0).sum())
+    out = pd.DataFrame({
+        "Контрагент": d["Контрагент"].astype(str),
+    })
+    if "План" in d.columns:
+        out["План"] = pd.to_numeric(d["План"], errors="coerce").fillna(0).round(0).astype(int)
+    out["Факт"] = pd.to_numeric(d["Факт"], errors="coerce").fillna(0).round(0).astype(int)
+    if "Отклонение" in d.columns:
+        out["Отклонение"] = pd.to_numeric(d["Отклонение"], errors="coerce").fillna(0).round(0).astype(int)
+    if total > 0:
+        out["Доля, %"] = (
+            pd.to_numeric(d["Факт"], errors="coerce").fillna(0) / total * 100.0
+        ).apply(lambda x: f"{float(x):.1f}%")
+    else:
+        out["Доля, %"] = "—"
+    return out
+
+
+def _gdrs_deviation_display_cls(v) -> tuple[str, str]:
+    """План − факт: >0 красный, <0 зелёный, 0 серый (как bar-chart ГДРС)."""
+    fv = pd.to_numeric(v, errors="coerce")
+    if pd.isna(fv):
+        return "—", ""
+    ri = int(round(float(fv)))
+    if ri > 0:
+        return f"{ri:+d}", "gdrs-u"
+    if ri < 0:
+        return f"{ri:+d}", "gdrs-o"
+    return "0", "gdrs-z"
+
+
+def _gdrs_pct_display_cls(v) -> tuple[str, str]:
+    if isinstance(v, str) and "%" in v:
+        try:
+            fv = float(str(v).replace("%", "").replace(",", ".").strip())
+        except (TypeError, ValueError):
+            return str(v), ""
+    else:
+        fv = pd.to_numeric(v, errors="coerce")
+    if pd.isna(fv):
+        return "—", ""
+    text_v = f"{float(fv):+.1f}%" if float(fv) != 0.0 else "0.0%"
+    if fv > 0:
+        return text_v, "gdrs-u"
+    if fv < 0:
+        return text_v, "gdrs-o"
+    return text_v, "gdrs-z"
+
+
+def _gdrs_deviation_cell_bg_style(raw) -> str:
+    """Фон «Отклонение» (План − Факт): >0 красный, <0 зелёный."""
+    from dashboards.gdrs_resursi import gdrs_deviation_cell_bg_style
+
+    return gdrs_deviation_cell_bg_style(raw)
+
+
+def _gdrs_summary_table_to_html(df: pd.DataFrame) -> str:
+    if df is None or df.empty:
+        return "<p>Нет данных для отображения.</p>"
+    wrap_id = "gdrs_sum_" + str(abs(id(df)))
+    tag = "d" + "iv"
+    parts = [
+        f"<{tag} id=\"{wrap_id}\" class=\"gdrs-summary-table-wrap\" "
+        f"style=\"overflow-x:auto;min-width:0;margin:0.75em 0;\">",
+        f"<style>"
+        f"#{wrap_id} table {{ width:100%; border-collapse:collapse; font-size:15px; "
+        f"background-color:{TABLE_BG_COLOR}; color:{TABLE_TEXT_COLOR}; }}"
+        f"#{wrap_id} th, #{wrap_id} td {{ border:1px solid rgba(255,255,255,0.3); padding:6px 8px; }}"
+        f"#{wrap_id} th {{ background-color:{TABLE_HEADER_BG_COLOR}; {TABLE_HEADER_FONT_CSS} }}"
+        f"#{wrap_id} td.gdrs-u, #{wrap_id} td.gdrs-u span {{ color:#ff5454 !important; font-weight:800; }}"
+        f"#{wrap_id} td.gdrs-o, #{wrap_id} td.gdrs-o span {{ color:#46d68a !important; font-weight:800; }}"
+        f"#{wrap_id} td.gdrs-z, #{wrap_id} td.gdrs-z span {{ color:#8899aa !important; }}"
+        f"</style>",
+        '<table class="bi-sortable-table"><thead><tr>',
+    ]
+    for col in df.columns:
+        parts.append(f"<th>{html_module.escape(str(col))}</th>")
+    parts.append("</tr></thead><tbody>")
+    _int_cols = {"План", "Факт", "СКУД"}
+    for _, row in df.iterrows():
+        parts.append("<tr>")
+        for col in df.columns:
+            val = row[col]
+            cl = str(col).strip()
+            extra_cls = ""
+            extra_style = ""
+            if cl == "Отклонение":
+                inner, extra_cls = _gdrs_deviation_display_cls(val)
+                extra_style = _gdrs_deviation_cell_bg_style(val)
+            elif cl == "Отклонение %":
+                inner, extra_cls = _gdrs_pct_display_cls(val)
+                extra_style = _gdrs_delta_pct_cell_bg_style(val)
+            elif cl in _int_cols:
+                num = pd.to_numeric(val, errors="coerce")
+                inner = "0" if pd.isna(num) else str(int(round(float(num))))
+            else:
+                inner = "" if val is None or (isinstance(val, float) and pd.isna(val)) else str(val)
+            cls_attr = f' class="{extra_cls}"' if extra_cls else ""
+            st_attr = f' style="{extra_style}"' if extra_style else ""
+            parts.append(f"<td{cls_attr}{st_attr}><span>{html_module.escape(inner)}</span></td>")
+        parts.append("</tr>")
+    parts.append(f"</tbody></table></{tag}>")
+    return mark_html_table_sortable("".join(parts))
 
 def _gdrs_render_plan_fact_summary_table(
     st,
@@ -18186,20 +18323,7 @@ def _gdrs_render_plan_fact_summary_table(
         st.info("Нет данных для таблицы.")
         return
     render_table_subheader(st, table_title)
-    tbl = display_df.copy()
-    for col in ("План", "Факт", "Отклонение"):
-        if col in tbl.columns:
-            tbl[col] = tbl[col].apply(
-                lambda x: f"{int(x)}" if pd.notna(pd.to_numeric(x, errors="coerce")) else "0"
-            )
-    st.markdown(
-        budget_table_to_html(
-            tbl,
-            finance_deviation_column="Отклонение",
-            deviation_red_if_positive_only=True,
-        ),
-        unsafe_allow_html=True,
-    )
+    st.markdown(_gdrs_summary_table_to_html(display_df), unsafe_allow_html=True)
 
 
 def dashboard_gdrs_people(df):
@@ -18601,21 +18725,21 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
 
     st.markdown("---")
     st.subheader(f"Распределение {_unit_gen} по контрагентам")
-    pie_df = chart_df[chart_df["Факт"] > 0][["Контрагент", "Факт"]].copy()
+    pie_source = chart_df[chart_df["Факт"] > 0].copy()
+    pie_df = pie_source[["Контрагент", "Факт"]].copy()
     if pie_df.empty:
         st.info("Нет фактических данных для круговой диаграммы.")
     else:
         try:
             fig3 = _gdrs_pie_contractors_figure(pie_df)
-            fig3.update_layout(
-                plot_bgcolor="rgba(0,0,0,0)",
-                paper_bgcolor="rgba(0,0,0,0)",
-                font_color="#eee",
-            )
-            fig3 = apply_chart_background(fig3)
             st.plotly_chart(fig3, use_container_width=True)
         except Exception as _e:
             st.warning(f"Plotly недоступен: {_e}")
+        _gdrs_render_plan_fact_summary_table(
+            st,
+            _gdrs_pie_distribution_display(pie_source),
+            table_title=f"Распределение {_unit_gen} по контрагентам",
+        )
 
     st.markdown("---")
     render_table_subheader(st, f"График движения рабочей силы ({unit}), {period_label}")

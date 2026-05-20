@@ -2170,8 +2170,18 @@ def _infer_file_type_by_name(file_name: str) -> str:
 
 # ── Чтение версии из БД в session_state ─────────────────────────────────────
 
-@st.cache_data(ttl=120)
-def _load_version_data(version_id: int, file_type: str) -> Optional[pd.DataFrame]:
+
+def _web_db_mtime() -> float:
+    try:
+        return float(Path(WEB_DB_PATH).stat().st_mtime)
+    except Exception:
+        return 0.0
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _load_version_data(
+    version_id: int, file_type: str, _db_mtime: float = 0.0
+) -> Optional[pd.DataFrame]:
     """Загружает строки нужного типа из web_data для указанной версии."""
     import sqlite3
     try:
@@ -2264,11 +2274,12 @@ def read_version_to_session(version_id: int):
     from data_loader import ensure_data_session_state
 
     ensure_data_session_state()
+    _db_mtime = _web_db_mtime()
 
     # ── Данные проектов (без дебиторки — она в отдельном session_state) ─────
     dfs = []
     for ftype in ("project", "budget"):
-        df = _load_version_data(version_id, ftype)
+        df = _load_version_data(version_id, ftype, _db_mtime)
         if df is not None and not df.empty:
             df = df.copy()
             df = _restore_date_columns(df)
@@ -2285,36 +2296,36 @@ def read_version_to_session(version_id: int):
         st.session_state["project_data_all_snapshots"] = None
     st.session_state.project_data = _deduplicate_project_snapshots(combined) if combined is not None else None
 
-    deb = _load_version_data(version_id, "debit_credit")
+    deb = _load_version_data(version_id, "debit_credit", _db_mtime)
     if deb is not None and not deb.empty:
         st.session_state.debit_credit_data = deb
     else:
         st.session_state.debit_credit_data = None
 
     # ── Данные ресурсов ──────────────────────────────────────────────────────
-    res = _load_version_data(version_id, "resources")
+    res = _load_version_data(version_id, "resources", _db_mtime)
     st.session_state.resources_data = res if (res is not None and not res.empty) else None
 
     # ── Данные техники ───────────────────────────────────────────────────────
-    tech = _load_version_data(version_id, "technique")
+    tech = _load_version_data(version_id, "technique", _db_mtime)
     st.session_state.technique_data = tech if (tech is not None and not tech.empty) else None
 
     # ── Данные TESSA (исполнительная документация) ────────────────────────
-    tessa = _load_version_data(version_id, "tessa")
+    tessa = _load_version_data(version_id, "tessa", _db_mtime)
     if tessa is not None and not tessa.empty:
         st.session_state["tessa_data"] = tessa
     elif st.session_state.get("tessa_data") is None:
         st.session_state["tessa_data"] = None
 
     # ── TESSA Tasks (отдельный файл для join CardId ↔ DocID) ───────────────
-    tt = _load_version_data(version_id, "tessa_tasks")
+    tt = _load_version_data(version_id, "tessa_tasks", _db_mtime)
     if tt is not None and not tt.empty:
         st.session_state["tessa_tasks_data"] = tt
     elif st.session_state.get("tessa_tasks_data") is None:
         st.session_state["tessa_tasks_data"] = None
 
     # ── Обороты 1С (dannye / бюджетные JSON): в БД как reference_dannye ───────
-    rd_ref = _load_version_data(version_id, "reference_dannye")
+    rd_ref = _load_version_data(version_id, "reference_dannye", _db_mtime)
     if rd_ref is not None and not rd_ref.empty:
         st.session_state["reference_1c_dannye"] = rd_ref
         try:
