@@ -438,6 +438,7 @@ from utils import (
     format_million_rub,
     to_million_rub,
     format_dataframe_as_html,
+    budget_table_to_html,
     norm_partner_join_key,
     render_dataframe_excel_csv_downloads,
     dataframe_to_csv_bytes_for_excel,
@@ -19891,6 +19892,39 @@ def dashboard_debit_credit(df):
             # «Отклонение» рисуется отдельно с per-bar окраской ниже.
         }
         _value_cols_for_chart = [c for c in value_cols if c != "Отклонение"]
+
+        def _dk_chart_bar_text(v, *, min_abs: float = 0.5) -> str:
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                return ""
+            try:
+                x = float(v)
+            except (TypeError, ValueError):
+                return ""
+            if abs(x) < min_abs:
+                return ""
+            return f"{x:.1f}"
+
+        _dk_bar_label_style = {
+            "Договор стоимость": dict(
+                textposition="inside",
+                insidetextanchor="middle",
+                textangle=0,
+                constraintext="none",
+                textfont=dict(size=18, color="#ffffff"),
+            ),
+            "Аванс": dict(
+                textposition="outside",
+                textangle=0,
+                cliponaxis=False,
+                textfont=dict(size=15, color="#F1C40F"),
+            ),
+            "КС-2": dict(
+                textposition="outside",
+                textangle=0,
+                cliponaxis=False,
+                textfont=dict(size=14, color="#f0f4f8"),
+            ),
+        }
         for col in _value_cols_for_chart:
             if col == "Отклонение":
                 # per-bar цвета: ≥0 — зелёный, <0 — красный.
@@ -19903,11 +19937,11 @@ def dashboard_debit_credit(df):
                         x=x,
                         y=chart_df[col],
                         marker_color=_bar_colors,
-                        text=chart_df[col].apply(
-                            lambda v: f"{v:.1f}" if pd.notna(v) else ""
-                        ),
+                        text=chart_df[col].apply(_dk_chart_bar_text),
                         textposition="outside",
-                        textfont=dict(size=10, color="#f0f4f8"),
+                        textangle=0,
+                        cliponaxis=False,
+                        textfont=dict(size=14, color="#f0f4f8"),
                         customdata=chart_df[col].apply(
                             lambda v: f"{v:.1f} млн" if pd.notna(v) else "0,0 млн"
                         ),
@@ -19915,21 +19949,26 @@ def dashboard_debit_credit(df):
                     )
                 )
                 continue
+            _lbl_style = _dk_bar_label_style.get(
+                col,
+                dict(
+                    textposition="inside",
+                    textangle=0,
+                    textfont=dict(size=14, color="#ffffff"),
+                ),
+            )
             fig.add_trace(
                 go.Bar(
                     name=col,
                     x=x,
                     y=chart_df[col],
                     marker_color=colors.get(col, None),
-                    text=chart_df[col].apply(
-                        lambda v: f"{v:.1f}" if pd.notna(v) else ""
-                    ),
-                    textposition="outside",
-                    textfont=dict(size=10, color="#f0f4f8"),
+                    text=chart_df[col].apply(_dk_chart_bar_text),
                     customdata=chart_df[col].apply(
                         lambda v: f"{v:.1f} млн" if pd.notna(v) else "0,0 млн"
                     ),
                     hovertemplate=f"<b>{col}</b><br>%{{x}}<br>%{{customdata}}<extra></extra>",
+                    **_lbl_style,
                 )
             )
         fig.update_layout(
@@ -19937,25 +19976,40 @@ def dashboard_debit_credit(df):
                 text="Дебиторская и кредиторская задолженность",
                 x=0.5,
                 xanchor="center",
-                font=dict(size=16, color="#f0f4f8"),
+                font=dict(size=18, color="#f0f4f8"),
             ),
             # Стек: Аванс поверх Договор, КС-2 поверх Аванса.
             barmode="stack" if _is_stack else "group",
-            height=min(900, max(420, len(chart_df) * 28)),
+            height=min(900, max(460, len(chart_df) * 32)),
             bargap=0.14,
             bargroupgap=0.06,
-            yaxis_title="млн руб.",
+            yaxis=dict(
+                title=dict(text="млн руб.", font=dict(size=14, color="#f0f4f8")),
+                tickfont=dict(size=13, color="#f0f4f8"),
+            ),
             legend=dict(
                 orientation="v",
                 yanchor="top",
                 y=1,
                 xanchor="left",
                 x=1.02,
+                font=dict(size=13, color="#f0f4f8"),
             ),
-            xaxis=dict(tickangle=-55, tickfont=dict(size=9), categoryorder="total descending"),
-            margin=dict(r=230, b=140, t=72),
+            xaxis=dict(tickangle=-55, tickfont=dict(size=12, color="#f0f4f8"), categoryorder="total descending"),
+            margin=dict(r=240, b=190, t=110),
+            uniformtext=dict(minsize=12, mode="hide"),
         )
         fig = _apply_finance_bar_label_layout(fig)
+        fig.update_layout(
+            margin=dict(r=240, b=190, t=110, l=60),
+            uniformtext=dict(minsize=12, mode="hide"),
+            legend=dict(font=dict(size=13, color="#f0f4f8")),
+        )
+        fig.update_xaxes(tickfont=dict(size=12, color="#f0f4f8"))
+        fig.update_yaxes(
+            tickfont=dict(size=13, color="#f0f4f8"),
+            title=dict(font=dict(size=14, color="#f0f4f8")),
+        )
         fig = apply_chart_background(fig)
         base = "Суммы по подрядчику" if contractor_col else "Суммы по договору"
         cap = base + ". Стек: Договор → Аванс → КС-2."
@@ -20099,7 +20153,14 @@ def dashboard_debit_credit(df):
             final_order.append(c)
     display_df = display_df[final_order]
     suppress_caption(f"Записей: {len(display_df)} • Финансы — млн руб., до десятых")
-    _render_html_table(display_df)
+    st.markdown(
+        budget_table_to_html(
+            display_df,
+            finance_deviation_column="Отклонение",
+            deviation_abs_min_mln=0.01,
+        ),
+        unsafe_allow_html=True,
+    )
     render_dataframe_excel_csv_downloads(
         display_df,
         file_stem="debit_credit",
