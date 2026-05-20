@@ -2220,6 +2220,7 @@ def render_chart(
     *,
     skip_clamp_zoom: bool = False,
     omit_default_width: bool = False,
+    scroll_viewport_height: int = None,
 ) -> None:
     """
     Единая точка вывода Plotly-графика с адаптивной конфигурацией.
@@ -2230,6 +2231,7 @@ def render_chart(
     skip_clamp_zoom: не вызывать _clamp_plotly_scroll_zoom_padding (Gantt по датам: minallowed/maxallowed
     на оси X в Streamlit иногда даёт пустую область графика).
     omit_default_width: не подставлять layout.width=1150 — чтобы график реально растягивался на ширину контейнера.
+    scroll_viewport_height: для длинных Gantt — figure на полную высоту, прокрутка внутри блока (px).
     """
     cfg = dict(_PLOTLY_CONFIG)
     if plotly_config_extra:
@@ -2257,7 +2259,21 @@ def render_chart(
     if not skip_clamp_zoom:
         _clamp_plotly_scroll_zoom_padding(fig)
     _apply_plotly_spec_411_labels(fig)
+    _use_scroll = (
+        scroll_viewport_height is not None
+        and height is not None
+        and int(height) > int(scroll_viewport_height)
+    )
+    if _use_scroll:
+        _vh = int(scroll_viewport_height)
+        st.markdown(
+            f'<div style="max-height:{_vh}px;overflow-y:auto;overflow-x:hidden;'
+            f'border:1px solid rgba(148,163,184,0.22);border-radius:8px;margin-bottom:0.35rem;">',
+            unsafe_allow_html=True,
+        )
     st.plotly_chart(fig, **kwargs)
+    if _use_scroll:
+        st.markdown("</div>", unsafe_allow_html=True)
     if caption_below:
         _chart_caption_below(caption_below)
 
@@ -31322,6 +31338,54 @@ def _gantt_wrap_task_label(name: str, width: int = 38, max_lines: int = 3) -> st
     return "<br>".join(parts) if len(parts) > 1 else (parts[0] if parts else s)
 
 
+_GANTT_MARGINS_V = 168
+
+
+def _gantt_max_label_lines_for_row_px(row_px: float, task_font: int) -> int:
+    """Сколько строк <br> допустимо при заданной высоте категории."""
+    lh = float(max(14.0, float(task_font) * 1.48))
+    label_budget = float(row_px) - 46.0 - 10.0 - 8.0
+    if label_budget >= 3 * lh + 18.0:
+        return 3
+    if label_budget >= 2 * lh + 14.0:
+        return 2
+    return 1
+
+
+def _gantt_effective_row_px(chart_height: int, n_rows: int) -> float:
+    n = max(1, int(n_rows))
+    return (float(chart_height) - float(_GANTT_MARGINS_V)) / float(n)
+
+
+def _gantt_resolve_y_labels(
+    raw_names: list[str],
+    *,
+    n_rows: int,
+    task_font: int,
+    dense: bool,
+    row_block_scale: float,
+) -> tuple[list[str], int]:
+    """Подписи Y + высота figure: число строк переноса не превышает доступную высоту категории."""
+    max_lines = 3
+    labels: list[str] = []
+    chart_h = 320
+    for _ in range(4):
+        labels = [_gantt_wrap_task_label(n, max_lines=max_lines) for n in raw_names]
+        chart_h = _project_schedule_gantt_chart_height(
+            n_rows,
+            dense=dense,
+            row_block_scale=row_block_scale,
+            y_labels=labels,
+            task_font=task_font,
+        )
+        row_px = _gantt_effective_row_px(chart_h, n_rows)
+        allowed = _gantt_max_label_lines_for_row_px(row_px, task_font)
+        if allowed >= max_lines:
+            break
+        max_lines = max(1, allowed)
+    return labels, chart_h
+
+
 def _render_project_schedule_gantt_legend(*, show_covenant: bool = False) -> None:
     """Легенда между фильтрами и чекбоксами (вне Plotly-iframe)."""
     items = [("#14b8a6", "План"), ("#fb923c", "Факт")]
@@ -31400,10 +31464,8 @@ def _project_schedule_gantt_chart_height(
     if dense:
         bars_block += 8.0
     pad_between = 10.0
-    row_px = int(round(max(label_block + bars_block + pad_between, 96.0 + (nl - 1) * lh * 1.1)))
-    # Верх/низ: оси X, заголовки, поля Plotly (~150–165 px суммарно).
-    margins_v = 168
-    return int(min(max_px, max(min_px, margins_v + n * row_px)))
+    row_px = int(round(max(_GANTT_MIN_ROW_PX, label_block + bars_block + pad_between)))
+    return int(min(max_px, max(min_px, _GANTT_MARGINS_V + n * row_px)))
 
 
 def _project_schedule_gantt_left_margin(
@@ -31475,9 +31537,16 @@ def _gantt_distinct_str_values_from_series(series: pd.Series) -> list:
     return _gantt_distinct_str_values(tuple(uniq))
 
 
-_GANTT_MAX_ROWS = 60
-_GANTT_CHART_MAX_HEIGHT = 1200
-_GANTT_TABLE_MAX_ROWS = 50
+_GANTT_MAX_ROWS = 30
+_GANTT_VIEWPORT_MAX_HEIGHT = 960
+_GANTT_CHART_MAX_HEIGHT = 1200  # legacy; для Gantt используется scroll_viewport, не clamp
+_GANTT_TABLE_MAX_ROWS = 30
+_GANTT_MIN_TASK_FONT = 12
+_GANTT_MIN_LABEL_FONT = 13
+_GANTT_MIN_ROW_PX = 70
+_GANTT_DATE_LABELS_END_ONLY_ROWS = 30
+_GANTT_DATE_LABELS_HOVER_ONLY_ROWS = 60
+_GANTT_LINES_TEXT_MAX_ROWS = 20
 
 
 def dashboard_project_schedule_chart(df):
@@ -32146,14 +32215,13 @@ def dashboard_project_schedule_chart(df):
             value=False,
             key="gantt_lift_display_limits",
             help=(
-                f"По умолчанию — до {_GANTT_MAX_ROWS} строк на диаграмме и высота до "
-                f"{_GANTT_CHART_MAX_HEIGHT} px. При снятии лимита отображаются все строки "
-                "после фильтров; загрузка может занять больше времени."
+                f"По умолчанию — до {_GANTT_MAX_ROWS} задач на диаграмме; блок графика "
+                f"прокручивается (до {_GANTT_VIEWPORT_MAX_HEIGHT} px на экране). При снятии лимита "
+                "отображаются все строки после фильтров; загрузка может занять больше времени."
             ),
         )
 
     _gantt_row_cap = None if lift_display_limits else _GANTT_MAX_ROWS
-    _gantt_chart_max_height = None if lift_display_limits else _GANTT_CHART_MAX_HEIGHT
     is_covenants = bool(force_covenant_points)
     if is_covenants:
         only_finish_delay = False
@@ -32375,16 +32443,20 @@ def dashboard_project_schedule_chart(df):
         )
     else:
         plot_df = plot_df.sort_values(sort_cols, ascending=sort_asc, na_position="last")
+    _gantt_rows_total = len(plot_df)
     if _gantt_row_cap is not None and len(plot_df) > _gantt_row_cap:
         plot_df = plot_df.head(_gantt_row_cap)
         suppress_caption(
-            f"На диаграмме показаны первые {_gantt_row_cap} строк после фильтров "
-            "(для скорости отрисовки). Включите «Снять лимит отображения» или уточните фильтры."
+            f"На диаграмме и в таблице показаны первые {_gantt_row_cap} из {_gantt_rows_total} задач "
+            "после фильтров. Включите «Снять лимит отображения» или уточните фильтры."
         )
     elif lift_display_limits and len(plot_df) > _GANTT_MAX_ROWS:
-        suppress_caption(
-            f"Полный режим: {len(plot_df)} строк на диаграмме — отрисовка может занять больше времени."
+        st.warning(
+            f"Полный режим: {len(plot_df)} задач на диаграмме — подписи дат у полос скрыты "
+            f"(остаются hover и таблица). Для читаемости используйте фильтры или лимит "
+            f"{_GANTT_MAX_ROWS} строк."
         )
+    _gantt_rows_shown = len(plot_df)
 
     lvl_for_indent = None
     if level_col:
@@ -32404,10 +32476,10 @@ def dashboard_project_schedule_chart(df):
             d = 0
         indents.append(d)
     names = plot_df[task_col].fillna("").astype(str).map(_gantt_clean_task_label)
-    y_labels = []
+    _gantt_raw_y_names: list[str] = []
     for name, d in zip(names.tolist(), indents):
         prefix = ("  " * d) + ("— " if d > 0 else "")
-        y_labels.append(_gantt_wrap_task_label(prefix + name))
+        _gantt_raw_y_names.append(prefix + name)
 
     def _gantt_trunc_label(s, n=86):
         s = str(s)
@@ -32429,23 +32501,31 @@ def dashboard_project_schedule_chart(df):
         span_days = 120.0
         if pd.notna(lo) and pd.notna(hi):
             span_days = max(1.0, (hi - lo).total_seconds() / 86400.0)
-        # Подстройка под реальные MSP-выгрузки: читаемость важнее плотности меток.
+        # Плотность влияет на прореживание подписей, но не уменьшает шрифт ниже минимума.
         is_dense = n_rows > 55 or span_days > 540
         is_very_dense = n_rows > 120 or span_days > 900
-        _lf = 9 if is_very_dense else (10 if is_dense else 11)
-        _tf = 9 if is_very_dense else (10 if is_dense else 11)
-        _ms = 6 if is_very_dense else (7 if is_dense else 8)
+        if n_rows > _GANTT_DATE_LABELS_HOVER_ONLY_ROWS:
+            date_label_mode = "none"
+        elif n_rows > _GANTT_DATE_LABELS_END_ONLY_ROWS:
+            date_label_mode = "end_only"
+        else:
+            date_label_mode = "full"
+        _lf = max(_GANTT_MIN_LABEL_FONT, int(round(13 * _GANTT_FONT_SCALE)))
+        _tf = max(_GANTT_MIN_TASK_FONT, int(round(12 * _GANTT_FONT_SCALE)))
+        _ms = 8 if is_very_dense else (9 if is_dense else 10)
         return {
-            "date_fmt": "%d.%m.%y" if is_dense else "%d.%m.%Y",
-            "label_font": int(round(_lf * _GANTT_FONT_SCALE)),
-            "task_font": int(round(_tf * _GANTT_FONT_SCALE)),
-            "max_ticks": 10 if is_very_dense else (16 if is_dense else 24),
+            "date_fmt": "%d.%m.%Y",
+            "label_font": _lf,
+            "task_font": _tf,
+            "max_ticks": 12 if is_very_dense else (18 if is_dense else 24),
             "right_pad_min": int(round((380 if is_dense else 320) * _GANTT_VIS_SCALE)),
             "right_pad_max": int(round((820 if is_dense else 700) * _GANTT_VIS_SCALE)),
-            "text_step": 4 if is_very_dense else (2 if is_dense else 1),
+            "text_step": 3 if is_very_dense else (2 if is_dense else 1),
             "marker_size": int(round(_ms * _GANTT_MARKER_SCALE)),
             "is_dense": is_dense,
             "is_very_dense": is_very_dense,
+            "date_label_mode": date_label_mode,
+            "show_lines_point_text": n_rows <= _GANTT_LINES_TEXT_MAX_ROWS,
         }
 
     def _build_date_lines_figure(
@@ -32460,10 +32540,9 @@ def dashboard_project_schedule_chart(df):
         fig = go.Figure()
         pct_series = pd.to_numeric(_df.get("pct complete"), errors="coerce")
         date_fmt = policy.get("date_fmt", "%d.%m.%Y")
-        _effective_force_all = bool(
-            force_all_labels and not (auto_compact_on_zoom and policy.get("is_dense"))
-        )
-        text_step = 1 if _effective_force_all else int(max(1, policy.get("text_step", 1)))
+        _n_lines = len(_df.index)
+        _show_point_text = _n_lines <= _GANTT_LINES_TEXT_MAX_ROWS
+        text_step = 1 if _show_point_text else int(max(1, policy.get("text_step", 1)))
 
         series_def = [
             ("plan start", "План: начало", "#57b8ff", "circle"),
@@ -32479,7 +32558,7 @@ def dashboard_project_schedule_chart(df):
                 continue
             text_vals = [""] * len(_df.index)
             show_end_labels = col in ("plan end", "base end")
-            if show_end_labels:
+            if show_end_labels and _show_point_text:
                 for i, (xv, pv) in enumerate(zip(xvals.tolist(), pct_series.tolist())):
                     if i % text_step != 0:
                         continue
@@ -32501,7 +32580,7 @@ def dashboard_project_schedule_chart(df):
                 go.Scatter(
                     x=xvals,
                     y=_y,
-                    mode="markers+text" if show_end_labels else "markers",
+                    mode="markers+text" if (show_end_labels and _show_point_text) else "markers",
                     text=text_vals if show_end_labels else None,
                     textposition="middle right",
                     textfont=dict(size=policy.get("label_font", 11), color="#f8fafc"),
@@ -32813,7 +32892,7 @@ def dashboard_project_schedule_chart(df):
             )
         fig.update_layout(barmode="group")
 
-        _lbl_font = max(10, int(policy.get("label_font", 11)))
+        _lbl_font = max(_GANTT_MIN_LABEL_FONT, int(policy.get("label_font", 13)))
         _date_ann: list[dict] = []
         _bar_edge_x: list = []
 
@@ -32879,64 +32958,79 @@ def dashboard_project_schedule_chart(df):
             )
 
         _n_rows_lbl = max(1, len(_row_meta))
-        _label_step = 1
-        if _n_rows_lbl > 50:
-            _label_step = 3
-        elif _n_rows_lbl > 25:
-            _label_step = 2
-        if policy.get("is_very_dense") and _n_rows_lbl > 150:
-            _label_step = max(_label_step, 4)
-        elif policy.get("is_dense") and _n_rows_lbl > 110:
-            _label_step = max(_label_step, 3)
+        _dlm = policy.get("date_label_mode", "full")
+        if _dlm == "none":
+            suppress_caption(
+                f"Подписи дат у полос скрыты ({_n_rows_lbl} задач): смотрите даты в hover и таблице."
+            )
+        else:
+            _label_step = 1
+            if _dlm == "end_only":
+                if _n_rows_lbl > 45:
+                    _label_step = 2
+            elif _n_rows_lbl > 50:
+                _label_step = 3
+            elif _n_rows_lbl > 25:
+                _label_step = 2
+            if _dlm == "full" and policy.get("is_very_dense") and _n_rows_lbl > 150:
+                _label_step = max(_label_step, 4)
+            elif _dlm == "full" and policy.get("is_dense") and _n_rows_lbl > 110:
+                _label_step = max(_label_step, 3)
 
-        for idx, meta in enumerate(_row_meta):
-            if idx % _label_step != 0:
-                continue
-            y = meta["y"]
-            ps, pe = meta["ps"], meta["pe"]
-            fs, fe = meta["fs"], meta["fe"]
-            _has_fact_lane = fs is not None and fe is not None
-            dur_p = _dur_days_days(ps, pe)
-            dur_f = _dur_days_days(fs, fe)
-            show_plan_lbl = bool(ps is not None and pe is not None and dur_p >= 1.0)
-            show_fact_lbl = bool(fs is not None and fe is not None and dur_f >= 1.0)
+            for idx, meta in enumerate(_row_meta):
+                if idx % _label_step != 0:
+                    continue
+                y = meta["y"]
+                ps, pe = meta["ps"], meta["pe"]
+                fs, fe = meta["fs"], meta["fe"]
+                _has_fact_lane = fs is not None and fe is not None
+                dur_p = _dur_days_days(ps, pe)
+                dur_f = _dur_days_days(fs, fe)
+                show_plan_lbl = bool(ps is not None and pe is not None and dur_p >= 1.0)
+                show_fact_lbl = bool(fs is not None and fe is not None and dur_f >= 1.0)
 
-            starts: list[tuple[str, pd.Timestamp, str]] = []
-            if show_plan_lbl and ps is not None:
-                starts.append(("plan", ps, _fmt_bar_date(ps, long_fmt=True)))
-            if (
-                show_fact_lbl
-                and fs is not None
-                and (ps is None or fs.normalize() != ps.normalize())
-            ):
-                starts.append(
-                    ("fact" if _has_fact_lane else "plan", fs, _fmt_bar_date(fs, long_fmt=True))
-                )
-            ns = len(starts)
-            for si, (ln, xv, txt) in enumerate(starts):
-                _add_date_label(
-                    xv, y, txt, side="start", lane=ln, stack_index=si, stack_total=ns
-                )
+                if _dlm == "full":
+                    starts: list[tuple[str, pd.Timestamp, str]] = []
+                    if show_plan_lbl and ps is not None:
+                        starts.append(("plan", ps, _fmt_bar_date(ps, long_fmt=True)))
+                    if (
+                        show_fact_lbl
+                        and fs is not None
+                        and (ps is None or fs.normalize() != ps.normalize())
+                    ):
+                        starts.append(
+                            ("fact" if _has_fact_lane else "plan", fs, _fmt_bar_date(fs, long_fmt=True))
+                        )
+                    ns = len(starts)
+                    for si, (ln, xv, txt) in enumerate(starts):
+                        _add_date_label(
+                            xv, y, txt, side="start", lane=ln, stack_index=si, stack_total=ns
+                        )
 
-            ends: list[tuple[str, pd.Timestamp, str]] = []
-            if show_plan_lbl and pe is not None:
-                end_p = _fmt_bar_date(pe, long_fmt=True)
-                if label_pct and pd.notna(meta["pct"]):
-                    try:
-                        end_p = f"{end_p} · {int(round(float(meta['pct'])))}%"
-                    except (TypeError, ValueError):
-                        pass
-                ends.append(("plan", pe, end_p))
-            if (
-                show_fact_lbl
-                and fe is not None
-                and (pe is None or fe.normalize() != pe.normalize())
-            ):
-                ends.append(("fact" if _has_fact_lane else "plan", fe, _fmt_bar_date(fe, long_fmt=True)))
-            ne = len(ends)
-            for ei, (ln, xv, txt) in enumerate(ends):
-                _add_date_label(
-                    xv, y, txt, side="end", lane=ln, stack_index=ei, stack_total=ne
+                ends: list[tuple[str, pd.Timestamp, str]] = []
+                if show_plan_lbl and pe is not None:
+                    end_p = _fmt_bar_date(pe, long_fmt=True)
+                    if label_pct and pd.notna(meta["pct"]):
+                        try:
+                            end_p = f"{end_p} · {int(round(float(meta['pct'])))}%"
+                        except (TypeError, ValueError):
+                            pass
+                    ends.append(("plan", pe, end_p))
+                if (
+                    show_fact_lbl
+                    and fe is not None
+                    and (pe is None or fe.normalize() != pe.normalize())
+                ):
+                    ends.append(("fact" if _has_fact_lane else "plan", fe, _fmt_bar_date(fe, long_fmt=True)))
+                ne = len(ends)
+                for ei, (ln, xv, txt) in enumerate(ends):
+                    _add_date_label(
+                        xv, y, txt, side="end", lane=ln, stack_index=ei, stack_total=ne
+                    )
+            if _dlm == "end_only":
+                suppress_caption(
+                    f"Более {_GANTT_DATE_LABELS_END_ONLY_ROWS} задач: подписи дат только у окончания "
+                    "(даты начала — в hover)."
                 )
         if show_covenant_markers and base_end_x:
             fig.add_trace(
@@ -33073,14 +33167,15 @@ def dashboard_project_schedule_chart(df):
 
         base_text = [_fmt_ts(x) for x in base_end.tolist()]
         fact_text = [_fmt_ts(x) for x in fact_end.tolist()]
+        _show_cov_text = len(_df.index) <= _GANTT_LINES_TEXT_MAX_ROWS
 
         fig = go.Figure()
         fig.add_trace(
             go.Scatter(
                 x=base_end,
                 y=_y,
-                mode="markers+text",
-                text=base_text,
+                mode="markers+text" if _show_cov_text else "markers",
+                text=base_text if _show_cov_text else None,
                 textposition="middle right",
                 textfont=dict(size=policy.get("label_font", 11), color="#f8fafc"),
                 marker=dict(
@@ -33104,8 +33199,8 @@ def dashboard_project_schedule_chart(df):
             go.Scatter(
                 x=fact_end,
                 y=_y,
-                mode="markers+text",
-                text=fact_text,
+                mode="markers+text" if _show_cov_text else "markers",
+                text=fact_text if _show_cov_text else None,
                 textposition="middle right",
                 textfont=dict(size=policy.get("label_font", 11), color="#f8fafc"),
                 marker=dict(
@@ -33191,8 +33286,15 @@ def dashboard_project_schedule_chart(df):
         fig.update_layout(margin=_cov_margin, showlegend=False)
         return fig, fact_end_col, fact_label
 
-    plot_df["_gantt_y_label"] = [_gantt_wrap_task_label(_gantt_trunc_label(s, 165)) for s in y_labels]
     _readability = _gantt_readability_policy(plot_df)
+    y_labels, _gantt_chart_height = _gantt_resolve_y_labels(
+        [_gantt_trunc_label(s, 165) for s in _gantt_raw_y_names],
+        n_rows=len(plot_df),
+        task_font=int(_readability.get("task_font", _GANTT_MIN_TASK_FONT)),
+        dense=bool(_readability.get("is_dense")),
+        row_block_scale=_GANTT_ROW_BLOCK_SCALE,
+    )
+    plot_df["_gantt_y_label"] = y_labels
     _effective_force_all = bool(
         force_all_labels and not (auto_compact_on_zoom and _readability.get("is_dense"))
     )
@@ -33232,13 +33334,25 @@ def dashboard_project_schedule_chart(df):
     # Названия задач отображаются нативными tick labels Y-оси (showticklabels=True),
     # что гарантирует корректное позиционирование при любом масштабе страницы.
 
-    _gantt_render_h = int(chart_h)
+    _gantt_render_h = int(max(_gantt_chart_height, 520))
     try:
         _h_now = int(getattr(fig_gantt.layout, "height", None) or 0)
         if _h_now > 0:
             _gantt_render_h = _h_now
     except Exception:
         pass
+
+    _gantt_plot_kw = dict(
+        max_height=None,
+        skip_clamp_zoom=True,
+        omit_default_width=True,
+        scroll_viewport_height=_GANTT_VIEWPORT_MAX_HEIGHT,
+    )
+    if _gantt_render_h > _GANTT_VIEWPORT_MAX_HEIGHT:
+        suppress_caption(
+            f"Диаграмма: {_gantt_rows_shown} задач — прокрутите блок графика "
+            f"(полная высота {_gantt_render_h} px, на экране до {_GANTT_VIEWPORT_MAX_HEIGHT} px)."
+        )
 
     if is_covenants:
         if "base end" not in plot_df.columns or not pd.to_datetime(plot_df["base end"], errors="coerce").notna().any():
@@ -33256,13 +33370,16 @@ def dashboard_project_schedule_chart(df):
             fig_cov,
             key="gantt_project_schedule_covenants",
             height=_gantt_render_h,
-            max_height=_gantt_chart_max_height,
             caption_below=(
                 "Ковенанты: синяя точка — базовое окончание, красная — "
                 + _fact_label.lower()
-                + "; подписи рядом с точками — даты."
+                + (
+                    f"; при более {_GANTT_LINES_TEXT_MAX_ROWS} задачах подписи у точек скрыты (hover)."
+                    if len(plot_df) > _GANTT_LINES_TEXT_MAX_ROWS
+                    else "; подписи рядом с точками — даты."
+                )
             ),
-            skip_clamp_zoom=True,
+            **_gantt_plot_kw,
         )
     elif view_mode == "Линии дат":
         fig_lines = _build_date_lines_figure(
@@ -33280,13 +33397,17 @@ def dashboard_project_schedule_chart(df):
             fig_lines,
             key="gantt_project_schedule_lines",
             height=_gantt_render_h,
-            max_height=_gantt_chart_max_height,
             caption_below=(
                 "Линии дат: План/База по началу и окончанию; подписи справа — "
                 + ("% выполнения" if label_pct else "дата окончания")
-                + ". Масштаб и панорама — колесом мыши или панелью (+/−, рамка)."
+                + (
+                    f". При более {_GANTT_LINES_TEXT_MAX_ROWS} задачах подписи у точек скрыты (hover)."
+                    if len(plot_df) > _GANTT_LINES_TEXT_MAX_ROWS
+                    else "."
+                )
+                + " Масштаб и панорама — колесом мыши или панелью (+/−, рамка)."
             ),
-            skip_clamp_zoom=True,
+            **_gantt_plot_kw,
         )
     else:
         # Гантт: не clamp’ить ось X; scrollZoom — как в общем _PLOTLY_CONFIG (колесо над графиком).
@@ -33299,7 +33420,6 @@ def dashboard_project_schedule_chart(df):
             fig_gantt,
             key="gantt_project_schedule",
             height=_gantt_render_h,
-            max_height=_gantt_chart_max_height,
             caption_below=(
                 "План (бирюзовая полоса) и факт (оранжевая). "
                 + (
@@ -33309,7 +33429,7 @@ def dashboard_project_schedule_chart(df):
                 )
                 + "Подписи: начало слева, окончание справа. Масштаб — колесом мыши или панелью (+/−, рамка)."
             ),
-            skip_clamp_zoom=True,
+            **_gantt_plot_kw,
         )
 
     # Правки куратора 08.05.2026: подпись «Таблица под графиком» убрана.
@@ -33490,15 +33610,11 @@ def dashboard_project_schedule_chart(df):
         st.info("Нет колонок для таблицы.")
     else:
         with st.expander("Таблица задач", expanded=False):
-            _render_gantt_schedule_html_table(tbl_show, max_rows=_GANTT_TABLE_MAX_ROWS)
-            if len(plot_df) > _GANTT_TABLE_MAX_ROWS:
-                _cap_hint = (
-                    "все строки на диаграмме"
-                    if lift_display_limits
-                    else f"на диаграмме до {_gantt_row_cap or len(plot_df)} задач"
-                )
+            _render_gantt_schedule_html_table(tbl_show, max_rows=_gantt_rows_shown)
+            if _gantt_rows_total > _gantt_rows_shown:
                 suppress_caption(
-                    f"Показано {_GANTT_TABLE_MAX_ROWS} из {len(plot_df)} строк таблицы ({_cap_hint})."
+                    f"Таблица и диаграмма: показано {_gantt_rows_shown} из {_gantt_rows_total} "
+                    "задач после фильтров."
                 )
 
 
