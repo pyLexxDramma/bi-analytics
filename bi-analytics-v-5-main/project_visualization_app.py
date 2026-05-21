@@ -259,7 +259,6 @@ if not st.session_state.get("authenticated"):
 load_custom_css()
 
 _RU_LABELS_INJECTED_THIS_RUN = False
-_TABLE_SORT_INJECTED_THIS_RUN = False
 
 
 def _inject_ru_labels_once() -> None:
@@ -279,14 +278,10 @@ def _inject_ru_labels_once() -> None:
 
 
 def _inject_table_sort_once() -> None:
-    global _TABLE_SORT_INJECTED_THIS_RUN
-    if _TABLE_SORT_INJECTED_THIS_RUN:
-        return
     try:
         from dashboards.table_sort_inject import inject_sortable_tables_script
 
         inject_sortable_tables_script()
-        _TABLE_SORT_INJECTED_THIS_RUN = True
     except Exception as _e:
         import logging
 

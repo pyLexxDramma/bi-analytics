@@ -1244,7 +1244,12 @@ section.main,
 }
 /* HTML-таблицы отчётов и обёртки широких блоков */
 .rendered-table-wrap,
+.pf-dates-table-wrap,
 [data-testid="stVerticalBlock"] div[class*="table"] {
+    overflow-x: auto !important;
+    max-width: 100%;
+}
+[data-testid="stMarkdownContainer"] .pf-dates-table-wrap {
     overflow-x: auto !important;
     max-width: 100%;
 }

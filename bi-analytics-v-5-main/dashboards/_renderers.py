@@ -201,9 +201,17 @@ def _filter_df_by_project_labels(
 _TABLE_CSS = """
 <style>
 /* §4.8: плотная сетка — без лишней «пустой» ширины ячеек; скролл по горизонтали */
-.rendered-table-wrap {overflow-x:auto; min-width:0; margin:0.5rem 0 1rem 0}
+.rendered-table-wrap {overflow-x:auto; min-width:0; max-width:100%; margin:0.5rem 0 1rem 0; -webkit-overflow-scrolling:touch}
+.rendered-table-wrap .rendered-table {width:max-content; min-width:100%}
+.pf-dates-table-wrap {
+  overflow-x:auto; overflow-y:visible; min-width:0; max-width:100%; width:100%;
+  margin:0.5rem 0 1rem 0; -webkit-overflow-scrolling:touch; scrollbar-gutter:stable;
+}
+.pf-dates-table-wrap .pf-dates-table {width:max-content; min-width:100%; table-layout:auto}
+.pf-dates-table th {max-width:none; padding:6px 6px}
+.pf-dates-table td {max-width:12em}
 .rendered-table {
-  width:100%; border-collapse:collapse; font-size:13px;
+  border-collapse:collapse; font-size:13px;
   font-family:Inter,system-ui,sans-serif; table-layout:auto;
 }
 .rendered-table th {
@@ -236,6 +244,14 @@ _TABLE_CSS = """
 .rendered-table th.col-baseline, .rendered-table td.col-baseline { background:rgba(46,134,171,0.12); }
 .rendered-table th.col-fact, .rendered-table td.col-fact { background:rgba(255,99,71,0.10); }
 .rendered-table th.col-dev, .rendered-table td.col-dev { background:rgba(241,196,15,0.08); }
+.rendered-table th.col-pf-start, .rendered-table td.col-pf-start { background:rgba(56,189,248,0.14); }
+.rendered-table th.col-pf-end, .rendered-table td.col-pf-end { background:rgba(59,130,246,0.20); }
+.rendered-table th.col-pf-dur, .rendered-table td.col-pf-dur { background:rgba(30,58,138,0.32); }
+.rendered-table th .bi-sort-label { cursor:pointer !important; user-select:none; }
+.rendered-table th .bi-sort-label:hover { color:#93c5fd; }
+.pf-dev-red { color:#ff6b6b !important; font-weight:700; }
+.pf-dev-green { color:#00e676 !important; font-weight:600; }
+.pf-dev-neu { color:#e8eef5 !important; }
 </style>
 """
 
@@ -308,6 +324,78 @@ def _render_html_table(
             suppress_caption(
                 f"Показано {max_rows} из {len(df)} записей. Скачайте CSV или Excel для полных данных."
             )
+
+
+def _plan_fact_dates_col_css_class(col: str) -> str:
+    c = str(col).strip()
+    if c in ("Баз. начало", "Базовое начало", "Начало", "Отклонение начала", "Откл. начала"):
+        return "col-pf-start"
+    if c in ("Баз. окончание", "Базовое окончание", "Окончание", "Отклонение окончания", "Откл. окончания", "Отклонение окончания (дней)"):
+        return "col-pf-end"
+    if c in ("Баз. длит.", "Длительность", "Отклонение длительности", "Откл. длит."):
+        return "col-pf-dur"
+    return ""
+
+
+def _plan_fact_deviation_span(nval, text: str) -> str:
+    if nval is None or (isinstance(nval, float) and pd.isna(nval)):
+        return ""
+    try:
+        n = int(round(float(nval)))
+    except (TypeError, ValueError):
+        return html_module.escape(str(text))
+    cls = "pf-dev-red" if n < 0 else ("pf-dev-green" if n == 0 else "pf-dev-neu")
+    disp = str(text).strip() if str(text).strip() else str(n)
+    return f'<span class="{cls}">{html_module.escape(disp)}</span>'
+
+
+def _render_plan_fact_dates_main_table(display_df: pd.DataFrame, numeric_df: pd.DataFrame) -> None:
+    if display_df is None or getattr(display_df, "empty", True):
+        st.info("Нет данных для таблицы.")
+        return
+    _dev_cols = {
+        "Откл. начала",
+        "Откл. окончания",
+        "Откл. длит.",
+        "Отклонение начала",
+        "Отклонение окончания",
+        "Отклонение длительности",
+        "Отклонение окончания (дней)",
+    }
+    _num_cols = {"Баз. длит.", "Длительность"}
+    parts = [
+        '<div class="rendered-table-wrap pf-dates-table-wrap">',
+        '<table class="rendered-table bi-sortable-table pf-dates-table bi-sort-click-only">',
+        "<thead><tr>",
+    ]
+    for c in display_df.columns:
+        cls = _plan_fact_dates_col_css_class(c)
+        parts.append(f'<th class="{cls}">{html_module.escape(str(c))}</th>')
+    parts.append("</tr></thead><tbody>")
+    for i in range(len(display_df)):
+        parts.append("<tr>")
+        for c in display_df.columns:
+            cls = _plan_fact_dates_col_css_class(c)
+            txt = display_df.iloc[i][c]
+            if c in _dev_cols and c in numeric_df.columns:
+                cell = _plan_fact_deviation_span(numeric_df.iloc[i][c], str(txt))
+            else:
+                cell = (
+                    html_module.escape(str(txt))
+                    if pd.notna(txt) and str(txt).strip() not in ("", "nan", "None")
+                    else ""
+                )
+            align = ' style="text-align:right"' if c in _dev_cols or c in _num_cols else ""
+            parts.append(f'<td class="{cls}"{align}>{cell}</td>')
+        parts.append("</tr>")
+    parts.append("</tbody></table></div>")
+    st.markdown(_TABLE_CSS + mark_html_table_sortable("".join(parts)), unsafe_allow_html=True)
+    try:
+        from dashboards.table_sort_inject import rescan_sortable_tables_after_render
+
+        rescan_sortable_tables_after_render()
+    except Exception:
+        pass
 
 
 def _parse_gantt_dev_days_display(v):
@@ -6882,20 +6970,12 @@ def dashboard_plan_fact_dates(df):
         ]
 
     table_df = df_after_hide.copy()
-    _end = pd.to_numeric(table_df.get("plan_end_diff"), errors="coerce")
-    # ТЗ заказчика 2026-05-06 (Блок 2): в таблице/диаграммах — ТОЛЬКО опаздывающие
-    # задачи, т.е. где «Базовое окончание − Окончание < 0» (формула совпадает с
-    # `plan_end_diff = base_end - plan_end`, см. L5060-5063). Раньше тут стоял
-    # `> 1e-9` — это пропускало только задачи с аномалией base_end > plan_end и
-    # отсекало классически опаздывающие (включая ЗОС).
-    _has_dev = _end.notna() & (_end < -1e-9)
-    table_df = table_df[_has_dev].copy()
+    _end_dev = pd.to_numeric(table_df.get("plan_end_diff"), errors="coerce")
+    table_df = table_df[_end_dev.notna() & (_end_dev < -1e-9)].copy()
 
     if chart_df.empty and table_df.empty:
         st.info(
-            "Нет опаздывающих задач (Базовое окончание − Окончание < 0) "
-            "для выбранных фильтров. Снимите чекбокс «Скрыть завершённые» или "
-            "расширьте фильтр по проекту/блоку."
+            "Нет задач с отклонением окончания < 0 для выбранных фильтров."
         )
         return
 
@@ -7382,6 +7462,12 @@ def dashboard_plan_fact_dates(df):
             _row_h = 34 + _max_lines * 14
             _chart_h = max(420, int(n_rows * _row_h))
             _chart_viewport = 960
+            _x_max_ms = float(_origin_ms)
+            for _b0, _bl in zip(base_base_ms, base_len_ms):
+                _x_max_ms = max(_x_max_ms, float(_b0) + float(_bl))
+            for _b0, _bl in zip(cur_base_ms, cur_len_ms):
+                _x_max_ms = max(_x_max_ms, float(_b0) + float(_bl))
+            _x_pad_ms = 14.0 * 86400000.0
 
             fig.add_trace(
                 go.Bar(
@@ -7420,7 +7506,12 @@ def dashboard_plan_fact_dates(df):
                 xaxis_title="Дата (от начала шкалы до окончания)",
                 yaxis_title=None,
                 height=_chart_h,
-                xaxis=dict(type="date", tickformat="%d.%m.%Y", automargin=True),
+                xaxis=dict(
+                    type="date",
+                    tickformat="%d.%m.%Y",
+                    automargin=True,
+                    range=[_origin_ms, _x_max_ms + _x_pad_ms],
+                ),
                 margin=dict(l=64, r=72, t=48, b=56),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             )
@@ -7481,6 +7572,14 @@ def dashboard_plan_fact_dates(df):
         s = str(date_val).strip() if date_val else ""
         return s if s and s.lower() not in ("nan", "nat", "none") else ""
 
+    def _format_int_days(x):
+        if pd.isna(x) or str(x).strip() == "":
+            return ""
+        try:
+            return str(int(round(float(x), 0)))
+        except (TypeError, ValueError):
+            return ""
+
     def _resolve_msp_id_columns(frame: pd.DataFrame) -> dict:
         """
         Возвращает маппинг {display_name: source_column} для ID задач MSP.
@@ -7519,7 +7618,8 @@ def dashboard_plan_fact_dates(df):
                 break
         return out
 
-    _msp_id_cols = _resolve_msp_id_columns(table_df)
+    summary_source_df = table_df
+    _msp_id_cols = _resolve_msp_id_columns(summary_source_df)
 
     if show_covenant_ui:
         pe_col, fe_col = "plan end", "base end"
@@ -7537,6 +7637,10 @@ def dashboard_plan_fact_dates(df):
             ped_num = pd.to_numeric(ped, errors="coerce")
             pev = crow.get(pe_col)
             fev = crow.get(fe_col)
+            _pe = pd.to_datetime(pev, errors="coerce", dayfirst=True)
+            _fe = pd.to_datetime(fev, errors="coerce", dayfirst=True)
+            if pd.isna(ped_num) and pd.notna(_pe) and pd.notna(_fe):
+                ped_num = (_fe - _pe).total_seconds() / 86400.0
             _id_cell = ""
             if _cov_id_src and _cov_id_src in _cov_tbl_df.columns:
                 _raw_id = crow.get(_cov_id_src)
@@ -7549,35 +7653,35 @@ def dashboard_plan_fact_dates(df):
                     else "",
                     "Задача": _clean_display_str(crow.get("task name")),
                     "ID задачи": _id_cell,
-                    "Базовое окончание": pd.to_datetime(fev, errors="coerce", dayfirst=True),
-                    "Окончание": pd.to_datetime(pev, errors="coerce", dayfirst=True),
+                    "Базовое окончание": _fe,
+                    "Окончание": _pe,
                     "Отклонение окончания (дней)": ped_num,
                 }
             )
         cov_df = pd.DataFrame(cov_rows)
         if selected_project != "Все" or "project name" not in _cov_tbl_df.columns:
             cov_df = cov_df.drop(columns=["Проект"], errors="ignore")
+        if not cov_df.empty:
+            _has_cov_dates = cov_df["Базовое окончание"].notna() | cov_df["Окончание"].notna()
+            cov_df = cov_df.loc[_has_cov_dates].copy()
         if cov_df.empty:
             st.info("Нет строк для таблицы ковенантов.")
         else:
             render_table_subheader(st, "Ковенанты (таблица)")
-            from streamlit.column_config import DatetimeColumn, NumberColumn, TextColumn
-
-            _cov_cfg = {}
-            for c in cov_df.columns:
-                if c == "Отклонение окончания (дней)":
-                    _cov_cfg[c] = NumberColumn(c, format="%d")
-                elif c in ("Базовое окончание", "Окончание"):
-                    _cov_cfg[c] = DatetimeColumn(c, format="DD.MM.YYYY")
-                else:
-                    _cov_cfg[c] = TextColumn(c)
-            st.dataframe(
-                cov_df,
-                column_config=_cov_cfg,
-                hide_index=True,
-                use_container_width=True,
-                height=min(520, 48 + max(1, len(cov_df)) * 36),
-            )
+            cov_display = cov_df.copy()
+            for _dc in ("Базовое окончание", "Окончание"):
+                if _dc in cov_display.columns:
+                    cov_display[_dc] = cov_display[_dc].apply(format_date_display)
+            if "Отклонение окончания (дней)" in cov_display.columns:
+                cov_display["Отклонение окончания (дней)"] = cov_display[
+                    "Отклонение окончания (дней)"
+                ].apply(_format_int_days)
+            _cov_num = cov_df.copy()
+            if "Отклонение окончания (дней)" in _cov_num.columns:
+                _cov_num["Отклонение окончания (дней)"] = pd.to_numeric(
+                    _cov_num["Отклонение окончания (дней)"], errors="coerce"
+                )
+            _render_plan_fact_dates_main_table(cov_display, _cov_num)
             cov_export = cov_df.copy()
             if "Базовое окончание" in cov_export.columns:
                 cov_export["Базовое окончание"] = cov_export["Базовое окончание"].apply(format_date_display)
@@ -7606,7 +7710,7 @@ def dashboard_plan_fact_dates(df):
     # Summary table — макет: даты / отклонения, видимые столбцы
     summary_data = []
 
-    for idx, row in table_df.iterrows():
+    for idx, row in summary_source_df.iterrows():
         plan_start = row.get("plan start", pd.NaT)
         plan_end = row.get("plan end", pd.NaT)
         base_start = row.get("base start", pd.NaT)
@@ -7644,14 +7748,14 @@ def dashboard_plan_fact_dates(df):
             task_show = _sanitize_eng_networks(_clean_display_str(row.get("task name")))
 
         _fb_val = ""
-        if pf_dates_block_filter_col and pf_dates_block_filter_col in table_df.columns:
+        if pf_dates_block_filter_col and pf_dates_block_filter_col in summary_source_df.columns:
             _fb_val = _clean_display_str(row.get(pf_dates_block_filter_col))
-        elif pf_dates_block_col_res and pf_dates_block_col_res in table_df.columns:
+        elif pf_dates_block_col_res and pf_dates_block_col_res in summary_source_df.columns:
             _fb_val = _clean_display_str(row.get(pf_dates_block_col_res))
-        if not _fb_val and "_dt_lvl2_key" in table_df.columns:
+        if not _fb_val and "_dt_lvl2_key" in summary_source_df.columns:
             _fb_val = _clean_display_str(row.get("_dt_lvl2_key"))
         _bld_val = ""
-        if "_dt_lvl3_key" in table_df.columns:
+        if "_dt_lvl3_key" in summary_source_df.columns:
             _bld_val = _clean_display_str(row.get("_dt_lvl3_key"))
 
         rec = {
@@ -7676,12 +7780,12 @@ def dashboard_plan_fact_dates(df):
                 if pd.notna(_tid) and str(_tid).strip() not in ("", "nan", "none")
                 else ""
             )
-        if "reason of deviation" in table_df.columns:
+        if "reason of deviation" in summary_source_df.columns:
             _raw_reason = _clean_display_str(row.get("reason of deviation"))
             rec["Причина отклонения"] = (
                 _deviations_reason_bucket_label(_raw_reason) if _raw_reason else ""
             )
-        if dates_notes_col and dates_notes_col in table_df.columns:
+        if dates_notes_col and dates_notes_col in summary_source_df.columns:
             rec["Заметки"] = _clean_display_str(row.get(dates_notes_col))
         summary_data.append(rec)
 
@@ -7701,14 +7805,6 @@ def dashboard_plan_fact_dates(df):
     ):
         if col in summary_df.columns:
             summary_df[col] = pd.to_numeric(summary_df[col], errors="coerce")
-
-    def _format_int_days(x):
-        if pd.isna(x) or str(x).strip() == "":
-            return ""
-        try:
-            return str(int(round(float(x), 0)))
-        except (TypeError, ValueError):
-            return ""
 
     # ТЗ заказчика 2026-05-06 (Блок 2): порядок столбцов
     # «Базовое начало | Начало | Отклонение начала | Базовое окончание | Окончание |
@@ -7741,10 +7837,20 @@ def dashboard_plan_fact_dates(df):
     out_cols = [c for c in out_cols if c in summary_df.columns]
     summary_df = summary_df[out_cols]
 
+    _sort_col = None
+    for _sc in ("Отклонение окончания", "Откл. окончания"):
+        if _sc in summary_df.columns:
+            _sort_col = _sc
+            break
+    if _sort_col:
+        summary_df = summary_df.sort_values(
+            _sort_col,
+            ascending=True,
+            na_position="last",
+        ).reset_index(drop=True)
+
     _col_short = {
         "Функциональный блок": "Функц. блок",
-        "Базовое начало": "Баз. начало",
-        "Базовое окончание": "Баз. окончание",
         "Отклонение начала": "Откл. начала",
         "Отклонение окончания": "Откл. окончания",
         "Базовая длительность": "Баз. длит.",
@@ -7758,7 +7864,7 @@ def dashboard_plan_fact_dates(df):
     summary_display = summary_df.copy()
     _dt_download_cols = [
         c
-        for c in ("Баз. начало", "Баз. окончание", "Начало", "Окончание")
+        for c in ("Базовое начало", "Базовое окончание", "Начало", "Окончание")
         if c in summary_display.columns
     ]
     for _dc in _dt_download_cols:
@@ -7782,48 +7888,11 @@ def dashboard_plan_fact_dates(df):
                 .round(0)
             )
 
-    # Сортировка по клику на заголовок столбца (встроенная в st.dataframe)
-
-    def _dates_main_column_config(columns: list[str]) -> dict:
-        from streamlit.column_config import DatetimeColumn, NumberColumn, TextColumn
-
-        cfg = {}
-        for c in columns:
-            if c in ("Проект", "Задача", "Функц. блок", "Строение", "Причина откл.", "Заметки", "ID задачи"):
-                cfg[c] = TextColumn(c)
-            elif c in ("Баз. начало", "Баз. окончание", "Начало", "Окончание"):
-                cfg[c] = DatetimeColumn(c, format="DD.MM.YYYY")
-            elif c in ("Откл. начала", "Откл. окончания", "Откл. длит.", "Баз. длит.", "Длительность"):
-                cfg[c] = NumberColumn(c, format="%d")
-            else:
-                cfg[c] = TextColumn(c)
-        return cfg
-
-    _dates_column_role = {
-        "Баз. начало": "baseline",
-        "Баз. окончание": "baseline",
-        "Начало": "fact",
-        "Окончание": "fact",
-        "Баз. длит.": "duration",
-        "Длительность": "duration",
-        "Откл. окончания": "dev",
-        "Откл. начала": "dev",
-        "Откл. длит.": "dev",
-    }
-
-    # В режиме ковенантов узкая таблица «Ковенанты (таблица)» уже даёт сроки/отклонения по ковенантам;
-    # полная таблица по filtered_df дублировала бы те же строки — показываем её только свёрнуто.
     def _render_dates_main_table():
-        st.dataframe(
-            summary_numeric,
-            column_config=_dates_main_column_config(list(summary_numeric.columns)),
-            hide_index=True,
-            use_container_width=True,
-            height=min(700, 50 + max(1, len(summary_numeric)) * 35),
-        )
+        _render_plan_fact_dates_main_table(summary_display, summary_numeric)
 
     if not show_covenant_ui:
-        st.subheader("Отклонение от базового плана")
+        st.subheader("Отклонение от базового плана (таблица)")
         _render_dates_main_table()
         render_dataframe_excel_csv_downloads(
             summary_display,
@@ -7832,7 +7901,7 @@ def dashboard_plan_fact_dates(df):
             csv_label="Скачать CSV",
         )
     else:
-        with st.expander("Полная таблица отклонений по всем задачам фильтра", expanded=False):
+        with st.expander("Полная таблица отклонений по всем задачам фильтра", expanded=True):
             st.markdown(
                 "Полная таблица по всем задачам фильтра не выводится отдельным блоком, чтобы не дублировать "
                 "таблицу **Ковенанты** выше. Ниже — развёртка со всеми колонками (план/факт, отклонения), если нужен экспорт."
