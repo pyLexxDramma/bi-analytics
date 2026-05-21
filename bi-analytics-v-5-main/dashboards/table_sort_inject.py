@@ -3,33 +3,16 @@
 from __future__ import annotations
 
 import os
+import re
 
+import streamlit as st
 import streamlit.components.v1 as components
 
-_TABLE_SORT_SCRIPT = """
-<script>
+_TABLE_SORT_JS = r"""
 (function () {
-  function hostWin() {
-    try {
-      if (window.parent && window.parent.document) return window.parent;
-    } catch (e1) {}
-    try {
-      if (window.top && window.top.document) return window.top;
-    } catch (e2) {}
-    return window;
-  }
-
-  function docRoot() {
-    var w = hostWin();
-    try {
-      if (w.document && w.document.body) return w.document;
-    } catch (e3) {}
-    return document.body ? document : null;
-  }
-
   function parseNum(t) {
-    var s = String(t || "").replace(/\\s/g, "").replace(/\\u00a0/g, "");
-    var m = s.match(/-?\\d+[.,]?\\d*/);
+    var s = String(t || "").replace(/\s/g, "").replace(/\u00a0/g, "");
+    var m = s.match(/-?\d+[.,]?\d*/);
     if (!m) return NaN;
     return parseFloat(m[0].replace(",", "."));
   }
@@ -41,9 +24,12 @@ _TABLE_SORT_SCRIPT = """
     return "data";
   }
 
-  function cellText(tr, colIdx) {
+  function cellSortKey(tr, colIdx) {
     if (!tr || !tr.cells || !tr.cells[colIdx]) return "";
-    return (tr.cells[colIdx].textContent || "").trim();
+    var cell = tr.cells[colIdx];
+    var dv = cell.getAttribute("data-sort-val");
+    if (dv !== null && dv !== "") return dv;
+    return (cell.textContent || "").trim();
   }
 
   function compareCells(at, bt, sortDir) {
@@ -60,10 +46,7 @@ _TABLE_SORT_SCRIPT = """
     var cur = null;
     rows.forEach(function (r) {
       var k = rowKind(r);
-      if (k === "total") {
-        totals.push(r);
-        return;
-      }
+      if (k === "total") { totals.push(r); return; }
       if (k === "group") {
         if (cur) blocks.push(cur);
         cur = { header: r, body: [] };
@@ -89,9 +72,9 @@ _TABLE_SORT_SCRIPT = """
   }
 
   function sortArrow(sortDir) {
-    if (sortDir === -1) return " \\u25BC";
-    if (sortDir === 1) return " \\u25B2";
-    return " \\u21C5";
+    if (sortDir === -1) return " \u25BC";
+    if (sortDir === 1) return " \u25B2";
+    return " \u21C5";
   }
 
   function initTable(tbl) {
@@ -105,10 +88,11 @@ _TABLE_SORT_SCRIPT = """
     ths.forEach(function (th, colIdx) {
       if (th.getAttribute("data-bi-sort-th") === "1") return;
       th.setAttribute("data-bi-sort-th", "1");
-      var labelText = (th.textContent || "").trim();
+      var labelText = th.getAttribute("data-sort-label") || (th.textContent || "").trim();
+      labelText = labelText.replace(/\s[\u21C5\u25B2\u25BC\u2191\u2193]+$/, "").trim();
       th.innerHTML = "";
       th.style.verticalAlign = "middle";
-      th.style.cursor = "default";
+      th.style.cursor = "pointer";
       var wrap = document.createElement("div");
       wrap.style.cssText =
         "display:flex;align-items:center;gap:6px;justify-content:space-between;width:100%;";
@@ -122,16 +106,14 @@ _TABLE_SORT_SCRIPT = """
       sel.title = "Сортировка и фильтр";
       sel.innerHTML =
         '<option value="">Все</option>' +
-        '<option value="asc">\\u2191</option>' +
-        '<option value="desc">\\u2193</option>' +
+        '<option value="asc">\u2191</option>' +
+        '<option value="desc">\u2193</option>' +
         '<option value="pos">+</option>' +
-        '<option value="neg">\\u2212</option>';
+        '<option value="neg">\u2212</option>';
       sel.style.cssText =
         "font-size:11px;max-width:54px;background:#143252;color:#e8eef5;border:1px solid #5a7a9a;border-radius:4px;cursor:pointer;";
       wrap.appendChild(label);
-      if (!clickOnly) {
-        wrap.appendChild(sel);
-      }
+      if (!clickOnly) wrap.appendChild(sel);
       th.appendChild(wrap);
       var sortDir = 0;
       var signFilter = "";
@@ -148,9 +130,9 @@ _TABLE_SORT_SCRIPT = """
         var byProject = isProjectColumn(th, colIdx);
 
         function rowVisible(r) {
-          var cell = r.cells[colIdx];
-          if (!signFilter || !cell) return true;
-          var n = parseNum(cell.textContent);
+          if (!signFilter) return true;
+          if (!r || !r.cells || !r.cells[colIdx]) return true;
+          var n = parseNum(cellSortKey(r, colIdx));
           if (signFilter === "pos") return !isNaN(n) && n > 0;
           if (signFilter === "neg") return !isNaN(n) && n < 0;
           return true;
@@ -161,14 +143,14 @@ _TABLE_SORT_SCRIPT = """
           if (sortDir !== 0) {
             if (byProject) {
               split.blocks.sort(function (a, b) {
-                var at = cellText(a.header, colIdx) || cellText(a.body[0], colIdx);
-                var bt = cellText(b.header, colIdx) || cellText(b.body[0], colIdx);
+                var at = cellSortKey(a.header, colIdx) || cellSortKey(a.body[0], colIdx);
+                var bt = cellSortKey(b.header, colIdx) || cellSortKey(b.body[0], colIdx);
                 return compareCells(at, bt, sortDir);
               });
             } else {
               split.blocks.forEach(function (blk) {
                 blk.body.sort(function (a, b) {
-                  return compareCells(cellText(a, colIdx), cellText(b, colIdx), sortDir);
+                  return compareCells(cellSortKey(a, colIdx), cellSortKey(b, colIdx), sortDir);
                 });
               });
             }
@@ -195,7 +177,7 @@ _TABLE_SORT_SCRIPT = """
             else dataRows.push(r);
           });
           dataRows.sort(function (a, b) {
-            return compareCells(cellText(a, colIdx), cellText(b, colIdx), sortDir);
+            return compareCells(cellSortKey(a, colIdx), cellSortKey(b, colIdx), sortDir);
           });
           dataRows.forEach(function (r) {
             r.style.display = rowVisible(r) ? "" : "none";
@@ -215,12 +197,20 @@ _TABLE_SORT_SCRIPT = """
         paintLabel();
       }
 
-      paintLabel();
-      label.addEventListener("click", function (ev) {
-        ev.preventDefault();
-        ev.stopPropagation();
+      function toggleSort(ev) {
+        if (ev) {
+          ev.preventDefault();
+          ev.stopPropagation();
+        }
         sortDir = sortDir >= 0 ? -1 : 1;
         apply();
+      }
+
+      paintLabel();
+      label.addEventListener("click", toggleSort);
+      th.addEventListener("click", function (ev) {
+        if (ev.target && ev.target.classList && ev.target.classList.contains("bi-sort-filter")) return;
+        toggleSort(ev);
       });
       if (!clickOnly) {
         sel.addEventListener("change", function (ev) {
@@ -243,25 +233,30 @@ _TABLE_SORT_SCRIPT = """
     root.querySelectorAll("table.bi-sortable-table").forEach(initTable);
   }
 
-  function ensureSortHooks(doc) {
-    var w = hostWin();
-    if (!w.__BI_TABLE_SORT__) w.__BI_TABLE_SORT__ = {};
-    var state = w.__BI_TABLE_SORT__;
+  function bootDoc(doc) {
+    if (!doc || !doc.body) return;
     scan(doc.body);
-    if (state.observing) return;
-    state.observing = true;
-    try {
-      var obs = new MutationObserver(function () { scan(doc.body); });
-      obs.observe(doc.body, { childList: true, subtree: true });
-      state.observer = obs;
-    } catch (eObs) {}
+    [0, 30, 120, 400, 1000].forEach(function (ms) {
+      setTimeout(function () { scan(doc.body); }, ms);
+    });
   }
 
-  var doc = docRoot();
-  if (!doc || !doc.body) return;
-  ensureSortHooks(doc);
+  bootDoc(document);
 })();
-</script>
+"""
+
+_TABLE_SORT_SCRIPT = f"<script>{_TABLE_SORT_JS}</script>"
+
+_IFRAME_SHELL_CSS = """
+<style>
+html, body {
+  margin: 0; padding: 0;
+  background: transparent;
+  color: #e0e0e0;
+  font-family: Inter, system-ui, sans-serif;
+}
+.bi-sortable-html-root { width: 100%; max-width: 100%; }
+</style>
 """
 
 
@@ -274,14 +269,55 @@ def table_sort_inject_enabled() -> bool:
     )
 
 
+def _split_embedded_style(html: str) -> tuple[str, str]:
+    text = html or ""
+    m = re.match(r"\s*(<style[^>]*>.*?</style>)\s*(.*)", text, flags=re.I | re.S)
+    if m:
+        return m.group(1), m.group(2)
+    return "", text
+
+
+def _estimate_html_block_height(html: str) -> int:
+    rows = html.count("<tr")
+    return int(min(2400, max(360, 80 + rows * 30)))
+
+
+def _build_sortable_html_document(html: str) -> str:
+    style_block, body = _split_embedded_style(html)
+    return (
+        "<!DOCTYPE html><html lang='ru'><head>"
+        "<meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        f"{style_block}{_IFRAME_SHELL_CSS}"
+        "</head><body>"
+        f"<div class='bi-sortable-html-root'>{body}{_TABLE_SORT_SCRIPT}</div>"
+        "</body></html>"
+    )
+
+
+def render_sortable_html_block(html: str) -> None:
+    """Таблица + JS в одном iframe (components.html) — st.html не исполняет inline-скрипты."""
+    if not html:
+        return
+    if not table_sort_inject_enabled():
+        st.markdown(html, unsafe_allow_html=True)
+        return
+    doc = _build_sortable_html_document(html)
+    components.html(doc, height=_estimate_html_block_height(html), scrolling=True)
+
+
 def inject_sortable_tables_script() -> None:
     if not table_sort_inject_enabled():
         return
-    components.html(_TABLE_SORT_SCRIPT, height=0)
+    components.html(
+        _build_sortable_html_document("<div></div>"),
+        height=0,
+        scrolling=False,
+    )
 
 
 def rescan_sortable_tables_after_render() -> None:
-    """Повторный scan после отрисовки таблицы в том же run Streamlit."""
+    """Legacy: таблицы рендерятся через render_sortable_html_block."""
     if not table_sort_inject_enabled():
         return
-    components.html(_TABLE_SORT_SCRIPT, height=0)
+    inject_sortable_tables_script()

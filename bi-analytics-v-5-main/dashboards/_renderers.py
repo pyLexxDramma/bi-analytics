@@ -208,7 +208,8 @@ _TABLE_CSS = """
   margin:0.5rem 0 1rem 0; -webkit-overflow-scrolling:touch; scrollbar-gutter:stable;
 }
 .pf-dates-table-wrap .pf-dates-table {width:max-content; min-width:100%; table-layout:auto}
-.pf-dates-table th {max-width:none; padding:6px 6px}
+.pf-dates-table th {max-width:none; padding:6px 6px; cursor:pointer}
+.bi-sort-click-only thead th { cursor:pointer !important; }
 .pf-dates-table td {max-width:12em}
 .rendered-table {
   border-collapse:collapse; font-size:13px;
@@ -238,6 +239,10 @@ _TABLE_CSS = """
 .rendered-table td {
   padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0;
   white-space:nowrap; max-width:16em; overflow:hidden; text-overflow:ellipsis;
+}
+.gantt-schedule-table-wrap .rendered-table td {
+  white-space:normal; max-width:none; overflow:visible; text-overflow:clip;
+  word-break:break-word;
 }
 .rendered-table tr:hover td {background:#262833}
 .rendered-table tr:nth-child(even) td {background:rgba(255,255,255,0.02)}
@@ -337,6 +342,42 @@ def _plan_fact_dates_col_css_class(col: str) -> str:
     return ""
 
 
+def _plan_fact_deviation_td_style(nval) -> str:
+    """Фон ячейки отклонения: <0 красный, 0 тёмно-зелёный, >0 зелёный (как на других дашбордах)."""
+    if nval is None or (isinstance(nval, float) and pd.isna(nval)):
+        return ""
+    try:
+        n = int(round(float(nval)))
+    except (TypeError, ValueError):
+        return ""
+    if n < 0:
+        return "background-color:#c0392b;color:#ffffff;font-weight:700;"
+    if n == 0:
+        return "background-color:#14532d;color:#ecfdf5;font-weight:600;"
+    return "background-color:#27ae60;color:#ffffff;font-weight:600;"
+
+
+def _plan_fact_sort_attr(nval) -> str:
+    if nval is None or (isinstance(nval, float) and pd.isna(nval)):
+        return ""
+    try:
+        ts = pd.Timestamp(nval)
+        if pd.notna(ts):
+            return f' data-sort-val="{float(ts.timestamp())}"'
+    except Exception:
+        pass
+    try:
+        fv = float(nval)
+        if pd.isna(fv):
+            return ""
+        return f' data-sort-val="{fv}"'
+    except (TypeError, ValueError):
+        s = str(nval).strip()
+        if s and s.lower() not in ("nan", "none", "nat"):
+            return f' data-sort-val="{html_module.escape(s, quote=True)}"'
+    return ""
+
+
 def _plan_fact_deviation_span(nval, text: str) -> str:
     if nval is None or (isinstance(nval, float) and pd.isna(nval)):
         return ""
@@ -362,7 +403,9 @@ def _render_plan_fact_dates_main_table(display_df: pd.DataFrame, numeric_df: pd.
         "Отклонение длительности",
         "Отклонение окончания (дней)",
     }
-    _num_cols = {"Баз. длит.", "Длительность"}
+    _num_cols = {"Баз. длит.", "Длительность", "Базовая длительность"}
+    _date_cols = {"Базовое начало", "Базовое окончание", "Начало", "Окончание"}
+    _reason_cols = {"Причины отклонений", "Заметки"}
     parts = [
         '<div class="rendered-table-wrap pf-dates-table-wrap">',
         '<table class="rendered-table bi-sortable-table pf-dates-table bi-sort-click-only">',
@@ -370,15 +413,54 @@ def _render_plan_fact_dates_main_table(display_df: pd.DataFrame, numeric_df: pd.
     ]
     for c in display_df.columns:
         cls = _plan_fact_dates_col_css_class(c)
-        parts.append(f'<th class="{cls}">{html_module.escape(str(c))}</th>')
+        c_esc = html_module.escape(str(c))
+        parts.append(
+            f'<th class="{cls}" data-sort-label="{c_esc}">'
+            f'<span class="bi-sort-label">{c_esc} \u21c5</span></th>'
+        )
     parts.append("</tr></thead><tbody>")
     for i in range(len(display_df)):
         parts.append("<tr>")
         for c in display_df.columns:
             cls = _plan_fact_dates_col_css_class(c)
             txt = display_df.iloc[i][c]
+            sort_attr = ""
+            td_style = ""
             if c in _dev_cols and c in numeric_df.columns:
-                cell = _plan_fact_deviation_span(numeric_df.iloc[i][c], str(txt))
+                nv = numeric_df.iloc[i][c]
+                sort_attr = _plan_fact_sort_attr(nv)
+                td_style = _plan_fact_deviation_td_style(nv)
+                disp = str(txt).strip() if pd.notna(txt) and str(txt).strip() not in ("", "nan", "None") else ""
+                if not disp and pd.notna(nv):
+                    try:
+                        disp = str(int(round(float(nv))))
+                    except (TypeError, ValueError):
+                        pass
+                cell = html_module.escape(disp) if disp else ""
+            elif c in _reason_cols:
+                s = str(txt).strip() if pd.notna(txt) else ""
+                if s and s.lower() not in ("", "nan", "none"):
+                    cell = (
+                        f'<span style="background-color:#1f6b3b;color:#ffffff;'
+                        f'padding:2px 4px;display:inline-block;">'
+                        f"{html_module.escape(s)}</span>"
+                    )
+                else:
+                    cell = ""
+            elif c in _num_cols and c in numeric_df.columns:
+                sort_attr = _plan_fact_sort_attr(numeric_df.iloc[i][c])
+                cell = (
+                    html_module.escape(str(txt))
+                    if pd.notna(txt) and str(txt).strip() not in ("", "nan", "None")
+                    else ""
+                )
+            elif c in _date_cols and c in numeric_df.columns:
+                sort_attr = _plan_fact_sort_attr(numeric_df.iloc[i][c])
+                cell = (
+                    html_module.escape(str(txt))
+                    if pd.notna(txt) and str(txt).strip() not in ("", "nan", "None")
+                    else ""
+                )
             else:
                 cell = (
                     html_module.escape(str(txt))
@@ -386,16 +468,17 @@ def _render_plan_fact_dates_main_table(display_df: pd.DataFrame, numeric_df: pd.
                     else ""
                 )
             align = ' style="text-align:right"' if c in _dev_cols or c in _num_cols else ""
-            parts.append(f'<td class="{cls}"{align}>{cell}</td>')
+            if td_style:
+                align = f' style="{td_style}text-align:right;"' if c in _dev_cols or c in _num_cols else f' style="{td_style}"'
+            parts.append(f'<td class="{cls}"{sort_attr}{align}>{cell}</td>')
         parts.append("</tr>")
     parts.append("</tbody></table></div>")
-    st.markdown(_TABLE_CSS + mark_html_table_sortable("".join(parts)), unsafe_allow_html=True)
     try:
-        from dashboards.table_sort_inject import rescan_sortable_tables_after_render
+        from dashboards.table_sort_inject import render_sortable_html_block
 
-        rescan_sortable_tables_after_render()
+        render_sortable_html_block(_TABLE_CSS + mark_html_table_sortable("".join(parts)))
     except Exception:
-        pass
+        st.markdown(_TABLE_CSS + mark_html_table_sortable("".join(parts)), unsafe_allow_html=True)
 
 
 def _parse_gantt_dev_days_display(v):
@@ -435,69 +518,102 @@ def _gantt_deviation_cell_style(v) -> str:
     return "background-color: #27ae60; color: #ffffff"
 
 
-def _render_gantt_schedule_html_table(df: pd.DataFrame, max_rows: int = 80):
-    """Таблица под графиком проекта: тёмная тема, подсветка «Отклонение Начала/Окончания» по дням
-    и зелёная подсветка непустых ячеек «Причины отклонений» / «Заметки» (как на скрине ТЗ заказчика)."""
-    show = df.head(max_rows).copy()
-    for col in show.columns:
-        show[col] = [str(v) if pd.notna(v) else "" for v in show[col]]
-    dev_names = [c for c in ("Отклонение Начала", "Отклонение Окончания") if c in show.columns]
-    reason_names = [c for c in ("Причины отклонений", "Причина отклонения", "Заметки") if c in show.columns]
-    sty = show.style.set_properties(
-        **{"background-color": TABLE_BG_COLOR, "color": TABLE_TEXT_COLOR, "font-size": "13px"}
-    ).set_table_styles(
-        [
-            {
-                "selector": "th",
-                "props": [
-                    ("background-color", TABLE_HEADER_BG_COLOR),
-                    ("color", TABLE_TEXT_COLOR),
-                    ("font-weight", "600"),
-                    ("border-bottom", "2px solid #444"),
-                    ("padding", "6px 8px"),
-                    ("text-align", "left"),
-                ],
-            },
-            {"selector": "td", "props": [("border-bottom", "1px solid #333"), ("padding", "5px 8px")]},
-        ]
-    )
-    if dev_names:
-        sty = sty.apply(
-            lambda s: s.map(_gantt_deviation_cell_style),
-            subset=dev_names,
-            axis=0,
+def _render_gantt_schedule_html_table(
+    display_df: pd.DataFrame,
+    numeric_df: pd.DataFrame | None = None,
+    *,
+    max_rows: int = 80,
+) -> None:
+    """Таблица под «График проекта»: сортировка, прокраска отклонений, без обрезки текста."""
+    if display_df is None or getattr(display_df, "empty", True):
+        st.info("Нет данных для таблицы.")
+        return
+    num = numeric_df if numeric_df is not None else display_df
+    show_disp = display_df.head(max_rows)
+    show_num = num.reindex(show_disp.index)
+
+    _dev_cols = {
+        "Отклонение окончания",
+        "Отклонение Начала",
+        "Отклонение Окончания",
+    }
+    _date_cols = {"Окончание", "Базовое окончание"}
+    _num_cols = {"ИД", "Ур", "% завершения"}
+    _reason_cols = {"Причины отклонений", "Причина отклонения", "Заметки"}
+
+    parts = [
+        '<div class="rendered-table-wrap gantt-schedule-table-wrap pf-dates-table-wrap">',
+        '<table class="rendered-table bi-sortable-table bi-sort-click-only">',
+        "<thead><tr>",
+    ]
+    for c in show_disp.columns:
+        c_esc = html_module.escape(str(c))
+        parts.append(
+            f'<th data-sort-label="{c_esc}">'
+            f'<span class="bi-sort-label">{c_esc} \u21c5</span></th>'
         )
-    # ТЗ заказчика 2026-05-06 (скрин 2): непустые ячейки «Причины отклонений»
-    # и «Заметки» подсвечиваются светло-зелёным фоном.
-    if reason_names:
-        def _reason_cell_style(v):
-            s = str(v).strip()
-            if s and s.lower() not in ("nan", "none"):
-                return "background-color: #1f6b3b; color: #ffffff"
-            return ""
-        sty = sty.apply(
-            lambda s: s.map(_reason_cell_style),
-            subset=reason_names,
-            axis=0,
-        )
-    # КРИТИЧНО: Styler.to_html() не принимает параметр index=False (в отличие
-    # от DataFrame.to_html). Без явного hide(axis="index") индекс DataFrame
-    # рендерится первой колонкой как «#» с числами 2146/2147/… (это смущало
-    # куратора 08.05.2026 — не соответствовало заливке строк).
+    parts.append("</tr></thead><tbody>")
+    for i in range(len(show_disp)):
+        parts.append("<tr>")
+        for c in show_disp.columns:
+            txt = show_disp.iloc[i][c]
+            sort_attr = ""
+            td_style = ""
+            if c in _dev_cols and c in show_num.columns:
+                nv = show_num.iloc[i][c]
+                sort_attr = _plan_fact_sort_attr(nv)
+                td_style = _plan_fact_deviation_td_style(nv)
+                disp = str(txt).strip() if pd.notna(txt) and str(txt).strip() not in ("", "nan", "None") else ""
+                cell = html_module.escape(disp) if disp else ""
+            elif c in _reason_cols:
+                s = str(txt).strip() if pd.notna(txt) else ""
+                if s and s.lower() not in ("", "nan", "none"):
+                    cell = (
+                        f'<span style="background-color:#1f6b3b;color:#ffffff;'
+                        f'padding:2px 4px;display:inline-block;">'
+                        f"{html_module.escape(s)}</span>"
+                    )
+                else:
+                    cell = ""
+            elif c in _date_cols and c in show_num.columns:
+                sort_attr = _plan_fact_sort_attr(show_num.iloc[i][c])
+                cell = (
+                    html_module.escape(str(txt))
+                    if pd.notna(txt) and str(txt).strip() not in ("", "nan", "None")
+                    else ""
+                )
+            elif c in _num_cols and c in show_num.columns:
+                sort_attr = _plan_fact_sort_attr(show_num.iloc[i][c])
+                cell = (
+                    html_module.escape(str(txt))
+                    if pd.notna(txt) and str(txt).strip() not in ("", "nan", "None")
+                    else ""
+                )
+            else:
+                cell = (
+                    html_module.escape(str(txt))
+                    if pd.notna(txt) and str(txt).strip() not in ("", "nan", "None")
+                    else ""
+                )
+            align = ""
+            if c in _dev_cols or c in _num_cols:
+                align = f' style="{td_style}text-align:right;"' if td_style else ' style="text-align:right"'
+            elif td_style:
+                align = f' style="{td_style}"'
+            parts.append(f"<td{sort_attr}{align}>{cell}</td>")
+        parts.append("</tr>")
+    parts.append("</tbody></table></div>")
     try:
-        sty = sty.hide(axis="index")
-    except (AttributeError, TypeError):
-        try:
-            sty = sty.hide_index()
-        except Exception:
-            pass
-    html = sty.to_html(classes="rendered-table", escape=True, border=0)
-    st.markdown(_TABLE_CSS + '<div class="rendered-table-wrap">' + html + "</div>", unsafe_allow_html=True)
-    if len(df) > max_rows:
-        with st.expander("Ограничение отображения таблицы", expanded=False):
-            suppress_caption(
-                f"Показано {max_rows} из {len(df)} записей. Скачайте CSV или Excel для полных данных."
-            )
+        from dashboards.table_sort_inject import render_sortable_html_block
+
+        render_sortable_html_block(_TABLE_CSS + mark_html_table_sortable("".join(parts)))
+    except Exception:
+        st.markdown(_TABLE_CSS + mark_html_table_sortable("".join(parts)), unsafe_allow_html=True)
+    if len(display_df) > max_rows:
+        suppress_caption(
+            f"Показано {max_rows} из {len(display_df)} записей. "
+            "Скачайте CSV для полных данных."
+        )
 
 
 from utils import (
@@ -700,6 +816,78 @@ def _dev_tasks_build_ancestor_keys(
     work["_dt_lvl3_key"] = r3
     work["_dt_lvl_num"] = lvn
     return work
+
+
+def _msp_wbs_tuple(val):
+    try:
+        if val is None or pd.isna(val):
+            return ()
+    except Exception:
+        if val is None:
+            return ()
+    s = str(val).strip()
+    if not s or s.lower() in ("nan", "none"):
+        return ()
+    parts = [p for p in re.split(r"[.\s/|>\\-]+", s) if p != ""]
+    out = []
+    for p in parts:
+        try:
+            out.append(int(float(p)))
+        except (TypeError, ValueError):
+            continue
+    return tuple(out) if out else ()
+
+
+def _msp_resolve_wbs_column(d: pd.DataFrame):
+    """Колонка WBS / Outline Number для иерархии MSP."""
+    if d is None or getattr(d, "empty", True):
+        return None
+    cols_lower = {str(c).strip().lower(): c for c in d.columns}
+    for w in (
+        "outline number",
+        "outline_number",
+        "wbs",
+        "wbs code",
+        "код wbs",
+        "иерархический номер",
+        "номер структуры",
+    ):
+        if w in cols_lower:
+            return cols_lower[w]
+    for c in d.columns:
+        sl = str(c).strip().lower()
+        if "outline" in sl and "number" in sl:
+            return c
+        if "wbs" in sl:
+            return c
+    return None
+
+
+def _msp_filter_level5_with_ancestors(
+    df: pd.DataFrame,
+    level_col,
+    wbs_col=None,
+) -> pd.DataFrame:
+    """Задачи уровня 5 и все их родители (по WBS или по уровню ≤ 5)."""
+    if df is None or getattr(df, "empty", True):
+        return df
+    if not level_col or level_col not in df.columns:
+        return df
+    ln_all = pd.to_numeric(df[level_col], errors="coerce")
+    leaf_mask = ln_all == 5.0
+    if not leaf_mask.any():
+        return df
+    if wbs_col and wbs_col in df.columns:
+        wbs_all = df[wbs_col].map(_msp_wbs_tuple)
+        ancestor_set: set = set()
+        for t in wbs_all[leaf_mask].tolist():
+            if not t:
+                continue
+            for k in range(1, len(t) + 1):
+                ancestor_set.add(t[:k])
+        if ancestor_set:
+            return df[wbs_all.isin(ancestor_set)].copy()
+    return df[leaf_mask | (ln_all.notna() & (ln_all <= 5))].copy()
 
 
 def _gdrs_header_is_dd_mm_yyyy(name) -> bool:
@@ -6540,8 +6728,13 @@ def dashboard_plan_fact_dates(df):
     with _cb_r1_1:
         dates_show_reason_notes = st.checkbox(
             "Показать причины отклонений",
-            value=True,
+            value=False,
             key="dates_show_reason_notes",
+            help=(
+                "При включении: в таблице добавляются колонки «Причины отклонений» и «Заметки», "
+                "отображаются задачи уровня 5 и все родительские задачи выше. "
+                "Селектор «Детализация» игнорируется."
+            ),
         )
     with _cb_r1_2:
         hide_completed_dates = st.checkbox(
@@ -6729,7 +6922,14 @@ def dashboard_plan_fact_dates(df):
             _mask_lvl_col = "level structure"
         elif "level" in filtered_df.columns:
             _mask_lvl_col = "level"
-    if _mask_lvl_col and _mask_lvl_col in filtered_df.columns:
+    _pf_wbs_col = _msp_resolve_wbs_column(filtered_df)
+    if dates_show_reason_notes and _mask_lvl_col and _mask_lvl_col in filtered_df.columns:
+        filtered_df = _msp_filter_level5_with_ancestors(
+            filtered_df,
+            _mask_lvl_col,
+            _pf_wbs_col,
+        )
+    elif _mask_lvl_col and _mask_lvl_col in filtered_df.columns:
         level_num = pd.to_numeric(filtered_df[_mask_lvl_col], errors="coerce")
         if selected_level == "Сводные (1–3 ур.)":
             mask_level = level_num.notna() & (level_num <= 3)
@@ -6970,8 +7170,9 @@ def dashboard_plan_fact_dates(df):
         ]
 
     table_df = df_after_hide.copy()
-    _end_dev = pd.to_numeric(table_df.get("plan_end_diff"), errors="coerce")
-    table_df = table_df[_end_dev.notna() & (_end_dev < -1e-9)].copy()
+    if not dates_show_reason_notes:
+        _end_dev = pd.to_numeric(table_df.get("plan_end_diff"), errors="coerce")
+        table_df = table_df[_end_dev.notna() & (_end_dev < -1e-9)].copy()
 
     if chart_df.empty and table_df.empty:
         st.info(
@@ -7187,6 +7388,10 @@ def dashboard_plan_fact_dates(df):
             covenant_auto_from_data = True
             break
     show_covenant_ui = force_covenant_ui or covenant_filter_selected or covenant_auto_from_data
+    # «Причины отклонений»: основная таблица с колонками причин/заметок — без блока «Ковенанты (таблица)»
+    # от автодетекта в данных (иначе дублируется и уходит в expander ковенантов).
+    if dates_show_reason_notes and not force_covenant_ui:
+        show_covenant_ui = False
     # Таблица «Ковенанты»: при выборе блока с маркером ковенанта срез уже ограничен блоком —
     # показываем все строки блока (как на экране СМР), без доп. текстовой маски «ковенант» в задаче.
     # Иначе — строки с признаком ковенанта в полях задачи/блока/примечаний и т.д.
@@ -7780,13 +7985,16 @@ def dashboard_plan_fact_dates(df):
                 if pd.notna(_tid) and str(_tid).strip() not in ("", "nan", "none")
                 else ""
             )
-        if "reason of deviation" in summary_source_df.columns:
-            _raw_reason = _clean_display_str(row.get("reason of deviation"))
-            rec["Причина отклонения"] = (
-                _deviations_reason_bucket_label(_raw_reason) if _raw_reason else ""
-            )
-        if dates_notes_col and dates_notes_col in summary_source_df.columns:
-            rec["Заметки"] = _clean_display_str(row.get(dates_notes_col))
+        if dates_show_reason_notes:
+            if _mask_lvl_col and _mask_lvl_col in summary_source_df.columns:
+                _lv = pd.to_numeric(row.get(_mask_lvl_col), errors="coerce")
+                rec["Ур"] = int(_lv) if pd.notna(_lv) else ""
+            if "reason of deviation" in summary_source_df.columns:
+                rec["Причины отклонений"] = _clean_display_str(
+                    row.get("reason of deviation")
+                )
+            if dates_notes_col and dates_notes_col in summary_source_df.columns:
+                rec["Заметки"] = _clean_display_str(row.get(dates_notes_col))
         summary_data.append(rec)
 
     summary_df = pd.DataFrame(summary_data)
@@ -7811,6 +8019,8 @@ def dashboard_plan_fact_dates(df):
     #  Отклонение окончания | Базовая длительность | Длительность | Отклонение длительности».
     # Идентификатор задачи MSP — первый найденный столбец из набора Unique ID / Task ID / Outline Number и т.п.
     out_cols = ["Задача"] if selected_project != "Все" else ["Проект", "Задача"]
+    if dates_show_reason_notes and "Ур" in summary_df.columns:
+        out_cols.insert(1 if selected_project != "Все" else 2, "Ур")
     if "ID задачи" in summary_df.columns:
         out_cols.append("ID задачи")
     if "Функциональный блок" in summary_df.columns:
@@ -7830,24 +8040,32 @@ def dashboard_plan_fact_dates(df):
     if tbl_show_dur:
         out_cols.append("Отклонение длительности")
     if dates_show_reason_notes:
-        if "Причина отклонения" in summary_df.columns:
-            out_cols.append("Причина отклонения")
+        if "Причины отклонений" in summary_df.columns:
+            out_cols.append("Причины отклонений")
         if "Заметки" in summary_df.columns:
             out_cols.append("Заметки")
     out_cols = [c for c in out_cols if c in summary_df.columns]
     summary_df = summary_df[out_cols]
 
     _sort_col = None
-    for _sc in ("Отклонение окончания", "Откл. окончания"):
-        if _sc in summary_df.columns:
-            _sort_col = _sc
-            break
-    if _sort_col:
+    if dates_show_reason_notes and "Ур" in summary_df.columns:
+        summary_df["_sort_ур"] = pd.to_numeric(summary_df["Ур"], errors="coerce")
         summary_df = summary_df.sort_values(
-            _sort_col,
-            ascending=True,
+            ["_sort_ур", "Задача"],
+            ascending=[True, True],
             na_position="last",
-        ).reset_index(drop=True)
+        ).drop(columns=["_sort_ур"], errors="ignore").reset_index(drop=True)
+    else:
+        for _sc in ("Отклонение окончания", "Откл. окончания"):
+            if _sc in summary_df.columns:
+                _sort_col = _sc
+                break
+        if _sort_col:
+            summary_df = summary_df.sort_values(
+                _sort_col,
+                ascending=True,
+                na_position="last",
+            ).reset_index(drop=True)
 
     _col_short = {
         "Функциональный блок": "Функц. блок",
@@ -7891,14 +8109,45 @@ def dashboard_plan_fact_dates(df):
     def _render_dates_main_table():
         _render_plan_fact_dates_main_table(summary_display, summary_numeric)
 
+    _pf_n_after_filters = len(df_after_hide)
+    _pf_n_table = len(summary_source_df)
+    _pf_n_chart = len(chart_df)
+    _pf_chart_cap = 400
+
+    def _pf_dates_scope_caption() -> str:
+        parts = [
+            f"Таблица: {_pf_n_table} задач из {_pf_n_after_filters} после фильтров."
+        ]
+        if _pf_n_chart > _pf_chart_cap:
+            parts.append(
+                f"График: до {min(_pf_n_chart, _pf_chart_cap)} из {_pf_n_chart} "
+                f"(лимит {_pf_chart_cap} строк)."
+            )
+        elif _pf_n_chart != _pf_n_table:
+            parts.append(f"График: {_pf_n_chart} задач.")
+        if not dates_show_reason_notes:
+            parts.append("В таблице — только строки с отклонением окончания < 0.")
+        if only_negative_dev_dates:
+            parts.append("На графике — только отклонение окончания < 0.")
+        if dates_show_reason_notes:
+            parts.append(
+                "Режим «Причины отклонений»: уровень 5 и родители; «Детализация» не действует."
+            )
+        elif _mask_lvl_col:
+            parts.append(f"Детализация: {selected_level}.")
+        parts.append("Сортировка: клик по заголовку колонки.")
+        return " ".join(parts)
+
     if not show_covenant_ui:
         st.subheader("Отклонение от базового плана (таблица)")
+        suppress_caption(_pf_dates_scope_caption())
         _render_dates_main_table()
         render_dataframe_excel_csv_downloads(
             summary_display,
             file_stem="detail_dates",
             key_prefix="detail_dates",
             csv_label="Скачать CSV",
+            popover_label="Скачать таблицу (CSV / Excel)",
         )
     else:
         with st.expander("Полная таблица отклонений по всем задачам фильтра", expanded=True):
@@ -31574,16 +31823,14 @@ def _render_project_schedule_covenants(df: pd.DataFrame) -> None:
     )
 
 
-def _gantt_wrap_task_label(name: str, width: int = 38, max_lines: int = 3) -> str:
-    """Перенос длинного названия задачи для tick labels оси Y (Plotly: <br>)."""
+def _gantt_wrap_task_label(name: str, width: int = 44, max_lines: int = 6) -> str:
+    """Перенос длинного названия задачи для tick labels оси Y (Plotly: <br>), без обрезки «…»."""
     s = str(name).strip()
     if not s:
         return ""
     parts = textwrap.wrap(s, width=width, break_long_words=False, break_on_hyphens=False)
     if len(parts) > max_lines:
         parts = parts[:max_lines]
-        tail = parts[-1]
-        parts[-1] = (tail[: max(1, width - 1)] + "…") if len(tail) >= width else tail + "…"
     return "<br>".join(parts) if len(parts) > 1 else (parts[0] if parts else s)
 
 
@@ -31615,7 +31862,7 @@ def _gantt_resolve_y_labels(
     row_block_scale: float,
 ) -> tuple[list[str], int]:
     """Подписи Y + высота figure: число строк переноса не превышает доступную высоту категории."""
-    max_lines = 3
+    max_lines = 6
     labels: list[str] = []
     chart_h = 320
     for _ in range(4):
@@ -31635,9 +31882,12 @@ def _gantt_resolve_y_labels(
     return labels, chart_h
 
 
-def _render_project_schedule_gantt_legend(*, show_covenant: bool = False) -> None:
+def _render_project_schedule_gantt_legend(*, show_covenant: bool = False, label_pct: bool = False) -> None:
     """Легенда между фильтрами и чекбоксами (вне Plotly-iframe)."""
-    items = [("#14b8a6", "План"), ("#fb923c", "Факт")]
+    if label_pct:
+        items = [("#14b8a6", "План (% выполнения)")]
+    else:
+        items = [("#14b8a6", "План"), ("#fb923c", "Факт")]
     if show_covenant:
         items.append(("#C084FC", "Ковенанта (базовое окончание)"))
     parts = []
@@ -31658,20 +31908,21 @@ def _render_project_schedule_gantt_legend(*, show_covenant: bool = False) -> Non
 def _project_schedule_gantt_x_range(
     bar_dates: list,
     *,
+    bar_starts: list | None = None,
     label_right_x: list | None = None,
     label_left_x: list | None = None,
 ) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
-    """Узкий диапазон оси X по датам полос; запас только под подписи слева/справа от краёв."""
+    """Узкий диапазон оси X: слева — от начала полос, справа — запас под подписи окончания."""
     pts = [pd.Timestamp(x) for x in (bar_dates or []) if x is not None]
     if not pts:
         return None, None
-    lo_bars = min(pts)
+    start_pts = [pd.Timestamp(x) for x in (bar_starts or []) if x is not None]
+    lo_bars = min(start_pts) if start_pts else min(pts)
     hi_bars = max(pts)
     span = max((hi_bars - lo_bars).total_seconds() / 86400.0, 1.0)
-    text_pad_l = timedelta(days=max(4.0, span * 0.008))
-    text_pad_r = timedelta(days=max(6.0, span * 0.012))
-    lo_pad = lo_bars - timedelta(days=max(2.0, span * 0.012))
-    hi_pad = hi_bars + timedelta(days=max(6.0, span * 0.025))
+    text_pad_r = timedelta(days=max(10.0, span * 0.022))
+    lo_pad = lo_bars - timedelta(days=max(0.5, span * 0.003))
+    hi_pad = hi_bars + timedelta(days=max(8.0, span * 0.030))
     if label_left_x:
         try:
             lo_pad = min(lo_pad, min(pd.Timestamp(x) for x in label_left_x) - text_pad_l)
@@ -31717,23 +31968,55 @@ def _project_schedule_gantt_chart_height(
     return int(min(max_px, max(min_px, _GANTT_MARGINS_V + n * row_px)))
 
 
-def _project_schedule_gantt_left_margin(
+def _project_schedule_gantt_label_column_layout(
     y_labels,
     *,
     dense: bool = False,
     task_font: int = 11,
-) -> int:
+    plot_min_px: int = 480,
+) -> tuple[int, float]:
+    """Минимальный отступ слева и доля ширины под колонку названий (без пустого margin.l)."""
     max_line_len = 12
-    max_lines = 1
     for y in y_labels or [""]:
-        lines = str(y).split("<br>")
-        max_lines = max(max_lines, len(lines))
-        if lines:
-            max_line_len = max(max_line_len, max(len(line) for line in lines))
-    px_per_char = max(6.2, float(task_font) * 0.58)
-    est = int(92 + max_line_len * px_per_char)
-    floor = 170 if dense else 160
-    return int(min(800, max(floor, est)))
+        for line in str(y).split("<br>"):
+            max_line_len = max(max_line_len, len(line))
+    px_per_char = max(6.0, float(task_font) * 0.58)
+    label_px = int(12 + max_line_len * px_per_char)
+    label_px = int(min(720, max(96, label_px)))
+    margin_l = 6
+    total_px = label_px + plot_min_px
+    domain_start = round(label_px / total_px, 4)
+    domain_start = min(0.50, max(0.08, domain_start))
+    return margin_l, domain_start
+
+
+def _project_schedule_gantt_y_label_annotations(
+    y_labels,
+    *,
+    task_font: int,
+) -> list[dict]:
+    """Подписи задач в левой колонке figure (paper x≈0), без широкого margin.l."""
+    out: list[dict] = []
+    for y in y_labels or []:
+        txt = str(y).strip()
+        if not txt:
+            continue
+        out.append(
+            dict(
+                x=0.004,
+                y=y,
+                xref="paper",
+                yref="y",
+                text=txt,
+                showarrow=False,
+                xanchor="left",
+                yanchor="middle",
+                xshift=4,
+                align="left",
+                font=dict(size=task_font, color=TABLE_TEXT_COLOR, family="Arial"),
+            )
+        )
+    return out
 
 
 def _project_schedule_gantt_apply_y_labels(
@@ -31742,9 +32025,8 @@ def _project_schedule_gantt_apply_y_labels(
     *,
     dense: bool,
     task_font: int,
-) -> int:
-    """Подписи задач слева, выравнивание по левому краю блока имён."""
-    left_m = _project_schedule_gantt_left_margin(y_labels, dense=dense, task_font=task_font)
+) -> tuple[int, float, list[dict]]:
+    """Подписи задач на оси Y (automargin); полосы — на всю ширину plot area."""
     n = len(y_labels or [])
     fig.update_yaxes(
         categoryorder="array",
@@ -31752,15 +32034,13 @@ def _project_schedule_gantt_apply_y_labels(
         autorange="reversed",
         range=[n - 0.5, -0.5] if n > 0 else None,
         fixedrange=True,
-        tickfont=dict(size=task_font, color=TABLE_TEXT_COLOR),
-        ticklabelposition="outside left",
-        ticklabeloverflow="allow",
-        ticklabelstandoff=6,
         side="left",
-        automargin=True,
         showticklabels=True,
+        automargin=True,
+        tickfont=dict(size=task_font, color=TABLE_TEXT_COLOR, family="Arial"),
     )
-    return left_m
+    fig.update_xaxes(domain=[0.0, 1.0])
+    return 8, 0.0, []
 
 
 @st.cache_data(show_spinner=False, ttl=300)
@@ -31793,7 +32073,7 @@ _GANTT_TABLE_MAX_ROWS = 30
 _GANTT_MIN_TASK_FONT = 12
 _GANTT_MIN_LABEL_FONT = 13
 _GANTT_MIN_ROW_PX = 70
-_GANTT_DATE_LABELS_END_ONLY_ROWS = 30
+_GANTT_DATE_LABELS_END_ONLY_ROWS = 8
 _GANTT_DATE_LABELS_HOVER_ONLY_ROWS = 60
 _GANTT_LINES_TEXT_MAX_ROWS = 20
 
@@ -32248,7 +32528,7 @@ def dashboard_project_schedule_chart(df):
         sel_block = "Все"
         sel_building = "Все"
 
-        _flt_cols = st.columns(5 if _has_building_filter else 4)
+        _flt_cols = st.columns(4 if _has_building_filter else 3)
         f1 = _flt_cols[0]
         f2 = _flt_cols[1]
         _ix = 2
@@ -32257,7 +32537,6 @@ def dashboard_project_schedule_chart(df):
             f_building = _flt_cols[_ix]
             _ix += 1
         f_level = _flt_cols[_ix]
-        f_view = _flt_cols[_ix + 1]
 
         with f1:
             if proj_col:
@@ -32399,25 +32678,9 @@ def dashboard_project_schedule_chart(df):
             )
             if not level_col:
                 suppress_caption("Нет колонки уровня.")
-        with f_view:
-            view_mode = st.selectbox(
-                "Вид отображения",
-                ("Гантт (полосы)", "Линии дат"),
-                index=0,
-                key="gantt_view_mode",
-            )
 
     _gcb_a, _gcb_b, _gcb_c = st.columns((1, 1, 1), gap="small")
     with _gcb_a:
-        force_covenant_points = st.checkbox(
-            "Ковенанты по ТЗ: точки на шкале (базовое и окончание)",
-            value=False,
-            key="gantt_force_covenant_points",
-            help=(
-                "Синие маркеры — базовое окончание, красные — окончание (факт или план). "
-                "Включается только по этой галочке."
-            ),
-        )
         show_reasons = st.checkbox(
             "Показать причины отклонений",
             value=False,
@@ -32435,12 +32698,12 @@ def dashboard_project_schedule_chart(df):
             key="gantt_show_lots",
         )
         label_pct = st.checkbox(
-            "Показывать % выполнения",
-            value=True,
+            "Показать %",
+            value=False,
             key="gantt_bar_label_pct",
             help=(
-                "В подписи у конца полосы добавляются проценты; даты начала и окончания "
-                "плана показываются всегда."
+                "Включено: одна полоса на задачу и подпись с % выполнения из MSP. "
+                "Выключено (по умолчанию): две полосы (план и факт) с датами начала и окончания."
             ),
         )
     with _gcb_c:
@@ -32453,29 +32716,16 @@ def dashboard_project_schedule_chart(df):
             "На диаграмме только просрочка по окончанию (базовое − факт/plan < 0 дн.)",
             value=True,
             key="gantt_only_finish_delay",
-            disabled=bool(force_covenant_points),
             help=(
-                "По ТЗ для режима без «Ковенанты»: только задачи, где базовое окончание раньше "
+                "По ТЗ: только задачи, где базовое окончание раньше "
                 "планового/фактического (просрочка по «базовое окончание − окончание»)."
             ),
         )
-        lift_display_limits = st.checkbox(
-            "Снять лимит отображения (все строки, полная высота)",
-            value=False,
-            key="gantt_lift_display_limits",
-            help=(
-                f"По умолчанию — до {_GANTT_MAX_ROWS} задач на диаграмме; блок графика "
-                f"прокручивается (до {_GANTT_VIEWPORT_MAX_HEIGHT} px на экране). При снятии лимита "
-                "отображаются все строки после фильтров; загрузка может занять больше времени."
-            ),
-        )
 
-    _gantt_row_cap = None if lift_display_limits else _GANTT_MAX_ROWS
-    is_covenants = bool(force_covenant_points)
-    if is_covenants:
-        only_finish_delay = False
+    _gantt_row_cap = _GANTT_MAX_ROWS
+    view_mode = "Гантт (полосы)"
 
-    _render_project_schedule_gantt_legend(show_covenant=is_covenants)
+    _render_project_schedule_gantt_legend(show_covenant=False, label_pct=label_pct)
 
     # ── Применяем фильтр уровня (по селектору) или show_reasons-override (ур. 5 + предки) ──
     # Делаем здесь, чтобы значение чекбокса show_reasons уже было известно и могло
@@ -32649,7 +32899,7 @@ def dashboard_project_schedule_chart(df):
         pcn = pd.to_numeric(plot_df["pct complete"], errors="coerce")
         plot_df = plot_df.loc[~(pcn >= 99.999)].copy()
 
-    if (not is_covenants) and only_finish_delay:
+    if only_finish_delay:
         if "base end" not in plot_df.columns or "plan end" not in plot_df.columns:
             suppress_caption(
                 "Фильтр «только просрочка по окончанию»: нет колонок «base end» или «plan end» — отбор не применён."
@@ -32673,8 +32923,8 @@ def dashboard_project_schedule_chart(df):
 
         render_quality_hints(
             collect_project_schedule_hints(
-                only_finish_delay_active=bool((not is_covenants) and only_finish_delay),
-                is_covenants=is_covenants,
+                only_finish_delay_active=bool(only_finish_delay),
+                is_covenants=False,
                 base_end_column_present=_be_pres,
                 base_end_filled_ratio=_be_ratio,
             )
@@ -32682,7 +32932,7 @@ def dashboard_project_schedule_chart(df):
     except Exception:
         pass
 
-    if (not is_covenants) and only_finish_delay and "base end" in plot_df.columns and "plan end" in plot_df.columns:
+    if only_finish_delay and "base end" in plot_df.columns and "plan end" in plot_df.columns:
         be = pd.to_datetime(plot_df["base end"], errors="coerce")
         fe = pd.to_datetime(plot_df["plan end"], errors="coerce")
         plot_df = (
@@ -32697,13 +32947,7 @@ def dashboard_project_schedule_chart(df):
         plot_df = plot_df.head(_gantt_row_cap)
         suppress_caption(
             f"На диаграмме и в таблице показаны первые {_gantt_row_cap} из {_gantt_rows_total} задач "
-            "после фильтров. Включите «Снять лимит отображения» или уточните фильтры."
-        )
-    elif lift_display_limits and len(plot_df) > _GANTT_MAX_ROWS:
-        st.warning(
-            f"Полный режим: {len(plot_df)} задач на диаграмме — подписи дат у полос скрыты "
-            f"(остаются hover и таблица). Для читаемости используйте фильтры или лимит "
-            f"{_GANTT_MAX_ROWS} строк."
+            "после фильтров. Уточните фильтры для более узкой выборки."
         )
     _gantt_rows_shown = len(plot_df)
 
@@ -32865,11 +33109,8 @@ def dashboard_project_schedule_chart(df):
             y_labels=_y_list,
             task_font=_task_font,
         )
-        left_m = _project_schedule_gantt_left_margin(
-            _y_list, dense=bool(policy.get("is_dense")), task_font=_task_font
-        )
         _lines_margin = dict(
-            l=left_m,
+            l=8,
             r=220 if policy.get("is_dense") else 200,
             t=36,
             b=88,
@@ -32880,15 +33121,8 @@ def dashboard_project_schedule_chart(df):
             showlegend=False,
             uirevision="gantt_project_schedule_lines",
         )
-        _project_schedule_gantt_apply_y_labels(
-            fig,
-            _y_list,
-            dense=bool(policy.get("is_dense")),
-            task_font=int(policy.get("task_font", 11)),
-        )
         fig.update_yaxes(title=dict(text=""))
         fig.update_xaxes(title_text="Дата", automargin=True, showgrid=True)
-
         try:
             _bar_dates: list = []
             for _col in ("plan start", "plan end", "base start", "base end"):
@@ -32911,16 +33145,19 @@ def dashboard_project_schedule_chart(df):
                     )
         except Exception:
             pass
-
         fig = apply_chart_background(fig, skip_uniformtext=True)
-        left_m = _project_schedule_gantt_apply_y_labels(
+        left_m, _x_domain_start, _y_name_ann = _project_schedule_gantt_apply_y_labels(
             fig,
             _y_list,
             dense=bool(policy.get("is_dense")),
             task_font=_task_font,
         )
         _lines_margin["l"] = left_m
-        fig.update_layout(margin=_lines_margin, showlegend=False)
+        if _y_name_ann:
+            fig.update_layout(annotations=list(_y_name_ann), margin=_lines_margin, showlegend=False)
+        else:
+            fig.update_layout(margin=_lines_margin, showlegend=False)
+        fig.update_xaxes(domain=[_x_domain_start, 1.0])
         return fig
 
     def _gantt_find_fact_end_column(d: pd.DataFrame):
@@ -33117,7 +33354,7 @@ def dashboard_project_schedule_chart(df):
                 customdata=cust_plan,
             )
         )
-        if _n_fact_ok > 0:
+        if not label_pct and _n_fact_ok > 0:
             fig.add_trace(
                 go.Bar(
                     name="Факт",
@@ -33134,7 +33371,7 @@ def dashboard_project_schedule_chart(df):
                     customdata=cust_fact,
                 )
             )
-        else:
+        elif not label_pct:
             suppress_caption(
                 "Полоса «Факт» не построена: в выборке нет пар дат "
                 "«Старт факт / Конец факт» (base start / base end) или actual start / actual finish."
@@ -33144,15 +33381,16 @@ def dashboard_project_schedule_chart(df):
         _lbl_font = max(_GANTT_MIN_LABEL_FONT, int(policy.get("label_font", 13)))
         _date_ann: list[dict] = []
         _bar_edge_x: list = []
+        _end_label_x: list = []
 
         _GANTT_PLAN_COLOR = "#14b8a6"
         _GANTT_FACT_COLOR = "#fb923c"
 
         def _px_shift_for_text(text: str, *, side: str) -> int:
-            # Примерная ширина подписи в px (дата + «· N%»), чтобы не наезжать на полосу.
-            w = int(10 + len(str(text)) * float(_lbl_font) * 0.62)
-            w = max(44, min(160, w))
-            return -w if side == "start" else w
+            if side == "start":
+                return 8
+            w = int(12 + len(str(text)) * float(_lbl_font) * 0.65)
+            return max(52, min(220, w))
 
         def _dur_days_days(a, b) -> float:
             if a is None or b is None:
@@ -33180,11 +33418,11 @@ def dashboard_project_schedule_chart(df):
             _bar_edge_x.append(x_edge)
             _txt_color = _GANTT_FACT_COLOR if lane == "fact" else _GANTT_PLAN_COLOR
             _ax = _px_shift_for_text(text, side=side)
-            _xanchor = "right" if side == "start" else "left"
+            _xanchor = "left"
             # Лёгкое вертикальное расслоение только если на одной стороне две подписи (план+факт).
             _stack_ay = 0
             if stack_total > 1:
-                _stack_ay = int(round((stack_index - (stack_total - 1) / 2.0) * 10))
+                _stack_ay = int(round((stack_index - (stack_total - 1) / 2.0) * 16))
 
             _date_ann.append(
                 dict(
@@ -33205,82 +33443,67 @@ def dashboard_project_schedule_chart(df):
                     borderpad=2,
                 )
             )
+            if side == "end":
+                _end_label_x.append(x_edge)
 
-        _n_rows_lbl = max(1, len(_row_meta))
-        _dlm = policy.get("date_label_mode", "full")
-        if _dlm == "none":
-            suppress_caption(
-                f"Подписи дат у полос скрыты ({_n_rows_lbl} задач): смотрите даты в hover и таблице."
-            )
-        else:
-            _label_step = 1
-            if _dlm == "end_only":
-                if _n_rows_lbl > 45:
-                    _label_step = 2
-            elif _n_rows_lbl > 50:
-                _label_step = 3
-            elif _n_rows_lbl > 25:
-                _label_step = 2
-            if _dlm == "full" and policy.get("is_very_dense") and _n_rows_lbl > 150:
-                _label_step = max(_label_step, 4)
-            elif _dlm == "full" and policy.get("is_dense") and _n_rows_lbl > 110:
-                _label_step = max(_label_step, 3)
-
-            for idx, meta in enumerate(_row_meta):
-                if idx % _label_step != 0:
+        _date_mode = str(policy.get("date_label_mode") or "full")
+        if label_pct:
+            for meta in _row_meta:
+                y = meta["y"]
+                pe = meta["pe"]
+                if pe is None:
                     continue
+                txt = "н/д"
+                if pd.notna(meta.get("pct")):
+                    try:
+                        txt = f"{int(round(float(meta['pct'])))}%"
+                    except (TypeError, ValueError):
+                        pass
+                _add_date_label(
+                    pe,
+                    y,
+                    txt,
+                    side="end",
+                    lane="plan",
+                    stack_index=0,
+                    stack_total=1,
+                )
+        elif _date_mode != "none":
+            _show_start = _date_mode == "full"
+            for meta in _row_meta:
                 y = meta["y"]
                 ps, pe = meta["ps"], meta["pe"]
                 fs, fe = meta["fs"], meta["fe"]
-                _has_fact_lane = fs is not None and fe is not None
-                dur_p = _dur_days_days(ps, pe)
-                dur_f = _dur_days_days(fs, fe)
-                show_plan_lbl = bool(ps is not None and pe is not None and dur_p >= 1.0)
-                show_fact_lbl = bool(fs is not None and fe is not None and dur_f >= 1.0)
-
-                if _dlm == "full":
-                    starts: list[tuple[str, pd.Timestamp, str]] = []
-                    if show_plan_lbl and ps is not None:
-                        starts.append(("plan", ps, _fmt_bar_date(ps, long_fmt=True)))
-                    if (
-                        show_fact_lbl
-                        and fs is not None
-                        and (ps is None or fs.normalize() != ps.normalize())
-                    ):
-                        starts.append(
-                            ("fact" if _has_fact_lane else "plan", fs, _fmt_bar_date(fs, long_fmt=True))
-                        )
-                    ns = len(starts)
-                    for si, (ln, xv, txt) in enumerate(starts):
-                        _add_date_label(
-                            xv, y, txt, side="start", lane=ln, stack_index=si, stack_total=ns
-                        )
-
-                ends: list[tuple[str, pd.Timestamp, str]] = []
-                if show_plan_lbl and pe is not None:
-                    end_p = _fmt_bar_date(pe, long_fmt=True)
-                    if label_pct and pd.notna(meta["pct"]):
-                        try:
-                            end_p = f"{end_p} · {int(round(float(meta['pct'])))}%"
-                        except (TypeError, ValueError):
-                            pass
-                    ends.append(("plan", pe, end_p))
-                if (
-                    show_fact_lbl
-                    and fe is not None
-                    and (pe is None or fe.normalize() != pe.normalize())
-                ):
-                    ends.append(("fact" if _has_fact_lane else "plan", fe, _fmt_bar_date(fe, long_fmt=True)))
-                ne = len(ends)
-                for ei, (ln, xv, txt) in enumerate(ends):
+                start_items: list[tuple[str, pd.Timestamp, str]] = []
+                end_items: list[tuple[str, pd.Timestamp, str]] = []
+                if _show_start and ps is not None and pe is not None:
+                    start_items.append(("plan", ps, _fmt_bar_date(ps, long_fmt=True)))
+                if _show_start and fs is not None and fe is not None:
+                    start_items.append(("fact", fs, _fmt_bar_date(fs, long_fmt=True)))
+                if pe is not None:
+                    end_items.append(("plan", pe, _fmt_bar_date(pe, long_fmt=True)))
+                if fe is not None:
+                    end_items.append(("fact", fe, _fmt_bar_date(fe, long_fmt=True)))
+                for i, (lane, x_edge, txt) in enumerate(start_items):
                     _add_date_label(
-                        xv, y, txt, side="end", lane=ln, stack_index=ei, stack_total=ne
+                        x_edge,
+                        y,
+                        txt,
+                        side="start",
+                        lane=lane,
+                        stack_index=i,
+                        stack_total=len(start_items),
                     )
-            if _dlm == "end_only":
-                suppress_caption(
-                    f"Более {_GANTT_DATE_LABELS_END_ONLY_ROWS} задач: подписи дат только у окончания "
-                    "(даты начала — в hover)."
-                )
+                for i, (lane, x_edge, txt) in enumerate(end_items):
+                    _add_date_label(
+                        x_edge,
+                        y,
+                        txt,
+                        side="end",
+                        lane=lane,
+                        stack_index=i,
+                        stack_total=len(end_items),
+                    )
         if show_covenant_markers and base_end_x:
             fig.add_trace(
                 go.Scatter(
@@ -33308,12 +33531,21 @@ def dashboard_project_schedule_chart(df):
             y_labels=y_labels,
             task_font=int(policy.get("task_font", 11)),
         )
-        left_m = _project_schedule_gantt_apply_y_labels(
+        left_m, _x_domain_start, _y_name_ann = _project_schedule_gantt_apply_y_labels(
             fig,
             y_labels,
             dense=bool(policy.get("is_dense")),
             task_font=int(policy.get("task_font", 11)),
         )
+        _label_right_x: list = list(_end_label_x)
+        _right_label_px = 148
+        for _ann in _date_ann:
+            if _ann.get("xanchor") != "left":
+                continue
+            _axv = abs(int(_ann.get("ax") or 0))
+            if _axv >= 40:
+                _right_label_px = max(_right_label_px, _axv + 28)
+        _right_m = int(max(148, min(340, _right_label_px)))
         _bargap = min(0.28, 0.12 + 0.05 * (_ylines - 1))
         fig.update_layout(
             autosize=True,
@@ -33321,26 +33553,35 @@ def dashboard_project_schedule_chart(df):
             height=chart_h,
             xaxis_title="Период",
             yaxis_title=None,
-            margin=dict(l=left_m, r=148, t=36, b=88),
+            margin=dict(l=left_m, r=_right_m, t=36, b=88),
             showlegend=False,
             bargap=min(0.38, _bargap + 0.08),
             bargroupgap=0.16,
             uirevision="gantt_project_schedule_bars",
         )
-        if _date_ann:
-            fig.update_layout(annotations=list(_date_ann))
-        fig.update_xaxes(type="date", tickformat="%d.%m.%Y", automargin=True)
+        if _y_name_ann or _date_ann:
+            fig.update_layout(annotations=list(_y_name_ann) + list(_date_ann))
+        fig.update_xaxes(type="date", tickformat="%d.%m.%Y", automargin=True, domain=[_x_domain_start, 1.0])
 
         try:
             _bar_dates: list = []
+            _bar_starts: list = []
             for _meta in _row_meta:
                 for _dk in ("ps", "pe", "fs", "fe"):
                     _dv = _meta.get(_dk)
                     if _dv is not None:
                         _bar_dates.append(_dv)
+                for _sk in ("ps", "fs"):
+                    _sv = _meta.get(_sk)
+                    if _sv is not None:
+                        _bar_starts.append(_sv)
             _bar_dates.extend(base_end_x)
             _bar_dates.extend(_bar_edge_x)
-            lo_pad, hi_pad = _project_schedule_gantt_x_range(_bar_dates)
+            lo_pad, hi_pad = _project_schedule_gantt_x_range(
+                _bar_dates,
+                bar_starts=_bar_starts,
+                label_right_x=_label_right_x or None,
+            )
             if lo_pad is not None and hi_pad is not None:
                 fig.update_xaxes(range=[lo_pad, hi_pad], autorange=False)
                 tvals, ttext = _gantt_ru_date_ticks(
@@ -33375,13 +33616,7 @@ def dashboard_project_schedule_chart(df):
             pass
 
         fig = apply_chart_background(fig, skip_uniformtext=True)
-        left_m = _project_schedule_gantt_apply_y_labels(
-            fig,
-            y_labels,
-            dense=bool(policy.get("is_dense")),
-            task_font=int(policy.get("task_font", 11)),
-        )
-        fig.update_layout(showlegend=False, margin=dict(l=left_m, r=148, t=36, b=88))
+        fig.update_xaxes(domain=[_x_domain_start, 1.0])
         return fig
 
     def _build_covenants_points_figure(d: pd.DataFrame, policy: dict):
@@ -33482,11 +33717,8 @@ def dashboard_project_schedule_chart(df):
             y_labels=_y_list,
             task_font=_task_font,
         )
-        left_m = _project_schedule_gantt_left_margin(
-            _y_list, dense=bool(policy.get("is_dense")), task_font=_task_font
-        )
         _cov_margin = dict(
-            l=left_m,
+            l=8,
             r=240 if policy.get("is_dense") else 220,
             t=36,
             b=88,
@@ -33496,12 +33728,6 @@ def dashboard_project_schedule_chart(df):
             margin=_cov_margin,
             showlegend=False,
             uirevision="gantt_project_schedule_covenants",
-        )
-        _project_schedule_gantt_apply_y_labels(
-            fig,
-            _y_list,
-            dense=bool(policy.get("is_dense")),
-            task_font=int(policy.get("task_font", 11)),
         )
         fig.update_yaxes(title=dict(text=""))
         fig.update_xaxes(title_text="Дата", automargin=True, showgrid=True)
@@ -33525,19 +33751,23 @@ def dashboard_project_schedule_chart(df):
             pass
 
         fig = apply_chart_background(fig, skip_uniformtext=True)
-        left_m = _project_schedule_gantt_apply_y_labels(
+        left_m, _x_domain_start, _y_name_ann = _project_schedule_gantt_apply_y_labels(
             fig,
             _y_list,
             dense=bool(policy.get("is_dense")),
             task_font=_task_font,
         )
         _cov_margin["l"] = left_m
-        fig.update_layout(margin=_cov_margin, showlegend=False)
+        if _y_name_ann:
+            fig.update_layout(annotations=list(_y_name_ann), margin=_cov_margin, showlegend=False)
+        else:
+            fig.update_layout(margin=_cov_margin, showlegend=False)
+        fig.update_xaxes(domain=[_x_domain_start, 1.0])
         return fig, fact_end_col, fact_label
 
     _readability = _gantt_readability_policy(plot_df)
     y_labels, _gantt_chart_height = _gantt_resolve_y_labels(
-        [_gantt_trunc_label(s, 165) for s in _gantt_raw_y_names],
+        list(_gantt_raw_y_names),
         n_rows=len(plot_df),
         task_font=int(_readability.get("task_font", _GANTT_MIN_TASK_FONT)),
         dense=bool(_readability.get("is_dense")),
@@ -33576,7 +33806,7 @@ def dashboard_project_schedule_chart(df):
         label_pct=label_pct,
         pct_values=_pct_values,
         date_fmt=_dfmt_lbl,
-        show_covenant_markers=bool(is_covenants),
+        show_covenant_markers=False,
     )
     chart_h = int(getattr(fig_gantt.layout, "height", None) or 520)
 
@@ -33603,83 +33833,25 @@ def dashboard_project_schedule_chart(df):
             f"(полная высота {_gantt_render_h} px, на экране до {_GANTT_VIEWPORT_MAX_HEIGHT} px)."
         )
 
-    if is_covenants:
-        if "base end" not in plot_df.columns or not pd.to_datetime(plot_df["base end"], errors="coerce").notna().any():
-            st.info(
-                "Для режима «Ковенанты» нужно «base end» (базовое окончание). Сейчас в данных базовые окончания не заполнены — "
-                "точки базового плана будут отсутствовать."
+    try:
+        _h_g = int(getattr(fig_gantt.layout, "height", None) or 0)
+    except Exception:
+        _h_g = 0
+    _gantt_render_h = _h_g if _h_g > 0 else _gantt_render_h
+    render_chart(
+        fig_gantt,
+        key="gantt_project_schedule",
+        height=_gantt_render_h,
+        caption_below=(
+            (
+                "Одна полоса (план) с подписью % выполнения из MSP. "
+                if label_pct
+                else "План (бирюзовая) и факт (оранжевая); у каждой полосы — даты начала и окончания. "
             )
-        fig_cov, _fact_end_col, _fact_label = _build_covenants_points_figure(plot_df, policy=_readability)
-        try:
-            _h_cov = int(getattr(fig_cov.layout, "height", None) or 0)
-        except Exception:
-            _h_cov = 0
-        _gantt_render_h = _h_cov if _h_cov > 0 else _gantt_render_h
-        render_chart(
-            fig_cov,
-            key="gantt_project_schedule_covenants",
-            height=_gantt_render_h,
-            caption_below=(
-                "Ковенанты: синяя точка — базовое окончание, красная — "
-                + _fact_label.lower()
-                + (
-                    f"; при более {_GANTT_LINES_TEXT_MAX_ROWS} задачах подписи у точек скрыты (hover)."
-                    if len(plot_df) > _GANTT_LINES_TEXT_MAX_ROWS
-                    else "; подписи рядом с точками — даты."
-                )
-            ),
-            **_gantt_plot_kw,
-        )
-    elif view_mode == "Линии дат":
-        fig_lines = _build_date_lines_figure(
-            plot_df,
-            has_base_dates=has_base,
-            show_pct_labels=label_pct,
-            policy=_readability,
-        )
-        try:
-            _h_lines = int(getattr(fig_lines.layout, "height", None) or 0)
-        except Exception:
-            _h_lines = 0
-        _gantt_render_h = _h_lines if _h_lines > 0 else _gantt_render_h
-        render_chart(
-            fig_lines,
-            key="gantt_project_schedule_lines",
-            height=_gantt_render_h,
-            caption_below=(
-                "Линии дат: План/База по началу и окончанию; подписи справа — "
-                + ("% выполнения" if label_pct else "дата окончания")
-                + (
-                    f". При более {_GANTT_LINES_TEXT_MAX_ROWS} задачах подписи у точек скрыты (hover)."
-                    if len(plot_df) > _GANTT_LINES_TEXT_MAX_ROWS
-                    else "."
-                )
-                + " Масштаб и панорама — колесом мыши или панелью (+/−, рамка)."
-            ),
-            **_gantt_plot_kw,
-        )
-    else:
-        # Гантт: не clamp’ить ось X; scrollZoom — как в общем _PLOTLY_CONFIG (колесо над графиком).
-        try:
-            _h_g = int(getattr(fig_gantt.layout, "height", None) or 0)
-        except Exception:
-            _h_g = 0
-        _gantt_render_h = _h_g if _h_g > 0 else _gantt_render_h
-        render_chart(
-            fig_gantt,
-            key="gantt_project_schedule",
-            height=_gantt_render_h,
-            caption_below=(
-                "План (бирюзовая полоса) и факт (оранжевая). "
-                + (
-                    "Ромб ковенанты — при включённой галочке «Ковенанты по ТЗ». "
-                    if is_covenants
-                    else ""
-                )
-                + "Подписи: начало слева, окончание справа. Масштаб — колесом мыши или панелью (+/−, рамка)."
-            ),
-            **_gantt_plot_kw,
-        )
+            + "Масштаб — колесом мыши или панелью (+/−, рамка)."
+        ),
+        **_gantt_plot_kw,
+    )
 
     # Правки куратора 08.05.2026: подпись «Таблица под графиком» убрана.
 
@@ -33694,172 +33866,154 @@ def dashboard_project_schedule_chart(df):
     reason_src = _gantt_resolve_reason_column(plot_df)
     notes_src = _gantt_resolve_notes_column(plot_df)
 
-    if is_covenants:
-        base_end = (
-            pd.to_datetime(plot_df["base end"], errors="coerce")
-            if "base end" in plot_df.columns
-            else pd.Series(pd.NaT, index=plot_df.index)
-        )
-        fact_end_col = _gantt_find_fact_end_column(plot_df)
-        end_used = (
-            pd.to_datetime(plot_df[fact_end_col], errors="coerce")
-            if fact_end_col and fact_end_col in plot_df.columns
-            else pd.to_datetime(plot_df["plan end"], errors="coerce")
-        )
-        if not fact_end_col:
-            suppress_caption("Для ковенантов не найдена колонка фактического окончания — используется «plan end».")
+    # ТЗ заказчика 2026-05-06 (Блок 4, рисунок 6/8): таблица под графиком
+    d_end_num = None
+    if dev_end_src and dev_end_src in plot_df.columns:
+        d_end_num = pd.to_numeric(plot_df[dev_end_src], errors="coerce")
+    elif "base end" in plot_df.columns:
+        d_end_num = (
+            plot_df["plan end"] - pd.to_datetime(plot_df["base end"], errors="coerce")
+        ).dt.days
 
-        dev_end = (end_used - base_end).dt.days if base_end.notna().any() else pd.Series(np.nan, index=plot_df.index)
-        cov_tbl = pd.DataFrame(
-            {
-                "Ковенант": plot_df[task_col].fillna("").astype(str).map(_gantt_clean_task_label),
-                "Базовое окончание": [x.strftime("%d.%m.%Y") if pd.notna(x) else "" for x in base_end],
-                "Окончание": [x.strftime("%d.%m.%Y") if pd.notna(x) else "" for x in end_used],
-                "Отклонение Окончания": dev_end.map(_fmt_dev_days),
-            },
-            index=plot_df.index,
-        )
-        if show_reasons:
-            if reason_src and reason_src in plot_df.columns:
-                _rs = plot_df[reason_src].astype(str).fillna("")
-                cov_tbl["Причины отклонений"] = _rs.where(_rs.str.strip().str.lower().ne("nan"), "")
-            else:
-                cov_tbl["Причины отклонений"] = pd.Series("", index=cov_tbl.index, dtype=object)
-            if notes_src and notes_src in plot_df.columns:
-                _ns = plot_df[notes_src].astype(str).fillna("")
-                cov_tbl["Заметки"] = _ns.where(_ns.str.strip().str.lower().ne("nan"), "")
-            else:
-                cov_tbl["Заметки"] = pd.Series("", index=cov_tbl.index, dtype=object)
+    # ИД задачи MSP («Ид» в исходнике → canonical "task id seq" после web_loader._MSP_RENAME).
+    # Fallback на любые «id-подобные» поля (ID, Ид, task id, ID_задачи, Уникальный_идентификатор).
+    id_col = _sched_col(
+        plot_df,
+        [
+            "task id seq",
+            "Ид",
+            "ид",
+            "ID",
+            "id",
+            "task id",
+            "Task ID",
+            "task_id",
+            "ID_задачи",
+            "id задачи",
+        ],
+    ) or _sched_col(plot_df, ["unique id", "Уникальный_идентификатор"])
 
-        _ord = ["Ковенант", "Базовое окончание", "Окончание", "Отклонение Окончания"]
-        if show_reasons:
-            _ord.extend(["Причины отклонений", "Заметки"])
-        _ordered = [c for c in _ord if c in cov_tbl.columns]
-        _rest = [c for c in cov_tbl.columns if c not in _ordered]
-        tbl_show = cov_tbl[_ordered + _rest]
-    else:
-        # ТЗ заказчика 2026-05-06 (Блок 4, рисунок 6/8): таблица под графиком имеет колонки
-        # ИД · Название задачи · % завершения · Окончание · Базовое окончание · Отклонение окончания
-        # При флажке «Показать причины отклонений» — добавляются колонки «Причина отклонения» и «Заметки».
-        # Старые колонки «Проект», «План начало», «База: начало», «Отклонение Начала» убраны (избыточны
-        # для гант-режима с фильтром по проекту).
-        d_end_num = None
-        if dev_end_src and dev_end_src in plot_df.columns:
-            d_end_num = pd.to_numeric(plot_df[dev_end_src], errors="coerce")
-        elif "base end" in plot_df.columns:
-            d_end_num = (
-                plot_df["plan end"] - pd.to_datetime(plot_df["base end"], errors="coerce")
-            ).dt.days
-
-        # ИД задачи MSP («Ид» в исходнике → canonical "task id seq" после web_loader._MSP_RENAME).
-        # Fallback на любые «id-подобные» поля (ID, Ид, task id, ID_задачи, Уникальный_идентификатор).
-        id_col = _sched_col(
-            plot_df,
-            [
-                "task id seq",
-                "Ид",
-                "ид",
-                "ID",
-                "id",
-                "task id",
-                "Task ID",
-                "task_id",
-                "ID_задачи",
-                "id задачи",
-            ],
-        ) or _sched_col(plot_df, ["unique id", "Уникальный_идентификатор"])
-
-        tbl_view = pd.DataFrame(index=plot_df.index)
-        if id_col and id_col in plot_df.columns:
-            _id_ser = plot_df[id_col]
-            if isinstance(_id_ser, pd.DataFrame):
-                _id_ser = _id_ser.iloc[:, 0]
-            # Целые числа без '.0', NaN → ""
-            _id_num = pd.to_numeric(_id_ser, errors="coerce")
-            if _id_num.notna().any():
-                tbl_view["ИД"] = _id_num.map(
-                    lambda v: "" if pd.isna(v) else f"{int(v)}"
-                )
-            else:
-                tbl_view["ИД"] = _id_ser.astype(str).where(_id_ser.notna(), "")
-        else:
-            tbl_view["ИД"] = pd.Series("", index=plot_df.index, dtype=object)
-
-        # ТЗ заказчика 2026-05-06 (скрин 1): после «Ид» в таблице идёт колонка
-        # «Ур» — уровень иерархии MSP (3/4/5). Берём из level_col, если есть.
-        if level_col and level_col in plot_df.columns:
-            _lvl_num = pd.to_numeric(plot_df[level_col], errors="coerce")
-            tbl_view["Ур"] = _lvl_num.map(
+    tbl_view = pd.DataFrame(index=plot_df.index)
+    if id_col and id_col in plot_df.columns:
+        _id_ser = plot_df[id_col]
+        if isinstance(_id_ser, pd.DataFrame):
+            _id_ser = _id_ser.iloc[:, 0]
+        # Целые числа без '.0', NaN → ""
+        _id_num = pd.to_numeric(_id_ser, errors="coerce")
+        if _id_num.notna().any():
+            tbl_view["ИД"] = _id_num.map(
                 lambda v: "" if pd.isna(v) else f"{int(v)}"
             )
         else:
-            tbl_view["Ур"] = pd.Series("", index=plot_df.index, dtype=object)
+            tbl_view["ИД"] = _id_ser.astype(str).where(_id_ser.notna(), "")
+    else:
+        tbl_view["ИД"] = pd.Series("", index=plot_df.index, dtype=object)
 
-        if task_col and task_col in plot_df.columns:
-            tbl_view["Название задачи"] = (
-                plot_df[task_col].fillna("").astype(str).map(_gantt_clean_task_label)
-            )
-        else:
-            tbl_view["Название задачи"] = ""
+    # ТЗ заказчика 2026-05-06 (скрин 1): после «Ид» в таблице идёт колонка
+    # «Ур» — уровень иерархии MSP (3/4/5). Берём из level_col, если есть.
+    if level_col and level_col in plot_df.columns:
+        _lvl_num = pd.to_numeric(plot_df[level_col], errors="coerce")
+        tbl_view["Ур"] = _lvl_num.map(
+            lambda v: "" if pd.isna(v) else f"{int(v)}"
+        )
+    else:
+        tbl_view["Ур"] = pd.Series("", index=plot_df.index, dtype=object)
 
-        if "pct complete" in plot_df.columns:
-            _pct = _gantt_coerce_pct_series(plot_df["pct complete"]).round().astype("Int64")
-            tbl_view["% завершения"] = _pct.map(lambda v: "" if pd.isna(v) else f"{int(v)}%")
-        else:
-            tbl_view["% завершения"] = ""
+    if task_col and task_col in plot_df.columns:
+        tbl_view["Название задачи"] = (
+            plot_df[task_col].fillna("").astype(str).map(_gantt_clean_task_label)
+        )
+    else:
+        tbl_view["Название задачи"] = ""
 
-        if "plan end" in plot_df.columns:
-            _pe = pd.to_datetime(plot_df["plan end"], errors="coerce")
-            tbl_view["Окончание"] = [x.strftime("%d.%m.%Y") if pd.notna(x) else "" for x in _pe]
-        else:
-            tbl_view["Окончание"] = ""
+    if "pct complete" in plot_df.columns:
+        _pct = _gantt_coerce_pct_series(plot_df["pct complete"]).round().astype("Int64")
+        tbl_view["% завершения"] = _pct.map(lambda v: "" if pd.isna(v) else f"{int(v)}%")
+    else:
+        tbl_view["% завершения"] = ""
 
-        if "base end" in plot_df.columns:
-            _be = pd.to_datetime(plot_df["base end"], errors="coerce")
-            tbl_view["Базовое окончание"] = [
-                x.strftime("%d.%m.%Y") if pd.notna(x) else "" for x in _be
-            ]
-        else:
-            tbl_view["Базовое окончание"] = ""
+    if "plan end" in plot_df.columns:
+        _pe = pd.to_datetime(plot_df["plan end"], errors="coerce")
+        tbl_view["Окончание"] = [x.strftime("%d.%m.%Y") if pd.notna(x) else "" for x in _pe]
+    else:
+        tbl_view["Окончание"] = ""
 
-        if d_end_num is not None:
-            tbl_view["Отклонение окончания"] = d_end_num.reindex(tbl_view.index).map(_fmt_dev_days)
-        else:
-            tbl_view["Отклонение окончания"] = ""
-
-        if show_reasons:
-            # ТЗ заказчика 2026-05-06: «Причины отклонений» (множ. число),
-            # «Заметки». Подсветка непустых ячеек зелёным — в _render_gantt_schedule_html_table.
-            if reason_src and reason_src in plot_df.columns:
-                _r = plot_df[reason_src].astype(str).fillna("")
-                tbl_view["Причины отклонений"] = _r.where(_r.str.lower() != "nan", "")
-            else:
-                tbl_view["Причины отклонений"] = ""
-            if notes_src and notes_src in plot_df.columns:
-                _n = plot_df[notes_src].astype(str).fillna("")
-                tbl_view["Заметки"] = _n.where(_n.str.lower() != "nan", "")
-            else:
-                tbl_view["Заметки"] = ""
-
-        _gantt_tbl_order = [
-            "ИД",
-            "Ур",
-            "Название задачи",
-            "% завершения",
-            "Окончание",
-            "Базовое окончание",
-            "Отклонение окончания",
+    if "base end" in plot_df.columns:
+        _be = pd.to_datetime(plot_df["base end"], errors="coerce")
+        tbl_view["Базовое окончание"] = [
+            x.strftime("%d.%m.%Y") if pd.notna(x) else "" for x in _be
         ]
-        if show_reasons:
-            _gantt_tbl_order.extend(["Причины отклонений", "Заметки"])
-        _ordered = [c for c in _gantt_tbl_order if c in tbl_view.columns]
-        tbl_show = tbl_view[_ordered]
+    else:
+        tbl_view["Базовое окончание"] = ""
+
+    if d_end_num is not None:
+        tbl_view["Отклонение окончания"] = d_end_num.reindex(tbl_view.index).map(_fmt_dev_days)
+    else:
+        tbl_view["Отклонение окончания"] = ""
+
+    if show_reasons:
+        # ТЗ заказчика 2026-05-06: «Причины отклонений» (множ. число),
+        # «Заметки». Подсветка непустых ячеек зелёным — в _render_gantt_schedule_html_table.
+        if reason_src and reason_src in plot_df.columns:
+            _r = plot_df[reason_src].astype(str).fillna("")
+            tbl_view["Причины отклонений"] = _r.where(_r.str.lower() != "nan", "")
+        else:
+            tbl_view["Причины отклонений"] = ""
+        if notes_src and notes_src in plot_df.columns:
+            _n = plot_df[notes_src].astype(str).fillna("")
+            tbl_view["Заметки"] = _n.where(_n.str.lower() != "nan", "")
+        else:
+            tbl_view["Заметки"] = ""
+
+    _gantt_tbl_order = [
+        "ИД",
+        "Ур",
+        "Название задачи",
+        "% завершения",
+        "Окончание",
+        "Базовое окончание",
+        "Отклонение окончания",
+    ]
+    if show_reasons:
+        _gantt_tbl_order.extend(["Причины отклонений", "Заметки"])
+    _ordered = [c for c in _gantt_tbl_order if c in tbl_view.columns]
+    tbl_show = tbl_view[_ordered]
+
+    tbl_numeric = tbl_show.copy()
+    if d_end_num is not None:
+        tbl_numeric["Отклонение окончания"] = (
+            -pd.to_numeric(d_end_num.reindex(tbl_show.index), errors="coerce")
+        )
+    if "plan end" in plot_df.columns and "Окончание" in tbl_numeric.columns:
+        tbl_numeric["Окончание"] = pd.to_datetime(
+            plot_df["plan end"], errors="coerce"
+        ).reindex(tbl_show.index)
+    if "base end" in plot_df.columns and "Базовое окончание" in tbl_numeric.columns:
+        tbl_numeric["Базовое окончание"] = pd.to_datetime(
+            plot_df["base end"], errors="coerce"
+        ).reindex(tbl_show.index)
+    if "Ур" in tbl_numeric.columns:
+        tbl_numeric["Ур"] = pd.to_numeric(tbl_numeric["Ур"], errors="coerce")
+    if "ИД" in tbl_numeric.columns:
+        tbl_numeric["ИД"] = pd.to_numeric(tbl_numeric["ИД"], errors="coerce")
 
     if tbl_show.empty:
         st.info("Нет колонок для таблицы.")
     else:
         with st.expander("Таблица задач", expanded=False):
-            _render_gantt_schedule_html_table(tbl_show, max_rows=_gantt_rows_shown)
+            suppress_caption("Сортировка: клик по заголовку колонки.")
+            _render_gantt_schedule_html_table(
+                tbl_show,
+                tbl_numeric,
+                max_rows=_gantt_rows_shown,
+            )
+            render_dataframe_excel_csv_downloads(
+                tbl_show,
+                file_stem="gantt_project_schedule",
+                key_prefix="gantt_project_table",
+                csv_label="Скачать CSV",
+                popover_label="Скачать таблицу (CSV / Excel)",
+            )
             if _gantt_rows_total > _gantt_rows_shown:
                 suppress_caption(
                     f"Таблица и диаграмма: показано {_gantt_rows_shown} из {_gantt_rows_total} "
