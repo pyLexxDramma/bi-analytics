@@ -5731,7 +5731,6 @@ def render_plan_fact_zos_covenant_table(
         key_prefix="zos_covenant_table",
         csv_label="Скачать CSV (ЗОС)",
     )
-    st.markdown("---")
 
 
 _PLAN_FACT_KPI_PLATES_CSS = """
@@ -7263,6 +7262,8 @@ def dashboard_plan_fact_dates(df):
         _max_lines = max(1, max(len(str(y).split("<br>")) for y in y_order))
 
         fig = go.Figure()
+        _pf_bar_chart_h: Optional[int] = None
+        _pf_bar_chart_viewport: Optional[int] = None
 
         if is_covenant:
             _y = local["_y"]
@@ -7321,7 +7322,7 @@ def dashboard_plan_fact_dates(df):
                     "Нет задач с датами «Базовое окончание» или «Окончание» для диаграммы."
                 )
                 return
-            _origin_ts = pd.Timestamp(min(_timeline_pts)).normalize()
+            _origin_ts = pd.Timestamp(min(_timeline_pts)).normalize() - pd.Timedelta(days=30)
             _origin_ms = _epoch_ms(_origin_ts)
             if _origin_ms is None:
                 st.warning("Не удалось определить начало шкалы для диаграммы.")
@@ -7338,19 +7339,20 @@ def dashboard_plan_fact_dates(df):
             cust_p: list[tuple[str, str]] = []
 
             for _, row in local.iterrows():
-                y_labels.append(str(row["_y"]))
+                y_lbl = str(row["_y"])
                 be = row.get(fe_col)
                 pe = row.get(pe_col)
                 be_ms = _epoch_ms(be) if pd.notna(be) else None
                 pe_ms = _epoch_ms(pe) if pd.notna(pe) else None
+                b_len = max(0.0, float(be_ms - _origin_ms)) if be_ms is not None else 0.0
+                c_len = max(0.0, float(pe_ms - _origin_ms)) if pe_ms is not None else 0.0
+                if b_len <= 0.0 and c_len <= 0.0:
+                    continue
+                y_labels.append(y_lbl)
                 base_base_ms.append(float(_origin_ms))
                 cur_base_ms.append(float(_origin_ms))
-                base_len_ms.append(
-                    max(0.0, float(be_ms - _origin_ms)) if be_ms is not None else 0.0
-                )
-                cur_len_ms.append(
-                    max(0.0, float(pe_ms - _origin_ms)) if pe_ms is not None else 0.0
-                )
+                base_len_ms.append(b_len)
+                cur_len_ms.append(c_len)
                 base_txt.append(
                     pd.Timestamp(be).strftime("%d.%m.%Y") if pd.notna(be) else ""
                 )
@@ -7369,6 +7371,17 @@ def dashboard_plan_fact_dates(df):
                         pd.Timestamp(pe).strftime("%d.%m.%Y") if pd.notna(pe) else "—",
                     )
                 )
+
+            if not y_labels:
+                st.info("Нет задач с датами для диаграммы при текущих фильтрах.")
+                return
+
+            y_order = list(y_labels)
+            n_rows = len(y_order)
+            _max_lines = max(1, max(len(str(y).split("<br>")) for y in y_order))
+            _row_h = 34 + _max_lines * 14
+            _chart_h = max(420, int(n_rows * _row_h))
+            _chart_viewport = 960
 
             fig.add_trace(
                 go.Bar(
@@ -7406,11 +7419,13 @@ def dashboard_plan_fact_dates(df):
                 width=None,
                 xaxis_title="Дата (от начала шкалы до окончания)",
                 yaxis_title=None,
-                height=max(520, int(n_rows * (34 + _max_lines * 14))),
+                height=_chart_h,
                 xaxis=dict(type="date", tickformat="%d.%m.%Y", automargin=True),
                 margin=dict(l=64, r=72, t=48, b=56),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             )
+            _pf_bar_chart_h = _chart_h
+            _pf_bar_chart_viewport = _chart_viewport
 
         fig.update_yaxes(
             categoryorder="array",
@@ -7421,16 +7436,24 @@ def dashboard_plan_fact_dates(df):
             side="left",
         )
         fig = apply_chart_background(fig, skip_uniformtext=True)
-        render_chart(
-            fig,
+        _render_kw = dict(
+            skip_clamp_zoom=True,
+            omit_default_width=True,
             caption_below=(
                 "Блок «Ковенанты»: начало и окончание — точками на шкале дат."
                 if is_covenant
                 else "Столбцы от начала шкалы до «Базового окончания» и «Окончания»; сверху — наибольшее отклонение."
             ),
-            skip_clamp_zoom=True,
-            omit_default_width=True,
         )
+        if _pf_bar_chart_h is not None:
+            _render_kw["height"] = _pf_bar_chart_h
+            _render_kw["max_height"] = None
+            if (
+                _pf_bar_chart_viewport is not None
+                and _pf_bar_chart_h > _pf_bar_chart_viewport
+            ):
+                _render_kw["scroll_viewport_height"] = _pf_bar_chart_viewport
+        render_chart(fig, **_render_kw)
 
     def _plan_fact_gantt_source_df() -> pd.DataFrame:
         if covenant_points_chart:
