@@ -789,12 +789,13 @@ def require_auth():
         st.stop()
 
 
-def render_sidebar_menu(current_page: str = "reports"):
+def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool = True):
     """
     Отображение боковой панели с меню навигации
 
     Args:
         current_page: Текущая страница ("reports", "admin", "profile", "analyst_params")
+        include_footer: False — только навигация/настройки (версия данных и «Выйти» отдельно после загрузки web/)
     """
     if not is_streamlit_context():
         return
@@ -891,6 +892,16 @@ def render_sidebar_menu(current_page: str = "reports"):
             if st.button("Параметры отчётов", width="stretch", key="menu_go_analyst_params"):
                 switch_page_app("pages/_analyst_params.py")
 
+        if include_footer:
+            render_sidebar_footer(user)
+
+
+def render_sidebar_footer(user: dict) -> None:
+    """Низ сайдбара: данные/версия/выход. Вызывать после загрузки web/ → SQLite."""
+    if not is_streamlit_context():
+        return
+
+    with st.sidebar:
         # F2: встроенная навигация Streamlit скрыта.
 
         # ── Принудительный refresh (для admin/superadmin): чистит кэши Streamlit

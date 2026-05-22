@@ -186,11 +186,51 @@ def _render_ftp_sidebar_controls(st: Any) -> None:
 
 def _render_version_sidebar_compact(st: Any) -> None:
     try:
-        from web_schema import get_active_version_id, get_all_versions
+        from web_schema import get_active_version_id, get_all_versions, get_web_connection, init_web_schema
     except Exception:
         return
 
+    try:
+        init_web_schema()
+    except Exception:
+        pass
+
     versions = get_all_versions()
+    if not versions:
+        try:
+            active_id = get_active_version_id()
+        except Exception:
+            active_id = None
+        if active_id is not None:
+            try:
+                with get_web_connection() as conn:
+                    row = conn.execute(
+                        """
+                        SELECT id, created_at, label, status, files_count, rows_count, is_active
+                        FROM web_versions WHERE id=?
+                        """,
+                        (int(active_id),),
+                    ).fetchone()
+                    if row is not None:
+                        versions = [dict(row)]
+            except Exception:
+                pass
+
+    if not versions:
+        _sess_vid = _safe_int(st.session_state.get("web_version_id"))
+        if _sess_vid is not None:
+            versions = [
+                {
+                    "id": int(_sess_vid),
+                    "created_at": "текущая сессия",
+                    "label": None,
+                    "status": "success",
+                    "files_count": 0,
+                    "rows_count": 0,
+                    "is_active": 1,
+                }
+            ]
+
     if not versions:
         st.caption("Версия данных: нет снимков в БД")
         return

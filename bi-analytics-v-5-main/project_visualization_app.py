@@ -36,6 +36,7 @@ from auth import (
     logout,
     init_db,
     render_sidebar_menu,
+    render_sidebar_footer,
     authenticate,
     generate_reset_token,
     reset_password,
@@ -702,8 +703,8 @@ def main():
         unsafe_allow_html=True,
     )
 
-    # Боковая панель с меню навигации
-    render_sidebar_menu(current_page="reports")
+    # Боковая панель: навигация сразу; версия данных — после загрузки web/ (см. ниже).
+    render_sidebar_menu(current_page="reports", include_footer=False)
 
     ensure_data_session_state()
 
@@ -1183,6 +1184,8 @@ def main():
                 apply_web_version_pick(st, build_pseudo_lr_from_db=_build_pseudo_lr_from_db)
             except Exception:
                 pass
+
+        render_sidebar_footer(user)
 
         if _is_release_client_mode():
             _panel_tab = "Дашборды"
