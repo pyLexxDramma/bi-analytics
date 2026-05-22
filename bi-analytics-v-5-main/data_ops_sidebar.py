@@ -19,11 +19,13 @@ def render_admin_data_ops_sidebar(st: Any) -> None:
     """
     Маленькая панель в сайдбаре: источник данных, загрузка web/, версия, FTP.
     Вызывать из ``auth.render_sidebar_menu`` после «Обновить данные и кэш».
+    На release не вызывается (``show_data_ops_ui_for_role``).
     """
     try:
-        from config import is_release_client_mode
+        from config import is_release_client_mode, ignore_demo_data_files
     except Exception:
         is_release_client_mode = lambda: False  # type: ignore[assignment,misc]
+        ignore_demo_data_files = lambda: True  # type: ignore[assignment,misc]
 
     if is_release_client_mode():
         opts = ["Из папки web/", "FTP → web/", "Загрузить вручную"]
@@ -67,7 +69,8 @@ def render_admin_data_ops_sidebar(st: Any) -> None:
         with st.expander("FTP", expanded=False):
             _render_ftp_sidebar_controls(st)
 
-    _render_demo_data_toggle(st)
+    if not ignore_demo_data_files():
+        _render_demo_data_toggle(st)
     _render_version_sidebar_compact(st)
 
 

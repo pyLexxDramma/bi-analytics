@@ -769,6 +769,11 @@ def main():
 
     _admin_data_ops_sidebar = _show_data_ops_ui()
 
+    # Release: только web/, без демо и без ручных табов в сайдбаре.
+    if _is_release_client_mode():
+        st.session_state["data_mode_radio"] = "Из папки web/"
+        st.session_state["include_demo_data"] = False
+
     # Источник данных: UI только в сайдбаре у admin; клиент release — тихий web/.
     st.session_state.setdefault("data_mode_radio", "Из папки web/")
     data_mode = str(st.session_state.get("data_mode_radio") or "Из папки web/")
@@ -837,36 +842,8 @@ def main():
                 return None
 
         def _db_version_missing_budget_data(version_id: int) -> bool:
-            """
-            Активная версия БД может быть собрана auto_ingest'ом без demo budget-файла
-            из `new_csv/`. Для БДДС тогда в session попадает только MSP/1С, а бюджетный
-            слой теряется. В таком случае нужно перечитать `web/` + demo-файлы целиком.
-            """
-            try:
-                from config import ignore_demo_data_files
-
-                if ignore_demo_data_files():
-                    return False
-            except Exception:
-                pass
-            try:
-                import sqlite3 as _sql
-                from web_schema import WEB_DB_PATH as _WDP
-
-                _conn = _sql.connect(_WDP)
-                _rows = _conn.execute(
-                    "SELECT DISTINCT file_type FROM web_files WHERE version_id=?",
-                    (int(version_id),),
-                ).fetchall()
-                _conn.close()
-                _types = {str(_r[0] or "") for _r in _rows}
-                if "budget" in _types:
-                    return False
-                if "reference_dannye" not in _types:
-                    return False
-                return (_app_dir / "new_csv" / "sample_budget_data.csv").is_file()
-            except Exception:
-                return False
+            """Демо new_csv/ не используется — перезагрузка ради sample_budget не нужна."""
+            return False
 
         def _force_reload_when_active_db_missing_budget() -> None:
             """
@@ -1179,38 +1156,8 @@ def main():
                     _has_db_versions = bool(get_all_versions())
                 except Exception:
                     pass
-                if not _has_db_versions:
-                    st.session_state["_pending_web_folder_load"] = True
-                    st.session_state["_pending_web_load_quiet"] = True
-                    try:
-                        _auto_ftp_off = str(
-                            os.environ.get("BI_ANALYTICS_AUTO_FTP_ON_START", "")
-                        ).strip().lower() in ("0", "false", "no", "off")
-                    except Exception:
-                        _auto_ftp_off = False
-                    if not _auto_ftp_off:
-                        try:
-                            from ftp_sync import (
-                                merge_ftp_config,
-                                streamlit_secrets_to_config,
-                                sync_ftp_to_web,
-                            )
-
-                            _ftp_cfg = merge_ftp_config(streamlit_secrets_to_config())
-                            _ftp_cfg["timeout"] = float(_ftp_cfg.get("timeout") or 30) or 30
-                            if _ftp_cfg.get("host") and _ftp_cfg.get("user"):
-                                with st.spinner("Загружаю свежие данные…"):
-                                    sync_ftp_to_web(
-                                        get_web_dir(),
-                                        config=_ftp_cfg,
-                                        extensions=(".csv", ".json"),
-                                        progress=lambda _m: None,
-                                    )
-                        except Exception:
-                            pass
-                else:
-                    st.session_state["_pending_web_folder_load"] = True
-                    st.session_state["_pending_web_load_quiet"] = True
+                st.session_state["_pending_web_folder_load"] = True
+                st.session_state["_pending_web_load_quiet"] = True
 
         if (
             data_mode in ("Из папки web/", "FTP → web/")

@@ -229,17 +229,10 @@ def show_data_ops_ui_for_role(role: Optional[str]) -> bool:
     """
     Показывать панель «Источник данных», FTP, «Загрузить из web/», «Версия данных».
 
-    На release для обычного клиента — False (данные подгружаются тихо через auto-ingest / hydrate).
-    Админам на release — True (страховка при сбое FTP).
+    На release (клиент) — False: данные только из web/, автозагрузка при старте, без ручных табов.
+    На dev/local — True для настройки и отладки.
     """
-    if not is_release_client_mode():
-        return True
-    try:
-        from auth import has_admin_access
-
-        return bool(role and has_admin_access(str(role)))
-    except Exception:
-        return False
+    return not is_release_client_mode()
 
 
 def is_dev_branch() -> bool:
@@ -268,34 +261,18 @@ def get_ai_assistant_open_url() -> str:
 
 
 def default_include_demo_data() -> bool:
-    """Дефолт селектора «Подмешивать демо» (admin): dev — вкл., release — выкл."""
-    return not is_release_client_mode()
+    """Демо new_csv/ не используется (только явный BI_ANALYTICS_INCLUDE_DEMO=1)."""
+    return _env_truthy("BI_ANALYTICS_INCLUDE_DEMO")
 
 
 def ignore_demo_data_files() -> bool:
     """
-    Не подмешивать демо: каталог ``new_csv/`` рядом с приложением,
-    ``sample_*.csv`` и любые файлы в каталогах ``new_csv/`` внутри ``web/`` и доп. путей.
+    Не подмешивать демо: ``new_csv/``, ``sample_*.csv``, пути с ``…/new_csv/`` в web/.
 
-    Приоритет источников решения (сверху → вниз, первый сработавший побеждает):
-
-    1. ``BI_ANALYTICS_INCLUDE_DEMO=1`` (env) → ``False`` (явное включение демо).
-    2. ``BI_ANALYTICS_IGNORE_DEMO=1`` (env) → ``True``.
-    3. ``st.session_state['include_demo_data']`` — селектор admin в сайдбаре «Данные».
-    4. **Дефолт**: release — без демо; dev — демо из ``new_csv/`` при загрузке в SQLite.
+    По умолчанию **везде** (local, dev, release) — только реальные файлы из web/.
+    Исключение: ``BI_ANALYTICS_INCLUDE_DEMO=1`` для аварийной локальной отладки UI.
     """
-    if _env_truthy("BI_ANALYTICS_INCLUDE_DEMO"):
-        return False
-    if _env_truthy("BI_ANALYTICS_IGNORE_DEMO"):
-        return True
-    try:
-        import streamlit as st  # type: ignore
-
-        if "include_demo_data" in st.session_state:
-            return not bool(st.session_state.get("include_demo_data"))
-    except Exception:
-        pass
-    return is_release_client_mode()
+    return not _env_truthy("BI_ANALYTICS_INCLUDE_DEMO")
 
 
 def web_load_latest_snapshots_only() -> bool:

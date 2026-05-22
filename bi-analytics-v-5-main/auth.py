@@ -897,7 +897,15 @@ def render_sidebar_menu(current_page: str = "reports"):
         # и форсирует свежий ingest из web/ (опционально с FTP, если настроено).
         # Чтобы клиент мгновенно увидел свежие данные после деплоя — без ожидания
         # естественного истечения cache TTL.
-        if has_admin_access(user.get("role", "")):
+        _show_data_ops_sidebar = True
+        try:
+            from config import show_data_ops_ui_for_role
+
+            _show_data_ops_sidebar = bool(show_data_ops_ui_for_role(user.get("role", "")))
+        except Exception:
+            pass
+
+        if has_admin_access(user.get("role", "")) and _show_data_ops_sidebar:
             st.markdown("---")
             if st.button(
                 "Обновить данные и кэш",
