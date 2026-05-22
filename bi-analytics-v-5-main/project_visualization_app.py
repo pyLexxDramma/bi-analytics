@@ -799,6 +799,15 @@ def main():
         # и пишет «Не найдены tessa csv / 1C dannye» — даже если session_state
         # уже наполнен через read_version_to_session.
         def _build_pseudo_lr_from_db(version_id: int) -> "Optional[dict]":
+            _type_aliases = {
+                "msp": "project",
+                "budget": "reference_dannye",
+                "1c_budget": "reference_dannye",
+                "1c_dk": "debit_credit",
+                "tessa_id": "tessa",
+                "tessa_rd": "tessa",
+                "tessa_task": "tessa_tasks",
+            }
             try:
                 import sqlite3 as _sql
                 from web_schema import WEB_DB_PATH as _WDP
@@ -814,7 +823,8 @@ def main():
                 _diags = []
                 _types_in_db = set()
                 for _r in _rows:
-                    _ft = str(_r["file_type"] or "")
+                    _ft_raw = str(_r["file_type"] or "")
+                    _ft = _type_aliases.get(_ft_raw.lower(), _ft_raw)
                     _types_in_db.add(_ft)
                     _diags.append(
                         {
@@ -1278,20 +1288,21 @@ def main():
 
         _had_data_attempt = (
             st.session_state.get("last_load_result") is not None
-            or st.session_state.get("web_version_id") is not None
+            or _session_has_loaded_data()
         )
         if _had_data_attempt:
             _ctr = evaluate_data_contract(st.session_state.get("last_load_result"))
             st.session_state["last_data_contract"] = _ctr
             if _admin_data_ops_sidebar:
                 render_contract_banner(_ctr)
-            elif not _ctr.get("ok"):
+            elif not _ctr.get("ok") and not _is_release_client_mode():
                 for _bl in (_ctr.get("blocking") or [])[:5]:
                     st.error(str(_bl))
             if should_enforce_data_contract_stop(release_client_mode=_is_release_client_mode()) and not _ctr.get(
                 "ok"
             ):
-                st.stop()
+                if not _is_release_client_mode() or not _session_has_loaded_data():
+                    st.stop()
 
     # Use project data as main df for backward compatibility
     df = st.session_state.project_data

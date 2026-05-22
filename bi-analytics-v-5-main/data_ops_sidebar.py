@@ -17,6 +17,16 @@ def _safe_int(v: Any) -> Optional[int]:
 
 def render_release_data_version_sidebar(st: Any) -> None:
     """Release: только выбор версии данных в сайдбаре (без источника/FTP/ручной загрузки)."""
+    st.markdown(
+        '<p class="sidebar-section-title" style="margin-top:0.25rem;">Версия данных</p>',
+        unsafe_allow_html=True,
+    )
+    try:
+        from web_schema import init_web_schema
+
+        init_web_schema()
+    except Exception:
+        pass
     _render_version_sidebar_compact(st)
 
 

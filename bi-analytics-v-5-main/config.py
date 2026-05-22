@@ -222,7 +222,29 @@ def is_release_client_mode() -> bool:
         return True
     if _env_truthy("BI_ANALYTICS_RELEASE_MODE"):
         return True
-    return _git_current_branch() == "release"
+    if _git_current_branch() == "release":
+        return True
+    try:
+        import streamlit as st  # type: ignore
+
+        ctx = getattr(st, "context", None)
+        headers = getattr(ctx, "headers", None) if ctx is not None else None
+        host = ""
+        if headers is not None:
+            try:
+                host = str(headers.get("Host") or headers.get("host") or "").strip().lower()
+            except Exception:
+                host = ""
+        if not host:
+            try:
+                host = str(getattr(ctx, "url", "") or "").strip().lower()
+            except Exception:
+                host = ""
+        if "streamlit.app" in host:
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def show_data_ops_ui_for_role(role: Optional[str]) -> bool:

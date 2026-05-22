@@ -48,6 +48,26 @@ def collect_contract_file_checks(load_result: dict[str, Any] | None) -> list[dic
     if not isinstance(diags, list):
         diags = []
 
+    def _normalize_contract_file_type(raw_type: Any) -> str:
+        t = str(raw_type or "unknown").strip().lower()
+        aliases = {
+            "msp": "project",
+            "project": "project",
+            "budget": "reference_dannye",
+            "1c_budget": "reference_dannye",
+            "reference_dannye": "reference_dannye",
+            "1c_dk": "debit_credit",
+            "debit_credit": "debit_credit",
+            "tessa_id": "tessa",
+            "tessa_rd": "tessa",
+            "tessa": "tessa",
+            "tessa_task": "tessa_tasks",
+            "tessa_tasks": "tessa_tasks",
+            "resources": "resources",
+            "technique": "technique",
+        }
+        return aliases.get(t, t)
+
     def _hint_for(target: str, level: str) -> str:
         if str(level).lower() != "err":
             return ""
@@ -113,8 +133,29 @@ def collect_contract_file_checks(load_result: dict[str, Any] | None) -> list[dic
 
     type_to_items: dict[str, list[dict[str, Any]]] = {}
     for d in diags:
-        t = str((d or {}).get("type", "unknown"))
+        t = _normalize_contract_file_type((d or {}).get("type", "unknown"))
         type_to_items.setdefault(t, []).append(d or {})
+
+    # После hydrate из SQLite session_state может быть полнее, чем diagnostics
+    # (pseudo_lr из web_files без колонок / неполный список типов).
+    session_map = {
+        "project": st.session_state.get("project_data"),
+        "resources": st.session_state.get("resources_data"),
+        "tessa": st.session_state.get("tessa_data"),
+        "tessa_tasks": st.session_state.get("tessa_tasks_data"),
+        "debit_credit": st.session_state.get("debit_credit_data"),
+        "reference_dannye": st.session_state.get("reference_1c_dannye"),
+    }
+    for tp, obj in session_map.items():
+        if isinstance(obj, pd.DataFrame) and not obj.empty:
+            type_to_items.setdefault(tp, []).append(
+                {
+                    "file": f"session:{tp}",
+                    "type": tp,
+                    "rows": int(len(obj)),
+                    "columns": [str(c) for c in obj.columns],
+                }
+            )
 
     def _has_type(*types: str) -> bool:
         return any(t in type_to_items for t in types)
