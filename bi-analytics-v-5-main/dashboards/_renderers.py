@@ -19086,6 +19086,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         gdrs_agg_label_to_key,
         gdrs_agg_select_options,
         gdrs_filter_fact_by_months,
+        gdrs_matrix_show_week_columns,
         gdrs_month_select_options,
         gdrs_months_date_range,
         gdrs_plan_snapshot_date,
@@ -19258,6 +19259,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         article_sig_sets=_by_sig if _by_sig else None,
         article_by_project_contractor=_by_pc if _by_pc else None,
         article_pc_sets=_by_pc_sets if _by_pc_sets else None,
+        plan_agg=_plan_agg,
         skud_agg=_skud_agg,
     )
     if main_t is None or main_t.empty:
@@ -19391,6 +19393,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
     _tbl_period = (
         _format_gdrs_month_year_title_ru(date_from, date_to, long_fact_period, None) or period_label
     )
+    _show_week_cols = gdrs_matrix_show_week_columns(_plan_agg, _skud_agg)
     st.markdown(
         render_gdrs_matrix_table_html(
             view,
@@ -19400,6 +19403,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             title_line=_tbl_title,
             period_line=_tbl_period,
             delta_bg_style=_gdrs_delta_pct_cell_bg_style,
+            show_week_columns=_show_week_cols,
         ),
         unsafe_allow_html=True,
     )

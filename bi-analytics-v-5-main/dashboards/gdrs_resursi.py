@@ -1583,6 +1583,11 @@ def _skud_agg_per_pair(
     ).assign(skud_val=lambda d: d["skud_val"].fillna(0.0))
 
 
+def gdrs_matrix_show_week_columns(plan_agg: str, skud_agg: str) -> bool:
+    """Колонки «1–6 неделя» только без фильтра агрегации (legacy); при «Среднее за месяц» / «N неделя» — скрыть."""
+    return False
+
+
 def build_main_table(
     long_fact: pd.DataFrame,
     plan: pd.DataFrame,
@@ -1598,6 +1603,7 @@ def build_main_table(
     article_sig_sets: Optional[dict[str, set[str]]] = None,
     article_by_project_contractor: Optional[dict[tuple[str, str], str]] = None,
     article_pc_sets: Optional[dict[tuple[str, str], set[str]]] = None,
+    plan_agg: str = GDRS_AGG_MONTH,
     skud_agg: str = GDRS_AGG_MONTH,
 ) -> pd.DataFrame:
     """Сборка главной таблицы (Скрин 11): Контрагент × недели × отклонение × дельта.
@@ -1610,7 +1616,7 @@ def build_main_table(
     - Неделя = ISO-неделя; нумерация в порядке возрастания внутри выборки (1..6 для месяца).
     - weekly_avg(подрядчик, неделя) = ∑ daily / N_дней_в_неделе_в_выборке.
     - skud: по `skud_agg` — среднее за день за период (month_avg) или weekly_avg выбранной недели (week:N).
-    - plan: из переданной plan-таблицы (1С); для week:N план грузится на дату конца недели снаружи.
+    - plan: из plan-таблицы 1С на срез `plan_agg` (конец недели или конец периода).
     - deviation = План − skud; delta_pct = (deviation / План) × 100 (при План≠0).
   """
     if long_fact is None or long_fact.empty:
@@ -1712,6 +1718,12 @@ def build_main_table(
 
     if only_with_plan:
         rows = rows[rows["plan"] > 0].copy()
+        if rows.empty:
+            return pd.DataFrame()
+
+    _compact = not gdrs_matrix_show_week_columns(plan_agg, skud_agg)
+    if _compact:
+        rows = rows[(rows["plan"] > 0) | (rows["skud"] > 0)].copy()
         if rows.empty:
             return pd.DataFrame()
 
@@ -2061,8 +2073,9 @@ def render_gdrs_matrix_table_html(
     title_line: str = "",
     period_line: str = "",
     delta_bg_style=None,
+    show_week_columns: bool = True,
 ) -> str:
-    """HTML-таблица ГДРС: двухуровневая шапка «План» / «СКУД» над неделями 1–6."""
+    """HTML-таблица ГДРС: двухуровневая шапка «План» / «СКУД» над неделями 1–6 или компакт без недель."""
     import html as html_module
 
     if view is None or getattr(view, "empty", True):
@@ -2074,15 +2087,22 @@ def render_gdrs_matrix_table_html(
     wk_n = len(GDRS_WEEK_LABELS)
     plan_keys = list(GDRS_WEEK_PLAN_KEYS)
     skud_keys = list(GDRS_WEEK_SKUD_KEYS)
-    show_cols = list(fixed_cols) + plan_keys + skud_keys + [delta_col]
+    if show_week_columns:
+        show_cols = list(fixed_cols) + plan_keys + skud_keys + [delta_col]
+    else:
+        show_cols = list(fixed_cols) + [delta_col]
     ncols = len(show_cols)
     wid = wrap_id or ("gdrs_mtx_" + str(abs(id(view))))
     n_fixed = len(fixed_cols)
-    i_plan0 = n_fixed
-    i_plan1 = n_fixed + wk_n - 1
-    i_skud0 = n_fixed + wk_n
-    i_skud1 = n_fixed + 2 * wk_n - 1
-    i_delta = n_fixed + 2 * wk_n
+    if show_week_columns:
+        i_plan0 = n_fixed
+        i_plan1 = n_fixed + wk_n - 1
+        i_skud0 = n_fixed + wk_n
+        i_skud1 = n_fixed + 2 * wk_n - 1
+        i_delta = n_fixed + 2 * wk_n
+    else:
+        i_plan0 = i_plan1 = i_skud0 = i_skud1 = -1
+        i_delta = n_fixed
     text_cols = {"Контрагент", "Вид работ", "Вид работы"}
     numeric_cols = set(fixed_cols[2:]) | set(plan_keys) | set(skud_keys)
 
@@ -2092,14 +2112,15 @@ def render_gdrs_matrix_table_html(
             parts.append("gdrs-sep-r-strong")
         if ci == n_fixed - 1:
             parts.append("gdrs-sep-r-strong")
-        if ci == i_plan0:
-            parts.append("gdrs-sep-l-strong")
-        if ci == i_plan1:
-            parts.append("gdrs-sep-r-strong")
-        if ci == i_skud0:
-            parts.append("gdrs-sep-l-strong")
-        if ci == i_skud1:
-            parts.append("gdrs-sep-r-strong")
+        if show_week_columns:
+            if ci == i_plan0:
+                parts.append("gdrs-sep-l-strong")
+            if ci == i_plan1:
+                parts.append("gdrs-sep-r-strong")
+            if ci == i_skud0:
+                parts.append("gdrs-sep-l-strong")
+            if ci == i_skud1:
+                parts.append("gdrs-sep-r-strong")
         if ci == i_delta:
             parts.append("gdrs-sep-l-strong")
         return " ".join(parts)
@@ -2238,38 +2259,47 @@ def render_gdrs_matrix_table_html(
             f"{html_module.escape(period_line)}</th></tr>"
         )
     thead_parts.append("<tr>")
-    for ci, col in enumerate(fixed_cols):
-        hmc = _th_metric_cls(col)
-        hcls = _border_cls(ci) + (f" {hmc}" if hmc else "")
+    if show_week_columns:
+        for ci, col in enumerate(fixed_cols):
+            hmc = _th_metric_cls(col)
+            hcls = _border_cls(ci) + (f" {hmc}" if hmc else "")
+            thead_parts.append(
+                f'<th rowspan="2" class="{hcls.strip()}">{html_module.escape(col)}</th>'
+            )
         thead_parts.append(
-            f'<th rowspan="2" class="{hcls.strip()}">{html_module.escape(col)}</th>'
+            f'<th colspan="{wk_n}" class="gdrs-h-plan-group gdrs-sep-l-strong gdrs-sep-r-strong">План</th>'
         )
-    thead_parts.append(
-        f'<th colspan="{wk_n}" class="gdrs-h-plan-group gdrs-sep-l-strong gdrs-sep-r-strong">План</th>'
-    )
-    thead_parts.append(
-        f'<th colspan="{wk_n}" class="gdrs-h-skud-group gdrs-sep-l-strong gdrs-sep-r-strong">СКУД</th>'
-    )
-    delta_title = "Итого (%)" if delta_col == "Дельта (%)" else delta_col
-    thead_parts.append(
-        f'<th rowspan="2" class="{_border_cls(i_delta)}">{html_module.escape(delta_title)}</th>'
-    )
-    thead_parts.append("</tr><tr>")
-    for wi, lbl in enumerate(GDRS_WEEK_LABELS):
-        wcls = "gdrs-h-week gdrs-h-week-plan gdrs-col-plan"
-        if wi == 0:
-            wcls += " gdrs-sep-l-strong"
-        if wi == wk_n - 1:
-            wcls += " gdrs-sep-r-strong"
-        thead_parts.append(f'<th class="{wcls}">{html_module.escape(lbl)}</th>')
-    for wi, lbl in enumerate(GDRS_WEEK_LABELS):
-        wcls = "gdrs-h-week gdrs-h-week-skud gdrs-col-skud"
-        if wi == 0:
-            wcls += " gdrs-sep-l-strong"
-        if wi == wk_n - 1:
-            wcls += " gdrs-sep-r-strong"
-        thead_parts.append(f'<th class="{wcls}">{html_module.escape(lbl)}</th>')
-    thead_parts.append("</tr>")
+        thead_parts.append(
+            f'<th colspan="{wk_n}" class="gdrs-h-skud-group gdrs-sep-l-strong gdrs-sep-r-strong">СКУД</th>'
+        )
+        delta_title = "Итого (%)" if delta_col == "Дельта (%)" else delta_col
+        thead_parts.append(
+            f'<th rowspan="2" class="{_border_cls(i_delta)}">{html_module.escape(delta_title)}</th>'
+        )
+        thead_parts.append("</tr><tr>")
+        for wi, lbl in enumerate(GDRS_WEEK_LABELS):
+            wcls = "gdrs-h-week gdrs-h-week-plan gdrs-col-plan"
+            if wi == 0:
+                wcls += " gdrs-sep-l-strong"
+            if wi == wk_n - 1:
+                wcls += " gdrs-sep-r-strong"
+            thead_parts.append(f'<th class="{wcls}">{html_module.escape(lbl)}</th>')
+        for wi, lbl in enumerate(GDRS_WEEK_LABELS):
+            wcls = "gdrs-h-week gdrs-h-week-skud gdrs-col-skud"
+            if wi == 0:
+                wcls += " gdrs-sep-l-strong"
+            if wi == wk_n - 1:
+                wcls += " gdrs-sep-r-strong"
+            thead_parts.append(f'<th class="{wcls}">{html_module.escape(lbl)}</th>')
+        thead_parts.append("</tr>")
+    else:
+        for ci, col in enumerate(show_cols):
+            hmc = _th_metric_cls(col)
+            hcls = _border_cls(ci) + (f" {hmc}" if hmc else "")
+            thead_parts.append(
+                f'<th class="{hcls.strip()}">{html_module.escape(col)}</th>'
+            )
+        thead_parts.append("</tr>")
 
     body = "".join(_row_html(r) for _, r in view.iterrows())
     return (
