@@ -492,11 +492,19 @@ def _is_pct_complete_not_100(pct: Any, *, pct_scale_max: Any = None) -> bool:
 
 
 def _is_pct_complete_not_100_dev_matrix(pct: Any, *, pct_scale_max: Any = None) -> bool:
-    """Девелоперские проекты: оранжевый текст ячейки, если % выполнения в MSP задан и ≠ 100%."""
+    """Экспорт/флаги: % выполнения в MSP задан и ≠ 100%."""
     v = _normalized_pct_0_100(pct, pct_scale_max=pct_scale_max)
     if v is None:
         return False
     return abs(v - 100.0) > 1e-3
+
+
+def _is_pct_complete_100_dev_matrix(pct: Any, *, pct_scale_max: Any = None) -> bool:
+    """Девелоперские проекты: оранжевый текст (#f09355), если задача закрыта на 100%."""
+    v = _normalized_pct_0_100(pct, pct_scale_max=pct_scale_max)
+    if v is None:
+        return False
+    return abs(v - 100.0) <= 1e-3
 
 
 _MSP_NA_TOKENS = {"", "нд", "н/д", "n/d", "n/a", "—", "-", "nan", "nat", "none", "null"}
@@ -1640,6 +1648,7 @@ def build_dev_tz_matrix_rows(
         otkl_s: str,
         *,
         warn_pct: bool = False,
+        pct_complete_100: bool = False,
         warn_directives: bool = False,
         otkl_fact_lt_plan: bool = False,
         subcolumn_labels: Optional[Dict[str, str]] = None,
@@ -1669,6 +1678,7 @@ def build_dev_tz_matrix_rows(
                 "otkl": otkl_s,
                 "warn": bool(warn_pct or warn_directives),
                 "warn_pct": bool(warn_pct),
+                "pct_complete_100": bool(pct_complete_100),
                 "warn_directives": bool(warn_directives),
                 "otkl_fact_lt_plan": bool(otkl_fact_lt_plan),
                 "subcolumn_labels": dict(subcolumn_labels) if subcolumn_labels else None,
@@ -1698,8 +1708,18 @@ def build_dev_tz_matrix_rows(
             add_row(group, lab, "Н/Д", "Н/Д", "Н/Д", phase=phase, row_key=row_key)
             return
         # ТЗ: в каждой ячейке План/Факт/Откл. — одно значение (одна дата / один текст отклонения), без «дата1 / дата2».
-        ps, fs, os, _ok, w = _one_milestone_cell(sub, pct_scale_ref=mdf)
-        add_row(group, lab, ps, fs, os, warn_pct=bool(w), phase=phase, row_key=row_key)
+        ps, fs, os, _ok, w, pct100 = _one_milestone_cell(sub, pct_scale_ref=mdf)
+        add_row(
+            group,
+            lab,
+            ps,
+            fs,
+            os,
+            warn_pct=bool(w),
+            pct_complete_100=bool(pct100),
+            phase=phase,
+            row_key=row_key,
+        )
 
     # Порядок столбцов — по референсу (file-002: вехи Ковенантов; file-003: ДС/ТЕССА до ИРД/ПОС)
     _rk = iter(_DEV_MATRIX_ROW_KEYS)
@@ -2272,7 +2292,7 @@ _DEV_TZ_MATRIX_CSS = """
   min-width: max(720px, 100%) !important;
   max-width: none !important;
   font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 700;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th {
@@ -2296,10 +2316,10 @@ _DEV_TZ_MATRIX_CSS = """
   border-color: #5a6f82 !important;
   vertical-align: middle !important;
   text-align: center !important;
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 700;
-  line-height: 1.35;
-  padding: 6px 8px !important;
+  line-height: 1.45;
+  padding: 14px 12px !important;
   color: #fafafa;
   background-color: #0c1219 !important;
   background-clip: padding-box;
@@ -2314,9 +2334,9 @@ _DEV_TZ_MATRIX_CSS = """
   text-align: center !important;
   vertical-align: middle !important;
   font-weight: 700;
-  font-size: 13px;
-  padding: 6px 10px;
-  color: #ffffff;
+  font-size: 17px;
+  padding: 12px 14px;
+  color: #f0f4f8;
   box-sizing: border-box;
   background: #1a3328 !important;
   border-top: 3px solid #ffffff !important;
@@ -2328,10 +2348,10 @@ _DEV_TZ_MATRIX_CSS = """
   text-align: center !important;
   vertical-align: middle !important;
   font-weight: 700;
-  font-size: 13px;
-  padding: 6px 10px;
+  font-size: 18px;
+  padding: 12px 14px;
   background: linear-gradient(180deg, rgba(34, 139, 34, 0.35) 0%, rgba(25, 90, 25, 0.25) 100%) !important;
-  color: #ffffff;
+  color: #f0f4f8;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead {
   border-top: 3px solid #ffffff !important;
@@ -2344,9 +2364,10 @@ _DEV_TZ_MATRIX_CSS = """
   text-align: center !important;
   vertical-align: middle !important;
   font-weight: 700;
-  font-size: 13px;
+  font-size: 18px;
+  padding: 12px 14px;
   background: linear-gradient(180deg, rgba(92, 100, 115, 0.58) 0%, rgba(55, 61, 72, 0.48) 100%) !important;
-  color: #ffffff !important;
+  color: #f0f4f8 !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-life {
   border-left: 3px solid #ffffff !important;
@@ -2355,9 +2376,9 @@ _DEV_TZ_MATRIX_CSS = """
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone {
   text-align: center !important;
   vertical-align: middle !important;
-  font-size: 13px;
+  font-size: 17px;
   font-weight: 700;
-  line-height: 1.35;
+  line-height: 1.45;
   min-width: 6.5em;
   max-width: none !important;
   white-space: normal !important;
@@ -2366,16 +2387,16 @@ _DEV_TZ_MATRIX_CSS = """
   hyphens: manual;
   overflow: visible !important;
   text-overflow: clip !important;
-  padding: 6px 8px;
-  color: #ffffff;
+  padding: 12px 10px;
+  color: #f0f4f8;
   background: rgba(26, 28, 35, 0.92) !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub {
   text-align: center !important;
   vertical-align: middle !important;
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 700;
-  color: #ffffff;
+  color: #f0f4f8;
   min-width: 4.5em;
   max-width: none !important;
   white-space: normal !important;
@@ -2383,13 +2404,13 @@ _DEV_TZ_MATRIX_CSS = """
   overflow-wrap: anywhere;
   overflow: visible !important;
   text-overflow: clip !important;
-  padding: 6px 8px;
+  padding: 10px 8px;
   background: rgba(22, 24, 32, 0.95) !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-inv-block,
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-inv-block {
   background: linear-gradient(180deg, rgba(34, 139, 34, 0.35) 0%, rgba(25, 90, 25, 0.25) 100%) !important;
-  color: #ffffff !important;
+  color: #f0f4f8 !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-inv-block {
   text-align: center !important;
@@ -2399,7 +2420,7 @@ _DEV_TZ_MATRIX_CSS = """
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-life-block,
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-life-block {
   background: linear-gradient(180deg, rgba(92, 100, 115, 0.58) 0%, rgba(55, 61, 72, 0.48) 100%) !important;
-  color: #ffffff !important;
+  color: #f0f4f8 !important;
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-life-block {
   text-align: center !important;
@@ -2409,18 +2430,25 @@ _DEV_TZ_MATRIX_CSS = """
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-td-project {
   text-align: left !important;
   font-weight: 700;
-  font-size: 13px;
-  padding: 6px 10px !important;
+  font-size: 18px;
+  padding: 14px 12px !important;
   background: #161f2b !important;
-  color: #ffffff;
+  color: #f0f4f8;
   word-wrap: break-word;
   overflow-wrap: anywhere;
   vertical-align: middle !important;
   border-right: 3px solid #ffffff !important;
 }
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-text-pct-warn {
-  color: #e8912d !important;
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-text-pct-done {
+  color: #f09355 !important;
   font-weight: 700 !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-sortable {
+  cursor: pointer;
+  user-select: none;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-sortable:hover {
+  filter: brightness(1.08);
 }
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-otkl-ok {
   color: #28a745 !important;
@@ -2502,33 +2530,38 @@ def _dev_tz_matrix_cell_classes(
     """CSS-классы для ячейки План / Факт / Откл."""
     parts: List[str] = []
     v = r.get(col) or ""
-    warn_pct = bool(r.get("warn_pct"))
-    warn_dir = bool(r.get("warn_directives"))
-    if warn_pct and col in ("plan", "fact") and not r.get("subcolumn_labels"):
-        parts.append("dev-tz-text-pct-warn")
-    if _dev_tz_apply_vert_date(vertical_dates, col, v):
-        parts.append("dev-tz-date-vert")
+    subcols = r.get("subcolumn_labels")
+    is_special = bool(subcols)
+
+    if not is_special:
+        if bool(r.get("pct_complete_100")) and col in ("plan", "fact"):
+            parts.append("dev-tz-text-pct-done")
+        if _dev_tz_apply_vert_date(vertical_dates, col, v):
+            parts.append("dev-tz-date-vert")
+        if col == "otkl":
+            dd = _parse_otkl_days_display(v)
+            if dd is not None:
+                parts.append("dev-tz-otkl-ok" if dd >= 0 else "dev-tz-otkl-bad")
+        return " ".join(parts).strip()
+
+    # Блоки «ПРЕДПИСАНИЯ» и «Выборка ДС»: белый текст, цвет только у отклонений.
+    otkl_lbl = str((subcols or {}).get("otkl") or "").lower()
+    is_preds = "предпис" in otkl_lbl
+    if col in ("plan", "fact"):
+        return ""
     if col == "otkl":
-        if warn_dir and not r.get("subcolumn_labels"):
-            parts.append("dev-tz-directives-warn")
-        if bool(r.get("otkl_fact_lt_plan")):
-            parts.append("dev-tz-otkl-bad")
-        elif r.get("subcolumn_labels"):
+        if is_preds:
             try:
                 if int(str(v or "").strip()) > 0:
                     parts.append("dev-tz-otkl-bad")
             except (TypeError, ValueError):
                 pass
+        elif bool(r.get("otkl_fact_lt_plan")):
+            parts.append("dev-tz-otkl-bad")
         else:
-            dd = _parse_otkl_days_display(v)
-            if dd is not None:
-                parts.append("dev-tz-otkl-ok" if dd >= 0 else "dev-tz-otkl-bad")
-    if col == "fact" and r.get("subcolumn_labels"):
-        try:
-            if int(str(v or "").strip()) > 0:
-                parts.append("dev-tz-otkl-bad")
-        except (TypeError, ValueError):
-            pass
+            sv = str(v or "").strip()
+            if sv and sv.upper() not in ("Н/Д", "N/D", "—", "-"):
+                parts.append("dev-tz-otkl-ok")
     return " ".join(parts).strip()
 
 
@@ -2603,6 +2636,19 @@ _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS = """
 #matrix-fs-root.matrix-fs-pseudo-on .cp-tables-stack .cp-table-wrap{
   max-height:none!important;overflow-x:auto!important;overflow-y:visible!important;
   width:max-content!important;max-width:min(100%,max-content)!important}
+/* Девелоперские проекты: матрица по центру в полноэкранном режиме */
+#matrix-fs-root:fullscreen .matrix-fs-body.dev-tz-fs-body,
+#matrix-fs-root:-webkit-full-screen .matrix-fs-body.dev-tz-fs-body,
+#matrix-fs-root:-moz-full-screen .matrix-fs-body.dev-tz-fs-body,
+#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body.dev-tz-fs-body{
+  display:flex!important;flex-direction:column!important;align-items:center!important;
+  justify-content:flex-start!important;overflow:auto!important;-webkit-overflow-scrolling:touch!important}
+#matrix-fs-root:fullscreen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap,
+#matrix-fs-root:-webkit-full-screen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap,
+#matrix-fs-root:-moz-full-screen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap,
+#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap{
+  width:max-content!important;max-width:min(100%,max-content)!important;margin:12px auto!important;
+  max-height:none!important;overflow:auto!important}
 """
 
 _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
@@ -2673,7 +2719,9 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
     xb.addEventListener("click",function(ev){ev.preventDefault();exitPseudo();sync();});
     tb.appendChild(xb);
     var scroll=doc.createElement("div");
-    scroll.setAttribute("style","flex:1 1 auto;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;");
+    scroll.className=bodyEl.className||"";
+    scroll.setAttribute("style","flex:1 1 auto;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;"
+      +"display:flex;flex-direction:column;align-items:center;");
     scroll.innerHTML=bodyEl.innerHTML;
     pseudoShell.appendChild(tb);
     pseudoShell.appendChild(scroll);
@@ -2803,6 +2851,69 @@ _MATRIX_IFRAME_FIT_HEIGHT_SCRIPT = """
     var w=document.querySelector(".dev-tz-matrix-wrap,.cp-tables-stack");
     if(w&&typeof ResizeObserver!=="undefined") new ResizeObserver(schedule).observe(w);
   }catch(e){}
+})();
+</script>
+"""
+
+_DEV_TZ_MATRIX_SORT_SCRIPT = """
+<script>
+(function(){
+  function parseNum(t){
+    var s=String(t||"").replace(/\\s/g,"").replace(/\\u00a0/g,"").replace(",",".");
+    var m=s.match(/-?\\d+(?:\\.\\d+)?/);
+    return m?parseFloat(m[0]):NaN;
+  }
+  function cellKey(tr, colIdx){
+    if(!tr||!tr.cells||!tr.cells[colIdx]) return "";
+    var c=tr.cells[colIdx];
+    var dv=c.getAttribute("data-sort-val");
+    if(dv!==null&&dv!=="") return dv;
+    return (c.textContent||"").trim();
+  }
+  function compare(at,bt,dir){
+    var an=parseNum(at), bn=parseNum(bt), cmp=0;
+    if(!isNaN(an)&&!isNaN(bn)) cmp=an-bn;
+    else cmp=String(at).localeCompare(String(bt),"ru",{numeric:true,sensitivity:"base"});
+    return dir>0?cmp:-cmp;
+  }
+  var tbl=document.querySelector("table.dev-tz-wide");
+  if(!tbl) return;
+  var tbody=tbl.querySelector("tbody");
+  if(!tbody) return;
+  function paint(th, base, dir){
+    tbl.querySelectorAll("thead th.dev-tz-sortable").forEach(function(x){
+      x.removeAttribute("data-sort-dir");
+      var lb=x.getAttribute("data-sort-label")||"";
+      x.textContent=lb;
+    });
+    th.setAttribute("data-sort-dir", String(dir));
+    th.textContent=base+(dir>0?" \\u25B2":" \\u25BC");
+  }
+  function sortByCol(colIdx, th, baseLabel){
+    var cur=th.getAttribute("data-sort-dir");
+    var dir=cur==="1"?-1:1;
+    paint(th, baseLabel, dir);
+    var rows=Array.prototype.slice.call(tbody.querySelectorAll("tr"));
+    rows.sort(function(a,b){return compare(cellKey(a,colIdx),cellKey(b,colIdx),dir);});
+    rows.forEach(function(r){tbody.appendChild(r);});
+    try{window.dispatchEvent(new Event("resize"));}catch(e){}
+  }
+  var projTh=tbl.querySelector("thead th.dev-tz-th-project");
+  if(projTh){
+    projTh.classList.add("dev-tz-sortable");
+    var plab=(projTh.textContent||"Проект").trim();
+    projTh.setAttribute("data-sort-label", plab);
+    projTh.title="Клик — сортировка по проекту";
+    projTh.addEventListener("click",function(ev){ev.preventDefault();sortByCol(0,projTh,plab);});
+  }
+  tbl.querySelectorAll("thead tr:nth-child(3) th.dev-tz-sub").forEach(function(th){
+    th.classList.add("dev-tz-sortable");
+    var lab=(th.textContent||"").trim();
+    th.setAttribute("data-sort-label", lab);
+    th.title="Клик — сортировка по колонке";
+    var colIdx=(th.cellIndex||0)+1;
+    th.addEventListener("click",function(ev){ev.preventDefault();sortByCol(colIdx,th,lab);});
+  });
 })();
 </script>
 """
@@ -2955,8 +3066,8 @@ def render_dev_tz_matrix(
                         'text-align:center;padding:8px 4px;"'
                     )
                 tip = ""
-                if key in ("plan", "fact") and r.get("warn_pct") and "dev-tz-text-pct-warn" in cls:
-                    tip = ' title="' + esc("% выполнения в MSP для выбранной задачи ниже 100%; подсветка предупреждает о риске срыва срока.") + '"'
+                if key in ("plan", "fact") and r.get("pct_complete_100") and "dev-tz-text-pct-done" in cls:
+                    tip = ' title="' + esc("% выполнения в MSP для выбранной задачи — 100% (закрыта).") + '"'
                 body_cells.append(f"<td{oc}{iv}{tip}>{esc(str(v))}</td>")
         plab = row_labels[bi] if bi < len(row_labels) else ""
         body_trs.append(
@@ -2964,7 +3075,7 @@ def render_dev_tz_matrix(
         )
 
     html_tbl = (
-        '<table class="rendered-table dev-tz-wide" border="0">'
+        '<table class="rendered-table dev-tz-wide bi-sortable-table" border="0">'
         + thead
         + "<tbody>"
         + "".join(body_trs)
@@ -2993,7 +3104,20 @@ html,body{margin:0;padding:0;background:transparent;color:#e6edf3;overflow:hidde
   border-collapse:separate!important;border-spacing:0!important;
   width:max-content!important;min-width:100%!important;
   font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif!important;
-  font-size:13px!important;font-weight:700!important}
+  font-size:16px!important;font-weight:700!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td{
+  font-size:16px!important;line-height:1.45!important;padding:14px 12px!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project{
+  font-size:17px!important;padding:12px 14px!important;color:#f0f4f8!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project{
+  font-size:18px!important;padding:14px 12px!important;color:#f0f4f8!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead-life{
+  font-size:18px!important;padding:12px 14px!important;color:#f0f4f8!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone{
+  font-size:17px!important;padding:12px 10px!important;color:#f0f4f8!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub{
+  font-size:16px!important;padding:10px 8px!important;color:#f0f4f8!important}
 /* Сетка: только непрозрачные границы (без border-shorthand — не сбрасывает белые 3px). */
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th,
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td{
@@ -3045,11 +3169,16 @@ html,body{margin:0;padding:0;background:transparent;color:#e6edf3;overflow:hidde
   box-shadow:inset 3px 0 0 #fff,inset -3px 0 0 #fff,inset 0 3px 0 #fff,inset 0 -3px 0 #fff}
 """
     _n_rows = len(blocks)
-    # Стартовая высота iframe; точная подгонка — _MATRIX_IFRAME_FIT_HEIGHT_SCRIPT (без полосы снизу).
-    _iframe_h = max(160, 6 + 3 * 38 + _n_rows * 38 + 12)
+    _row_h = 56
+    _iframe_h = max(220, 6 + 3 * _row_h + _n_rows * _row_h + 12)
     _head_styles = _dev_css_raw + _sticky_css
     _scroll_block = '<div class="dev-tz-matrix-wrap">' + html_tbl + "</div>"
-    _iframe_html = _matrix_iframe_html_document(_head_styles, _scroll_block)
+    _iframe_html = _matrix_iframe_html_document(
+        _head_styles,
+        _scroll_block,
+        body_class="dev-tz-fs-body",
+        extra_body_suffix=_DEV_TZ_MATRIX_SORT_SCRIPT,
+    )
     st.markdown(_DEV_MATRIX_STREAMLIT_HOST_CSS, unsafe_allow_html=True)
     _components.html(_iframe_html, height=_iframe_h, scrolling=False)
 
@@ -3392,14 +3521,14 @@ def _one_milestone_cell(
     rows: pd.DataFrame,
     *,
     pct_scale_ref: Optional[pd.DataFrame] = None,
-) -> Tuple[str, str, str, bool, bool]:
+) -> Tuple[str, str, str, bool, bool, bool]:
     """
     План = базовое окончание (base end), Факт = «Окончание» (plan end после загрузки MSP).
     Откл. = План − Факт (календарные дни), как в матрице девелоперских проектов.
-    Пятый элемент — узкий шрифт по ТЗ: «% выполнения» у строки-представителя вехи не 100% (при известном %).
+    warn_pct — % ≠ 100 (для экспорта); pct_complete_100 — закрыто на 100% (оранжевый текст План/Факт).
     """
     if rows is None or rows.empty:
-        return "Н/Д", "Н/Д", "Н/Д", False, False
+        return "Н/Д", "Н/Д", "Н/Д", False, False, False
     ref_for_scale = pct_scale_ref if pct_scale_ref is not None else rows
     try:
         pct_scale_max = _pct_scale_max_from_frame(ref_for_scale)
@@ -3409,30 +3538,38 @@ def _one_milestone_cell(
     pdt, fdt, pct = _msp_plan_fact_pct(r)
     # Предупреждение по % — только по строке-представителе вехи (та же, что даёт План/Факт),
     # иначе при нескольких совпадениях под одну веху «оранжевый» статус липнет ко всем столбцам.
-    def _row_has_pct_lt_100(rr: pd.Series) -> bool:
+    def _row_pct_flags(rr: pd.Series) -> Tuple[bool, bool]:
         if "pct complete" not in rr.index:
-            return False
+            return False, False
         v = rr["pct complete"]
         if isinstance(v, pd.Series):
+            not100 = False
+            is100 = False
             for _x in v.tolist():
                 if _is_pct_complete_not_100_dev_matrix(_x, pct_scale_max=pct_scale_max):
-                    return True
-            return False
-        return _is_pct_complete_not_100_dev_matrix(v, pct_scale_max=pct_scale_max)
+                    not100 = True
+                if _is_pct_complete_100_dev_matrix(_x, pct_scale_max=pct_scale_max):
+                    is100 = True
+            return not100, is100
+        return (
+            bool(_is_pct_complete_not_100_dev_matrix(v, pct_scale_max=pct_scale_max)),
+            bool(_is_pct_complete_100_dev_matrix(v, pct_scale_max=pct_scale_max)),
+        )
 
     try:
-        warn_pct = bool(_row_has_pct_lt_100(r))
+        warn_pct, pct_complete_100 = _row_pct_flags(r)
     except Exception:
         warn_pct = bool(_is_pct_complete_not_100_dev_matrix(pct, pct_scale_max=pct_scale_max))
+        pct_complete_100 = bool(_is_pct_complete_100_dev_matrix(pct, pct_scale_max=pct_scale_max))
     pl = _fmt_date_ru(pdt)
     fl = _fmt_date_ru(fdt)
     if pd.isna(pdt) or pd.isna(fdt):
-        return pl, fl, "Н/Д", False, warn_pct
+        return pl, fl, "Н/Д", False, warn_pct, pct_complete_100
     dev_days = _delta_days_plan_minus_fact(pdt, fdt)
     otk = _fmt_delta_days(dev_days)
     # План − Факт: ≥0 — факт не позже плана (в срок или раньше); <0 — просрочка.
     ok = bool(dev_days is not None and dev_days >= 0)
-    return pl, fl, otk, ok, warn_pct
+    return pl, fl, otk, ok, warn_pct, pct_complete_100
 
 
 def _cp_hide_completed_candidates(sub: pd.DataFrame) -> pd.DataFrame:
@@ -3483,7 +3620,7 @@ def build_control_points_df(mdf: pd.DataFrame, *, hide_completed: bool = False) 
             m = _match_milestone_tasks(sub_m, kw)
             if hide_completed and (m is None or getattr(m, "empty", True)):
                 m = _match_milestone_tasks(sub, kw)
-            pl, fl, otk, ok, warn_pct = _one_milestone_cell(m, pct_scale_ref=sub)
+            pl, fl, otk, ok, warn_pct, _pct100 = _one_milestone_cell(m, pct_scale_ref=sub)
             rec[f"{slug}_plan"] = pl
             rec[f"{slug}_fact"] = fl
             rec[f"{slug}_otkl"] = otk

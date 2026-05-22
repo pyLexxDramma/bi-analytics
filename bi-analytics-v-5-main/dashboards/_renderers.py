@@ -177,7 +177,7 @@ def _session_reset_project_if_excluded(state_key: str) -> None:
         if state_key not in st.session_state:
             return
         raw = st.session_state[state_key]
-        if state_key == "budget_project":
+        if state_key in ("budget_project", "dev_proj_multi"):
             if isinstance(raw, str) and raw in MSP_PROJECT_FILTER_EXCLUDE_NAMES:
                 st.session_state[state_key] = []
             elif isinstance(raw, list) and any(x in MSP_PROJECT_FILTER_EXCLUDE_NAMES for x in raw):
@@ -30252,7 +30252,7 @@ def dashboard_developer_projects(df):
     cur_dash = str(st.session_state.get("current_dashboard", "") or "").strip()
     prev_seen = str(st.session_state.get(_dev_dash_seen, "") or "").strip()
     if cur_dash == "Девелоперские проекты" and prev_seen != "Девелоперские проекты":
-        st.session_state["dev_proj"] = "Все"
+        st.session_state["dev_proj_multi"] = []
     st.session_state[_dev_dash_seen] = cur_dash
 
     if df is None or not hasattr(df, "columns") or df.empty:
@@ -30309,7 +30309,7 @@ def dashboard_developer_projects(df):
     def _render_dev_filter_and_matrix(work: pd.DataFrame, project_col: Optional[str]) -> None:
         # По правкам ТЗ: в фильтрах только проект — одна строка на логический объект (совпадает «Контрольные точки»).
         if project_col and project_col in work.columns:
-            _session_reset_project_if_excluded("dev_proj")
+            _session_reset_project_if_excluded("dev_proj_multi")
             try:
                 from dashboards.dev_projects_tz_matrix import (
                     _control_points_project_group_key as _cp_gk,
@@ -30339,36 +30339,38 @@ def dashboard_developer_projects(df):
                     (_cp_lab(gk, sorted(set(vs))) for gk, vs in gm.items()),
                     key=lambda x: str(x).casefold(),
                 )
-                projects = ["Все"] + labels
+                projects = labels
             else:
-                projects = ["Все"] + _unique_project_labels_for_select(work[project_col])
+                projects = _unique_project_labels_for_select(work[project_col])
             with filters_panel(st):
-                sel_proj = st.selectbox(
+                sel_projs = st.multiselect(
                     "Проект",
                     projects,
-                    index=0,
-                    key="dev_proj",
+                    default=st.session_state.get("dev_proj_multi") or [],
+                    key="dev_proj_multi",
+                    placeholder="Все проекты",
                 )
         else:
-            sel_proj = "Все"
+            sel_projs = []
         # Не фильтруем по «Уровень» в UI: в MSP это не outline; выбор не «Все» оставлял только часть строк —
         # матрица ТЗ (вехи ур. 5 и т.д.) превращалась в сплошные Н/Д. Уровни отбора встроены в матрицу.
 
         filtered = work.copy()
-        if sel_proj != "Все" and project_col:
+        sel_projs_list = [str(p).strip() for p in (sel_projs or []) if str(p).strip()]
+        if sel_projs_list and project_col:
             try:
                 from dashboards.dev_projects_tz_matrix import _control_points_project_group_key as _cp_gk2
             except Exception:
                 _cp_gk2 = None  # type: ignore[assignment]
             if _cp_gk2 is not None:
-                tgt = str(_cp_gk2(sel_proj))
+                tgt_keys = {str(_cp_gk2(p)) for p in sel_projs_list}
                 filtered = filtered[
-                    filtered[project_col].map(lambda x: str(_cp_gk2(x)) == tgt)
+                    filtered[project_col].map(lambda x: str(_cp_gk2(x)) in tgt_keys)
                 ]
             else:
-                _pk = _project_filter_norm_key(sel_proj)
+                tgt_keys = {_project_filter_norm_key(p) for p in sel_projs_list}
                 filtered = filtered[
-                    filtered[project_col].map(_project_filter_norm_key) == _pk
+                    filtered[project_col].map(_project_filter_norm_key).isin(tgt_keys)
                 ]
 
         if project_col and project_col in filtered.columns:
@@ -30412,8 +30414,19 @@ def dashboard_developer_projects(df):
         rows_blocks_for_export: list = []
         export_project_names: list = []
 
-        if sel_proj != "Все" or not project_col or uniq_proj_n <= 1:
-            plab_scope = str(sel_proj).strip() if (sel_proj and str(sel_proj).strip() != "Все") else ""
+        _show_all_projects = (
+            not sel_projs_list
+            and project_col
+            and uniq_proj_n > 1
+        )
+        _single_project_mode = (
+            len(sel_projs_list) == 1
+            or not project_col
+            or uniq_proj_n <= 1
+        )
+
+        if _single_project_mode:
+            plab_scope = sel_projs_list[0] if sel_projs_list else ""
             rows_tz, cap_tz = build_dev_tz_matrix_rows_cached(
                 matrix_df,
                 st.session_state.get("project_data"),
@@ -30428,19 +30441,19 @@ def dashboard_developer_projects(df):
                 and matrix_df[project_col].notna().any()
             ):
                 plab = str(matrix_df[project_col].dropna().astype(str).str.strip().iloc[0]).strip()
-            elif not plab and sel_proj and str(sel_proj).strip() != "Все":
-                plab = str(sel_proj).strip()
+            elif not plab and sel_projs_list:
+                plab = str(sel_projs_list[0]).strip()
             render_dev_tz_matrix(rows_tz, "", project_labels=[plab], vertical_dates=vert_dates)
             rows_blocks_for_export = [rows_tz]
             if project_col and project_col in matrix_df.columns and matrix_df[project_col].notna().any():
                 export_project_names = [
                     str(matrix_df[project_col].dropna().astype(str).str.strip().iloc[0]).strip()
                 ]
-            elif sel_proj and str(sel_proj).strip() != "Все":
-                export_project_names = [str(sel_proj).strip()]
+            elif sel_projs_list:
+                export_project_names = [str(sel_projs_list[0]).strip()]
             else:
                 export_project_names = [""]
-        else:
+        elif _show_all_projects or len(sel_projs_list) > 1:
             raw_names = sorted(
                 matrix_df[project_col].dropna().astype(str).str.strip().unique().tolist()
             )
@@ -30459,6 +30472,16 @@ def dashboard_developer_projects(df):
             else:
                 for pname in raw_names:
                     grouped[str(pname).strip()].append(str(pname).strip())
+            if sel_projs_list and _control_points_project_group_key is not None:
+                sel_gks = {str(_control_points_project_group_key(p)) for p in sel_projs_list}
+                grouped = {gk: vs for gk, vs in grouped.items() if gk in sel_gks}
+            elif sel_projs_list:
+                sel_set = set(sel_projs_list)
+                grouped = {
+                    gk: vs
+                    for gk, vs in grouped.items()
+                    if gk in sel_set or any(v in sel_set for v in vs)
+                }
             blocks: list = []
             names: list = []
             for gk in sorted(grouped.keys(), key=lambda x: (_control_points_project_label(x, grouped[x]).lower()) if (_control_points_project_label is not None) else x.lower()):
