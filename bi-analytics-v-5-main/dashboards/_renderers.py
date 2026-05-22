@@ -19353,6 +19353,57 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
     else:
         st.info("Нет данных по проектам.")
 
+    render_table_subheader(st, f"График движения рабочей силы ({unit}), {period_label}")
+    period_days = max(1, (date_to - date_from).days + 1)
+    if period_days > 45:
+        st.warning(
+            f"Выбран период {period_days} дн.: в таблице отображаются только первые 6 ISO-недель "
+            f"({date_from.strftime('%d.%m.%Y')} — {(date_from + _pd.Timedelta(days=42)).strftime('%d.%m.%Y')}); "
+            f"неделя 7+ не помещается в макет ТЗ. Сократите период до месяца, чтобы увидеть все недели."
+        )
+    view = main_t.copy()
+    view["Контрагент"] = view.apply(
+        lambda r: (
+            r["project_name"] if r["row_kind"] == "subtotal"
+            else ("Итого" if r["row_kind"] == "grand_total" else r["contractor_name"])
+        ),
+        axis=1,
+    )
+    if "vid_raboty" in view.columns:
+        vid_col = view["vid_raboty"].fillna("").astype(str)
+        view["Вид работ"] = [v if v.strip() else "—" for v in vid_col]
+    else:
+        view["Вид работ"] = view["contract_name"].fillna("").astype(str).apply(
+            lambda s: s if s else "—"
+        )
+    view["План"] = view["plan"].fillna(0).astype(int)
+    view["СКУД"] = view["skud"].fillna(0).astype(int)
+    view["Отклонение"] = view["deviation"].round(0).astype(int)
+    view["__kind__"] = view["row_kind"]
+    view["_delta_pct_raw"] = view["delta_pct"]
+    for _pk in ("p1", "p2", "p3", "p4", "p5", "p6"):
+        if _pk in view.columns:
+            view[_pk] = view[_pk].fillna(0).astype(int)
+    for _wk in ("w1", "w2", "w3", "w4", "w5", "w6"):
+        view[_wk] = view[_wk].fillna(0).astype(int)
+    from dashboards.gdrs_resursi import render_gdrs_matrix_table_html
+    _tbl_title = f"График движения рабочей силы ({unit})"
+    _tbl_period = (
+        _format_gdrs_month_year_title_ru(date_from, date_to, long_fact_period, None) or period_label
+    )
+    st.markdown(
+        render_gdrs_matrix_table_html(
+            view,
+            fixed_cols=["Контрагент", "Вид работ", "План", "СКУД", "Отклонение"],
+            delta_col="Отклонение %",
+            kind_col="__kind__",
+            title_line=_tbl_title,
+            period_line=_tbl_period,
+            delta_bg_style=_gdrs_delta_pct_cell_bg_style,
+        ),
+        unsafe_allow_html=True,
+    )
+
     st.markdown("---")
     st.subheader("ГДРС по выбранным контрагентам")
     if chart_df.empty:
@@ -19456,57 +19507,6 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             table_title=f"Распределение {_unit_gen} по контрагентам",
         )
 
-    st.markdown("---")
-    render_table_subheader(st, f"График движения рабочей силы ({unit}), {period_label}")
-    period_days = max(1, (date_to - date_from).days + 1)
-    if period_days > 45:
-        st.warning(
-            f"Выбран период {period_days} дн.: в таблице отображаются только первые 6 ISO-недель "
-            f"({date_from.strftime('%d.%m.%Y')} — {(date_from + _pd.Timedelta(days=42)).strftime('%d.%m.%Y')}); "
-            f"неделя 7+ не помещается в макет ТЗ. Сократите период до месяца, чтобы увидеть все недели."
-        )
-    view = main_t.copy()
-    view["Контрагент"] = view.apply(
-        lambda r: (
-            r["project_name"] if r["row_kind"] == "subtotal"
-            else ("Итого" if r["row_kind"] == "grand_total" else r["contractor_name"])
-        ),
-        axis=1,
-    )
-    if "vid_raboty" in view.columns:
-        vid_col = view["vid_raboty"].fillna("").astype(str)
-        view["Вид работ"] = [v if v.strip() else "—" for v in vid_col]
-    else:
-        view["Вид работ"] = view["contract_name"].fillna("").astype(str).apply(
-            lambda s: s if s else "—"
-        )
-    view["План"] = view["plan"].fillna(0).astype(int)
-    view["СКУД"] = view["skud"].fillna(0).astype(int)
-    view["Отклонение"] = view["deviation"].round(0).astype(int)
-    view["__kind__"] = view["row_kind"]
-    view["_delta_pct_raw"] = view["delta_pct"]
-    for _pk in ("p1", "p2", "p3", "p4", "p5", "p6"):
-        if _pk in view.columns:
-            view[_pk] = view[_pk].fillna(0).astype(int)
-    for _wk in ("w1", "w2", "w3", "w4", "w5", "w6"):
-        view[_wk] = view[_wk].fillna(0).astype(int)
-    from dashboards.gdrs_resursi import render_gdrs_matrix_table_html
-    _tbl_title = f"График движения рабочей силы ({unit})"
-    _tbl_period = (
-            _format_gdrs_month_year_title_ru(date_from, date_to, long_fact_period, None) or period_label
-    )
-    st.markdown(
-        render_gdrs_matrix_table_html(
-            view,
-            fixed_cols=["Контрагент", "Вид работ", "План", "СКУД", "Отклонение"],
-            delta_col="Отклонение %",
-            kind_col="__kind__",
-            title_line=_tbl_title,
-            period_line=_tbl_period,
-            delta_bg_style=_gdrs_delta_pct_cell_bg_style,
-        ),
-        unsafe_allow_html=True,
-    )
 # ==================== DASHBOARD: Дебиторская и кредиторская задолженность подрядчиков ====================
 def _find_col(df, names):
     """Поиск колонки по частичному совпадению (без учёта регистра)."""
