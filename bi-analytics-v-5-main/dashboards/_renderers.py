@@ -2137,27 +2137,53 @@ def _finance_bar_text_mln_rub(
     values_rub: pd.Series,
     *,
     min_abs_mln: float = 0.0,
-    mln_suffix: str = "млн. руб.",
-    decimals: int = 2,
+    decimals: int | None = None,
 ) -> list:
-    """Подписи над столбцами: число и строка единиц (по умолчанию «млн. руб.»), две строки."""
-    out = []
-    _floor = float(min_abs_mln) if min_abs_mln else 0.0
-    _suf = str(mln_suffix) if mln_suffix else "млн. руб."
-    _d = max(0, int(decimals))
-    for v in values_rub:
+    """Подписи над столбцами: только число в млн (единица на оси Y, без «млн. руб.»)."""
+    floor_rub = float(min_abs_mln or 0.0) * 1e6
+    if decimals is not None:
+        out: list[str] = []
+        d = max(0, int(decimals))
+        for v in values_rub:
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                out.append("")
+                continue
+            try:
+                x = float(v) / 1e6
+            except (TypeError, ValueError):
+                out.append("")
+                continue
+            if floor_rub > 0.0 and abs(float(v)) < floor_rub:
+                out.append("")
+                continue
+            out.append(f"{x:.{d}f}")
+        return out
+    return _forecast_bdd_bar_value_labels(values_rub, min_abs_rub=floor_rub)
+
+
+def _finance_bar_text_from_mln_series(
+    values_mln: pd.Series,
+    *,
+    min_abs_mln: float = 0.0,
+    decimals: int | None = None,
+) -> list[str]:
+    """Подписи bar из значений уже в млн (с NaN → пустая строка)."""
+    out: list[str] = []
+    for v in values_mln:
         if v is None or (isinstance(v, float) and pd.isna(v)):
             out.append("")
             continue
         try:
-            x = float(v) / 1e6
+            rub = float(v) * 1e6
         except (TypeError, ValueError):
             out.append("")
             continue
-        if _floor > 0.0 and abs(x) < _floor:
-            out.append("")
-            continue
-        out.append(f"{x:.{_d}f}<br>{_suf}")
+        lbl = _finance_bar_text_mln_rub(
+            pd.Series([rub]),
+            min_abs_mln=min_abs_mln,
+            decimals=decimals,
+        )
+        out.append(lbl[0] if lbl else "")
     return out
 
 
@@ -10003,9 +10029,7 @@ def dashboard_budget_by_period(df):
                 _txt_under = (
                     None
                     if _hide_bar_value_labels
-                    else _y_fact_lt_plan.map(
-                        lambda v: format_million_rub(float(v) * 1e6) if pd.notna(v) else ""
-                    )
+                    else _finance_bar_text_from_mln_series(_y_fact_lt_plan)
                 )
                 fig.add_trace(
                     go.Bar(
@@ -10026,9 +10050,7 @@ def dashboard_budget_by_period(df):
                 _txt_over = (
                     None
                     if _hide_bar_value_labels
-                    else _y_fact_gt_plan.map(
-                        lambda v: format_million_rub(float(v) * 1e6) if pd.notna(v) else ""
-                    )
+                    else _finance_bar_text_from_mln_series(_y_fact_gt_plan)
                 )
                 fig.add_trace(
                     go.Bar(
@@ -10053,7 +10075,9 @@ def dashboard_budget_by_period(df):
             _adj_txt = (
                 None
                 if _hide_bar_value_labels
-                else project_data[adjusted_budget_col].apply(format_million_rub)
+                else _finance_bar_text_mln_rub(
+                    project_data[adjusted_budget_col], min_abs_mln=_tlbl
+                )
             )
             fig.add_trace(
                 go.Bar(
@@ -11022,7 +11046,7 @@ def dashboard_budget_by_section(df):
                     y=section_data["budget plan"].div(1e6),
                     name="Бюджет План",
                     marker_color="#2E86AB",
-                    text=section_data["budget plan"].apply(format_million_rub),
+                    text=_finance_bar_text_mln_rub(section_data["budget plan"]),
                     textposition="outside",
                     textfont=dict(size=18, color="white"),
                 )
@@ -11033,7 +11057,7 @@ def dashboard_budget_by_section(df):
                     y=section_data["budget fact"].div(1e6),
                     name="Бюджет Факт",
                     marker_color="#A23B72",
-                    text=section_data["budget fact"].apply(format_million_rub),
+                    text=_finance_bar_text_mln_rub(section_data["budget fact"]),
                     textposition="outside",
                     textfont=dict(size=18, color="white"),
                 )
@@ -11046,7 +11070,7 @@ def dashboard_budget_by_section(df):
                         y=section_data["reserve budget"].div(1e6),
                         name="Отклонение",
                         marker_color=dev_colors_sec,
-                        text=section_data["reserve budget"].apply(format_million_rub),
+                        text=_finance_bar_text_mln_rub(section_data["reserve budget"]),
                         textposition="outside",
                         textfont=dict(size=18, color="white"),
                     )
@@ -11077,7 +11101,7 @@ def dashboard_budget_by_section(df):
                     x=section_chart_data["budget plan"].div(1e6),
                     name="Бюджет План",
                     marker_color="#2E86AB",
-                    text=section_chart_data["budget plan"].apply(format_million_rub),
+                    text=_finance_bar_text_mln_rub(section_chart_data["budget plan"]),
                     textposition="outside",
                     textfont=dict(size=18, color="white"),
                     orientation="h",
@@ -11089,7 +11113,7 @@ def dashboard_budget_by_section(df):
                     x=section_chart_data["budget fact"].div(1e6),
                     name="Бюджет Факт",
                     marker_color="#A23B72",
-                    text=section_chart_data["budget fact"].apply(format_million_rub),
+                    text=_finance_bar_text_mln_rub(section_chart_data["budget fact"]),
                     textposition="outside",
                     textfont=dict(size=18, color="white"),
                     orientation="h",
@@ -11103,7 +11127,7 @@ def dashboard_budget_by_section(df):
                         x=section_chart_data["reserve budget"].div(1e6),
                         name="Отклонение",
                         marker_color=dev_colors_sec,
-                        text=section_chart_data["reserve budget"].apply(format_million_rub),
+                        text=_finance_bar_text_mln_rub(section_chart_data["reserve budget"]),
                         textposition="outside",
                         textfont=dict(size=18, color="white"),
                         orientation="h",
@@ -11752,14 +11776,12 @@ def dashboard_bdr(df):
             _xb = -45 if _nb <= 18 else -50 if _nb <= 36 else -55
             _x_standoff = 30 if _nb <= 18 else (44 if _nb <= 36 else 56)
             _txt_pos_b = "none" if _hide_bar_value_labels else "outside"
-            _mln_lab = "млн. руб."
             _plan_txt_b = (
                 None
                 if _hide_bar_value_labels
                 else _finance_bar_text_mln_rub(
                     chart_df["План расходов"],
                     min_abs_mln=_tlbl_b,
-                    mln_suffix=_mln_lab,
                     decimals=1,
                 )
             )
@@ -11769,7 +11791,6 @@ def dashboard_bdr(df):
                 else _finance_bar_text_mln_rub(
                     chart_df["Факт расходов"],
                     min_abs_mln=_tlbl_b,
-                    mln_suffix=_mln_lab,
                     decimals=1,
                 )
             )
@@ -11811,11 +11832,7 @@ def dashboard_bdr(df):
                     _dev_txt_lt = (
                         None
                         if _hide_bar_value_labels
-                        else _y_b_fact_lt.map(
-                            lambda v: format_million_rub(float(v) * 1e6, decimals=1)
-                            if pd.notna(v)
-                            else ""
-                        )
+                        else _finance_bar_text_from_mln_series(_y_b_fact_lt, decimals=1)
                     )
                     fig.add_trace(
                         go.Bar(
@@ -11836,11 +11853,7 @@ def dashboard_bdr(df):
                     _dev_txt_gt = (
                         None
                         if _hide_bar_value_labels
-                        else _y_b_fact_gt.map(
-                            lambda v: format_million_rub(float(v) * 1e6, decimals=1)
-                            if pd.notna(v)
-                            else ""
-                        )
+                        else _finance_bar_text_from_mln_series(_y_b_fact_gt, decimals=1)
                     )
                     fig.add_trace(
                         go.Bar(
@@ -24037,7 +24050,7 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
         labels={"Сумма_млн": "млн руб.", "Проект": "Проект"},
     )
     fig.update_traces(
-        texttemplate="%{text:,.1f} млн",
+        texttemplate="%{text:,.1f}",
         textposition="outside",
         cliponaxis=False,
     )
@@ -24704,7 +24717,7 @@ def dashboard_budget_by_type(df):
                 # Add text labels on the edge of bars (в миллионах рублей)
                 fig_hist.update_traces(
                     textposition="outside",
-                    texttemplate="%{text:.2f} млн руб.",
+                    texttemplate="%{text:.2f}",
                     textfont=dict(size=12, color="white"),
                 )
 
