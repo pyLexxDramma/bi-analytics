@@ -898,14 +898,24 @@ def render_sidebar_menu(current_page: str = "reports"):
         # Чтобы клиент мгновенно увидел свежие данные после деплоя — без ожидания
         # естественного истечения cache TTL.
         _show_data_ops_sidebar = True
+        _is_release_client = False
         try:
-            from config import show_data_ops_ui_for_role
+            from config import is_release_client_mode, show_data_ops_ui_for_role
 
+            _is_release_client = bool(is_release_client_mode())
             _show_data_ops_sidebar = bool(show_data_ops_ui_for_role(user.get("role", "")))
         except Exception:
             pass
 
-        if has_admin_access(user.get("role", "")) and _show_data_ops_sidebar:
+        if _is_release_client:
+            st.markdown("---")
+            try:
+                from data_ops_sidebar import render_release_data_version_sidebar
+
+                render_release_data_version_sidebar(st)
+            except Exception:
+                pass
+        elif has_admin_access(user.get("role", "")) and _show_data_ops_sidebar:
             st.markdown("---")
             if st.button(
                 "Обновить данные и кэш",

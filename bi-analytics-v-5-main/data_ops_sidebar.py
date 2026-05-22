@@ -15,6 +15,11 @@ def _safe_int(v: Any) -> Optional[int]:
         return None
 
 
+def render_release_data_version_sidebar(st: Any) -> None:
+    """Release: только выбор версии данных в сайдбаре (без источника/FTP/ручной загрузки)."""
+    _render_version_sidebar_compact(st)
+
+
 def render_admin_data_ops_sidebar(st: Any) -> None:
     """
     Маленькая панель в сайдбаре: источник данных, загрузка web/, версия, FTP.

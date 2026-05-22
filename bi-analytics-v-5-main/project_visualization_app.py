@@ -1166,7 +1166,7 @@ def main():
             _load_quiet = bool(st.session_state.pop("_pending_web_load_quiet", True))
             _perform_load_from_web_folder(quiet=_load_quiet, force_rescan=not _load_quiet)
 
-        if _admin_data_ops_sidebar:
+        if _admin_data_ops_sidebar or _is_release_client_mode():
             try:
                 from data_ops_sidebar import apply_web_version_pick
 
