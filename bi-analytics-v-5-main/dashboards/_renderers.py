@@ -18818,7 +18818,6 @@ def _gdrs_dynamics_chart_panel(
             textposition="top center",
             textfont=dict(color="#29b6f6", size=_lbl_sz),
             cliponaxis=False,
-            yaxis="y2",
             hovertemplate="План: %{y}<br>%{x|%d.%m.%Y}<extra></extra>",
         ))
         fig.add_trace(_go.Scatter(
@@ -18829,7 +18828,6 @@ def _gdrs_dynamics_chart_panel(
             textposition="bottom center",
             textfont=dict(color="#ff8c2d", size=_lbl_sz),
             cliponaxis=False,
-            yaxis="y",
             customdata=_pct_hover,
             hovertemplate="Факт: %{y}<br>%{customdata}<br>%{x|%d.%m.%Y}<extra></extra>",
         ))
@@ -18863,12 +18861,11 @@ def _gdrs_dynamics_chart_panel(
         )
         _fact = dyn["Факт"].astype(float)
         _plan = dyn["План"].astype(float)
-        _f_lo, _f_hi = float(_fact.min()), float(_fact.max())
-        _f_span = max(_f_hi - _f_lo, 1.0)
-        _f_pad = max(_f_span * 0.28, 18.0)
-        _p_lo, _p_hi = float(_plan.min()), float(_plan.max())
-        _p_span = max(_p_hi - _p_lo, 1.0)
-        _p_pad = max(_p_span * 0.24, 18.0)
+        _y_lo = float(min(_fact.min(), _plan.min()))
+        _y_hi = float(max(_fact.max(), _plan.max()))
+        _y_span = max(_y_hi - _y_lo, 1.0)
+        _y_pad = max(_y_span * 0.22, 24.0)
+        _y_range = [max(0.0, _y_lo - _y_pad), _y_hi + _y_pad]
         fig.update_layout(
             xaxis=dict(
                 type="date",
@@ -18878,22 +18875,15 @@ def _gdrs_dynamics_chart_panel(
                 gridcolor="rgba(255,255,255,0.06)",
             ),
             yaxis=dict(
-                title="Факт",
-                range=[max(0.0, _f_lo - _f_pad), _f_hi + _f_pad],
+                title="Количество (план и факт)",
+                range=_y_range,
                 autorange=False,
                 showgrid=True,
                 gridcolor="rgba(255,255,255,0.08)",
             ),
-            yaxis2=dict(
-                title="План",
-                overlaying="y",
-                side="right",
-                range=[max(0.0, _p_lo - _p_pad), _p_hi + _p_pad],
-                autorange=False,
-                showgrid=False,
-            ),
         )
         fig = apply_chart_background(fig)
+        fig.update_layout(yaxis=dict(range=_y_range, autorange=False))
         st.plotly_chart(fig, use_container_width=True)
     except Exception as _e:
         st.warning(f"Plotly недоступен: {_e}")
@@ -18940,16 +18930,28 @@ def _gdrs_pie_distribution_display(pie_df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _gdrs_deviation_vs_plan_text_and_color(plan_v, fact_v) -> tuple[str, str]:
+    """Подпись отклонения (факт − план): факт < план — красный и «−», иначе зелёный и «+»."""
+    p = float(pd.to_numeric(plan_v, errors="coerce") or 0)
+    f = float(pd.to_numeric(fact_v, errors="coerce") or 0)
+    d = int(round(f - p))
+    if f < p:
+        return f"{d:d}", "#ff5454"
+    if f > p:
+        return f"{d:+d}", "#46d68a"
+    return "0", "#8899aa"
+
+
 def _gdrs_deviation_display_cls(v) -> tuple[str, str]:
-    """План − факт: >0 красный, <0 зелёный, 0 серый (как bar-chart ГДРС)."""
+    """Таблица: факт−план (<0 красный «−», ≥0 зелёный «+»). В данных хранится план−факт."""
     fv = pd.to_numeric(v, errors="coerce")
     if pd.isna(fv):
         return "—", ""
-    ri = int(round(float(fv)))
-    if ri > 0:
-        return f"{ri:+d}", "gdrs-u"
-    if ri < 0:
-        return f"{ri:+d}", "gdrs-o"
+    d = int(round(-float(fv)))
+    if d < 0:
+        return f"{d:d}", "gdrs-u"
+    if d > 0:
+        return f"{d:+d}", "gdrs-o"
     return "0", "gdrs-z"
 
 
@@ -18963,10 +18965,11 @@ def _gdrs_pct_display_cls(v) -> tuple[str, str]:
         fv = pd.to_numeric(v, errors="coerce")
     if pd.isna(fv):
         return "—", ""
-    text_v = f"{float(fv):+.1f}%" if float(fv) != 0.0 else "0.0%"
-    if fv > 0:
+    display = -float(fv)
+    text_v = f"{display:+.1f}%" if display != 0.0 else "0.0%"
+    if display < 0:
         return text_v, "gdrs-u"
-    if fv < 0:
+    if display > 0:
         return text_v, "gdrs-o"
     return text_v, "gdrs-z"
 
@@ -19285,15 +19288,15 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         try:
             import plotly.graph_objects as _go
             proj_df = proj_df.sort_values("plan", ascending=False).reset_index(drop=True)
-            _dev_signed = proj_df["deviation"].round(0).astype(int)
-            _dev_colors = [
-                "#ff5454" if int(v) > 0 else ("#46d68a" if int(v) < 0 else "#8899aa")
-                for v in _dev_signed
-            ]
             _proj_labels = proj_df["project_name"].astype(str).tolist()
             _plan_vals = proj_df["plan"].fillna(0).astype(int).tolist()
             _fact_vals = proj_df["skud"].fillna(0).astype(int).tolist()
-            _dev_abs = _dev_signed.abs().tolist()
+            _dev_text, _dev_colors, _dev_abs = [], [], []
+            for _pv, _fv in zip(proj_df["plan"], proj_df["skud"]):
+                _lbl, _col = _gdrs_deviation_vs_plan_text_and_color(_pv, _fv)
+                _dev_text.append(_lbl)
+                _dev_colors.append(_col)
+                _dev_abs.append(abs(int(round(float(_fv) - float(_pv)))))
             fig_pf = _go.Figure()
             fig_pf.add_bar(
                 name="План", x=_proj_labels, y=_plan_vals,
@@ -19308,10 +19311,11 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                 textfont=dict(color="#cfe9fa", size=12),
             )
             fig_pf.add_bar(
-                name="Отклонение (план − факт)", x=_proj_labels, y=_dev_abs,
+                name="Отклонение (факт − план)", x=_proj_labels, y=_dev_abs,
                 marker_color=_dev_colors,
-                text=[f"{int(v):+d}" for v in _dev_signed], textposition="outside",
-                textfont=dict(color="#cfe9fa", size=12),
+                text=_dev_text,
+                textposition="outside",
+                textfont=dict(color=_dev_colors, size=12),
             )
             fig_pf.update_layout(
                 title=dict(
@@ -19371,17 +19375,20 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                 textposition="outside",
                 textfont=dict(color="#cfe9fa", size=11),
             )
+            _ctr_dev_text, _ctr_dev_colors, _ctr_dev_abs = [], [], []
+            for _pv, _fv in zip(chart_df["План"], chart_df["Факт"]):
+                _lbl, _col = _gdrs_deviation_vs_plan_text_and_color(_pv, _fv)
+                _ctr_dev_text.append(_lbl)
+                _ctr_dev_colors.append(_col)
+                _ctr_dev_abs.append(abs(int(round(float(_fv) - float(_pv)))))
             fig2.add_bar(
-                name="Отклонение (план − факт)",
+                name="Отклонение (факт − план)",
                 x=chart_df["Контрагент"],
-                y=chart_df["Отклонение"].abs(),
-                marker_color=[
-                    "#ff5454" if v > 0 else ("#46d68a" if v < 0 else "#8899aa")
-                    for v in chart_df["Отклонение"]
-                ],
-                text=[f"{int(v):+d}" for v in chart_df["Отклонение"]],
+                y=_ctr_dev_abs,
+                marker_color=_ctr_dev_colors,
+                text=_ctr_dev_text,
                 textposition="outside",
-                textfont=dict(color="#cfe9fa", size=11),
+                textfont=dict(color=_ctr_dev_colors, size=11),
             )
             fig2.update_layout(
                 barmode="group",
@@ -19397,11 +19404,6 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             st.plotly_chart(fig2, use_container_width=True)
         except Exception as _e:
             st.warning(f"Plotly недоступен: {_e}")
-        _gdrs_render_plan_fact_summary_table(
-            st,
-            _gdrs_contractors_summary_display(chart_df),
-            table_title="ГДРС по выбранным контрагентам",
-        )
 
     st.markdown("---")
     if str(sel_vid).casefold() == "рабочие":

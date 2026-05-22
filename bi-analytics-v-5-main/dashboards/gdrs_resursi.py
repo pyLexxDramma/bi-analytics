@@ -1155,15 +1155,18 @@ def gdrs_dynamics_build_series(
     f2 = fact_df.copy()
     f2["date"] = pd.to_datetime(f2["date"])
     f2["bucket"] = gdrs_dynamics_assign_buckets(f2["date"], agg_kind)
+    f2["_day"] = f2["date"].dt.normalize()
 
-    agg = (
-        f2.groupby("bucket", as_index=False)
-        .agg(
-            fact_sum=("fact", "sum"),
-            fact_days=("date", lambda s: s.dt.normalize().nunique()),
-        )
+    daily_totals = (
+        f2.groupby(["bucket", "_day"], as_index=False)["fact"]
+        .sum()
     )
-    agg["Факт"] = (agg["fact_sum"] / agg["fact_days"].clip(lower=1)).round(0).astype(int)
+    agg = (
+        daily_totals.groupby("bucket", as_index=False)["fact"]
+        .mean()
+        .rename(columns={"fact": "Факт"})
+    )
+    agg["Факт"] = pd.to_numeric(agg["Факт"], errors="coerce").fillna(0).round(0).astype(int)
 
     grid = pd.DataFrame({"bucket": gdrs_dynamics_bucket_starts(date_from, date_to, agg_kind)})
     if month_periods:
