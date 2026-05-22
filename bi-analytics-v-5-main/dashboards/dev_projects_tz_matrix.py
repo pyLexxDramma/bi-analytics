@@ -3626,6 +3626,7 @@ def build_control_points_df(mdf: pd.DataFrame, *, hide_completed: bool = False) 
             rec[f"{slug}_otkl"] = otk
             rec[f"{slug}_ok"] = ok
             rec[f"{slug}_warn_pct"] = bool(warn_pct)
+            rec[f"{slug}_pct100"] = bool(_pct100)
             if not ok:
                 rec["row_ok"] = False
         rows_out.append(rec)
@@ -3676,11 +3677,11 @@ _CONTROL_POINTS_CSS = """
   background-color: #0c1219 !important;
 }
 .cp-table-wrap .rendered-table th {
-  font-size: 15px !important;
+  font-size: 17px !important;
   font-weight: 700 !important;
-  color: #4ade80 !important;
+  color: #f0f4f8 !important;
   background: #17314b !important;
-  padding: 6px 8px !important;
+  padding: 10px 10px !important;
   text-align: center !important;
   vertical-align: middle !important;
 }
@@ -3696,8 +3697,8 @@ _CONTROL_POINTS_CSS = """
 .rendered-table th.cp-tophead {
   text-align: center !important;
   background: #17314b !important;
-  color: #ffffff !important;
-  font-size: 15px !important;
+  color: #f0f4f8 !important;
+  font-size: 18px !important;
   font-weight: 700 !important;
 }
 /* Центрирование заголовков вех и подстолбцов */
@@ -3705,18 +3706,18 @@ _CONTROL_POINTS_CSS = """
   text-align: center !important;
   vertical-align: middle !important;
   background: #1a3328 !important;
-  font-size: 15px !important;
+  font-size: 17px !important;
   font-weight: 700 !important;
-  padding: 6px 8px !important;
-  color: #4ade80 !important;
+  padding: 10px 10px !important;
+  color: #f0f4f8 !important;
 }
 .cp-table-wrap .rendered-table th.cp-sub {
   text-align: center !important;
   vertical-align: middle !important;
-  font-size: 15px !important;
-  color: #86efac !important;
+  font-size: 16px !important;
+  color: #f0f4f8 !important;
   font-weight: 700 !important;
-  padding: 6px 8px !important;
+  padding: 8px 8px !important;
   background: #17314b !important;
 }
 .cp-table-wrap .rendered-table th.cp-col-project {
@@ -3726,8 +3727,8 @@ _CONTROL_POINTS_CSS = """
   left: 0 !important;
   z-index: 3 !important;
   background: #161f2b !important;
-  color: #4ade80 !important;
-  font-size: 15px !important;
+  color: #f0f4f8 !important;
+  font-size: 17px !important;
 }
 .cp-col-project {
   position: sticky !important;
@@ -3777,11 +3778,10 @@ _CONTROL_POINTS_CSS = """
 .cp-table-wrap .rendered-table tbody td.cp-col-project {
   box-shadow: inset -3px 0 0 #ffffff;
 }
-/* При % выполнения ≠ 100% — оранжевый текст (как в «Девелоперских проектах») */
-.cp-table-wrap .rendered-table td.cp-td-pct-narrow,
-.cp-table-wrap .rendered-table td.cp-td-warn {
+/* Закрыто на 100% — оранжевый текст #f09355 в План/Факт */
+.cp-table-wrap .rendered-table td.cp-td-pct-done {
   background: transparent !important;
-  color: #e8912d !important;
+  color: #f09355 !important;
   font-weight: 700 !important;
 }
 /* Отклонение: зелёный / красный (как dev-tz-otkl-ok / dev-tz-otkl-bad) */
@@ -3793,11 +3793,18 @@ _CONTROL_POINTS_CSS = """
   color: #d9534f !important;
   font-weight: 700 !important;
 }
-.cp-table-wrap .rendered-table td.cp-otkl-ok.cp-td-pct-narrow {
+.cp-table-wrap .rendered-table td.cp-otkl-ok.cp-td-pct-done {
   color: #28a745 !important;
 }
-.cp-table-wrap .rendered-table td.cp-otkl-late.cp-td-pct-narrow {
+.cp-table-wrap .rendered-table td.cp-otkl-late.cp-td-pct-done {
   color: #d9534f !important;
+}
+.cp-table-wrap .rendered-table thead th.cp-sortable {
+  cursor: pointer;
+  user-select: none;
+}
+.cp-table-wrap .rendered-table thead th.cp-sortable:hover {
+  filter: brightness(1.08);
 }
 .cp-status-cell { text-align: center; vertical-align: middle; }
 .cp-status-dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; vertical-align: middle; }
@@ -3839,42 +3846,46 @@ def _apply_control_points_msp_filters(
         if matched:
             rest = [gk for gk in ordered_gks if gk not in matched]
             ordered_gks = matched + rest
-        opts = ["Все"] + ordered_gks
+        opts = ordered_gks
 
         def _cp_proj_select_label(opt: str) -> str:
-            if opt == "Все":
-                return "Все"
             return str(gk_to_lab.get(opt, opt))
 
         from .ui_quiet import filters_grid, filters_popover
 
-        _cp_reset_keys = ["cp_msp_filter_project_gk"]
-        _pre_gk = str(st.session_state.get("cp_msp_filter_project_gk", "Все") or "Все")
+        _cp_reset_keys = ["cp_msp_filter_projects"]
+        _pre_sel = st.session_state.get("cp_msp_filter_projects") or []
+        if not isinstance(_pre_sel, list):
+            _pre_sel = []
         with filters_popover(
             st,
             reset_keys=_cp_reset_keys,
-            active_count=1 if _pre_gk != "Все" else 0,
+            active_count=len(_pre_sel),
         ) as _fp:
             with filters_grid(st, 1) as _cols:
                 with _cols[0]:
-                    sel_gk = st.selectbox(
+                    sel_gks = st.multiselect(
                         "Проект",
                         opts,
                         format_func=_cp_proj_select_label,
-                        key="cp_msp_filter_project_gk",
+                        key="cp_msp_filter_projects",
+                        placeholder="Все проекты",
                     )
             _chips = []
-            if sel_gk != "Все":
-                _chips.append(("Проект", _cp_proj_select_label(sel_gk)))
+            for _gk in sel_gks or []:
+                _chips.append(("Проект", _cp_proj_select_label(_gk)))
             _fp.set_chips(_chips)
     else:
-        sel_gk = "Все"
+        sel_gks = []
 
     out = df
-    if sel_gk != "Все" and pcol and pcol in out.columns and gk_to_raws:
-        raws = gk_to_raws.get(str(sel_gk).strip())
-        if raws:
-            out = out[out[pcol].astype(str).str.strip().isin(raws)]
+    if sel_gks and pcol and pcol in out.columns and gk_to_raws:
+        _raws_union: list[str] = []
+        for _gk in sel_gks:
+            _raws_union.extend(gk_to_raws.get(str(_gk).strip(), []) or [])
+        _raws_union = sorted(set(_raws_union))
+        if _raws_union:
+            out = out[out[pcol].astype(str).str.strip().isin(_raws_union)]
 
     meta["subtree_rows"] = int(len(out))
     return out, meta
@@ -4087,6 +4098,78 @@ _CONTROL_POINTS_POPOVER_FRAGMENT = (
 )
 
 
+_CONTROL_POINTS_SORT_SCRIPT = """
+<script>
+(function(){
+  function parseNum(t){
+    var s=String(t||"").replace(/\\s/g,"").replace(/\\u00a0/g,"").replace(",",".");
+    var m=s.match(/-?\\d+(?:\\.\\d+)?/);
+    return m?parseFloat(m[0]):NaN;
+  }
+  function cellKey(tr,colIdx){
+    if(!tr||!tr.cells||!tr.cells[colIdx]) return "";
+    return (tr.cells[colIdx].textContent||"").trim();
+  }
+  function compare(at,bt,dir){
+    var an=parseNum(at), bn=parseNum(bt), cmp=0;
+    if(!isNaN(an)&&!isNaN(bn)) cmp=an-bn;
+    else cmp=String(at).localeCompare(String(bt),"ru",{numeric:true,sensitivity:"base"});
+    return dir>0?cmp:-cmp;
+  }
+  function initTable(tbl){
+    if(!tbl||tbl.getAttribute("data-cp-sort-ready")==="1") return;
+    tbl.setAttribute("data-cp-sort-ready","1");
+    var tbody=tbl.querySelector("tbody");
+    if(!tbody) return;
+    var projTh=tbl.querySelector("thead th.cp-col-project");
+    if(projTh){
+      projTh.classList.add("cp-sortable");
+      var plab=(projTh.textContent||"Проект").trim();
+      projTh.setAttribute("data-sort-label", plab);
+      projTh.title="Клик — сортировка по проекту";
+      projTh.addEventListener("click",function(ev){
+        ev.preventDefault();
+        var cur=projTh.getAttribute("data-sort-dir");
+        var dir=cur==="1"?-1:1;
+        tbl.querySelectorAll("thead th.cp-sortable").forEach(function(x){
+          x.removeAttribute("data-sort-dir");
+          x.textContent=x.getAttribute("data-sort-label")||"";
+        });
+        projTh.setAttribute("data-sort-dir", String(dir));
+        projTh.textContent=plab+(dir>0?" \\u25B2":" \\u25BC");
+        var rows=Array.prototype.slice.call(tbody.querySelectorAll("tr"));
+        rows.sort(function(a,b){return compare(cellKey(a,0),cellKey(b,0),dir);});
+        rows.forEach(function(r){tbody.appendChild(r);});
+      });
+    }
+    tbl.querySelectorAll("thead tr:nth-child(2) th.cp-sub").forEach(function(th){
+      th.classList.add("cp-sortable");
+      var lab=(th.textContent||"").trim();
+      th.setAttribute("data-sort-label", lab);
+      th.title="Клик — сортировка по колонке";
+      var colIdx=(th.cellIndex||0)+1;
+      th.addEventListener("click",function(ev){
+        ev.preventDefault();
+        var cur=th.getAttribute("data-sort-dir");
+        var dir=cur==="1"?-1:1;
+        tbl.querySelectorAll("thead th.cp-sortable").forEach(function(x){
+          x.removeAttribute("data-sort-dir");
+          x.textContent=x.getAttribute("data-sort-label")||"";
+        });
+        th.setAttribute("data-sort-dir", String(dir));
+        th.textContent=lab+(dir>0?" \\u25B2":" \\u25BC");
+        var rows=Array.prototype.slice.call(tbody.querySelectorAll("tr"));
+        rows.sort(function(a,b){return compare(cellKey(a,colIdx),cellKey(b,colIdx),dir);});
+        rows.forEach(function(r){tbody.appendChild(r);});
+      });
+    });
+  }
+  document.querySelectorAll(".cp-table-wrap table.rendered-table").forEach(initTable);
+})();
+</script>
+"""
+
+
 def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> None:
     """Таблица «Контрольные точки проектов»: 3 блока по 4 вехи.
 
@@ -4096,7 +4179,7 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
       (зелёный, если все 4 вехи блока в срок; иначе красный). Колонка
       «Статус» внутри ячеек вех **убрана**.
     - В ячейке вехи остаются 3 колонки: План / Факт / Откл.
-    - При `% выполнения ≠ 100%` значения — узким шрифтом (`cp-td-pct-narrow`).
+    - При `% выполнения = 100%` — оранжевый текст `#f09355` в План/Факт; иначе белый.
     - При просрочке (Откл < 0) — красный текст `cp-otkl-late`.
     - Индикатор ●: по клику или Enter/Пробел открывается таблица задач MSP по вехе
       (без открытия при наведении мыши).
@@ -4156,10 +4239,10 @@ html,body{margin:0;padding:0;background:#0e1520;overflow-x:hidden;overflow-y:aut
   font-size:13px!important;font-weight:700!important;line-height:1.35!important;
   color:#fafafa!important;padding:6px 8px!important;text-align:center!important}
 .cp-table-wrap .rendered-table th{
-  font-size:15px!important;font-weight:700!important;color:#4ade80!important;padding:6px 8px!important}
-.cp-table-wrap .rendered-table th.cp-sub{color:#86efac!important;font-size:15px!important}
-.cp-table-wrap .rendered-table th.cp-ghead{font-size:15px!important}
-.cp-table-wrap .rendered-table thead th.cp-col-project{font-size:15px!important}
+  font-size:17px!important;font-weight:700!important;color:#f0f4f8!important;padding:10px 10px!important}
+.cp-table-wrap .rendered-table th.cp-sub{color:#f0f4f8!important;font-size:16px!important}
+.cp-table-wrap .rendered-table th.cp-ghead{font-size:17px!important;color:#f0f4f8!important}
+.cp-table-wrap .rendered-table thead th.cp-col-project{font-size:17px!important;color:#f0f4f8!important}
 .cp-table-wrap .rendered-table{border:3px solid #ffffff!important}
 .cp-table-wrap .rendered-table th,
 .cp-table-wrap .rendered-table td{
@@ -4181,7 +4264,7 @@ html,body{margin:0;padding:0;background:#0e1520;overflow-x:hidden;overflow-y:aut
   z-index:4!important;background:#161f2b!important;
   text-align:left!important;color:#ffffff!important;padding:6px 10px!important;
   font-size:15px!important}
-.cp-table-wrap .rendered-table td.cp-td-pct-narrow{color:#e8912d!important}
+.cp-table-wrap .rendered-table td.cp-td-pct-done{color:#f09355!important}
 .cp-table-wrap .rendered-table td.cp-otkl-ok{color:#28a745!important}
 .cp-table-wrap .rendered-table td.cp-otkl-late{color:#d9534f!important}
 .cp-table-wrap .rendered-table th.cp-sub-status,
@@ -4254,7 +4337,7 @@ html,body{margin:0;padding:0;background:#0e1520;overflow-x:hidden;overflow-y:aut
                 f'<td class="cp-col-project">{esc(str(r.get("project", "")))}</td>',
             ]
             for i, (_t, slug) in enumerate(grp):
-                pct_inc = bool(r.get(f"{slug}_warn_pct"))
+                pct100 = bool(r.get(f"{slug}_pct100"))
                 m_ok = bool(r.get(f"{slug}_ok", False))
                 otkl_txt = str(r.get(f"{slug}_otkl", "") or "")
                 _od = _parse_otkl_days_display(otkl_txt)
@@ -4286,10 +4369,7 @@ html,body{margin:0;padding:0;background:#0e1520;overflow-x:hidden;overflow-y:aut
                     quote=True,
                 )
                 _tip = f"Таблица задач по вехе. {dot_al} Откройте кликом или клавишей Enter."
-                status_extra = ""
-                if pct_inc:
-                    status_extra = " cp-td-pct-narrow"
-                status_cell_cls = "cp-col-cell-status cp-ms-first" + status_extra
+                status_cell_cls = "cp-col-cell-status cp-ms-first"
                 cells.append(
                     f'<td class="{status_cell_cls}" title="{esc(_tip)}">'
                     f'<span class="cp-status-hit" data-cp-b64="{_b64_attr}" tabindex="0" role="button" '
@@ -4299,9 +4379,9 @@ html,body{margin:0;padding:0;background:#0e1520;overflow-x:hidden;overflow-y:aut
                 plan_parts: List[str] = []
                 fact_parts: List[str] = []
                 otkl_parts: List[str] = []
-                if pct_inc:
-                    plan_parts.append("cp-td-pct-narrow")
-                    fact_parts.append("cp-td-pct-narrow")
+                if pct100:
+                    plan_parts.append("cp-td-pct-done")
+                    fact_parts.append("cp-td-pct-done")
                 if otk_late:
                     otkl_parts.append("cp-otkl-late")
                 elif m_ok or (_od is not None and _od >= 0):
@@ -4334,7 +4414,7 @@ html,body{margin:0;padding:0;background:#0e1520;overflow-x:hidden;overflow-y:aut
     _iframe_html = _matrix_iframe_html_document(
         _head_styles,
         _scroll_block,
-        extra_body_suffix=_CONTROL_POINTS_POPOVER_FRAGMENT,
+        extra_body_suffix=_CONTROL_POINTS_POPOVER_FRAGMENT + _CONTROL_POINTS_SORT_SCRIPT,
         body_class="cp-body-stack",
     )
     _gap = 14 * max(0, len(table_blocks) - 1)
