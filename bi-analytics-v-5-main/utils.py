@@ -999,15 +999,25 @@ def _fact_vs_plan_font_class(
     return DEVIATION_CLASS_YELLOW
 
 
-def _column_uses_fact_plan_colors(col: Any, finance_deviation_column: Optional[str]) -> bool:
+def _column_uses_fact_plan_colors(
+    col: Any,
+    finance_deviation_column: Optional[str],
+    *,
+    color_fact_column: bool = True,
+) -> bool:
     cl = str(col).casefold()
     if finance_deviation_column and col == finance_deviation_column:
         return True
     if "отклон" in cl:
         return True
     if "факт" in cl and "план" not in cl:
-        return True
+        return bool(color_fact_column)
     return False
+
+
+def _is_table_label_column(col: Any) -> bool:
+    cl = str(col).casefold().strip()
+    return cl in ("проект", "период")
 
 
 def _parse_finance_value(v) -> Optional[float]:
@@ -1041,6 +1051,13 @@ def budget_table_to_html(
     emphasize_row_kinds: tuple[str, ...] = ("project", "total"),
     emphasize_row_font_em: float = 1.12,
     table_caption: str | None = None,
+    color_fact_column: bool = True,
+    header_font_css: str | None = None,
+    group_row_font_css: str | None = None,
+    label_columns_font_css: str | None = None,
+    total_row_bg_color: str | None = None,
+    total_row_font_css: str | None = None,
+    table_font_size_px: int = 15,
 ) -> str:
     """
     Строит HTML таблицы бюджета с раскраской колонки отклонения.
@@ -1060,29 +1077,34 @@ def budget_table_to_html(
     if df is None or df.empty:
         return "<p>Нет данных для отображения.</p>"
 
+    _hdr_css = header_font_css or TABLE_HEADER_FONT_CSS
+    _grp_css = group_row_font_css or f"font-weight:700;font-size:{float(emphasize_row_font_em or 1.12):.2f}em;"
+    _tot_bg = total_row_bg_color or TABLE_TOTAL_ROW_BG_COLOR
+    _tot_font = total_row_font_css or TABLE_TOTAL_ROW_FONT_CSS
+    _tbl_px = max(12, int(table_font_size_px or 15))
     wrap_id = "bdt_" + str(id(df))
     parts = [
         _html_table_caption(table_caption),
         f'<div id="{wrap_id}" class="budget-deviation-table-wrap" style="overflow-x: auto; min-width: 0; margin: 0.75em 0;">',
         f'<style>'
-        f'#{wrap_id} table {{ table-layout: auto; font-size: 15px; }}'
+        f'#{wrap_id} table {{ table-layout: auto; font-size: {_tbl_px}px; }}'
         f'#{wrap_id} th, #{wrap_id} td {{ max-width: 11em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}'
         f'#{wrap_id} td.bd-cell-red, #{wrap_id} td.bd-cell-red * {{ color: hsl(348,100%,63%) !important; }} '
         f'#{wrap_id} td.bd-cell-green, #{wrap_id} td.bd-cell-green * {{ color: hsl(148,100%,63%) !important; }}'
         f'#{wrap_id} td.bd-cell-yellow, #{wrap_id} td.bd-cell-yellow * {{ color: hsl(48,95%,62%) !important; }}'
-        f'#{wrap_id} thead th {{ background-color: {TABLE_HEADER_BG_COLOR} !important; {TABLE_HEADER_FONT_CSS} }}'
+        f'#{wrap_id} thead th {{ background-color: {TABLE_HEADER_BG_COLOR} !important; {_hdr_css} }}'
         f'#{wrap_id} tr.bd-group-row td {{ background-color: {TABLE_GROUP_ROW_BG_COLOR} !important; }}'
-        f'#{wrap_id} tr.bd-total-row td {{ background-color: {TABLE_TOTAL_ROW_BG_COLOR} !important; {TABLE_TOTAL_ROW_FONT_CSS} }}'
-        f'#{wrap_id} tr.bd-total-row td, #{wrap_id} tr.bd-total-row td * {{ {TABLE_TOTAL_ROW_FONT_CSS} }}'
+        f'#{wrap_id} tr.bd-total-row td {{ background-color: {_tot_bg} !important; {_tot_font} }}'
+        f'#{wrap_id} tr.bd-total-row td, #{wrap_id} tr.bd-total-row td * {{ {_tot_font} }}'
         f'</style>',
-        f'<table class="bi-sortable-table" style="width:100%; border-collapse: collapse; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; font-size: 15px;">',
+        f'<table class="bi-sortable-table" style="width:100%; border-collapse: collapse; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; font-size: {_tbl_px}px;">',
         "<thead><tr>",
     ]
     header_cols = [c for c in df.columns if c != row_kind_column]
     for col in header_cols:
         col_esc = html_module.escape(str(col))
         parts.append(
-            f'<th style="border: 1px solid rgba(255,255,255,0.3); padding: 6px 8px; background-color: {TABLE_HEADER_BG_COLOR}; {TABLE_HEADER_FONT_CSS}">{col_esc}</th>'
+            f'<th style="border: 1px solid rgba(255,255,255,0.3); padding: 8px 10px; background-color: {TABLE_HEADER_BG_COLOR}; {_hdr_css}">{col_esc}</th>'
         )
     parts.append("</tr></thead><tbody>")
     visible_cols = [c for c in df.columns if c != row_kind_column]
@@ -1100,21 +1122,20 @@ def budget_table_to_html(
             str(x).strip().casefold() for x in emphasize_row_kinds
         }
         _cell_bg = (
-            TABLE_TOTAL_ROW_BG_COLOR
+            _tot_bg
             if is_total_row_st
             else (TABLE_GROUP_ROW_BG_COLOR if is_emphasized_row else TABLE_BG_COLOR)
         )
-        _efs = float(emphasize_row_font_em) if emphasize_row_font_em and emphasize_row_font_em > 1 else 1.15
         if is_total_row_st:
             row_style = (
                 ' class="bd-total-row bd-group-row" style="'
-                f"{TABLE_TOTAL_ROW_FONT_CSS} border-top:3px solid rgba(255,255,255,0.55);"
+                f"{_tot_font} border-top:3px solid rgba(255,255,255,0.55);"
                 'border-bottom:2px solid rgba(255,255,255,0.35);"'
             )
         elif is_emphasized_row:
             row_style = (
-                ' class="bd-group-row" style="font-weight:700; '
-                f"font-size:{_efs}em; border-top:1px solid rgba(255,255,255,0.35);\""
+                ' class="bd-group-row" style="'
+                f"{_grp_css} border-top:1px solid rgba(255,255,255,0.35);\""
             )
         else:
             row_style = ""
@@ -1125,7 +1146,14 @@ def budget_table_to_html(
             val = row[col]
             val_str = "" if (val is None or (isinstance(val, float) and pd.isna(val))) else str(val)
             val_esc = html_module.escape(val_str)
-            if _column_uses_fact_plan_colors(col, finance_deviation_column):
+            _label_css = (
+                label_columns_font_css
+                if label_columns_font_css and _is_table_label_column(col)
+                else ""
+            )
+            if _column_uses_fact_plan_colors(
+                col, finance_deviation_column, color_fact_column=color_fact_column
+            ):
                 num = _parse_finance_value(val)
                 cl = str(col).casefold()
                 if "факт" in cl and "план" not in cl:
@@ -1150,11 +1178,11 @@ def budget_table_to_html(
                 else:
                     parts.append(
                         f'<td style="padding: 4px 5px; color: {TABLE_TEXT_COLOR}; '
-                        f'background-color: {_cell_bg};">{val_esc}</td>'
+                        f'background-color: {_cell_bg}; {_label_css}">{val_esc}</td>'
                     )
             else:
                 parts.append(
-                    f'<td style="padding: 4px 5px; color: {TABLE_TEXT_COLOR}; background-color: {_cell_bg};">{val_esc}</td>'
+                    f'<td style="padding: 4px 5px; color: {TABLE_TEXT_COLOR}; background-color: {_cell_bg}; {_label_css}">{val_esc}</td>'
                 )
         parts.append("</tr>")
     parts.append("</tbody></table></div>")

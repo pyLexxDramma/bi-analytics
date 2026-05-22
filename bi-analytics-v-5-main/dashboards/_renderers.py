@@ -9318,6 +9318,17 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
 
 
 # ==================== DASHBOARD 6: Budget Plan/Fact/Reserve by Project by Period ====================
+_BDDS_TABLE_HTML_KW = {
+    "color_fact_column": False,
+    "header_font_css": "font-weight:800;font-size:1.18em;",
+    "group_row_font_css": "font-weight:800;font-size:1.12em;",
+    "label_columns_font_css": "font-weight:700;font-size:1.05em;",
+    "total_row_bg_color": "#000000",
+    "total_row_font_css": "font-weight:800;font-size:1.15em;color:#ffffff;",
+    "table_font_size_px": 16,
+}
+
+
 def dashboard_budget_by_period(df):
     st.header("БДДС")
 
@@ -10293,6 +10304,7 @@ def dashboard_budget_by_period(df):
                     deviation_red_if_negative=True,
                     row_kind_column="_row_kind",
                     emphasize_row_kinds=("project", "total"),
+                    **_BDDS_TABLE_HTML_KW,
                 ),
                 unsafe_allow_html=True,
             )
@@ -10347,6 +10359,7 @@ def dashboard_budget_by_period(df):
                 deviation_red_if_negative=True,
                 row_kind_column="_row_kind",
                 emphasize_row_kinds=("total",),
+                **_BDDS_TABLE_HTML_KW,
             ),
             unsafe_allow_html=True,
         )
