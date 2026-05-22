@@ -22866,30 +22866,68 @@ def dashboard_documentation(
                     pie_data = {k: v for k, v in pie_data.items() if v > 0}
                     if pie_data:
                         _nk = len(pie_data)
-                        fig_pie = px.pie(
-                            values=list(pie_data.values()),
-                            names=list(pie_data.keys()),
-                            title=None,
-                            color_discrete_map={
-                                "Завершено (100%)": "#2E86AB",
-                                "В работе": "#F39C12",
-                                "Не начато": "#E74C3C",
-                            },
-                        )
-                        fig_pie = _pie_apply_percent_inside_legend_left(
-                            fig_pie,
-                            height=500,
-                            pct_fontsize=18 if _nk <= 3 else 16,
-                            legend_fontsize=11,
-                            left_margin=min(340, max(228, int(210 + _nk * 42))),
-                        )
-                        fig_pie.update_traces(
-                            hovertemplate=(
-                                "<b>%{label}</b><br>Значение: %{value}<br>Доля: %{percent}<br><extra></extra>"
-                            ),
-                        )
-                        fig_pie = apply_chart_background(fig_pie)
-                        render_chart(fig_pie, caption_below="Исполнение ПД")
+                        _pie_color_map = {
+                            "Завершено (100%)": "#2E86AB",
+                            "В работе": "#F39C12",
+                            "Не начато": "#E74C3C",
+                        }
+                        _pie_names = list(pie_data.keys())
+                        _pie_vals = list(pie_data.values())
+                        _pie_h = 560
+                        _leg_col, _chart_col = st.columns([0.15, 0.85], gap="small")
+                        with _leg_col:
+                            _leg_items = "".join(
+                                f"<div style='display:flex;align-items:center;gap:8px;margin:6px 0;'>"
+                                f"<span style='color:{_pie_color_map.get(lbl, '#2E86AB')};font-size:16px;line-height:1;'>■</span>"
+                                f"<span style='color:#f0f4f8;font-size:13px;'>{lbl}</span></div>"
+                                for lbl in _pie_names
+                            )
+                            st.markdown(
+                                f"<div style='min-height:{_pie_h}px;display:flex;flex-direction:column;"
+                                f"justify-content:center;'>{_leg_items}</div>",
+                                unsafe_allow_html=True,
+                            )
+                        with _chart_col:
+                            _pie_colors = [
+                                _pie_color_map.get(lbl, "#2E86AB") for lbl in _pie_names
+                            ]
+                            fig_pie = px.pie(
+                                values=_pie_vals,
+                                names=_pie_names,
+                                title=None,
+                                color_discrete_sequence=_pie_colors,
+                            )
+                            fig_pie.update_traces(
+                                showlegend=False,
+                                textinfo="percent",
+                                texttemplate="%{percent:.0%}",
+                                textposition="inside",
+                                insidetextorientation="horizontal",
+                                textfont=dict(
+                                    size=40 if _nk <= 2 else 32,
+                                    color="#ffffff",
+                                    family="Inter, system-ui, Arial, sans-serif",
+                                ),
+                                marker=dict(colors=_pie_colors, line=dict(width=0)),
+                                domain=dict(x=[0.02, 0.98], y=[0.02, 0.98]),
+                                hovertemplate=(
+                                    "<b>%{label}</b><br>Значение: %{value}<br>Доля: %{percent}<br><extra></extra>"
+                                ),
+                            )
+                            fig_pie = apply_chart_background(fig_pie)
+                            fig_pie.update_layout(
+                                height=_pie_h,
+                                width=_pie_h,
+                                showlegend=False,
+                                margin=dict(l=0, r=0, t=0, b=0),
+                            )
+                            _pc_l, _pc_c, _pc_r = st.columns([0.08, 0.84, 0.08])
+                            with _pc_c:
+                                render_chart(
+                                    fig_pie,
+                                    caption_below="Исполнение ПД",
+                                    omit_default_width=True,
+                                )
                 else:
                     st.info(
                         "Нет задач ПД для диаграммы (ур.5, заполнен «шифр ПД РД», родитель «Проектная документация»)."
