@@ -137,9 +137,9 @@ DEVIATION_CLASS_GREEN = "bd-cell-green"
 DEVIATION_CLASS_YELLOW = "bd-cell-yellow"
 
 # Единый размер колонок HTML-таблиц (format_dataframe_as_html, plan_fact_dates и т.д.)
-HTML_TABLE_TH_MAX_EM = 18
-HTML_TABLE_TD_MAX_EM = 16
-HTML_TABLE_COL_MIN_EM = 8
+HTML_TABLE_TH_MAX_EM = 24
+HTML_TABLE_TD_MAX_EM = 22
+HTML_TABLE_COL_MIN_EM = 11
 
 # Размерность сумм: млн рублей
 MILLION = 1_000_000
@@ -1008,7 +1008,7 @@ def _column_uses_fact_plan_colors(
     cl = str(col).casefold()
     if finance_deviation_column and col == finance_deviation_column:
         return True
-    if "отклон" in cl:
+    if "отклон" in cl or "\u0394" in str(col) or " δ" in cl:
         return True
     if "факт" in cl and "план" not in cl:
         return bool(color_fact_column)
@@ -1087,8 +1087,10 @@ def budget_table_to_html(
         _html_table_caption(table_caption),
         f'<div id="{wrap_id}" class="budget-deviation-table-wrap" style="overflow-x: auto; min-width: 0; margin: 0.75em 0;">',
         f'<style>'
-        f'#{wrap_id} table {{ table-layout: auto; font-size: {_tbl_px}px; }}'
-        f'#{wrap_id} th, #{wrap_id} td {{ max-width: 11em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}'
+        f'#{wrap_id} table {{ table-layout: auto; font-size: {_tbl_px}px; width: max-content; min-width: 100%; }}'
+        f'#{wrap_id} th, #{wrap_id} td {{ min-width: 11em; max-width: 24em; padding: 7px 14px; white-space: nowrap; }}'
+        f'#{wrap_id} th:first-child, #{wrap_id} td:first-child {{ min-width: 14em; max-width: 32em; }}'
+        f'#{wrap_id} th:not(:first-child), #{wrap_id} td:not(:first-child) {{ min-width: 9em; max-width: 16em; }}'
         f'#{wrap_id} td.bd-cell-red, #{wrap_id} td.bd-cell-red * {{ color: hsl(348,100%,63%) !important; }} '
         f'#{wrap_id} td.bd-cell-green, #{wrap_id} td.bd-cell-green * {{ color: hsl(148,100%,63%) !important; }}'
         f'#{wrap_id} td.bd-cell-yellow, #{wrap_id} td.bd-cell-yellow * {{ color: hsl(48,95%,62%) !important; }}'
@@ -1104,7 +1106,7 @@ def budget_table_to_html(
     for col in header_cols:
         col_esc = html_module.escape(str(col))
         parts.append(
-            f'<th style="border: 1px solid rgba(255,255,255,0.3); padding: 8px 10px; background-color: {TABLE_HEADER_BG_COLOR}; {_hdr_css}">{col_esc}</th>'
+            f'<th style="border: 1px solid rgba(255,255,255,0.3); padding: 8px 14px; background-color: {TABLE_HEADER_BG_COLOR}; {_hdr_css}">{col_esc}</th>'
         )
     parts.append("</tr></thead><tbody>")
     visible_cols = [c for c in df.columns if c != row_kind_column]
@@ -1119,7 +1121,7 @@ def budget_table_to_html(
             not row_kind and _row_is_table_total(row, skip_cols={row_kind_column} if row_kind_column else set())
         )
         is_emphasized_row = is_total_row_st or row_kind in {
-            str(x).strip().casefold() for x in emphasize_row_kinds
+            str(x).strip().casefold() for x in (emphasize_row_kinds or ())
         }
         _cell_bg = (
             _tot_bg
@@ -1162,6 +1164,20 @@ def budget_table_to_html(
                         fact=num,
                         abs_neutral_mln=float(deviation_abs_min_mln),
                     )
+                elif (
+                    finance_deviation_column
+                    and col == finance_deviation_column
+                    and deviation_red_if_negative
+                    and num is not None
+                ):
+                    if abs(float(num)) < float(deviation_abs_min_mln):
+                        cell_class = None
+                    else:
+                        cell_class = (
+                            DEVIATION_CLASS_RED
+                            if float(num) < 0
+                            else DEVIATION_CLASS_GREEN
+                        )
                 else:
                     cell_class = _fact_vs_plan_font_class(
                         deviation=num,
@@ -1172,17 +1188,17 @@ def budget_table_to_html(
                     )
                 if cell_class:
                     parts.append(
-                        f'<td class="{cell_class}" style="padding: 4px 5px; font-weight: bold; '
+                        f'<td class="{cell_class}" style="padding: 7px 14px; font-weight: bold; '
                         f'background-color: {_cell_bg};"><span>{val_esc}</span></td>'
                     )
                 else:
                     parts.append(
-                        f'<td style="padding: 4px 5px; color: {TABLE_TEXT_COLOR}; '
+                        f'<td style="padding: 7px 14px; color: {TABLE_TEXT_COLOR}; '
                         f'background-color: {_cell_bg}; {_label_css}">{val_esc}</td>'
                     )
             else:
                 parts.append(
-                    f'<td style="padding: 4px 5px; color: {TABLE_TEXT_COLOR}; background-color: {_cell_bg}; {_label_css}">{val_esc}</td>'
+                    f'<td style="padding: 7px 14px; color: {TABLE_TEXT_COLOR}; background-color: {_cell_bg}; {_label_css}">{val_esc}</td>'
                 )
         parts.append("</tr>")
     parts.append("</tbody></table></div>")

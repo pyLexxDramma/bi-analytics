@@ -70,6 +70,118 @@ def _filter_1c_frame_by_article_lot_sublot(frame: pd.DataFrame, *, art_col: Opti
     return frame.loc[m].copy()
 
 
+def _turnover_rows_in_full_rubles(frame: pd.DataFrame) -> pd.Series:
+    """
+    Эвристика масштаба сумм: JSON 1С (*_dannye) — в тыс. руб.; demo CSV (new_csv/sample_budget) — в руб.
+    """
+    if frame is None or getattr(frame, "empty", True):
+        return pd.Series(dtype=bool)
+    src_col = None
+    for c in frame.columns:
+        cl = str(c).strip().casefold()
+        if cl in ("__source_file", "source_file", "_source_file"):
+            src_col = c
+            break
+    if src_col is not None:
+        src = frame[src_col].fillna("").astype(str).str.lower()
+        return (
+            src.str.contains("sample_budget")
+            | src.str.contains("/new_csv/")
+            | src.str.startswith("new_csv/")
+        )
+    amt_col = _pick_col(frame, ("Сумма", "amount"))
+    if not amt_col:
+        return pd.Series(False, index=frame.index)
+    med = float(_coerce_1c_money_series(frame[amt_col]).abs().median() or 0.0)
+    return pd.Series(med >= 500_000.0, index=frame.index)
+
+
+def _amount_series_to_rubles(frame: pd.DataFrame, amt_col: str) -> pd.Series:
+    raw = _coerce_1c_money_series(frame[amt_col]).fillna(0.0)
+    full_rub = _turnover_rows_in_full_rubles(frame)
+    out = raw.copy()
+    if bool((~full_rub).any()):
+        out.loc[~full_rub] = out.loc[~full_rub] * 1000.0
+    return out
+
+
+def _demo_budget_source_mask(frame: pd.DataFrame) -> pd.Series:
+    """Строки из new_csv/sample_budget, а не реальные budget-CSV из web/."""
+    if frame is None or getattr(frame, "empty", True):
+        return pd.Series(dtype=bool)
+    src_col = None
+    for c in frame.columns:
+        cl = str(c).strip().casefold()
+        if cl in ("__source_file", "source_file", "_source_file"):
+            src_col = c
+            break
+    if src_col is None:
+        return pd.Series(False, index=frame.index)
+    src = frame[src_col].fillna("").astype(str).str.lower()
+    return (
+        src.str.contains("sample_budget")
+        | src.str.contains("/new_csv/")
+        | src.str.startswith("new_csv/")
+    )
+
+
+def _load_demo_budget_turnover_df() -> Optional[pd.DataFrame]:
+    """Демо-обороты БДДС из SQLite (file_type=budget) или session project_data."""
+    try:
+        from config import ignore_demo_data_files
+
+        if ignore_demo_data_files():
+            return None
+    except Exception:
+        pass
+
+    import streamlit as st
+
+    try:
+        from web_loader import _load_version_data, _web_db_mtime
+
+        vid = st.session_state.get("web_version_id") or st.session_state.get(
+            "active_web_version_id"
+        )
+        if not vid:
+            try:
+                from web_schema import get_active_version_id
+
+                vid = get_active_version_id()
+            except Exception:
+                vid = None
+        if vid:
+            loaded = _load_version_data(int(vid), "budget", _web_db_mtime())
+            if loaded is not None and not loaded.empty:
+                demo_mask = _demo_budget_source_mask(loaded)
+                if bool(demo_mask.any()):
+                    out = loaded.loc[demo_mask].copy()
+                    if "__source_file" not in out.columns:
+                        out["__source_file"] = "new_csv/sample_budget_data.csv"
+                    return out
+    except Exception:
+        pass
+    pd_obj = st.session_state.get("project_data")
+    if isinstance(pd_obj, pd.DataFrame) and not pd_obj.empty:
+        demo_mask = _demo_budget_source_mask(pd_obj)
+        if bool(demo_mask.any()):
+            return pd_obj.loc[demo_mask].copy()
+        art = _pick_col(pd_obj, ("СтатьяОборотов", "Статья оборотов", "article"))
+        scen = _pick_col(pd_obj, ("Сценарий", "scenario"))
+        per = _pick_col(pd_obj, ("Период", "period"))
+        if art and scen and per:
+            src_col = None
+            for c in pd_obj.columns:
+                if str(c).strip().casefold() in ("__source_file", "source_file", "_source_file"):
+                    src_col = c
+                    break
+            if src_col is not None:
+                src = pd_obj[src_col].fillna("").astype(str).str.lower()
+                if src.str.contains("sample_|new_csv", regex=True).any():
+                    return pd_obj.copy()
+    return None
+
+
 def _coerce_1c_money_series(raw: pd.Series) -> pd.Series:
     """Нормализация денежных сумм из выгрузки 1С (пробелы тысяч, скобки, ₽)."""
     if raw is None:
@@ -401,9 +513,7 @@ def try_synthetic_budget_from_1c_dannye(
     if t.empty:
         return None
 
-    # 1С обороты в текущих выгрузках передаются в тыс. руб.;
-    # приводим к рублям, чтобы отображение в "млн руб." было корректным.
-    t["_amt"] = _coerce_1c_money_series(t[amt]).fillna(0.0) * 1000.0
+    t["_amt"] = _amount_series_to_rubles(t, amt)
     sser = t[scen].astype(str)
     # Выгрузки 1С: по ТЗ план/факт из бюджетного сценария и статьи «ФАКТ» для факта; иначе — по сценарию.
     plan_mask = (
@@ -774,9 +884,12 @@ def ensure_budget_frame_with_fallback(
     if has_cols and not force_from_1c:
         bp = pd.to_numeric(work["budget plan"], errors="coerce").fillna(0.0)
         bf = pd.to_numeric(work["budget fact"], errors="coerce").fillna(0.0)
-        if (float(bp.abs().sum()) + float(bf.abs().sum())) > 0.0:
+        msp_total = float(bp.abs().sum()) + float(bf.abs().sum())
+        # MSP-задачи часто дают «копейки» (630k на весь проект) — не блокируем overlay 1С+demo.
+        if msp_total >= 5_000_000.0:
             return work, False
-    syn = try_synthetic_budget_from_1c_dannye()
+    ref = resolve_reference_1c_dannye()
+    syn = try_synthetic_budget_from_1c_dannye(reference_1c_dannye=ref)
     if syn is None or syn.empty:
         return work, False
 
@@ -825,6 +938,953 @@ def ensure_budget_frame_with_fallback(
         return work, False
 
     return syn, True
+
+
+def _filter_1c_budget_syn(
+    syn: pd.DataFrame,
+    *,
+    project_norm_keys: set[str] | None = None,
+    narrow_to_project_norm_key: str | None = None,
+    period_start: Any | None = None,
+    period_end: Any | None = None,
+) -> pd.DataFrame:
+    """Сужает синтетику 1С по проектам и календарному диапазону plan end."""
+    if syn is None or syn.empty:
+        return syn
+    from dashboards._renderers import (
+        _project_filter_norm_key,
+        _project_norm_key_matches_msp_keys,
+    )
+
+    out = syn.copy()
+    keys = {k for k in (project_norm_keys or set()) if k}
+    if keys and "project name" in out.columns:
+        _rk = out["project name"].map(_project_filter_norm_key)
+        out = out[_rk.map(lambda rk: _project_norm_key_matches_msp_keys(rk, keys))].copy()
+    nt = (narrow_to_project_norm_key or "").strip()
+    if nt and not out.empty and "project name" in out.columns:
+        _rk_n = out["project name"].map(_project_filter_norm_key)
+        out = out[_rk_n.map(lambda rk: _project_norm_key_matches_msp_keys(rk, {nt}))].copy()
+    ps = period_start
+    pe = period_end
+    if ps is not None and pe is not None and not out.empty:
+        ts = pd.to_datetime(ps, errors="coerce")
+        te = pd.to_datetime(pe, errors="coerce")
+        if pd.notna(ts) and pd.notna(te):
+            plan_end_series = pd.to_datetime(out["plan end"], errors="coerce")
+            out = out[
+                plan_end_series.notna()
+                & (plan_end_series >= ts.normalize())
+                & (
+                    plan_end_series
+                    <= (te.normalize() + pd.Timedelta(days=1) - pd.Timedelta(seconds=1))
+                )
+            ].copy()
+    return out
+
+
+def expand_budget_month_grid(
+    df: pd.DataFrame,
+    *,
+    period_col: str,
+    period_original_col: str = "period_original",
+    cal_start: Any | None = None,
+    cal_end: Any | None = None,
+    fill_columns: tuple[str, ...] = ("budget plan", "budget fact", "reserve budget"),
+    group_by: str | None = "project name",
+    format_period=None,
+) -> pd.DataFrame:
+    """
+    Дополняет помесячный фрейм нулевыми строками на весь выбранный календарный диапазон.
+    Исправляет потерю имени индекса после ``reindex`` (иначе сетка месяцев молча не строится).
+    """
+    if df is None or df.empty or cal_start is None or cal_end is None:
+        return df
+    if period_original_col not in df.columns:
+        return df
+    try:
+        p0 = pd.Timestamp(cal_start).to_period("M")
+        p1 = pd.Timestamp(cal_end).to_period("M")
+        if p0 > p1:
+            return df
+        month_idx = pd.period_range(p0, p1, freq="M")
+    except Exception:
+        return df
+
+    if format_period is None:
+        from utils import format_period_ru as format_period
+
+    def _expand_chunk(chunk: pd.DataFrame) -> pd.DataFrame:
+        out = (
+            chunk.set_index(period_original_col)
+            .reindex(month_idx)
+            .rename_axis(period_original_col)
+            .reset_index()
+        )
+        for col in fill_columns:
+            if col in out.columns:
+                out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0.0)
+        if period_col:
+            out[period_col] = out[period_original_col].apply(format_period)
+        return out
+
+    if group_by and group_by in df.columns:
+        parts: list[pd.DataFrame] = []
+        for _gval, chunk in df.groupby(group_by, dropna=False):
+            expanded = _expand_chunk(chunk)
+            expanded[group_by] = _gval
+            parts.append(expanded)
+        if not parts:
+            return df
+        cols = list(df.columns)
+        merged = pd.concat(parts, ignore_index=True)
+        for col in cols:
+            if col not in merged.columns:
+                merged[col] = df[col].iloc[0] if len(df) else None
+        return merged[cols]
+
+    return _expand_chunk(df)
+
+
+def merge_budget_summary_by_norm_project_month(
+    summary: pd.DataFrame,
+    *,
+    period_col: str,
+    period_original_col: str = "period_original",
+    project_col: str = "project name",
+    fill_columns: tuple[str, ...] = ("budget plan", "budget fact", "reserve budget"),
+    canonical_project_name: str | None = None,
+) -> pd.DataFrame:
+    """Склеивает строки MSP и 1С с разными подписями проекта в одну серию по месяцам."""
+    if summary is None or summary.empty or project_col not in summary.columns:
+        return summary
+    if period_original_col not in summary.columns:
+        return summary
+    from dashboards._renderers import _project_filter_norm_key
+
+    out = summary.copy()
+    out["_norm_pk"] = out[project_col].map(_project_filter_norm_key)
+    name_map: dict[str, str] = {}
+    for nm in out[project_col].dropna().unique():
+        pk = _project_filter_norm_key(nm)
+        if pk and pk not in name_map:
+            name_map[pk] = str(nm)
+    if canonical_project_name:
+        canon = str(canonical_project_name).strip()
+        if canon:
+            pk = _project_filter_norm_key(canon)
+            if pk:
+                name_map[pk] = canon
+
+    agg: dict[str, str] = {period_col: "first", project_col: "first"}
+    for col in fill_columns:
+        if col in out.columns:
+            agg[col] = "sum"
+    for col in out.columns:
+        if col.startswith("budget ") and col not in agg and col not in (period_col, project_col, period_original_col, "_norm_pk"):
+            agg[col] = "sum"
+
+    merged = (
+        out.groupby([period_original_col, "_norm_pk"], dropna=False)
+        .agg(agg)
+        .reset_index()
+    )
+    merged[project_col] = merged["_norm_pk"].map(lambda k: name_map.get(k, k))
+    merged = merged.drop(columns=["_norm_pk"], errors="ignore")
+    cols = [c for c in summary.columns if c in merged.columns]
+    return merged[cols] if cols else merged
+
+
+def resolve_reference_1c_dannye(
+    reference_1c_dannye: Optional[pd.DataFrame] = None,
+) -> Optional[pd.DataFrame]:
+    """reference из аргумента или session_state (для overlay/синтетики БДДС)."""
+    if reference_1c_dannye is not None and isinstance(reference_1c_dannye, pd.DataFrame):
+        if not reference_1c_dannye.empty:
+            return reference_1c_dannye
+    import streamlit as st
+
+    ref = st.session_state.get("reference_1c_dannye")
+    if ref is not None and isinstance(ref, pd.DataFrame) and not ref.empty:
+        return ref
+    try:
+        from web_loader import _load_version_data, _web_db_mtime
+
+        vid = st.session_state.get("web_version_id") or st.session_state.get(
+            "active_web_version_id"
+        )
+        if not vid:
+            from web_schema import get_active_version_id
+
+            vid = get_active_version_id()
+        if vid:
+            loaded = _load_version_data(int(vid), "reference_dannye", _web_db_mtime())
+            if loaded is not None and not loaded.empty:
+                st.session_state["reference_1c_dannye"] = loaded
+                return loaded
+    except Exception:
+        pass
+    try:
+        from web_loader import (
+            _load_1c_json_spravochniki,
+            pick_latest_snapshot_files,
+            scan_web_files,
+        )
+
+        files, _ = pick_latest_snapshot_files(scan_web_files(extensions=(".json",)))
+        for fi in reversed(files):
+            if not str(fi.get("name", "")).lower().endswith(".json"):
+                continue
+            probe = _load_1c_json_spravochniki(fi["path"])
+            if probe is not None and not probe.empty:
+                st.session_state["reference_1c_dannye"] = probe
+                return probe
+    except Exception:
+        pass
+    return None
+
+
+def _normalize_turnover_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    """Приводит demo CSV и JSON 1С к общим именам колонок."""
+    if frame is None or getattr(frame, "empty", True):
+        return frame
+    out = frame.copy()
+    renames: dict[str, str] = {}
+    for c in list(out.columns):
+        cl = str(c).strip().casefold()
+        if cl in ("статьяоборотов", "статья оборотов", "article"):
+            renames[c] = "СтатьяОборотов"
+        elif cl in ("сценарий", "scenario"):
+            renames[c] = "Сценарий"
+        elif cl in ("период", "period"):
+            renames[c] = "Период"
+        elif cl in ("сумма", "amount"):
+            renames[c] = "Сумма"
+        elif cl in ("проект", "project"):
+            renames[c] = "Проект"
+        elif cl in ("типстатьи", "тип статьи", "article_type"):
+            renames[c] = "ТипСтатьи"
+        elif cl in ("расходдоход", "приходрасход", "вид движения"):
+            renames[c] = "РасходДоход"
+    if renames:
+        out = out.rename(columns=renames)
+    return out
+
+
+def resolve_budget_turnover_dannye(
+    reference_1c_dannye: Optional[pd.DataFrame] = None,
+) -> Optional[pd.DataFrame]:
+    """
+    Обороты БДДС для синтетики/overlay: 1С reference_dannye + demo budget (new_csv/sample_budget_data.csv).
+    """
+    ref = resolve_reference_1c_dannye(reference_1c_dannye)
+    demo = _load_demo_budget_turnover_df()
+    parts: list[pd.DataFrame] = []
+    if ref is not None and not ref.empty:
+        parts.append(_normalize_turnover_columns(ref.copy()))
+    if demo is not None and not demo.empty:
+        parts.append(_normalize_turnover_columns(demo.copy()))
+    if not parts:
+        return None
+    if len(parts) == 1:
+        return parts[0]
+    merged = pd.concat(parts, ignore_index=True, sort=False)
+    merged.attrs["budget_turnover_merged_demo"] = True
+    return merged
+
+
+def _bdds_month_label_short(ts: pd.Timestamp) -> str:
+    if ts is None or pd.isna(ts):
+        return ""
+    return pd.Timestamp(ts).strftime("%m.%y")
+
+
+def _bdds_month_label_short(ts: pd.Timestamp) -> str:
+    if ts is None or pd.isna(ts):
+        return ""
+    return pd.Timestamp(ts).strftime("%m.%y")
+
+
+def _bdds_turnover_g_for_project(
+    *,
+    project_name: str,
+    period_start: Any | None = None,
+    period_end: Any | None = None,
+    reference_1c_dannye: Optional[pd.DataFrame] = None,
+    max_months: int = 24,
+) -> Optional[tuple[pd.DataFrame, list, str, Any]]:
+    """
+    Общая подготовка оборотов БДДС для матрицы и помесячной сводки:
+    возвращает (g, months, art_col, project_name).
+    """
+    ref = resolve_budget_turnover_dannye(reference_1c_dannye)
+    if ref is None or ref.empty:
+        return None
+    from dashboards._renderers import _project_filter_norm_key, _project_norm_key_matches_msp_keys
+
+    t = ref.copy()
+    scen = _pick_col(t, ("Сценарий", "scenario"))
+    amt = _pick_col(t, ("Сумма", "amount"))
+    art = _pick_col(t, ("СтатьяОборотов", "Статья оборотов", "article"))
+    per = _pick_col(t, ("Период", "period"))
+    proj = _pick_col(t, ("Проект", "project", "проект"))
+    rd = _pick_col(t, ("РасходДоход", "ПриходРасход", "вид движения"))
+    typ = _pick_col(t, ("ТипСтатьи", "article_type", "Тип статьи"))
+    if not scen or not amt or not art or not per or not proj:
+        return None
+
+    pk = _project_filter_norm_key(project_name)
+    t = t[t[proj].map(_project_filter_norm_key).map(lambda rk: _project_norm_key_matches_msp_keys(rk, {pk}))].copy()
+    if t.empty:
+        return None
+
+    def _no_bdr(row) -> bool:
+        a = str(row.get(art, "") if art else "").casefold()
+        if "(бдр)" in a or a.strip() == "бдр":
+            return False
+        if typ and typ in row.index:
+            tl = str(row.get(typ, "")).casefold()
+            if "бдр" in tl and "бддс" not in tl:
+                return False
+        return True
+
+    t = t[t.apply(_no_bdr, axis=1)].copy()
+    if art:
+        t = _filter_1c_frame_by_article_lot_sublot(t, art_col=art)
+    if t.empty:
+        return None
+
+    t["_amt"] = _amount_series_to_rubles(t, amt)
+    t["_d"] = _parse_1c_period_series(t[per])
+    t = t[t["_d"].notna()].copy()
+    if period_start is not None and period_end is not None:
+        ts = pd.to_datetime(period_start, errors="coerce")
+        te = pd.to_datetime(period_end, errors="coerce")
+        if pd.notna(ts) and pd.notna(te):
+            te_inc = te + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+            t = t[(t["_d"] >= ts.normalize()) & (t["_d"] <= te_inc)].copy()
+    if t.empty:
+        return None
+
+    sser = t[scen].astype(str)
+    plan_mask = (
+        sser.str.contains("бюджет", case=False, na=False)
+        | sser.str.contains("budget", case=False, na=False)
+        | (
+            sser.str.contains("план", case=False, na=False)
+            & ~sser.str.contains("факт", case=False, na=False)
+        )
+    )
+    fact_mask = sser.str.contains("факт", case=False, na=False) | sser.str.contains(
+        "fact", case=False, na=False
+    )
+    t["_plan"] = np.where(plan_mask.to_numpy(), t["_amt"].to_numpy(), 0.0)
+    t["_fact"] = np.where(fact_mask.to_numpy(), t["_amt"].to_numpy(), 0.0)
+    t["__plan"] = t["_plan"]
+    t["__fact"] = t["_fact"]
+    _bddds_route_unassigned_plan_fact(t, plan_mask=plan_mask, fact_mask=fact_mask)
+    t["_plan"] = pd.to_numeric(t["__plan"], errors="coerce").fillna(0.0)
+    t["_fact"] = pd.to_numeric(t["__fact"], errors="coerce").fillna(0.0)
+
+    t["_m"] = t["_d"].dt.to_period("M")
+    months = sorted(t["_m"].dropna().unique())
+    if not months:
+        return None
+    month_totals = (
+        t.groupby("_m")[["_plan", "_fact"]]
+        .sum()
+        .assign(_abs=lambda df: df["_plan"].abs() + df["_fact"].abs())
+    )
+    months_active: list = []
+    for m in sorted(month_totals.index):
+        pl = float(month_totals.loc[m, "_plan"])
+        fc = float(month_totals.loc[m, "_fact"])
+        if pl + fc <= 0.0:
+            continue
+        if pl > 500_000_000.0 and fc < pl * 0.05:
+            pl = 0.0
+        if pl + fc <= 0.0:
+            continue
+        if int(m.year) >= 2025 and max(pl, fc) > 100_000_000.0:
+            continue
+        months_active.append(m)
+    m2024 = sorted(x for x in months_active if int(x.year) == 2024)
+    m2026 = sorted(x for x in months_active if int(x.year) == 2026)
+    months = (m2024 + m2026)[: max(1, int(max_months))]
+
+    if rd and rd in t.columns:
+        rs = t[rd].astype(str).str.casefold()
+        t["_section"] = np.where(
+            rs.str.contains("поступ", na=False),
+            "Поступления",
+            "Платежи",
+        )
+    else:
+        t["_section"] = "Платежи"
+
+    g = (
+        t.groupby(["_section", art, "_m"], dropna=False)[["_plan", "_fact"]]
+        .sum()
+        .reset_index()
+    )
+    demo_rows = _turnover_rows_in_full_rubles(t)
+    t_ratio_src = t.loc[~demo_rows] if bool((~demo_rows).any()) else t
+    pairs = t_ratio_src.groupby("_m")[["_plan", "_fact"]].sum()
+    sel = (pairs["_plan"] > 0) & (pairs["_fact"] > 0) & (pairs["_plan"] < 5e8) & (pairs["_fact"] < 5e8)
+    global_ratio = None
+    if bool(sel.any()):
+        sp = float(pairs.loc[sel, "_plan"].sum())
+        sf = float(pairs.loc[sel, "_fact"].sum())
+        if sf > 0:
+            global_ratio = sp / sf
+    for m in months:
+        need = (g["_m"] == m) & (g["_plan"] <= 0) & (g["_fact"] > 0)
+        if not bool(need.any()) or global_ratio is None:
+            continue
+        g.loc[need, "_plan"] = g.loc[need, "_fact"] * float(global_ratio)
+
+    return g, months, art, project_name
+
+
+def build_bdds_plan_fact_analysis_table(
+    *,
+    project_name: str,
+    period_start: Any | None = None,
+    period_end: Any | None = None,
+    reference_1c_dannye: Optional[pd.DataFrame] = None,
+    max_months: int = 24,
+) -> Optional[pd.DataFrame]:
+    """
+    Матрица «Статья × месяц» (план/факт/откл.) для таблицы «План-фактный анализ» на БДДС.
+    """
+    prep = _bdds_turnover_g_for_project(
+        project_name=project_name,
+        period_start=period_start,
+        period_end=period_end,
+        reference_1c_dannye=reference_1c_dannye,
+        max_months=max_months,
+    )
+    if prep is None:
+        return None
+    g, months, art, _proj_nm = prep
+    from utils import format_million_rub
+
+    def _section_rank(s: str) -> int:
+        return 0 if str(s) == "Поступления" else 1
+
+    articles: list[tuple[str, str]] = []
+    for sec in sorted(g["_section"].unique(), key=_section_rank):
+        arts = (
+            g.loc[g["_section"] == sec, art]
+            .dropna()
+            .astype(str)
+            .unique()
+            .tolist()
+        )
+        for a in sorted(arts):
+            articles.append((str(sec), a))
+
+    rows: list[dict] = []
+    col_names: list[str] = []
+    for m in months:
+        lbl = _bdds_month_label_short(m.to_timestamp())
+        for suffix, key in (("П", "_plan"), ("Ф", "_fact"), ("Δ", "_dev")):
+            cn = f"{lbl} {suffix}"
+            col_names.append(cn)
+
+    def _cell(plan_v: float, fact_v: float, kind: str) -> str:
+        if kind == "_plan":
+            return format_million_rub(plan_v, decimals=1) if abs(plan_v) >= 50_000 else ""
+        if kind == "_fact":
+            return format_million_rub(fact_v, decimals=1) if abs(fact_v) >= 50_000 else ""
+        dev = fact_v - plan_v
+        if abs(dev) < 50_000:
+            return ""
+        return format_million_rub(dev, decimals=1)
+
+    for sec, art_name in articles:
+        hdr = {"Статья": sec, "_row_kind": "project"}
+        for cn in col_names:
+            hdr[cn] = ""
+        rows.append(hdr)
+        body = {"Статья": f"  {art_name}", "_row_kind": ""}
+        sub = g[(g["_section"] == sec) & (g[art].astype(str) == art_name)]
+        for m in months:
+            lbl = _bdds_month_label_short(m.to_timestamp())
+            chunk = sub.loc[sub["_m"] == m]
+            pl = float(chunk["_plan"].sum()) if not chunk.empty else 0.0
+            fc = float(chunk["_fact"].sum()) if not chunk.empty else 0.0
+            body[f"{lbl} П"] = _cell(pl, fc, "_plan")
+            body[f"{lbl} Ф"] = _cell(pl, fc, "_fact")
+            body[f"{lbl} Δ"] = _cell(pl, fc, "_dev")
+        rows.append(body)
+
+    tot = {"Статья": "ИТОГО", "_row_kind": "total"}
+    for m in months:
+        lbl = _bdds_month_label_short(m.to_timestamp())
+        chunk_m = g[g["_m"] == m]
+        pl = float(chunk_m["_plan"].sum())
+        fc = float(chunk_m["_fact"].sum())
+        tot[f"{lbl} П"] = _cell(pl, fc, "_plan")
+        tot[f"{lbl} Ф"] = _cell(pl, fc, "_fact")
+        tot[f"{lbl} Δ"] = _cell(pl, fc, "_dev")
+    rows.append(tot)
+
+    out = pd.DataFrame(rows)
+    return out
+
+
+def overlay_turnover_monthly_on_budget_summary(
+    summary: pd.DataFrame,
+    *,
+    period_col: str,
+    project_name: str,
+    period_start: Any | None = None,
+    period_end: Any | None = None,
+    reference_1c_dannye: Optional[pd.DataFrame] = None,
+    project_norm_keys: set[str] | None = None,
+    narrow_to_project_norm_key: str | None = None,
+) -> tuple[pd.DataFrame, bool]:
+    """
+    Подмешивает в сводку месяцы из merged turnover (demo+1С) по той же логике, что матрица «План-факт».
+    Не перезаписывает месяцы, где уже есть данные 1С/MSP (сумма > 500 тыс. руб.).
+    """
+    if summary is None or summary.empty or not str(project_name or "").strip():
+        return summary, False
+    prep = _bdds_turnover_g_for_project(
+        project_name=project_name,
+        period_start=period_start,
+        period_end=period_end,
+        reference_1c_dannye=reference_1c_dannye,
+    )
+    if prep is None:
+        return summary, False
+    g, months, _art, canon_proj = prep
+    if not months:
+        return summary, False
+
+    from dashboards._renderers import (
+        _project_filter_norm_key,
+        _project_norm_key_matches_msp_keys,
+    )
+    from utils import format_period_ru
+
+    keys = {k for k in (project_norm_keys or set()) if k}
+    nt = (narrow_to_project_norm_key or "").strip()
+    if nt:
+        keys.add(nt)
+    syn_pk = _project_filter_norm_key(canon_proj)
+
+    out = summary.copy()
+    if "period_original" not in out.columns and period_col in out.columns:
+        out["period_original"] = out[period_col]
+
+    def _to_month_period(x):
+        if isinstance(x, pd.Period):
+            return x.asfreq("M") if x.freq != "M" else x
+        if pd.isna(x):
+            return pd.NaT
+        try:
+            return pd.Period(str(x), freq="M")
+        except Exception:
+            pass
+        try:
+            ts = pd.Timestamp(x)
+            if pd.notna(ts):
+                return ts.to_period("M")
+        except Exception:
+            pass
+        return pd.NaT
+
+    merged_any = False
+    extra_rows: list[dict] = []
+    for m in months:
+        try:
+            if int(m.year) >= 2025:
+                continue
+        except Exception:
+            pass
+        chunk_m = g[g["_m"] == m]
+        syn_plan = float(chunk_m["_plan"].sum())
+        syn_fact = float(chunk_m["_fact"].sum())
+        if syn_plan + syn_fact <= 50_000.0:
+            continue
+
+        if "project name" in out.columns:
+            row_mask = out["project name"].map(_project_filter_norm_key).map(
+                lambda rk: _project_norm_key_matches_msp_keys(rk, {syn_pk})
+            )
+        else:
+            row_mask = pd.Series(False, index=out.index)
+
+        per_vals = out["period_original"].map(_to_month_period)
+        hit = row_mask & (per_vals == m)
+        if bool(hit.any()):
+            existing_pl = float(out.loc[hit, "budget plan"].fillna(0.0).sum())
+            existing_fc = float(out.loc[hit, "budget fact"].fillna(0.0).sum())
+            if existing_pl + existing_fc > 500_000.0:
+                continue
+            out.loc[hit, "budget plan"] = syn_plan
+            out.loc[hit, "budget fact"] = syn_fact
+            if "reserve budget" in out.columns:
+                out.loc[hit, "reserve budget"] = syn_fact - syn_plan
+            merged_any = True
+        else:
+            if keys and not _project_norm_key_matches_msp_keys(syn_pk, keys):
+                continue
+            _proj_nm = canon_proj
+            if "project name" in out.columns:
+                for nm in out["project name"].dropna().unique():
+                    if _project_norm_key_matches_msp_keys(_project_filter_norm_key(nm), {syn_pk}):
+                        _proj_nm = str(nm)
+                        break
+            extra_rows.append(
+                {
+                    "project name": _proj_nm,
+                    period_col: format_period_ru(m),
+                    "period_original": m,
+                    "budget plan": syn_plan,
+                    "budget fact": syn_fact,
+                    "reserve budget": syn_fact - syn_plan,
+                }
+            )
+            merged_any = True
+
+    if extra_rows:
+        out = pd.concat([out, pd.DataFrame(extra_rows)], ignore_index=True)
+
+    if not merged_any:
+        return summary, False
+
+    canon = None
+    if nt and "project name" in out.columns:
+        for nm in out["project name"].dropna().unique():
+            if _project_norm_key_matches_msp_keys(_project_filter_norm_key(nm), {nt}):
+                canon = str(nm)
+                break
+    out = merge_budget_summary_by_norm_project_month(
+        out,
+        period_col=period_col,
+        canonical_project_name=canon,
+    )
+    return out, True
+
+
+def overlay_demo_turnover_on_budget_summary(
+    summary: pd.DataFrame,
+    *,
+    period_col: str,
+    period_start: Any | None = None,
+    period_end: Any | None = None,
+    project_norm_keys: set[str] | None = None,
+    narrow_to_project_norm_key: str | None = None,
+    max_year: int = 2024,
+) -> tuple[pd.DataFrame, bool]:
+    """
+    Добавляет в сводку месяцы из demo budget (sample_budget_data), где ещё нет данных 1С/MSP.
+    План для fact-only месяцев оценивается по коэффициенту из строк 1С (без demo bulk).
+    По умолчанию подмешиваются только месяцы до ``max_year`` включительно (MSP/demo 2024),
+    чтобы не раздувать итоги demo-оборотами 2025+.
+    """
+    if summary is None or summary.empty:
+        return summary, False
+    demo = _load_demo_budget_turnover_df()
+    if demo is None or demo.empty:
+        return summary, False
+    syn = try_synthetic_budget_from_1c_dannye(reference_1c_dannye=demo)
+    if syn is None or syn.empty:
+        return summary, False
+    syn = _filter_1c_budget_syn(
+        syn,
+        project_norm_keys=project_norm_keys,
+        narrow_to_project_norm_key=narrow_to_project_norm_key,
+        period_start=period_start,
+        period_end=period_end,
+    )
+    if syn is None or syn.empty:
+        return summary, False
+
+    from dashboards._renderers import (
+        _project_filter_norm_key,
+        _project_norm_key_matches_msp_keys,
+    )
+    from utils import format_period_ru
+
+    out = summary.copy()
+    if "period_original" not in out.columns and period_col in out.columns:
+        out["period_original"] = out[period_col]
+
+    _pl_sm = pd.to_numeric(out.get("budget plan", 0), errors="coerce").fillna(0.0)
+    _fc_sm = pd.to_numeric(out.get("budget fact", 0), errors="coerce").fillna(0.0)
+    _sel_sm = (_pl_sm > 0) & (_fc_sm > 0) & (_pl_sm < 5e8) & (_fc_sm < 5e8)
+    _plan_fact_ratio: float | None = None
+    if bool(_sel_sm.any()):
+        _sp = float(_pl_sm.loc[_sel_sm].sum())
+        _sf = float(_fc_sm.loc[_sel_sm].sum())
+        if _sf > 0:
+            _plan_fact_ratio = _sp / _sf
+
+    keys = {k for k in (project_norm_keys or set()) if k}
+    nt = (narrow_to_project_norm_key or "").strip()
+    if nt:
+        keys.add(nt)
+
+    merged_any = False
+    extra_rows: list[dict] = []
+    for _, sr in syn.iterrows():
+        syn_pk = _project_filter_norm_key(sr.get("project name"))
+        if keys and not _project_norm_key_matches_msp_keys(syn_pk, keys):
+            continue
+        syn_month = sr.get("plan_month")
+        if pd.isna(syn_month):
+            continue
+        try:
+            syn_month = (
+                pd.Period(syn_month, freq="M")
+                if not isinstance(syn_month, pd.Period)
+                else syn_month
+            )
+        except Exception:
+            continue
+        try:
+            syn_year = int(syn_month.year)
+        except Exception:
+            syn_year = 0
+        if max_year is not None and syn_year > int(max_year):
+            continue
+        syn_plan = float(pd.to_numeric(sr.get("budget plan"), errors="coerce") or 0.0)
+        syn_fact = float(pd.to_numeric(sr.get("budget fact"), errors="coerce") or 0.0)
+        if syn_plan > 500_000_000.0 and syn_fact < syn_plan * 0.05:
+            syn_plan = 0.0
+        if int(syn_year) >= 2025 and max(syn_plan, syn_fact) > 100_000_000.0:
+            continue
+        if syn_plan <= 0.0 and syn_fact > 0.0 and _plan_fact_ratio is not None:
+            syn_plan = syn_fact * float(_plan_fact_ratio)
+        if syn_plan + syn_fact <= 0.0:
+            continue
+
+        if "project name" in out.columns:
+            row_mask = out["project name"].map(_project_filter_norm_key).map(
+                lambda rk: _project_norm_key_matches_msp_keys(rk, {syn_pk})
+            )
+        else:
+            row_mask = pd.Series(False, index=out.index)
+
+        def _to_month_period(x):
+            if isinstance(x, pd.Period):
+                return x.asfreq("M") if x.freq != "M" else x
+            if pd.isna(x):
+                return pd.NaT
+            try:
+                return pd.Period(str(x), freq="M")
+            except Exception:
+                pass
+            try:
+                ts = pd.Timestamp(x)
+                if pd.notna(ts):
+                    return ts.to_period("M")
+            except Exception:
+                pass
+            return pd.NaT
+
+        per_vals = out["period_original"].map(_to_month_period)
+        hit = row_mask & (per_vals == syn_month)
+        if bool(hit.any()):
+            existing_pl = float(out.loc[hit, "budget plan"].fillna(0.0).sum())
+            existing_fc = float(out.loc[hit, "budget fact"].fillna(0.0).sum())
+            if existing_pl + existing_fc > 500_000.0:
+                continue
+            out.loc[hit, "budget plan"] = syn_plan
+            out.loc[hit, "budget fact"] = syn_fact
+            if "reserve budget" in out.columns:
+                out.loc[hit, "reserve budget"] = syn_fact - syn_plan
+            merged_any = True
+        else:
+            _proj_nm = str(sr.get("project name") or "")
+            if "project name" in out.columns:
+                for nm in out["project name"].dropna().unique():
+                    if _project_norm_key_matches_msp_keys(
+                        _project_filter_norm_key(nm), {syn_pk}
+                    ):
+                        _proj_nm = str(nm)
+                        break
+            extra_rows.append(
+                {
+                    "project name": _proj_nm,
+                    period_col: format_period_ru(syn_month),
+                    "period_original": syn_month,
+                    "budget plan": syn_plan,
+                    "budget fact": syn_fact,
+                    "reserve budget": syn_fact - syn_plan,
+                }
+            )
+            merged_any = True
+
+    if extra_rows:
+        out = pd.concat([out, pd.DataFrame(extra_rows)], ignore_index=True)
+
+    if not merged_any:
+        return summary, False
+
+    canon = None
+    if nt and "project name" in out.columns:
+        for nm in out["project name"].dropna().unique():
+            if _project_norm_key_matches_msp_keys(_project_filter_norm_key(nm), {nt}):
+                canon = str(nm)
+                break
+    out = merge_budget_summary_by_norm_project_month(
+        out,
+        period_col=period_col,
+        canonical_project_name=canon,
+    )
+    return out, True
+
+
+def overlay_1c_on_budget_summary(
+    summary: pd.DataFrame,
+    *,
+    period_col: str,
+    period_start: Any | None = None,
+    period_end: Any | None = None,
+    project_norm_keys: set[str] | None = None,
+    narrow_to_project_norm_key: str | None = None,
+    reference_1c_dannye: Optional[pd.DataFrame] = None,
+) -> tuple[pd.DataFrame, bool]:
+    """
+    Подмешивает помесячные план/факт из 1С в сводку MSP (по project + month).
+    MSP остаётся основой по срокам; 1С уточняет месяцы, где есть обороты.
+    """
+    if summary is None or summary.empty:
+        return summary, False
+    ref = resolve_reference_1c_dannye(reference_1c_dannye)
+    syn = try_synthetic_budget_from_1c_dannye(reference_1c_dannye=ref)
+    if syn is None or syn.empty:
+        return summary, False
+    # Сначала только календарь; проект — в цикле (иначе двойной фильтр может обнулить syn).
+    syn = _filter_1c_budget_syn(
+        syn,
+        project_norm_keys=None,
+        narrow_to_project_norm_key=None,
+        period_start=period_start,
+        period_end=period_end,
+    )
+    if syn is None or syn.empty:
+        return summary, False
+
+    from dashboards._renderers import (
+        _project_filter_norm_key,
+        _project_norm_key_matches_msp_keys,
+    )
+
+    keys = {k for k in (project_norm_keys or set()) if k}
+    nt = (narrow_to_project_norm_key or "").strip()
+    if nt:
+        keys.add(nt)
+
+    out = summary.copy()
+    if "project name" in out.columns:
+        summary_keys = {
+            _project_filter_norm_key(x) for x in out["project name"].dropna().unique()
+        }
+        summary_keys.discard("")
+        if summary_keys:
+            keys = keys | summary_keys if keys else summary_keys
+    if "period_original" not in out.columns and period_col in out.columns:
+        out["period_original"] = out[period_col]
+
+    def _canonical_name_for_syn_pk(syn_pk: str, fallback: str = "") -> str:
+        if not syn_pk or "project name" not in out.columns:
+            return fallback
+        _mask = out["project name"].map(_project_filter_norm_key).map(
+            lambda rk: _project_norm_key_matches_msp_keys(rk, {syn_pk})
+        )
+        if bool(_mask.any()):
+            return str(out.loc[_mask, "project name"].iloc[0])
+        nt = (narrow_to_project_norm_key or "").strip()
+        if nt and _project_norm_key_matches_msp_keys(syn_pk, {nt}):
+            for nm in out["project name"].dropna().unique():
+                if _project_norm_key_matches_msp_keys(_project_filter_norm_key(nm), {nt}):
+                    return str(nm)
+        return fallback
+
+    extra_rows: list[dict] = []
+    merged_any = False
+    for _, sr in syn.iterrows():
+        syn_pk = _project_filter_norm_key(sr.get("project name"))
+        if keys and not _project_norm_key_matches_msp_keys(syn_pk, keys):
+            continue
+        syn_month = sr.get("plan_month")
+        if pd.isna(syn_month):
+            continue
+        try:
+            syn_month = pd.Period(syn_month, freq="M") if not isinstance(syn_month, pd.Period) else syn_month
+        except Exception:
+            continue
+        syn_plan = float(pd.to_numeric(sr.get("budget plan"), errors="coerce") or 0.0)
+        syn_fact = float(pd.to_numeric(sr.get("budget fact"), errors="coerce") or 0.0)
+        if "project name" in out.columns:
+            row_mask = out["project name"].map(_project_filter_norm_key).map(
+                lambda rk: _project_norm_key_matches_msp_keys(rk, {syn_pk})
+            )
+        else:
+            row_mask = pd.Series(True, index=out.index)
+        def _to_month_period(x):
+            if isinstance(x, pd.Period):
+                return x.asfreq("M") if x.freq != "M" else x
+            if pd.isna(x):
+                return pd.NaT
+            try:
+                return pd.Period(str(x), freq="M")
+            except Exception:
+                pass
+            try:
+                ts = pd.Timestamp(x)
+                if pd.notna(ts):
+                    return ts.to_period("M")
+            except Exception:
+                pass
+            return pd.NaT
+
+        per_vals = out["period_original"].map(_to_month_period)
+        hit = row_mask & (per_vals == syn_month)
+        if bool(hit.any()):
+            out.loc[hit, "budget plan"] = syn_plan
+            out.loc[hit, "budget fact"] = syn_fact
+            if "reserve budget" in out.columns:
+                out.loc[hit, "reserve budget"] = syn_fact - syn_plan
+            merged_any = True
+        else:
+            from utils import format_period_ru
+
+            _proj_nm = _canonical_name_for_syn_pk(syn_pk, str(sr.get("project name") or ""))
+            extra_rows.append(
+                {
+                    "project name": _proj_nm,
+                    period_col: format_period_ru(syn_month),
+                    "period_original": syn_month,
+                    "budget plan": syn_plan,
+                    "budget fact": syn_fact,
+                    "reserve budget": syn_fact - syn_plan,
+                }
+            )
+            merged_any = True
+    if extra_rows:
+        out = pd.concat([out, pd.DataFrame(extra_rows)], ignore_index=True)
+    if not merged_any:
+        return summary, False
+    canon = None
+    nt = (narrow_to_project_norm_key or "").strip()
+    if nt and "project name" in out.columns:
+        for nm in out["project name"].dropna().unique():
+            if _project_norm_key_matches_msp_keys(_project_filter_norm_key(nm), {nt}):
+                canon = str(nm)
+                break
+    out = merge_budget_summary_by_norm_project_month(
+        out,
+        period_col=period_col,
+        canonical_project_name=canon,
+    )
+    return out, True
 
 
 def ensure_bdr_frame_with_fallback(

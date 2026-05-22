@@ -9329,8 +9329,53 @@ _BDDS_TABLE_HTML_KW = {
 }
 
 
+# Минимум оборотов (руб.) для месяца на графике БДДС/БДР — иначе ось забивается «пустыми» месяцами.
+_FINANCE_CHART_MIN_MONTH_RUB = 500_000.0
+_BDDS_CHART_MIN_MONTH_RUB = _FINANCE_CHART_MIN_MONTH_RUB
+
+
+def _finance_plotly_bar_layout(n_periods: int) -> tuple[float, float, float]:
+    """bargap, bargroupgap, trace width для grouped bar chart (БДДС / БДР)."""
+    n = max(1, int(n_periods))
+    if n <= 8:
+        return 0.20, 0.06, 0.72
+    if n <= 14:
+        return 0.16, 0.05, 0.58
+    if n <= 24:
+        return 0.12, 0.04, 0.48
+    if n <= 36:
+        return 0.10, 0.035, 0.40
+    return 0.08, 0.03, max(0.32, min(0.55, 20.0 / n))
+
+
+_bdds_plotly_bar_layout = _finance_plotly_bar_layout
+
+
+def _finance_plotly_apply_bar_width(fig, n_periods: int, categories: list) -> None:
+    """Широкие столбцы + холст по числу периодов (после apply_chart_background)."""
+    n = max(1, int(n_periods))
+    bg, bgg, bar_w = _finance_plotly_bar_layout(n)
+    fig.update_layout(bargap=bg, bargroupgap=bgg)
+    fig.update_traces(width=bar_w, selector=dict(type="bar"))
+    if categories:
+        fig.update_xaxes(
+            type="category",
+            categoryorder="array",
+            categoryarray=[str(c) for c in categories],
+        )
+    fig.update_layout(
+        width=max(_RENDER_CHART_DEFAULT_WIDTH_PX, min(3600, max(900, 72 * n)))
+    )
+
+
 def dashboard_budget_by_period(df):
     st.header("БДДС")
+
+    from dashboards.finance_from_1c import resolve_reference_1c_dannye
+
+    _bdds_ref_boot = resolve_reference_1c_dannye()
+    if _bdds_ref_boot is not None and not _bdds_ref_boot.empty:
+        st.session_state["reference_1c_dannye"] = _bdds_ref_boot
 
     def _derive_bdds_dimensions(_df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -9449,6 +9494,7 @@ def dashboard_budget_by_period(df):
             else:
                 selected_projects = []
                 _bdds_all_projects = True
+        selected_projects = list(selected_projects or [])
 
         if selected_projects and "project name" in filtered_df.columns:
             filtered_df = _filter_df_by_project_labels(
@@ -9583,10 +9629,21 @@ def dashboard_budget_by_period(df):
                     if pd.notna(_start_dt) and pd.notna(_end_dt):
                         if _start_dt > _end_dt:
                             _start_dt, _end_dt = _end_dt, _start_dt
-                        filtered_df = filtered_df[
-                            (_pe_series >= _start_dt)
-                            & (_pe_series <= (_end_dt + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)))
-                        ].copy()
+                        _end_inclusive = _end_dt + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+                        if "plan start" in filtered_df.columns:
+                            _ps_series = pd.to_datetime(
+                                filtered_df["plan start"], errors="coerce"
+                            )
+                            filtered_df = filtered_df[
+                                _pe_series.notna()
+                                & _ps_series.notna()
+                                & (_ps_series <= _end_inclusive)
+                                & (_pe_series >= _start_dt)
+                            ].copy()
+                        else:
+                            filtered_df = filtered_df[
+                                (_pe_series >= _start_dt) & (_pe_series <= _end_inclusive)
+                            ].copy()
                         _bdds_cal_start = _start_dt
                         _bdds_cal_end = _end_dt
 
@@ -9605,7 +9662,7 @@ def dashboard_budget_by_period(df):
 
     _bdds_narrow_pk = (
         _project_filter_norm_key(selected_projects[0])
-        if (not _bdds_all_projects) and len(selected_projects) == 1
+        if (not _bdds_all_projects) and len(selected_projects or []) == 1
         else ""
     )
     _bdds_narrow_pk = (_bdds_narrow_pk or "").strip() or None
@@ -9616,7 +9673,7 @@ def dashboard_budget_by_period(df):
         restrict_projects_from_df=True,
         period_start=_bdds_cal_start,
         period_end=_bdds_cal_end,
-        force_from_1c=True,
+        force_from_1c=False,
         narrow_to_project_norm_key=_bdds_narrow_pk,
     )
     # После подстановки из 1С повторно применяем фильтр проекта,
@@ -9696,49 +9753,118 @@ def dashboard_budget_by_period(df):
     if adjusted_budget_col:
         agg_dict[adjusted_budget_col] = "sum"
 
-    budget_summary = (
-        filtered_df.groupby([period_col, "project name"]).agg(agg_dict).reset_index()
+    _is_1c_only_frame = bool(_bdds_used_1c) and bool(
+        getattr(filtered_df, "attrs", {}).get("data_source_1c_synthetic")
     )
+    budget_summary = pd.DataFrame()
+    if (
+        period_type_en == "Month"
+        and not _is_1c_only_frame
+        and "plan start" in filtered_df.columns
+        and "plan end" in filtered_df.columns
+    ):
+        budget_summary = _bdds_build_monthly_summary_from_msp(filtered_df, period_col=period_col)
+    if budget_summary.empty:
+        budget_summary = (
+            filtered_df.groupby([period_col, "project name"]).agg(agg_dict).reset_index()
+        )
 
     # Store original period values for sorting before formatting
     budget_summary["period_original"] = budget_summary[period_col]
     budget_summary[period_col] = budget_summary[period_col].apply(format_period_ru)
 
-    @st.fragment
+    from dashboards.finance_from_1c import (
+        build_bdds_plan_fact_analysis_table,
+        expand_budget_month_grid,
+        overlay_1c_on_budget_summary,
+        overlay_turnover_monthly_on_budget_summary,
+        resolve_budget_turnover_dannye,
+    )
+
+    _bdds_proj_keys: set[str] = set()
+    if not _bdds_all_projects and selected_projects:
+        _bdds_proj_keys = {_project_filter_norm_key(p) for p in selected_projects}
+        _bdds_proj_keys.discard("")
+
+    _bdds_ref_1c = resolve_reference_1c_dannye(_bdds_ref_boot)
+    budget_summary, _bdds_overlay_1c = overlay_1c_on_budget_summary(
+        budget_summary,
+        period_col=period_col,
+        period_start=_bdds_cal_start,
+        period_end=_bdds_cal_end,
+        project_norm_keys=_bdds_proj_keys or None,
+        narrow_to_project_norm_key=_bdds_narrow_pk,
+        reference_1c_dannye=_bdds_ref_1c,
+    )
+    if _bdds_overlay_1c:
+        _bdds_used_1c = True
+
+    if not _bdds_all_projects and len(selected_projects or []) == 1:
+        budget_summary, _bdds_overlay_turn = overlay_turnover_monthly_on_budget_summary(
+            budget_summary,
+            period_col=period_col,
+            project_name=str(selected_projects[0]),
+            period_start=_bdds_cal_start,
+            period_end=_bdds_cal_end,
+            reference_1c_dannye=resolve_budget_turnover_dannye(_bdds_ref_1c),
+            project_norm_keys=_bdds_proj_keys or None,
+            narrow_to_project_norm_key=_bdds_narrow_pk,
+        )
+
+    # Таблица — полная сетка месяцев; график — только месяцы с данными (читаемые столбцы).
+    budget_summary_chart = budget_summary.copy()
+
+    _bdds_grid_fill = ["budget plan", "budget fact", "reserve budget"]
+    if adjusted_budget_col:
+        _bdds_grid_fill.append(adjusted_budget_col)
+    if (
+        period_type_en == "Month"
+        and str(st.session_state.get("budget_period_view", "По месяцам")) == "По месяцам"
+    ):
+        budget_summary = expand_budget_month_grid(
+            budget_summary,
+            period_col=period_col,
+            cal_start=_bdds_cal_start,
+            cal_end=_bdds_cal_end,
+            fill_columns=tuple(_bdds_grid_fill),
+            group_by="project name" if "project name" in budget_summary.columns else None,
+        )
+
     def _budget_period_chart():
         view_type = str(st.session_state.get("budget_period_view", "По месяцам"))
-        if not _bdds_all_projects:
-            _sel_keys = {_project_filter_norm_key(p) for p in selected_projects}
-            _sel_keys.discard("")
-            project_data = budget_summary[
-                budget_summary["project name"]
-                .map(_project_filter_norm_key)
-                .map(lambda rk: _project_norm_key_matches_msp_keys(rk, _sel_keys))
-            ].copy()
-            if len(selected_projects) > 1:
-                agg_dict_all = {
-                    "budget plan": "sum",
-                    "budget fact": "sum",
-                    "reserve budget": "sum",
-                    "period_original": "first",
-                }
-                if adjusted_budget_col:
-                    agg_dict_all[adjusted_budget_col] = "sum"
-                project_data = (
-                    project_data.groupby(period_col).agg(agg_dict_all).reset_index()
-                )
-        else:
+        _chart_src = budget_summary_chart
+
+        def _bdds_chart_aggregate_by_period(src: pd.DataFrame) -> pd.DataFrame:
+            if src is None or src.empty:
+                return pd.DataFrame()
             agg_dict_all = {
                 "budget plan": "sum",
                 "budget fact": "sum",
                 "reserve budget": "sum",
-                "period_original": "first",
             }
-            if adjusted_budget_col:
+            if adjusted_budget_col and adjusted_budget_col in src.columns:
                 agg_dict_all[adjusted_budget_col] = "sum"
-            project_data = (
-                budget_summary.groupby(period_col).agg(agg_dict_all).reset_index()
-            )
+            grp_key = "period_original" if "period_original" in src.columns else period_col
+            out = src.groupby(grp_key, dropna=False).agg(agg_dict_all).reset_index()
+            if grp_key != period_col:
+                out[period_col] = out[grp_key].apply(format_period_ru)
+            try:
+                out = out.sort_values(grp_key).reset_index(drop=True)
+            except Exception:
+                pass
+            return out
+
+        if not _bdds_all_projects:
+            _sel_keys = {_project_filter_norm_key(p) for p in (selected_projects or [])}
+            _sel_keys.discard("")
+            project_data = _chart_src[
+                _chart_src["project name"]
+                .map(_project_filter_norm_key)
+                .map(lambda rk: _project_norm_key_matches_msp_keys(rk, _sel_keys))
+            ].copy()
+        else:
+            project_data = _chart_src.copy()
+        project_data = _bdds_chart_aggregate_by_period(project_data)
         if project_data["period_original"].dtype == "object":
             try:
                 project_data["period_sort"] = project_data["period_original"].apply(
@@ -9753,47 +9879,34 @@ def dashboard_budget_by_period(df):
                 project_data = project_data.sort_values("period_original").copy()
         else:
             project_data = project_data.sort_values("period_original").copy()
-        # По умолчанию: все месяцы выбранного периода проекта (в т.ч. с нулевым планом/фактом).
-        if (
-            period_type_en == "Month"
-            and view_type == "По месяцам"
-            and not project_data.empty
-        ):
-            try:
-                if _bdds_cal_start is not None and _bdds_cal_end is not None:
-                    _grid_p0 = pd.Timestamp(_bdds_cal_start).to_period("M")
-                    _grid_p1 = pd.Timestamp(_bdds_cal_end).to_period("M")
-                else:
-                    _po = project_data["period_original"].dropna()
-                    if _po.empty:
-                        raise ValueError("no periods")
-                    _grid_p0 = _po.min()
-                    _grid_p1 = _po.max()
-                    if not isinstance(_grid_p0, pd.Period):
-                        _grid_p0 = pd.Period(str(_grid_p0), freq="M")
-                    if not isinstance(_grid_p1, pd.Period):
-                        _grid_p1 = pd.Period(str(_grid_p1), freq="M")
-                if _grid_p0 is not None and _grid_p1 is not None and _grid_p0 <= _grid_p1:
-                    _month_idx = pd.period_range(_grid_p0, _grid_p1, freq="M")
-                    project_data = (
-                        project_data.set_index("period_original")
-                        .reindex(_month_idx)
-                        .reset_index()
-                    )
-                    for _zc in ("budget plan", "budget fact", "reserve budget"):
-                        if _zc in project_data.columns:
-                            project_data[_zc] = pd.to_numeric(
-                                project_data[_zc], errors="coerce"
-                            ).fillna(0.0)
-                    if adjusted_budget_col and adjusted_budget_col in project_data.columns:
-                        project_data[adjusted_budget_col] = pd.to_numeric(
-                            project_data[adjusted_budget_col], errors="coerce"
-                        ).fillna(0.0)
-                    project_data[period_col] = project_data["period_original"].apply(
-                        format_period_ru
-                    )
-            except Exception:
-                pass
+
+        _hide_zero_months = False
+        if period_type_en == "Month" and view_type == "По месяцам":
+            _hide_zero_months = st.checkbox(
+                "Скрывать месяцы, где план и факт равны 0",
+                value=bool(_bdds_all_projects),
+                key="budget_period_hide_zero_months",
+                help="Влияет на график. По умолчанию включено для «Все проекты». В таблице ниже — полный период.",
+            )
+
+        def _bdds_chart_drop_empty_months(_df: pd.DataFrame) -> pd.DataFrame:
+            if _df is None or _df.empty:
+                return _df
+            _pl = _df["budget plan"].fillna(0.0)
+            _fc = _df["budget fact"].fillna(0.0)
+            _keep = (_pl.abs() + _fc.abs()) >= _FINANCE_CHART_MIN_MONTH_RUB
+            if (
+                adjusted_budget_col
+                and adjusted_budget_col in _df.columns
+                and not hide_adjusted
+            ):
+                _keep = _keep | (
+                    _df[adjusted_budget_col].fillna(0.0).abs() >= _FINANCE_CHART_MIN_MONTH_RUB
+                )
+            return _df.loc[_keep].copy()
+
+        if period_type_en == "Month" and view_type == "По месяцам" and not project_data.empty:
+            project_data = _bdds_chart_drop_empty_months(project_data)
         if view_type == "Накопительно":
             project_data["budget plan"] = project_data["budget plan"].cumsum()
             project_data["budget fact"] = project_data["budget fact"].cumsum()
@@ -9804,30 +9917,13 @@ def dashboard_budget_by_period(df):
         else:
             title_suffix = ""
 
-        # Узкие столбцы при длинной шкале: убираем «пустые» месяцы (иначе каждая колонка — тонкая).
-        _hide_zero_months = False
-        if period_type_en == "Month" and view_type == "По месяцам":
-            _hide_zero_months = st.checkbox(
-                "Скрывать месяцы, где план и факт равны 0",
-                value=False,
-                key="budget_period_hide_zero_months",
-            )
         if (
             _hide_zero_months
             and period_type_en == "Month"
             and view_type == "По месяцам"
             and not project_data.empty
         ):
-            _pl = project_data["budget plan"].fillna(0.0)
-            _fc = project_data["budget fact"].fillna(0.0)
-            _keep = _pl.abs() + _fc.abs() > 0.5
-            if (
-                adjusted_budget_col
-                and adjusted_budget_col in project_data.columns
-                and not hide_adjusted
-            ):
-                _keep = _keep | (project_data[adjusted_budget_col].fillna(0.0).abs() > 0.5)
-            project_data = project_data.loc[_keep].copy()
+            project_data = _bdds_chart_drop_empty_months(project_data)
         if project_data.empty:
             st.info(
                 "Нет периодов для графика. Снимите «Скрывать месяцы, где план и факт равны 0» "
@@ -9841,13 +9937,7 @@ def dashboard_budget_by_period(df):
         _hide_bar_value_labels = _is_cumulative and _n > 10
         _tlbl = 0.005
         _tfs = 8 if _n > 32 else 9 if _n > 20 else 10 if _n > 12 else 11
-        # Меньше «воздуха» между группами/столбцами — визуально шире бары.
-        if _n > 32:
-            _bg, _bgg = 0.04, 0.01
-        elif _n > 18:
-            _bg, _bgg = 0.06, 0.02
-        else:
-            _bg, _bgg = 0.1, 0.04
+        _bg, _bgg, _bar_w = _bdds_plotly_bar_layout(_n)
         # Нижнее поле под наклонные подписи месяцев + легенда (см. _plotly_legend_horizontal_below_plot).
         # Высота фигуры должна быть >= margin.t + margin.b + минимум для самих столбцов, иначе область графика ~0 px.
         _leg_b_pre = 300
@@ -9905,54 +9995,54 @@ def dashboard_budget_by_period(df):
         if not hide_reserve:
             _dev_mln = project_data["reserve budget"].div(1e6)
             _dev_x = project_data[period_col]
-            # Как в таблице: факт − план; ≥0 — перерасход (вверх, красный), <0 — экономия (вниз, зелёный).
+            # ТЗ: отклонение = факт − план; факт < план — красный, факт > план — зелёный.
             _dev_thr_mln = 0.01
-            _y_over = _dev_mln.where(_dev_mln > _dev_thr_mln)
-            _y_save = _dev_mln.where(_dev_mln < -_dev_thr_mln)
-            if _y_over.notna().any():
+            _y_fact_gt_plan = _dev_mln.where(_dev_mln > _dev_thr_mln)
+            _y_fact_lt_plan = _dev_mln.where(_dev_mln < -_dev_thr_mln)
+            if _y_fact_lt_plan.notna().any():
+                _txt_under = (
+                    None
+                    if _hide_bar_value_labels
+                    else _y_fact_lt_plan.map(
+                        lambda v: format_million_rub(float(v) * 1e6) if pd.notna(v) else ""
+                    )
+                )
+                fig.add_trace(
+                    go.Bar(
+                        x=_dev_x,
+                        y=_y_fact_lt_plan,
+                        name="Отклонение (факт < план)",
+                        marker_color="#e74c3c",
+                        text=_txt_under,
+                        textposition=_txt_pos,
+                        textfont=dict(size=_tfs, color="#f0f4f8"),
+                        customdata=_y_fact_lt_plan.map(
+                            lambda v: format_million_rub(float(v) * 1e6) if pd.notna(v) else ""
+                        ),
+                        hovertemplate="<b>%{x}</b><br>Факт < план: %{customdata}<br><extra></extra>",
+                    )
+                )
+            if _y_fact_gt_plan.notna().any():
                 _txt_over = (
                     None
                     if _hide_bar_value_labels
-                    else _y_over.map(
+                    else _y_fact_gt_plan.map(
                         lambda v: format_million_rub(float(v) * 1e6) if pd.notna(v) else ""
                     )
                 )
                 fig.add_trace(
                     go.Bar(
                         x=_dev_x,
-                        y=_y_over,
-                        name="Отклонение (перерасход)",
-                        marker_color="#e74c3c",
+                        y=_y_fact_gt_plan,
+                        name="Отклонение (факт > план)",
+                        marker_color="#27ae60",
                         text=_txt_over,
                         textposition=_txt_pos,
                         textfont=dict(size=_tfs, color="#f0f4f8"),
-                        customdata=_y_over.map(
+                        customdata=_y_fact_gt_plan.map(
                             lambda v: format_million_rub(float(v) * 1e6) if pd.notna(v) else ""
                         ),
-                        hovertemplate="<b>%{x}</b><br>Перерасход (факт − план): %{customdata}<br><extra></extra>",
-                    )
-                )
-            if _y_save.notna().any():
-                _txt_save = (
-                    None
-                    if _hide_bar_value_labels
-                    else _y_save.map(
-                        lambda v: format_million_rub(float(v) * 1e6) if pd.notna(v) else ""
-                    )
-                )
-                fig.add_trace(
-                    go.Bar(
-                        x=_dev_x,
-                        y=_y_save,
-                        name="Отклонение (экономия)",
-                        marker_color="#27ae60",
-                        text=_txt_save,
-                        textposition=_txt_pos,
-                        textfont=dict(size=_tfs, color="#f0f4f8"),
-                        customdata=_y_save.map(
-                            lambda v: format_million_rub(float(v) * 1e6) if pd.notna(v) else ""
-                        ),
-                        hovertemplate="<b>%{x}</b><br>Экономия (факт − план): %{customdata}<br><extra></extra>",
+                        hovertemplate="<b>%{x}</b><br>Факт > план: %{customdata}<br><extra></extra>",
                     )
                 )
         if (
@@ -9997,16 +10087,6 @@ def dashboard_budget_by_period(df):
                 fig.update_layout(uniformtext=dict(minsize=5, mode="hide"))
             except Exception:
                 pass
-        # Правки куратора 08.05.2026: при малом числе периодов Plotly раздувает столбцы
-        # на всю ширину слота — выглядит как «толстенные» бары на полэкрана и
-        # ещё и накладываются друг на друга. Принудительно фиксируем узкую ширину
-        # (как при большом числе периодов «Дмитровский 1»), без наложения.
-        if _n <= 6:
-            try:
-                fig.update_layout(bargap=0.86, bargroupgap=0.12)
-                fig.update_traces(width=0.08, offsetgroup=None, selector=dict(type="bar"))
-            except Exception:
-                pass
         # Легенда под графиком (margin b согласован с расчётом высоты _ch выше).
         _leg_b = _leg_b_pre
         _leg_y = -0.34 if _n <= 20 else (-0.38 if _n <= 36 else -0.44)
@@ -10046,7 +10126,14 @@ def dashboard_budget_by_period(df):
                 if _ymax > 0 or _ymin < 0:
                     fig.update_layout(yaxis=dict(range=[_ymin, max(_ymax * 1.22, 0.01)]))
         fig = apply_chart_background(fig)
-        # Не clamp’ить к 900: при больших margin и длинной шкале нужна полная высота.
+        try:
+            _finance_plotly_apply_bar_width(
+                fig,
+                _n,
+                project_data[period_col].astype(str).tolist(),
+            )
+        except Exception:
+            pass
         render_chart(
             fig,
             caption_below=f"БДДС{title_suffix}",
@@ -10139,7 +10226,7 @@ def dashboard_budget_by_period(df):
             return _bdc_fmt, _tot_block
 
         if (
-            (_bdds_all_projects or len(selected_projects) > 1)
+            (_bdds_all_projects or len(selected_projects or []) > 1)
             and "project name" in budget_summary.columns
         ):
             if _bdds_all_projects:
@@ -10214,7 +10301,7 @@ def dashboard_budget_by_period(df):
                 }
                 if adjusted_budget_col and adjusted_budget_col in budget_summary.columns and not hide_adjusted:
                     _tot_raw[adjusted_budget_col] = float(_bs_for_tot[adjusted_budget_col].fillna(0.0).sum())
-        elif not _bdds_all_projects and len(selected_projects) == 1:
+        elif not _bdds_all_projects and len(selected_projects or []) == 1:
             _tbl_pk2 = _project_filter_norm_key(selected_projects[0])
             _tbl_src2 = budget_summary[
                 budget_summary["project name"]
@@ -10310,6 +10397,41 @@ def dashboard_budget_by_period(df):
             )
 
     _budget_period_chart()
+
+    if not _bdds_all_projects and len(selected_projects or []) == 1:
+        _pf_proj = str(selected_projects[0])
+        _pf_kw = {**_BDDS_TABLE_HTML_KW, "table_font_size_px": 14}
+        try:
+            _pf_tbl = build_bdds_plan_fact_analysis_table(
+                project_name=_pf_proj,
+                period_start=_bdds_cal_start,
+                period_end=_bdds_cal_end,
+                reference_1c_dannye=resolve_budget_turnover_dannye(_bdds_ref_1c),
+            )
+            if _pf_tbl is not None and not _pf_tbl.empty:
+                _pf_title = f"План-фактный анализ по проекту {_pf_proj}"
+                if _bdds_cal_start is not None and _bdds_cal_end is not None:
+                    try:
+                        _ts = pd.Timestamp(_bdds_cal_start).date()
+                        _te = pd.Timestamp(_bdds_cal_end).date()
+                        _pf_title += f" ({_ts.strftime('%d.%m.%Y')} — {_te.strftime('%d.%m.%Y')})"
+                    except Exception:
+                        pass
+                render_table_subheader(st, _pf_title)
+                st.markdown(
+                    budget_table_to_html(
+                        _pf_tbl,
+                        finance_deviation_column=None,
+                        row_kind_column="_row_kind",
+                        emphasize_row_kinds=("project", "total"),
+                        **_pf_kw,
+                    ),
+                    unsafe_allow_html=True,
+                )
+        except Exception as _pf_exc:
+            st.error(
+                f"Ошибка при построении таблицы «План-фактный анализ» по проекту {_pf_proj}: {_pf_exc}"
+            )
 
     # R23-13.2 (стр.35): в БДДС дополнительно вывести таблицу
     # «Сводка бюджета по проекту» (как в БДР) с итоговой строкой «Итого».
@@ -11567,22 +11689,35 @@ def dashboard_bdr(df):
                 chart_df["Отклонение"] = chart_df["Факт расходов"] - chart_df["План расходов"]
                 title_suffix = " (накопительно)"
 
+            _bdr_all_projects = str(st.session_state.get("bdr_project", selected_project)).strip() in (
+                "",
+                "Все",
+            )
+
+            def _bdr_drop_empty_months(_cdf: pd.DataFrame) -> pd.DataFrame:
+                if _cdf is None or _cdf.empty:
+                    return _cdf
+                _dp = _cdf["План расходов"].fillna(0.0)
+                _dfx = _cdf["Факт расходов"].fillna(0.0)
+                _keep = (_dp.abs() + _dfx.abs()) >= _FINANCE_CHART_MIN_MONTH_RUB
+                return _cdf.loc[_keep].copy()
+
             _bdr_hide_zero = False
             if period_type_en == "Month" and view_type == "По месяцам":
                 _bdr_hide_zero = st.checkbox(
                     "Скрывать месяцы, где план и факт расходов равны 0",
-                    value=True,
+                    value=bool(_bdr_all_projects),
                     key="bdr_hide_zero_months_tz",
                 )
+            if period_type_en == "Month" and view_type == "По месяцам" and not chart_df.empty:
+                chart_df = _bdr_drop_empty_months(chart_df)
             if (
                 _bdr_hide_zero
                 and period_type_en == "Month"
                 and view_type == "По месяцам"
                 and not chart_df.empty
             ):
-                _dp = chart_df["План расходов"].fillna(0.0)
-                _dfx = chart_df["Факт расходов"].fillna(0.0)
-                chart_df = chart_df.loc[_dp.abs() + _dfx.abs() > 0.5].copy()
+                chart_df = _bdr_drop_empty_months(chart_df)
             if chart_df.empty:
                 st.info(
                     "Нет периодов для графика. Снимите фильтр скрытия нулевых периодов "
@@ -11668,33 +11803,60 @@ def dashboard_bdr(df):
                 )
             )
             if not hide_deviation:
-                dev_colors = [
-                    "#e74c3c" if float(v) >= 0 else "#27ae60"
-                    for v in chart_df["Отклонение"]
-                ]
-                _dev_txt_b = (
-                    None
-                    if _hide_bar_value_labels
-                    else _finance_bar_text_mln_rub(
-                        chart_df["Отклонение"],
-                        min_abs_mln=_tlbl_dev,
-                        mln_suffix=_mln_lab,
-                        decimals=1,
+                _dev_mln_b = chart_df["Отклонение"].div(1e6)
+                _dev_thr_b = 0.01
+                _y_b_fact_lt = _dev_mln_b.where(_dev_mln_b < -_dev_thr_b)
+                _y_b_fact_gt = _dev_mln_b.where(_dev_mln_b > _dev_thr_b)
+                if _y_b_fact_lt.notna().any():
+                    _dev_txt_lt = (
+                        None
+                        if _hide_bar_value_labels
+                        else _y_b_fact_lt.map(
+                            lambda v: format_million_rub(float(v) * 1e6, decimals=1)
+                            if pd.notna(v)
+                            else ""
+                        )
                     )
-                )
-                fig.add_trace(
-                    go.Bar(
-                        x=x_vals,
-                        y=chart_df["Отклонение"].div(1e6),
-                        name="Отклонение",
-                        marker_color=dev_colors,
-                        text=_dev_txt_b,
-                        textposition=_txt_pos_b,
-                        textfont=dict(size=_tfs_b, color="#f0f4f8"),
-                        customdata=chart_df["Отклонение"].apply(lambda v: format_million_rub(v, decimals=1)),
-                        hovertemplate="<b>%{x}</b><br>Отклонение: %{customdata}<br><extra></extra>",
+                    fig.add_trace(
+                        go.Bar(
+                            x=x_vals,
+                            y=_y_b_fact_lt,
+                            name="Отклонение (факт < план)",
+                            marker_color="#e74c3c",
+                            text=_dev_txt_lt,
+                            textposition=_txt_pos_b,
+                            textfont=dict(size=_tfs_b, color="#f0f4f8"),
+                            customdata=_y_b_fact_lt.map(
+                                lambda v: format_million_rub(float(v) * 1e6) if pd.notna(v) else ""
+                            ),
+                            hovertemplate="<b>%{x}</b><br>Факт < план: %{customdata}<br><extra></extra>",
+                        )
                     )
-                )
+                if _y_b_fact_gt.notna().any():
+                    _dev_txt_gt = (
+                        None
+                        if _hide_bar_value_labels
+                        else _y_b_fact_gt.map(
+                            lambda v: format_million_rub(float(v) * 1e6, decimals=1)
+                            if pd.notna(v)
+                            else ""
+                        )
+                    )
+                    fig.add_trace(
+                        go.Bar(
+                            x=x_vals,
+                            y=_y_b_fact_gt,
+                            name="Отклонение (факт > план)",
+                            marker_color="#27ae60",
+                            text=_dev_txt_gt,
+                            textposition=_txt_pos_b,
+                            textfont=dict(size=_tfs_b, color="#f0f4f8"),
+                            customdata=_y_b_fact_gt.map(
+                                lambda v: format_million_rub(float(v) * 1e6) if pd.notna(v) else ""
+                            ),
+                            hovertemplate="<b>%{x}</b><br>Факт > план: %{customdata}<br><extra></extra>",
+                        )
+                    )
 
             fig.update_layout(
                 title_text="",
@@ -11740,6 +11902,14 @@ def dashboard_bdr(df):
             except Exception:
                 pass
             fig = apply_chart_background(fig)
+            try:
+                _finance_plotly_apply_bar_width(
+                    fig,
+                    _nb,
+                    chart_df["Период"].astype(str).tolist(),
+                )
+            except Exception:
+                pass
             render_chart(
                 fig,
                 caption_below=f"БДР. План/факт расходов{title_suffix}",
@@ -11792,7 +11962,7 @@ def dashboard_bdr(df):
                     ):
                         _dp = _s["План расходов"].fillna(0.0)
                         _dfx = _s["Факт расходов"].fillna(0.0)
-                        _s = _s.loc[_dp.abs() + _dfx.abs() > 0.5].copy()
+                        _s = _s.loc[_dp.abs() + _dfx.abs() >= _FINANCE_CHART_MIN_MONTH_RUB].copy()
                     if _s.empty:
                         continue
                     _s["Период"] = _s[period_col].apply(format_period_ru)
@@ -11897,6 +12067,7 @@ def dashboard_bdr(df):
                     tbl_disp,
                     row_kind_column="__rk",
                     finance_deviation_column=_bdr_tz_dev_col,
+                    deviation_red_if_negative=True,
                     emphasize_row_kinds=("project", "total"),
                 ),
                 unsafe_allow_html=True,
@@ -12134,6 +12305,7 @@ def dashboard_bdr(df):
                 budget_table_to_html(
                     proj_tbl,
                     finance_deviation_column="Отклонение, млн. руб.",
+                    deviation_red_if_negative=True,
                 ),
                 unsafe_allow_html=True,
             )
@@ -24908,6 +25080,68 @@ def _bdds_distribute_row_uniform(total: float, start, end) -> dict:
         return {m: 0.0 for m in months}
     per = t / len(months)
     return {m: per for m in months}
+
+
+def _bdds_build_monthly_summary_from_msp(
+    work_df: pd.DataFrame,
+    *,
+    period_col: str = "plan_month",
+) -> pd.DataFrame:
+    """
+    Сводка БДДС по месяцам из MSP: plan/fact каждой строки равномерно
+    по месяцам между plan start и plan end (как прогнозный БДДС).
+    """
+    if work_df is None or work_df.empty or "project name" not in work_df.columns:
+        return pd.DataFrame()
+    if "plan start" not in work_df.columns or "plan end" not in work_df.columns:
+        return pd.DataFrame()
+    ws = work_df.copy()
+    ensure_budget_columns(ws)
+    ws["plan start"] = pd.to_datetime(ws["plan start"], errors="coerce", dayfirst=True)
+    ws["plan end"] = pd.to_datetime(ws["plan end"], errors="coerce", dayfirst=True)
+    ws["budget plan"] = pd.to_numeric(ws["budget plan"], errors="coerce").fillna(0.0)
+    ws["budget fact"] = pd.to_numeric(ws.get("budget fact", 0), errors="coerce").fillna(0.0)
+    buckets: dict[tuple[str, pd.Period], dict[str, float]] = {}
+    for _, row in ws.iterrows():
+        proj = str(row.get("project name", "") or "")
+        if not proj:
+            continue
+        ps, pe = row["plan start"], row["plan end"]
+        if pd.isna(ps) or pd.isna(pe):
+            continue
+        plan_amt = float(row["budget plan"])
+        fact_amt = float(row["budget fact"])
+        if abs(plan_amt) < 1e-9 and abs(fact_amt) < 1e-9:
+            continue
+        for m, v in _bdds_distribute_row_uniform(plan_amt, ps, pe).items():
+            key = (proj, m)
+            buckets.setdefault(key, {"budget plan": 0.0, "budget fact": 0.0})
+            buckets[key]["budget plan"] += float(v)
+        for m, v in _bdds_distribute_row_uniform(fact_amt, ps, pe).items():
+            key = (proj, m)
+            buckets.setdefault(key, {"budget plan": 0.0, "budget fact": 0.0})
+            buckets[key]["budget fact"] += float(v)
+    if not buckets:
+        return pd.DataFrame()
+    out_rows: list[dict] = []
+    for (proj, month), vals in buckets.items():
+        plan_v = float(vals["budget plan"])
+        fact_v = float(vals["budget fact"])
+        try:
+            pe_ts = month.to_timestamp(how="end")
+        except Exception:
+            continue
+        out_rows.append(
+            {
+                "project name": proj,
+                period_col: month,
+                "plan end": pe_ts,
+                "budget plan": plan_v,
+                "budget fact": fact_v,
+                "reserve budget": fact_v - plan_v,
+            }
+        )
+    return pd.DataFrame(out_rows)
 
 
 def _bdds_distribute_row_abc(total: float, start, end, a, b, c) -> dict:

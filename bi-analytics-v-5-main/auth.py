@@ -893,59 +893,6 @@ def render_sidebar_menu(current_page: str = "reports"):
 
         # F2: встроенная навигация Streamlit скрыта.
 
-        # ── Admin-only тумблер «Демо-данные» (только в dev, на release недоступно) ──
-        try:
-            from config import is_release_client_mode as _cfg_is_release
-            from config import ignore_demo_data_files as _cfg_ignore_demo
-            _is_release = bool(_cfg_is_release())
-        except Exception:
-            _is_release = False
-            _cfg_ignore_demo = lambda: False  # type: ignore[assignment]
-        if not _is_release and has_admin_access(user.get("role", "")):
-            st.markdown("---")
-            st.markdown(
-                '<p class="sidebar-section-title">Dev-инструменты</p>',
-                unsafe_allow_html=True,
-            )
-            _demo_now_on = not bool(_cfg_ignore_demo())
-            _new_val = st.toggle(
-                "Подмешивать демо-данные",
-                value=_demo_now_on,
-                key="_admin_demo_toggle",
-                help=(
-                    "Демо: sample_*.csv и файлы из new_csv/. Включён — подмешиваются "
-                    "при загрузке из web/. Выключен — игнорируются (как на release). "
-                    "Только для admin/superadmin на dev. На release недоступно."
-                ),
-            )
-            _prev_pref = str(st.session_state.get("_admin_demo_pref", "") or "")
-            _new_pref = "include" if _new_val else "ignore"
-            if _new_pref != _prev_pref:
-                st.session_state["_admin_demo_pref"] = _new_pref
-                st.cache_data.clear()
-                # Прямая перезагрузка из web/ — гарантирует, что новая версия БД
-                # будет содержать (или не содержать) демо в соответствии с тумблером,
-                # без зависимости от того, на какой странице сейчас находится admin.
-                try:
-                    from web_loader import load_all_from_web
-                    from data_loader import ensure_data_session_state
-                    ensure_data_session_state()
-                    with st.spinner("Перечитываю web/ с новыми настройками демо…"):
-                        result = load_all_from_web()
-                    st.session_state["last_load_result"] = result
-                    st.session_state.pop("web_version_id", None)
-                    try:
-                        from web_schema import get_active_version_id as _gav
-                        _na = _gav()
-                        if _na is not None:
-                            st.session_state["web_version_pick_id"] = int(_na)
-                    except Exception:
-                        pass
-                except Exception as _e:
-                    st.warning(f"Не удалось перечитать web/ автоматически: {_e}")
-                st.session_state.pop("_pending_web_folder_load", None)
-                st.rerun()
-
         # ── Принудительный refresh (для admin/superadmin): чистит кэши Streamlit
         # и форсирует свежий ingest из web/ (опционально с FTP, если настроено).
         # Чтобы клиент мгновенно увидел свежие данные после деплоя — без ожидания

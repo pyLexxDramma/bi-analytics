@@ -216,7 +216,7 @@ def is_release_client_mode() -> bool:
 
     Используется:
     - ``project_visualization_app.py`` — скрытие dev-диагностики в UI.
-    - ``ignore_demo_data_files()`` — автоматически включает игнор sample_*/new_csv/.
+    - ``ignore_demo_data_files()`` — дефолт без демо на release, с демо на dev; admin может переключить в сайдбаре.
     """
     if _env_truthy("BI_ANALYTICS_HIDE_DEV_DIAGNOSTICS"):
         return True
@@ -267,6 +267,11 @@ def get_ai_assistant_open_url() -> str:
     return ""
 
 
+def default_include_demo_data() -> bool:
+    """Дефолт селектора «Подмешивать демо» (admin): dev — вкл., release — выкл."""
+    return not is_release_client_mode()
+
+
 def ignore_demo_data_files() -> bool:
     """
     Не подмешивать демо: каталог ``new_csv/`` рядом с приложением,
@@ -274,38 +279,23 @@ def ignore_demo_data_files() -> bool:
 
     Приоритет источников решения (сверху → вниз, первый сработавший побеждает):
 
-    1. ``release``-режим (см. :func:`is_release_client_mode`) — на release демо
-       **всегда отключены**, никакие сессионные/env-переключатели не возвращают их.
-       Это аппаратное правило безопасности для клиентского деплоя.
-    2. Сессионный admin-тумблер ``st.session_state["_admin_demo_pref"]`` — действует
-       только в dev, ставится из сайдбара (`auth.render_sidebar_menu`):
-       - ``"include"`` → демо подмешиваются (вернёт ``False``);
-       - ``"ignore"``  → демо игнорируются (вернёт ``True``).
-    3. ``BI_ANALYTICS_INCLUDE_DEMO=1`` (env) → ``False`` (явное включение демо
-       для текущего процесса, например для UI-демонстрации).
-    4. ``BI_ANALYTICS_IGNORE_DEMO=1`` (env) → ``True``.
-    5. **Дефолт**: ``True`` — демо игнорируются. Это «безопасный по умолчанию»
-       подход: разработчик видит данные так же, как клиент на release; чтобы
-       подмешать демо, admin явно включает тумблер в сайдбаре или задаётся
-       ``BI_ANALYTICS_INCLUDE_DEMO=1``.
+    1. ``BI_ANALYTICS_INCLUDE_DEMO=1`` (env) → ``False`` (явное включение демо).
+    2. ``BI_ANALYTICS_IGNORE_DEMO=1`` (env) → ``True``.
+    3. ``st.session_state['include_demo_data']`` — селектор admin в сайдбаре «Данные».
+    4. **Дефолт**: release — без демо; dev — демо из ``new_csv/`` при загрузке в SQLite.
     """
-    if is_release_client_mode():
-        return True
-    try:
-        import streamlit as st  # type: ignore
-
-        pref = str(st.session_state.get("_admin_demo_pref", "") or "").strip().lower()
-        if pref == "ignore":
-            return True
-        if pref == "include":
-            return False
-    except Exception:
-        pass
     if _env_truthy("BI_ANALYTICS_INCLUDE_DEMO"):
         return False
     if _env_truthy("BI_ANALYTICS_IGNORE_DEMO"):
         return True
-    return True
+    try:
+        import streamlit as st  # type: ignore
+
+        if "include_demo_data" in st.session_state:
+            return not bool(st.session_state.get("include_demo_data"))
+    except Exception:
+        pass
+    return is_release_client_mode()
 
 
 def web_load_latest_snapshots_only() -> bool:

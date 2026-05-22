@@ -836,6 +836,91 @@ def main():
                 print(f"[auto_hydrate] pseudo_lr failed: {_e}", file=sys.stderr)
                 return None
 
+        def _db_version_missing_budget_data(version_id: int) -> bool:
+            """
+            Активная версия БД может быть собрана auto_ingest'ом без demo budget-файла
+            из `new_csv/`. Для БДДС тогда в session попадает только MSP/1С, а бюджетный
+            слой теряется. В таком случае нужно перечитать `web/` + demo-файлы целиком.
+            """
+            try:
+                from config import ignore_demo_data_files
+
+                if ignore_demo_data_files():
+                    return False
+            except Exception:
+                pass
+            try:
+                import sqlite3 as _sql
+                from web_schema import WEB_DB_PATH as _WDP
+
+                _conn = _sql.connect(_WDP)
+                _rows = _conn.execute(
+                    "SELECT DISTINCT file_type FROM web_files WHERE version_id=?",
+                    (int(version_id),),
+                ).fetchall()
+                _conn.close()
+                _types = {str(_r[0] or "") for _r in _rows}
+                if "budget" in _types:
+                    return False
+                if "reference_dannye" not in _types:
+                    return False
+                return (_app_dir / "new_csv" / "sample_budget_data.csv").is_file()
+            except Exception:
+                return False
+
+        def _force_reload_when_active_db_missing_budget() -> None:
+            """
+            Старые версии БД без `budget` не подходят для БДДС — пересканируем web/
+            (demo из new_csv/ подмешиваются автоматически в dev).
+            """
+            try:
+                _active_id = get_active_version_id()
+            except Exception as _e:
+                print(f"[auto_hydrate] get_active_version_id failed: {_e}", file=sys.stderr)
+                return
+            if not _active_id:
+                return
+            _flag_key = "_bdds_auto_demo_reload_version_id"
+            if st.session_state.get(_flag_key) == int(_active_id):
+                return
+            if not _db_version_missing_budget_data(int(_active_id)):
+                return
+            print(
+                f"[auto_hydrate] force reload from web/: active version {_active_id} has no budget rows",
+                file=sys.stderr,
+            )
+            st.cache_data.clear()
+            st.session_state.pop("web_version_id", None)
+            with st.spinner("Обновление данных из web/…"):
+                _forced_result = load_all_from_web()
+            try:
+                _new_active = get_active_version_id()
+            except Exception:
+                _new_active = None
+            if not _new_active or _db_version_missing_budget_data(int(_new_active)):
+                print(
+                    "[auto_hydrate] force reload finished but active version still has no budget rows",
+                    file=sys.stderr,
+                )
+                return
+            st.session_state["last_load_result"] = _forced_result
+            try:
+                st.session_state["last_data_readiness"] = build_data_readiness_report(_forced_result)
+                st.session_state["last_env_fingerprint"] = build_environment_fingerprint(_forced_result)
+                from data_contract import evaluate_data_contract as _edc
+
+                st.session_state["last_data_contract"] = _edc(_forced_result)
+            except Exception:
+                pass
+            st.session_state["web_version_id"] = int(_new_active)
+            st.session_state["web_version_pick_id"] = int(_new_active)
+            st.session_state[_flag_key] = int(_new_active)
+            st.session_state["_auto_hydrated_from_web"] = True
+            st.session_state.pop("_pending_web_folder_load", None)
+            st.rerun()
+
+        _force_reload_when_active_db_missing_budget()
+
         # ── Auto-hydrate сессии из активной версии БД ────────────────────
         # Зачем: auto_ingest при cold start пишет данные в web_data.db, но
         # st.session_state у него нет (нет ScriptRunContext). Без этого
@@ -860,15 +945,24 @@ def main():
                 _hydrate_active_id = None
 
             _hydrate_ok = False
+            _hydrate_force_web_reload = False
             if _hydrate_active_id:
-                try:
-                    if st.session_state.get("project_data") is None:
-                        read_version_to_session(int(_hydrate_active_id))
-                    st.session_state["web_version_id"] = int(_hydrate_active_id)
-                    st.session_state["web_version_pick_id"] = int(_hydrate_active_id)
-                    _hydrate_ok = True
-                except Exception as _e:
-                    print(f"[auto_hydrate] read_version_to_session failed: {_e}", file=sys.stderr)
+                if _db_version_missing_budget_data(int(_hydrate_active_id)):
+                    _hydrate_force_web_reload = True
+                    print(
+                        f"[auto_hydrate] DB version {_hydrate_active_id} has no budget rows; "
+                        "forcing load_all_from_web()",
+                        file=sys.stderr,
+                    )
+                else:
+                    try:
+                        if st.session_state.get("project_data") is None:
+                            read_version_to_session(int(_hydrate_active_id))
+                        st.session_state["web_version_id"] = int(_hydrate_active_id)
+                        st.session_state["web_version_pick_id"] = int(_hydrate_active_id)
+                        _hydrate_ok = True
+                    except Exception as _e:
+                        print(f"[auto_hydrate] read_version_to_session failed: {_e}", file=sys.stderr)
 
             if _hydrate_ok:
                 _pseudo_lr = _build_pseudo_lr_from_db(int(_hydrate_active_id))
@@ -901,7 +995,7 @@ def main():
             )
             if _need_fallback and web_dir_exists():
                 _fb_from_db = False
-                if _hydrate_active_id:
+                if _hydrate_active_id and not _hydrate_force_web_reload:
                     try:
                         read_version_to_session(int(_hydrate_active_id))
                         _fb_from_db = st.session_state.get("project_data") is not None or (
@@ -927,6 +1021,9 @@ def main():
                 else:
                     try:
                         print("[auto_hydrate] fallback to load_all_from_web()", file=sys.stderr)
+                        if _hydrate_force_web_reload:
+                            st.cache_data.clear()
+                            st.session_state.pop("web_version_id", None)
                         with st.spinner("Первичная загрузка данных из web/…"):
                             _fb_result = load_all_from_web()
                         st.session_state["last_load_result"] = _fb_result
@@ -946,6 +1043,9 @@ def main():
                         except Exception:
                             pass
                         st.session_state["_auto_hydrated_from_web"] = True
+                        if _hydrate_force_web_reload:
+                            st.session_state.pop("_pending_web_folder_load", None)
+                            st.rerun()
                     except Exception as _e:
                         print(f"[auto_hydrate] fallback load_all_from_web failed: {_e}", file=sys.stderr)
 

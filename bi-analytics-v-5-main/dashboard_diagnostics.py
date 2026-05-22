@@ -35,9 +35,9 @@ _DASHBOARD_REQUIRED_COLUMNS: Dict[str, Dict[str, List[str]]] = {
         "numeric": [],
     },
     "БДДС": {
-        "required": ["Период", "Проект", "Сумма"],
-        "date": ["Период"],
-        "numeric": ["Сумма"],
+        "required": ["project name", "plan end"],
+        "date": ["plan start", "plan end"],
+        "numeric": ["budget plan", "budget fact"],
     },
     "БДР": {
         "required": ["Период", "Проект", "Сумма"],
