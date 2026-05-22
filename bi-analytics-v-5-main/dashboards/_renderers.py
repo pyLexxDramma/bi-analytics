@@ -2561,6 +2561,17 @@ def render_chart(
     if not skip_clamp_zoom:
         _clamp_plotly_scroll_zoom_padding(fig)
     _apply_plotly_spec_411_labels(fig)
+    try:
+        _yax = fig.layout.yaxis
+        if _yax is not None and getattr(_yax, "autorange", None) is False:
+            _yr = getattr(_yax, "range", None)
+            if _yr is not None and len(_yr) == 2:
+                fig.update_yaxes(
+                    range=[float(_yr[0]), float(_yr[1])],
+                    autorange=False,
+                )
+    except Exception:
+        pass
     _use_scroll = (
         scroll_viewport_height is not None
         and height is not None
@@ -13251,6 +13262,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
 
     # Add filters
     with filters_panel(st):
+        filter_col1, filter_col2 = st.columns(2, gap="small")
 
         # Project filter (несколько проектов)
         selected_projects: list[str] = []
@@ -23778,6 +23790,17 @@ def dashboard_documentation(
                         _pd_ix = np.linspace(0, len(_pd_tickvals) - 1, num=52, dtype=int)
                         _pd_tickvals = [_pd_tickvals[int(i)] for i in sorted(set(_pd_ix))]
                     _pd_ticktext = [_pd_axis_date_tick_label_ru(v) for v in _pd_tickvals]
+                    _pd_y = pd.to_numeric(dynamics_df["Количество"], errors="coerce").dropna()
+                    _pd_y_max = float(_pd_y.max()) if not _pd_y.empty else 1.0
+                    _pd_y_min = float(_pd_y.min()) if not _pd_y.empty else 0.0
+                    _pd_span = max(_pd_y_max - _pd_y_min, 1.0)
+                    _pd_foot = max(_pd_span * 0.12, _pd_y_max * 0.08, 4.0)
+                    _pd_head = max(_pd_span * 0.12, _pd_y_max * 0.08, 2.0)
+                    _pd_y_lo = (
+                        _pd_y_min - _pd_foot
+                        if _pd_y_min >= 0
+                        else _pd_y_min - max(_pd_foot, abs(_pd_y_min) * 0.15)
+                    )
                     fig_dynamics.update_layout(
                         margin=dict(l=56, r=36, t=48, b=138),
                         yaxis_title="Количество разделов ПД",
@@ -23792,7 +23815,10 @@ def dashboard_documentation(
                             tickfont=dict(size=10),
                             automargin=False,
                         ),
-                        yaxis=dict(rangemode="tozero"),
+                        yaxis=dict(
+                            range=[_pd_y_lo, _pd_y_max + _pd_head],
+                            autorange=False,
+                        ),
                         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, title_text=""),
                     )
                     fig_dynamics.update_traces(
@@ -23803,6 +23829,10 @@ def dashboard_documentation(
                         textfont=dict(size=10, color="white"),
                     )
                     fig_dynamics = apply_chart_background(fig_dynamics)
+                    fig_dynamics.update_yaxes(
+                        range=[_pd_y_lo, _pd_y_max + _pd_head],
+                        autorange=False,
+                    )
                     render_chart(fig_dynamics, caption_below="Динамика выдачи ПД")
 
                     render_table_subheader(st, "Таблица по проектной документации")
@@ -23872,34 +23902,16 @@ def dashboard_documentation(
                                 tbl_show,
                                 days_column="Отклонение окончания",
                             )
-                            st.markdown(
-                                render_styled_table_to_html(sty_tbl), unsafe_allow_html=True
-                            )
-                            tbl_ui = pd.DataFrame(
-                                {
-                                    "Раздел": tbl_f["Раздел"].map(lambda x: sanitize_display_label(x)),
-                                    "Базовое окончание": tbl_f["_bf"],
-                                    "Окончание": tbl_f["_sf"],
-                                    "Отклонение окончания": tbl_f["_dev"],
-                                }
-                            )
-                            st.dataframe(
-                                tbl_ui,
-                                use_container_width=True,
-                                hide_index=True,
-                                column_config={
-                                    "Базовое окончание": st.column_config.DatetimeColumn(
-                                        format="DD.MM.YYYY"
-                                    ),
-                                    "Окончание": st.column_config.DatetimeColumn(format="DD.MM.YYYY"),
-                                    "Отклонение окончания": st.column_config.NumberColumn(
-                                        format="%d"
-                                    ),
-                                },
-                            )
+                            _pd_tbl_html = render_styled_table_to_html(sty_tbl)
+                            try:
+                                from dashboards.table_sort_inject import render_sortable_html_block
+
+                                render_sortable_html_block(_pd_tbl_html)
+                            except Exception:
+                                st.markdown(_pd_tbl_html, unsafe_allow_html=True)
                             suppress_caption(
-                                "Интерактивная таблица ниже: сортировка по клику на заголовок столбца. "
-                                "Выше — та же выборка с подсветкой отклонения окончания (дни), как в остальных отчётах."
+                                "Сортировка по клику на заголовок столбца; "
+                                "отклонение окончания (дни) — красный при просрочке, зелёный при опережении."
                             )
         except Exception as e:
             st.error(f"Ошибка при построении графика 'Динамика ПД': {str(e)}")

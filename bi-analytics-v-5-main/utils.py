@@ -130,6 +130,17 @@ TABLE_TOTAL_ROW_FONT_CSS = (
 # Фон области графиков Plotly — как карточка контента (.main .block-container: rgba(18,56,92,0.8))
 CHART_BG_COLOR = "rgba(18, 56, 92, 0.88)"
 TABLE_TEXT_COLOR = "#ffffff"
+# Чёткая сетка ячеек (как в cp-table-wrap / budget_table_to_html)
+TABLE_CELL_BORDER = "1px solid #5a7a9a"
+TABLE_CELL_BORDER_CSS = f"border: {TABLE_CELL_BORDER};"
+
+
+def _table_cell_style(background: str, color: str, *, extra: str = "") -> str:
+    """Inline-стиль ячейки Styler: фон + цвет + граница (apply() затирает set_properties)."""
+    parts = [f"background-color: {background}", f"color: {color}", TABLE_CELL_BORDER_CSS]
+    if extra:
+        parts.append(extra.strip())
+    return "; ".join(parts)
 # ТЗ: факт vs план — цвет шрифта (без светофоров ●)
 DEVIATION_NEUTRAL_PCT = 0.10
 DEVIATION_CLASS_RED = "bd-cell-red"
@@ -800,15 +811,23 @@ def style_dataframe_for_dark_theme(
         "white-space": "nowrap",
         "overflow": "hidden",
         "text-overflow": "ellipsis",
+        "border": TABLE_CELL_BORDER,
     }
     base = df.style.set_properties(**_cell_dense).set_table_styles(
         [
+            {
+                "selector": "table",
+                "props": [
+                    ("border-collapse", "collapse"),
+                    ("border", "2px solid #799ac0"),
+                ],
+            },
             {
                 "selector": "th",
                 "props": [
                     ("background-color", TABLE_HEADER_BG_COLOR),
                     ("color", TABLE_TEXT_COLOR),
-                    ("border", "0"),
+                    ("border", TABLE_CELL_BORDER),
                     ("font-size", "13px"),
                     ("padding", "6px 8px"),
                     ("max-width", "18em"),
@@ -827,11 +846,11 @@ def style_dataframe_for_dark_theme(
         for v in series:
             num = pd.to_numeric(v, errors="coerce")
             if pd.isna(num):
-                result.append(f"background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}")
+                result.append(_table_cell_style(TABLE_BG_COLOR, TABLE_TEXT_COLOR))
             elif num > 0:
-                result.append("background-color: #c0392b; color: #ffffff")
+                result.append(_table_cell_style("#c0392b", "#ffffff"))
             else:
-                result.append("background-color: #27ae60; color: #ffffff")
+                result.append(_table_cell_style("#27ae60", "#ffffff"))
         return result
 
     _dev_day_cols = []
@@ -866,13 +885,13 @@ def style_dataframe_for_dark_theme(
                 except (TypeError, ValueError):
                     pass
                 if num is None or pd.isna(num):
-                    result.append(f"background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}")
+                    result.append(_table_cell_style(TABLE_BG_COLOR, TABLE_TEXT_COLOR))
                 elif _fin_dev_min > 0 and abs(float(num)) < _fin_dev_min:
-                    result.append(f"background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}")
+                    result.append(_table_cell_style(TABLE_BG_COLOR, TABLE_TEXT_COLOR))
                 elif num >= 0:
-                    result.append("background-color: #c0392b; color: #ffffff")
+                    result.append(_table_cell_style("#c0392b", "#ffffff"))
                 else:
-                    result.append("background-color: #27ae60; color: #ffffff")
+                    result.append(_table_cell_style("#27ae60", "#ffffff"))
             return result
         base = base.apply(
             lambda c: _finance_cell_color(c) if c.name == finance_deviation_column else [""] * len(c),
@@ -888,12 +907,12 @@ def style_dataframe_for_dark_theme(
             plan_val = _parse_date_cell(plan_series.iloc[idx])
             fact_val = _parse_date_cell(fact_series.iloc[idx])
             if plan_val is None or fact_val is None:
-                return f"background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}"
+                return _table_cell_style(TABLE_BG_COLOR, TABLE_TEXT_COLOR)
             if fact_val < plan_val:
-                return "background-color: #27ae60; color: #ffffff"
+                return _table_cell_style("#27ae60", "#ffffff")
             if fact_val > plan_val:
-                return "background-color: #c0392b; color: #ffffff"
-            return f"background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}"
+                return _table_cell_style("#c0392b", "#ffffff")
+            return _table_cell_style(TABLE_BG_COLOR, TABLE_TEXT_COLOR)
 
         def _plan_fact_row_style(series):
             styles = [_plan_fact_cell_color(i) for i in range(len(series))]
@@ -922,7 +941,7 @@ def style_dataframe_for_dark_theme(
             for v in series:
                 num = pd.to_numeric(v, errors="coerce")
                 if pd.isna(num):
-                    out.append(f"background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}")
+                    out.append(_table_cell_style(TABLE_BG_COLOR, TABLE_TEXT_COLOR))
                     continue
                 t = (float(num) - vmin) / span
                 t = max(0.0, min(1.0, t))
@@ -936,7 +955,11 @@ def style_dataframe_for_dark_theme(
                     r = int(241 + (192 - 241) * u)
                     g = int(196 + (57 - 196) * u)
                     b = int(15 + (43 - 15) * u)
-                out.append(f"background-color: rgb({r},{g},{b}); color: #ffffff; font-weight: 600")
+                out.append(
+                    _table_cell_style(
+                        f"rgb({r},{g},{b})", "#ffffff", extra="font-weight: 600"
+                    )
+                )
             return out
 
         base = base.apply(
@@ -1277,8 +1300,19 @@ def render_styled_table_to_html(styler, hide_index: bool = True) -> str:
         return "<p>Нет данных для отображения.</p>"
     try:
         html = styler.to_html(index=not hide_index)
+        html = mark_html_table_sortable(html)
+        border_css = (
+            "<style>"
+            ".bi-styled-table-wrap table{border-collapse:collapse!important;"
+            "border:2px solid #799ac0!important;}"
+            ".bi-styled-table-wrap thead th,.bi-styled-table-wrap tbody td{"
+            "border:" + TABLE_CELL_BORDER + "!important;}"
+            "</style>"
+        )
         return (
-            '<div style="overflow-x:auto;min-width:0;margin:1em 0;-webkit-overflow-scrolling:touch;">'
+            border_css
+            + '<div class="bi-styled-table-wrap" style="overflow-x:auto;min-width:0;margin:1em 0;'
+            + "-webkit-overflow-scrolling:touch;\">"
             f"{html}</div>"
         )
     except Exception:
