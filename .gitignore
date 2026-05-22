@@ -4,6 +4,7 @@ _visual_check_out/
 
 # Локальный журнал правок (не публиковать)
 PRAVKI_HOD_RABOT.md
+bi-analytics-v-5-main/docs/PRAVKI-ETAP-2.md
 
 # Cursor / локальные сессии (не в origin); правила агента — в репозитории
 .cursor/*
