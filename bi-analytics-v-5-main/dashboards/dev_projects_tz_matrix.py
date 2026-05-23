@@ -587,6 +587,21 @@ def _fmt_delta_days(d: Optional[int]) -> str:
 _OTKL_DAYS_DISPLAY_RE = re.compile(r"([+-]?\d+)\s*дн", re.IGNORECASE)
 
 
+def _parse_otkl_mln_display(s: Any) -> Optional[float]:
+    """Число из «Откл.» в млн руб. (напр. «121,8» / «-2123,5») для раскраски бюджета."""
+    if s is None:
+        return None
+    t = str(s).strip()
+    if not t or t.upper() in ("Н/Д", "N/D", "—", "-"):
+        return None
+    if _OTKL_DAYS_DISPLAY_RE.search(t):
+        return None
+    t = t.replace("\xa0", "").replace("\u202f", "").replace(" ", "").replace(",", ".")
+    try:
+        return float(t)
+    except ValueError:
+        return None
+
 def _parse_otkl_days_display(s: Any) -> Optional[int]:
     """Число дней из строки вида «+3 дн.» / «0 дн.» для раскраски «Откл.» (План−Факт)."""
     if s is None:
@@ -2542,6 +2557,10 @@ def _dev_tz_matrix_cell_classes(
             dd = _parse_otkl_days_display(v)
             if dd is not None:
                 parts.append("dev-tz-otkl-ok" if dd >= 0 else "dev-tz-otkl-bad")
+            else:
+                mv = _parse_otkl_mln_display(v)
+                if mv is not None:
+                    parts.append("dev-tz-otkl-ok" if mv >= 0 else "dev-tz-otkl-bad")
         return " ".join(parts).strip()
 
     # Блоки «ПРЕДПИСАНИЯ» и «Выборка ДС»: белый текст, цвет только у отклонений.
@@ -2556,12 +2575,16 @@ def _dev_tz_matrix_cell_classes(
                     parts.append("dev-tz-otkl-bad")
             except (TypeError, ValueError):
                 pass
-        elif bool(r.get("otkl_fact_lt_plan")):
-            parts.append("dev-tz-otkl-bad")
         else:
-            sv = str(v or "").strip()
-            if sv and sv.upper() not in ("Н/Д", "N/D", "—", "-"):
-                parts.append("dev-tz-otkl-ok")
+            mv = _parse_otkl_mln_display(v)
+            if mv is not None:
+                parts.append("dev-tz-otkl-ok" if mv >= 0 else "dev-tz-otkl-bad")
+            elif bool(r.get("otkl_fact_lt_plan")):
+                parts.append("dev-tz-otkl-bad")
+            else:
+                sv = str(v or "").strip()
+                if sv and sv.upper() not in ("Н/Д", "N/D", "—", "-"):
+                    parts.append("dev-tz-otkl-ok")
     return " ".join(parts).strip()
 
 
@@ -2587,13 +2610,11 @@ _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS = """
   width:100vw!important;height:100vh!important;max-height:-webkit-fill-available!important;
   overflow:hidden!important;display:flex!important;flex-direction:column!important;
 }
-#matrix-fs-root:fullscreen .matrix-fs-body,#matrix-fs-root:-webkit-full-screen .matrix-fs-body,
-#matrix-fs-root:-moz-full-screen .matrix-fs-body{
+#matrix-fs-root:fullscreen .matrix-fs-body:not(.dev-tz-fs-body),
+#matrix-fs-root:-webkit-full-screen .matrix-fs-body:not(.dev-tz-fs-body),
+#matrix-fs-root:-moz-full-screen .matrix-fs-body:not(.dev-tz-fs-body){
   flex:1 1 auto;min-height:0;overflow:hidden!important;
 }
-#matrix-fs-root:fullscreen .dev-tz-matrix-wrap,
-#matrix-fs-root:-webkit-full-screen .dev-tz-matrix-wrap,
-#matrix-fs-root:-moz-full-screen .dev-tz-matrix-wrap,
 #matrix-fs-root:fullscreen .cp-table-wrap,
 #matrix-fs-root:-webkit-full-screen .cp-table-wrap,
 #matrix-fs-root:-moz-full-screen .cp-table-wrap{
@@ -2608,8 +2629,8 @@ _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS = """
   box-sizing:border-box!important;display:flex!important;flex-direction:column!important;
   overflow:hidden!important;
 }
-#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body{flex:1 1 auto;min-height:0;overflow:hidden!important;}
-#matrix-fs-root.matrix-fs-pseudo-on .dev-tz-matrix-wrap,
+#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body:not(.dev-tz-fs-body){
+  flex:1 1 auto;min-height:0;overflow:hidden!important;}
 #matrix-fs-root.matrix-fs-pseudo-on .cp-table-wrap{
   max-height:calc(100% - 48px)!important;overflow:auto!important;-webkit-overflow-scrolling:touch!important;
 }
@@ -2636,19 +2657,31 @@ _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS = """
 #matrix-fs-root.matrix-fs-pseudo-on .cp-tables-stack .cp-table-wrap{
   max-height:none!important;overflow-x:auto!important;overflow-y:visible!important;
   width:max-content!important;max-width:min(100%,max-content)!important}
-/* Девелоперские проекты: матрица по центру в полноэкранном режиме */
+/* Девелоперские проекты: полноэкран — ширина 100% (вертикальный центр через JS margin-top) */
 #matrix-fs-root:fullscreen .matrix-fs-body.dev-tz-fs-body,
 #matrix-fs-root:-webkit-full-screen .matrix-fs-body.dev-tz-fs-body,
 #matrix-fs-root:-moz-full-screen .matrix-fs-body.dev-tz-fs-body,
-#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body.dev-tz-fs-body{
-  display:flex!important;flex-direction:column!important;align-items:center!important;
-  justify-content:flex-start!important;overflow:auto!important;-webkit-overflow-scrolling:touch!important}
+#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body.dev-tz-fs-body,
+#matrix-fs-pseudo-shell.dev-tz-fs-shell .matrix-fs-body.dev-tz-fs-body{
+  position:relative!important;flex:1 1 auto!important;min-height:0!important;width:100%!important;
+  overflow:auto!important;-webkit-overflow-scrolling:touch!important;box-sizing:border-box!important}
 #matrix-fs-root:fullscreen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap,
 #matrix-fs-root:-webkit-full-screen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap,
 #matrix-fs-root:-moz-full-screen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap,
-#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap{
-  width:max-content!important;max-width:min(100%,max-content)!important;margin:12px auto!important;
-  max-height:none!important;overflow:auto!important}
+#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap,
+#matrix-fs-pseudo-shell.dev-tz-fs-shell .dev-tz-matrix-wrap{
+  width:100%!important;max-width:100%!important;min-width:0!important;margin-left:0!important;margin-right:0!important;
+  box-sizing:border-box!important;overflow-x:auto!important;overflow-y:visible!important}
+#matrix-fs-root:fullscreen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide,
+#matrix-fs-root:-webkit-full-screen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide,
+#matrix-fs-root:-moz-full-screen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide,
+#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide,
+#matrix-fs-pseudo-shell.dev-tz-fs-shell .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide{
+  width:100%!important;min-width:100%!important;max-width:100%!important}
+/* Девелоперские проекты: overlay в родителе Streamlit */
+#matrix-fs-pseudo-shell.dev-tz-fs-shell{display:flex!important;flex-direction:column!important;
+  width:100vw!important;height:100vh!important;max-height:-webkit-fill-available!important;
+  box-sizing:border-box!important}
 """
 
 _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
@@ -2667,14 +2700,49 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
   var prevParentOverflow="";
   var prevIframeOverflow="";
 
-  function cloneHeadStyles(target){
-    var styles=document.head.querySelectorAll("style");
-    for(var i=0;i<styles.length;i++){
-      var s=document.createElement("style");
+  function injectParentHeadStyles(doc){
+    if(!doc||!doc.head) return;
+    var id="matrix-fs-pseudo-parent-css";
+    if(!doc.getElementById(id)){
+      var s=doc.createElement("style");
+      s.id=id;
       s.type="text/css";
-      s.textContent=styles[i].textContent||"";
-      target.appendChild(s);
+      var parts=[];
+      var styles=document.head.querySelectorAll("style");
+      for(var i=0;i<styles.length;i++){parts.push(styles[i].textContent||"");}
+      s.textContent=parts.join("\\n");
+      doc.head.appendChild(s);
     }
+    var devId="matrix-fs-devtz-parent-css";
+    var oldDev=doc.getElementById(devId);
+    if(oldDev&&oldDev.parentNode){oldDev.parentNode.removeChild(oldDev);}
+    var ds=doc.createElement("style");
+    ds.id=devId;
+    ds.type="text/css";
+    ds.textContent=(
+      "#matrix-fs-pseudo-shell.dev-tz-fs-shell{display:flex!important;flex-direction:column!important;"
+      +"width:100vw!important;height:100vh!important;max-height:-webkit-fill-available!important;"
+      +"box-sizing:border-box!important}"
+      +"#matrix-fs-pseudo-shell.dev-tz-fs-shell .matrix-fs-body.dev-tz-fs-body{"
+      +"position:relative!important;width:100%!important;flex:1 1 auto!important;min-height:0!important;"
+      +"overflow:auto!important;-webkit-overflow-scrolling:touch!important;box-sizing:border-box!important}"
+      +"#matrix-fs-pseudo-shell.dev-tz-fs-shell .dev-tz-matrix-wrap{"
+      +"width:100%!important;max-width:100%!important;min-width:0!important;margin-left:0!important;margin-right:0!important;"
+      +"box-sizing:border-box!important;overflow-x:auto!important;overflow-y:visible!important}"
+      +"#matrix-fs-pseudo-shell.dev-tz-fs-shell .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide,"
+      +"#matrix-fs-pseudo-shell.dev-tz-fs-shell table.rendered-table.dev-tz-wide{"
+      +"width:100%!important;min-width:100%!important;max-width:100%!important;"
+      +"table-layout:auto!important}"
+    );
+    doc.head.appendChild(ds);
+  }
+
+  function removeParentHeadStyles(doc){
+    if(!doc) return;
+    var el=doc.getElementById("matrix-fs-pseudo-parent-css");
+    if(el&&el.parentNode){el.parentNode.removeChild(el);}
+    var devEl=doc.getElementById("matrix-fs-devtz-parent-css");
+    if(devEl&&devEl.parentNode){devEl.parentNode.removeChild(devEl);}
   }
 
   function exitPseudo(){
@@ -2682,6 +2750,7 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
       pseudoShell.parentNode.removeChild(pseudoShell);
     }
     pseudoShell=null;
+    try{removeParentHeadStyles(parentDoc);}catch(e0){}
     try{
       if(parentDoc&&parentDoc.body){
         parentDoc.body.style.overflow=prevParentOverflow;
@@ -2691,6 +2760,168 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
       document.body.style.overflow=prevIframeOverflow;
     }catch(e2){}
     root.classList.remove("matrix-fs-pseudo-on");
+    var bodyEl=root.querySelector(".matrix-fs-body.dev-tz-fs-body");
+    if(bodyEl){devTzResetFsLayout(bodyEl);}
+    else{devTzReflowIframe();}
+    requestAnimationFrame(devTzReflowIframe);
+    setTimeout(devTzReflowIframe,0);
+    setTimeout(devTzReflowIframe,120);
+    setTimeout(devTzReflowIframe,350);
+  }
+
+  function devTzWrapHtml(bodyEl){
+    var wrap=bodyEl.querySelector(".dev-tz-matrix-wrap");
+    return wrap?wrap.outerHTML:bodyEl.innerHTML;
+  }
+
+  function devTzSetImp(el,prop,val){
+    if(!el) return;
+    try{el.style.setProperty(prop,val,"important");}catch(e){el.style[prop]=val;}
+  }
+
+  function devTzIsScrollFsActive(scrollEl){
+    if(!scrollEl) return false;
+    if(pseudoShell&&pseudoShell.contains(scrollEl)) return true;
+    if(!root) return false;
+    if(activeNative()||root.classList.contains("matrix-fs-pseudo-on")){
+      return !!scrollEl.closest&&scrollEl.closest("#matrix-fs-root")===root;
+    }
+    return false;
+  }
+
+  function devTzClearFsTimers(scrollEl){
+    if(!scrollEl||!scrollEl.__devTzFsTimerIds) return;
+    for(var i=0;i<scrollEl.__devTzFsTimerIds.length;i++){clearTimeout(scrollEl.__devTzFsTimerIds[i]);}
+    scrollEl.__devTzFsTimerIds=null;
+  }
+
+  function devTzMeasureIframeHeight(){
+    var root=document.getElementById("matrix-fs-root");
+    if(!root) return 0;
+    var wrap=root.querySelector(".dev-tz-matrix-wrap");
+    if(!wrap){
+      return Math.ceil(root.getBoundingClientRect().height||0);
+    }
+    var rr=wrap.getBoundingClientRect();
+    var rt=root.getBoundingClientRect();
+    return Math.ceil((rr.bottom||0)-(rt.top||0)+2);
+  }
+
+  function devTzReflowIframe(){
+    try{
+      var fe=window.frameElement;
+      var root=document.getElementById("matrix-fs-root");
+      if(!fe||!root) return;
+      root.style.height="auto";
+      root.style.minHeight="0";
+      var body=root.querySelector(".matrix-fs-body");
+      if(body){
+        body.style.height="auto";
+        body.style.minHeight="0";
+      }
+      var h=devTzMeasureIframeHeight();
+      if(h<40) return;
+      fe.style.height=h+"px";
+      fe.style.minHeight="0";
+      fe.style.maxHeight="none";
+      fe.style.overflow="hidden";
+      if(typeof window.__devTzMatrixRemeasure==="function"){
+        window.__devTzMatrixRemeasure();
+      }
+    }catch(e){}
+  }
+
+  function devTzResetFsLayout(scrollEl){
+    if(!scrollEl) return;
+    devTzClearFsTimers(scrollEl);
+    if(scrollEl.__devTzFsResizeHandler){
+      try{window.removeEventListener("resize",scrollEl.__devTzFsResizeHandler);}catch(e){}
+      scrollEl.__devTzFsResizeHandler=null;
+    }
+    var wrap=scrollEl.querySelector(".dev-tz-matrix-wrap");
+    if(wrap){
+      wrap.removeAttribute("style");
+      var tbl=wrap.querySelector("table");
+      if(tbl){tbl.removeAttribute("style");}
+    }
+    scrollEl.removeAttribute("style");
+    scrollEl.__devTzFsFitBound=false;
+    scrollEl.__devTzFsFit=null;
+    devTzReflowIframe();
+    requestAnimationFrame(devTzReflowIframe);
+    setTimeout(devTzReflowIframe,0);
+    setTimeout(devTzReflowIframe,120);
+    setTimeout(devTzReflowIframe,350);
+  }
+
+  function devTzApplyFsLayout(scrollEl,shellEl,toolbarEl,win){
+    if(!scrollEl) return;
+    win=win||window;
+    var wrap=scrollEl.querySelector(".dev-tz-matrix-wrap");
+    if(!wrap) return;
+    devTzSetImp(wrap,"width","100%");
+    devTzSetImp(wrap,"max-width","100%");
+    devTzSetImp(wrap,"box-sizing","border-box");
+    devTzSetImp(wrap,"margin-left","0");
+    devTzSetImp(wrap,"margin-right","0");
+    var tbl=wrap.querySelector("table");
+    if(tbl){
+      devTzSetImp(tbl,"width","100%");
+      devTzSetImp(tbl,"min-width","100%");
+      devTzSetImp(tbl,"max-width","100%");
+    }
+    devTzSetImp(scrollEl,"position","relative");
+    devTzSetImp(scrollEl,"width","100%");
+    devTzSetImp(scrollEl,"box-sizing","border-box");
+    devTzSetImp(scrollEl,"overflow","auto");
+    devTzSetImp(scrollEl,"-webkit-overflow-scrolling","touch");
+    function fit(){
+      if(!devTzIsScrollFsActive(scrollEl)) return;
+      if(!shellEl||!scrollEl||!wrap) return;
+      var tbH=toolbarEl?toolbarEl.offsetHeight:0;
+      var shellRect=shellEl.getBoundingClientRect?shellEl.getBoundingClientRect():null;
+      var vh=shellRect&&shellRect.height?shellRect.height:0;
+      if(!vh){vh=win.innerHeight||0;}
+      if(!vh&&win.document&&win.document.documentElement){
+        vh=win.document.documentElement.clientHeight||0;
+      }
+      var avail=Math.max(120,Math.floor(vh-tbH-8));
+      devTzSetImp(scrollEl,"min-height",avail+"px");
+      devTzSetImp(scrollEl,"height",avail+"px");
+      var wrapH=wrap.offsetHeight||0;
+      if(!wrapH&&wrap.getBoundingClientRect){wrapH=wrap.getBoundingClientRect().height||0;}
+      if(wrapH>0&&wrapH<avail-4){
+        devTzSetImp(wrap,"position","absolute");
+        devTzSetImp(wrap,"top","50%");
+        devTzSetImp(wrap,"left","0");
+        devTzSetImp(wrap,"right","0");
+        devTzSetImp(wrap,"transform","translateY(-50%)");
+        devTzSetImp(wrap,"margin-top","0");
+        devTzSetImp(wrap,"margin-bottom","0");
+      }else{
+        devTzSetImp(wrap,"position","relative");
+        devTzSetImp(wrap,"top","0");
+        devTzSetImp(wrap,"left","0");
+        devTzSetImp(wrap,"right","0");
+        devTzSetImp(wrap,"transform","none");
+        var topPx=wrapH>0?Math.max(0,Math.floor((avail-wrapH)/2)):Math.floor(avail*0.22);
+        devTzSetImp(wrap,"margin-top",topPx+"px");
+        devTzSetImp(wrap,"margin-bottom","0");
+      }
+    }
+    fit();
+    requestAnimationFrame(fit);
+    if(!scrollEl.__devTzFsTimerIds){scrollEl.__devTzFsTimerIds=[];}
+    scrollEl.__devTzFsTimerIds.push(setTimeout(fit,0));
+    scrollEl.__devTzFsTimerIds.push(setTimeout(fit,60));
+    scrollEl.__devTzFsTimerIds.push(setTimeout(fit,180));
+    scrollEl.__devTzFsTimerIds.push(setTimeout(fit,400));
+    if(!scrollEl.__devTzFsResizeHandler){
+      scrollEl.__devTzFsResizeHandler=fit;
+      scrollEl.__devTzFsFitBound=true;
+      win.addEventListener("resize",fit);
+    }
+    scrollEl.__devTzFsFit=fit;
   }
 
   function enterPseudoParent(){
@@ -2700,6 +2931,8 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
     if(!doc||!doc.body||!bodyEl){enterPseudoIframe();return;}
     pseudoShell=doc.createElement("div");
     pseudoShell.id="matrix-fs-pseudo-shell";
+    var _devFs=bodyEl.classList.contains("dev-tz-fs-body");
+    if(_devFs){pseudoShell.classList.add("dev-tz-fs-shell");}
     pseudoShell.setAttribute("style",
       "position:fixed!important;z-index:2147483646!important;left:0!important;top:0!important;right:0!important;bottom:0!important;"
       +"width:100%!important;height:100%!important;max-height:-webkit-fill-available!important;"
@@ -2707,7 +2940,7 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
       +"padding:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right))"
       +" max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left))!important;"
       +"box-sizing:border-box!important;overflow:hidden!important;");
-    cloneHeadStyles(pseudoShell);
+    injectParentHeadStyles(doc);
     var tb=doc.createElement("div");
     tb.setAttribute("style","flex:0 0 auto;display:flex;justify-content:flex-end;align-items:center;padding:2px 0 8px 0;");
     var xb=doc.createElement("button");
@@ -2720,14 +2953,14 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
     tb.appendChild(xb);
     var scroll=doc.createElement("div");
     scroll.className=bodyEl.className||"";
-    scroll.setAttribute("style","flex:1 1 auto;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;"
-      +"display:flex;flex-direction:column;align-items:center;");
-    scroll.innerHTML=bodyEl.innerHTML;
+    scroll.setAttribute("style","flex:1 1 auto;min-height:0;overflow:auto;width:100%;box-sizing:border-box;position:relative;");
+    scroll.innerHTML=_devFs?devTzWrapHtml(bodyEl):bodyEl.innerHTML;
     pseudoShell.appendChild(tb);
     pseudoShell.appendChild(scroll);
     prevParentOverflow=doc.body.style.overflow||"";
     doc.body.appendChild(pseudoShell);
     doc.body.style.overflow="hidden";
+    if(_devFs){devTzApplyFsLayout(scroll,pseudoShell,tb,doc.defaultView||window);}
     sync();
   }
 
@@ -2756,6 +2989,26 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
     btn.setAttribute("title", on?
       "\\u0412\\u044b\\u0439\\u0442\\u0438 \\u0438\\u0437 \\u043f\\u043e\\u043b\\u043d\\u043e\\u044d\\u043a\\u0440\\u0430\\u043d\\u043d\\u043e\\u0433\\u043e \\u0440\\u0435\\u0436\\u0438\\u043c\\u0430":
       "\\u041d\\u0430 \\u0432\\u0435\\u0441\\u044c \\u044d\\u043a\\u0440\\u0430\\u043d");
+    if(on&&!pseudoShell){
+      var bodyEl=root.querySelector(".matrix-fs-body.dev-tz-fs-body");
+      if(bodyEl){
+        requestAnimationFrame(function(){
+          devTzApplyFsLayout(bodyEl,root,root.querySelector(".matrix-fs-topbar"),window);
+        });
+      }
+    }else if(on&&pseudoShell){
+      var pScroll=pseudoShell.querySelector(".matrix-fs-body.dev-tz-fs-body");
+      var pTb=pseudoShell.firstElementChild;
+      if(pScroll){
+        requestAnimationFrame(function(){
+          var pwin=parentDoc&&parentDoc.defaultView?parentDoc.defaultView:window;
+          devTzApplyFsLayout(pScroll,pseudoShell,pTb,pwin);
+        });
+      }
+    }else{
+      var offBody=root.querySelector(".matrix-fs-body.dev-tz-fs-body");
+      if(offBody){devTzResetFsLayout(offBody);}
+    }
   }
 
   function exitNative(){
@@ -2776,26 +3029,34 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
     e.stopPropagation();
     if(active()){
       exitPseudo();
-      if(activeNative()) exitNative();
+      exitNative();
       sync();
+      return;
+    }
+    /* Streamlit: overlay в родителе — iframe не трогаем, иначе ломается вёрстка после выхода */
+    if(parentDoc){
+      enterPseudoParent();
       return;
     }
     var p=enterNative();
     if(p&&p.then){
-      p.then(function(){sync();}).catch(function(){
-        if(parentDoc){enterPseudoParent();}
-        else{enterPseudoIframe();}
-      });
+      p.then(function(){sync();}).catch(function(){enterPseudoIframe();});
     }else{
-      if(parentDoc){enterPseudoParent();}
-      else{enterPseudoIframe();}
+      enterPseudoIframe();
     }
   });
 
-  document.addEventListener("fullscreenchange",sync);
-  document.addEventListener("webkitfullscreenchange",sync);
-  document.addEventListener("mozfullscreenchange",sync);
-  document.addEventListener("MSFullscreenChange",sync);
+  function onFsChange(){
+    if(!activeNative()&&!isPseudo()){
+      var bodyEl=root.querySelector(".matrix-fs-body.dev-tz-fs-body");
+      if(bodyEl){devTzResetFsLayout(bodyEl);}
+    }
+    sync();
+  }
+  document.addEventListener("fullscreenchange",onFsChange);
+  document.addEventListener("webkitfullscreenchange",onFsChange);
+  document.addEventListener("mozfullscreenchange",onFsChange);
+  document.addEventListener("MSFullscreenChange",onFsChange);
 
   function escClose(ev){
     if(ev.key==="Escape"&&isPseudo()){exitPseudo();if(activeNative()) exitNative();sync();}
@@ -2828,8 +3089,16 @@ _MATRIX_IFRAME_FIT_HEIGHT_SCRIPT = """
     try{
       var fe=window.frameElement;
       if(!fe) return;
+      var root=document.getElementById("matrix-fs-root");
+      if(root){
+        root.style.height="auto";
+        root.style.minHeight="0";
+        var body=root.querySelector(".matrix-fs-body");
+        if(body){body.style.height="auto";body.style.minHeight="0";}
+      }
       fe.style.height=h+"px";
       fe.style.minHeight="0";
+      fe.style.maxHeight="none";
       fe.style.overflow="hidden";
       fe.classList.add("dev-tz-matrix-iframe");
       var p=fe.parentElement;
@@ -2851,6 +3120,7 @@ _MATRIX_IFRAME_FIT_HEIGHT_SCRIPT = """
     var w=document.querySelector(".dev-tz-matrix-wrap,.cp-tables-stack");
     if(w&&typeof ResizeObserver!=="undefined") new ResizeObserver(schedule).observe(w);
   }catch(e){}
+  window.__devTzMatrixRemeasure=apply;
 })();
 </script>
 """
