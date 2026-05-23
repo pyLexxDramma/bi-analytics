@@ -9250,15 +9250,17 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
 
 
 # ==================== DASHBOARD 6: Budget Plan/Fact/Reserve by Project by Period ====================
-_BDDS_TABLE_HTML_KW = {
+_FINANCE_TABLE_HTML_KW = {
     "color_fact_column": False,
-    "header_font_css": "font-weight:800;font-size:1.18em;",
-    "group_row_font_css": "font-weight:800;font-size:1.12em;",
-    "label_columns_font_css": "font-weight:700;font-size:1.05em;",
+    "header_font_css": "font-weight:800;font-size:1.24em;",
+    "group_row_font_css": "font-weight:800;font-size:1.14em;",
+    "label_columns_font_css": "font-weight:800;font-size:1.12em;",
     "total_row_bg_color": "#000000",
-    "total_row_font_css": "font-weight:800;font-size:1.15em;color:#ffffff;",
-    "table_font_size_px": 16,
+    "total_row_font_css": "font-weight:900;font-size:1.2em;color:#ffffff;",
+    "table_font_size_px": 17,
 }
+_BDDS_TABLE_HTML_KW = _FINANCE_TABLE_HTML_KW
+_BDR_TABLE_HTML_KW = _FINANCE_TABLE_HTML_KW
 
 
 # Минимум оборотов (руб.) для месяца на графике БДДС/БДР — иначе ось забивается «пустыми» месяцами.
@@ -9753,7 +9755,7 @@ def dashboard_budget_by_period(df):
                 "Скрывать месяцы, где план и факт равны 0",
                 value=bool(_bdds_all_projects),
                 key="budget_period_hide_zero_months",
-                help="Влияет на график. По умолчанию включено для «Все проекты». В таблице ниже — полный период.",
+                help="Скрывает месяцы с нулевым планом и фактом на графике и в таблице ниже.",
             )
 
         def _bdds_chart_drop_empty_months(_df: pd.DataFrame) -> pd.DataFrame:
@@ -9772,8 +9774,6 @@ def dashboard_budget_by_period(df):
                 )
             return _df.loc[_keep].copy()
 
-        if period_type_en == "Month" and view_type == "По месяцам" and not project_data.empty:
-            project_data = _bdds_chart_drop_empty_months(project_data)
         if view_type == "Накопительно":
             project_data["budget plan"] = project_data["budget plan"].cumsum()
             project_data["budget fact"] = project_data["budget fact"].cumsum()
@@ -10039,6 +10039,16 @@ def dashboard_budget_by_period(df):
             _src = _src.sort_values("period_original").reset_index(drop=True)
             if _src.empty:
                 return pd.DataFrame(), {}
+            if (
+                period_type_en == "Month"
+                and view_type == "По месяцам"
+                and bool(st.session_state.get("budget_period_hide_zero_months", _bdds_all_projects))
+            ):
+                _dp = pd.to_numeric(_src["budget plan"], errors="coerce").fillna(0.0)
+                _df = pd.to_numeric(_src["budget fact"], errors="coerce").fillna(0.0)
+                _src = _src.loc[(_dp.abs() + _df.abs()) >= _FINANCE_CHART_MIN_MONTH_RUB].copy()
+                if _src.empty:
+                    return pd.DataFrame(), {}
             _bdc = _src.copy()
             _bdc["_per_disp"] = _bdc[period_col]
             _bdc["Проект"] = project_col_label
@@ -10090,24 +10100,71 @@ def dashboard_budget_by_period(df):
                     _tot_block[adjusted_budget_col] = float(_bdc[adjusted_budget_col].fillna(0.0).sum())
             return _bdc_fmt, _tot_block
 
-        if (
-            (_bdds_all_projects or len(selected_projects or []) > 1)
-            and "project name" in budget_summary.columns
-        ):
+        _bdds_proj_labels_for_tbl: list[str] = []
+        if "project name" in budget_summary.columns:
             if _bdds_all_projects:
-                _proj_labels_bdd = _unique_project_labels_for_select(
+                _bdds_proj_labels_for_tbl = _unique_project_labels_for_select(
                     budget_summary["project name"], apply_exclude_names=False
                 )
             else:
-                _proj_labels_bdd = list(selected_projects)
+                _bdds_proj_labels_for_tbl = list(selected_projects or [])
+
+        def _bdds_slice_for_project(_pl: str) -> pd.DataFrame:
+            _pk2 = _project_filter_norm_key(_pl)
+            return budget_summary[
+                budget_summary["project name"]
+                .map(_project_filter_norm_key)
+                .map(lambda rk: _project_norm_key_matches_msp_keys(rk, {_pk2}))
+            ].copy()
+
+        _bdds_proj_labels_for_tbl = [
+            _pl for _pl in _bdds_proj_labels_for_tbl if not _bdds_slice_for_project(_pl).empty
+        ]
+
+        def _bdds_tot_raw_from_summary(_bs_for_tot: pd.DataFrame) -> dict:
+            if view_type == "Накопительно":
+                _agg_tbl_tot = {
+                    "budget plan": "sum",
+                    "budget fact": "sum",
+                    "reserve budget": "sum",
+                    "period_original": "first",
+                }
+                if adjusted_budget_col and adjusted_budget_col in _bs_for_tot.columns:
+                    _agg_tbl_tot[adjusted_budget_col] = "sum"
+                _ag_tot = _bs_for_tot.groupby(period_col, dropna=False).agg(_agg_tbl_tot).reset_index()
+                _ag_tot = _ag_tot.sort_values("period_original").reset_index(drop=True)
+                for _cn in ["budget plan", "budget fact", "reserve budget"]:
+                    _ag_tot[_cn] = _ag_tot[_cn].fillna(0.0).cumsum()
+                if adjusted_budget_col and adjusted_budget_col in _ag_tot.columns and not hide_adjusted:
+                    _ag_tot[adjusted_budget_col] = (
+                        pd.to_numeric(_ag_tot[adjusted_budget_col], errors="coerce").fillna(0.0).cumsum()
+                    )
+                _ag_tot["reserve budget"] = _ag_tot["budget fact"] - _ag_tot["budget plan"]
+                _lr_gr = _ag_tot.iloc[-1]
+                _out = {
+                    "budget plan": float(_lr_gr["budget plan"]),
+                    "budget fact": float(_lr_gr["budget fact"]),
+                    "reserve budget": float(_lr_gr["reserve budget"]),
+                }
+                if adjusted_budget_col and adjusted_budget_col in _ag_tot.columns and not hide_adjusted:
+                    _out[adjusted_budget_col] = float(_lr_gr[adjusted_budget_col])
+                return _out
+            _out = {
+                "budget plan": float(_bs_for_tot["budget plan"].fillna(0.0).sum()),
+                "budget fact": float(_bs_for_tot["budget fact"].fillna(0.0).sum()),
+                "reserve budget": float(
+                    _bs_for_tot["budget fact"].fillna(0.0).sum()
+                    - _bs_for_tot["budget plan"].fillna(0.0).sum()
+                ),
+            }
+            if adjusted_budget_col and adjusted_budget_col in _bs_for_tot.columns and not hide_adjusted:
+                _out[adjusted_budget_col] = float(_bs_for_tot[adjusted_budget_col].fillna(0.0).sum())
+            return _out
+
+        if len(_bdds_proj_labels_for_tbl) > 1:
             _parts_bdd: list[pd.DataFrame] = []
-            for _pl in _proj_labels_bdd:
-                _pk2 = _project_filter_norm_key(_pl)
-                _slice = budget_summary[
-                    budget_summary["project name"]
-                    .map(_project_filter_norm_key)
-                    .map(lambda rk: _project_norm_key_matches_msp_keys(rk, {_pk2}))
-                ].copy()
+            for _pl in _bdds_proj_labels_for_tbl:
+                _slice = _bdds_slice_for_project(_pl)
                 _fmt_body, _ = _bdds_build_formatted_block(_slice, project_col_label="")
                 if _fmt_body.empty:
                     continue
@@ -10126,46 +10183,14 @@ def dashboard_budget_by_period(df):
             _bdc_fmt = pd.concat(_parts_bdd, ignore_index=True) if _parts_bdd else pd.DataFrame()
             _bs_for_tot = budget_summary
             if not _bdds_all_projects:
-                _bs_for_tot = _filter_df_by_project_labels(
-                    budget_summary, selected_projects
-                )
-            if view_type == "Накопительно":
-                _agg_tbl_tot = {
-                    "budget plan": "sum",
-                    "budget fact": "sum",
-                    "reserve budget": "sum",
-                    "period_original": "first",
-                }
-                if adjusted_budget_col and adjusted_budget_col in budget_summary.columns:
-                    _agg_tbl_tot[adjusted_budget_col] = "sum"
-                _ag_tot = _bs_for_tot.groupby(period_col, dropna=False).agg(_agg_tbl_tot).reset_index()
-                _ag_tot = _ag_tot.sort_values("period_original").reset_index(drop=True)
-                for _cn in ["budget plan", "budget fact", "reserve budget"]:
-                    _ag_tot[_cn] = _ag_tot[_cn].fillna(0.0).cumsum()
-                if adjusted_budget_col and adjusted_budget_col in _ag_tot.columns and not hide_adjusted:
-                    _ag_tot[adjusted_budget_col] = (
-                        pd.to_numeric(_ag_tot[adjusted_budget_col], errors="coerce").fillna(0.0).cumsum()
-                    )
-                _ag_tot["reserve budget"] = _ag_tot["budget fact"] - _ag_tot["budget plan"]
-                _lr_gr = _ag_tot.iloc[-1]
-                _tot_raw = {
-                    "budget plan": float(_lr_gr["budget plan"]),
-                    "budget fact": float(_lr_gr["budget fact"]),
-                    "reserve budget": float(_lr_gr["reserve budget"]),
-                }
-                if adjusted_budget_col and adjusted_budget_col in _ag_tot.columns and not hide_adjusted:
-                    _tot_raw[adjusted_budget_col] = float(_lr_gr[adjusted_budget_col])
-            else:
-                _tot_raw = {
-                    "budget plan": float(_bs_for_tot["budget plan"].fillna(0.0).sum()),
-                    "budget fact": float(_bs_for_tot["budget fact"].fillna(0.0).sum()),
-                    "reserve budget": float(
-                        _bs_for_tot["budget fact"].fillna(0.0).sum()
-                        - _bs_for_tot["budget plan"].fillna(0.0).sum()
-                    ),
-                }
-                if adjusted_budget_col and adjusted_budget_col in budget_summary.columns and not hide_adjusted:
-                    _tot_raw[adjusted_budget_col] = float(_bs_for_tot[adjusted_budget_col].fillna(0.0).sum())
+                _bs_for_tot = _filter_df_by_project_labels(budget_summary, selected_projects)
+            _tot_raw = _bdds_tot_raw_from_summary(_bs_for_tot)
+        elif len(_bdds_proj_labels_for_tbl) == 1:
+            _pl_one = _bdds_proj_labels_for_tbl[0]
+            _tbl_src2 = _bdds_slice_for_project(_pl_one)
+            _bdc_fmt, _tot_raw = _bdds_build_formatted_block(
+                _tbl_src2, project_col_label=str(_pl_one)
+            )
         elif not _bdds_all_projects and len(selected_projects or []) == 1:
             _tbl_pk2 = _project_filter_norm_key(selected_projects[0])
             _tbl_src2 = budget_summary[
@@ -10559,6 +10584,7 @@ def dashboard_budget_cumulative(df):
             tbl_period_disp,
             finance_deviation_column="Отклонение (факт − план), млн. руб.",
             deviation_red_if_negative=True,
+            **_FINANCE_TABLE_HTML_KW,
         ),
         unsafe_allow_html=True,
     )
@@ -10741,6 +10767,7 @@ def dashboard_budget_cumulative(df):
             tbl_c,
             finance_deviation_column="Отклонение (факт − план, накоп.), млн. руб.",
             deviation_red_if_negative=True,
+            **_FINANCE_TABLE_HTML_KW,
         ),
         unsafe_allow_html=True,
     )
@@ -11843,6 +11870,7 @@ def dashboard_bdr(df):
                     finance_deviation_column=_bdr_tz_dev_col,
                     deviation_red_if_negative=True,
                     emphasize_row_kinds=("project", "total"),
+                    **_BDR_TABLE_HTML_KW,
                 ),
                 unsafe_allow_html=True,
             )
@@ -12049,7 +12077,11 @@ def dashboard_bdr(df):
             "Сальдо": "Сальдо, млн. руб.",
         })
         st.markdown(
-            budget_table_to_html(display_df, finance_deviation_column="Сальдо, млн. руб."),
+            budget_table_to_html(
+                display_df,
+                finance_deviation_column="Сальдо, млн. руб.",
+                **_BDR_TABLE_HTML_KW,
+            ),
             unsafe_allow_html=True,
         )
 
@@ -12080,6 +12112,7 @@ def dashboard_bdr(df):
                     proj_tbl,
                     finance_deviation_column="Отклонение, млн. руб.",
                     deviation_red_if_negative=True,
+                    **_BDR_TABLE_HTML_KW,
                 ),
                 unsafe_allow_html=True,
             )
@@ -12105,6 +12138,7 @@ def dashboard_bdr(df):
                 budget_table_to_html(
                     proj_tbl,
                     finance_deviation_column="Сальдо, млн. руб.",
+                    **_BDR_TABLE_HTML_KW,
                 ),
                 unsafe_allow_html=True,
             )

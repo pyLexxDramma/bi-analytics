@@ -1105,11 +1105,9 @@ def budget_table_to_html(
     _tot_bg = total_row_bg_color or TABLE_TOTAL_ROW_BG_COLOR
     _tot_font = total_row_font_css or TABLE_TOTAL_ROW_FONT_CSS
     _tbl_px = max(12, int(table_font_size_px or 15))
+    _lbl_col_css = label_columns_font_css or ""
     wrap_id = "bdt_" + str(id(df))
-    parts = [
-        _html_table_caption(table_caption),
-        f'<div id="{wrap_id}" class="budget-deviation-table-wrap" style="overflow-x: auto; min-width: 0; margin: 0.75em 0;">',
-        f'<style>'
+    _style_css = (
         f'#{wrap_id} table {{ table-layout: auto; font-size: {_tbl_px}px; width: max-content; min-width: 100%; }}'
         f'#{wrap_id} th, #{wrap_id} td {{ min-width: 11em; max-width: 24em; padding: 7px 14px; white-space: nowrap; }}'
         f'#{wrap_id} th:first-child, #{wrap_id} td:first-child {{ min-width: 14em; max-width: 32em; }}'
@@ -1118,10 +1116,15 @@ def budget_table_to_html(
         f'#{wrap_id} td.bd-cell-green, #{wrap_id} td.bd-cell-green * {{ color: hsl(148,100%,63%) !important; }}'
         f'#{wrap_id} td.bd-cell-yellow, #{wrap_id} td.bd-cell-yellow * {{ color: hsl(48,95%,62%) !important; }}'
         f'#{wrap_id} thead th {{ background-color: {TABLE_HEADER_BG_COLOR} !important; {_hdr_css} }}'
+        f'{f"#{wrap_id} tbody td:first-child {{ {_lbl_col_css} }}" if _lbl_col_css else ""}'
         f'#{wrap_id} tr.bd-group-row td {{ background-color: {TABLE_GROUP_ROW_BG_COLOR} !important; }}'
         f'#{wrap_id} tr.bd-total-row td {{ background-color: {_tot_bg} !important; {_tot_font} }}'
         f'#{wrap_id} tr.bd-total-row td, #{wrap_id} tr.bd-total-row td * {{ {_tot_font} }}'
-        f'</style>',
+    )
+    parts = [
+        _html_table_caption(table_caption),
+        f'<div id="{wrap_id}" class="budget-deviation-table-wrap" style="overflow-x: auto; min-width: 0; margin: 0.75em 0;">',
+        f"<style>{_style_css}</style>",
         f'<table class="bi-sortable-table" style="width:100%; border-collapse: collapse; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; font-size: {_tbl_px}px;">',
         "<thead><tr>",
     ]
@@ -1171,9 +1174,10 @@ def budget_table_to_html(
             val = row[col]
             val_str = "" if (val is None or (isinstance(val, float) and pd.isna(val))) else str(val)
             val_esc = html_module.escape(val_str)
+            _is_row_label_col = col == visible_cols[0] or _is_table_label_column(col)
             _label_css = (
                 label_columns_font_css
-                if label_columns_font_css and _is_table_label_column(col)
+                if label_columns_font_css and _is_row_label_col
                 else ""
             )
             if _column_uses_fact_plan_colors(
