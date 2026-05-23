@@ -9287,6 +9287,18 @@ def _finance_plotly_apply_bar_width(fig, n_periods: int, categories: list) -> No
     """Широкие столбцы + холст по числу периодов (после apply_chart_background)."""
     n = max(1, int(n_periods))
     bg, bgg, bar_w = _finance_plotly_bar_layout(n)
+    try:
+        barmode = str(fig.layout.barmode or "group").lower()
+    except Exception:
+        barmode = "group"
+    n_bar = sum(
+        1
+        for tr in (fig.data or [])
+        if getattr(tr, "type", None) == "bar" or type(tr).__name__ == "Bar"
+    )
+    if barmode == "group" and n_bar > 1:
+        # width — на каждый trace; без деления plan/fact наслаиваются в одной категории.
+        bar_w = min(bar_w, max(0.10, 0.80 / float(n_bar)))
     fig.update_layout(bargap=bg, bargroupgap=bgg)
     fig.update_traces(width=bar_w, selector=dict(type="bar"))
     if categories:
@@ -11964,14 +11976,6 @@ def dashboard_bdr(df):
                 nticks=min(64, max(12, _nb)),
             ),
         )
-        # Правки куратора 08.05.2026: фиксируем узкие столбцы при малом числе периодов
-        # (иначе Plotly растягивает 1-3 столбца на всю ширину графика).
-        if _nb <= 6:
-            try:
-                fig.update_layout(bargap=0.86, bargroupgap=0.12)
-                fig.update_traces(width=0.08, offsetgroup=None, selector=dict(type="bar"))
-            except Exception:
-                pass
         if not chart_df.empty:
             _ymax = float(
                 np.nanmax(
@@ -12016,6 +12020,14 @@ def dashboard_bdr(df):
         except Exception:
             pass
         fig = apply_chart_background(fig)
+        try:
+            _finance_plotly_apply_bar_width(
+                fig,
+                _nb,
+                chart_df["Период"].astype(str).tolist(),
+            )
+        except Exception:
+            pass
         render_chart(
             fig,
             caption_below=f"БДР{title_suffix}",
