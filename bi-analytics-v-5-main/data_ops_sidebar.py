@@ -37,10 +37,9 @@ def render_admin_data_ops_sidebar(st: Any) -> None:
     На release не вызывается (``show_data_ops_ui_for_role``).
     """
     try:
-        from config import is_release_client_mode, ignore_demo_data_files
+        from config import is_release_client_mode
     except Exception:
         is_release_client_mode = lambda: False  # type: ignore[assignment,misc]
-        ignore_demo_data_files = lambda: True  # type: ignore[assignment,misc]
 
     if is_release_client_mode():
         opts = ["Из папки web/", "FTP → web/", "Загрузить вручную"]
@@ -84,55 +83,7 @@ def render_admin_data_ops_sidebar(st: Any) -> None:
         with st.expander("FTP", expanded=False):
             _render_ftp_sidebar_controls(st)
 
-    if not ignore_demo_data_files():
-        _render_demo_data_toggle(st)
     _render_version_sidebar_compact(st)
-
-
-def _render_demo_data_toggle(st: Any) -> None:
-    """Селектор демо new_csv/ (admin): на release по умолчанию выкл., с подсказкой."""
-    try:
-        from config import default_include_demo_data, ignore_demo_data_files
-    except Exception:
-        return
-
-    if "include_demo_data" not in st.session_state:
-        st.session_state["include_demo_data"] = default_include_demo_data()
-
-    def _on_demo_toggle_change() -> None:
-        st.session_state["_pending_web_folder_load"] = True
-        st.session_state["_pending_web_load_quiet"] = False
-        for _k in (
-            "web_version_id",
-            "_auto_hydrated_from_db",
-            "_bdds_auto_demo_reload_version_id",
-        ):
-            st.session_state.pop(_k, None)
-
-    _demo_help = (
-        "Включено: к выгрузкам из web/ добавляются sample_* из new_csv/ "
-        "(MSP, обороты БДДС, ДЗ/КЗ, техника). Отчёты могут показывать месяцы и суммы, "
-        "которых нет в реальных данных 1С — удобно для локальной проверки UI.\n\n"
-        "Выключено: только web/ и 1С — корректный режим для клиента и приёмки. "
-        "После переключения выполните загрузку из web/ (или дождитесь автоперезагрузки)."
-    )
-
-    st.checkbox(
-        "Подмешивать демо-данные (new_csv/)",
-        key="include_demo_data",
-        help=_demo_help,
-        on_change=_on_demo_toggle_change,
-    )
-
-    if st.session_state.get("include_demo_data"):
-        st.caption(
-            "Демо включены: БДДС/план-факт могут содержать тестовые месяцы (например 2024) "
-            "поверх реальных оборотов 1С. Для prod-цифр держите выключенным."
-        )
-    elif ignore_demo_data_files():
-        st.caption(
-            "Демо выключены: в отчётах только web/ и 1С. Пустые блоки — неполные выгрузки, не ошибка UI."
-        )
 
 
 def _render_ftp_sidebar_controls(st: Any) -> None:

@@ -770,10 +770,10 @@ def main():
 
     _admin_data_ops_sidebar = _show_data_ops_ui()
 
-    # Release: только web/, без демо и без ручных табов в сайдбаре.
+    # Только web/, без демо и без ручных табов в сайдбаре на release.
     if _is_release_client_mode():
         st.session_state["data_mode_radio"] = "Из папки web/"
-        st.session_state["include_demo_data"] = False
+    st.session_state["include_demo_data"] = False
 
     # Источник данных: UI только в сайдбаре у admin; клиент release — тихий web/.
     st.session_state.setdefault("data_mode_radio", "Из папки web/")
@@ -853,14 +853,24 @@ def main():
                 return None
 
         def _db_version_missing_budget_data(version_id: int) -> bool:
-            """Демо new_csv/ не используется — перезагрузка ради sample_budget не нужна."""
-            return False
+            """Нет оборотов 1С (reference_dannye) — БДДС не соберётся без пересканирования web/."""
+            try:
+                import sqlite3
+                from web_schema import WEB_DB_PATH
+
+                conn = sqlite3.connect(WEB_DB_PATH)
+                row = conn.execute(
+                    "SELECT COALESCE(SUM(rows_count), 0) FROM web_files "
+                    "WHERE version_id=? AND file_type IN ('reference_dannye', 'budget')",
+                    (int(version_id),),
+                ).fetchone()
+                conn.close()
+                return not row or int(row[0] or 0) <= 0
+            except Exception:
+                return True
 
         def _force_reload_when_active_db_missing_budget() -> None:
-            """
-            Старые версии БД без `budget` не подходят для БДДС — пересканируем web/
-            (demo из new_csv/ подмешиваются автоматически в dev).
-            """
+            """Старые версии БД без оборотов 1С — пересканируем web/."""
             try:
                 _active_id = get_active_version_id()
             except Exception as _e:
@@ -1161,21 +1171,19 @@ def main():
             and not st.session_state.get("_release_web_autoload_tried", False)
         ):
             st.session_state["_release_web_autoload_tried"] = True
-            if not _session_has_loaded_data():
-                _has_db_versions = False
-                try:
-                    _has_db_versions = bool(get_all_versions())
-                except Exception:
-                    pass
-                st.session_state["_pending_web_folder_load"] = True
-                st.session_state["_pending_web_load_quiet"] = True
+            st.session_state["_pending_web_folder_load"] = True
+            st.session_state["_pending_web_load_quiet"] = True
+            st.session_state["_pending_web_force_rescan"] = True
 
         if (
             data_mode in ("Из папки web/", "FTP → web/")
             and st.session_state.pop("_pending_web_folder_load", False)
         ):
             _load_quiet = bool(st.session_state.pop("_pending_web_load_quiet", True))
-            _perform_load_from_web_folder(quiet=_load_quiet, force_rescan=not _load_quiet)
+            _force_rescan = bool(st.session_state.pop("_pending_web_force_rescan", False))
+            if _is_release_client_mode() and not _force_rescan:
+                _force_rescan = True
+            _perform_load_from_web_folder(quiet=_load_quiet, force_rescan=_force_rescan)
 
         if _admin_data_ops_sidebar or _is_release_client_mode():
             try:

@@ -1102,7 +1102,7 @@ def _dedupe_scan_files_by_identity(files: List[Dict]) -> Tuple[List[Dict], List[
 
 
 _ONE_C_STEM_RE = re.compile(
-    r"^(?:1с_|1c_|lc_|лк_|lk_)(\d{2}-\d{2}-\d{4})(?:_(\d{2}-\d{2}))?(?:_.*)?$",
+    r"^(?:1с_|1c_|lc_|лк_|lk_)(\d{2}-\d{2}-\d{4})(?:_(\d{2}-\d{2}))?(?:_(.+))?$",
     re.IGNORECASE,
 )
 
@@ -1153,6 +1153,15 @@ def _one_c_snapshot_sort_key(stem: str):
         return None
     hhmm = m.group(2) or "00-00"
     return (d, hhmm)
+
+
+def _one_c_file_family(stem: str) -> Optional[str]:
+    """Семейство 1С JSON (dannye, dk, spravochniki, …) — последний снимок выбирается отдельно."""
+    m = _ONE_C_STEM_RE.match(stem.lower())
+    if not m:
+        return None
+    suffix = (m.group(3) or "").strip().lower()
+    return suffix or "default"
 
 
 def _generic_stem_family(stem: str) -> str:
@@ -1364,18 +1373,27 @@ def pick_latest_snapshot_files(files: List[Dict]) -> Tuple[List[Dict], List[str]
     for f in passthrough:
         _add(f)
 
-    keys_ok: List[Tuple[tuple, Dict]] = []
     one_c_fallback: List[Dict] = []
+    buckets_1c: Dict[str, List[Dict]] = {}
     for f in one_c:
-        sk = _one_c_snapshot_sort_key(Path(f["name"]).stem)
-        if sk is None:
+        stem = Path(f["name"]).stem
+        fam = _one_c_file_family(stem)
+        sk = _one_c_snapshot_sort_key(stem)
+        if fam is None or sk is None:
             one_c_fallback.append(f)
         else:
-            keys_ok.append((sk, f))
-    if keys_ok:
-        best_k = max(k for k, _ in keys_ok)
-        for k, f in keys_ok:
-            if k == best_k:
+            buckets_1c.setdefault(fam, []).append(f)
+    for _fam, lst in buckets_1c.items():
+        rated: List[Tuple[tuple, Dict]] = []
+        for f in lst:
+            sk = _one_c_snapshot_sort_key(Path(f["name"]).stem)
+            if sk is not None:
+                rated.append((sk, f))
+        if not rated:
+            continue
+        best_sk = max(k for k, _ in rated)
+        for k, f in rated:
+            if k == best_sk:
                 _add(f)
     for f in one_c_fallback:
         dated_other.append(f)
@@ -1597,28 +1615,16 @@ def load_all_from_web() -> Dict:
         "version_id": None,
     }
 
-    if ignore_demo_data_files():
-        result["warnings"].insert(
-            0,
-            "BI_ANALYTICS_IGNORE_DEMO: демо не подмешивается (каталог new_csv/ рядом с приложением, "
-            "а также sample_*.csv и пути с …/new_csv/ в web/).",
-        )
-        files = scan_web_files(extensions=(".csv", ".json"))
-    else:
-        files = scan_web_files(extensions=(".csv", ".json")) + scan_new_csv_demo_files()
+    files = scan_web_files(extensions=(".csv", ".json"))
     files, dedupe_warns = _dedupe_scan_files_by_identity(files)
     result["warnings"].extend(dedupe_warns)
     if web_load_latest_snapshots_only():
         files, snap_warns = pick_latest_snapshot_files(files)
         result["warnings"].extend(snap_warns)
     if not files:
-        if ignore_demo_data_files():
-            result["errors"].append(
-                "Нет CSV/JSON для загрузки после исключения демо, либо каталоги пусты. "
-                "Положите в web/ актуальные выгрузки MSP/1С/TESSA (без опоры на sample_ и new_csv)."
-            )
-        else:
-            result["errors"].append("Папка web/ пуста или не найдена, и new_csv/ без демо-файлов.")
+        result["errors"].append(
+            "Нет CSV/JSON для загрузки: положите в web/ актуальные выгрузки MSP/1С/TESSA."
+        )
         return result
 
     ensure_data_session_state()

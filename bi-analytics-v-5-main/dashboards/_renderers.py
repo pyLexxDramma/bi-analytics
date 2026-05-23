@@ -24,6 +24,8 @@ from .ui_quiet import (
     suppress_caption,
     qa_debug_block,
     project_filter_multiselect,
+    period_date_range_input,
+    LABEL_PERIOD,
 )
 from dashboards.dev_projects_tz_matrix import (
     build_dev_tz_matrix_rows,
@@ -3316,6 +3318,39 @@ def _is_generic_block_name(v) -> bool:
     return bool(re.match(r"^(блок|block)\s*[-_a-zа-я]*\d+$", s))
 
 
+def _deviations_filter_df_by_period_range(
+    filtered_df: pd.DataFrame, range_key: str
+) -> pd.DataFrame:
+    """Срез по календарному диапазону из session_state (plan end / plan_month)."""
+    _dr = st.session_state.get(range_key)
+    if isinstance(_dr, tuple) and len(_dr) == 2:
+        _p_start, _p_end = _dr[0], _dr[1]
+    elif hasattr(_dr, "year"):
+        _p_start = _p_end = _dr
+    else:
+        return filtered_df
+    _start_dt = pd.to_datetime(_p_start, errors="coerce")
+    _end_dt = pd.to_datetime(_p_end, errors="coerce")
+    if pd.isna(_start_dt) or pd.isna(_end_dt):
+        return filtered_df
+    if _start_dt > _end_dt:
+        _start_dt, _end_dt = _end_dt, _start_dt
+    _end_inclusive = _end_dt + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+    if "plan end" in filtered_df.columns:
+        _pe = pd.to_datetime(filtered_df["plan end"], errors="coerce", dayfirst=True)
+        return filtered_df[
+            _pe.notna() & (_pe >= _start_dt) & (_pe <= _end_inclusive)
+        ].copy()
+    if "plan_month" in filtered_df.columns:
+        _pm = filtered_df["plan_month"]
+        _pf = _start_dt.to_period("M")
+        _pt = _end_dt.to_period("M")
+        return filtered_df[
+            _pm.notna() & (_pm >= _pf) & (_pm <= _pt)
+        ].copy()
+    return filtered_df
+
+
 def _apply_deviations_combined_filters(
     df: pd.DataFrame, *, building_col=None
 ) -> pd.DataFrame:
@@ -3334,29 +3369,6 @@ def _apply_deviations_combined_filters(
     )
     selected_block = st.session_state.get("devcombo_block", "Все")
     selected_building = st.session_state.get("devcombo_building", "Все")
-    available_months = []
-    if "plan_month" in filtered_df.columns:
-        unique_months = filtered_df["plan_month"].dropna().unique()
-        if len(unique_months) > 0:
-            month_dict = {format_period_ru(m): m for m in unique_months}
-            available_months = sorted(month_dict.keys(), key=lambda x: month_dict[x])
-    elif "plan end" in filtered_df.columns:
-        mask = filtered_df["plan end"].notna()
-        if mask.any():
-            temp_months = filtered_df.loc[mask, "plan end"].dt.to_period("M").unique()
-            if len(temp_months) > 0:
-                month_dict = {format_period_ru(m): m for m in temp_months}
-                available_months = sorted(month_dict.keys(), key=lambda x: month_dict[x])
-    period_from = (
-        st.session_state.get("devcombo_period_from", "Все")
-        if len(available_months) > 0
-        else "Все"
-    )
-    period_to = (
-        st.session_state.get("devcombo_period_to", "Все")
-        if len(available_months) > 0
-        else "Все"
-    )
 
     if selected_project != "Все" and "project name" in filtered_df.columns:
         filtered_df = _deviations_filter_df_by_project_name(
@@ -3366,48 +3378,9 @@ def _apply_deviations_combined_filters(
         filtered_df, selected_block, selected_building, building_col
     )
 
-    has_plan_month_col = "plan_month" in filtered_df.columns
-    if has_plan_month_col and (period_from != "Все" or period_to != "Все"):
-        pf = (
-            _deviations_filter_month_string_to_period(period_from)
-            if period_from != "Все"
-            else None
-        )
-        pt = (
-            _deviations_filter_month_string_to_period(period_to)
-            if period_to != "Все"
-            else None
-        )
-        if pf is not None and pt is not None and pf > pt:
-            pf, pt = pt, pf
-        if pf is not None:
-            filtered_df = filtered_df[filtered_df["plan_month"] >= pf]
-        if pt is not None:
-            filtered_df = filtered_df[filtered_df["plan_month"] <= pt]
-    elif not has_plan_month_col and "plan end" in filtered_df.columns:
-        pf = (
-            _deviations_filter_month_string_to_period(period_from)
-            if period_from != "Все"
-            else None
-        )
-        pt = (
-            _deviations_filter_month_string_to_period(period_to)
-            if period_to != "Все"
-            else None
-        )
-        if pf is not None or pt is not None:
-            if pf is not None and pt is not None and pf > pt:
-                pf, pt = pt, pf
-            _pe = pd.to_datetime(
-                filtered_df["plan end"], errors="coerce", dayfirst=True
-            )
-            pm = _pe.dt.to_period("M")
-            ok = pd.Series(True, index=filtered_df.index)
-            if pf is not None:
-                ok &= pm >= pf
-            if pt is not None:
-                ok &= pm <= pt
-            filtered_df = filtered_df[ok]
+    filtered_df = _deviations_filter_df_by_period_range(
+        filtered_df, "devcombo_period_range"
+    )
 
     return filtered_df
 
@@ -3426,7 +3399,7 @@ def _render_deviations_combined_shared_filters(df):
     use_flat_bs = _deviations_use_flat_block_section_task(df)
 
     with filters_panel(st):
-        col1, col2, col3, col4, col5, col6 = st.columns(6)
+        col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
             if "project name" in df.columns:
                 _session_reset_project_if_excluded("devcombo_project")
@@ -3601,37 +3574,32 @@ def _render_deviations_combined_shared_filters(df):
             else:
                 suppress_caption("Нет строения")
     
-        available_months = []
-        if "plan_month" in df.columns:
-            unique_months = df["plan_month"].dropna().unique()
-            if len(unique_months) > 0:
-                month_dict = {format_period_ru(m): m for m in unique_months}
-                available_months = sorted(month_dict.keys(), key=lambda x: month_dict[x])
-        elif "plan end" in df.columns:
-            mask = df["plan end"].notna()
-            if mask.any():
-                _pe_fm = pd.to_datetime(
-                    df.loc[mask, "plan end"], errors="coerce", dayfirst=True
-                )
-                temp_months = _pe_fm.dt.to_period("M").dropna().unique()
-                if len(temp_months) > 0:
-                    month_dict = {format_period_ru(m): m for m in temp_months}
-                    available_months = sorted(month_dict.keys(), key=lambda x: month_dict[x])
+        _devcombo_pmin = None
+        _devcombo_pmax = None
+        if "plan end" in df.columns:
+            _pe_dev = pd.to_datetime(df["plan end"], errors="coerce", dayfirst=True)
+            if _pe_dev.notna().any():
+                _devcombo_pmin = _pe_dev.min().date()
+                _devcombo_pmax = _pe_dev.max().date()
+        elif "plan_month" in df.columns:
+            _pm_dev = df["plan_month"].dropna()
+            if len(_pm_dev):
+                _devcombo_pmin = _pm_dev.min().start_time.date()
+                _devcombo_pmax = _pm_dev.max().end_time.date()
 
         with col4:
-            if len(available_months) > 0:
-                months_opts = ["Все"] + available_months
-                st.selectbox("Период с", months_opts, key="devcombo_period_from")
+            if _devcombo_pmin and _devcombo_pmax:
+                period_date_range_input(
+                    st,
+                    "devcombo_period_range",
+                    min_value=_devcombo_pmin,
+                    max_value=_devcombo_pmax,
+                    default=(_devcombo_pmin, _devcombo_pmax),
+                )
             else:
-                st.selectbox("Период с", ["Все"], key="devcombo_period_from", disabled=True)
-        with col5:
-            if len(available_months) > 0:
-                months_opts = ["Все"] + available_months
-                st.selectbox("Период по", months_opts, key="devcombo_period_to")
-            else:
-                st.selectbox("Период по", ["Все"], key="devcombo_period_to", disabled=True)
+                suppress_caption("Нет данных для фильтра периода")
 
-        with col6:
+        with col5:
             st.checkbox(
                 "ТОП 5 причин отклонений",
                 value=False,
@@ -3652,7 +3620,6 @@ def dashboard_deviations_combined(df):
         )
         return
 
-    st.header("Причины отклонений")
     suppress_caption(
         "Категории в диаграммах и таблицах приведены к перечню из последних правок по отчёту "
         "(стек долей, легенда и детальная таблица)."
@@ -3666,7 +3633,7 @@ def dashboard_deviations_combined(df):
         ]
     )
 
-    # R23-04 add-on (стр.11): при выборе узкого диапазона «Период с / Период по»
+    # R23-04 add-on (стр.11): при выборе узкого диапазона «Период»
     # (например, январь–сентябрь) в подвкладках иногда падал traceback — если данных
     # за период нет совсем или они частичные. По ТЗ: «нет совсем — написать об этом;
     # есть частично — показать то, что есть». Оборачиваем каждую подвкладку в общий
@@ -3676,7 +3643,7 @@ def dashboard_deviations_combined(df):
         if frame is None or getattr(frame, "empty", True):
             st.info(
                 "За выбранный период нет данных по отклонениям. "
-                "Поменяйте «Период с / Период по» или фильтры «Проект / Функциональный блок / Строение»."
+                "Поменяйте «Период» или фильтры «Проект / Функциональный блок / Строение»."
             )
             return
         try:
@@ -3684,7 +3651,7 @@ def dashboard_deviations_combined(df):
         except Exception as _e:  # noqa: BLE001
             st.warning(
                 f"Не удалось построить подвкладку «{tab_label}» для выбранного периода: {_e}. "
-                "Если данных за часть диапазона нет — расширьте «Период с / Период по», "
+                "Если данных за часть диапазона нет — расширьте «Период», "
                 "или снимите сужающие фильтры."
             )
 
@@ -3765,7 +3732,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
 
         with filters_panel(st, reset_keys=[
             "reason_project", "reason_block", "reason_building",
-            "reason_period_from", "reason_period_to",
+            "reason_period_range",
         ]):
             col1, col2, col3 = st.columns(3)
 
@@ -3938,58 +3905,30 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                 else:
                     suppress_caption("Нет строения")
 
-            available_months = []
-            try:
-                has_plan_month_column = "plan_month" in df.columns
-            except (AttributeError, TypeError):
-                has_plan_month_column = False
-
-            if has_plan_month_column:
-                unique_months = df["plan_month"].dropna().unique()
-                if len(unique_months) > 0:
-                    month_dict = {format_period_ru(m): m for m in unique_months}
-                    available_months = sorted(
-                        month_dict.keys(), key=lambda x: month_dict[x]
-                    )
+            _reason_pmin = None
+            _reason_pmax = None
+            if "plan end" in df.columns:
+                _pe_rs = pd.to_datetime(df["plan end"], errors="coerce", dayfirst=True)
+                if _pe_rs.notna().any():
+                    _reason_pmin = _pe_rs.min().date()
+                    _reason_pmax = _pe_rs.max().date()
+            elif "plan_month" in df.columns:
+                _pm_rs = df["plan_month"].dropna()
+                if len(_pm_rs):
+                    _reason_pmin = _pm_rs.min().start_time.date()
+                    _reason_pmax = _pm_rs.max().end_time.date()
+            if _reason_pmin and _reason_pmax:
+                period_date_range_input(
+                    st,
+                    "reason_period_range",
+                    min_value=_reason_pmin,
+                    max_value=_reason_pmax,
+                    default=(_reason_pmin, _reason_pmax),
+                )
             else:
-                try:
-                    has_plan_end_column = "plan end" in df.columns
-                except (AttributeError, TypeError):
-                    has_plan_end_column = False
-
-                if has_plan_end_column:
-                    mask = df["plan end"].notna()
-                    if mask.any():
-                        temp_months = df.loc[mask, "plan end"].dt.to_period("M").unique()
-                        if len(temp_months) > 0:
-                            month_dict = {format_period_ru(m): m for m in temp_months}
-                            available_months = sorted(
-                                month_dict.keys(), key=lambda x: month_dict[x]
-                            )
-
-            r2b, r2c = st.columns(2)
-            with r2b:
-                if len(available_months) > 0:
-                    months_opts = ["Все"] + available_months
-                    period_from = st.selectbox(
-                        "Период с", months_opts, key="reason_period_from"
-                    )
-                else:
-                    period_from = "Все"
-                    st.selectbox("Период с", ["Все"], key="reason_period_from", disabled=True)
-            with r2c:
-                if len(available_months) > 0:
-                    months_opts = ["Все"] + available_months
-                    period_to = st.selectbox(
-                        "Период по", months_opts, key="reason_period_to"
-                    )
-                else:
-                    period_to = "Все"
-                    st.selectbox("Период по", ["Все"], key="reason_period_to", disabled=True)
+                suppress_caption("Нет данных для фильтра периода")
     else:
-        period_from = "Все"
-        period_to = "Все"
-        available_months = []
+        pass
 
     filtered_df = df.copy()
 
@@ -4017,52 +3956,10 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
     except (AttributeError, TypeError):
         has_reason_col = False
 
-    try:
-        has_plan_month_col = "plan_month" in filtered_df.columns
-    except (AttributeError, TypeError):
-        has_plan_month_col = False
-
-    if has_plan_month_col and (period_from != "Все" or period_to != "Все"):
-        pf = (
-            _deviations_filter_month_string_to_period(period_from)
-            if period_from != "Все"
-            else None
+    if not hide_shared_filters:
+        filtered_df = _deviations_filter_df_by_period_range(
+            filtered_df, "reason_period_range"
         )
-        pt = (
-            _deviations_filter_month_string_to_period(period_to)
-            if period_to != "Все"
-            else None
-        )
-        if pf is not None and pt is not None and pf > pt:
-            pf, pt = pt, pf
-        if pf is not None:
-            filtered_df = filtered_df[filtered_df["plan_month"] >= pf]
-        if pt is not None:
-            filtered_df = filtered_df[filtered_df["plan_month"] <= pt]
-    elif not has_plan_month_col and "plan end" in filtered_df.columns:
-        pf = (
-            _deviations_filter_month_string_to_period(period_from)
-            if period_from != "Все"
-            else None
-        )
-        pt = (
-            _deviations_filter_month_string_to_period(period_to)
-            if period_to != "Все"
-            else None
-        )
-        if pf is not None or pt is not None:
-            if pf is not None and pt is not None and pf > pt:
-                pf, pt = pt, pf
-            _pe = pd.to_datetime(
-                filtered_df["plan end"], errors="coerce", dayfirst=True
-            )
-            pm = _pe.dt.to_period("M")
-            ok = pd.Series(True, index=filtered_df.index)
-            if pf is not None:
-                ok &= pm >= pf
-            if pt is not None:
-                ok &= pm <= pt
-            filtered_df = filtered_df[ok]
 
     # Filter tasks relevant for "dynamics of deviations": deviation=1/True OR reason of deviation filled
     try:
@@ -5627,7 +5524,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     .tolist()
                 )
                 selected_reason_filter = st.selectbox(
-                    "Фильтр по причине отклонения",
+                    "Причина",
                     available_reasons,
                     key="summary_reason_filter",
                 )
@@ -5641,7 +5538,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             # Фильтр по периоду
             period_options = ["Весь период"] + available_periods
             selected_period_filter = st.selectbox(
-                "Фильтр по периоду", period_options, key="summary_period_filter"
+                "Период", period_options, key="summary_period_filter"
             )
 
             # Применяем фильтр по периоду
@@ -6206,7 +6103,6 @@ def render_plan_fact_dates_metric_plates(
 
 # ==================== DASHBOARD 3: Plan/Fact Dates for Tasks ====================
 def dashboard_plan_fact_dates(df):
-    st.header("Отклонение от базового плана")
     if df is None or not hasattr(df, "columns") or df.empty:
         st.warning("Нет данных для отображения. Загрузите файл с задачами MSP.")
         return
@@ -8219,7 +8115,6 @@ def dashboard_deviation_by_tasks_current_month(df):
 
     ensure_msp_hierarchy_columns(df)
 
-    st.header("Значения отклонений от базового плана")
 
     find_column = _dev_tasks_find_column
 
@@ -9406,7 +9301,6 @@ def _finance_plotly_apply_bar_width(fig, n_periods: int, categories: list) -> No
 
 
 def dashboard_budget_by_period(df):
-    st.header("БДДС")
 
     from dashboards.finance_from_1c import resolve_reference_1c_dannye
 
@@ -9575,90 +9469,14 @@ def dashboard_budget_by_period(df):
                     _bdds_scope = tuple(sorted(selected_projects)) if selected_projects else ("__all__",)
                     if st.session_state.get("_bdds_period_scope") != _bdds_scope:
                         st.session_state["_bdds_period_scope"] = _bdds_scope
-                        st.session_state["budget_period_from"] = _def_start
-                        st.session_state["budget_period_to"] = _def_end
-                _from_kw: dict = {
-                    "label": "С",
-                    "key": "budget_period_from",
-                    "help": "Начало диапазона по полю «Конец план».",
-                    "format": "DD.MM.YYYY",
-                }
-                _to_kw: dict = {
-                    "label": "По",
-                    "key": "budget_period_to",
-                    "help": "Конец диапазона по полю «Конец план».",
-                    "format": "DD.MM.YYYY",
-                }
-                if _def_start and _def_end and _def_start <= _def_end:
-                    _from_kw["min_value"] = _bdds_min_all or _def_start
-                    _from_kw["max_value"] = _bdds_max_all or _def_end
-                    _to_kw["min_value"] = _bdds_min_all or _def_start
-                    _to_kw["max_value"] = _bdds_max_all or _def_end
-                    # value только при первом показе виджета — иначе цикл rerun при смене проекта.
-                    if "budget_period_from" not in st.session_state:
-                        _from_kw["value"] = _def_start
-                    if "budget_period_to" not in st.session_state:
-                        _to_kw["value"] = _def_end
-                _bdds_pc_from, _bdds_pc_to = st.columns(2)
-                with _bdds_pc_from:
-                    _period_from = st.date_input(**_from_kw)
-                with _bdds_pc_to:
-                    _period_to = st.date_input(**_to_kw)
-                components.html(
-                    """
-                    <script>
-                    (function() {
-                      const dict = new Map([
-                        ["January","Январь"],["February","Февраль"],["March","Март"],["April","Апрель"],
-                        ["May","Май"],["June","Июнь"],["July","Июль"],["August","Август"],
-                        ["September","Сентябрь"],["October","Октябрь"],["November","Ноябрь"],["December","Декабрь"],
-                        ["Mo","Пн"],["Tu","Вт"],["We","Ср"],["Th","Чт"],["Fr","Пт"],["Sa","Сб"],["Su","Вс"],
-                        ["None","Нет"]
-                      ]);
-                      const root = window.parent && window.parent.document ? window.parent.document : document;
-                      const shouldSkip = (el) => {
-                        if (!el || !el.tagName) return true;
-                        const t = el.tagName.toLowerCase();
-                        if (t === "script" || t === "style" || t === "textarea" || t === "input") return true;
-                        if (t === "svg" || t === "path") return true;
-                        if (el.isContentEditable) return true;
-                        return false;
-                      };
-                      const replaceInTextNode = (node) => {
-                        const raw = node.nodeValue || "";
-                        const txt = raw.trim();
-                        if (!txt) return;
-                        if (dict.has(txt)) {
-                          node.nodeValue = raw.replace(txt, dict.get(txt));
-                          return;
-                        }
-                        let next = raw;
-                        for (const [en, ru] of dict.entries()) {
-                          next = next.replace(new RegExp("\\b" + en + "\\b", "g"), ru);
-                        }
-                        if (next !== raw) node.nodeValue = next;
-                      };
-                      const apply = () => {
-                        const all = root.querySelectorAll("*");
-                        all.forEach((el) => {
-                          if (shouldSkip(el)) return;
-                          const childs = el.childNodes || [];
-                          for (let i = 0; i < childs.length; i++) {
-                            const n = childs[i];
-                            if (n && n.nodeType === Node.TEXT_NODE) replaceInTextNode(n);
-                          }
-                        });
-                      };
-                      apply();
-                      try {
-                        const obs = new MutationObserver(apply);
-                        if (root.body) obs.observe(root.body, { childList: true, subtree: true });
-                      } catch (e) {}
-                    })();
-                    </script>
-                    """,
-                    height=0,
-                    width=0,
+                        st.session_state.pop("budget_period_range", None)
+                _period_from, _period_to = period_date_range_input(
+                    st,
+                    "budget_period_range",
+                    min_value=_bdds_min_all or _def_start,
+                    max_value=_bdds_max_all or _def_end,
+                    default=(_def_start, _def_end) if _def_start and _def_end else None,
+                    help="Диапазон по полю «Конец план».",
                 )
                 if _period_from is not None and _period_to is not None:
                     _start_dt = pd.to_datetime(_period_from, errors="coerce")
@@ -10527,7 +10345,6 @@ def dashboard_budget_by_period(df):
 # ==================== DASHBOARD 6.5: Budget Cumulative ====================
 def dashboard_budget_cumulative(df):
 
-    st.header("БДДС накопительно")
 
     with filters_panel(st):
         col1, col2, col3 = st.columns(3)
@@ -10553,7 +10370,7 @@ def dashboard_budget_cumulative(df):
             if "section" in df.columns:
                 sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
                 selected_section = st.selectbox(
-                    "Фильтр по этапу", sections, key="budget_cum_section"
+                    "Этап", sections, key="budget_cum_section"
                 )
             else:
                 selected_section = "Все"
@@ -10920,7 +10737,6 @@ def dashboard_budget_cumulative(df):
 
 # ==================== DASHBOARD 7: Budget Plan/Fact/Reserve by Section by Period ====================
 def dashboard_budget_by_section(df):
-    st.header("💰 БДДС по лотам")
     with st.expander("Вид отображения", expanded=False):
         suppress_caption("По месяцам или накопительно — переключатель в блоке графика ниже.")
 
@@ -10938,7 +10754,7 @@ def dashboard_budget_by_section(df):
             if "section" in df.columns:
                 sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
                 selected_section = st.selectbox(
-                    "Фильтр по этапу", sections, key="budget_section"
+                    "Этап", sections, key="budget_section"
                 )
             else:
                 selected_section = "Все"
@@ -11193,8 +11009,6 @@ def dashboard_bdr(df):
     или классический режим доходы / расходы / сальдо; помесячно / накопительно.
     Fallback из 1С — обороты БДР по расходам (не БДДС).
     """
-    st.header("БДР")
-
     if df is None or not hasattr(df, "columns") or df.empty:
         st.warning("⚠️ Нет данных для отображения. Загрузите данные проекта.")
         return
@@ -11547,7 +11361,6 @@ def dashboard_bdr(df):
             )
 
         ensure_date_columns(filtered_df)
-        # Фильтр периода — два одиночных date_input («С»/«По»), без range quick select Streamlit.
         if "plan end" in filtered_df.columns:
             _pe_series_bdr = pd.to_datetime(filtered_df["plan end"], errors="coerce")
             if _pe_series_bdr.notna().any():
@@ -11555,9 +11368,6 @@ def dashboard_bdr(df):
                 _bdr_max = _pe_series_bdr.max()
                 _bdr_start = _bdr_min.date() if pd.notna(_bdr_min) else None
                 _bdr_end = _bdr_max.date() if pd.notna(_bdr_max) else None
-                # Правки куратора 08.05.2026: min/max календаря брать из ВСЕГО df,
-                # а не из отфильтрованного по проекту, иначе при единственной дате
-                # у проекта календарь «залипает» (min_value == max_value).
                 try:
                     _pe_all_bdr = pd.to_datetime(df["plan end"], errors="coerce")
                     if _pe_all_bdr.notna().any():
@@ -11567,85 +11377,13 @@ def dashboard_bdr(df):
                         _bdr_min_all, _bdr_max_all = _bdr_start, _bdr_end
                 except Exception:
                     _bdr_min_all, _bdr_max_all = _bdr_start, _bdr_end
-                _bdr_from_kw: dict = {
-                    "label": "С",
-                    "key": "bdr_period_from",
-                    "help": "Начало диапазона по полю «Конец план».",
-                    "format": "DD.MM.YYYY",
-                }
-                _bdr_to_kw: dict = {
-                    "label": "По",
-                    "key": "bdr_period_to",
-                    "help": "Конец диапазона по полю «Конец план».",
-                    "format": "DD.MM.YYYY",
-                }
-                if _bdr_start and _bdr_end and _bdr_start <= _bdr_end:
-                    _bdr_from_kw["value"] = _bdr_start
-                    _bdr_to_kw["value"] = _bdr_end
-                    _bdr_from_kw["min_value"] = _bdr_min_all or _bdr_start
-                    _bdr_from_kw["max_value"] = _bdr_max_all or _bdr_end
-                    _bdr_to_kw["min_value"] = _bdr_min_all or _bdr_start
-                    _bdr_to_kw["max_value"] = _bdr_max_all or _bdr_end
-                _bdr_pc_from, _bdr_pc_to = st.columns(2)
-                with _bdr_pc_from:
-                    _bdr_period_from = st.date_input(**_bdr_from_kw)
-                with _bdr_pc_to:
-                    _bdr_period_to = st.date_input(**_bdr_to_kw)
-                components.html(
-                    """
-                    <script>
-                    (function() {
-                      const dict = new Map([
-                        ["January","Январь"],["February","Февраль"],["March","Март"],["April","Апрель"],
-                        ["May","Май"],["June","Июнь"],["July","Июль"],["August","Август"],
-                        ["September","Сентябрь"],["October","Октябрь"],["November","Ноябрь"],["December","Декабрь"],
-                        ["Mo","Пн"],["Tu","Вт"],["We","Ср"],["Th","Чт"],["Fr","Пт"],["Sa","Сб"],["Su","Вс"],
-                        ["None","Нет"]
-                      ]);
-                      const root = window.parent && window.parent.document ? window.parent.document : document;
-                      const shouldSkip = (el) => {
-                        if (!el || !el.tagName) return true;
-                        const t = el.tagName.toLowerCase();
-                        if (t === "script" || t === "style" || t === "textarea" || t === "input") return true;
-                        if (t === "svg" || t === "path") return true;
-                        if (el.isContentEditable) return true;
-                        return false;
-                      };
-                      const replaceInTextNode = (node) => {
-                        const raw = node.nodeValue || "";
-                        const txt = raw.trim();
-                        if (!txt) return;
-                        if (dict.has(txt)) {
-                          node.nodeValue = raw.replace(txt, dict.get(txt));
-                          return;
-                        }
-                        let next = raw;
-                        for (const [en, ru] of dict.entries()) {
-                          next = next.replace(new RegExp("\\b" + en + "\\b", "g"), ru);
-                        }
-                        if (next !== raw) node.nodeValue = next;
-                      };
-                      const apply = () => {
-                        const all = root.querySelectorAll("*");
-                        all.forEach((el) => {
-                          if (shouldSkip(el)) return;
-                          const childs = el.childNodes || [];
-                          for (let i = 0; i < childs.length; i++) {
-                            const n = childs[i];
-                            if (n && n.nodeType === Node.TEXT_NODE) replaceInTextNode(n);
-                          }
-                        });
-                      };
-                      apply();
-                      try {
-                        const obs = new MutationObserver(apply);
-                        if (root.body) obs.observe(root.body, { childList: true, subtree: true });
-                      } catch (e) {}
-                    })();
-                    </script>
-                    """,
-                    height=0,
-                    width=0,
+                _bdr_period_from, _bdr_period_to = period_date_range_input(
+                    st,
+                    "bdr_period_range",
+                    min_value=_bdr_min_all or _bdr_start,
+                    max_value=_bdr_max_all or _bdr_end,
+                    default=(_bdr_start, _bdr_end) if _bdr_start and _bdr_end else None,
+                    help="Диапазон по полю «Конец план».",
                 )
                 if _bdr_period_from is not None and _bdr_period_to is not None:
                     _bdr_from = pd.to_datetime(_bdr_period_from, errors="coerce")
@@ -11884,7 +11622,7 @@ def dashboard_bdr(df):
 
             fig.update_layout(
                 title_text="",
-                yaxis_title=_mln_lab,
+                yaxis_title="млн. руб.",
                 barmode="group",
                 bargap=_bgb,
                 bargroupgap=_bggb,
@@ -12495,11 +12233,10 @@ def _rd_plan_fallback_view(
             key=lambda x: x.casefold(),
         )
 
-    st.markdown("##### Фильтры")
     f2a, f2b, f2c = st.columns(3, gap="small")
     with f2a:
         sel_sec = st.multiselect(
-            "Фильтр по разделу",
+            "Раздел",
             options=sec_opts,
             default=sec_opts,
             key=f"rd_fb_sec_{fb_k}",
@@ -12510,7 +12247,7 @@ def _rd_plan_fallback_view(
     d_end = None
     with f2b:
         dm = st.selectbox(
-            "Период (по плановой дате выдачи)",
+            "Период",
             ["Весь период (за всё время)", "Выбор диапазона дат"],
             index=0,
             key=f"rd_fb_per_mode_{fb_k}",
@@ -12520,12 +12257,13 @@ def _rd_plan_fallback_view(
             mn_d = _pv.min().date()
             mx_d = _pv.max().date()
             dr = st.date_input(
-                "Диапазон дат",
+                "",
                 value=(mn_d, mx_d),
                 min_value=mn_d,
                 max_value=mx_d,
                 key=f"rd_fb_dr_{fb_k}",
                 format="DD.MM.YYYY",
+                label_visibility="collapsed",
             )
             if isinstance(dr, tuple) and len(dr) == 2:
                 d_start, d_end = dr[0], dr[1]
@@ -12537,7 +12275,7 @@ def _rd_plan_fallback_view(
         sel_st: list[str] = []
         if stat_vals:
             sel_st = st.multiselect(
-                "Фильтр по статусу",
+                "Статус",
                 options=stat_vals,
                 default=stat_vals,
                 key=f"rd_fb_st_{fb_k}",
@@ -13338,7 +13076,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     key=lambda x: x.casefold(),
                 )
                 selected_section = st.selectbox(
-                    ("Фильтр по виду раздела ПД" if is_pd else "Фильтр по виду раздела РД"),
+                    ("Вид раздела" if is_pd else "Вид раздела"),
                     ["Все"] + section_options,
                     key="rd_delay_section",
                 )
@@ -13353,7 +13091,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     key=lambda x: x.casefold(),
                 )
                 selected_section = st.selectbox(
-                    ("Фильтр по виду раздела ПД" if is_pd else "Фильтр по виду раздела РД"),
+                    ("Вид раздела" if is_pd else "Вид раздела"),
                     ["Все"] + section_options,
                     key="rd_delay_section",
                 )
@@ -13375,7 +13113,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             rd_status_options_rd.append("Просрочено подрядчиком")
         if rd_status_options_rd:
             selected_statuses_rd = st.pills(
-                "Фильтр по статусу ПД" if is_pd else "Фильтр по статусу РД",
+                "Статус",
                 rd_status_options_rd,
                 selection_mode="multi",
                 default=rd_status_options_rd,
@@ -14373,7 +14111,6 @@ def dashboard_rd_delay(df, is_pd: bool = False):
 
 # ==================== DASHBOARD 8.6.5: Technique Visualization ====================
 def dashboard_technique(df):
-    st.header("График движения рабочей силы")
 
     technique_df = st.session_state.get("technique_data", None)
     resources_df = st.session_state.get("resources_data", None)
@@ -14754,7 +14491,7 @@ def dashboard_technique(df):
                 work_df["Контрагент"].dropna().unique().tolist()
             )
             selected_contractor = st.selectbox(
-                "Фильтр по контрагенту", contractors, key="technique_contractor"
+                "Контрагент", contractors, key="technique_contractor"
             )
         else:
             selected_contractor = "Все"
@@ -14827,29 +14564,54 @@ def dashboard_technique(df):
                         if label not in period_value_by_label:
                             period_value_by_label[label] = v
                             period_labels_sorted.append(label)
+                    _gdrs_dates = [
+                        ts.date() for _, ts in parsed if pd.notna(ts)
+                    ]
+                    if _gdrs_dates:
+                        _gmin, _gmax = min(_gdrs_dates), max(_gdrs_dates)
+                        _gf, _gt = period_date_range_input(
+                            st,
+                            f"{key_prefix}_period_range",
+                            min_value=_gmin,
+                            max_value=_gmax,
+                            default=(_gmin, _gmax),
+                        )
+                        if _gf is not None and _gt is not None:
+                            if _gf > _gt:
+                                _gf, _gt = _gt, _gf
+                            selected_periods = [
+                                v
+                                for v, ts in parsed
+                                if pd.notna(ts)
+                                and _gf <= ts.date() <= _gt
+                            ]
                 else:
                     period_labels_sorted = sorted(uniq_vals)
                     period_value_by_label = {v: v for v in period_labels_sorted}
-
-                selected_period_from = st.selectbox(
-                    "Период с (дата)",
-                    ["Все"] + period_labels_sorted,
-                    key=f"{key_prefix}_period_from",
-                )
-                selected_period_to = st.selectbox(
-                    "Период по (дата)",
-                    ["Все"] + period_labels_sorted,
-                    key=f"{key_prefix}_period_to",
-                )
-                if period_labels_sorted:
-                    i_from = period_labels_sorted.index(selected_period_from) if selected_period_from in period_labels_sorted else 0
-                    i_to = period_labels_sorted.index(selected_period_to) if selected_period_to in period_labels_sorted else (len(period_labels_sorted) - 1)
-                    if i_from > i_to:
-                        i_from, i_to = i_to, i_from
-                    selected_periods = [
-                        period_value_by_label[lbl]
-                        for lbl in period_labels_sorted[i_from : i_to + 1]
-                    ]
+                    selected_period_from = st.selectbox(
+                        "Период",
+                        ["Все"] + period_labels_sorted,
+                        key=f"{key_prefix}_period_from",
+                    )
+                    selected_period_to = st.selectbox(
+                        "",
+                        ["Все"] + period_labels_sorted,
+                        key=f"{key_prefix}_period_to",
+                        label_visibility="collapsed",
+                    )
+                    if period_labels_sorted:
+                        i_from = period_labels_sorted.index(selected_period_from) if selected_period_from in period_labels_sorted else 0
+                        i_to = period_labels_sorted.index(selected_period_to) if selected_period_to in period_labels_sorted else (len(period_labels_sorted) - 1)
+                        if selected_period_from == "Все":
+                            i_from = 0
+                        if selected_period_to == "Все":
+                            i_to = len(period_labels_sorted) - 1
+                        if i_from > i_to:
+                            i_from, i_to = i_to, i_from
+                        selected_periods = [
+                            period_value_by_label[lbl]
+                            for lbl in period_labels_sorted[i_from : i_to + 1]
+                        ]
             else:
                 st.info("Нет значений периода")
         else:
@@ -16064,16 +15826,6 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
     show_header: выводить ли заголовок (при вызове из табов можно False).
     key_prefix: префикс для ключей виджетов Streamlit (уникальный при вызове из нескольких табов).
     """
-    if show_header:
-        _dst = (data_source_filter or "").strip().lower()
-        # R23-05 стр.12: «Переименовать отчёт в "План/факт рабочие"».
-        if _dst == "техника":
-            st.header("План/факт техника")
-        elif _dst == "ресурсы":
-            st.header("План/факт рабочие")
-        else:
-            st.header("ГДРС")
-
     resources_df = st.session_state.get("resources_data", None)
     technique_df = st.session_state.get("technique_data", None)
     combined_df = None
@@ -16722,7 +16474,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     work_df["Контрагент"].dropna().unique().tolist()
                 )
                 selected_contractor = st.selectbox(
-                    "Фильтр по контрагенту", contractors, key=f"{key_prefix}_contractor"
+                    "Контрагент", contractors, key=f"{key_prefix}_contractor"
                 )
             else:
                 selected_contractor = "Все"
@@ -18687,7 +18439,6 @@ def dashboard_technique_tabs(df):
     ГДРС → «Рабочие»: график движения рабочей силы.
     R23-05 стр.14: отдельный пункт меню «ГДРС Техника» вынесен в dashboard_gdrs_equipment.
     """
-    st.header("ГДРС")
     dashboard_workforce_movement(
         df, data_source_filter="Ресурсы", show_header=False, key_prefix="gdrs_people"
     )
@@ -18697,7 +18448,6 @@ def dashboard_gdrs_equipment(df):
     """
     R23-05 стр.14: восстановленный отчёт «Техника» (параллельно с «Рабочие»).
     """
-    st.header("ГДРС")
     dashboard_workforce_movement(
         df, data_source_filter="Техника", show_header=False, key_prefix="gdrs_tech"
     )
@@ -19106,13 +18856,6 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         load_plan_aggregate,
         load_resursi_files,
     )
-
-    if vid_locked == "Рабочие":
-        st.header("График движения рабочей силы (люди)")
-    elif vid_locked == "Техника":
-        st.header("График движения рабочей силы (техника)")
-    else:
-        st.header("ГДРС")
 
     web_dir = _Path(_root) / "web"
     ai_dir = web_dir / "AI"
@@ -19981,7 +19724,6 @@ def _gdrs_merge_plan_from_1c_spravochniki(
 
 def dashboard_debit_credit(df):
     """Дебиторская и кредиторская задолженность подрядчиков: график и таблица по данным из файла."""
-    st.header("Дебиторская и кредиторская задолженность")
 
     data = st.session_state.get("debit_credit_data", None)
     if (data is None or data.empty) and (df is not None and not df.empty):
@@ -20523,7 +20265,7 @@ def dashboard_debit_credit(df):
                 mn = work["_dc_period_dt"].min().date()
                 mx = work["_dc_period_dt"].max().date()
                 dr = st.date_input(
-                    "Период (дата договора)",
+                    "Период",
                     value=(mn, mx),
                     min_value=mn,
                     max_value=mx,
@@ -21396,7 +21138,6 @@ def dashboard_executive_documentation(df):
     Отчёт «Исполнительная документация» — TESSA.
     Исключаются строки KindName «Предписание» (отдельный отчёт «Предписания»).
     """
-    st.header("Исполнительная документация")
     tessa_df = st.session_state.get("tessa_data", None)
     work = None
     _source_label = ""
@@ -21532,7 +21273,7 @@ def dashboard_executive_documentation(df):
         with fc1:
             if obj_col:
                 objects = ["Все"] + _unique_project_labels_for_select(work[obj_col])
-                sel_obj = st.selectbox("Объект", objects, key="exec_doc_object")
+                sel_obj = st.selectbox("Проект", objects, key="exec_doc_object")
             else:
                 sel_obj = "Все"
         with fc2:
@@ -21554,7 +21295,7 @@ def dashboard_executive_documentation(df):
                 min_date = dmin.date() if hasattr(dmin, "date") else dmin
                 max_date = dmax.date() if hasattr(dmax, "date") else dmax
                 dr = st.date_input(
-                    "Период (по дате создания в TESSA)",
+                    "Период",
                     value=(min_date, max_date),
                     min_value=min_date,
                     max_value=max_date,
@@ -22350,7 +22091,6 @@ def dashboard_documentation(
     *,
     embed_delay_at_end: bool = True,
 ):
-    st.header(page_title)
 
     _doc_fk = (
         "rd_work_"
@@ -22592,12 +22332,13 @@ def dashboard_documentation(
             )
             if selected_period_mode == "Выбор диапазона дат":
                 selected_period = st.date_input(
-                    ("Диапазон дат (по дате сдачи ПД в плане)" if is_pd else "Диапазон дат (по дате сдачи РД в плане)"),
+                    LABEL_PERIOD,
                     value=(min_date, max_date),
                     min_value=min_date,
                     max_value=max_date,
                     key=f"{_doc_fk}date_range",
                     format="DD.MM.YYYY",
+                    label_visibility="collapsed",
                 )
                 if isinstance(selected_period, tuple) and len(selected_period) == 2:
                     selected_date_start, selected_date_end = selected_period
@@ -22622,7 +22363,7 @@ def dashboard_documentation(
                     section_options,
                 )
                 selected_sections_doc = st.multiselect(
-                    "Фильтр по виду раздела ПД",
+                    "Вид раздела",
                     options=section_options,
                     default=_sec_default,
                     key=f"{_doc_fk}section_filter_ms",
@@ -22646,7 +22387,7 @@ def dashboard_documentation(
                     section_options,
                 )
                 selected_sections_doc = st.multiselect(
-                    "Фильтр по разделу",
+                    "Раздел",
                     options=section_options,
                     default=_sec_default,
                     key=f"{_doc_fk}section_filter_ms",
@@ -22667,7 +22408,7 @@ def dashboard_documentation(
                     section_options,
                 )
                 selected_sections_doc = st.multiselect(
-                    "Фильтр по разделу",
+                    "Раздел",
                     options=section_options,
                     default=_sec_default,
                     key=f"{_doc_fk}section_filter_ms",
@@ -22706,11 +22447,7 @@ def dashboard_documentation(
         # R23-06 (стр.17): статус «Просрочено подрядчиком» — и для РД, и для ПД.
         if "Просрочено подрядчиком" not in rd_status_options:
             rd_status_options.append("Просрочено подрядчиком")
-        _status_label = (
-            "Фильтр по статусу ПД"
-            if page_title == "Проектная документация"
-            else "Фильтр по статусу РД"
-        )
+        _status_label = "Статус"
         if rd_status_options:
             selected_statuses = st.pills(
                 _status_label,
@@ -23859,7 +23596,7 @@ def dashboard_documentation(
                             }
                         )
                         sel_sec = st.multiselect(
-                            "Фильтр по разделу (шифр)",
+                            "Раздел (шифр)",
                             options=secs_sorted,
                             default=secs_sorted,
                             key=_doc_fk + "pd_tbl_sections",
@@ -23959,7 +23696,6 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
     - Цвет «Отклонение»: <0 — красный, >0 — зелёный (через `budget_table_to_html(deviation_red_if_negative=True)`).
     - Фильтр Проект (по умолчанию «Все»).
     """
-    st.header("Утверждённый бюджет план/факт")
     df = df.copy()
     from dashboards.finance_from_1c import (
         ensure_budget_frame_with_fallback,
@@ -24350,7 +24086,6 @@ def dashboard_budget_by_type(df):
     """
     _render_approved_budget_plan_fact(df)
     return
-    st.header("Бюджет план/факт")
     df = df.copy()
     from dashboards.finance_from_1c import ensure_budget_frame_with_fallback
 
@@ -24376,7 +24111,7 @@ def dashboard_budget_by_type(df):
         if "section" in df.columns:
             sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
             selected_section = st.selectbox(
-                "Фильтр по этапу", sections, key="budget_type_section"
+                "Этап", sections, key="budget_type_section"
             )
         else:
             selected_section = "Все"
@@ -24798,7 +24533,6 @@ def dashboard_budget_by_type(df):
 
 # ==================== DASHBOARD 8.1: Budget Old Charts ====================
 def dashboard_budget_old_charts(df):
-    st.header("БДДС (старые графики)")
 
     with filters_panel(st, reset_keys=["budget_old_period", "budget_old_project", "budget_old_section"]):
         col1, col2, col3 = st.columns(3)
@@ -24823,7 +24557,7 @@ def dashboard_budget_old_charts(df):
             if "section" in df.columns:
                 sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
                 selected_section = st.selectbox(
-                    "Фильтр по этапу", sections, key="budget_old_section"
+                    "Этап", sections, key="budget_old_section"
                 )
             else:
                 selected_section = "Все"
@@ -25693,7 +25427,6 @@ def calculate_approved_budget(df, rule_name="default"):
 
 def dashboard_approved_budget(df):
     """Панель для отображения утвержденного бюджета"""
-    st.header("Утвержденный бюджет")
     from dashboards.finance_from_1c import ensure_budget_frame_with_fallback
 
     df = df.copy()
@@ -25725,7 +25458,7 @@ def dashboard_approved_budget(df):
             if "section" in df.columns:
                 sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
                 selected_section = st.selectbox(
-                    "Фильтр по этапу", sections, key="approved_budget_section"
+                    "Этап", sections, key="approved_budget_section"
                 )
             else:
                 selected_section = "Все"
@@ -26575,7 +26308,6 @@ def _forecast_financier_status_table_html(df: pd.DataFrame) -> str:
 
 def dashboard_forecast_budget(df):
     """Панель «БДДС (утверждённый/прогнозный)» (ранее «Прогнозный бюджет»)."""
-    st.header("БДДС (утверждённый/прогнозный)")
     # Check English name first (alias created in load_data), then Russian
     project_col = None
     if "project name" in df.columns:
@@ -26648,86 +26380,13 @@ def dashboard_forecast_budget(df):
                 except Exception:
                     _mn_all_fc, _mx_all_fc = _def_sf, _def_st
 
-                _fkw_fc: dict = {
-                    "label": "С",
-                    "key": "forecast_bddcs_cal_from",
-                    "help": "Начало диапазона (по датам окончания плана MSP).",
-                    "format": "DD.MM.YYYY",
-                }
-                _tkw_fc: dict = {
-                    "label": "По",
-                    "key": "forecast_bddcs_cal_to",
-                    "help": "Конец диапазона (по датам окончания плана MSP).",
-                    "format": "DD.MM.YYYY",
-                }
-                if _def_sf and _def_st and _def_sf <= _def_st:
-                    _fkw_fc["value"] = _def_sf
-                    _tkw_fc["value"] = _def_st
-                    _fkw_fc["min_value"] = _mn_all_fc or _def_sf
-                    _fkw_fc["max_value"] = _mx_all_fc or _def_st
-                    _tkw_fc["min_value"] = _mn_all_fc or _def_sf
-                    _tkw_fc["max_value"] = _mx_all_fc or _def_st
-                fc_from_c, fc_to_c = st.columns(2)
-                with fc_from_c:
-                    _cf_in = st.date_input(**_fkw_fc)
-                with fc_to_c:
-                    _ct_in = st.date_input(**_tkw_fc)
-
-                components.html(
-                    """
-                    <script>
-                    (function() {
-                      const dict = new Map([
-                        ["January","Январь"],["February","Февраль"],["March","Март"],["April","Апрель"],
-                        ["May","Май"],["June","Июнь"],["July","Июль"],["August","Август"],
-                        ["September","Сентябрь"],["October","Октябрь"],["November","Ноябрь"],["December","Декабрь"],
-                        ["Mo","Пн"],["Tu","Вт"],["We","Ср"],["Th","Чт"],["Fr","Пт"],["Sa","Сб"],["Su","Вс"],
-                        ["None","Нет"]
-                      ]);
-                      const root = window.parent && window.parent.document ? window.parent.document : document;
-                      const shouldSkip = (el) => {
-                        if (!el || !el.tagName) return true;
-                        const t = el.tagName.toLowerCase();
-                        if (t === "script" || t === "style" || t === "textarea" || t === "input") return true;
-                        if (t === "svg" || t === "path") return true;
-                        if (el.isContentEditable) return true;
-                        return false;
-                      };
-                      const replaceInTextNode = (node) => {
-                        const raw = node.nodeValue || "";
-                        const txt = raw.trim();
-                        if (!txt) return;
-                        if (dict.has(txt)) {
-                          node.nodeValue = raw.replace(txt, dict.get(txt));
-                          return;
-                        }
-                        let next = raw;
-                        for (const [en, ru] of dict.entries()) {
-                          next = next.replace(new RegExp("\\b" + en + "\\b", "g"), ru);
-                        }
-                        if (next !== raw) node.nodeValue = next;
-                      };
-                      const apply = () => {
-                        const all = root.querySelectorAll("*");
-                        all.forEach((el) => {
-                          if (shouldSkip(el)) return;
-                          const childs = el.childNodes || [];
-                          for (let i = 0; i < childs.length; i++) {
-                            const n = childs[i];
-                            if (n && n.nodeType === Node.TEXT_NODE) replaceInTextNode(n);
-                          }
-                        });
-                      };
-                      apply();
-                      try {
-                        const obs = new MutationObserver(apply);
-                        if (root.body) obs.observe(root.body, { childList: true, subtree: true });
-                      } catch (e) {}
-                    })();
-                    </script>
-                    """,
-                    height=0,
-                    width=0,
+                _cf_in, _ct_in = period_date_range_input(
+                    st,
+                    "forecast_bddcs_cal_range",
+                    min_value=_mn_all_fc or _def_sf,
+                    max_value=_mx_all_fc or _def_st,
+                    default=(_def_sf, _def_st) if _def_sf and _def_st else None,
+                    help="Диапазон по датам окончания плана MSP.",
                 )
 
                 filtered_scope = _forecast_filter_rows_by_plan_end_range(
@@ -29451,7 +29110,6 @@ def dashboard_predpisania(df):
     Критичность — при теге «КРИТИЧНЫЙ» в Tessa_Teg (синонимы см. код); KindID вида «Предписания»
     проверяется только если поле в строке заполнено (иначе допускается — выборка уже по KindName).
     """
-    st.header("Неустраненные предписания")
     tessa_df = st.session_state.get("tessa_data", None)
     work = None
     _source_label = ""
@@ -29916,7 +29574,7 @@ def dashboard_predpisania(df):
                 min_issue = pred["_issue_date"].min().date()
                 max_issue = pred["_issue_date"].max().date()
                 issue_period = st.date_input(
-                    "Выбор периода выданных предписаний",
+                    "Период",
                     value=(min_issue, max_issue),
                     min_value=min_issue,
                     max_value=max_issue,
@@ -30830,7 +30488,6 @@ def dashboard_pravki_report_hidden(df):
 
 def dashboard_id_tessa_placeholder(df):
     """Служебный экран ИД/TESSA: показывает источник и наличие данных, без пустой заглушки."""
-    st.header("ИД/TESSA")
     tessa_df = st.session_state.get("tessa_data", None)
     work = None
     _source_label = ""
@@ -31061,7 +30718,6 @@ def dashboard_control_points(df):
     """
     Контрольные точки (MSP): матрица проектов × вехи по макету правок (скрин file-009).
     """
-    st.header("Контрольные точки")
     if df is None or df.empty:
         st.warning("Загрузите данные MSP (проект).")
         return
@@ -32430,7 +32086,6 @@ def dashboard_project_schedule_chart(df):
     _GANTT_MARKER_SCALE = 1.2
     _GANTT_STROKE_SCALE = 1.2
 
-    st.header("График проекта")
     if df is None or df.empty:
         st.warning("Загрузите данные MSP.")
         return

@@ -161,7 +161,6 @@ def _get_dashboards() -> Dict[str, Callable]:
     if dashboard_executive_documentation is None:
 
         def _stub_executive(df):
-            st.header("Исполнительная документация")
             st.info("Раздел в разработке.")
 
         dashboard_executive_documentation = _stub_executive
@@ -169,7 +168,6 @@ def _get_dashboards() -> Dict[str, Callable]:
     if dashboard_debit_credit is None:
 
         def _stub_debit(df):
-            st.header("Дебиторская и кредиторская задолженность подрядчиков")
             st.info("Загрузите файл с данными по задолженности подрядчиков.")
 
         dashboard_debit_credit = _stub_debit
@@ -184,7 +182,6 @@ def _get_dashboards() -> Dict[str, Callable]:
     if dashboard_control_points is None:
 
         def _stub_cp(df):
-            st.header("Контрольные точки")
             st.info("Модуль в разработке (правки 04.2026).")
 
         dashboard_control_points = _stub_cp
@@ -192,7 +189,6 @@ def _get_dashboards() -> Dict[str, Callable]:
     if dashboard_project_schedule_chart is None:
 
         def _stub_psc(df):
-            st.header("График проекта")
             st.info("Модуль в разработке (правки 04.2026).")
 
         dashboard_project_schedule_chart = _stub_psc

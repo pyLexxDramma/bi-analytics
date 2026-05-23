@@ -91,6 +91,38 @@ def _reset_button_key(keys: Sequence[str]) -> str:
     return "bi_filters_reset_" + hashlib.md5(raw.encode("utf-8")).hexdigest()[:12]
 
 
+_FILTERS_LAST_DASHBOARD_KEY = "_bi_filters_last_dashboard"
+
+
+def _filters_expander_session_key(
+    st: Any,
+    label: str,
+    reset_keys: Optional[Sequence[str]],
+    panel_key: Optional[str],
+) -> str:
+    if panel_key:
+        raw = str(panel_key)
+    elif reset_keys:
+        raw = "|".join(sorted(str(k) for k in reset_keys))
+    else:
+        raw = str(label or "Фильтры")
+    dash = ""
+    if hasattr(st, "session_state"):
+        dash = str(st.session_state.get("current_dashboard") or "").strip()
+    digest = hashlib.md5(f"{dash}|{raw}".encode("utf-8")).hexdigest()[:12]
+    return f"bi_filters_exp_{digest}"
+
+
+def _collapse_filters_expander_on_dashboard_open(st: Any, expander_key: str) -> None:
+    """При переходе на другой дашборд — блок «Фильтры» свёрнут."""
+    if not hasattr(st, "session_state"):
+        return
+    cur_dash = str(st.session_state.get("current_dashboard") or "")
+    if st.session_state.get(_FILTERS_LAST_DASHBOARD_KEY) != cur_dash:
+        st.session_state[_FILTERS_LAST_DASHBOARD_KEY] = cur_dash
+        st.session_state[expander_key] = False
+
+
 def reset_filter_widgets(st: Any, keys: Sequence[str]) -> None:
     """Сбросить значения виджетов по ключам session_state."""
     if not hasattr(st, "session_state"):
@@ -155,6 +187,7 @@ def filters_popover(
     *,
     active_count: int = 0,
     reset_keys: Optional[Sequence[str]] = None,
+    panel_key: Optional[str] = None,
 ) -> Generator[_FiltersPopoverHandle, None, None]:
     """
     Верхняя панель отчёта: чипы сверху, фильтры в свёрнутом expander, «Сбросить» внутри.
@@ -166,7 +199,9 @@ def filters_popover(
         pop_label = f"{pop_label} ({int(active_count)})"
     chip_slot = st.empty()
     handle = _FiltersPopoverHandle(st, chip_slot)
-    with st.expander(pop_label, expanded=False):
+    _exp_key = _filters_expander_session_key(st, pop_label, reset_keys, panel_key)
+    _collapse_filters_expander_on_dashboard_open(st, _exp_key)
+    with st.expander(pop_label, expanded=False, key=_exp_key):
         if reset_keys:
             _rb_col, _ = st.columns([1, 4])
             with _rb_col:
@@ -186,18 +221,105 @@ def filters_panel(
     title: str = "Фильтры",
     *,
     reset_keys: Optional[Sequence[str]] = None,
+    panel_key: Optional[str] = None,
 ) -> Generator[None, None, None]:
     """
     Совместимость: виджеты в ``filters_popover`` (без чипов).
     Новые отчёты с чипами — ``filters_popover`` напрямую.
     """
-    with filters_popover(st, label=title, reset_keys=reset_keys) as _fp:
+    with filters_popover(
+        st, label=title, reset_keys=reset_keys, panel_key=panel_key
+    ) as _fp:
         yield
         _fp.set_chips([])
 
 
 PROJECT_FILTER_PLACEHOLDER = "Все"
 PROJECT_FILTER_LABEL = "Проект"
+
+# Единые подписи фильтров (все дашборды)
+FILTER_PANEL_TITLE = "Фильтры"
+FILTER_RESET_LABEL = "Сбросить"
+FILTER_ALL = "Все"
+LABEL_PROJECT = "Проект"
+LABEL_BLOCK = "Функциональный блок"
+LABEL_BUILDING = "Строение"
+LABEL_CONTRACTOR = "Подрядчик"
+LABEL_COUNTERPARTY = "Контрагент"
+LABEL_STAGE = "Этап"
+LABEL_SECTION = "Раздел"
+LABEL_REASON = "Причина"
+LABEL_GROUP_BY = "Группировать по"
+LABEL_VIEW = "Представление"
+LABEL_PERIOD = "Период"
+LABEL_GRANULARITY = "Гранулярность"
+PERIOD_MODE_ALL_TIME = "Весь период (за всё время)"
+PERIOD_MODE_CUSTOM = "Выбор диапазона дат"
+
+
+def period_date_range_input(
+    st: Any,
+    key: str,
+    *,
+    min_value: Any,
+    max_value: Any,
+    default: Optional[Tuple[Any, Any]] = None,
+    label: str = LABEL_PERIOD,
+    help: Optional[str] = None,
+    date_format: str = "DD.MM.YYYY",
+) -> Tuple[Optional[Any], Optional[Any]]:
+    """
+    Единый фильтр периода: один ``st.date_input`` с календарём и выбором диапазона.
+    Возвращает (start, end) или (None, None), если даты недоступны.
+    """
+    if min_value is None or max_value is None:
+        return None, None
+    kw: dict = {
+        "label": label,
+        "min_value": min_value,
+        "max_value": max_value,
+        "key": key,
+        "format": date_format,
+    }
+    if default is not None and key not in getattr(st, "session_state", {}):
+        kw["value"] = default
+    dr = st.date_input(**kw, help=help)
+    if isinstance(dr, tuple) and len(dr) == 2:
+        return dr[0], dr[1]
+    if hasattr(dr, "year"):
+        return dr, dr
+    return None, None
+
+
+def period_mode_and_range(
+    st: Any,
+    *,
+    mode_key: str,
+    range_key: str,
+    min_value: Any,
+    max_value: Any,
+    default_range: Optional[Tuple[Any, Any]] = None,
+    label: str = LABEL_PERIOD,
+) -> Tuple[bool, Optional[Any], Optional[Any]]:
+    """
+    Режим «весь период» или календарный диапазон. Возвращает (all_time, start, end).
+    """
+    mode = st.selectbox(
+        label,
+        [PERIOD_MODE_ALL_TIME, PERIOD_MODE_CUSTOM],
+        key=mode_key,
+    )
+    if mode != PERIOD_MODE_CUSTOM:
+        return True, None, None
+    start, end = period_date_range_input(
+        st,
+        range_key,
+        min_value=min_value,
+        max_value=max_value,
+        default=default_range,
+        label="",
+    )
+    return False, start, end
 
 
 def migrate_project_multiselect_state(

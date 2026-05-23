@@ -216,7 +216,7 @@ def is_release_client_mode() -> bool:
 
     Используется:
     - ``project_visualization_app.py`` — скрытие dev-диагностики в UI.
-    - ``ignore_demo_data_files()`` — дефолт без демо на release, с демо на dev; admin может переключить в сайдбаре.
+    - ``ignore_demo_data_files()`` — демо ``new_csv/`` не подмешиваются.
     """
     if _env_truthy("BI_ANALYTICS_HIDE_DEV_DIAGNOSTICS"):
         return True
@@ -283,18 +283,13 @@ def get_ai_assistant_open_url() -> str:
 
 
 def default_include_demo_data() -> bool:
-    """Демо new_csv/ не используется (только явный BI_ANALYTICS_INCLUDE_DEMO=1)."""
-    return _env_truthy("BI_ANALYTICS_INCLUDE_DEMO")
+    """Демо-данные отключены — только выгрузки из web/."""
+    return False
 
 
 def ignore_demo_data_files() -> bool:
-    """
-    Не подмешивать демо: ``new_csv/``, ``sample_*.csv``, пути с ``…/new_csv/`` в web/.
-
-    По умолчанию **везде** (local, dev, release) — только реальные файлы из web/.
-    Исключение: ``BI_ANALYTICS_INCLUDE_DEMO=1`` для аварийной локальной отладки UI.
-    """
-    return not _env_truthy("BI_ANALYTICS_INCLUDE_DEMO")
+    """Не подмешивать ``new_csv/``, ``sample_*.csv`` и пути с ``…/new_csv/`` в web/."""
+    return True
 
 
 def web_load_latest_snapshots_only() -> bool:

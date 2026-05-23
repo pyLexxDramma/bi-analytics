@@ -1,5 +1,55 @@
 # -*- coding: utf-8 -*-
-"""Совместимость: раньше код жил здесь; сейчас реализация в ``ui_quiet`` (деплой без потерянного файла)."""
-from .ui_quiet import filters_panel, inject_unified_filters_css
+"""Совместимость: реализация фильтров в ``ui_quiet``."""
+from .ui_quiet import (
+    FILTER_ALL,
+    FILTER_PANEL_TITLE,
+    LABEL_BLOCK,
+    LABEL_BUILDING,
+    LABEL_CONTRACTOR,
+    LABEL_COUNTERPARTY,
+    LABEL_GRANULARITY,
+    LABEL_GROUP_BY,
+    LABEL_PERIOD,
+    LABEL_PROJECT,
+    LABEL_REASON,
+    LABEL_SECTION,
+    LABEL_STAGE,
+    LABEL_VIEW,
+    PERIOD_MODE_ALL_TIME,
+    PERIOD_MODE_CUSTOM,
+    PROJECT_FILTER_LABEL,
+    PROJECT_FILTER_PLACEHOLDER,
+    filters_panel,
+    filters_popover,
+    inject_unified_filters_css,
+    period_date_range_input,
+    period_mode_and_range,
+    project_filter_multiselect,
+)
 
-__all__ = ["filters_panel", "inject_unified_filters_css"]
+__all__ = [
+    "FILTER_ALL",
+    "FILTER_PANEL_TITLE",
+    "LABEL_BLOCK",
+    "LABEL_BUILDING",
+    "LABEL_CONTRACTOR",
+    "LABEL_COUNTERPARTY",
+    "LABEL_GRANULARITY",
+    "LABEL_GROUP_BY",
+    "LABEL_PERIOD",
+    "LABEL_PROJECT",
+    "LABEL_REASON",
+    "LABEL_SECTION",
+    "LABEL_STAGE",
+    "LABEL_VIEW",
+    "PERIOD_MODE_ALL_TIME",
+    "PERIOD_MODE_CUSTOM",
+    "PROJECT_FILTER_LABEL",
+    "PROJECT_FILTER_PLACEHOLDER",
+    "filters_panel",
+    "filters_popover",
+    "inject_unified_filters_css",
+    "period_date_range_input",
+    "period_mode_and_range",
+    "project_filter_multiselect",
+]
