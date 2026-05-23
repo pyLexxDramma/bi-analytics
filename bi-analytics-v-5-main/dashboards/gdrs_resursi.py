@@ -1075,6 +1075,8 @@ def _build_plan_lookup(plan: Optional[pd.DataFrame], plan_col: str) -> tuple[dic
 
 def _gdrs_dynamics_period_freq(agg_kind: str) -> str:
     k = str(agg_kind or "").strip().casefold()
+    if k == "день":
+        return "D"
     if k == "неделя":
         return "W"
     if k == "месяц":
@@ -1177,14 +1179,19 @@ def gdrs_dynamics_build_series(
     dyn["Период"] = dyn["bucket"].dt.strftime("%d.%m.%Y")
 
     plan_cache: dict = {}
-    plans: list[int] = []
     dyn_to = pd.Timestamp(date_to).normalize()
+    unique_snaps: list[pd.Timestamp] = []
     for bkt in dyn["bucket"]:
         snap = gdrs_dynamics_bucket_snapshot_end(bkt, agg_kind, dyn_to)
-        sk = pd.Timestamp(snap).normalize()
+        unique_snaps.append(pd.Timestamp(snap).normalize())
+    for sk in sorted(set(unique_snaps)):
         if sk not in plan_cache:
             plan_df = _load_plan(sk)
             plan_cache[sk] = _build_plan_lookup(plan_df, plan_col)
+    plans: list[int] = []
+    for bkt in dyn["bucket"]:
+        snap = gdrs_dynamics_bucket_snapshot_end(bkt, agg_kind, dyn_to)
+        sk = pd.Timestamp(snap).normalize()
         plans.append(gdrs_plan_sum_for_pairs(pairs, *plan_cache[sk]))
     dyn["План"] = plans
     return dyn
@@ -1199,7 +1206,10 @@ def gdrs_dynamics_bucket_snapshot_end(
     b = pd.Timestamp(bucket_start).normalize()
     end = pd.Timestamp(period_end).normalize()
     kind = str(agg_kind or "").strip().casefold()
-    if kind == "неделя":
+    if kind == "день":
+        # План из 1С не меняется ежедневно — snapshot на конец ISO-недели (иначе N загрузок JSON).
+        snap = pd.Timestamp(b.to_period("W").end_time).normalize()
+    elif kind == "неделя":
         snap = b + pd.Timedelta(days=6)
     elif kind == "месяц":
         snap = (b + pd.offsets.MonthEnd(0)).normalize()
@@ -1584,8 +1594,11 @@ def _skud_agg_per_pair(
 
 
 def gdrs_matrix_show_week_columns(plan_agg: str, skud_agg: str) -> bool:
-    """Колонки «1–6 неделя» только без фильтра агрегации (legacy); при «Среднее за месяц» / «N неделя» — скрыть."""
-    return False
+    """Колонки «1–6 неделя» — только при «Среднее за месяц» в фильтрах План и СКУД."""
+    return (
+        gdrs_agg_week_num(plan_agg) is None
+        and gdrs_agg_week_num(skud_agg) is None
+    )
 
 
 def build_main_table(
@@ -1605,6 +1618,7 @@ def build_main_table(
     article_pc_sets: Optional[dict[tuple[str, str], set[str]]] = None,
     plan_agg: str = GDRS_AGG_MONTH,
     skud_agg: str = GDRS_AGG_MONTH,
+    weekly_plan_by_week: Optional[dict[int, pd.DataFrame]] = None,
 ) -> pd.DataFrame:
     """Сборка главной таблицы (Скрин 11): Контрагент × недели × отклонение × дельта.
 
@@ -1710,10 +1724,31 @@ def build_main_table(
         else np.nan,
         axis=1,
     )
+    _show_week_cols = gdrs_matrix_show_week_columns(plan_agg, skud_agg)
+    _weekly_plan_lu: dict[int, tuple] = {}
+    if _show_week_cols and weekly_plan_by_week:
+        for _wn, _wp_df in weekly_plan_by_week.items():
+            if _wp_df is not None and not _wp_df.empty:
+                _weekly_plan_lu[int(_wn)] = _build_plan_lookup(_wp_df, plan_col)
     for w in ("w1", "w2", "w3", "w4", "w5", "w6"):
         rows[w] = rows[w].fillna(0.0).round(0)
-    for p in ("p1", "p2", "p3", "p4", "p5", "p6"):
-        rows[p] = rows["plan"].fillna(0.0).round(0)
+    for wi, pk in enumerate(("p1", "p2", "p3", "p4", "p5", "p6"), start=1):
+        if _show_week_cols and wi in _weekly_plan_lu:
+            _lu = _weekly_plan_lu[wi]
+            rows[pk] = rows.apply(
+                lambda r, _lookup=_lu: _lookup_plan(
+                    str(r.get("project_id", "")),
+                    str(r.get("contractor_id", "")),
+                    str(r.get("project_name", "")),
+                    str(r.get("contractor_name", "")),
+                    _lookup[0],
+                    _lookup[1],
+                    _lookup[2],
+                ),
+                axis=1,
+            ).astype(float).round(0)
+        else:
+            rows[pk] = rows["plan"].fillna(0.0).round(0)
     rows["row_kind"] = "row"
 
     if only_with_plan:
@@ -1750,12 +1785,12 @@ def build_main_table(
                 "w4": float(block["w4"].sum()),
                 "w5": float(block["w5"].sum()),
                 "w6": float(block["w6"].sum()),
-                "p1": plan_sum,
-                "p2": plan_sum,
-                "p3": plan_sum,
-                "p4": plan_sum,
-                "p5": plan_sum,
-                "p6": plan_sum,
+                "p1": float(block["p1"].sum()),
+                "p2": float(block["p2"].sum()),
+                "p3": float(block["p3"].sum()),
+                "p4": float(block["p4"].sum()),
+                "p5": float(block["p5"].sum()),
+                "p6": float(block["p6"].sum()),
                 "row_kind": "subtotal",
             }]
         )
@@ -1789,12 +1824,12 @@ def build_main_table(
             "w4": float(sub_only["w4"].sum()),
             "w5": float(sub_only["w5"].sum()),
             "w6": float(sub_only["w6"].sum()),
-            "p1": plan_total,
-            "p2": plan_total,
-            "p3": plan_total,
-            "p4": plan_total,
-            "p5": plan_total,
-            "p6": plan_total,
+            "p1": float(sub_only["p1"].sum()),
+            "p2": float(sub_only["p2"].sum()),
+            "p3": float(sub_only["p3"].sum()),
+            "p4": float(sub_only["p4"].sum()),
+            "p5": float(sub_only["p5"].sum()),
+            "p6": float(sub_only["p6"].sum()),
             "row_kind": "grand_total",
         }]
     )

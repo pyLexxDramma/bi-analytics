@@ -18556,7 +18556,33 @@ def _gdrs_plan_loader(dog_sig: tuple, spr_sig: tuple):
 _gdrs_fragment = getattr(st, "fragment", None)
 
 
-@(_gdrs_fragment if _gdrs_fragment else (lambda f: f))
+def _gdrs_dyn_nice_dtick(y_lo: float, y_hi: float, *, target_ticks: int = 5) -> float:
+    """Шаг делений оси Y по масштабу данных (меньший шаг — заметнее динамика)."""
+    import math
+
+    span = max(float(y_hi) - float(y_lo), 1.0)
+    raw = span / max(1, int(target_ticks))
+    if raw <= 0:
+        return 1.0
+    mag = 10 ** math.floor(math.log10(raw))
+    for mult in (1, 2, 2.5, 5, 10):
+        step = mult * mag
+        if span / step <= target_ticks + 1:
+            return float(step)
+    return float(raw)
+
+
+def _gdrs_dyn_y_range(series, *, pad_ratio: float = 0.14, min_pad: float = 8.0) -> list[float]:
+    vals = pd.to_numeric(series, errors="coerce").fillna(0.0)
+    if vals.empty:
+        return [0.0, 1.0]
+    y_lo = float(vals.min())
+    y_hi = float(vals.max())
+    y_span = max(y_hi - y_lo, 1.0)
+    y_pad = max(y_span * pad_ratio, min_pad)
+    return [max(0.0, y_lo - y_pad), y_hi + y_pad]
+
+
 def _gdrs_dynamics_chart_panel(
     fact_dyn,
     dyn_from_iso: str,
@@ -18576,17 +18602,14 @@ def _gdrs_dynamics_chart_panel(
     dyn_from = pd.Timestamp(dyn_from_iso)
     dyn_to = pd.Timestamp(dyn_to_iso)
     st.subheader(dyn_title)
-    _span_days = int((dyn_to - dyn_from).days) + 1
-    if _span_days <= 62:
-        _agg_default = 0
-    elif _span_days <= 800:
-        _agg_default = 1
-    else:
-        _agg_default = 2
+    _agg_options = ["День", "Неделя", "Месяц", "Год"]
+    _agg_key = f"gdrs_dyn_kind_{vid_locked or 'any'}"
+    _agg_default = 0
+    if _agg_key not in st.session_state or st.session_state[_agg_key] not in _agg_options:
+        st.session_state[_agg_key] = _agg_options[_agg_default]
     agg_kind = st.radio(
-        "Группировка", ["Неделя", "Месяц", "Год"], horizontal=True,
-        index=_agg_default,
-        key=f"gdrs_dyn_kind_{vid_locked or 'any'}",
+        "Группировка", _agg_options, horizontal=True,
+        key=_agg_key,
     )
     st.caption(
         f"По всем загруженным датам: **{dyn_from.strftime('%d.%m.%Y')} — "
@@ -18596,16 +18619,17 @@ def _gdrs_dynamics_chart_panel(
     uniq_pairs = fact_dyn[
         ["project_id", "project_name", "contractor_id", "contractor_name"]
     ].drop_duplicates()
-    dyn = gdrs_dynamics_build_series(
-        fact_dyn, dyn_from, dyn_to, agg_kind,
-        [], [], uniq_pairs, plan_col,
-        plan_aggregate_loader=_gdrs_plan_loader(dog_sig, spr_sig),
-        month_periods=month_periods,
-    )
+    with st.spinner("Строим график динамики…"):
+        dyn = gdrs_dynamics_build_series(
+            fact_dyn, dyn_from, dyn_to, agg_kind,
+            [], [], uniq_pairs, plan_col,
+            plan_aggregate_loader=_gdrs_plan_loader(dog_sig, spr_sig),
+            month_periods=month_periods,
+        )
     if len(dyn) < 2:
         st.warning(
             "Для выбранной группировки доступен только один период. "
-            "Переключите на «Неделя» или загрузите CSV за несколько месяцев."
+            "Переключите на «День» или «Неделя» или загрузите CSV за несколько месяцев."
         )
     try:
         _x = dyn["bucket"]
@@ -18622,6 +18646,7 @@ def _gdrs_dynamics_chart_panel(
             x=_x, y=dyn["План"], mode="lines+markers+text",
             line=dict(color="#29b6f6", width=2.5), marker=dict(size=7),
             name="План",
+            yaxis="y",
             text=[f"{int(v)}" for v in dyn["План"]],
             textposition="top center",
             textfont=dict(color="#29b6f6", size=_lbl_sz),
@@ -18632,6 +18657,7 @@ def _gdrs_dynamics_chart_panel(
             x=_x, y=dyn["Факт"], mode="lines+markers+text",
             line=dict(color="#ff8c2d", width=2.5), marker=dict(size=7),
             name="Факт",
+            yaxis="y2",
             text=[f"{int(f)}" for f in dyn["Факт"]],
             textposition="bottom center",
             textfont=dict(color="#ff8c2d", size=_lbl_sz),
@@ -18650,13 +18676,22 @@ def _gdrs_dynamics_chart_panel(
                 text=f"({_pct}%)",
                 showarrow=False,
                 xref="x",
-                yref="y",
+                yref="y2",
                 xanchor="center",
                 yanchor="top",
                 yshift=-18 if _n_pts <= 16 else -14,
                 font=dict(size=_ann_sz, color=_pct_color),
             )
         _chart_h = int(min(620, max(400, 36 * _n_pts)))
+        _plan_range = _gdrs_dyn_y_range(dyn["План"], pad_ratio=0.12, min_pad=12.0)
+        _fact_range = _gdrs_dyn_y_range(dyn["Факт"], pad_ratio=0.18, min_pad=6.0)
+        _plan_dtick = _gdrs_dyn_nice_dtick(_plan_range[0], _plan_range[1])
+        _fact_dtick = _gdrs_dyn_nice_dtick(_fact_range[0], _fact_range[1])
+        _x_dtick = None
+        if str(agg_kind).casefold() == "день":
+            _x_dtick = "D2"
+        elif str(agg_kind).casefold() == "неделя":
+            _x_dtick = "D7"
         fig.update_layout(
             title=f"Фактическое количество — {sel_vid.lower()} (ресурсы)",
             plot_bgcolor="rgba(0,0,0,0)",
@@ -18664,34 +18699,41 @@ def _gdrs_dynamics_chart_panel(
             font_color="#eee",
             xaxis_title=f"Период — {agg_kind.lower()}",
             height=_chart_h,
-            margin=dict(l=52, r=56, t=88, b=88),
+            margin=dict(l=56, r=72, t=88, b=88),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         )
-        _fact = dyn["Факт"].astype(float)
-        _plan = dyn["План"].astype(float)
-        _y_lo = float(min(_fact.min(), _plan.min()))
-        _y_hi = float(max(_fact.max(), _plan.max()))
-        _y_span = max(_y_hi - _y_lo, 1.0)
-        _y_pad = max(_y_span * 0.22, 24.0)
-        _y_range = [max(0.0, _y_lo - _y_pad), _y_hi + _y_pad]
         fig.update_layout(
             xaxis=dict(
                 type="date",
                 tickformat="%d.%m.%Y",
+                dtick=_x_dtick,
                 tickangle=-35 if len(dyn) > 6 else 0,
                 showgrid=True,
                 gridcolor="rgba(255,255,255,0.06)",
             ),
             yaxis=dict(
-                title="Количество (план и факт)",
-                range=_y_range,
+                title="План",
+                range=_plan_range,
+                dtick=_plan_dtick,
                 autorange=False,
                 showgrid=True,
                 gridcolor="rgba(255,255,255,0.08)",
             ),
+            yaxis2=dict(
+                title="Факт",
+                overlaying="y",
+                side="right",
+                range=_fact_range,
+                dtick=_fact_dtick,
+                autorange=False,
+                showgrid=False,
+            ),
         )
         fig = apply_chart_background(fig)
-        fig.update_layout(yaxis=dict(range=_y_range, autorange=False))
+        fig.update_layout(
+            yaxis=dict(range=_plan_range, autorange=False, dtick=_plan_dtick),
+            yaxis2=dict(range=_fact_range, autorange=False, dtick=_fact_dtick),
+        )
         st.plotly_chart(fig, use_container_width=True)
     except Exception as _e:
         st.warning(f"Plotly недоступен: {_e}")
@@ -18901,6 +18943,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         load_1c_dannye_article_maps,
         load_plan_aggregate,
         load_resursi_files,
+        week_end_in_filtered_fact,
     )
 
     web_dir = _Path(_root) / "web"
@@ -19038,6 +19081,26 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         _dog_sig, _spr_sig, pd.Timestamp(_plan_snap).normalize().isoformat(),
     )
 
+    _weekly_plan_by_week: dict[int, _pd.DataFrame] = {}
+    if gdrs_matrix_show_week_columns(_plan_agg, _skud_agg):
+        for _wn in range(1, 7):
+            _w_end = week_end_in_filtered_fact(
+                long_fact_period,
+                vid=sel_vid,
+                date_from=date_from,
+                date_to=date_to,
+                week_num=_wn,
+                projects=sel_projects or None,
+                contractors=sel_contractors or None,
+            )
+            if _w_end is None or not _pd.notna(_w_end):
+                continue
+            _weekly_plan_by_week[_wn] = _gdrs_cached_plan_aggregate(
+                _dog_sig,
+                _spr_sig,
+                _pd.Timestamp(_w_end).normalize().isoformat(),
+            )
+
     _dannye_paths: list[_Path] = []
     for _base in (web_dir, ai_dir):
         if _base.is_dir():
@@ -19062,6 +19125,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         article_pc_sets=_by_pc_sets if _by_pc_sets else None,
         plan_agg=_plan_agg,
         skud_agg=_skud_agg,
+        weekly_plan_by_week=_weekly_plan_by_week or None,
     )
     if main_t is None or main_t.empty:
         st.info("Нет данных для выбранных фильтров.")
