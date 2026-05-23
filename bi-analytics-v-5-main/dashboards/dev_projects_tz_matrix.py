@@ -2610,9 +2610,9 @@ _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS = """
   width:100vw!important;height:100vh!important;max-height:-webkit-fill-available!important;
   overflow:hidden!important;display:flex!important;flex-direction:column!important;
 }
-#matrix-fs-root:fullscreen .matrix-fs-body:not(.dev-tz-fs-body),
-#matrix-fs-root:-webkit-full-screen .matrix-fs-body:not(.dev-tz-fs-body),
-#matrix-fs-root:-moz-full-screen .matrix-fs-body:not(.dev-tz-fs-body){
+#matrix-fs-root:fullscreen .matrix-fs-body:not(.dev-tz-fs-body):not(.cp-body-stack),
+#matrix-fs-root:-webkit-full-screen .matrix-fs-body:not(.dev-tz-fs-body):not(.cp-body-stack),
+#matrix-fs-root:-moz-full-screen .matrix-fs-body:not(.dev-tz-fs-body):not(.cp-body-stack){
   flex:1 1 auto;min-height:0;overflow:hidden!important;
 }
 #matrix-fs-root:fullscreen .cp-table-wrap,
@@ -2629,34 +2629,44 @@ _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS = """
   box-sizing:border-box!important;display:flex!important;flex-direction:column!important;
   overflow:hidden!important;
 }
-#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body:not(.dev-tz-fs-body){
+#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body:not(.dev-tz-fs-body):not(.cp-body-stack){
   flex:1 1 auto;min-height:0;overflow:hidden!important;}
 #matrix-fs-root.matrix-fs-pseudo-on .cp-table-wrap{
   max-height:calc(100% - 48px)!important;overflow:auto!important;-webkit-overflow-scrolling:touch!important;
 }
-/* Контрольные точки: несколько таблиц в одном iframe, по центру в полноэкранном режиме */
-.cp-tables-stack{display:flex;flex-direction:column;align-items:center;gap:14px;width:100%;
+/* Контрольные точки: несколько таблиц в одном iframe */
+.cp-tables-stack{display:flex;flex-direction:column;align-items:stretch;gap:14px;width:100%;
   padding:0 6px 10px;box-sizing:border-box}
 .matrix-fs-body.cp-body-stack{overflow-x:hidden!important;overflow-y:auto!important;
   -webkit-overflow-scrolling:touch}
+/* Полноэкран — как «Девелоперские проекты»: 100% ширина, центр по вертикали (JS) */
 #matrix-fs-root:fullscreen .matrix-fs-body.cp-body-stack,
 #matrix-fs-root:-webkit-full-screen .matrix-fs-body.cp-body-stack,
 #matrix-fs-root:-moz-full-screen .matrix-fs-body.cp-body-stack,
-#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body.cp-body-stack{
-  display:flex!important;flex-direction:column!important;align-items:center!important;
-  overflow:auto!important;-webkit-overflow-scrolling:touch!important}
-#matrix-fs-root:fullscreen .cp-tables-stack,
-#matrix-fs-root:-webkit-full-screen .cp-tables-stack,
-#matrix-fs-root:-moz-full-screen .cp-tables-stack,
-#matrix-fs-root.matrix-fs-pseudo-on .cp-tables-stack{
-  align-items:center!important;width:100%!important;max-width:100%!important;
-  padding:12px 16px 24px!important}
-#matrix-fs-root:fullscreen .cp-tables-stack .cp-table-wrap,
-#matrix-fs-root:-webkit-full-screen .cp-tables-stack .cp-table-wrap,
-#matrix-fs-root:-moz-full-screen .cp-tables-stack .cp-table-wrap,
-#matrix-fs-root.matrix-fs-pseudo-on .cp-tables-stack .cp-table-wrap{
-  max-height:none!important;overflow-x:auto!important;overflow-y:visible!important;
-  width:max-content!important;max-width:min(100%,max-content)!important}
+#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body.cp-body-stack,
+#matrix-fs-pseudo-shell.dev-tz-fs-shell .matrix-fs-body.cp-body-stack{
+  position:relative!important;flex:1 1 auto!important;min-height:0!important;width:100%!important;
+  overflow:auto!important;-webkit-overflow-scrolling:touch!important;box-sizing:border-box!important}
+#matrix-fs-root:fullscreen .matrix-fs-body.cp-body-stack .cp-tables-stack,
+#matrix-fs-root:-webkit-full-screen .matrix-fs-body.cp-body-stack .cp-tables-stack,
+#matrix-fs-root:-moz-full-screen .matrix-fs-body.cp-body-stack .cp-tables-stack,
+#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body.cp-body-stack .cp-tables-stack,
+#matrix-fs-pseudo-shell.dev-tz-fs-shell .cp-tables-stack{
+  width:100%!important;max-width:100%!important;min-width:0!important;margin-left:0!important;margin-right:0!important;
+  box-sizing:border-box!important;align-items:stretch!important;padding-left:0!important;padding-right:0!important}
+#matrix-fs-root:fullscreen .matrix-fs-body.cp-body-stack .cp-table-wrap,
+#matrix-fs-root:-webkit-full-screen .matrix-fs-body.cp-body-stack .cp-table-wrap,
+#matrix-fs-root:-moz-full-screen .matrix-fs-body.cp-body-stack .cp-table-wrap,
+#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body.cp-body-stack .cp-table-wrap,
+#matrix-fs-pseudo-shell.dev-tz-fs-shell .cp-table-wrap{
+  width:100%!important;max-width:100%!important;min-width:0!important;margin-left:0!important;margin-right:0!important;
+  box-sizing:border-box!important;overflow-x:auto!important;overflow-y:visible!important;max-height:none!important}
+#matrix-fs-root:fullscreen .matrix-fs-body.cp-body-stack .cp-table-wrap table.rendered-table,
+#matrix-fs-root:-webkit-full-screen .matrix-fs-body.cp-body-stack .cp-table-wrap table.rendered-table,
+#matrix-fs-root:-moz-full-screen .matrix-fs-body.cp-body-stack .cp-table-wrap table.rendered-table,
+#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body.cp-body-stack .cp-table-wrap table.rendered-table,
+#matrix-fs-pseudo-shell.dev-tz-fs-shell .cp-table-wrap table.rendered-table{
+  width:100%!important;min-width:100%!important;max-width:100%!important}
 /* Девелоперские проекты: полноэкран — ширина 100% (вертикальный центр через JS margin-top) */
 #matrix-fs-root:fullscreen .matrix-fs-body.dev-tz-fs-body,
 #matrix-fs-root:-webkit-full-screen .matrix-fs-body.dev-tz-fs-body,
@@ -2699,6 +2709,65 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
   var pseudoShell=null;
   var prevParentOverflow="";
   var prevIframeOverflow="";
+  var MATRIX_FS_WIDE_SEL=".matrix-fs-body.dev-tz-fs-body,.matrix-fs-body.cp-body-stack";
+
+  function matrixFsWideBody(el){
+    return !!(el&&el.classList&&(el.classList.contains("dev-tz-fs-body")||el.classList.contains("cp-body-stack")));
+  }
+
+  function matrixFsFindWrap(scrollEl){
+    if(!scrollEl) return null;
+    return scrollEl.querySelector(".dev-tz-matrix-wrap")
+      ||scrollEl.querySelector(".cp-tables-stack")
+      ||scrollEl.querySelector(".cp-table-wrap");
+  }
+
+  function matrixFsStyleTable(tbl){
+    if(!tbl) return;
+    devTzSetImp(tbl,"width","100%");
+    devTzSetImp(tbl,"min-width","100%");
+    devTzSetImp(tbl,"max-width","100%");
+  }
+
+  function matrixFsStyleWrap(w){
+    if(!w) return;
+    devTzSetImp(w,"width","100%");
+    devTzSetImp(w,"max-width","100%");
+    devTzSetImp(w,"min-width","0");
+    devTzSetImp(w,"box-sizing","border-box");
+    devTzSetImp(w,"margin-left","0");
+    devTzSetImp(w,"margin-right","0");
+  }
+
+  function matrixFsApplyWrapStyles(wrap){
+    if(!wrap) return;
+    matrixFsStyleWrap(wrap);
+    if(wrap.classList&&wrap.classList.contains("cp-tables-stack")){
+      var blocks=wrap.querySelectorAll(".cp-table-wrap");
+      for(var i=0;i<blocks.length;i++){
+        matrixFsStyleWrap(blocks[i]);
+        matrixFsStyleTable(blocks[i].querySelector("table"));
+      }
+    }else{
+      matrixFsStyleTable(wrap.querySelector("table"));
+    }
+  }
+
+  function matrixFsResetWrapStyles(scrollEl){
+    if(!scrollEl) return;
+    var wraps=scrollEl.querySelectorAll(".dev-tz-matrix-wrap,.cp-tables-stack,.cp-table-wrap");
+    for(var i=0;i<wraps.length;i++){
+      wraps[i].removeAttribute("style");
+      var tbls=wraps[i].querySelectorAll("table");
+      for(var j=0;j<tbls.length;j++){tbls[j].removeAttribute("style");}
+    }
+  }
+
+  function matrixFsWideBodyEl(scope){
+    scope=scope||root;
+    if(!scope||!scope.querySelector) return null;
+    return scope.querySelector(MATRIX_FS_WIDE_SEL);
+  }
 
   function injectParentHeadStyles(doc){
     if(!doc||!doc.head) return;
@@ -2733,6 +2802,17 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
       +"#matrix-fs-pseudo-shell.dev-tz-fs-shell table.rendered-table.dev-tz-wide{"
       +"width:100%!important;min-width:100%!important;max-width:100%!important;"
       +"table-layout:auto!important}"
+      +"#matrix-fs-pseudo-shell.dev-tz-fs-shell .matrix-fs-body.cp-body-stack{"
+      +"position:relative!important;width:100%!important;flex:1 1 auto!important;min-height:0!important;"
+      +"overflow:auto!important;-webkit-overflow-scrolling:touch!important;box-sizing:border-box!important}"
+      +"#matrix-fs-pseudo-shell.dev-tz-fs-shell .cp-tables-stack{"
+      +"width:100%!important;max-width:100%!important;min-width:0!important;margin-left:0!important;margin-right:0!important;"
+      +"box-sizing:border-box!important;align-items:stretch!important}"
+      +"#matrix-fs-pseudo-shell.dev-tz-fs-shell .cp-table-wrap{"
+      +"width:100%!important;max-width:100%!important;min-width:0!important;margin-left:0!important;margin-right:0!important;"
+      +"box-sizing:border-box!important;overflow-x:auto!important;overflow-y:visible!important}"
+      +"#matrix-fs-pseudo-shell.dev-tz-fs-shell .cp-table-wrap table.rendered-table{"
+      +"width:100%!important;min-width:100%!important;max-width:100%!important;table-layout:auto!important}"
     );
     doc.head.appendChild(ds);
   }
@@ -2760,7 +2840,7 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
       document.body.style.overflow=prevIframeOverflow;
     }catch(e2){}
     root.classList.remove("matrix-fs-pseudo-on");
-    var bodyEl=root.querySelector(".matrix-fs-body.dev-tz-fs-body");
+    var bodyEl=matrixFsWideBodyEl();
     if(bodyEl){devTzResetFsLayout(bodyEl);}
     else{devTzReflowIframe();}
     requestAnimationFrame(devTzReflowIframe);
@@ -2770,7 +2850,7 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
   }
 
   function devTzWrapHtml(bodyEl){
-    var wrap=bodyEl.querySelector(".dev-tz-matrix-wrap");
+    var wrap=matrixFsFindWrap(bodyEl);
     return wrap?wrap.outerHTML:bodyEl.innerHTML;
   }
 
@@ -2798,7 +2878,7 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
   function devTzMeasureIframeHeight(){
     var root=document.getElementById("matrix-fs-root");
     if(!root) return 0;
-    var wrap=root.querySelector(".dev-tz-matrix-wrap");
+    var wrap=root.querySelector(".dev-tz-matrix-wrap,.cp-tables-stack,.cp-table-wrap");
     if(!wrap){
       return Math.ceil(root.getBoundingClientRect().height||0);
     }
@@ -2838,11 +2918,9 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
       try{window.removeEventListener("resize",scrollEl.__devTzFsResizeHandler);}catch(e){}
       scrollEl.__devTzFsResizeHandler=null;
     }
-    var wrap=scrollEl.querySelector(".dev-tz-matrix-wrap");
+    var wrap=matrixFsFindWrap(scrollEl);
     if(wrap){
-      wrap.removeAttribute("style");
-      var tbl=wrap.querySelector("table");
-      if(tbl){tbl.removeAttribute("style");}
+      matrixFsResetWrapStyles(scrollEl);
     }
     scrollEl.removeAttribute("style");
     scrollEl.__devTzFsFitBound=false;
@@ -2857,19 +2935,9 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
   function devTzApplyFsLayout(scrollEl,shellEl,toolbarEl,win){
     if(!scrollEl) return;
     win=win||window;
-    var wrap=scrollEl.querySelector(".dev-tz-matrix-wrap");
+    var wrap=matrixFsFindWrap(scrollEl);
     if(!wrap) return;
-    devTzSetImp(wrap,"width","100%");
-    devTzSetImp(wrap,"max-width","100%");
-    devTzSetImp(wrap,"box-sizing","border-box");
-    devTzSetImp(wrap,"margin-left","0");
-    devTzSetImp(wrap,"margin-right","0");
-    var tbl=wrap.querySelector("table");
-    if(tbl){
-      devTzSetImp(tbl,"width","100%");
-      devTzSetImp(tbl,"min-width","100%");
-      devTzSetImp(tbl,"max-width","100%");
-    }
+    matrixFsApplyWrapStyles(wrap);
     devTzSetImp(scrollEl,"position","relative");
     devTzSetImp(scrollEl,"width","100%");
     devTzSetImp(scrollEl,"box-sizing","border-box");
@@ -2931,8 +2999,8 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
     if(!doc||!doc.body||!bodyEl){enterPseudoIframe();return;}
     pseudoShell=doc.createElement("div");
     pseudoShell.id="matrix-fs-pseudo-shell";
-    var _devFs=bodyEl.classList.contains("dev-tz-fs-body");
-    if(_devFs){pseudoShell.classList.add("dev-tz-fs-shell");}
+    var _wideFs=matrixFsWideBody(bodyEl);
+    if(_wideFs){pseudoShell.classList.add("dev-tz-fs-shell");}
     pseudoShell.setAttribute("style",
       "position:fixed!important;z-index:2147483646!important;left:0!important;top:0!important;right:0!important;bottom:0!important;"
       +"width:100%!important;height:100%!important;max-height:-webkit-fill-available!important;"
@@ -2954,13 +3022,13 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
     var scroll=doc.createElement("div");
     scroll.className=bodyEl.className||"";
     scroll.setAttribute("style","flex:1 1 auto;min-height:0;overflow:auto;width:100%;box-sizing:border-box;position:relative;");
-    scroll.innerHTML=_devFs?devTzWrapHtml(bodyEl):bodyEl.innerHTML;
+    scroll.innerHTML=_wideFs?devTzWrapHtml(bodyEl):bodyEl.innerHTML;
     pseudoShell.appendChild(tb);
     pseudoShell.appendChild(scroll);
     prevParentOverflow=doc.body.style.overflow||"";
     doc.body.appendChild(pseudoShell);
     doc.body.style.overflow="hidden";
-    if(_devFs){devTzApplyFsLayout(scroll,pseudoShell,tb,doc.defaultView||window);}
+    if(_wideFs){devTzApplyFsLayout(scroll,pseudoShell,tb,doc.defaultView||window);}
     sync();
   }
 
@@ -2990,14 +3058,14 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
       "\\u0412\\u044b\\u0439\\u0442\\u0438 \\u0438\\u0437 \\u043f\\u043e\\u043b\\u043d\\u043e\\u044d\\u043a\\u0440\\u0430\\u043d\\u043d\\u043e\\u0433\\u043e \\u0440\\u0435\\u0436\\u0438\\u043c\\u0430":
       "\\u041d\\u0430 \\u0432\\u0435\\u0441\\u044c \\u044d\\u043a\\u0440\\u0430\\u043d");
     if(on&&!pseudoShell){
-      var bodyEl=root.querySelector(".matrix-fs-body.dev-tz-fs-body");
+      var bodyEl=matrixFsWideBodyEl();
       if(bodyEl){
         requestAnimationFrame(function(){
           devTzApplyFsLayout(bodyEl,root,root.querySelector(".matrix-fs-topbar"),window);
         });
       }
     }else if(on&&pseudoShell){
-      var pScroll=pseudoShell.querySelector(".matrix-fs-body.dev-tz-fs-body");
+      var pScroll=matrixFsWideBodyEl(pseudoShell);
       var pTb=pseudoShell.firstElementChild;
       if(pScroll){
         requestAnimationFrame(function(){
@@ -3006,7 +3074,7 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
         });
       }
     }else{
-      var offBody=root.querySelector(".matrix-fs-body.dev-tz-fs-body");
+      var offBody=matrixFsWideBodyEl();
       if(offBody){devTzResetFsLayout(offBody);}
     }
   }
@@ -3048,7 +3116,7 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
 
   function onFsChange(){
     if(!activeNative()&&!isPseudo()){
-      var bodyEl=root.querySelector(".matrix-fs-body.dev-tz-fs-body");
+      var bodyEl=matrixFsWideBodyEl();
       if(bodyEl){devTzResetFsLayout(bodyEl);}
     }
     sync();
