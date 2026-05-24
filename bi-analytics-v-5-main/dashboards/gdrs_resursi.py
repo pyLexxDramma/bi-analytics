@@ -2340,7 +2340,7 @@ def render_gdrs_matrix_table_html(
     return (
         f'<div id="{wid}" class="gdrs-table-wrap">'
         + _gdrs_matrix_table_css(wid)
-        + '<table class="gdrs-matrix-table"><thead>'
+        + '<table class="gdrs-matrix-table bi-sortable-table"><thead>'
         + "".join(thead_parts)
         + "</thead><tbody>"
         + body

@@ -321,16 +321,79 @@ def _render_html_table(
                     parts.append(f'<td class="{cls.strip()}">{esc}</td>')
             parts.append("</tr>")
         parts.append("</tbody></table></div>")
-        st.markdown(_TABLE_CSS + "".join(parts), unsafe_allow_html=True)
+        render_report_html_table(
+            _TABLE_CSS + "".join(parts),
+            export_df=df,
+            file_stem="table_export",
+            key_prefix=f"html_tbl_{abs(id(df))}",
+        )
     else:
         html = show.to_html(index=False, classes="rendered-table bi-sortable-table", escape=True, border=0)
-        st.markdown(_TABLE_CSS + '<div class="rendered-table-wrap">' + html + "</div>",
-                    unsafe_allow_html=True)
+        render_report_html_table(
+            _TABLE_CSS + '<div class="rendered-table-wrap">' + html + "</div>",
+            export_df=df,
+            file_stem="table_export",
+            key_prefix=f"html_tbl_{abs(id(df))}",
+        )
     if len(df) > max_rows:
         with st.expander("Ограничение отображения таблицы", expanded=False):
             suppress_caption(
                 f"Показано {max_rows} из {len(df)} записей. Скачайте CSV или Excel для полных данных."
             )
+
+
+def _render_budget_table_html(
+    df: pd.DataFrame,
+    *,
+    file_stem: str | None = None,
+    key_prefix: str | None = None,
+    **kwargs,
+) -> None:
+    from utils import _export_file_stem
+
+    stem = file_stem or (
+        _export_file_stem(kwargs.get("table_caption"))
+        if kwargs.get("table_caption")
+        else "budget_table"
+    )
+    kp = key_prefix or f"budget_{stem}_{abs(id(df))}"
+    render_report_html_table(
+        budget_table_to_html(df, **kwargs),
+        export_df=df,
+        file_stem=stem,
+        key_prefix=kp,
+    )
+
+
+def _render_format_dataframe_html(
+    df: pd.DataFrame,
+    *,
+    file_stem: str = "table_export",
+    key_prefix: str | None = None,
+    **kwargs,
+) -> None:
+    render_report_html_table(
+        format_dataframe_as_html(df, **kwargs),
+        export_df=df,
+        file_stem=file_stem,
+        key_prefix=key_prefix or f"fmt_tbl_{file_stem}_{abs(id(df))}",
+    )
+
+
+def _render_styled_table_report(
+    styler,
+    export_df: pd.DataFrame,
+    *,
+    file_stem: str = "table_export",
+    key_prefix: str | None = None,
+    hide_index: bool = True,
+) -> None:
+    render_report_html_table(
+        render_styled_table_to_html(styler, hide_index=hide_index),
+        export_df=export_df,
+        file_stem=file_stem,
+        key_prefix=key_prefix or f"sty_tbl_{file_stem}_{abs(id(export_df))}",
+    )
 
 
 def _plan_fact_dates_col_css_class(col: str) -> str:
@@ -475,12 +538,12 @@ def _render_plan_fact_dates_main_table(display_df: pd.DataFrame, numeric_df: pd.
             parts.append(f'<td class="{cls}"{sort_attr}{align}>{cell}</td>')
         parts.append("</tr>")
     parts.append("</tbody></table></div>")
-    try:
-        from dashboards.table_sort_inject import render_sortable_html_block
-
-        render_sortable_html_block(_TABLE_CSS + mark_html_table_sortable("".join(parts)))
-    except Exception:
-        st.markdown(_TABLE_CSS + mark_html_table_sortable("".join(parts)), unsafe_allow_html=True)
+    render_report_html_table(
+        _TABLE_CSS + mark_html_table_sortable("".join(parts)),
+        export_df=display_df,
+        file_stem="plan_fact_dates",
+        key_prefix=f"pf_dates_{abs(id(display_df))}",
+    )
 
 
 def _parse_gantt_dev_days_display(v):
@@ -605,12 +668,12 @@ def _render_gantt_schedule_html_table(
             parts.append(f"<td{sort_attr}{align}>{cell}</td>")
         parts.append("</tr>")
     parts.append("</tbody></table></div>")
-    try:
-        from dashboards.table_sort_inject import render_sortable_html_block
-
-        render_sortable_html_block(_TABLE_CSS + mark_html_table_sortable("".join(parts)))
-    except Exception:
-        st.markdown(_TABLE_CSS + mark_html_table_sortable("".join(parts)), unsafe_allow_html=True)
+    render_report_html_table(
+        _TABLE_CSS + mark_html_table_sortable("".join(parts)),
+        export_df=display_df,
+        file_stem="gantt_schedule",
+        key_prefix=f"gantt_tbl_{abs(id(display_df))}",
+    )
     if len(display_df) > max_rows:
         suppress_caption(
             f"Показано {max_rows} из {len(display_df)} записей. "
@@ -647,6 +710,8 @@ from utils import (
     budget_table_to_html,
     norm_partner_join_key,
     render_dataframe_excel_csv_downloads,
+    render_report_html_table,
+    _export_file_stem,
     dataframe_to_csv_bytes_for_excel,
     dataframe_to_xlsx_bytes,
     sanitize_display_label,
@@ -1698,11 +1763,10 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
 
     parts.append("</tbody></table></div>")
     st.markdown(f"**Записей:** {len(rows_out)}")
-    st.markdown(_DEV_REASONS_FULL_TABLE_CSS + "".join(parts), unsafe_allow_html=True)
-
     out_df = pd.DataFrame(rows_out, columns=headers)
-    render_dataframe_excel_csv_downloads(
-        out_df,
+    render_report_html_table(
+        _DEV_REASONS_FULL_TABLE_CSS + "".join(parts),
+        export_df=out_df,
         file_stem="deviations_detail",
         key_prefix="devtable_detail",
     )
@@ -5968,17 +6032,17 @@ def render_plan_fact_zos_covenant_table(
         er["Отклонение"] = zr.get("_zos_dev")
         export_rows.append(er)
     parts.append("</tbody></table></div>")
-    st.markdown(_TABLE_CSS + "".join(parts), unsafe_allow_html=True)
+    _zos_export = pd.DataFrame(export_rows)
+    render_report_html_table(
+        _TABLE_CSS + "".join(parts),
+        export_df=_zos_export,
+        file_stem="zos_covenant_plan_fact",
+        key_prefix="zos_covenant_table",
+    )
     suppress_caption(
         f"ЗОС: {len(sub)} "
         + ("проект(ов)" if show_proj and len(sub) > 1 else "задача")
         + ". Отклонение = базовое окончание − окончание (дней)."
-    )
-    render_dataframe_excel_csv_downloads(
-        pd.DataFrame(export_rows),
-        file_stem="zos_covenant_plan_fact",
-        key_prefix="zos_covenant_table",
-        csv_label="Скачать CSV (ЗОС)",
     )
 
 
@@ -10313,17 +10377,14 @@ def dashboard_budget_by_period(df):
             }
             table_display = _bdc_fmt.rename(columns=_rename_tbl)
 
-            st.markdown(
-                budget_table_to_html(
+            _render_budget_table_html(
                     table_display,
                     finance_deviation_column=_bdds_dev_tbl,
                     deviation_red_if_negative=True,
                     row_kind_column="_row_kind",
                     emphasize_row_kinds=("project", "total"),
                     **_BDDS_TABLE_HTML_KW,
-                ),
-                unsafe_allow_html=True,
-            )
+                )
 
     _budget_period_chart()
 
@@ -10347,16 +10408,13 @@ def dashboard_budget_by_period(df):
                     except Exception:
                         pass
                 render_table_subheader(st, _pf_title)
-                st.markdown(
-                    budget_table_to_html(
+                _render_budget_table_html(
                         _pf_tbl,
                         finance_deviation_column=None,
                         row_kind_column="_row_kind",
                         emphasize_row_kinds=("project", "total"),
                         **_pf_kw,
-                    ),
-                    unsafe_allow_html=True,
-                )
+                    )
         except Exception as _pf_exc:
             st.error(
                 f"Ошибка при построении таблицы «План-фактный анализ» по проекту {_pf_proj}: {_pf_exc}"
@@ -10403,17 +10461,14 @@ def dashboard_budget_by_period(df):
                 ]
             )
             _proj_tbl = pd.concat([_proj_tbl, _total_row], ignore_index=True)
-        st.markdown(
-            budget_table_to_html(
+        _render_budget_table_html(
                 _proj_tbl,
                 finance_deviation_column="Отклонение, млн. руб.",
                 deviation_red_if_negative=True,
                 row_kind_column="_row_kind",
                 emphasize_row_kinds=("total",),
                 **_BDDS_TABLE_HTML_KW,
-            ),
-            unsafe_allow_html=True,
-        )
+            )
 
     render_quality_hints(_bdds_q_hints)
 
@@ -10618,15 +10673,12 @@ def dashboard_budget_cumulative(df):
     tbl_period_disp = tbl_period_disp.rename(columns=ren_p)
     if period_col in tbl_period_disp.columns:
         tbl_period_disp = tbl_period_disp.rename(columns={period_col: period_label})
-    st.markdown(
-        budget_table_to_html(
+    _render_budget_table_html(
             tbl_period_disp,
             finance_deviation_column="Отклонение (факт − план), млн. руб.",
             deviation_red_if_negative=True,
             **_FINANCE_TABLE_HTML_KW,
-        ),
-        unsafe_allow_html=True,
-    )
+        )
 
     # --- Накопительные ряды для графика (по выбранному проекту или сумма по всем)
     bs = _sort_period_df(budget_summary.copy())
@@ -10801,15 +10853,12 @@ def dashboard_budget_cumulative(df):
             "reserve_cum": "Отклонение (факт − план, накоп.), млн. руб.",
         }
     )
-    st.markdown(
-        budget_table_to_html(
+    _render_budget_table_html(
             tbl_c,
             finance_deviation_column="Отклонение (факт − план, накоп.), млн. руб.",
             deviation_red_if_negative=True,
             **_FINANCE_TABLE_HTML_KW,
-        ),
-        unsafe_allow_html=True,
-    )
+        )
     render_quality_hints(_bcc_q_hints)
 
 
@@ -11069,14 +11118,11 @@ def dashboard_budget_by_section(df):
         "budget fact": "Бюджет Факт, млн руб.",
         "reserve budget": "Отклонение, млн руб.",
     })
-    st.markdown(
-        budget_table_to_html(
+    _render_budget_table_html(
             table_section,
             finance_deviation_column="Отклонение, млн руб.",
             deviation_red_if_negative=True,
-        ),
-        unsafe_allow_html=True,
-    )
+        )
     render_quality_hints(_bss_q_hints)
 
 
@@ -11902,17 +11948,14 @@ def dashboard_bdr(df):
                 }
             )
             _bdr_tz_dev_col = "Отклонение, млн. руб."
-            st.markdown(
-                budget_table_to_html(
+            _render_budget_table_html(
                     tbl_disp,
                     row_kind_column="__rk",
                     finance_deviation_column=_bdr_tz_dev_col,
                     deviation_red_if_negative=True,
                     emphasize_row_kinds=("project", "total"),
                     **_BDR_TABLE_HTML_KW,
-                ),
-                unsafe_allow_html=True,
-            )
+                )
             return
 
         if view_type == "Накопительно":
@@ -12115,14 +12158,11 @@ def dashboard_bdr(df):
             "Расходы": "Расходы, млн. руб.",
             "Сальдо": "Сальдо, млн. руб.",
         })
-        st.markdown(
-            budget_table_to_html(
+        _render_budget_table_html(
                 display_df,
                 finance_deviation_column="Сальдо, млн. руб.",
                 **_BDR_TABLE_HTML_KW,
-            ),
-            unsafe_allow_html=True,
-        )
+            )
 
     _bdr_chart()
 
@@ -12146,15 +12186,12 @@ def dashboard_bdr(df):
             suppress_caption(
                 "План/факт расходов и отклонение (факт минус план) по проекту за выбранные фильтры."
             )
-            st.markdown(
-                budget_table_to_html(
+            _render_budget_table_html(
                     proj_tbl,
                     finance_deviation_column="Отклонение, млн. руб.",
                     deviation_red_if_negative=True,
                     **_BDR_TABLE_HTML_KW,
-                ),
-                unsafe_allow_html=True,
-            )
+                )
         else:
             by_p = (
                 filtered_df.groupby("project name", dropna=False)
@@ -12173,14 +12210,11 @@ def dashboard_bdr(df):
             suppress_caption(
                 "Колонка «Сальдо» — доходы минус расходы по проекту за выбранные фильтры."
             )
-            st.markdown(
-                budget_table_to_html(
+            _render_budget_table_html(
                     proj_tbl,
                     finance_deviation_column="Сальдо, млн. руб.",
                     **_BDR_TABLE_HTML_KW,
-                ),
-                unsafe_allow_html=True,
-            )
+                )
 
     render_quality_hints(_bdr_q_hints)
 
@@ -12896,7 +12930,7 @@ def _rd_plan_fallback_view(
             detail_show[c] = detail_show[c].replace({"": "—"})
 
     render_table_subheader(st, "Детальная таблица")
-    st.dataframe(detail_show, hide_index=True, use_container_width=True)
+    _render_html_table(detail_show)
     return True
 
 
@@ -14034,8 +14068,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             elif detail_table.empty:
                 st.info("Нет данных для детальной таблицы.")
             else:
-                st.markdown(format_dataframe_as_html(detail_table), unsafe_allow_html=True)
-                render_dataframe_excel_csv_downloads(
+                _render_format_dataframe_html(
                     detail_table,
                     file_stem="rd_delay_detail",
                     key_prefix="rd_delay_detail",
@@ -14059,8 +14092,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         #     summary_table,
         #     days_column=dev_col,
         # ))
-        st.markdown(format_dataframe_as_html(summary_table), unsafe_allow_html=True)
-        render_dataframe_excel_csv_downloads(
+        _render_format_dataframe_html(
             summary_table,
             file_stem="rd_delay_summary",
             key_prefix="rd_delay_summary",
@@ -15611,15 +15643,12 @@ def dashboard_technique(df):
                 display_df["Отклонение"] = display_df["Отклонение"].apply(
                     lambda x: int(round(x, 0)) if pd.notna(x) else 0
                 )
-                st.markdown(
-                    budget_table_to_html(
+                _render_budget_table_html(
                         display_df,
                         finance_deviation_column="Отклонение",
                         deviation_red_if_positive_only=True,
                         
-                    ),
-                    unsafe_allow_html=True,
-                )
+                    )
 
         # ========== Chart 2: Bar Chart by Contractor (Plan, Fact, Отклонение) ==========
         st.subheader(
@@ -15882,10 +15911,7 @@ def dashboard_technique(df):
             lambda x: f"{int(x)}" if pd.notna(x) else "0"
         )
 
-        st.markdown(
-            budget_table_to_html(summary_table, finance_deviation_column="Отклонение"),
-            unsafe_allow_html=True,
-        )
+        _render_budget_table_html(summary_table, finance_deviation_column="Отклонение")
 
         # Summary metrics
         col1, col2, col3 = st.columns(3)
@@ -17418,7 +17444,8 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
 
             from dashboards.gdrs_resursi import render_gdrs_matrix_table_html as _gdrs_mtx_html
 
-            st.markdown(
+            _ref_export = _view[_show_cols].copy()
+            render_report_html_table(
                 _gdrs_mtx_html(
                     _view[_render_cols],
                     fixed_cols=["Контрагент", "Вид работы", "План", "СКУД", "Отклонение"],
@@ -17428,7 +17455,9 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     period_line=_period_row_display,
                     delta_bg_style=_gdrs_delta_pct_cell_bg_style,
                 ),
-                unsafe_allow_html=True,
+                export_df=_ref_export,
+                file_stem=_export_file_stem(_gdrs_ref_line1),
+                key_prefix=f"gdrs_ref_matrix_{abs(id(_view))}",
             )
             suppress_caption(
                 "Пояснение: «СКУД» в строке — среднее по столбцам 1–6 недели (как в методичке по неделям). "
@@ -18214,15 +18243,12 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 display_df["Отклонение"] = display_df["Отклонение"].apply(
                     lambda x: int(round(x, 0)) if pd.notna(x) else 0
                 )
-                st.markdown(
-                    budget_table_to_html(
+                _render_budget_table_html(
                         display_df,
                         finance_deviation_column="Отклонение",
                         deviation_red_if_positive_only=True,
                         
-                    ),
-                    unsafe_allow_html=True,
-                )
+                    )
 
         # ========== Chart 2: Bar Chart by Contractor (Plan, Fact, Отклонение) ==========
         st.subheader(
@@ -18492,15 +18518,12 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 ["Контрагент", "План", "Факт", "%", "Отклонение"]
             ]
 
-            st.markdown(
-                budget_table_to_html(
+            _render_budget_table_html(
                     summary_table,
                     finance_deviation_column="Отклонение",
                     deviation_red_if_positive_only=True,
                     
-                ),
-                unsafe_allow_html=True,
-            )
+                )
 
             # Summary metrics
             col1, col2, col3 = st.columns(3)
@@ -18951,7 +18974,12 @@ def _gdrs_render_plan_fact_summary_table(
         st.info("Нет данных для таблицы.")
         return
     render_table_subheader(st, table_title)
-    st.markdown(_gdrs_summary_table_to_html(display_df), unsafe_allow_html=True)
+    render_report_html_table(
+        _gdrs_summary_table_to_html(display_df),
+        export_df=display_df,
+        file_stem=_export_file_stem(table_title),
+        key_prefix=f"gdrs_sum_{abs(id(display_df))}",
+    )
 
 
 def dashboard_gdrs_people(df):
@@ -19321,7 +19349,19 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         _format_gdrs_month_year_title_ru(date_from, date_to, long_fact_period, None) or period_label
     )
     _show_week_cols = gdrs_matrix_show_week_columns(_plan_agg, _skud_agg)
-    st.markdown(
+    _week_ren = {
+        "p1": "План 1 нед", "p2": "План 2 нед", "p3": "План 3 нед",
+        "p4": "План 4 нед", "p5": "План 5 нед", "p6": "План 6 нед",
+        "w1": "СКУД 1 нед", "w2": "СКУД 2 нед", "w3": "СКУД 3 нед",
+        "w4": "СКУД 4 нед", "w5": "СКУД 5 нед", "w6": "СКУД 6 нед",
+    }
+    _mtx_drop = {
+        "__kind__", "_delta_pct_raw", "row_kind", "project_name", "contractor_name",
+        "contract_name", "vid_raboty", "plan", "skud", "deviation", "delta_pct",
+    }
+    _mtx_export = view.drop(columns=[c for c in view.columns if c in _mtx_drop], errors="ignore")
+    _mtx_export = _mtx_export.rename(columns={k: v for k, v in _week_ren.items() if k in _mtx_export.columns})
+    render_report_html_table(
         render_gdrs_matrix_table_html(
             view,
             fixed_cols=["Контрагент", "Вид работ", "План", "СКУД", "Отклонение"],
@@ -19332,7 +19372,9 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             delta_bg_style=_gdrs_delta_pct_cell_bg_style,
             show_week_columns=_show_week_cols,
         ),
-        unsafe_allow_html=True,
+        export_df=_mtx_export,
+        file_stem=_export_file_stem(_tbl_title),
+        key_prefix=f"gdrs_matrix_{abs(id(view))}",
     )
 
     st.markdown("---")
@@ -20797,14 +20839,11 @@ def dashboard_debit_credit(df):
             final_order.append(c)
     display_df = display_df[final_order]
     suppress_caption(f"Записей: {len(display_df)} • Финансы — млн руб., до десятых")
-    st.markdown(
-        budget_table_to_html(
+    _render_budget_table_html(
             display_df,
             finance_deviation_column="Отклонение",
             deviation_abs_min_mln=0.01,
-        ),
-        unsafe_allow_html=True,
-    )
+        )
     render_dataframe_excel_csv_downloads(
         display_df,
         file_stem="debit_credit",
@@ -23811,13 +23850,12 @@ def dashboard_documentation(
                                 tbl_show,
                                 days_column="Отклонение окончания",
                             )
-                            _pd_tbl_html = render_styled_table_to_html(sty_tbl)
-                            try:
-                                from dashboards.table_sort_inject import render_sortable_html_block
-
-                                render_sortable_html_block(_pd_tbl_html)
-                            except Exception:
-                                st.markdown(_pd_tbl_html, unsafe_allow_html=True)
+                            _render_styled_table_report(
+                                sty_tbl,
+                                tbl_show,
+                                file_stem="pd_dynamics_table",
+                                key_prefix="pd_dyn_tbl",
+                            )
                             suppress_caption(
                                 "Сортировка по клику на заголовок столбца; "
                                 "отклонение окончания (дни) — красный при просрочке, зелёный при опережении."
@@ -24049,14 +24087,11 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
                 ]
             )
             table_display = pd.concat([table_display, total_row], ignore_index=True)
-        st.markdown(
-            budget_table_to_html(
+        _render_budget_table_html(
                 table_display,
                 finance_deviation_column="Отклонение, млн руб.",
                 deviation_red_if_negative=True,
-            ),
-            unsafe_allow_html=True,
-        )
+            )
         render_dataframe_excel_csv_downloads(
             table_display,
             file_stem="approved_budget",
@@ -24234,13 +24269,10 @@ def _render_approved_budget_monthly_block(df: pd.DataFrame, selected_project: st
             "reserve budget": "Отклонение (факт − план), млн руб.",
         }
     )
-    st.markdown(
-        budget_table_to_html(
+    _render_budget_table_html(
             summary_table,
             finance_deviation_column="Отклонение (факт − план), млн руб.",
-        ),
-        unsafe_allow_html=True,
-    )
+        )
     render_dataframe_excel_csv_downloads(
         summary_table,
         file_stem="approved_budget_by_month",
@@ -24473,13 +24505,10 @@ def dashboard_budget_by_type(df):
             pd.DataFrame([total_row]),
         ], ignore_index=True)
     # R23-13.3: окраска отклонения (<0 — зелёный, >0 — красный) через budget_table_to_html.
-    st.markdown(
-        budget_table_to_html(
+    _render_budget_table_html(
             budget_table_display,
             finance_deviation_column="Отклонение, млн руб.",
-        ),
-        unsafe_allow_html=True,
-    )
+        )
     render_quality_hints(_budget_type_q_hints)
     render_dataframe_excel_csv_downloads(
         budget_table_display,
@@ -24691,8 +24720,7 @@ def dashboard_budget_by_type(df):
                 )
 
                 # st.table(style_dataframe_for_dark_theme(summary_hist))
-                st.markdown(format_dataframe_as_html(summary_hist), unsafe_allow_html=True)
-                render_dataframe_excel_csv_downloads(
+                _render_format_dataframe_html(
                     summary_hist,
                     file_stem="budget_summary",
                     key_prefix="budget_summary",
@@ -25689,14 +25717,11 @@ def dashboard_approved_budget(df):
                 ),
             }
         )
-        st.markdown(
-            budget_table_to_html(
+        _render_budget_table_html(
                 _tz_out,
                 finance_deviation_column="Отклонение, млн руб.",
                 deviation_red_if_negative=True,
-            ),
-            unsafe_allow_html=True,
-        )
+            )
         render_quality_hints(_approved_q_hints)
 
     if "budget plan" in filtered_df.columns and "budget fact" in filtered_df.columns:
@@ -25912,13 +25937,10 @@ def dashboard_approved_budget(df):
             "reserve budget": "Отклонение (факт − план), млн руб.",
         }
     )
-    st.markdown(
-        budget_table_to_html(
+    _render_budget_table_html(
             summary_table,
             finance_deviation_column="Отклонение (факт − план), млн руб.",
-        ),
-        unsafe_allow_html=True,
-    )
+        )
     render_quality_hints(_approved_q_hints)
     render_dataframe_excel_csv_downloads(
         summary_table,
@@ -27090,10 +27112,7 @@ def dashboard_forecast_budget(df):
                 "БДДС прогноз, млн руб.": (_chart_df["bdds_forecast"] / 1e6).map(lambda x: f"{float(x):.2f}"),
             }
         )
-        st.markdown(
-            budget_table_to_html(bdds_like_tbl, finance_deviation_column=None),
-            unsafe_allow_html=True,
-        )
+        _render_budget_table_html(bdds_like_tbl, finance_deviation_column=None)
         render_dataframe_excel_csv_downloads(
             bdds_like_tbl,
             file_stem="forecast_bddcs_bddstyle_table",
@@ -27171,20 +27190,14 @@ def dashboard_forecast_budget(df):
     _cond_fc = None
     if not _hide_dev_fc:
         _cond_fc = {_dev_col_fc: {"positive_color": "#6ee7b7", "negative_color": "#f87171"}}
-    st.markdown(
-        format_dataframe_as_html(
-            summary_numeric,
-            conditional_cols=_cond_fc,
-            cell_background=_cell_background_fc,
-            finance_decimal_places=1,
-            bold_row_indices={summary_numeric.index[-1]},
-        ),
-        unsafe_allow_html=True,
-    )
-    render_dataframe_excel_csv_downloads(
-        summary_table_dl,
+    _render_format_dataframe_html(
+        summary_numeric,
         file_stem="forecast_bddcs_summary",
         key_prefix=f"fcast_summary_{_npk_fc}_{period_type_en}",
+        conditional_cols=_cond_fc,
+        cell_background=_cell_background_fc,
+        finance_decimal_places=1,
+        bold_row_indices={summary_numeric.index[-1]},
     )
     if (_many_projects_fc is False) and (edited_df_out is not None) and not edited_df_out.empty:
         render_dataframe_excel_csv_downloads(
@@ -27207,9 +27220,9 @@ def dashboard_forecast_budget(df):
         row_modes=_fc_row_modes,
     )
     st.subheader("Статус")
-    st.markdown(_forecast_financier_status_table_html(_status_disp), unsafe_allow_html=True)
-    render_dataframe_excel_csv_downloads(
-        _status_disp,
+    render_report_html_table(
+        _forecast_financier_status_table_html(_status_disp),
+        export_df=_status_disp,
         file_stem="forecast_bddcs_financier_status",
         key_prefix=f"fcast_status_{_npk_fc}_{period_type_en}",
     )

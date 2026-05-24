@@ -1653,6 +1653,32 @@ def _download_button_compat(
         st.download_button(**kw)
 
 
+def render_report_html_table(
+    html: str,
+    *,
+    export_df: pd.DataFrame | None = None,
+    file_stem: str = "table_export",
+    key_prefix: str | None = None,
+) -> None:
+    """HTML-таблица: клиентская сортировка по колонкам + экспорт CSV/XLSX."""
+    if not html or not str(html).strip():
+        return
+    html = mark_html_table_sortable(html)
+    try:
+        from dashboards.table_sort_inject import render_sortable_html_block
+
+        render_sortable_html_block(html)
+    except Exception:
+        st.markdown(html, unsafe_allow_html=True)
+    if export_df is not None:
+        _kp = key_prefix or f"tbl_{_export_file_stem(file_stem)}"
+        render_dataframe_excel_csv_downloads(
+            export_df,
+            file_stem=file_stem,
+            key_prefix=_kp,
+        )
+
+
 def render_dataframe_excel_csv_downloads(
     df: pd.DataFrame,
     *,

@@ -19,8 +19,8 @@ _TABLE_SORT_JS = r"""
 
   function rowKind(tr) {
     if (!tr) return "data";
-    if (tr.classList.contains("bd-total-row")) return "total";
-    if (tr.classList.contains("bd-group-row")) return "group";
+    if (tr.classList.contains("bd-total-row") || tr.classList.contains("gdrs-rk-grand") || tr.classList.contains("gdrs-rk-total") || tr.classList.contains("rk-total")) return "total";
+    if (tr.classList.contains("bd-group-row") || tr.classList.contains("gdrs-rk-subtotal") || tr.classList.contains("gdrs-rk-project") || tr.classList.contains("rk-project")) return "group";
     return "data";
   }
 
@@ -61,7 +61,8 @@ _TABLE_SORT_JS = r"""
 
   function tableHasProjectBlocks(rows) {
     return rows.some(function (r) {
-      return r.classList.contains("bd-group-row") && !r.classList.contains("bd-total-row");
+      return (r.classList.contains("bd-group-row") || r.classList.contains("gdrs-rk-subtotal") || r.classList.contains("gdrs-rk-project") || r.classList.contains("rk-project"))
+        && !r.classList.contains("bd-total-row") && !r.classList.contains("gdrs-rk-grand");
     });
   }
 
@@ -82,6 +83,10 @@ _TABLE_SORT_JS = r"""
     tbl.setAttribute("data-bi-sort-ready", "1");
     if (!tbl.classList.contains("bi-sortable-table")) tbl.classList.add("bi-sortable-table");
     var theadRow = tbl.querySelector("thead tr");
+    if (tbl.classList.contains("gdrs-matrix-table") || tbl.querySelector("thead tr.title-row")) {
+      var headerRows = tbl.querySelectorAll("thead tr");
+      if (headerRows.length > 1) theadRow = headerRows[headerRows.length - 1];
+    }
     if (!theadRow) return;
     var ths = theadRow.querySelectorAll("th");
     var clickOnly = tbl.classList.contains("bi-sort-click-only");
