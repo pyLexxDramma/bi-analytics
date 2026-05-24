@@ -130,8 +130,8 @@ TABLE_TOTAL_ROW_FONT_CSS = (
 # Фон области графиков Plotly — как карточка контента (.main .block-container: rgba(18,56,92,0.8))
 CHART_BG_COLOR = "rgba(18, 56, 92, 0.88)"
 TABLE_TEXT_COLOR = "#ffffff"
-# Чёткая сетка ячеек (как в cp-table-wrap / budget_table_to_html)
 TABLE_CELL_BORDER = "1px solid #5a7a9a"
+FINANCE_TABLE_CELL_BORDER = "1px solid #7a9ec4"
 TABLE_CELL_BORDER_CSS = f"border: {TABLE_CELL_BORDER};"
 
 
@@ -1092,8 +1092,8 @@ def budget_table_to_html(
 
     Раскраска факт/план/отклонение: красный (факт < план), жёлтый (≈ план ±10%), зелёный (факт > план) — только цвет шрифта.
 
-    Если ``deviation_red_if_negative=True`` (БДДС при отклонении = факт − план; утверждённый бюджет при план − факт):
-    значение < 0 — красный, ≥ 0 — зелёный. Для БДДС: факт < план — красный, факт ≥ план — зелёный.
+    Если ``deviation_red_if_negative=True`` (БДДС/БДР: отклонение = план − факт):
+    значение < 0 — красный, ≥ 0 — зелёный.
 
     Если ``|число| < deviation_abs_min_mln`` (по умолчанию 0.01 млн руб.), ячейка без акцентного цвета — как обычный текст.
     """
@@ -1107,16 +1107,22 @@ def budget_table_to_html(
     _tbl_px = max(12, int(table_font_size_px or 15))
     _lbl_col_css = label_columns_font_css or ""
     wrap_id = "bdt_" + str(id(df))
+    _cell_border = FINANCE_TABLE_CELL_BORDER
     _style_css = (
-        f'#{wrap_id} table {{ table-layout: auto; font-size: {_tbl_px}px; width: max-content; min-width: 100%; }}'
-        f'#{wrap_id} th, #{wrap_id} td {{ min-width: 11em; max-width: 24em; padding: 7px 14px; white-space: nowrap; }}'
+        f'#{wrap_id} table {{ table-layout: auto; font-size: {_tbl_px}px; width: max-content; min-width: 100%; '
+        f'border-collapse: separate !important; border-spacing: 0 !important; border: {_cell_border} !important; }}'
+        f'#{wrap_id} th, #{wrap_id} td {{ min-width: 11em; max-width: 24em; padding: 7px 14px; white-space: nowrap; '
+        f'border-right: {_cell_border} !important; border-bottom: {_cell_border} !important; '
+        f'border-top: none !important; border-left: none !important; }}'
+        f'#{wrap_id} thead tr:first-child th {{ border-top: {_cell_border} !important; }}'
+        f'#{wrap_id} tr th:first-child, #{wrap_id} tr td:first-child {{ border-left: {_cell_border} !important; }}'
         f'#{wrap_id} th:first-child, #{wrap_id} td:first-child {{ min-width: 14em; max-width: 32em; }}'
         f'#{wrap_id} th:not(:first-child), #{wrap_id} td:not(:first-child) {{ min-width: 9em; max-width: 16em; }}'
         f'#{wrap_id} td.bd-cell-red, #{wrap_id} td.bd-cell-red * {{ color: hsl(348,100%,63%) !important; }} '
         f'#{wrap_id} td.bd-cell-green, #{wrap_id} td.bd-cell-green * {{ color: hsl(148,100%,63%) !important; }}'
         f'#{wrap_id} td.bd-cell-yellow, #{wrap_id} td.bd-cell-yellow * {{ color: hsl(48,95%,62%) !important; }}'
         f'#{wrap_id} thead th {{ background-color: {TABLE_HEADER_BG_COLOR} !important; {_hdr_css} }}'
-        f'{f"#{wrap_id} tbody td:first-child {{ {_lbl_col_css} }}" if _lbl_col_css else ""}'
+        f'{f"#{wrap_id} tbody td:first-child, #{wrap_id} tbody td:nth-child(2) {{ {_lbl_col_css} }}" if _lbl_col_css else ""}'
         f'#{wrap_id} tr.bd-group-row td {{ background-color: {TABLE_GROUP_ROW_BG_COLOR} !important; }}'
         f'#{wrap_id} tr.bd-total-row td {{ background-color: {_tot_bg} !important; {_tot_font} }}'
         f'#{wrap_id} tr.bd-total-row td, #{wrap_id} tr.bd-total-row td * {{ {_tot_font} }}'
@@ -1132,7 +1138,7 @@ def budget_table_to_html(
     for col in header_cols:
         col_esc = html_module.escape(str(col))
         parts.append(
-            f'<th style="border: 1px solid rgba(255,255,255,0.3); padding: 8px 14px; background-color: {TABLE_HEADER_BG_COLOR}; {_hdr_css}">{col_esc}</th>'
+            f'<th style="padding: 8px 14px; background-color: {TABLE_HEADER_BG_COLOR}; {_hdr_css}">{col_esc}</th>'
         )
     parts.append("</tr></thead><tbody>")
     visible_cols = [c for c in df.columns if c != row_kind_column]

@@ -261,6 +261,25 @@ html, body {
   font-family: Inter, system-ui, sans-serif;
 }
 .bi-sortable-html-root { width: 100%; max-width: 100%; }
+.bi-sortable-html-root table.bi-sortable-table {
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+  border: 1px solid #7a9ec4 !important;
+}
+.bi-sortable-html-root table.bi-sortable-table th,
+.bi-sortable-html-root table.bi-sortable-table td {
+  border-right: 1px solid #7a9ec4 !important;
+  border-bottom: 1px solid #7a9ec4 !important;
+  border-top: none !important;
+  border-left: none !important;
+}
+.bi-sortable-html-root table.bi-sortable-table thead tr:first-child th {
+  border-top: 1px solid #7a9ec4 !important;
+}
+.bi-sortable-html-root table.bi-sortable-table tr th:first-child,
+.bi-sortable-html-root table.bi-sortable-table tr td:first-child {
+  border-left: 1px solid #7a9ec4 !important;
+}
 </style>
 """
 
