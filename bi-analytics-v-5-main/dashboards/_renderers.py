@@ -27351,13 +27351,14 @@ _PRED_DASH_MOCK_CSS = """
 .pred-mock-badge { background:#c0392b; color:#fff; padding:4px 14px; border-radius:20px; font-size:13px; font-weight:500; }
 .pred-detail-wrap { overflow-x:auto; min-width:0; border:1px solid #444; border-radius:10px; margin-top:8px; }
 .pred-detail-wrap table { width:100%; table-layout:auto; border-collapse:collapse; }
-.pred-detail-wrap th { text-align:left; padding:6px 8px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:11px; text-transform:uppercase; white-space:nowrap; line-height:1.2; word-break:normal; overflow:hidden; text-overflow:ellipsis; }
+.pred-detail-wrap th { text-align:left; padding:6px 8px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:11px; text-transform:uppercase; white-space:nowrap; line-height:1.2; word-break:normal; overflow:hidden; text-overflow:ellipsis; cursor:pointer; user-select:none; }
 .pred-detail-wrap th.pred-col-st,
 .pred-detail-wrap th.pred-col-num,
 .pred-detail-wrap th.pred-col-dly { white-space:nowrap; }
-.pred-detail-wrap th a { color:#fafafa; text-decoration:none; display:inline-flex; gap:6px; align-items:center; }
-.pred-detail-wrap th a:hover { color:#93c5fd; }
-.pred-sort-icon { color:#8fb4da; font-size:10px; }
+.pred-detail-wrap table { border-collapse:separate !important; border-spacing:0 !important; border:1px solid #5a7a9a !important; }
+.pred-detail-wrap th, .pred-detail-wrap td { border-right:1px solid #5a7a9a !important; border-bottom:1px solid #5a7a9a !important; }
+.pred-detail-wrap thead tr:first-child th { border-top:1px solid #5a7a9a !important; }
+.pred-detail-wrap tr th:first-child, .pred-detail-wrap tr td:first-child { border-left:1px solid #5a7a9a !important; }
 .pred-detail-wrap td { padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0; vertical-align:top; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; background:#1a1c23 !important; }
 .pred-detail-wrap .pred-col-num { width:9ch; min-width:9ch; max-width:11ch; }
 .pred-detail-wrap .pred-col-dly { width:11ch; min-width:11ch; max-width:12ch; font-variant-numeric:tabular-nums; }
@@ -27867,11 +27868,35 @@ def _pred_detail_col_class(col_name: str) -> str:
     return "pred-col-text"
 
 
+def _pred_cell_sort_attr(col: str, row: pd.Series) -> str:
+    """data-sort-val для клиентской сортировки (числа, даты)."""
+    c = str(col).strip()
+    if c == "Дней просрочки" and "_overdue_num" in row.index:
+        n = pd.to_numeric(row.get("_overdue_num"), errors="coerce")
+        if pd.notna(n):
+            return f' data-sort-val="{float(n)}"'
+    if c in {
+        "Дата выдачи предписания",
+        "Срок устранения",
+        "Фактическая дата устранения предписания",
+    }:
+        ts = pd.to_datetime(row.get(col), errors="coerce", dayfirst=True)
+        if pd.notna(ts):
+            return f' data-sort-val="{float(ts.timestamp())}"'
+    if c.startswith("№") or "договор" in c.casefold() or "документ" in c.casefold() or "предписан" in c.casefold():
+        s = str(row.get(col, "")).strip()
+        m = re.search(r"-?\d+(?:[.,]\d+)?", s.replace("\xa0", ""))
+        if m:
+            try:
+                return f' data-sort-val="{float(m.group().replace(",", "."))}"'
+            except (TypeError, ValueError):
+                pass
+    return ""
+
+
 def _pred_detail_table_html(
     df: pd.DataFrame,
     *,
-    sort_col: str = "",
-    sort_order: str = "asc",
     max_rows: int = 700,
 ) -> str:
     esc = html_module.escape
@@ -27893,17 +27918,18 @@ def _pred_detail_table_html(
         return f'<p style="color:#a0a0a0;padding:16px;">{esc("Нет строк для отображения.")}</p>'
     show = df.head(max_rows)
     render_cols = [c for c in show.columns if c not in ("_resolved_flag", "_overdue_num")]
-    parts = ['<div class="pred-detail-wrap"><table><thead><tr>']
+    parts = [
+        '<div class="pred-detail-wrap">',
+        '<table class="bi-sortable-table bi-sort-click-only">',
+        "<thead><tr>",
+    ]
     for col in render_cols:
         c_cls = _pred_detail_col_class(col)
-        marker = "↕"
-        if sort_col == col:
-            marker = "↑" if str(sort_order).lower() == "asc" else "↓"
-        link = _pred_sort_link(col, sort_col, sort_order)
         caption = header_alias.get(str(col).strip(), str(col).strip())
+        full_name = str(col).strip()
         parts.append(
-            f'<th class="{esc(c_cls, quote=True)}">'
-            f'<a href="{esc(link, quote=True)}" title="{esc(str(col).strip(), quote=True)}">{esc(caption)} <span class="pred-sort-icon">{esc(marker)}</span></a></th>'
+            f'<th class="{esc(c_cls, quote=True)}" data-sort-label="{esc(full_name, quote=True)}" '
+            f'title="{esc(full_name, quote=True)}">{esc(caption)}</th>'
         )
     parts.append("</tr></thead><tbody>")
     for _, row in show.iterrows():
@@ -27922,10 +27948,11 @@ def _pred_detail_table_html(
             else:
                 inner = esc(str(val))
             c_cls = _pred_detail_col_class(col)
-            parts.append(f'<td class="{esc(c_cls, quote=True)}">{inner}</td>')
+            sort_attr = _pred_cell_sort_attr(col, row)
+            parts.append(f'<td class="{esc(c_cls, quote=True)}"{sort_attr}>{inner}</td>')
         parts.append("</tr>")
     parts.append("</tbody></table></div>")
-    return "".join(parts)
+    return mark_html_table_sortable("".join(parts))
 
 
 def _pred_build_overdue_mock_blocks(
@@ -30237,24 +30264,17 @@ def dashboard_predpisania(df):
         due_col,
         "__completion_eff__",
     )
-    sort_col = _pred_query_param_value("pred_sort", "Дней просрочки")
-    sort_order = _pred_query_param_value("pred_order", "desc")
-    if sort_col in table_df.columns:
-        table_df = _pred_sort_table_df(table_df, sort_col, sort_order)
+    table_df = _pred_sort_table_df(table_df, "Дней просрочки", "desc")
 
     overdue_cnt = int((show["_overdue_days"] > 0).sum())
     suppress_caption(
         f"Записей: {len(table_df)} · просроченных: {overdue_cnt} · устраненных: {int(show['_resolved'].sum())}"
     )
-    st.markdown(
-        _PRED_DASH_MOCK_CSS
-        + _pred_detail_table_html(table_df, sort_col=sort_col, sort_order=sort_order),
-        unsafe_allow_html=True,
-    )
-    render_dataframe_excel_csv_downloads(
-        table_df.drop(columns=["_resolved_flag", "_overdue_num"], errors="ignore"),
+    render_report_html_table(
+        _PRED_DASH_MOCK_CSS + _pred_detail_table_html(table_df),
+        export_df=table_df.drop(columns=["_resolved_flag", "_overdue_num"], errors="ignore"),
         file_stem="predpisania",
-        key_prefix="predpisania",
+        key_prefix="predpisania_detail",
     )
 
     with st.expander("По статусам и объектам", expanded=False):
