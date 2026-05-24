@@ -1912,7 +1912,7 @@ def _chart_caption_below(title: str) -> None:
     """Заголовок под графиком (после подписей значений на столбцах/точках)."""
     if not title:
         return
-    esc = html_module.escape(str(title))
+    esc = html_module.escape(sanitize_display_label(str(title)))
     st.markdown(
         "<p style='text-align:center;color:#e8eef5;margin:0.45rem 0 0.35rem;font-size:1.08rem;font-weight:700;'>"
         f"{esc}</p>",

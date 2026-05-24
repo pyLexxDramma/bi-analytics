@@ -171,7 +171,7 @@ def format_table_title(name: str, filters_suffix: str | None = None) -> str:
         fs = str(filters_suffix).strip().strip("()")
         if fs and f"({fs})" not in s:
             s = f"{s} ({fs})"
-    return s
+    return sanitize_display_label(s)
 
 
 def render_table_subheader(st: Any, name: str, filters_suffix: str | None = None) -> None:
@@ -182,7 +182,7 @@ def render_table_subheader(st: Any, name: str, filters_suffix: str | None = None
 def _html_table_caption(caption: str | None) -> str:
     if not caption or not str(caption).strip():
         return ""
-    cap = html_module.escape(str(caption).strip())
+    cap = html_module.escape(sanitize_display_label(str(caption).strip()))
     return f'<h3 class="bi-table-caption" style="{TABLE_CAPTION_STYLE}">{cap}</h3>'
 
 
