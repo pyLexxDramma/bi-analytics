@@ -1950,10 +1950,14 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame) -> go.Figure:
     """Круговая «распределение по контрагентам»: абсолют и % на секторе, названия в легенде."""
     df = pie_df.sort_values("Факт", ascending=False).reset_index(drop=True)
     n = int(len(df))
-    height = int(min(780, max(520, 460 + n * 7)))
-    r_margin = int(min(440, max(260, 210 + n * 7)))
     values = pd.to_numeric(df["Факт"], errors="coerce").fillna(0).astype(float).tolist()
     total_v = float(sum(values)) if values else 0.0
+    _txt_in = max(14, min(20, 22 - n // 2))
+    _txt_out = max(13, _txt_in - 1)
+    _leg_sz = max(13, min(16, 18 - n // 3))
+    _use_bottom_legend = n >= 8
+    # Квадратный холст — на широком экране круг не сжимается по высоте (диаметр ≈ сторона).
+    _side = int(min(1180, max(820, 760 + n * 14)))
     slice_text: list[str] = []
     slice_pos: list[str] = []
     slice_pull: list[float] = []
@@ -1966,17 +1970,23 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame) -> go.Figure:
         frac = float(val) / total_v
         abs_txt = f"{int(round(val))}"
         pct_txt = f"{frac * 100:.1f}%" if 0 < frac < 0.03 else f"{frac * 100:.0f}%"
-        slice_text.append(f"{abs_txt}<br>{pct_txt}")
-        if frac < 0.045:
-            slice_pos.append("outside")
-            slice_pull.append(0.04)
-        else:
+        if frac < 0.05:
+            slice_text.append("")
             slice_pos.append("inside")
             slice_pull.append(0.0)
+        elif frac < 0.08 and not _use_bottom_legend:
+            slice_text.append(f"{abs_txt}<br>{pct_txt}")
+            slice_pos.append("outside")
+            slice_pull.append(0.03)
+        else:
+            slice_text.append(f"{abs_txt}<br>{pct_txt}")
+            slice_pos.append("inside")
+            slice_pull.append(0.0)
+    _labels = df["Контрагент"].astype(str).tolist()
     fig = go.Figure(
         data=[
             go.Pie(
-                labels=df["Контрагент"].astype(str),
+                labels=_labels,
                 values=values,
                 sort=False,
                 direction="clockwise",
@@ -1985,8 +1995,8 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame) -> go.Figure:
                 textposition=slice_pos,
                 insidetextorientation="horizontal",
                 pull=slice_pull,
-                textfont=dict(size=13 if n <= 8 else 11, color="#ffffff"),
-                outsidetextfont=dict(size=11 if n <= 10 else 10, color="#e8eef5"),
+                textfont=dict(size=_txt_in, color="#ffffff"),
+                outsidetextfont=dict(size=_txt_out, color="#e8eef5"),
                 hovertemplate=(
                     "<b>%{label}</b><br>Факт: %{value}<br>%{percent}<extra></extra>"
                 ),
@@ -1994,28 +2004,57 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame) -> go.Figure:
             )
         ]
     )
-    fig.update_layout(
-        height=height,
-        uniformtext=dict(minsize=8, mode="show"),
-        legend=dict(
-            orientation="v",
-            yanchor="top",
-            y=1.0,
-            xanchor="left",
-            x=1.01,
-            font=dict(size=11, color="#e8eef5"),
-            tracegroupgap=3,
-            itemsizing="constant",
-        ),
-        margin=dict(l=28, r=r_margin, t=44, b=56),
-        showlegend=True,
-        plot_bgcolor=CHART_BG_COLOR,
-        paper_bgcolor=CHART_BG_COLOR,
-    )
-    try:
-        fig.update_traces(domain=dict(x=[0.0, 0.72], y=[0.05, 0.95]))
-    except Exception:
-        pass
+    if _use_bottom_legend:
+        _b_leg = int(88 + n * 15)
+        _leg_y = -0.02 - min(0.18, 0.022 * n)
+        fig.update_layout(
+            width=_side,
+            height=_side,
+            uniformtext=dict(minsize=12, mode="show"),
+            legend=dict(
+                orientation="h",
+                yanchor="top",
+                y=_leg_y,
+                x=0.5,
+                xanchor="center",
+                font=dict(size=_leg_sz, color="#e8eef5"),
+                tracegroupgap=6,
+                itemsizing="constant",
+            ),
+            margin=dict(l=40, r=40, t=40, b=_b_leg),
+            showlegend=True,
+            plot_bgcolor=CHART_BG_COLOR,
+            paper_bgcolor=CHART_BG_COLOR,
+        )
+        try:
+            fig.update_traces(domain=dict(x=[0.04, 0.96], y=[0.10, 0.96]))
+        except Exception:
+            pass
+    else:
+        r_margin = int(min(420, max(260, 220 + n * 9)))
+        fig.update_layout(
+            width=_side,
+            height=_side,
+            uniformtext=dict(minsize=12, mode="show"),
+            legend=dict(
+                orientation="v",
+                yanchor="middle",
+                y=0.5,
+                xanchor="left",
+                x=1.01,
+                font=dict(size=_leg_sz, color="#e8eef5"),
+                tracegroupgap=4,
+                itemsizing="constant",
+            ),
+            margin=dict(l=48, r=r_margin, t=44, b=48),
+            showlegend=True,
+            plot_bgcolor=CHART_BG_COLOR,
+            paper_bgcolor=CHART_BG_COLOR,
+        )
+        try:
+            fig.update_traces(domain=dict(x=[0.0, 0.70], y=[0.02, 0.98]))
+        except Exception:
+            pass
     return fig
 
 
