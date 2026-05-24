@@ -18632,6 +18632,8 @@ def _gdrs_dynamics_chart_panel(
             "Переключите на «День» или «Неделя» или загрузите CSV за несколько месяцев."
         )
     try:
+        from plotly.subplots import make_subplots as _make_subplots
+
         _x = dyn["bucket"]
         _pct_hover = [
             f"{int(round(float(f) / float(p) * 100))}% от плана"
@@ -18641,30 +18643,49 @@ def _gdrs_dynamics_chart_panel(
         _n_pts = len(dyn)
         _lbl_sz = 11 if _n_pts <= 16 else (10 if _n_pts <= 24 else 9)
         _ann_sz = 10 if _n_pts <= 16 else 9
-        fig = _go.Figure()
-        fig.add_trace(_go.Scatter(
-            x=_x, y=dyn["План"], mode="lines+markers+text",
-            line=dict(color="#29b6f6", width=2.5), marker=dict(size=7),
-            name="План",
-            yaxis="y",
-            text=[f"{int(v)}" for v in dyn["План"]],
-            textposition="top center",
-            textfont=dict(color="#29b6f6", size=_lbl_sz),
-            cliponaxis=False,
-            hovertemplate="План: %{y}<br>%{x|%d.%m.%Y}<extra></extra>",
-        ))
-        fig.add_trace(_go.Scatter(
-            x=_x, y=dyn["Факт"], mode="lines+markers+text",
-            line=dict(color="#ff8c2d", width=2.5), marker=dict(size=7),
-            name="Факт",
-            yaxis="y2",
-            text=[f"{int(f)}" for f in dyn["Факт"]],
-            textposition="bottom center",
-            textfont=dict(color="#ff8c2d", size=_lbl_sz),
-            cliponaxis=False,
-            customdata=_pct_hover,
-            hovertemplate="Факт: %{y}<br>%{customdata}<br>%{x|%d.%m.%Y}<extra></extra>",
-        ))
+        fig = _make_subplots(
+            rows=2,
+            cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.10,
+            row_heights=[0.48, 0.52],
+            subplot_titles=("План", "Факт"),
+        )
+        fig.add_trace(
+            _go.Scatter(
+                x=_x,
+                y=dyn["План"],
+                mode="lines+markers+text",
+                line=dict(color="#29b6f6", width=2.5),
+                marker=dict(size=7),
+                name="План",
+                text=[f"{int(v)}" for v in dyn["План"]],
+                textposition="top center",
+                textfont=dict(color="#29b6f6", size=_lbl_sz),
+                cliponaxis=False,
+                hovertemplate="План: %{y}<br>%{x|%d.%m.%Y}<extra></extra>",
+            ),
+            row=1,
+            col=1,
+        )
+        fig.add_trace(
+            _go.Scatter(
+                x=_x,
+                y=dyn["Факт"],
+                mode="lines+markers+text",
+                line=dict(color="#ff8c2d", width=2.5),
+                marker=dict(size=7),
+                name="Факт",
+                text=[f"{int(f)}" for f in dyn["Факт"]],
+                textposition="top center",
+                textfont=dict(color="#ff8c2d", size=_lbl_sz),
+                cliponaxis=False,
+                customdata=_pct_hover,
+                hovertemplate="Факт: %{y}<br>%{customdata}<br>%{x|%d.%m.%Y}<extra></extra>",
+            ),
+            row=2,
+            col=1,
+        )
         for _xb, _f, _p in zip(_x, dyn["Факт"], dyn["План"]):
             if int(_p) <= 0:
                 continue
@@ -18675,14 +18696,14 @@ def _gdrs_dynamics_chart_panel(
                 y=int(_f),
                 text=f"({_pct}%)",
                 showarrow=False,
-                xref="x",
+                xref="x2",
                 yref="y2",
                 xanchor="center",
                 yanchor="top",
-                yshift=-18 if _n_pts <= 16 else -14,
+                yshift=-16 if _n_pts <= 16 else -12,
                 font=dict(size=_ann_sz, color=_pct_color),
             )
-        _chart_h = int(min(620, max(400, 36 * _n_pts)))
+        _chart_h = int(min(720, max(520, 44 * _n_pts)))
         _plan_range = _gdrs_dyn_y_range(dyn["План"], pad_ratio=0.12, min_pad=12.0)
         _fact_range = _gdrs_dyn_y_range(dyn["Факт"], pad_ratio=0.18, min_pad=6.0)
         _plan_dtick = _gdrs_dyn_nice_dtick(_plan_range[0], _plan_range[1])
@@ -18697,43 +18718,45 @@ def _gdrs_dynamics_chart_panel(
             plot_bgcolor="rgba(0,0,0,0)",
             paper_bgcolor="rgba(0,0,0,0)",
             font_color="#eee",
-            xaxis_title=f"Период — {agg_kind.lower()}",
             height=_chart_h,
-            margin=dict(l=56, r=72, t=88, b=88),
+            margin=dict(l=56, r=32, t=96, b=88),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         )
-        fig.update_layout(
-            xaxis=dict(
-                type="date",
-                tickformat="%d.%m.%Y",
-                dtick=_x_dtick,
-                tickangle=-35 if len(dyn) > 6 else 0,
-                showgrid=True,
-                gridcolor="rgba(255,255,255,0.06)",
-            ),
-            yaxis=dict(
-                title="План",
-                range=_plan_range,
-                dtick=_plan_dtick,
-                autorange=False,
-                showgrid=True,
-                gridcolor="rgba(255,255,255,0.08)",
-            ),
-            yaxis2=dict(
-                title="Факт",
-                overlaying="y",
-                side="right",
-                range=_fact_range,
-                dtick=_fact_dtick,
-                autorange=False,
-                showgrid=False,
-            ),
+        fig.update_yaxes(
+            title_text="Количество",
+            range=_plan_range,
+            dtick=_plan_dtick,
+            autorange=False,
+            showgrid=True,
+            gridcolor="rgba(255,255,255,0.08)",
+            row=1,
+            col=1,
+        )
+        fig.update_yaxes(
+            title_text="Количество",
+            range=_fact_range,
+            dtick=_fact_dtick,
+            autorange=False,
+            showgrid=True,
+            gridcolor="rgba(255,255,255,0.08)",
+            row=2,
+            col=1,
+        )
+        fig.update_xaxes(showticklabels=False, row=1, col=1)
+        fig.update_xaxes(
+            title_text=f"Период — {agg_kind.lower()}",
+            type="date",
+            tickformat="%d.%m.%Y",
+            dtick=_x_dtick,
+            tickangle=-35 if len(dyn) > 6 else 0,
+            showgrid=True,
+            gridcolor="rgba(255,255,255,0.06)",
+            row=2,
+            col=1,
         )
         fig = apply_chart_background(fig)
-        fig.update_layout(
-            yaxis=dict(range=_plan_range, autorange=False, dtick=_plan_dtick),
-            yaxis2=dict(range=_fact_range, autorange=False, dtick=_fact_dtick),
-        )
+        fig.update_yaxes(range=_plan_range, autorange=False, dtick=_plan_dtick, row=1, col=1)
+        fig.update_yaxes(range=_fact_range, autorange=False, dtick=_fact_dtick, row=2, col=1)
         st.plotly_chart(fig, use_container_width=True)
     except Exception as _e:
         st.warning(f"Plotly недоступен: {_e}")
