@@ -18719,6 +18719,43 @@ def _gdrs_dyn_y_range(series, *, pad_ratio: float = 0.14, min_pad: float = 8.0) 
     return [max(0.0, y_lo - y_pad), y_hi + y_pad]
 
 
+def _gdrs_dyn_panel_dtick(
+    y_lo: float,
+    y_hi: float,
+    agg_kind: str,
+    *,
+    series_kind: str = "fact",
+) -> float:
+    """Оптимальный шаг сетки Y для «День» / «Неделя» / «Месяц» / «Год» и ряда план/факт."""
+    span = max(float(y_hi) - float(y_lo), 1.0)
+    _agg = str(agg_kind or "").casefold()
+    _sk = "plan" if str(series_kind).casefold().startswith("plan") else "fact"
+    _presets = {
+        "день": {"plan": (10, 0.08), "fact": (12, 0.10)},
+        "неделя": {"plan": (12, 0.06), "fact": (14, 0.08)},
+        "месяц": {"plan": (14, 0.05), "fact": (14, 0.06)},
+        "год": {"plan": (10, 0.07), "fact": (12, 0.08)},
+    }
+    _target, _max_frac = _presets.get(_agg, _presets["день"])[_sk]
+    _step = _gdrs_dyn_nice_dtick(y_lo, y_hi, target_ticks=_target)
+    _cap = max(span * _max_frac, 1.0)
+    if span <= 25:
+        _cap = min(_cap, max(1.0, span / 5.0))
+    elif span <= 60:
+        _cap = min(_cap, max(2.0, span / 7.0))
+    elif span <= 150:
+        _cap = min(_cap, max(3.0, span / 9.0))
+    return float(min(_step, _cap))
+
+
+def _gdrs_dyn_panel_y_range(series, agg_kind: str) -> list[float]:
+    """Узкий диапазон Y вокруг min/max — чтобы была видна динамика, не «пол» 0…max."""
+    _agg = str(agg_kind or "").casefold()
+    if _agg in ("неделя", "месяц", "год"):
+        return _gdrs_dyn_y_range(series, pad_ratio=0.05, min_pad=2.0)
+    return _gdrs_dyn_y_range(series, pad_ratio=0.08, min_pad=4.0)
+
+
 def _gdrs_dynamics_chart_panel(
     fact_dyn,
     dyn_from_iso: str,
@@ -18768,60 +18805,96 @@ def _gdrs_dynamics_chart_panel(
             "Переключите на «День» или «Неделя» или загрузите CSV за несколько месяцев."
         )
     try:
-        from plotly.subplots import make_subplots as _make_subplots
-
         _x = dyn["bucket"]
+        _plan_s = pd.to_numeric(dyn["План"], errors="coerce").fillna(0.0)
+        _fact_s = pd.to_numeric(dyn["Факт"], errors="coerce").fillna(0.0)
+        _zero_plan_mask = _plan_s <= 0
+        _zero_plan_n = int(_zero_plan_mask.sum())
+        if _zero_plan_n > 0:
+            _zdates = dyn.loc[_zero_plan_mask, "Период"].astype(str).tolist()
+            _preview = ", ".join(_zdates[:5])
+            _more = f" и ещё {_zero_plan_n - 5}" if _zero_plan_n > 5 else ""
+            _fact_at_zero = int((_zero_plan_mask & (_fact_s > 0)).sum())
+            _hint = (
+                f" При этом в {_fact_at_zero} период(ах) факт > 0 — вероятна проблема с 1С "
+                "(Dogovor / spravochniki на дату snapshot)."
+                if _fact_at_zero > 0
+                else " Проверьте загрузку Dogovor / spravochniki на даты snapshot."
+            )
+            st.warning(
+                f"В {_zero_plan_n} период(ах) план из 1С равен 0 или отсутствует"
+                f" ({_preview}{_more}).{_hint} "
+                "На графике такие точки не соединяются линией плана."
+            )
+
+        _plan_plot = _plan_s.astype(float).copy()
+        _plan_plot.loc[_zero_plan_mask] = np.nan
+
         _pct_hover = [
             f"{int(round(float(f) / float(p) * 100))}% от плана"
-            if int(p) > 0 else "—"
-            for f, p in zip(dyn["Факт"], dyn["План"])
+            if float(p) > 0
+            else "—"
+            for f, p in zip(_fact_s, _plan_s)
         ]
         _n_pts = len(dyn)
-        _lbl_sz = 11 if _n_pts <= 16 else (10 if _n_pts <= 24 else 9)
-        _ann_sz = 10 if _n_pts <= 16 else 9
-        fig = _make_subplots(
-            rows=2,
-            cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.10,
-            row_heights=[0.48, 0.52],
-            subplot_titles=("План", "Факт"),
+        _lbl_sz = 12 if _n_pts <= 12 else (11 if _n_pts <= 20 else (10 if _n_pts <= 32 else 9))
+        _ann_sz = 11 if _n_pts <= 16 else 9
+
+        _plan_for_range = _plan_plot.dropna()
+        if _plan_for_range.empty:
+            _plan_for_range = _plan_s
+        _plan_range = _gdrs_dyn_panel_y_range(_plan_for_range, agg_kind)
+        _fact_range = _gdrs_dyn_panel_y_range(_fact_s, agg_kind)
+        _plan_dtick = _gdrs_dyn_panel_dtick(
+            _plan_range[0], _plan_range[1], agg_kind, series_kind="plan"
         )
+        _fact_dtick = _gdrs_dyn_panel_dtick(
+            _fact_range[0], _fact_range[1], agg_kind, series_kind="fact"
+        )
+
+        _plan_hi = float(_plan_for_range.max()) if not _plan_for_range.empty else 0.0
+        _fact_hi = float(_fact_s.max()) if not _fact_s.empty else 0.0
+        _use_dual_y = _plan_hi >= 80 and _fact_hi > 0 and (_plan_hi / max(_fact_hi, 1.0)) >= 1.6
+
+        fig = _go.Figure()
         fig.add_trace(
             _go.Scatter(
                 x=_x,
-                y=dyn["План"],
+                y=_plan_plot,
                 mode="lines+markers+text",
                 line=dict(color="#29b6f6", width=2.5),
-                marker=dict(size=7),
+                marker=dict(size=8),
                 name="План",
-                text=[f"{int(v)}" for v in dyn["План"]],
+                connectgaps=False,
+                text=[
+                    f"{int(v)}" if pd.notna(v) and float(v) > 0 else ""
+                    for v in _plan_plot
+                ],
                 textposition="top center",
                 textfont=dict(color="#29b6f6", size=_lbl_sz),
                 cliponaxis=False,
+                yaxis="y",
                 hovertemplate="План: %{y}<br>%{x|%d.%m.%Y}<extra></extra>",
-            ),
-            row=1,
-            col=1,
+            )
         )
         fig.add_trace(
             _go.Scatter(
                 x=_x,
                 y=dyn["Факт"],
                 mode="lines+markers+text",
-                line=dict(color="#ff8c2d", width=2.5),
-                marker=dict(size=7),
+                line=dict(color="#ff8c2d", width=3),
+                marker=dict(size=9),
                 name="Факт",
                 text=[f"{int(f)}" for f in dyn["Факт"]],
-                textposition="top center",
+                textposition="bottom center",
                 textfont=dict(color="#ff8c2d", size=_lbl_sz),
                 cliponaxis=False,
+                yaxis="y2" if _use_dual_y else "y",
                 customdata=_pct_hover,
                 hovertemplate="Факт: %{y}<br>%{customdata}<br>%{x|%d.%m.%Y}<extra></extra>",
-            ),
-            row=2,
-            col=1,
+            )
         )
+        _ann_yref = "y2" if _use_dual_y else "y"
         for _xb, _f, _p in zip(_x, dyn["Факт"], dyn["План"]):
             if int(_p) <= 0:
                 continue
@@ -18832,71 +18905,130 @@ def _gdrs_dynamics_chart_panel(
                 y=int(_f),
                 text=f"({_pct}%)",
                 showarrow=False,
-                xref="x2",
-                yref="y2",
+                xref="x",
+                yref=_ann_yref,
                 xanchor="center",
                 yanchor="top",
-                yshift=-16 if _n_pts <= 16 else -12,
+                yshift=-14 if _n_pts <= 16 else -10,
                 font=dict(size=_ann_sz, color=_pct_color),
             )
-        _chart_h = int(min(720, max(520, 44 * _n_pts)))
-        _plan_range = _gdrs_dyn_y_range(dyn["План"], pad_ratio=0.12, min_pad=12.0)
-        _fact_range = _gdrs_dyn_y_range(dyn["Факт"], pad_ratio=0.18, min_pad=6.0)
-        _plan_dtick = _gdrs_dyn_nice_dtick(_plan_range[0], _plan_range[1])
-        _fact_dtick = _gdrs_dyn_nice_dtick(_fact_range[0], _fact_range[1])
+
+        _base_h = max(520, min(760, 38 * _n_pts + 120))
+        _chart_h = int(1.5 * _base_h)
+
         _x_dtick = None
         if str(agg_kind).casefold() == "день":
-            _x_dtick = "D2"
+            if _n_pts > 24:
+                _x_dtick = "D5"
+            elif _n_pts > 12:
+                _x_dtick = "D3"
+            else:
+                _x_dtick = "D2"
         elif str(agg_kind).casefold() == "неделя":
             _x_dtick = "D7"
-        fig.update_layout(
+        _layout_kw = dict(
             title=f"Фактическое количество — {sel_vid.lower()} (ресурсы)",
             plot_bgcolor="rgba(0,0,0,0)",
             paper_bgcolor="rgba(0,0,0,0)",
             font_color="#eee",
             height=_chart_h,
-            margin=dict(l=56, r=32, t=96, b=88),
+            margin=dict(l=62, r=62 if _use_dual_y else 32, t=104, b=96),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         )
-        fig.update_yaxes(
-            title_text="Количество",
-            range=_plan_range,
-            dtick=_plan_dtick,
-            autorange=False,
-            showgrid=True,
-            gridcolor="rgba(255,255,255,0.08)",
-            row=1,
-            col=1,
-        )
-        fig.update_yaxes(
-            title_text="Количество",
-            range=_fact_range,
-            dtick=_fact_dtick,
-            autorange=False,
-            showgrid=True,
-            gridcolor="rgba(255,255,255,0.08)",
-            row=2,
-            col=1,
-        )
-        fig.update_xaxes(showticklabels=False, row=1, col=1)
+        if _use_dual_y:
+            _layout_kw["yaxis"] = dict(
+                title="План",
+                range=_plan_range,
+                dtick=_plan_dtick,
+                autorange=False,
+                showgrid=True,
+                gridcolor="rgba(41,182,246,0.14)",
+                side="left",
+            )
+            _layout_kw["yaxis2"] = dict(
+                title="Факт",
+                range=_fact_range,
+                dtick=_fact_dtick,
+                autorange=False,
+                overlaying="y",
+                side="right",
+                showgrid=True,
+                gridcolor="rgba(255,255,255,0.08)",
+            )
+        else:
+            _both = pd.concat([_plan_s, _fact_s], ignore_index=True)
+            _comb_range = _gdrs_dyn_panel_y_range(_both, agg_kind)
+            _comb_dtick = _gdrs_dyn_panel_dtick(
+                _comb_range[0], _comb_range[1], agg_kind, series_kind="fact"
+            )
+            _layout_kw["yaxis"] = dict(
+                title="Количество",
+                range=_comb_range,
+                dtick=_comb_dtick,
+                autorange=False,
+                showgrid=True,
+                gridcolor="rgba(255,255,255,0.08)",
+            )
+        fig.update_layout(**_layout_kw)
         fig.update_xaxes(
             title_text=f"Период — {agg_kind.lower()}",
             type="date",
             tickformat="%d.%m.%Y",
             dtick=_x_dtick,
-            tickangle=-35 if len(dyn) > 6 else 0,
+            tickangle=-35 if _n_pts > 6 else 0,
             showgrid=True,
             gridcolor="rgba(255,255,255,0.06)",
-            row=2,
-            col=1,
         )
         fig = apply_chart_background(fig)
-        fig.update_yaxes(range=_plan_range, autorange=False, dtick=_plan_dtick, row=1, col=1)
-        fig.update_yaxes(range=_fact_range, autorange=False, dtick=_fact_dtick, row=2, col=1)
+        if _use_dual_y:
+            fig.update_layout(
+                yaxis=dict(range=list(_plan_range), dtick=_plan_dtick, autorange=False),
+                yaxis2=dict(range=list(_fact_range), dtick=_fact_dtick, autorange=False),
+            )
         st.plotly_chart(fig, use_container_width=True)
+        if _use_dual_y:
+            st.caption(
+                "Слева — план (чел.), справа — факт (чел.); линии на **разных шкалах** — "
+                "пересечение линий **не** означает равенство плана и факта."
+            )
+        else:
+            st.caption("План и факт на одной шкале (чел.).")
+
+        _dyn_tbl = pd.DataFrame({
+            "Период": dyn["Период"].astype(str),
+            "План": _plan_s.round(0).astype(int),
+            "Факт": _fact_s.round(0).astype(int),
+        })
+        _dyn_tbl["%"] = [
+            f"{int(round(float(f) / float(p) * 100))}%"
+            if float(p) > 0
+            else "—"
+            for f, p in zip(_fact_s, _plan_s)
+        ]
+        _dyn_tbl["Δ"] = (_fact_s - _plan_s).round(0).astype(int)
+        st.markdown("**Детализация по периодам**")
+        _render_html_table(
+            _dyn_tbl,
+            max_rows=500,
+            column_role={"План": "baseline", "Факт": "fact", "Δ": "dev", "%": "dev"},
+        )
     except Exception as _e:
         st.warning(f"Plotly недоступен: {_e}")
-        st.dataframe(dyn[["Период", "План", "Факт"]], use_container_width=True)
+        _plan_fb = pd.to_numeric(dyn["План"], errors="coerce").fillna(0.0)
+        _fact_fb = pd.to_numeric(dyn["Факт"], errors="coerce").fillna(0.0)
+        _fb_tbl = pd.DataFrame({
+            "Период": dyn["Период"],
+            "План": _plan_fb.round(0).astype(int),
+            "Факт": _fact_fb.round(0).astype(int),
+        })
+        _fb_tbl["%"] = [
+            f"{int(round(float(f) / float(p) * 100))}%"
+            if float(p) > 0
+            else "—"
+            for f, p in zip(_fact_fb, _plan_fb)
+        ]
+        _fb_tbl["Δ"] = (_fact_fb - _plan_fb).round(0).astype(int)
+        _render_html_table(_fb_tbl, max_rows=500)
 
 
 # ==================== DASHBOARD: ГДРС (новая реализация по ТЗ 2026-05-07) ====================
