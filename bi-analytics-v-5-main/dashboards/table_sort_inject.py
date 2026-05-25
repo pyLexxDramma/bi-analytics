@@ -302,8 +302,15 @@ def _split_embedded_style(html: str) -> tuple[str, str]:
 
 
 def _estimate_html_block_height(html: str) -> int:
-    rows = html.count("<tr")
-    return int(min(2400, max(360, 80 + rows * 30)))
+    bodies = re.findall(r"<tbody[^>]*>(.*?)</tbody>", html, re.I | re.S)
+    if bodies:
+        data_rows = sum(part.count("<tr") for part in bodies)
+    else:
+        data_rows = max(0, html.count("<tr") - 1)
+    thead_h = 44
+    row_h = 27
+    est = thead_h + data_rows * row_h + 16
+    return int(min(900, max(100, est)))
 
 
 def _build_sortable_html_document(html: str) -> str:

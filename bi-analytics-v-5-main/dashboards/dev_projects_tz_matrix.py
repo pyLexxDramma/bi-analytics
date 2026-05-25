@@ -2687,7 +2687,45 @@ _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS = """
 #matrix-fs-root:-moz-full-screen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide,
 #matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide,
 #matrix-fs-pseudo-shell.dev-tz-fs-shell .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide{
-  width:100%!important;min-width:100%!important;max-width:100%!important}
+  width:max-content!important;min-width:100%!important;max-width:none!important}
+/* Девелоперские проекты: без переносов в Проект / План / Факт / Откл. */
+#matrix-fs-root:fullscreen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap th.dev-tz-th-project,
+#matrix-fs-root:fullscreen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap td.dev-tz-td-project,
+#matrix-fs-root:fullscreen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap th.dev-tz-sub,
+#matrix-fs-root:fullscreen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap td.dev-tz-ms-first,
+#matrix-fs-root:fullscreen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap td.dev-tz-ms-fact,
+#matrix-fs-root:fullscreen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap td.dev-tz-ms-last,
+#matrix-fs-root:-webkit-full-screen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap th.dev-tz-th-project,
+#matrix-fs-root:-webkit-full-screen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap td.dev-tz-td-project,
+#matrix-fs-root:-webkit-full-screen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap th.dev-tz-sub,
+#matrix-fs-root:-webkit-full-screen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap td.dev-tz-ms-first,
+#matrix-fs-root:-webkit-full-screen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap td.dev-tz-ms-fact,
+#matrix-fs-root:-webkit-full-screen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap td.dev-tz-ms-last,
+#matrix-fs-root:-moz-full-screen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap th.dev-tz-th-project,
+#matrix-fs-root:-moz-full-screen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap td.dev-tz-td-project,
+#matrix-fs-root:-moz-full-screen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap th.dev-tz-sub,
+#matrix-fs-root:-moz-full-screen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap td.dev-tz-ms-first,
+#matrix-fs-root:-moz-full-screen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap td.dev-tz-ms-fact,
+#matrix-fs-root:-moz-full-screen .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap td.dev-tz-ms-last,
+#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap th.dev-tz-th-project,
+#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap td.dev-tz-td-project,
+#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap th.dev-tz-sub,
+#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap td.dev-tz-ms-first,
+#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap td.dev-tz-ms-fact,
+#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body.dev-tz-fs-body .dev-tz-matrix-wrap td.dev-tz-ms-last,
+#matrix-fs-pseudo-shell.dev-tz-fs-shell .dev-tz-matrix-wrap th.dev-tz-th-project,
+#matrix-fs-pseudo-shell.dev-tz-fs-shell .dev-tz-matrix-wrap td.dev-tz-td-project,
+#matrix-fs-pseudo-shell.dev-tz-fs-shell .dev-tz-matrix-wrap th.dev-tz-sub,
+#matrix-fs-pseudo-shell.dev-tz-fs-shell .dev-tz-matrix-wrap td.dev-tz-ms-first,
+#matrix-fs-pseudo-shell.dev-tz-fs-shell .dev-tz-matrix-wrap td.dev-tz-ms-fact,
+#matrix-fs-pseudo-shell.dev-tz-fs-shell .dev-tz-matrix-wrap td.dev-tz-ms-last{
+  white-space:nowrap!important;word-break:keep-all!important;overflow-wrap:normal!important;
+  hyphens:none!important;text-overflow:clip!important;min-width:5.5em}
+#matrix-fs-pseudo-shell.dev-tz-fs-shell .dev-tz-matrix-wrap td.dev-tz-td-project{
+  min-width:9em}
+#matrix-fs-pseudo-shell.dev-tz-fs-shell .dev-tz-matrix-wrap td.dev-tz-ms-last,
+#matrix-fs-pseudo-shell.dev-tz-fs-shell .dev-tz-matrix-wrap th.dev-tz-sub.dev-tz-ms-last{
+  min-width:6.5em}
 /* Девелоперские проекты: overlay в родителе Streamlit */
 #matrix-fs-pseudo-shell.dev-tz-fs-shell{display:flex!important;flex-direction:column!important;
   width:100vw!important;height:100vh!important;max-height:-webkit-fill-available!important;
@@ -2724,9 +2762,15 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
 
   function matrixFsStyleTable(tbl){
     if(!tbl) return;
-    devTzSetImp(tbl,"width","100%");
-    devTzSetImp(tbl,"min-width","100%");
-    devTzSetImp(tbl,"max-width","100%");
+    if(tbl.classList&&tbl.classList.contains("dev-tz-wide")){
+      devTzSetImp(tbl,"width","max-content");
+      devTzSetImp(tbl,"min-width","100%");
+      devTzSetImp(tbl,"max-width","none");
+    }else{
+      devTzSetImp(tbl,"width","100%");
+      devTzSetImp(tbl,"min-width","100%");
+      devTzSetImp(tbl,"max-width","100%");
+    }
   }
 
   function matrixFsStyleWrap(w){
@@ -2800,8 +2844,15 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
       +"box-sizing:border-box!important;overflow-x:auto!important;overflow-y:visible!important}"
       +"#matrix-fs-pseudo-shell.dev-tz-fs-shell .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide,"
       +"#matrix-fs-pseudo-shell.dev-tz-fs-shell table.rendered-table.dev-tz-wide{"
-      +"width:100%!important;min-width:100%!important;max-width:100%!important;"
+      +"width:max-content!important;min-width:100%!important;max-width:none!important;"
       +"table-layout:auto!important}"
+      +"#matrix-fs-pseudo-shell.dev-tz-fs-shell .dev-tz-matrix-wrap th.dev-tz-th-project,"
+      +"#matrix-fs-pseudo-shell.dev-tz-fs-shell .dev-tz-matrix-wrap td.dev-tz-td-project,"
+      +"#matrix-fs-pseudo-shell.dev-tz-fs-shell .dev-tz-matrix-wrap th.dev-tz-sub,"
+      +"#matrix-fs-pseudo-shell.dev-tz-fs-shell .dev-tz-matrix-wrap td.dev-tz-ms-first,"
+      +"#matrix-fs-pseudo-shell.dev-tz-fs-shell .dev-tz-matrix-wrap td.dev-tz-ms-fact,"
+      +"#matrix-fs-pseudo-shell.dev-tz-fs-shell .dev-tz-matrix-wrap td.dev-tz-ms-last{"
+      +"white-space:nowrap!important;word-break:keep-all!important;overflow-wrap:normal!important}"
       +"#matrix-fs-pseudo-shell.dev-tz-fs-shell .matrix-fs-body.cp-body-stack{"
       +"position:relative!important;width:100%!important;flex:1 1 auto!important;min-height:0!important;"
       +"overflow:auto!important;-webkit-overflow-scrolling:touch!important;box-sizing:border-box!important}"
@@ -3395,6 +3446,8 @@ def render_dev_tz_matrix(
                     cls = (cls + " dev-tz-ms-first").strip()
                 elif key == "otkl":
                     cls = (cls + " dev-tz-ms-last").strip()
+                elif key == "fact":
+                    cls = (cls + " dev-tz-ms-fact").strip()
                 oc = f' class="{esc(cls)}"' if cls else ""
                 iv = ""
                 if _dev_tz_apply_vert_date(vertical_dates, key, v):

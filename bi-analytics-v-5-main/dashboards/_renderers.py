@@ -207,7 +207,7 @@ _TABLE_CSS = """
 .rendered-table-wrap .rendered-table {width:max-content; min-width:100%}
 .pf-dates-table-wrap {
   overflow-x:auto; overflow-y:visible; min-width:0; max-width:100%; width:100%;
-  margin:0.5rem 0 1rem 0; -webkit-overflow-scrolling:touch; scrollbar-gutter:stable;
+  margin:0.25rem 0 0.35rem 0; -webkit-overflow-scrolling:touch; scrollbar-gutter:stable;
 }
 .pf-dates-table-wrap .pf-dates-table {width:max-content; min-width:100%; table-layout:auto}
 .pf-dates-table th {max-width:none; padding:6px 6px; cursor:pointer}
@@ -1914,7 +1914,7 @@ def _chart_caption_below(title: str) -> None:
         return
     esc = html_module.escape(sanitize_display_label(str(title)))
     st.markdown(
-        "<p style='text-align:center;color:#e8eef5;margin:0.45rem 0 0.35rem;font-size:1.08rem;font-weight:700;'>"
+        "<p style='text-align:center;color:#e8eef5;margin:0.2rem 0 0.15rem;font-size:1.08rem;font-weight:700;'>"
         f"{esc}</p>",
         unsafe_allow_html=True,
     )
@@ -2691,7 +2691,7 @@ def render_chart(
         _vh = int(scroll_viewport_height)
         st.markdown(
             f'<div style="max-height:{_vh}px;overflow-y:auto;overflow-x:hidden;'
-            f'border:1px solid rgba(148,163,184,0.22);border-radius:8px;margin-bottom:0.35rem;">',
+            f'border:1px solid rgba(148,163,184,0.22);border-radius:8px;margin:0 0 0.15rem 0;">',
             unsafe_allow_html=True,
         )
     st.plotly_chart(fig, **kwargs)
@@ -6009,12 +6009,16 @@ def render_plan_fact_zos_covenant_table(
 
     export_rows: list[dict] = []
     parts = [
-        '<div class="rendered-table-wrap">',
-        '<table class="rendered-table" style="border-collapse:collapse;width:100%">',
+        '<div class="rendered-table-wrap pf-dates-table-wrap">',
+        '<table class="rendered-table bi-sortable-table pf-dates-table bi-sort-click-only" style="border-collapse:collapse;width:100%">',
         "<thead><tr>",
     ]
     for c in cols_order:
-        parts.append(f"<th>{html_module.escape(c)}</th>")
+        c_esc = html_module.escape(str(c))
+        parts.append(
+            f'<th data-sort-label="{c_esc}">'
+            f'<span class="bi-sort-label">{c_esc} \u21c5</span></th>'
+        )
     parts.append("</tr></thead><tbody>")
     for _, zr in sub.iterrows():
         parts.append("<tr>")
@@ -6028,9 +6032,16 @@ def render_plan_fact_zos_covenant_table(
         er['Наименование задачи («ЗОС»)'] = str(tn)
         btxt = _plan_fact_zos_format_date_cell(zr.get("_base_end"))
         otxt = _plan_fact_zos_format_date_cell(zr.get("_plan_end"))
-        parts.append(f"<td>{html_module.escape(btxt)}</td>")
-        parts.append(f"<td>{html_module.escape(otxt)}</td>")
-        parts.append(f"<td style='text-align:right'>{_dev_html(zr.get('_zos_dev'))}</td>")
+        _be_sort = _plan_fact_sort_attr(zr.get("_base_end"))
+        _pe_sort = _plan_fact_sort_attr(zr.get("_plan_end"))
+        parts.append(f"<td{_be_sort}>{html_module.escape(btxt)}</td>")
+        parts.append(f"<td{_pe_sort}>{html_module.escape(otxt)}</td>")
+        _zdev = zr.get("_zos_dev")
+        _zdev_sort = _plan_fact_sort_attr(_zdev)
+        _zdev_style = _plan_fact_deviation_td_style(_zdev)
+        _zdev_disp = _dev_html(_zdev)
+        _td_st = f' style="{_zdev_style}text-align:right"' if _zdev_style else " style='text-align:right'"
+        parts.append(f"<td{_zdev_sort}{_td_st}>{_zdev_disp}</td>")
         parts.append("</tr>")
         er["Базовое окончание"] = zr.get("_base_end")
         er["Окончание"] = zr.get("_plan_end")
@@ -6039,7 +6050,7 @@ def render_plan_fact_zos_covenant_table(
     parts.append("</tbody></table></div>")
     _zos_export = pd.DataFrame(export_rows)
     render_report_html_table(
-        _TABLE_CSS + "".join(parts),
+        _TABLE_CSS + mark_html_table_sortable("".join(parts)),
         export_df=_zos_export,
         file_stem="zos_covenant_plan_fact",
         key_prefix="zos_covenant_table",
@@ -6053,7 +6064,7 @@ def render_plan_fact_zos_covenant_table(
 
 _PLAN_FACT_KPI_PLATES_CSS = """
 <style>
-.pf-kpi-wrap{background:#152238;border-radius:10px;padding:14px 18px;margin:10px 0 16px 0;border:1px solid rgba(148,163,184,.22);}
+.pf-kpi-wrap{background:#152238;border-radius:10px;padding:14px 18px;margin:8px 0 10px 0;border:1px solid rgba(148,163,184,.22);}
 .pf-kpi-row{display:flex;gap:14px;flex-wrap:wrap;border-bottom:1px solid rgba(148,163,184,.16);padding:12px 0;}
 .pf-kpi-row:last-child{border-bottom:none;padding-bottom:4px;}
 .pf-kpi-cell{flex:1 1 200px;min-width:160px;}
@@ -6130,9 +6141,16 @@ def render_plan_fact_dates_metric_plates(
     nd = "Н/Д"
     metric_task = (get_setting("baseline_plan_task_for_metrics") or "").strip()
 
-    def _one_row_html(max_lbl: str, plan_lbl: str, fact_lbl: str) -> str:
+    def _one_row_html(max_lbl: str, plan_lbl: str, fact_lbl: str, project_name: str = "") -> str:
+        _proj_html = ""
+        if project_name:
+            _proj_html = (
+                f'<div style="font-size:13px;color:#94a3b8;font-weight:600;'
+                f'margin-bottom:2px;letter-spacing:.02em;">'
+                f'{html_module.escape(project_name)}</div>'
+            )
         return (
-            '<div class="pf-kpi-row">'
+            f'<div class="pf-kpi-row">{_proj_html}'
             f'<div class="pf-kpi-cell"><div class="pf-kpi-lbl">Максимальное отклонение (дней)</div>'
             f'<div class="pf-kpi-val">{html_module.escape(max_lbl)}</div></div>'
             f'<div class="pf-kpi-cell"><div class="pf-kpi-lbl">План окончания проекта</div>'
@@ -6200,7 +6218,7 @@ def render_plan_fact_dates_metric_plates(
             if _sub.empty:
                 continue
             _max, _plan, _fact = _row_for_scope(_sub)
-            parts.append(_one_row_html(_max, _plan, _fact))
+            parts.append(_one_row_html(_max, _plan, _fact, project_name=_pn))
     else:
         _max, _plan, _fact = _row_for_scope(w)
         parts.append(_one_row_html(_max, _plan, _fact))
@@ -6820,7 +6838,7 @@ def dashboard_plan_fact_dates(df):
 
     selected_reason_bucket_dates = "Все"
     _rbuckets: list[str] = []
-    if (not force_covenant_ui) and dates_show_reason_notes and "reason of deviation" in df.columns:
+    if (not force_covenant_ui) and "reason of deviation" in df.columns:
         _rvals = (
             df["reason of deviation"]
             .dropna()
@@ -7568,7 +7586,7 @@ def dashboard_plan_fact_dates(df):
             lh = float(max(13.0, _PF_GANTT_TASK_FONT * 1.42))
             bars_block = 20.0
             row_h = int(max(36, max_lines * lh + bars_block))
-            chart_h = max(160, int(n_rows_local * row_h + 80))
+            chart_h = max(160, int(n_rows_local * row_h + 48))
             return chart_h, max_lines
 
         def _pf_gantt_label_domain(y_order_local: list[str]) -> float:
@@ -7576,10 +7594,10 @@ def dashboard_plan_fact_dates(df):
             for y in y_order_local:
                 for line in str(y).split("<br>"):
                     max_line_len = max(max_line_len, len(line))
-            px_per_char = max(5.0, _PF_GANTT_TASK_FONT * 0.50)
-            label_px = int(4 + max_line_len * px_per_char + 6)
-            label_px = min(480, max(64, label_px))
-            return round(min(0.38, max(0.04, (label_px + 4) / 980.0)), 4)
+            px_per_char = max(6.2, _PF_GANTT_TASK_FONT * 0.62)
+            label_px = int(8 + max_line_len * px_per_char + 12)
+            label_px = min(560, max(120, label_px))
+            return round(min(0.46, max(0.12, (label_px + 8) / 980.0)), 4)
 
         def _pf_gantt_y_label_annotations(y_order_local: list[str]) -> list[dict]:
             out: list[dict] = []
@@ -7626,10 +7644,11 @@ def dashboard_plan_fact_dates(df):
                 fig_obj.update_layout(annotations=y_ann)
             return 4
 
+        _PF_GANTT_VIEWPORT = 560
         _PF_GANTT_LEGEND = dict(
             orientation="h",
-            yanchor="top",
-            y=-0.18,
+            yanchor="bottom",
+            y=1.02,
             xanchor="left",
             x=0,
         )
@@ -7702,10 +7721,12 @@ def dashboard_plan_fact_dates(df):
                 yaxis_title=None,
                 height=_chart_h,
                 xaxis=dict(type="date", tickformat="%d.%m.%Y", automargin=True),
-                margin=dict(l=4, r=72, t=12, b=68),
+                margin=dict(l=4, r=72, t=44, b=12),
                 legend=_PF_GANTT_LEGEND,
             )
             _pf_apply_gantt_y_labels(fig, y_order)
+            _pf_bar_chart_h = _chart_h
+            _pf_bar_chart_viewport = _PF_GANTT_VIEWPORT
         else:
             def _epoch_ms(ts) -> Optional[float]:
                 if ts is None or (isinstance(ts, float) and pd.isna(ts)):
@@ -7782,7 +7803,7 @@ def dashboard_plan_fact_dates(df):
             y_order = list(y_labels)
             n_rows = len(y_order)
             _chart_h, _max_lines = _pf_gantt_chart_height(y_order)
-            _chart_viewport = 960
+            _chart_viewport = _PF_GANTT_VIEWPORT
             _x_max_ms = float(_origin_ms)
             for _b0, _bl in zip(base_base_ms, base_len_ms):
                 _x_max_ms = max(_x_max_ms, float(_b0) + float(_bl))
@@ -7833,7 +7854,7 @@ def dashboard_plan_fact_dates(df):
                     automargin=True,
                     range=[_origin_ms, _x_max_ms + _x_pad_ms],
                 ),
-                margin=dict(l=4, r=72, t=12, b=68),
+                margin=dict(l=4, r=72, t=44, b=12),
                 legend=_PF_GANTT_LEGEND,
                 bargap=0.02,
                 bargroupgap=0.03,
@@ -8015,23 +8036,6 @@ def dashboard_plan_fact_dates(df):
                     _cov_num["Отклонение окончания (дней)"], errors="coerce"
                 )
             _render_plan_fact_dates_main_table(cov_display, _cov_num)
-            cov_export = cov_df.copy()
-            if "Базовое окончание" in cov_export.columns:
-                cov_export["Базовое окончание"] = cov_export["Базовое окончание"].apply(format_date_display)
-            if "Окончание" in cov_export.columns:
-                cov_export["Окончание"] = cov_export["Окончание"].apply(format_date_display)
-            if "Отклонение окончания (дней)" in cov_export.columns:
-                cov_export["Отклонение окончания (дней)"] = cov_export["Отклонение окончания (дней)"].apply(
-                    lambda x: ""
-                    if pd.isna(x)
-                    else str(int(round(float(x), 0)))
-                )
-            render_dataframe_excel_csv_downloads(
-                cov_export,
-                file_stem="covenant_plan_fact",
-                key_prefix="covenant_table",
-                csv_label="Скачать CSV (ковенанты, для Excel)",
-            )
     elif bar_df.empty:
         st.info("Нет данных для отображения графика.")
     else:
@@ -8270,26 +8274,9 @@ def dashboard_plan_fact_dates(df):
         st.subheader("Отклонение от базового плана (таблица)")
         suppress_caption(_pf_dates_scope_caption())
         _render_dates_main_table()
-        render_dataframe_excel_csv_downloads(
-            summary_display,
-            file_stem="detail_dates",
-            key_prefix="detail_dates",
-            csv_label="Скачать CSV",
-            popover_label="Скачать таблицу (CSV / Excel)",
-        )
     else:
         with st.expander("Полная таблица отклонений по всем задачам фильтра", expanded=True):
-            st.markdown(
-                "Полная таблица по всем задачам фильтра не выводится отдельным блоком, чтобы не дублировать "
-                "таблицу **Ковенанты** выше. Ниже — развёртка со всеми колонками (план/факт, отклонения), если нужен экспорт."
-            )
             _render_dates_main_table()
-            render_dataframe_excel_csv_downloads(
-                summary_display,
-                file_stem="detail_dates",
-                key_prefix="detail_dates_cov_all",
-                csv_label="Скачать CSV (все задачи фильтра, для Excel)",
-            )
 
 
 # ==================== DASHBOARD 4: Deviation Amount by Tasks ====================
