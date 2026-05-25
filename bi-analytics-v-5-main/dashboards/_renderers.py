@@ -7525,29 +7525,30 @@ def dashboard_plan_fact_dates(df):
             esc_lines = [html_module.escape(p) for p in parts if str(p).strip() != ""]
             return "<br>".join(esc_lines) if esc_lines else ""
 
-        def _pf_simple_task_label(row: pd.Series) -> str:
-            tn = row.get("task name", "")
-            disp = _bar_task_label_from_row(row, tn)
+        def _pf_task_name(row: pd.Series) -> str:
+            disp = _bar_task_label_from_row(row, row.get("task name", ""))
             if selected_project == "Все" and "project name" in row.index:
                 pn = str(row.get("project name", "")).strip()
                 if pn:
                     disp = f"{disp} ({pn})"
-            disp = str(disp).strip()
-            if len(disp) > 80:
-                disp = disp[:77].rstrip() + "..."
-            return disp
+            return str(disp).strip()
+
+        _PF_GANTT_TASK_FONT = 11
+        _PF_GANTT_WRAP_WIDTH = 42
+        _PF_GANTT_WRAP_MAX_LINES = 8
+
+        def _pf_y_label_wrapped(name: str) -> str:
+            return _gantt_wrap_task_label(
+                name,
+                width=_PF_GANTT_WRAP_WIDTH,
+                max_lines=_PF_GANTT_WRAP_MAX_LINES,
+            )
+
+        def _pf_simple_task_label(row: pd.Series) -> str:
+            return _pf_y_label_wrapped(_pf_task_name(row))
 
         def _pf_build_y_label(row: pd.Series) -> str:
-            tn = row.get("task name", "")
-            disp = _bar_task_label_from_row(row, tn)
-            if selected_project == "Все" and "project name" in row.index:
-                pn = str(row.get("project name", "")).strip()
-                if pn:
-                    disp = f"{disp} ({pn})"
-            title_chunks: list[str] = []
-            for chunk in textwrap.wrap(str(disp), width=34, break_long_words=False):
-                title_chunks.append(chunk)
-            title_chunks = title_chunks[:4]
+            title_wrapped = _pf_y_label_wrapped(_pf_task_name(row))
             bs = row.get("base start")
             be = row.get("base end")
             ps = row.get("plan start")
@@ -7556,7 +7557,82 @@ def dashboard_plan_fact_dates(df):
             line_plan = f"Н {_pf_fmt_day_short(ps)} · О {_pf_fmt_day_short(pe)}"
             wrapped_base = textwrap.wrap(line_base, width=38, break_long_words=False) or [line_base]
             wrapped_plan = textwrap.wrap(line_plan, width=38, break_long_words=False) or [line_plan]
-            return _pf_join_lines([*title_chunks, *wrapped_base, *wrapped_plan])
+            date_part = _pf_join_lines([*wrapped_base, *wrapped_plan])
+            if title_wrapped and date_part:
+                return f"{title_wrapped}<br>{date_part}"
+            return title_wrapped or date_part
+
+        def _pf_gantt_chart_height(y_order: list[str]) -> tuple[int, int]:
+            n_rows_local = max(1, len(y_order))
+            max_lines = max(1, max(len(str(y).split("<br>")) for y in y_order))
+            lh = float(max(13.0, _PF_GANTT_TASK_FONT * 1.42))
+            bars_block = 20.0
+            row_h = int(max(36, max_lines * lh + bars_block))
+            chart_h = max(160, int(n_rows_local * row_h + 80))
+            return chart_h, max_lines
+
+        def _pf_gantt_label_domain(y_order_local: list[str]) -> float:
+            max_line_len = 8
+            for y in y_order_local:
+                for line in str(y).split("<br>"):
+                    max_line_len = max(max_line_len, len(line))
+            px_per_char = max(5.0, _PF_GANTT_TASK_FONT * 0.50)
+            label_px = int(4 + max_line_len * px_per_char + 6)
+            label_px = min(480, max(64, label_px))
+            return round(min(0.38, max(0.04, (label_px + 4) / 980.0)), 4)
+
+        def _pf_gantt_y_label_annotations(y_order_local: list[str]) -> list[dict]:
+            out: list[dict] = []
+            for y in y_order_local:
+                txt = str(y).strip()
+                if not txt:
+                    continue
+                out.append(
+                    dict(
+                        x=0.002,
+                        y=y,
+                        xref="paper",
+                        yref="y",
+                        text=txt,
+                        showarrow=False,
+                        xanchor="left",
+                        yanchor="middle",
+                        xshift=2,
+                        align="left",
+                        font=dict(
+                            size=_PF_GANTT_TASK_FONT,
+                            color=TABLE_TEXT_COLOR,
+                            family="Arial",
+                        ),
+                    )
+                )
+            return out
+
+        def _pf_apply_gantt_y_labels(fig_obj, y_order_local: list[str]) -> int:
+            n_local = len(y_order_local)
+            domain_start = _pf_gantt_label_domain(y_order_local)
+            y_ann = _pf_gantt_y_label_annotations(y_order_local)
+            fig_obj.update_yaxes(
+                categoryorder="array",
+                categoryarray=list(y_order_local),
+                autorange="reversed",
+                range=[n_local - 0.5, -0.5] if n_local > 0 else None,
+                fixedrange=True,
+                side="left",
+                showticklabels=False,
+            )
+            fig_obj.update_xaxes(domain=[domain_start, 1.0])
+            if y_ann:
+                fig_obj.update_layout(annotations=y_ann)
+            return 4
+
+        _PF_GANTT_LEGEND = dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.18,
+            xanchor="left",
+            x=0,
+        )
 
         if is_covenant:
             local["_y_full"] = local.apply(_pf_build_y_label, axis=1)
@@ -7585,7 +7661,7 @@ def dashboard_plan_fact_dates(df):
 
         y_order = local["_y"].tolist()
         n_rows = len(y_order)
-        _max_lines = max(1, max(len(str(y).split("<br>")) for y in y_order))
+        _chart_h, _max_lines = _pf_gantt_chart_height(y_order)
 
         fig = go.Figure()
         _pf_bar_chart_h: Optional[int] = None
@@ -7624,11 +7700,12 @@ def dashboard_plan_fact_dates(df):
                 width=None,
                 xaxis_title="Дата",
                 yaxis_title=None,
-                height=max(520, int(n_rows * (34 + _max_lines * 14))),
+                height=_chart_h,
                 xaxis=dict(type="date", tickformat="%d.%m.%Y", automargin=True),
-                margin=dict(l=64, r=72, t=48, b=56),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                margin=dict(l=4, r=72, t=12, b=68),
+                legend=_PF_GANTT_LEGEND,
             )
+            _pf_apply_gantt_y_labels(fig, y_order)
         else:
             def _epoch_ms(ts) -> Optional[float]:
                 if ts is None or (isinstance(ts, float) and pd.isna(ts)):
@@ -7704,9 +7781,7 @@ def dashboard_plan_fact_dates(df):
 
             y_order = list(y_labels)
             n_rows = len(y_order)
-            _max_lines = max(1, max(len(str(y).split("<br>")) for y in y_order))
-            _row_h = 34 + _max_lines * 14
-            _chart_h = max(420, int(n_rows * _row_h))
+            _chart_h, _max_lines = _pf_gantt_chart_height(y_order)
             _chart_viewport = 960
             _x_max_ms = float(_origin_ms)
             for _b0, _bl in zip(base_base_ms, base_len_ms):
@@ -7758,20 +7833,32 @@ def dashboard_plan_fact_dates(df):
                     automargin=True,
                     range=[_origin_ms, _x_max_ms + _x_pad_ms],
                 ),
-                margin=dict(l=64, r=72, t=48, b=56),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                margin=dict(l=4, r=72, t=12, b=68),
+                legend=_PF_GANTT_LEGEND,
+                bargap=0.02,
+                bargroupgap=0.03,
             )
+            _pf_apply_gantt_y_labels(fig, y_order)
             _pf_bar_chart_h = _chart_h
             _pf_bar_chart_viewport = _chart_viewport
 
-        fig.update_yaxes(
-            categoryorder="array",
-            categoryarray=y_order,
-            autorange="reversed",
-            tickfont=dict(size=10, color="#e8eaed"),
-            automargin=True,
-            side="left",
-        )
+        _sep_shapes: list[dict] = []
+        for _si in range(len(y_order) - 1):
+            _sep_shapes.append(
+                dict(
+                    type="line",
+                    xref="paper",
+                    yref="y",
+                    x0=0,
+                    x1=1,
+                    y0=_si + 0.5,
+                    y1=_si + 0.5,
+                    line=dict(color="rgba(148,163,184,0.22)", width=1, dash="dot"),
+                )
+            )
+        if _sep_shapes:
+            fig.update_layout(shapes=_sep_shapes)
+
         fig = apply_chart_background(fig, skip_uniformtext=True)
         _render_kw = dict(
             skip_clamp_zoom=True,
