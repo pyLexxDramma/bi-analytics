@@ -18843,18 +18843,11 @@ def _gdrs_dynamics_chart_panel(
         _plan_for_range = _plan_plot.dropna()
         if _plan_for_range.empty:
             _plan_for_range = _plan_s
-        _plan_range = _gdrs_dyn_panel_y_range(_plan_for_range, agg_kind)
-        _fact_range = _gdrs_dyn_panel_y_range(_fact_s, agg_kind)
-        _plan_dtick = _gdrs_dyn_panel_dtick(
-            _plan_range[0], _plan_range[1], agg_kind, series_kind="plan"
+        _both = pd.concat([_plan_s, _fact_s], ignore_index=True)
+        _comb_range = _gdrs_dyn_panel_y_range(_both, agg_kind)
+        _comb_dtick = _gdrs_dyn_panel_dtick(
+            _comb_range[0], _comb_range[1], agg_kind, series_kind="fact"
         )
-        _fact_dtick = _gdrs_dyn_panel_dtick(
-            _fact_range[0], _fact_range[1], agg_kind, series_kind="fact"
-        )
-
-        _plan_hi = float(_plan_for_range.max()) if not _plan_for_range.empty else 0.0
-        _fact_hi = float(_fact_s.max()) if not _fact_s.empty else 0.0
-        _use_dual_y = _plan_hi >= 80 and _fact_hi > 0 and (_plan_hi / max(_fact_hi, 1.0)) >= 1.6
 
         fig = _go.Figure()
         fig.add_trace(
@@ -18889,12 +18882,12 @@ def _gdrs_dynamics_chart_panel(
                 textposition="bottom center",
                 textfont=dict(color="#ff8c2d", size=_lbl_sz),
                 cliponaxis=False,
-                yaxis="y2" if _use_dual_y else "y",
+                yaxis="y",
                 customdata=_pct_hover,
                 hovertemplate="Факт: %{y}<br>%{customdata}<br>%{x|%d.%m.%Y}<extra></extra>",
             )
         )
-        _ann_yref = "y2" if _use_dual_y else "y"
+        _ann_yref = "y"
         for _xb, _f, _p in zip(_x, dyn["Факт"], dyn["План"]):
             if int(_p) <= 0:
                 continue
@@ -18932,43 +18925,17 @@ def _gdrs_dynamics_chart_panel(
             paper_bgcolor="rgba(0,0,0,0)",
             font_color="#eee",
             height=_chart_h,
-            margin=dict(l=62, r=62 if _use_dual_y else 32, t=104, b=96),
+            margin=dict(l=62, r=32, t=104, b=96),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        )
-        if _use_dual_y:
-            _layout_kw["yaxis"] = dict(
-                title="План",
-                range=_plan_range,
-                dtick=_plan_dtick,
-                autorange=False,
-                showgrid=True,
-                gridcolor="rgba(41,182,246,0.14)",
-                side="left",
-            )
-            _layout_kw["yaxis2"] = dict(
-                title="Факт",
-                range=_fact_range,
-                dtick=_fact_dtick,
-                autorange=False,
-                overlaying="y",
-                side="right",
-                showgrid=True,
-                gridcolor="rgba(255,255,255,0.08)",
-            )
-        else:
-            _both = pd.concat([_plan_s, _fact_s], ignore_index=True)
-            _comb_range = _gdrs_dyn_panel_y_range(_both, agg_kind)
-            _comb_dtick = _gdrs_dyn_panel_dtick(
-                _comb_range[0], _comb_range[1], agg_kind, series_kind="fact"
-            )
-            _layout_kw["yaxis"] = dict(
+            yaxis=dict(
                 title="Количество",
                 range=_comb_range,
                 dtick=_comb_dtick,
                 autorange=False,
                 showgrid=True,
                 gridcolor="rgba(255,255,255,0.08)",
-            )
+            ),
+        )
         fig.update_layout(**_layout_kw)
         fig.update_xaxes(
             title_text=f"Период — {agg_kind.lower()}",
@@ -18980,19 +18947,8 @@ def _gdrs_dynamics_chart_panel(
             gridcolor="rgba(255,255,255,0.06)",
         )
         fig = apply_chart_background(fig)
-        if _use_dual_y:
-            fig.update_layout(
-                yaxis=dict(range=list(_plan_range), dtick=_plan_dtick, autorange=False),
-                yaxis2=dict(range=list(_fact_range), dtick=_fact_dtick, autorange=False),
-            )
         st.plotly_chart(fig, use_container_width=True)
-        if _use_dual_y:
-            st.caption(
-                "Слева — план (чел.), справа — факт (чел.); линии на **разных шкалах** — "
-                "пересечение линий **не** означает равенство плана и факта."
-            )
-        else:
-            st.caption("План и факт на одной шкале (чел.).")
+        st.caption("План и факт на одной шкале (чел.); пересечение линий — близкие значения.")
 
         _dyn_tbl = pd.DataFrame({
             "Период": dyn["Период"].astype(str),
