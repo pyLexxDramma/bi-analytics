@@ -19063,7 +19063,7 @@ def _gdrs_dynamics_chart_panel(
             "План и факт на одной шкале; подписи у факта — значение и % от плана."
         )
 
-                _dyn_tbl = pd.DataFrame({
+        _dyn_tbl = pd.DataFrame({
             "Период": dyn["Период"].astype(str),
             "План": _plan_s.round(0).astype(int),
             "Факт": _fact_s.round(0).astype(int),
