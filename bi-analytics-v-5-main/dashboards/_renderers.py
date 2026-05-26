@@ -32397,6 +32397,7 @@ def _project_schedule_gantt_x_range(
     lo_bars = min(start_pts) if start_pts else min(pts)
     hi_bars = max(pts)
     span = max((hi_bars - lo_bars).total_seconds() / 86400.0, 1.0)
+    text_pad_l = timedelta(days=max(10.0, span * 0.022))
     text_pad_r = timedelta(days=max(10.0, span * 0.022))
     lo_pad = lo_bars - timedelta(days=max(0.5, span * 0.003))
     hi_pad = hi_bars + timedelta(days=max(8.0, span * 0.030))
@@ -32503,8 +32504,14 @@ def _project_schedule_gantt_apply_y_labels(
     dense: bool,
     task_font: int,
 ) -> tuple[int, float, list[dict]]:
-    """Подписи задач на оси Y (automargin); полосы — на всю ширину plot area."""
+    """Подписи задач слева (paper annotations), без обрезки tick labels."""
     n = len(y_labels or [])
+    margin_l, domain_start = _project_schedule_gantt_label_column_layout(
+        y_labels,
+        dense=dense,
+        task_font=task_font,
+    )
+    y_ann = _project_schedule_gantt_y_label_annotations(y_labels, task_font=task_font)
     fig.update_yaxes(
         categoryorder="array",
         categoryarray=list(y_labels),
@@ -32512,12 +32519,10 @@ def _project_schedule_gantt_apply_y_labels(
         range=[n - 0.5, -0.5] if n > 0 else None,
         fixedrange=True,
         side="left",
-        showticklabels=True,
-        automargin=True,
-        tickfont=dict(size=task_font, color=TABLE_TEXT_COLOR, family="Arial"),
+        showticklabels=False,
     )
-    fig.update_xaxes(domain=[0.0, 1.0])
-    return 8, 0.0, []
+    fig.update_xaxes(domain=[domain_start, 1.0])
+    return margin_l, domain_start, y_ann
 
 
 @st.cache_data(show_spinner=False, ttl=300)
@@ -32553,6 +32558,7 @@ _GANTT_MIN_ROW_PX = 70
 _GANTT_DATE_LABELS_END_ONLY_ROWS = 8
 _GANTT_DATE_LABELS_HOVER_ONLY_ROWS = 60
 _GANTT_LINES_TEXT_MAX_ROWS = 20
+_CHART_PLOT_DATE_FMT = "%d-%m-%y"
 
 
 def dashboard_project_schedule_chart(df):
@@ -32740,26 +32746,7 @@ def dashboard_project_schedule_chart(df):
         if len(rng) > max_ticks:
             step = int(np.ceil(len(rng) / float(max_ticks)))
             rng = rng[:: max(step, 1)]
-        abbr = {
-            1: "янв.",
-            2: "фев.",
-            3: "мар.",
-            4: "апр.",
-            5: "мая",
-            6: "июн.",
-            7: "июл.",
-            8: "авг.",
-            9: "сен.",
-            10: "окт.",
-            11: "нояб.",
-            12: "дек.",
-        }
-        ticktext = []
-        for ts in rng:
-            if freq == "1W":
-                ticktext.append(ts.strftime("%d.%m.%Y"))
-            else:
-                ticktext.append(f"{abbr.get(ts.month, ts.month)} {ts.year}")
+        ticktext = [pd.Timestamp(ts).strftime(_CHART_PLOT_DATE_FMT) for ts in rng]
         return list(rng), ticktext
 
     def _fmt_dev_days(v) -> str:
@@ -33483,7 +33470,7 @@ def dashboard_project_schedule_chart(df):
         _tf = max(_GANTT_MIN_TASK_FONT, int(round(12 * _GANTT_FONT_SCALE)))
         _ms = 8 if is_very_dense else (9 if is_dense else 10)
         return {
-            "date_fmt": "%d.%m.%Y",
+            "date_fmt": _CHART_PLOT_DATE_FMT,
             "label_font": _lf,
             "task_font": _tf,
             "max_ticks": 12 if is_very_dense else (18 if is_dense else 24),
@@ -33563,7 +33550,7 @@ def dashboard_project_schedule_chart(df):
                     customdata=np.stack(
                         [
                             _df[task_col].astype(str).values,
-                            xvals.dt.strftime("%d.%m.%Y").fillna("").values,
+                            xvals.dt.strftime(_CHART_PLOT_DATE_FMT).fillna("").values,
                         ],
                         axis=-1,
                     ),
@@ -33716,14 +33703,14 @@ def dashboard_project_schedule_chart(df):
                 return None
             return float(t.timestamp() * 1000.0)
 
-        def _fmt_bar_date(ts, *, long_fmt: bool = False) -> str:
+        def _fmt_bar_date(ts) -> str:
             if ts is None or (isinstance(ts, float) and pd.isna(ts)):
                 return ""
             try:
                 tt = pd.Timestamp(ts)
                 if pd.isna(tt):
                     return ""
-                return tt.strftime("%d.%m.%Y" if long_fmt else date_fmt)
+                return tt.strftime(date_fmt)
             except Exception:
                 return ""
 
@@ -33777,7 +33764,7 @@ def dashboard_project_schedule_chart(df):
             p1 = _epoch_ms(pe)
             plan_base_ms.append(float(p0) if p0 is not None else 0.0)
             plan_len_ms.append(max(0.0, float(p1 - p0)) if p0 is not None and p1 is not None else 0.0)
-            cust_plan.append((_fmt_bar_date(ps, long_fmt=True), _fmt_bar_date(pe, long_fmt=True)))
+            cust_plan.append((_fmt_bar_date(ps), _fmt_bar_date(pe)))
 
             fs, fe = _resolve_fact_interval(row)
             f0 = _epoch_ms(fs)
@@ -33785,7 +33772,7 @@ def dashboard_project_schedule_chart(df):
             if f0 is not None and f1 is not None and f1 >= f0:
                 fact_base_ms.append(float(f0))
                 fact_len_ms.append(max(0.0, float(f1 - f0)))
-                cust_fact.append((_fmt_bar_date(fs, long_fmt=True), _fmt_bar_date(fe, long_fmt=True)))
+                cust_fact.append((_fmt_bar_date(fs), _fmt_bar_date(fe)))
                 _n_fact_ok += 1
             else:
                 fact_base_ms.append(0.0)
@@ -33807,6 +33794,9 @@ def dashboard_project_schedule_chart(df):
                     "fs": fs,
                     "fe": fe,
                     "pct": pv,
+                    "has_fact": bool(
+                        f0 is not None and f1 is not None and f1 >= f0
+                    ),
                 }
             )
 
@@ -33878,6 +33868,11 @@ def dashboard_project_schedule_chart(df):
 
         # Подписи дат у полос: одна annotation на метку (без «halo» — иначе Plotly
         # тратит минуты на тысячи fig.add_annotation при 50+ строках).
+        def _bar_lane_ay(lane: str, row_has_fact: bool) -> int:
+            if not row_has_fact:
+                return 0
+            return -14 if lane == "plan" else 14
+
         def _add_date_label(
             x_edge: pd.Timestamp,
             y_cat: str,
@@ -33885,20 +33880,20 @@ def dashboard_project_schedule_chart(df):
             *,
             side: str,
             lane: str,
-            stack_index: int,
-            stack_total: int,
+            row_has_fact: bool,
         ) -> None:
-            """Подпись строго до/после края полосы; вертикально — середина строки категории (как центр полосы)."""
+            """Подпись у начала/конца полосы, по вертикали — центр полосы (план выше, факт ниже)."""
             if not text or x_edge is None:
                 return
             _bar_edge_x.append(x_edge)
             _txt_color = _GANTT_FACT_COLOR if lane == "fact" else _GANTT_PLAN_COLOR
-            _ax = _px_shift_for_text(text, side=side)
-            _xanchor = "left"
-            # Лёгкое вертикальное расслоение только если на одной стороне две подписи (план+факт).
-            _stack_ay = 0
-            if stack_total > 1:
-                _stack_ay = int(round((stack_index - (stack_total - 1) / 2.0) * 16))
+            if side == "start":
+                _xanchor = "right"
+                _ax = -5
+            else:
+                _xanchor = "left"
+                _ax = _px_shift_for_text(text, side="end")
+            _ay = _bar_lane_ay(lane, row_has_fact)
 
             _date_ann.append(
                 dict(
@@ -33912,7 +33907,7 @@ def dashboard_project_schedule_chart(df):
                     axref="pixel",
                     ayref="pixel",
                     ax=_ax,
-                    ay=_stack_ay,
+                    ay=_ay,
                     showarrow=False,
                     font=dict(size=_lbl_font, color=_txt_color, family="Arial"),
                     bgcolor="rgba(14,19,25,0.78)",
@@ -33941,8 +33936,7 @@ def dashboard_project_schedule_chart(df):
                     txt,
                     side="end",
                     lane="plan",
-                    stack_index=0,
-                    stack_total=1,
+                    row_has_fact=bool(meta.get("has_fact")),
                 )
         elif _date_mode != "none":
             _show_start = _date_mode == "full"
@@ -33950,35 +33944,34 @@ def dashboard_project_schedule_chart(df):
                 y = meta["y"]
                 ps, pe = meta["ps"], meta["pe"]
                 fs, fe = meta["fs"], meta["fe"]
+                _row_has_fact = bool(meta.get("has_fact"))
                 start_items: list[tuple[str, pd.Timestamp, str]] = []
                 end_items: list[tuple[str, pd.Timestamp, str]] = []
                 if _show_start and ps is not None and pe is not None:
-                    start_items.append(("plan", ps, _fmt_bar_date(ps, long_fmt=True)))
+                    start_items.append(("plan", ps, _fmt_bar_date(ps)))
                 if _show_start and fs is not None and fe is not None:
-                    start_items.append(("fact", fs, _fmt_bar_date(fs, long_fmt=True)))
+                    start_items.append(("fact", fs, _fmt_bar_date(fs)))
                 if pe is not None:
-                    end_items.append(("plan", pe, _fmt_bar_date(pe, long_fmt=True)))
+                    end_items.append(("plan", pe, _fmt_bar_date(pe)))
                 if fe is not None:
-                    end_items.append(("fact", fe, _fmt_bar_date(fe, long_fmt=True)))
-                for i, (lane, x_edge, txt) in enumerate(start_items):
+                    end_items.append(("fact", fe, _fmt_bar_date(fe)))
+                for lane, x_edge, txt in start_items:
                     _add_date_label(
                         x_edge,
                         y,
                         txt,
                         side="start",
                         lane=lane,
-                        stack_index=i,
-                        stack_total=len(start_items),
+                        row_has_fact=_row_has_fact,
                     )
-                for i, (lane, x_edge, txt) in enumerate(end_items):
+                for lane, x_edge, txt in end_items:
                     _add_date_label(
                         x_edge,
                         y,
                         txt,
                         side="end",
                         lane=lane,
-                        stack_index=i,
-                        stack_total=len(end_items),
+                        row_has_fact=_row_has_fact,
                     )
         if show_covenant_markers and base_end_x:
             fig.add_trace(
@@ -33993,7 +33986,7 @@ def dashboard_project_schedule_chart(df):
                         color="#C084FC",
                         line=dict(color="rgba(255,255,255,0.75)", width=1),
                     ),
-                    hovertemplate="%{y}<br>Базовое окончание: %{x|%d.%m.%Y}<extra></extra>",
+                    hovertemplate="%{y}<br>Базовое окончание: %{x|" + _CHART_PLOT_DATE_FMT + "}<extra></extra>",
                     showlegend=False,
                 )
             )
@@ -34037,7 +34030,12 @@ def dashboard_project_schedule_chart(df):
         )
         if _y_name_ann or _date_ann:
             fig.update_layout(annotations=list(_y_name_ann) + list(_date_ann))
-        fig.update_xaxes(type="date", tickformat="%d.%m.%Y", automargin=True, domain=[_x_domain_start, 1.0])
+        fig.update_xaxes(
+            type="date",
+            tickformat=_CHART_PLOT_DATE_FMT,
+            automargin=True,
+            domain=[_x_domain_start, 1.0],
+        )
 
         try:
             _bar_dates: list = []
@@ -34148,7 +34146,7 @@ def dashboard_project_schedule_chart(df):
                 customdata=np.stack(
                     [
                         _df[task_col].astype(str).values,
-                        pd.to_datetime(base_end, errors="coerce").dt.strftime("%d.%m.%Y").fillna("").values,
+                        pd.to_datetime(base_end, errors="coerce").dt.strftime(_CHART_PLOT_DATE_FMT).fillna("").values,
                     ],
                     axis=-1,
                 ),
@@ -34173,7 +34171,7 @@ def dashboard_project_schedule_chart(df):
                 customdata=np.stack(
                     [
                         _df[task_col].astype(str).values,
-                        pd.to_datetime(fact_end, errors="coerce").dt.strftime("%d.%m.%Y").fillna("").values,
+                        pd.to_datetime(fact_end, errors="coerce").dt.strftime(_CHART_PLOT_DATE_FMT).fillna("").values,
                     ],
                     axis=-1,
                 ),
@@ -34286,8 +34284,7 @@ def dashboard_project_schedule_chart(df):
     )
     chart_h = int(getattr(fig_gantt.layout, "height", None) or 520)
 
-    # Названия задач отображаются нативными tick labels Y-оси (showticklabels=True),
-    # что гарантирует корректное позиционирование при любом масштабе страницы.
+    # Названия задач — paper-annotations слева (см. _project_schedule_gantt_apply_y_labels).
 
     _gantt_render_h = int(max(_gantt_chart_height, 520))
     try:
