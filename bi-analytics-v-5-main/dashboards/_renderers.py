@@ -18955,25 +18955,13 @@ def _gdrs_dynamics_chart_panel(
         _plan_for_range = _plan_plot.dropna()
         if _plan_for_range.empty:
             _plan_for_range = _plan_s
-        _plan_range = _gdrs_dyn_panel_y_range(_plan_for_range, agg_kind)
-        _fact_range = _gdrs_dyn_panel_y_range(_fact_s, agg_kind)
-        _plan_dtick = _gdrs_dyn_panel_dtick(
-            _plan_range[0], _plan_range[1], agg_kind, series_kind="plan"
-        )
-        _fact_dtick = _gdrs_dyn_panel_dtick(
-            _fact_range[0], _fact_range[1], agg_kind, series_kind="fact"
+        _both = pd.concat([_plan_for_range, _fact_s], ignore_index=True)
+        _comb_range = _gdrs_dyn_panel_y_range(_both, agg_kind)
+        _comb_dtick = _gdrs_dyn_panel_dtick(
+            _comb_range[0], _comb_range[1], agg_kind, series_kind="fact"
         )
 
-        from plotly.subplots import make_subplots as _make_subplots
-
-        fig = _make_subplots(
-            rows=2,
-            cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.08,
-            row_heights=[0.46, 0.54],
-            subplot_titles=("План", "Факт"),
-        )
+        fig = _go.Figure()
         fig.add_trace(
             _go.Scatter(
                 x=_x,
@@ -18991,9 +18979,7 @@ def _gdrs_dynamics_chart_panel(
                 textfont=dict(color=_th.line_plan, size=_lbl_sz),
                 cliponaxis=False,
                 hovertemplate="План: %{y}<br>%{x|%d.%m.%Y}<extra></extra>",
-            ),
-            row=1,
-            col=1,
+            )
         )
         fig.add_trace(
             _go.Scatter(
@@ -19003,28 +18989,28 @@ def _gdrs_dynamics_chart_panel(
                 line=dict(color=_th.line_fact, width=3),
                 marker=dict(size=9),
                 name="Факт",
-                text=[f"{int(f)}" for f in dyn["Факт"]],
-                textposition="top center",
+                text=["" for _ in dyn["Факт"]],
+                textposition="bottom center",
                 textfont=dict(color=_th.line_fact, size=_lbl_sz),
                 cliponaxis=False,
                 customdata=_pct_hover,
                 hovertemplate="Факт: %{y}<br>%{customdata}<br>%{x|%d.%m.%Y}<extra></extra>",
-            ),
-            row=2,
-            col=1,
+            )
         )
         for _xb, _f, _p in zip(_x, dyn["Факт"], dyn["План"]):
+            _pct_color = _th.good if int(_p) > 0 and float(_f) >= float(_p) else _th.bad
             if int(_p) <= 0:
-                continue
-            _pct = int(round(float(_f) / float(_p) * 100.0))
-            _pct_color = _th.good if _pct >= 100 else _th.bad
+                _ann_text = f"{int(_f)}"
+            else:
+                _pct = int(round(float(_f) / float(_p) * 100.0))
+                _ann_text = f"{int(_f)} ({_pct}%)"
             fig.add_annotation(
                 x=_xb,
                 y=int(_f),
-                text=f"({_pct}%)",
+                text=_ann_text,
                 showarrow=False,
-                xref="x2",
-                yref="y2",
+                xref="x",
+                yref="y",
                 xanchor="center",
                 yanchor="top",
                 yshift=-14 if _n_pts <= 16 else -10,
@@ -19032,7 +19018,7 @@ def _gdrs_dynamics_chart_panel(
             )
 
         _base_h = max(520, min(760, 38 * _n_pts + 120))
-        _chart_h = int(3 * _base_h)
+        _chart_h = int(1.5 * _base_h)
 
         _x_dtick = None
         if str(agg_kind).casefold() == "день":
@@ -19053,28 +19039,15 @@ def _gdrs_dynamics_chart_panel(
             height=_chart_h,
             margin=dict(l=62, r=32, t=104, b=96),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            yaxis=dict(
+                title="Количество",
+                range=_comb_range,
+                dtick=_comb_dtick,
+                autorange=False,
+                showgrid=True,
+                gridcolor=_th.chart_grid,
+            ),
         )
-        fig.update_yaxes(
-            title_text="Количество",
-            range=_plan_range,
-            dtick=_plan_dtick,
-            autorange=False,
-            showgrid=True,
-            gridcolor=_th.chart_grid,
-            row=1,
-            col=1,
-        )
-        fig.update_yaxes(
-            title_text="Количество",
-            range=_fact_range,
-            dtick=_fact_dtick,
-            autorange=False,
-            showgrid=True,
-            gridcolor=_th.chart_grid,
-            row=2,
-            col=1,
-        )
-        fig.update_xaxes(showticklabels=False, row=1, col=1)
         fig.update_xaxes(
             title_text=f"Период — {agg_kind.lower()}",
             type="date",
@@ -19083,23 +19056,14 @@ def _gdrs_dynamics_chart_panel(
             tickangle=-35 if _n_pts > 6 else 0,
             showgrid=True,
             gridcolor=_th.chart_grid,
-            row=2,
-            col=1,
         )
         fig = apply_gdrs_chart_background(fig, _th)
-        fig.update_yaxes(
-            range=list(_plan_range), dtick=_plan_dtick, autorange=False, row=1, col=1
-        )
-        fig.update_yaxes(
-            range=list(_fact_range), dtick=_fact_dtick, autorange=False, row=2, col=1
-        )
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
-            "Сверху — план, снизу — факт; у каждого ряда своя шкала Y — "
-            "пересечения линий между рядами нет."
+            "План и факт на одной шкале; подписи у факта — значение и % от плана."
         )
 
-        _dyn_tbl = pd.DataFrame({
+                _dyn_tbl = pd.DataFrame({
             "Период": dyn["Период"].astype(str),
             "План": _plan_s.round(0).astype(int),
             "Факт": _fact_s.round(0).astype(int),
