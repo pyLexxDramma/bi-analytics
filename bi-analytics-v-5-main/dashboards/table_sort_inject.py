@@ -283,6 +283,87 @@ html, body {
 </style>
 """
 
+_IFRAME_SHELL_CSS_LIGHT = """
+<style>
+html, body {
+  margin: 0; padding: 0;
+  background: #ffffff;
+  color: #111827;
+  font-family: Inter, system-ui, sans-serif;
+}
+.bi-sortable-html-root { width: 100%; max-width: 100%; color: #111827; }
+.bi-sortable-html-root h3.bi-table-caption,
+.bi-sortable-html-root .bi-table-caption {
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+  opacity: 1 !important;
+}
+.bi-sortable-html-root table.bi-sortable-table {
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+  border: 1px solid #cbd5e1 !important;
+}
+.bi-sortable-html-root table.bi-sortable-table th,
+.bi-sortable-html-root table.bi-sortable-table td {
+  border-right: 1px solid #cbd5e1 !important;
+  border-bottom: 1px solid #cbd5e1 !important;
+  border-top: none !important;
+  border-left: none !important;
+  color: #111827;
+}
+.bi-sortable-html-root table.bi-sortable-table thead tr:first-child th {
+  border-top: 1px solid #cbd5e1 !important;
+}
+.bi-sortable-html-root table.bi-sortable-table tr th:first-child,
+.bi-sortable-html-root table.bi-sortable-table tr td:first-child {
+  border-left: 1px solid #cbd5e1 !important;
+}
+.bi-sortable-html-root .bi-sort-label { color: #111827 !important; }
+.bi-sortable-html-root .bi-sort-filter {
+  background: #ffffff !important;
+  color: #111827 !important;
+  border: 1px solid #94a3b8 !important;
+}
+</style>
+"""
+
+
+_GDRS_TABLE_WRAP_IFRAME_CSS = """
+<style>
+html, body {
+  overflow-x: hidden !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}
+.bi-sortable-html-root {
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow-x: hidden !important;
+  box-sizing: border-box !important;
+}
+.gdrs-table-wrap {
+  display: block !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow-x: auto !important;
+  overflow-y: visible !important;
+  -webkit-overflow-scrolling: touch !important;
+}
+.gdrs-table-wrap .gdrs-matrix-table {
+  width: max-content !important;
+  min-width: 100% !important;
+}
+</style>
+"""
+
+def _iframe_shell_css(html: str) -> str:
+    html_l = html or ""
+    base = _IFRAME_SHELL_CSS_LIGHT if "gdrs-light-table" in html_l else _IFRAME_SHELL_CSS
+    if "gdrs-table-wrap" in html_l:
+        return base + _GDRS_TABLE_WRAP_IFRAME_CSS
+    return base
+
 
 def table_sort_inject_enabled() -> bool:
     return os.environ.get("BI_ANALYTICS_TABLE_SORT", "1").strip().lower() not in (
@@ -302,8 +383,34 @@ def _split_embedded_style(html: str) -> tuple[str, str]:
 
 
 def _estimate_html_block_height(html: str) -> int:
-    rows = html.count("<tr")
-    return int(min(2400, max(360, 80 + rows * 30)))
+    bodies = re.findall(r"<tbody[^>]*>(.*?)</tbody>", html, re.I | re.S)
+    if bodies:
+        data_rows = sum(part.count("<tr") for part in bodies)
+    else:
+        data_rows = max(0, html.count("<tr") - 1)
+    html_l = html or ""
+    if "gdrs-summary-table-wrap" in html_l:
+        thead_h = 76
+        row_h = 44
+        extra = 40
+        cap = 1400
+    elif "gdrs-matrix-table" in html_l or "gdrs-table-wrap" in html_l:
+        thead_h = 132
+        row_h = 38
+        extra = 56
+        cap = 2600
+    elif "bi-sortable-table" in html_l:
+        thead_h = 68
+        row_h = 34
+        extra = 24
+        cap = 1000
+    else:
+        thead_h = 44
+        row_h = 27
+        extra = 16
+        cap = 900
+    est = thead_h + data_rows * row_h + extra
+    return int(min(cap, max(120, est)))
 
 
 def _build_sortable_html_document(html: str) -> str:
@@ -312,7 +419,7 @@ def _build_sortable_html_document(html: str) -> str:
         "<!DOCTYPE html><html lang='ru'><head>"
         "<meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-        f"{style_block}{_IFRAME_SHELL_CSS}"
+        f"{style_block}{_iframe_shell_css(html)}"
         "</head><body>"
         f"<div class='bi-sortable-html-root'>{body}{_TABLE_SORT_SCRIPT}</div>"
         "</body></html>"
@@ -327,7 +434,9 @@ def render_sortable_html_block(html: str) -> None:
         st.markdown(html, unsafe_allow_html=True)
         return
     doc = _build_sortable_html_document(html)
-    components.html(doc, height=_estimate_html_block_height(html), scrolling=True)
+    _h = _estimate_html_block_height(html)
+    _scroll = "gdrs-summary-table-wrap" not in (html or "")
+    components.html(doc, height=_h, scrolling=_scroll)
 
 
 def inject_sortable_tables_script() -> None:

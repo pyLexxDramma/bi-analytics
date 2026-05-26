@@ -68,6 +68,8 @@ REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
         [
             "ГДРС (люди)",
             "ГДРС (техника)",
+            "ГДРС (превью — светлая, люди)",
+            "ГДРС (превью — светлая, техника)",
         ],
     ),
     ("Предписания", ["Предписания по подрядчикам"]),
@@ -147,6 +149,8 @@ def _get_dashboards() -> Dict[str, Callable]:
     dashboard_gdrs = getattr(_renderers, "dashboard_gdrs", None)
     dashboard_gdrs_people = getattr(_renderers, "dashboard_gdrs_people", None)
     dashboard_gdrs_equipment_v2 = getattr(_renderers, "dashboard_gdrs_equipment_v2", None)
+    dashboard_gdrs_people_preview_light = getattr(_renderers, "dashboard_gdrs_people_preview_light", None)
+    dashboard_gdrs_equipment_preview_light = getattr(_renderers, "dashboard_gdrs_equipment_preview_light", None)
     if dashboard_gdrs_people is None and dashboard_gdrs is not None:
         dashboard_gdrs_people = lambda df: dashboard_gdrs(df)  # noqa: E731
     if dashboard_gdrs_equipment_v2 is None and dashboard_gdrs is not None:
@@ -157,6 +161,10 @@ def _get_dashboards() -> Dict[str, Callable]:
         dashboard_gdrs_people = dashboard_technique_tabs
     if dashboard_gdrs_equipment_v2 is None:
         dashboard_gdrs_equipment_v2 = dashboard_gdrs_equipment
+    if dashboard_gdrs_people_preview_light is None and dashboard_gdrs is not None:
+        dashboard_gdrs_people_preview_light = lambda df: dashboard_gdrs(df, vid_locked="Рабочие", theme="light")  # noqa: E731
+    if dashboard_gdrs_equipment_preview_light is None and dashboard_gdrs is not None:
+        dashboard_gdrs_equipment_preview_light = lambda df: dashboard_gdrs(df, vid_locked="Техника", theme="light")  # noqa: E731
     dashboard_executive_documentation = getattr(_renderers, "dashboard_executive_documentation", None)
     if dashboard_executive_documentation is None:
 
@@ -238,6 +246,8 @@ def _get_dashboards() -> Dict[str, Callable]:
         "ГДРС": dashboard_gdrs,
         "ГДРС (люди)": dashboard_gdrs_people,
         "ГДРС (техника)": dashboard_gdrs_equipment_v2,
+        "ГДРС (превью — светлая, люди)": dashboard_gdrs_people_preview_light,
+        "ГДРС (превью — светлая, техника)": dashboard_gdrs_equipment_preview_light,
         # Алиасы (старые deep-link/настройки).
         "График движения рабочей силы (люди)": dashboard_gdrs_people,
         "График движения рабочей силы (техника)": dashboard_gdrs_equipment_v2,

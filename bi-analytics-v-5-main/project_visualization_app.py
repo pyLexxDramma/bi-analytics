@@ -52,6 +52,7 @@ from data_loader import (
     clear_all_data_for_removed_files,
 )
 from utils import load_custom_css
+from auto_ingest import safe_stderr_log
 from dashboard_diagnostics import render_dashboard_diagnostics_tab
 
 # # ← Добавь тестовый блок сразу после импортов (чтобы он отобразился на всех страницах)
@@ -315,18 +316,7 @@ def _render_active_dashboard(
             "в боковом меню."
         )
         return
-    if release_mode:
-        render_fn(df_for_render)
-        return
-    tab_dash, tab_diag = st.tabs(["Дашборд", "Диагностика (dev)"])
-    with tab_dash:
-        render_fn(df_for_render)
-    with tab_diag:
-        render_dashboard_diagnostics_tab(
-            selected_dashboard,
-            df_for_render,
-            st.session_state,
-        )
+    render_fn(df_for_render)
 
 
 if hasattr(st, "fragment"):
@@ -695,13 +685,32 @@ def main():
     _inject_table_sort_once()
 
     _dash_title = str(st.session_state.get("current_dashboard") or "").strip()
+    _gdrs_light_preview = False
+    try:
+        from dashboards.gdrs_theme import inject_gdrs_light_preview_css, is_gdrs_light_preview_report
+
+        _gdrs_light_preview = is_gdrs_light_preview_report(_dash_title)
+        if _gdrs_light_preview:
+            inject_gdrs_light_preview_css(st)
+    except Exception:
+        pass
     _h1_text = (
-        _html_escape(_dash_title) if _dash_title else "Панель аналитики проектов"
+        "ГДРС"
+        if _gdrs_light_preview
+        else (_html_escape(_dash_title) if _dash_title else "Панель аналитики проектов")
     )
-    st.markdown(
-        f'<h1 class="main-header">{_h1_text}</h1>',
-        unsafe_allow_html=True,
-    )
+    if _gdrs_light_preview:
+        st.markdown(
+            f'<h1 class="main-header gdrs-light-heading" '
+            f'style="color:#000000!important;-webkit-text-fill-color:#000000!important;'
+            f'font-weight:800!important;opacity:1!important;">{_h1_text}</h1>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f'<h1 class="main-header">{_h1_text}</h1>',
+            unsafe_allow_html=True,
+        )
 
     # Боковая панель: навигация сразу; версия данных — после загрузки web/ (см. ниже).
     render_sidebar_menu(current_page="reports", include_footer=False)
@@ -835,10 +844,9 @@ def main():
                             "columns": [],
                         }
                     )
-                print(
+                safe_stderr_log(
                     f"[auto_hydrate] pseudo_lr: version_id={version_id}, "
-                    f"types={sorted(_types_in_db)}, files={len(_rows)}",
-                    file=sys.stderr,
+                    f"types={sorted(_types_in_db)}, files={len(_rows)}"
                 )
                 return {
                     "loaded": len(_rows),
@@ -849,7 +857,7 @@ def main():
                     "version_id": int(version_id),
                 }
             except Exception as _e:
-                print(f"[auto_hydrate] pseudo_lr failed: {_e}", file=sys.stderr)
+                safe_stderr_log(f"[auto_hydrate] pseudo_lr failed: {_e}")
                 return None
 
         def _db_version_missing_budget_data(version_id: int) -> bool:
@@ -874,7 +882,7 @@ def main():
             try:
                 _active_id = get_active_version_id()
             except Exception as _e:
-                print(f"[auto_hydrate] get_active_version_id failed: {_e}", file=sys.stderr)
+                safe_stderr_log(f"[auto_hydrate] get_active_version_id failed: {_e}")
                 return
             if not _active_id:
                 return
@@ -883,9 +891,8 @@ def main():
                 return
             if not _db_version_missing_budget_data(int(_active_id)):
                 return
-            print(
-                f"[auto_hydrate] force reload from web/: active version {_active_id} has no budget rows",
-                file=sys.stderr,
+            safe_stderr_log(
+                f"[auto_hydrate] force reload from web/: active version {_active_id} has no budget rows"
             )
             st.cache_data.clear()
             st.session_state.pop("web_version_id", None)
@@ -896,9 +903,8 @@ def main():
             except Exception:
                 _new_active = None
             if not _new_active or _db_version_missing_budget_data(int(_new_active)):
-                print(
-                    "[auto_hydrate] force reload finished but active version still has no budget rows",
-                    file=sys.stderr,
+                safe_stderr_log(
+                    "[auto_hydrate] force reload finished but active version still has no budget rows"
                 )
                 return
             st.session_state["last_load_result"] = _forced_result
@@ -939,7 +945,7 @@ def main():
             try:
                 _hydrate_active_id = get_active_version_id()
             except Exception as _e:
-                print(f"[auto_hydrate] get_active_version_id failed: {_e}", file=sys.stderr)
+                safe_stderr_log(f"[auto_hydrate] get_active_version_id failed: {_e}")
                 _hydrate_active_id = None
 
             _hydrate_ok = False
@@ -947,10 +953,9 @@ def main():
             if _hydrate_active_id:
                 if _db_version_missing_budget_data(int(_hydrate_active_id)):
                     _hydrate_force_web_reload = True
-                    print(
+                    safe_stderr_log(
                         f"[auto_hydrate] DB version {_hydrate_active_id} has no budget rows; "
-                        "forcing load_all_from_web()",
-                        file=sys.stderr,
+                        "forcing load_all_from_web()"
                     )
                 else:
                     try:
@@ -960,7 +965,7 @@ def main():
                         st.session_state["web_version_pick_id"] = int(_hydrate_active_id)
                         _hydrate_ok = True
                     except Exception as _e:
-                        print(f"[auto_hydrate] read_version_to_session failed: {_e}", file=sys.stderr)
+                        safe_stderr_log(f"[auto_hydrate] read_version_to_session failed: {_e}")
 
             if _hydrate_ok:
                 _pseudo_lr = _build_pseudo_lr_from_db(int(_hydrate_active_id))
@@ -975,7 +980,7 @@ def main():
                         st.session_state["last_data_readiness"] = build_data_readiness_report(_pseudo_lr)
                         st.session_state["last_env_fingerprint"] = build_environment_fingerprint(_pseudo_lr)
                     except Exception as _e:
-                        print(f"[auto_hydrate] data_contract/readiness failed: {_e}", file=sys.stderr)
+                        safe_stderr_log(f"[auto_hydrate] data_contract/readiness failed: {_e}")
                     st.session_state["_auto_hydrated_from_db"] = True
 
             # Fallback: если auto-hydrate не справился (нет active_id, или
@@ -1008,17 +1013,16 @@ def main():
                             _pseudo_lr = _build_pseudo_lr_from_db(int(_hydrate_active_id))
                             if _pseudo_lr:
                                 st.session_state["last_load_result"] = _pseudo_lr
-                            print(
-                                f"[auto_hydrate] hydrated from DB version {_hydrate_active_id}",
-                                file=sys.stderr,
+                            safe_stderr_log(
+                                f"[auto_hydrate] hydrated from DB version {_hydrate_active_id}"
                             )
                     except Exception as _e:
-                        print(f"[auto_hydrate] DB fallback failed: {_e}", file=sys.stderr)
+                        safe_stderr_log(f"[auto_hydrate] DB fallback failed: {_e}")
                 if _fb_from_db:
                     st.session_state["_auto_hydrated_from_db"] = True
                 else:
                     try:
-                        print("[auto_hydrate] fallback to load_all_from_web()", file=sys.stderr)
+                        safe_stderr_log("[auto_hydrate] fallback to load_all_from_web()")
                         if _hydrate_force_web_reload:
                             st.cache_data.clear()
                             st.session_state.pop("web_version_id", None)
@@ -1045,7 +1049,7 @@ def main():
                             st.session_state.pop("_pending_web_folder_load", None)
                             st.rerun()
                     except Exception as _e:
-                        print(f"[auto_hydrate] fallback load_all_from_web failed: {_e}", file=sys.stderr)
+                        safe_stderr_log(f"[auto_hydrate] fallback load_all_from_web failed: {_e}")
 
         def _session_has_loaded_data() -> bool:
             return bool(
@@ -1082,7 +1086,7 @@ def main():
                 st.session_state["_auto_hydrated_from_db"] = True
                 return _session_has_loaded_data()
             except Exception as _e:
-                print(f"[web_load] hydrate from DB failed: {_e}", file=sys.stderr)
+                safe_stderr_log(f"[web_load] hydrate from DB failed: {_e}")
                 return False
 
         def _perform_load_from_web_folder(*, quiet: bool = False, force_rescan: bool = False) -> None:
@@ -1194,69 +1198,6 @@ def main():
                 pass
 
         render_sidebar_footer(user)
-
-        if _is_release_client_mode():
-            _panel_tab = "Дашборды"
-        else:
-            _panel_tab = st.radio(
-                "Вкладка панели",
-                ["Дашборды", "Проверка данных"],
-                horizontal=True,
-                key="main_panel_view_tab",
-            )
-        if _panel_tab == "Проверка данных":
-            render_data_readiness_expander()
-            if st.session_state.get("last_data_schema_health"):
-                _fsch = (st.session_state.get("last_data_schema_health") or {}).get("file_checks") or []
-                if _fsch:
-                    with st.expander("Проверка файлов и колонок (что отсутствует/не распознано)", expanded=True):
-                        _fd = pd.DataFrame(_fsch).copy()
-                        _prio = {"err": 0, "warn": 1, "ok": 2}
-                        _fd["_p"] = _fd["level"].map(lambda x: _prio.get(str(x).lower(), 9))
-                        _fd = _fd.sort_values(["_p", "target"], kind="stable").drop(columns=["_p"])
-
-                        def _style_level(row):
-                            lv = str(row.get("level", "")).lower()
-                            if lv == "err":
-                                return ["background-color: #5a1f1f; color: #ffe3e3;"] * len(row)
-                            if lv == "warn":
-                                return ["background-color: #5a4b1f; color: #fff3d6;"] * len(row)
-                            if lv == "ok":
-                                return ["background-color: #1f4a2a; color: #e7ffe7;"] * len(row)
-                            return [""] * len(row)
-
-                        st.dataframe(
-                            _fd.style.apply(_style_level, axis=1),
-                            use_container_width=True,
-                            hide_index=True,
-                            height=min(720, 40 + max(1, len(_fd)) * 34),
-                        )
-                from data_health import REPORT_JSON, REPORT_MD
-
-                c1, c2 = st.columns(2)
-                with c1:
-                    if REPORT_MD.exists():
-                        st.download_button(
-                            "Скачать data_health_report.md",
-                            data=REPORT_MD.read_text(encoding="utf-8"),
-                            file_name="data_health_report.md",
-                            mime="text/markdown",
-                            key="download_data_health_md",
-                        )
-                with c2:
-                    if REPORT_JSON.exists():
-                        st.download_button(
-                            "Скачать data_health_report.json",
-                            data=REPORT_JSON.read_text(encoding="utf-8"),
-                            file_name="data_health_report.json",
-                            mime="application/json",
-                            key="download_data_health_json",
-                        )
-            _env = st.session_state.get("last_env_fingerprint")
-            if _env:
-                with st.expander("Environment fingerprint (для сравнения local vs deploy)", expanded=False):
-                    st.json(_env)
-            st.stop()
 
     else:
 
@@ -1437,19 +1378,16 @@ def main():
             df_for_render = df
 
         try:
-            if _is_release_client_mode():
+            from dashboards.gdrs_theme import inject_gdrs_light_preview_css, is_gdrs_light_preview_report
+
+            if is_gdrs_light_preview_report(selected_dashboard):
+                inject_gdrs_light_preview_css(st)
+            with st.spinner("Загрузка отчёта…"):
                 _render_active_dashboard(
                     selected_dashboard,
                     df_for_render,
-                    release_mode=True,
+                    release_mode=_is_release_client_mode(),
                 )
-            else:
-                with st.spinner("Загрузка отчёта…"):
-                    _render_active_dashboard(
-                        selected_dashboard,
-                        df_for_render,
-                        release_mode=False,
-                    )
         except Exception as e:
             st.error(f"Ошибка при отображении графика '{selected_dashboard}': {str(e)}")
             st.exception(e)
