@@ -161,10 +161,20 @@ def gdrs_render_table_subheader(
 
 
 def inject_gdrs_light_preview_css(st) -> None:
-    """CSS preview ГДРС — перебивает static/css/style.css (тёмная тема)."""
-    if st.session_state.get("_gdrs_light_preview_css_injected"):
+    """CSS preview ГДРС — перебивает static/css/style.css (tёмная тема)."""
+    # На каждый rerun Streamlit заново отдаёт страницу; в Яндекс.Браузере
+    # <style> из прошлого run может пропасть — inject повторяем каждый script run.
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+
+        _ctx = get_script_run_ctx()
+        _run_id = getattr(_ctx, "script_run_id", None) if _ctx else None
+    except Exception:
+        _run_id = None
+    if _run_id is not None and st.session_state.get("_gdrs_light_css_run") == _run_id:
         return
-    st.session_state["_gdrs_light_preview_css_injected"] = True
+    if _run_id is not None:
+        st.session_state["_gdrs_light_css_run"] = _run_id
     th = GDRS_THEME_LIGHT
     g_surface = "#f3f4f6"
     g_hover = "#e5e7eb"
@@ -631,6 +641,21 @@ section.main.stMain,
   margin-top: 0 !important;
 }}
 
+
+html.gdrs-light-preview,
+html.gdrs-light-preview body,
+html.gdrs-light-preview body .stApp,
+html.gdrs-light-preview body [data-testid="stAppViewContainer"],
+html.gdrs-light-preview body [data-testid="stAppViewContainer"] > section,
+html.gdrs-light-preview body [data-testid="stMainBlockContainer"],
+html.gdrs-light-preview body section.main,
+html.gdrs-light-preview body .stMain,
+html.gdrs-light-preview body .main,
+html.gdrs-light-preview body .main .block-container {{
+  background-color: #ffffff !important;
+  background: #ffffff !important;
+  color-scheme: light !important;
+}}
 html body .gdrs-loading-banner {{
   display: flex;
   align-items: center;
@@ -659,7 +684,11 @@ html body .gdrs-loading-icon {{
 <script>
 (function(){{
   document.documentElement.classList.add("gdrs-light-preview");
-  document.body.classList.add("gdrs-light-preview");
+  if (document.body) document.body.classList.add("gdrs-light-preview");
+  document.querySelectorAll(".stApp,[data-testid=\"stAppViewContainer\"],section.main,.stMain,.main").forEach(function(el) {
+    el.style.setProperty("background-color", "#ffffff", "important");
+    el.style.setProperty("background", "#ffffff", "important");
+  });
   function _gdrsHideStreamlitHeader() {{
     var sel = '[data-testid="stHeader"], .stHeader, header[data-testid="stHeader"]';
     document.querySelectorAll(sel).forEach(function(el) {{
