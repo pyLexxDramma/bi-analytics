@@ -18775,57 +18775,13 @@ def dashboard_gdrs_equipment(df):
 
 
 # ==================== ГДРС: кэш тяжёлых загрузок ====================
-def _gdrs_paths_mtime_sig(paths) -> tuple:
-    from pathlib import Path as _P
-
-    sig: list[tuple] = []
-    for p in sorted({str(_P(x).resolve()) for x in paths}):
-        pp = _P(p)
-        if pp.is_file():
-            stt = pp.stat()
-            sig.append((p, stt.st_mtime_ns, stt.st_size))
-    return tuple(sig)
-
-
-@st.cache_data(show_spinner=False, ttl=3600)
-def _gdrs_cached_load_resursi(paths_sig: tuple) -> pd.DataFrame:
-    from pathlib import Path as _P
-    from dashboards.gdrs_resursi import load_resursi_files
-
-    return load_resursi_files([_P(p[0]) for p in paths_sig])
-
-
-@st.cache_data(show_spinner=False, ttl=3600)
-def _gdrs_cached_plan_aggregate(
-    dog_sig: tuple,
-    spr_sig: tuple,
-    snapshot_iso: str,
-) -> pd.DataFrame:
-    from pathlib import Path as _P
-    from dashboards.gdrs_resursi import load_plan_aggregate
-
-    snap = pd.Timestamp(snapshot_iso) if snapshot_iso else None
-    return load_plan_aggregate(
-        [_P(p[0]) for p in dog_sig],
-        [_P(p[0]) for p in spr_sig],
-        snapshot_date=snap,
-    )
-
-
-@st.cache_data(show_spinner=False, ttl=3600)
-def _gdrs_cached_dannye_maps(dannye_sig: tuple):
-    from pathlib import Path as _P
-    from dashboards.gdrs_resursi import load_1c_dannye_article_maps
-
-    return load_1c_dannye_article_maps([_P(p[0]) for p in dannye_sig])
-
-
-def _gdrs_plan_loader(dog_sig: tuple, spr_sig: tuple):
-    def _load(snap: pd.Timestamp) -> pd.DataFrame:
-        iso = pd.Timestamp(snap).normalize().isoformat()
-        return _gdrs_cached_plan_aggregate(dog_sig, spr_sig, iso)
-
-    return _load
+from dashboards.gdrs_resursi import (
+    _gdrs_cached_dannye_maps,
+    _gdrs_cached_load_resursi,
+    _gdrs_cached_plan_aggregate,
+    _gdrs_paths_mtime_sig,
+    _gdrs_plan_loader,
+)
 
 
 _gdrs_fragment = getattr(st, "fragment", None)
@@ -19586,8 +19542,6 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             )
 
 
-    if _gdrs_light_preview_active:
-        inject_gdrs_light_preview_css(st)
     if sel_month_labels:
         _sel_periods = [_month_label_to_period[lbl] for lbl in sel_month_labels if lbl in _month_label_to_period]
     else:
@@ -19940,9 +19894,6 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             table_title=f"Распределение {_unit_gen} по контрагентам",
             theme=theme,
         )
-
-    if theme == "light":
-        inject_gdrs_light_preview_css(st)
 
 
 # ==================== DASHBOARD: Дебиторская и кредиторская задолженность подрядчиков ====================

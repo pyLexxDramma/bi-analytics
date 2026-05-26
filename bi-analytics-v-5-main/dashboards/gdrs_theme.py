@@ -162,6 +162,9 @@ def gdrs_render_table_subheader(
 
 def inject_gdrs_light_preview_css(st) -> None:
     """CSS preview ГДРС — перебивает static/css/style.css (тёмная тема)."""
+    if st.session_state.get("_gdrs_light_preview_css_injected"):
+        return
+    st.session_state["_gdrs_light_preview_css_injected"] = True
     th = GDRS_THEME_LIGHT
     g_surface = "#f3f4f6"
     g_hover = "#e5e7eb"

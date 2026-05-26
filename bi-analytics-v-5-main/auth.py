@@ -811,14 +811,6 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
         return
 
     with st.sidebar:
-        try:
-            from dashboards.gdrs_theme import inject_gdrs_light_preview_css, is_gdrs_light_preview_report
-
-            _sb_dash = str(st.session_state.get("current_dashboard") or "").strip()
-            if is_gdrs_light_preview_report(_sb_dash):
-                inject_gdrs_light_preview_css(st)
-        except Exception:
-            pass
         # F2: скрываем системную мульти-страничную навигацию Streamlit
         # (streamlit app / admin / analyst params), оставляем только наше меню.
         st.markdown(

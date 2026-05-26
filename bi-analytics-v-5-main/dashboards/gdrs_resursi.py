@@ -2375,3 +2375,76 @@ def render_gdrs_matrix_table_html(
         + body
         + "</tbody></table></div>"
     )
+
+# =====================================================================
+# Disk-кэш для отчёта ГДРС (@st.cache_data)
+# =====================================================================
+import streamlit as st
+
+
+def _gdrs_paths_mtime_sig(paths) -> tuple:
+    from pathlib import Path as _P
+
+    sig: list[tuple] = []
+    for p in sorted({str(_P(x).resolve()) for x in paths}):
+        pp = _P(p)
+        if pp.is_file():
+            stt = pp.stat()
+            sig.append((p, stt.st_mtime_ns, stt.st_size))
+    return tuple(sig)
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _gdrs_cached_load_resursi(paths_sig: tuple) -> pd.DataFrame:
+    from pathlib import Path as _P
+
+    return load_resursi_files([_P(p[0]) for p in paths_sig])
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _gdrs_cached_plan_aggregate(
+    dog_sig: tuple,
+    spr_sig: tuple,
+    snapshot_iso: str,
+) -> pd.DataFrame:
+    from pathlib import Path as _P
+
+    snap = pd.Timestamp(snapshot_iso) if snapshot_iso else None
+    return load_plan_aggregate(
+        [_P(p[0]) for p in dog_sig],
+        [_P(p[0]) for p in spr_sig],
+        snapshot_date=snap,
+    )
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _gdrs_cached_dannye_maps(dannye_sig: tuple):
+    from pathlib import Path as _P
+
+    return load_1c_dannye_article_maps([_P(p[0]) for p in dannye_sig])
+
+
+def _gdrs_plan_loader(dog_sig: tuple, spr_sig: tuple):
+    def _load(snap: pd.Timestamp) -> pd.DataFrame:
+        iso = pd.Timestamp(snap).normalize().isoformat()
+        return _gdrs_cached_plan_aggregate(dog_sig, spr_sig, iso)
+
+    return _load
+
+
+def warm_gdrs_disk_caches() -> None:
+    """Прогрев CSV/JSON-кэша ГДРС до отрисовки отчёта."""
+    try:
+        root = Path(__file__).resolve().parent.parent
+        web_dir = root / "web"
+        ai_dir = web_dir / "AI"
+        resursi_files = sorted(ai_dir.glob("*resursi*.csv"))
+        if not resursi_files:
+            resursi_files = sorted(web_dir.glob("*resursi*.csv"))
+        if resursi_files:
+            _gdrs_cached_load_resursi(_gdrs_paths_mtime_sig(resursi_files))
+        dannye_paths = sorted(web_dir.glob("*dannye*.json"))
+        if dannye_paths:
+            _gdrs_cached_dannye_maps(_gdrs_paths_mtime_sig(dannye_paths))
+    except Exception:
+        pass

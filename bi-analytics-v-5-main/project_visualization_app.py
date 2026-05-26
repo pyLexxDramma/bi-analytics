@@ -1177,9 +1177,10 @@ def main():
             and not st.session_state.get("_release_web_autoload_tried", False)
         ):
             st.session_state["_release_web_autoload_tried"] = True
-            st.session_state["_pending_web_folder_load"] = True
-            st.session_state["_pending_web_load_quiet"] = True
-            st.session_state["_pending_web_force_rescan"] = True
+            if not st.session_state.get("_auto_hydrated_from_db") and not _session_has_loaded_data():
+                st.session_state["_pending_web_folder_load"] = True
+                st.session_state["_pending_web_load_quiet"] = True
+                st.session_state["_pending_web_force_rescan"] = False
 
         if (
             data_mode in ("Из папки web/", "FTP → web/")
@@ -1187,9 +1188,10 @@ def main():
         ):
             _load_quiet = bool(st.session_state.pop("_pending_web_load_quiet", True))
             _force_rescan = bool(st.session_state.pop("_pending_web_force_rescan", False))
-            if _is_release_client_mode() and not _force_rescan:
-                _force_rescan = True
-            _perform_load_from_web_folder(quiet=_load_quiet, force_rescan=_force_rescan)
+            if _session_has_loaded_data() and not _force_rescan:
+                pass
+            else:
+                _perform_load_from_web_folder(quiet=_load_quiet, force_rescan=_force_rescan)
 
         if _admin_data_ops_sidebar or _is_release_client_mode():
             try:
@@ -1346,6 +1348,8 @@ def main():
             "ГДРС (люди)",
             "ГДРС (техника)",
             "ГДРС Техника",
+            "ГДРС (превью — светлая, люди)",
+            "ГДРС (превью — светлая, техника)",
         )
 
         if selected_dashboard in dashboards_using_technique:
@@ -1390,6 +1394,12 @@ def main():
             _gdrs_light_sel = is_gdrs_light_preview_report(selected_dashboard)
             if _gdrs_light_sel:
                 inject_gdrs_light_preview_css(st)
+                try:
+                    from dashboards.gdrs_resursi import warm_gdrs_disk_caches
+
+                    warm_gdrs_disk_caches()
+                except Exception:
+                    pass
             _gdrs_loading = None
             if _gdrs_light_sel:
                 _gdrs_loading = gdrs_show_loading_banner(
