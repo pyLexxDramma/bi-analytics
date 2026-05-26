@@ -19176,7 +19176,8 @@ def _gdrs_dynamics_chart_panel(
             max_rows=500,
             column_role={"План": "baseline", "Факт": "fact", "Δ": "dev", "%": "dev"},
             iframe_light=(theme == "light"),
-        )    except Exception as _e:
+        )
+    except Exception as _e:
         st.warning(f"Plotly недоступен: {_e}")
         _plan_fb = pd.to_numeric(dyn["План"], errors="coerce").fillna(0.0)
         _fact_fb = pd.to_numeric(dyn["Факт"], errors="coerce").fillna(0.0)
