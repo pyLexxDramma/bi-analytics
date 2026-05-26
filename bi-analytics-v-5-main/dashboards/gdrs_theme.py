@@ -627,6 +627,31 @@ section.main.stMain,
 .stApp {{
   margin-top: 0 !important;
 }}
+
+html body .gdrs-loading-banner {{
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin: 0 0 1rem 0;
+  padding: 0.65rem 1rem;
+  background: #eff6ff;
+  border: 1px solid #93c5fd;
+  border-radius: 8px;
+  color: #1e3a8a;
+  font-size: 0.95rem;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}}
+html body .gdrs-loading-icon {{
+  display: inline-block;
+  font-size: 1.25rem;
+  line-height: 1;
+  animation: gdrs-loading-spin 1.1s linear infinite;
+}}
+@keyframes gdrs-loading-spin {{
+  from {{ transform: rotate(0deg); }}
+  to {{ transform: rotate(360deg); }}
+}}
 </style>
 <script>
 (function(){{
@@ -655,6 +680,35 @@ section.main.stMain,
 """,
         unsafe_allow_html=True,
     )
+
+
+def gdrs_loading_banner_html(message: str = "Идёт загрузка дашборда…") -> str:
+    import html as _html
+
+    msg = _html.escape(str(message or "Идёт загрузка дашборда…").strip())
+    return (
+        f'<div class="gdrs-loading-banner" role="status" aria-live="polite">'
+        f'<span class="gdrs-loading-icon" aria-hidden="true">🕐</span>'
+        f'<span class="gdrs-loading-text">{msg}</span>'
+        f"</div>"
+    )
+
+
+def gdrs_show_loading_banner(st, message: str = "Идёт загрузка дашборда…", slot=None):
+    """Верхний баннер загрузки для светлого превью ГДРС."""
+    target = slot if slot is not None else st.empty()
+    target.markdown(gdrs_loading_banner_html(message), unsafe_allow_html=True)
+    return target
+
+
+def gdrs_clear_loading_banner(holder) -> None:
+    if holder is None:
+        return
+    try:
+        holder.empty()
+    except Exception:
+        pass
+
 
 def gdrs_bar_label_size(theme: GdrsTheme) -> int:
     """Размер подписей над столбцами (светлое превью ~16px)."""

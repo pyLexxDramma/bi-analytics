@@ -699,6 +699,7 @@ def main():
         if _gdrs_light_preview
         else (_html_escape(_dash_title) if _dash_title else "Панель аналитики проектов")
     )
+    _gdrs_load_slot = None
     if _gdrs_light_preview:
         st.markdown(
             f'<h1 class="main-header gdrs-light-heading" '
@@ -706,6 +707,7 @@ def main():
             f'font-weight:800!important;opacity:1!important;">{_h1_text}</h1>',
             unsafe_allow_html=True,
         )
+        _gdrs_load_slot = st.empty()
     else:
         st.markdown(
             f'<h1 class="main-header">{_h1_text}</h1>',
@@ -1378,16 +1380,32 @@ def main():
             df_for_render = df
 
         try:
-            from dashboards.gdrs_theme import inject_gdrs_light_preview_css, is_gdrs_light_preview_report
+            from dashboards.gdrs_theme import (
+                gdrs_clear_loading_banner,
+                gdrs_show_loading_banner,
+                inject_gdrs_light_preview_css,
+                is_gdrs_light_preview_report,
+            )
 
-            if is_gdrs_light_preview_report(selected_dashboard):
+            _gdrs_light_sel = is_gdrs_light_preview_report(selected_dashboard)
+            if _gdrs_light_sel:
                 inject_gdrs_light_preview_css(st)
-            with st.spinner("Загрузка отчёта…"):
-                _render_active_dashboard(
-                    selected_dashboard,
-                    df_for_render,
-                    release_mode=_is_release_client_mode(),
+            _gdrs_loading = None
+            if _gdrs_light_sel:
+                _gdrs_loading = gdrs_show_loading_banner(
+                    st,
+                    "Идёт загрузка дашборда…",
+                    slot=_gdrs_load_slot,
                 )
+            try:
+                with st.spinner("Загрузка отчёта…"):
+                    _render_active_dashboard(
+                        selected_dashboard,
+                        df_for_render,
+                        release_mode=_is_release_client_mode(),
+                    )
+            finally:
+                gdrs_clear_loading_banner(_gdrs_loading)
         except Exception as e:
             st.error(f"Ошибка при отображении графика '{selected_dashboard}': {str(e)}")
             st.exception(e)
