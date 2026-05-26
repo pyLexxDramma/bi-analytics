@@ -32300,7 +32300,7 @@ def _render_project_schedule_covenants(df: pd.DataFrame) -> None:
     )
 
 
-def _gantt_wrap_task_label(name: str, width: int = 44, max_lines: int = 6) -> str:
+def _gantt_wrap_task_label(name: str, width: int = 42, max_lines: int = 8) -> str:
     """Перенос длинного названия задачи для tick labels оси Y (Plotly: <br>), без обрезки «…»."""
     s = str(name).strip()
     if not s:
@@ -32339,7 +32339,7 @@ def _gantt_resolve_y_labels(
     row_block_scale: float,
 ) -> tuple[list[str], int]:
     """Подписи Y + высота figure: число строк переноса не превышает доступную высоту категории."""
-    max_lines = 6
+    max_lines = 8
     labels: list[str] = []
     chart_h = 320
     for _ in range(4):
@@ -32453,19 +32453,16 @@ def _project_schedule_gantt_label_column_layout(
     task_font: int = 11,
     plot_min_px: int = 480,
 ) -> tuple[int, float]:
-    """Минимальный отступ слева и доля ширины под колонку названий (без пустого margin.l)."""
-    max_line_len = 12
+    """Как «Отклонение от базового плана»: domain под колонку названий без широкого margin.l."""
+    max_line_len = 8
     for y in y_labels or [""]:
         for line in str(y).split("<br>"):
             max_line_len = max(max_line_len, len(line))
-    px_per_char = max(6.0, float(task_font) * 0.58)
-    label_px = int(12 + max_line_len * px_per_char)
-    label_px = int(min(720, max(96, label_px)))
-    margin_l = 6
-    total_px = label_px + plot_min_px
-    domain_start = round(label_px / total_px, 4)
-    domain_start = min(0.50, max(0.08, domain_start))
-    return margin_l, domain_start
+    px_per_char = max(6.2, float(task_font) * 0.62)
+    label_px = int(8 + max_line_len * px_per_char + 12)
+    label_px = min(560, max(120, label_px))
+    domain_start = round(min(0.46, max(0.12, (label_px + 8) / 980.0)), 4)
+    return 4, domain_start
 
 
 def _project_schedule_gantt_y_label_annotations(
@@ -32481,7 +32478,7 @@ def _project_schedule_gantt_y_label_annotations(
             continue
         out.append(
             dict(
-                x=0.004,
+                x=0.002,
                 y=y,
                 xref="paper",
                 yref="y",
@@ -32489,7 +32486,7 @@ def _project_schedule_gantt_y_label_annotations(
                 showarrow=False,
                 xanchor="left",
                 yanchor="middle",
-                xshift=4,
+                xshift=2,
                 align="left",
                 font=dict(size=task_font, color=TABLE_TEXT_COLOR, family="Arial"),
             )
@@ -33460,12 +33457,8 @@ def dashboard_project_schedule_chart(df):
         # Плотность влияет на прореживание подписей, но не уменьшает шрифт ниже минимума.
         is_dense = n_rows > 55 or span_days > 540
         is_very_dense = n_rows > 120 or span_days > 900
-        if n_rows > _GANTT_DATE_LABELS_HOVER_ONLY_ROWS:
-            date_label_mode = "none"
-        elif n_rows > _GANTT_DATE_LABELS_END_ONLY_ROWS:
-            date_label_mode = "end_only"
-        else:
-            date_label_mode = "full"
+        # Лимит диаграммы 200 строк — start/end на полосах без прореживания.
+        date_label_mode = "full"
         _lf = max(_GANTT_MIN_LABEL_FONT, int(round(13 * _GANTT_FONT_SCALE)))
         _tf = max(_GANTT_MIN_TASK_FONT, int(round(12 * _GANTT_FONT_SCALE)))
         _ms = 8 if is_very_dense else (9 if is_dense else 10)
@@ -33747,6 +33740,8 @@ def dashboard_project_schedule_chart(df):
         _seen_y: dict[str, int] = {}
         _n_fact_ok = 0
 
+        plan_end_lbl: list[str] = []
+        fact_end_lbl: list[str] = []
         for i, (_, row) in enumerate(local.iterrows()):
             y = str(row["_gantt_y_label"])
             if y in _seen_y:
@@ -33779,6 +33774,12 @@ def dashboard_project_schedule_chart(df):
                 fact_len_ms.append(0.0)
                 cust_fact.append(("—", "—"))
 
+            plan_end_lbl.append(_fmt_bar_date(pe))
+            if f0 is not None and f1 is not None and f1 >= f0:
+                fact_end_lbl.append(_fmt_bar_date(fe))
+            else:
+                fact_end_lbl.append("")
+
             if show_covenant_markers:
                 be = row.get("base end")
                 if pd.notna(be):
@@ -33804,6 +33805,60 @@ def dashboard_project_schedule_chart(df):
         if not y_labels:
             return fig
 
+        _lbl_font = max(_GANTT_MIN_LABEL_FONT, int(policy.get("label_font", 13)))
+        _date_ann: list[dict] = []
+        _GANTT_PLAN_COLOR = "#14b8a6"
+        _GANTT_FACT_COLOR = "#fb923c"
+
+        def _bar_lane_yshift(lane: str, row_has_fact: bool) -> int:
+            """Смещение подписи к центру полосы plan/fact в grouped bar."""
+            if not row_has_fact:
+                return 0
+            return -16 if lane == "plan" else 16
+
+        def _add_start_date_label(
+            x_edge: pd.Timestamp,
+            y_cat: str,
+            text: str,
+            *,
+            lane: str,
+            row_has_fact: bool,
+        ) -> None:
+            """Подпись у начала полосы, по вертикали — центр полосы."""
+            if not text or x_edge is None:
+                return
+            _txt_color = _GANTT_FACT_COLOR if lane == "fact" else _GANTT_PLAN_COLOR
+            _date_ann.append(
+                dict(
+                    x=x_edge,
+                    y=y_cat,
+                    text=text,
+                    xref="x",
+                    yref="y",
+                    xanchor="right",
+                    yanchor="middle",
+                    axref="pixel",
+                    ayref="pixel",
+                    ax=-4,
+                    yshift=_bar_lane_yshift(lane, row_has_fact),
+                    showarrow=False,
+                    font=dict(size=_lbl_font, color=_txt_color, family="Arial"),
+                )
+            )
+
+        if label_pct:
+            _plan_trace_text: list[str] = []
+            for meta in _row_meta:
+                txt = "н/д"
+                if pd.notna(meta.get("pct")):
+                    try:
+                        txt = f"{int(round(float(meta['pct'])))}%"
+                    except (TypeError, ValueError):
+                        pass
+                _plan_trace_text.append(txt)
+        else:
+            _plan_trace_text = list(plan_end_lbl)
+
         fig.add_trace(
             go.Bar(
                 name="План",
@@ -33811,9 +33866,10 @@ def dashboard_project_schedule_chart(df):
                 x=plan_len_ms,
                 y=y_labels,
                 base=plan_base_ms,
-                marker=dict(color="#14b8a6"),
-                text=[""] * len(y_labels),
-                textposition="none",
+                marker=dict(color=_GANTT_PLAN_COLOR),
+                text=_plan_trace_text,
+                textposition="outside",
+                textfont=dict(size=_lbl_font, color=_GANTT_PLAN_COLOR),
                 showlegend=False,
                 cliponaxis=False,
                 hovertemplate="%{y}<br>План: %{customdata[0]} — %{customdata[1]}<extra></extra>",
@@ -33828,9 +33884,10 @@ def dashboard_project_schedule_chart(df):
                     x=fact_len_ms,
                     y=y_labels,
                     base=fact_base_ms,
-                    marker=dict(color="#fb923c"),
-                    text=[""] * len(y_labels),
-                    textposition="none",
+                    marker=dict(color=_GANTT_FACT_COLOR),
+                    text=list(fact_end_lbl),
+                    textposition="outside",
+                    textfont=dict(size=_lbl_font, color=_GANTT_FACT_COLOR),
                     showlegend=False,
                     cliponaxis=False,
                     hovertemplate="%{y}<br>Факт: %{customdata[0]} — %{customdata[1]}<extra></extra>",
@@ -33844,133 +33901,27 @@ def dashboard_project_schedule_chart(df):
             )
         fig.update_layout(barmode="group")
 
-        _lbl_font = max(_GANTT_MIN_LABEL_FONT, int(policy.get("label_font", 13)))
-        _date_ann: list[dict] = []
-        _bar_edge_x: list = []
-        _end_label_x: list = []
-
-        _GANTT_PLAN_COLOR = "#14b8a6"
-        _GANTT_FACT_COLOR = "#fb923c"
-
-        def _px_shift_for_text(text: str, *, side: str) -> int:
-            if side == "start":
-                return 8
-            w = int(12 + len(str(text)) * float(_lbl_font) * 0.65)
-            return max(52, min(220, w))
-
-        def _dur_days_days(a, b) -> float:
-            if a is None or b is None:
-                return float("inf")
-            try:
-                return (pd.Timestamp(b) - pd.Timestamp(a)).total_seconds() / 86400.0
-            except Exception:
-                return float("inf")
-
-        # Подписи дат у полос: одна annotation на метку (без «halo» — иначе Plotly
-        # тратит минуты на тысячи fig.add_annotation при 50+ строках).
-        def _bar_lane_ay(lane: str, row_has_fact: bool) -> int:
-            if not row_has_fact:
-                return 0
-            return -14 if lane == "plan" else 14
-
-        def _add_date_label(
-            x_edge: pd.Timestamp,
-            y_cat: str,
-            text: str,
-            *,
-            side: str,
-            lane: str,
-            row_has_fact: bool,
-        ) -> None:
-            """Подпись у начала/конца полосы, по вертикали — центр полосы (план выше, факт ниже)."""
-            if not text or x_edge is None:
-                return
-            _bar_edge_x.append(x_edge)
-            _txt_color = _GANTT_FACT_COLOR if lane == "fact" else _GANTT_PLAN_COLOR
-            if side == "start":
-                _xanchor = "right"
-                _ax = -5
-            else:
-                _xanchor = "left"
-                _ax = _px_shift_for_text(text, side="end")
-            _ay = _bar_lane_ay(lane, row_has_fact)
-
-            _date_ann.append(
-                dict(
-                    x=x_edge,
-                    y=y_cat,
-                    text=text,
-                    xref="x",
-                    yref="y",
-                    xanchor=_xanchor,
-                    yanchor="middle",
-                    axref="pixel",
-                    ayref="pixel",
-                    ax=_ax,
-                    ay=_ay,
-                    showarrow=False,
-                    font=dict(size=_lbl_font, color=_txt_color, family="Arial"),
-                    bgcolor="rgba(14,19,25,0.78)",
-                    borderpad=2,
-                )
-            )
-            if side == "end":
-                _end_label_x.append(x_edge)
-
         _date_mode = str(policy.get("date_label_mode") or "full")
-        if label_pct:
-            for meta in _row_meta:
-                y = meta["y"]
-                pe = meta["pe"]
-                if pe is None:
-                    continue
-                txt = "н/д"
-                if pd.notna(meta.get("pct")):
-                    try:
-                        txt = f"{int(round(float(meta['pct'])))}%"
-                    except (TypeError, ValueError):
-                        pass
-                _add_date_label(
-                    pe,
-                    y,
-                    txt,
-                    side="end",
-                    lane="plan",
-                    row_has_fact=bool(meta.get("has_fact")),
-                )
-        elif _date_mode != "none":
-            _show_start = _date_mode == "full"
+        if not label_pct and _date_mode == "full":
             for meta in _row_meta:
                 y = meta["y"]
                 ps, pe = meta["ps"], meta["pe"]
                 fs, fe = meta["fs"], meta["fe"]
                 _row_has_fact = bool(meta.get("has_fact"))
-                start_items: list[tuple[str, pd.Timestamp, str]] = []
-                end_items: list[tuple[str, pd.Timestamp, str]] = []
-                if _show_start and ps is not None and pe is not None:
-                    start_items.append(("plan", ps, _fmt_bar_date(ps)))
-                if _show_start and fs is not None and fe is not None:
-                    start_items.append(("fact", fs, _fmt_bar_date(fs)))
-                if pe is not None:
-                    end_items.append(("plan", pe, _fmt_bar_date(pe)))
-                if fe is not None:
-                    end_items.append(("fact", fe, _fmt_bar_date(fe)))
-                for lane, x_edge, txt in start_items:
-                    _add_date_label(
-                        x_edge,
+                if ps is not None and pe is not None:
+                    _add_start_date_label(
+                        ps,
                         y,
-                        txt,
-                        side="start",
-                        lane=lane,
+                        _fmt_bar_date(ps),
+                        lane="plan",
                         row_has_fact=_row_has_fact,
                     )
-                for lane, x_edge, txt in end_items:
-                    _add_date_label(
-                        x_edge,
+                if fs is not None and fe is not None:
+                    _add_start_date_label(
+                        fs,
                         y,
-                        txt,
-                        side="end",
-                        lane=lane,
+                        _fmt_bar_date(fs),
+                        lane="fact",
                         row_has_fact=_row_has_fact,
                     )
         if show_covenant_markers and base_end_x:
@@ -34006,16 +33957,7 @@ def dashboard_project_schedule_chart(df):
             dense=bool(policy.get("is_dense")),
             task_font=int(policy.get("task_font", 11)),
         )
-        _label_right_x: list = list(_end_label_x)
-        _right_label_px = 148
-        for _ann in _date_ann:
-            if _ann.get("xanchor") != "left":
-                continue
-            _axv = abs(int(_ann.get("ax") or 0))
-            if _axv >= 40:
-                _right_label_px = max(_right_label_px, _axv + 28)
-        _right_m = int(max(148, min(340, _right_label_px)))
-        _bargap = min(0.28, 0.12 + 0.05 * (_ylines - 1))
+        _right_m = 72
         fig.update_layout(
             autosize=True,
             width=None,
@@ -34024,8 +33966,8 @@ def dashboard_project_schedule_chart(df):
             yaxis_title=None,
             margin=dict(l=left_m, r=_right_m, t=36, b=88),
             showlegend=False,
-            bargap=min(0.38, _bargap + 0.08),
-            bargroupgap=0.16,
+            bargap=0.02,
+            bargroupgap=0.03,
             uirevision="gantt_project_schedule_bars",
         )
         if _y_name_ann or _date_ann:
@@ -34050,11 +33992,9 @@ def dashboard_project_schedule_chart(df):
                     if _sv is not None:
                         _bar_starts.append(_sv)
             _bar_dates.extend(base_end_x)
-            _bar_dates.extend(_bar_edge_x)
             lo_pad, hi_pad = _project_schedule_gantt_x_range(
                 _bar_dates,
                 bar_starts=_bar_starts,
-                label_right_x=_label_right_x or None,
             )
             if lo_pad is not None and hi_pad is not None:
                 fig.update_xaxes(range=[lo_pad, hi_pad], autorange=False)
