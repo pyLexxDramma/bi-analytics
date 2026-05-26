@@ -1941,19 +1941,43 @@ def _gdrs_matrix_table_css(wrap_id: str) -> str:
     w = wrap_id
     return f"""
 <style>
+html, body {{
+  overflow-x: hidden !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}}
+.bi-sortable-html-root {{
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow-x: hidden !important;
+  box-sizing: border-box !important;
+}}
 #{w}.gdrs-table-wrap {{
-  overflow-x: auto;
-  min-width: 0;
-  max-width: 100%;
+  display: block !important;
+  overflow-x: auto !important;
+  overflow-y: visible !important;
+  min-width: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
   margin: 0.5rem 0;
+  -webkit-overflow-scrolling: touch !important;
   scrollbar-width: thin;
   scrollbar-color: rgba(121,154,192,0.5) #141820;
+}}
+#{w}.gdrs-table-wrap::-webkit-scrollbar {{
+  height: 10px;
+}}
+#{w}.gdrs-table-wrap::-webkit-scrollbar-thumb {{
+  background: rgba(121,154,192,0.65);
+  border-radius: 5px;
 }}
 #{w} .gdrs-matrix-table {{
   border: 3px solid #ffffff;
   border-collapse: separate !important;
   border-spacing: 0 !important;
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-size: 13px;
 }}
@@ -2109,6 +2133,7 @@ def render_gdrs_matrix_table_html(
     period_line: str = "",
     delta_bg_style=None,
     show_week_columns: bool = True,
+    theme: str = "dark",
 ) -> str:
     """HTML-таблица ГДРС: двухуровневая шапка «План» / «СКУД» над неделями 1–6 или компакт без недель."""
     import html as html_module
@@ -2337,9 +2362,13 @@ def render_gdrs_matrix_table_html(
         thead_parts.append("</tr>")
 
     body = "".join(_row_html(r) for _, r in view.iterrows())
+    from dashboards.gdrs_theme import get_gdrs_theme, gdrs_matrix_table_css
+
+    _th = get_gdrs_theme(theme)
+    _wrap_cls = "gdrs-table-wrap gdrs-light-table" if _th.name == "light" else "gdrs-table-wrap"
     return (
-        f'<div id="{wid}" class="gdrs-table-wrap">'
-        + _gdrs_matrix_table_css(wid)
+        f'<div id="{wid}" class="{_wrap_cls}">'
+        + gdrs_matrix_table_css(wid, _th)
         + '<table class="gdrs-matrix-table bi-sortable-table"><thead>'
         + "".join(thead_parts)
         + "</thead><tbody>"

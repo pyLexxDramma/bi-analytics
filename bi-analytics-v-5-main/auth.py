@@ -82,6 +82,8 @@ _REPORT_ROLE_ALLOWLIST: Dict[str, frozenset] = {
     "ГДРС Техника": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "ГДРС (люди)": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "ГДРС (техника)": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
+    "ГДРС (превью — светлая, люди)": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
+    "ГДРС (превью — светлая, техника)": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "Исполнительная документация": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "Предписания по подрядчикам": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "Неустраненные предписания": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
@@ -809,6 +811,14 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
         return
 
     with st.sidebar:
+        try:
+            from dashboards.gdrs_theme import inject_gdrs_light_preview_css, is_gdrs_light_preview_report
+
+            _sb_dash = str(st.session_state.get("current_dashboard") or "").strip()
+            if is_gdrs_light_preview_report(_sb_dash):
+                inject_gdrs_light_preview_css(st)
+        except Exception:
+            pass
         # F2: скрываем системную мульти-страничную навигацию Streamlit
         # (streamlit app / admin / analyst params), оставляем только наше меню.
         st.markdown(
@@ -903,98 +913,6 @@ def render_sidebar_footer(user: dict) -> None:
 
     with st.sidebar:
         # F2: встроенная навигация Streamlit скрыта.
-
-        # ── Принудительный refresh (для admin/superadmin): чистит кэши Streamlit
-        # и форсирует свежий ingest из web/ (опционально с FTP, если настроено).
-        # Чтобы клиент мгновенно увидел свежие данные после деплоя — без ожидания
-        # естественного истечения cache TTL.
-        _show_data_ops_sidebar = True
-        try:
-            from config import show_data_ops_ui_for_role
-
-            _show_data_ops_sidebar = bool(show_data_ops_ui_for_role(user.get("role", "")))
-        except Exception:
-            pass
-
-        if has_admin_access(user.get("role", "")) and _show_data_ops_sidebar:
-            st.markdown("---")
-            if st.button(
-                "Обновить данные и кэш",
-                width="stretch",
-                key="menu_force_refresh",
-                help=(
-                    "Очистить st.cache_data / st.cache_resource, удалить локальный "
-                    "web_data.db и заново загрузить web/. Используется после деплоя "
-                    "новой версии, если на dev/release клиент видит старые данные."
-                ),
-            ):
-                try:
-                    for _fn in ("cache_data", "cache_resource"):
-                        try:
-                            _obj = getattr(st, _fn, None)
-                            if _obj is not None and hasattr(_obj, "clear"):
-                                _obj.clear()
-                        except Exception:
-                            pass
-                    # force_run_auto_ingest_now сбрасывает in-process flag
-                    # и форсит FORCE=1 + AUTO_INGEST=1 для ОДНОГО прогона,
-                    # после чего восстанавливает env как было. Без этого
-                    # повторный вызов в том же процессе был no-op (флаг уже True
-                    # от cold-start ingest) → кнопка ничего не делала, кроме
-                    # очистки кэшей.
-                    try:
-                        from auto_ingest import force_run_auto_ingest_now
-
-                        with st.spinner("Принудительный refresh: ingest + кэш…"):
-                            _ingest_meta = force_run_auto_ingest_now()
-                        if not _ingest_meta.get("ok"):
-                            st.warning(f"Ingest вернул ошибку: {_ingest_meta.get('error')}")
-                    except Exception as _e:
-                        st.warning(f"Не удалось перезапустить ingest: {_e}")
-                    for _k in (
-                        "_dev_matrix_cache_v1",
-                        "last_load_result",
-                        "web_version_id",
-                        "web_version_pick_id",
-                        # Сбрасываем «уже наполнен» — чтобы auto-hydrate
-                        # перечитал session_state из новой версии БД.
-                        "_auto_hydrated_from_db",
-                    ):
-                        st.session_state.pop(_k, None)
-                    # Обнуляем DataFrame'ы, иначе auto-hydrate увидит project_data
-                    # != None и не перечитает БД.
-                    for _k in (
-                        "project_data",
-                        "project_data_all_snapshots",
-                        "debit_credit_data",
-                        "tessa_data",
-                        "tessa_tasks_data",
-                        "reference_1c_dannye",
-                        "reference_partner_to_project",
-                        "resources_data",
-                        "technique_data",
-                    ):
-                        st.session_state[_k] = None
-                    st.success("Кэш очищен. Загружу свежие данные…")
-                    st.rerun()
-                except Exception as _e:
-                    st.error(f"Refresh failed: {_e}")
-
-            try:
-                from data_ops_sidebar import render_admin_data_ops_sidebar
-
-                render_admin_data_ops_sidebar(st)
-            except Exception:
-                pass
-
-        if not (has_admin_access(user.get("role", "")) and _show_data_ops_sidebar):
-            st.markdown("---")
-            try:
-                from data_ops_sidebar import render_release_data_version_sidebar
-
-                render_release_data_version_sidebar(st)
-            except Exception:
-                pass
 
         # 3. Выход (для всех ролей)
         st.markdown("---")

@@ -158,6 +158,9 @@ MILLION = 1_000_000
 TABLE_CAPTION_STYLE = (
     "margin:0.75em 0 0.35em 0;font-size:1.05rem;font-weight:700;color:#e8eef5;"
 )
+TABLE_CAPTION_STYLE_LIGHT = (
+    "margin:0.75em 0 0.35em 0;font-size:1.05rem;font-weight:700;color:#111827;"
+)
 
 
 def format_table_title(name: str, filters_suffix: str | None = None) -> str:
@@ -179,11 +182,12 @@ def render_table_subheader(st: Any, name: str, filters_suffix: str | None = None
     st.subheader(format_table_title(name, filters_suffix))
 
 
-def _html_table_caption(caption: str | None) -> str:
+def _html_table_caption(caption: str | None, *, light: bool = False) -> str:
     if not caption or not str(caption).strip():
         return ""
     cap = html_module.escape(sanitize_display_label(str(caption).strip()))
-    return f'<h3 class="bi-table-caption" style="{TABLE_CAPTION_STYLE}">{cap}</h3>'
+    style = TABLE_CAPTION_STYLE_LIGHT if light else TABLE_CAPTION_STYLE
+    return f'<h3 class="bi-table-caption" style="{style}">{cap}</h3>'
 
 
 def _row_is_table_total(row: pd.Series, *, skip_cols: set[str] | None = None) -> bool:

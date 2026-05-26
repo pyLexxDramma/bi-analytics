@@ -270,6 +270,7 @@ def _render_html_table(
     *,
     cell_titles: bool = False,
     column_role: dict = None,
+    iframe_light: bool = False,
 ):
     """Render a DataFrame as a styled HTML table (bypasses broken st.dataframe canvas).
 
@@ -281,6 +282,26 @@ def _render_html_table(
     for col in show.columns:
         show[col] = [str(v) if pd.notna(v) else "" for v in show[col]]
     _role = column_role or {}
+    _light_open = '<div class="gdrs-light-table">' if iframe_light else ""
+    _light_close = "</div>" if iframe_light else ""
+    _table_css = _TABLE_CSS
+    if iframe_light:
+        _table_css = _TABLE_CSS.replace(
+            "background:hsl(209, 72%, 6%); color:#fafafa;",
+            "background:#e5e7eb; color:#111827;",
+        ).replace(
+            "padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0;",
+            "padding:7px 10px; border-bottom:1px solid #cbd5e1; color:#111827; font-weight:700;",
+        ).replace(
+            "background:hsl(209, 70%, 7%) !important;",
+            "background:#f3f4f6 !important; color:#111827 !important;",
+        ).replace(
+            "tr:hover td {background:#262833}",
+            "tr:hover td {background:#f3f4f6}",
+        ).replace(
+            "tr:nth-child(even) td {background:rgba(255,255,255,0.02)}",
+            "tr:nth-child(even) td {background:#fcfcfd}",
+        )
 
     def _th_class(c):
         r = _role.get(c) or _role.get(str(c))
@@ -323,7 +344,7 @@ def _render_html_table(
             parts.append("</tr>")
         parts.append("</tbody></table></div>")
         render_report_html_table(
-            _TABLE_CSS + "".join(parts),
+            _light_open + _table_css + "".join(parts) + _light_close,
             export_df=df,
             file_stem="table_export",
             key_prefix=f"html_tbl_{abs(id(df))}",
@@ -331,7 +352,7 @@ def _render_html_table(
     else:
         html = show.to_html(index=False, classes="rendered-table bi-sortable-table", escape=True, border=0)
         render_report_html_table(
-            _TABLE_CSS + '<div class="rendered-table-wrap">' + html + "</div>",
+            _light_open + _table_css + '<div class="rendered-table-wrap">' + html + "</div>" + _light_close,
             export_df=df,
             file_stem="table_export",
             key_prefix=f"html_tbl_{abs(id(df))}",
@@ -2012,8 +2033,11 @@ def _apply_finance_bar_label_layout(
     return fig
 
 
-def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame) -> go.Figure:
+def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -> go.Figure:
     """Круговая «распределение по контрагентам»: абсолют и % на секторе, названия в легенде."""
+    from dashboards.gdrs_theme import get_gdrs_theme
+
+    _th = get_gdrs_theme(theme)
     df = pie_df.sort_values("Факт", ascending=False).reset_index(drop=True)
     n = int(len(df))
     values = pd.to_numeric(df["Факт"], errors="coerce").fillna(0).astype(float).tolist()
@@ -2061,12 +2085,12 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame) -> go.Figure:
                 textposition=slice_pos,
                 insidetextorientation="horizontal",
                 pull=slice_pull,
-                textfont=dict(size=_txt_in, color="#ffffff"),
-                outsidetextfont=dict(size=_txt_out, color="#e8eef5"),
+                textfont=dict(size=_txt_in, color=_th.pie_text_in),
+                outsidetextfont=dict(size=_txt_out, color=_th.pie_text_out),
                 hovertemplate=(
                     "<b>%{label}</b><br>Факт: %{value}<br>%{percent}<extra></extra>"
                 ),
-                marker=dict(line=dict(color="rgba(15,23,42,0.9)", width=1)),
+                marker=dict(line=dict(color=_th.pie_line, width=1)),
             )
         ]
     )
@@ -2083,14 +2107,14 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame) -> go.Figure:
                 y=_leg_y,
                 x=0.5,
                 xanchor="center",
-                font=dict(size=_leg_sz, color="#e8eef5"),
+                font=dict(size=_leg_sz, color=_th.pie_legend),
                 tracegroupgap=6,
                 itemsizing="constant",
             ),
             margin=dict(l=40, r=40, t=40, b=_b_leg),
             showlegend=True,
-            plot_bgcolor=CHART_BG_COLOR,
-            paper_bgcolor=CHART_BG_COLOR,
+            plot_bgcolor=_th.chart_bg,
+            paper_bgcolor=_th.chart_bg,
         )
         try:
             fig.update_traces(domain=dict(x=[0.04, 0.96], y=[0.10, 0.96]))
@@ -2108,14 +2132,14 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame) -> go.Figure:
                 y=0.5,
                 xanchor="left",
                 x=1.01,
-                font=dict(size=_leg_sz, color="#e8eef5"),
+                font=dict(size=_leg_sz, color=_th.pie_legend),
                 tracegroupgap=4,
                 itemsizing="constant",
             ),
             margin=dict(l=48, r=r_margin, t=44, b=48),
             showlegend=True,
-            plot_bgcolor=CHART_BG_COLOR,
-            paper_bgcolor=CHART_BG_COLOR,
+            plot_bgcolor=_th.chart_bg,
+            paper_bgcolor=_th.chart_bg,
         )
         try:
             fig.update_traces(domain=dict(x=[0.0, 0.70], y=[0.02, 0.98]))
@@ -18882,16 +18906,33 @@ def _gdrs_dynamics_chart_panel(
     dyn_title: str,
     vid_locked: str | None,
     month_periods: list | None = None,
+    *,
+    theme: str = "dark",
 ):
     """Линейный график динамики — fragment: смена группировки без полной перезагрузки страницы."""
     import plotly.graph_objects as _go
     from dashboards.gdrs_resursi import gdrs_dynamics_build_series
+    from dashboards.gdrs_theme import (
+        apply_gdrs_chart_background,
+        get_gdrs_theme,
+        gdrs_render_subheader,
+        gdrs_apply_grouped_bar_labels,
+        gdrs_apply_bar_outside_labels,
+        gdrs_sanitize_bar_text_labels,
+        inject_gdrs_light_preview_css,
+    )
+
+    _th = get_gdrs_theme(theme)
 
     dyn_from = pd.Timestamp(dyn_from_iso)
     dyn_to = pd.Timestamp(dyn_to_iso)
-    st.subheader(dyn_title)
+    if theme == "light":
+        inject_gdrs_light_preview_css(st)
+        gdrs_render_subheader(st, dyn_title, theme=theme)
+    else:
+        st.subheader(dyn_title)
     _agg_options = ["День", "Неделя", "Месяц", "Год"]
-    _agg_key = f"gdrs_dyn_kind_{vid_locked or 'any'}"
+    _agg_key = f"gdrs_dyn_kind_{vid_locked or 'any'}_{theme}"
     _agg_default = 0
     if _agg_key not in st.session_state or st.session_state[_agg_key] not in _agg_options:
         st.session_state[_agg_key] = _agg_options[_agg_default]
@@ -18970,7 +19011,7 @@ def _gdrs_dynamics_chart_panel(
                 x=_x,
                 y=_plan_plot,
                 mode="lines+markers+text",
-                line=dict(color="#29b6f6", width=2.5),
+                line=dict(color=_th.line_plan, width=2.5),
                 marker=dict(size=8),
                 name="План",
                 connectgaps=False,
@@ -18979,7 +19020,7 @@ def _gdrs_dynamics_chart_panel(
                     for v in _plan_plot
                 ],
                 textposition="top center",
-                textfont=dict(color="#29b6f6", size=_lbl_sz),
+                textfont=dict(color=_th.line_plan, size=_lbl_sz),
                 cliponaxis=False,
                 yaxis="y",
                 hovertemplate="План: %{y}<br>%{x|%d.%m.%Y}<extra></extra>",
@@ -18990,12 +19031,12 @@ def _gdrs_dynamics_chart_panel(
                 x=_x,
                 y=dyn["Факт"],
                 mode="lines+markers+text",
-                line=dict(color="#ff8c2d", width=3),
+                line=dict(color=_th.line_fact, width=3),
                 marker=dict(size=9),
                 name="Факт",
                 text=[f"{int(f)}" for f in dyn["Факт"]],
                 textposition="bottom center",
-                textfont=dict(color="#ff8c2d", size=_lbl_sz),
+                textfont=dict(color=_th.line_fact, size=_lbl_sz),
                 cliponaxis=False,
                 yaxis="y",
                 customdata=_pct_hover,
@@ -19007,7 +19048,7 @@ def _gdrs_dynamics_chart_panel(
             if int(_p) <= 0:
                 continue
             _pct = int(round(float(_f) / float(_p) * 100.0))
-            _pct_color = "#46d68a" if _pct >= 100 else "#ff5454"
+            _pct_color = _th.good if _pct >= 100 else _th.bad
             fig.add_annotation(
                 x=_xb,
                 y=int(_f),
@@ -19036,9 +19077,9 @@ def _gdrs_dynamics_chart_panel(
             _x_dtick = "D7"
         _layout_kw = dict(
             title=f"Фактическое количество — {sel_vid.lower()} (ресурсы)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            font_color="#eee",
+            plot_bgcolor=_th.chart_bg,
+            paper_bgcolor=_th.chart_bg,
+            font_color=_th.text,
             height=_chart_h,
             margin=dict(l=62, r=32, t=104, b=96),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
@@ -19048,7 +19089,7 @@ def _gdrs_dynamics_chart_panel(
                 dtick=_comb_dtick,
                 autorange=False,
                 showgrid=True,
-                gridcolor="rgba(255,255,255,0.08)",
+                gridcolor=_th.chart_grid,
             ),
         )
         fig.update_layout(**_layout_kw)
@@ -19059,9 +19100,9 @@ def _gdrs_dynamics_chart_panel(
             dtick=_x_dtick,
             tickangle=-35 if _n_pts > 6 else 0,
             showgrid=True,
-            gridcolor="rgba(255,255,255,0.06)",
+            gridcolor=_th.chart_grid,
         )
-        fig = apply_chart_background(fig)
+        fig = apply_gdrs_chart_background(fig, _th)
         st.plotly_chart(fig, use_container_width=True)
         st.caption("План и факт на одной шкале (чел.); пересечение линий — близкие значения.")
 
@@ -19082,6 +19123,7 @@ def _gdrs_dynamics_chart_panel(
             _dyn_tbl,
             max_rows=500,
             column_role={"План": "baseline", "Факт": "fact", "Δ": "dev", "%": "dev"},
+            iframe_light=(theme == "light"),
         )
     except Exception as _e:
         st.warning(f"Plotly недоступен: {_e}")
@@ -19114,6 +19156,34 @@ def _gdrs_projects_summary_display(proj_df: pd.DataFrame) -> pd.DataFrame:
     if "delta_pct" in d.columns:
         out["Отклонение %"] = d["delta_pct"]
     return out
+
+
+def _gdrs_build_contractors_chart_df(main_t: pd.DataFrame) -> pd.DataFrame:
+    """Свод по контрагентам: одна строка на контрагента (без дублей по проектам)."""
+    cols = ["project_name", "contractor_name", "plan", "skud"]
+    raw = main_t.loc[main_t["row_kind"] == "row", [c for c in cols if c in main_t.columns]].copy()
+    if raw.empty or "contractor_name" not in raw.columns:
+        return pd.DataFrame(columns=["Контрагент", "План", "Факт", "Отклонение"])
+    if "project_name" in raw.columns:
+        raw = raw.drop_duplicates(subset=["project_name", "contractor_name"], keep="first")
+    raw["contractor_name"] = raw["contractor_name"].astype(str).str.strip()
+    raw = raw[raw["contractor_name"] != ""]
+    if raw.empty:
+        return pd.DataFrame(columns=["Контрагент", "План", "Факт", "Отклонение"])
+    raw["plan"] = pd.to_numeric(raw["plan"], errors="coerce").fillna(0.0)
+    raw["skud"] = pd.to_numeric(raw["skud"], errors="coerce").fillna(0.0)
+    agg = raw.groupby("contractor_name", as_index=False).agg(
+        plan=("plan", "sum"),
+        skud=("skud", "sum"),
+    )
+    agg.rename(
+        columns={"contractor_name": "Контрагент", "plan": "План", "skud": "Факт"},
+        inplace=True,
+    )
+    agg["План"] = agg["План"].round(0).astype(int)
+    agg["Факт"] = agg["Факт"].round(0).astype(int)
+    agg["Отклонение"] = (agg["План"] - agg["Факт"]).round(0).astype(int)
+    return agg.sort_values("План", ascending=False).reset_index(drop=True)
 
 
 def _gdrs_contractors_summary_display(chart_df: pd.DataFrame) -> pd.DataFrame:
@@ -19193,22 +19263,27 @@ def _gdrs_deviation_cell_bg_style(raw) -> str:
     return gdrs_deviation_cell_bg_style(raw)
 
 
-def _gdrs_summary_table_to_html(df: pd.DataFrame) -> str:
+def _gdrs_summary_table_to_html(df: pd.DataFrame, *, theme: str = "dark") -> str:
+    from dashboards.gdrs_theme import get_gdrs_theme
+
+    _th = get_gdrs_theme(theme)
     if df is None or df.empty:
         return "<p>Нет данных для отображения.</p>"
     wrap_id = "gdrs_sum_" + str(abs(id(df)))
     tag = "d" + "iv"
+    _wrap_cls = "gdrs-summary-table-wrap gdrs-light-table" if _th.name == "light" else "gdrs-summary-table-wrap"
     parts = [
-        f"<{tag} id=\"{wrap_id}\" class=\"gdrs-summary-table-wrap\" "
+        f"<{tag} id=\"{wrap_id}\" class=\"{_wrap_cls}\" "
         f"style=\"overflow-x:auto;min-width:0;margin:0.75em 0;\">",
         f"<style>"
         f"#{wrap_id} table {{ width:100%; border-collapse:collapse; font-size:15px; "
-        f"background-color:{TABLE_BG_COLOR}; color:{TABLE_TEXT_COLOR}; }}"
-        f"#{wrap_id} th, #{wrap_id} td {{ border:1px solid rgba(255,255,255,0.3); padding:6px 8px; }}"
-        f"#{wrap_id} th {{ background-color:{TABLE_HEADER_BG_COLOR}; {TABLE_HEADER_FONT_CSS} }}"
-        f"#{wrap_id} td.gdrs-u, #{wrap_id} td.gdrs-u span {{ color:#ff5454 !important; font-weight:800; }}"
-        f"#{wrap_id} td.gdrs-o, #{wrap_id} td.gdrs-o span {{ color:#46d68a !important; font-weight:800; }}"
-        f"#{wrap_id} td.gdrs-z, #{wrap_id} td.gdrs-z span {{ color:#8899aa !important; }}"
+        f"background-color:{_th.table_bg}; color:{_th.table_text}; }}"
+        f"#{wrap_id} th, #{wrap_id} td {{ border:1px solid {_th.border}; padding:8px 10px; color:{_th.table_text} !important; font-weight:700; }}"
+        f"#{wrap_id} th, #{wrap_id} td, #{wrap_id} th *, #{wrap_id} td * {{ color:{_th.table_text} !important; }}"
+        f"#{wrap_id} th {{ background-color:{_th.table_header_bg}; {_th.table_header_font_css} }}"
+        f"#{wrap_id} td.gdrs-u, #{wrap_id} td.gdrs-u span {{ color:{_th.bad} !important; font-weight:800; }}"
+        f"#{wrap_id} td.gdrs-o, #{wrap_id} td.gdrs-o span {{ color:{_th.good} !important; font-weight:800; }}"
+        f"#{wrap_id} td.gdrs-z, #{wrap_id} td.gdrs-z span {{ color:{_th.neutral} !important; }}"
         f"</style>",
         '<table class="bi-sortable-table"><thead><tr>',
     ]
@@ -19246,13 +19321,16 @@ def _gdrs_render_plan_fact_summary_table(
     display_df: pd.DataFrame,
     *,
     table_title: str,
+    theme: str = "dark",
 ) -> None:
+    from dashboards.gdrs_theme import gdrs_render_table_subheader
+
     if display_df is None or display_df.empty:
         st.info("Нет данных для таблицы.")
         return
-    render_table_subheader(st, table_title)
+    gdrs_render_table_subheader(st, table_title, theme=theme)
     render_report_html_table(
-        _gdrs_summary_table_to_html(display_df),
+        _gdrs_summary_table_to_html(display_df, theme=theme),
         export_df=display_df,
         file_stem=_export_file_stem(table_title),
         key_prefix=f"gdrs_sum_{abs(id(display_df))}",
@@ -19269,7 +19347,17 @@ def dashboard_gdrs_equipment_v2(df):
     return dashboard_gdrs(df, vid_locked="Техника")
 
 
-def dashboard_gdrs(df, vid_locked: str | None = None):
+def dashboard_gdrs_people_preview_light(df):
+    """Превью ГДРС (люди) в светлой теме для оценки заказчиком."""
+    return dashboard_gdrs(df, vid_locked="Рабочие", theme="light")
+
+
+def dashboard_gdrs_equipment_preview_light(df):
+    """Превью ГДРС (техника) в светлой теме для оценки заказчиком."""
+    return dashboard_gdrs(df, vid_locked="Техника", theme="light")
+
+
+def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
     """
     ГДРС — переписанный по ТЗ заказчика 2026-05-07 (см. docs/TZ_GDRS_2026-05-07.md).
 
@@ -19287,12 +19375,32 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
     UI: одна страница — 4 визуала (проекты, контрагенты, динамика, круговая) и таблица.
     Фильтры сверху: Проект (multi), Контрагент (multi), [Вид ресурсов — только если не locked],
                     Период (date range), «Только с планом» (checkbox).
+
+    theme: "dark" (основной ГДРС) или "light" (отдельное превью для заказчика).
     """
     import os
     import sys
     from pathlib import Path as _Path
     import pandas as _pd
     import numpy as _np
+    from dashboards.gdrs_theme import (
+        apply_gdrs_chart_background,
+        get_gdrs_theme,
+        gdrs_deviation_vs_plan_text_and_color,
+        gdrs_render_subheader,
+        gdrs_render_table_subheader,
+        gdrs_apply_grouped_bar_labels,
+        gdrs_apply_bar_outside_labels,
+        gdrs_sanitize_bar_text_labels,
+        inject_gdrs_light_preview_css,
+    )
+
+    _th = get_gdrs_theme(theme)
+    if theme == "light":
+        inject_gdrs_light_preview_css(st)
+        _gdrs_light_preview_active = True
+    else:
+        _gdrs_light_preview_active = False
 
     _this = os.path.dirname(os.path.abspath(__file__))
     _root = os.path.dirname(_this)
@@ -19346,23 +19454,24 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
 
     use_radio = vid_locked is None
     _gdrs_vid_key = vid_locked or "any"
+    _gdrs_key_suffix = f"{_gdrs_vid_key}_light" if theme == "light" else _gdrs_vid_key
     _gdrs_reset_keys = [
-        f"gdrs_filter_projects_{_gdrs_vid_key}",
-        f"gdrs_filter_contractors_{_gdrs_vid_key}",
-        f"gdrs_filter_months_{_gdrs_vid_key}",
-        f"gdrs_filter_only_plan_{_gdrs_vid_key}",
-        f"gdrs_filter_plan_agg_{_gdrs_vid_key}",
-        f"gdrs_filter_skud_agg_{_gdrs_vid_key}",
+        f"gdrs_filter_projects_{_gdrs_key_suffix}",
+        f"gdrs_filter_contractors_{_gdrs_key_suffix}",
+        f"gdrs_filter_months_{_gdrs_key_suffix}",
+        f"gdrs_filter_only_plan_{_gdrs_key_suffix}",
+        f"gdrs_filter_plan_agg_{_gdrs_key_suffix}",
+        f"gdrs_filter_skud_agg_{_gdrs_key_suffix}",
     ]
     if use_radio:
-        _gdrs_reset_keys.append(f"gdrs_filter_vid_{_gdrs_vid_key}")
+        _gdrs_reset_keys.append(f"gdrs_filter_vid_{_gdrs_key_suffix}")
     fcol_specs = [1.4, 1.4, 1.0, 1.6, 1.0] if use_radio else [1.4, 1.4, 1.6, 1.0]
     with filters_panel(st, reset_keys=_gdrs_reset_keys):
         fcols = st.columns(fcol_specs)
         project_options = project_labels_for_filter(long_fact["project_name"])
         with fcols[0]:
             sel_projects, _ = project_filter_multiselect(st, project_options,
-                key=f"gdrs_filter_projects_{_gdrs_vid_key}",
+                key=f"gdrs_filter_projects_{_gdrs_key_suffix}",
             )
         _lf_proj = filter_dataframe_by_project_labels(
             long_fact, sel_projects, col="project_name"
@@ -19373,7 +19482,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
         with fcols[1]:
             sel_contractors = st.multiselect(
                 "Контрагент", contractor_options, default=[],
-                key=f"gdrs_filter_contractors_{_gdrs_vid_key}",
+                key=f"gdrs_filter_contractors_{_gdrs_key_suffix}",
                 help="Пусто = все контрагенты выбранных проектов",
                 placeholder="Выберите контрагентов",
             )
@@ -19381,7 +19490,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             with fcols[2]:
                 sel_vid = st.radio(
                     "Вид ресурсов", ["Рабочие", "Техника"], horizontal=True,
-                    key=f"gdrs_filter_vid_{_gdrs_vid_key}",
+                    key=f"gdrs_filter_vid_{_gdrs_key_suffix}",
                 )
             date_idx, plan_idx = 3, 4
         else:
@@ -19393,14 +19502,14 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                 "Месяц",
                 _month_labels,
                 default=_default_months,
-                key=f"gdrs_filter_months_{_gdrs_vid_key}",
+                key=f"gdrs_filter_months_{_gdrs_key_suffix}",
                 placeholder="Все месяцы",
                 help="Один или несколько календарных месяцев. Пусто — все месяцы с данными.",
             )
         with fcols[plan_idx]:
             only_with_plan = st.checkbox(
                 "Только с планом", value=True,
-                key=f"gdrs_filter_only_plan_{_gdrs_vid_key}",
+                key=f"gdrs_filter_only_plan_{_gdrs_key_suffix}",
                 help="Скрыть подрядчиков без плана в активном договоре",
             )
         _agg_opts = gdrs_agg_select_options()
@@ -19410,7 +19519,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                 "План",
                 _agg_opts,
                 index=0,
-                key=f"gdrs_filter_plan_agg_{_gdrs_vid_key}",
+                key=f"gdrs_filter_plan_agg_{_gdrs_key_suffix}",
                 help="Среднее за месяц — план из 1С на конец периода; "
                 "N неделя — план из 1С на последний день этой недели в периоде",
             )
@@ -19419,11 +19528,14 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                 "СКУД",
                 _agg_opts,
                 index=0,
-                key=f"gdrs_filter_skud_agg_{_gdrs_vid_key}",
+                key=f"gdrs_filter_skud_agg_{_gdrs_key_suffix}",
                 help="Среднее за месяц — среднее факт/день за весь период (CSV); "
                 "N неделя — среднее факт/день только в выбранной неделе",
             )
 
+
+    if _gdrs_light_preview_active:
+        inject_gdrs_light_preview_css(st)
     if sel_month_labels:
         _sel_periods = [_month_label_to_period[lbl] for lbl in sel_month_labels if lbl in _month_label_to_period]
     else:
@@ -19505,16 +19617,9 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
     unit = "люди" if sel_vid == "Рабочие" else "техника"
     _unit_gen = "людей" if sel_vid == "Рабочие" else "техники"
 
-    chart_df = main_t[main_t["row_kind"] == "row"][
-        ["contractor_name", "plan", "skud", "deviation"]
-    ].copy()
-    chart_df.rename(columns={
-        "contractor_name": "Контрагент", "plan": "План", "skud": "Факт",
-    }, inplace=True)
-    chart_df["Отклонение"] = chart_df["deviation"].round(0).astype(int)
-    chart_df = chart_df.sort_values("План", ascending=False)
+    chart_df = _gdrs_build_contractors_chart_df(main_t)
 
-    st.subheader("ГДРС по выбранным проектам")
+    gdrs_render_subheader(st, "ГДРС по выбранным проектам", theme=theme)
     proj_df = main_t[main_t["row_kind"] == "subtotal"][
         ["project_name", "plan", "skud", "deviation", "delta_pct"]
     ].copy()
@@ -19527,67 +19632,82 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             _fact_vals = proj_df["skud"].fillna(0).astype(int).tolist()
             _dev_text, _dev_colors, _dev_abs = [], [], []
             for _pv, _fv in zip(proj_df["plan"], proj_df["skud"]):
-                _lbl, _col = _gdrs_deviation_vs_plan_text_and_color(_pv, _fv)
+                _lbl, _col = gdrs_deviation_vs_plan_text_and_color(_pv, _fv, _th)
                 _dev_text.append(_lbl)
                 _dev_colors.append(_col)
                 _dev_abs.append(abs(int(round(float(_fv) - float(_pv)))))
+            _bar_axis_sz = 22 if theme == "light" else 14
+            _bar_title_sz = 22 if theme == "light" else 16
+            _bar_margin_b = 150 if theme == "light" else 110
             fig_pf = _go.Figure()
             fig_pf.add_bar(
                 name="План", x=_proj_labels, y=_plan_vals,
-                marker_color="#29b6f6",
-                text=[f"{v}" for v in _plan_vals], textposition="outside",
-                textfont=dict(color="#cfe9fa", size=12),
+                marker_color=_th.bar_plan,
             )
             fig_pf.add_bar(
                 name="Факт", x=_proj_labels, y=_fact_vals,
-                marker_color="#46d68a",
-                text=[f"{v}" for v in _fact_vals], textposition="outside",
-                textfont=dict(color="#cfe9fa", size=12),
+                marker_color=_th.bar_fact,
             )
             fig_pf.add_bar(
                 name="Отклонение (факт − план)", x=_proj_labels, y=_dev_abs,
                 marker_color=_dev_colors,
-                text=_dev_text,
-                textposition="outside",
-                textfont=dict(color=_dev_colors, size=12),
             )
             fig_pf.update_layout(
                 title=dict(
                     text="План / Факт / Отклонение по проектам",
-                    font=dict(size=16, color="#eee"),
+                    font=dict(size=_bar_title_sz, color=_th.text, family="Inter, sans-serif"),
                     x=0.0, xanchor="left", y=0.96, yanchor="top",
                 ),
                 barmode="group",
-                plot_bgcolor="rgba(0,0,0,0)",
-                paper_bgcolor="rgba(0,0,0,0)",
-                font_color="#eee",
-                xaxis=dict(showgrid=False),
-                yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.08)"),
-                height=520,
-                margin=dict(l=56, r=24, t=72, b=110),
+                plot_bgcolor=_th.chart_bg,
+                paper_bgcolor=_th.chart_bg,
+                font_color=_th.text,
+                xaxis=dict(
+                    showgrid=False,
+                    tickfont=dict(size=_bar_axis_sz, color=_th.text, family="Inter, sans-serif"),
+                    tickangle=-25 if theme == "light" else 0,
+                ),
+                yaxis=dict(
+                    showgrid=True,
+                    gridcolor=_th.chart_grid,
+                    tickfont=dict(size=_bar_axis_sz if theme == "light" else 12, color=_th.text),
+                ),
+                height=560 if theme == "light" else 520,
+                margin=dict(l=56, r=24, t=72, b=_bar_margin_b),
                 legend=dict(
                     orientation="h", yanchor="top", y=-0.18,
                     xanchor="left", x=0.0, bgcolor="rgba(0,0,0,0)",
                 ),
             )
-            fig_pf = apply_chart_background(fig_pf)
+            fig_pf = apply_gdrs_chart_background(fig_pf, _th, skip_uniformtext=True)
             _n_projs = len(_proj_labels)
             if _n_projs <= 2:
                 fig_pf.update_layout(bargap=0.65, bargroupgap=0.15)
             elif _n_projs <= 4:
                 fig_pf.update_layout(bargap=0.45, bargroupgap=0.1)
-            st.plotly_chart(fig_pf, use_container_width=True)
+            fig_pf = gdrs_apply_grouped_bar_labels(
+                fig_pf,
+                _th,
+                _proj_labels,
+                [
+                    ([f"{v}" for v in _plan_vals], _th.bar_plan_text),
+                    ([f"{v}" for v in _fact_vals], _th.bar_fact_text),
+                    (_dev_text, _dev_colors),
+                ],
+            )
+            st.plotly_chart(fig_pf, use_container_width=True, key="gdrs_proj_bar_light")
         except Exception as _e:
             st.warning(f"Plotly недоступен: {_e}")
         _gdrs_render_plan_fact_summary_table(
             st,
             _gdrs_projects_summary_display(proj_df),
             table_title="ГДРС по выбранным проектам",
+            theme=theme,
         )
     else:
         st.info("Нет данных по проектам.")
 
-    render_table_subheader(st, f"График движения рабочей силы ({unit}), {period_label}")
+    gdrs_render_table_subheader(st, f"График движения рабочей силы ({unit}), {period_label}", theme=theme)
     period_days = max(1, (date_to - date_from).days + 1)
     if period_days > 45:
         st.warning(
@@ -19648,6 +19768,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             period_line=_tbl_period,
             delta_bg_style=_gdrs_delta_pct_cell_bg_style,
             show_week_columns=_show_week_cols,
+            theme=theme,
         ),
         export_df=_mtx_export,
         file_stem=_export_file_stem(_tbl_title),
@@ -19655,30 +19776,26 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
     )
 
     st.markdown("---")
-    st.subheader("ГДРС по выбранным контрагентам")
+    gdrs_render_subheader(st, "ГДРС по выбранным контрагентам", theme=theme)
     if chart_df.empty:
         st.info("Нет данных по контрагентам.")
     else:
         try:
             import plotly.graph_objects as _go
+            _bar_axis_sz = 22 if theme == "light" else 14
+            _bar_margin_b = 150 if theme == "light" else 140
             fig2 = _go.Figure()
             fig2.add_bar(
                 name="План", x=chart_df["Контрагент"], y=chart_df["План"],
-                marker_color="#29b6f6",
-                text=[f"{int(v)}" for v in chart_df["План"]],
-                textposition="outside",
-                textfont=dict(color="#cfe9fa", size=11),
+                marker_color=_th.bar_plan,
             )
             fig2.add_bar(
                 name="Факт", x=chart_df["Контрагент"], y=chart_df["Факт"],
-                marker_color="#46d68a",
-                text=[f"{int(v)}" for v in chart_df["Факт"]],
-                textposition="outside",
-                textfont=dict(color="#cfe9fa", size=11),
+                marker_color=_th.bar_fact,
             )
             _ctr_dev_text, _ctr_dev_colors, _ctr_dev_abs = [], [], []
             for _pv, _fv in zip(chart_df["План"], chart_df["Факт"]):
-                _lbl, _col = _gdrs_deviation_vs_plan_text_and_color(_pv, _fv)
+                _lbl, _col = gdrs_deviation_vs_plan_text_and_color(_pv, _fv, _th)
                 _ctr_dev_text.append(_lbl)
                 _ctr_dev_colors.append(_col)
                 _ctr_dev_abs.append(abs(int(round(float(_fv) - float(_pv)))))
@@ -19687,22 +19804,35 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
                 x=chart_df["Контрагент"],
                 y=_ctr_dev_abs,
                 marker_color=_ctr_dev_colors,
-                text=_ctr_dev_text,
-                textposition="outside",
-                textfont=dict(color=_ctr_dev_colors, size=11),
             )
             fig2.update_layout(
                 barmode="group",
-                plot_bgcolor="rgba(0,0,0,0)",
-                paper_bgcolor="rgba(0,0,0,0)",
-                font_color="#eee",
-                xaxis_tickangle=-45,
-                height=480,
-                margin=dict(l=48, r=32, t=32, b=140),
+                plot_bgcolor=_th.chart_bg,
+                paper_bgcolor=_th.chart_bg,
+                font_color=_th.text,
+                xaxis=dict(
+                    tickangle=-45,
+                    tickfont=dict(size=_bar_axis_sz, color=_th.text, family="Inter, system-ui, sans-serif"),
+                ),
+                yaxis=dict(
+                    tickfont=dict(size=_bar_axis_sz if theme == "light" else 12, color=_th.text),
+                ),
+                height=560 if theme == "light" else 480,
+                margin=dict(l=56, r=24, t=72, b=_bar_margin_b),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
             )
-            fig2 = apply_chart_background(fig2)
-            st.plotly_chart(fig2, use_container_width=True)
+            fig2 = apply_gdrs_chart_background(fig2, _th, skip_uniformtext=True)
+            fig2 = gdrs_apply_grouped_bar_labels(
+                fig2,
+                _th,
+                chart_df["Контрагент"].astype(str).tolist(),
+                [
+                    ([f"{int(v)}" for v in chart_df["План"]], _th.bar_plan_text),
+                    ([f"{int(v)}" for v in chart_df["Факт"]], _th.bar_fact_text),
+                    (_ctr_dev_text, _ctr_dev_colors),
+                ],
+            )
+            st.plotly_chart(fig2, use_container_width=True, key="gdrs_ctr_bar_light")
         except Exception as _e:
             st.warning(f"Plotly недоступен: {_e}")
 
@@ -19737,17 +19867,18 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             _dyn_title,
             vid_locked,
             month_periods=_sel_periods,
+            theme=theme,
         )
 
     st.markdown("---")
-    st.subheader(f"Распределение {_unit_gen} по контрагентам")
+    gdrs_render_subheader(st, f"Распределение {_unit_gen} по контрагентам", theme=theme)
     pie_source = chart_df[chart_df["Факт"] > 0].copy()
     pie_df = pie_source[["Контрагент", "Факт"]].copy()
     if pie_df.empty:
         st.info("Нет фактических данных для круговой диаграммы.")
     else:
         try:
-            fig3 = _gdrs_pie_contractors_figure(pie_df)
+            fig3 = _gdrs_pie_contractors_figure(pie_df, theme=theme)
             st.plotly_chart(fig3, use_container_width=True)
         except Exception as _e:
             st.warning(f"Plotly недоступен: {_e}")
@@ -19755,7 +19886,12 @@ def dashboard_gdrs(df, vid_locked: str | None = None):
             st,
             _gdrs_pie_distribution_display(pie_source),
             table_title=f"Распределение {_unit_gen} по контрагентам",
+            theme=theme,
         )
+
+    if theme == "light":
+        inject_gdrs_light_preview_css(st)
+
 
 # ==================== DASHBOARD: Дебиторская и кредиторская задолженность подрядчиков ====================
 def _find_col(df, names):
