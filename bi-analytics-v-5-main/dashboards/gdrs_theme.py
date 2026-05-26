@@ -685,10 +685,10 @@ html body .gdrs-loading-icon {{
 (function(){{
   document.documentElement.classList.add("gdrs-light-preview");
   if (document.body) document.body.classList.add("gdrs-light-preview");
-  document.querySelectorAll(".stApp,[data-testid=\"stAppViewContainer\"],section.main,.stMain,.main").forEach(function(el) {
+  document.querySelectorAll(".stApp,[data-testid=\"stAppViewContainer\"],section.main,.stMain,.main").forEach(function(el) {{
     el.style.setProperty("background-color", "#ffffff", "important");
     el.style.setProperty("background", "#ffffff", "important");
-  });
+  }});
   function _gdrsHideStreamlitHeader() {{
     var sel = '[data-testid="stHeader"], .stHeader, header[data-testid="stHeader"]';
     document.querySelectorAll(sel).forEach(function(el) {{
