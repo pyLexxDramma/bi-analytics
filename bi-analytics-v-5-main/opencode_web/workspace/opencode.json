@@ -1,4 +1,77 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "permission": "allow"
+  "permission": "allow",
+  "enabled_providers": ["vllm"],
+  "model": "vllm/Qwen3.5-35B-A3B-GPTQ-Int4",
+  "default_agent": "xca",
+  "instructions": [
+    "!AGENTS.md",
+    "!CLAUDE.md",
+    "!XCA_ANALYTICS_RULES.md",
+    "!AI_ASSISTANT_RULES.md",
+    "!AI_DATA_RULES.md",
+    "!AI_AGENT_GUIDE.md",
+    "!analytics/KNOWLEDGE_BASE.md",
+    "!analytics/QUESTIONS_CATALOG.md"
+  ],
+  "provider": {
+    "vllm": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "http://127.0.0.1:8000/v1",
+        "timeout": 300000,
+        "chat_template_kwargs": { "enable_thinking": false }
+      },
+      "models": {
+        "Qwen3.5-35B-A3B-GPTQ-Int4": {
+          "id": "Qwen/Qwen3.5-35B-A3B-GPTQ-Int4",
+          "tool_call": true,
+          "reasoning": false,
+          "limit": { "context": 32768, "output": 8192 },
+          "options": {
+            "chat_template_kwargs": { "enable_thinking": false }
+          }
+        }
+      }
+    }
+  },
+  "compaction": {
+    "auto": true,
+    "prune": true,
+    "reserved": 8000,
+    "tail_turns": 3,
+    "preserve_recent_tokens": 12000
+  },
+  "agent": {
+    "build": { "disable": true },
+    "chat": { "disable": true },
+    "general": { "disable": true },
+    "ask": { "disable": true },
+    "plan": { "disable": true },
+    "explore": { "disable": true },
+    "summary": { "disable": true },
+    "title": { "disable": false, "hidden": true, "model": "vllm/Qwen3.5-35B-A3B-GPTQ-Int4" },
+    "compaction": {
+      "disable": false,
+      "hidden": true,
+      "model": "vllm/Qwen3.5-35B-A3B-GPTQ-Int4"
+    },
+    "xca": {
+      "description": "XCA AI — аналитика проектов",
+      "mode": "primary",
+      "model": "vllm/Qwen3.5-35B-A3B-GPTQ-Int4",
+      "prompt": "Ты XCA AI — бизнес-ассистент для руководителей строительных проектов.\n\nЖЕСТКИЕ ПРАВИЛА ВЫВОДА:\n- На одно сообщение пользователя отправляй только один итоговый ответ в чат.\n- Никогда не отправляй промежуточные сообщения вида «сейчас проверю», «нужно запустить анализ», «необходимо выполнить шаги», «статус выполнения».\n- Если требуется анализ инструментами (bash/grep), сначала полностью выполни его молча, и только потом отправь один финальный ответ.\n- Если инструментов не нужно (приветствие, уточнение) — ответь сразу одним коротким сообщением.\n\nСОДЕРЖАНИЕ ОТВЕТА:\n- Русский язык, деловой стиль.\n- Не упоминай команды, пути, python, bash, OpenCode, шаги, лимиты, служебные ограничения.\n- На вопросы с цифрами: используй только свежие результаты анализа web_data.db и дай итог с конкретными цифрами.\n- Любые служебные сообщения о compaction/сжатии оставляй во внутреннем reasoning и не показывай пользователю.\n\nЗапрещено выводить пользователю: «лимит шагов», «остались задачи», «инструменты отключены», «maximum steps».Если в результате есть PNG-график: - добавь строку ' График: [имя.png](file:///workspace/.../имя.png)' - следующей строкой выведи только абсолютный путь '/workspace/.../имя.png' - не добавляй другой текст после пути.",
+      "permission": {
+        "bash": "allow",
+        "edit": "deny",
+        "write": "deny",
+        "apply_patch": "deny",
+        "task": "deny",
+        "webfetch": "deny",
+        "websearch": "deny",
+        "grep": "allow",
+        "glob": "allow"
+      }
+    }
+  }
 }

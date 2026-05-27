@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from db_common import connect_db, ensure_output_dir, get_effective_version_id, parse_db_args, query_to_df, resolve_db_path, save_table
 
 

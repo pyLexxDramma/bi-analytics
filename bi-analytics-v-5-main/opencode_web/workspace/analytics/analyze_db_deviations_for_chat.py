@@ -14,51 +14,58 @@ from db_common import (
     resolve_db_path,
     save_table,
 )
+from workspace_paths import analytics_output_dir, resolve_output_dir, to_workspace_display_path
 
 
 def _build_pie_chart(df: pd.DataFrame, target_png: Path) -> None:
+    """Горизонтальные столбцы — читаемее pie при многих причинах."""
     target_png.parent.mkdir(parents=True, exist_ok=True)
     if df.empty:
-        fig, ax = plt.subplots(figsize=(8, 5))
-        ax.text(0.5, 0.5, "Нет данных по причинам отклонений", ha="center", va="center")
+        fig, ax = plt.subplots(figsize=(9, 4))
+        ax.text(0.5, 0.5, "Нет данных по причинам отклонений (MSP)", ha="center", va="center")
         ax.axis("off")
         plt.tight_layout()
         plt.savefig(target_png, dpi=140)
         plt.close(fig)
         return
 
-    chart_df = df.copy()
-    chart_df = chart_df.sort_values("reason_count", ascending=False)
-    if len(chart_df) > 12:
-        top = chart_df.head(11).copy()
-        other_count = int(chart_df.iloc[11:]["reason_count"].sum())
+    chart_df = df.copy().sort_values("reason_count", ascending=True)
+    if len(chart_df) > 15:
+        top = chart_df.tail(14)
+        other_count = int(chart_df.head(len(chart_df) - 14)["reason_count"].sum())
         chart_df = pd.concat(
             [
                 top,
                 pd.DataFrame([{"reason": "Прочие", "reason_count": other_count}]),
             ],
             ignore_index=True,
-        )
+        ).sort_values("reason_count", ascending=True)
 
-    fig, ax = plt.subplots(figsize=(10, 7))
-    ax.pie(
-        chart_df["reason_count"],
-        labels=chart_df["reason"],
-        autopct="%1.1f%%",
-        startangle=90,
-        textprops={"fontsize": 9},
-    )
-    ax.set_title("Причины отклонений (актуальные срезы по проектам)")
-    ax.axis("equal")
-    plt.tight_layout()
+    labels = chart_df["reason"].astype(str).tolist()
+    counts = pd.to_numeric(chart_df["reason_count"], errors="coerce").fillna(0)
+    total = float(counts.sum()) or 1.0
+    pct_labels = [f"{int(c)} ({c / total * 100:.1f}%)" for c in counts]
+
+    fig_h = max(4.5, len(labels) * 0.38)
+    fig, ax = plt.subplots(figsize=(10, fig_h))
+    y_pos = range(len(labels))
+    ax.barh(list(y_pos), counts, color="#5b8ec4")
+    ax.set_yticks(list(y_pos))
+    ax.set_yticklabels(labels, fontsize=9)
+    ax.set_xlabel("Количество задач с причиной")
+    ax.set_title("Основные причины отклонений по срокам (MSP)")
+    for idx, label in enumerate(pct_labels):
+        ax.text(float(counts.iloc[idx]) + total * 0.01, idx, label, va="center", fontsize=8)
+    fig.tight_layout()
     plt.savefig(target_png, dpi=140)
     plt.close(fig)
 
 
 def main() -> None:
-    args = parse_db_args(default_output="/workspace/analytics/output/db_deviations_chat")
+    default_out = analytics_output_dir() / "db_deviations_chat"
+    args = parse_db_args(default_output=str(to_workspace_display_path(default_out)))
     db_path = resolve_db_path(args.db)
-    output_dir = ensure_output_dir(Path(args.output))
+    output_dir = ensure_output_dir(resolve_output_dir(args.output))
 
     with connect_db(db_path) as conn:
         version_id = get_effective_version_id(conn, args.version_id)
@@ -141,6 +148,17 @@ def main() -> None:
 
     pie_path = output_dir / "deviations_reasons_for_chat_pie.png"
     _build_pie_chart(reasons_df, pie_path)
+
+    diagnostics = pd.DataFrame(
+        [
+            {
+                "version_id": int(version_id),
+                "chart_png": to_workspace_display_path(pie_path) if pie_path.is_file() else "",
+                "pie_bytes": int(pie_path.stat().st_size) if pie_path.is_file() else 0,
+            }
+        ]
+    )
+    save_table(diagnostics, output_dir / "diagnostics.csv")
 
 
 if __name__ == "__main__":
