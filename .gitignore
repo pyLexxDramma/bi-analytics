@@ -1,25 +1,22 @@
-# Локальные прогоны Playwright / артефакты проверки UI
+﻿# Local Playwright / UI audit
 _visual_check_playwright.py
 _visual_check_out/
 
-# Локальный журнал правок (не публиковать)
+# Local work logs
 PRAVKI_HOD_RABOT.md
 bi-analytics-v-5-main/docs/PRAVKI-ETAP-2.md
 
-# Cursor / локальные сессии (не в origin); правила агента — в репозитории
-.cursor/*
-!.cursor/rules/
-!.cursor/rules/**
-**/.cursor/*
-!**/.cursor/rules/
-!**/.cursor/rules/**
+# Cursor / agent (local only, never on GitHub)
+.cursor/
+**/.cursor/
 agent-transcripts/
 **/agent-transcripts/
 
-# Dev Containers — только локально (при необходимости скопировать из примера)
+# Dev containers
 .devcontainer/
+**/.devcontainer/
 
-# ── Python / кэш / виртуальные окружения (весь репозиторий) ──
+# Python / cache / venv
 __pycache__/
 **/__pycache__/
 *.py[cod]
@@ -39,29 +36,47 @@ venv/
 env/
 ENV/
 
-# IDE
+# IDE / OS
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-
-# OS
 .DS_Store
 Thumbs.db
 
-# Секреты и окружение
+# Secrets
 .env
 .env.*
 *.env
 
-# Логи
+# Logs / temp
 *.log
 *.tmp
 *.bak
 
-# Локальные БД приложения (создаются при работе)
+# Local DB
 bi-analytics-v-5-main/data/*.db
 bi-analytics-v-5-main/*.db
 *.sqlite
 *.sqlite3
+
+# --- Not for GitHub: CI/deploy/scripts at repo root ---
+.github/
+scripts/
+
+# App-level dev junk (see also bi-analytics-v-5-main/.gitignore)
+bi-analytics-v-5-main/docs/
+bi-analytics-v-5-main/scripts/
+bi-analytics-v-5-main/etl/
+bi-analytics-v-5-main/new_csv/
+bi-analytics-v-5-main/tests/
+bi-analytics-v-5-main/components/
+bi-analytics-v-5-main/.github/
+bi-analytics-v-5-main/.cursor/
+bi-analytics-v-5-main/requirements-dev.txt
+bi-analytics-v-5-main/permissions.py
+bi-analytics-v-5-main/DEPLOYMENT.md
+bi-analytics-v-5-main/README.md
+bi-analytics-v-5-main/mapping_spec_v2.md
+bi-analytics-v-5-main/Доп материалы/

@@ -1,117 +1,65 @@
-# =====================================
-# Python / Bytecode / Cache
-# =====================================
+﻿# Python / cache
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
 *.so
+.Python
 *.pyc
 *.pyo
-.Python
 
-# =====================================
 # Virtual environments
-# =====================================
 venv/
 .venv/
 env/
 ENV/
 *.venv
 
-# =====================================
-# Build / Distribution
-# =====================================
+# Build
 build/
 dist/
 *.egg
 *.egg-info/
 eggs/
 .eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-develop-eggs/
-downloads/
-.installed.cfg
 
-# =====================================
-# IDE / Editors
-# =====================================
+# IDE / OS
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-
-# =====================================
-# OS-specific files
-# =====================================
 .DS_Store
 **/.DS_Store
 Thumbs.db
 ehthumbs.db
 
-# =====================================
-# Streamlit
-# =====================================
-# .streamlit/
-
-# =====================================
-# Databases & sensitive data
-# =====================================
+# Databases (runtime)
 *.db
 *.sqlite
 *.sqlite3
 data/web_data.db
 users.db
-
-# Эфемерные маркеры auto_ingest (создаются runtime'ом рядом с web_data.db)
 data/.auto_ingest_done.txt
 data/.auto_ingest.lock
 
-# Рабочие выгрузки в web/ могут коммититься в репозиторий (CSV/JSON для демо и CI).
-
-# =====================================
-# Data files (большие / тестовые файлы)
-# =====================================
-# Раскомментируй, если НЕ хочешь коммитить данные
-# *.csv
+# Data formats (large / optional)
 *.xlsx
 *.xls
 *.parquet
 *.jsonl
-# sample_*.*
 s_data.*
 e_data.*
-test_*.*
 
-# =====================================
-# Logs & temporary files
-# =====================================
+# Logs / temp
 *.log
 streamlit.log
 *.tmp
 *.bak
 *.temp
+*.sync-conflict-*
 
-# =====================================
-# Windows scripts & local launchers
-# =====================================
-*.bat
-*.ps1
-run_*.*
-start_*.*
-!start_visualization_app.bat
-!scripts/set-remote-env-user.ps1.example
-debug_*.*
-test_*.py       # если это одноразовые тесты
-
-# =====================================
-# Environment & secrets
-# =====================================
+# Secrets
 .env
 .env.*
 *.env
@@ -122,34 +70,37 @@ env.txt
 *token*
 credentials.*
 
-# =====================================
-# Misc / Project-specific junk
-# =====================================
-*.sync-conflict-*
+# --- Not for GitHub: only dashboard + opencode_web runtime ---
+docs/
+scripts/
+etl/
+new_csv/
+tests/
+components/
 .devcontainer/
+.github/
+.cursor/
+.pytest_cache/
 
-# Локальные прогоны / скриншоты QA (не часть приложения, не в GitHub)
+requirements-dev.txt
+permissions.py
+DEPLOYMENT.md
+README.md
+mapping_spec_v2.md
+start_visualization_app.bat
+setup_and_run_local.ps1
+
+# QA / local audit artifacts
 docs/bench_results/
-qa_final/
-qa_audit/
-qa_screenshots/
-qa_full_interactive/
-qa_scroll/
-qa_tables/
-qa_tables_final/
-qa_tables_v2/
-qa_verify/
-qa_pravki_nav_check/
-
-# Визуальные/дымовые проверки и зависимости только для них (не runtime приложения)
-scripts/playwright_smoke_ui.py
-scripts/streamlit_visual_audit.py
-scripts/requirements-visual-audit.txt
-
-# Локальные одноразовые скрипты / черновики (не в репозиторий)
+qa_*/
+qa_*
+_visual_check_*
 _scan_bddcs.py
 dashboards/patch_pd_phase1.py
 
-# Локальные черновики и QA-артефакты (см. «Доп материалы/README.md»)
-Доп материалы/**
-!Доп материалы/README.md
+# Local materials (not runtime)
+Доп материалы/
+
+# Windows helpers (local only)
+*.bat
+*.ps1
