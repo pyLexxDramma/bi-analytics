@@ -1086,6 +1086,7 @@ def budget_table_to_html(
     total_row_bg_color: str | None = None,
     total_row_font_css: str | None = None,
     table_font_size_px: int = 15,
+    table_scroll_max_height_vh: float | None = None,
 ) -> str:
     """
     Строит HTML таблицы бюджета с раскраской колонки отклонения.
@@ -1111,12 +1112,13 @@ def budget_table_to_html(
     _tot_font = total_row_font_css or TABLE_TOTAL_ROW_FONT_CSS
     _tbl_px = max(12, int(table_font_size_px or 15))
     _lbl_col_css = label_columns_font_css or ""
+    _scroll_vh = float(table_scroll_max_height_vh) if table_scroll_max_height_vh else None
     wrap_id = "bdt_" + str(id(df))
     _cell_border = FINANCE_TABLE_CELL_BORDER
     _style_css = (
         f'#{wrap_id} table {{ table-layout: auto; font-size: {_tbl_px}px; width: max-content; min-width: 100%; '
         f'border-collapse: separate !important; border-spacing: 0 !important; border: {_cell_border} !important; }}'
-        f'#{wrap_id} th, #{wrap_id} td {{ min-width: 11em; max-width: 24em; padding: 7px 14px; white-space: nowrap; '
+        f'#{wrap_id} th, #{wrap_id} td {{ min-width: 11em; max-width: 24em; padding: 7px 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box; '
         f'border-right: {_cell_border} !important; border-bottom: {_cell_border} !important; '
         f'border-top: none !important; border-left: none !important; }}'
         f'#{wrap_id} thead tr:first-child th {{ border-top: {_cell_border} !important; }}'
@@ -1131,19 +1133,44 @@ def budget_table_to_html(
         f'#{wrap_id} tr.bd-group-row td {{ background-color: {TABLE_GROUP_ROW_BG_COLOR} !important; }}'
         f'#{wrap_id} tr.bd-total-row td {{ background-color: {_tot_bg} !important; {_tot_font} }}'
         f'#{wrap_id} tr.bd-total-row td, #{wrap_id} tr.bd-total-row td * {{ {_tot_font} }}'
+        + (
+            f'#{wrap_id} th.bd-fin-dev-col, #{wrap_id} td.bd-fin-dev-col '
+            f'{{ min-width: 10.5em; max-width: 12em; overflow: hidden; text-overflow: ellipsis; isolation: isolate; }}'
+            if finance_deviation_column
+            else ""
+        )
+        + (
+            f'#{wrap_id} .budget-table-scroll {{ max-height: {_scroll_vh:.1f}vh; overflow: auto; '
+            f'-webkit-overflow-scrolling: touch; }}'
+            f'#{wrap_id} thead th {{ position: sticky; top: 0; z-index: 5; }}'
+            f'#{wrap_id} tr.bd-total-row td {{ position: sticky; bottom: 0; z-index: 4; '
+            f'box-shadow: 0 -3px 10px rgba(0,0,0,0.35); }}'
+            if _scroll_vh
+            else ""
+        )
+        + (
+            f'#{wrap_id} th.bd-fin-delta-col, #{wrap_id} td.bd-fin-delta-col '
+            f'{{ min-width: 10.5em; max-width: 12em; overflow: hidden; text-overflow: ellipsis; isolation: isolate; }}'
+        )
     )
     parts = [
         _html_table_caption(table_caption),
         f'<div id="{wrap_id}" class="budget-deviation-table-wrap" style="overflow-x: auto; min-width: 0; margin: 0.75em 0;">',
         f"<style>{_style_css}</style>",
+        f'<div class="budget-table-scroll">' if _scroll_vh else "",
         f'<table class="bi-sortable-table" style="width:100%; border-collapse: collapse; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; font-size: {_tbl_px}px;">',
         "<thead><tr>",
     ]
     header_cols = [c for c in df.columns if c != row_kind_column]
     for col in header_cols:
         col_esc = html_module.escape(str(col))
+        _col_cls = ""
+        if finance_deviation_column and col == finance_deviation_column:
+            _col_cls = "bd-fin-dev-col"
+        elif "кс-2" in str(col).casefold() and "аванс" in str(col).casefold():
+            _col_cls = "bd-fin-delta-col"
         parts.append(
-            f'<th style="padding: 8px 14px; background-color: {TABLE_HEADER_BG_COLOR}; {_hdr_css}">{col_esc}</th>'
+            f'<th class="{_col_cls}" style="padding: 8px 14px; background-color: {TABLE_HEADER_BG_COLOR}; {_hdr_css}">{col_esc}</th>'
         )
     parts.append("</tr></thead><tbody>")
     visible_cols = [c for c in df.columns if c != row_kind_column]
@@ -1249,9 +1276,15 @@ def budget_table_to_html(
                         abs_neutral_mln=float(deviation_abs_min_mln),
                     )
                 if cell_class:
+                    _extra_cls = ""
+                    if finance_deviation_column and col == finance_deviation_column:
+                        _extra_cls = " bd-fin-dev-col"
+                    elif "кс-2" in str(col).casefold() and "аванс" in str(col).casefold():
+                        _extra_cls = " bd-fin-delta-col"
                     parts.append(
-                        f'<td class="{cell_class}" style="padding: 7px 14px; font-weight: bold; '
-                        f'background-color: {_cell_bg};"><span>{val_esc}</span></td>'
+                        f'<td class="{cell_class}{_extra_cls}" style="padding: 7px 14px; font-weight: bold; '
+                        f'background-color: {_cell_bg}; overflow: hidden; text-overflow: ellipsis; '
+                        f'box-sizing: border-box;"><span style="display:block;overflow:hidden;text-overflow:ellipsis;">{val_esc}</span></td>'
                     )
                 else:
                     parts.append(
@@ -1263,7 +1296,10 @@ def budget_table_to_html(
                     f'<td style="padding: 7px 14px; color: {TABLE_TEXT_COLOR}; background-color: {_cell_bg}; {_label_css}">{val_esc}</td>'
                 )
         parts.append("</tr>")
-    parts.append("</tbody></table></div>")
+    parts.append("</tbody></table>")
+    if _scroll_vh:
+        parts.append("</div>")
+    parts.append("</div>")
     return mark_html_table_sortable("".join(parts))
 
 

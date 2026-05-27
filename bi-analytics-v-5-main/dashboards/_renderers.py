@@ -9707,6 +9707,171 @@ def _render_finance_bar_chart(
         )
 
 
+_DK_BAR_PX_GROUPED = 200
+_DK_BAR_PX_STACK = 120
+_DK_BAR_SCROLL_VP_PX = 1420
+
+
+def _dk_plotly_canvas_width(n_cats: int, *, grouped: bool) -> tuple[bool, int]:
+    n = max(1, int(n_cats))
+    px = _DK_BAR_PX_GROUPED if grouped else _DK_BAR_PX_STACK
+    vp = int(_DK_BAR_SCROLL_VP_PX)
+    content_w = n * px
+    if content_w <= vp:
+        return False, vp
+    return True, int(min(12000, content_w))
+
+
+def _render_debit_credit_bar_chart(
+    fig,
+    *,
+    categories: list,
+    grouped: bool,
+    caption_below: str = "",
+) -> None:
+    # ДЗ/КЗ: широкие столбцы; длинный ряд - гориз. скролл (как БДДС).
+    import uuid
+
+    cats = [str(c) for c in (categories or [])]
+    n = max(1, len(cats))
+    grouped = bool(grouped)
+    fig_h = int(max(560, min(960, 500 + n * (16 if grouped else 12))))
+    need_hscroll, canvas_w = _dk_plotly_canvas_width(n, grouped=grouped)
+    fixed_w = int(canvas_w) if need_hscroll else None
+
+    try:
+        if grouped:
+            _finance_plotly_apply_bar_width(
+                fig,
+                n,
+                cats,
+                fixed_canvas_width=fixed_w,
+            )
+        else:
+            bg = max(0.06, min(0.22, 2.8 / n))
+            if need_hscroll:
+                bg = max(0.04, min(0.10, 2.0 / n))
+            fig.update_layout(bargap=bg, bargroupgap=0.04)
+            fig.update_traces(
+                width=min(0.82, max(0.42, 16.0 / n)),
+                selector=dict(type="bar"),
+            )
+    except Exception:
+        pass
+
+    try:
+        fig.update_layout(height=fig_h, autosize=not need_hscroll)
+        if need_hscroll and fixed_w:
+            fig.update_layout(width=fixed_w)
+        else:
+            fig.update_layout(width=None)
+    except Exception:
+        pass
+
+    _tick_size = 13 if need_hscroll else 12
+    try:
+        if cats:
+            fig.update_xaxes(
+                type="category",
+                categoryorder="array",
+                categoryarray=cats,
+                tickmode="array",
+                tickvals=cats,
+                ticktext=cats,
+                tickangle=0 if need_hscroll else -42,
+                ticklabelstandoff=16,
+                tickfont=dict(size=_tick_size, color="#f0f4f8"),
+                automargin=True,
+            )
+        else:
+            fig.update_xaxes(
+                tickangle=0 if need_hscroll else -42,
+                tickfont=dict(size=_tick_size, color="#f0f4f8"),
+                automargin=True,
+            )
+        fig.update_yaxes(tickfont=dict(size=14, color="#f0f4f8"))
+    except Exception:
+        pass
+
+    try:
+        fig.update_layout(uniformtext=dict(minsize=13, mode="hide"))
+    except Exception:
+        pass
+
+    if caption_below:
+        try:
+            fig.update_layout(title_text="")
+        except Exception:
+            pass
+    _apply_plotly_spec_411_labels(fig)
+
+    if not need_hscroll:
+        render_chart(
+            fig,
+            caption_below=caption_below,
+            height=fig_h,
+            max_height=None,
+            omit_default_width=True,
+        )
+        return
+
+    uid = uuid.uuid4().hex[:8]
+    w = int(fixed_w or canvas_w)
+    h = int(fig_h)
+    cfg = dict(_PLOTLY_CONFIG)
+    cfg["responsive"] = False
+    try:
+        _m = fig.layout.margin
+        _b = int(_m.b) if _m is not None and _m.b is not None else 120
+        fig.update_layout(
+            margin=dict(
+                l=int(_m.l or 60) if _m is not None else 60,
+                r=int(_m.r or 220) if _m is not None else 220,
+                t=int(_m.t or 72) if _m is not None else 72,
+                b=min(_b, 112),
+            )
+        )
+    except Exception:
+        pass
+    _plotly_js = "cdn"
+    if st.session_state.get("_pf_dk_bar_plotly_js"):
+        _plotly_js = False
+    else:
+        st.session_state["_pf_dk_bar_plotly_js"] = True
+    try:
+        plot_div = fig.to_html(
+            full_html=False,
+            include_plotlyjs=_plotly_js,
+            config=cfg,
+            default_width=f"{w}px",
+            default_height=f"{h}px",
+        )
+        shell = (
+            f"<style>"
+            f".pf-dkbar-{uid}-wrap{{width:100%;max-width:100%;overflow-x:auto;overflow-y:hidden;"
+            f"-webkit-overflow-scrolling:touch;box-sizing:border-box;line-height:0;"
+            f"background:transparent;border:none;margin:0;padding:0;}}"
+            f".pf-dkbar-{uid}-inner{{width:{w}px;min-width:{w}px;max-width:{w}px;display:block;"
+            f"line-height:normal;}}"
+            f".pf-dkbar-{uid}-inner .plotly-graph-div{{width:{w}px!important;"
+            f"min-width:{w}px!important;max-width:{w}px!important;height:{h}px!important;}}"
+            f"</style>"
+            f'<div class="pf-dkbar-{uid}-wrap"><div class="pf-dkbar-{uid}-inner">{plot_div}</div></div>'
+        )
+        st.html(shell, width="stretch", unsafe_allow_javascript=True)
+        if caption_below:
+            _chart_caption_below(caption_below)
+    except Exception:
+        render_chart(
+            fig,
+            caption_below=caption_below,
+            height=fig_h,
+            max_height=None,
+            omit_default_width=True,
+            plotly_config_extra={"responsive": False},
+        )
+
+
 def dashboard_budget_by_period(df):
 
     from dashboards.finance_from_1c import resolve_reference_1c_dannye
@@ -20003,6 +20168,95 @@ def _find_col(df, names):
     return None
 
 
+_RE_UUID_PROJECT = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+def _is_uuid_like(val) -> bool:
+    s = str(val or "").strip()
+    return bool(s and _RE_UUID_PROJECT.match(s))
+
+
+def _load_project_id_to_name_lookup() -> dict[str, str]:
+    """ID_Проекта → Наименование_Проекта из свежих web/1с_*_Projekts.json."""
+    import json as _json
+    from pathlib import Path as _Path
+
+    out: dict[str, str] = {}
+    try:
+        web_dir = _Path(__file__).resolve().parent.parent / "web"
+        files = sorted(web_dir.glob("1[сc]_*_Projekts.json"), key=lambda x: x.stat().st_mtime)
+    except Exception:
+        return out
+    for fp in files:
+        try:
+            data = _json.loads(fp.read_text(encoding="utf-8-sig"))
+        except Exception:
+            try:
+                data = _json.loads(fp.read_text(encoding="utf-8", errors="ignore"))
+            except Exception:
+                continue
+        rows = data if isinstance(data, list) else []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            pid = str(
+                row.get("ID_Проекта")
+                or row.get("id_проекта")
+                or row.get("ID_Project")
+                or ""
+            ).strip().lower()
+            pname = str(
+                row.get("Наименование_Проекта")
+                or row.get("Наименование проекта")
+                or row.get("Проект")
+                or ""
+            ).strip()
+            if pid and pname:
+                out[pid] = pname
+    return out
+
+
+def _find_project_display_col(df: pd.DataFrame) -> str | None:
+    """Колонка с названием проекта (не id/guid)."""
+    if df is None or getattr(df, "empty", True):
+        return None
+    preferred = (
+        "project name",
+        "наименование_проекта",
+        "наименование проекта",
+        "название проекта",
+        "проект",
+    )
+    cols = list(df.columns)
+    for cand in preferred:
+        cl = cand.lower()
+        for c in cols:
+            sl = str(c).lower().strip().replace("_", " ")
+            if sl == cl or cl in sl:
+                if "id" in sl.replace(" ", "") and "наименование" not in sl and "название" not in sl:
+                    continue
+                return c
+    return None
+
+
+def _resolve_project_display_labels(series: pd.Series, lookup: dict[str, str]) -> pd.Series:
+    """Подмена GUID проекта на наименование из справочника Projekts.json."""
+    if series is None or lookup is None or not lookup:
+        return series
+
+    def _one(v):
+        s = str(v or "").strip()
+        if not s or s.lower() in ("nan", "none", "nat"):
+            return ""
+        if _is_uuid_like(s):
+            return lookup.get(s.lower(), s)
+        return s
+
+    return series.map(_one)
+
+
 def _to_num(series):
     """Приведение к числу (пробелы, запятая как десятичный разделитель)."""
     return pd.to_numeric(
@@ -20464,17 +20718,15 @@ def dashboard_debit_credit(df):
     work.columns = [str(c).strip() for c in work.columns]
 
     contractor_col = _find_col(work, ["Название контрагента", "Название организации", "подрядчик", "Подрядчик", "contractor", "Организация"])
-    project_col = _find_col(
+    project_col = _find_project_display_col(work) or _find_col(
         work,
         [
             "project name",
+            "Наименование_Проекта",
             "Проект",
             "проект",
-            "ID проекта",
-            "id проекта",
             "Project",
             "название проекта",
-            "код проекта",
         ],
     )
     project_from_reference = False
@@ -20534,6 +20786,14 @@ def dashboard_debit_credit(df):
             )
             project_col = "_project_mapped"
             project_from_reference = True
+    _proj_name_lookup: dict[str, str] = {}
+    try:
+        _proj_name_lookup = _load_project_id_to_name_lookup()
+    except Exception:
+        _proj_name_lookup = {}
+    if project_col and project_col in work.columns and _proj_name_lookup:
+        work[project_col] = _resolve_project_display_labels(work[project_col], _proj_name_lookup)
+
     contract_col = _find_col(work, ["Номер договора", "Договор", "договор", "contract"])
     # Q15 (08.05.2026): «Сумма договора» — заказчик подтвердил, что лежит в справочнике
     # JSON. В выгрузке DK.json структура содержит вложенный объект `Договор.СуммаДоговора`,
@@ -21003,6 +21263,22 @@ def dashboard_debit_credit(df):
                     issue_start = issue_end = dr
             else:
                 st.caption("Нет колонки «Дата договора» — период не применяется.")
+        dk_display_view = st.selectbox(
+            "Вид отображения",
+            ["С группировкой", "Без группировки"],
+            index=1,
+            key="debit_credit_display_view",
+            help="С группировкой — столбцы рядом (Договор, Аванс, КС-2, Отклонение). "
+            "Без группировки — стек Договор → Аванс → КС-2.",
+        )
+
+    if project_col and project_col in work.columns:
+        try:
+            _plu = _load_project_id_to_name_lookup()
+            if _plu:
+                work[project_col] = _resolve_project_display_labels(work[project_col], _plu)
+        except Exception:
+            pass
 
     filtered = work.copy()
     if sel_contractor != "Все" and contractor_col:
@@ -21065,7 +21341,9 @@ def dashboard_debit_credit(df):
     chart_df = pd.DataFrame(built).reset_index()
     chart_df = chart_df.rename(columns={chart_group_col: chart_label})
 
-    _is_stack = True
+    # Визуал 1 — grouped (с группировкой); визуал 2 — stack (без группировки, текущий).
+    _dk_chart_grouped = dk_display_view == "С группировкой"
+    _is_stack = not _dk_chart_grouped
 
     value_cols = [c for c in chart_df.columns if c != chart_label]
     if not value_cols:
@@ -21107,45 +21385,22 @@ def dashboard_debit_credit(df):
                 insidetextanchor="middle",
                 textangle=0,
                 constraintext="none",
-                textfont=dict(size=18, color="#ffffff"),
+                textfont=dict(size=20, color="#ffffff"),
             ),
             "Аванс": dict(
                 textposition="outside",
                 textangle=0,
                 cliponaxis=False,
-                textfont=dict(size=15, color="#F1C40F"),
+                textfont=dict(size=17, color="#F1C40F"),
             ),
             "КС-2": dict(
                 textposition="outside",
                 textangle=0,
                 cliponaxis=False,
-                textfont=dict(size=14, color="#f0f4f8"),
+                textfont=dict(size=16, color="#f0f4f8"),
             ),
         }
         for col in _value_cols_for_chart:
-            if col == "Отклонение":
-                # per-bar цвета: ≥0 — зелёный, <0 — красный.
-                _bar_colors = chart_df[col].apply(
-                    lambda v: "#27ae60" if pd.notna(v) and float(v) >= 0 else "#e74c3c"
-                ).tolist()
-                fig.add_trace(
-                    go.Bar(
-                        name=col,
-                        x=x,
-                        y=chart_df[col],
-                        marker_color=_bar_colors,
-                        text=chart_df[col].apply(_dk_chart_bar_text),
-                        textposition="outside",
-                        textangle=0,
-                        cliponaxis=False,
-                        textfont=dict(size=14, color="#f0f4f8"),
-                        customdata=chart_df[col].apply(
-                            lambda v: f"{v:.1f} млн" if pd.notna(v) else "0,0 млн"
-                        ),
-                        hovertemplate=f"<b>{col}</b><br>%{{x}}<br>%{{customdata}}<extra></extra>",
-                    )
-                )
-                continue
             _lbl_style = _dk_bar_label_style.get(
                 col,
                 dict(
@@ -21154,35 +21409,45 @@ def dashboard_debit_credit(df):
                     textfont=dict(size=14, color="#ffffff"),
                 ),
             )
+            _bar_kw = dict(
+                name=col,
+                x=x,
+                y=chart_df[col],
+                marker_color=colors.get(col, None),
+                text=chart_df[col].apply(_dk_chart_bar_text),
+                customdata=chart_df[col].apply(
+                    lambda v: f"{v:.1f} млн" if pd.notna(v) else "0,0 млн"
+                ),
+                hovertemplate=f"<b>{col}</b><br>%{{x}}<br>%{{customdata}}<extra></extra>",
+                **_lbl_style,
+            )
+            fig.add_trace(go.Bar(**_bar_kw))
+        if _dk_chart_grouped and "Отклонение" in chart_df.columns:
+            _dev_colors = chart_df["Отклонение"].apply(
+                lambda v: "#27ae60" if pd.notna(v) and float(v) >= 0 else "#e74c3c"
+            ).tolist()
             fig.add_trace(
                 go.Bar(
-                    name=col,
+                    name="Отклонение",
                     x=x,
-                    y=chart_df[col],
-                    marker_color=colors.get(col, None),
-                    text=chart_df[col].apply(_dk_chart_bar_text),
-                    customdata=chart_df[col].apply(
+                    y=chart_df["Отклонение"],
+                    marker_color=_dev_colors,
+                    text=chart_df["Отклонение"].apply(_dk_chart_bar_text),
+                    textposition="outside",
+                    textangle=0,
+                    cliponaxis=False,
+                    textfont=dict(size=16, color="#f0f4f8"),
+                    customdata=chart_df["Отклонение"].apply(
                         lambda v: f"{v:.1f} млн" if pd.notna(v) else "0,0 млн"
                     ),
-                    hovertemplate=f"<b>{col}</b><br>%{{x}}<br>%{{customdata}}<extra></extra>",
-                    **_lbl_style,
+                    hovertemplate="<b>Отклонение</b><br>%{x}<br>%{customdata}<extra></extra>",
                 )
             )
         fig.update_layout(
-            title=dict(
-                text="Дебиторская и кредиторская задолженность",
-                x=0.5,
-                xanchor="center",
-                font=dict(size=18, color="#f0f4f8"),
-            ),
-            # Стек: Аванс поверх Договор, КС-2 поверх Аванса.
             barmode="stack" if _is_stack else "group",
-            height=min(900, max(460, len(chart_df) * 32)),
-            bargap=0.14,
-            bargroupgap=0.06,
             yaxis=dict(
-                title=dict(text="млн руб.", font=dict(size=14, color="#f0f4f8")),
-                tickfont=dict(size=13, color="#f0f4f8"),
+                title=dict(text="млн руб.", font=dict(size=15, color="#f0f4f8")),
+                tickfont=dict(size=14, color="#f0f4f8"),
             ),
             legend=dict(
                 orientation="v",
@@ -21190,27 +21455,24 @@ def dashboard_debit_credit(df):
                 y=1,
                 xanchor="left",
                 x=1.02,
-                font=dict(size=13, color="#f0f4f8"),
+                font=dict(size=14, color="#f0f4f8"),
             ),
-            xaxis=dict(tickangle=-55, tickfont=dict(size=12, color="#f0f4f8"), categoryorder="total descending"),
-            margin=dict(r=240, b=190, t=110),
-            uniformtext=dict(minsize=12, mode="hide"),
+            margin=dict(r=220, b=120, t=72, l=64),
         )
         fig = _apply_finance_bar_label_layout(fig)
-        fig.update_layout(
-            margin=dict(r=240, b=190, t=110, l=60),
-            uniformtext=dict(minsize=12, mode="hide"),
-            legend=dict(font=dict(size=13, color="#f0f4f8")),
-        )
-        fig.update_xaxes(tickfont=dict(size=12, color="#f0f4f8"))
-        fig.update_yaxes(
-            tickfont=dict(size=13, color="#f0f4f8"),
-            title=dict(font=dict(size=14, color="#f0f4f8")),
-        )
         fig = apply_chart_background(fig)
         base = "Суммы по подрядчику" if contractor_col else "Суммы по договору"
-        cap = base + ". Стек: Договор → Аванс → КС-2."
-        render_chart(fig, caption_below=cap)
+        if _dk_chart_grouped:
+            cap = base + ". Группы: Договор, Аванс, КС-2, Отклонение (КС-2 − Аванс; <0 — вниз)."
+        else:
+            cap = base + ". Стек: Договор → Аванс → КС-2."
+        _cats = chart_df[chart_label].astype(str).tolist()
+        _render_debit_credit_bar_chart(
+            fig,
+            categories=_cats,
+            grouped=_dk_chart_grouped,
+            caption_below=cap,
+        )
 
     render_table_subheader(st, "Таблица по подрядчику и договору" if contractor_col else "Таблица по договорам")
     table_group_cols = [contract_col]
@@ -21304,11 +21566,9 @@ def dashboard_debit_credit(df):
             for p, a in zip(table_df["Договор стоимость"], table_df["Аванс"])
         ]
         # Колонку «Аванс ≥60%» вставим в порядке после «Аванс» при выводе.
-    total_row = {"Договор": "Итого"}
-    if "Проект" in table_df.columns:
-        total_row["Проект"] = ""
-    if "Подрядчик" in table_df.columns:
-        total_row["Подрядчик"] = ""
+    total_row = {c: "" for c in group_dim_cols}
+    if group_dim_cols:
+        total_row[group_dim_cols[0]] = "ИТОГО"
     for col in value_cols_t:
         total_row[col] = table_df[col].sum()
     if "Аванс ≥60%" in table_df.columns:
@@ -21349,17 +21609,20 @@ def dashboard_debit_credit(df):
         if c not in final_order:
             final_order.append(c)
     display_df = display_df[final_order]
-    suppress_caption(f"Записей: {len(display_df)} • Финансы — млн руб., до десятых")
+    _n_data_rows = max(0, len(display_df) - 1)
+    suppress_caption(
+        f"Строк данных: {_n_data_rows} • Финансы — млн руб., до десятых • "
+        "Строка «ИТОГО» закреплена внизу при прокрутке; "
+        "колонки «Остаток», «Отклонение», «КС-2 − Аванс» — прокрутите таблицу вправо →"
+    )
     _render_budget_table_html(
             display_df,
             finance_deviation_column="Отклонение",
             deviation_abs_min_mln=0.01,
+            file_stem="debit_credit",
+            key_prefix="debit_credit",
+            table_scroll_max_height_vh=52,
         )
-    render_dataframe_excel_csv_downloads(
-        display_df,
-        file_stem="debit_credit",
-        key_prefix="debit_credit",
-    )
 
 
 # ── TESSA: поиск колонок и дат (Исполнительная документация / Предписания) ──
