@@ -24446,52 +24446,51 @@ def _render_plan_fact_summary_dashboard(
             gauge=gauge_kw,
         )
     )
-    fig.update_layout(height=280, margin=dict(l=20, r=20, t=16, b=16))
+    _gauge_h = 260
+    fig.update_layout(
+        height=_gauge_h,
+        margin=dict(l=8, r=8, t=8, b=28),
+        autosize=False,
+    )
     fig = apply_chart_background(fig)
 
     render_table_subheader(st, "Сводный дашборд план/факт")
-    g_col, val_col = st.columns([1.25, 1], gap="large")
+    st.markdown('<div class="appr-pf-summary-anchor"></div>', unsafe_allow_html=True)
+    g_col, val_col = st.columns([1.2, 1], gap="medium", vertical_alignment="center")
     with g_col:
         render_chart(
             fig,
-            height=280,
+            height=_gauge_h,
             caption_below="",
             key=f"appr_budget_summary_gauge_{key_suffix}",
+            skip_clamp_zoom=True,
+            omit_default_width=True,
         )
+    _pct_html = (
+        f'<p style="font-size:1.2rem;font-weight:700;margin:0.75rem 0 0;color:{bar_color};">'
+        f"{pct_of_plan:.1f}% от плана</p>"
+        if plan_rub > 0 and np.isfinite(pct_of_plan)
+        else ""
+    )
     with val_col:
-        p_col, f_col = st.columns(2, gap="medium")
-        with p_col:
-            st.markdown(
-                f'<p style="font-size:1.65rem;font-weight:700;margin:0 0 0.25rem 0;color:#f8fbff;">'
-                f"{plan_v:{vf}} {unit}</p>",
-                unsafe_allow_html=True,
-            )
-            st.markdown(
-                f'<p style="font-size:1.05rem;font-weight:600;margin:0;color:#e8eef5;">'
-                f"{plan_mln:.1f} млн рублей</p>",
-                unsafe_allow_html=True,
-            )
-            st.markdown(
-                '<p style="font-size:1.2rem;font-weight:700;margin:0.75rem 0 0;color:#f8fbff;">100%</p>',
-                unsafe_allow_html=True,
-            )
-        with f_col:
-            st.markdown(
-                f'<p style="font-size:1.65rem;font-weight:700;margin:0 0 0.25rem 0;color:#f8fbff;">'
-                f"{fact_v:{vf}} {unit}</p>",
-                unsafe_allow_html=True,
-            )
-            st.markdown(
-                f'<p style="font-size:1.05rem;font-weight:600;margin:0;color:#e8eef5;">'
-                f"{fact_mln:.1f} млн рублей</p>",
-                unsafe_allow_html=True,
-            )
-            if plan_rub > 0 and np.isfinite(pct_of_plan):
-                st.markdown(
-                    f'<p style="font-size:1.2rem;font-weight:700;margin:0.75rem 0 0;color:{bar_color};">'
-                    f"{pct_of_plan:.1f}% от плана</p>",
-                    unsafe_allow_html=True,
-                )
+        st.markdown(
+            f'<div class="appr-pf-summary-kpi">'
+            f'<div class="appr-pf-summary-kpi-col">'
+            f'<p style="font-size:1.65rem;font-weight:700;margin:0 0 0.25rem 0;color:#f8fbff;">'
+            f"{plan_v:{vf}} {unit}</p>"
+            f'<p style="font-size:1.05rem;font-weight:600;margin:0;color:#e8eef5;">'
+            f"{plan_mln:.1f} млн рублей</p>"
+            f'<p style="font-size:1.2rem;font-weight:700;margin:0.75rem 0 0;color:#f8fbff;">100%</p>'
+            f"</div>"
+            f'<div class="appr-pf-summary-kpi-col">'
+            f'<p style="font-size:1.65rem;font-weight:700;margin:0 0 0.25rem 0;color:#f8fbff;">'
+            f"{fact_v:{vf}} {unit}</p>"
+            f'<p style="font-size:1.05rem;font-weight:600;margin:0;color:#e8eef5;">'
+            f"{fact_mln:.1f} млн рублей</p>"
+            f"{_pct_html}"
+            f"</div></div>",
+            unsafe_allow_html=True,
+        )
 
 
 def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
@@ -24579,18 +24578,7 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
     fact_total = float(agg["fact"].sum())
     dev_total = fact_total - plan_total
 
-    _render_plan_fact_summary_dashboard(
-        st,
-        plan_rub=plan_total,
-        fact_rub=fact_total,
-        key_suffix=_project_filter_norm_key(str(selected_project)),
-    )
-    _render_plan_fact_detail_table(
-        st,
-        filtered_df,
-        key_suffix=_project_filter_norm_key(str(selected_project)),
-    )
-
+    # Гистограмма сразу под фильтрами (ТЗ макета 2026-05).
     bar_rows = []
     for _, r in agg.iterrows():
         bar_rows.append(
@@ -24633,8 +24621,6 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
         height=520,
         xaxis_title="Проект",
         yaxis_title="млн рублей",
-        # ВАЖНО: orientation="v" — иначе apply_chart_background затирает позицию
-        # горизонтальной легенды на y=-0.25 (наезжает на подписи проектов).
         legend=dict(
             orientation="v",
             yanchor="top",
@@ -24650,8 +24636,6 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
         bargroupgap=0.08,
     )
     fig = apply_chart_background(fig)
-    # Повторно фиксируем легенду/маржины ПОСЛЕ apply_chart_background — на случай, если
-    # глобальный стиль сбрасывает позицию (legend_base.y=-0.25 ломает вёрстку при 3 проектах).
     fig.update_layout(
         legend=dict(
             orientation="v",
@@ -24668,6 +24652,18 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
     render_chart(
         fig,
         caption_below="Сравнение «Утверждённый бюджет» (ПЛАН без БДР) и «Фактические расходы» (ФАКТ) по проектам",
+    )
+
+    _render_plan_fact_summary_dashboard(
+        st,
+        plan_rub=plan_total,
+        fact_rub=fact_total,
+        key_suffix=_project_filter_norm_key(str(selected_project)),
+    )
+    _render_plan_fact_detail_table(
+        st,
+        filtered_df,
+        key_suffix=_project_filter_norm_key(str(selected_project)),
     )
 
     # Правки куратора 08.05.2026: перенесены графики из старого таба «Утверждённый бюджет»

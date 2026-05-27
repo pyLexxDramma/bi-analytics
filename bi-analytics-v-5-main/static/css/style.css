@@ -1136,6 +1136,31 @@ div[data-baseweb="menu"] li span {
     border: 1px solid rgba(255, 255, 255, 0.12) !important;
 }
 
+
+/* Сводный дашборд план/факт — только строка gauge+KPI (сразу после anchor), фикс. высота */
+:root { --appr-pf-gauge-h: 260px; }
+.appr-pf-summary-anchor ~ div[data-testid="stHorizontalBlock"] {
+    overflow: visible !important;
+}
+.appr-pf-summary-anchor ~ div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+    overflow: visible !important;
+}
+.appr-pf-summary-anchor ~ div[data-testid="stHorizontalBlock"] [data-testid="stPlotlyChart"] {
+    min-height: var(--appr-pf-gauge-h) !important;
+    height: var(--appr-pf-gauge-h) !important;
+    max-height: var(--appr-pf-gauge-h) !important;
+    overflow: hidden !important;
+    margin-bottom: 0 !important;
+}
+.appr-pf-summary-anchor ~ div[data-testid="stHorizontalBlock"] [data-testid="stPlotlyChart"] iframe {
+    min-height: var(--appr-pf-gauge-h) !important;
+    height: var(--appr-pf-gauge-h) !important;
+    max-height: var(--appr-pf-gauge-h) !important;
+    overflow: hidden !important;
+}
+.appr-pf-summary-kpi { display: flex; gap: 1.25rem; flex-wrap: wrap; align-items: flex-start; }
+.appr-pf-summary-kpi-col { flex: 1 1 140px; min-width: 120px; }
+
 /* Plotly: рамка и минимальная высота — область графика не «сливается» с фоном и не схлопывается */
 [data-testid="stPlotlyChart"] {
     min-height: 380px !important;

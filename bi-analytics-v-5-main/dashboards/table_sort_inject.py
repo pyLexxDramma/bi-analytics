@@ -399,6 +399,11 @@ def _estimate_html_block_height(html: str) -> int:
         row_h = 38
         extra = 56
         cap = 2600
+    elif "budget-deviation-table-wrap" in html_l:
+        thead_h = 80
+        row_h = 48
+        extra = 52
+        cap = 720
     elif "bi-sortable-table" in html_l:
         thead_h = 68
         row_h = 34
@@ -435,7 +440,12 @@ def render_sortable_html_block(html: str) -> None:
         return
     doc = _build_sortable_html_document(html)
     _h = _estimate_html_block_height(html)
-    _scroll = "gdrs-summary-table-wrap" not in (html or "")
+    _no_iframe_scroll = (
+        "gdrs-summary-table-wrap",
+        "budget-deviation-table-wrap",
+    )
+    _scroll = not any(m in (html or "") for m in _no_iframe_scroll)
+    _h = _estimate_html_block_height(html) + (24 if not _scroll else 0)
     components.html(doc, height=_h, scrolling=_scroll)
 
 
