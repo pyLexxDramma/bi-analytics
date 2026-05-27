@@ -188,6 +188,7 @@ def filters_popover(
     active_count: int = 0,
     reset_keys: Optional[Sequence[str]] = None,
     panel_key: Optional[str] = None,
+    expanded: bool = False,
 ) -> Generator[_FiltersPopoverHandle, None, None]:
     """
     Верхняя панель отчёта: чипы сверху, фильтры в свёрнутом expander, «Сбросить» внутри.
@@ -201,7 +202,7 @@ def filters_popover(
     handle = _FiltersPopoverHandle(st, chip_slot)
     _exp_key = _filters_expander_session_key(st, pop_label, reset_keys, panel_key)
     _collapse_filters_expander_on_dashboard_open(st, _exp_key)
-    with st.expander(pop_label, expanded=False, key=_exp_key):
+    with st.expander(pop_label, expanded=expanded, key=_exp_key):
         if reset_keys:
             _rb_col, _ = st.columns([1, 4])
             with _rb_col:
@@ -222,13 +223,14 @@ def filters_panel(
     *,
     reset_keys: Optional[Sequence[str]] = None,
     panel_key: Optional[str] = None,
+    expanded: bool = False,
 ) -> Generator[None, None, None]:
     """
     Совместимость: виджеты в ``filters_popover`` (без чипов).
     Новые отчёты с чипами — ``filters_popover`` напрямую.
     """
     with filters_popover(
-        st, label=title, reset_keys=reset_keys, panel_key=panel_key
+        st, label=title, reset_keys=reset_keys, panel_key=panel_key, expanded=expanded
     ) as _fp:
         yield
         _fp.set_chips([])

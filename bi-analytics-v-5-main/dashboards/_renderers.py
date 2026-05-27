@@ -316,7 +316,7 @@ def _render_html_table(
     if column_tooltips is not None or column_role is not None or cell_titles:
         parts = [
             '<div class="rendered-table-wrap">',
-            '<table class="rendered-table bi-sortable-table" style="border-collapse:collapse;width:100%">',
+            '<table class="rendered-table bi-sortable-table bi-sort-click-only" style="border-collapse:collapse;width:100%">',
             "<thead><tr>",
         ]
         for c in show.columns:
@@ -350,7 +350,7 @@ def _render_html_table(
             key_prefix=f"html_tbl_{abs(id(df))}",
         )
     else:
-        html = show.to_html(index=False, classes="rendered-table bi-sortable-table", escape=True, border=0)
+        html = show.to_html(index=False, classes="rendered-table bi-sortable-table bi-sort-click-only", escape=True, border=0)
         render_report_html_table(
             _light_open + _table_css + '<div class="rendered-table-wrap">' + html + "</div>" + _light_close,
             export_df=df,
@@ -1721,7 +1721,7 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
 
     parts = [
         '<div class="dev-reasons-wrap">',
-        '<table class="dev-reasons-table">',
+        '<table class="dev-reasons-table rendered-table bi-sortable-table bi-sort-click-only">',
         "<thead><tr>",
     ]
     for h in headers:
@@ -3513,6 +3513,71 @@ def _deviations_filter_df_by_period_range(
     return filtered_df
 
 
+
+_DEV_TIME_AXIS_PLAN = "По дате окончания плана"
+_DEV_TIME_AXIS_SNAPSHOT = "По дате снимка выгрузки"
+
+
+def _deviations_period_type_en_from_ru(label: str) -> str:
+    return {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year", "День": "Day"}.get(
+        str(label or "Месяц").strip(), "Month"
+    )
+
+
+def _deviations_report_period_options(df: pd.DataFrame, period_type_en: str) -> list[str]:
+    if df is None or getattr(df, "empty", True) or "plan end" not in df.columns:
+        return []
+    pe = pd.to_datetime(df["plan end"], errors="coerce", dayfirst=True)
+    pe = pe[pe.notna()]
+    if pe.empty:
+        return []
+    if period_type_en == "Day":
+        vals = pe.dt.date
+    elif period_type_en == "Quarter":
+        vals = pe.dt.to_period("Q")
+    elif period_type_en == "Year":
+        vals = pe.dt.to_period("Y")
+    else:
+        vals = pe.dt.to_period("M")
+    labels = [format_period_ru(v) for v in pd.unique(vals)]
+    labels = [x for x in labels if str(x).strip()]
+    return sorted(set(labels), key=lambda s: str(s))
+
+
+def _deviations_apply_reason_filter(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or getattr(df, "empty", True):
+        return df
+    sel = str(st.session_state.get("devcombo_reason", "Все") or "Все").strip()
+    if sel == "Все" or "reason of deviation" not in df.columns:
+        return df
+    return df[
+        df["reason of deviation"].astype(str).str.strip() == sel
+    ].copy()
+
+
+def _deviations_apply_report_period_filter(
+    df: pd.DataFrame, *, period_type_en: str
+) -> pd.DataFrame:
+    if df is None or getattr(df, "empty", True):
+        return df
+    sel = str(st.session_state.get("devcombo_report_period", "Весь период") or "Весь период").strip()
+    if sel in ("", "Весь период") or "plan end" not in df.columns:
+        return df
+    out = df.copy()
+    pe = pd.to_datetime(out["plan end"], errors="coerce", dayfirst=True)
+    mask = pe.notna()
+    if period_type_en == "Day":
+        temp = pe.dt.date
+    elif period_type_en == "Quarter":
+        temp = pe.dt.to_period("Q")
+    elif period_type_en == "Year":
+        temp = pe.dt.to_period("Y")
+    else:
+        temp = pe.dt.to_period("M")
+    out.loc[mask, "_dev_report_period_lbl"] = temp.loc[mask].map(format_period_ru)
+    out = out[out["_dev_report_period_lbl"].astype(str).str.strip() == sel].copy()
+    return out.drop(columns=["_dev_report_period_lbl"], errors="ignore")
+
 def _apply_deviations_combined_filters(
     df: pd.DataFrame, *, building_col=None
 ) -> pd.DataFrame:
@@ -3543,6 +3608,13 @@ def _apply_deviations_combined_filters(
     filtered_df = _deviations_filter_df_by_period_range(
         filtered_df, "devcombo_period_range"
     )
+    filtered_df = _deviations_apply_reason_filter(filtered_df)
+    _pt_en = _deviations_period_type_en_from_ru(
+        st.session_state.get("dynamics_period", "Месяц")
+    )
+    filtered_df = _deviations_apply_report_period_filter(
+        filtered_df, period_type_en=_pt_en
+    )
 
     return filtered_df
 
@@ -3560,7 +3632,7 @@ def _render_deviations_combined_shared_filters(df):
     use_hierarchy = bool(level_col and task_col and task_col in df.columns)
     use_flat_bs = _deviations_use_flat_block_section_task(df)
 
-    with filters_panel(st):
+    with filters_panel(st, panel_key="deviations_combined", expanded=False):
         col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
             if "project name" in df.columns:
@@ -3762,10 +3834,57 @@ def _render_deviations_combined_shared_filters(df):
                 suppress_caption("Нет данных для фильтра периода")
 
         with col5:
+            if "reason of deviation" in df.columns:
+                _reason_opts = ["Все"] + sorted(
+                    df["reason of deviation"]
+                    .dropna()
+                    .astype(str)
+                    .str.strip()
+                    .unique()
+                    .tolist()
+                )
+                st.selectbox("Причина", _reason_opts, key="devcombo_reason")
+            else:
+                suppress_caption("Нет колонки причин отклонений")
+
+        _pt_lbl = st.session_state.get("dynamics_period", "Месяц")
+        _pt_en_shared = _deviations_period_type_en_from_ru(_pt_lbl)
+        _df_period_src = _deviations_project_slice_by_key(df, "devcombo_project")
+        _period_lbl_opts = ["Весь период"] + _deviations_report_period_options(
+            _df_period_src, _pt_en_shared
+        )
+        _row2 = st.columns(5)
+        with _row2[0]:
+            st.selectbox(
+                "Группировать по",
+                ["Месяц", "Квартал", "Год"],
+                key="dynamics_period",
+            )
+        with _row2[1]:
+            st.selectbox("Период", _period_lbl_opts, key="devcombo_report_period")
+        with _row2[2]:
+            st.radio(
+                "Ось времени",
+                [_DEV_TIME_AXIS_PLAN, _DEV_TIME_AXIS_SNAPSHOT],
+                horizontal=True,
+                key="dynamics_time_axis_combo",
+            )
+        with _row2[3]:
+            st.selectbox(
+                "Вид отображения",
+                ["По причинам", "По месяцам"],
+                key="reasons_view_type",
+            )
+        with _row2[4]:
             st.checkbox(
                 "ТОП 5 причин отклонений",
                 value=False,
                 key="reason_top5",
+            )
+            st.checkbox(
+                "Показывать линию тренда",
+                value=False,
+                key="reasons_dynamics_show_trend_line",
             )
 
     filtered_df = _apply_deviations_combined_filters(df, building_col=building_col)
@@ -3782,11 +3901,11 @@ def dashboard_deviations_combined(df):
         )
         return
 
+    filtered_shared, building_col = _render_deviations_combined_shared_filters(df)
     suppress_caption(
         "Категории в диаграммах и таблицах приведены к перечню из последних правок по отчёту "
         "(стек долей, легенда и детальная таблица)."
     )
-    filtered_shared, building_col = _render_deviations_combined_shared_filters(df)
     tab_by_month, tab_reasons, tab_dynamics = st.tabs(
         [
             "Доли причин отклонений по проекту",
@@ -4407,7 +4526,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         _maket_wrap_id = f"dev_reason_maket_{abs(id(maket_df))}"
         _tbl_m = [
             f'<div id="{_maket_wrap_id}" class="rendered-table-wrap">',
-            '<table class="rendered-table bi-sortable-table" style="border-collapse:collapse;width:100%">',
+            '<table class="rendered-table bi-sortable-table bi-sort-click-only" style="border-collapse:collapse;width:100%">',
             "<thead><tr>",
         ]
         _hdrs = ["№", "Проект"]
@@ -4529,28 +4648,15 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             "{color:#8899aa!important;font-weight:600!important;}"
             "</style>"
         )
-        _maket_html_doc = (
-            "<!DOCTYPE html><html><head><meta charset=\"utf-8\"/>"
-            + _maket_iframe_css
-            + _TABLE_CSS
-            + "</head><body>"
-            + "".join(_tbl_m)
-            + "</body></html>"
-        )
-        _ifr_h = int(min(1200, max(200, 88 + len(maket_df) * 30)))
-        try:
-            components.html(_maket_html_doc, height=_ifr_h, scrolling=True, width=None)
-        except TypeError:
-            components.html(_maket_html_doc, height=_ifr_h, scrolling=True)
         st.markdown(f"**Записей (по макету):** {len(maket_df)}")
         maket_csv_df = build_deviations_maket_export_df(
             table_reason_df, building_col, notes_col_m
         )
-        render_dataframe_excel_csv_downloads(
-            maket_csv_df,
+        render_report_html_table(
+            _maket_iframe_css + _TABLE_CSS + "".join(_tbl_m),
+            export_df=maket_csv_df,
             file_stem="deviations_detail_maket",
             key_prefix="devtable_maket",
-            csv_label="Скачать CSV (по макету, для Excel)",
         )
 
     _render_deviations_reasons_full_table(table_reason_df, building_col, notes_col_m)
@@ -4638,23 +4744,14 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         return "" if hide_shared_filters else msg
 
     if hide_shared_filters:
-        _time_axis = st.radio(
-            "Ось времени",
-            [
-                "По дате окончания плана (plan end)",
-                "По дате снимка выгрузки (snapshot_date)",
-            ],
-            horizontal=True,
-            key="dynamics_time_axis_combo",
-            index=1,
+        _time_axis = str(
+            st.session_state.get("dynamics_time_axis_combo", _DEV_TIME_AXIS_SNAPSHOT)
+            or _DEV_TIME_AXIS_SNAPSHOT
         )
     else:
         _time_axis = st.radio(
             "Ось времени",
-            [
-                "По дате окончания плана (plan end)",
-                "По дате снимка выгрузки (snapshot_date)",
-            ],
+            [_DEV_TIME_AXIS_PLAN, _DEV_TIME_AXIS_SNAPSHOT],
             horizontal=True,
             key="dynamics_time_axis_pravki",
         )
@@ -4669,27 +4766,15 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 "Показана динамика по plan end из текущего набора."
             )
             source_df = df
-            _time_axis = "По дате окончания плана (plan end)"
+            _time_axis = _DEV_TIME_AXIS_PLAN
     if "project name" in source_df.columns:
         source_df = _project_column_apply_canonical(source_df.copy(), "project name")
 
-    with filters_panel(st, reset_keys=["dynamics_period", "dynamics_project", "dynamics_reason"]):
-        if hide_shared_filters:
-            col1, = st.columns(1)
-            with col1:
-                period_type = st.selectbox(
-                    "Группировать по",
-                    ["День", "Месяц", "Квартал", "Год"],
-                    key="dynamics_period",
-                )
-                period_map = {
-                    "День": "Day",
-                    "Месяц": "Month",
-                    "Квартал": "Quarter",
-                    "Год": "Year",
-                }
-                period_type_en = period_map.get(period_type, "Month")
-        else:
+    if hide_shared_filters:
+        period_type = str(st.session_state.get("dynamics_period", "Месяц") or "Месяц")
+        period_type_en = _deviations_period_type_en_from_ru(period_type)
+    else:
+        with filters_panel(st, reset_keys=["dynamics_period", "dynamics_project", "dynamics_reason"]):
             col1, col2, col3 = st.columns(3)
 
             with col1:
@@ -5657,102 +5742,10 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 f"Сводная таблица (группировка: {', '.join(project_summary_cols)})"
             )
 
-        # Добавляем селекторы для фильтрации таблицы
-        filter_cols = st.columns(3)
         filtered_df_for_summary = filtered_df.copy()
-
-        with filter_cols[0]:
-            if "project name" in filtered_df_for_summary.columns:
-                available_projects = ["Все"] + sorted(
-                    filtered_df_for_summary["project name"].dropna().unique().tolist()
-                )
-                selected_project_filter = st.selectbox(
-                    "Проект",
-                    available_projects,
-                    key="summary_project_filter",
-                )
-                if selected_project_filter != "Все":
-                    filtered_df_for_summary = filtered_df_for_summary[
-                        filtered_df_for_summary["project name"]
-                        == selected_project_filter
-                    ]
-
-        with filter_cols[1]:
-            if "reason of deviation" in filtered_df_for_summary.columns:
-                available_reasons = ["Все"] + sorted(
-                    filtered_df_for_summary["reason of deviation"]
-                    .dropna()
-                    .unique()
-                    .tolist()
-                )
-                selected_reason_filter = st.selectbox(
-                    "Причина",
-                    available_reasons,
-                    key="summary_reason_filter",
-                )
-                if selected_reason_filter != "Все":
-                    filtered_df_for_summary = filtered_df_for_summary[
-                        filtered_df_for_summary["reason of deviation"]
-                        == selected_reason_filter
-                    ]
-
-        with filter_cols[2]:
-            # Фильтр по периоду
-            period_options = ["Весь период"] + available_periods
-            selected_period_filter = st.selectbox(
-                "Период", period_options, key="summary_period_filter"
-            )
-
-            # Применяем фильтр по периоду
-            if (
-                selected_period_filter != "Весь период"
-                and "period" in filtered_df_for_summary.columns
-            ):
-                # Фильтруем по отформатированному периоду
-                if "plan end" in filtered_df_for_summary.columns:
-                    # Создаем временную колонку с отформатированными периодами для фильтрации
-                    filtered_df_for_summary = filtered_df_for_summary.copy()
-                    mask = filtered_df_for_summary["plan end"].notna()
-                    if period_type_en == "Month":
-                        filtered_df_for_summary.loc[mask, "temp_period"] = (
-                            filtered_df_for_summary.loc[mask, "plan end"].dt.to_period(
-                                "M"
-                            )
-                        )
-                    elif period_type_en == "Quarter":
-                        filtered_df_for_summary.loc[mask, "temp_period"] = (
-                            filtered_df_for_summary.loc[mask, "plan end"].dt.to_period(
-                                "Q"
-                            )
-                        )
-                    elif period_type_en == "Year":
-                        filtered_df_for_summary.loc[mask, "temp_period"] = (
-                            filtered_df_for_summary.loc[mask, "plan end"].dt.to_period(
-                                "Y"
-                            )
-                        )
-                    else:
-                        filtered_df_for_summary.loc[mask, "temp_period"] = (
-                            filtered_df_for_summary.loc[mask, "plan end"].dt.date
-                        )
-
-                    # Форматируем периоды для сравнения
-                    filtered_df_for_summary.loc[mask, "temp_period_formatted"] = (
-                        filtered_df_for_summary.loc[mask, "temp_period"].apply(
-                            format_period_ru
-                        )
-                    )
-                    # Фильтруем по выбранному периоду
-                    period_mask = (
-                        filtered_df_for_summary["temp_period_formatted"]
-                        == selected_period_filter
-                    )
-                    filtered_df_for_summary = filtered_df_for_summary[period_mask]
-                    # Удаляем временные колонки
-                    filtered_df_for_summary = filtered_df_for_summary.drop(
-                        columns=["temp_period", "temp_period_formatted"],
-                        errors="ignore",
-                    )
+        selected_period_filter = str(
+            st.session_state.get("devcombo_report_period", "Весь период") or "Весь период"
+        ).strip()
 
         # Aggregate by project (and reason if present) - sum across selected periods
         project_summary = (
@@ -5823,11 +5816,9 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             project_summary[period_col_name] = project_summary[period_col_name].apply(_fmt_days)
 
         suppress_caption(f"Записей: {len(project_summary)}")
-        _render_html_table(project_summary)
-        render_dataframe_excel_csv_downloads(
+        _render_html_table(
             project_summary,
-            file_stem="project_summary",
-            key_prefix="proj_summary",
+            column_tooltips={str(c): str(c) for c in project_summary.columns},
         )
     else:
         # No project in group, show regular summary by period (только количество, без дней)
@@ -5842,11 +5833,9 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             "reason of deviation": "Причина отклонений",
         })
         suppress_caption(f"Записей: {len(display_grouped)}")
-        _render_html_table(display_grouped)
-        render_dataframe_excel_csv_downloads(
+        _render_html_table(
             display_grouped,
-            file_stem="grouped_summary",
-            key_prefix="grouped_summary",
+            column_tooltips={str(c): str(c) for c in display_grouped.columns},
         )
 
 
@@ -8867,11 +8856,11 @@ def dashboard_deviation_by_tasks_current_month(df):
                     )
                     table_display = table_display.sort_values("Суммарно дней отклонений", ascending=False)
                     suppress_caption(f"Записей: {len(table_display)}")
-                    _render_html_table(table_display)
-                    render_dataframe_excel_csv_downloads(
+                    _render_html_table(
                         table_display,
-                        file_stem="deviation_details",
-                        key_prefix="deviation_detail_export",
+                        column_tooltips={
+                            str(c): str(c) for c in table_display.columns
+                        },
                     )
                     fig_detail = px.bar(
                         detail_deviations,
@@ -8956,24 +8945,23 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
     selected_building_r = "Все"
     _bld_col = None
 
-    if hide_shared_filters:
-        render_table_subheader(st, "Динамика причин отклонений по месяцам")
-    else:
+    if not hide_shared_filters:
         st.header("Динамика причин отклонений по месяцам")
 
-    with filters_panel(st, reset_keys=[
-        "reasons_period", "reasons_reason", "reasons_project", "reasons_building",
-        "reasons_view_type", "reasons_dynamics_show_trend_line",
-    ]):
-        if hide_shared_filters:
-            col1, = st.columns(1)
-            with col1:
-                period_type = st.selectbox(
-                    "Группировать по", ["Месяц", "Квартал", "Год"], key="reasons_period"
-                )
-                period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
-                period_type_en = period_map.get(period_type, "Month")
-        else:
+    if hide_shared_filters:
+        period_type = str(st.session_state.get("dynamics_period", "Месяц") or "Месяц")
+        period_type_en = _deviations_period_type_en_from_ru(period_type)
+        view_type = str(
+            st.session_state.get("reasons_view_type", "По причинам") or "По причинам"
+        )
+        show_trend_line = bool(
+            st.session_state.get("reasons_dynamics_show_trend_line", False)
+        )
+    else:
+        with filters_panel(st, reset_keys=[
+            "reasons_period", "reasons_reason", "reasons_project", "reasons_building",
+            "reasons_view_type", "reasons_dynamics_show_trend_line",
+        ]):
             col1, col2, col3, col4 = st.columns(4)
 
             with col1:
@@ -9035,17 +9023,17 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
                     selected_building_r = "Все"
             selected_section = "Все"
 
-        view_type = st.selectbox(
-            "Вид отображения", ["По причинам", "По месяцам"], key="reasons_view_type"
-        )
-        if view_type == "По месяцам":
-            show_trend_line = st.checkbox(
-                "Показывать линию тренда",
-                value=False,
-                key="reasons_dynamics_show_trend_line",
+            view_type = st.selectbox(
+                "Вид отображения", ["По причинам", "По месяцам"], key="reasons_view_type"
             )
-        else:
-            show_trend_line = False
+            if view_type == "По месяцам":
+                show_trend_line = st.checkbox(
+                    "Показывать линию тренда",
+                    value=False,
+                    key="reasons_dynamics_show_trend_line",
+                )
+            else:
+                show_trend_line = False
 
     filtered_df = df.copy()
 
@@ -9486,11 +9474,9 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
 
         render_table_subheader(st, f"Сводная таблица по {period_label.lower()}")
         st.markdown(f"**Записей:** {len(summary_by_reason)}")
-        _render_html_table(summary_by_reason)
-        render_dataframe_excel_csv_downloads(
+        _render_html_table(
             summary_by_reason,
-            file_stem="reasons_summary",
-            key_prefix="reasons_summary",
+            column_tooltips={str(c): str(c) for c in summary_by_reason.columns},
         )
     else:
         st.warning("Столбец 'reason of deviation' не найден в данных.")
