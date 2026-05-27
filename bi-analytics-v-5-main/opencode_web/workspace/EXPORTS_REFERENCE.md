@@ -27,3 +27,6 @@
 
 - `load_all_from_web()` — `spravochniki` → `st.session_state["reference_contractors"]` (DataFrame: ячейки `Количество*` могут быть **list**).
 - `dashboards/_renderers.py` — `_gdrs_merge_plan_from_1c_spravochniki`: план рабочих/техники по строке факта; разбор JSON-массивов — `_gdrs_plan_metric_from_spravochnik_cell` (max по `Количество`).
+- `dashboards/finance_from_1c.py` — план/факт ₽ для дашборда; зеркало в `workspace/analytics/dashboard_finance.py` + `analyze_db_finance_plan_fact.py`.
+  - **Утверждённый бюджет:** ТипСтатьи=БДДС, сценарий ПЛАН (без «(БДР)» в статье), ФАКТ, ×1000.
+  - **БДДС по месяцам:** лот/подлот в `СтатьяОборотов`, бюджетный сценарий, период month-first.

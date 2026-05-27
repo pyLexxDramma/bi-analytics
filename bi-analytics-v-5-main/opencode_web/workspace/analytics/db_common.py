@@ -8,10 +8,16 @@ from typing import Any
 import pandas as pd
 
 
+# Порядок: сначала типичные пути в Docker (/workspace/...), затем БД рядом с каталогом workspace
+# при локальном запуске из клона репозитория (workspace/web_data.db).
+_MODULE_DIR = Path(__file__).resolve().parent
+_WORKSPACE_DB = _MODULE_DIR.parent / "web_data.db"
+
 DEFAULT_DB_CANDIDATES = (
     "/workspace/web_data.db",
     "/workspace/data/web_data.db",
     "/workspace/analytics/web_data.db",
+    str(_WORKSPACE_DB),
 )
 
 

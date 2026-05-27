@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
+
 from db_common import connect_db, ensure_output_dir, get_effective_version_id, parse_db_args, query_to_df, resolve_db_path, save_table
 
 
@@ -43,6 +45,18 @@ def main() -> None:
         )
 
     save_table(health, output_dir / "project_health.csv")
+    diagnostics = pd.DataFrame(
+        [
+            {
+                "version_id": int(version_id),
+                "db_path": str(db_path),
+                "project_rows": int(len(health)),
+                "status": "ok" if not health.empty else "empty",
+            }
+        ]
+    )
+    save_table(diagnostics, output_dir / "diagnostics.csv")
+    print(f"OK db={db_path} projects={len(health)} → {output_dir / 'diagnostics.csv'}")
 
 
 if __name__ == "__main__":

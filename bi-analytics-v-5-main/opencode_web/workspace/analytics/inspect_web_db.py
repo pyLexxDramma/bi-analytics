@@ -61,6 +61,13 @@ def main() -> None:
             """,
             (version_id,),
         )
+        rows_total = int(
+            query_to_df(
+                conn,
+                "SELECT COUNT(*) AS c FROM web_data WHERE version_id = ?",
+                (version_id,),
+            ).iloc[0]["c"]
+        )
 
     save_table(versions, output_dir / "versions_top20.csv")
     save_table(files, output_dir / "active_version_files.csv")
@@ -70,6 +77,25 @@ def main() -> None:
             keys_df = _safe_json_keys(chunk["row_data"])
             if not keys_df.empty:
                 save_table(keys_df, output_dir / f"keys_{type_name}.csv")
+
+    diagnostics = pd.DataFrame(
+        [
+            {
+                "version_id": int(version_id),
+                "db_path": str(db_path),
+                "web_versions_rows": int(len(versions)),
+                "web_files_rows": int(len(files)),
+                "web_data_rows": rows_total,
+                "status": "ok",
+                "note": "БД доступна. Для списка проектов используйте analyze_db_finance_plan_fact.py → plan_fact_by_project.csv",
+            }
+        ]
+    )
+    save_table(diagnostics, output_dir / "diagnostics.csv")
+    print(
+        f"OK db={db_path} version_id={version_id} web_data_rows={rows_total} "
+        f"→ {output_dir / 'diagnostics.csv'}"
+    )
 
 
 if __name__ == "__main__":

@@ -1,71 +1,61 @@
-# Data Analysis Knowledge Base (DB-first)
+# Data Analysis Knowledge Base
 
-Используй этот файл как карту работы с `web_data.db` и DB-скриптами.
+**Полные правила:** `/workspace/AI_DATA_RULES.md` (обязательно `cat` перед аналитикой).  
+**Типовые вопросы пользователей:** `/workspace/analytics/QUESTIONS_CATALOG.md` (какой скрипт и CSV на каждый вопрос из `questions.md`).
 
-## Основной источник данных
+## Источник данных
 
-- Главный источник: SQLite `web_data.db`.
-- Путь задается аргументом `--db` или ищется автоматически в:
-  - `/workspace/web_data.db`
-  - `/workspace/data/web_data.db`
-  - `/workspace/analytics/web_data.db`
+- **`/workspace/web_data.db`** — таблицы `web_versions`, `web_files`, `web_data` (JSON в `row_data`).
+- Проверка: `python3 /workspace/analytics/inspect_web_db.py` (не смотреть старые PNG/CSV в `output/`).
+- Активная версия: `web_versions.is_active = 1` AND `status = success`.
+- **Финансы и БДДС есть** в `file_type = reference_dannye` (1С обороты: ПЛАН/ФАКТ, БДДС, проект, контрагент, суммы в **тыс. руб.** → в скриптах ×1000).
 
-## Структура БД
+## file_type
 
-- `web_versions` — версии загрузок (status, files_count, rows_count, is_active)
-- `web_files` — мета-файлы версии (file_type, file_name, rel_path, rows_count)
-- `web_data` — построчные данные:
-  - `version_id`
-  - `file_type`
-  - `source_file`
-  - `row_data` (JSON-строка)
+| file_type | Содержание |
+|-----------|------------|
+| `reference_dannye` | 1С: ПЛАН/ФАКТ, **БДДС**, проект, контрагент, статья, период |
+| `debit_credit` | Авансы (ДК) |
+| `project` | MSP (сроки, **причины отклонений по срокам**) |
+| `resources`, `technique` | ГДРС |
+| `tessa`, `tessa_tasks` | ИД |
+| `rd_plan` | План РД |
 
-## Готовые DB-скрипты (Python-only)
+## Главный скрипт финансов и БДДС
 
-- `python /workspace/analytics/analyze_db_fast_answers.py`
-  - Быстрый пакет: inventory + msp/resources/rd.
-- `python /workspace/analytics/analyze_db_msp.py`
-  - MSP: прогресс и долгие открытые задачи.
-- `python /workspace/analytics/analyze_db_project_health.py`
-  - KPI здоровья проектов (open share, long open).
-- `python /workspace/analytics/analyze_db_project_delays.py`
-  - Детализация просрочек по задачам.
-- `python /workspace/analytics/analyze_db_delay_reasons.py`
-  - Частоты причин отклонений по проектам.
-- `python /workspace/analytics/analyze_db_deviations_for_chat.py`
-  - Каноническая сводка отклонений для чата + круговая диаграмма по причинам.
-- `python /workspace/analytics/analyze_db_resources.py`
-  - Ресурсы/техника.
-- `python /workspace/analytics/analyze_db_contractors.py`
-  - Снимок по подрядчикам и средней нагрузке.
-- `python /workspace/analytics/analyze_db_rd_registry.py`
-  - Реестр РД.
-- `python /workspace/analytics/analyze_db_tessa.py`
-  - TESSA tasks / RD / ID.
-- `python /workspace/analytics/analyze_db_tessa_overdue.py`
-  - Распределение TESSA по статусам/объектам.
-- `python /workspace/analytics/analyze_db_finance.py`
-  - 1C dannye и DK.
-- `python /workspace/analytics/analyze_db_finance_scenarios.py`
-  - Агрегация сумм по сценариям/периодам.
-- `python /workspace/analytics/inspect_web_db.py`
-  - Аудит структуры БД и JSON-ключей.
+**`python /workspace/analytics/analyze_db_finance_plan_fact.py`**
 
-## Правила выбора скрипта
+| Запрос | CSV | PNG (если создан) |
+|--------|-----|-----------------|
+| План/факт по **проекту** | `plan_fact_by_project.csv` | `plan_fact_by_project.png` |
+| План/факт по **подрядчику** | `plan_fact_by_contractor.csv` | — |
+| **БДДС / динамика по месяцам** | `plan_fact_by_project_month.csv` | `plan_fact_bddds_monthly.png` |
+| Недоосвоение **по статьям** | `plan_fact_by_article.csv` | — |
+| Авансы | `advances_by_contractor.csv` | — |
 
-1. По умолчанию сначала `analyze_db_fast_answers.py`.
-2. По домену:
-   - MSP -> `analyze_db_msp.py` / `analyze_db_project_health.py` / `analyze_db_project_delays.py`
-   - Причины отклонений -> `analyze_db_deviations_for_chat.py` (в первую очередь), затем `analyze_db_delay_reasons.py`
-   - Ресурсы/техника -> `analyze_db_resources.py` / `analyze_db_contractors.py`
-   - РД -> `analyze_db_rd_registry.py`
-   - TESSA -> `analyze_db_tessa.py` / `analyze_db_tessa_overdue.py`
-   - Финансы -> `analyze_db_finance.py` / `analyze_db_finance_scenarios.py`
-3. При странном результате сначала `inspect_web_db.py`.
+Путь output: `/workspace/analytics/output/db_finance_plan_fact/`.  
+В `diagnostics.csv` поля `chart_png`, `chart_png_monthly`, `synthetic_monthly_rows` — если `synthetic_monthly_rows > 0`, данные БДДС по месяцам **есть**.
 
-## Ограничение режима
+## Сроки (не путать с финансами)
 
-Работаем только с `web_data.db` через `analyze_db_*.py`.
-Сценарии с `.csv` как основным источником отключены.
-Legacy-выгрузки `output/esipovo_deviations*` не использовать для ответов.
-Перед ответом по отклонениям всегда пересоздавать свежие файлы через `analyze_db_deviations_for_chat.py`.
+| Запрос | Скрипт | PNG |
+|--------|--------|-----|
+| Причины отклонений **по срокам** (MSP), доли | `analyze_db_deviations_for_chat.py` | `deviations_reasons_for_chat_pie.png` |
+| Просрочки задач | `analyze_db_project_delays.py` | — |
+| Отставание по блоку | `analyze_db_msp_by_block.py` | — |
+
+**Не использовать** `analyze_db_deviations_for_chat.py` для вопросов про **бюджет/БДДС/рубли** — только MSP-сроки.
+
+## Другие скрипты
+
+| Скрипт | Назначение |
+|--------|------------|
+| `analyze_db_resources.py` | Ресурсы ГДРС |
+| `analyze_db_prescriptions.py` | Предписания |
+| `inspect_web_db.py` | Аудит ключей JSON |
+
+Legacy `esipovo_deviations*`, CSV в `workspace/AI` — **не использовать**.
+
+## Графики в ответе ИИ
+
+Пока **не требуются** в обычных ответах. Строку с PNG добавляй только если пользователь явно просит график/диаграмму.
