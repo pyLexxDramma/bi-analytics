@@ -1,4 +1,4 @@
-﻿"""SSH-tunnel to OpenCode and /global/health check."""
+"""SSH-tunnel to OpenCode and /global/health check."""
 
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ def _cfg_int(name: str, default: int) -> int:
 
 
 def _hydrate_env() -> None:
-    load_dotenv(dotenv_path=_ENV_PATH, override=False)
+    load_dotenv(dotenv_path=_ENV_PATH, override=True, encoding="utf-8-sig")
     try:
         secrets = st.secrets
         for key in _SECRET_KEYS:
