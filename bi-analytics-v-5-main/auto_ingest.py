@@ -260,11 +260,15 @@ def _purge_web_dir_artifacts() -> None:
         safe_stderr_log(f"[auto_ingest] purge web_data.db failed: {e}")
 
 
-def _do_ftp_sync() -> dict | None:
-    if not _flag("BI_ANALYTICS_AUTO_INGEST_FTP", default="1"):
-        return None
-    if not (os.environ.get("BI_FTP_HOST") and os.environ.get("BI_FTP_USER")):
-        safe_stderr_log("[auto_ingest] FTP host/user not set → пропуск FTP-sync")
+def _ftp_credentials_configured() -> bool:
+    _maybe_secrets_to_env()
+    return bool(os.environ.get("BI_FTP_HOST") and os.environ.get("BI_FTP_USER"))
+
+
+def run_ftp_sync_to_web(*, log_prefix: str = "[auto_ingest]") -> dict | None:
+    """Скачать свежие CSV/JSON с FTP в локальный ``web/`` (общая функция для всех окружений)."""
+    if not _ftp_credentials_configured():
+        safe_stderr_log(f"{log_prefix} FTP host/user not set → пропуск FTP-sync")
         return None
     try:
         from ftp_sync import sync_ftp_to_web
@@ -276,15 +280,29 @@ def _do_ftp_sync() -> dict | None:
         same = result.get("skipped_same_size", 0)
         errs = result.get("errors", [])
         safe_stderr_log(
-            f"[auto_ingest] ftp_sync: downloaded={downloaded}, "
+            f"{log_prefix} ftp_sync: downloaded={downloaded}, "
             f"skipped_same_size={same}, errors={len(errs)}"
         )
         for e in errs[:5]:
-            safe_stderr_log(f"[auto_ingest] ftp err: {e}")
+            safe_stderr_log(f"{log_prefix} ftp err: {e}")
         return result
     except Exception as e:
-        safe_stderr_log(f"[auto_ingest] ftp_sync exception: {e}")
+        safe_stderr_log(f"{log_prefix} ftp_sync exception: {e}")
         return None
+
+
+def _do_ftp_sync() -> dict | None:
+    if not _flag("BI_ANALYTICS_AUTO_INGEST_FTP", default="1"):
+        return None
+    return run_ftp_sync_to_web(log_prefix="[auto_ingest]")
+
+
+def maybe_ftp_sync_before_web_load(*, log_prefix: str = "[web_load]") -> dict | None:
+    """FTP перед ``load_all_from_web()`` — local / dev / release читают один источник."""
+    _maybe_secrets_to_env()
+    if not _flag("BI_ANALYTICS_AUTO_FTP_ON_START", default="1"):
+        return None
+    return run_ftp_sync_to_web(log_prefix=log_prefix)
 
 
 def _do_load_all() -> dict | None:

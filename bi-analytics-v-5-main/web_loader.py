@@ -996,7 +996,11 @@ def _iter_web_scan_roots() -> List[Tuple[Path, str]]:
     Корни для CSV/JSON: локальный web/, при наличии .../Analitics/web, пути из BI_ANALYTICS_WEB_EXTRA_PATHS.
     Второй элемент кортежа — префикс для rel_path (уникальность при одинаковых именах в разных корнях).
     """
-    from config import get_analytics_sibling_web_dir, get_extra_web_dirs_from_env
+    from config import (
+        get_analytics_sibling_web_dir,
+        get_extra_web_dirs_from_env,
+        include_analytics_sibling_web_dir,
+    )
 
     roots: List[Tuple[Path, str]] = []
     seen: set = set()
@@ -1013,7 +1017,7 @@ def _iter_web_scan_roots() -> List[Tuple[Path, str]]:
 
     _add(get_web_dir(), "")
 
-    sib = get_analytics_sibling_web_dir()
+    sib = get_analytics_sibling_web_dir() if include_analytics_sibling_web_dir() else None
     if sib is not None:
         try:
             if sib.resolve() != get_web_dir().resolve():

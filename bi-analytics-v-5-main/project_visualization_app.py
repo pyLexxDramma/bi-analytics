@@ -1093,6 +1093,13 @@ def main():
 
         def _perform_load_from_web_folder(*, quiet: bool = False, force_rescan: bool = False) -> None:
             """Сканирование web/, запись в SQLite и обновление session_state (как кнопка «Загрузить из web/»)."""
+            try:
+                from auto_ingest import maybe_ftp_sync_before_web_load
+
+                maybe_ftp_sync_before_web_load()
+            except Exception as _ftp_e:
+                safe_stderr_log(f"[web_load] ftp sync before load failed: {_ftp_e!r}")
+
             if not web_dir_exists():
                 st.error(
                     "Не найден ни локальный каталог web/ рядом с приложением, "

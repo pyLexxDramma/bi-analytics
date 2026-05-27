@@ -32,7 +32,7 @@ def _env_config() -> Dict[str, Any]:
         "user": os.environ.get("BI_FTP_USER", "").strip(),
         "password": os.environ.get("BI_FTP_PASSWORD", "").strip(),
         "port": int(os.environ.get("BI_FTP_PORT", "21") or 21),
-        "remote_dir": (os.environ.get("BI_FTP_REMOTE_DIR", "/") or "/").strip() or "/",
+        "remote_dir": (os.environ.get("BI_FTP_REMOTE_DIR", "/web") or "/web").strip() or "/web",
         "use_tls": os.environ.get("BI_FTP_TLS", "").lower() in ("1", "true", "yes"),
         "timeout": float(os.environ.get("BI_FTP_TIMEOUT", "60") or 60),
     }
@@ -405,7 +405,7 @@ def streamlit_secrets_to_config() -> Optional[Dict[str, Any]]:
             "user": block.get("user"),
             "password": block.get("password"),
             "port": block.get("port"),
-            "remote_dir": block.get("remote_dir", "/"),
+            "remote_dir": block.get("remote_dir", "/web"),
             "use_tls": bool(block.get("use_tls", False)),
             "timeout": block.get("timeout", 60),
         }

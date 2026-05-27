@@ -56,11 +56,13 @@ _mock_st.cache_data = lambda *a, **kw: (lambda f: f)
 sys.modules["streamlit"] = _mock_st
 
 from web_schema import init_web_schema  # noqa: E402
+from auto_ingest import maybe_ftp_sync_before_web_load  # noqa: E402
 from web_loader import load_all_from_web, web_dir_exists  # noqa: E402
 
 
 def main() -> int:
     init_web_schema()
+    maybe_ftp_sync_before_web_load(log_prefix="[ingest_cli]")
     if not web_dir_exists():
         print(
             "Нет каталога данных: локальный web/, Analitics/web или BI_ANALYTICS_WEB_EXTRA_PATHS.",

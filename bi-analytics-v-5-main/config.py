@@ -102,6 +102,16 @@ BASE_DIR: str = os.path.dirname(os.path.abspath(__file__))
 BASE_PATH: Path = Path(BASE_DIR).resolve()
 
 
+def include_analytics_sibling_web_dir() -> bool:
+    """
+    Сканировать ``.../Analitics/web`` рядом с репозиторием.
+
+    По умолчанию выключено — local/dev/release читают только ``web/`` внутри приложения
+    (как Streamlit Cloud и VPS после FTP-sync). Включить: ``BI_ANALYTICS_WEB_INCLUDE_SIBLING=1``.
+    """
+    return _env_truthy("BI_ANALYTICS_WEB_INCLUDE_SIBLING")
+
+
 def get_analytics_sibling_web_dir() -> Optional[Path]:
     """
     Каталог данных «Analitics/web»: на уровень выше вложенного репозитория.
