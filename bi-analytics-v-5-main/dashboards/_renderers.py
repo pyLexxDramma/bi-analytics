@@ -2302,6 +2302,7 @@ def _finance_bar_text_from_mln_series(
     *,
     min_abs_mln: float = 0.0,
     decimals: int | None = None,
+    unit_suffix: str = " млн рублей",
 ) -> list[str]:
     """Подписи bar из значений уже в млн (с NaN → пустая строка)."""
     out: list[str] = []
@@ -2318,6 +2319,7 @@ def _finance_bar_text_from_mln_series(
             pd.Series([rub]),
             min_abs_mln=min_abs_mln,
             decimals=decimals,
+            unit_suffix=unit_suffix,
         )
         out.append(lbl[0] if lbl else "")
     return out
@@ -10168,7 +10170,7 @@ def dashboard_budget_by_period(df):
             )
         fig.update_layout(
             title_text="",
-            yaxis_title="млн. руб.",
+            yaxis_title="млн рублей",
             barmode="group",
             bargap=_bg,
             bargroupgap=_bgg,
@@ -24249,6 +24251,249 @@ def dashboard_project_documentation(df):
 # исключена — заказчик прямо указал «такой визуал нас не устраивает и не был ранее в правках».
 # Источник данных приоритетно — `try_approved_budget_from_1c_dannye` (БДДС/ПЛАН без «(БДР)» vs БДДС/ФАКТ).
 # Если 1С-выгрузки нет — fallback на MSP-колонки `budget plan / budget fact`.
+def _find_contract_column_for_budget(d: pd.DataFrame):
+    """Колонка контрактации / покрытия контрактами в данных бюджета."""
+    for cand in (
+        "Контрактация",
+        "контрактация",
+        "Контракт",
+        "contract",
+        "Contract",
+        "Покрытие контрактами",
+    ):
+        if cand in d.columns:
+            return cand
+    for col in d.columns:
+        c = str(col).lower().strip()
+        if "контрактация" in c:
+            return col
+        if "контракт" in c and "план" not in c:
+            return col
+        if "покрытие" in c and "контракт" in c:
+            return col
+    return None
+
+
+def _plan_fact_pct_label(numerator: float, denominator: float) -> str:
+    if denominator and float(denominator) > 0:
+        return f"{100.0 * float(numerator) / float(denominator):.1f}%"
+    return "—"
+
+
+def _render_plan_fact_detail_table(
+    st,
+    filtered_df: pd.DataFrame,
+    *,
+    key_suffix: str = "",
+) -> None:
+    """Таблица по проектам: план, факт, остаток, отклонение, % выполнения, % покрытия контрактами."""
+    src = filtered_df.copy()
+    if src.empty:
+        st.info("Нет данных для таблицы.")
+        return
+    src["budget plan"] = pd.to_numeric(src["budget plan"], errors="coerce").fillna(0.0)
+    src["budget fact"] = pd.to_numeric(src["budget fact"], errors="coerce").fillna(0.0)
+    contract_col = _find_contract_column_for_budget(src)
+    if contract_col:
+        src["_contract_rub"] = pd.to_numeric(src[contract_col], errors="coerce").fillna(0.0)
+    else:
+        src["_contract_rub"] = 0.0
+
+    if "project name" in src.columns:
+        table_agg = (
+            src.groupby("project name", dropna=False)
+            .agg(
+                plan=("budget plan", "sum"),
+                fact=("budget fact", "sum"),
+                contract=("_contract_rub", "sum"),
+            )
+            .reset_index()
+        )
+    else:
+        table_agg = pd.DataFrame(
+            [
+                {
+                    "project name": "Итого",
+                    "plan": float(src["budget plan"].sum()),
+                    "fact": float(src["budget fact"].sum()),
+                    "contract": float(src["_contract_rub"].sum()),
+                }
+            ]
+        )
+
+    rows = []
+    for _, r in table_agg.iterrows():
+        plan = float(r["plan"])
+        fact = float(r["fact"])
+        contract = float(r["contract"])
+        rows.append(
+            {
+                "Проект": str(r["project name"]),
+                "План, млн руб.": f"{plan / 1e6:.2f}",
+                "Факт, млн руб.": f"{fact / 1e6:.2f}",
+                "Остаток, млн руб.": f"{(plan - fact) / 1e6:.2f}",
+                "Отклонение, млн руб.": f"{(fact - plan) / 1e6:.2f}",
+                "% выполнения": _plan_fact_pct_label(fact, plan),
+                "% покрытия контрактами": _plan_fact_pct_label(contract, plan),
+            }
+        )
+    display = pd.DataFrame(rows)
+    if "project name" in src.columns and len(table_agg) > 1:
+        plan_total = float(table_agg["plan"].sum())
+        fact_total = float(table_agg["fact"].sum())
+        contract_total = float(table_agg["contract"].sum())
+        display = pd.concat(
+            [
+                display,
+                pd.DataFrame(
+                    [
+                        {
+                            "Проект": "ИТОГО",
+                            "План, млн руб.": f"{plan_total / 1e6:.2f}",
+                            "Факт, млн руб.": f"{fact_total / 1e6:.2f}",
+                            "Остаток, млн руб.": f"{(plan_total - fact_total) / 1e6:.2f}",
+                            "Отклонение, млн руб.": f"{(fact_total - plan_total) / 1e6:.2f}",
+                            "% выполнения": _plan_fact_pct_label(fact_total, plan_total),
+                            "% покрытия контрактами": _plan_fact_pct_label(
+                                contract_total, plan_total
+                            ),
+                        }
+                    ]
+                ),
+            ],
+            ignore_index=True,
+        )
+
+    render_table_subheader(
+        st,
+        "План / Факт / Остаток / Отклонение / % выполнения / % покрытия контрактами",
+    )
+    _render_budget_table_html(
+        display,
+        finance_deviation_column="Отклонение, млн руб.",
+        deviation_red_if_positive_only=True,
+        expense_overrun_style=True,
+        header_font_css="font-weight:700;font-size:1.15em;",
+        label_columns_font_css="font-weight:700;font-size:1.08em;",
+        table_font_size_px=16,
+        file_stem="approved_budget_plan_fact_detail",
+        key_prefix=f"appr_budget_detail_{key_suffix}",
+    )
+
+
+def _plan_fact_summary_gauge_color(plan_rub: float, fact_rub: float) -> str:
+    """Цвет дуги gauge: зелёный — запас до плана, оранжевый — в пределах 20% до плана, красный — перерасход."""
+    if plan_rub <= 0:
+        return "#8892a0"
+    if fact_rub > plan_rub:
+        return "#e74c3c"
+    if fact_rub >= 0.8 * plan_rub:
+        return "#e67e22"
+    return "#27ae60"
+
+
+def _render_plan_fact_summary_dashboard(
+    st,
+    *,
+    plan_rub: float,
+    fact_rub: float,
+    key_suffix: str = "",
+) -> None:
+    """Сводка план/факт: gauge (факт к плану) + абсолютные значения и доли без серых подписей."""
+    plan_rub = float(plan_rub or 0.0)
+    fact_rub = float(fact_rub or 0.0)
+    use_bln = max(plan_rub, fact_rub, 1.0) >= 1e9
+    scale = 1e9 if use_bln else 1e6
+    unit = "млрд" if use_bln else "млн"
+    vf = ".2f" if use_bln else ".1f"
+    plan_v = plan_rub / scale
+    fact_v = fact_rub / scale
+    plan_mln = plan_rub / 1e6
+    fact_mln = fact_rub / 1e6
+    hi = max(plan_v, fact_v, 1e-9) * 1.08
+    pct_of_plan = (100.0 * fact_rub / plan_rub) if plan_rub > 0 else float("nan")
+    bar_color = _plan_fact_summary_gauge_color(plan_rub, fact_rub)
+
+    gauge_kw: dict = {
+        "shape": "angular",
+        "axis": {
+            "range": [0.0, float(hi)],
+            "tickwidth": 0,
+            "ticklen": 0,
+            "tickcolor": "rgba(0,0,0,0)",
+            "showticklabels": False,
+        },
+        "bar": {"color": bar_color, "thickness": 0.78},
+        "bgcolor": "rgba(255,255,255,0.08)",
+        "borderwidth": 0,
+    }
+    if plan_v > 0:
+        gauge_kw["threshold"] = {
+            "line": {"color": "#5e35b1", "width": 3},
+            "thickness": 0.82,
+            "value": float(plan_v),
+        }
+
+    fig = go.Figure(
+        go.Indicator(
+            mode="gauge+number",
+            value=float(fact_v),
+            number={
+                "suffix": f" {unit}",
+                "valueformat": vf,
+                "font": {"size": 34, "color": "#f8fbff"},
+            },
+            gauge=gauge_kw,
+        )
+    )
+    fig.update_layout(height=280, margin=dict(l=20, r=20, t=16, b=16))
+    fig = apply_chart_background(fig)
+
+    render_table_subheader(st, "Сводный дашборд план/факт")
+    g_col, val_col = st.columns([1.25, 1], gap="large")
+    with g_col:
+        render_chart(
+            fig,
+            height=280,
+            caption_below="",
+            key=f"appr_budget_summary_gauge_{key_suffix}",
+        )
+    with val_col:
+        p_col, f_col = st.columns(2, gap="medium")
+        with p_col:
+            st.markdown(
+                f'<p style="font-size:1.65rem;font-weight:700;margin:0 0 0.25rem 0;color:#f8fbff;">'
+                f"{plan_v:{vf}} {unit}</p>",
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                f'<p style="font-size:1.05rem;font-weight:600;margin:0;color:#e8eef5;">'
+                f"{plan_mln:.1f} млн рублей</p>",
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                '<p style="font-size:1.2rem;font-weight:700;margin:0.75rem 0 0;color:#f8fbff;">100%</p>',
+                unsafe_allow_html=True,
+            )
+        with f_col:
+            st.markdown(
+                f'<p style="font-size:1.65rem;font-weight:700;margin:0 0 0.25rem 0;color:#f8fbff;">'
+                f"{fact_v:{vf}} {unit}</p>",
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                f'<p style="font-size:1.05rem;font-weight:600;margin:0;color:#e8eef5;">'
+                f"{fact_mln:.1f} млн рублей</p>",
+                unsafe_allow_html=True,
+            )
+            if plan_rub > 0 and np.isfinite(pct_of_plan):
+                st.markdown(
+                    f'<p style="font-size:1.2rem;font-weight:700;margin:0.75rem 0 0;color:{bar_color};">'
+                    f"{pct_of_plan:.1f}% от плана</p>",
+                    unsafe_allow_html=True,
+                )
+
+
 def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
     """Утверждённый бюджет план/факт (ТЗ «ФИНАНСЫ» от 2026-05-07).
 
@@ -24334,6 +24579,18 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
     fact_total = float(agg["fact"].sum())
     dev_total = fact_total - plan_total
 
+    _render_plan_fact_summary_dashboard(
+        st,
+        plan_rub=plan_total,
+        fact_rub=fact_total,
+        key_suffix=_project_filter_norm_key(str(selected_project)),
+    )
+    _render_plan_fact_detail_table(
+        st,
+        filtered_df,
+        key_suffix=_project_filter_norm_key(str(selected_project)),
+    )
+
     bar_rows = []
     for _, r in agg.iterrows():
         bar_rows.append(
@@ -24351,28 +24608,31 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
             }
         )
     bar_df = pd.DataFrame(bar_rows)
+    bar_df["Подпись"] = _finance_bar_text_from_mln_series(
+        bar_df["Сумма_млн"], decimals=1, unit_suffix=" млн рублей"
+    )
     fig = px.bar(
         bar_df,
         x="Проект",
         y="Сумма_млн",
         color="Тип",
         barmode="group",
-        text="Сумма_млн",
+        text="Подпись",
         color_discrete_map={
             "Утверждённый бюджет": "#5e35b1",
             "Фактические расходы": "#d81b60",
         },
-        labels={"Сумма_млн": "млн руб.", "Проект": "Проект"},
+        labels={"Сумма_млн": "млн рублей", "Проект": "Проект"},
     )
     fig.update_traces(
-        texttemplate="%{text:,.1f}",
+        texttemplate="%{text}",
         textposition="outside",
         cliponaxis=False,
     )
     fig.update_layout(
         height=520,
         xaxis_title="Проект",
-        yaxis_title="млн руб.",
+        yaxis_title="млн рублей",
         # ВАЖНО: orientation="v" — иначе apply_chart_background затирает позицию
         # горизонтальной легенды на y=-0.25 (наезжает на подписи проектов).
         legend=dict(
@@ -24385,6 +24645,7 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
         ),
         margin=dict(l=64, r=220, t=64, b=96),
         xaxis=dict(tickangle=0, tickfont=dict(size=12)),
+        yaxis=dict(tickformat=".1f"),
         bargap=0.25,
         bargroupgap=0.08,
     )
@@ -24408,46 +24669,6 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
         fig,
         caption_below="Сравнение «Утверждённый бюджет» (ПЛАН без БДР) и «Фактические расходы» (ФАКТ) по проектам",
     )
-
-    with st.expander("Детальные данные", expanded=False):
-        table_df = agg.copy()
-        table_df["dev"] = table_df["fact"] - table_df["plan"]
-        table_display = pd.DataFrame(
-            {
-                "Проект": table_df["project name"].astype(str),
-                "Утверждённый бюджет, млн руб.": (table_df["plan"] / 1e6)
-                .round(1)
-                .map(lambda x: f"{x:.1f}"),
-                "Фактические расходы, млн руб.": (table_df["fact"] / 1e6)
-                .round(1)
-                .map(lambda x: f"{x:.1f}"),
-                "Отклонение, млн руб.": (table_df["dev"] / 1e6)
-                .round(1)
-                .map(lambda x: f"{x:.1f}"),
-            }
-        )
-        if len(agg) > 1:
-            total_row = pd.DataFrame(
-                [
-                    {
-                        "Проект": "Итого",
-                        "Утверждённый бюджет, млн руб.": f"{plan_total / 1e6:.1f}",
-                        "Фактические расходы, млн руб.": f"{fact_total / 1e6:.1f}",
-                        "Отклонение, млн руб.": f"{dev_total / 1e6:.1f}",
-                    }
-                ]
-            )
-            table_display = pd.concat([table_display, total_row], ignore_index=True)
-        _render_budget_table_html(
-                table_display,
-                finance_deviation_column="Отклонение, млн руб.",
-                deviation_red_if_negative=True,
-            )
-        render_dataframe_excel_csv_downloads(
-            table_display,
-            file_stem="approved_budget",
-            key_prefix="approved_budget",
-        )
 
     # Правки куратора 08.05.2026: перенесены графики из старого таба «Утверждённый бюджет»
     # в текущий «Утверждённый бюджет план/факт» (план/факт по месяцам + сводная таблица).
@@ -24544,7 +24765,9 @@ def _render_approved_budget_monthly_block(df: pd.DataFrame, selected_project: st
             name="БДДС план",
             marker_color="#2E86AB",
             text=_finance_bar_text_mln_rub(
-                monthly_rows["budget plan"], min_abs_mln=_text_min_mln
+                monthly_rows["budget plan"],
+                min_abs_mln=_text_min_mln,
+                unit_suffix=" млн рублей",
             ),
             textposition="outside",
             textfont=dict(size=_tf_size, color="#f0f4f8"),
@@ -24559,7 +24782,9 @@ def _render_approved_budget_monthly_block(df: pd.DataFrame, selected_project: st
             name="БДДС факт",
             marker_color="#A23B72",
             text=_finance_bar_text_mln_rub(
-                monthly_rows["budget fact"], min_abs_mln=_text_min_mln
+                monthly_rows["budget fact"],
+                min_abs_mln=_text_min_mln,
+                unit_suffix=" млн рублей",
             ),
             textposition="outside",
             textfont=dict(size=_tf_size, color="#f0f4f8"),
@@ -24569,7 +24794,7 @@ def _render_approved_budget_monthly_block(df: pd.DataFrame, selected_project: st
     )
     fig.update_layout(
         title_text="",
-        yaxis_title="млн. руб.",
+        yaxis_title="млн рублей",
         barmode="group",
         bargap=_bg,
         bargroupgap=_bgg,
@@ -24601,7 +24826,9 @@ def _render_approved_budget_monthly_block(df: pd.DataFrame, selected_project: st
             )
         )
         if np.isfinite(_ymax) and _ymax > 0:
-            fig.update_layout(yaxis=dict(range=[0, _ymax * 1.22]))
+            fig.update_layout(yaxis=dict(range=[0, _ymax * 1.22], tickformat=".1f"))
+        else:
+            fig.update_layout(yaxis=dict(tickformat=".1f"))
     fig = apply_chart_background(fig)
     render_chart(fig, caption_below="План/факт по месяцам.", height=_chart_h)
 
@@ -24621,11 +24848,11 @@ def _render_approved_budget_monthly_block(df: pd.DataFrame, selected_project: st
         }
     )
     _render_budget_table_html(
-            summary_table,
-            finance_deviation_column="Отклонение, млн руб.",
-        )
-    render_dataframe_excel_csv_downloads(
         summary_table,
+        finance_deviation_column="Отклонение, млн руб.",
+        header_font_css="font-weight:700;font-size:1.15em;",
+        label_columns_font_css="font-weight:700;font-size:1.08em;",
+        table_font_size_px=16,
         file_stem="approved_budget_by_month",
         key_prefix="appr_budget_planfact_summary",
     )

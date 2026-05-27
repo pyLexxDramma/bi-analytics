@@ -1072,6 +1072,7 @@ def budget_table_to_html(
     *,
     deviation_red_if_positive_only: bool = False,
     deviation_red_if_negative: bool = False,
+    expense_overrun_style: bool = False,
     deviation_abs_min_mln: float = 0.01,
     deviation_semaphore_style: bool = False,
     row_kind_column: Optional[str] = None,
@@ -1195,12 +1196,20 @@ def budget_table_to_html(
             ):
                 num = _parse_finance_value(val)
                 cl = str(col).casefold()
-                if "факт" in cl and "план" not in cl:
-                    cell_class = _fact_vs_plan_font_class(
-                        plan=_plan_n,
-                        fact=num,
-                        abs_neutral_mln=float(deviation_abs_min_mln),
-                    )
+                if (
+                    finance_deviation_column
+                    and col == finance_deviation_column
+                    and deviation_red_if_positive_only
+                    and num is not None
+                ):
+                    if abs(float(num)) < float(deviation_abs_min_mln):
+                        cell_class = None
+                    else:
+                        cell_class = (
+                            DEVIATION_CLASS_RED
+                            if float(num) > 0
+                            else DEVIATION_CLASS_GREEN
+                        )
                 elif (
                     finance_deviation_column
                     and col == finance_deviation_column
@@ -1214,6 +1223,22 @@ def budget_table_to_html(
                             DEVIATION_CLASS_RED
                             if float(num) < 0
                             else DEVIATION_CLASS_GREEN
+                        )
+                elif "факт" in cl and "план" not in cl:
+                    if expense_overrun_style and _plan_n is not None and num is not None:
+                        if abs(float(num) - float(_plan_n)) < float(deviation_abs_min_mln):
+                            cell_class = None
+                        elif float(num) > float(_plan_n):
+                            cell_class = DEVIATION_CLASS_RED
+                        elif float(num) < float(_plan_n):
+                            cell_class = DEVIATION_CLASS_GREEN
+                        else:
+                            cell_class = DEVIATION_CLASS_YELLOW
+                    else:
+                        cell_class = _fact_vs_plan_font_class(
+                            plan=_plan_n,
+                            fact=num,
+                            abs_neutral_mln=float(deviation_abs_min_mln),
                         )
                 else:
                     cell_class = _fact_vs_plan_font_class(
