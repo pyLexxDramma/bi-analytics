@@ -1599,12 +1599,175 @@ def dedupe_msp_for_developer_projects(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+
+
+_PLOT_SECTION_RE = re.compile(
+    r"(?:\u0443\u0447\u0430\u0441\u0442\u043e\u043a|\u0443\u0447\.?)\s*\u2116\s*(\d+)",
+    re.IGNORECASE | re.UNICODE,
+)
+
+# \u0417\u0430\u0434\u0430\u0447\u0438 MSP, \u043a\u043e\u0442\u043e\u0440\u044b\u0435 \u043c\u043e\u0433\u0443\u0442 \u0434\u0443\u0431\u043b\u0438\u0440\u043e\u0432\u0430\u0442\u044c\u0441\u044f \u043f\u043e \u0443\u0447\u0430\u0441\u0442\u043a\u0430\u043c (\u0422\u04173).
+_PLOT_SECTION_TASK_HINTS = (
+    "\u0437\u043e\u0441",
+    " \u0440\u0432",
+    "\u0440\u0432)",
+    "\u0432\u044b\u043a\u0443\u043f",
+    "\u043f\u0440\u0430\u0432\u043e 1",
+    "\u043f\u0440\u0430\u0432\u043e 2",
+    "\u0442\u0435\u0445\u043f\u0440\u0438\u0441\u043e\u0435\u0434",
+)
+
+
+def _task_plot_section(task_name: object) -> Optional[str]:
+    s = str(task_name or "").strip()
+    if not s:
+        return None
+    m = _PLOT_SECTION_RE.search(s)
+    if not m:
+        return None
+    return str(m.group(1)).strip()
+
+
+def _task_name_suggests_plot_section(task_name: object) -> bool:
+    t = str(task_name or "").casefold()
+    if not t:
+        return False
+    if _task_plot_section(task_name):
+        return True
+    return any(h in t for h in _PLOT_SECTION_TASK_HINTS)
+
+
+def _filter_milestone_tasks_by_plot_section(
+    sub: pd.DataFrame,
+    plot_section: str,
+) -> pd.DataFrame:
+    """\u0415\u0441\u043b\u0438 \u0441\u0440\u0435\u0438 \u0432\u0435\u0445\u0438 \u0435\u0441\u0442\u044c \u0443\u0447\u0430\u0441\u0442\u043e\u043a \u2014 \u043e\u0441\u0442\u0430\u0432\u043b\u044f\u0435\u043c \u0442\u043e\u043b\u044c\u043a\u043e \u0437\u0430\u0434\u0430\u0447\u0438 \u044d\u0442\u043e\u0433\u043e \u2116; \u0438\u043d\u0430\u0447\u0435 \u0431\u0435\u0437 \u0444\u0438\u043b\u044c\u0442\u0440\u0430 (\u043e\u0431\u0449\u0438\u0435 \u0432\u0435\u0445\u0438)."""
+    if sub is None or getattr(sub, "empty", True):
+        return sub
+    tc = _task_name_col(sub)
+    if not tc or tc not in sub.columns:
+        return sub
+    sec = str(plot_section or "").strip()
+    if not sec:
+        return sub
+    has_sectioned = False
+    for tn in sub[tc].astype(str):
+        if _task_plot_section(tn):
+            has_sectioned = True
+            break
+    if not has_sectioned:
+        return sub
+    keep = []
+    for ix, rr in sub.iterrows():
+        ps = _task_plot_section(rr.get(tc))
+        if ps is None or ps == sec:
+            keep.append(ix)
+    if not keep:
+        return sub.iloc[0:0].copy()
+    return sub.loc[keep].copy()
+
+
+def _detect_plot_sections_from_msp(mdf: pd.DataFrame) -> List[str]:
+    if mdf is None or getattr(mdf, "empty", True):
+        return []
+    tc = _task_name_col(mdf)
+    if not tc or tc not in mdf.columns:
+        return []
+    found: set[str] = set()
+    for tn in mdf[tc].astype(str):
+        if not _task_name_suggests_plot_section(tn):
+            continue
+        ps = _task_plot_section(tn)
+        if ps:
+            found.add(ps)
+    if len(found) < 2:
+        return []
+
+    def _sort_key(x: str) -> tuple:
+        try:
+            return (0, int(x))
+        except ValueError:
+            return (1, x)
+
+    return sorted(found, key=_sort_key)
+
+
+def build_dev_tz_matrix_blocks(
+    mdf: pd.DataFrame,
+    project_data: Optional[pd.DataFrame],
+    ss: Any,
+    *,
+    project_label_for_scope: str = "",
+) -> List[Tuple[str, List[Dict[str, Any]]]]:
+    """\u041e\u0434\u0438\u043d \u043f\u0440\u043e\u0435\u043a\u0442 \u2014 \u043e\u0434\u043d\u0430 \u0441\u0442\u0440\u043e\u043a\u0430; \u043f\u0440\u0438 \u043d\u0435\u0441\u043a\u043e\u043b\u044c\u043a\u0438\u0445 \u0443\u0447\u0430\u0441\u0442\u043a\u0445 \u2014 \u043d\u0435\u0441\u043a\u043e\u043b\u044c\u043a\u043e \u0441\u0442\u0440\u043e\u043a (\u0443\u0447. \u2116N)."""
+    if mdf is None or getattr(mdf, "empty", True):
+        return []
+    sections = _detect_plot_sections_from_msp(mdf)
+    rows0, label0 = build_dev_tz_matrix_rows(
+        mdf,
+        project_data,
+        ss,
+        project_label_for_scope=project_label_for_scope,
+        plot_section=None,
+    )
+    base = str(label0 or project_label_for_scope or "").strip()
+    if not sections:
+        return [(base, rows0)] if rows0 or base else []
+    blocks: List[Tuple[str, List[Dict[str, Any]]]] = []
+    for sec in sections:
+        rows_s, _ = build_dev_tz_matrix_rows(
+            mdf,
+            project_data,
+            ss,
+            project_label_for_scope=project_label_for_scope,
+            plot_section=sec,
+        )
+        lbl = f"{base} (\u0443\u0447. \u2116{sec})" if base else f"\u0443\u0447. \u2116{sec}"
+        blocks.append((lbl, rows_s))
+    return blocks
+
+
+def build_dev_tz_matrix_blocks_cached(
+    mdf: pd.DataFrame,
+    project_data: Optional[pd.DataFrame],
+    ss: Any,
+    *,
+    project_label_for_scope: str = "",
+) -> List[Tuple[str, List[Dict[str, Any]]]]:
+    if mdf is None or getattr(mdf, "empty", True):
+        return []
+    if ss is None:
+        return build_dev_tz_matrix_blocks(
+            mdf, project_data, ss, project_label_for_scope=project_label_for_scope
+        )
+    cache = _dev_matrix_cache(ss)
+    key = (
+        "blocks",
+        _df_fingerprint(mdf),
+        _matrix_project_scope_tag(mdf),
+        _df_fingerprint(project_data),
+        str(project_label_for_scope or ""),
+        _prefs_fingerprint(),
+    )
+    cached = cache.get(key)
+    if isinstance(cached, list):
+        return cached  # type: ignore[return-value]
+    res = build_dev_tz_matrix_blocks(
+        mdf, project_data, ss, project_label_for_scope=project_label_for_scope
+    )
+    try:
+        cache[key] = res
+    except Exception:
+        pass
+    return res
+
 def build_dev_tz_matrix_rows(
     mdf: pd.DataFrame,
     project_data: Optional[pd.DataFrame],
     ss: Any,
     *,
     project_label_for_scope: str = "",
+    plot_section: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], str]:
     rows: List[Dict[str, Any]] = []
 
@@ -1719,6 +1882,8 @@ def build_dev_tz_matrix_rows(
         lab = effective_title(row_key, label)
         kw2 = effective_match(row_key, kw)
         sub = _match_tasks_like_msp_row(mdf, kw2)
+        if plot_section:
+            sub = _filter_milestone_tasks_by_plot_section(sub, str(plot_section))
         if sub is None or sub.empty:
             add_row(group, lab, "Н/Д", "Н/Д", "Н/Д", phase=phase, row_key=row_key)
             return

@@ -15,6 +15,27 @@ def _safe_int(v: Any) -> Optional[int]:
         return None
 
 
+
+
+def trigger_ftp_and_force_reload_db(st: Any, *, quiet: bool = False) -> None:
+    """FTP-sync + полный перескан web/ → SQLite (без hydrate из кэша сессии)."""
+    st.session_state["_pending_web_folder_load"] = True
+    st.session_state["_pending_web_load_quiet"] = bool(quiet)
+    st.session_state["_pending_web_force_rescan"] = True
+    for _k in ("_auto_hydrated_from_db", "_auto_hydrated_from_web"):
+        st.session_state.pop(_k, None)
+
+
+def _render_force_reload_button(st: Any, *, key: str) -> None:
+    if st.button(
+        "FTP + перезагрузить БД",
+        width="stretch",
+        key=key,
+        type="primary",
+        help="Синхронизация с FTP, затем полная пересборка активной версии в SQLite и обновление дашборда.",
+    ):
+        trigger_ftp_and_force_reload_db(st, quiet=False)
+
 def render_release_data_version_sidebar(st: Any) -> None:
     """Release: только выбор версии данных в сайдбаре (без источника/FTP/ручной загрузки)."""
     st.markdown(
@@ -27,6 +48,7 @@ def render_release_data_version_sidebar(st: Any) -> None:
         init_web_schema()
     except Exception:
         pass
+    _render_force_reload_button(st, key="release_sidebar_ftp_force_reload")
     _render_version_sidebar_compact(st)
 
 
@@ -78,6 +100,9 @@ def render_admin_data_ops_sidebar(st: Any) -> None:
         ):
             st.session_state["_pending_web_folder_load"] = True
             st.session_state["_pending_web_load_quiet"] = False
+            st.session_state["_pending_web_force_rescan"] = False
+
+    _render_force_reload_button(st, key="sidebar_ftp_force_reload")
 
     if mode == "FTP → web/":
         with st.expander("FTP", expanded=False):

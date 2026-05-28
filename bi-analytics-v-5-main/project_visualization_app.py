@@ -1093,10 +1093,13 @@ def main():
 
         def _perform_load_from_web_folder(*, quiet: bool = False, force_rescan: bool = False) -> None:
             """Сканирование web/, запись в SQLite и обновление session_state (как кнопка «Загрузить из web/»)."""
+            if force_rescan:
+                for _k in ("_auto_hydrated_from_db", "_auto_hydrated_from_web"):
+                    st.session_state.pop(_k, None)
             try:
                 from auto_ingest import maybe_ftp_sync_before_web_load
 
-                maybe_ftp_sync_before_web_load()
+                maybe_ftp_sync_before_web_load(log_prefix="[force_reload]")
             except Exception as _ftp_e:
                 safe_stderr_log(f"[web_load] ftp sync before load failed: {_ftp_e!r}")
 
@@ -1199,11 +1202,33 @@ def main():
                 pass
             else:
                 _perform_load_from_web_folder(quiet=_load_quiet, force_rescan=_force_rescan)
+                if _force_rescan and not _load_quiet:
+                    try:
+                        from web_schema import get_active_version_id
+                        from web_loader import read_version_to_session
+
+                        _na = get_active_version_id()
+                        if _na is not None:
+                            read_version_to_session(int(_na))
+                            st.session_state["web_version_id"] = int(_na)
+                            st.session_state["web_version_pick_id"] = int(_na)
+                            st.session_state["_auto_hydrated_from_db"] = True
+                    except Exception as _e:
+                        safe_stderr_log(f"[force_reload] read_version_to_session failed: {_e!r}")
 
         if _admin_data_ops_sidebar or _is_release_client_mode():
             try:
-                from data_ops_sidebar import apply_web_version_pick
+                from data_ops_sidebar import (
+                    apply_web_version_pick,
+                    render_admin_data_ops_sidebar,
+                    render_release_data_version_sidebar,
+                )
 
+                with st.sidebar:
+                    if _admin_data_ops_sidebar:
+                        render_admin_data_ops_sidebar(st)
+                    else:
+                        render_release_data_version_sidebar(st)
                 apply_web_version_pick(st, build_pseudo_lr_from_db=_build_pseudo_lr_from_db)
             except Exception:
                 pass

@@ -30,6 +30,7 @@ from .ui_quiet import (
 from dashboards.dev_projects_tz_matrix import (
     build_dev_tz_matrix_rows,
     build_dev_tz_matrix_rows_cached,
+    build_dev_tz_matrix_blocks_cached,
     dedupe_msp_for_developer_projects_cached,
     ensure_msp_df_for_dev_matrix,
     load_developer_projects_matrix_prefs,
@@ -31843,32 +31844,20 @@ def dashboard_developer_projects(df):
 
         if _single_project_mode:
             plab_scope = sel_projs_list[0] if sel_projs_list else ""
-            rows_tz, cap_tz = build_dev_tz_matrix_rows_cached(
+            _blocks = build_dev_tz_matrix_blocks_cached(
                 matrix_df,
                 st.session_state.get("project_data"),
                 st.session_state,
                 project_label_for_scope=plab_scope,
             )
-            plab = str(cap_tz or "").strip()
-            if (
-                not plab
-                and project_col
-                and project_col in matrix_df.columns
-                and matrix_df[project_col].notna().any()
-            ):
-                plab = str(matrix_df[project_col].dropna().astype(str).str.strip().iloc[0]).strip()
-            elif not plab and sel_projs_list:
-                plab = str(sel_projs_list[0]).strip()
-            render_dev_tz_matrix(rows_tz, "", project_labels=[plab], vertical_dates=vert_dates)
-            rows_blocks_for_export = [rows_tz]
-            if project_col and project_col in matrix_df.columns and matrix_df[project_col].notna().any():
-                export_project_names = [
-                    str(matrix_df[project_col].dropna().astype(str).str.strip().iloc[0]).strip()
-                ]
-            elif sel_projs_list:
-                export_project_names = [str(sel_projs_list[0]).strip()]
-            else:
-                export_project_names = [""]
+            if not _blocks:
+                st.info("Нет строк MSP для выбранного проекта.")
+                return
+            _names = [str(lbl or "").strip() for lbl, _ in _blocks]
+            _row_lists = [rows for _, rows in _blocks]
+            render_dev_tz_matrix(_row_lists, "", project_labels=_names, vertical_dates=vert_dates)
+            rows_blocks_for_export = _row_lists
+            export_project_names = _names
         elif _show_all_projects or len(sel_projs_list) > 1:
             raw_names = sorted(
                 matrix_df[project_col].dropna().astype(str).str.strip().unique().tolist()
@@ -31906,14 +31895,15 @@ def dashboard_developer_projects(df):
                 sub = matrix_df[matrix_df[project_col].astype(str).str.strip().isin(raws)]
                 if sub.empty:
                     continue
-                rows_p, _cap = build_dev_tz_matrix_rows_cached(
+                _sub_blocks = build_dev_tz_matrix_blocks_cached(
                     sub,
                     st.session_state.get("project_data"),
                     st.session_state,
                     project_label_for_scope=str(label or "").strip(),
                 )
-                blocks.append(rows_p)
-                names.append(label)
+                for blab, rows_p in _sub_blocks:
+                    blocks.append(rows_p)
+                    names.append(str(blab or label or "").strip())
             if not blocks:
                 st.info("Нет строк MSP для проектов в выборке.")
                 return
