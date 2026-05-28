@@ -240,20 +240,37 @@ _TABLE_SORT_JS = r"""
 
   function reportFrameHeight() {
     try {
-      var root = document.querySelector(".budget-deviation-table-wrap")
+      var root = document.querySelector(".pf-dates-table-wrap")
+        || document.querySelector(".gantt-schedule-table-wrap")
+        || document.querySelector(".budget-deviation-table-wrap")
         || document.querySelector(".bi-sortable-html-root")
         || document.body;
-      var el = document.documentElement;
-      var bottom = 0;
+      var compact = root && (
+        root.classList.contains("pf-dates-table-wrap")
+        || root.classList.contains("gantt-schedule-table-wrap")
+      );
+      var h = 0;
       if (root && root.getBoundingClientRect) {
         var r = root.getBoundingClientRect();
-        bottom = r.bottom + (window.scrollY || 0);
+        var bottom = r.bottom + (window.scrollY || 0);
+        if (compact) {
+          var tbl = root.querySelector("table.pf-dates-table")
+            || root.querySelector("table.bi-sortable-table");
+          if (tbl && tbl.getBoundingClientRect) {
+            var tr = tbl.getBoundingClientRect();
+            h = Math.ceil(tr.bottom + (window.scrollY || 0)) + 6;
+          } else {
+            h = Math.ceil(bottom) + 6;
+          }
+        } else {
+          var el = document.documentElement;
+          h = Math.ceil(Math.max(
+            bottom,
+            el.scrollHeight || 0,
+            (document.body && document.body.scrollHeight) || 0
+          )) + 14;
+        }
       }
-      var h = Math.ceil(Math.max(
-        bottom,
-        el.scrollHeight || 0,
-        (document.body && document.body.scrollHeight) || 0
-      )) + 14;
       if (h > 0) {
         window.parent.postMessage({ type: "streamlit:setFrameHeight", height: h }, "*");
       }
@@ -275,7 +292,9 @@ _TABLE_SORT_JS = r"""
   bootDoc(document);
   try {
     var ro = new ResizeObserver(function () { reportFrameHeight(); });
-    var tgt = document.querySelector(".budget-deviation-table-wrap")
+    var tgt = document.querySelector(".pf-dates-table-wrap")
+      || document.querySelector(".gantt-schedule-table-wrap")
+      || document.querySelector(".budget-deviation-table-wrap")
       || document.querySelector(".bi-sortable-html-root")
       || document.body;
     if (tgt) ro.observe(tgt);
@@ -285,6 +304,28 @@ _TABLE_SORT_JS = r"""
 
 _TABLE_SORT_SCRIPT = f"<script>{_TABLE_SORT_JS}</script>"
 
+_COMPACT_FRAME_FIT_JS = r"""
+(function () {
+  function fit() {
+    try {
+      var root = document.querySelector(".pf-dates-table-wrap")
+        || document.querySelector(".gantt-schedule-table-wrap")
+        || document.querySelector(".bi-sortable-html-root")
+        || document.body;
+      var tbl = root.querySelector("table") || root;
+      var box = tbl.getBoundingClientRect();
+      var h = Math.ceil(box.bottom + (window.scrollY || 0)) + 4;
+      if (h > 0) {
+        window.parent.postMessage({ type: "streamlit:setFrameHeight", height: h }, "*");
+      }
+    } catch (e) {}
+  }
+  fit();
+  window.addEventListener("load", fit);
+  [0, 40, 120, 300, 800].forEach(function (ms) { setTimeout(fit, ms); });
+})();
+"""
+
 _IFRAME_SHELL_CSS = """
 <style>
 html, body {
@@ -293,6 +334,11 @@ html, body {
   color: #e0e0e0;
   font-family: Inter, system-ui, sans-serif;
 }
+
+.pf-dates-table-wrap,.gantt-schedule-table-wrap{display:block;width:100%;margin:0;padding:0}
+html,body{height:auto!important;min-height:0!important;overflow:visible!important}
+.bi-sortable-html-root{display:block;width:100%;margin:0;padding:0}
+
 .bi-sortable-html-root { width: 100%; max-width: 100%; }
 .bi-sortable-html-root table.bi-sortable-table {
   border-collapse: separate !important;
@@ -437,6 +483,10 @@ def _estimate_html_block_height(html: str) -> int:
         row_h = 32
         extra = 28
         cap = 4800
+    elif "pf-dates-table-wrap" in html_l or "pf-dates-table" in html_l:
+        thead_h = 42
+        row_h = 27
+        extra = 6
     elif "bi-sortable-table" in html_l:
         thead_h = 68
         row_h = 34
@@ -453,6 +503,8 @@ def _estimate_html_block_height(html: str) -> int:
     est = thead_h + n_plain * row_h + n_group * (row_h + 8) + n_total * (row_h + 10) + extra
     if "budget-deviation-table-wrap" in html_l:
         return int(max(120, est))
+    if "pf-dates-table-wrap" in html_l or "pf-dates-table" in html_l:
+        return int(max(72, est))
     return int(min(cap, max(120, est)))
 
 
@@ -499,27 +551,60 @@ def _build_sortable_html_document(html: str) -> str:
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"{style_block}{_iframe_shell_css(html)}{fs_css}"
         "</head><body>"
-        f"<div class='bi-sortable-html-root'>{body}{_TABLE_SORT_SCRIPT}</div>"
+        f"<div class='bi-sortable-html-root'>{body}{_TABLE_SORT_SCRIPT}"
+        + (
+            f"<script>{_COMPACT_FRAME_FIT_JS}</script>"
+            if ("pf-dates-table-wrap" in html_l or "pf-dates-table" in html_l or "gantt-schedule-table-wrap" in html_l)
+            else ""
+        )
+        + "</div>"
         "</body></html>"
     )
 
 
-def render_sortable_html_block(html: str) -> None:
-    """Таблица + JS в iframe (components.html); высота подстраивается скриптом."""
+def _html_block_compact(html: str) -> bool:
+    html_l = html or ""
+    return (
+        "pf-dates-table-wrap" in html_l
+        or "pf-dates-table" in html_l
+        or "gantt-schedule-table-wrap" in html_l
+    )
+
+
+def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None) -> None:
+    """Таблица + JS; для plan-fact — st.html (высота по контенту), иначе components.html."""
     if not html:
         return
     if not table_sort_inject_enabled():
         st.markdown(html, unsafe_allow_html=True)
         return
     doc = _build_sortable_html_document(html)
+    _compact = (
+        _html_block_compact(html)
+        if compact_iframe is None
+        else bool(compact_iframe)
+    )
+    if _compact:
+        _h_compact = _estimate_html_block_height(html)
+        try:
+            st.html(doc, width="stretch", unsafe_allow_javascript=True)
+            return
+        except Exception:
+            pass
+        components.html(doc, height=max(72, _h_compact), scrolling=False)
+        return
     _h = _estimate_html_block_height(html)
     _no_iframe_scroll = (
         "gdrs-summary-table-wrap",
         "budget-deviation-table-wrap",
+        "pf-dates-table-wrap",
+        "gantt-schedule-table-wrap",
     )
     _scroll = not any(m in (html or "") for m in _no_iframe_scroll)
     if "budget-deviation-table-wrap" in (html or ""):
         _h = int(_h) + 28
+    elif _compact:
+        _scroll = False
     _h = _h + (4 if not _scroll else 0)
     components.html(doc, height=_h, scrolling=_scroll)
 

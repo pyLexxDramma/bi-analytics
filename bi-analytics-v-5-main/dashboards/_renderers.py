@@ -208,7 +208,7 @@ _TABLE_CSS = """
 .rendered-table-wrap .rendered-table {width:max-content; min-width:100%}
 .pf-dates-table-wrap {
   overflow-x:auto; overflow-y:visible; min-width:0; max-width:100%; width:100%;
-  margin:0.25rem 0 0.35rem 0; -webkit-overflow-scrolling:touch; scrollbar-gutter:stable;
+  margin:0.15rem 0 0.1rem 0; -webkit-overflow-scrolling:touch; scrollbar-gutter:stable;
 }
 .pf-zos-table-wrap{margin-bottom:0.2rem!important}
 .pf-dates-table-wrap .pf-dates-table {width:max-content; min-width:100%; table-layout:auto}
@@ -1443,6 +1443,8 @@ _DEV_REASONS_FULL_TABLE_CSS = """
 .dev-txt-ok { color:#46d68a !important; font-weight:600; }
 .dev-txt-bad { color:#ff5454 !important; font-weight:600; }
 .dev-txt-zero { color:#8899aa !important; font-weight:600; }
+.dev-reasons-table td.dev-reason-cell,
+.dev-reasons-table td.dev-reason-cell * { color:#e8eaed !important; font-weight:600; }
 .dev-reasons-table td.dev-bg-lblue.dev-txt-bad,
 .dev-reasons-table td.dev-bg-lblue.dev-txt-ok,
 .dev-reasons-table td.dev-bg-lblue.dev-txt-zero { background:rgba(214,234,248,0.14) !important; }
@@ -1770,10 +1772,9 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
                     bucket_key = str(raw or "").strip()
                     bx = _deviations_reason_bucket_colors().get(bucket_key, "")
                     if bx:
-                        tc = _deviations_contrast_text_on_fill(bx)
                         extra_style = (
                             f"border-left:4px solid {bx};padding-left:6px;"
-                            f"font-weight:600;color:{tc} !important;"
+                            f"font-weight:600;color:#e8eaed !important;"
                         )
                 esc = html_module.escape(txt) if str(txt).strip() != "" else ""
                 _st = f' style="{extra_style}"' if extra_style else ""
@@ -2192,8 +2193,8 @@ def _apply_vertical_category_bar_width(fig: go.Figure) -> go.Figure:
     минимальный зазор между ними (исполнительная документация и др.).
     """
     try:
-        fig.update_layout(bargap=0.28, bargroupgap=0.12)
-        fig.update_traces(width=0.68, selector=dict(type="bar"))
+        fig.update_layout(bargap=0.42, bargroupgap=0.14)
+        fig.update_traces(width=0.46, selector=dict(type="bar"))
     except Exception:
         pass
     return fig
@@ -4350,18 +4351,24 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             textposition="outside", textfont=dict(size=14, color="white")
         )
         fig = _apply_finance_bar_label_layout(fig)
+        fig = _apply_vertical_category_bar_width(fig)
         fig = apply_chart_background(fig)
         _ymax = float(reason_counts["Количество"].max() or 0)
         n = len(reason_counts)
-        _bar_h = max(480, int(140 + n * 56))
-        _y_top = max(1.0, _ymax * 1.42 + 8.0)
+        _bar_h = max(960, int(560 + n * 112))
+        _y_top = max(1.0, _ymax * 1.48 + 12.0)
         _gdrs_rc = _plotly_bargaps_sparse_x_like_gdrs(n)
         _ly_rc = dict(
             height=_bar_h,
-            margin=dict(l=24, r=24, t=96, b=140 if n > 6 else 100),
+            margin=dict(l=48, r=28, t=48, b=240 if n > 6 else 168),
             yaxis=dict(
                 range=[0, _y_top],
-                title="Количество",
+                title=dict(text="Количество", standoff=10, font=dict(size=14, color="#e8eef5")),
+                automargin=True,
+                tickfont=dict(size=13, color="#e8eef5"),
+            ),
+            xaxis=dict(
+                title=dict(text="Причина отклонений", standoff=44, font=dict(size=14, color="#e8eef5")),
                 automargin=True,
             ),
         )
@@ -4369,7 +4376,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             _ly_rc.update(_gdrs_rc)
         fig.update_layout(**_ly_rc)
         if n > 6:
-            fig.update_xaxes(tickangle=-45)
+            fig.update_xaxes(tickangle=-45, ticklabelstandoff=14)
         else:
             fig.update_xaxes(
                 tickangle=0,
@@ -4388,7 +4395,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
 
         # Круг «Доли причин»: в секторах только %; причины — легенда столбиком слева.
         n_reasons = len(reason_counts)
-        _pie_h = int(max(980, 860 + min(n_reasons, 28) * 34))
+        _pie_h = int(max(1280, 1080 + min(n_reasons, 28) * 44))
         fig = px.pie(
             reason_counts,
             values="Количество",
@@ -4396,16 +4403,16 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             title=None,
             hole=0.28,
         )
-        _pie_font = 18 if n_reasons <= 8 else 17 if n_reasons <= 12 else 15
-        _lm_reason = min(380, max(236, int(200 + n_reasons * 6)))
+        _pie_font = 22 if n_reasons <= 8 else 20 if n_reasons <= 12 else 18
+        _lm_reason = min(280, max(180, int(160 + n_reasons * 4)))
         fig = _pie_apply_percent_inside_legend_left(
             fig,
             height=_pie_h,
             pct_fontsize=_pie_font,
-            legend_fontsize=13,
+            legend_fontsize=16,
             left_margin=_lm_reason,
-            domain_x=(0.34, 0.92),
-            domain_y=(0.12, 0.89),
+            domain_x=(0.20, 0.98),
+            domain_y=(0.04, 0.96),
             extra_layout=dict(font=dict(family="Inter, system-ui, sans-serif")),
         )
         fig.update_traces(
@@ -4625,9 +4632,8 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             _clr_tbl = _clr_map_rt.get(str(_bk_tbl).strip(), "") if _clr_map_rt else ""
             _rs_esc = html_module.escape(rs)
             if _clr_tbl:
-                _tc_rs = _deviations_contrast_text_on_fill(_clr_tbl)
                 _tbl_m.append(
-                    f'<td style="border-left:4px solid {_clr_tbl};padding-left:6px;color:{_tc_rs};font-weight:600">{_rs_esc}</td>'
+                    f'<td style="border-left:4px solid {_clr_tbl};padding-left:6px;color:#e8eaed;font-weight:600">{_rs_esc}</td>'
                 )
             else:
                 _tbl_m.append(f"<td>{_rs_esc}</td>")
@@ -5084,7 +5090,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         _ord_tz = list(DEVIATIONS_REASON_BUCKET_ORDER)
         _clr_tz = _deviations_reason_bucket_colors()
         _n_per_tz = len(_pl_tz)
-        _h_tz = int(max(560, 420 + min(_n_per_tz, 36) * 18))
+        _h_tz = int(max(1120, 840 + min(_n_per_tz, 36) * 36))
         fig_tz = px.bar(
             _agg_tz,
             x="_per_lbl",
@@ -5102,7 +5108,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         )
         fig_tz.update_layout(
             barmode="stack",
-            bargap=0.32,
+            bargap=0.22,
             legend=dict(
                 title=dict(text="Типовая причина"),
                 orientation="v",
@@ -5112,15 +5118,19 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 xanchor="left",
                 font=dict(size=12),
             ),
-            margin=dict(l=64, r=280, t=52, b=180),
+            margin=dict(l=48, r=200, t=48, b=260),
             height=_h_tz,
             xaxis=dict(
-                title=str(period_label),
+                title=dict(text=str(period_label), standoff=48, font=dict(size=13, color="#e8eef5")),
                 tickangle=-45,
                 automargin=True,
-                title_standoff=22,
+                tickfont=dict(size=12, color="#e8eef5"),
             ),
-            yaxis=dict(title="Количество", automargin=True),
+            yaxis=dict(
+                title=dict(text="Количество", standoff=8, font=dict(size=13, color="#e8eef5")),
+                automargin=True,
+                tickfont=dict(size=12, color="#e8eef5"),
+            ),
         )
         if _n_per_tz > 18:
             fig_tz.update_xaxes(ticklabelstep=2)
@@ -5135,8 +5145,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             if getattr(tr, "type", None) == "bar":
                 mc = getattr(tr.marker, "color", None)
                 if isinstance(mc, str):
-                    tc = _deviations_contrast_text_on_fill(mc)
-                    tr.update(insidetextfont=dict(color=tc, size=12))
+                    tr.update(insidetextfont=dict(color="#f0f4f8", size=12))
         _tot_tz = (
             _agg_tz.groupby("_per_lbl", observed=False)["Количество"]
             .sum()
@@ -5307,7 +5316,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             )
             # Группировка столбцов: легенда справа, как у «По причинам», чтобы не наезжать на ось X
             _n_per_top = int(len(_pd_top_periods) if _pd_top_periods else project_data["period"].nunique(dropna=True) or 0)
-            _top_h = int(max(640, 420 + min(_n_per_top, 36) * 22))
+            _top_h = int(max(1280, 840 + min(_n_per_top, 36) * 44))
             fig.update_layout(
                 barmode="group",
                 bargap=0.16,
@@ -5323,14 +5332,18 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     traceorder="normal",
                     itemsizing="constant",
                 ),
-                margin=dict(l=64, r=300, t=36, b=200),
+                margin=dict(l=56, r=240, t=36, b=240),
                 xaxis=dict(
-                    title="",
+                    title=dict(text="Период", standoff=48, font=dict(size=13, color="#e8eef5")),
                     tickangle=-45,
-                    tickfont=dict(size=12),
+                    tickfont=dict(size=12, color="#e8eef5"),
                     automargin=True,
                 ),
-                yaxis=dict(title="Дни отклонений", automargin=True, tickfont=dict(size=12)),
+                yaxis=dict(
+                    title=dict(text="Дни отклонения", standoff=8, font=dict(size=13, color="#e8eef5")),
+                    automargin=True,
+                    tickfont=dict(size=12, color="#e8eef5"),
+                ),
                 height=_top_h,
             )
             _sparse_top = _plotly_bargaps_sparse_x_like_gdrs(_n_per_top)
@@ -5477,7 +5490,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 _wrap = 1
                 _facet_rows = max(1, int(np.ceil(_n_proj / float(_wrap))))
                 _n_per_facet = int(len(_periods_grid) if _periods_grid else reason_data["period"].nunique(dropna=True) or 0)
-                _panel_h = int(max(440, 360 + min(_n_per_facet, 32) * 18))
+                _panel_h = int(max(520, 420 + min(_n_per_facet, 32) * 22))
                 fig = px.bar(
                     reason_data,
                     x="period",
@@ -5516,7 +5529,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         traceorder="normal",
                         itemsizing="constant",
                     ),
-                    margin=dict(l=72, r=300, t=120, b=318),
+                    margin=dict(l=56, r=260, t=96, b=360),
                     height=min(
                         3200,
                         120 + _facet_rows * (_panel_h + 64),
@@ -5528,16 +5541,15 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 fig.update_layout(**_facet_ly)
                 fig.update_xaxes(
                     tickangle=-45,
-                    title=_period_x_title,
                     automargin=True,
-                    tickfont=dict(size=11),
-                    title_standoff=42,
-                    ticklabelstandoff=10,
+                    tickfont=dict(size=11, color="#e8eef5"),
+                    title=dict(text=_period_x_title, standoff=48, font=dict(size=12, color="#e8eef5")),
+                    ticklabelstandoff=12,
                 )
                 fig.update_yaxes(
-                    title="Количество отклонений",
+                    title=dict(text="Количество отклонений", standoff=8, font=dict(size=12, color="#e8eef5")),
                     automargin=True,
-                    tickfont=dict(size=11),
+                    tickfont=dict(size=11, color="#e8eef5"),
                 )
                 if _n_per_facet > 18:
                     fig.update_xaxes(ticklabelstep=2)
@@ -5567,7 +5579,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     text="_seg_lbl",
                 )
                 _n_per_single = int(len(_periods_grid) if _periods_grid else reason_data["period"].nunique(dropna=True) or 0)
-                _single_h = int(max(600, 440 + min(_n_per_single, 36) * 20))
+                _single_h = int(max(1120, 880 + min(_n_per_single, 36) * 40))
                 _single_ly = dict(
                     barmode="stack",
                     bargap=0.34,
@@ -5583,18 +5595,17 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         traceorder="normal",
                         itemsizing="constant",
                     ),
-                    margin=dict(l=64, r=300, t=54, b=236),
+                    margin=dict(l=56, r=260, t=48, b=280),
                     xaxis=dict(
-                        title=_period_x_title,
+                        title=dict(text=_period_x_title, standoff=40, font=dict(size=13, color="#e8eef5")),
                         tickangle=-45,
-                        tickfont=dict(size=12),
+                        tickfont=dict(size=12, color="#e8eef5"),
                         automargin=True,
-                        title_standoff=28,
                     ),
                     yaxis=dict(
-                        title="Количество отклонений",
+                        title=dict(text="Количество отклонений", standoff=8, font=dict(size=13, color="#e8eef5")),
                         automargin=True,
-                        tickfont=dict(size=12),
+                        tickfont=dict(size=12, color="#e8eef5"),
                     ),
                     height=_single_h,
                 )
@@ -7653,29 +7664,32 @@ def dashboard_plan_fact_dates(df):
             for y in y_order_local:
                 for line in str(y).split("<br>"):
                     max_line_len = max(max_line_len, len(line))
-            px_per_char = max(6.2, _PF_GANTT_TASK_FONT * 0.62)
-            label_px = int(8 + max_line_len * px_per_char + 12)
-            label_px = min(560, max(120, label_px))
-            return round(min(0.46, max(0.12, (label_px + 8) / 980.0)), 4)
+            px_per_char = max(5.8, _PF_GANTT_TASK_FONT * 0.56)
+            label_px = int(6 + max_line_len * px_per_char + 8)
+            label_px = min(320, max(72, label_px))
+            return round(min(0.30, max(0.08, (label_px + 2) / 1280.0)), 4)
 
-        def _pf_gantt_y_label_annotations(y_order_local: list[str]) -> list[dict]:
+        def _pf_gantt_y_label_annotations(
+            y_order_local: list[str], *, domain_start: float
+        ) -> list[dict]:
             out: list[dict] = []
+            _x_lab = max(0.015, float(domain_start) - 0.008)
             for y in y_order_local:
                 txt = str(y).strip()
                 if not txt:
                     continue
                 out.append(
                     dict(
-                        x=0.002,
+                        x=_x_lab,
                         y=y,
                         xref="paper",
                         yref="y",
                         text=txt,
                         showarrow=False,
-                        xanchor="left",
+                        xanchor="right",
                         yanchor="middle",
-                        xshift=2,
-                        align="left",
+                        xshift=0,
+                        align="right",
                         font=dict(
                             size=_PF_GANTT_TASK_FONT,
                             color=TABLE_TEXT_COLOR,
@@ -7688,7 +7702,7 @@ def dashboard_plan_fact_dates(df):
         def _pf_apply_gantt_y_labels(fig_obj, y_order_local: list[str]) -> int:
             n_local = len(y_order_local)
             domain_start = _pf_gantt_label_domain(y_order_local)
-            y_ann = _pf_gantt_y_label_annotations(y_order_local)
+            y_ann = _pf_gantt_y_label_annotations(y_order_local, domain_start=domain_start)
             fig_obj.update_yaxes(
                 categoryorder="array",
                 categoryarray=list(y_order_local),
@@ -7703,7 +7717,7 @@ def dashboard_plan_fact_dates(df):
                 fig_obj.update_layout(annotations=y_ann)
             return 4
 
-        _PF_GANTT_VIEWPORT = 720
+        _PF_GANTT_VIEWPORT = 1720  # видимая высота блока графика (×2 от 860)
         _PF_GANTT_LEGEND = dict(
             orientation="h",
             yanchor="top",
@@ -7780,7 +7794,7 @@ def dashboard_plan_fact_dates(df):
                 yaxis_title=None,
                 height=_chart_h,
                 xaxis=dict(type="date", tickformat="%d.%m.%Y", automargin=True),
-                margin=dict(l=4, r=72, t=8, b=36),
+                margin=dict(l=4, r=72, t=12, b=56),
                 legend=_PF_GANTT_LEGEND,
             )
             _pf_apply_gantt_y_labels(fig, y_order)
@@ -7904,7 +7918,6 @@ def dashboard_plan_fact_dates(df):
                 barmode="group",
                 autosize=True,
                 width=None,
-                xaxis_title="Дата (от начала шкалы до окончания)",
                 yaxis_title=None,
                 height=_chart_h,
                 xaxis=dict(
@@ -7912,8 +7925,9 @@ def dashboard_plan_fact_dates(df):
                     tickformat="%d.%m.%Y",
                     automargin=True,
                     range=[_origin_ms, _x_max_ms + _x_pad_ms],
+                    title=dict(text="Дата (от начала шкалы до окончания)", standoff=22, font=dict(size=13, color="#e8eef5")),
                 ),
-                margin=dict(l=4, r=72, t=8, b=36),
+                margin=dict(l=4, r=56, t=12, b=88),
                 legend=_PF_GANTT_LEGEND,
                 bargap=0.02,
                 bargroupgap=0.03,
@@ -33446,10 +33460,10 @@ def _project_schedule_gantt_label_column_layout(
     for y in y_labels or [""]:
         for line in str(y).split("<br>"):
             max_line_len = max(max_line_len, len(line))
-    px_per_char = max(6.2, float(task_font) * 0.62)
-    label_px = int(8 + max_line_len * px_per_char + 12)
-    label_px = min(560, max(120, label_px))
-    domain_start = round(min(0.46, max(0.12, (label_px + 8) / 980.0)), 4)
+    px_per_char = max(5.8, float(task_font) * 0.56)
+    label_px = int(6 + max_line_len * px_per_char + 8)
+    label_px = min(380, max(88, label_px))
+    domain_start = round(min(0.30, max(0.08, (label_px + 2) / 1280.0)), 4)
     return 4, domain_start
 
 
@@ -33473,9 +33487,11 @@ def _project_schedule_gantt_y_label_annotations(
     *,
     task_font: int,
     numeric_row_y: bool = False,
+    domain_start: float = 0.12,
 ) -> list[dict]:
-    """Подписи задач в левой колонке figure (paper x≈0), без широкого margin.l."""
+    """Подписи задач по левому краю колонки названий (как в таблице задач)."""
     out: list[dict] = []
+    _x_lab = max(0.015, float(domain_start) - 0.008)
     for i, y in enumerate(y_labels or []):
         txt = str(y).strip()
         if not txt:
@@ -33483,16 +33499,16 @@ def _project_schedule_gantt_y_label_annotations(
         y_pos = float(i) if numeric_row_y else y
         out.append(
             dict(
-                x=0.002,
+                x=_x_lab,
                 y=y_pos,
                 xref="paper",
                 yref="y",
                 text=txt,
                 showarrow=False,
-                xanchor="left",
+                xanchor="right",
                 yanchor="middle",
-                xshift=2,
-                align="left",
+                xshift=0,
+                align="right",
                 font=dict(size=task_font, color=TABLE_TEXT_COLOR, family="Arial"),
             )
         )
@@ -33518,6 +33534,7 @@ def _project_schedule_gantt_apply_y_labels(
         y_labels,
         task_font=task_font,
         numeric_row_y=numeric_row_y,
+        domain_start=domain_start,
     )
     if numeric_row_y:
         _lane_pad = 0.35
@@ -34599,7 +34616,7 @@ def dashboard_project_schedule_chart(df):
             l=8,
             r=220 if policy.get("is_dense") else 200,
             t=36,
-            b=88,
+            b=112,
         )
         fig.update_layout(
             height=chart_h,
@@ -35014,9 +35031,9 @@ def dashboard_project_schedule_chart(df):
             autosize=True,
             width=None,
             height=chart_h,
-            xaxis_title="Период",
+            xaxis_title=dict(text="Период", standoff=22),
             yaxis_title=None,
-            margin=dict(l=left_m, r=_right_m, t=36, b=88),
+            margin=dict(l=left_m, r=_right_m, t=36, b=112),
             showlegend=False,
             bargap=0.02,
             bargroupgap=0.03,
@@ -35187,7 +35204,7 @@ def dashboard_project_schedule_chart(df):
             l=8,
             r=240 if policy.get("is_dense") else 220,
             t=36,
-            b=88,
+            b=112,
         )
         fig.update_layout(
             height=chart_h,

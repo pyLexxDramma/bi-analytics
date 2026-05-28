@@ -1757,6 +1757,42 @@ def render_report_html_table(
     html = mark_html_table_sortable(html)
     _kp = key_prefix or f"tbl_{_export_file_stem(file_stem)}"
     _pop_key = f"{_kp}_dl"
+    _compact_tbl = (
+        "pf-dates-table-wrap" in (html or "")
+        or file_stem == "plan_fact_dates"
+    )
+
+    def _render_table_block() -> None:
+        try:
+            from dashboards.table_sort_inject import render_sortable_html_block
+
+            render_sortable_html_block(html, compact_iframe=_compact_tbl)
+        except Exception:
+            st.markdown(html, unsafe_allow_html=True)
+
+    if _compact_tbl:
+        st.markdown(
+            "<style>"
+            "div[data-testid='stHtml']{margin:0!important;padding:0!important;}"
+            "div[data-testid='stHtml'] iframe{display:block;margin:0!important;padding:0!important;}"
+            "div[data-testid='stElementContainer']:has([data-testid='stHtml']) "
+            "{margin-bottom:0!important;padding-bottom:0!important;}"
+            "div[data-testid='stVerticalBlock']:has([data-testid='stPopover']) "
+            "{margin-top:0!important;padding-top:0!important;}"
+            "div[data-testid='stExpander'] details[open]>div{padding-bottom:0.35rem!important;}"
+            "</style>",
+            unsafe_allow_html=True,
+        )
+        _render_table_block()
+        if export_df is not None:
+            render_dataframe_excel_csv_downloads(
+                export_df,
+                file_stem=file_stem,
+                key_prefix=_kp,
+                popover_key=_pop_key,
+            )
+        return
+
     try:
         _tbl_block = st.container(border=False, gap="xxsmall")
     except TypeError:
@@ -1765,12 +1801,7 @@ def render_report_html_table(
         except TypeError:
             _tbl_block = st.container(border=False)
     with _tbl_block:
-        try:
-            from dashboards.table_sort_inject import render_sortable_html_block
-
-            render_sortable_html_block(html)
-        except Exception:
-            st.markdown(html, unsafe_allow_html=True)
+        _render_table_block()
         if export_df is not None:
             render_dataframe_excel_csv_downloads(
                 export_df,
