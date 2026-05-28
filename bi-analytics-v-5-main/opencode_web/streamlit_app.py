@@ -67,6 +67,9 @@ def render_connection_status(browser_url: str) -> None:
     if version:
         st.caption(f"Версия сервера: `{version}`")
 
+    ws_err = str(st.session_state.get("workspace_error", "")).strip()
+    if ws_err and st.session_state.get("opencode_health_ok"):
+        st.error(ws_err)
     err = str(st.session_state.get("tunnel_error", "")).strip()
     if err:
         st.error(err)

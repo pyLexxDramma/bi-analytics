@@ -20,7 +20,8 @@ services:
       - opencode_share:/root/.local/share/opencode
       - opencode_state:/root/.local/state
       - opencode_cache:/root/.cache
-      - ./workspace:/workspace
+      # Only DB from host; project files come from image COPY (empty ./workspace hides them).
+      - ./workspace/web_data.db:/workspace/web_data.db
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4096/global/health >/dev/null || exit 1"]
       interval: 5s

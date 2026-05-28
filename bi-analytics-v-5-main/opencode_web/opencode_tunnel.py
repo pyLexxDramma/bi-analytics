@@ -278,13 +278,71 @@ def get_opencode_base_url() -> str:
     return DEFAULT_OPENCODE_URL
 
 
+
+def probe_ssh_workspace() -> tuple[bool, str]:
+    """Check /workspace/opencode.json on the SSH host (Docker bind mount often empty)."""
+    if not ENABLE_SSH_TUNNEL or not AI_SSH_HOST or not AI_SSH_PASSWORD:
+        return True, ""
+    try:
+        import paramiko
+    except ImportError:
+        return True, ""
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        client.connect(
+            AI_SSH_HOST,
+            port=AI_SSH_PORT,
+            username=AI_SSH_USER,
+            password=AI_SSH_PASSWORD,
+            timeout=12,
+            allow_agent=False,
+            look_for_keys=False,
+        )
+        cmd = (
+            "docker exec xca-opencode test -f /workspace/opencode.json 2>/dev/null "
+            "|| test -f /workspace/opencode.json"
+        )
+        _, stdout, stderr = client.exec_command(cmd, timeout=15)
+        code = stdout.channel.recv_exit_status()
+        detail = (stdout.read() + stderr.read()).decode("utf-8", errors="replace").strip()
+        client.close()
+        if code == 0:
+            return True, ""
+        return False, (
+            "На сервере пустой /workspace (нет opencode.json). "
+            "В каталоге opencode_web: git pull, затем docker compose build --no-cache && docker compose up -d. "
+            "Либо уберите bind ./workspace из compose (уже в репозитории) и пересоберите образ."
+        )
+    except Exception as exc:
+        return False, f"SSH probe: {exc}"
+
 def get_opencode_browser_url() -> str:
-    from opencode_ui_url import build_xca_ui_url, normalize_opencode_browser_url
+    from opencode_ui_url import (
+        DEFAULT_XCA_WORKSPACE,
+        build_xca_ui_url,
+        normalize_opencode_browser_url,
+        workspace_slug,
+    )
 
     public_base = os.getenv("OPENCODE_PUBLIC_UI_BASE", "").strip()
-    if public_base:
-        return normalize_opencode_browser_url(build_xca_ui_url(public_base))
-    return normalize_opencode_browser_url(build_xca_ui_url(get_opencode_base_url()))
+    base = public_base or get_opencode_base_url()
+    url = normalize_opencode_browser_url(build_xca_ui_url(base))
+    try:
+        r = requests.post(
+            f"{base.rstrip('/')}/session",
+            params={"directory": DEFAULT_XCA_WORKSPACE},
+            json={"title": "BI Analytics"},
+            timeout=(2.0, 8.0),
+        )
+        if r.status_code < 400:
+            sid = str(r.json().get("id", "")).strip()
+            if sid:
+                slug = workspace_slug()
+                return f"{base.rstrip('/')}/{slug}/session/{sid}"
+    except requests.RequestException:
+        pass
+    return url
 
 
 def check_opencode_health(opencode_url: str) -> tuple[bool, str]:
@@ -325,9 +383,15 @@ def bootstrap_backend() -> None:
     ok, detail = check_opencode_health(get_opencode_base_url())
     st.session_state.opencode_health_ok = ok
     st.session_state.opencode_version = detail if ok else ""
+    ws_ok, ws_err = probe_ssh_workspace() if ok else (True, "")
+    st.session_state.workspace_ok = ws_ok
+    st.session_state.workspace_error = ws_err
     if not ok and not st.session_state.tunnel_error:
         st.session_state.tunnel_error = detail
-    if ok:
+    elif ok and not ws_ok and ws_err:
+        st.session_state.tunnel_error = ws_err
+        add_connection_log("Workspace probe", ws_err)
+    if ok and ws_ok:
         st.session_state.tunnel_error = ""
         add_connection_log("OpenCode health", "ok")
 
