@@ -1,24 +1,24 @@
-﻿# Deploy to VPS on push to main/master, or manually (Actions → Deploy to VPS → Run workflow).
+﻿# Автодеплой ai.conall.ru при push в release (после merge main → release).
 #
-# GitHub → Settings → Secrets and variables → Actions → Repository secrets:
-#   VPS_HOST          — IP или hostname (например 94.141.105.174)
-#   VPS_USER          — SSH-пользователь (например dashai)
-#   VPS_PORT          — порт SSH (строка, например 2274)
-#   VPS_SSH_KEY       — приватный ключ, парный к публичному в authorized_keys на сервере
-#   VPS_DEPLOY_PATH   — абсолютный путь к клону репозитория (корень git или bi-analytics-v-5-main)
+# Отдельно от Deploy release (сервер клиента, секреты DEPLOY_*).
 #
-# Optional:
-#   VPS_SSH_KNOWN_HOSTS — вывод: ssh-keyscan -p PORT HOST  (защита от MITM для ssh-action)
+# GitHub → Settings → Secrets and variables → Actions:
+#   VPS_HOST          — ai.conall.ru или IP
+#   VPS_USER          — SSH-пользователь
+#   VPS_PORT          — порт SSH (например 2274)
+#   VPS_SSH_KEY       — приватный ключ PEM
+#   VPS_DEPLOY_PATH   — путь к git-клону на ai.conall.ru
 #
-name: Deploy to VPS
+name: Deploy ai.conall.ru
 
 on:
   push:
-    branches: [main, master]
+    branches: [release]
   workflow_dispatch:
 
 jobs:
   deploy:
+    if: ${{ secrets.VPS_HOST != '' }}
     runs-on: ubuntu-latest
     steps:
       - name: Deploy over SSH
@@ -34,8 +34,8 @@ jobs:
             set -e
             cd "${{ secrets.VPS_DEPLOY_PATH }}"
             git fetch origin
-            git checkout "${{ github.ref_name }}"
-            git reset --hard "origin/${{ github.ref_name }}"
+            git checkout release
+            git reset --hard origin/release
             DEPLOY_SCRIPT=""
             if [[ -x bi-analytics-v-5-main/scripts/server_deploy.sh ]]; then
               DEPLOY_SCRIPT="bi-analytics-v-5-main/scripts/server_deploy.sh"
