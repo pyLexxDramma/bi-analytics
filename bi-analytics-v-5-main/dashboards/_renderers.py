@@ -9494,8 +9494,15 @@ _FINANCE_TABLE_HTML_KW = {
     "total_row_font_css": "font-weight:900;font-size:1.38em;color:#ffffff;",
     "table_font_size_px": 18,
 }
-_BDDS_TABLE_HTML_KW = _FINANCE_TABLE_HTML_KW
-_BDR_TABLE_HTML_KW = _FINANCE_TABLE_HTML_KW
+_BDDS_TABLE_HTML_KW = {
+    **_FINANCE_TABLE_HTML_KW,
+    "table_font_size_px": 16,
+    "header_font_css": "font-weight:900;font-size:1.20em;",
+    "group_row_font_css": "font-weight:800;font-size:1.12em;",
+    "label_columns_font_css": "font-weight:800;font-size:1.08em;",
+    "total_row_font_css": "font-weight:900;font-size:1.24em;color:#ffffff;",
+}
+_BDR_TABLE_HTML_KW = dict(_BDDS_TABLE_HTML_KW)
 
 
 # Минимум оборотов (руб.) для месяца на графике БДДС/БДР — иначе ось забивается «пустыми» месяцами.
@@ -10226,6 +10233,18 @@ def dashboard_budget_by_period(df):
     if _bdds_overlay_1c:
         _bdds_used_1c = True
 
+    try:
+        from dashboards.finance_from_1c import try_synthetic_budget_from_1c_dannye
+
+        _syn_hint = try_synthetic_budget_from_1c_dannye(reference_1c_dannye=_bdds_ref_1c)
+        if _syn_hint is not None and not _syn_hint.empty and "plan_month" in _syn_hint.columns:
+            _lm = pd.Period(_syn_hint["plan_month"].max(), freq="M")
+            if not hasattr(filtered_df, "attrs") or filtered_df.attrs is None:
+                filtered_df.attrs = {}
+            filtered_df.attrs["bdds_1c_latest_month"] = format_period_ru(_lm)
+    except Exception:
+        pass
+
     if not _bdds_all_projects and len(selected_projects or []) == 1:
         budget_summary, _bdds_overlay_turn = overlay_turnover_monthly_on_budget_summary(
             budget_summary,
@@ -10420,10 +10439,10 @@ def dashboard_budget_by_period(df):
         if not hide_reserve:
             _dev_mln = project_data["reserve budget"].div(1e6)
             _dev_x = project_data[period_col]
-            # ТЗ: отклонение = план − факт; отрицательное — красный, положительное — зелёный.
+            # ТЗ БДДС/БДР: отклонение = план − факт; факт < план (значение > 0) — красный, факт > план — зелёный.
             _dev_thr_mln = 0.01
-            _y_fact_gt_plan = _dev_mln.where(_dev_mln > _dev_thr_mln)
-            _y_fact_lt_plan = _dev_mln.where(_dev_mln < -_dev_thr_mln)
+            _y_fact_lt_plan = _dev_mln.where(_dev_mln > _dev_thr_mln)
+            _y_fact_gt_plan = _dev_mln.where(_dev_mln < -_dev_thr_mln)
             if _y_fact_lt_plan.notna().any():
                 _txt_under = (
                     None
@@ -10434,7 +10453,7 @@ def dashboard_budget_by_period(df):
                     go.Bar(
                         x=_dev_x,
                         y=_y_fact_lt_plan,
-                        name="Отклонение (план − факт < 0)",
+                        name="Отклонение (факт < план)",
                         marker_color="#e74c3c",
                         text=_txt_under,
                         textposition=_txt_pos,
@@ -10455,7 +10474,7 @@ def dashboard_budget_by_period(df):
                     go.Bar(
                         x=_dev_x,
                         y=_y_fact_gt_plan,
-                        name="Отклонение (план − факт > 0)",
+                        name="Отклонение (факт > план)",
                         marker_color="#27ae60",
                         text=_txt_over,
                         textposition=_txt_pos,
@@ -10835,7 +10854,7 @@ def dashboard_budget_by_period(df):
             _render_budget_table_html(
                     table_display,
                     finance_deviation_column=_bdds_dev_tbl,
-                    deviation_red_if_negative=True,
+                    deviation_color_fact_vs_plan=True,
                     row_kind_column="_row_kind",
                     emphasize_row_kinds=("project", "total"),
                     **_BDDS_TABLE_HTML_KW,
@@ -10919,7 +10938,7 @@ def dashboard_budget_by_period(df):
         _render_budget_table_html(
                 _proj_tbl,
                 finance_deviation_column="Отклонение, млн. руб.",
-                deviation_red_if_negative=True,
+                deviation_color_fact_vs_plan=True,
                 row_kind_column="_row_kind",
                 emphasize_row_kinds=("total",),
                 **_BDDS_TABLE_HTML_KW,
@@ -12170,8 +12189,8 @@ def dashboard_bdr(df):
             if not hide_deviation:
                 _dev_mln_b = chart_df["Отклонение"].div(1e6)
                 _dev_thr_b = 0.01
-                _y_b_fact_lt = _dev_mln_b.where(_dev_mln_b < -_dev_thr_b)
-                _y_b_fact_gt = _dev_mln_b.where(_dev_mln_b > _dev_thr_b)
+                _y_b_fact_lt = _dev_mln_b.where(_dev_mln_b > _dev_thr_b)
+                _y_b_fact_gt = _dev_mln_b.where(_dev_mln_b < -_dev_thr_b)
                 if _y_b_fact_lt.notna().any():
                     _dev_txt_lt = (
                         None
@@ -12182,7 +12201,7 @@ def dashboard_bdr(df):
                         go.Bar(
                             x=x_vals,
                             y=_y_b_fact_lt,
-                            name="Отклонение (план − факт < 0)",
+                            name="Отклонение (факт < план)",
                             marker_color="#e74c3c",
                             text=_dev_txt_lt,
                             textposition=_txt_pos_b,
@@ -12203,7 +12222,7 @@ def dashboard_bdr(df):
                         go.Bar(
                             x=x_vals,
                             y=_y_b_fact_gt,
-                            name="Отклонение (план − факт > 0)",
+                            name="Отклонение (факт > план)",
                             marker_color="#27ae60",
                             text=_dev_txt_gt,
                             textposition=_txt_pos_b,
@@ -12424,7 +12443,7 @@ def dashboard_bdr(df):
                     tbl_disp,
                     row_kind_column="__rk",
                     finance_deviation_column=_bdr_tz_dev_col,
-                    deviation_red_if_negative=True,
+                    deviation_color_fact_vs_plan=True,
                     emphasize_row_kinds=("project", "total"),
                     **_BDR_TABLE_HTML_KW,
                 )
@@ -12685,7 +12704,7 @@ def dashboard_bdr(df):
             _render_budget_table_html(
                     proj_tbl,
                     finance_deviation_column="Отклонение, млн. руб.",
-                    deviation_red_if_negative=True,
+                    deviation_color_fact_vs_plan=True,
                     row_kind_column="_row_kind",
                     emphasize_row_kinds=("total",),
                     **_BDR_TABLE_HTML_KW,

@@ -1072,6 +1072,7 @@ def budget_table_to_html(
     *,
     deviation_red_if_positive_only: bool = False,
     deviation_red_if_negative: bool = False,
+    deviation_color_fact_vs_plan: bool = False,
     expense_overrun_style: bool = False,
     deviation_abs_min_mln: float = 0.01,
     deviation_semaphore_style: bool = False,
@@ -1087,6 +1088,7 @@ def budget_table_to_html(
     total_row_font_css: str | None = None,
     table_font_size_px: int = 15,
     table_scroll_max_height_vh: float | None = None,
+    table_cell_padding_px: int | None = None,
 ) -> str:
     """
     Строит HTML таблицы бюджета с раскраской колонки отклонения.
@@ -1098,8 +1100,8 @@ def budget_table_to_html(
 
     Раскраска факт/план/отклонение: красный (факт < план), жёлтый (≈ план ±10%), зелёный (факт > план) — только цвет шрифта.
 
-    Если ``deviation_red_if_negative=True`` (БДДС/БДР: отклонение = план − факт):
-    значение < 0 — красный, ≥ 0 — зелёный.
+    Если ``deviation_red_if_positive_only=True`` (БДДС/БДР: отклонение = план − факт):
+    значение > 0 (факт < план) — красный, ≤ 0 (факт ≥ план) — зелёный.
 
     Если ``|число| < deviation_abs_min_mln`` (по умолчанию 0.01 млн руб.), ячейка без акцентного цвета — как обычный текст.
     """
@@ -1111,6 +1113,9 @@ def budget_table_to_html(
     _tot_bg = total_row_bg_color or TABLE_TOTAL_ROW_BG_COLOR
     _tot_font = total_row_font_css or TABLE_TOTAL_ROW_FONT_CSS
     _tbl_px = max(12, int(table_font_size_px or 15))
+    _pad_y, _pad_x = (5, 10) if _tbl_px <= 16 else (7, 14)
+    if table_cell_padding_px is not None:
+        _pad_y = _pad_x = max(2, int(table_cell_padding_px))
     _lbl_col_css = label_columns_font_css or ""
     _scroll_vh = float(table_scroll_max_height_vh) if table_scroll_max_height_vh else None
     wrap_id = "bdt_" + str(id(df))
@@ -1118,7 +1123,7 @@ def budget_table_to_html(
     _style_css = (
         f'#{wrap_id} table {{ table-layout: auto; font-size: {_tbl_px}px; width: max-content; min-width: 100%; '
         f'border-collapse: separate !important; border-spacing: 0 !important; border: {_cell_border} !important; }}'
-        f'#{wrap_id} th, #{wrap_id} td {{ min-width: 11em; max-width: 24em; padding: 7px 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box; '
+        f'#{wrap_id} th, #{wrap_id} td {{ min-width: 11em; max-width: 24em; padding: {_pad_y}px {_pad_x}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box; '
         f'border-right: {_cell_border} !important; border-bottom: {_cell_border} !important; '
         f'border-top: none !important; border-left: none !important; }}'
         f'#{wrap_id} thead tr:first-child th {{ border-top: {_cell_border} !important; }}'
@@ -1155,7 +1160,7 @@ def budget_table_to_html(
     )
     parts = [
         _html_table_caption(table_caption),
-        f'<div id="{wrap_id}" class="budget-deviation-table-wrap" style="overflow-x: auto; min-width: 0; margin: 0.75em 0;">',
+        f'<div id="{wrap_id}" class="budget-deviation-table-wrap" style="overflow-x: auto; min-width: 0; margin: 0.35em 0 0 0; padding-bottom: 6px;">',
         f"<style>{_style_css}</style>",
         f'<div class="budget-table-scroll">' if _scroll_vh else "",
         f'<table class="bi-sortable-table" style="width:100%; border-collapse: collapse; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; font-size: {_tbl_px}px;">',
@@ -1170,7 +1175,7 @@ def budget_table_to_html(
         elif "кс-2" in str(col).casefold() and "аванс" in str(col).casefold():
             _col_cls = "bd-fin-delta-col"
         parts.append(
-            f'<th class="{_col_cls}" style="padding: 8px 14px; background-color: {TABLE_HEADER_BG_COLOR}; {_hdr_css}">{col_esc}</th>'
+            f'<th class="{_col_cls}" style="padding: {_pad_y}px {_pad_x}px; background-color: {TABLE_HEADER_BG_COLOR}; {_hdr_css}">{col_esc}</th>'
         )
     parts.append("</tr></thead><tbody>")
     visible_cols = [c for c in df.columns if c != row_kind_column]
@@ -1224,6 +1229,21 @@ def budget_table_to_html(
                 num = _parse_finance_value(val)
                 cl = str(col).casefold()
                 if (
+                    finance_deviation_column
+                    and col == finance_deviation_column
+                    and deviation_color_fact_vs_plan
+                    and _plan_n is not None
+                    and _fact_n is not None
+                ):
+                    if abs(float(_fact_n) - float(_plan_n)) < float(deviation_abs_min_mln):
+                        cell_class = None
+                    elif float(_fact_n) < float(_plan_n):
+                        cell_class = DEVIATION_CLASS_RED
+                    elif float(_fact_n) > float(_plan_n):
+                        cell_class = DEVIATION_CLASS_GREEN
+                    else:
+                        cell_class = None
+                elif (
                     finance_deviation_column
                     and col == finance_deviation_column
                     and deviation_red_if_positive_only
@@ -1282,18 +1302,18 @@ def budget_table_to_html(
                     elif "кс-2" in str(col).casefold() and "аванс" in str(col).casefold():
                         _extra_cls = " bd-fin-delta-col"
                     parts.append(
-                        f'<td class="{cell_class}{_extra_cls}" style="padding: 7px 14px; font-weight: bold; '
+                        f'<td class="{cell_class}{_extra_cls}" style="padding: {_pad_y}px {_pad_x}px; font-weight: bold; '
                         f'background-color: {_cell_bg}; overflow: hidden; text-overflow: ellipsis; '
                         f'box-sizing: border-box;"><span style="display:block;overflow:hidden;text-overflow:ellipsis;">{val_esc}</span></td>'
                     )
                 else:
                     parts.append(
-                        f'<td style="padding: 7px 14px; color: {TABLE_TEXT_COLOR}; '
+                        f'<td style="padding: {_pad_y}px {_pad_x}px; color: {TABLE_TEXT_COLOR}; '
                         f'background-color: {_cell_bg}; {_label_css}">{val_esc}</td>'
                     )
             else:
                 parts.append(
-                    f'<td style="padding: 7px 14px; color: {TABLE_TEXT_COLOR}; background-color: {_cell_bg}; {_label_css}">{val_esc}</td>'
+                    f'<td style="padding: {_pad_y}px {_pad_x}px; color: {TABLE_TEXT_COLOR}; background-color: {_cell_bg}; {_label_css}">{val_esc}</td>'
                 )
         parts.append("</tr>")
     parts.append("</tbody></table>")
@@ -1735,19 +1755,29 @@ def render_report_html_table(
     if not html or not str(html).strip():
         return
     html = mark_html_table_sortable(html)
+    _kp = key_prefix or f"tbl_{_export_file_stem(file_stem)}"
+    _pop_key = f"{_kp}_dl"
     try:
-        from dashboards.table_sort_inject import render_sortable_html_block
+        _tbl_block = st.container(border=False, gap="xxsmall")
+    except TypeError:
+        try:
+            _tbl_block = st.container(border=False, gap=None)
+        except TypeError:
+            _tbl_block = st.container(border=False)
+    with _tbl_block:
+        try:
+            from dashboards.table_sort_inject import render_sortable_html_block
 
-        render_sortable_html_block(html)
-    except Exception:
-        st.markdown(html, unsafe_allow_html=True)
-    if export_df is not None:
-        _kp = key_prefix or f"tbl_{_export_file_stem(file_stem)}"
-        render_dataframe_excel_csv_downloads(
-            export_df,
-            file_stem=file_stem,
-            key_prefix=_kp,
-        )
+            render_sortable_html_block(html)
+        except Exception:
+            st.markdown(html, unsafe_allow_html=True)
+        if export_df is not None:
+            render_dataframe_excel_csv_downloads(
+                export_df,
+                file_stem=file_stem,
+                key_prefix=_kp,
+                popover_key=_pop_key,
+            )
 
 
 def render_dataframe_excel_csv_downloads(
@@ -1757,6 +1787,7 @@ def render_dataframe_excel_csv_downloads(
     key_prefix: str,
     csv_label: str = "Скачать CSV (для Excel)",
     popover_label: str = "Скачать таблицу",
+    popover_key: str | None = None,
     on_csv_click=None,
     on_xlsx_click=None,
 ) -> None:
@@ -1774,7 +1805,8 @@ def render_dataframe_excel_csv_downloads(
     stem = _export_file_stem(file_stem)
     csv_bytes = dataframe_to_csv_bytes_for_excel(df)
     xlsx_bytes = dataframe_to_xlsx_bytes(df, sheet_name="Данные")
-    with st.popover(popover_label):
+    _pk = (popover_key or f"{key_prefix}_dl").replace(" ", "_")
+    with st.popover(popover_label, key=_pk):
         _download_button_compat(
             label=csv_label,
             data=csv_bytes,

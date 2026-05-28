@@ -32,6 +32,12 @@ def collect_budget_1c_hints(
     a = attrs or {}
     hints: list[str] = []
     imputed = bool(a.get("bddds_plan_imputed_ratio"))
+    beyond = str(a.get("bdds_1c_latest_month") or "").strip()
+    if beyond:
+        hints.append(
+            f"Обороты 1С для БДДС доступны по {beyond} включительно; месяцы позже в таблице могут быть пустыми "
+            "(календарь MSP) до появления новых выгрузок в web/."
+        )
     if imputed:
         hints.append(
             "В выгрузке 1С для части периодов не было строк «ПЛАН» при ненулевом «ФАКТ» — значение плана оценено как "

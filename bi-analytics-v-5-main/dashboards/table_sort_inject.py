@@ -238,15 +238,48 @@ _TABLE_SORT_JS = r"""
     root.querySelectorAll("table.bi-sortable-table").forEach(initTable);
   }
 
+  function reportFrameHeight() {
+    try {
+      var root = document.querySelector(".budget-deviation-table-wrap")
+        || document.querySelector(".bi-sortable-html-root")
+        || document.body;
+      var el = document.documentElement;
+      var bottom = 0;
+      if (root && root.getBoundingClientRect) {
+        var r = root.getBoundingClientRect();
+        bottom = r.bottom + (window.scrollY || 0);
+      }
+      var h = Math.ceil(Math.max(
+        bottom,
+        el.scrollHeight || 0,
+        (document.body && document.body.scrollHeight) || 0
+      )) + 14;
+      if (h > 0) {
+        window.parent.postMessage({ type: "streamlit:setFrameHeight", height: h }, "*");
+      }
+    } catch (e) {}
+  }
+
   function bootDoc(doc) {
     if (!doc || !doc.body) return;
     scan(doc.body);
+    reportFrameHeight();
     [0, 30, 120, 400, 1000].forEach(function (ms) {
-      setTimeout(function () { scan(doc.body); }, ms);
+      setTimeout(function () {
+        scan(doc.body);
+        reportFrameHeight();
+      }, ms);
     });
   }
 
   bootDoc(document);
+  try {
+    var ro = new ResizeObserver(function () { reportFrameHeight(); });
+    var tgt = document.querySelector(".budget-deviation-table-wrap")
+      || document.querySelector(".bi-sortable-html-root")
+      || document.body;
+    if (tgt) ro.observe(tgt);
+  } catch (e) {}
 })();
 """
 
@@ -400,10 +433,10 @@ def _estimate_html_block_height(html: str) -> int:
         extra = 56
         cap = 2600
     elif "budget-deviation-table-wrap" in html_l:
-        thead_h = 80
-        row_h = 48
-        extra = 52
-        cap = 720
+        thead_h = 64
+        row_h = 32
+        extra = 28
+        cap = 4800
     elif "bi-sortable-table" in html_l:
         thead_h = 68
         row_h = 34
@@ -414,7 +447,12 @@ def _estimate_html_block_height(html: str) -> int:
         row_h = 27
         extra = 16
         cap = 900
-    est = thead_h + data_rows * row_h + extra
+    n_group = html_l.count("bd-group-row")
+    n_total = html_l.count("bd-total-row")
+    n_plain = max(0, data_rows - n_group - n_total)
+    est = thead_h + n_plain * row_h + n_group * (row_h + 8) + n_total * (row_h + 10) + extra
+    if "budget-deviation-table-wrap" in html_l:
+        return int(max(120, est))
     return int(min(cap, max(120, est)))
 
 
@@ -432,7 +470,7 @@ def _build_sortable_html_document(html: str) -> str:
 
 
 def render_sortable_html_block(html: str) -> None:
-    """Таблица + JS в одном iframe (components.html) — st.html не исполняет inline-скрипты."""
+    """Таблица + JS в iframe (components.html); высота подстраивается скриптом."""
     if not html:
         return
     if not table_sort_inject_enabled():
@@ -445,7 +483,9 @@ def render_sortable_html_block(html: str) -> None:
         "budget-deviation-table-wrap",
     )
     _scroll = not any(m in (html or "") for m in _no_iframe_scroll)
-    _h = _estimate_html_block_height(html) + (24 if not _scroll else 0)
+    if "budget-deviation-table-wrap" in (html or ""):
+        _h = int(_h) + 28
+    _h = _h + (4 if not _scroll else 0)
     components.html(doc, height=_h, scrolling=_scroll)
 
 
