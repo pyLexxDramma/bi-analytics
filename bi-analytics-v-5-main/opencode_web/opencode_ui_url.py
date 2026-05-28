@@ -39,3 +39,22 @@ def build_xca_ui_url(base_url: str, workspace_dir: str | None = None) -> str:
     directory = (workspace_dir or DEFAULT_XCA_WORKSPACE).strip() or DEFAULT_XCA_WORKSPACE
     slug = encode_directory_slug(directory)
     return f"{base_url.rstrip('/')}/{slug}/"
+
+def workspace_slug(workspace_dir: str | None = None) -> str:
+    directory = (workspace_dir or DEFAULT_XCA_WORKSPACE).strip() or DEFAULT_XCA_WORKSPACE
+    return encode_directory_slug(directory)
+
+
+def normalize_opencode_browser_url(url: str, workspace_dir: str | None = None) -> str:
+    directory = (workspace_dir or DEFAULT_XCA_WORKSPACE).strip() or DEFAULT_XCA_WORKSPACE
+    slug = workspace_slug(directory)
+    raw = (url or "").strip()
+    if not raw:
+        return build_xca_ui_url("http://127.0.0.1:4096", directory)
+    if f"/{slug}/" in raw or raw.rstrip("/").endswith(f"/{slug}"):
+        return raw if raw.endswith("/") else raw + "/"
+    base = raw.split("?", 1)[0].split("#", 1)[0].rstrip("/")
+    if base.endswith(f"/{ROOT_SLASH_SLUG}"):
+        base = base[: -len(ROOT_SLASH_SLUG) - 1]
+    return build_xca_ui_url(base or "http://127.0.0.1:4096", directory)
+

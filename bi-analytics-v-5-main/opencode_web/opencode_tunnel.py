@@ -279,12 +279,12 @@ def get_opencode_base_url() -> str:
 
 
 def get_opencode_browser_url() -> str:
-    from opencode_ui_url import build_xca_ui_url
+    from opencode_ui_url import build_xca_ui_url, normalize_opencode_browser_url
 
     public_base = os.getenv("OPENCODE_PUBLIC_UI_BASE", "").strip()
     if public_base:
-        return build_xca_ui_url(public_base)
-    return build_xca_ui_url(get_opencode_base_url())
+        return normalize_opencode_browser_url(build_xca_ui_url(public_base))
+    return normalize_opencode_browser_url(build_xca_ui_url(get_opencode_base_url()))
 
 
 def check_opencode_health(opencode_url: str) -> tuple[bool, str]:

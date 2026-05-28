@@ -273,23 +273,33 @@ def is_dev_branch() -> bool:
     return br == "dev" or br.startswith("dev/") or br.startswith("dev-")
 
 
+def _opencode_workspace_url(public_base: str) -> str:
+    """Public OpenCode Web UI URL (/workspace)."""
+    base = (public_base or "").strip().rstrip("/")
+    if not base:
+        return ""
+    try:
+        import sys
+        from pathlib import Path as _Path
+        ow = _Path(__file__).resolve().parent / "opencode_web"
+        if ow.is_dir():
+            ow_s = str(ow)
+            if ow_s not in sys.path:
+                sys.path.insert(0, ow_s)
+            from opencode_ui_url import build_xca_ui_url
+            return build_xca_ui_url(base)
+    except Exception:
+        pass
+    return f"{base}/L3dvcmtzcGFjZQ/"
+
+
 def get_ai_assistant_open_url() -> str:
-    """
-    URL страницы **XCA AI** (чат), открываемый из BI в **новой вкладке** браузера.
-
-    Задаётся отдельно от SSH-переменных сервиса ``opencode_web``: те нужны только
-    процессу чата (см. ``opencode_web/AI_INTEGRATION_GUIDE.md``), а здесь —
-    публичный ``https://…`` (или ``http://`` в LAN), по которому пользователь
-    реально открывает UI чата.
-
-    Приоритет ключей (первый непустой): ``AI_ASSISTANT_URL``, ``XCA_AI_CHAT_URL``,
-    ``AI_CHAT_PUBLIC_URL``.
-    """
     for key in ("AI_ASSISTANT_URL", "XCA_AI_CHAT_URL", "AI_CHAT_PUBLIC_URL"):
         u = _read_env_or_secret(key).strip()
         if u:
             return u
-    return ""
+    return _opencode_workspace_url(_read_env_or_secret("OPENCODE_PUBLIC_UI_BASE"))
+
 
 
 def default_include_demo_data() -> bool:

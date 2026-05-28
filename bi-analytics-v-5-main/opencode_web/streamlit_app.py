@@ -24,7 +24,7 @@ from opencode_tunnel import (
     get_opencode_browser_url,
     stop_ssh_tunnel,
 )
-from opencode_ui_url import DEFAULT_XCA_WORKSPACE
+from opencode_ui_url import DEFAULT_XCA_WORKSPACE, workspace_slug
 
 APP_DIR = Path(__file__).resolve().parent
 LOGO_PATH = APP_DIR / "logo.svg"
@@ -51,10 +51,11 @@ def render_connection_status(browser_url: str) -> None:
     st.markdown(f"### {health_icon} Подключение к OpenCode AI")
 
     if ENABLE_SSH_TUNNEL:
+        local_base = get_opencode_base_url()
         st.caption(
             f"SSH: `{AI_SSH_USER}@{AI_SSH_HOST}:{AI_SSH_PORT}` → "
             f"сервер `127.0.0.1:{AI_OPENCODE_REMOTE_PORT}` → "
-            f"ПК `127.0.0.1:{AI_LOCAL_TUNNEL_PORT}`"
+            f"ПК `{local_base}`"
         )
     else:
         st.caption("SSH выключен — прямой URL из `.env`")
