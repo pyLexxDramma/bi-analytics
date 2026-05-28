@@ -23,7 +23,7 @@ ENV OPENCODE_DISABLE_DEFAULT_PLUGINS=true
 RUN mkdir -p /workspace /var/log
 
 COPY scripts/render_opencode_config.sh /usr/local/bin/render_opencode_config.sh
-COPY scripts/opencode_entrypoint.sh /usr/local/bin/opencode_entrypoint.sh
+COPY opencode_entrypoint.sh /usr/local/bin/opencode_entrypoint.sh
 COPY scripts/ensure_web_data_db.sh /usr/local/bin/ensure_web_data_db.sh
 COPY scripts/diagnose_ai_session.sh /usr/local/bin/diagnose_ai_session.sh
 COPY scripts/verify_local_llm.sh /usr/local/bin/verify_local_llm.sh
