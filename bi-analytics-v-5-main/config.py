@@ -294,11 +294,15 @@ def _opencode_workspace_url(public_base: str) -> str:
 
 
 def get_ai_assistant_open_url() -> str:
+    """Кнопка «ИИ помощник» в BI: страница /_opencode_ai, не OpenCode :4096."""
     for key in ("AI_ASSISTANT_URL", "XCA_AI_CHAT_URL", "AI_CHAT_PUBLIC_URL"):
         u = _read_env_or_secret(key).strip()
         if u:
             return u
-    return _opencode_workspace_url(_read_env_or_secret("OPENCODE_PUBLIC_UI_BASE"))
+    base = _read_env_or_secret("BI_STREAMLIT_PUBLIC_URL").strip().rstrip("/")
+    if base:
+        return f"{base}/_opencode_ai"
+    return ""
 
 
 
