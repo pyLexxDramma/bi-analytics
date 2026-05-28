@@ -227,6 +227,7 @@ else:
                 if success and user:
                     st.session_state.authenticated = True
                     st.session_state.user = user
+                    st.session_state.current_dashboard = "Девелоперские проекты"
                     st.success(f"Добро пожаловать, {user['username']}!")
                     st.balloons()
                     import time

@@ -1336,7 +1336,11 @@ def main():
                 else:
                     st.session_state.current_dashboard = all_allowed[0]
             else:
-                st.session_state.current_dashboard = "Причины отклонений"
+                st.session_state.current_dashboard = (
+                    "Девелоперские проекты"
+                    if "Девелоперские проекты" in all_allowed_set
+                    else all_allowed[0]
+                )
 
         cur = st.session_state.get("current_dashboard", "")
         if cur not in all_allowed_set:
