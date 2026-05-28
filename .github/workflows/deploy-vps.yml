@@ -1,11 +1,11 @@
-# Deploy to VPS on push to main/master, or manually (Actions → Deploy to VPS → Run workflow).
+﻿# Deploy to VPS on push to main/master, or manually (Actions → Deploy to VPS → Run workflow).
 #
 # GitHub → Settings → Secrets and variables → Actions → Repository secrets:
 #   VPS_HOST          — IP или hostname (например 94.141.105.174)
 #   VPS_USER          — SSH-пользователь (например dashai)
 #   VPS_PORT          — порт SSH (строка, например 2274)
 #   VPS_SSH_KEY       — приватный ключ, парный к публичному в authorized_keys на сервере
-#   VPS_DEPLOY_PATH   — абсолютный путь к клону репозитория (например /opt/bi-analytics)
+#   VPS_DEPLOY_PATH   — абсолютный путь к клону репозитория (корень git или bi-analytics-v-5-main)
 #
 # Optional:
 #   VPS_SSH_KNOWN_HOSTS — вывод: ssh-keyscan -p PORT HOST  (защита от MITM для ssh-action)
@@ -30,13 +30,20 @@ jobs:
           port: ${{ secrets.VPS_PORT }}
           command_timeout: 20m
           script_stop: true
-          # Раскомментируйте, если задали секрет VPS_SSH_KNOWN_HOSTS:
-          # known_hosts: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
           script: |
             set -e
             cd "${{ secrets.VPS_DEPLOY_PATH }}"
             git fetch origin
             git checkout "${{ github.ref_name }}"
             git reset --hard "origin/${{ github.ref_name }}"
-            chmod +x scripts/server_deploy.sh || true
-            ./scripts/server_deploy.sh
+            DEPLOY_SCRIPT=""
+            if [[ -x bi-analytics-v-5-main/scripts/server_deploy.sh ]]; then
+              DEPLOY_SCRIPT="bi-analytics-v-5-main/scripts/server_deploy.sh"
+            elif [[ -x scripts/server_deploy.sh ]]; then
+              DEPLOY_SCRIPT="scripts/server_deploy.sh"
+            else
+              echo "ERROR: server_deploy.sh not found under $PWD"
+              exit 1
+            fi
+            chmod +x "$DEPLOY_SCRIPT"
+            ./"$DEPLOY_SCRIPT"
