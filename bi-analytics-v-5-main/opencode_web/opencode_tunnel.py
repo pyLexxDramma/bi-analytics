@@ -279,6 +279,25 @@ def get_opencode_base_url() -> str:
 
 
 
+def _is_streamlit_cloud() -> bool:
+    hint = " ".join(
+        os.getenv(k, "") for k in ("STREAMLIT_SHARING_BASE_URL", "HOSTNAME", "STREAMLIT_SERVER_BASE_URL")
+    ).lower()
+    return "streamlit.app" in hint or os.getenv("STREAMLIT_RUNTIME_ENV", "").lower() == "cloud"
+
+
+def _opencode_browser_base_url() -> str:
+    """URL for links in the user browser (not necessarily the SSH tunnel API base)."""
+    public_base = os.getenv("OPENCODE_PUBLIC_UI_BASE", "").strip()
+    use_public = _cfg_bool("OPENCODE_USE_PUBLIC_UI_BASE")
+    if ENABLE_SSH_TUNNEL:
+        tunnel_base = get_opencode_base_url()
+        if use_public and public_base and _is_streamlit_cloud():
+            return public_base
+        return tunnel_base
+    return public_base or DEFAULT_OPENCODE_URL
+
+
 def probe_ssh_workspace() -> tuple[bool, str]:
     """Check /workspace/opencode.json on the SSH host (Docker bind mount often empty)."""
     if not ENABLE_SSH_TUNNEL or not AI_SSH_HOST or not AI_SSH_PASSWORD:
@@ -325,12 +344,12 @@ def get_opencode_browser_url() -> str:
         workspace_slug,
     )
 
-    public_base = os.getenv("OPENCODE_PUBLIC_UI_BASE", "").strip()
-    base = public_base or get_opencode_base_url()
-    url = normalize_opencode_browser_url(build_xca_ui_url(base))
+    api_base = get_opencode_base_url()
+    browser_base = _opencode_browser_base_url()
+    url = normalize_opencode_browser_url(build_xca_ui_url(browser_base))
     try:
         r = requests.post(
-            f"{base.rstrip('/')}/session",
+            f"{api_base.rstrip('/')}/session",
             params={"directory": DEFAULT_XCA_WORKSPACE},
             json={"title": "BI Analytics"},
             timeout=(2.0, 8.0),
@@ -339,7 +358,7 @@ def get_opencode_browser_url() -> str:
             sid = str(r.json().get("id", "")).strip()
             if sid:
                 slug = workspace_slug()
-                return f"{base.rstrip('/')}/{slug}/session/{sid}"
+                return f"{browser_base.rstrip('/')}/{slug}/session/{sid}"
     except requests.RequestException:
         pass
     return url
