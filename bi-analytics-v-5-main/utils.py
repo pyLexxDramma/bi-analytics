@@ -1759,7 +1759,8 @@ def render_report_html_table(
     _pop_key = f"{_kp}_dl"
     _compact_tbl = (
         "pf-dates-table-wrap" in (html or "")
-        or file_stem == "plan_fact_dates"
+        or "pred-detail-wrap" in (html or "")
+        or file_stem in ("plan_fact_dates", "predpisania")
     )
 
     def _render_table_block() -> None:

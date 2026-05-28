@@ -28565,7 +28565,7 @@ _PRED_DASH_MOCK_CSS = """
 .pred-mock-title { font-size:1.05rem; font-weight:600; color:#fafafa; }
 .pred-mock-sort { font-size:12px; color:#a0a0a0; }
 .pred-mock-badge { background:#c0392b; color:#fff; padding:4px 14px; border-radius:20px; font-size:13px; font-weight:500; }
-.pred-detail-wrap { overflow-x:auto; min-width:0; border:1px solid #444; border-radius:10px; margin-top:8px; }
+.pred-detail-wrap { overflow-x:hidden; min-width:0; border:1px solid #444; border-radius:10px; margin-top:8px; }
 .pred-detail-wrap table { width:100%; table-layout:auto; border-collapse:collapse; }
 .pred-detail-wrap th { text-align:left; padding:6px 8px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:11px; text-transform:uppercase; white-space:nowrap; line-height:1.2; word-break:normal; overflow:hidden; text-overflow:ellipsis; cursor:pointer; user-select:none; }
 .pred-detail-wrap th.pred-col-st,
@@ -31242,54 +31242,6 @@ def dashboard_predpisania(df):
     with pm3:
         st.metric("Неустраненные", n_unresolved)
 
-    # Sanity-блок для сверки с эталоном (scripts/_qa_15_pred_check.py).
-    # Свёрнут по умолчанию — открывают только при расхождении цифр.
-    # Скрыт в release-режиме автоматически через qa_debug_block.
-    with qa_debug_block(st) as _qa_on:
-        if _qa_on:
-            _sanity_cols = st.columns(3)
-            with _sanity_cols[0]:
-                st.markdown("**Распределение по KrStateID**")
-                if "KrStateID" in filtered.columns and "KrState" in filtered.columns:
-                    _sanity_krs = (
-                        filtered.groupby(["KrStateID", "KrState"], dropna=False)
-                        .size()
-                        .reset_index(name="Количество")
-                        .sort_values("KrStateID")
-                    )
-                    st.dataframe(_sanity_krs, hide_index=True, use_container_width=True)
-                else:
-                    pass
-            with _sanity_cols[1]:
-                st.markdown("**Распределение по подрядчикам**")
-                if contr_col and contr_col in filtered.columns:
-                    _sanity_contr = (
-                        filtered[contr_col].astype(str).str.strip().value_counts().reset_index()
-                    )
-                    _sanity_contr.columns = ["Подрядчик", "Количество"]
-                    st.dataframe(_sanity_contr, hide_index=True, use_container_width=True)
-                else:
-                    pass
-            with _sanity_cols[2]:
-                st.markdown("**Источники данных**")
-                _src_lines = []
-                _src_lines.append(f"• Всего строк после dedup: **{len(filtered)}**")
-                _src_lines.append(f"• card_col / DocID: `{pred_doc_col or '—'}`")
-                _src_lines.append(f"• contract_col (№ договора): `{contract_col or '—'}`")
-                _src_lines.append(f"• due_col (срок устранения): `{due_col or '—'}`")
-                _src_lines.append(f"• completion_col (факт устранения): `{completion_col or '—'}`")
-                _src_lines.append(f"• creation_col (дата выдачи): `{creation_col_pred or '—'}`")
-                if "1C_ID_DOG" in filtered.columns:
-                    _n_dog = int(
-                        filtered["1C_ID_DOG"].astype(str).str.strip()
-                        .replace({"": pd.NA, "nan": pd.NA, "None": pd.NA, "NaN": pd.NA}).notna().sum()
-                    )
-                    _src_lines.append(f"• 1C_ID_DOG заполнено: **{_n_dog} / {len(filtered)}**")
-                if "id_Deadline" in filtered.columns:
-                    _dl = pd.to_datetime(filtered["id_Deadline"], errors="coerce", dayfirst=True)
-                    _src_lines.append(f"• id_Deadline (parsed): **{int(_dl.notna().sum())} / {len(filtered)}**")
-                st.markdown("\n".join(_src_lines))
-
     col_chart, col_kpi = st.columns([3, 1])
 
     with col_chart:
@@ -31439,8 +31391,6 @@ def dashboard_predpisania(df):
 
             # Второй чарт «по проектам» (зелёный) убран по требованию заказчика
             # 07.05.2026 (скрин 5): в макете один бар-чарт — по подрядчикам.
-            # Разрез по проектам остаётся доступен в свёрнутом блоке
-            # «По статусам и объектам» ниже (в expander).
         else:
             if hide_resolved and filtered.loc[~filtered["_resolved"]].empty:
                 st.info("Нет данных для диаграммы: по текущим фильтрам все предписания устранены.")
@@ -31457,6 +31407,73 @@ def dashboard_predpisania(df):
             "«Неустраненные» = всего − устранённые; «Просроченные» — открытые с истёкшим id_Deadline; "
             "«Критические» — тег «КРИТИЧНЫЙ» и указанный KindID."
         )
+
+    status_counts = filtered["Статус"].value_counts()
+    st.subheader("Предписания по статусам")
+    status_df = status_counts.reset_index()
+    status_df.columns = ["Статус", "Количество"]
+    fig2 = px.pie(
+        status_df,
+        names="Статус",
+        values="Количество",
+        color_discrete_sequence=px.colors.qualitative.Set2,
+    )
+    _nst = len(status_df.index)
+    fig2 = _pie_apply_percent_inside_legend_left(
+        fig2,
+        height=840,
+        pct_fontsize=36 if _nst <= 6 else 32,
+        legend_fontsize=44,
+        left_margin=min(560, max(360, int(360 + _nst * 36))),
+        domain_x=(0.36, 0.88),
+        domain_y=(0.08, 0.92),
+        extra_layout=dict(uirevision="pred_status_pie"),
+    )
+    fig2.update_traces(
+        hovertemplate="<b>%{label}</b><br>Количество: %{value}<br>Доля: %{percent:.1%}<extra></extra>",
+    )
+    fig2 = apply_chart_background(fig2)
+    render_chart(fig2, key="pred_status_pie", caption_below="Распределение предписаний по статусам")
+
+    if obj_col and obj_col in filtered.columns:
+        st.subheader("Предписания по объектам")
+        by_obj = (
+            filtered.groupby(obj_col)
+            .size()
+            .reset_index(name="Количество")
+        )
+        # R23-10: детерминированная сортировка объектов (убывание количества, затем алфавит).
+        by_obj["_sort_name"] = by_obj[obj_col].astype(str).str.casefold()
+        by_obj = by_obj.sort_values(
+            ["Количество", "_sort_name"],
+            ascending=[False, True],
+            kind="mergesort",
+        ).drop(columns=["_sort_name"]).reset_index(drop=True)
+        fig3 = px.bar(
+            by_obj,
+            x=obj_col,
+            y="Количество",
+            text="Количество",
+            labels={obj_col: "Объект"},
+            color_discrete_sequence=["#06A77D"],
+        )
+        fig3.update_traces(textposition="outside", textfont=dict(size=13, color="white"))
+        fig3 = _apply_finance_bar_label_layout(fig3)
+        fig3 = apply_chart_background(fig3)
+        _n_obj = len(by_obj.index)
+        _obj_gaps = _plotly_bargaps_sparse_x_like_gdrs(_n_obj)
+        fig3.update_traces(width=max(0.08, 0.46 / 5), selector=dict(type="bar"))
+        fig3.update_layout(
+            height=450,
+            xaxis_title="Объект",
+            yaxis_title="Количество",
+            xaxis_tickangle=-45,
+            uirevision="pred_by_obj",
+            xaxis=dict(fixedrange=True, categoryorder="array", categoryarray=by_obj[obj_col].tolist()),
+            yaxis=dict(fixedrange=True),
+            **_obj_gaps,
+        )
+        render_chart(fig3, key="pred_by_obj", caption_below="Количество предписаний по объектам")
 
     render_table_subheader(st, "Детальная таблица по предписаниям")
     with st.expander("Примечание к таблице", expanded=False):
@@ -31493,67 +31510,6 @@ def dashboard_predpisania(df):
         key_prefix="predpisania_detail",
     )
 
-    with st.expander("По статусам и объектам", expanded=False):
-        status_counts = filtered["Статус"].value_counts()
-        st.subheader("Предписания по статусам")
-        status_df = status_counts.reset_index()
-        status_df.columns = ["Статус", "Количество"]
-        fig2 = px.pie(
-            status_df,
-            names="Статус",
-            values="Количество",
-            color_discrete_sequence=px.colors.qualitative.Set2,
-        )
-        _nst = len(status_df.index)
-        fig2 = _pie_apply_percent_inside_legend_left(
-            fig2,
-            height=420,
-            pct_fontsize=18 if _nst <= 6 else 16,
-            legend_fontsize=11,
-            left_margin=min(320, max(232, int(208 + _nst * 26))),
-            extra_layout=dict(uirevision="pred_status_pie"),
-        )
-        fig2.update_traces(
-            hovertemplate="<b>%{label}</b><br>Количество: %{value}<br>Доля: %{percent:.1%}<extra></extra>",
-        )
-        fig2 = apply_chart_background(fig2)
-        render_chart(fig2, key="pred_status_pie", caption_below="Распределение предписаний по статусам")
-
-        if obj_col and obj_col in filtered.columns:
-            st.subheader("Предписания по объектам")
-            by_obj = (
-                filtered.groupby(obj_col)
-                .size()
-                .reset_index(name="Количество")
-            )
-            # R23-10: детерминированная сортировка объектов (убывание количества, затем алфавит).
-            by_obj["_sort_name"] = by_obj[obj_col].astype(str).str.casefold()
-            by_obj = by_obj.sort_values(
-                ["Количество", "_sort_name"],
-                ascending=[False, True],
-                kind="mergesort",
-            ).drop(columns=["_sort_name"]).reset_index(drop=True)
-            fig3 = px.bar(
-                by_obj,
-                x=obj_col,
-                y="Количество",
-                text="Количество",
-                labels={obj_col: "Объект"},
-                color_discrete_sequence=["#06A77D"],
-            )
-            fig3.update_traces(textposition="outside", textfont=dict(size=13, color="white"))
-            fig3 = _apply_finance_bar_label_layout(fig3)
-            fig3 = apply_chart_background(fig3)
-            fig3.update_layout(
-                height=450,
-                xaxis_title="Объект",
-                yaxis_title="Количество",
-                xaxis_tickangle=-45,
-                uirevision="pred_by_obj",
-                xaxis=dict(fixedrange=True, categoryorder="array", categoryarray=by_obj[obj_col].tolist()),
-                yaxis=dict(fixedrange=True),
-            )
-            render_chart(fig3, key="pred_by_obj", caption_below="Количество предписаний по объектам")
 
 
 _DEV_DETAIL_TABLE_CSS = """
