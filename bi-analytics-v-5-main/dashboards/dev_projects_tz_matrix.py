@@ -2615,6 +2615,25 @@ _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS = """
 #matrix-fs-root:-moz-full-screen .matrix-fs-body:not(.dev-tz-fs-body):not(.cp-body-stack){
   flex:1 1 auto;min-height:0;overflow:hidden!important;
 }
+
+#matrix-fs-root:fullscreen .gdrs-table-wrap,
+#matrix-fs-root:-webkit-full-screen .gdrs-table-wrap,
+#matrix-fs-root:-moz-full-screen .gdrs-table-wrap{
+  max-height:calc(100vh - 64px)!important;max-height:calc(100dvh - 64px)!important;
+  overflow:auto!important;-webkit-overflow-scrolling:touch!important;
+}
+#matrix-fs-root.matrix-fs-pseudo-on .gdrs-table-wrap,
+#matrix-fs-pseudo-shell.dev-tz-fs-shell .gdrs-table-wrap{
+  max-height:calc(100% - 48px)!important;overflow:auto!important;-webkit-overflow-scrolling:touch!important;
+}
+#matrix-fs-root:fullscreen .matrix-fs-body.gdrs-fs-body,
+#matrix-fs-root:-webkit-full-screen .matrix-fs-body.gdrs-fs-body,
+#matrix-fs-root:-moz-full-screen .matrix-fs-body.gdrs-fs-body,
+#matrix-fs-root.matrix-fs-pseudo-on .matrix-fs-body.gdrs-fs-body,
+#matrix-fs-pseudo-shell.dev-tz-fs-shell .matrix-fs-body.gdrs-fs-body{
+  position:relative!important;flex:1 1 auto!important;min-height:0!important;width:100%!important;
+  overflow:auto!important;-webkit-overflow-scrolling:touch!important;box-sizing:border-box!important;
+}
 #matrix-fs-root:fullscreen .cp-table-wrap,
 #matrix-fs-root:-webkit-full-screen .cp-table-wrap,
 #matrix-fs-root:-moz-full-screen .cp-table-wrap{
@@ -2750,14 +2769,15 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
   var MATRIX_FS_WIDE_SEL=".matrix-fs-body.dev-tz-fs-body,.matrix-fs-body.cp-body-stack";
 
   function matrixFsWideBody(el){
-    return !!(el&&el.classList&&(el.classList.contains("dev-tz-fs-body")||el.classList.contains("cp-body-stack")));
+    return !!(el&&el.classList&&(el.classList.contains("dev-tz-fs-body")||el.classList.contains("cp-body-stack")||el.classList.contains("gdrs-fs-body")));
   }
 
   function matrixFsFindWrap(scrollEl){
     if(!scrollEl) return null;
     return scrollEl.querySelector(".dev-tz-matrix-wrap")
       ||scrollEl.querySelector(".cp-tables-stack")
-      ||scrollEl.querySelector(".cp-table-wrap");
+      ||scrollEl.querySelector(".cp-table-wrap")
+      ||scrollEl.querySelector(".gdrs-table-wrap");
   }
 
   function matrixFsStyleTable(tbl){

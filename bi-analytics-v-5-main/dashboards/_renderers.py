@@ -19705,6 +19705,8 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         load_1c_dannye_article_maps,
         load_plan_aggregate,
         load_resursi_files,
+        load_1c_kontr_index,
+        enrich_gdrs_fact_contractor_ids,
         week_end_in_filtered_fact,
     )
 
@@ -19716,6 +19718,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         resursi_files = sorted(web_dir.glob("*resursi*.csv"))
     dogovor_files = sorted(web_dir.glob("*_Dogovor.json"))
     sprav_files = sorted(web_dir.glob("*_spravochniki.json"))
+    kontr_files = sorted(web_dir.glob("*_Kontr.json"))
 
     if not resursi_files:
         st.warning(
@@ -19734,6 +19737,12 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         st.error("Файлы ресурсов не распознаны (формат?). Проверьте структуру CSV.")
         return
     long_fact = apply_unified_project_column(long_fact, "project_name")
+    _kontr_index = load_1c_kontr_index(kontr_files) if kontr_files else None
+    long_fact = enrich_gdrs_fact_contractor_ids(
+        long_fact,
+        dogovor_paths=dogovor_files,
+        kontr=_kontr_index,
+    )
 
     _month_options = gdrs_month_select_options(long_fact)
     _month_labels = [lbl for lbl, _ in _month_options]
@@ -19890,6 +19899,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         plan_agg=_plan_agg,
         skud_agg=_skud_agg,
         weekly_plan_by_week=_weekly_plan_by_week or None,
+        kontr_index=_kontr_index,
     )
     if main_t is None or main_t.empty:
         st.info("Нет данных для выбранных фильтров.")
@@ -20026,6 +20036,9 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
     for _wk in ("w1", "w2", "w3", "w4", "w5", "w6"):
         view[_wk] = view[_wk].fillna(0).astype(int)
     from dashboards.gdrs_resursi import render_gdrs_matrix_table_html
+    _gdrs_act_exp, _gdrs_act_sp = st.columns([0.14, 0.86])
+    with _gdrs_act_exp:
+        pass
     _tbl_title = f"График движения рабочей силы ({unit})"
     _tbl_period = (
         _format_gdrs_month_year_title_ru(date_from, date_to, long_fact_period, None) or period_label
@@ -20043,6 +20056,13 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
     }
     _mtx_export = view.drop(columns=[c for c in view.columns if c in _mtx_drop], errors="ignore")
     _mtx_export = _mtx_export.rename(columns={k: v for k, v in _week_ren.items() if k in _mtx_export.columns})
+    with _gdrs_act_exp:
+        render_dataframe_excel_csv_downloads(
+            _mtx_export,
+            file_stem=_export_file_stem(_tbl_title),
+            key_prefix=f"gdrs_matrix_{abs(id(view))}",
+            popover_label="Экспорт",
+        )
     render_report_html_table(
         render_gdrs_matrix_table_html(
             view,
@@ -20055,7 +20075,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             show_week_columns=_show_week_cols,
             theme=theme,
         ),
-        export_df=_mtx_export,
+        export_df=None,
         file_stem=_export_file_stem(_tbl_title),
         key_prefix=f"gdrs_matrix_{abs(id(view))}",
     )

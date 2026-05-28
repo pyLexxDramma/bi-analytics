@@ -456,13 +456,48 @@ def _estimate_html_block_height(html: str) -> int:
     return int(min(cap, max(120, est)))
 
 
+
+
+def _gdrs_matrix_fullscreen_shell_wrap(body: str) -> str:
+    """Обёртка ГДРС-матрицы: кнопка ⛶ и полноэкранный overlay как в Девелоперских проектах."""
+    from dashboards.dev_projects_tz_matrix import (
+        _MATRIX_IFRAME_FIT_HEIGHT_SCRIPT,
+        _MATRIX_IFRAME_FULLSCREEN_SCRIPT,
+    )
+
+    inner = body or ""
+    if "matrix-fs-root" in inner:
+        return inner
+    return (
+        '<div id="matrix-fs-root" class="matrix-fs-root">'
+        '<div class="matrix-fs-topbar" role="toolbar" aria-label="Таблица">'
+        '<button type="button" class="matrix-fs-btn" id="matrix-fs-btn" title="На весь экран">'
+        "\u26f6</button></div>"
+        '<div class="matrix-fs-body gdrs-fs-body cp-body-stack">'
+        + inner
+        + "</div></div>"
+        + _MATRIX_IFRAME_FULLSCREEN_SCRIPT
+        + (_MATRIX_IFRAME_FIT_HEIGHT_SCRIPT or "")
+    )
+
+
+def _gdrs_fullscreen_head_css() -> str:
+    from dashboards.dev_projects_tz_matrix import _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS
+
+    return "<style>" + _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS + "</style>"
+
 def _build_sortable_html_document(html: str) -> str:
     style_block, body = _split_embedded_style(html)
+    html_l = html or ""
+    fs_css = ""
+    if "gdrs-table-wrap" in html_l:
+        body = _gdrs_matrix_fullscreen_shell_wrap(body)
+        fs_css = _gdrs_fullscreen_head_css()
     return (
         "<!DOCTYPE html><html lang='ru'><head>"
         "<meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-        f"{style_block}{_iframe_shell_css(html)}"
+        f"{style_block}{_iframe_shell_css(html)}{fs_css}"
         "</head><body>"
         f"<div class='bi-sortable-html-root'>{body}{_TABLE_SORT_SCRIPT}</div>"
         "</body></html>"

@@ -542,6 +542,130 @@ def load_resursi_files(paths: Iterable[Path | str]) -> pd.DataFrame:
     )
     return out
 
+@dataclass(frozen=True)
+class GdrsKontrIndex:
+    """Справочник 1С Kontr."""
+
+    ids: frozenset[str]
+    norm_names: frozenset[str]
+    id_by_norm: dict[str, str]
+
+
+def load_1c_kontr_index(paths: Iterable[Path | str]) -> GdrsKontrIndex:
+    ids: set[str] = set()
+    norm_names: set[str] = set()
+    id_by_norm: dict[str, str] = {}
+    for p in paths:
+        data = _safe_json(Path(p))
+        if not isinstance(data, list):
+            continue
+        for r in data:
+            if not isinstance(r, dict):
+                continue
+            cid = str(r.get("ID_Контрагента") or "").strip()
+            cname = str(r.get("Наименование_Контрагента") or "").strip()
+            if not cid and not cname:
+                continue
+            nn = normalize_name(cname) if cname else ""
+            if cid:
+                ids.add(cid)
+            if nn:
+                norm_names.add(nn)
+                if cid and nn not in id_by_norm:
+                    id_by_norm[nn] = cid
+    return GdrsKontrIndex(frozenset(ids), frozenset(norm_names), id_by_norm)
+
+
+def build_dogovor_contractor_id_lookup(
+    dogovor_paths: Iterable[Path | str],
+) -> tuple[dict[tuple[str, str], str], dict[str, str]]:
+    by_proj: dict[tuple[str, str], str] = {}
+    by_name: dict[str, str] = {}
+    for p in dogovor_paths:
+        df = load_plan_from_dogovor(Path(p), snapshot_date=None)
+        if df is None or df.empty:
+            continue
+        for _, r in df.iterrows():
+            pid = str(r.get("project_id", "")).strip()
+            cid = str(r.get("contractor_id", "")).strip()
+            cname = str(r.get("contractor_name", "")).strip()
+            if not cid:
+                continue
+            nn = normalize_name(cname)
+            if nn:
+                by_name.setdefault(nn, cid)
+                if pid:
+                    by_proj.setdefault((pid, nn), cid)
+    return by_proj, by_name
+
+
+def enrich_gdrs_fact_contractor_ids(
+    df: pd.DataFrame,
+    *,
+    dogovor_paths: Optional[Iterable[Path | str]] = None,
+    kontr: Optional[GdrsKontrIndex] = None,
+) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    work = df.copy()
+    by_proj, by_name = build_dogovor_contractor_id_lookup(dogovor_paths or [])
+
+    def _resolve_id(row: pd.Series) -> str:
+        cur = str(row.get("contractor_id", "")).strip()
+        if cur:
+            return cur
+        pid = str(row.get("project_id", "")).strip()
+        nn = normalize_name(str(row.get("contractor_name", "")))
+        if pid and nn and (pid, nn) in by_proj:
+            return by_proj[(pid, nn)]
+        if nn and nn in by_name:
+            return by_name[nn]
+        if kontr and nn and nn in kontr.id_by_norm:
+            return kontr.id_by_norm[nn]
+        return ""
+
+    work["contractor_id"] = work.apply(_resolve_id, axis=1)
+    return work
+
+
+def gdrs_contractor_in_kontr(
+    contractor_id: str,
+    contractor_name: str,
+    kontr: Optional[GdrsKontrIndex],
+) -> bool:
+    if kontr is None or (not kontr.ids and not kontr.norm_names):
+        return True
+    cid = str(contractor_id or "").strip()
+    if cid and cid in kontr.ids:
+        return True
+    nn = normalize_name(str(contractor_name or ""))
+    return bool(nn and nn in kontr.norm_names)
+
+
+def gdrs_apply_kontr_plan_gate(
+    rows: pd.DataFrame,
+    kontr: Optional[GdrsKontrIndex],
+) -> pd.DataFrame:
+    if rows is None or rows.empty or kontr is None:
+        return rows
+    if not kontr.ids and not kontr.norm_names:
+        return rows
+    work = rows.copy()
+    detail = work["row_kind"].astype(str) == "row"
+    for idx in work.index[detail]:
+        r = work.loc[idx]
+        if gdrs_contractor_in_kontr(
+            str(r.get("contractor_id", "")),
+            str(r.get("contractor_name", "")),
+            kontr,
+        ):
+            continue
+        work.loc[idx, "plan"] = 0.0
+        for pk in ("p1", "p2", "p3", "p4", "p5", "p6"):
+            if pk in work.columns:
+                work.loc[idx, pk] = 0.0
+    return work
+
 
 # =====================================================================
 # Парсер плана (Dogovor.json + spravochniki.json fallback)
@@ -1619,6 +1743,7 @@ def build_main_table(
     plan_agg: str = GDRS_AGG_MONTH,
     skud_agg: str = GDRS_AGG_MONTH,
     weekly_plan_by_week: Optional[dict[int, pd.DataFrame]] = None,
+    kontr_index: Optional[GdrsKontrIndex] = None,
 ) -> pd.DataFrame:
     """Сборка главной таблицы (Скрин 11): Контрагент × недели × отклонение × дельта.
 
@@ -1717,9 +1842,9 @@ def build_main_table(
     rows["skud"] = rows["skud_avg"].fillna(0.0).round(0)
     # ТЗ ГДРС (2026-05 + уточнение по скринам): Отклонение = План − Факт (СКУД);
     # Отклонение % = (Отклонение / План) × 100. Положительное — недовыполнение.
-    rows["deviation"] = (rows["plan"] - rows["skud"]).round(0)
+    rows["deviation"] = (rows["skud"] - rows["plan"]).round(0)
     rows["delta_pct"] = rows.apply(
-        lambda r: ((r["plan"] - r["skud"]) / r["plan"] * 100.0)
+        lambda r: ((r["skud"] - r["plan"]) / r["plan"] * 100.0)
         if r["plan"] not in (0.0, None) and float(r["plan"]) != 0.0
         else np.nan,
         axis=1,
@@ -1751,6 +1876,8 @@ def build_main_table(
             rows[pk] = rows["plan"].fillna(0.0).round(0)
     rows["row_kind"] = "row"
 
+    rows = gdrs_apply_kontr_plan_gate(rows, kontr_index)
+
     if only_with_plan:
         rows = rows[rows["plan"] > 0].copy()
         if rows.empty:
@@ -1767,7 +1894,7 @@ def build_main_table(
         block = chunk.sort_values("contractor_name").copy()
         plan_sum = float(block["plan"].sum())
         skud_sum = float(block["skud"].sum())
-        dev_sum = plan_sum - skud_sum
+        dev_sum = skud_sum - plan_sum
         sub = pd.DataFrame(
             [{
                 "project_name": proj,
@@ -1778,7 +1905,7 @@ def build_main_table(
                 "plan": plan_sum,
                 "skud": skud_sum,
                 "deviation": dev_sum,
-                "delta_pct": ((plan_sum - skud_sum) / plan_sum * 100.0) if plan_sum > 0 else np.nan,
+                "delta_pct": ((skud_sum - plan_sum) / plan_sum * 100.0) if plan_sum > 0 else np.nan,
                 "w1": float(block["w1"].sum()),
                 "w2": float(block["w2"].sum()),
                 "w3": float(block["w3"].sum()),
@@ -1804,7 +1931,7 @@ def build_main_table(
     sub_only = body[body["row_kind"] == "subtotal"]
     plan_total = float(sub_only["plan"].sum())
     skud_total_v = float(sub_only["skud"].sum())
-    dev_total = plan_total - skud_total_v
+    dev_total = skud_total_v - plan_total
     grand = pd.DataFrame(
         [{
             "project_name": "Итого",
@@ -1815,7 +1942,7 @@ def build_main_table(
             "plan": plan_total,
             "skud": skud_total_v,
             "deviation": dev_total,
-            "delta_pct": ((plan_total - skud_total_v) / plan_total * 100.0)
+            "delta_pct": ((skud_total_v - plan_total) / plan_total * 100.0)
             if plan_total > 0
             else np.nan,
             "w1": float(sub_only["w1"].sum()),
@@ -1890,7 +2017,7 @@ def build_summary_table(
         .agg(plan=("plan", "sum"), mean_per_day=("mean_per_day", "sum"))
     )
     # ТЗ: Отклонение = План − Факт (среднее за день для периода).
-    out["deviation"] = (out["plan"] - out["mean_per_day"]).round(0)
+    out["deviation"] = (out["mean_per_day"] - out["plan"]).round(0)
     return out[["contractor_name", "plan", "mean_per_day", "deviation"]]
 
 
@@ -1908,7 +2035,7 @@ def gdrs_delta_pct_cell_bg_style(raw) -> str:
     except Exception:
         return ""
     if p <= 0:
-        return "background-color:rgba(183,244,183,0.48) !important;"
+        return "background-color:rgba(255,84,84,0.35) !important;"
     t = min(max(p, 0.0), 100.0) / 100.0
     lo = (204, 248, 204)
     hi = (192, 38, 42)
@@ -1928,11 +2055,11 @@ def gdrs_deviation_cell_bg_style(raw) -> str:
     except Exception:
         return ""
     if v > 0:
-        t = min(max(v, 0.0), 100.0) / 100.0
+        return "background-color:rgba(70,214,138,0.32) !important;"
+    if v < 0:
+        t = min(max(-v, 0.0), 100.0) / 100.0
         alpha = 0.24 + 0.36 * t
         return f"background-color:rgba(255,84,84,{alpha:.3f}) !important;"
-    if v < 0:
-        return "background-color:rgba(70,214,138,0.32) !important;"
     return "background-color:rgba(136,153,170,0.18) !important;"
 
 
@@ -2086,7 +2213,8 @@ html, body {{
 #{w} tr.gdrs-rk-project td:first-child,
 #{w} tr.gdrs-rk-subtotal td:first-child {{
   color: #ffffff !important;
-  font-size: 17px !important;
+  font-size: 20px !important;
+  font-weight: 900 !important;
 }}
 #{w} tr.gdrs-rk-project td {{
   border-top: 2px solid rgba(255,255,255,0.75) !important;
@@ -2255,7 +2383,7 @@ def render_gdrs_matrix_table_html(
                 except (TypeError, ValueError):
                     fv = None
                 if fv is not None and fv == fv:
-                    dev_cls = "gdrs-u" if fv > 0 else ("gdrs-o" if fv < 0 else "gdrs-z")
+                    dev_cls = "gdrs-o" if fv > 0 else ("gdrs-u" if fv < 0 else "gdrs-z")
                     dev_bg = gdrs_deviation_cell_bg_style(fv)
                     inner = "0" if int(round(fv)) == 0 else f"{int(round(fv)):+d}"
                     cells.append(
@@ -2278,7 +2406,7 @@ def render_gdrs_matrix_table_html(
                     pct = float("nan")
                 if pct == pct:
                     grad = (delta_bg_style(raw_pct) if delta_bg_style else "") or ""
-                    pct_cls = "gdrs-u" if pct > 0 else ("gdrs-o" if pct < 0 else "gdrs-z")
+                    pct_cls = "gdrs-o" if pct > 0 else ("gdrs-u" if pct < 0 else "gdrs-z")
                     sign = "+" if pct > 0 else ""
                     cells.append(
                         _td_html(
@@ -2367,7 +2495,7 @@ def render_gdrs_matrix_table_html(
     _th = get_gdrs_theme(theme)
     _wrap_cls = "gdrs-table-wrap gdrs-light-table" if _th.name == "light" else "gdrs-table-wrap"
     return (
-        f'<div id="{wid}" class="{_wrap_cls}">'
+f'<div id="{wid}" class="{_wrap_cls}">'
         + gdrs_matrix_table_css(wid, _th)
         + '<table class="gdrs-matrix-table bi-sortable-table"><thead>'
         + "".join(thead_parts)
