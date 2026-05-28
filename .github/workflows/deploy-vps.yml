@@ -47,8 +47,10 @@ jobs:
             fi
             chmod +x "$DEPLOY_SCRIPT"
             export BI_DEPLOY_SKIP_SYSTEMD=1
+            export BI_DEPLOY_SKIP_INGEST=1
             export BI_DEPLOY_FAIL_ON_INGEST=0
             ./"$DEPLOY_SCRIPT"
+
 
 
 
