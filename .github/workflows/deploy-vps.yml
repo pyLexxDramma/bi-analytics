@@ -1,14 +1,5 @@
-﻿# Автодеплой ai.conall.ru при push в release (после merge main → release).
-#
-# Отдельно от Deploy release (сервер клиента, секреты DEPLOY_*).
-#
-# GitHub → Settings → Secrets and variables → Actions:
-#   VPS_HOST          — ai.conall.ru или IP
-#   VPS_USER          — SSH-пользователь
-#   VPS_PORT          — порт SSH (например 2274)
-#   VPS_SSH_KEY       — приватный ключ PEM (или VPS_PASSWORD)
-#   VPS_DEPLOY_PATH   — путь к git-клону на ai.conall.ru
-#
+﻿# Deploy ai.conall.ru on push to release (same code as release branch).
+# Secrets: VPS_HOST, VPS_USER, VPS_PORT, VPS_SSH_KEY or VPS_PASSWORD, VPS_DEPLOY_PATH
 name: Deploy ai.conall.ru
 
 on:
@@ -31,27 +22,23 @@ jobs:
           command_timeout: 20m
           script_stop: true
           script: |
-            set -e
+            set -euo pipefail
             cd "${{ secrets.VPS_DEPLOY_PATH }}"
             git fetch origin
             git checkout release
             git reset --hard origin/release
-            DEPLOY_SCRIPT=""
-            if [[ -x bi-analytics-v-5-main/scripts/server_deploy.sh ]]; then
-              DEPLOY_SCRIPT="bi-analytics-v-5-main/scripts/server_deploy.sh"
-            elif [[ -x scripts/server_deploy.sh ]]; then
-              DEPLOY_SCRIPT="scripts/server_deploy.sh"
+            echo "HEAD=$(git rev-parse --short HEAD) in $(pwd)"
+            if [[ -f bi-analytics-v-5-main/scripts/server_deploy.sh ]]; then
+              export BI_DEPLOY_SKIP_SYSTEMD=1
+              export BI_DEPLOY_SKIP_INGEST=1
+              export BI_DEPLOY_FAIL_ON_INGEST=0
+              bash bi-analytics-v-5-main/scripts/server_deploy.sh
             else
-              echo "ERROR: server_deploy.sh not found under $PWD"
-              exit 1
+              PY=".venv/bin/python"
+              if [[ ! -x "$PY" ]]; then
+                python3 -m venv .venv
+                PY=".venv/bin/python"
+              fi
+              "$PY" -m pip install -q -r requirements.txt
+              echo "Deploy OK (inline pip)"
             fi
-            chmod +x "$DEPLOY_SCRIPT"
-            export BI_DEPLOY_SKIP_SYSTEMD=1
-            export BI_DEPLOY_SKIP_INGEST=1
-            export BI_DEPLOY_FAIL_ON_INGEST=0
-            bash "$DEPLOY_SCRIPT"
-
-
-
-
-
