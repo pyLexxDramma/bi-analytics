@@ -30,14 +30,8 @@ if [[ ! -f "$REQ" ]]; then
 fi
 echo "REQ=$REQ"
 
-if ! "$PY" -m pip install --upgrade pip -q; then
-  echo "ERROR: pip upgrade failed"
-  exit 1
-fi
-if ! "$PY" -m pip install -r "$REQ" -q; then
-  echo "ERROR: pip install -r $REQ failed"
-  exit 1
-fi
+"$PY" -m pip install --upgrade pip -q
+"$PY" -m pip install -r "$REQ" -q
 echo "OK: pip install"
 
 if [[ "${BI_DEPLOY_SKIP_INGEST:-0}" == "1" ]]; then
@@ -49,10 +43,34 @@ elif [[ -f "$APP_SUBDIR/ingest_web_cli.py" ]]; then
   set -e
   if [[ "$ingest_rc" -ne 0 ]]; then
     echo "WARN: ingest exited $ingest_rc"
-    [[ "${BI_DEPLOY_FAIL_ON_INGEST:-0}" == "1" ]] && exit "$ingest_rc"
+    if [[ "${BI_DEPLOY_FAIL_ON_INGEST:-0}" == "1" ]]; then
+      exit "$ingest_rc"
+    fi
   else
     echo "OK: ingest"
   fi
 fi
 
-echo "Deploy finished (code + deps)."
+if [[ "${BI_DEPLOY_SKIP_SYSTEMD:-0}" == "1" ]]; then
+  echo "SKIP: systemd (BI_DEPLOY_SKIP_SYSTEMD=1)"
+  echo "Deploy finished (code + deps)."
+  exit 0
+fi
+
+UNIT="${BI_SYSTEMD_UNIT:-bi-analytics.service}"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+echo "Restarting $UNIT ..."
+systemctl --user stop "$UNIT" 2>/dev/null || true
+sleep 2
+
+if command -v ss >/dev/null 2>&1 && ss -tlnp 2>/dev/null | grep -q ':8501 '; then
+  echo "WARN: port 8501 still busy, stopping stray streamlit"
+  pkill -f 'streamlit.*8501' 2>/dev/null || true
+  sleep 1
+fi
+
+systemctl --user start "$UNIT"
+systemctl --user is-active --quiet "$UNIT"
+echo "OK: $UNIT is active"
+echo "Deploy finished."
