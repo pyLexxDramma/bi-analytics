@@ -755,7 +755,24 @@ def _match_msp(
             return out.iloc[0:0].copy()
         sc = out[col].astype(str)
         if "ковенант" in str(parent_l2_contains).lower():
-            out = out[sc.str.contains("ковенант", **_lit)]
+            mask_cov = sc.str.contains("ковенант", **_lit)
+            if "block" in out.columns:
+                mask_cov = mask_cov | out["block"].astype(str).str.contains("ковенант", **_lit)
+            # Вехи «ЗОС - 2 этап» без БЛОК/section «Ковенанты» (типично Дмитровский).
+            if nm:
+                nm_s = _nm_clean.loc[out.index]
+                mask_cov = mask_cov | nm_s.str.contains(
+                    r"^(?:ЗОС|РВ|Право\s*1|Право\s*2)\s*-\s*\d+\s*этап\s*$",
+                    case=False,
+                    na=False,
+                    regex=True,
+                ) | nm_s.str.contains(
+                    r"(?:ВЫКУП\s+ЗУ|Право\s*2).+\(\s*1\s+и\s+2\s+этап",
+                    case=False,
+                    na=False,
+                    regex=True,
+                )
+            out = out[mask_cov]
         else:
             out = out[sc.str.contains(str(parent_l2_contains), **_lit)]
     name_masks: List[pd.Series] = []
@@ -1605,6 +1622,11 @@ _PLOT_SECTION_RE = re.compile(
     r"(?:\u0443\u0447\u0430\u0441\u0442\u043e\u043a|\u0443\u0447\.?)\s*\u2116\s*(\d+)",
     re.IGNORECASE | re.UNICODE,
 )
+# Дмитровский и др.: «ЗОС - 2 этап» — отдельные строки матрицы по номеру этапа.
+_STAGE_SECTION_RE = re.compile(
+    r"(\d+)\s*\u044d\u0442\u0430\u043f",
+    re.IGNORECASE | re.UNICODE,
+)
 
 # \u0417\u0430\u0434\u0430\u0447\u0438 MSP, \u043a\u043e\u0442\u043e\u0440\u044b\u0435 \u043c\u043e\u0433\u0443\u0442 \u0434\u0443\u0431\u043b\u0438\u0440\u043e\u0432\u0430\u0442\u044c\u0441\u044f \u043f\u043e \u0443\u0447\u0430\u0441\u0442\u043a\u0430\u043c (\u0422\u04173).
 _PLOT_SECTION_TASK_HINTS = (
@@ -1623,9 +1645,12 @@ def _task_plot_section(task_name: object) -> Optional[str]:
     if not s:
         return None
     m = _PLOT_SECTION_RE.search(s)
-    if not m:
-        return None
-    return str(m.group(1)).strip()
+    if m:
+        return str(m.group(1)).strip()
+    m2 = _STAGE_SECTION_RE.search(s)
+    if m2:
+        return str(m2.group(1)).strip()
+    return None
 
 
 def _task_name_suggests_plot_section(task_name: object) -> bool:
@@ -1722,7 +1747,7 @@ def build_dev_tz_matrix_blocks(
             project_label_for_scope=project_label_for_scope,
             plot_section=sec,
         )
-        lbl = f"{base} (\u0443\u0447. \u2116{sec})" if base else f"\u0443\u0447. \u2116{sec}"
+        lbl = f"{base} ({sec} \u044d\u0442\u0430\u043f)" if base else f"{sec} \u044d\u0442\u0430\u043f"
         blocks.append((lbl, rows_s))
     return blocks
 
@@ -2265,6 +2290,9 @@ def build_dev_tz_matrix_rows(
                     "заключение о соответствии",
                     "ЗОС)",
                     "зос)",
+                    "ЗОС - 1 этап",
+                    "ЗОС - 2 этап",
+                    "ЗОС -",
                 ],
                 "parent_l2_contains": "Ковенанты",
                 "phase_needles": [
@@ -2288,6 +2316,9 @@ def build_dev_tz_matrix_rows(
                     "ввод в эксплуатацию",
                     "Разрешение на ввод объекта",
                     "Разрешение на ввод в эксплуатацию",
+                    "РВ - 1 этап",
+                    "РВ - 2 этап",
+                    "РВ -",
                 ],
                 "parent_l2_contains": "Ковенанты",
                 "phase_needles": [
@@ -2307,7 +2338,14 @@ def build_dev_tz_matrix_rows(
             "Право 1",
             {
                 "level": 5.0,
-                "names_any": ["Право 1", "Право1", "право 1", "Право 1 на"],
+                "names_any": [
+                    "Право 1",
+                    "Право1",
+                    "право 1",
+                    "Право 1 на",
+                    "Право 1 - 1 этап",
+                    "Право 1 - 2 этап",
+                ],
                 "parent_l2_contains": "Ковенанты",
                 "phase_needles": [
                     "Право 1",
@@ -3846,6 +3884,20 @@ CONTROL_POINT_MILESTONES: List[Tuple[str, str, dict]] = [
     ("Пуск электричества", "power_on", {"level": 5.0, "names_any": ["Пуск электричества"], "parent_l2_contains": "Ковенанты"}),
     ("Пуск газа", "gas_on", {"level": 5.0, "names_any": ["Пуск газа"], "parent_l2_contains": "Ковенанты"}),
     (
+        "ЗОС",
+        "zos",
+        {
+            "level": 5.0,
+            "names_any": [
+                "Заключение о соответствии",
+                "ЗОС)",
+                "ЗОС - 1 этап",
+                "ЗОС - 2 этап",
+            ],
+            "parent_l2_contains": "Ковенанты",
+        },
+    ),
+    (
         "РВ",
         "rv",
         {
@@ -3856,12 +3908,18 @@ CONTROL_POINT_MILESTONES: List[Tuple[str, str, dict]] = [
                 "Разрешение на ввод объекта",
                 "Разрешение на ввод",
                 "ввод в эксплуатацию",
+                "РВ - 1 этап",
+                "РВ - 2 этап",
             ],
             "names_exact_any": ["РВ"],
             "parent_l2_contains": "Ковенанты",
         },
     ),
-    ("Право 1", "pravo1", {"level": 5.0, "names_any": ["Право 1"], "parent_l2_contains": "Ковенанты"}),
+    ("Право 1", "pravo1", {
+        "level": 5.0,
+        "names_any": ["Право 1", "Право 1 - 1 этап", "Право 1 - 2 этап"],
+        "parent_l2_contains": "Ковенанты",
+    }),
     ("Выкуп ЗУ", "vykup_zu", {"level": 5.0, "names_any": ["Выкуп ЗУ", "Выкуп земельного участка"], "parent_l2_contains": "Ковенанты"}),
     ("Право 2", "pravo2", {"level": 5.0, "names_any": ["Право 2", "Право 2 на Застройщика"], "parent_l2_contains": "Ковенанты"}),
 ]
