@@ -1717,6 +1717,28 @@ def _detect_plot_sections_from_msp(mdf: pd.DataFrame) -> List[str]:
     return sorted(found, key=_sort_key)
 
 
+def _control_points_stage_from_project_label(label: object) -> Optional[str]:
+    s = str(label or "").strip()
+    if not s:
+        return None
+    m = re.search(r"\((\d+)\s*\u044d\u0442\u0430\u043f\)\s*$", s, flags=re.IGNORECASE)
+    if m:
+        return str(m.group(1)).strip()
+    return None
+
+
+def _control_points_base_project_label(label: object) -> str:
+    s = str(label or "").strip()
+    if not s:
+        return ""
+    return re.sub(
+        r"\s*\(\d+\s*\u044d\u0442\u0430\u043f\)\s*$",
+        "",
+        s,
+        flags=re.IGNORECASE,
+    ).strip()
+
+
 def build_dev_tz_matrix_blocks(
     mdf: pd.DataFrame,
     project_data: Optional[pd.DataFrame],
@@ -4247,23 +4269,34 @@ def build_control_points_df(mdf: pd.DataFrame, *, hide_completed: bool = False) 
         key=lambda it: _control_points_project_label(it[0], it[1]).lower(),
     ):
         sub = work[work[pcol].astype(str).str.strip().isin(raws)]
-        display = _control_points_project_label(gk, raws)
-        rec: Dict[str, Any] = {"project": display, "row_ok": True}
-        for title, slug, kw in get_control_point_milestones_effective():
-            sub_m = _cp_hide_completed_candidates(sub) if hide_completed else sub
-            m = _match_milestone_tasks(sub_m, kw)
-            if hide_completed and (m is None or getattr(m, "empty", True)):
-                m = _match_milestone_tasks(sub, kw)
-            pl, fl, otk, ok, warn_pct, _pct100 = _one_milestone_cell(m, pct_scale_ref=sub)
-            rec[f"{slug}_plan"] = pl
-            rec[f"{slug}_fact"] = fl
-            rec[f"{slug}_otkl"] = otk
-            rec[f"{slug}_ok"] = ok
-            rec[f"{slug}_warn_pct"] = bool(warn_pct)
-            rec[f"{slug}_pct100"] = bool(_pct100)
-            if not ok:
-                rec["row_ok"] = False
-        rows_out.append(rec)
+        display_base = _control_points_project_label(gk, raws)
+        sections = _detect_plot_sections_from_msp(sub)
+        stage_labels: List[Tuple[str, Optional[str]]]
+        if sections:
+            stage_labels = [(f"{display_base} ({sec} этап)", sec) for sec in sections]
+        else:
+            stage_labels = [(display_base, None)]
+        for display, plot_sec in stage_labels:
+            rec: Dict[str, Any] = {"project": display, "row_ok": True}
+            for title, slug, kw in get_control_point_milestones_effective():
+                sub_m = _cp_hide_completed_candidates(sub) if hide_completed else sub
+                m = _match_milestone_tasks(sub_m, kw)
+                if hide_completed and (m is None or getattr(m, "empty", True)):
+                    m = _match_milestone_tasks(sub, kw)
+                if plot_sec:
+                    m = _filter_milestone_tasks_by_plot_section(m, str(plot_sec))
+                pl, fl, otk, ok, warn_pct, _pct100 = _one_milestone_cell(
+                    m, pct_scale_ref=sub
+                )
+                rec[f"{slug}_plan"] = pl
+                rec[f"{slug}_fact"] = fl
+                rec[f"{slug}_otkl"] = otk
+                rec[f"{slug}_ok"] = ok
+                rec[f"{slug}_warn_pct"] = bool(warn_pct)
+                rec[f"{slug}_pct100"] = bool(_pct100)
+                if not ok:
+                    rec["row_ok"] = False
+            rows_out.append(rec)
     return pd.DataFrame(rows_out)
 
 
@@ -4528,7 +4561,7 @@ def _apply_control_points_msp_filters(
 CONTROL_POINTS_GROUPS_DEFAULT_SLUGS: List[List[str]] = [
     ["gpzu", "exp_pd", "fin_start", "rd_stage"],
     ["rs", "smr_finish", "power_on", "gas_on"],
-    ["rv", "pravo1", "vykup_zu", "pravo2"],
+    ["zos", "rv", "pravo1", "vykup_zu", "pravo2"],
 ]
 
 
@@ -4573,7 +4606,13 @@ def _control_points_project_label_to_raw_names(mdf: pd.DataFrame) -> Dict[str, L
     for gk, raws in key_to_raws.items():
         raws_u = sorted(set(raws))
         lab = _control_points_project_label(gk, raws_u)
-        out[lab] = raws_u
+        sub = work[work[pcol].astype(str).str.strip().isin(raws_u)]
+        sections = _detect_plot_sections_from_msp(sub)
+        if sections:
+            for sec in sections:
+                out[f"{lab} ({sec} этап)"] = raws_u
+        else:
+            out[lab] = raws_u
     return out
 
 
@@ -4983,8 +5022,14 @@ html,body{margin:0;padding:0;background:#0e1520;overflow-x:hidden;overflow-y:aut
                     if m_ok
                     else "Просрочка: факт позже плана или нет дат."
                 )
+                _proj_disp = str(r.get("project", "")).strip()
+                _plot_sec = _control_points_stage_from_project_label(_proj_disp)
                 if pcol_cp and pcol_cp in getattr(filtered_mdf, "columns", []):
-                    _raws = _proj_lab_to_raws.get(str(r.get("project", "")).strip(), [])
+                    _raws = _proj_lab_to_raws.get(_proj_disp, [])
+                    if not _raws:
+                        _raws = _proj_lab_to_raws.get(
+                            _control_points_base_project_label(_proj_disp), []
+                        )
                     sub_proj = filtered_mdf[
                         filtered_mdf[pcol_cp].astype(str).str.strip().isin(_raws)
                     ]
@@ -4993,6 +5038,10 @@ html,body{margin:0;padding:0;background:#0e1520;overflow-x:hidden;overflow-y:aut
                 skel = slug_kw_map.get(slug)
                 if skel:
                     mhit = _match_milestone_tasks(sub_proj, skel[1])
+                    if _plot_sec:
+                        mhit = _filter_milestone_tasks_by_plot_section(
+                            mhit, str(_plot_sec)
+                        )
                 else:
                     mhit = pd.DataFrame()
                 _detail_html = _cp_detail_panel_inner_html(
