@@ -293,16 +293,50 @@ def _opencode_workspace_url(public_base: str) -> str:
     return f"{base}/L3dvcmtzcGFjZQ/"
 
 
+# OpenCode: dev — лаунчер на Streamlit Cloud; prod — ai.conall.ru после nginx Николая.
+AI_ASSISTANT_URL_DEV_DEFAULT = "https://bi-analytics-dev.streamlit.app/_opencode_ai"
+AI_ASSISTANT_URL_PROD_DEFAULT = "https://ai.conall.ru/opencode/L3dvcmtzcGFjZQ/"
+
+
 def get_ai_assistant_open_url() -> str:
-    """Кнопка «ИИ помощник» в BI: страница /_opencode_ai, не OpenCode :4096."""
+    """
+    URL кнопки «ИИ помощник» (новая вкладка).
+
+    Приоритет:
+    1. AI_ASSISTANT_URL (или XCA_AI_CHAT_URL / AI_CHAT_PUBLIC_URL)
+    2. AI_ASSISTANT_TARGET=dev|prod|off|auto (по умолчанию auto)
+       - auto + dev-приложение → AI_ASSISTANT_URL_DEV (Streamlit dev)
+       - auto + release-клиент → пусто, пока не AI_ASSISTANT_USE_PROD=1
+       - prod → AI_ASSISTANT_URL_PROD (ai.conall.ru после Николая)
+    """
     for key in ("AI_ASSISTANT_URL", "XCA_AI_CHAT_URL", "AI_CHAT_PUBLIC_URL"):
         u = _read_env_or_secret(key).strip()
         if u:
             return u
-    base = _read_env_or_secret("BI_STREAMLIT_PUBLIC_URL").strip().rstrip("/")
-    if base:
-        return f"{base}/_opencode_ai"
-    return ""
+
+    target = _read_env_or_secret("AI_ASSISTANT_TARGET").strip().lower() or "auto"
+    if target in ("off", "none", "0", "false"):
+        return ""
+
+    prod_url = (
+        _read_env_or_secret("AI_ASSISTANT_URL_PROD").strip()
+        or AI_ASSISTANT_URL_PROD_DEFAULT
+    )
+    dev_url = (
+        _read_env_or_secret("AI_ASSISTANT_URL_DEV").strip()
+        or AI_ASSISTANT_URL_DEV_DEFAULT
+    )
+
+    if target == "prod" or _env_truthy("AI_ASSISTANT_USE_PROD"):
+        return prod_url
+
+    if target == "dev":
+        return dev_url
+
+    # auto: dev Streamlit — лаунчер; release client — скрыть до ai.conall.ru
+    if is_release_client_mode():
+        return prod_url if _env_truthy("AI_ASSISTANT_USE_PROD") else ""
+    return dev_url
 
 
 
