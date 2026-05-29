@@ -212,6 +212,39 @@ def _git_current_branch() -> str:
         return ""
 
 
+
+def _streamlit_request_host() -> str:
+    try:
+        import streamlit as st  # type: ignore
+
+        ctx = getattr(st, "context", None)
+        headers = getattr(ctx, "headers", None) if ctx is not None else None
+        if headers is not None:
+            try:
+                h = str(headers.get("Host") or headers.get("host") or "").strip().lower()
+                if h:
+                    return h
+            except Exception:
+                pass
+        try:
+            return str(getattr(ctx, "url", "") or "").strip().lower()
+        except Exception:
+            return ""
+    except Exception:
+        return ""
+
+
+def _is_streamlit_dev_deployment() -> bool:
+    """Streamlit Cloud dev app (не client release)."""
+    if _env_truthy("BI_ANALYTICS_DEV_MODE"):
+        return True
+    host = _streamlit_request_host()
+    if "bi-analytics-dev" in host:
+        return True
+    pub = _read_env_or_secret("BI_STREAMLIT_PUBLIC_URL").strip().lower()
+    return "bi-analytics-dev" in pub
+
+
 def is_release_client_mode() -> bool:
     """
     Единый предикат «клиентского релиза».
@@ -234,26 +267,9 @@ def is_release_client_mode() -> bool:
         return True
     if _git_current_branch() == "release":
         return True
-    try:
-        import streamlit as st  # type: ignore
-
-        ctx = getattr(st, "context", None)
-        headers = getattr(ctx, "headers", None) if ctx is not None else None
-        host = ""
-        if headers is not None:
-            try:
-                host = str(headers.get("Host") or headers.get("host") or "").strip().lower()
-            except Exception:
-                host = ""
-        if not host:
-            try:
-                host = str(getattr(ctx, "url", "") or "").strip().lower()
-            except Exception:
-                host = ""
-        if "streamlit.app" in host:
-            return True
-    except Exception:
-        pass
+    host = _streamlit_request_host()
+    if "streamlit.app" in host:
+        return not _is_streamlit_dev_deployment()
     return False
 
 
@@ -334,9 +350,9 @@ def get_ai_assistant_open_url() -> str:
         return dev_url
 
     # auto: dev Streamlit — лаунчер; release client — скрыть до ai.conall.ru
-    if is_release_client_mode():
-        return prod_url if _env_truthy("AI_ASSISTANT_USE_PROD") else ""
-    return dev_url
+    if _is_streamlit_dev_deployment() or (not is_release_client_mode()):
+        return dev_url
+    return prod_url if _env_truthy("AI_ASSISTANT_USE_PROD") else ""
 
 
 
