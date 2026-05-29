@@ -83,7 +83,10 @@ _TABLE_SORT_JS = r"""
     tbl.setAttribute("data-bi-sort-ready", "1");
     if (!tbl.classList.contains("bi-sortable-table")) tbl.classList.add("bi-sortable-table");
     var theadRow = tbl.querySelector("thead tr");
-    if (tbl.classList.contains("gdrs-matrix-table") || tbl.querySelector("thead tr.title-row")) {
+    if (tbl.classList.contains("gdrs-matrix-table")) {
+      var metricsRow = tbl.querySelector("thead tr.gdrs-h-metrics");
+      if (metricsRow) theadRow = metricsRow;
+    } else if (tbl.querySelector("thead tr.title-row")) {
       var headerRows = tbl.querySelectorAll("thead tr");
       if (headerRows.length > 1) theadRow = headerRows[headerRows.length - 1];
     }
@@ -92,6 +95,8 @@ _TABLE_SORT_JS = r"""
     var clickOnly = tbl.classList.contains("bi-sort-click-only");
     ths.forEach(function (th, colIdx) {
       if (th.getAttribute("data-bi-sort-th") === "1") return;
+      if (tbl.classList.contains("gdrs-matrix-table") && th.getAttribute("data-gdrs-sort") !== "1") return;
+      colIdx = th.cellIndex;
       th.setAttribute("data-bi-sort-th", "1");
       var labelText = th.getAttribute("data-sort-label") || (th.textContent || "").trim();
       labelText = labelText.replace(/\s[\u21C5\u25B2\u25BC\u2191\u2193]+$/, "").trim();

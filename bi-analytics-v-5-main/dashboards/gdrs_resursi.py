@@ -2385,6 +2385,7 @@ def render_gdrs_matrix_table_html(
         col: str,
         inner: str,
         *,
+        raw_val=None,
         extra_cls: str = "",
         extra_style: str = "",
         is_detail: bool = False,
@@ -2400,7 +2401,18 @@ def render_gdrs_matrix_table_html(
         if extra_cls:
             cls += f" {extra_cls}"
         st = extra_style or ""
-        return f'<td class="{cls.strip()}" style="{st}">{inner}</td>'
+        sort_attr = ""
+        if col in numeric_cols or col == "Отклонение":
+            try:
+                rv = raw_val if raw_val is not None else inner
+                if isinstance(rv, str):
+                    rv = rv.replace(" ", "").replace(" ", "").replace(",", ".")
+                fv = float(rv)
+                if fv == fv:
+                    sort_attr = f' data-sort-val="{fv}"'
+            except (TypeError, ValueError):
+                pass
+        return f'<td class="{cls.strip()}" style="{st}"{sort_attr}>{inner}</td>'
 
     def _row_html(row) -> str:
         kind = str(row.get(kind_col, "") or "").strip().casefold()
@@ -2431,6 +2443,7 @@ def render_gdrs_matrix_table_html(
                             ci,
                             col,
                             html_module.escape(inner),
+                            raw_val=fv,
                             extra_cls=dev_cls,
                             extra_style=dev_bg,
                             is_detail=is_detail,
@@ -2463,7 +2476,7 @@ def render_gdrs_matrix_table_html(
                 else:
                     cells.append(_td_html(ci, col, "—", is_detail=is_detail))
             elif col in numeric_cols:
-                cells.append(_td_html(ci, col, html_module.escape(_fmt_num(v)), is_detail=is_detail))
+                cells.append(_td_html(ci, col, html_module.escape(_fmt_num(v)), raw_val=v, is_detail=is_detail))
             else:
                 cells.append(
                     _td_html(
@@ -2486,13 +2499,14 @@ def render_gdrs_matrix_table_html(
             f'<tr class="gdrs-h-period"><th colspan="{ncols}">'
             f"{html_module.escape(period_line)}</th></tr>"
         )
-    thead_parts.append("<tr>")
+    thead_parts.append("<tr class=\"gdrs-h-metrics\">")
     if show_week_columns:
         for ci, col in enumerate(fixed_cols):
             hmc = _th_metric_cls(col)
             hcls = _border_cls(ci) + (f" {hmc}" if hmc else "")
+            _sort = ' data-gdrs-sort="1" data-sort-label="' + html_module.escape(col) + '"' if col in ("План", "СКУД", "Отклонение") else ""
             thead_parts.append(
-                f'<th rowspan="2" class="{hcls.strip()}">{html_module.escape(col)}</th>'
+                f'<th rowspan="2" class="{hcls.strip()}"{_sort}>{html_module.escape(col)}</th>'
             )
         thead_parts.append(
             f'<th colspan="{wk_n}" class="gdrs-h-plan-group gdrs-sep-l-strong gdrs-sep-r-strong">План</th>'
@@ -2524,8 +2538,9 @@ def render_gdrs_matrix_table_html(
         for ci, col in enumerate(show_cols):
             hmc = _th_metric_cls(col)
             hcls = _border_cls(ci) + (f" {hmc}" if hmc else "")
+            _sort = ' data-gdrs-sort="1" data-sort-label="' + html_module.escape(col) + '"' if col in ("План", "СКУД", "Отклонение") else ""
             thead_parts.append(
-                f'<th class="{hcls.strip()}">{html_module.escape(col)}</th>'
+                f'<th class="{hcls.strip()}"{_sort}>{html_module.escape(col)}</th>'
             )
         thead_parts.append("</tr>")
 
