@@ -18,7 +18,7 @@ from typing import Dict, List, Optional, Tuple
 import streamlit as st
 from html import escape as _html_escape_attr
 
-from config import DB_PATH, get_ai_assistant_open_url, switch_page_app
+from config import AI_ASSISTANT_PAGE, DB_PATH, get_ai_assistant_open_url, is_ai_assistant_embedded_page, switch_page_app
 
 # Роли пользователей
 ROLES = {
@@ -826,7 +826,16 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
         st.markdown("### Меню")
         _ai_open = (get_ai_assistant_open_url() or "").strip()
         if _ai_open and has_report_access(user["role"]):
-            if hasattr(st, "link_button"):
+            if is_ai_assistant_embedded_page():
+                if st.button(
+                    "ИИ помощник",
+                    width="stretch",
+                    help="Встроенный чат OpenCode AI в этом приложении.",
+                    icon="🤖",
+                    key="sidebar_ai_assistant",
+                ):
+                    switch_page_app(AI_ASSISTANT_PAGE)
+            elif hasattr(st, "link_button"):
                 st.link_button(
                     "ИИ помощник",
                     _ai_open,

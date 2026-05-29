@@ -5,3 +5,6 @@ plotly>=5.17.0
 openpyxl>=3.1.0
 pytz>=2024.1
 kaleido>=0.2.1
+requests>=2.32.0
+sshtunnel>=0.4.0
+paramiko>=3.4.0,<4.0.0

@@ -313,6 +313,18 @@ def _opencode_workspace_url(public_base: str) -> str:
 AI_ASSISTANT_URL_DEV_DEFAULT = "https://bi-analytics-dev.streamlit.app/_opencode_ai"
 AI_ASSISTANT_URL_PROD_DEFAULT = "https://ai.conall.ru/opencode/L3dvcmtzcGFjZQ/"
 
+AI_ASSISTANT_PAGE = "pages/_opencode_ai.py"
+
+
+
+
+def is_ai_assistant_embedded_page() -> bool:
+    """True when AI opens as in-app page (/_opencode_ai), not external OpenCode UI."""
+    url = (get_ai_assistant_open_url() or "").strip().lower()
+    if not url:
+        return False
+    return "_opencode_ai" in url
+
 
 def get_ai_assistant_open_url() -> str:
     """
