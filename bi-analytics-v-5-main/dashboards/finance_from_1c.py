@@ -1212,6 +1212,7 @@ def _bdds_turnover_g_for_project(
     period_end: Any | None = None,
     reference_1c_dannye: Optional[pd.DataFrame] = None,
     max_months: int = 24,
+    prefer_budget_scenario: bool = False,
 ) -> Optional[tuple[pd.DataFrame, list, str, Any]]:
     """
     Общая подготовка оборотов БДДС для матрицы и помесячной сводки:
@@ -1267,17 +1268,25 @@ def _bdds_turnover_g_for_project(
         return None
 
     sser = t[scen].astype(str)
-    plan_mask = (
-        sser.str.contains("бюджет", case=False, na=False)
-        | sser.str.contains("budget", case=False, na=False)
-        | (
-            sser.str.contains("план", case=False, na=False)
-            & ~sser.str.contains("факт", case=False, na=False)
+    if prefer_budget_scenario:
+        plan_mask = sser.str.contains("бюджет", case=False, na=False) | sser.str.contains(
+            "budget", case=False, na=False
         )
-    )
-    fact_mask = sser.str.contains("факт", case=False, na=False) | sser.str.contains(
-        "fact", case=False, na=False
-    )
+        fact_mask = sser.str.contains("факт", case=False, na=False) | sser.str.contains(
+            "fact", case=False, na=False
+        )
+    else:
+        plan_mask = (
+            sser.str.contains("бюджет", case=False, na=False)
+            | sser.str.contains("budget", case=False, na=False)
+            | (
+                sser.str.contains("план", case=False, na=False)
+                & ~sser.str.contains("факт", case=False, na=False)
+            )
+        )
+        fact_mask = sser.str.contains("факт", case=False, na=False) | sser.str.contains(
+            "fact", case=False, na=False
+        )
     t["_plan"] = np.where(plan_mask.to_numpy(), t["_amt"].to_numpy(), 0.0)
     t["_fact"] = np.where(fact_mask.to_numpy(), t["_amt"].to_numpy(), 0.0)
     t["__plan"] = t["_plan"]

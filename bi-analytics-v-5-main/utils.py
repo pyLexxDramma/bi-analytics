@@ -1160,7 +1160,7 @@ def budget_table_to_html(
     )
     parts = [
         _html_table_caption(table_caption),
-        f'<div id="{wrap_id}" class="budget-deviation-table-wrap" style="overflow-x: auto; min-width: 0; margin: 0.35em 0 0 0; padding-bottom: 6px;">',
+        f'<div id="{wrap_id}" class="budget-deviation-table-wrap" style="overflow-x: auto; min-width: 0; margin: 0; padding: 0;">',
         f"<style>{_style_css}</style>",
         f'<div class="budget-table-scroll">' if _scroll_vh else "",
         f'<table class="bi-sortable-table" style="width:100%; border-collapse: collapse; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; font-size: {_tbl_px}px;">',
@@ -1760,7 +1760,11 @@ def render_report_html_table(
     _compact_tbl = (
         "pf-dates-table-wrap" in (html or "")
         or "pred-detail-wrap" in (html or "")
-        or file_stem in ("plan_fact_dates", "predpisania")
+        or (
+            "budget-deviation-table-wrap" in (html or "")
+            and "budget-table-scroll" in (html or "")
+        )
+        or file_stem in ("plan_fact_dates", "predpisania", "debit_credit")
     )
 
     def _render_table_block() -> None:
@@ -1793,6 +1797,19 @@ def render_report_html_table(
                 popover_key=_pop_key,
             )
         return
+
+    if "budget-deviation-table-wrap" in (html or ""):
+        st.markdown(
+            "<style>"
+            "div[data-testid='stHtml']{margin:0!important;padding:0!important;}"
+            "div[data-testid='stHtml'] iframe{display:block;margin:0!important;padding:0!important;}"
+            "div[data-testid='stElementContainer']:has([data-testid='stHtml']) "
+            "{margin-bottom:0!important;padding-bottom:0!important;}"
+            "div[data-testid='stVerticalBlock']:has([data-testid='stPopover']) "
+            "{margin-top:0.15rem!important;padding-top:0!important;}"
+            "</style>",
+            unsafe_allow_html=True,
+        )
 
     try:
         _tbl_block = st.container(border=False, gap="xxsmall")

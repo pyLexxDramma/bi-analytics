@@ -1937,7 +1937,7 @@ def _chart_caption_below(title: str, *, tight: bool = False) -> None:
     if not title:
         return
     esc = html_module.escape(sanitize_display_label(str(title)))
-    _m = "0.05rem 0 0" if tight else "0.2rem 0 0.15rem"
+    _m = "0.05rem 0 0" if tight else "0.12rem 0 0.05rem"
     st.markdown(
         f"<p style='text-align:center;color:#e8eef5;margin:{_m};font-size:1.08rem;font-weight:700;'>"
         f"{esc}</p>",
@@ -9756,15 +9756,21 @@ def _render_debit_credit_bar_chart(
     categories: list,
     grouped: bool,
     caption_below: str = "",
+    tick_labels: list | None = None,
 ) -> None:
     # ДЗ/КЗ: широкие столбцы; длинный ряд - гориз. скролл (как БДДС).
     import uuid
 
     cats = [str(c) for c in (categories or [])]
+    ticktext = [str(t) for t in (tick_labels or cats)]
+    if len(ticktext) != len(cats):
+        ticktext = cats
     n = max(1, len(cats))
     grouped = bool(grouped)
-    fig_h = int(max(560, min(960, 500 + n * (16 if grouped else 12))))
+    fig_h = int(max(400, min(620, 360 + n * (8 if grouped else 7))))
     need_hscroll, canvas_w = _dk_plotly_canvas_width(n, grouped=grouped)
+    if n >= 8 and not need_hscroll:
+        need_hscroll, canvas_w = True, int(min(12000, n * (_DK_BAR_PX_GROUPED if grouped else _DK_BAR_PX_STACK)))
     fixed_w = int(canvas_w) if need_hscroll else None
 
     try:
@@ -9805,9 +9811,9 @@ def _render_debit_credit_bar_chart(
                 categoryarray=cats,
                 tickmode="array",
                 tickvals=cats,
-                ticktext=cats,
-                tickangle=0 if need_hscroll else -42,
-                ticklabelstandoff=16,
+                ticktext=ticktext,
+                tickangle=0,
+                ticklabelstandoff=20,
                 tickfont=dict(size=_tick_size, color="#f0f4f8"),
                 automargin=True,
             )
@@ -9850,13 +9856,13 @@ def _render_debit_credit_bar_chart(
     cfg["responsive"] = False
     try:
         _m = fig.layout.margin
-        _b = int(_m.b) if _m is not None and _m.b is not None else 120
+        _b = int(_m.b) if _m is not None and _m.b is not None else 96
         fig.update_layout(
             margin=dict(
-                l=int(_m.l or 60) if _m is not None else 60,
-                r=int(_m.r or 220) if _m is not None else 220,
-                t=int(_m.t or 72) if _m is not None else 72,
-                b=min(_b, 112),
+                l=int(_m.l or 56) if _m is not None else 56,
+                r=int(_m.r or 36) if _m is not None else 36,
+                t=int(_m.t or 64) if _m is not None else 64,
+                b=min(_b, 100),
             )
         )
     except Exception:
@@ -21329,10 +21335,10 @@ def dashboard_debit_credit(df):
         dk_display_view = st.selectbox(
             "Вид отображения",
             ["С группировкой", "Без группировки"],
-            index=1,
+            index=0,
             key="debit_credit_display_view",
             help="С группировкой — столбцы рядом (Договор, Аванс, КС-2, Отклонение). "
-            "Без группировки — стек Договор → Аванс → КС-2.",
+            "Без группировки — стек Договор → Аванс → КС-2 (без отклонения; при наличии отклонения включается группировка).",
         )
 
     if project_col and project_col in work.columns:
@@ -21372,11 +21378,24 @@ def dashboard_debit_credit(df):
         st.info("Нет данных при выбранных фильтрах.")
         return
 
-    def _trunc_label(val, max_len: int = 34) -> str:
+    def _trunc_label(val, max_len: int = 22) -> str:
         s = str(val).strip()
         if len(s) <= max_len:
             return s
         return s[: max_len - 1] + "…"
+
+    def _dk_x_tick_labels(vals) -> list[str]:
+        import textwrap as _tw
+
+        out: list[str] = []
+        for v in vals:
+            s = str(v).strip()
+            if not s:
+                out.append("")
+                continue
+            parts = _tw.wrap(s, width=16, break_long_words=False, break_on_hyphens=False)
+            out.append("<br>".join(parts[:2]) if parts else s)
+        return out
 
     chart_group_col = contractor_col if contractor_col else contract_col
     chart_label = "Подрядчик" if contractor_col else "Договор"
@@ -21404,8 +21423,12 @@ def dashboard_debit_credit(df):
     chart_df = pd.DataFrame(built).reset_index()
     chart_df = chart_df.rename(columns={chart_group_col: chart_label})
 
-    # Визуал 1 — grouped (с группировкой); визуал 2 — stack (без группировки, текущий).
+    # Визуал 1 — grouped (с группировкой); визуал 2 — stack (без группировки).
     _dk_chart_grouped = dk_display_view == "С группировкой"
+    _has_deviation_col = "Отклонение" in chart_df.columns
+    # Отклонение — отдельный столбец; в стеке не показывается, принудительно group.
+    if _has_deviation_col:
+        _dk_chart_grouped = True
     _is_stack = not _dk_chart_grouped
 
     value_cols = [c for c in chart_df.columns if c != chart_label]
@@ -21419,7 +21442,7 @@ def dashboard_debit_credit(df):
         chart_df = chart_df.drop(columns=["_bar_rank"], errors="ignore")
         value_cols = [c for c in chart_df.columns if c != chart_label]
         fig = go.Figure()
-        x = chart_df[chart_label].astype(str).map(_trunc_label)
+        x = chart_df[chart_label].astype(str)
         # Правки куратора 08.05.2026: цвета по ТЗ.
         # Договор стоимость = синий, Аванс = жёлтый, КС-2 = серый,
         # Отклонение: ≥0 = зелёный, <0 = красный (вниз ниже 0).
@@ -21485,7 +21508,7 @@ def dashboard_debit_credit(df):
                 **_lbl_style,
             )
             fig.add_trace(go.Bar(**_bar_kw))
-        if _dk_chart_grouped and "Отклонение" in chart_df.columns:
+        if _has_deviation_col:
             _dev_colors = chart_df["Отклонение"].apply(
                 lambda v: "#27ae60" if pd.notna(v) and float(v) >= 0 else "#e74c3c"
             ).tolist()
@@ -21512,27 +21535,30 @@ def dashboard_debit_credit(df):
                 title=dict(text="млн руб.", font=dict(size=15, color="#f0f4f8")),
                 tickfont=dict(size=14, color="#f0f4f8"),
             ),
-            legend=dict(
-                orientation="v",
-                yanchor="top",
-                y=1,
-                xanchor="left",
-                x=1.02,
-                font=dict(size=14, color="#f0f4f8"),
-            ),
-            margin=dict(r=220, b=120, t=72, l=64),
+            margin=dict(r=36, b=96, t=64, l=56),
         )
         fig = _apply_finance_bar_label_layout(fig)
+        _nfc_dk = max(1, len(chart_df))
+        _leg_bottom_dk = int(max(108, min(168, 88 + _nfc_dk * 2)))
+        _leg_y_dk = -0.22 if _nfc_dk <= 16 else (-0.28 if _nfc_dk <= 24 else -0.34)
+        fig = _plotly_legend_horizontal_below_plot(
+            fig,
+            bottom_px=_leg_bottom_dk,
+            legend_y=_leg_y_dk,
+            top_px=64,
+        )
         fig = apply_chart_background(fig)
         base = "Суммы по подрядчику" if contractor_col else "Суммы по договору"
         if _dk_chart_grouped:
             cap = base + ". Группы: Договор, Аванс, КС-2, Отклонение (КС-2 − Аванс; <0 — вниз)."
         else:
             cap = base + ". Стек: Договор → Аванс → КС-2."
-        _cats = chart_df[chart_label].astype(str).tolist()
+        _cats_full = chart_df[chart_label].astype(str).tolist()
+        _cats_tick = _dk_x_tick_labels(_cats_full)
         _render_debit_credit_bar_chart(
             fig,
-            categories=_cats,
+            categories=_cats_full,
+            tick_labels=_cats_tick,
             grouped=_dk_chart_grouped,
             caption_below=cap,
         )
@@ -26156,16 +26182,27 @@ def _bdds_month_periods_inclusive(start, end):
     return out
 
 
-def _bdds_normalize_abc(a, b, c):
-    """A+B+C=100%; при нуле или ошибке — 34/33/33."""
+def _bdds_abc_sum(a, b, c) -> float:
     try:
-        x, y, z = float(a), float(b), float(c)
+        return float(a) + float(b) + float(c)
     except (TypeError, ValueError):
-        return 34.0, 33.0, 33.0
-    s = x + y + z
-    if s <= 0:
-        return 34.0, 33.0, 33.0
-    return 100.0 * x / s, 100.0 * y / s, 100.0 * z / s
+        return float("nan")
+
+
+def _bdds_abc_is_valid(a, b, c, *, tol: float = 0.01) -> bool:
+    """A+B+C должна быть ровно 100% (допуск tol — только погрешность ввода)."""
+    s = _bdds_abc_sum(a, b, c)
+    return bool(np.isfinite(s)) and abs(s - 100.0) <= float(tol)
+
+
+def _bdds_parse_abc(a, b, c, *, tol: float = 0.01):
+    """Возвращает (a, b, c) только если сумма = 100%; иначе None."""
+    if not _bdds_abc_is_valid(a, b, c, tol=tol):
+        return None
+    try:
+        return float(a), float(b), float(c)
+    except (TypeError, ValueError):
+        return None
 
 
 def _bdds_distribute_row_uniform(total: float, start, end) -> dict:
@@ -26253,7 +26290,10 @@ def _bdds_distribute_row_abc(total: float, start, end, a, b, c) -> dict:
     t = float(total)
     if t == 0:
         return {m: 0.0 for m in months}
-    ap, bp, cp = _bdds_normalize_abc(a, b, c)
+    parsed = _bdds_parse_abc(a, b, c)
+    if parsed is None:
+        return {}
+    ap, bp, cp = parsed
     ms, me = months[0], months[-1]
     out = {m: 0.0 for m in months}
     out[ms] += t * (ap / 100.0)
@@ -26284,7 +26324,10 @@ def _bdds_distribute_row_abc_components(total: float, start, end, a, b, c):
     if t == 0:
         z = {m: 0.0 for m in months}
         return z.copy(), z.copy(), z.copy()
-    ap, bp, cp = _bdds_normalize_abc(a, b, c)
+    parsed = _bdds_parse_abc(a, b, c)
+    if parsed is None:
+        return {}, {}, {}
+    ap, bp, cp = parsed
     ms, me = months[0], months[-1]
     da = {m: 0.0 for m in months}
     db = {m: 0.0 for m in months}
@@ -26382,6 +26425,7 @@ def compute_bddcs_forecast_monthly(
     fc_totals: dict = {}
     plan_totals: dict = {}
     fact_totals: dict = {}
+    abc_errors: list[str] = []
 
     for pos in range(len(df)):
         r = df.iloc[pos]
@@ -26409,11 +26453,18 @@ def compute_bddcs_forecast_monthly(
             fact_totals[m] = fact_totals.get(m, 0.0) + float(v)
 
         if use_abc_row:
+            if not _bdds_abc_is_valid(a, b, c):
+                lot = str(r.get("section", r.get("task name", "")) or "").strip() or f"строка {pos + 1}"
+                abc_errors.append(f"{lot}: A+B+C={_bdds_abc_sum(a, b, c):.2f}% (нужно 100%)")
+                continue
             dp = _bdds_distribute_row_abc(plan_amt, ps, pe, a, b, c)
         else:
             dp = _bdds_distribute_row_uniform(plan_amt, ps, pe)
         for m, v in dp.items():
             fc_totals[m] = fc_totals.get(m, 0.0) + float(v)
+
+    if abc_errors:
+        return pd.DataFrame(), "Исправьте доли A/B/C (сумма ровно 100%): " + "; ".join(abc_errors[:8])
 
     all_m = sorted(set(plan_totals.keys()) | set(fc_totals.keys()) | set(fact_totals.keys()))
     if not all_m:
@@ -27122,10 +27173,9 @@ def _forecast_merge_bddcs_from_1c(project_df: pd.DataFrame, project_name: str) -
     """
     Подставляет суммы из оборотов 1С (БДДС):
 
-    - **БДДС план**: по возможности строки с **ТипСтатьи**, содержащим «БДДС», сценарий с «ПЛАН»,
-      статья оборотов без «БДР».
-    - **БДДС факт**: те же ограничения по типу/статье, сценарий «ФАКТ» / Fact.
-    - Подстраховка для старых выгрузок: сумма по сценарию «Бюджет» / Budget на план и (если нужно) на факт.
+    - **БДДС план**: сценарий «Бюджет» / Budget, статья оборотов без «(БДР)».
+    - **БДДС факт**: сценарий «Факт» / Fact, те же ограничения по статье.
+    - Для старых выгрузок: если по «Бюджет» план = 0 — подстраховка сценарием «План» (без «Факт»).
 
     Распределение по лотам — пропорционально текущему budget plan в MSP для проекта (или поровну).
     """
@@ -27186,41 +27236,31 @@ def _forecast_merge_bddcs_from_1c(project_df: pd.DataFrame, project_name: str) -
     if t_bd.empty:
         t_bd = t_base
 
+    try:
+        from dashboards.finance_from_1c import _amount_series_to_rubles
+        amt_num = _amount_series_to_rubles(t_bd, amt)
+    except Exception:
+        amt_num = pd.to_numeric(t_bd[amt], errors="coerce").fillna(0.0)
     sser = t_bd[scen].astype(str)
-    amt_num = pd.to_numeric(t_bd[amt], errors="coerce").fillna(0.0)
 
     _norm_scen = sser.str.strip().str.casefold()
-    plan_mask = (
-        sser.str.contains("бюджет", case=False, na=False)
-        | sser.str.contains("budget", case=False, na=False)
-        | (
-            sser.str.contains("план", case=False, na=False)
-            & ~sser.str.contains("факт", case=False, na=False)
-        )
-    )
-    plan_mask = plan_mask | _norm_scen.eq("план")
-    fact_mask = sser.str.contains("факт", case=False, na=False) | sser.str.contains(
-        "fact", case=False, na=False
-    )
-    fact_mask = fact_mask | _norm_scen.eq("факт")
     budget_mask = sser.str.contains("бюджет", case=False, na=False) | sser.str.contains(
         "budget", case=False, na=False
     )
+    plan_mask = budget_mask
+    fact_mask = sser.str.contains("факт", case=False, na=False) | sser.str.contains(
+        "fact", case=False, na=False
+    ) | _norm_scen.eq("факт")
 
     plan_sum = float(amt_num.loc[plan_mask].sum())
     fact_sum = float(amt_num.loc[fact_mask].sum())
-    budget_tot = float(amt_num.loc[budget_mask].sum())
 
-    if plan_sum <= 0.0 and budget_tot > 0.0:
-        plan_sum = budget_tot
-    if fact_sum <= 0.0:
-        if budget_tot > 0.0:
-            fact_sum = budget_tot
-        else:
-            legacy_fact_mask = sser.str.contains("факт", case=False, na=False) | sser.str.contains(
-                "fact", case=False, na=False
-            )
-            fact_sum = float(amt_num.loc[legacy_fact_mask].sum())
+    if plan_sum <= 0.0:
+        legacy_plan_mask = (
+            sser.str.contains("план", case=False, na=False)
+            & ~sser.str.contains("факт", case=False, na=False)
+        ) | _norm_scen.eq("план")
+        plan_sum = float(amt_num.loc[legacy_plan_mask].sum())
 
     if "budget plan" in out.columns:
         w = pd.to_numeric(out["budget plan"], errors="coerce").fillna(0.0)
@@ -27468,6 +27508,7 @@ def _forecast_turnover_monthly_plan_fact(
         period_start=date_from,
         period_end=date_to,
         reference_1c_dannye=ref,
+        prefer_budget_scenario=True,
     )
     if prep is None:
         return {}
@@ -28102,11 +28143,27 @@ def dashboard_forecast_budget(df):
         )
         row_modes = ed_rows["Условие распределения"].astype(str)
         abc_src = ed_rows[["A, %", "B, %", "C, %"]].copy()
-        sums_fc = abc_src.sum(axis=1)
-        if (sums_fc - 100).abs().max() > 0.5 and row_modes.astype(str).str.contains("%", na=False).any():
-            st.warning(
-                "Сумма A+B+C по строкам с «% Распределения» должна быть **100%** (допуск ±0.5%). Нормализуется при расчёте."
+        _abc_bad: list[str] = []
+        for _i in range(len(ed_rows)):
+            _rm = str(row_modes.iloc[_i]).strip().casefold()
+            if not (_rm.startswith("%") or "распредел" in _rm):
+                continue
+            _a = ed_rows.iloc[_i]["A, %"]
+            _b = ed_rows.iloc[_i]["B, %"]
+            _c = ed_rows.iloc[_i]["C, %"]
+            if _bdds_abc_is_valid(_a, _b, _c):
+                continue
+            _lot_lbl = str(ed_rows.iloc[_i].get("Лот", ed_rows.iloc[_i].get("Задача", "")) or "").strip()
+            _abc_bad.append(
+                f"{_lot_lbl or f'строка {_i + 1}'}: A+B+C={_bdds_abc_sum(_a, _b, _c):.2f}%"
             )
+        if _abc_bad:
+            st.error(
+                "Для «% Распределения» сумма **A+B+C** должна быть **ровно 100%** "
+                "(без автоматической нормализации): "
+                + "; ".join(_abc_bad[:8])
+            )
+            return
 
         _lot_res_fc = _forecast_per_lot_distribution_totals(
             updated_data,

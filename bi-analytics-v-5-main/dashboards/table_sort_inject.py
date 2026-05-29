@@ -494,10 +494,15 @@ def _estimate_html_block_height(html: str) -> int:
         extra = 56
         cap = 2600
     elif "budget-deviation-table-wrap" in html_l:
+        m_vh = re.search(r"max-height:\s*([\d.]+)vh", html_l)
+        if m_vh and "budget-table-scroll" in html_l:
+            vh = float(m_vh.group(1))
+            est_vh = int(vh * 10) + 56
+            return int(max(200, min(720, est_vh)))
         thead_h = 64
         row_h = 32
-        extra = 28
-        cap = 4800
+        extra = 16
+        cap = 900
     elif "pf-dates-table-wrap" in html_l or "pf-dates-table" in html_l:
         thead_h = 42
         row_h = 27
@@ -575,7 +580,16 @@ def _build_sortable_html_document(html: str) -> str:
         f"<div class='bi-sortable-html-root'>{body}{_TABLE_SORT_SCRIPT}"
         + (
             f"<script>{_COMPACT_FRAME_FIT_JS}</script>"
-            if ("pf-dates-table-wrap" in html_l or "pf-dates-table" in html_l or "pred-detail-wrap" in html_l or "gantt-schedule-table-wrap" in html_l)
+            if (
+                "pf-dates-table-wrap" in html_l
+                or "pf-dates-table" in html_l
+                or "pred-detail-wrap" in html_l
+                or "gantt-schedule-table-wrap" in html_l
+                or (
+                    "budget-deviation-table-wrap" in html_l
+                    and "budget-table-scroll" in html_l
+                )
+            )
             else ""
         )
         + "</div>"
@@ -590,6 +604,10 @@ def _html_block_compact(html: str) -> bool:
         or "pf-dates-table" in html_l
         or "pred-detail-wrap" in html_l
         or "gantt-schedule-table-wrap" in html_l
+        or (
+            "budget-deviation-table-wrap" in html_l
+            and "budget-table-scroll" in html_l
+        )
     )
 
 
@@ -631,7 +649,8 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
     )
     _scroll = not any(m in (html or "") for m in _no_iframe_scroll)
     if "budget-deviation-table-wrap" in (html or ""):
-        _h = int(_h) + 28
+        if "budget-table-scroll" not in (html or ""):
+            _h = int(_h) + 12
     elif _compact:
         _scroll = False
     _h = _h + (4 if not _scroll else 0)
