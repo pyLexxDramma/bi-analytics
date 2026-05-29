@@ -24960,6 +24960,8 @@ def _render_plan_fact_summary_dashboard(
         st.markdown(
             f'<div class="appr-pf-summary-kpi">'
             f'<div class="appr-pf-summary-kpi-col">'
+            f'<p style="font-size:1.15rem;font-weight:800;margin:0 0 0.45rem 0;color:#2E86AB;'
+            f'letter-spacing:0.02em;">План</p>'
             f'<p style="font-size:1.65rem;font-weight:700;margin:0 0 0.25rem 0;color:#f8fbff;">'
             f"{plan_v:{vf}} {unit}</p>"
             f'<p style="font-size:1.05rem;font-weight:600;margin:0;color:#e8eef5;">'
@@ -24967,6 +24969,8 @@ def _render_plan_fact_summary_dashboard(
             f'<p style="font-size:1.2rem;font-weight:700;margin:0.75rem 0 0;color:#f8fbff;">100%</p>'
             f"</div>"
             f'<div class="appr-pf-summary-kpi-col">'
+            f'<p style="font-size:1.15rem;font-weight:800;margin:0 0 0.45rem 0;color:#A23B72;'
+            f'letter-spacing:0.02em;">Факт</p>'
             f'<p style="font-size:1.65rem;font-weight:700;margin:0 0 0.25rem 0;color:#f8fbff;">'
             f"{fact_v:{vf}} {unit}</p>"
             f'<p style="font-size:1.05rem;font-weight:600;margin:0;color:#e8eef5;">'
@@ -25051,15 +25055,19 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
         return
 
     hist_by_type_df["Сумма_млн"] = hist_by_type_df["Сумма"] / 1e6
+    hist_by_type_df["bar_text"] = _finance_bar_text_mln_rub(
+        hist_by_type_df["Сумма"],
+        unit_suffix=" млн рублей",
+    )
     fig_hist = px.bar(
         hist_by_type_df,
         x="project name",
-        y="Сумма",
+        y="Сумма_млн",
         color="Тип бюджета",
         title=None,
-        labels={"project name": "Проект", "Сумма": "Сумма бюджета (руб.)"},
+        labels={"project name": "Проект", "Сумма_млн": "млн рублей"},
         barmode="group",
-        text="Сумма_млн",
+        text="bar_text",
         color_discrete_map={
             "Бюджет План": "#2E86AB",
             "Бюджет Факт": "#A23B72",
@@ -25070,7 +25078,7 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
     )
     fig_hist.update_layout(
         xaxis_title="Проект",
-        yaxis_title="Сумма бюджета (руб.)",
+        yaxis_title="млн рублей",
         height=600,
         xaxis=dict(tickangle=-45, tickfont=dict(size=12)),
         legend=dict(title="Тип бюджета", orientation="v", yanchor="top", y=1, xanchor="left", x=1.02),
@@ -25078,9 +25086,13 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
     )
     fig_hist.update_traces(
         textposition="outside",
-        texttemplate="%{text:.2f}",
+        texttemplate="%{text}",
         textfont=dict(size=12, color="white"),
     )
+    try:
+        fig_hist.update_layout(yaxis=dict(tickformat=".1f"))
+    except Exception:
+        pass
     fig_hist = _apply_finance_bar_label_layout(fig_hist)
     fig_hist = apply_chart_background(fig_hist)
     render_chart(fig_hist, caption_below="Бюджет план/факт/корректировка/отклонение по проектам")
@@ -25755,18 +25767,21 @@ def dashboard_budget_by_type(df):
                 st.info("Нет данных для отображения с выбранными типами бюджета.")
             else:
                 # Преобразуем значения в миллионы рублей для отображения на столбцах
-                hist_by_type_df["Сумма_млн"] = hist_by_type_df["Сумма"] / 1000000
+                hist_by_type_df["Сумма_млн"] = hist_by_type_df["Сумма"] / 1e6
+                hist_by_type_df["bar_text"] = _finance_bar_text_mln_rub(
+                    hist_by_type_df["Сумма"],
+                    unit_suffix=" млн рублей",
+                )
 
-                # Create histogram
                 fig_hist = px.bar(
                     hist_by_type_df,
                     x="project name",
-                    y="Сумма",
+                    y="Сумма_млн",
                     color="Тип бюджета",
                     title=None,
-                    labels={"project name": "Проект", "Сумма": "Сумма бюджета (руб.)"},
+                    labels={"project name": "Проект", "Сумма_млн": "млн рублей"},
                     barmode="group",
-                    text="Сумма_млн",
+                    text="bar_text",
                     color_discrete_map={
                         "Бюджет План": "#2E86AB",
                         "Бюджет Факт": "#A23B72",
@@ -25776,20 +25791,22 @@ def dashboard_budget_by_type(df):
                     },
                 )
 
-                # Update layout
                 fig_hist.update_layout(
                     xaxis_title="Проект",
-                    yaxis_title="Сумма бюджета (руб.)",
+                    yaxis_title="млн рублей",
                     height=600,
                     xaxis=dict(tickangle=-45, tickfont=dict(size=12)),
                 )
 
-                # Add text labels on the edge of bars (в миллионах рублей)
                 fig_hist.update_traces(
                     textposition="outside",
-                    texttemplate="%{text:.2f}",
+                    texttemplate="%{text}",
                     textfont=dict(size=12, color="white"),
                 )
+                try:
+                    fig_hist.update_layout(yaxis=dict(tickformat=".1f"))
+                except Exception:
+                    pass
 
                 fig_hist = _apply_finance_bar_label_layout(fig_hist)
                 fig_hist.update_layout(
