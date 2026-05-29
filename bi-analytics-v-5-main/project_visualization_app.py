@@ -1099,9 +1099,24 @@ def main():
             try:
                 from auto_ingest import maybe_ftp_sync_before_web_load
 
-                maybe_ftp_sync_before_web_load(log_prefix="[force_reload]")
+                if not quiet:
+                    with st.spinner(
+                        "Шаг 1/2: синхронизация с FTP (обычно 1–5 мин, ~640 файлов)…"
+                    ):
+                        _ftp_res = maybe_ftp_sync_before_web_load(log_prefix="[force_reload]")
+                else:
+                    _ftp_res = maybe_ftp_sync_before_web_load(log_prefix="[force_reload]")
+                if not quiet and isinstance(_ftp_res, dict):
+                    st.caption(
+                        "FTP: загружено "
+                        f"{len(_ftp_res.get('downloaded', []))}, "
+                        f"без изменений (тот же размер) "
+                        f"{_ftp_res.get('skipped_same_size', 0)}"
+                    )
             except Exception as _ftp_e:
                 safe_stderr_log(f"[web_load] ftp sync before load failed: {_ftp_e!r}")
+                if not quiet:
+                    st.warning(f"FTP: ошибка или таймаут — продолжаем с локальным web/. ({_ftp_e!r})")
 
             if not web_dir_exists():
                 st.error(
@@ -1121,7 +1136,12 @@ def main():
             if quiet:
                 result = load_all_from_web()
             else:
-                with st.spinner("Читаю файлы из web/..."):
+                _load_msg = (
+                    "Шаг 2/2: пересборка БД из web/ (5–15 мин при полном скане)…"
+                    if force_rescan
+                    else "Читаю файлы из web/…"
+                )
+                with st.spinner(_load_msg):
                     result = load_all_from_web()
             try:
                 st.session_state["last_load_result"] = result
