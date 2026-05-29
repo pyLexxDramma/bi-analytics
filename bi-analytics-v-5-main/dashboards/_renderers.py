@@ -7664,16 +7664,22 @@ def dashboard_plan_fact_dates(df):
             for y in y_order_local:
                 for line in str(y).split("<br>"):
                     max_line_len = max(max_line_len, len(line))
-            px_per_char = max(5.8, _PF_GANTT_TASK_FONT * 0.56)
-            label_px = int(6 + max_line_len * px_per_char + 8)
-            label_px = min(320, max(72, label_px))
-            return round(min(0.30, max(0.08, (label_px + 2) / 1280.0)), 4)
+            px_per_char = max(5.2, _PF_GANTT_TASK_FONT * 0.50)
+            label_px = int(4 + max_line_len * px_per_char + 6)
+            label_px = min(240, max(52, label_px))
+            return round(
+                min(
+                    _GANTT_LABEL_DOMAIN_MAX,
+                    max(_GANTT_LABEL_DOMAIN_MIN, _GANTT_LABEL_X_LEFT + (label_px + 4) / 1180.0),
+                ),
+                4,
+            )
 
         def _pf_gantt_y_label_annotations(
             y_order_local: list[str], *, domain_start: float
         ) -> list[dict]:
             out: list[dict] = []
-            _x_lab = max(0.015, float(domain_start) - 0.008)
+            _x_lab = _GANTT_LABEL_X_LEFT
             for y in y_order_local:
                 txt = str(y).strip()
                 if not txt:
@@ -7686,10 +7692,10 @@ def dashboard_plan_fact_dates(df):
                         yref="y",
                         text=txt,
                         showarrow=False,
-                        xanchor="right",
+                        xanchor="left",
                         yanchor="middle",
                         xshift=0,
-                        align="right",
+                        align="left",
                         font=dict(
                             size=_PF_GANTT_TASK_FONT,
                             color=TABLE_TEXT_COLOR,
@@ -33419,10 +33425,16 @@ def _project_schedule_gantt_label_column_layout(
     for y in y_labels or [""]:
         for line in str(y).split("<br>"):
             max_line_len = max(max_line_len, len(line))
-    px_per_char = max(5.8, float(task_font) * 0.56)
-    label_px = int(6 + max_line_len * px_per_char + 8)
-    label_px = min(380, max(88, label_px))
-    domain_start = round(min(0.30, max(0.08, (label_px + 2) / 1280.0)), 4)
+    px_per_char = max(5.2, float(task_font) * 0.50)
+    label_px = int(4 + max_line_len * px_per_char + 6)
+    label_px = min(240, max(52, label_px))
+    domain_start = round(
+        min(
+            _GANTT_LABEL_DOMAIN_MAX,
+            max(_GANTT_LABEL_DOMAIN_MIN, _GANTT_LABEL_X_LEFT + (label_px + 4) / 1180.0),
+        ),
+        4,
+    )
     return 4, domain_start
 
 
@@ -33450,7 +33462,7 @@ def _project_schedule_gantt_y_label_annotations(
 ) -> list[dict]:
     """Подписи задач по левому краю колонки названий (как в таблице задач)."""
     out: list[dict] = []
-    _x_lab = max(0.015, float(domain_start) - 0.008)
+    _x_lab = _GANTT_LABEL_X_LEFT
     for i, y in enumerate(y_labels or []):
         txt = str(y).strip()
         if not txt:
@@ -33464,10 +33476,10 @@ def _project_schedule_gantt_y_label_annotations(
                 yref="y",
                 text=txt,
                 showarrow=False,
-                xanchor="right",
+                xanchor="left",
                 yanchor="middle",
                 xshift=0,
-                align="right",
+                align="left",
                 font=dict(size=task_font, color=TABLE_TEXT_COLOR, family="Arial"),
             )
         )
@@ -33553,6 +33565,9 @@ _GANTT_DATE_LABELS_END_ONLY_ROWS = 8
 _GANTT_DATE_LABELS_HOVER_ONLY_ROWS = 60
 _GANTT_LINES_TEXT_MAX_ROWS = 20
 _CHART_PLOT_DATE_FMT = "%d-%m-%y"
+_GANTT_LABEL_X_LEFT = 0.006
+_GANTT_LABEL_DOMAIN_MAX = 0.20
+_GANTT_LABEL_DOMAIN_MIN = 0.05
 
 
 def dashboard_project_schedule_chart(df):
