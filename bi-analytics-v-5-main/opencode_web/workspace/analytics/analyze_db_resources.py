@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from db_common import connect_db, ensure_output_dir, get_effective_version_id, parse_db_args, query_to_df, resolve_db_path, save_table
+from gdrs_kontr_common import contractor_in_kontr, load_kontr_index
 
 
 def main() -> None:
@@ -36,6 +37,24 @@ def main() -> None:
             """,
             (version_id,),
         )
+
+
+    web_glob = Path("/workspace/web")
+    if not web_glob.exists():
+        web_glob = Path(__file__).resolve().parents[1] / "web"
+    if not web_glob.exists():
+        web_glob = Path(__file__).resolve().parents[2] / "web"
+    _kontr = load_kontr_index(web_glob) if web_glob.exists() else None
+    if _kontr is not None and not result.empty and "contractor" in result.columns:
+        mask = result.apply(
+            lambda r: contractor_in_kontr(
+                str(r.get("contractor_id", "")),
+                str(r.get("contractor", r.get("contractor_name", ""))),
+                _kontr,
+            ),
+            axis=1,
+        )
+        result = result.loc[mask].copy()
 
     save_table(result, output_dir / "resources_overview.csv")
 

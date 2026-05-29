@@ -19722,6 +19722,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         load_resursi_files,
         load_1c_kontr_index,
         enrich_gdrs_fact_contractor_ids,
+        gdrs_filter_fact_kontr_intersection,
         week_end_in_filtered_fact,
     )
 
@@ -19758,6 +19759,8 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         dogovor_paths=dogovor_files,
         kontr=_kontr_index,
     )
+
+    long_fact = gdrs_filter_fact_kontr_intersection(long_fact, _kontr_index)
 
     _month_options = gdrs_month_select_options(long_fact)
     _month_labels = [lbl for lbl, _ in _month_options]

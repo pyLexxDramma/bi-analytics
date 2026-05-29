@@ -115,7 +115,8 @@ class _ResursiSchema:
     """Схема одного `resursi.csv`: позиции колонок и список (col_idx, date)."""
     col_id_project: Optional[int]  # None если в файле нет колонки «ID Проекта»
     col_name_project: int
-    col_contractor: int  # позиция «человекочитаемого» названия подрядчика
+    col_contractor: int  # позиция «человекочитаемого» названия подрядчика (new или legacy)
+    col_contractor_fallback: Optional[int]  # Подрядчик_old — если new пустой
     col_id_contractor: Optional[int]  # отдельная колонка ID подрядчика, если есть
     col_vid: int  # позиция колонки «Тип ресурсов»
     date_columns: list[tuple[int, pd.Timestamp]]
@@ -202,6 +203,7 @@ def _detect_schema(df_raw: pd.DataFrame) -> Optional[_ResursiSchema]:
         col_id_project=col_id_project,
         col_name_project=col_name_project,
         col_contractor=col_contractor,
+        col_contractor_fallback=col_contractor_old,
         col_id_contractor=col_id_contractor,
         col_vid=col_vid,
         date_columns=date_columns,
@@ -307,6 +309,25 @@ def _coerce_int(val: object) -> Optional[float]:
         return None
 
 
+_CONTRACTOR_ID_PLACEHOLDERS = frozenset({"", "nan", "none", "null", "#н/д", "н/д", "#n/d", "n/d"})
+
+def _sanitize_contractor_id(raw: object) -> str:
+    s = str(raw or "").strip()
+    if not s or s.casefold() in _CONTRACTOR_ID_PLACEHOLDERS:
+        return ""
+    if s.startswith("#"):
+        return ""
+    return s if _is_uuid_like(s) else ""
+
+def _contractor_name_from_row(row: pd.Series, schema: _ResursiSchema) -> str:
+    for col in (schema.col_contractor, schema.col_contractor_fallback):
+        if col is None or col >= len(row):
+            continue
+        name = str(row.iloc[col]).strip()
+        if name and name.casefold() not in {"nan", "none"}:
+            return name
+    return ""
+
 def load_resursi_file(path: Path) -> pd.DataFrame:
     """Загрузить один resursi.csv → long DataFrame.
 
@@ -336,12 +357,12 @@ def load_resursi_file(path: Path) -> pd.DataFrame:
         if not proj_name or proj_name.lower() in {"nan", "none"}:
             continue
         contractor_id = (
-            str(row.iloc[schema.col_id_contractor]).strip()
+            _sanitize_contractor_id(row.iloc[schema.col_id_contractor])
             if schema.col_id_contractor is not None
             else ""
         )
-        contractor_name = str(row.iloc[schema.col_contractor]).strip()
-        if not contractor_name or contractor_name.lower() in {"nan", "none"}:
+        contractor_name = _contractor_name_from_row(row, schema)
+        if not contractor_name:
             continue
         vid = _normalize_vid(row.iloc[schema.col_vid])
         if not vid:
@@ -563,7 +584,7 @@ def load_1c_kontr_index(paths: Iterable[Path | str]) -> GdrsKontrIndex:
             if not isinstance(r, dict):
                 continue
             cid = str(r.get("ID_Контрагента") or "").strip()
-            cname = str(r.get("Наименование_Контрагента") or "").strip()
+            cname = str(r.get("Наименование_Контрагента") or r.get("Наименование") or "").strip()
             if not cid and not cname:
                 continue
             nn = normalize_name(cname) if cname else ""
@@ -611,7 +632,7 @@ def enrich_gdrs_fact_contractor_ids(
     by_proj, by_name = build_dogovor_contractor_id_lookup(dogovor_paths or [])
 
     def _resolve_id(row: pd.Series) -> str:
-        cur = str(row.get("contractor_id", "")).strip()
+        cur = _sanitize_contractor_id(row.get("contractor_id", ""))
         if cur:
             return cur
         pid = str(row.get("project_id", "")).strip()
@@ -635,7 +656,7 @@ def gdrs_contractor_in_kontr(
 ) -> bool:
     if kontr is None or (not kontr.ids and not kontr.norm_names):
         return True
-    cid = str(contractor_id or "").strip()
+    cid = _sanitize_contractor_id(contractor_id)
     if cid and cid in kontr.ids:
         return True
     nn = normalize_name(str(contractor_name or ""))
@@ -665,6 +686,25 @@ def gdrs_apply_kontr_plan_gate(
             if pk in work.columns:
                 work.loc[idx, pk] = 0.0
     return work
+
+
+def gdrs_filter_fact_kontr_intersection(
+    df: pd.DataFrame,
+    kontr: Optional[GdrsKontrIndex],
+) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    if kontr is None or (not kontr.ids and not kontr.norm_names):
+        return df
+    mask = df.apply(
+        lambda r: gdrs_contractor_in_kontr(
+            str(r.get("contractor_id", "")),
+            str(r.get("contractor_name", "")),
+            kontr,
+        ),
+        axis=1,
+    )
+    return df.loc[mask].copy()
 
 
 # =====================================================================
