@@ -512,17 +512,13 @@ def render_ftp_sync_download_notice(st, ftp_res: dict | None) -> None:
     same = int(ftp_res.get("skipped_same_size") or 0)
     if downloaded:
         preview = downloaded[:40]
-        body = "
-".join(f"• `{name}`" for name in preview)
+        body = "\n".join(f"• `{name}`" for name in preview)
         extra = len(downloaded) - len(preview)
         if extra > 0:
-            body += f"
-• … и ещё **{extra}**"
+            body += f"\n• … и ещё **{extra}**"
         st.warning(
             f"**FTP:** загружено **{len(downloaded)}** новых или изменённых файлов "
-            f"(без изменений по размеру: {same}).
-
-{body}"
+            f"(без изменений по размеру: {same}).\n\n{body}"
         )
     else:
         st.info(
