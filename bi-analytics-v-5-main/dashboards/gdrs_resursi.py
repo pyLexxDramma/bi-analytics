@@ -1796,7 +1796,7 @@ def build_main_table(
     - weekly_avg(подрядчик, неделя) = ∑ daily / N_дней_в_неделе_в_выборке.
     - skud: по `skud_agg` — среднее за день за период (month_avg) или weekly_avg выбранной недели (week:N).
     - plan: из plan-таблицы 1С на срез `plan_agg` (конец недели или конец периода).
-    - deviation = План − skud; delta_pct = (deviation / План) × 100 (при План≠0).
+    - deviation = skud − План (факт − план); delta_pct = (deviation / План) × 100 (при План≠0).
   """
     if long_fact is None or long_fact.empty:
         return pd.DataFrame()
@@ -1880,8 +1880,8 @@ def build_main_table(
         axis=1,
     )
     rows["skud"] = rows["skud_avg"].fillna(0.0).round(0)
-    # ТЗ ГДРС (2026-05 + уточнение по скринам): Отклонение = План − Факт (СКУД);
-    # Отклонение % = (Отклонение / План) × 100. Положительное — недовыполнение.
+    # Отклонение = Факт (СКУД) − План: «+» если факт > плана, «−» если наоборот.
+    # Отклонение % = (Отклонение / План) × 100.
     rows["deviation"] = (rows["skud"] - rows["plan"]).round(0)
     rows["delta_pct"] = rows.apply(
         lambda r: ((r["skud"] - r["plan"]) / r["plan"] * 100.0)
@@ -2056,7 +2056,7 @@ def build_summary_table(
         summary.groupby("contractor_name", as_index=False)
         .agg(plan=("plan", "sum"), mean_per_day=("mean_per_day", "sum"))
     )
-    # ТЗ: Отклонение = План − Факт (среднее за день для периода).
+    # Отклонение = Факт − План (среднее за день для периода).
     out["deviation"] = (out["mean_per_day"] - out["plan"]).round(0)
     return out[["contractor_name", "plan", "mean_per_day", "deviation"]]
 
@@ -2087,7 +2087,7 @@ def gdrs_delta_pct_cell_bg_style(raw) -> str:
 
 
 def gdrs_deviation_cell_bg_style(raw) -> str:
-    """Фон ячейки «Отклонение» (План − Факт): >0 красный, <0 зелёный, 0 нейтральный."""
+    """Фон ячейки «Отклонение» (факт − план): >0 зелёный, <0 красный, 0 нейтральный."""
     if raw is None or (isinstance(raw, float) and pd.isna(raw)):
         return ""
     try:
@@ -2154,7 +2154,9 @@ html, body {{
   padding: 6px 8px !important;
   vertical-align: middle !important;
   background-clip: padding-box;
-  white-space: nowrap;
+  text-align: center !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
 }}
 #{w} .gdrs-matrix-table thead th {{
   background: #17314b !important;
@@ -2162,6 +2164,24 @@ html, body {{
   font-size: 16px !important;
   font-weight: 800 !important;
   text-align: center !important;
+  white-space: normal !important;
+  word-wrap: break-word !important;
+  overflow-wrap: anywhere !important;
+  line-height: 1.25 !important;
+  max-width: 11em !important;
+  vertical-align: bottom !important;
+}}
+#{w} .gdrs-matrix-table tbody td {{
+  white-space: normal !important;
+  word-wrap: break-word !important;
+  overflow-wrap: anywhere !important;
+  max-width: 28em !important;
+}}
+#{w} .gdrs-matrix-table tbody td.gdrs-col-plan,
+#{w} .gdrs-matrix-table tbody td.gdrs-col-skud,
+#{w} .gdrs-matrix-table tbody td.gdrs-col-dev {{
+  white-space: nowrap !important;
+  max-width: none !important;
 }}
 #{w} .gdrs-matrix-table thead tr.gdrs-h-title th,
 #{w} .gdrs-matrix-table thead tr.gdrs-h-period th {{
@@ -2222,6 +2242,12 @@ html, body {{
 }}
 #{w} .gdrs-matrix-table tbody td.gdrs-td-text {{
   text-align: left !important;
+  vertical-align: top !important;
+  white-space: normal !important;
+  word-wrap: break-word !important;
+  overflow-wrap: anywhere !important;
+  max-width: 36em !important;
+  min-width: 10em !important;
 }}
 #{w} .gdrs-sep-l-strong {{
   box-shadow: inset 3px 0 0 #ffffff;
@@ -2504,7 +2530,7 @@ def render_gdrs_matrix_table_html(
         for ci, col in enumerate(fixed_cols):
             hmc = _th_metric_cls(col)
             hcls = _border_cls(ci) + (f" {hmc}" if hmc else "")
-            _sort = ' data-gdrs-sort="1" data-sort-label="' + html_module.escape(col) + '"' if col in ("План", "СКУД", "Отклонение") else ""
+            _sort = ' data-gdrs-sort="1" data-sort-label="' + html_module.escape(col) + '"' if col in ("Контрагент", "Вид работ", "План", "СКУД", "Отклонение") else ""
             thead_parts.append(
                 f'<th rowspan="2" class="{hcls.strip()}"{_sort}>{html_module.escape(col)}</th>'
             )
@@ -2525,20 +2551,20 @@ def render_gdrs_matrix_table_html(
                 wcls += " gdrs-sep-l-strong"
             if wi == wk_n - 1:
                 wcls += " gdrs-sep-r-strong"
-            thead_parts.append(f'<th class="{wcls}">{html_module.escape(lbl)}</th>')
+            thead_parts.append(f'<th class="{wcls}" data-gdrs-sort="1" data-sort-label="{html_module.escape(lbl)}">{html_module.escape(lbl)}</th>')
         for wi, lbl in enumerate(GDRS_WEEK_LABELS):
             wcls = "gdrs-h-week gdrs-h-week-skud gdrs-col-skud"
             if wi == 0:
                 wcls += " gdrs-sep-l-strong"
             if wi == wk_n - 1:
                 wcls += " gdrs-sep-r-strong"
-            thead_parts.append(f'<th class="{wcls}">{html_module.escape(lbl)}</th>')
+            thead_parts.append(f'<th class="{wcls}" data-gdrs-sort="1" data-sort-label="{html_module.escape(lbl)}">{html_module.escape(lbl)}</th>')
         thead_parts.append("</tr>")
     else:
         for ci, col in enumerate(show_cols):
             hmc = _th_metric_cls(col)
             hcls = _border_cls(ci) + (f" {hmc}" if hmc else "")
-            _sort = ' data-gdrs-sort="1" data-sort-label="' + html_module.escape(col) + '"' if col in ("План", "СКУД", "Отклонение") else ""
+            _sort = ' data-gdrs-sort="1" data-sort-label="' + html_module.escape(col) + '"' if col in ("Контрагент", "Вид работ", "План", "СКУД", "Отклонение") else ""
             thead_parts.append(
                 f'<th class="{hcls.strip()}"{_sort}>{html_module.escape(col)}</th>'
             )
@@ -2552,7 +2578,7 @@ def render_gdrs_matrix_table_html(
     return (
 f'<div id="{wid}" class="{_wrap_cls}">'
         + gdrs_matrix_table_css(wid, _th)
-        + '<table class="gdrs-matrix-table bi-sortable-table"><thead>'
+        + '<table class="gdrs-matrix-table bi-sortable-table bi-sort-click-only"><thead>'
         + "".join(thead_parts)
         + "</thead><tbody>"
         + body

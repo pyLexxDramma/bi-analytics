@@ -345,7 +345,7 @@ def _render_html_table(
             return " col-dev"
         return ""
 
-    if column_tooltips is not None or column_role is not None or cell_titles:
+    if True:
         parts = [
             '<div class="rendered-table-wrap">',
             '<table class="rendered-table bi-sortable-table bi-sort-click-only" style="border-collapse:collapse;width:100%">',
@@ -389,14 +389,6 @@ def _render_html_table(
         parts.append("</tbody></table></div>")
         render_report_html_table(
             _light_open + _table_css + "".join(parts) + _light_close,
-            export_df=df,
-            file_stem="table_export",
-            key_prefix=f"html_tbl_{abs(id(df))}",
-        )
-    else:
-        html = show.to_html(index=False, classes="rendered-table bi-sortable-table bi-sort-click-only", escape=True, border=0)
-        render_report_html_table(
-            _light_open + _table_css + '<div class="rendered-table-wrap">' + html + "</div>" + _light_close,
             export_df=df,
             file_stem="table_export",
             key_prefix=f"html_tbl_{abs(id(df))}",
@@ -19550,7 +19542,7 @@ def _gdrs_build_contractors_chart_df(main_t: pd.DataFrame) -> pd.DataFrame:
     )
     agg["План"] = agg["План"].round(0).astype(int)
     agg["Факт"] = agg["Факт"].round(0).astype(int)
-    agg["Отклонение"] = (agg["План"] - agg["Факт"]).round(0).astype(int)
+    agg["Отклонение"] = (agg["Факт"] - agg["План"]).round(0).astype(int)
     return agg.sort_values("План", ascending=False).reset_index(drop=True)
 
 
@@ -19593,11 +19585,11 @@ def _gdrs_deviation_vs_plan_text_and_color(plan_v, fact_v) -> tuple[str, str]:
 
 
 def _gdrs_deviation_display_cls(v) -> tuple[str, str]:
-    """Таблица: факт−план (<0 красный «−», ≥0 зелёный «+»). В данных хранится план−факт."""
+    """Отклонение = факт − план: «+» если факт > плана, «−» если наоборот."""
     fv = pd.to_numeric(v, errors="coerce")
     if pd.isna(fv):
         return "—", ""
-    d = int(round(-float(fv)))
+    d = int(round(float(fv)))
     if d < 0:
         return f"{d:d}", "gdrs-u"
     if d > 0:
@@ -19615,7 +19607,7 @@ def _gdrs_pct_display_cls(v) -> tuple[str, str]:
         fv = pd.to_numeric(v, errors="coerce")
     if pd.isna(fv):
         return "—", ""
-    display = -float(fv)
+    display = float(fv)
     text_v = f"{display:+.1f}%" if display != 0.0 else "0.0%"
     if display < 0:
         return text_v, "gdrs-u"
@@ -19648,7 +19640,10 @@ def _gdrs_summary_table_to_html(df: pd.DataFrame, *, theme: str = "dark") -> str
         f"background-color:{_th.table_bg}; color:{_th.table_text}; }}"
         f"#{wrap_id} th, #{wrap_id} td {{ border:1px solid {_th.border}; padding:8px 10px; color:{_th.table_text} !important; font-weight:700; }}"
         f"#{wrap_id} th, #{wrap_id} td, #{wrap_id} th *, #{wrap_id} td * {{ color:{_th.table_text} !important; }}"
-        f"#{wrap_id} th {{ background-color:{_th.table_header_bg}; {_th.table_header_font_css} }}"
+        f"#{wrap_id} th {{ background-color:{_th.table_header_bg}; {_th.table_header_font_css}; text-align:center!important; white-space:normal;word-wrap:break-word;overflow-wrap:anywhere;line-height:1.25;max-width:11em;overflow:visible;text-overflow:clip;vertical-align:bottom; }}"
+        f"#{wrap_id} td {{ text-align:center;vertical-align:middle;white-space:normal;word-wrap:break-word;overflow-wrap:anywhere;overflow:visible;text-overflow:clip;max-width:28em; }}"
+        f"#{wrap_id} td.col-text {{ text-align:left!important;vertical-align:top;max-width:36em; }}"
+        f"#{wrap_id} th.col-text {{ text-align:center!important; }}"
         f"#{wrap_id} td.gdrs-u, #{wrap_id} td.gdrs-u span {{ color:{_th.bad} !important; font-weight:800; }}"
         f"#{wrap_id} td.gdrs-o, #{wrap_id} td.gdrs-o span {{ color:{_th.good} !important; font-weight:800; }}"
         f"#{wrap_id} td.gdrs-z, #{wrap_id} td.gdrs-z span {{ color:{_th.neutral} !important; }}"
@@ -19656,7 +19651,12 @@ def _gdrs_summary_table_to_html(df: pd.DataFrame, *, theme: str = "dark") -> str
         '<table class="bi-sortable-table"><thead><tr>',
     ]
     for col in df.columns:
-        parts.append(f"<th>{html_module.escape(str(col))}</th>")
+        _cc = table_column_css_class(str(col))
+        _ce = html_module.escape(str(col))
+        parts.append(
+            f'<th class="{_cc}" data-sort-label="{_ce}">'
+            f'<span class="bi-sort-label">{_ce} \u21c5</span></th>'
+        )
     parts.append("</tr></thead><tbody>")
     _int_cols = {"План", "Факт", "СКУД"}
     for _, row in df.iterrows():
@@ -19677,7 +19677,9 @@ def _gdrs_summary_table_to_html(df: pd.DataFrame, *, theme: str = "dark") -> str
                 inner = "0" if pd.isna(num) else str(int(round(float(num))))
             else:
                 inner = "" if val is None or (isinstance(val, float) and pd.isna(val)) else str(val)
-            cls_attr = f' class="{extra_cls}"' if extra_cls else ""
+            _cc = table_column_css_class(cl)
+            _td_cls = f"{_cc} {extra_cls}".strip() if extra_cls else _cc
+            cls_attr = f' class="{_td_cls}"' if _td_cls else ""
             st_attr = f' style="{extra_style}"' if extra_style else ""
             parts.append(f"<td{cls_attr}{st_attr}><span>{html_module.escape(inner)}</span></td>")
         parts.append("</tr>")

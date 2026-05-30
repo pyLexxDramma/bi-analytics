@@ -1034,10 +1034,32 @@ html, body {{
   padding: 7px 10px !important;
   vertical-align: middle !important;
   background-clip: padding-box;
-  white-space: nowrap;
+  text-align: center !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
   color: {th.text} !important;
   font-size: 14px !important;
   line-height: 1.35 !important;
+}}
+#{w} .gdrs-matrix-table thead th {{
+  white-space: normal !important;
+  word-wrap: break-word !important;
+  overflow-wrap: anywhere !important;
+  line-height: 1.25 !important;
+  max-width: 11em !important;
+  vertical-align: bottom !important;
+}}
+#{w} .gdrs-matrix-table tbody td {{
+  white-space: normal !important;
+  word-wrap: break-word !important;
+  overflow-wrap: anywhere !important;
+  max-width: 28em !important;
+}}
+#{w} .gdrs-matrix-table tbody td.gdrs-col-plan,
+#{w} .gdrs-matrix-table tbody td.gdrs-col-skud,
+#{w} .gdrs-matrix-table tbody td.gdrs-col-dev {{
+  white-space: nowrap !important;
+  max-width: none !important;
 }}
 #{w} .gdrs-matrix-table th *,
 #{w} .gdrs-matrix-table td *,

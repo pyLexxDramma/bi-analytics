@@ -1,8 +1,11 @@
-"""Интерактивная сортировка HTML-таблиц (клик по заголовку + фильтр по знаку)."""
+"""Интерактивная сортировка HTML-таблиц (клик по заголовку, стрелки в подписи)."""
 
 from __future__ import annotations
 
 import os
+
+from utils import BI_TABLE_LAYOUT_CSS
+
 import re
 
 import streamlit as st
@@ -66,9 +69,11 @@ _TABLE_SORT_JS = r"""
     });
   }
 
-  function isProjectColumn(th, colIdx) {
-    var t = (th && th.textContent) ? th.textContent.trim().toLowerCase() : "";
+  function isProjectColumn(tbl, th, colIdx) {
+    var label = (th && th.getAttribute("data-sort-label")) ? th.getAttribute("data-sort-label").trim().toLowerCase() : "";
+    var t = label || ((th && th.textContent) ? th.textContent.trim().toLowerCase() : "");
     if (t.indexOf("проект") >= 0) return true;
+    if (tbl && tbl.classList.contains("gdrs-matrix-table")) return false;
     return colIdx === 0;
   }
 
@@ -83,16 +88,23 @@ _TABLE_SORT_JS = r"""
     tbl.setAttribute("data-bi-sort-ready", "1");
     if (!tbl.classList.contains("bi-sortable-table")) tbl.classList.add("bi-sortable-table");
     var theadRow = tbl.querySelector("thead tr");
+    var gdrsWeekRow = null;
     if (tbl.classList.contains("gdrs-matrix-table")) {
       var metricsRow = tbl.querySelector("thead tr.gdrs-h-metrics");
       if (metricsRow) theadRow = metricsRow;
+      var maybeWeek = metricsRow && metricsRow.nextElementSibling;
+      if (maybeWeek && maybeWeek.querySelector("th.gdrs-h-week")) gdrsWeekRow = maybeWeek;
     } else if (tbl.querySelector("thead tr.title-row")) {
       var headerRows = tbl.querySelectorAll("thead tr");
       if (headerRows.length > 1) theadRow = headerRows[headerRows.length - 1];
     }
     if (!theadRow) return;
+    bindSortableThs(tbl, theadRow);
+    if (gdrsWeekRow) bindSortableThs(tbl, gdrsWeekRow);
+  }
+
+  function bindSortableThs(tbl, theadRow) {
     var ths = theadRow.querySelectorAll("th");
-    var clickOnly = tbl.classList.contains("bi-sort-click-only");
     ths.forEach(function (th, colIdx) {
       if (th.getAttribute("data-bi-sort-th") === "1") return;
       if (tbl.classList.contains("gdrs-matrix-table") && th.getAttribute("data-gdrs-sort") !== "1") return;
@@ -105,48 +117,39 @@ _TABLE_SORT_JS = r"""
       th.style.cursor = "pointer";
       var wrap = document.createElement("div");
       wrap.style.cssText =
-        "display:flex;align-items:center;gap:6px;justify-content:space-between;width:100%;";
+        "display:flex;align-items:center;gap:6px;justify-content:flex-start;width:100%;";
       var label = document.createElement("span");
       label.className = "bi-sort-label";
       label.style.cssText =
         "flex:1;min-width:0;white-space:normal;word-wrap:break-word;overflow-wrap:anywhere;overflow:visible;text-overflow:clip;cursor:pointer;user-select:none;";
       label.title = "Клик — сортировка по убыванию, повторный клик — по возрастанию";
-      var sel = document.createElement("select");
-      sel.className = "bi-sort-filter";
-      sel.title = "Сортировка и фильтр";
-      sel.innerHTML =
-        '<option value="">Все</option>' +
-        '<option value="asc">\u2191</option>' +
-        '<option value="desc">\u2193</option>' +
-        '<option value="pos">+</option>' +
-        '<option value="neg">\u2212</option>';
-      sel.style.cssText =
-        "font-size:11px;max-width:54px;background:#143252;color:#e8eef5;border:1px solid #5a7a9a;border-radius:4px;cursor:pointer;";
       wrap.appendChild(label);
-      if (!clickOnly) wrap.appendChild(sel);
       th.appendChild(wrap);
-      var sortDir = 0;
-      var signFilter = "";
+      th._biSortDir = 0;
+
+      function resetPeerSortLabels(activeTh) {
+        theadRow.querySelectorAll("th[data-bi-sort-th='1']").forEach(function (oth) {
+          if (oth === activeTh) return;
+          oth._biSortDir = 0;
+          var lbl = oth.querySelector(".bi-sort-label");
+          if (!lbl) return;
+          var lt = (oth.getAttribute("data-sort-label") || "").trim();
+          lt = lt.replace(/\s[\u21C5\u25B2\u25BC\u2191\u2193]+$/, "").trim();
+          lbl.textContent = lt + sortArrow(0);
+        });
+      }
 
       function paintLabel() {
-        label.textContent = labelText + sortArrow(sortDir);
+        label.textContent = labelText + sortArrow(th._biSortDir || 0);
       }
 
       function apply() {
         var tbody = tbl.querySelector("tbody");
         if (!tbody) return;
+        var sortDir = th._biSortDir || 0;
         var rows = Array.prototype.slice.call(tbody.querySelectorAll("tr"));
         var grouped = tableHasProjectBlocks(rows);
-        var byProject = isProjectColumn(th, colIdx);
-
-        function rowVisible(r) {
-          if (!signFilter) return true;
-          if (!r || !r.cells || !r.cells[colIdx]) return true;
-          var n = parseNum(cellSortKey(r, colIdx));
-          if (signFilter === "pos") return !isNaN(n) && n > 0;
-          if (signFilter === "neg") return !isNaN(n) && n < 0;
-          return true;
-        }
+        var byProject = isProjectColumn(tbl, th, colIdx);
 
         if (grouped) {
           var split = splitGroupedRows(rows);
@@ -172,7 +175,7 @@ _TABLE_SORT_JS = r"""
           });
           split.totals.forEach(function (r) { ordered.push(r); });
           ordered.forEach(function (r) {
-            r.style.display = rowVisible(r) ? "" : "none";
+            r.style.display = "";
             tbody.appendChild(r);
           });
           paintLabel();
@@ -190,18 +193,18 @@ _TABLE_SORT_JS = r"""
             return compareCells(cellSortKey(a, colIdx), cellSortKey(b, colIdx), sortDir);
           });
           dataRows.forEach(function (r) {
-            r.style.display = rowVisible(r) ? "" : "none";
+            r.style.display = "";
             tbody.appendChild(r);
           });
           totals.forEach(function (r) {
-            r.style.display = rowVisible(r) ? "" : "none";
+            r.style.display = "";
             tbody.appendChild(r);
           });
           paintLabel();
           return;
         }
         rows.forEach(function (r) {
-          r.style.display = rowVisible(r) ? "" : "none";
+          r.style.display = "";
           tbody.appendChild(r);
         });
         paintLabel();
@@ -212,29 +215,18 @@ _TABLE_SORT_JS = r"""
           ev.preventDefault();
           ev.stopPropagation();
         }
-        sortDir = sortDir >= 0 ? -1 : 1;
+        if (!th._biSortDir) {
+          resetPeerSortLabels(th);
+          th._biSortDir = -1;
+        } else {
+          th._biSortDir = th._biSortDir >= 0 ? -1 : 1;
+        }
         apply();
       }
 
       paintLabel();
       label.addEventListener("click", toggleSort);
-      th.addEventListener("click", function (ev) {
-        if (ev.target && ev.target.classList && ev.target.classList.contains("bi-sort-filter")) return;
-        toggleSort(ev);
-      });
-      if (!clickOnly) {
-        sel.addEventListener("change", function (ev) {
-          ev.stopPropagation();
-          var v = sel.value;
-          signFilter = "";
-          if (v === "asc") sortDir = 1;
-          else if (v === "desc") sortDir = -1;
-          else if (v === "pos") { sortDir = 0; signFilter = "pos"; }
-          else if (v === "neg") { sortDir = 0; signFilter = "neg"; }
-          else sortDir = 0;
-          apply();
-        });
-      }
+      th.addEventListener("click", toggleSort);
     });
   }
 
@@ -339,7 +331,7 @@ _COMPACT_FRAME_FIT_JS = r"""
 })();
 """
 
-_IFRAME_SHELL_CSS = """
+_IFRAME_SHELL_CSS = ("""
 <style>
 html, body {
   margin: 0; padding: 0;
@@ -371,13 +363,26 @@ html,body{height:auto!important;min-height:0!important;overflow:visible!importan
   border-top: 1px solid #7a9ec4 !important;
 }
 .bi-sortable-html-root table.bi-sortable-table tr th:first-child,
+.bi-sortable-html-root table.gdrs-matrix-table thead th[data-gdrs-sort="1"],
+.bi-sortable-html-root table.bi-sortable-table thead th[data-bi-sort-th="1"] {
+  cursor: pointer !important;
+}
+.bi-sortable-html-root table.bi-sortable-table thead th .bi-sort-label {
+  cursor: pointer !important;
+  user-select: none;
+}
+</style>
+"""
++ BI_TABLE_LAYOUT_CSS
++ """
+<style>
 .bi-sortable-html-root table.bi-sortable-table tr td:first-child {
   border-left: 1px solid #7a9ec4 !important;
 }
 </style>
-"""
+""")
 
-_IFRAME_SHELL_CSS_LIGHT = """
+_IFRAME_SHELL_CSS_LIGHT = ("""
 <style>
 html, body {
   margin: 0; padding: 0;
@@ -413,13 +418,20 @@ html, body {
   border-left: 1px solid #cbd5e1 !important;
 }
 .bi-sortable-html-root .bi-sort-label { color: #111827 !important; }
+</style>
+"""
++ BI_TABLE_LAYOUT_CSS
++ """
+<style>
+.bi-sortable-html-root .bi-sort-filter,
+.bi-sortable-html-root select.bi-sort-filter { display: none !important; }
 .bi-sortable-html-root .bi-sort-filter {
   background: #ffffff !important;
   color: #111827 !important;
   border: 1px solid #94a3b8 !important;
 }
 </style>
-"""
+""")
 
 
 _GDRS_TABLE_WRAP_IFRAME_CSS = """
@@ -470,9 +482,10 @@ def table_sort_inject_enabled() -> bool:
 
 def _split_embedded_style(html: str) -> tuple[str, str]:
     text = html or ""
-    m = re.match(r"\s*(<style[^>]*>.*?</style>)\s*(.*)", text, flags=re.I | re.S)
-    if m:
-        return m.group(1), m.group(2)
+    styles = re.findall(r"<style[^>]*>.*?</style>", text, flags=re.I | re.S)
+    if styles:
+        body = re.sub(r"<style[^>]*>.*?</style>", "", text, count=len(styles), flags=re.I | re.S).strip()
+        return "".join(styles), body
     return "", text
 
 

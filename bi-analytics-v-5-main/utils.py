@@ -163,6 +163,47 @@ HTML_TABLE_TD_COMPACT_CSS = (
     "white-space:nowrap;overflow:visible;text-overflow:clip;"
 )
 
+# Общие правила вёрстки HTML-таблиц (сортировка + выравнивание + перенос заголовков).
+BI_TABLE_LAYOUT_CSS = """
+<style>
+.bi-sortable-html-root table.bi-sortable-table th,
+table.bi-sortable-table th {
+  text-align: center !important;
+  vertical-align: bottom !important;
+  white-space: normal !important;
+  word-wrap: break-word !important;
+  overflow-wrap: anywhere !important;
+  line-height: 1.25 !important;
+  max-width: 11em !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+.bi-sortable-html-root table.bi-sortable-table td,
+table.bi-sortable-table td {
+  text-align: center !important;
+  vertical-align: middle !important;
+  white-space: normal !important;
+  word-wrap: break-word !important;
+  overflow-wrap: anywhere !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  max-width: 28em !important;
+}
+.bi-sortable-html-root table.bi-sortable-table td.col-text,
+table.bi-sortable-table td.col-text {
+  text-align: left !important;
+  vertical-align: top !important;
+  max-width: 36em !important;
+}
+.bi-sortable-html-root table.bi-sortable-table th.col-text,
+table.bi-sortable-table th.col-text {
+  text-align: center !important;
+  vertical-align: bottom !important;
+}
+</style>
+"""
+
+
 # Размерность сумм: млн рублей
 MILLION = 1_000_000
 
@@ -221,6 +262,16 @@ def mark_html_table_sortable(html: str) -> str:
     def _patch_table_tag(match: re.Match) -> str:
         tag = match.group(0)
         if "bi-sortable-table" in tag:
+            if "bi-sort-click-only" not in tag:
+                if re.search(r'\bclass=["\']', tag, flags=re.I):
+                    return re.sub(
+                        r'class=(["\'])([^"\']*)\1',
+                        lambda m: f'class={m.group(1)}{m.group(2)} bi-sort-click-only{m.group(1)}',
+                        tag,
+                        count=1,
+                        flags=re.I,
+                    )
+                return tag[:-1] + ' class="bi-sort-click-only"' + tag[-1]
             return tag
         if re.search(r'\bclass=["\']', tag, flags=re.I):
             return re.sub(
