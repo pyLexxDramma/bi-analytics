@@ -24976,15 +24976,37 @@ def _find_contract_column_for_budget(d: pd.DataFrame):
 
 
 def _plan_fact_pct_label(numerator: float, denominator: float) -> str:
+    """% = 100 × числитель / знаменатель (план > 0)."""
     if denominator and float(denominator) > 0:
         return f"{100.0 * float(numerator) / float(denominator):.1f}%"
     return "—"
+
+
+def _plan_fact_contract_pct_label(
+    contract_rub: float, plan_rub: float, *, has_contract_source: bool
+) -> str:
+    """% покрытия контрактами = 100 × контрактация / план; без колонки — «—», не 0%."""
+    if not has_contract_source:
+        return "—"
+    return _plan_fact_pct_label(contract_rub, plan_rub)
+
+
+def _contract_rub_by_project(msp_df: pd.DataFrame | None) -> pd.Series | None:
+    if msp_df is None or msp_df.empty or "project name" not in msp_df.columns:
+        return None
+    col = _find_contract_column_for_budget(msp_df)
+    if not col:
+        return None
+    tmp = msp_df.copy()
+    tmp["_c"] = pd.to_numeric(tmp[col], errors="coerce").fillna(0.0)
+    return tmp.groupby("project name", dropna=False)["_c"].sum()
 
 
 def _render_plan_fact_detail_table(
     st,
     filtered_df: pd.DataFrame,
     *,
+    msp_df: pd.DataFrame | None = None,
     key_suffix: str = "",
 ) -> None:
     """Таблица по проектам: план, факт, остаток, отклонение, % выполнения, % покрытия контрактами."""
@@ -24995,10 +25017,14 @@ def _render_plan_fact_detail_table(
     src["budget plan"] = pd.to_numeric(src["budget plan"], errors="coerce").fillna(0.0)
     src["budget fact"] = pd.to_numeric(src["budget fact"], errors="coerce").fillna(0.0)
     contract_col = _find_contract_column_for_budget(src)
+    _has_contract_src = contract_col is not None
     if contract_col:
         src["_contract_rub"] = pd.to_numeric(src[contract_col], errors="coerce").fillna(0.0)
     else:
         src["_contract_rub"] = 0.0
+    _msp_contract_by_proj = _contract_rub_by_project(msp_df)
+    if _msp_contract_by_proj is not None:
+        _has_contract_src = True
 
     if "project name" in src.columns:
         table_agg = (
@@ -25035,7 +25061,13 @@ def _render_plan_fact_detail_table(
                 "Остаток, млн руб.": f"{(plan - fact) / 1e6:.2f}",
                 "Отклонение, млн руб.": f"{(fact - plan) / 1e6:.2f}",
                 "% выполнения": _plan_fact_pct_label(fact, plan),
-                "% покрытия контрактами": _plan_fact_pct_label(contract, plan),
+                "% покрытия контрактами": _plan_fact_contract_pct_label(
+                    contract if _msp_contract_by_proj is None else float(
+                        _msp_contract_by_proj.get(r["project name"], contract)
+                    ),
+                    plan,
+                    has_contract_source=_has_contract_src,
+                ),
             }
         )
     display = pd.DataFrame(rows)
@@ -25073,7 +25105,8 @@ def _render_plan_fact_detail_table(
         display,
         finance_deviation_column="Отклонение, млн руб.",
         deviation_red_if_positive_only=True,
-        expense_overrun_style=True,
+        color_fact_column=False,
+        expense_overrun_style=False,
         header_font_css="font-weight:700;font-size:1.15em;",
         label_columns_font_css="font-weight:700;font-size:1.08em;",
         table_font_size_px=16,
@@ -25093,6 +25126,87 @@ def _plan_fact_summary_gauge_color(plan_rub: float, fact_rub: float) -> str:
     return "#27ae60"
 
 
+_APPR_PF_GAUGE_HEIGHT_PX = 584
+
+
+def _render_appr_pf_gauge_chart(fig: go.Figure, *, height: int, chart_key: str) -> None:
+    h = max(200, int(height))
+    cfg = dict(_PLOTLY_CONFIG)
+    cfg["displayModeBar"] = False
+    cfg["scrollZoom"] = False
+    try:
+        plot_div = fig.to_html(
+            full_html=False,
+            include_plotlyjs="cdn",
+            config=cfg,
+            default_width="100%",
+            default_height=f"{h}px",
+        )
+        shell = (
+            "<!DOCTYPE html><html lang='ru'><head><meta charset='utf-8'>"
+            "<style>"
+            "html,body{margin:0;padding:0;overflow:hidden!important;background:transparent;}"
+            f".appr-pf-gauge-wrap{{width:100%;height:{h}px;max-height:{h}px;overflow:hidden!important;}}"
+            "</style></head><body>"
+            f'<div class="appr-pf-gauge-wrap">{plot_div}</div>'
+            "</body></html>"
+        )
+        components.html(shell, height=h + 2, scrolling=False)
+    except Exception:
+        render_chart(
+            fig,
+            height=h,
+            key=chart_key,
+            skip_clamp_zoom=True,
+            omit_default_width=True,
+            max_height=h + 8,
+        )
+
+
+_APPR_PF_SUMMARY_GAUGE_CSS = """
+<style>
+.appr-pf-summary-anchor ~ div[data-testid="stHorizontalBlock"] {
+  overflow: hidden !important;
+  max-width: 100% !important;
+}
+.appr-pf-summary-anchor ~ div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:first-child {
+  overflow: hidden !important;
+  max-width: 100% !important;
+}
+.appr-pf-summary-anchor ~ div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:first-child div[data-testid="stHtml"],
+.appr-pf-summary-anchor ~ div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:first-child [data-testid="stHtml"] iframe {
+  overflow: hidden !important;
+  max-width: 100% !important;
+}
+</style>
+"""
+
+
+
+
+def _plan_fact_gauge_axis_ticks(
+    hi: float, plan_v: float, *, value_format: str, unit: str
+) -> tuple[list[float], list[str]]:
+    hi = float(hi or 0.0)
+    if hi <= 0:
+        return [0.0], ["0"]
+    plan_v = float(plan_v or 0.0)
+    raw = [0.0, hi]
+    if plan_v > 0:
+        raw.append(plan_v)
+        if plan_v < hi:
+            raw.append(plan_v * 0.5)
+    else:
+        raw.extend([hi / 3.0, 2.0 * hi / 3.0])
+    ticks = sorted({round(v, 4) for v in raw if 0.0 <= v <= hi + 1e-9})
+    if ticks[0] != 0.0:
+        ticks.insert(0, 0.0)
+    if abs(ticks[-1] - hi) > 1e-6:
+        ticks.append(hi)
+    texts = [f"{v:{value_format}} {unit}".strip() for v in ticks]
+    return ticks, texts
+
+
 def _render_plan_fact_summary_dashboard(
     st,
     *,
@@ -25100,7 +25214,7 @@ def _render_plan_fact_summary_dashboard(
     fact_rub: float,
     key_suffix: str = "",
 ) -> None:
-    """Сводка план/факт: gauge (факт к плану) + абсолютные значения и доли без серых подписей."""
+    """Сводка план/факт: gauge (факт к плану) + шкала с делениями и подписями оси."""
     plan_rub = float(plan_rub or 0.0)
     fact_rub = float(fact_rub or 0.0)
     use_bln = max(plan_rub, fact_rub, 1.0) >= 1e9
@@ -25115,16 +25229,23 @@ def _render_plan_fact_summary_dashboard(
     pct_of_plan = (100.0 * fact_rub / plan_rub) if plan_rub > 0 else float("nan")
     bar_color = _plan_fact_summary_gauge_color(plan_rub, fact_rub)
 
+    tickvals, ticktext = _plan_fact_gauge_axis_ticks(
+        hi, plan_v, value_format=vf, unit=unit
+    )
     gauge_kw: dict = {
         "shape": "angular",
         "axis": {
             "range": [0.0, float(hi)],
-            "tickwidth": 0,
-            "ticklen": 0,
-            "tickcolor": "rgba(0,0,0,0)",
-            "showticklabels": False,
+            "tickmode": "array",
+            "tickvals": tickvals,
+            "ticktext": ticktext,
+            "tickwidth": 2,
+            "ticklen": 12,
+            "tickcolor": "#c8d4e3",
+            "tickfont": {"size": 15, "color": "#e8eef5"},
+            "showticklabels": True,
         },
-        "bar": {"color": bar_color, "thickness": 0.78},
+        "bar": {"color": bar_color, "thickness": 0.72},
         "bgcolor": "rgba(255,255,255,0.08)",
         "borderwidth": 0,
     }
@@ -25142,30 +25263,28 @@ def _render_plan_fact_summary_dashboard(
             number={
                 "suffix": f" {unit}",
                 "valueformat": vf,
-                "font": {"size": 34, "color": "#f8fbff"},
+                "font": {"size": 56, "color": "#f8fbff"},
             },
             gauge=gauge_kw,
         )
     )
-    _gauge_h = 260
+    _gauge_h = _APPR_PF_GAUGE_HEIGHT_PX
     fig.update_layout(
         height=_gauge_h,
-        margin=dict(l=8, r=8, t=8, b=28),
+        margin=dict(l=16, r=16, t=12, b=40),
         autosize=False,
     )
     fig = apply_chart_background(fig)
 
     render_table_subheader(st, "Сводный дашборд план/факт")
+    st.markdown(_APPR_PF_SUMMARY_GAUGE_CSS, unsafe_allow_html=True)
     st.markdown('<div class="appr-pf-summary-anchor"></div>', unsafe_allow_html=True)
     g_col, val_col = st.columns([1.2, 1], gap="medium", vertical_alignment="center")
     with g_col:
-        render_chart(
+        _render_appr_pf_gauge_chart(
             fig,
             height=_gauge_h,
-            caption_below="",
-            key=f"appr_budget_summary_gauge_{key_suffix}",
-            skip_clamp_zoom=True,
-            omit_default_width=True,
+            chart_key=f"appr_budget_summary_gauge_{key_suffix}",
         )
     _pct_html = (
         f'<p style="font-size:1.2rem;font-weight:700;margin:0.75rem 0 0;color:{bar_color};">'
@@ -25315,25 +25434,38 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
     render_chart(fig_hist, caption_below="Бюджет план/факт/корректировка/отклонение по проектам")
 
     render_table_subheader(st, "Сводная таблица по проектам")
-    summary_hist = hist_by_type_df.pivot_table(
-        index="project name",
-        columns="Тип бюджета",
-        values="Сумма",
-        aggfunc="sum",
-        fill_value=0,
-    ).reset_index()
-    for col in summary_hist.columns:
-        if col != "project name":
-            summary_hist[col] = (
-                (summary_hist[col].astype(float) / 1e6)
-                .round(2)
-                .apply(lambda x: f"{float(x):.2f}" if pd.notna(x) else "0.00")
-            )
-    summary_hist = summary_hist.rename(
-        columns={c: f"{c}, млн руб." for c in summary_hist.columns if c != "project name"}
-    )
-    _render_format_dataframe_html(
-        summary_hist,
+    _sum_rows: list[dict] = []
+    for _, row in budget_by_project.iterrows():
+        plan = float(row["budget plan"])
+        fact = float(row["budget fact"])
+        _sum_rows.append(
+            {
+                "Проект": str(row["project name"]),
+                "Бюджет План, млн руб.": f"{plan / 1e6:.2f}",
+                "Бюджет Факт, млн руб.": f"{fact / 1e6:.2f}",
+                "Отклонение, млн руб.": f"{(fact - plan) / 1e6:.2f}",
+            }
+        )
+    if len(budget_by_project) > 1:
+        plan_total = float(budget_by_project["budget plan"].sum())
+        fact_total = float(budget_by_project["budget fact"].sum())
+        _sum_rows.append(
+            {
+                "Проект": "ИТОГО",
+                "Бюджет План, млн руб.": f"{plan_total / 1e6:.2f}",
+                "Бюджет Факт, млн руб.": f"{fact_total / 1e6:.2f}",
+                "Отклонение, млн руб.": f"{(fact_total - plan_total) / 1e6:.2f}",
+            }
+        )
+    _render_budget_table_html(
+        pd.DataFrame(_sum_rows),
+        finance_deviation_column="Отклонение, млн руб.",
+        deviation_red_if_positive_only=True,
+        color_fact_column=False,
+        expense_overrun_style=False,
+        header_font_css="font-weight:700;font-size:1.15em;",
+        label_columns_font_css="font-weight:700;font-size:1.08em;",
+        table_font_size_px=16,
         file_stem="budget_summary",
         key_prefix="budget_summary",
     )
@@ -25425,15 +25557,17 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
 
     _render_budget_histogram_plan_fact_by_projects(filtered_df)
 
+    _render_plan_fact_detail_table(
+        st,
+        filtered_df,
+        msp_df=df if used_1c_approved else None,
+        key_suffix=_project_filter_norm_key(str(selected_project)),
+    )
+
     _render_plan_fact_summary_dashboard(
         st,
         plan_rub=plan_total,
         fact_rub=fact_total,
-        key_suffix=_project_filter_norm_key(str(selected_project)),
-    )
-    _render_plan_fact_detail_table(
-        st,
-        filtered_df,
         key_suffix=_project_filter_norm_key(str(selected_project)),
     )
 

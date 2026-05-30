@@ -1138,7 +1138,7 @@ div[data-baseweb="menu"] li span {
 
 
 /* Сводный дашборд план/факт — только строка gauge+KPI (сразу после anchor), фикс. высота */
-:root { --appr-pf-gauge-h: 260px; }
+:root { --appr-pf-gauge-h: 584px; }
 .appr-pf-summary-anchor ~ div[data-testid="stHorizontalBlock"] {
     overflow: visible !important;
 }
@@ -1160,6 +1160,20 @@ div[data-baseweb="menu"] li span {
 }
 .appr-pf-summary-kpi { display: flex; gap: 1.25rem; flex-wrap: wrap; align-items: flex-start; }
 .appr-pf-summary-kpi-col { flex: 1 1 140px; min-width: 120px; }
+
+.appr-pf-summary-anchor ~ div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:first-child, div[data-testid="stColumn"]:first-child div[data-testid="stHtml"] {
+    min-height: var(--appr-pf-gauge-h) !important;
+    max-height: var(--appr-pf-gauge-h) !important;
+    height: var(--appr-pf-gauge-h) !important;
+    overflow: hidden !important;
+}
+.appr-pf-summary-anchor ~ div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:first-child, div[data-testid="stColumn"]:first-child [data-testid="stHtml"] iframe {
+    min-height: var(--appr-pf-gauge-h) !important;
+    max-height: var(--appr-pf-gauge-h) !important;
+    height: var(--appr-pf-gauge-h) !important;
+    overflow: hidden !important;
+}
+
 
 /* Plotly: рамка и минимальная высота — область графика не «сливается» с фоном и не схлопывается */
 [data-testid="stPlotlyChart"] {
