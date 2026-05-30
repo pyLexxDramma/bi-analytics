@@ -868,19 +868,33 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
                 if not visible:
                     continue
                 _expand_here = any(current_dashboard == r for r in visible)
-                with st.expander(cat_name, expanded=_expand_here):
-                    for report in visible:
-                        button_type = (
-                            "primary" if current_dashboard == report else "secondary"
-                        )
-                        if st.button(
-                            report,
-                            width="stretch",
-                            key=f"menu_report_{report}",
-                            type=button_type,
-                        ):
-                            st.session_state.current_dashboard = report
-                            st.rerun()
+                if len(visible) == 1:
+                    report = visible[0]
+                    button_type = (
+                        "primary" if current_dashboard == report else "secondary"
+                    )
+                    if st.button(
+                        report,
+                        width="stretch",
+                        key=f"menu_report_{report}",
+                        type=button_type,
+                    ):
+                        st.session_state.current_dashboard = report
+                        st.rerun()
+                else:
+                    with st.expander(cat_name, expanded=_expand_here):
+                        for report in visible:
+                            button_type = (
+                                "primary" if current_dashboard == report else "secondary"
+                            )
+                            if st.button(
+                                report,
+                                width="stretch",
+                                key=f"menu_report_{report}",
+                                type=button_type,
+                            ):
+                                st.session_state.current_dashboard = report
+                                st.rerun()
             st.markdown("---")
 
         st.markdown('<p class="sidebar-section-title">Настройки</p>', unsafe_allow_html=True)
