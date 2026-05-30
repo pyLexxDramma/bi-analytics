@@ -368,8 +368,8 @@ def get_ai_assistant_open_url() -> str:
     Приоритет:
     1. AI_ASSISTANT_URL (или XCA_AI_CHAT_URL / AI_CHAT_PUBLIC_URL)
     2. AI_ASSISTANT_TARGET=dev|prod|embedded|off|auto (по умолчанию auto)
-       - auto + Streamlit Cloud + SSH → встроенный /_opencode_ai (работает без публичного DNS)
-       - auto + иначе → AI_ASSISTANT_URL_DEV / PROD (Web UI через ai.conall.ru/opencode/)
+       - dev → AI_ASSISTANT_URL_DEV; release → AI_ASSISTANT_URL_PROD (один Web UI OpenCode)
+       - embedded на release → тоже Web UI; embedded только на dev/local без release_mode
     """
     for key in ("AI_ASSISTANT_URL", "XCA_AI_CHAT_URL", "AI_CHAT_PUBLIC_URL"):
         u = _read_env_or_secret(key).strip()
@@ -391,23 +391,19 @@ def get_ai_assistant_open_url() -> str:
         return prod_url
 
     if target == "embedded":
+        # release client — тот же Web UI OpenCode, что и dev (не Streamlit /_opencode_ai)
+        if is_release_client_mode():
+            return prod_url
         return _embedded_ai_url_for_current_app()
 
     if target == "dev":
         return dev_url
 
-    # dev (Cloud и local) — нативный Web UI OpenCode, не Streamlit /_opencode_ai
+    # dev / local — Web UI OpenCode
     if _is_streamlit_dev_deployment() or (not is_release_client_mode()):
         return dev_url
 
-    # auto на release Cloud + SSH — embedded, если нет публичного HTTPS
-    if (
-        _is_streamlit_cloud_deployment()
-        and _ai_ssh_tunnel_configured()
-        and not _env_truthy("AI_ASSISTANT_FORCE_WEB_UI")
-    ):
-        return _embedded_ai_url_for_current_app()
-
+    # release (auto и пр.) — Web UI OpenCode, как на dev
     return prod_url
 
 
