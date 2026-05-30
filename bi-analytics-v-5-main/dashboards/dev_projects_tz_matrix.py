@@ -1717,6 +1717,19 @@ def _detect_plot_sections_from_msp(mdf: pd.DataFrame) -> List[str]:
     return sorted(found, key=_sort_key)
 
 
+
+def _msp_is_unified_dmitrovsky(mdf: pd.DataFrame) -> bool:
+    """Дмитровский 1 — одна строка матрицы/КТ, без деления по «N этап»."""
+    if mdf is None or getattr(mdf, "empty", True):
+        return False
+    pcol = _project_name_column(mdf)
+    if not pcol or pcol not in mdf.columns:
+        return False
+    for raw in mdf[pcol].dropna().astype(str).str.strip().unique():
+        if _control_points_project_group_key(raw) == "unified_dmitrovsky1":
+            return True
+    return False
+
 def _control_points_stage_from_project_label(label: object) -> Optional[str]:
     s = str(label or "").strip()
     if not s:
@@ -1750,6 +1763,8 @@ def build_dev_tz_matrix_blocks(
     if mdf is None or getattr(mdf, "empty", True):
         return []
     sections = _detect_plot_sections_from_msp(mdf)
+    if _msp_is_unified_dmitrovsky(mdf):
+        sections = []
     rows0, label0 = build_dev_tz_matrix_rows(
         mdf,
         project_data,
@@ -4271,6 +4286,8 @@ def build_control_points_df(mdf: pd.DataFrame, *, hide_completed: bool = False) 
         sub = work[work[pcol].astype(str).str.strip().isin(raws)]
         display_base = _control_points_project_label(gk, raws)
         sections = _detect_plot_sections_from_msp(sub)
+        if gk == "unified_dmitrovsky1":
+            sections = []
         stage_labels: List[Tuple[str, Optional[str]]]
         if sections:
             stage_labels = [(f"{display_base} ({sec} этап)", sec) for sec in sections]
@@ -4608,6 +4625,8 @@ def _control_points_project_label_to_raw_names(mdf: pd.DataFrame) -> Dict[str, L
         lab = _control_points_project_label(gk, raws_u)
         sub = work[work[pcol].astype(str).str.strip().isin(raws_u)]
         sections = _detect_plot_sections_from_msp(sub)
+        if gk == "unified_dmitrovsky1":
+            sections = []
         if sections:
             for sec in sections:
                 out[f"{lab} ({sec} этап)"] = raws_u

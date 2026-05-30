@@ -684,6 +684,9 @@ def main():
     _inject_ru_labels_once()
     _inject_table_sort_once()
 
+    if not str(st.session_state.get("current_dashboard") or "").strip():
+        st.session_state["current_dashboard"] = "Девелоперские проекты"
+
     _dash_title = str(st.session_state.get("current_dashboard") or "").strip()
     _gdrs_light_preview = False
     try:
