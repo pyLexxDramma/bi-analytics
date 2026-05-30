@@ -309,16 +309,47 @@ def _opencode_workspace_url(public_base: str) -> str:
     return f"{base}/L3dvcmtzcGFjZQ/"
 
 
-# OpenCode: dev — лаунчер на Streamlit Cloud; prod — ai.conall.ru после nginx Николая.
-AI_ASSISTANT_WEB_UI_DEFAULT = "https://opencode.ai.conall.ru/L3dvcmtzcGFjZQ/"
+# OpenCode Web UI: ai.conall.ru/opencode/ (прокси dash-ai). opencode.ai.conall.ru — после DNS.
+AI_ASSISTANT_URL_PATH_FALLBACK = "https://ai.conall.ru/opencode/L3dvcmtzcGFjZQ/"
+AI_ASSISTANT_WEB_UI_DEFAULT = AI_ASSISTANT_URL_PATH_FALLBACK
 AI_ASSISTANT_URL_DEV_DEFAULT = AI_ASSISTANT_WEB_UI_DEFAULT
 AI_ASSISTANT_URL_PROD_DEFAULT = AI_ASSISTANT_WEB_UI_DEFAULT
-AI_ASSISTANT_URL_PATH_FALLBACK = "https://ai.conall.ru/opencode/L3dvcmtzcGFjZQ/"
 AI_ASSISTANT_URL_EMBEDDED_DEFAULT = "https://bi-analytics-dev.streamlit.app/_opencode_ai"
 
 AI_ASSISTANT_PAGE = "pages/_opencode_ai.py"
 
 
+def _is_streamlit_cloud_deployment() -> bool:
+    return "streamlit.app" in _streamlit_request_host()
+
+
+def _ai_ssh_tunnel_configured() -> bool:
+    return _env_truthy("ENABLE_SSH_TUNNEL") and bool(_read_env_or_secret("AI_SSH_HOST").strip())
+
+
+def _embedded_ai_url_for_current_app() -> str:
+    embedded = _read_env_or_secret("AI_ASSISTANT_URL_EMBEDDED").strip()
+    if embedded:
+        return embedded
+    host = _streamlit_request_host()
+    if host:
+        h = host.split("/")[0].split(":")[0].strip()
+        if h.endswith(".streamlit.app"):
+            return f"https://{h}/_opencode_ai"
+    pub = _read_env_or_secret("BI_STREAMLIT_PUBLIC_URL").strip().rstrip("/")
+    if pub:
+        return f"{pub}/_opencode_ai"
+    return AI_ASSISTANT_URL_EMBEDDED_DEFAULT
+
+
+def _normalize_ai_assistant_public_url(url: str) -> str:
+    """opencode.ai.conall.ru без DNS → рабочий путь ai.conall.ru/opencode/…"""
+    u = (url or "").strip()
+    if not u or "_opencode_ai" in u.lower():
+        return u
+    if "opencode.ai.conall.ru" in u.lower():
+        return AI_ASSISTANT_URL_PATH_FALLBACK
+    return u
 
 
 def is_ai_assistant_embedded_page() -> bool:
@@ -332,49 +363,48 @@ def is_ai_assistant_embedded_page() -> bool:
 
 def get_ai_assistant_open_url() -> str:
     """
-    URL кнопки «ИИ помощник» (новая вкладка).
+    URL кнопки «ИИ помощник».
 
     Приоритет:
     1. AI_ASSISTANT_URL (или XCA_AI_CHAT_URL / AI_CHAT_PUBLIC_URL)
-    2. AI_ASSISTANT_TARGET=dev|prod|off|auto (по умолчанию auto)
-       - auto + dev-приложение → AI_ASSISTANT_URL_DEV (Streamlit dev)
-       - auto + release-клиент → пусто, пока не AI_ASSISTANT_USE_PROD=1
-       - prod → AI_ASSISTANT_URL_PROD (ai.conall.ru после Николая)
+    2. AI_ASSISTANT_TARGET=dev|prod|embedded|off|auto (по умолчанию auto)
+       - auto + Streamlit Cloud + SSH → встроенный /_opencode_ai (работает без публичного DNS)
+       - auto + иначе → AI_ASSISTANT_URL_DEV / PROD (Web UI через ai.conall.ru/opencode/)
     """
     for key in ("AI_ASSISTANT_URL", "XCA_AI_CHAT_URL", "AI_CHAT_PUBLIC_URL"):
         u = _read_env_or_secret(key).strip()
         if u:
-            return u
+            return _normalize_ai_assistant_public_url(u)
 
     target = _read_env_or_secret("AI_ASSISTANT_TARGET").strip().lower() or "auto"
     if target in ("off", "none", "0", "false"):
         return ""
 
-    prod_url = (
-        _read_env_or_secret("AI_ASSISTANT_URL_PROD").strip()
-        or AI_ASSISTANT_URL_PROD_DEFAULT
+    prod_url = _normalize_ai_assistant_public_url(
+        _read_env_or_secret("AI_ASSISTANT_URL_PROD").strip() or AI_ASSISTANT_URL_PROD_DEFAULT
     )
-    dev_url = (
-        _read_env_or_secret("AI_ASSISTANT_URL_DEV").strip()
-        or AI_ASSISTANT_URL_DEV_DEFAULT
+    dev_url = _normalize_ai_assistant_public_url(
+        _read_env_or_secret("AI_ASSISTANT_URL_DEV").strip() or AI_ASSISTANT_URL_DEV_DEFAULT
     )
 
     if target == "prod" or _env_truthy("AI_ASSISTANT_USE_PROD"):
         return prod_url
 
     if target == "embedded":
-        return (
-            _read_env_or_secret("AI_ASSISTANT_URL_EMBEDDED").strip()
-            or AI_ASSISTANT_URL_EMBEDDED_DEFAULT
-        )
+        return _embedded_ai_url_for_current_app()
 
     if target == "dev":
         return dev_url
 
-    # auto: dev Web UI — лаунчер; release client — скрыть до ai.conall.ru
+    # auto: на Cloud с SSH — встроенный чат OpenCode; иначе публичный Web UI
+    if _is_streamlit_cloud_deployment() and _ai_ssh_tunnel_configured() and not _env_truthy(
+        "AI_ASSISTANT_FORCE_WEB_UI"
+    ):
+        return _embedded_ai_url_for_current_app()
+
     if _is_streamlit_dev_deployment() or (not is_release_client_mode()):
         return dev_url
-    return prod_url if _env_truthy("AI_ASSISTANT_USE_PROD") else ""
+    return prod_url if _env_truthy("AI_ASSISTANT_USE_PROD") else prod_url
 
 
 
