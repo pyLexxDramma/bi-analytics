@@ -22,6 +22,7 @@ def trigger_ftp_and_force_reload_db(st: Any, *, quiet: bool = False) -> None:
     st.session_state["_pending_web_folder_load"] = True
     st.session_state["_pending_web_load_quiet"] = bool(quiet)
     st.session_state["_pending_web_force_rescan"] = True
+    st.session_state["_show_ftp_sync_notice"] = True
     for _k in ("_auto_hydrated_from_db", "_auto_hydrated_from_web"):
         st.session_state.pop(_k, None)
 
