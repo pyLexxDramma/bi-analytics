@@ -681,6 +681,15 @@ def main():
             st.rerun()
         st.stop()
 
+    _ftp_notice = st.session_state.pop("_ftp_sync_notice", None)
+    if _ftp_notice:
+        try:
+            from auto_ingest import render_ftp_sync_download_notice
+
+            render_ftp_sync_download_notice(st, _ftp_notice)
+        except Exception:
+            pass
+
     _inject_ru_labels_once()
     _inject_table_sort_once()
 
@@ -1109,13 +1118,8 @@ def main():
                         _ftp_res = maybe_ftp_sync_before_web_load(log_prefix="[force_reload]")
                 else:
                     _ftp_res = maybe_ftp_sync_before_web_load(log_prefix="[force_reload]")
-                if not quiet and isinstance(_ftp_res, dict):
-                    st.caption(
-                        "FTP: загружено "
-                        f"{len(_ftp_res.get('downloaded', []))}, "
-                        f"без изменений (тот же размер) "
-                        f"{_ftp_res.get('skipped_same_size', 0)}"
-                    )
+                if isinstance(_ftp_res, dict):
+                    st.session_state["last_ftp_sync_result"] = _ftp_res
             except Exception as _ftp_e:
                 safe_stderr_log(f"[web_load] ftp sync before load failed: {_ftp_e!r}")
                 if not quiet:
@@ -1201,6 +1205,17 @@ def main():
                     for row in result.get("diagnostics", [])[:40]:
                         st.json(row)
 
+            if st.session_state.pop("_show_ftp_sync_notice", False) or st.session_state.pop(
+                "_pending_login_ftp_reload", False
+            ):
+                _ftp_n = st.session_state.get("last_ftp_sync_result")
+                if isinstance(_ftp_n, dict):
+                    st.session_state["_ftp_sync_notice"] = _ftp_n
+            elif not _release_quiet and isinstance(
+                st.session_state.get("last_ftp_sync_result"), dict
+            ):
+                st.session_state["_ftp_sync_notice"] = st.session_state["last_ftp_sync_result"]
+
             if not quiet:
                 st.rerun()
 
@@ -1212,8 +1227,9 @@ def main():
             st.session_state["_release_web_autoload_tried"] = True
             if not st.session_state.get("_auto_hydrated_from_db") and not _session_has_loaded_data():
                 st.session_state["_pending_web_folder_load"] = True
-                st.session_state["_pending_web_load_quiet"] = True
-                st.session_state["_pending_web_force_rescan"] = False
+                st.session_state["_pending_web_load_quiet"] = False
+                st.session_state["_pending_web_force_rescan"] = True
+                st.session_state["_show_ftp_sync_notice"] = True
 
         if (
             data_mode in ("Из папки web/", "FTP → web/")

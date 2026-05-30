@@ -489,6 +489,48 @@ def maybe_run_auto_ingest_on_startup() -> None:
         safe_stderr_log("[auto_ingest] DONE")
 
 
+
+
+def schedule_ftp_reload_after_login(session_state) -> None:
+    """После входа: FTP → полная пересборка БД → баннер о новых файлах."""
+    session_state["_pending_login_ftp_reload"] = True
+    session_state["_pending_web_folder_load"] = True
+    session_state["_pending_web_load_quiet"] = False
+    session_state["_pending_web_force_rescan"] = True
+    session_state["_show_ftp_sync_notice"] = True
+    for _k in ("_auto_hydrated_from_db", "_auto_hydrated_from_web"):
+        session_state.pop(_k, None)
+
+
+def render_ftp_sync_download_notice(st, ftp_res: dict | None) -> None:
+    """Предупреждение/инфо после FTP-sync: сколько и какие файлы скачаны."""
+    if not isinstance(ftp_res, dict):
+        return
+    for err in (ftp_res.get("errors") or [])[:5]:
+        st.warning(f"FTP: {err}")
+    downloaded = [str(x) for x in (ftp_res.get("downloaded") or [])]
+    same = int(ftp_res.get("skipped_same_size") or 0)
+    if downloaded:
+        preview = downloaded[:40]
+        body = "
+".join(f"• `{name}`" for name in preview)
+        extra = len(downloaded) - len(preview)
+        if extra > 0:
+            body += f"
+• … и ещё **{extra}**"
+        st.warning(
+            f"**FTP:** загружено **{len(downloaded)}** новых или изменённых файлов "
+            f"(без изменений по размеру: {same}).
+
+{body}"
+        )
+    else:
+        st.info(
+            f"**FTP:** новых файлов нет — на сервере те же версии по размеру ({same}). "
+            "База пересобрана из `web/`."
+        )
+
+
 def force_run_auto_ingest_now() -> Dict[str, Any]:
     """Принудительно запустить auto-ingest СЕЙЧАС, обходя in-process-flag и маркер.
 

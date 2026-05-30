@@ -25,6 +25,7 @@ from auth import (
     get_user_by_username,
 )
 from config import switch_page_app
+from auto_ingest import schedule_ftp_reload_after_login
 from utils import load_custom_css
 
 # Инициализация базы данных
@@ -228,6 +229,7 @@ else:
                     st.session_state.authenticated = True
                     st.session_state.user = user
                     st.session_state.current_dashboard = "Девелоперские проекты"
+                    schedule_ftp_reload_after_login(st.session_state)
                     st.success(f"Добро пожаловать, {user['username']}!")
                     st.balloons()
                     import time
