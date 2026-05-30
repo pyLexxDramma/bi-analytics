@@ -151,6 +151,17 @@ DEVIATION_CLASS_YELLOW = "bd-cell-yellow"
 HTML_TABLE_TH_MAX_EM = 24
 HTML_TABLE_TD_MAX_EM = 22
 HTML_TABLE_COL_MIN_EM = 11
+HTML_TABLE_TH_WRAP_CSS = (
+    "white-space:normal;word-wrap:break-word;overflow-wrap:anywhere;line-height:1.25;"
+    "overflow:visible;text-overflow:clip;vertical-align:bottom;"
+)
+HTML_TABLE_TD_TEXT_CSS = (
+    "white-space:normal;word-wrap:break-word;overflow-wrap:anywhere;"
+    "overflow:visible;text-overflow:clip;vertical-align:top;"
+)
+HTML_TABLE_TD_COMPACT_CSS = (
+    "white-space:nowrap;overflow:visible;text-overflow:clip;"
+)
 
 # Размерность сумм: млн рублей
 MILLION = 1_000_000
@@ -204,13 +215,72 @@ def _row_is_table_total(row: pd.Series, *, skip_cols: set[str] | None = None) ->
 
 def mark_html_table_sortable(html: str) -> str:
     """Добавляет класс для клиентской сортировки (см. table_sort_inject)."""
-    if not html or "bi-sortable-table" in html:
+    if not html or "<table" not in html:
         return html
-    if "<table" in html:
-        html = html.replace("<table ", '<table class="bi-sortable-table" ', 1)
-        html = html.replace("<table>", '<table class="bi-sortable-table">', 1)
-        html = html.replace("<table style=", '<table class="bi-sortable-table" style=', 1)
-    return html
+
+    def _patch_table_tag(match: re.Match) -> str:
+        tag = match.group(0)
+        if "bi-sortable-table" in tag:
+            return tag
+        if re.search(r'\bclass=["\']', tag, flags=re.I):
+            return re.sub(
+                r'class=(["\'])([^"\']*)\1',
+                lambda m: f'class={m.group(1)}{m.group(2)} bi-sortable-table bi-sort-click-only{m.group(1)}',
+                tag,
+                count=1,
+                flags=re.I,
+            )
+        return tag[:-1] + ' class="bi-sortable-table bi-sort-click-only"' + tag[-1]
+
+    return re.sub(r"<table\b[^>]*>", _patch_table_tag, html, flags=re.I)
+
+
+
+def render_dataframe_sortable(
+    df: pd.DataFrame,
+    *,
+    file_stem: str = "table_export",
+    key_prefix: str | None = None,
+    use_styler: bool = True,
+    hide_index: bool = True,
+    **style_kwargs,
+) -> None:
+    """DataFrame с клиентской сортировкой по клику на заголовок."""
+    if df is None or getattr(df, "empty", True):
+        st.info("Нет данных для отображения.")
+        return
+    if use_styler:
+        styler = (
+            style_dataframe_for_dark_theme(df, **style_kwargs)
+            if style_kwargs
+            else style_dataframe_for_dark_theme(df)
+        )
+        html = render_styled_table_to_html(styler, hide_index=hide_index)
+    else:
+        html = format_dataframe_as_html(df)
+    render_report_html_table(
+        html,
+        export_df=df,
+        file_stem=file_stem,
+        key_prefix=key_prefix or f"df_sort_{abs(id(df))}",
+    )
+
+
+
+TABLE_COL_TEXT_KEYS = (
+    "задач", "проект", "лот", "раздел", "блок", "строен", "причин", "замет", "назван",
+    "контрагент", "подряд", "шифр", "объект", "ковенант", "функц", "наимен", "документ",
+    "предпис", "договор", "исполнит", "мероприят", "описан", "коммент", "этап", "вех", "вид", "note", "name",
+    "task", "partner", "контраг", "секци", "подраздел", "строение", "участок", "работ",
+)
+
+
+def table_column_css_class(col: str) -> str:
+    """col-text — длинные подписи (td слева); иначе col-num — числа/даты (td по центру). th всегда центрируют CSS."""
+    cl = str(col or "").strip().casefold()
+    if any(k in cl for k in TABLE_COL_TEXT_KEYS):
+        return "col-text"
+    return "col-num"
 
 
 def sanitize_display_label(value: Any) -> str:
@@ -811,10 +881,11 @@ def style_dataframe_for_dark_theme(
         "color": TABLE_TEXT_COLOR,
         "font-size": "13px",
         "padding": "5px 8px",
-        "max-width": "16em",
-        "white-space": "nowrap",
-        "overflow": "hidden",
-        "text-overflow": "ellipsis",
+        "max-width": "28em",
+        "white-space": "normal",
+        "overflow": "visible",
+        "text-overflow": "clip",
+        "word-wrap": "break-word",
         "border": TABLE_CELL_BORDER,
     }
     base = df.style.set_properties(**_cell_dense).set_table_styles(
@@ -834,15 +905,45 @@ def style_dataframe_for_dark_theme(
                     ("border", TABLE_CELL_BORDER),
                     ("font-size", "13px"),
                     ("padding", "6px 8px"),
-                    ("max-width", "18em"),
-                    ("white-space", "nowrap"),
-                    ("overflow", "hidden"),
-                    ("text-overflow", "ellipsis"),
+                    ("max-width", "11em"),
+                    ("white-space", "normal"),
+                    ("overflow", "visible"),
+                    ("text-overflow", "clip"),
+                    ("word-wrap", "break-word"),
+                    ("line-height", "1.25"),
+                    ("text-align", "center"),
+                    ("vertical-align", "bottom"),
                 ],
             },
             {"selector": "th *, td *", "props": [("color", TABLE_TEXT_COLOR)]},
         ]
     )
+
+    for _col in df.columns:
+        _cc = table_column_css_class(_col)
+        if _cc == "col-text":
+            base = base.set_properties(
+                subset=pd.IndexSlice[:, [_col]],
+                **{
+                    "text-align": "left",
+                    "vertical-align": "top",
+                    "white-space": "normal",
+                    "overflow": "visible",
+                    "text-overflow": "clip",
+                    "word-wrap": "break-word",
+                },
+            )
+        else:
+            base = base.set_properties(
+                subset=pd.IndexSlice[:, [_col]],
+                **{
+                    "text-align": "center",
+                    "vertical-align": "middle",
+                    "white-space": "nowrap",
+                    "overflow": "visible",
+                    "text-overflow": "clip",
+                },
+            )
 
     # Подсветка по дням отклонения (одна или несколько колонок «дней»)
     def _days_cell_color(series):
@@ -1123,7 +1224,7 @@ def budget_table_to_html(
     _style_css = (
         f'#{wrap_id} table {{ table-layout: auto; font-size: {_tbl_px}px; width: max-content; min-width: 100%; '
         f'border-collapse: separate !important; border-spacing: 0 !important; border: {_cell_border} !important; }}'
-        f'#{wrap_id} th, #{wrap_id} td {{ min-width: 11em; max-width: 24em; padding: {_pad_y}px {_pad_x}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-sizing: border-box; '
+        f'#{wrap_id} th, #{wrap_id} td {{ min-width: 11em; max-width: 24em; padding: {_pad_y}px {_pad_x}px; box-sizing: border-box; '
         f'border-right: {_cell_border} !important; border-bottom: {_cell_border} !important; '
         f'border-top: none !important; border-left: none !important; }}'
         f'#{wrap_id} thead tr:first-child th {{ border-top: {_cell_border} !important; }}'
@@ -1133,14 +1234,15 @@ def budget_table_to_html(
         f'#{wrap_id} td.bd-cell-red, #{wrap_id} td.bd-cell-red * {{ color: hsl(348,100%,63%) !important; }} '
         f'#{wrap_id} td.bd-cell-green, #{wrap_id} td.bd-cell-green * {{ color: hsl(148,100%,63%) !important; }}'
         f'#{wrap_id} td.bd-cell-yellow, #{wrap_id} td.bd-cell-yellow * {{ color: hsl(48,95%,62%) !important; }}'
-        f'#{wrap_id} thead th {{ background-color: {TABLE_HEADER_BG_COLOR} !important; {_hdr_css} }}'
+        f'#{wrap_id} thead th {{ background-color: {TABLE_HEADER_BG_COLOR} !important; {_hdr_css}; {HTML_TABLE_TH_WRAP_CSS} max-width:11em; }}'
+        f'#{wrap_id} tbody td {{ {HTML_TABLE_TD_TEXT_CSS} max-width:28em; }}'
         f'{f"#{wrap_id} tbody td:first-child, #{wrap_id} tbody td:nth-child(2) {{ {_lbl_col_css} }}" if _lbl_col_css else ""}'
         f'#{wrap_id} tr.bd-group-row td {{ background-color: {TABLE_GROUP_ROW_BG_COLOR} !important; }}'
         f'#{wrap_id} tr.bd-total-row td {{ background-color: {_tot_bg} !important; {_tot_font} }}'
         f'#{wrap_id} tr.bd-total-row td, #{wrap_id} tr.bd-total-row td * {{ {_tot_font} }}'
         + (
             f'#{wrap_id} th.bd-fin-dev-col, #{wrap_id} td.bd-fin-dev-col '
-            f'{{ min-width: 10.5em; max-width: 12em; overflow: hidden; text-overflow: ellipsis; isolation: isolate; }}'
+            f'{{ min-width: 10.5em; max-width: 12em; {HTML_TABLE_TD_COMPACT_CSS} isolation: isolate; }}'
             if finance_deviation_column
             else ""
         )
@@ -1155,7 +1257,7 @@ def budget_table_to_html(
         )
         + (
             f'#{wrap_id} th.bd-fin-delta-col, #{wrap_id} td.bd-fin-delta-col '
-            f'{{ min-width: 10.5em; max-width: 12em; overflow: hidden; text-overflow: ellipsis; isolation: isolate; }}'
+            f'{{ min-width: 10.5em; max-width: 12em; {HTML_TABLE_TD_COMPACT_CSS} isolation: isolate; }}'
         )
     )
     parts = [
@@ -1163,7 +1265,7 @@ def budget_table_to_html(
         f'<div id="{wrap_id}" class="budget-deviation-table-wrap" style="overflow-x: auto; min-width: 0; margin: 0; padding: 0;">',
         f"<style>{_style_css}</style>",
         f'<div class="budget-table-scroll">' if _scroll_vh else "",
-        f'<table class="bi-sortable-table" style="width:100%; border-collapse: collapse; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; font-size: {_tbl_px}px;">',
+        f'<table class="bi-sortable-table bi-sort-click-only" style="width:100%; border-collapse: collapse; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; font-size: {_tbl_px}px;">',
         "<thead><tr>",
     ]
     header_cols = [c for c in df.columns if c != row_kind_column]
@@ -1174,8 +1276,11 @@ def budget_table_to_html(
             _col_cls = "bd-fin-dev-col"
         elif "кс-2" in str(col).casefold() and "аванс" in str(col).casefold():
             _col_cls = "bd-fin-delta-col"
+        _cc = table_column_css_class(col)
+        _col_cls = f"{_col_cls} {_cc}".strip()
         parts.append(
-            f'<th class="{_col_cls}" style="padding: {_pad_y}px {_pad_x}px; background-color: {TABLE_HEADER_BG_COLOR}; {_hdr_css}">{col_esc}</th>'
+            f'<th class="{_col_cls}" style="padding: {_pad_y}px {_pad_x}px; background-color: {TABLE_HEADER_BG_COLOR}; {_hdr_css} text-align:center;vertical-align:bottom;" data-sort-label="{col_esc}">'
+            f'<span class="bi-sort-label">{col_esc} \u21c5</span></th>'
         )
     parts.append("</tr></thead><tbody>")
     visible_cols = [c for c in df.columns if c != row_kind_column]
@@ -1301,19 +1406,28 @@ def budget_table_to_html(
                         _extra_cls = " bd-fin-dev-col"
                     elif "кс-2" in str(col).casefold() and "аванс" in str(col).casefold():
                         _extra_cls = " bd-fin-delta-col"
+                    _cc = table_column_css_class(col)
+                    _td_css = HTML_TABLE_TD_COMPACT_CSS if _cc == "col-num" else HTML_TABLE_TD_TEXT_CSS
+                    _align = "text-align:center;vertical-align:middle;" if _cc == "col-num" else "text-align:left;vertical-align:top;"
                     parts.append(
-                        f'<td class="{cell_class}{_extra_cls}" style="padding: {_pad_y}px {_pad_x}px; font-weight: bold; '
-                        f'background-color: {_cell_bg}; overflow: hidden; text-overflow: ellipsis; '
-                        f'box-sizing: border-box;"><span style="display:block;overflow:hidden;text-overflow:ellipsis;">{val_esc}</span></td>'
+                        f'<td class="{cell_class}{_extra_cls} {_cc}" style="padding: {_pad_y}px {_pad_x}px; font-weight: bold; '
+                        f'background-color: {_cell_bg}; {_td_css} {_align} '
+                        f'box-sizing: border-box;">{val_esc}</td>'
                     )
                 else:
+                    _cc = table_column_css_class(col)
+                    _td_css = HTML_TABLE_TD_COMPACT_CSS if _cc == "col-num" else HTML_TABLE_TD_TEXT_CSS
+                    _align = "text-align:center;vertical-align:middle;" if _cc == "col-num" else "text-align:left;vertical-align:top;"
                     parts.append(
-                        f'<td style="padding: {_pad_y}px {_pad_x}px; color: {TABLE_TEXT_COLOR}; '
-                        f'background-color: {_cell_bg}; {_label_css}">{val_esc}</td>'
+                        f'<td class="{_cc}" style="padding: {_pad_y}px {_pad_x}px; color: {TABLE_TEXT_COLOR}; '
+                        f'background-color: {_cell_bg}; {_td_css} {_align} {_label_css}">{val_esc}</td>'
                     )
             else:
+                _cc = table_column_css_class(col)
+                _td_css = HTML_TABLE_TD_COMPACT_CSS if _cc == "col-num" else HTML_TABLE_TD_TEXT_CSS
+                _align = "text-align:center;vertical-align:middle;" if _cc == "col-num" else "text-align:left;vertical-align:top;"
                 parts.append(
-                    f'<td style="padding: {_pad_y}px {_pad_x}px; color: {TABLE_TEXT_COLOR}; background-color: {_cell_bg}; {_label_css}">{val_esc}</td>'
+                    f'<td class="{_cc}" style="padding: {_pad_y}px {_pad_x}px; color: {TABLE_TEXT_COLOR}; background-color: {_cell_bg}; {_td_css} {_align} {_label_css}">{val_esc}</td>'
                 )
         parts.append("</tr>")
     parts.append("</tbody></table>")
@@ -1354,14 +1468,16 @@ def plan_fact_dates_table_to_html(
     green_color = "#27ae60"
     parts = [
         '<div style="overflow-x: auto; min-width: 0; margin: 1em 0;">',
-        f'<table class="bi-sortable-table" style="width:100%; border-collapse: collapse; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; font-size: 13px;">',
+        f'<table class="bi-sortable-table bi-sort-click-only" style="width:100%; border-collapse: collapse; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; font-size: 13px;">',
         "<thead><tr>",
     ]
     for col in df.columns:
         col_esc = html_module.escape(str(col))
+        _cc = table_column_css_class(col)
         parts.append(
-            f'<th style="border: 1px solid rgba(255,255,255,0.3); padding: 6px 8px; min-width: {HTML_TABLE_COL_MIN_EM}em; max-width: {HTML_TABLE_TH_MAX_EM}em; overflow: hidden; '
-            f'text-overflow: ellipsis; white-space: nowrap; background-color: {TABLE_HEADER_BG_COLOR};">{col_esc}</th>'
+            f'<th class="{_cc}" style="border: 1px solid rgba(255,255,255,0.3); padding: 6px 8px; min-width: {HTML_TABLE_COL_MIN_EM}em; max-width: 11em; '
+            f'{HTML_TABLE_TH_WRAP_CSS} background-color: {TABLE_HEADER_BG_COLOR}; text-align:center;vertical-align:bottom;" data-sort-label="{col_esc}">'
+            f'<span class="bi-sort-label">{col_esc} \u21c5</span></th>'
         )
     parts.append("</tr></thead><tbody>")
     for i, (_, row) in enumerate(df.iterrows()):
@@ -1373,14 +1489,18 @@ def plan_fact_dates_table_to_html(
             val_esc = html_module.escape(val_str)
             if col == fact_date_column and row_style:
                 text_color = red_color if row_style == "red" else green_color
+                _cc = table_column_css_class(col)
                 parts.append(
-                    f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 5px 8px; min-width: {HTML_TABLE_COL_MIN_EM}em; max-width: {HTML_TABLE_TD_MAX_EM}em; overflow: hidden; '
-                    f'text-overflow: ellipsis; white-space: nowrap; background-color: {TABLE_BG_COLOR}; color: {text_color}; font-weight: bold;">{val_esc}</td>'
+                    f'<td class="{_cc}" style="border: 1px solid rgba(255,255,255,0.2); padding: 5px 8px; min-width: {HTML_TABLE_COL_MIN_EM}em; max-width: 14em; '
+                    f'{HTML_TABLE_TD_COMPACT_CSS} background-color: {TABLE_BG_COLOR}; color: {text_color}; font-weight: bold; text-align:center;vertical-align:middle;">{val_esc}</td>'
                 )
             else:
+                _cc = table_column_css_class(col)
+                _align = "text-align:left;vertical-align:top;" if _cc == "col-text" else "text-align:center;vertical-align:middle;"
+                _tdc = HTML_TABLE_TD_TEXT_CSS if _cc == "col-text" else HTML_TABLE_TD_COMPACT_CSS
                 parts.append(
-                    f'<td style="border: 1px solid rgba(255,255,255,0.2); padding: 5px 8px; min-width: {HTML_TABLE_COL_MIN_EM}em; max-width: {HTML_TABLE_TD_MAX_EM}em; overflow: hidden; '
-                    f'text-overflow: ellipsis; white-space: nowrap; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR};">{val_esc}</td>'
+                    f'<td class="{_cc}" style="border: 1px solid rgba(255,255,255,0.2); padding: 5px 8px; min-width: {HTML_TABLE_COL_MIN_EM}em; max-width: 28em; '
+                    f'{_tdc} background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; {_align}">{val_esc}</td>'
                 )
         parts.append("</tr>")
     parts.append("</tbody></table></div>")
@@ -1402,6 +1522,9 @@ def render_styled_table_to_html(styler, hide_index: bool = True) -> str:
             "border:2px solid #799ac0!important;}"
             ".bi-styled-table-wrap thead th,.bi-styled-table-wrap tbody td{"
             "border:" + TABLE_CELL_BORDER + "!important;}"
+            ".bi-styled-table-wrap thead th{text-align:center!important;vertical-align:bottom;}"
+            ".bi-styled-table-wrap tbody td{text-align:center;vertical-align:middle;}"
+            ".bi-styled-table-wrap tbody td.col-text{text-align:left;vertical-align:top;}"
             "</style>"
         )
         return (
@@ -1517,25 +1640,28 @@ def format_dataframe_as_html(
     # §4.8: плотные ячейки — как `budget_table_to_html` / `style_dataframe_for_dark_theme`
     _th = (
         f"padding:6px 8px;background-color:{TABLE_HEADER_BG_COLOR};color:{TABLE_TEXT_COLOR};"
-        f"min-width:{HTML_TABLE_COL_MIN_EM}em;max-width:{HTML_TABLE_TH_MAX_EM}em;"
-        f"{TABLE_HEADER_FONT_CSS}"
-        "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+        f"min-width:{HTML_TABLE_COL_MIN_EM}em;max-width:11em;"
+        f"{TABLE_HEADER_FONT_CSS}{HTML_TABLE_TH_WRAP_CSS}"
     )
     _td_base = (
         f"padding:5px 8px;border:1px solid rgba(255,255,255,0.15);background-color:{TABLE_BG_COLOR};"
         f"color:{TABLE_TEXT_COLOR};font-size:13px;min-width:{HTML_TABLE_COL_MIN_EM}em;max-width:{HTML_TABLE_TD_MAX_EM}em;"
-        "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+        f"{HTML_TABLE_TD_TEXT_CSS}"
     )
     _td_group = _td_base.replace(TABLE_BG_COLOR, TABLE_GROUP_ROW_BG_COLOR)
     html_table = (
         "<div class='bd-table-wrap' style='width:100%;overflow-x:auto;min-width:0;-webkit-overflow-scrolling:touch;'>"
-        f"<table class='bi-sortable-table' style='width:100%;min-width:max-content;border-collapse:collapse;background-color:{TABLE_BG_COLOR};"
+        f"<table class='bi-sortable-table bi-sort-click-only' style='width:100%;min-width:max-content;border-collapse:collapse;background-color:{TABLE_BG_COLOR};"
         f"color:{TABLE_TEXT_COLOR};font-size:13px;'>"
     )
     html_table += "<thead><tr>"
     for col in df.columns:
         col_escaped = html_module.escape(ru_column_header(col))
-        html_table += f"<th style='{_th}'>{col_escaped}</th>"
+        _cc = table_column_css_class(col)
+        html_table += (
+            f"<th class='{_cc}' style='{_th}' data-sort-label='{col_escaped}'>"
+            f"<span class='bi-sort-label'>{col_escaped} \u21c5</span></th>"
+        )
     html_table += "</tr></thead><tbody>"
     for idx, row in df.iterrows():
         _is_tot = idx in _bold_ix or _row_is_table_total(row)
@@ -1601,9 +1727,13 @@ def format_dataframe_as_html(
                                 _bg_extra = f"background-color:{_bg_s}!important;"
                     except Exception:
                         pass
-                html_table += (
-                    f"<td style='{_td_base}{_bg_extra}color:{color};font-weight:bold;'>{formatted_value}</td>"
-                )
+                _cc_td = table_column_css_class(col)
+                _td_st = _td_base + _bg_extra + f"color:{color};font-weight:bold;"
+                if _cc_td == "col-num":
+                    _td_st = _td_st.replace(HTML_TABLE_TD_TEXT_CSS, HTML_TABLE_TD_COMPACT_CSS) + "text-align:center;vertical-align:middle;"
+                else:
+                    _td_st += "text-align:left;vertical-align:top;"
+                html_table += f"<td class='{_cc_td}' style='{_td_st}'>{formatted_value}</td>"
             else:
                 if isinstance(value, (int, float)) and is_scalar and not pd.isna(value):
                     col_lower = str(col).lower()
@@ -1655,7 +1785,12 @@ def format_dataframe_as_html(
                                 cell_style += f"background-color:{_bg_s}!important;"
                     except Exception:
                         pass
-                html_table += f"<td style='{cell_style}'>{formatted_value}</td>"
+                _cc = table_column_css_class(col)
+                if _cc == "col-num":
+                    cell_style = cell_style.replace(HTML_TABLE_TD_TEXT_CSS, HTML_TABLE_TD_COMPACT_CSS) + "text-align:center;vertical-align:middle;"
+                else:
+                    cell_style += "text-align:left;vertical-align:top;"
+                html_table += f"<td class='{_cc}' style='{cell_style}'>{formatted_value}</td>"
         html_table += "</tr>"
     html_table += "</tbody></table></div>"
     return mark_html_table_sortable(html_table)
@@ -1765,6 +1900,9 @@ def render_report_html_table(
             and "budget-table-scroll" in (html or "")
         )
         or file_stem in ("plan_fact_dates", "predpisania", "debit_credit")
+        or "bi-styled-table-wrap" in (html or "")
+        or "rendered-table-wrap" in (html or "")
+        or "dev-reasons-wrap" in (html or "")
     )
 
     def _render_table_block() -> None:

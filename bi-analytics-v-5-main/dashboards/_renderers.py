@@ -212,17 +212,22 @@ _TABLE_CSS = """
 }
 .pf-zos-table-wrap{margin-bottom:0.2rem!important}
 .pf-dates-table-wrap .pf-dates-table {width:max-content; min-width:100%; table-layout:auto}
-.pf-dates-table th {max-width:none; padding:6px 6px; cursor:pointer}
+.pf-dates-table th {max-width:11em; padding:6px 6px; cursor:pointer;
+  white-space:normal; word-wrap:break-word; overflow-wrap:anywhere; line-height:1.25;
+  overflow:visible; text-overflow:clip; vertical-align:bottom;}
 .bi-sort-click-only thead th { cursor:pointer !important; }
-.pf-dates-table td {max-width:12em}
+.pf-dates-table td {max-width:28em; white-space:normal; word-wrap:break-word;
+  overflow-wrap:anywhere; overflow:visible; text-overflow:clip; vertical-align:top;}
 .rendered-table {
   border-collapse:collapse; font-size:13px;
   font-family:Inter,system-ui,sans-serif; table-layout:auto;
 }
 .rendered-table th {
   position:sticky; top:0; background:hsl(209, 72%, 6%); color:#fafafa;
-  padding:6px 8px; text-align:left; border-bottom:2px solid #444;
-  font-weight:700; font-size:1.05em; white-space:nowrap; max-width:18em; overflow:hidden; text-overflow:ellipsis;
+  padding:6px 8px; text-align:center; border-bottom:2px solid #444;
+  font-weight:700; font-size:1.05em;
+  white-space:normal; word-wrap:break-word; overflow-wrap:anywhere; line-height:1.25;
+  max-width:11em; overflow:visible; text-overflow:clip; vertical-align:bottom;
 }
 .rendered-table tr.bd-group-row td { background:hsl(209, 70%, 7%) !important; }
 .rendered-table tr.bd-total-row td {
@@ -242,12 +247,38 @@ _TABLE_CSS = """
 }
 .rendered-table td {
   padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0;
-  white-space:nowrap; max-width:16em; overflow:hidden; text-overflow:ellipsis;
+  text-align:center; vertical-align:middle;
+  white-space:normal; word-wrap:break-word; overflow-wrap:anywhere;
+  max-width:28em; overflow:visible; text-overflow:clip;
 }
-.gantt-schedule-table-wrap .rendered-table td {
-  white-space:normal; max-width:none; overflow:visible; text-overflow:clip;
+.rendered-table th.col-pf-start,
+.rendered-table th.col-pf-end,
+.rendered-table th.col-pf-dur,
+.rendered-table th.col-baseline,
+.rendered-table th.col-fact,
+.rendered-table th.col-dev,
+.rendered-table td.col-pf-start,
+.rendered-table td.col-pf-end,
+.rendered-table td.col-pf-dur,
+.rendered-table td.col-baseline,
+.rendered-table td.col-fact,
+.rendered-table td.col-dev {
+  white-space:nowrap; max-width:none; overflow:visible; text-overflow:clip;
+}
+.gantt-schedule-table-wrap .rendered-table td,
+.gantt-schedule-table-wrap .rendered-table th {
+  white-space:normal; max-width:28em; overflow:visible; text-overflow:clip;
   word-break:break-word;
 }
+.rendered-table th.col-text,
+.rendered-table td.col-text {
+  min-width:10em; max-width:36em;
+  white-space:normal; word-wrap:break-word; overflow-wrap:anywhere;
+  overflow:visible; text-overflow:clip;
+}
+.rendered-table td.col-text { text-align:left; vertical-align:top; }
+.rendered-table th.col-text { text-align:center; vertical-align:bottom; }
+.rendered-table td.col-num, .rendered-table th.col-num { text-align:center; }
 .rendered-table tr:hover td {background:#262833}
 .rendered-table tr:nth-child(even) td {background:rgba(255,255,255,0.02)}
 .rendered-table th.col-baseline, .rendered-table td.col-baseline { background:rgba(46,134,171,0.12); }
@@ -324,24 +355,36 @@ def _render_html_table(
             esc_c = html_module.escape(str(c))
             tip = (column_tooltips or {}).get(c) or (column_tooltips or {}).get(str(c))
             cls = _th_class(c)
+            _cc = table_column_css_class(c)
+            _cls_full = f"{_cc} {cls.strip()}".strip()
             if tip:
                 esc_tip = html_module.escape(str(tip), quote=True)
-                parts.append(f'<th class="{cls.strip()}" title="{esc_tip}">{esc_c}</th>')
+                parts.append(
+                    f'<th class="{_cls_full}" title="{esc_tip}" data-sort-label="{esc_c}">'
+                    f'<span class="bi-sort-label">{esc_c} \u21c5</span></th>'
+                )
             else:
-                parts.append(f'<th class="{cls.strip()}">{esc_c}</th>')
+                parts.append(
+                    f'<th class="{_cls_full}" data-sort-label="{esc_c}">'
+                    f'<span class="bi-sort-label">{esc_c} \u21c5</span></th>'
+                )
         parts.append("</tr></thead><tbody>")
         for i in range(len(show)):
             row = show.iloc[i]
-            parts.append("<tr>")
+            _row_vals = [str(row[c]).strip() for c in show.columns]
+            _is_total = any(v.casefold() == "итого" for v in _row_vals)
+            parts.append('<tr class="bd-total-row">' if _is_total else "<tr>")
             for c in show.columns:
                 cell = row[c]
                 esc = html_module.escape(str(cell)) if str(cell).strip() != "" else ""
                 cls = _th_class(c)
+                _cc = table_column_css_class(c)
+                _cls_full = f"{_cc} {cls.strip()}".strip()
                 if cell_titles and esc:
                     ct = html_module.escape(f"{c}: {cell}", quote=True)
-                    parts.append(f'<td class="{cls.strip()}" title="{ct}">{esc}</td>')
+                    parts.append(f'<td class="{_cls_full}" title="{ct}">{esc}</td>')
                 else:
-                    parts.append(f'<td class="{cls.strip()}">{esc}</td>')
+                    parts.append(f'<td class="{_cls_full}">{esc}</td>')
             parts.append("</tr>")
         parts.append("</tbody></table></div>")
         render_report_html_table(
@@ -427,6 +470,9 @@ def _plan_fact_dates_col_css_class(col: str) -> str:
         return "col-pf-end"
     if c in ("Баз. длит.", "Длительность", "Отклонение длительности", "Откл. длит."):
         return "col-pf-dur"
+    cl = c.casefold()
+    if any(k in cl for k in ("задач","проект","блок","строен","причин","замет","id задач","функц","контрагент","подряд","назван")):
+        return "col-text"
     return ""
 
 
@@ -705,6 +751,7 @@ def _render_gantt_schedule_html_table(
 
 
 from utils import (
+    table_column_css_class,
     TABLE_BG_COLOR,
     TABLE_HEADER_BG_COLOR,
     TABLE_HEADER_FONT_CSS,
@@ -738,6 +785,7 @@ from utils import (
     dataframe_to_csv_bytes_for_excel,
     dataframe_to_xlsx_bytes,
     sanitize_display_label,
+    render_dataframe_sortable,
 )
 
 # Максимальное число строк, передаваемых в Plotly для scatter/line-графиков.
@@ -1428,12 +1476,15 @@ _DEV_REASONS_FULL_TABLE_CSS = """
 }
 .dev-reasons-table th {
   position:sticky; top:0; background:#1a1c23; color:#fafafa;
-  padding:6px 8px; text-align:left; border-bottom:2px solid #444;
-  font-weight:600; white-space:nowrap; max-width:18em; overflow:hidden; text-overflow:ellipsis;
+  padding:6px 8px; text-align:center; border-bottom:2px solid #444;
+  font-weight:600; white-space:normal; word-wrap:break-word; overflow-wrap:anywhere; line-height:1.25; max-width:11em; overflow:visible; text-overflow:clip; vertical-align:bottom;
 }
 .dev-reasons-table td {
   padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0;
-  white-space:nowrap; max-width:16em; overflow:hidden; text-overflow:ellipsis;
+  text-align:center; vertical-align:middle;
+  white-space:normal; word-wrap:break-word; overflow-wrap:anywhere; max-width:28em; overflow:visible; text-overflow:clip;
+}
+.dev-reasons-table td.col-text { text-align:left; vertical-align:top; }
 }
 .dev-reasons-table tr:hover td { background:#262833; }
 .dev-bg-turq { background:rgba(72,202,228,0.18) !important; }
@@ -1728,7 +1779,9 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
         "<thead><tr>",
     ]
     for h in headers:
-        parts.append(f"<th>{html_module.escape(h)}</th>")
+        _hcc = table_column_css_class(h)
+        _he = html_module.escape(h)
+        parts.append(f'<th class="{_hcc}" data-sort-label="{_he}"><span class="bi-sort-label">{_he} \u21c5</span></th>')
     parts.append("</tr></thead><tbody>")
 
     for cells in cells_rows:
@@ -14340,10 +14393,11 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                         na_position="last",
                         kind="mergesort",
                     ).reset_index(drop=True)
-                    st.dataframe(
+                    _render_styled_table_report(
                         style_dataframe_for_dark_theme(_tessa_detail_table),
-                        use_container_width=True,
-                        hide_index=True,
+                        _tessa_detail_table,
+                        file_stem="rd_delay_tessa_detail",
+                        key_prefix=f"rd_tessa_{abs(id(_tessa_detail_table))}",
                     )
 
         # Если TESSA-детальная отрисована выше — MSP-ветку детальной таблицы
@@ -17929,7 +17983,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     f'<div id="{wrap_id}" style="overflow-x:auto;min-width:0;margin:0.75em 0;">',
                     f"<style>"
                     f"#{wrap_id} table{{border-collapse:collapse;background-color:{TABLE_BG_COLOR};color:{TABLE_TEXT_COLOR};font-size:13px;border:1px solid rgba(255,255,255,0.45);}}"
-                    f"#{wrap_id} th,#{wrap_id} td{{border:1px solid rgba(255,255,255,0.45);padding:4px 6px;white-space:nowrap;}}"
+                    f"#{wrap_id} th{{border:1px solid rgba(255,255,255,0.45);padding:4px 6px;white-space:normal;word-wrap:break-word;overflow-wrap:anywhere;line-height:1.25;overflow:visible;text-overflow:clip;vertical-align:bottom;max-width:11em;}}"f"#{wrap_id} td{{border:1px solid rgba(255,255,255,0.45);padding:4px 6px;white-space:normal;word-wrap:break-word;overflow-wrap:anywhere;overflow:visible;text-overflow:clip;vertical-align:top;max-width:28em;}}"f"#{wrap_id} th.t-center,#{wrap_id} td.t-center{{white-space:nowrap;max-width:none;overflow:visible;text-overflow:clip;}}"
                     f"#{wrap_id} thead th{{background-color:{TABLE_BG_COLOR};font-weight:700;border:1px solid rgba(255,255,255,0.45)!important;}}"
                     f"#{wrap_id} thead tr{{border-bottom:1px solid rgba(255,255,255,0.45)!important;}}"
                     f"#{wrap_id} thead tr.title-row{{border-bottom:none!important;}}"
@@ -21810,10 +21864,10 @@ _EXEC_DOC_DETAIL_CSS = """
 }
 .exec-doc-table { width:100%; table-layout:auto; border-collapse:collapse; font-size:13px; font-family:Inter,system-ui,sans-serif; }
 .exec-doc-table th {
-  text-align:left; padding:6px 8px; background:#16283a; color:#f8fbff;
+  text-align:center; padding:6px 8px; background:#16283a; color:#f8fbff;
   border-bottom:1px solid rgba(138,160,184,0.28); font-size:11px; font-weight:700;
-  text-transform:uppercase; letter-spacing:0.04em; white-space:nowrap; line-height:1.2; word-break:normal; hyphens:none;
-  overflow:hidden; text-overflow:ellipsis;
+  text-transform:uppercase; letter-spacing:0.04em; white-space:normal; line-height:1.25; word-wrap:break-word; overflow-wrap:anywhere; hyphens:none;
+  max-width:11em; overflow:visible; text-overflow:clip;
   vertical-align:bottom;
 }
 .exec-doc-table th.exec-col-num,
@@ -21823,14 +21877,20 @@ _EXEC_DOC_DETAIL_CSS = """
 .exec-doc-table td {
   padding:5px 8px; border-bottom:1px solid rgba(82,104,130,0.28); color:#e8eef5;
   vertical-align:top;
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  white-space:normal; word-wrap:break-word; overflow-wrap:anywhere; max-width:28em; overflow:visible; text-overflow:clip;
   background:rgba(19,35,52,0.9);
 }
+.exec-doc-table td.exec-col-num,
+.exec-doc-table td.exec-col-dly,
+.exec-doc-table td.exec-col-date,
+.exec-doc-table td.exec-col-st {
+  white-space:nowrap; max-width:none; overflow:visible; text-overflow:clip;
+}
 /* Компактные «технические» колонки, чтобы даты/сроки/дни визуально «привязались» к цифрам, а широкие поля — не съедали весь макет */
-.exec-col-num { width:10ch; min-width:10ch; max-width:12ch; text-align:left; }
-.exec-col-dly { width:12ch; min-width:12ch; max-width:14ch; text-align:left; }
-.exec-col-st { width:14ch; min-width:14ch; max-width:18ch; text-align:left; }
-.exec-col-date { width:13ch; min-width:13ch; max-width:14ch; text-align:left; }
+.exec-col-num { width:10ch; min-width:10ch; max-width:12ch; text-align:center; }
+.exec-col-dly { width:12ch; min-width:12ch; max-width:14ch; text-align:center; }
+.exec-col-st { width:14ch; min-width:14ch; max-width:18ch; text-align:center; }
+.exec-col-date { width:13ch; min-width:13ch; max-width:14ch; text-align:center; }
 .exec-col-text { width:auto; min-width:16ch; max-width:none; }
 .exec-doc-table tr:nth-child(even) td { background:rgba(255,255,255,0.025); }
 .exec-doc-table tr:hover td { background:rgba(48,72,99,0.72); }
@@ -22547,7 +22607,12 @@ def dashboard_executive_documentation(df):
                         filtered["Статус"].astype(str).str.strip().value_counts().reset_index()
                     )
                     _id_st.columns = ["Статус", "Количество"]
-                    st.dataframe(_id_st, hide_index=True, use_container_width=True)
+                    render_dataframe_sortable(
+                        _id_st,
+                        file_stem="exec_qa_status",
+                        key_prefix=f"exec_qa_st_{abs(id(_id_st))}",
+                        use_styler=False,
+                    )
                 else:
                     pass
             with _id_cols[1]:
@@ -22559,7 +22624,12 @@ def dashboard_executive_documentation(df):
                         .reset_index(name="Количество")
                         .sort_values("KrStateID")
                     )
-                    st.dataframe(_id_kr, hide_index=True, use_container_width=True)
+                    render_dataframe_sortable(
+                        _id_kr,
+                        file_stem="exec_qa_krstate",
+                        key_prefix=f"exec_qa_kr_{abs(id(_id_kr))}",
+                        use_styler=False,
+                    )
                 else:
                     pass
             with _id_cols[2]:
@@ -28189,7 +28259,12 @@ def dashboard_forecast_budget(df):
             st.caption(
                 "Без колонок условия распределения и A/B/C — только лот, даты периода и суммы после распределения БДДС прогноза."
             )
-            st.dataframe(_lot_res_fc, hide_index=True, use_container_width=True)
+            render_dataframe_sortable(
+                _lot_res_fc,
+                file_stem="forecast_lots_recalc",
+                key_prefix=f"fc_lot_{abs(id(_lot_res_fc))}",
+                use_styler=False,
+            )
 
     if calc_error:
         st.error(calc_error)
@@ -28635,7 +28710,7 @@ _PRED_DASH_MOCK_CSS = """
 .pred-leg { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:8px; padding:8px 12px; background:#1a1c23; border-radius:12px; border:1px solid #444; font-size:13px; color:#e0e0e0; }
 .pred-mock-table-wrap { margin-top:4px; overflow-x:auto; min-width:0; border-radius:8px; border:1px solid #444; }
 .pred-mock-table-wrap table { width:100%; table-layout:fixed; border-collapse:collapse; font-size:13px; }
-.pred-mock-table-wrap th { text-align:left; padding:6px 8px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:11px; letter-spacing:0.02em; }
+.pred-mock-table-wrap th { text-align:center; padding:6px 8px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:11px; letter-spacing:0.02em; }
 .pred-mock-table-wrap td { padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0; vertical-align:top; }
 .pred-mock-table-wrap tr.pred-crit td { background:rgba(231,76,60,0.07); }
 .pred-td-contr { font-weight:600; color:#fafafa; background:#1a1c23; }
@@ -28650,7 +28725,7 @@ _PRED_DASH_MOCK_CSS = """
 .pred-mock-badge { background:#c0392b; color:#fff; padding:4px 14px; border-radius:20px; font-size:13px; font-weight:500; }
 .pred-detail-wrap { overflow-x:hidden; min-width:0; border:1px solid #444; border-radius:10px; margin-top:8px; }
 .pred-detail-wrap table { width:100%; table-layout:auto; border-collapse:collapse; }
-.pred-detail-wrap th { text-align:left; padding:6px 8px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:11px; text-transform:uppercase; white-space:nowrap; line-height:1.2; word-break:normal; overflow:hidden; text-overflow:ellipsis; cursor:pointer; user-select:none; }
+.pred-detail-wrap th { text-align:center; padding:6px 8px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:11px; text-transform:uppercase; white-space:normal; line-height:1.25; word-wrap:break-word; overflow-wrap:anywhere; max-width:11em; overflow:visible; text-overflow:clip; vertical-align:bottom; cursor:pointer; user-select:none; }
 .pred-detail-wrap th.pred-col-st,
 .pred-detail-wrap th.pred-col-num,
 .pred-detail-wrap th.pred-col-dly { white-space:nowrap; }
@@ -28658,7 +28733,12 @@ _PRED_DASH_MOCK_CSS = """
 .pred-detail-wrap th, .pred-detail-wrap td { border-right:1px solid #5a7a9a !important; border-bottom:1px solid #5a7a9a !important; }
 .pred-detail-wrap thead tr:first-child th { border-top:1px solid #5a7a9a !important; }
 .pred-detail-wrap tr th:first-child, .pred-detail-wrap tr td:first-child { border-left:1px solid #5a7a9a !important; }
-.pred-detail-wrap td { padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0; vertical-align:top; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; background:#1a1c23 !important; }
+.pred-detail-wrap td { padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0; vertical-align:top; white-space:normal; word-wrap:break-word; overflow-wrap:anywhere; max-width:28em; overflow:visible; text-overflow:clip; background:#1a1c23 !important; }
+.pred-detail-wrap td.pred-col-num,
+.pred-detail-wrap td.pred-col-dly,
+.pred-detail-wrap td.pred-col-date,
+.pred-detail-wrap td.pred-col-mid,
+.pred-detail-wrap td.pred-col-contr { white-space:nowrap; max-width:none; overflow:visible; text-overflow:clip; }
 .pred-detail-wrap .pred-col-num { width:9ch; min-width:9ch; max-width:11ch; }
 .pred-detail-wrap .pred-col-dly { width:11ch; min-width:11ch; max-width:12ch; font-variant-numeric:tabular-nums; }
 .pred-detail-wrap .pred-col-st { width:22ch; min-width:22ch; max-width:26ch; }
@@ -32659,13 +32739,16 @@ html,body{{margin:0;padding:0;background:transparent;color:#e6edf3;
   border:1px solid rgba(121,154,192,0.55)}}
 table.hsched{{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%}}
 table.hsched th,table.hsched td{{border:1px solid rgba(121,154,192,0.55);
-  padding:5px 8px;white-space:nowrap;vertical-align:middle}}
+  padding:5px 8px;vertical-align:middle}}
 table.hsched thead th{{position:sticky;top:0;z-index:5;background:#17314b;
-  color:#eaf2fb;font-weight:700;text-align:center;cursor:pointer;user-select:none}}
+  color:#eaf2fb;font-weight:700;text-align:center;cursor:pointer;user-select:none;
+  white-space:normal;word-wrap:break-word;overflow-wrap:anywhere;line-height:1.25;
+  max-width:11em;overflow:visible;text-overflow:clip;vertical-align:bottom}}
 table.hsched thead th:hover{{background:#1f3e5e}}
 table.hsched tbody td.task{{position:sticky;left:0;z-index:3;background:#161f2b;
-  text-align:left;min-width:280px;max-width:520px;white-space:nowrap;
-  overflow:hidden;text-overflow:ellipsis;
+  text-align:left;min-width:200px;max-width:520px;
+  white-space:normal;word-wrap:break-word;overflow-wrap:anywhere;
+  overflow:visible;text-overflow:clip;vertical-align:top;
   box-shadow:2px 0 0 rgba(190,214,242,0.45)}}
 table.hsched thead th:first-child,table.hsched thead th:nth-child(2){{
   position:sticky;top:0;z-index:6}}
@@ -32677,8 +32760,8 @@ table.hsched tbody tr:hover td.task{{background:#22314a}}
 td.num{{text-align:center;font-variant-numeric:tabular-nums}}
 td.dt{{text-align:center;font-variant-numeric:tabular-nums;color:#cfe0f5}}
 td.id{{text-align:center;color:#9aa4b2}}
-td.txt{{white-space:nowrap;max-width:380px;overflow:hidden;text-overflow:ellipsis;
-  color:#cfd8e3}}
+td.txt{{white-space:normal;max-width:380px;word-wrap:break-word;overflow:visible;text-overflow:clip;
+  color:#cfd8e3;vertical-align:top}}
 td.pct{{color:#a7c4ff;font-weight:600}}
 td.dev-neg{{color:#f87171;font-weight:700}}
 td.dev-pos{{color:#22c55e;font-weight:700}}
@@ -32902,12 +32985,15 @@ html,body{{margin:0;padding:0;background:transparent;color:#e6edf3;
   border:1px solid rgba(121,154,192,0.55)}}
 table.msched{{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%}}
 table.msched th,table.msched td{{border:1px solid rgba(121,154,192,0.55);
-  padding:5px 8px;white-space:nowrap;vertical-align:middle}}
+  padding:5px 8px;vertical-align:middle}}
 table.msched thead th{{position:sticky;top:0;z-index:5;background:#17314b;
-  color:#eaf2fb;font-weight:700;text-align:center}}
+  color:#eaf2fb;font-weight:700;text-align:center;
+  white-space:normal;word-wrap:break-word;overflow-wrap:anywhere;line-height:1.25;
+  max-width:11em;overflow:visible;text-overflow:clip}}
 table.msched tbody td.task{{position:sticky;left:0;z-index:3;background:#161f2b;
-  text-align:left;min-width:280px;max-width:520px;white-space:nowrap;
-  overflow:hidden;text-overflow:ellipsis;
+  text-align:left;min-width:200px;max-width:520px;
+  white-space:normal;word-wrap:break-word;overflow-wrap:anywhere;
+  overflow:visible;text-overflow:clip;vertical-align:top;
   box-shadow:2px 0 0 rgba(190,214,242,0.45)}}
 table.msched thead th:nth-child(2){{left:0;z-index:7;text-align:left;background:#1a3328}}
 table.msched tbody tr:nth-child(even) td{{background:rgba(255,255,255,0.025)}}
@@ -32915,7 +33001,7 @@ table.msched tbody tr:nth-child(even) td.task{{background:#1a2433}}
 td.num,td.bar-cell{{text-align:center;font-variant-numeric:tabular-nums;min-width:120px}}
 td.dt{{text-align:center;color:#cfe0f5}}
 td.id{{text-align:center;color:#9aa4b2}}
-td.txt{{max-width:380px;overflow:hidden;text-overflow:ellipsis;color:#cfd8e3}}
+td.txt{{max-width:380px;white-space:normal;word-wrap:break-word;overflow:visible;text-overflow:clip;color:#cfd8e3}}
 td.pct{{color:#a7c4ff;font-weight:600}}
 .bar-row{{display:flex;flex-direction:column;align-items:stretch;gap:2px;width:100%}}
 .bar-val{{font-size:11px;font-weight:700;text-align:center}}
@@ -33040,10 +33126,12 @@ def _render_project_schedule_barchart(df: pd.DataFrame) -> None:
             rec["Причины отклонений"] = r["reason"]
             rec["Заметки"] = r["notes"]
         tbl_rows.append(rec)
-    st.dataframe(
-        style_dataframe_for_dark_theme(pd.DataFrame(tbl_rows)),
-        use_container_width=True,
-        hide_index=True,
+    _pf_top_df = pd.DataFrame(tbl_rows)
+    _render_styled_table_report(
+        style_dataframe_for_dark_theme(_pf_top_df),
+        _pf_top_df,
+        file_stem="pf_top_deviations",
+        key_prefix=f"pf_top_{abs(id(_pf_top_df))}",
     )
 
 
@@ -33334,10 +33422,11 @@ def _render_project_schedule_covenants(df: pd.DataFrame) -> None:
             for r in rows
         ]
     )
-    st.dataframe(
+    _render_styled_table_report(
         style_dataframe_for_dark_theme(tbl),
-        use_container_width=True,
-        hide_index=True,
+        tbl,
+        file_stem="covenants_schedule",
+        key_prefix=f"cov_tbl_{abs(id(tbl))}",
     )
 
 
@@ -33872,10 +33961,12 @@ def dashboard_project_schedule_chart(df):
     if "plan start" not in work.columns or "plan end" not in work.columns:
         st.warning("Нужны колонки «План: начало» и «План: окончание» (после загрузки MSP: plan start / plan end).")
         pref = [c for c in ("project name", "task name", "plan start", "plan end") if c in work.columns]
-        st.dataframe(
-            style_dataframe_for_dark_theme(work[pref].head(80) if pref else work.head(80)),
-            use_container_width=True,
-            hide_index=True,
+        _gantt_preview = work[pref].head(80) if pref else work.head(80)
+        _render_styled_table_report(
+            style_dataframe_for_dark_theme(_gantt_preview),
+            _gantt_preview,
+            file_stem="gantt_data_preview",
+            key_prefix=f"gantt_prev_{abs(id(_gantt_preview))}",
         )
         return
 

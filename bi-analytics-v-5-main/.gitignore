@@ -104,3 +104,6 @@ dashboards/patch_pd_phase1.py
 # Windows helpers (local only)
 *.bat
 *.ps1
+
+output/screenshots/
+

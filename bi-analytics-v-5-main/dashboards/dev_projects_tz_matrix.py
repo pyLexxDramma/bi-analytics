@@ -1482,7 +1482,7 @@ def render_developer_predpisaniya_expander(
     """Полная таблица предписаний Tessa под матрицей + выгрузка."""
     import streamlit as st
 
-    from utils import render_dataframe_excel_csv_downloads
+    from utils import render_dataframe_excel_csv_downloads, render_dataframe_sortable
 
     raw_names = [str(n).strip() for n in (project_names or []) if str(n).strip()]
     if len(raw_names) == 1:
@@ -1497,7 +1497,7 @@ def render_developer_predpisaniya_expander(
             df_all = build_predpisaniya_detail_df(ss, "")
             if df_all.empty:
                 return
-            st.dataframe(df_all, use_container_width=True, hide_index=True)
+            render_dataframe_sortable(df_all, file_stem="predpisaniya_tessa", key_prefix="dev_pred_all_tbl", use_styler=False)
             render_dataframe_excel_csv_downloads(
                 df_all,
                 file_stem="predpisaniya_tessa",
@@ -1518,7 +1518,7 @@ def render_developer_predpisaniya_expander(
             df_fallback = build_predpisaniya_detail_df(ss, "")
             if df_fallback.empty:
                 return
-            st.dataframe(df_fallback, use_container_width=True, hide_index=True)
+            render_dataframe_sortable(df_fallback, file_stem="predpisaniya_tessa", key_prefix="dev_pred_fb_tbl", use_styler=False)
             render_dataframe_excel_csv_downloads(
                 df_fallback,
                 file_stem="predpisaniya_tessa",
@@ -1528,7 +1528,7 @@ def render_developer_predpisaniya_expander(
             return
 
         merged = pd.concat(chunks, ignore_index=True)
-        st.dataframe(merged, use_container_width=True, hide_index=True)
+        render_dataframe_sortable(merged, file_stem="predpisaniya_tessa_by_project", key_prefix="dev_pred_detail_tbl", use_styler=False)
         render_dataframe_excel_csv_downloads(
             merged,
             file_stem="predpisaniya_tessa_by_project",
@@ -3555,12 +3555,20 @@ _DEV_TZ_MATRIX_SORT_SCRIPT = """
     projTh.title="Клик — сортировка по проекту";
     projTh.addEventListener("click",function(ev){ev.preventDefault();sortByCol(0,projTh,plab);});
   }
+  tbl.querySelectorAll("thead tr:nth-child(2) th.dev-tz-milestone").forEach(function(th){
+    th.classList.add("dev-tz-sortable");
+    var lab=(th.textContent||"").trim();
+    th.setAttribute("data-sort-label", lab);
+    th.title="Клик — сортировка по вехе";
+    var colIdx=th.cellIndex||0;
+    th.addEventListener("click",function(ev){ev.preventDefault();sortByCol(colIdx,th,lab);});
+  });
   tbl.querySelectorAll("thead tr:nth-child(3) th.dev-tz-sub").forEach(function(th){
     th.classList.add("dev-tz-sortable");
     var lab=(th.textContent||"").trim();
     th.setAttribute("data-sort-label", lab);
     th.title="Клик — сортировка по колонке";
-    var colIdx=(th.cellIndex||0)+1;
+    var colIdx=th.cellIndex||0;
     th.addEventListener("click",function(ev){ev.preventDefault();sortByCol(colIdx,th,lab);});
   });
 })();
@@ -3580,10 +3588,13 @@ def _matrix_iframe_html_document(
     ``scroll_block_inner`` — готовый блок с обёрткой (.dev-tz-matrix-wrap / .cp-table-wrap) и таблицей.
     ``extra_body_suffix`` — доп. HTML/скрипты перед ``</body>`` (напр. поповер «Контрольные точки»).
     """
+    # Сортировка только из extra_body_suffix (dev-tz / control-points).
+    # Общий table_sort_inject в iframe не подключаем: даёт дубли <select>Все</select> рядом с кликом по th.
+    _extra = extra_body_suffix or ""
     return (
         '<!DOCTYPE html><html><head><meta charset="utf-8">'
         '<meta name="color-scheme" content="dark">'
-        '<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5,viewport-fit=cover">'
+        '<meta name="viewport" content="width=device-width,initial-scale=5,viewport-fit=cover">'
         "<style>"
         + head_styles
         + _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS
@@ -3599,7 +3610,7 @@ def _matrix_iframe_html_document(
         + "</div></div>"
         + _MATRIX_IFRAME_FULLSCREEN_SCRIPT
         + _MATRIX_IFRAME_FIT_HEIGHT_SCRIPT
-        + (extra_body_suffix or "")
+        + _extra
         + "</body></html>"
     )
 
@@ -3726,7 +3737,7 @@ def render_dev_tz_matrix(
         )
 
     html_tbl = (
-        '<table class="rendered-table dev-tz-wide bi-sortable-table" border="0">'
+        '<table class="rendered-table dev-tz-wide bi-sortable-table bi-sort-click-only" border="0">'
         + thead
         + "<tbody>"
         + "".join(body_trs)

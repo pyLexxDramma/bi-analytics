@@ -109,7 +109,7 @@ _TABLE_SORT_JS = r"""
       var label = document.createElement("span");
       label.className = "bi-sort-label";
       label.style.cssText =
-        "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;cursor:pointer;user-select:none;";
+        "flex:1;min-width:0;white-space:normal;word-wrap:break-word;overflow-wrap:anywhere;overflow:visible;text-overflow:clip;cursor:pointer;user-select:none;";
       label.title = "Клик — сортировка по убыванию, повторный клик — по возрастанию";
       var sel = document.createElement("select");
       sel.className = "bi-sort-filter";
@@ -604,6 +604,9 @@ def _html_block_compact(html: str) -> bool:
         or "pf-dates-table" in html_l
         or "pred-detail-wrap" in html_l
         or "gantt-schedule-table-wrap" in html_l
+        or "rendered-table-wrap" in html_l
+        or "dev-reasons-wrap" in html_l
+        or "bi-styled-table-wrap" in html_l
         or (
             "budget-deviation-table-wrap" in html_l
             and "budget-table-scroll" in html_l
@@ -619,6 +622,7 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
         st.markdown(html, unsafe_allow_html=True)
         return
     doc = _build_sortable_html_document(html)
+    # Не st.html: <script> сортировки в основной DOM часто не выполняется (↕ видны, клик мёртвый).
     _compact = (
         _html_block_compact(html)
         if compact_iframe is None
@@ -626,13 +630,6 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
     )
     if _compact:
         _h_compact = _estimate_html_block_height(html)
-        _use_st_html = "pred-detail-wrap" not in (html or "")
-        if _use_st_html:
-            try:
-                st.html(doc, width="stretch", unsafe_allow_javascript=True)
-                return
-            except Exception:
-                pass
         components.html(
             doc,
             height=max(120, _h_compact + 12),
