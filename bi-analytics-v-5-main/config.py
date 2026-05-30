@@ -310,8 +310,11 @@ def _opencode_workspace_url(public_base: str) -> str:
 
 
 # OpenCode: dev — лаунчер на Streamlit Cloud; prod — ai.conall.ru после nginx Николая.
-AI_ASSISTANT_URL_DEV_DEFAULT = "https://bi-analytics-dev.streamlit.app/_opencode_ai"
-AI_ASSISTANT_URL_PROD_DEFAULT = "https://ai.conall.ru/opencode/L3dvcmtzcGFjZQ/"
+AI_ASSISTANT_WEB_UI_DEFAULT = "https://opencode.ai.conall.ru/L3dvcmtzcGFjZQ/"
+AI_ASSISTANT_URL_DEV_DEFAULT = AI_ASSISTANT_WEB_UI_DEFAULT
+AI_ASSISTANT_URL_PROD_DEFAULT = AI_ASSISTANT_WEB_UI_DEFAULT
+AI_ASSISTANT_URL_PATH_FALLBACK = "https://ai.conall.ru/opencode/L3dvcmtzcGFjZQ/"
+AI_ASSISTANT_URL_EMBEDDED_DEFAULT = "https://bi-analytics-dev.streamlit.app/_opencode_ai"
 
 AI_ASSISTANT_PAGE = "pages/_opencode_ai.py"
 
@@ -319,10 +322,11 @@ AI_ASSISTANT_PAGE = "pages/_opencode_ai.py"
 
 
 def is_ai_assistant_embedded_page() -> bool:
-    """True when AI opens as in-app page (/_opencode_ai), not external OpenCode UI."""
+    """True only for in-app Streamlit chat (/_opencode_ai), not native OpenCode Web UI."""
+    target = _read_env_or_secret("AI_ASSISTANT_TARGET").strip().lower()
+    if target == "embedded":
+        return True
     url = (get_ai_assistant_open_url() or "").strip().lower()
-    if not url:
-        return False
     return "_opencode_ai" in url
 
 
@@ -358,10 +362,16 @@ def get_ai_assistant_open_url() -> str:
     if target == "prod" or _env_truthy("AI_ASSISTANT_USE_PROD"):
         return prod_url
 
+    if target == "embedded":
+        return (
+            _read_env_or_secret("AI_ASSISTANT_URL_EMBEDDED").strip()
+            or AI_ASSISTANT_URL_EMBEDDED_DEFAULT
+        )
+
     if target == "dev":
         return dev_url
 
-    # auto: dev Streamlit — лаунчер; release client — скрыть до ai.conall.ru
+    # auto: dev Web UI — лаунчер; release client — скрыть до ai.conall.ru
     if _is_streamlit_dev_deployment() or (not is_release_client_mode()):
         return dev_url
     return prod_url if _env_truthy("AI_ASSISTANT_USE_PROD") else ""

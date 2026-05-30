@@ -840,7 +840,7 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
                     "ИИ помощник",
                     _ai_open,
                     width="stretch",
-                    help="Открывает чат XCA AI в новой вкладке браузера.",
+                    help="Открывает нативный Web UI OpenCode в новой вкладке.",
                     icon="🤖",
                     key="sidebar_ai_assistant",
                 )
