@@ -396,15 +396,19 @@ def get_ai_assistant_open_url() -> str:
     if target == "dev":
         return dev_url
 
-    # auto: на Cloud с SSH — встроенный чат OpenCode; иначе публичный Web UI
-    if _is_streamlit_cloud_deployment() and _ai_ssh_tunnel_configured() and not _env_truthy(
-        "AI_ASSISTANT_FORCE_WEB_UI"
+    # dev (Cloud и local) — нативный Web UI OpenCode, не Streamlit /_opencode_ai
+    if _is_streamlit_dev_deployment() or (not is_release_client_mode()):
+        return dev_url
+
+    # auto на release Cloud + SSH — embedded, если нет публичного HTTPS
+    if (
+        _is_streamlit_cloud_deployment()
+        and _ai_ssh_tunnel_configured()
+        and not _env_truthy("AI_ASSISTANT_FORCE_WEB_UI")
     ):
         return _embedded_ai_url_for_current_app()
 
-    if _is_streamlit_dev_deployment() or (not is_release_client_mode()):
-        return dev_url
-    return prod_url if _env_truthy("AI_ASSISTANT_USE_PROD") else prod_url
+    return prod_url
 
 
 
