@@ -340,11 +340,24 @@ html, body {
   font-family: Inter, system-ui, sans-serif;
 }
 
-.pf-dates-table-wrap,.pred-detail-wrap,.gantt-schedule-table-wrap{display:block;width:100%;margin:0;padding:0}
+.pf-dates-table-wrap,.gantt-schedule-table-wrap{
+  display:block;width:100%;max-width:100%;margin:0;padding:0;
+  overflow-x:auto!important;overflow-y:visible;
+  -webkit-overflow-scrolling:touch;scrollbar-gutter:stable;
+}
+.pred-detail-wrap{display:block;width:100%;margin:0;padding:0}
 .pred-detail-wrap{overflow-x:hidden!important;overflow-y:visible!important}
 .pred-detail-wrap table{width:100%!important;max-width:100%!important}
-html,body{height:auto!important;min-height:0!important;overflow:visible!important}
-.bi-sortable-html-root{display:block;width:100%;margin:0;padding:0}
+html,body{
+  height:auto!important;min-height:0!important;
+  margin:0;padding:0;width:100%;max-width:100%;
+  overflow-x:hidden!important;overflow-y:visible!important;
+}
+.bi-sortable-html-root{
+  display:block;width:100%;max-width:100%;margin:0;padding:0;
+  overflow-x:auto!important;overflow-y:visible;
+  -webkit-overflow-scrolling:touch;
+}
 
 .bi-sortable-html-root { width: 100%; max-width: 100%; }
 .bi-sortable-html-root table.bi-sortable-table {
@@ -643,10 +656,15 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
     )
     if _compact:
         _h_compact = _estimate_html_block_height(html)
+        _wide_tbl = (
+            "pf-dates-table-wrap" in (html or "")
+            or "pf-dates-table" in (html or "")
+            or "gantt-schedule-table-wrap" in (html or "")
+        )
         components.html(
             doc,
             height=max(120, _h_compact + 12),
-            scrolling=False,
+            scrolling=bool(_wide_tbl),
         )
         return
     _h = _estimate_html_block_height(html)

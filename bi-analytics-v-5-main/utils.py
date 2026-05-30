@@ -1967,13 +1967,18 @@ def render_report_html_table(
     if _compact_tbl:
         st.markdown(
             "<style>"
-            "div[data-testid='stHtml']{margin:0!important;padding:0!important;}"
-            "div[data-testid='stHtml'] iframe{display:block;margin:0!important;padding:0!important;}"
+            "div[data-testid='stHtml']{margin:0!important;padding:0!important;"
+            "max-width:100%!important;overflow-x:auto!important;min-width:0!important;}"
+            "div[data-testid='stHtml'] iframe{display:block;margin:0!important;padding:0!important;"
+            "width:100%!important;max-width:100%!important;min-width:0!important;}"
             "div[data-testid='stElementContainer']:has([data-testid='stHtml']) "
-            "{margin-bottom:0!important;padding-bottom:0!important;}"
+            "{margin-bottom:0!important;padding-bottom:0.35rem!important;"
+            "max-width:100%!important;overflow-x:auto!important;min-width:0!important;}"
             "div[data-testid='stVerticalBlock']:has([data-testid='stPopover']) "
             "{margin-top:0!important;padding-top:0!important;}"
-            "div[data-testid='stExpander'] details[open]>div{padding-bottom:0.35rem!important;}"
+            "div[data-testid='stExpander'] details[open]>div{padding-bottom:0.35rem!important;"
+            "max-width:100%!important;overflow-x:auto!important;min-width:0!important;}"
+            "div[data-testid='stExpander'] [data-testid='stHtml']{overflow-x:auto!important;}"
             "</style>",
             unsafe_allow_html=True,
         )

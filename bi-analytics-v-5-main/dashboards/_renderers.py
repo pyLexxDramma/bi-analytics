@@ -209,10 +209,13 @@ _TABLE_CSS = """
 .pf-dates-table-wrap {
   overflow-x:auto; overflow-y:visible; min-width:0; max-width:100%; width:100%;
   margin:0.15rem 0 0.1rem 0; -webkit-overflow-scrolling:touch; scrollbar-gutter:stable;
+  box-sizing:border-box;
 }
+.pf-dates-table-wrap::-webkit-scrollbar{height:10px}
+.pf-dates-table-wrap::-webkit-scrollbar-thumb{background:rgba(148,163,184,0.45);border-radius:5px}
 .pf-zos-table-wrap{margin-bottom:0.2rem!important}
 .pf-dates-table-wrap .pf-dates-table {width:max-content; min-width:100%; table-layout:auto}
-.pf-dates-table th {max-width:11em; padding:6px 6px; cursor:pointer;
+.pf-dates-table th {max-width:9.5em; padding:6px 6px; cursor:pointer;
   white-space:normal; word-wrap:break-word; overflow-wrap:anywhere; line-height:1.25;
   overflow:visible; text-overflow:clip; vertical-align:bottom;}
 .bi-sort-click-only thead th { cursor:pointer !important; }
@@ -468,19 +471,93 @@ def _plan_fact_dates_col_css_class(col: str) -> str:
     return ""
 
 
-def _plan_fact_deviation_td_style(nval) -> str:
-    """Фон ячейки отклонения: <0 красный, 0 тёмно-зелёный, >0 зелёный (как на других дашбордах)."""
+_PF_DEV_START_KEYS = ("Откл. начала", "Отклонение начала")
+_PF_DEV_END_KEYS = (
+    "Откл. окончания",
+    "Отклонение окончания",
+    "Отклонение окончания (дней)",
+)
+_PF_DEV_DUR_KEYS = ("Откл. длит.", "Отклонение длительности")
+_PF_START_TINT_COLS = frozenset(
+    {
+        "Базовое начало",
+        "Баз. начало",
+        "Начало",
+        "Откл. начала",
+        "Отклонение начала",
+    }
+)
+_PF_END_TINT_COLS = frozenset(
+    {
+        "Базовое окончание",
+        "Баз. окончание",
+        "Окончание",
+        "Откл. окончания",
+        "Отклонение окончания",
+        "Отклонение окончания (дней)",
+    }
+)
+_PF_DUR_TINT_COLS = frozenset(
+    {
+        "Баз. длит.",
+        "Базовая длительность",
+        "Длительность",
+        "Откл. длит.",
+        "Отклонение длительности",
+    }
+)
+
+
+def _plan_fact_pick_dev_value(row: pd.Series, keys: tuple[str, ...]):
+    for k in keys:
+        if k not in row.index:
+            continue
+        v = row[k]
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            continue
+        return v
+    return None
+
+
+def _plan_fact_deviation_bg_style(nval) -> str:
+    """Фон ячейки (даты/длительность/отклонение): <0 красный, 0 нейтральный, >0 зелёный."""
     if nval is None or (isinstance(nval, float) and pd.isna(nval)):
         return ""
     try:
-        n = int(round(float(nval)))
+        n = float(nval)
     except (TypeError, ValueError):
         return ""
     if n < 0:
-        return "background-color:#c0392b;color:#ffffff;font-weight:700;"
+        t = min(max(-n, 0.0), 365.0) / 365.0
+        alpha = 0.24 + 0.36 * t
+        return f"background-color:rgba(255,84,84,{alpha:.3f}) !important;"
     if n == 0:
-        return "background-color:#14532d;color:#ecfdf5;font-weight:600;"
-    return "background-color:#27ae60;color:#ffffff;font-weight:600;"
+        return "background-color:rgba(70,214,138,0.22) !important;"
+    t = min(max(n, 0.0), 365.0) / 365.0
+    alpha = 0.18 + 0.28 * t
+    return f"background-color:rgba(70,214,138,{alpha:.3f}) !important;"
+
+
+def _plan_fact_deviation_td_style(nval) -> str:
+    """Совместимость: только фон (цвет шрифта — pf-dev-*)."""
+    return _plan_fact_deviation_bg_style(nval)
+
+
+def _plan_fact_dev_nval_for_col(col: str, dev_start, dev_end, dev_dur):
+    c = str(col).strip()
+    if c in _PF_START_TINT_COLS:
+        return dev_start
+    if c in _PF_END_TINT_COLS:
+        return dev_end
+    if c in _PF_DUR_TINT_COLS:
+        return dev_dur
+    return None
+
+
+def _plan_fact_td_align_style(col: str, *, in_dev: bool, in_num: bool, in_date: bool) -> str:
+    if in_dev or in_num:
+        return "text-align:right;"
+    return "text-align:center;"
 
 
 def _plan_fact_sort_attr(nval) -> str:
@@ -546,23 +623,31 @@ def _render_plan_fact_dates_main_table(display_df: pd.DataFrame, numeric_df: pd.
         )
     parts.append("</tr></thead><tbody>")
     for i in range(len(display_df)):
+        num_row = numeric_df.iloc[i]
+        dev_start = _plan_fact_pick_dev_value(num_row, _PF_DEV_START_KEYS)
+        dev_end = _plan_fact_pick_dev_value(num_row, _PF_DEV_END_KEYS)
+        dev_dur = _plan_fact_pick_dev_value(num_row, _PF_DEV_DUR_KEYS)
         parts.append("<tr>")
         for c in display_df.columns:
             cls = _plan_fact_dates_col_css_class(c)
             txt = display_df.iloc[i][c]
             sort_attr = ""
-            td_style = ""
+            style_parts: list[str] = []
+            tint_n = _plan_fact_dev_nval_for_col(c, dev_start, dev_end, dev_dur)
+            if tint_n is not None:
+                bg = _plan_fact_deviation_bg_style(tint_n)
+                if bg:
+                    style_parts.append(bg)
             if c in _dev_cols and c in numeric_df.columns:
                 nv = numeric_df.iloc[i][c]
                 sort_attr = _plan_fact_sort_attr(nv)
-                td_style = _plan_fact_deviation_td_style(nv)
                 disp = str(txt).strip() if pd.notna(txt) and str(txt).strip() not in ("", "nan", "None") else ""
                 if not disp and pd.notna(nv):
                     try:
                         disp = str(int(round(float(nv))))
                     except (TypeError, ValueError):
                         pass
-                cell = html_module.escape(disp) if disp else ""
+                cell = _plan_fact_deviation_span(nv, disp) if (disp or pd.notna(nv)) else ""
             elif c in _reason_cols:
                 s = str(txt).strip() if pd.notna(txt) else ""
                 if s and s.lower() not in ("", "nan", "none"):
@@ -593,9 +678,15 @@ def _render_plan_fact_dates_main_table(display_df: pd.DataFrame, numeric_df: pd.
                     if pd.notna(txt) and str(txt).strip() not in ("", "nan", "None")
                     else ""
                 )
-            align = ' style="text-align:right"' if c in _dev_cols or c in _num_cols else ""
-            if td_style:
-                align = f' style="{td_style}text-align:right;"' if c in _dev_cols or c in _num_cols else f' style="{td_style}"'
+            style_parts.append(
+                _plan_fact_td_align_style(
+                    c,
+                    in_dev=c in _dev_cols,
+                    in_num=c in _num_cols,
+                    in_date=c in _date_cols,
+                )
+            )
+            align = f' style="{"".join(style_parts)}"' if style_parts else ""
             parts.append(f'<td class="{cls}"{sort_attr}{align}>{cell}</td>')
         parts.append("</tr>")
     parts.append("</tbody></table></div>")
@@ -663,6 +754,7 @@ def _render_gantt_schedule_html_table(
         "Отклонение Начала",
         "Отклонение Окончания",
     }
+    _gantt_dev_keys = ("Отклонение окончания", "Отклонение Окончания", "Отклонение Начала")
     _date_cols = {"Окончание", "Базовое окончание"}
     _num_cols = {"ИД", "Ур", "% завершения"}
     _reason_cols = {"Причины отклонений", "Причина отклонения", "Заметки"}
@@ -673,24 +765,37 @@ def _render_gantt_schedule_html_table(
         "<thead><tr>",
     ]
     for c in show_disp.columns:
+        cls = _plan_fact_dates_col_css_class(c)
         c_esc = html_module.escape(str(c))
         parts.append(
-            f'<th data-sort-label="{c_esc}">'
+            f'<th class="{cls}" data-sort-label="{c_esc}">'
             f'<span class="bi-sort-label">{c_esc} \u21c5</span></th>'
         )
     parts.append("</tr></thead><tbody>")
     for i in range(len(show_disp)):
+        num_row = show_num.iloc[i]
+        dev_end = _plan_fact_pick_dev_value(num_row, _gantt_dev_keys)
         parts.append("<tr>")
         for c in show_disp.columns:
+            cls = _plan_fact_dates_col_css_class(c)
             txt = show_disp.iloc[i][c]
             sort_attr = ""
-            td_style = ""
+            style_parts: list[str] = []
+            if c in _date_cols or c in _dev_cols:
+                if dev_end is not None:
+                    bg = _plan_fact_deviation_bg_style(dev_end)
+                    if bg:
+                        style_parts.append(bg)
             if c in _dev_cols and c in show_num.columns:
                 nv = show_num.iloc[i][c]
                 sort_attr = _plan_fact_sort_attr(nv)
-                td_style = _plan_fact_deviation_td_style(nv)
                 disp = str(txt).strip() if pd.notna(txt) and str(txt).strip() not in ("", "nan", "None") else ""
-                cell = html_module.escape(disp) if disp else ""
+                if not disp and pd.notna(nv):
+                    try:
+                        disp = str(int(round(float(nv))))
+                    except (TypeError, ValueError):
+                        pass
+                cell = _plan_fact_deviation_span(nv, disp) if (disp or pd.notna(nv)) else ""
             elif c in _reason_cols:
                 s = str(txt).strip() if pd.notna(txt) else ""
                 if s and s.lower() not in ("", "nan", "none"):
@@ -721,12 +826,12 @@ def _render_gantt_schedule_html_table(
                     if pd.notna(txt) and str(txt).strip() not in ("", "nan", "None")
                     else ""
                 )
-            align = ""
             if c in _dev_cols or c in _num_cols:
-                align = f' style="{td_style}text-align:right;"' if td_style else ' style="text-align:right"'
-            elif td_style:
-                align = f' style="{td_style}"'
-            parts.append(f"<td{sort_attr}{align}>{cell}</td>")
+                style_parts.append("text-align:right;")
+            else:
+                style_parts.append("text-align:center;")
+            align = f' style="{"".join(style_parts)}"' if style_parts else ""
+            parts.append(f'<td class="{cls}"{sort_attr}{align}>{cell}</td>')
         parts.append("</tr>")
     parts.append("</tbody></table></div>")
     render_report_html_table(
@@ -6132,14 +6237,28 @@ def render_plan_fact_zos_covenant_table(
         otxt = _plan_fact_zos_format_date_cell(zr.get("_plan_end"))
         _be_sort = _plan_fact_sort_attr(zr.get("_base_end"))
         _pe_sort = _plan_fact_sort_attr(zr.get("_plan_end"))
-        parts.append(f"<td{_be_sort}>{html_module.escape(btxt)}</td>")
-        parts.append(f"<td{_pe_sort}>{html_module.escape(otxt)}</td>")
         _zdev = zr.get("_zos_dev")
+        _zdev_bg = _plan_fact_deviation_bg_style(_zdev)
+        def _zos_st(extra: str) -> str:
+            return f' style="{_zdev_bg}{extra}"' if _zdev_bg else f' style="{extra}"'
+        parts.append(
+            f'<td class="col-pf-end"{_be_sort}{_zos_st("text-align:center;")}>'
+            f"{html_module.escape(btxt)}</td>"
+        )
+        parts.append(
+            f'<td class="col-pf-end"{_pe_sort}{_zos_st("text-align:center;")}>'
+            f"{html_module.escape(otxt)}</td>"
+        )
         _zdev_sort = _plan_fact_sort_attr(_zdev)
-        _zdev_style = _plan_fact_deviation_td_style(_zdev)
-        _zdev_disp = _dev_html(_zdev)
-        _td_st = f' style="{_zdev_style}text-align:right"' if _zdev_style else " style='text-align:right'"
-        parts.append(f"<td{_zdev_sort}{_td_st}>{_zdev_disp}</td>")
+        _zdev_disp = ""
+        if _zdev is not None and not (isinstance(_zdev, float) and pd.isna(_zdev)):
+            try:
+                _zdev_disp = _plan_fact_deviation_span(_zdev, str(int(round(float(_zdev)))))
+            except (TypeError, ValueError):
+                _zdev_disp = _plan_fact_deviation_span(_zdev, str(_zdev))
+        parts.append(
+            f'<td class="col-dev"{_zdev_sort}{_zos_st("text-align:right;")}>{_zdev_disp}</td>'
+        )
         parts.append("</tr>")
         er["Базовое окончание"] = zr.get("_base_end")
         er["Окончание"] = zr.get("_plan_end")
