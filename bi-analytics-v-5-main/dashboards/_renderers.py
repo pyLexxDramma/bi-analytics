@@ -28356,7 +28356,7 @@ def _forecast_financier_status_table_html(df: pd.DataFrame) -> str:
         ".fc-st-cell-red, .fc-st-cell-red * { color: hsl(348,100%,63%) !important; }"
         ".fc-st-cell-green, .fc-st-cell-green * { color: hsl(148,100%,63%) !important; }"
         "</style>",
-        '<div class="rendered-table-wrap bi-styled-table-wrap" style="overflow-x:auto;min-width:0;margin:1em 0;max-width:100%;">',
+        f'<div class="fc-table-scroll-wrap bi-styled-table-wrap" data-bi-rows="{len(df)}">',
         f'<table class="rendered-table bi-sortable-table bi-sort-click-only" style="width:100%;border-collapse:collapse;background-color:{TABLE_BG_COLOR};color:{TABLE_TEXT_COLOR};font-size:14px;">',
         "<thead><tr>",
     ]
@@ -29282,6 +29282,7 @@ def dashboard_forecast_budget(df):
         cell_background=_cell_background_fc,
         finance_decimal_places=1,
         bold_row_indices={summary_numeric.index[-1]},
+        table_scroll_max_height_vh=70.0,
     )
     _status_disp = _forecast_financier_status_dataset(
         filtered_scope=filtered_scope,

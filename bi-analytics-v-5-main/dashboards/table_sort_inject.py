@@ -238,8 +238,18 @@ _TABLE_SORT_JS = r"""
 
   function reportFrameHeight() {
     try {
+      var fcBox = document.querySelector(".fc-table-scroll-wrap");
+      if (fcBox && fcBox.getBoundingClientRect) {
+        var fr = fcBox.getBoundingClientRect();
+        var fh = Math.ceil(fr.height || 0) + 8;
+        if (fh > 0) {
+          window.parent.postMessage({ type: "streamlit:setFrameHeight", height: fh }, "*");
+          return;
+        }
+      }
       var root = document.querySelector(".pf-dates-table-wrap")
         || document.querySelector(".pred-detail-wrap")
+        || document.querySelector(".fc-table-scroll-wrap")
         || document.querySelector(".gantt-schedule-table-wrap")
         || document.querySelector(".budget-deviation-table-wrap")
         || document.querySelector(".bi-sortable-html-root")
@@ -247,6 +257,7 @@ _TABLE_SORT_JS = r"""
       var compact = root && (
         root.classList.contains("pf-dates-table-wrap")
         || root.classList.contains("pred-detail-wrap")
+        || root.classList.contains("fc-table-scroll-wrap")
         || root.classList.contains("gantt-schedule-table-wrap")
       );
       var h = 0;
@@ -256,8 +267,8 @@ _TABLE_SORT_JS = r"""
         if (compact) {
           var tbl = root.querySelector("table.pf-dates-table")
             || root.querySelector("table.bi-sortable-table");
-          if (root.classList.contains("pred-detail-wrap")) {
-            h = Math.ceil(r.height + (window.scrollY || 0)) + 16;
+          if (root.classList.contains("pred-detail-wrap") || root.classList.contains("fc-table-scroll-wrap")) {
+            h = Math.ceil(r.height) + 10;
           } else
           if (tbl && tbl.getBoundingClientRect) {
             var tr = tbl.getBoundingClientRect();
@@ -297,6 +308,7 @@ _TABLE_SORT_JS = r"""
     var ro = new ResizeObserver(function () { reportFrameHeight(); });
     var tgt = document.querySelector(".pf-dates-table-wrap")
       || document.querySelector(".pred-detail-wrap")
+      || document.querySelector(".fc-table-scroll-wrap")
       || document.querySelector(".gantt-schedule-table-wrap")
       || document.querySelector(".budget-deviation-table-wrap")
       || document.querySelector(".bi-sortable-html-root")
@@ -312,13 +324,21 @@ _COMPACT_FRAME_FIT_JS = r"""
 (function () {
   function fit() {
     try {
+      var fc = document.querySelector(".fc-table-scroll-wrap");
+      if (fc) {
+        var fh = Math.ceil((window.innerHeight || document.documentElement.clientHeight || 0)) + 4;
+        if (fh > 0) {
+          window.parent.postMessage({ type: "streamlit:setFrameHeight", height: fh }, "*");
+          return;
+        }
+      }
       var root = document.querySelector(".budget-deviation-table-wrap")
         || document.querySelector(".pf-dates-table-wrap")
         || document.querySelector(".pred-detail-wrap")
         || document.querySelector(".gantt-schedule-table-wrap")
         || document.querySelector(".bi-sortable-html-root")
         || document.body;
-      var pad = (root && root.classList && root.classList.contains("pred-detail-wrap")) ? 20 : 4;
+      var pad = (root && root.classList && (root.classList.contains("pred-detail-wrap") || root.classList.contains("fc-table-scroll-wrap"))) ? 20 : 4;
       var h = 0;
       var tbl = root.querySelector && root.querySelector("table");
       if (tbl) {
@@ -371,6 +391,17 @@ html:has(.pred-detail-wrap),body:has(.pred-detail-wrap){overflow:hidden!importan
 .pred-detail-wrap thead th>div{justify-content:center!important;align-items:center!important}
 .pred-detail-wrap thead th .bi-sort-label{text-align:center!important}
 .pred-detail-wrap thead th.pred-col-crit,.pred-detail-wrap thead th.pred-col-crit .bi-sort-label{white-space:nowrap!important}
+.bi-sortable-html-root:has(.fc-table-scroll-wrap){overflow:visible!important;overflow-x:hidden!important;height:auto!important;max-height:none!important}
+html:has(.fc-table-scroll-wrap),body:has(.fc-table-scroll-wrap){overflow:hidden!important;margin:0;padding:0;height:auto!important;max-height:none!important}
+.fc-table-scroll-wrap{
+  display:block;width:100%!important;margin:0;padding:0;
+  height:100%!important;max-height:100%!important;min-height:0!important;
+  overflow-x:auto!important;overflow-y:scroll!important;
+  scrollbar-gutter:stable;scrollbar-width:thin;box-sizing:border-box;
+}
+html:has(.fc-table-scroll-wrap),body:has(.fc-table-scroll-wrap){height:100%!important;min-height:0!important;max-height:100%!important;}
+.fc-table-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;vertical-align:middle!important;text-align:center!important}
+.fc-table-scroll-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important}
 html,body{
   height:auto!important;min-height:0!important;
   margin:0;padding:0;width:100%;max-width:100%;
@@ -560,6 +591,10 @@ def _estimate_html_block_height(html: str) -> int:
         thead_h = 42
         row_h = 27
         extra = 6
+    elif "fc-table-scroll-wrap" in html_l:
+        thead_h = 56
+        row_h = 34
+        extra = 48
     elif "pred-detail-wrap" in html_l:
         thead_h = 56
         row_h = 50
@@ -590,6 +625,8 @@ def _estimate_html_block_height(html: str) -> int:
         return int(max(72, est))
     if "pred-detail-wrap" in html_l:
         return int(max(420, min(820, est + 24)))
+    if "fc-table-scroll-wrap" in html_l:
+        return int(max(840, min(1640, est + 24)))
     return int(min(cap, max(120, est)))
 
 
@@ -650,6 +687,7 @@ def _build_sortable_html_document(html: str) -> str:
                 or "bi-styled-table-wrap" in html_l
                 or "rendered-table-wrap" in html_l
                 or "dev-reasons-wrap" in html_l
+                or "fc-table-scroll-wrap" in html_l
             )
             else ""
         )
@@ -664,10 +702,12 @@ def _html_block_compact(html: str) -> bool:
         "pf-dates-table-wrap" in html_l
         or "pf-dates-table" in html_l
         or "pred-detail-wrap" in html_l
+        or "fc-table-scroll-wrap" in html_l
         or "gantt-schedule-table-wrap" in html_l
         or "rendered-table-wrap" in html_l
         or "dev-reasons-wrap" in html_l
         or "bi-styled-table-wrap" in html_l
+        or "fc-table-scroll-wrap" in html_l
         or "budget-deviation-table-wrap" in html_l
     )
 
@@ -682,6 +722,9 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
     doc = _build_sortable_html_document(html)
     if "pred-detail-wrap" in (html or ""):
         components.html(doc, height=548, scrolling=False)
+        return
+    if "fc-table-scroll-wrap" in (html or ""):
+        components.html(doc, height=1052, scrolling=False)
         return
     # Не st.html: <script> сортировки в основной DOM часто не выполняется (↕ видны, клик мёртвый).
     _compact = (
@@ -704,13 +747,14 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
         )
         return
     _h = _estimate_html_block_height(html)
-    if "pred-detail-wrap" not in (html or "") and "gdrs-matrix-table" not in (html or ""):
+    if "pred-detail-wrap" not in (html or "") and "fc-table-scroll-wrap" not in (html or "") and "gdrs-matrix-table" not in (html or ""):
         _h = min(900, max(320, int(_h)))
     _no_iframe_scroll = (
         "gdrs-summary-table-wrap",
         "budget-deviation-table-wrap",
         "pf-dates-table-wrap",
         "pred-detail-wrap",
+        "fc-table-scroll-wrap",
         "gantt-schedule-table-wrap",
         "exec-doc-table-wrap",
         "rendered-table-wrap",

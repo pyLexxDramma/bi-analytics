@@ -228,7 +228,10 @@ table.bi-sortable-table thead th .bi-sort-label{text-align:center!important}
   [data-testid="stPlotlyChart"]{min-height:280px!important}
   [data-testid="stPlotlyChart"] iframe{min-height:260px!important}
   .pred-detail-wrap{height:min(55vh,420px)!important;max-height:min(55vh,420px)!important}
+  .fc-table-scroll-wrap{height:100%!important;max-height:100%!important}
 }
+.fc-table-scroll-wrap{height:100%!important;max-height:100%!important;overflow-y:scroll!important;overflow-x:auto!important;-webkit-overflow-scrolling:touch!important;scrollbar-gutter:stable}
+.fc-table-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important}
 @media (max-width:700px){
   .main .block-container{padding-left:.75rem!important;padding-right:.75rem!important}
   [data-testid="stPlotlyChart"]{min-height:240px!important}
@@ -1614,7 +1617,7 @@ def render_styled_table_to_html(styler, hide_index: bool = True) -> str:
         )
         return (
             border_css
-            + '<div class="bi-styled-table-wrap" style="overflow-x:auto;min-width:0;margin:1em 0;'
+            + '<div class="bi-styled-table-wrap" style="overflow-x:auto;min-width:0;margin:0.35em 0 0 0;'
             + "-webkit-overflow-scrolling:touch;\">"
             f"{html}</div>"
         )
@@ -1676,6 +1679,7 @@ def format_dataframe_as_html(
     *,
     finance_decimal_places: int = 2,
     bold_row_indices: Optional[set] = None,
+    table_scroll_max_height_vh: float | None = None,
 ) -> str:
     """Форматирует DataFrame в HTML-таблицу для отображения в Streamlit."""
     if df is None or df.empty:
@@ -1734,11 +1738,33 @@ def format_dataframe_as_html(
         f"{HTML_TABLE_TD_TEXT_CSS}"
     )
     _td_group = _td_base.replace(TABLE_BG_COLOR, TABLE_GROUP_ROW_BG_COLOR)
-    html_table = (
-        "<div class='bd-table-wrap' style='width:100%;overflow-x:auto;min-width:0;-webkit-overflow-scrolling:touch;'>"
+    _scroll_vh = float(table_scroll_max_height_vh) if table_scroll_max_height_vh else None
+    if _scroll_vh:
+        _scroll_vh = max(30.0, min(85.0, _scroll_vh))
+    _tbl_open = (
         f"<table class='bi-sortable-table bi-sort-click-only' style='width:100%;min-width:max-content;border-collapse:collapse;background-color:{TABLE_BG_COLOR};"
         f"color:{TABLE_TEXT_COLOR};font-size:13px;'>"
     )
+    if _scroll_vh:
+        html_table = (
+            f'<div class="fc-table-scroll-wrap" data-bi-rows="{len(df)}">'
+            f"<style>"
+            f".fc-table-scroll-wrap{{display:block;width:100%;max-width:100%;margin:0.35em 0 0 0;"
+            f"height:100%;max-height:100%;min-height:0;"
+            f"overflow-x:auto;overflow-y:scroll;-webkit-overflow-scrolling:touch;"
+            f"scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:#4a5568 #1a1c23;"
+            f"border:1px solid rgba(255,255,255,0.25);border-radius:10px;}}"
+            f".fc-table-scroll-wrap thead th{{position:sticky;top:0;z-index:5;"
+            f"background-color:{TABLE_HEADER_BG_COLOR}!important;}}"
+            f"</style>"
+            f"<div class='fc-table-scroll-inner' style='min-width:0;'>"
+            + _tbl_open
+        )
+    else:
+        html_table = (
+            "<div class='bd-table-wrap' style='width:100%;overflow-x:auto;min-width:0;-webkit-overflow-scrolling:touch;'>"
+            + _tbl_open
+        )
     html_table += "<thead><tr>"
     for col in df.columns:
         col_escaped = html_module.escape(ru_column_header(col))
@@ -1877,7 +1903,10 @@ def format_dataframe_as_html(
                     cell_style += "text-align:left;vertical-align:top;"
                 html_table += f"<td class='{_cc}' style='{cell_style}'>{formatted_value}</td>"
         html_table += "</tr>"
-    html_table += "</tbody></table></div>"
+    if _scroll_vh:
+        html_table += "</tbody></table></div></div>"
+    else:
+        html_table += "</tbody></table></div>"
     return mark_html_table_sortable(html_table)
 
 
@@ -2010,6 +2039,7 @@ def render_report_html_table(
         or "gdrs-summary-table-wrap" in (html or "")
         or "gdrs-matrix-table" in (html or "")
         or "bi-sortable-table" in (html or "")
+        or "fc-table-scroll-wrap" in (html or "")
     )
 
     def _render_table_block() -> None:
@@ -2020,19 +2050,31 @@ def render_report_html_table(
         except Exception:
             st.markdown(html, unsafe_allow_html=True)
 
-    if _compact_tbl and "pred-detail-wrap" in (html or ""):
+    if _compact_tbl and ("pred-detail-wrap" in (html or "") or "fc-table-scroll-wrap" in (html or "")):
+        _fc_tbl = "fc-table-scroll-wrap" in (html or "")
         st.markdown(
             "<style>"
-            ".bi-sortable-html-root:has(.pred-detail-wrap){overflow:visible!important;overflow-x:hidden!important;}"
+            ".bi-sortable-html-root:has(.pred-detail-wrap),.bi-sortable-html-root:has(.fc-table-scroll-wrap){overflow:visible!important;overflow-x:hidden!important;}"
             ".pred-detail-wrap{height:min(70vh,520px)!important;max-height:min(70vh,520px)!important;"
             "overflow-y:scroll!important;overflow-x:auto!important;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch;}"
-            "div[data-testid='stElementContainer']:has(iframe){overflow:visible!important;margin-bottom:8px!important;max-width:100%!important;}"
-            "div[data-testid='stElementContainer']:has(iframe) iframe{overflow:hidden!important;max-width:100%!important;}"
-            "@media (max-width:900px){.pred-detail-wrap{height:min(55vh,420px)!important;max-height:min(55vh,420px)!important;}}"
+            ".fc-table-scroll-wrap{height:100%!important;max-height:100%!important;}"
+            "overflow-y:scroll!important;overflow-x:auto!important;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch;}"
+            "div[data-testid='stElementContainer']:has(iframe){overflow:visible!important;margin:0!important;padding:0!important;"
+            "max-width:100%!important;height:auto!important;min-height:0!important;}"
+            "div[data-testid='stElementContainer']:has(iframe) iframe{display:block!important;margin:0!important;padding:0!important;"
+            "overflow:hidden!important;max-width:100%!important;vertical-align:top!important;}"
+            "div[data-testid='stVerticalBlock']:has(iframe){gap:0!important;margin:0!important;padding:0!important;}"
+            "div[data-testid='stVerticalBlock']:has(iframe)+div[data-testid='stVerticalBlock']:has([data-testid='stPopover']),"
+            "div[data-testid='stVerticalBlock']:has([data-testid='stHtml'])+div[data-testid='stVerticalBlock']:has([data-testid='stPopover'])"
+            "{margin:0!important;padding:0!important;gap:0!important;}"
+            "[data-testid='stPopover']{margin:0!important;padding:0!important;}"
+            "@media (max-width:900px){.pred-detail-wrap{height:min(55vh,420px)!important;max-height:min(55vh,420px)!important;}"
+            ".fc-table-scroll-wrap{height:100%!important;max-height:100%!important;}}"
             "</style>",
             unsafe_allow_html=True,
         )
     if _compact_tbl:
+        _gap_fc = "fc-table-scroll-wrap" in (html or "")
         st.markdown(
             "<style>"
             "div[data-testid='stHtml'],div[data-testid='stElementContainer']:has(iframe){"
@@ -2042,19 +2084,38 @@ def render_report_html_table(
             "width:100%!important;max-width:100%!important;min-width:0!important;vertical-align:top!important;}"
             "div[data-testid='stElementContainer']:has(iframe[title='streamlit_components_v1']),"
             "div[data-testid='stElementContainer']:has([data-testid='stHtml']) "
-            "{margin-bottom:0!important;padding-bottom:0!important;overflow:visible!important;}"
-            "div[data-testid='stElementContainer']:has([data-testid='stPopover']),"
-            "div[data-testid='stVerticalBlock']:has([data-testid='stPopover']) "
-            "{margin-top:0!important;padding-top:0!important;}"
+            "{margin:0!important;padding:0!important;overflow:visible!important;}"
+            "div[data-testid='stVerticalBlock']:has(iframe){gap:0!important;margin:0!important;padding:0!important;}"
             "div[data-testid='stVerticalBlock']:has(iframe)+div[data-testid='stVerticalBlock']:has([data-testid='stPopover']),"
             "div[data-testid='stVerticalBlock']:has([data-testid='stHtml']) "
             "+div[data-testid='stVerticalBlock']:has([data-testid='stPopover']) "
-            "{margin-top:0!important;padding-top:0!important;}"
+            "{margin:0!important;padding:0!important;gap:0!important;}"
+            "[data-testid='stPopover']{margin:0!important;padding:0!important;}"
             "div[data-testid='stExpander'] details[open]>div{padding-bottom:0!important;"
             "max-width:100%!important;overflow-x:auto!important;min-width:0!important;}"
             "</style>",
             unsafe_allow_html=True,
         )
+        if _gap_fc:
+            try:
+                _tbl_outer = st.container(border=False, gap=None)
+            except TypeError:
+                _tbl_outer = st.container(border=False)
+            with _tbl_outer:
+                try:
+                    _tbl_box = st.container(border=False, height=1052, gap=None)
+                except TypeError:
+                    _tbl_box = st.container(border=False)
+                with _tbl_box:
+                    _render_table_block()
+                if export_df is not None:
+                    render_dataframe_excel_csv_downloads(
+                        export_df,
+                        file_stem=file_stem,
+                        key_prefix=_kp,
+                        popover_key=_pop_key,
+                    )
+            return
         try:
             _tbl_block = st.container(border=False, gap="xxsmall")
         except TypeError:
