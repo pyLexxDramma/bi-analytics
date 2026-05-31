@@ -359,9 +359,12 @@ html, body {
   overflow-x:auto!important;overflow-y:visible;
   -webkit-overflow-scrolling:touch;scrollbar-gutter:stable;
 }
-.pred-detail-wrap{display:block;width:100%;margin:0;padding:0}
-.pred-detail-wrap{overflow-x:hidden!important;overflow-y:visible!important}
-.pred-detail-wrap table{width:100%!important;max-width:100%!important}
+.bi-sortable-html-root:has(.pred-detail-wrap){overflow:visible!important;overflow-x:hidden!important}
+.pred-detail-wrap{display:block;width:100%;margin:0;padding:0;max-height:min(72vh,780px)!important;overflow-x:auto!important;overflow-y:auto!important;scrollbar-gutter:stable}
+.pred-detail-wrap table{width:max-content!important;min-width:100%!important}
+.pred-detail-wrap thead th{vertical-align:middle!important;text-align:center!important;white-space:normal!important;max-width:none!important}
+.pred-detail-wrap thead th>div{justify-content:center!important;align-items:center!important}
+.pred-detail-wrap thead th .bi-sort-label{text-align:center!important;white-space:normal!important;overflow-wrap:anywhere!important}
 html,body{
   height:auto!important;min-height:0!important;
   margin:0;padding:0;width:100%;max-width:100%;

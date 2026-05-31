@@ -1968,10 +1968,10 @@ def render_report_html_table(
     if _compact_tbl and "pred-detail-wrap" in (html or ""):
         st.markdown(
             "<style>"
+            ".bi-sortable-html-root:has(.pred-detail-wrap){overflow:visible!important;overflow-x:hidden!important;}"
+            ".pred-detail-wrap{max-height:min(72vh,780px)!important;overflow-y:auto!important;overflow-x:auto!important;scrollbar-gutter:stable;}"
             "div[data-testid='stHtml'],div[data-testid='stElementContainer']:has([data-testid='stHtml']) "
-            "{overflow:visible!important;max-height:none!important;margin-bottom:8px!important;}"
-            "div[data-testid='stVerticalBlock']:has(.pred-detail-wrap) "
-            "{overflow:visible!important;}"
+            "{overflow-x:hidden!important;overflow-y:visible!important;margin-bottom:8px!important;}"
             "</style>",
             unsafe_allow_html=True,
         )

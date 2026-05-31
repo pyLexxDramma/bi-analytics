@@ -29334,33 +29334,64 @@ _PRED_DASH_MOCK_CSS = """
 .pred-mock-title { font-size:1.05rem; font-weight:600; color:#fafafa; }
 .pred-mock-sort { font-size:12px; color:#a0a0a0; }
 .pred-mock-badge { background:#c0392b; color:#fff; padding:4px 14px; border-radius:20px; font-size:13px; font-weight:500; }
-.pred-detail-wrap { overflow-x:auto; overflow-y:visible; min-width:0; -webkit-overflow-scrolling:touch; border:1px solid #444; border-radius:10px; margin-top:8px; margin-bottom:12px; }
-.pred-detail-wrap table { width:100%; table-layout:auto; border-collapse:collapse; }
-.pred-detail-wrap th { text-align:center; padding:4px 5px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:10px; text-transform:uppercase; white-space:normal; line-height:1.25; word-wrap:break-word; overflow-wrap:anywhere; max-width:11em; overflow:visible; text-overflow:clip; vertical-align:bottom; cursor:pointer; user-select:none; }
-.pred-detail-wrap th.pred-col-st,
-.pred-detail-wrap th.pred-col-num,
-.pred-detail-wrap th.pred-col-dly { white-space:nowrap; }
+.pred-detail-wrap {
+  overflow-x:auto; overflow-y:auto; min-width:0;
+  max-height:min(72vh, 780px);
+  -webkit-overflow-scrolling:touch;
+  border:1px solid #444; border-radius:10px; margin-top:8px; margin-bottom:12px;
+  scrollbar-gutter:stable;
+}
+.bi-sortable-html-root:has(.pred-detail-wrap) {
+  overflow:visible !important;
+  overflow-x:hidden !important;
+}
+.pred-detail-wrap table { width:max-content; min-width:100%; table-layout:auto; border-collapse:collapse; }
+.pred-detail-wrap thead th {
+  text-align:center; vertical-align:middle; padding:8px 6px;
+  background:#1a1c23; color:#fafafa; border-bottom:2px solid #444;
+  font-size:10px; text-transform:uppercase; line-height:1.2;
+  white-space:normal; overflow:visible; max-width:none;
+  cursor:pointer; user-select:none;
+  position:sticky; top:0; z-index:3;
+}
+.pred-detail-wrap thead th > div { justify-content:center !important; align-items:center !important; }
+.pred-detail-wrap thead th .bi-sort-label {
+  text-align:center; width:100%;
+  white-space:normal; overflow-wrap:anywhere; word-wrap:break-word;
+}
 .pred-detail-wrap table { border-collapse:separate !important; border-spacing:0 !important; border:1px solid #5a7a9a !important; }
 .pred-detail-wrap th, .pred-detail-wrap td { border-right:1px solid #5a7a9a !important; border-bottom:1px solid #5a7a9a !important; }
 .pred-detail-wrap thead tr:first-child th { border-top:1px solid #5a7a9a !important; }
 .pred-detail-wrap tr th:first-child, .pred-detail-wrap tr td:first-child { border-left:1px solid #5a7a9a !important; }
-.pred-detail-wrap td { padding:4px 6px; border-bottom:1px solid #333; color:#e0e0e0; vertical-align:top; white-space:normal; word-wrap:break-word; overflow-wrap:anywhere; max-width:11em; font-size:12px; overflow:visible; text-overflow:clip; background:#1a1c23 !important; }
-.pred-detail-wrap td.pred-col-num,
+.pred-detail-wrap td {
+  padding:5px 7px; color:#e0e0e0; vertical-align:middle; text-align:center;
+  font-size:12px; background:#1a1c23 !important;
+}
+.pred-detail-wrap td.pred-col-st, .pred-detail-wrap td.pred-col-text { text-align:left; white-space:normal; word-wrap:break-word; }
 .pred-detail-wrap td.pred-col-dly,
 .pred-detail-wrap td.pred-col-date,
 .pred-detail-wrap td.pred-col-mid,
-.pred-detail-wrap td.pred-col-contr { white-space:nowrap; max-width:none; overflow:visible; text-overflow:clip; }
-.pred-detail-wrap .pred-col-num { width:9ch; min-width:9ch; max-width:11ch; }
-.pred-detail-wrap .pred-col-dly { width:11ch; min-width:11ch; max-width:12ch; font-variant-numeric:tabular-nums; }
-.pred-detail-wrap .pred-col-st { width:22ch; min-width:22ch; max-width:26ch; }
-.pred-detail-wrap td.pred-col-st { white-space:normal; overflow:visible; text-overflow:clip; }
+.pred-detail-wrap td.pred-col-contr,
+.pred-detail-wrap td.pred-col-crit { white-space:nowrap; }
+.pred-detail-wrap .pred-col-st { min-width:11em; }
+.pred-detail-wrap thead th.pred-col-st { min-width:11em; }
 .pred-detail-wrap td.pred-col-st .pred-chip { white-space:nowrap; }
-.pred-detail-wrap .pred-col-contr { width:14ch; min-width:12ch; max-width:18ch; }
-.pred-detail-wrap .pred-col-date { width:12ch; min-width:12ch; max-width:13ch; }
-.pred-detail-wrap .pred-col-mid { width:12ch; min-width:11ch; max-width:16ch; }
-.pred-detail-wrap .pred-col-text { width:auto; min-width:12ch; }
-/* Подсветка строк: !important нужен, потому что Streamlit-обертка
-   добавляет свой более специфичный фон, который перебивает rgba. */
+.pred-detail-wrap .pred-col-contr { min-width:12em; }
+.pred-detail-wrap thead th.pred-col-contr { min-width:12em; }
+.pred-detail-wrap .pred-col-text { min-width:9em; }
+.pred-detail-wrap thead th.pred-col-text { min-width:9em; }
+.pred-detail-wrap .pred-col-mid { min-width:7em; }
+.pred-detail-wrap thead th.pred-col-mid { min-width:7em; }
+.pred-detail-wrap .pred-col-date { min-width:10em; }
+.pred-detail-wrap thead th.pred-col-date { min-width:10em; }
+.pred-detail-wrap .pred-col-date-long { min-width:14em; }
+.pred-detail-wrap thead th.pred-col-date-long { min-width:14em; }
+.pred-detail-wrap .pred-col-block { min-width:12em; }
+.pred-detail-wrap thead th.pred-col-block { min-width:12em; }
+.pred-detail-wrap .pred-col-dly { min-width:9em; font-variant-numeric:tabular-nums; }
+.pred-detail-wrap thead th.pred-col-dly { min-width:9em; }
+.pred-detail-wrap .pred-col-crit { min-width:14em; }
+.pred-detail-wrap thead th.pred-col-crit { min-width:14em; }
 .pred-detail-wrap tbody tr.pred-row-overdue td { background:rgba(255, 105, 145, 0.14) !important; border-bottom:1px solid rgba(255, 93, 143, 0.28); }
 .pred-detail-wrap tbody tr.pred-row-overdue td:first-child { border-left:4px solid #ff5d8f !important; }
 .pred-detail-wrap tbody tr.pred-row-resolved td { background:rgba(102, 221, 102, 0.14) !important; border-bottom:1px solid rgba(102, 221, 102, 0.28); }
@@ -29916,13 +29947,17 @@ def _pred_detail_col_class(col_name: str) -> str:
         return "pred-col-mid"
     if c == "№ документа":
         return "pred-col-mid"
-    if c in {"Дата выдачи предписания", "Срок устранения", "Фактическая дата устранения предписания"} or "дата" in cl:
+    if c == "Фактическая дата устранения предписания":
+        return "pred-col-date-long"
+    if c in {"Дата выдачи предписания", "Срок устранения"}:
         return "pred-col-date"
+    if c == "Блок выдачи предписания":
+        return "pred-col-block"
     if c == "Дней просрочки" or "дней" in cl:
         return "pred-col-dly"
     if c == "Критические предписания" or c.startswith("критич"):
-        return "pred-col-num"
-    if c in {"Проект", "Блок выдачи предписания"}:
+        return "pred-col-crit"
+    if c == "Проект":
         return "pred-col-text"
     return "pred-col-text"
 
@@ -29971,7 +30006,7 @@ def _pred_detail_table_html(
         "Срок устранения": "Срок",
         "Фактическая дата устранения предписания": "Факт устран.",
         "Дней просрочки": "Просрочка, дн",
-        "Критические предписания": "Критич.",
+        "Критические предписания": "Критические предписания",
     }
     if df is None or df.empty:
         return f'<p style="color:#a0a0a0;padding:16px;">{esc("Нет строк для отображения.")}</p>'
@@ -29985,11 +30020,10 @@ def _pred_detail_table_html(
     ]
     for col in render_cols:
         c_cls = _pred_detail_col_class(col)
-        caption = header_alias.get(str(col).strip(), str(col).strip())
         full_name = str(col).strip()
         parts.append(
             f'<th class="{esc(c_cls, quote=True)}" data-sort-label="{esc(full_name, quote=True)}" '
-            f'title="{esc(full_name, quote=True)}">{esc(caption)}</th>'
+            f'title="{esc(full_name, quote=True)}">{esc(full_name)}</th>'
         )
     parts.append("</tr></thead><tbody>")
     for _, row in show.iterrows():
