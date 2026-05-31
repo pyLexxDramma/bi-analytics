@@ -22142,6 +22142,28 @@ def _krstate_bucket(raw) -> str:
 
 
 # ── Исполнительная документация: детальная таблица (тёмная тема, как остальной дашборд) ──
+_EXEC_DOC_KPI_CSS = """
+<style>
+.exec-kpi-grid {
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+  gap:12px; margin:0.5rem 0 1rem;
+}
+.exec-kpi-card {
+  background:rgba(20,35,52,0.92); border:1px solid rgba(104,128,157,0.24);
+  border-radius:14px; padding:14px 16px;
+}
+.exec-kpi-card.exec-kpi-alert { border-color:rgba(239,68,68,0.35); }
+.exec-kpi-card.exec-kpi-warn { border-color:rgba(245,158,11,0.35); }
+.exec-kpi-card.exec-kpi-ok { border-color:rgba(34,197,94,0.35); }
+.exec-kpi-title { color:#8fa7bf; font-size:12px; margin-bottom:8px; }
+.exec-kpi-value { color:#f8fbff; font-size:28px; font-weight:800; line-height:1.05; }
+.exec-kpi-subtitle { color:#97a9bc; font-size:12px; margin-top:8px; line-height:1.4; }
+.exec-kpi-delta-pos { color:#4ade80; font-size:12px; font-weight:700; margin-top:8px; }
+.exec-kpi-delta-neg { color:#f87171; font-size:12px; font-weight:700; margin-top:8px; }
+</style>
+"""
+
+
 _EXEC_DOC_DETAIL_CSS = """
 <style>
 .exec-doc-panel {
@@ -22356,7 +22378,7 @@ def _exec_metric_cards_html(cards: list[dict], *, caption: str | None = None) ->
     parts.append("</div>")
     if caption:
         parts.append(f'<div class="exec-doc-caption">{esc(caption)}</div>')
-    return "".join(parts)
+    return _EXEC_DOC_KPI_CSS + "".join(parts)
 
 
 def _exec_cell_sort_attr(col: str, row: pd.Series) -> str:
