@@ -1965,6 +1965,16 @@ def render_report_html_table(
         except Exception:
             st.markdown(html, unsafe_allow_html=True)
 
+    if _compact_tbl and "pred-detail-wrap" in (html or ""):
+        st.markdown(
+            "<style>"
+            "div[data-testid='stHtml'],div[data-testid='stElementContainer']:has([data-testid='stHtml']) "
+            "{overflow:visible!important;max-height:none!important;margin-bottom:8px!important;}"
+            "div[data-testid='stVerticalBlock']:has(.pred-detail-wrap) "
+            "{overflow:visible!important;}"
+            "</style>",
+            unsafe_allow_html=True,
+        )
     if _compact_tbl:
         st.markdown(
             "<style>"

@@ -29334,7 +29334,7 @@ _PRED_DASH_MOCK_CSS = """
 .pred-mock-title { font-size:1.05rem; font-weight:600; color:#fafafa; }
 .pred-mock-sort { font-size:12px; color:#a0a0a0; }
 .pred-mock-badge { background:#c0392b; color:#fff; padding:4px 14px; border-radius:20px; font-size:13px; font-weight:500; }
-.pred-detail-wrap { overflow-x:auto; min-width:0; -webkit-overflow-scrolling:touch; border:1px solid #444; border-radius:10px; margin-top:8px; }
+.pred-detail-wrap { overflow-x:auto; overflow-y:visible; min-width:0; -webkit-overflow-scrolling:touch; border:1px solid #444; border-radius:10px; margin-top:8px; margin-bottom:12px; }
 .pred-detail-wrap table { width:100%; table-layout:auto; border-collapse:collapse; }
 .pred-detail-wrap th { text-align:center; padding:4px 5px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:10px; text-transform:uppercase; white-space:normal; line-height:1.25; word-wrap:break-word; overflow-wrap:anywhere; max-width:11em; overflow:visible; text-overflow:clip; vertical-align:bottom; cursor:pointer; user-select:none; }
 .pred-detail-wrap th.pred-col-st,
@@ -29977,9 +29977,10 @@ def _pred_detail_table_html(
         return f'<p style="color:#a0a0a0;padding:16px;">{esc("Нет строк для отображения.")}</p>'
     show = df.head(max_rows)
     render_cols = [c for c in show.columns if c not in ("_resolved_flag", "_overdue_num")]
+    n_rows = len(show)
     parts = [
-        '<div class="pred-detail-wrap">',
-        '<table class="bi-sortable-table bi-sort-click-only">',
+        f'<div class="pred-detail-wrap" data-bi-rows="{n_rows}">',
+        '<table class="rendered-table bi-sortable-table bi-sort-click-only">',
         "<thead><tr>",
     ]
     for col in render_cols:

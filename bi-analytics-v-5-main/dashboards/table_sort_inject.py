@@ -222,6 +222,7 @@ _TABLE_SORT_JS = r"""
           th._biSortDir = th._biSortDir >= 0 ? -1 : 1;
         }
         apply();
+        reportFrameHeight();
       }
 
       paintLabel();
@@ -296,6 +297,7 @@ _TABLE_SORT_JS = r"""
   try {
     var ro = new ResizeObserver(function () { reportFrameHeight(); });
     var tgt = document.querySelector(".pf-dates-table-wrap")
+      || document.querySelector(".pred-detail-wrap")
       || document.querySelector(".gantt-schedule-table-wrap")
       || document.querySelector(".budget-deviation-table-wrap")
       || document.querySelector(".bi-sortable-html-root")
@@ -545,9 +547,9 @@ def _estimate_html_block_height(html: str) -> int:
         row_h = 27
         extra = 6
     elif "pred-detail-wrap" in html_l:
-        thead_h = 52
-        row_h = 44
-        extra = 36
+        thead_h = 56
+        row_h = 50
+        extra = 48
     elif "bi-sortable-table" in html_l:
         thead_h = 68
         row_h = 34
@@ -665,6 +667,18 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
         st.markdown(html, unsafe_allow_html=True)
         return
     doc = _build_sortable_html_document(html)
+    if "pred-detail-wrap" in (html or ""):
+        try:
+            st.html(doc, width="stretch", unsafe_allow_javascript=True)
+            return
+        except TypeError:
+            try:
+                st.html(doc, width="stretch")
+                return
+            except Exception:
+                pass
+        except Exception:
+            pass
     # Не st.html: <script> сортировки в основной DOM часто не выполняется (↕ видны, клик мёртвый).
     _compact = (
         _html_block_compact(html)
