@@ -1969,9 +1969,11 @@ def render_report_html_table(
         st.markdown(
             "<style>"
             ".bi-sortable-html-root:has(.pred-detail-wrap){overflow:visible!important;overflow-x:hidden!important;}"
-            ".pred-detail-wrap{max-height:min(72vh,780px)!important;overflow-y:auto!important;overflow-x:auto!important;scrollbar-gutter:stable;}"
-            "div[data-testid='stHtml'],div[data-testid='stElementContainer']:has([data-testid='stHtml']) "
-            "{overflow-x:hidden!important;overflow-y:visible!important;margin-bottom:8px!important;}"
+            ".pred-detail-wrap{height:min(70vh,520px)!important;max-height:min(70vh,520px)!important;"
+            "overflow-y:scroll!important;overflow-x:auto!important;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch;}"
+            "div[data-testid='stElementContainer']:has(iframe){overflow:visible!important;margin-bottom:8px!important;max-width:100%!important;}"
+            "div[data-testid='stElementContainer']:has(iframe) iframe{overflow:hidden!important;max-width:100%!important;}"
+            "@media (max-width:900px){.pred-detail-wrap{height:min(55vh,420px)!important;max-height:min(55vh,420px)!important;}}"
             "</style>",
             unsafe_allow_html=True,
         )

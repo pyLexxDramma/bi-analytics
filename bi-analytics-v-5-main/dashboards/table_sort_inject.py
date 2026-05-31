@@ -256,9 +256,8 @@ _TABLE_SORT_JS = r"""
         if (compact) {
           var tbl = root.querySelector("table.pf-dates-table")
             || root.querySelector("table.bi-sortable-table");
-          if (root.classList.contains("pred-detail-wrap") && tbl && tbl.getBoundingClientRect) {
-            var tr = tbl.getBoundingClientRect();
-            h = Math.ceil(tr.bottom + (window.scrollY || 0)) + 20;
+          if (root.classList.contains("pred-detail-wrap")) {
+            h = Math.ceil(r.height + (window.scrollY || 0)) + 16;
           } else
           if (tbl && tbl.getBoundingClientRect) {
             var tr = tbl.getBoundingClientRect();
@@ -360,11 +359,18 @@ html, body {
   -webkit-overflow-scrolling:touch;scrollbar-gutter:stable;
 }
 .bi-sortable-html-root:has(.pred-detail-wrap){overflow:visible!important;overflow-x:hidden!important}
-.pred-detail-wrap{display:block;width:100%;margin:0;padding:0;max-height:min(72vh,780px)!important;overflow-x:auto!important;overflow-y:auto!important;scrollbar-gutter:stable}
-.pred-detail-wrap table{width:max-content!important;min-width:100%!important}
-.pred-detail-wrap thead th{vertical-align:middle!important;text-align:center!important;white-space:normal!important;max-width:none!important}
+html:has(.pred-detail-wrap),body:has(.pred-detail-wrap){overflow:hidden!important;margin:0;padding:0}
+.pred-detail-wrap{
+  display:block;width:100%!important;margin:0;padding:0;
+  height:min(70vh,520px)!important;max-height:min(70vh,520px)!important;
+  overflow-x:auto!important;overflow-y:scroll!important;
+  scrollbar-gutter:stable;scrollbar-width:thin;
+}
+.pred-detail-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important}
+.pred-detail-wrap thead th{vertical-align:middle!important;text-align:center!important}
 .pred-detail-wrap thead th>div{justify-content:center!important;align-items:center!important}
-.pred-detail-wrap thead th .bi-sort-label{text-align:center!important;white-space:normal!important;overflow-wrap:anywhere!important}
+.pred-detail-wrap thead th .bi-sort-label{text-align:center!important}
+.pred-detail-wrap thead th.pred-col-crit,.pred-detail-wrap thead th.pred-col-crit .bi-sort-label{white-space:nowrap!important}
 html,body{
   height:auto!important;min-height:0!important;
   margin:0;padding:0;width:100%;max-width:100%;
@@ -578,7 +584,7 @@ def _estimate_html_block_height(html: str) -> int:
     if "pf-dates-table-wrap" in html_l or "pf-dates-table" in html_l:
         return int(max(72, est))
     if "pred-detail-wrap" in html_l:
-        return int(max(120, min(3200, est + 24)))
+        return int(max(420, min(820, est + 24)))
     return int(min(cap, max(120, est)))
 
 
@@ -631,7 +637,6 @@ def _build_sortable_html_document(html: str) -> str:
             if (
                 "pf-dates-table-wrap" in html_l
                 or "pf-dates-table" in html_l
-                or "pred-detail-wrap" in html_l
                 or "gantt-schedule-table-wrap" in html_l
                 or (
                     "budget-deviation-table-wrap" in html_l
@@ -671,17 +676,8 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
         return
     doc = _build_sortable_html_document(html)
     if "pred-detail-wrap" in (html or ""):
-        try:
-            st.html(doc, width="stretch", unsafe_allow_javascript=True)
-            return
-        except TypeError:
-            try:
-                st.html(doc, width="stretch")
-                return
-            except Exception:
-                pass
-        except Exception:
-            pass
+        components.html(doc, height=548, scrolling=False)
+        return
     # Не st.html: <script> сортировки в основной DOM часто не выполняется (↕ видны, клик мёртвый).
     _compact = (
         _html_block_compact(html)
