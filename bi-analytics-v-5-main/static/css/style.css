@@ -257,6 +257,36 @@ div[data-testid="stDataFrame"] [role="gridcell"] span {
     border: 1px solid rgba(255,255,255,0.3) !important;
 }
 
+/* st.data_editor (Glide): клики и курсор ввода — не перекрывать глобальным input{} */
+[data-testid="stDataEditor"],
+div[data-testid="stDataEditor"] {
+    min-height: 12rem !important;
+    pointer-events: auto !important;
+}
+div[data-testid="stDataEditor"] [role="cell"],
+div[data-testid="stDataEditor"] [role="gridcell"],
+div[data-testid="stDataEditor"] [role="columnheader"],
+div[data-testid="stDataEditor"] canvas {
+    pointer-events: auto !important;
+}
+div[data-testid="stDataEditor"] [role="cell"],
+div[data-testid="stDataEditor"] [role="gridcell"] {
+    cursor: cell !important;
+}
+[data-testid="stDataEditor"] input,
+[data-testid="stDataEditor"] textarea,
+[data-testid="stDataEditor"] [contenteditable="true"],
+div[data-testid="stDataEditor"] input,
+div[data-testid="stDataEditor"] textarea {
+    color: #ffffff !important;
+    background-color: #1e3a5f !important;
+    border: 1px solid rgba(96, 165, 250, 0.75) !important;
+    caret-color: #ffffff !important;
+    pointer-events: auto !important;
+    cursor: text !important;
+    outline: 1px solid rgba(96, 165, 250, 0.5) !important;
+}
+
 
 
 
@@ -1293,8 +1323,45 @@ section.main,
     max-width: 100%;
 }
 
+
+/* Прогнозный бюджет: st.data_editor — поверх глобального input{} (INPUT ¤ Start ниже по файлу) */
+div[data-testid="stDataEditor"] input,
+div[data-testid="stDataEditor"] textarea,
+[data-testid="stDataEditor"] input,
+[data-testid="stDataEditor"] textarea,
+div[data-testid="stDataEditor"] [contenteditable="true"],
+[data-testid="stDataEditor"] [contenteditable="true"] {
+    color: #ffffff !important;
+    background-color: #1e3a5f !important;
+    border: 1px solid rgba(96, 165, 250, 0.85) !important;
+    caret-color: #ffffff !important;
+    pointer-events: auto !important;
+    cursor: text !important;
+    outline: none !important;
+    min-height: 1.4em !important;
+    opacity: 1 !important;
+}
+div[data-testid="stDataEditor"] [role="cell"]:focus,
+div[data-testid="stDataEditor"] [role="gridcell"]:focus,
+div[data-testid="stDataEditor"] [role="cell"][aria-selected="true"],
+div[data-testid="stDataEditor"] [role="gridcell"][aria-selected="true"] {
+    outline: 2px solid rgba(96, 165, 250, 0.9) !important;
+    outline-offset: -1px !important;
+}
+
 /* Фильтры в строке: равная ширина колонок, без пустого flex-места между selectbox’ами */
 section.main [data-testid="stHorizontalBlock"] > div[data-testid="column"] {
     flex: 1 1 0% !important;
     min-width: 0 !important;
+}
+
+/* Прогнозный бюджет: липкая шапка редактора лотов */
+.fc-fc-lot-hdr-stick {
+  position: sticky !important;
+  top: 3.15rem !important;
+  z-index: 1002 !important;
+  background: #0d2b47 !important;
+}
+[data-testid="stVerticalBlock"] > div:has(.fc-fc-lot-hdr-stick) {
+  overflow: visible !important;
 }

@@ -44,6 +44,7 @@ from utils import (
     load_custom_css,
     outline_level_numeric,
     render_dataframe_excel_csv_downloads,
+    render_report_html_table,
 )
 try:
     from filters import (
@@ -666,16 +667,12 @@ def _admin_tab3_logs_fragment() -> None:
             # df_logs["sort_time"] = pd.to_datetime(df_logs["Время"], format=..., errors="coerce")
             # но обычно достаточно просто сортировки по строке
 
-            html_table = format_dataframe_as_html(df_logs)
-            st.markdown(html_table, unsafe_allow_html=True)
-
-            # Экспорт
             _logs_stem = f"logs_{datetime.now():%Y%m%d_%H%M%S}"
-            render_dataframe_excel_csv_downloads(
-                df_logs,
+            render_report_html_table(
+                format_dataframe_as_html(df_logs),
+                export_df=df_logs,
                 file_stem=_logs_stem,
                 key_prefix="admin_action_logs",
-                csv_label="Скачать логи (CSV для Excel)",
             )
 
         else:

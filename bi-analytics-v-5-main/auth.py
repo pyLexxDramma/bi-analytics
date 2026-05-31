@@ -422,9 +422,15 @@ def delete_user(user_id: int, deleted_by: str) -> Tuple[bool, str]:
     return True, f"Пользователь «{target_username}» удалён"
 
 
+def user_can_edit_finance_tables(role: str | None) -> bool:
+    """Редактирование таблиц БДДС/прогноза: админ, суперадмин, РП, финансист."""
+    r = str(role or "").strip().lower()
+    return r in {"superadmin", "admin", "rp", "financier"}
+
+
 def has_admin_access(user_role: str) -> bool:
     """Проверка доступа к административной панели"""
-    return user_role in ADMIN_ROLES
+    return str(user_role or "").strip().lower() in ("superadmin", "admin")
 
 
 def has_report_access(user_role: str) -> bool:

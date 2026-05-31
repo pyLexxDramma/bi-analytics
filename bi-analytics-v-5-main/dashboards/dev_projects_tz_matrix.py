@@ -1482,7 +1482,7 @@ def render_developer_predpisaniya_expander(
     """Полная таблица предписаний Tessa под матрицей + выгрузка."""
     import streamlit as st
 
-    from utils import render_dataframe_excel_csv_downloads, render_dataframe_sortable
+    from utils import render_dataframe_sortable
 
     raw_names = [str(n).strip() for n in (project_names or []) if str(n).strip()]
     if len(raw_names) == 1:
@@ -1498,12 +1498,7 @@ def render_developer_predpisaniya_expander(
             if df_all.empty:
                 return
             render_dataframe_sortable(df_all, file_stem="predpisaniya_tessa", key_prefix="dev_pred_all_tbl", use_styler=False)
-            render_dataframe_excel_csv_downloads(
-                df_all,
-                file_stem="predpisaniya_tessa",
-                key_prefix="dev_pred_all",
-                csv_label="Скачать предписания (CSV)",
-            )
+
             return
 
         chunks: List[pd.DataFrame] = []
@@ -1519,22 +1514,12 @@ def render_developer_predpisaniya_expander(
             if df_fallback.empty:
                 return
             render_dataframe_sortable(df_fallback, file_stem="predpisaniya_tessa", key_prefix="dev_pred_fb_tbl", use_styler=False)
-            render_dataframe_excel_csv_downloads(
-                df_fallback,
-                file_stem="predpisaniya_tessa",
-                key_prefix="dev_pred_fb",
-                csv_label="Скачать предписания (CSV)",
-            )
+
             return
 
         merged = pd.concat(chunks, ignore_index=True)
         render_dataframe_sortable(merged, file_stem="predpisaniya_tessa_by_project", key_prefix="dev_pred_detail_tbl", use_styler=False)
-        render_dataframe_excel_csv_downloads(
-            merged,
-            file_stem="predpisaniya_tessa_by_project",
-            key_prefix="dev_pred_detail",
-            csv_label="Скачать предписания (CSV)",
-        )
+
 
 
 def dedupe_msp_for_developer_projects(df: pd.DataFrame) -> pd.DataFrame:

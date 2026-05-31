@@ -1313,7 +1313,7 @@ def budget_table_to_html(
     )
     parts = [
         _html_table_caption(table_caption),
-        f'<div id="{wrap_id}" class="budget-deviation-table-wrap" style="overflow-x: auto; min-width: 0; margin: 0; padding: 0;">',
+        f'<div id="{wrap_id}" class="budget-deviation-table-wrap" data-bi-rows="{len(df)}" style="overflow-x: auto; min-width: 0; margin: 0; padding: 0;">',
         f"<style>{_style_css}</style>",
         f'<div class="budget-table-scroll">' if _scroll_vh else "",
         f'<table class="bi-sortable-table bi-sort-click-only" style="width:100%; border-collapse: collapse; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; font-size: {_tbl_px}px;">',
@@ -1967,29 +1967,42 @@ def render_report_html_table(
     if _compact_tbl:
         st.markdown(
             "<style>"
-            "div[data-testid='stHtml']{margin:0!important;padding:0!important;"
-            "max-width:100%!important;overflow-x:auto!important;min-width:0!important;}"
-            "div[data-testid='stHtml'] iframe{display:block;margin:0!important;padding:0!important;"
-            "width:100%!important;max-width:100%!important;min-width:0!important;}"
+            "div[data-testid='stHtml'],div[data-testid='stElementContainer']:has(iframe){"
+            "margin:0!important;padding:0!important;max-width:100%!important;min-width:0!important;}"
+            "div[data-testid='stHtml'] iframe,iframe[title='streamlit_components_v1']{"
+            "display:block!important;margin:0!important;padding:0!important;border:0!important;"
+            "width:100%!important;max-width:100%!important;min-width:0!important;vertical-align:top!important;}"
+            "div[data-testid='stElementContainer']:has(iframe[title='streamlit_components_v1']),"
             "div[data-testid='stElementContainer']:has([data-testid='stHtml']) "
-            "{margin-bottom:0!important;padding-bottom:0.35rem!important;"
-            "max-width:100%!important;overflow-x:auto!important;min-width:0!important;}"
+            "{margin-bottom:0!important;padding-bottom:0!important;overflow:visible!important;}"
+            "div[data-testid='stElementContainer']:has([data-testid='stPopover']),"
             "div[data-testid='stVerticalBlock']:has([data-testid='stPopover']) "
             "{margin-top:0!important;padding-top:0!important;}"
-            "div[data-testid='stExpander'] details[open]>div{padding-bottom:0.35rem!important;"
+            "div[data-testid='stVerticalBlock']:has(iframe)+div[data-testid='stVerticalBlock']:has([data-testid='stPopover']),"
+            "div[data-testid='stVerticalBlock']:has([data-testid='stHtml']) "
+            "+div[data-testid='stVerticalBlock']:has([data-testid='stPopover']) "
+            "{margin-top:0!important;padding-top:0!important;}"
+            "div[data-testid='stExpander'] details[open]>div{padding-bottom:0!important;"
             "max-width:100%!important;overflow-x:auto!important;min-width:0!important;}"
-            "div[data-testid='stExpander'] [data-testid='stHtml']{overflow-x:auto!important;}"
             "</style>",
             unsafe_allow_html=True,
         )
-        _render_table_block()
-        if export_df is not None:
-            render_dataframe_excel_csv_downloads(
-                export_df,
-                file_stem=file_stem,
-                key_prefix=_kp,
-                popover_key=_pop_key,
-            )
+        try:
+            _tbl_block = st.container(border=False, gap="xxsmall")
+        except TypeError:
+            try:
+                _tbl_block = st.container(border=False, gap=None)
+            except TypeError:
+                _tbl_block = st.container(border=False)
+        with _tbl_block:
+            _render_table_block()
+            if export_df is not None:
+                render_dataframe_excel_csv_downloads(
+                    export_df,
+                    file_stem=file_stem,
+                    key_prefix=_kp,
+                    popover_key=_pop_key,
+                )
         return
 
     if "budget-deviation-table-wrap" in (html or ""):
@@ -2000,7 +2013,7 @@ def render_report_html_table(
             "div[data-testid='stElementContainer']:has([data-testid='stHtml']) "
             "{margin-bottom:0!important;padding-bottom:0!important;}"
             "div[data-testid='stVerticalBlock']:has([data-testid='stPopover']) "
-            "{margin-top:0.15rem!important;padding-top:0!important;}"
+            "{margin-top:0!important;padding-top:0!important;}"
             "</style>",
             unsafe_allow_html=True,
         )

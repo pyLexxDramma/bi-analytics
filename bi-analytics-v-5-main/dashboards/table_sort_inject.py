@@ -311,15 +311,27 @@ _COMPACT_FRAME_FIT_JS = r"""
 (function () {
   function fit() {
     try {
-      var root = document.querySelector(".pf-dates-table-wrap")
+      var root = document.querySelector(".budget-deviation-table-wrap")
+        || document.querySelector(".pf-dates-table-wrap")
         || document.querySelector(".pred-detail-wrap")
         || document.querySelector(".gantt-schedule-table-wrap")
         || document.querySelector(".bi-sortable-html-root")
         || document.body;
-      var tbl = root.querySelector("table") || root;
-      var box = tbl.getBoundingClientRect();
       var pad = (root && root.classList && root.classList.contains("pred-detail-wrap")) ? 20 : 4;
-      var h = Math.ceil(box.bottom + (window.scrollY || 0)) + pad;
+      var h = 0;
+      var tbl = root.querySelector && root.querySelector("table");
+      if (tbl) {
+        var box = tbl.getBoundingClientRect();
+        h = Math.ceil(box.bottom + (window.scrollY || 0)) + pad;
+        var cap = root.querySelector && root.querySelector(".budget-table-scroll");
+        if (cap) {
+          var cb = cap.getBoundingClientRect();
+          h = Math.min(h, Math.ceil(cb.bottom + (window.scrollY || 0)) + pad);
+        }
+      } else {
+        var box2 = root.getBoundingClientRect();
+        h = Math.ceil(box2.bottom + (window.scrollY || 0)) + pad;
+      }
       if (h > 0) {
         window.parent.postMessage({ type: "streamlit:setFrameHeight", height: h }, "*");
       }
@@ -503,12 +515,16 @@ def _split_embedded_style(html: str) -> tuple[str, str]:
 
 
 def _estimate_html_block_height(html: str) -> int:
-    bodies = re.findall(r"<tbody[^>]*>(.*?)</tbody>", html, re.I | re.S)
-    if bodies:
-        data_rows = sum(part.count("<tr") for part in bodies)
-    else:
-        data_rows = max(0, html.count("<tr") - 1)
     html_l = html or ""
+    m_rows = re.search(r'data-bi-rows="(\d+)"', html_l)
+    if m_rows:
+        data_rows = int(m_rows.group(1))
+    else:
+        bodies = re.findall(r"<tbody[^>]*>(.*?)</tbody>", html, re.I | re.S)
+        if bodies:
+            data_rows = sum(part.count("<tr") for part in bodies)
+        else:
+            data_rows = max(0, html.count("<tr") - 1)
     if "gdrs-summary-table-wrap" in html_l:
         thead_h = 76
         row_h = 44
@@ -520,11 +536,6 @@ def _estimate_html_block_height(html: str) -> int:
         extra = 56
         cap = 2600
     elif "budget-deviation-table-wrap" in html_l:
-        m_vh = re.search(r"max-height:\s*([\d.]+)vh", html_l)
-        if m_vh and "budget-table-scroll" in html_l:
-            vh = float(m_vh.group(1))
-            est_vh = int(vh * 10) + 56
-            return int(max(200, min(720, est_vh)))
         thead_h = 64
         row_h = 32
         extra = 16
@@ -552,6 +563,12 @@ def _estimate_html_block_height(html: str) -> int:
     n_plain = max(0, data_rows - n_group - n_total)
     est = thead_h + n_plain * row_h + n_group * (row_h + 8) + n_total * (row_h + 10) + extra
     if "budget-deviation-table-wrap" in html_l:
+        m_vh = re.search(r"max-height:\s*([\d.]+)vh", html_l)
+        if m_vh and "budget-table-scroll" in html_l:
+            vh_cap = int(max(200, min(720, float(m_vh.group(1)) * 10 + 56)))
+            if data_rows <= 18:
+                return int(max(120, est))
+            return int(max(120, min(est, vh_cap)))
         return int(max(120, est))
     if "pf-dates-table-wrap" in html_l or "pf-dates-table" in html_l:
         return int(max(72, est))
@@ -615,6 +632,9 @@ def _build_sortable_html_document(html: str) -> str:
                     "budget-deviation-table-wrap" in html_l
                     and "budget-table-scroll" in html_l
                 )
+                or "bi-styled-table-wrap" in html_l
+                or "rendered-table-wrap" in html_l
+                or "dev-reasons-wrap" in html_l
             )
             else ""
         )
@@ -633,10 +653,7 @@ def _html_block_compact(html: str) -> bool:
         or "rendered-table-wrap" in html_l
         or "dev-reasons-wrap" in html_l
         or "bi-styled-table-wrap" in html_l
-        or (
-            "budget-deviation-table-wrap" in html_l
-            and "budget-table-scroll" in html_l
-        )
+        or "budget-deviation-table-wrap" in html_l
     )
 
 
@@ -661,9 +678,10 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
             or "pf-dates-table" in (html or "")
             or "gantt-schedule-table-wrap" in (html or "")
         )
+        _pad_h = 4 if "budget-deviation-table-wrap" in (html or "") else 12
         components.html(
             doc,
-            height=max(120, _h_compact + 12),
+            height=max(120, _h_compact + _pad_h),
             scrolling=bool(_wide_tbl),
         )
         return
