@@ -31815,19 +31815,8 @@ def dashboard_predpisania(df):
             )
         else:
             contractors_ms = []
-        if curator_col:
-            curators = ["Все кураторы"] + sorted(
-                pred[curator_col].dropna().astype(str).str.strip().unique().tolist(),
-                key=lambda x: str(x).lower(),
-            )
-        else:
-            curators = ["Все кураторы"]
-    
-        if curator_col:
-            fc1, fc2, fc3, fc4, fc5 = st.columns([2, 2, 2, 2, 2])
-        else:
-            fc1, fc2, fc3, fc4 = st.columns([2, 2, 2, 2])
-            fc5 = None
+        fc1, fc2, fc3, fc4 = st.columns([2, 2, 2, 2])
+        sel_curator = "Все кураторы"
     
         with fc1:
             if obj_col:
@@ -31847,17 +31836,51 @@ def dashboard_predpisania(df):
                 )
             else:
                 sel_contr = []
-        if curator_col and fc5 is not None:
-            with fc3:
-                sel_curator = st.selectbox("Куратор", curators, key="pred_m_curator")
-            _fc_contract = fc4
-            _fc_period = fc5
-        else:
-            sel_curator = "Все кураторы"
-            _fc_contract = fc3
-            _fc_period = fc4
+        _fc_contract = fc3
+        _fc_period = fc4
         with _fc_contract:
-            contract_q = st.text_input("№ договора (частичный поиск)", "", key="pred_m_contract")
+            contract_q = ""
+            contract_exact = False
+            if contract_col and contract_col in pred.columns:
+                _contract_unique = sorted(
+                    {
+                        str(x).strip()
+                        for x in pred[contract_col].dropna().tolist()
+                        if str(x).strip()
+                        and str(x).strip().lower() not in ("nan", "none", "nat")
+                    },
+                    key=lambda x: x.casefold(),
+                )
+                contract_q_raw = st.text_input(
+                    "№ договора (частичный поиск)",
+                    "",
+                    key="pred_m_contract",
+                )
+                cq = str(contract_q_raw or "").strip()
+                _matches = (
+                    [c for c in _contract_unique if cq.casefold() in c.casefold()]
+                    if cq
+                    else []
+                )
+                if len(_matches) == 1:
+                    contract_q = _matches[0]
+                    contract_exact = True
+                elif len(_matches) > 1:
+                    contract_q = st.selectbox(
+                        "Совпадения № договора",
+                        options=_matches,
+                        key="pred_m_contract_pick",
+                    )
+                    contract_exact = True
+                else:
+                    contract_q = cq
+                    contract_exact = False
+            else:
+                contract_q = st.text_input(
+                    "№ договора (частичный поиск)",
+                    "",
+                    key="pred_m_contract",
+                ).strip()
         with _fc_period:
             if pred["_issue_date"].notna().any():
                 min_issue = pred["_issue_date"].min().date()
@@ -31961,9 +31984,14 @@ def dashboard_predpisania(df):
     if sel_curator != "Все кураторы" and curator_col and curator_col in filtered.columns:
         filtered = filtered[filtered[curator_col].astype(str).str.strip() == sel_curator]
     if contract_q.strip() and contract_col:
-        filtered = filtered[
-            filtered[contract_col].astype(str).str.lower().str.contains(contract_q.strip().lower(), na=False)
-        ]
+        _cq = contract_q.strip()
+        _cc = filtered[contract_col].astype(str).str.strip()
+        if contract_exact:
+            filtered = filtered[_cc == _cq]
+        else:
+            filtered = filtered[
+                _cc.str.casefold().str.contains(_cq.casefold(), na=False)
+            ]
     if issue_start is not None and issue_end is not None:
         filtered = filtered[
             filtered["_issue_date"].notna()
@@ -32008,13 +32036,13 @@ def dashboard_predpisania(df):
     n_overdue = int((unres_mask & (filtered["_overdue_days"] > 0)).sum())
     n_critical = int((unres_mask & filtered["_critical"]).sum())
 
-    fu = filtered.loc[unres_mask].copy()
+    chart_df = filtered.loc[unres_mask].copy() if hide_resolved else filtered.copy()
     chart_group_col = None
     chart_group_label = ""
-    if contr_col and contr_col in fu.columns and fu[contr_col].astype(str).str.strip().ne("").any():
+    if contr_col and contr_col in chart_df.columns and chart_df[contr_col].astype(str).str.strip().ne("").any():
         chart_group_col = contr_col
         chart_group_label = "подрядчикам"
-    elif obj_col and obj_col in fu.columns and fu[obj_col].astype(str).str.strip().ne("").any():
+    elif obj_col and obj_col in chart_df.columns and chart_df[obj_col].astype(str).str.strip().ne("").any():
         chart_group_col = obj_col
         chart_group_label = "проектам"
     if issue_start is not None and issue_end is not None:
@@ -32043,24 +32071,28 @@ def dashboard_predpisania(df):
             '</span>'
             '<span style="display:inline-flex;align-items:center;gap:6px;margin-left:14px;">'
             '<span style="display:inline-block;width:18px;height:18px;background:#3498db;border-radius:50%;color:#fff;font-size:11px;font-weight:700;text-align:center;line-height:18px;">N</span>'
-            '<strong>Синий пузырёк справа</strong> — все неустранённые по подрядчику.'
-            '</span>'
+            + '<strong>Синий пузырёк справа</strong> — '
+            + ('все неустранённые по подрядчику.' if hide_resolved else 'всего предписаний по подрядчику.')
+            + '</span>'
             '</div>',
             unsafe_allow_html=True,
         )
-        if chart_group_col and not fu.empty:
+        if chart_group_col and not chart_df.empty:
+            _cnt_col = "Неустранено" if hide_resolved else "Всего"
             grp = (
-                fu.groupby(chart_group_col, as_index=False)
+                chart_df.groupby(chart_group_col, as_index=False)
                 .agg(
-                    Неустранено=(chart_group_col, "size"),
-                    Просрочено=("_overdue_days", lambda x: int((x > 0).sum())),
-                    Мин_дата=("_issue_date", "min"),
-                    Макс_дата=("_issue_date", "max"),
+                    **{
+                        _cnt_col: (chart_group_col, "size"),
+                        "Просрочено": ("_overdue_days", lambda x: int((x > 0).sum())),
+                        "Мин_дата": ("_issue_date", "min"),
+                        "Макс_дата": ("_issue_date", "max"),
+                    }
                 )
             )
             grp["_sort_name"] = grp[chart_group_col].astype(str).str.casefold()
             grp = grp.sort_values(
-                ["Неустранено", "_sort_name"],
+                [_cnt_col, "_sort_name"],
                 ascending=[False, True],
                 kind="mergesort",
             ).drop(columns=["_sort_name"]).reset_index(drop=True)
@@ -32075,8 +32107,8 @@ def dashboard_predpisania(df):
             fig1.add_trace(
                 go.Bar(
                     y=grp[chart_group_col],
-                    x=grp["Неустранено"],
-                    name="Всего неустранённых",
+                    x=grp[_cnt_col],
+                    name=("Всего неустранённых" if hide_resolved else "Всего предписаний"),
                     orientation="h",
                     marker=dict(color="rgba(230,126,34,0.22)", line=dict(color="rgba(230,126,34,0.55)", width=1)),
                     customdata=np.stack(
@@ -32115,7 +32147,7 @@ def dashboard_predpisania(df):
             # Слой 3: «синий пузырёк» справа от каждого бара = всего неустранённых.
             # Реализовано через Scatter с большим круглым маркером и текстом по центру.
             xmax = max(
-                float(pd.to_numeric(grp["Неустранено"], errors="coerce").fillna(0).max()),
+                float(pd.to_numeric(grp[_cnt_col], errors="coerce").fillna(0).max()),
                 1.0,
             )
             axis_upper = _pred_axis_upper_bound(xmax)
@@ -32124,7 +32156,7 @@ def dashboard_predpisania(df):
             fig1.add_trace(
                 go.Scatter(
                     y=grp[chart_group_col],
-                    x=grp["Неустранено"] + _bub_shift,
+                    x=grp[_cnt_col] + _bub_shift,
                     mode="markers+text",
                     marker=dict(
                         size=34,
@@ -32132,7 +32164,7 @@ def dashboard_predpisania(df):
                         line=dict(color="rgba(255,255,255,0.45)", width=2),
                         symbol="circle",
                     ),
-                    text=[str(int(v)) for v in grp["Неустранено"]],
+                    text=[str(int(v)) for v in grp[_cnt_col]],
                     textfont=dict(color="#ffffff", size=13, family="Inter, Arial, sans-serif"),
                     textposition="middle center",
                     hovertemplate="<b>%{y}</b><br>Неустранённых (всего): %{text}<extra></extra>",
@@ -32162,7 +32194,11 @@ def dashboard_predpisania(df):
                 yaxis=dict(automargin=True, tickfont=dict(size=14), fixedrange=True),
                 uirevision="pred_main_chart",
                 title=dict(
-                    text="Неустранённые предписания по подрядчикам",
+                    text=(
+                        "Неустранённые предписания по подрядчикам"
+                        if hide_resolved
+                        else "Все предписания по подрядчикам"
+                    ),
                     font=dict(size=16),
                     x=0.5,
                     xanchor="center",
@@ -32195,7 +32231,8 @@ def dashboard_predpisania(df):
             "«Критические» — тег «КРИТИЧНЫЙ» и указанный KindID."
         )
 
-    status_counts = filtered["Статус"].value_counts()
+    _viz_df = chart_df
+    status_counts = _viz_df["Статус"].value_counts()
     st.subheader("Предписания по статусам")
     status_df = status_counts.reset_index()
     status_df.columns = ["Статус", "Количество"]
@@ -32222,10 +32259,10 @@ def dashboard_predpisania(df):
     fig2 = apply_chart_background(fig2)
     render_chart(fig2, key="pred_status_pie", caption_below="Распределение предписаний по статусам")
 
-    if obj_col and obj_col in filtered.columns:
+    if obj_col and obj_col in _viz_df.columns:
         st.subheader("Предписания по объектам")
         by_obj = (
-            filtered.groupby(obj_col)
+            _viz_df.groupby(obj_col)
             .size()
             .reset_index(name="Количество")
         )
@@ -32265,9 +32302,7 @@ def dashboard_predpisania(df):
     render_table_subheader(st, "Детальная таблица по предписаниям")
     with st.expander("Примечание к таблице", expanded=False):
         suppress_caption("Клик по заголовку сортирует таблицу. Просроченные строки выделены розовым, устраненные — салатовым.")
-    show = filtered.copy()
-    if hide_resolved:
-        show = show.loc[unres_mask].copy()
+    show = chart_df.copy()
     show = show.sort_values(["_critical", "_overdue_days"], ascending=[False, False])
 
     show_tbl = show.copy()
