@@ -169,7 +169,7 @@ BI_TABLE_LAYOUT_CSS = """
 .bi-sortable-html-root table.bi-sortable-table th,
 table.bi-sortable-table th {
   text-align: center !important;
-  vertical-align: bottom !important;
+  vertical-align: middle !important;
   white-space: normal !important;
   word-wrap: break-word !important;
   overflow-wrap: anywhere !important;
@@ -198,8 +198,42 @@ table.bi-sortable-table td.col-text {
 .bi-sortable-html-root table.bi-sortable-table th.col-text,
 table.bi-sortable-table th.col-text {
   text-align: center !important;
-  vertical-align: bottom !important;
+  vertical-align: middle !important;
 }
+</style>
+"""
+
+BI_RESPONSIVE_DASHBOARD_CSS = """
+<style>
+/* BI Analytics: узкие экраны — таблицы и графики (все дашборды) */
+.rendered-table-wrap,.bi-styled-table-wrap,.exec-doc-table-wrap,.pf-dates-table-wrap,
+.budget-deviation-table-wrap,.budget-table-scroll,.dev-reasons-wrap,.pred-detail-wrap,
+.gdrs-table-wrap,.gdrs-summary-table-wrap,.bi-sortable-html-root,
+div[data-testid="stElementContainer"]:has(iframe[title="streamlit_components_v1"]),
+div[data-testid="stHtml"]{max-width:100%!important;min-width:0!important;box-sizing:border-box!important}
+.rendered-table-wrap,.pf-dates-table-wrap,.exec-doc-table-wrap,.bi-styled-table-wrap,
+.dev-reasons-wrap,.gdrs-table-wrap,.gdrs-summary-table-wrap{overflow-x:auto!important;-webkit-overflow-scrolling:touch!important}
+table.bi-sortable-table th,.bi-sortable-html-root table.bi-sortable-table th{
+  text-align:center!important;vertical-align:middle!important}
+table.bi-sortable-table thead th>div,.bi-sortable-html-root table.bi-sortable-table thead th>div{
+  justify-content:center!important;align-items:center!important}
+table.bi-sortable-table thead th .bi-sort-label{text-align:center!important}
+[data-testid="stPlotlyChart"],[data-testid="stPlotlyChart"]>div,[data-testid="stPlotlyChart"] iframe{
+  max-width:100%!important;width:100%!important;box-sizing:border-box!important}
+.pf-fbar-wrap,.pf-gantt-view{overflow-x:auto!important;max-width:100%!important;-webkit-overflow-scrolling:touch!important}
+@media (max-width:1100px){
+  table.bi-sortable-table th,.bi-sortable-html-root table.bi-sortable-table th{
+    font-size:9px!important;padding:6px 4px!important;white-space:normal!important;word-wrap:break-word!important;max-width:none!important}
+  table.bi-sortable-table td{font-size:11px!important;padding:5px 6px!important}
+  [data-testid="stPlotlyChart"]{min-height:280px!important}
+  [data-testid="stPlotlyChart"] iframe{min-height:260px!important}
+  .pred-detail-wrap{height:min(55vh,420px)!important;max-height:min(55vh,420px)!important}
+}
+@media (max-width:700px){
+  .main .block-container{padding-left:.75rem!important;padding-right:.75rem!important}
+  [data-testid="stPlotlyChart"]{min-height:240px!important}
+}
+
 </style>
 """
 
@@ -1850,10 +1884,13 @@ def format_dataframe_as_html(
 def load_custom_css() -> None:
     """Загружает CSS из static/css/style.css. Единственное место — импортируй отсюда."""
     from pathlib import Path
-    css_path = Path(__file__).resolve().parent / "static" / "css" / "style.css"
-    if css_path.exists():
-        with open(css_path, encoding="utf-8") as f:
-            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    base = Path(__file__).resolve().parent
+    for name in ("style.css", "bi-responsive.css"):
+        css_path = base / "static" / "css" / name
+        if css_path.exists():
+            with open(css_path, encoding="utf-8") as f:
+                st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    st.markdown(BI_TABLE_LAYOUT_CSS + BI_RESPONSIVE_DASHBOARD_CSS, unsafe_allow_html=True)
 
 
 def dataframe_to_csv_bytes_for_excel(
@@ -1941,6 +1978,17 @@ def render_report_html_table(
     if not html or not str(html).strip():
         return
     html = mark_html_table_sortable(html)
+    if "bi_report_table_responsive_css" not in st.session_state:
+        st.session_state.bi_report_table_responsive_css = True
+        st.markdown(
+            "<style>"
+            "div[data-testid='stElementContainer']:has(iframe){max-width:100%!important;overflow:visible!important;}"
+            "iframe[title='streamlit_components_v1']{max-width:100%!important;}"
+            ".rendered-table-wrap,.exec-doc-table-wrap,.bi-styled-table-wrap,.gdrs-table-wrap{"
+            "overflow-x:auto!important;-webkit-overflow-scrolling:touch;}"
+            "</style>",
+            unsafe_allow_html=True,
+        )
     _kp = key_prefix or f"tbl_{_export_file_stem(file_stem)}"
     _pop_key = f"{_kp}_dl"
     _compact_tbl = (
@@ -1950,11 +1998,18 @@ def render_report_html_table(
             "budget-deviation-table-wrap" in (html or "")
             and "budget-table-scroll" in (html or "")
         )
-        or file_stem in ("plan_fact_dates", "predpisania", "debit_credit", "executive_docs")
+        or file_stem in (
+            "plan_fact_dates", "predpisania", "debit_credit", "executive_docs",
+            "forecast_bddcs_financier_status", "gdrs", "budget", "dev_reasons",
+        )
         or "exec-doc-table-wrap" in (html or "")
         or "bi-styled-table-wrap" in (html or "")
         or "rendered-table-wrap" in (html or "")
         or "dev-reasons-wrap" in (html or "")
+        or "gdrs-table-wrap" in (html or "")
+        or "gdrs-summary-table-wrap" in (html or "")
+        or "gdrs-matrix-table" in (html or "")
+        or "bi-sortable-table" in (html or "")
     )
 
     def _render_table_block() -> None:

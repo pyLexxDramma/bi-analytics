@@ -2509,7 +2509,7 @@ def _forecast_bdd_bar_value_labels(
             txt = f"{x:.3f}"
         else:
             txt = f"{x:.4f}"
-        out.append(f"{txt} млн руб")
+        out.append(txt)
     return out
 
 
@@ -2916,6 +2916,10 @@ def render_chart(
     if not skip_clamp_zoom:
         _clamp_plotly_scroll_zoom_padding(fig)
     _apply_plotly_spec_411_labels(fig)
+    try:
+        fig.update_layout(autosize=True)
+    except Exception:
+        pass
     try:
         _yax = fig.layout.yaxis
         if _yax is not None and getattr(_yax, "autorange", None) is False:
@@ -28352,14 +28356,15 @@ def _forecast_financier_status_table_html(df: pd.DataFrame) -> str:
         ".fc-st-cell-red, .fc-st-cell-red * { color: hsl(348,100%,63%) !important; }"
         ".fc-st-cell-green, .fc-st-cell-green * { color: hsl(148,100%,63%) !important; }"
         "</style>",
-        '<div style="overflow-x:auto; min-width:0; margin: 1em 0;">',
-        f'<table style="width:100%; border-collapse:collapse; background-color:{TABLE_BG_COLOR}; color:{TABLE_TEXT_COLOR}; font-size:14px;">',
+        '<div class="rendered-table-wrap bi-styled-table-wrap" style="overflow-x:auto;min-width:0;margin:1em 0;max-width:100%;">',
+        f'<table class="rendered-table bi-sortable-table bi-sort-click-only" style="width:100%;border-collapse:collapse;background-color:{TABLE_BG_COLOR};color:{TABLE_TEXT_COLOR};font-size:14px;">',
         "<thead><tr>",
     ]
     for c in df.columns:
+        _cn = str(c).strip()
         parts.append(
-            f'<th style="border:1px solid rgba(255,255,255,0.25); padding:6px 8px; text-align:left;">'
-            f"{html_module.escape(str(c))}</th>"
+            f'<th style="border:1px solid rgba(255,255,255,0.25);padding:8px 6px;text-align:center;vertical-align:middle;" '
+            f'data-sort-label="{html_module.escape(_cn, quote=True)}">{html_module.escape(_cn)}</th>'
         )
     parts.append("</tr></thead><tbody>")
     for _, row in df.iterrows():
@@ -29094,9 +29099,9 @@ def dashboard_forecast_budget(df):
         _px_fc = 320 if _nfc > 12 else 280 if _nfc > 8 else 260 if _nfc > 5 else 240
         _tfs_out_fc = 9 if _nfc > 20 else 10
         _fmt_hover1 = lambda v: format_million_rub(v, decimals=1)  # noqa: E731
-        _plan_txt_fc = _forecast_bdd_bar_value_labels(_chart_df["bdds_plan_msp"], min_abs_rub=0.0)
-        _fact_txt_fc = _forecast_bdd_bar_value_labels(_chart_df["bdds_fact"], min_abs_rub=0.0)
-        _frc_txt_fc = _forecast_bdd_bar_value_labels(_chart_df["bdds_forecast"], min_abs_rub=0.0)
+        _plan_txt_fc = _finance_bar_text_mln_rub(_chart_df["bdds_plan_msp"], min_abs_mln=0.0)
+        _fact_txt_fc = _finance_bar_text_mln_rub(_chart_df["bdds_fact"], min_abs_mln=0.0)
+        _frc_txt_fc = _finance_bar_text_mln_rub(_chart_df["bdds_forecast"], min_abs_mln=0.0)
         fig_fc = go.Figure()
         x_fc = _chart_df["Период"].astype(str)
         fig_fc.add_trace(

@@ -380,6 +380,11 @@ html,body{
   display:block;width:100%;max-width:100%;margin:0;padding:0;
   overflow-x:auto!important;overflow-y:visible;
   -webkit-overflow-scrolling:touch;
+  box-sizing:border-box;
+}
+.bi-sortable-html-root table.bi-sortable-table{min-width:min(100%,720px);}
+@media (max-width:900px){
+  .bi-sortable-html-root table.bi-sortable-table{min-width:640px;}
 }
 
 .bi-sortable-html-root { width: 100%; max-width: 100%; }
@@ -699,12 +704,19 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
         )
         return
     _h = _estimate_html_block_height(html)
+    if "pred-detail-wrap" not in (html or "") and "gdrs-matrix-table" not in (html or ""):
+        _h = min(900, max(320, int(_h)))
     _no_iframe_scroll = (
         "gdrs-summary-table-wrap",
         "budget-deviation-table-wrap",
         "pf-dates-table-wrap",
         "pred-detail-wrap",
         "gantt-schedule-table-wrap",
+        "exec-doc-table-wrap",
+        "rendered-table-wrap",
+        "bi-styled-table-wrap",
+        "dev-reasons-wrap",
+        "gdrs-table-wrap",
     )
     _scroll = not any(m in (html or "") for m in _no_iframe_scroll)
     if "budget-deviation-table-wrap" in (html or ""):

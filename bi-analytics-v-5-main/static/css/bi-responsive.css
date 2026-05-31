@@ -1,0 +1,28 @@
+/* BI Analytics: узкие экраны — таблицы и графики (все дашборды) */
+.rendered-table-wrap,.bi-styled-table-wrap,.exec-doc-table-wrap,.pf-dates-table-wrap,
+.budget-deviation-table-wrap,.budget-table-scroll,.dev-reasons-wrap,.pred-detail-wrap,
+.gdrs-table-wrap,.gdrs-summary-table-wrap,.bi-sortable-html-root,
+div[data-testid="stElementContainer"]:has(iframe[title="streamlit_components_v1"]),
+div[data-testid="stHtml"]{max-width:100%!important;min-width:0!important;box-sizing:border-box!important}
+.rendered-table-wrap,.pf-dates-table-wrap,.exec-doc-table-wrap,.bi-styled-table-wrap,
+.dev-reasons-wrap,.gdrs-table-wrap,.gdrs-summary-table-wrap{overflow-x:auto!important;-webkit-overflow-scrolling:touch!important}
+table.bi-sortable-table th,.bi-sortable-html-root table.bi-sortable-table th{
+  text-align:center!important;vertical-align:middle!important}
+table.bi-sortable-table thead th>div,.bi-sortable-html-root table.bi-sortable-table thead th>div{
+  justify-content:center!important;align-items:center!important}
+table.bi-sortable-table thead th .bi-sort-label{text-align:center!important}
+[data-testid="stPlotlyChart"],[data-testid="stPlotlyChart"]>div,[data-testid="stPlotlyChart"] iframe{
+  max-width:100%!important;width:100%!important;box-sizing:border-box!important}
+.pf-fbar-wrap,.pf-gantt-view{overflow-x:auto!important;max-width:100%!important;-webkit-overflow-scrolling:touch!important}
+@media (max-width:1100px){
+  table.bi-sortable-table th,.bi-sortable-html-root table.bi-sortable-table th{
+    font-size:9px!important;padding:6px 4px!important;white-space:normal!important;word-wrap:break-word!important;max-width:none!important}
+  table.bi-sortable-table td{font-size:11px!important;padding:5px 6px!important}
+  [data-testid="stPlotlyChart"]{min-height:280px!important}
+  [data-testid="stPlotlyChart"] iframe{min-height:260px!important}
+  .pred-detail-wrap{height:min(55vh,420px)!important;max-height:min(55vh,420px)!important}
+}
+@media (max-width:700px){
+  .main .block-container{padding-left:.75rem!important;padding-right:.75rem!important}
+  [data-testid="stPlotlyChart"]{min-height:240px!important}
+}
