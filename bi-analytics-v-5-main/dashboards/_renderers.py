@@ -22,7 +22,6 @@ from .ui_quiet import (
     inject_unified_filters_css,
     filters_panel,
     suppress_caption,
-    qa_debug_block,
     project_filter_multiselect,
     period_date_range_input,
     LABEL_PERIOD,
@@ -22193,8 +22192,7 @@ _EXEC_DOC_DETAIL_CSS = """
 .exec-col-text { width:auto; min-width:16ch; max-width:none; }
 .exec-doc-table tr:nth-child(even) td { background:rgba(255,255,255,0.025); }
 .exec-doc-table tr:hover td { background:rgba(48,72,99,0.72); }
-.exec-doc-table th a { color:#f8fbff; text-decoration:none; display:inline-flex; gap:6px; align-items:center; }
-.exec-doc-table th a:hover { color:#93c5fd; }
+.exec-doc-table th { cursor:pointer; user-select:none; }
 .exec-doc-th-sort { color:#8fb4da; font-size:10px; }
 .exec-delay-val { color:#5eead4; font-weight:600; font-variant-numeric:tabular-nums; }
 .exec-dash { color:#8892a0; }
@@ -22361,14 +22359,38 @@ def _exec_metric_cards_html(cards: list[dict], *, caption: str | None = None) ->
     return "".join(parts)
 
 
+def _exec_cell_sort_attr(col: str, row: pd.Series) -> str:
+    """data-sort-val для клиентской сортировки (даты, просрочки)."""
+    c = str(col).strip()
+    if c in {
+        "Плановая дата сдачи",
+        "Факт сдачи",
+        "Дата передачи заказчику",
+        "Дата согласования",
+        "Дата создания",
+    }:
+        ts = pd.to_datetime(row.get(c), errors="coerce", dayfirst=True)
+        if pd.notna(ts):
+            return f' data-sort-val="{float(ts.timestamp())}"'
+    if c in {"Просрочка сдачи", "Просрочка соглас."}:
+        m = re.search(r"-?\d+", str(row.get(c, "")).replace("\xa0", ""))
+        if m:
+            return f' data-sort-val="{int(m.group())}"'
+    if c == "№ документа":
+        m = re.search(r"-?\d+(?:[.,]\d+)?", str(row.get(c, "")).replace("\xa0", ""))
+        if m:
+            try:
+                return f' data-sort-val="{float(m.group().replace(",", "."))}"'
+            except (TypeError, ValueError):
+                pass
+    return ""
+
+
 def _exec_detail_table_html(
     df: pd.DataFrame,
     max_rows: int = 500,
-    *,
-    sort_col: str = "",
-    sort_order: str = "asc",
 ) -> str:
-    """HTML-таблица детального отчёта ИД: CAPS-заголовки, циан для просрочек, пилюли статусов."""
+    """HTML-таблица детального отчёта ИД (клиентская сортировка по клику на заголовок)."""
     esc = html_module.escape
     header_alias = {
         "Контрагент": "Контрагент",
@@ -22391,14 +22413,11 @@ def _exec_detail_table_html(
     head_parts = ["<thead><tr>"]
     for c in cols:
         c_cls = _exec_detail_col_class(c)
-        marker = "↕"
-        if sort_col == c:
-            marker = "↑" if str(sort_order).lower() == "asc" else "↓"
-        link = _exec_sort_link(c, sort_col, sort_order)
         caption = header_alias.get(str(c).strip(), str(c).strip())
+        full_name = str(c).strip()
         head_parts.append(
-            f'<th class="{esc(c_cls, quote=True)}">'
-            f'<a href="{esc(link, quote=True)}" title="{esc(str(c).strip(), quote=True)}">{esc(caption)} <span class="exec-doc-th-sort">{esc(marker)}</span></a></th>'
+            f'<th class="{esc(c_cls, quote=True)}" data-sort-label="{esc(full_name, quote=True)}" '
+            f'title="{esc(full_name, quote=True)}">{esc(caption)}</th>'
         )
     head_parts.append("</tr></thead>")
     thead = "".join(head_parts)
@@ -22419,15 +22438,17 @@ def _exec_detail_table_html(
             else:
                 inner = esc(raw)
             c_cls = _exec_detail_col_class(c)
-            body_parts.append(f'<td class="{esc(c_cls, quote=True)}">{inner}</td>')
+            sort_attr = _exec_cell_sort_attr(c, row)
+            body_parts.append(f'<td class="{esc(c_cls, quote=True)}"{sort_attr}>{inner}</td>')
         body_parts.append("</tr>")
     body_parts.append("</tbody>")
     return (
-        '<div class="exec-doc-table-wrap"><table class="exec-doc-table">'
+        '<div class="exec-doc-table-wrap"><table class="exec-doc-table bi-sortable-table bi-sort-click-only">'
         + thead
         + "".join(body_parts)
         + "</table></div>"
     )
+
 
 
 def _exec_granularity_freq_map() -> dict[str, str]:
@@ -22656,6 +22677,19 @@ def dashboard_executive_documentation(df):
     else:
         work["Статус"] = "Неизвестно"
 
+    work = _tessa_drop_project_state_rows(work)
+    _proj_lookup_exec, _, _ = _pred_projekts_1c_lookup()
+    if obj_col and obj_col in work.columns and _proj_lookup_exec:
+        work[obj_col] = _resolve_project_display_labels(work[obj_col], _proj_lookup_exec)
+    work = _pred_filter_by_projekts_registry(work, obj_col)
+    if obj_col and obj_col in work.columns:
+        work = work[
+            ~work[obj_col].astype(str).str.strip().isin(MSP_PROJECT_FILTER_EXCLUDE_NAMES)
+        ].reset_index(drop=True)
+    if work.empty:
+        st.info("Нет данных по проектам из справочника 1с_*_Projekts.json (после исключения тестовых объектов).")
+        return
+
     _contr_candidates = ["CONTR", "Контрагент", "contr"]
     contr_col = _tessa_find_column(work, _contr_candidates)
     card_col = _tessa_find_column(work, ["CardId", "CardID", "cardId", "DocID", "DocId"])
@@ -22705,7 +22739,13 @@ def dashboard_executive_documentation(df):
         fc1, fc2, fc3 = st.columns(3)
         with fc1:
             if obj_col:
-                objects = ["Все"] + _unique_project_labels_for_select(work[obj_col])
+                _exec_proj_opts = sorted(
+                    set(_proj_lookup_exec.values()) if _proj_lookup_exec else set(),
+                    key=lambda x: str(x).casefold(),
+                )
+                if not _exec_proj_opts:
+                    _exec_proj_opts = _unique_project_labels_for_select(work[obj_col])
+                objects = ["Все"] + _exec_proj_opts
                 sel_obj = st.selectbox("Проект", objects, key="exec_doc_object")
             else:
                 sel_obj = "Все"
@@ -22778,12 +22818,6 @@ def dashboard_executive_documentation(df):
     if sel_kind != "Все" and kind_col:
         filtered_base = filtered_base[filtered_base[kind_col].astype(str).str.strip() == sel_kind]
 
-    filtered = filtered_base.copy()
-    if creation_col and p_start is not None and p_end is not None:
-        ts_start = pd.Timestamp(p_start)
-        ts_end = pd.Timestamp(p_end) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-        filtered = filtered[filtered["_cd"].notna() & (filtered["_cd"] >= ts_start) & (filtered["_cd"] <= ts_end)]
-
     # tessa_data объединяет все snapshot-файлы → один документ может иметь несколько
     # записей (по дате snapshot). Для «текущего состояния» (карточки, бар-чарт
     # по статусам, по объектам) нужна одна запись на документ — последняя по snapshot.
@@ -22808,8 +22842,20 @@ def dashboard_executive_documentation(df):
             out = out.drop(columns=["_imp_dt"], errors="ignore")
         return out
 
-    filtered_history = filtered.copy()
-    filtered = _latest_snapshot(filtered)
+    filtered_cumulative = _latest_snapshot(filtered_base.copy())
+
+    filtered_period = filtered_base.copy()
+    if creation_col and p_start is not None and p_end is not None:
+        ts_start = pd.Timestamp(p_start)
+        ts_end = pd.Timestamp(p_end) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+        filtered_period = filtered_period[
+            filtered_period["_cd"].notna()
+            & (filtered_period["_cd"] >= ts_start)
+            & (filtered_period["_cd"] <= ts_end)
+        ]
+    filtered_period = _latest_snapshot(filtered_period)
+    filtered_history = filtered_period.copy()
+    filtered = filtered_cumulative
 
     if filtered.empty:
         _empty_reasons = []
@@ -22850,25 +22896,18 @@ def dashboard_executive_documentation(df):
     # не финальные «Подписано/Согласовано». Без явного исключения подстрока «согласован»
     # / «подписан» ловит и переходные статусы → метрика «Принято» становится завышенной,
     # а «На согласовании» — заниженной (расходится с оранжевым баром).
-    is_on_agree = (
-        sl.str.contains("на согласовани", na=False)
-        | sl.str.contains("на подписани", na=False)
-        | sl.str.contains("у заказчик", na=False)
-    )
+    is_on_agree = stu.str.strip().str.casefold().eq("на согласовании")
     is_on_sign = pd.Series(False, index=sl.index)
-    is_rework = sl.str.contains("доработ", na=False)
-    is_declined = stu.map(lambda s: _has_status(s, "Отказ"))
-    is_signed = (
-        stu.map(lambda s: _has_status(s, "Подписан", "Согласован", "Принят"))
-        & (~is_on_agree)
-    )
+    is_rework = stu.str.strip().str.casefold().eq("на доработке")
+    is_declined = stu.str.strip().str.casefold().eq("отказ")
+    is_signed = stu.str.strip().str.casefold().eq("подписан")
+    if "KrStateID" in filtered.columns:
+        is_signed = is_signed | (pd.to_numeric(filtered["KrStateID"], errors="coerce").eq(8))
+    is_signed = is_signed & (~is_on_agree)
 
     if "KrState" in filtered.columns:
         kb = filtered["KrState"].map(_krstate_bucket)
-        # KrState bucket «active» = «На согласовании / у заказчика» (не финальный) → НЕ в is_signed.
-        is_signed = is_signed | ((kb == "signed") & (~is_on_agree))
-        is_declined = is_declined | (kb == "declined")
-        is_on_agree = is_on_agree | (kb == "active")
+        # KPI по русским KrState из id.csv (без bucket KrState).
 
     overdue_mask = (~is_signed) & (~is_declined)
     cnt_c = int((overdue_mask & is_rework).sum())
@@ -22885,7 +22924,7 @@ def dashboard_executive_documentation(df):
         {"title": "Всего документов", "value": int(total_docs), "subtitle": "Уникальные документы в текущей выборке"},
         {"title": "Отказы", "value": int(is_declined.sum()), "subtitle": "Документы со статусом отказа", "tone": "alert"},
         {"title": "На согласовании", "value": int(is_on_agree.sum()), "subtitle": "Документы у заказчика", "tone": "warn"},
-        {"title": "Принято", "value": int(is_signed.sum()), "subtitle": "Подписано / согласовано", "tone": "ok"},
+        {"title": "Принято", "value": int(is_signed.sum()), "subtitle": "Только статус «Подписан»", "tone": "ok"},
         {"title": "У подрядчика", "value": int(is_rework.sum()), "subtitle": "Документы на доработке"},
         {"title": "Всего просрочек", "value": int(total_overdue_two), "subtitle": "Подрядчик + заказчик", "tone": "alert"},
     ]
@@ -22893,59 +22932,6 @@ def dashboard_executive_documentation(df):
         _exec_metric_cards_html(summary_cards),
         unsafe_allow_html=True,
     )
-
-    # Sanity-блок для сверки с эталоном (scripts/_qa_14_id_check.py).
-    # Виден на dev/локалке, скрыт в release автоматически.
-    with qa_debug_block(st) as _qa_on_id:
-        if _qa_on_id:
-            _id_cols = st.columns(3)
-            with _id_cols[0]:
-                st.markdown("**Распределение по статусам (из выборки)**")
-                if "Статус" in filtered.columns:
-                    _id_st = (
-                        filtered["Статус"].astype(str).str.strip().value_counts().reset_index()
-                    )
-                    _id_st.columns = ["Статус", "Количество"]
-                    render_dataframe_sortable(
-                        _id_st,
-                        file_stem="exec_qa_status",
-                        key_prefix=f"exec_qa_st_{abs(id(_id_st))}",
-                        use_styler=False,
-                    )
-                else:
-                    pass
-            with _id_cols[1]:
-                st.markdown("**Распределение по KrStateID (TESSA)**")
-                if "KrStateID" in filtered.columns and "KrState" in filtered.columns:
-                    _id_kr = (
-                        filtered.groupby(["KrStateID", "KrState"], dropna=False)
-                        .size()
-                        .reset_index(name="Количество")
-                        .sort_values("KrStateID")
-                    )
-                    render_dataframe_sortable(
-                        _id_kr,
-                        file_stem="exec_qa_krstate",
-                        key_prefix=f"exec_qa_kr_{abs(id(_id_kr))}",
-                        use_styler=False,
-                    )
-                else:
-                    pass
-            with _id_cols[2]:
-                st.markdown("**Источники / поля**")
-                _id_src = []
-                _id_src.append(f"• Всего строк (после dedup): **{len(filtered)}**")
-                _id_src.append(f"• card_col / DocID: `{card_col or '—'}`")
-                _id_src.append(f"• contr_col (контрагент): `{contr_col or '—'}`")
-                _id_src.append(f"• obj_col (объект): `{obj_col or '—'}`")
-                _id_src.append(f"• kind_col (вид документа): `{kind_col or '—'}`")
-                _id_src.append(f"• creation_col (создан в TESSA): `{creation_col or '—'}`")
-                _id_src.append(f"• Всего документов (KPI): **{int(total_docs)}**")
-                _id_src.append(f"• Отказы / На согл. / Принято / Доработка / Просрочки: "
-                               f"**{int(is_declined.sum())} / {int(is_on_agree.sum())} / "
-                               f"{int(is_signed.sum())} / {int(is_rework.sum())} / "
-                               f"{int(total_overdue_two)}**")
-                st.markdown("\n".join(_id_src))
 
     def _exec_n_docs(dfp):
         if card_col and card_col in dfp.columns:
@@ -22970,22 +22956,16 @@ def dashboard_executive_documentation(df):
         sl_loc = stu_loc.str.lower()
         # См. фикс выше: переходные «На согласовании» / «На подписании» / «У заказчика»
         # не должны учитываться в «Принято».
-        on_agree_loc = (
-            sl_loc.str.contains("на согласовани", na=False)
-            | sl_loc.str.contains("на подписани", na=False)
-            | sl_loc.str.contains("у заказчик", na=False)
-        )
-        rework_loc = sl_loc.str.contains("доработ", na=False)
-        declined_loc = stu_loc.map(lambda s: _has_status(s, "Отказ"))
-        signed_loc = (
-            stu_loc.map(lambda s: _has_status(s, "Подписан", "Согласован", "Принят"))
-            & (~on_agree_loc)
-        )
+        on_agree_loc = stu_loc.str.strip().str.casefold().eq("на согласовании")
+        rework_loc = stu_loc.str.strip().str.casefold().eq("на доработке")
+        declined_loc = stu_loc.str.strip().str.casefold().eq("отказ")
+        signed_loc = stu_loc.str.strip().str.casefold().eq("подписан")
+        if "KrStateID" in dfp.columns:
+            signed_loc = signed_loc | (pd.to_numeric(dfp["KrStateID"], errors="coerce").eq(8))
+        signed_loc = signed_loc & (~on_agree_loc)
         if "KrState" in dfp.columns:
             kb_loc = dfp["KrState"].map(_krstate_bucket)
-            signed_loc = signed_loc | ((kb_loc == "signed") & (~on_agree_loc))
-            declined_loc = declined_loc | (kb_loc == "declined")
-            on_agree_loc = on_agree_loc | (kb_loc == "active")
+            # KPI snapshot: только русские статусы.
         overdue_loc = (~signed_loc) & (~declined_loc)
         return {
             "Всего документов": _exec_n_docs(dfp),
@@ -23308,39 +23288,24 @@ def dashboard_executive_documentation(df):
             }
             rows_out.append(row_dict)
         table_df = pd.DataFrame(rows_out)
-        sort_col = _exec_query_param_value("exec_sort", "Дата создания")
-        sort_order = _exec_query_param_value("exec_order", "desc")
-        if sort_col in table_df.columns:
-            table_df = _exec_sort_table_df(table_df, sort_col, sort_order)
+        table_df = _exec_sort_table_df(table_df, "Дата создания", "desc")
         st.markdown(f"**Записей:** {len(table_df)}")
-        try:
-            _exec_tbl_blk = st.container(border=False, gap="xxsmall")
-        except TypeError:
-            _exec_tbl_blk = st.container(border=False)
-        with _exec_tbl_blk:
-            st.markdown(
-                _EXEC_DOC_DETAIL_CSS
-                + '<div class="exec-doc-panel">'
-                + _exec_detail_table_html(
-                    table_df,
-                    sort_col=sort_col,
-                    sort_order=sort_order,
-                )
-                + "</div>",
-                unsafe_allow_html=True,
-            )
-            st.caption(
-                "Клик по заголовку сортирует таблицу. "
-                "Просрочки показываются в днях, а дата создания выводится без времени."
-            )
-            if len(table_df) > 500:
-                with st.expander("Ограничение отображения в браузере", expanded=False):
-                    suppress_caption("Показано 500 из записей — скачайте CSV или Excel для полного списка.")
-            render_dataframe_excel_csv_downloads(
-                table_df,
-                file_stem="executive_docs",
-                key_prefix="exec_doc",
-            )
+        render_report_html_table(
+            _EXEC_DOC_DETAIL_CSS
+            + '<div class="exec-doc-panel">'
+            + _exec_detail_table_html(table_df)
+            + "</div>",
+            export_df=table_df,
+            file_stem="executive_docs",
+            key_prefix="exec_doc",
+        )
+        st.caption(
+            "Клик по заголовку колонки — сортировка по возрастанию/убыванию. "
+            "Просрочки в днях, дата создания без времени."
+        )
+        if len(table_df) > 500:
+            with st.expander("Ограничение отображения в браузере", expanded=False):
+                suppress_caption("Показано 500 из записей — скачайте CSV или Excel для полного списка.")
 
     with tab_dyn:
         _gran_map_d = _exec_granularity_freq_map()
@@ -29347,9 +29312,9 @@ _PRED_DASH_MOCK_CSS = """
 .pred-mock-title { font-size:1.05rem; font-weight:600; color:#fafafa; }
 .pred-mock-sort { font-size:12px; color:#a0a0a0; }
 .pred-mock-badge { background:#c0392b; color:#fff; padding:4px 14px; border-radius:20px; font-size:13px; font-weight:500; }
-.pred-detail-wrap { overflow-x:hidden; min-width:0; border:1px solid #444; border-radius:10px; margin-top:8px; }
+.pred-detail-wrap { overflow-x:auto; min-width:0; -webkit-overflow-scrolling:touch; border:1px solid #444; border-radius:10px; margin-top:8px; }
 .pred-detail-wrap table { width:100%; table-layout:auto; border-collapse:collapse; }
-.pred-detail-wrap th { text-align:center; padding:6px 8px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:11px; text-transform:uppercase; white-space:normal; line-height:1.25; word-wrap:break-word; overflow-wrap:anywhere; max-width:11em; overflow:visible; text-overflow:clip; vertical-align:bottom; cursor:pointer; user-select:none; }
+.pred-detail-wrap th { text-align:center; padding:4px 5px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:10px; text-transform:uppercase; white-space:normal; line-height:1.25; word-wrap:break-word; overflow-wrap:anywhere; max-width:11em; overflow:visible; text-overflow:clip; vertical-align:bottom; cursor:pointer; user-select:none; }
 .pred-detail-wrap th.pred-col-st,
 .pred-detail-wrap th.pred-col-num,
 .pred-detail-wrap th.pred-col-dly { white-space:nowrap; }
@@ -29357,7 +29322,7 @@ _PRED_DASH_MOCK_CSS = """
 .pred-detail-wrap th, .pred-detail-wrap td { border-right:1px solid #5a7a9a !important; border-bottom:1px solid #5a7a9a !important; }
 .pred-detail-wrap thead tr:first-child th { border-top:1px solid #5a7a9a !important; }
 .pred-detail-wrap tr th:first-child, .pred-detail-wrap tr td:first-child { border-left:1px solid #5a7a9a !important; }
-.pred-detail-wrap td { padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0; vertical-align:top; white-space:normal; word-wrap:break-word; overflow-wrap:anywhere; max-width:28em; overflow:visible; text-overflow:clip; background:#1a1c23 !important; }
+.pred-detail-wrap td { padding:4px 6px; border-bottom:1px solid #333; color:#e0e0e0; vertical-align:top; white-space:normal; word-wrap:break-word; overflow-wrap:anywhere; max-width:11em; font-size:12px; overflow:visible; text-overflow:clip; background:#1a1c23 !important; }
 .pred-detail-wrap td.pred-col-num,
 .pred-detail-wrap td.pred-col-dly,
 .pred-detail-wrap td.pred-col-date,
@@ -29622,6 +29587,75 @@ def _pred_build_seven_column_df(
     return pd.DataFrame(rows, columns=cols)
 
 
+
+def _pred_projekts_1c_lookup() -> tuple[dict[str, str], frozenset[str], frozenset[str]]:
+    """ID_Проекта → имя; множества id и имён (casefold) из web/1с_*_Projekts.json."""
+    raw = _load_project_id_to_name_lookup() or {}
+    ids = frozenset(str(k).strip().lower() for k in raw if str(k).strip())
+    names = frozenset(str(v).strip().casefold() for v in raw.values() if str(v).strip())
+    return raw, ids, names
+
+
+def _tessa_drop_project_state_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Исключить документы TESSA в статусе «Проект» (KrStateID=0 / текст)."""
+    if df is None or getattr(df, "empty", True):
+        return df
+    out = df
+    if "KrStateID" in out.columns:
+        _krs = pd.to_numeric(out["KrStateID"], errors="coerce")
+        out = out[~_krs.eq(0)].copy()
+    st_col = _tessa_find_column(out, ["Статус", "KrState", "krstate"])
+    if st_col and st_col in out.columns:
+        _st = out[st_col].astype(str).str.strip().str.casefold()
+        out = out[~_st.eq("проект")].copy()
+    return out.reset_index(drop=True)
+
+
+def _pred_filter_by_projekts_registry(df: pd.DataFrame, obj_col: str | None) -> pd.DataFrame:
+    """Только проекты с ID в 1с_*_Projekts.json (остальные отбрасываем)."""
+    if df is None or getattr(df, "empty", True):
+        return df
+    _raw, valid_ids, valid_names = _pred_projekts_1c_lookup()
+    if not valid_ids:
+        return df
+    proj_id_col = _tessa_find_column(
+        df,
+        ["1C_ID_OBJECT", "1C_ID_PROJ", "ID_Проекта", "ProjectID", "1c_id_object"],
+    )
+    if proj_id_col and proj_id_col in df.columns:
+        sid = df[proj_id_col].astype(str).str.strip().str.lower()
+        sid = sid.replace({"": pd.NA, "nan": pd.NA, "none": pd.NA})
+        mask = sid.isin(valid_ids)
+        return df[mask.fillna(False)].copy()
+    if obj_col and obj_col in df.columns:
+        if _raw:
+            resolved = _resolve_project_display_labels(df[obj_col], _raw)
+            names = resolved.astype(str).str.strip().str.casefold()
+        else:
+            names = df[obj_col].astype(str).str.strip().str.casefold()
+        return df[names.isin(valid_names)].copy()
+    return df.iloc[0:0].copy()
+
+
+def _pred_status_display_label(status: Any, *, resolved: bool = False) -> str:
+    """«На ознакомлении» в UI → «Не устранено» (открытые предписания)."""
+    s = _clean_display_str(status, empty="Неизвестно")
+    if resolved:
+        return s
+    if str(s).strip().casefold() == "на ознакомлении":
+        return "Не устранено"
+    return s
+
+
+def _pred_status_pie_color(status_label: str) -> str:
+    sl = str(status_label).strip().casefold()
+    if "снято" in sl:
+        return "#2ecc71"
+    if "на ознакомлени" in sl or "не устранено" in sl:
+        return "#e67e22"
+    return "#94a3b8"
+
+
 def _pred_build_detail_table_df(
     show: pd.DataFrame,
     contr_col,
@@ -29669,7 +29703,7 @@ def _pred_build_detail_table_df(
             doc_full_s = "—"
         rows.append(
             {
-                "Статус предписания": _clean_display_str(row.get("Статус"), empty="Неизвестно"),
+                "Статус предписания": _pred_status_display_label(row.get("Статус"), resolved=resolved_raw),
                 "Подрядчик": _clean_display_str(row.get(contr_col), empty="—") if contr_col and contr_col in show.columns else "—",
                 "Проект": _clean_display_str(row.get(obj_col), empty="—") if obj_col and obj_col in show.columns else "—",
                 "№ договора": _pred_fmt_num(row.get(contract_col)) if contract_col and contract_col in show.columns else "Без номера",
@@ -31469,11 +31503,20 @@ def dashboard_predpisania(df):
         st.info("Нет предписаний с заполненным объектом/проектом.")
         return
 
-    pred_project_options = (
-        _unique_project_labels_for_select(pred[obj_col])
-        if obj_col and obj_col in pred.columns
-        else []
+    _proj_lookup_pred, _proj_ids_pred, _proj_names_pred = _pred_projekts_1c_lookup()
+    if obj_col and obj_col in pred.columns and _proj_lookup_pred:
+        pred[obj_col] = _resolve_project_display_labels(pred[obj_col], _proj_lookup_pred)
+    pred = _pred_filter_by_projekts_registry(pred, obj_col)
+    if pred.empty:
+        st.info("Нет предписаний по проектам из справочника 1с_*_Projekts.json.")
+        return
+
+    pred_project_options = sorted(
+        set(_proj_lookup_pred.values()) if _proj_lookup_pred else set(),
+        key=lambda x: str(x).casefold(),
     )
+    if not pred_project_options and obj_col and obj_col in pred.columns:
+        pred_project_options = _unique_project_labels_for_select(pred[obj_col])
 
     # Повторно объединяем по ключу уже внутри выборки «предписания» (договор/срок могли быть только в других строках)
     pred = _tessa_fill_card_from_doc_lookup(pred)
@@ -31505,15 +31548,7 @@ def dashboard_predpisania(df):
     #   0=Проект, 1=На согласовании, 2=Согласован, 4=На доработке,
     #   8=Подписан, 9=Отказ, 10=На подписании, 12=На ознакомлении, 13=Снято.
     # Исключаем по обоим признакам (надёжно): по KrStateID=0 И по тексту «Проект».
-    _st_stat = pred["Статус"].astype(str).str.strip()
-    _drop_mask_text = _st_stat.str.casefold().eq("проект") | _st_stat.str.fullmatch(
-        r"\s*Проект\s*", case=False, na=False
-    )
-    _drop_mask_id = pd.Series(False, index=pred.index)
-    if "KrStateID" in pred.columns:
-        _krs = pd.to_numeric(pred["KrStateID"], errors="coerce")
-        _drop_mask_id = _krs.eq(0)
-    pred = pred[~(_drop_mask_text | _drop_mask_id)].copy()
+    pred = _tessa_drop_project_state_rows(pred)
 
     contr_col = _tessa_find_column(pred, ["CONTR", "Контрагент", "contr"])
     curator_col = _tessa_find_column(
@@ -31667,6 +31702,9 @@ def dashboard_predpisania(df):
     issue_block_col = _tessa_find_column(
         pred,
         [
+            "Comment",
+            "comment",
+            "Комментарий",
             "BlockName",
             "IssueBlock",
             "Блок выдачи предписания",
@@ -31964,7 +32002,7 @@ def dashboard_predpisania(df):
     )
     hide_resolved = st.checkbox(
         "Не отображать устраненные предписания",
-        value=True,
+        value=False,
         key="pred_hide_resolved",
     )
 
@@ -32067,7 +32105,7 @@ def dashboard_predpisania(df):
             + '<div class="pred-leg">'
             '<span style="display:inline-flex;align-items:center;gap:6px;">'
             '<span style="display:inline-block;width:14px;height:14px;background:#E67E22;border-radius:3px;"></span>'
-            '<strong>Внутри столбца</strong> — просроченные предписания.'
+            '<strong>Внутри столбца</strong> — только просроченные (не все).'
             '</span>'
             '<span style="display:inline-flex;align-items:center;gap:6px;margin-left:14px;">'
             '<span style="display:inline-block;width:18px;height:18px;background:#3498db;border-radius:50%;color:#fff;font-size:11px;font-weight:700;text-align:center;line-height:18px;">N</span>'
@@ -32121,8 +32159,8 @@ def dashboard_predpisania(df):
                     ),
                     hovertemplate=(
                         "<b>%{y}</b><br>"
-                        "Неустранённых: %{x}<br>"
-                        "Просроченных: %{customdata[0]}<br>"
+                        + ("Всего: %{x}<br>" if not hide_resolved else "Неустранённых: %{x}<br>")
+                        + "Просроченных: %{customdata[0]}<br>"
                         "Дата выдачи (мин–макс): %{customdata[1]} — %{customdata[2]}<extra></extra>"
                     ),
                     showlegend=False,
@@ -32167,7 +32205,11 @@ def dashboard_predpisania(df):
                     text=[str(int(v)) for v in grp[_cnt_col]],
                     textfont=dict(color="#ffffff", size=13, family="Inter, Arial, sans-serif"),
                     textposition="middle center",
-                    hovertemplate="<b>%{y}</b><br>Неустранённых (всего): %{text}<extra></extra>",
+                    hovertemplate=(
+                        "<b>%{y}</b><br>"
+                        + ("Всего предписаний: %{text}<br>" if not hide_resolved else "Неустранённых: %{text}<br>")
+                        + "<extra></extra>"
+                    ),
                     name="Всего неустранённых",
                     showlegend=False,
                 )
@@ -32183,7 +32225,7 @@ def dashboard_predpisania(df):
             fig1.update_layout(
                 height=max(520, len(grp) * _row_h + 200),
                 yaxis_title="",
-                xaxis_title="Количество предписаний (длина — все, внутри — просроченные)",
+                xaxis_title="Количество (столбец — всего, оранжевый сегмент — просроченные)",
                 margin=dict(l=12, r=80, t=64, b=72),
                 xaxis=dict(
                     range=[0, axis_upper_with_bubble],
@@ -32232,15 +32274,27 @@ def dashboard_predpisania(df):
         )
 
     _viz_df = chart_df
-    status_counts = _viz_df["Статус"].value_counts()
+    _status_display = _viz_df.apply(
+        lambda r: _pred_status_display_label(
+            r.get("Статус"),
+            resolved=bool(r.get("_resolved", False)),
+        ),
+        axis=1,
+    )
+    status_counts = _status_display.value_counts()
     st.subheader("Предписания по статусам")
     status_df = status_counts.reset_index()
     status_df.columns = ["Статус", "Количество"]
+    _pie_status_labels = status_df["Статус"].astype(str).tolist()
+    _pie_status_colors = [_pred_status_pie_color(s) for s in _pie_status_labels]
     fig2 = px.pie(
         status_df,
         names="Статус",
         values="Количество",
-        color_discrete_sequence=px.colors.qualitative.Set2,
+        color="Статус",
+        color_discrete_map={
+            s: c for s, c in zip(_pie_status_labels, _pie_status_colors)
+        },
     )
     _nst = len(status_df.index)
     fig2 = _pie_apply_percent_inside_legend_left(
@@ -32301,8 +32355,8 @@ def dashboard_predpisania(df):
 
     render_table_subheader(st, "Детальная таблица по предписаниям")
     with st.expander("Примечание к таблице", expanded=False):
-        suppress_caption("Клик по заголовку сортирует таблицу. Просроченные строки выделены розовым, устраненные — салатовым.")
-    show = chart_df.copy()
+        suppress_caption("Клик по заголовку колонки — сортировка по возрастанию/убыванию. Просроченные — розовым, устранённые — салатовым. Колонка «Блок выдачи предписания» — из поля Comment в tessa_*-id.csv / *-rd.csv (пока в карточках часто пусто).")
+    show = filtered.copy()
     show = show.sort_values(["_critical", "_overdue_days"], ascending=[False, False])
 
     show_tbl = show.copy()

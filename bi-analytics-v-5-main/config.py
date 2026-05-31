@@ -444,7 +444,7 @@ DATA_MODE: str = os.environ.get("DATA_MODE", "auto").strip().lower()
 
 # Точные подписи «project name», которые не показываем в фильтрах (устаревший дубликат написания).
 # Важно: сравнение по строке, не по norm-key — иначе скрывались бы и «Дмитровский 1», если в исключении «Дмитровский-1».
-MSP_PROJECT_FILTER_EXCLUDE_NAMES: FrozenSet[str] = frozenset({"Дмитровский-1"})
+MSP_PROJECT_FILTER_EXCLUDE_NAMES: FrozenSet[str] = frozenset({"Дмитровский-1", "Барышы 2"})
 
 MSP_PROJECT_NAME_MAP: Dict[str, str] = {
     "dmitrovsky1": "Дмитровский 1",
