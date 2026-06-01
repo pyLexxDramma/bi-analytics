@@ -2999,7 +2999,7 @@ def render_chart(
             _shell = (
                 "<!DOCTYPE html><html><head><meta charset='utf-8'>"
                 "<style>html,body{margin:0;padding:0;background:transparent;overflow:hidden;}"
-                f".pf-gantt-view{{max-height:{_vh}px;overflow-y:auto;overflow-x:hidden;"
+                f".pf-gantt-view{{max-height:{_vh}px;overflow-y:auto;overflow-x:auto;-webkit-overflow-scrolling:touch;"
                 "border:1px solid rgba(148,163,184,0.22);border-radius:8px;}"
                 "</style></head><body>"
                 f'<div class="pf-gantt-view">{_plot_div}</div>'
@@ -7895,7 +7895,7 @@ def dashboard_plan_fact_dates(df):
             return str(disp).strip()
 
         _PF_GANTT_TASK_FONT = 11
-        _PF_GANTT_WRAP_WIDTH = 42
+        _PF_GANTT_WRAP_WIDTH = 34
         _PF_GANTT_WRAP_MAX_LINES = 8
 
         def _pf_y_label_wrapped(name: str) -> str:
@@ -7933,20 +7933,12 @@ def dashboard_plan_fact_dates(df):
             return chart_h, max_lines
 
         def _pf_gantt_label_domain(y_order_local: list[str]) -> float:
-            max_line_len = 8
-            for y in y_order_local:
-                for line in str(y).split("<br>"):
-                    max_line_len = max(max_line_len, len(line))
-            px_per_char = max(5.2, _PF_GANTT_TASK_FONT * 0.50)
-            label_px = int(4 + max_line_len * px_per_char + 6)
-            label_px = min(240, max(52, label_px))
-            return round(
-                min(
-                    _GANTT_LABEL_DOMAIN_MAX,
-                    max(_GANTT_LABEL_DOMAIN_MIN, _GANTT_LABEL_X_LEFT + (label_px + 4) / 1180.0),
-                ),
-                4,
+            _, domain_start = _project_schedule_gantt_label_column_layout(
+                y_order_local,
+                task_font=_PF_GANTT_TASK_FONT,
+                plot_min_px=480,
             )
+            return domain_start
 
         def _pf_gantt_y_label_annotations(
             y_order_local: list[str], *, domain_start: float
@@ -34531,10 +34523,11 @@ def _project_schedule_gantt_label_column_layout(
     px_per_char = max(5.2, float(task_font) * 0.50)
     label_px = int(4 + max_line_len * px_per_char + 6)
     label_px = min(240, max(52, label_px))
+    plot_ref_px = max(int(plot_min_px), _GANTT_LABEL_DOMAIN_REF_PX)
     domain_start = round(
         min(
             _GANTT_LABEL_DOMAIN_MAX,
-            max(_GANTT_LABEL_DOMAIN_MIN, _GANTT_LABEL_X_LEFT + (label_px + 4) / 1180.0),
+            max(_GANTT_LABEL_DOMAIN_MIN, _GANTT_LABEL_X_LEFT + (label_px + 8) / float(plot_ref_px)),
         ),
         4,
     )
@@ -34669,7 +34662,8 @@ _GANTT_DATE_LABELS_HOVER_ONLY_ROWS = 60
 _GANTT_LINES_TEXT_MAX_ROWS = 20
 _CHART_PLOT_DATE_FMT = "%d-%m-%y"
 _GANTT_LABEL_X_LEFT = 0.006
-_GANTT_LABEL_DOMAIN_MAX = 0.20
+_GANTT_LABEL_DOMAIN_MAX = 0.38
+_GANTT_LABEL_DOMAIN_REF_PX = 640
 _GANTT_LABEL_DOMAIN_MIN = 0.05
 
 
