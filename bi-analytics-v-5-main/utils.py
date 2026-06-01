@@ -200,6 +200,38 @@ table.bi-sortable-table th.col-text {
   text-align: center !important;
   vertical-align: middle !important;
 }
+.bi-sortable-html-root table.bi-sortable-table th.col-pf-start,
+.bi-sortable-html-root table.bi-sortable-table th.col-pf-end,
+.bi-sortable-html-root table.bi-sortable-table th.col-pf-dur,
+.bi-sortable-html-root table.bi-sortable-table td.col-pf-start,
+.bi-sortable-html-root table.bi-sortable-table td.col-pf-end,
+.bi-sortable-html-root table.bi-sortable-table td.col-pf-dur,
+table.bi-sortable-table th.col-pf-start,
+table.bi-sortable-table th.col-pf-end,
+table.bi-sortable-table th.col-pf-dur,
+table.bi-sortable-table td.col-pf-start,
+table.bi-sortable-table td.col-pf-end,
+table.bi-sortable-table td.col-pf-dur {
+  white-space: nowrap !important;
+  word-wrap: normal !important;
+  overflow-wrap: normal !important;
+  word-break: normal !important;
+  max-width: none !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+.bi-sortable-html-root table.bi-sortable-table th.col-pf-start .bi-sort-label,
+.bi-sortable-html-root table.bi-sortable-table th.col-pf-end .bi-sort-label,
+.bi-sortable-html-root table.bi-sortable-table th.col-pf-dur .bi-sort-label,
+table.bi-sortable-table th.col-pf-start .bi-sort-label,
+table.bi-sortable-table th.col-pf-end .bi-sort-label,
+table.bi-sortable-table th.col-pf-dur .bi-sort-label {
+  white-space: nowrap !important;
+  word-wrap: normal !important;
+  overflow-wrap: normal !important;
+  text-align: center !important;
+  display: inline-block;
+}
 </style>
 """
 
@@ -2020,15 +2052,29 @@ def render_report_html_table(
         )
     _kp = key_prefix or f"tbl_{_export_file_stem(file_stem)}"
     _pop_key = f"{_kp}_dl"
+    _wrap_key = "bitblwrap_" + str(_kp).replace(' ', '_')
+    if "bi_tbl_wrap_scoped_css" not in st.session_state:
+        st.session_state.bi_tbl_wrap_scoped_css = True
+        st.markdown(
+            "<style>"
+            'div[class*="st-key-bitblwrap_"] div[data-testid="stVerticalBlock"]{gap:0.1rem!important;}'
+            'div[class*="st-key-bitblwrap_"] div[data-testid="stElementContainer"]:has(iframe){margin-bottom:0!important;padding-bottom:0!important;}'
+            'div[class*="st-key-bitblwrap_"] div[data-testid="stElementContainer"]:has([data-testid="stHtml"]){margin-bottom:0!important;padding-bottom:0!important;}'
+            'div[class*="st-key-bitblwrap_"] [data-testid="stPopover"]{margin-top:0!important;padding-top:0!important;}'
+            "</style>",
+            unsafe_allow_html=True,
+        )
     _compact_tbl = (
-        "pf-dates-table-wrap" in (html or "")
+        "pf-covenant-table-wrap" in (html or "")
+        or "pf-dates-scroll-wrap" in (html or "")
+        or "pf-dates-table-wrap" in (html or "")
         or "pred-detail-wrap" in (html or "")
         or (
             "budget-deviation-table-wrap" in (html or "")
             and "budget-table-scroll" in (html or "")
         )
         or file_stem in (
-            "plan_fact_dates", "predpisania", "debit_credit", "executive_docs",
+            "plan_fact_dates", "plan_fact_covenant", "predpisania", "debit_credit", "executive_docs",
             "forecast_bddcs_financier_status", "gdrs", "budget", "dev_reasons",
         )
         or "exec-doc-table-wrap" in (html or "")
@@ -2063,13 +2109,20 @@ def render_report_html_table(
             "max-width:100%!important;height:auto!important;min-height:0!important;}"
             "div[data-testid='stElementContainer']:has(iframe) iframe{display:block!important;margin:0!important;padding:0!important;"
             "overflow:hidden!important;max-width:100%!important;vertical-align:top!important;}"
-            "div[data-testid='stVerticalBlock']:has(iframe){gap:0!important;margin:0!important;padding:0!important;}"
-            "div[data-testid='stVerticalBlock']:has(iframe)+div[data-testid='stVerticalBlock']:has([data-testid='stPopover']),"
-            "div[data-testid='stVerticalBlock']:has([data-testid='stHtml'])+div[data-testid='stVerticalBlock']:has([data-testid='stPopover'])"
-            "{margin:0!important;padding:0!important;gap:0!important;}"
-            "[data-testid='stPopover']{margin:0!important;padding:0!important;}"
+            "div[data-testid='stElementContainer']:has(iframe){margin-bottom:0!important;padding-bottom:0!important;}"
+            "[data-testid='stPopover']{margin-top:0.05rem!important;margin-bottom:0.5rem!important;padding:0!important;}"
             "@media (max-width:900px){.pred-detail-wrap{height:min(55vh,420px)!important;max-height:min(55vh,420px)!important;}"
             ".fc-table-scroll-wrap{height:100%!important;max-height:100%!important;}}"
+            "</style>",
+            unsafe_allow_html=True,
+        )
+    if _compact_tbl and "pf-covenant-table-wrap" in (html or ""):
+        st.markdown(
+            "<style>"
+            "div[data-testid='stElementContainer']:has(iframe){width:100%!important;max-width:100%!important;"
+            "min-width:0!important;margin:0!important;padding:0!important;}"
+            "iframe[title='streamlit_components_v1']{width:100%!important;max-width:100%!important;display:block!important;}"
+            "div[data-testid='stVerticalBlock']:has(iframe){width:100%!important;max-width:100%!important;}"
             "</style>",
             unsafe_allow_html=True,
         )
@@ -2085,12 +2138,6 @@ def render_report_html_table(
             "div[data-testid='stElementContainer']:has(iframe[title='streamlit_components_v1']),"
             "div[data-testid='stElementContainer']:has([data-testid='stHtml']) "
             "{margin:0!important;padding:0!important;overflow:visible!important;}"
-            "div[data-testid='stVerticalBlock']:has(iframe){gap:0!important;margin:0!important;padding:0!important;}"
-            "div[data-testid='stVerticalBlock']:has(iframe)+div[data-testid='stVerticalBlock']:has([data-testid='stPopover']),"
-            "div[data-testid='stVerticalBlock']:has([data-testid='stHtml']) "
-            "+div[data-testid='stVerticalBlock']:has([data-testid='stPopover']) "
-            "{margin:0!important;padding:0!important;gap:0!important;}"
-            "[data-testid='stPopover']{margin:0!important;padding:0!important;}"
             "div[data-testid='stExpander'] details[open]>div{padding-bottom:0!important;"
             "max-width:100%!important;overflow-x:auto!important;min-width:0!important;}"
             "</style>",
@@ -2098,7 +2145,7 @@ def render_report_html_table(
         )
         if _gap_fc:
             try:
-                _tbl_outer = st.container(border=False, gap=None)
+                _tbl_outer = st.container(border=False, gap=None, key=_wrap_key)
             except TypeError:
                 _tbl_outer = st.container(border=False)
             with _tbl_outer:
@@ -2117,7 +2164,7 @@ def render_report_html_table(
                     )
             return
         try:
-            _tbl_block = st.container(border=False, gap="xxsmall")
+            _tbl_block = st.container(border=False, gap="xxsmall", key=_wrap_key)
         except TypeError:
             try:
                 _tbl_block = st.container(border=False, gap=None)
@@ -2148,7 +2195,7 @@ def render_report_html_table(
         )
 
     try:
-        _tbl_block = st.container(border=False, gap="xxsmall")
+        _tbl_block = st.container(border=False, gap="xxsmall", key=_wrap_key)
     except TypeError:
         try:
             _tbl_block = st.container(border=False, gap=None)

@@ -203,7 +203,7 @@ def _filter_df_by_project_labels(
 _TABLE_CSS = """
 <style>
 /* §4.8: плотная сетка — без лишней «пустой» ширины ячеек; скролл по горизонтали */
-.rendered-table-wrap {overflow-x:auto; min-width:0; max-width:100%; margin:0.5rem 0 1rem 0; -webkit-overflow-scrolling:touch}
+.rendered-table-wrap {overflow-x:auto; min-width:0; max-width:100%; margin:0.15rem 0 0.05rem 0; -webkit-overflow-scrolling:touch}
 .rendered-table-wrap .rendered-table {width:max-content; min-width:100%}
 .pf-dates-table-wrap {
   overflow-x:auto; overflow-y:visible; min-width:0; max-width:100%; width:100%;
@@ -213,12 +213,35 @@ _TABLE_CSS = """
 .pf-dates-table-wrap::-webkit-scrollbar{height:10px}
 .pf-dates-table-wrap::-webkit-scrollbar-thumb{background:rgba(148,163,184,0.45);border-radius:5px}
 .pf-zos-table-wrap{margin-bottom:0.2rem!important}
+.pf-covenant-table-wrap .pf-dates-table{width:100%!important;min-width:100%!important;max-width:100%!important;table-layout:auto}
 .pf-dates-table-wrap .pf-dates-table {width:max-content; min-width:100%; table-layout:auto}
+.pf-dates-scroll-wrap{
+  overflow-x:auto!important;overflow-y:auto!important;
+  max-height:min(70vh,640px);width:100%!important;max-width:100%!important;
+  -webkit-overflow-scrolling:touch;scrollbar-gutter:stable;box-sizing:border-box;
+}
+.pf-dates-scroll-wrap::-webkit-scrollbar{width:10px;height:10px}
+.pf-dates-scroll-wrap::-webkit-scrollbar-thumb{background:rgba(148,163,184,0.45);border-radius:5px}
+.pf-dates-scroll-wrap .pf-dates-table thead th{position:sticky;top:0;z-index:4;background:hsl(209,72%,6%)!important;}
+.pf-dates-table th.col-pf-start,.pf-dates-table th.col-pf-end,.pf-dates-table th.col-pf-dur,
+.pf-dates-table td.col-pf-start,.pf-dates-table td.col-pf-end,.pf-dates-table td.col-pf-dur{
+  white-space:nowrap!important;max-width:none!important;word-wrap:normal!important;
+  overflow-wrap:normal!important;word-break:normal!important;overflow:visible;text-overflow:clip;
+  vertical-align:middle!important;text-align:center!important;
+}
+.pf-dates-table th.col-pf-start .bi-sort-label,.pf-dates-table th.col-pf-end .bi-sort-label,
+.pf-dates-table th.col-pf-dur .bi-sort-label{
+  white-space:nowrap!important;display:inline-block;text-align:center!important;
+}
 .pf-dates-table th {max-width:9.5em; padding:6px 6px; cursor:pointer;
   white-space:normal; word-wrap:break-word; overflow-wrap:anywhere; line-height:1.25;
   overflow:visible; text-overflow:clip; vertical-align:bottom;}
+.pf-dates-table th.col-pf-start,.pf-dates-table th.col-pf-end,.pf-dates-table th.col-pf-dur{
+  max-width:none!important;white-space:nowrap!important;word-wrap:normal!important;overflow-wrap:normal!important;
+}
 .bi-sort-click-only thead th { cursor:pointer !important; }
-.pf-dates-table td {max-width:28em; white-space:normal; word-wrap:break-word;
+.pf-dates-table td:not(.col-pf-project):not(.col-pf-start):not(.col-pf-end):not(.col-pf-dur) {
+  max-width:28em; white-space:normal; word-wrap:break-word;
   overflow-wrap:anywhere; overflow:visible; text-overflow:clip; vertical-align:top;}
 .rendered-table {
   border-collapse:collapse; font-size:13px;
@@ -265,13 +288,24 @@ _TABLE_CSS = """
 .rendered-table td.col-baseline,
 .rendered-table td.col-fact,
 .rendered-table td.col-dev {
-  white-space:nowrap; max-width:none; overflow:visible; text-overflow:clip;
+  white-space:nowrap!important; max-width:none!important; overflow:visible; text-overflow:clip;
+  text-align:center!important; vertical-align:middle!important;
 }
 .gantt-schedule-table-wrap .rendered-table td,
 .gantt-schedule-table-wrap .rendered-table th {
   white-space:normal; max-width:28em; overflow:visible; text-overflow:clip;
   word-break:break-word;
 }
+.rendered-table th.col-pf-project,
+.rendered-table td.col-pf-project,
+.pf-dates-table th.col-pf-project,
+.pf-dates-table td.col-pf-project {
+  min-width:max(11em, max-content); max-width:none;
+  white-space:nowrap !important; word-wrap:normal !important; overflow-wrap:normal !important;
+  overflow:visible; text-overflow:clip;
+}
+.rendered-table td.col-pf-project { text-align:left; vertical-align:middle; }
+.rendered-table th.col-pf-project { text-align:center; vertical-align:bottom; }
 .rendered-table th.col-text,
 .rendered-table td.col-text {
   min-width:10em; max-width:36em;
@@ -465,7 +499,9 @@ def _plan_fact_dates_col_css_class(col: str) -> str:
     if c in ("Баз. длит.", "Длительность", "Отклонение длительности", "Откл. длит."):
         return "col-pf-dur"
     cl = c.casefold()
-    if any(k in cl for k in ("задач","проект","блок","строен","причин","замет","id задач","функц","контрагент","подряд","назван")):
+    if ("проект" in cl or "project" in cl) and "задач" not in cl and "task" not in cl:
+        return "col-pf-project"
+    if any(k in cl for k in ("задач","блок","строен","причин","замет","id задач","функц","контрагент","подряд","назван")):
         return "col-text"
     return ""
 
@@ -554,8 +590,8 @@ def _plan_fact_dev_nval_for_col(col: str, dev_start, dev_end, dev_dur):
 
 
 def _plan_fact_td_align_style(col: str, *, in_dev: bool, in_num: bool, in_date: bool) -> str:
-    if in_dev or in_num:
-        return "text-align:right;"
+    if in_dev or in_num or in_date:
+        return "text-align:center;"
     return "text-align:center;"
 
 
@@ -592,7 +628,14 @@ def _plan_fact_deviation_span(nval, text: str) -> str:
     return f'<span class="{cls}">{html_module.escape(disp)}</span>'
 
 
-def _render_plan_fact_dates_main_table(display_df: pd.DataFrame, numeric_df: pd.DataFrame) -> None:
+def _render_plan_fact_dates_main_table(
+    display_df: pd.DataFrame,
+    numeric_df: pd.DataFrame,
+    *,
+    wrap_class: str = "",
+    file_stem: str = "plan_fact_dates",
+    key_prefix: str | None = None,
+) -> None:
     if display_df is None or getattr(display_df, "empty", True):
         st.info("Нет данных для таблицы.")
         return
@@ -608,8 +651,14 @@ def _render_plan_fact_dates_main_table(display_df: pd.DataFrame, numeric_df: pd.
     _num_cols = {"Баз. длит.", "Длительность", "Базовая длительность"}
     _date_cols = {"Базовое начало", "Базовое окончание", "Начало", "Окончание"}
     _reason_cols = {"Причины отклонений", "Заметки"}
+    _wrap_extra = (wrap_class or "").strip()
+    _wrap_cls = "rendered-table-wrap pf-dates-table-wrap"
+    if _wrap_extra:
+        _wrap_cls = f"{_wrap_cls} {_wrap_extra}"
+    elif file_stem == "plan_fact_dates":
+        _wrap_cls = f"{_wrap_cls} pf-dates-scroll-wrap"
     parts = [
-        '<div class="rendered-table-wrap pf-dates-table-wrap">',
+        f'<div class="{_wrap_cls}" data-bi-rows="{len(display_df)}">',
         '<table class="rendered-table bi-sortable-table pf-dates-table bi-sort-click-only">',
         "<thead><tr>",
     ]
@@ -689,11 +738,12 @@ def _render_plan_fact_dates_main_table(display_df: pd.DataFrame, numeric_df: pd.
             parts.append(f'<td class="{cls}"{sort_attr}{align}>{cell}</td>')
         parts.append("</tr>")
     parts.append("</tbody></table></div>")
+    _kp = key_prefix or f"pf_dates_{abs(id(display_df))}"
     render_report_html_table(
         _TABLE_CSS + mark_html_table_sortable("".join(parts)),
         export_df=display_df,
-        file_stem="plan_fact_dates",
-        key_prefix=f"pf_dates_{abs(id(display_df))}",
+        file_stem=file_stem,
+        key_prefix=_kp,
     )
 
 
@@ -8335,7 +8385,13 @@ def dashboard_plan_fact_dates(df):
                 _cov_num["Отклонение окончания (дней)"] = pd.to_numeric(
                     _cov_num["Отклонение окончания (дней)"], errors="coerce"
                 )
-            _render_plan_fact_dates_main_table(cov_display, _cov_num)
+            _render_plan_fact_dates_main_table(
+                cov_display,
+                _cov_num,
+                wrap_class="pf-covenant-table-wrap",
+                file_stem="plan_fact_covenant",
+                key_prefix="pf_covenant_table",
+            )
     elif bar_df.empty:
         st.info("Нет данных для отображения графика.")
     else:

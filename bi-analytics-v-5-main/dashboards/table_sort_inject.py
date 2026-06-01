@@ -238,6 +238,17 @@ _TABLE_SORT_JS = r"""
 
   function reportFrameHeight() {
     try {
+      var pfScrollBox = document.querySelector(".pf-dates-scroll-wrap");
+      if (pfScrollBox) {
+        var pfTbl = pfScrollBox.querySelector("table");
+        var content = pfTbl ? Math.ceil(pfTbl.getBoundingClientRect().height)
+                            : Math.ceil(pfScrollBox.scrollHeight || 0);
+        var psh = Math.min(640, content + 16);
+        if (psh > 0) {
+          window.parent.postMessage({ type: "streamlit:setFrameHeight", height: psh }, "*");
+          return;
+        }
+      }
       var fcBox = document.querySelector(".fc-table-scroll-wrap");
       if (fcBox && fcBox.getBoundingClientRect) {
         var fr = fcBox.getBoundingClientRect();
@@ -247,7 +258,8 @@ _TABLE_SORT_JS = r"""
           return;
         }
       }
-      var root = document.querySelector(".pf-dates-table-wrap")
+      var root = document.querySelector(".pf-covenant-table-wrap")
+        || document.querySelector(".pf-dates-table-wrap")
         || document.querySelector(".pred-detail-wrap")
         || document.querySelector(".fc-table-scroll-wrap")
         || document.querySelector(".gantt-schedule-table-wrap")
@@ -255,7 +267,8 @@ _TABLE_SORT_JS = r"""
         || document.querySelector(".bi-sortable-html-root")
         || document.body;
       var compact = root && (
-        root.classList.contains("pf-dates-table-wrap")
+        root.classList.contains("pf-covenant-table-wrap")
+        || root.classList.contains("pf-dates-table-wrap")
         || root.classList.contains("pred-detail-wrap")
         || root.classList.contains("fc-table-scroll-wrap")
         || root.classList.contains("gantt-schedule-table-wrap")
@@ -265,16 +278,11 @@ _TABLE_SORT_JS = r"""
         var r = root.getBoundingClientRect();
         var bottom = r.bottom + (window.scrollY || 0);
         if (compact) {
-          var tbl = root.querySelector("table.pf-dates-table")
-            || root.querySelector("table.bi-sortable-table");
           if (root.classList.contains("pred-detail-wrap") || root.classList.contains("fc-table-scroll-wrap")) {
             h = Math.ceil(r.height) + 10;
-          } else
-          if (tbl && tbl.getBoundingClientRect) {
-            var tr = tbl.getBoundingClientRect();
-            h = Math.ceil(tr.bottom + (window.scrollY || 0)) + 6;
           } else {
-            h = Math.ceil(bottom) + 6;
+            // высота обёртки таблицы включает горизонтальный скроллбар → без пустоты
+            h = Math.ceil(r.height) + 4;
           }
         } else {
           var el = document.documentElement;
@@ -306,7 +314,8 @@ _TABLE_SORT_JS = r"""
   bootDoc(document);
   try {
     var ro = new ResizeObserver(function () { reportFrameHeight(); });
-    var tgt = document.querySelector(".pf-dates-table-wrap")
+    var tgt = document.querySelector(".pf-covenant-table-wrap")
+      || document.querySelector(".pf-dates-table-wrap")
       || document.querySelector(".pred-detail-wrap")
       || document.querySelector(".fc-table-scroll-wrap")
       || document.querySelector(".gantt-schedule-table-wrap")
@@ -324,6 +333,17 @@ _COMPACT_FRAME_FIT_JS = r"""
 (function () {
   function fit() {
     try {
+      var pfScroll = document.querySelector(".pf-dates-scroll-wrap");
+      if (pfScroll) {
+        var pfsTbl = pfScroll.querySelector("table");
+        var pcontent = pfsTbl ? Math.ceil(pfsTbl.getBoundingClientRect().height)
+                              : Math.ceil(pfScroll.scrollHeight || 0);
+        var ph = Math.min(640, pcontent + 16);
+        if (ph > 0) {
+          window.parent.postMessage({ type: "streamlit:setFrameHeight", height: ph }, "*");
+          return;
+        }
+      }
       var fc = document.querySelector(".fc-table-scroll-wrap");
       if (fc) {
         var fh = Math.ceil((window.innerHeight || document.documentElement.clientHeight || 0)) + 4;
@@ -333,6 +353,7 @@ _COMPACT_FRAME_FIT_JS = r"""
         }
       }
       var root = document.querySelector(".budget-deviation-table-wrap")
+        || document.querySelector(".pf-covenant-table-wrap")
         || document.querySelector(".pf-dates-table-wrap")
         || document.querySelector(".pred-detail-wrap")
         || document.querySelector(".gantt-schedule-table-wrap")
@@ -340,16 +361,13 @@ _COMPACT_FRAME_FIT_JS = r"""
         || document.body;
       var pad = (root && root.classList && (root.classList.contains("pred-detail-wrap") || root.classList.contains("fc-table-scroll-wrap"))) ? 20 : 4;
       var h = 0;
-      var tbl = root.querySelector && root.querySelector("table");
-      if (tbl) {
-        var box = tbl.getBoundingClientRect();
-        h = Math.ceil(box.bottom + (window.scrollY || 0)) + pad;
-        var cap = root.querySelector && root.querySelector(".budget-table-scroll");
-        if (cap) {
-          var cb = cap.getBoundingClientRect();
-          h = Math.min(h, Math.ceil(cb.bottom + (window.scrollY || 0)) + pad);
-        }
+      var cap = root.querySelector && root.querySelector(".budget-table-scroll");
+      if (cap) {
+        // бюджетная таблица с внутренним скроллом — по нижней границе скролл-области
+        var cb = cap.getBoundingClientRect();
+        h = Math.ceil(cb.bottom + (window.scrollY || 0)) + pad;
       } else {
+        // высота обёртки таблицы (включая горизонтальный скроллбар) → кнопка вплотную
         var box2 = root.getBoundingClientRect();
         h = Math.ceil(box2.bottom + (window.scrollY || 0)) + pad;
       }
@@ -377,6 +395,18 @@ html, body {
   display:block;width:100%;max-width:100%;margin:0;padding:0;
   overflow-x:auto!important;overflow-y:visible;
   -webkit-overflow-scrolling:touch;scrollbar-gutter:stable;
+}
+.pf-dates-scroll-wrap{
+  display:block;width:100%!important;max-width:100%!important;margin:0;padding:0;
+  max-height:100vh!important;height:100vh!important;overflow-x:auto!important;overflow-y:auto!important;
+  -webkit-overflow-scrolling:touch;scrollbar-gutter:stable;box-sizing:border-box;
+}
+.pf-dates-scroll-wrap .pf-dates-table thead th{position:sticky!important;top:0!important;z-index:4!important;}
+html:has(.pf-dates-scroll-wrap),body:has(.pf-dates-scroll-wrap){
+  overflow:hidden!important;margin:0;padding:0;height:100%!important;min-height:0!important;
+}
+.bi-sortable-html-root:has(.pf-dates-scroll-wrap){
+  overflow:visible!important;height:100%!important;max-height:100vh!important;
 }
 .bi-sortable-html-root:has(.pred-detail-wrap){overflow:visible!important;overflow-x:hidden!important}
 html:has(.pred-detail-wrap),body:has(.pred-detail-wrap){overflow:hidden!important;margin:0;padding:0}
@@ -414,6 +444,10 @@ html,body{
   box-sizing:border-box;
 }
 .bi-sortable-html-root table.bi-sortable-table{min-width:min(100%,720px);}
+.bi-sortable-html-root:has(.pf-covenant-table-wrap) table.pf-dates-table{width:100%!important;min-width:100%!important;max-width:100%!important;}
+.bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table{width:max-content!important;min-width:100%!important;max-width:none!important;}
+.bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table th.col-pf-start,.bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table th.col-pf-end,.bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table th.col-pf-dur,.bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table td.col-pf-start,.bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table td.col-pf-end,.bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table td.col-pf-dur{white-space:nowrap!important;text-align:center!important;max-width:none!important;}
+.pf-covenant-table-wrap{display:block;width:100%!important;max-width:100%!important;}
 @media (max-width:900px){
   .bi-sortable-html-root table.bi-sortable-table{min-width:640px;}
 }
@@ -562,7 +596,9 @@ def _split_embedded_style(html: str) -> tuple[str, str]:
 
 
 def _estimate_html_block_height(html: str) -> int:
-    html_l = html or ""
+    # ВАЖНО: классы-обёртки берём из разметки без <style>, иначе CSS-определения
+    # (.pf-dates-scroll-wrap{...} и т.п.) ложно срабатывают на substring-проверках.
+    html_l = re.sub(r"<style[^>]*>.*?</style>", "", html or "", flags=re.I | re.S)
     m_rows = re.search(r'data-bi-rows="(\d+)"', html_l)
     if m_rows:
         data_rows = int(m_rows.group(1))
@@ -587,6 +623,15 @@ def _estimate_html_block_height(html: str) -> int:
         row_h = 32
         extra = 16
         cap = 900
+    elif "pf-dates-scroll-wrap" in html_l:
+        thead_h = 44
+        row_h = 28
+        extra = 12
+        cap = 640
+    elif "pf-covenant-table-wrap" in html_l:
+        thead_h = 42
+        row_h = 27
+        extra = 4
     elif "pf-dates-table-wrap" in html_l or "pf-dates-table" in html_l:
         thead_h = 42
         row_h = 27
@@ -621,6 +666,10 @@ def _estimate_html_block_height(html: str) -> int:
                 return int(max(120, est))
             return int(max(120, min(est, vh_cap)))
         return int(max(120, est))
+    if "pf-dates-scroll-wrap" in html_l:
+        return int(min(cap, max(200, est)))
+    if "pf-covenant-table-wrap" in html_l:
+        return int(max(68, est))
     if "pf-dates-table-wrap" in html_l or "pf-dates-table" in html_l:
         return int(max(72, est))
     if "pred-detail-wrap" in html_l:
@@ -678,6 +727,7 @@ def _build_sortable_html_document(html: str) -> str:
             f"<script>{_COMPACT_FRAME_FIT_JS}</script>"
             if (
                 "pf-dates-table-wrap" in html_l
+                or "pf-covenant-table-wrap" in html_l
                 or "pf-dates-table" in html_l
                 or "gantt-schedule-table-wrap" in html_l
                 or (
@@ -688,6 +738,7 @@ def _build_sortable_html_document(html: str) -> str:
                 or "rendered-table-wrap" in html_l
                 or "dev-reasons-wrap" in html_l
                 or "fc-table-scroll-wrap" in html_l
+                or "pf-dates-scroll-wrap" in html_l
             )
             else ""
         )
@@ -700,6 +751,8 @@ def _html_block_compact(html: str) -> bool:
     html_l = html or ""
     return (
         "pf-dates-table-wrap" in html_l
+        or "pf-covenant-table-wrap" in html_l
+        or "pf-dates-scroll-wrap" in html_l
         or "pf-dates-table" in html_l
         or "pred-detail-wrap" in html_l
         or "fc-table-scroll-wrap" in html_l
@@ -720,10 +773,17 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
         st.markdown(html, unsafe_allow_html=True)
         return
     doc = _build_sortable_html_document(html)
-    if "pred-detail-wrap" in (html or ""):
+    # Маршрутизация по реальным классам-обёрткам (без <style>): иначе CSS-селекторы
+    # в _TABLE_CSS ложно матчатся подстрокой и все таблицы уходят в одну ветку.
+    _b = re.sub(r"<style[^>]*>.*?</style>", "", html or "", flags=re.I | re.S)
+    if "pred-detail-wrap" in _b:
         components.html(doc, height=548, scrolling=False)
         return
-    if "fc-table-scroll-wrap" in (html or ""):
+    if "pf-dates-scroll-wrap" in _b:
+        _h_scroll = min(640, max(280, _estimate_html_block_height(html)))
+        components.html(doc, height=_h_scroll, scrolling=False)
+        return
+    if "fc-table-scroll-wrap" in _b:
         components.html(doc, height=1052, scrolling=False)
         return
     # Не st.html: <script> сортировки в основной DOM часто не выполняется (↕ видны, клик мёртвый).
@@ -734,16 +794,27 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
     )
     if _compact:
         _h_compact = _estimate_html_block_height(html)
+        _covenant_tbl = "pf-covenant-table-wrap" in _b
         _wide_tbl = (
-            "pf-dates-table-wrap" in (html or "")
-            or "pf-dates-table" in (html or "")
-            or "gantt-schedule-table-wrap" in (html or "")
+            "pf-dates-table-wrap" in _b
+            or "pf-dates-table" in _b
+            or "gantt-schedule-table-wrap" in _b
         )
-        _pad_h = 4 if "budget-deviation-table-wrap" in (html or "") else 12
+        # scrolling=False: iframe ужимается по высоте контента (setFrameHeight),
+        # без пустоты под таблицей. Горизонтальный скролл широкой таблицы —
+        # внутри обёртки .pf-dates-table-wrap (overflow-x:auto), pad — запас на скроллбар.
+        if _covenant_tbl:
+            _pad_h = 2
+        elif "budget-deviation-table-wrap" in (html or ""):
+            _pad_h = 4
+        elif _wide_tbl:
+            _pad_h = 18
+        else:
+            _pad_h = 10
         components.html(
             doc,
-            height=max(120, _h_compact + _pad_h),
-            scrolling=bool(_wide_tbl),
+            height=max(68 if _covenant_tbl else 96, _h_compact + _pad_h),
+            scrolling=False,
         )
         return
     _h = _estimate_html_block_height(html)

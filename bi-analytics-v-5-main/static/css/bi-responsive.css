@@ -18,6 +18,11 @@ table.bi-sortable-table thead th .bi-sort-label{text-align:center!important}
   table.bi-sortable-table th,.bi-sortable-html-root table.bi-sortable-table th{
     font-size:9px!important;padding:6px 4px!important;white-space:normal!important;word-wrap:break-word!important;max-width:none!important}
   table.bi-sortable-table td{font-size:11px!important;padding:5px 6px!important}
+  table.bi-sortable-table th.col-pf-start,table.bi-sortable-table th.col-pf-end,table.bi-sortable-table th.col-pf-dur,
+  .bi-sortable-html-root table.bi-sortable-table th.col-pf-start,.bi-sortable-html-root table.bi-sortable-table th.col-pf-end,.bi-sortable-html-root table.bi-sortable-table th.col-pf-dur,
+  table.bi-sortable-table td.col-pf-start,table.bi-sortable-table td.col-pf-end,table.bi-sortable-table td.col-pf-dur,
+  .bi-sortable-html-root table.bi-sortable-table td.col-pf-start,.bi-sortable-html-root table.bi-sortable-table td.col-pf-end,.bi-sortable-html-root table.bi-sortable-table td.col-pf-dur{
+    white-space:nowrap!important;word-wrap:normal!important;overflow-wrap:normal!important;text-align:center!important;max-width:none!important}
   [data-testid="stPlotlyChart"]{min-height:280px!important}
   [data-testid="stPlotlyChart"] iframe{min-height:260px!important}
   .pred-detail-wrap{height:min(55vh,420px)!important;max-height:min(55vh,420px)!important}
