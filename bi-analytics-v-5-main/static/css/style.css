@@ -1071,6 +1071,31 @@ section[data-testid="stSidebar"] [data-testid="stExpander"]:has(details[open]) [
 
 
 /* Фильтры отчёта: одинаковые вертикальные отступы (заголовок → панель → поля) */
+/* Gantt chart caption + task table full width */
+.bi-chart-caption-below {
+    margin-bottom: 1.15rem !important;
+    padding-bottom: 0.15rem !important;
+    position: relative !important;
+    z-index: 1 !important;
+}
+[data-testid="stMain"] [data-testid="stMarkdownContainer"]:has(.bi-chart-caption-below) {
+    margin-bottom: 0.35rem !important;
+}
+.gantt-schedule-scroll-wrap,
+.gantt-schedule-table-wrap {
+    width: 100% !important;
+    max-width: 100% !important;
+}
+div[data-testid="stElementContainer"]:has(.gantt-schedule-scroll-wrap) iframe[title="streamlit_components_v1"],
+div[data-testid="stHtml"]:has(.gantt-schedule-scroll-wrap) {
+    width: 100% !important;
+    max-width: 100% !important;
+}
+.gantt-section-heading {
+    margin-top: 1rem !important;
+    margin-bottom: 0.35rem !important;
+}
+
 [data-testid="stMain"],
 [data-testid="stMainBlockContainer"] {
     --bi-filter-rhythm: 16px;

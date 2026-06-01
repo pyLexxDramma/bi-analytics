@@ -333,6 +333,14 @@ _COMPACT_FRAME_FIT_JS = r"""
 (function () {
   function fit() {
     try {
+      var ganttScroll = document.querySelector(".gantt-schedule-scroll-wrap");
+      if (ganttScroll) {
+        var gh = Math.ceil(ganttScroll.getBoundingClientRect().height) + 6;
+        if (gh > 0) {
+          window.parent.postMessage({ type: "streamlit:setFrameHeight", height: gh }, "*");
+          return;
+        }
+      }
       var pfScroll = document.querySelector(".pf-dates-scroll-wrap");
       if (pfScroll) {
         var pfsTbl = pfScroll.querySelector("table");
@@ -391,9 +399,16 @@ html, body {
   font-family: Inter, system-ui, sans-serif;
 }
 
+.gantt-schedule-scroll-wrap{
+  display:block;width:100%!important;max-width:100%!important;margin:0;padding:0;
+  height:min(70vh,640px)!important;max-height:min(70vh,640px)!important;
+  overflow-x:auto!important;overflow-y:auto!important;
+  -webkit-overflow-scrolling:touch;scrollbar-gutter:stable;box-sizing:border-box;
+}
+.gantt-schedule-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:4!important;background:hsl(209,72%,6%)!important;}
 .pf-dates-table-wrap,.gantt-schedule-table-wrap{
   display:block;width:100%;max-width:100%;margin:0;padding:0;
-  overflow-x:auto!important;overflow-y:visible;
+  overflow-x:visible!important;overflow-y:visible;
   -webkit-overflow-scrolling:touch;scrollbar-gutter:stable;
 }
 .pf-dates-scroll-wrap{
@@ -444,6 +459,22 @@ html,body{
   box-sizing:border-box;
 }
 .bi-sortable-html-root table.bi-sortable-table{min-width:min(100%,720px);}
+.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.bi-sortable-table,
+.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.rendered-table{
+  width:100%!important;min-width:100%!important;max-width:100%!important;table-layout:fixed;
+}
+.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.bi-sortable-table th.col-text,
+.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.rendered-table th.col-text,
+.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.bi-sortable-table td.col-text,
+.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.rendered-table td.col-text{
+  width:38%!important;max-width:none!important;
+}
+.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.bi-sortable-table th,
+.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.rendered-table th,
+.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.bi-sortable-table td,
+.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.rendered-table td{
+  max-width:none!important;
+}
 .bi-sortable-html-root:has(.pf-covenant-table-wrap) table.pf-dates-table{width:100%!important;min-width:100%!important;max-width:100%!important;}
 .bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table{width:max-content!important;min-width:100%!important;max-width:none!important;}
 .bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table th.col-pf-start,.bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table th.col-pf-end,.bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table th.col-pf-dur,.bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table td.col-pf-start,.bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table td.col-pf-end,.bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table td.col-pf-dur{white-space:nowrap!important;text-align:center!important;max-width:none!important;}
@@ -730,6 +761,7 @@ def _build_sortable_html_document(html: str) -> str:
                 or "pf-covenant-table-wrap" in html_l
                 or "pf-dates-table" in html_l
                 or "gantt-schedule-table-wrap" in html_l
+                or "gantt-schedule-scroll-wrap" in html_l
                 or (
                     "budget-deviation-table-wrap" in html_l
                     and "budget-table-scroll" in html_l
@@ -757,6 +789,7 @@ def _html_block_compact(html: str) -> bool:
         or "pred-detail-wrap" in html_l
         or "fc-table-scroll-wrap" in html_l
         or "gantt-schedule-table-wrap" in html_l
+        or "gantt-schedule-scroll-wrap" in html_l
         or "rendered-table-wrap" in html_l
         or "dev-reasons-wrap" in html_l
         or "bi-styled-table-wrap" in html_l
@@ -782,6 +815,9 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
     if "pf-dates-scroll-wrap" in _b:
         _h_scroll = min(640, max(280, _estimate_html_block_height(html)))
         components.html(doc, height=_h_scroll, scrolling=False)
+        return
+    if "gantt-schedule-scroll-wrap" in _b:
+        components.html(doc, height=648, scrolling=False)
         return
     if "fc-table-scroll-wrap" in _b:
         components.html(doc, height=1052, scrolling=False)

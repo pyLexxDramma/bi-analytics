@@ -293,10 +293,31 @@ _TABLE_CSS = """
   white-space:nowrap!important; max-width:none!important; overflow:visible; text-overflow:clip;
   text-align:center!important; vertical-align:middle!important;
 }
+.gantt-schedule-scroll-wrap{
+  display:block;width:100%!important;max-width:100%!important;margin:0.35rem 0 0.15rem 0;padding:0;
+  height:min(70vh,640px)!important;max-height:min(70vh,640px)!important;
+  overflow-x:auto!important;overflow-y:auto!important;
+  -webkit-overflow-scrolling:touch;scrollbar-gutter:stable;box-sizing:border-box;
+}
+.gantt-schedule-scroll-wrap::-webkit-scrollbar{width:10px;height:10px}
+.gantt-schedule-scroll-wrap::-webkit-scrollbar-thumb{background:rgba(148,163,184,0.45);border-radius:5px}
+.gantt-schedule-scroll-wrap thead th{position:sticky;top:0;z-index:4;background:hsl(209,72%,6%)!important;}
+.gantt-schedule-table-wrap {
+  width:100%!important; max-width:100%!important; box-sizing:border-box;
+  overflow:visible!important;
+}
+.gantt-schedule-table-wrap .rendered-table {
+  width:100%!important; min-width:100%!important; max-width:100%!important;
+  table-layout:fixed;
+}
 .gantt-schedule-table-wrap .rendered-table td,
 .gantt-schedule-table-wrap .rendered-table th {
-  white-space:normal; max-width:28em; overflow:visible; text-overflow:clip;
-  word-break:break-word;
+  white-space:normal; overflow:visible; text-overflow:clip;
+  word-break:break-word; max-width:none!important;
+}
+.gantt-schedule-table-wrap .rendered-table th.col-text,
+.gantt-schedule-table-wrap .rendered-table td.col-text {
+  max-width:none; width:38%;
 }
 .rendered-table th.col-pf-project,
 .rendered-table td.col-pf-project,
@@ -424,7 +445,7 @@ def _render_html_table(
                 else:
                     parts.append(f'<td class="{_cls_full}">{esc}</td>')
             parts.append("</tr>")
-        parts.append("</tbody></table></div>")
+        parts.append("</tbody></table></div></div>")
         render_report_html_table(
             _light_open + _table_css + "".join(parts) + _light_close,
             export_df=df,
@@ -811,6 +832,7 @@ def _render_gantt_schedule_html_table(
     _reason_cols = {"Причины отклонений", "Причина отклонения", "Заметки"}
 
     parts = [
+        '<div class="gantt-schedule-scroll-wrap">',
         '<div class="rendered-table-wrap gantt-schedule-table-wrap pf-dates-table-wrap">',
         '<table class="rendered-table bi-sortable-table bi-sort-click-only">',
         "<thead><tr>",
@@ -2124,9 +2146,11 @@ def _chart_caption_below(title: str, *, tight: bool = False) -> None:
     if not title:
         return
     esc = html_module.escape(sanitize_display_label(str(title)))
-    _m = "0.05rem 0 0" if tight else "0.12rem 0 0.05rem"
+    _mb = "1.35rem" if tight else "1.15rem"
+    _mt = "0.05rem" if tight else "0.12rem"
     st.markdown(
-        f"<p style='text-align:center;color:#e8eef5;margin:{_m};font-size:1.08rem;font-weight:700;'>"
+        f"<p class='bi-chart-caption-below' style='text-align:center;color:#e8eef5;"
+        f"margin:{_mt} 0 {_mb};font-size:1.08rem;font-weight:700;position:relative;z-index:1;'>"
         f"{esc}</p>",
         unsafe_allow_html=True,
     )
@@ -34386,12 +34410,28 @@ def _render_project_schedule_covenants(df: pd.DataFrame) -> None:
     )
 
 
-def _gantt_wrap_task_label(name: str, width: int = 42, max_lines: int = 8) -> str:
+def _gantt_label_wrap_width_chars(*, task_font: int = 12, label_px: int = 300) -> int:
+    """Оценка числа символов в колонке названий (по ширине в px, не фиксированные 42)."""
+    px_per_char = max(5.2, float(task_font) * 0.50)
+    return max(52, int((int(label_px) - 10) / px_per_char))
+
+
+def _gantt_wrap_task_label(name: str, width: int | None = None, max_lines: int = 8) -> str:
     """Перенос длинного названия задачи для tick labels оси Y (Plotly: <br>), без обрезки «…»."""
     s = str(name).strip()
     if not s:
         return ""
-    parts = textwrap.wrap(s, width=width, break_long_words=False, break_on_hyphens=False)
+    w = int(width) if width is not None else 58
+    if len(s) <= w:
+        return s
+    parts = textwrap.wrap(s, width=w, break_long_words=False, break_on_hyphens=False)
+    while len(parts) >= 2 and len(parts[-1]) <= 8:
+        tail = parts[-1].strip()
+        if tail.endswith(")") or re.fullmatch(r"[IVXLC]+\)?", tail, re.I):
+            parts[-2] = f"{parts[-2]} {parts[-1]}".strip()
+            parts.pop()
+        else:
+            break
     if len(parts) > max_lines:
         parts = parts[:max_lines]
     return "<br>".join(parts) if len(parts) > 1 else (parts[0] if parts else s)
@@ -34429,7 +34469,8 @@ def _gantt_resolve_y_labels(
     labels: list[str] = []
     chart_h = 320
     for _ in range(4):
-        labels = [_gantt_wrap_task_label(n, max_lines=max_lines) for n in raw_names]
+        _wrap_w = _gantt_label_wrap_width_chars(task_font=task_font)
+        labels = [_gantt_wrap_task_label(n, width=_wrap_w, max_lines=max_lines) for n in raw_names]
         chart_h = _project_schedule_gantt_chart_height(
             n_rows,
             dense=dense,
@@ -34546,7 +34587,7 @@ def _project_schedule_gantt_label_column_layout(
             max_line_len = max(max_line_len, len(line))
     px_per_char = max(5.2, float(task_font) * 0.50)
     label_px = int(4 + max_line_len * px_per_char + 6)
-    label_px = min(240, max(52, label_px))
+    label_px = min(320, max(52, label_px))
     plot_ref_px = max(int(plot_min_px), _GANTT_LABEL_DOMAIN_REF_PX)
     domain_start = round(
         min(
@@ -36580,18 +36621,20 @@ def dashboard_project_schedule_chart(df):
     if tbl_show.empty:
         st.info("Нет колонок для таблицы.")
     else:
-        with st.expander("Таблица задач", expanded=False):
-            suppress_caption("Сортировка: клик по заголовку колонки.")
-            _render_gantt_schedule_html_table(
-                tbl_show,
-                tbl_numeric,
-                max_rows=_gantt_rows_shown,
+        from dashboards.gdrs_theme import gdrs_render_subheader
+
+        gdrs_render_subheader(st, "Таблица задач", theme="dark", level=4)
+        suppress_caption("Сортировка: клик по заголовку колонки.")
+        _render_gantt_schedule_html_table(
+            tbl_show,
+            tbl_numeric,
+            max_rows=_gantt_rows_shown,
+        )
+        if _gantt_rows_total > _gantt_rows_shown:
+            suppress_caption(
+                f"Таблица и диаграмма: показано {_gantt_rows_shown} из {_gantt_rows_total} "
+                "задач после фильтров."
             )
-            if _gantt_rows_total > _gantt_rows_shown:
-                suppress_caption(
-                    f"Таблица и диаграмма: показано {_gantt_rows_shown} из {_gantt_rows_total} "
-                    "задач после фильтров."
-                )
 
 
 def dashboard_pd_delay(df):
