@@ -7905,17 +7905,17 @@ def dashboard_plan_fact_dates(df):
             if selected_project == "Все" and "project name" in row.index:
                 pn = str(row.get("project name", "")).strip()
                 if pn:
-                    disp = f"{disp} ({pn})"
+                    disp = _gantt_label_with_project(disp, pn)
             return str(disp).strip()
 
         _PF_GANTT_TASK_FONT = 11
-        _PF_GANTT_WRAP_WIDTH = 34
         _PF_GANTT_WRAP_MAX_LINES = 8
 
         def _pf_y_label_wrapped(name: str) -> str:
+            _w = _gantt_label_wrap_width_chars(task_font=_PF_GANTT_TASK_FONT)
             return _gantt_wrap_task_label(
                 name,
-                width=_PF_GANTT_WRAP_WIDTH,
+                width=_w,
                 max_lines=_PF_GANTT_WRAP_MAX_LINES,
             )
 
@@ -7951,6 +7951,7 @@ def dashboard_plan_fact_dates(df):
                 y_order_local,
                 task_font=_PF_GANTT_TASK_FONT,
                 plot_min_px=480,
+                plot_ref_px=_GANTT_LABEL_DOMAIN_REF_PX,
             )
             return domain_start
 
@@ -7958,7 +7959,7 @@ def dashboard_plan_fact_dates(df):
             y_order_local: list[str], *, domain_start: float
         ) -> list[dict]:
             out: list[dict] = []
-            _x_lab = _GANTT_LABEL_X_LEFT
+            _x_lab, _x_anchor = _gantt_y_label_paper_x(domain_start)
             for y in y_order_local:
                 txt = str(y).strip()
                 if not txt:
@@ -7971,7 +7972,7 @@ def dashboard_plan_fact_dates(df):
                         yref="y",
                         text=txt,
                         showarrow=False,
-                        xanchor="left",
+                        xanchor=_x_anchor,
                         yanchor="middle",
                         xshift=0,
                         align="left",
@@ -34437,6 +34438,18 @@ def _gantt_wrap_task_label(name: str, width: int | None = None, max_lines: int =
     return "<br>".join(parts) if len(parts) > 1 else (parts[0] if parts else s)
 
 
+def _gantt_label_with_project(task: str, project: str | None = None) -> str:
+    task_s = str(task or "").strip()
+    proj_s = str(project or "").strip()
+    if proj_s and proj_s.lower() not in ("", "nan", "none") and task_s:
+        return f"{proj_s}. {task_s}"
+    return task_s
+
+
+def _gantt_y_label_paper_x(domain_start: float) -> tuple[float, str]:
+    _ = domain_start
+    return _GANTT_LABEL_X_LEFT, "left"
+
 _GANTT_MARGINS_V = 168
 
 
@@ -34579,6 +34592,7 @@ def _project_schedule_gantt_label_column_layout(
     dense: bool = False,
     task_font: int = 11,
     plot_min_px: int = 480,
+    plot_ref_px: int | None = None,
 ) -> tuple[int, float]:
     """Как «Отклонение от базового плана»: domain под колонку названий без широкого margin.l."""
     max_line_len = 8
@@ -34588,15 +34602,15 @@ def _project_schedule_gantt_label_column_layout(
     px_per_char = max(5.2, float(task_font) * 0.50)
     label_px = int(4 + max_line_len * px_per_char + 6)
     label_px = min(320, max(52, label_px))
-    plot_ref_px = max(int(plot_min_px), _GANTT_LABEL_DOMAIN_REF_PX)
+    ref_px = max(int(plot_min_px), int(plot_ref_px or _GANTT_LABEL_DOMAIN_REF_PX))
     domain_start = round(
         min(
             _GANTT_LABEL_DOMAIN_MAX,
-            max(_GANTT_LABEL_DOMAIN_MIN, _GANTT_LABEL_X_LEFT + (label_px + 8) / float(plot_ref_px)),
+            max(_GANTT_LABEL_DOMAIN_MIN, _GANTT_LABEL_X_LEFT + (label_px + 4) / float(ref_px)),
         ),
         4,
     )
-    return 4, domain_start
+    return max(4, min(label_px + 8, 48)), domain_start
 
 
 
@@ -34623,7 +34637,7 @@ def _project_schedule_gantt_y_label_annotations(
 ) -> list[dict]:
     """Подписи задач по левому краю колонки названий (как в таблице задач)."""
     out: list[dict] = []
-    _x_lab = _GANTT_LABEL_X_LEFT
+    _x_lab, _x_anchor = _gantt_y_label_paper_x(domain_start)
     for i, y in enumerate(y_labels or []):
         txt = str(y).strip()
         if not txt:
@@ -34637,7 +34651,7 @@ def _project_schedule_gantt_y_label_annotations(
                 yref="y",
                 text=txt,
                 showarrow=False,
-                xanchor="left",
+                xanchor=_x_anchor,
                 yanchor="middle",
                 xshift=0,
                 align="left",
@@ -34727,8 +34741,8 @@ _GANTT_DATE_LABELS_HOVER_ONLY_ROWS = 60
 _GANTT_LINES_TEXT_MAX_ROWS = 20
 _CHART_PLOT_DATE_FMT = "%d-%m-%y"
 _GANTT_LABEL_X_LEFT = 0.006
-_GANTT_LABEL_DOMAIN_MAX = 0.38
-_GANTT_LABEL_DOMAIN_REF_PX = 640
+_GANTT_LABEL_DOMAIN_MAX = 0.28
+_GANTT_LABEL_DOMAIN_REF_PX = 1440
 _GANTT_LABEL_DOMAIN_MIN = 0.05
 
 
@@ -35613,11 +35627,12 @@ def dashboard_project_schedule_chart(df):
     _show_proj_in_gantt_label = sel_proj == "Все" and bool(proj_col)
     for ix, (name, d) in zip(plot_df.index, zip(names.tolist(), indents)):
         prefix = ("  " * d) + ("— " if d > 0 else "")
-        label = prefix + name
+        core = name
         if _show_proj_in_gantt_label:
             pn = str(plot_df.at[ix, proj_col]).strip()
             if pn and pn.lower() not in ("", "nan", "none"):
-                label = f"{label} ({pn})"
+                core = _gantt_label_with_project(name, pn)
+        label = prefix + core
         _gantt_raw_y_names.append(label)
 
     def _gantt_trunc_label(s, n=86):
