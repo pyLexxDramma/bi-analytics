@@ -21,7 +21,7 @@ def suppress_caption(*_args, **_kwargs) -> None:
 
 # --- Единый блок фильтров ---------------------------------------------------------
 
-_SESSION_CSS_FLAG_KEY = "_bi_unified_filters_css_v2"
+_SESSION_CSS_FLAG_KEY = "_bi_unified_filters_css_v4"
 _DEFAULT_FIELD_MIN_PX = 260
 
 UNIFIED_FILTERS_CSS = """
@@ -29,14 +29,46 @@ UNIFIED_FILTERS_CSS = """
 [data-testid="stMain"] .bi-filters-scope {
     --bi-filter-rhythm: 16px;
 }
-/* Сетка в popover / expander: равные колонки, без «разъезда» по ширине */
+/* Popover: равные колонки с ограничением ширины поля */
 [data-testid="stMain"] [data-testid="stPopoverBody"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
-[data-testid="stMain"] [data-testid="stExpander"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
 [data-testid="stMain"] div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
 [data-testid="stMain"] .bi-filters-scope div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
     flex: 1 1 0% !important;
     min-width: """ + str(_DEFAULT_FIELD_MIN_PX) + """px !important;
     max-width: 320px !important;
+}
+/* Expander «Фilters»: строка селекторов — равные колонки и одинаковый gap */
+[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5):last-child),
+[data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5):last-child),
+[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(6):last-child),
+[data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(6):last-child) {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    gap: 12px !important;
+    column-gap: 12px !important;
+    width: 100% !important;
+}
+[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5):last-child) > div[data-testid="column"],
+[data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5):last-child) > div[data-testid="column"],
+[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(6):last-child) > div[data-testid="column"],
+[data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(6):last-child) > div[data-testid="column"] {
+    flex: 1 1 0% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    width: 0 !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+}
+[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5):last-child) [data-testid="stSelectbox"],
+[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5):last-child) [data-testid="stMultiSelect"],
+[data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5):last-child) [data-testid="stSelectbox"],
+[data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(5):last-child) [data-testid="stMultiSelect"],
+[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(6):last-child) [data-testid="stSelectbox"],
+[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(6):last-child) [data-testid="stMultiSelect"],
+[data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(6):last-child) [data-testid="stSelectbox"],
+[data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]:nth-child(6):last-child) [data-testid="stMultiSelect"] {
+    max-width: none !important;
+    width: 100% !important;
 }
 [data-testid="stMain"] [data-testid="stPopoverBody"] [data-testid="stVerticalBlock"] > label,
 [data-testid="stMain"] .bi-filters-scope [data-testid="stVerticalBlock"] > label {
@@ -79,19 +111,12 @@ UNIFIED_FILTERS_CSS = """
 .bi-filters-selectors {
     margin: 0 0 var(--bi-filter-rhythm, 14px) 0;
 }
-.bi-filters-selectors div[data-testid="stHorizontalBlock"] {
-    flex-wrap: wrap;
-    gap: 0.25rem 0;
-}
-.bi-filters-selectors div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
-    flex: 1 1 0% !important;
-    min-width: 140px !important;
-    max-width: none !important;
-    width: auto !important;
-}
 .bi-filters-selectors div[data-testid="column"] [data-testid="stSelectbox"],
 .bi-filters-selectors div[data-testid="column"] [data-testid="stMultiSelect"],
 .bi-filters-selectors div[data-testid="column"] [data-testid="stDateInput"] {
+    width: 100%;
+}
+.bi-filters-selectors div[data-testid="column"] [data-testid="stRadio"] {
     width: 100%;
 }
 .bi-filters-toggles {

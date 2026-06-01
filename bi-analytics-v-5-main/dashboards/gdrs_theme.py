@@ -124,30 +124,35 @@ def is_gdrs_light_preview_report(report_name: str) -> bool:
 
 
 
-def gdrs_light_heading_html(text: str, *, level: int = 3) -> str:
-    """Явный HTML-заголовок для светлого превью (обходит emotion/CSS темы)."""
+def gdrs_section_heading_html(text: str, *, theme: str = "dark", level: int = 3) -> str:
+    """Заголовок секции ГДРС: на ~2–3pt крупнее основного текста таблиц (14–15px)."""
     import html as _html
 
     safe = _html.escape(str(text or "").strip())
     if not safe:
         return ""
-    sizes = {2: "1.5rem", 3: "1.25rem", 4: "1.1rem"}
-    sz = sizes.get(level, "1.25rem")
+    is_light = str(theme or "").strip().lower() == "light"
+    color = "#111827" if is_light else "#fafafa"
+    sizes = {2: ("1.375rem", "1.5rem"), 3: ("1.1875rem", "1.25rem"), 4: ("1.0625rem", "1.125rem")}
+    sz_dark, sz_light = sizes.get(level, sizes[3])
+    sz = sz_light if is_light else sz_dark
+    cls = "gdrs-light-heading" if is_light else "gdrs-section-heading"
     return (
-        f'<h{level} class="gdrs-light-heading" '
-        f'style="color:#111827!important;-webkit-text-fill-color:#111827!important;'
+        f'<h{level} class="{cls}" '
+        f'style="color:{color}!important;-webkit-text-fill-color:{color}!important;'
         f"font-weight:700!important;font-size:{sz}!important;"
         f'margin:1rem 0 0.5rem 0!important;opacity:1!important;">{safe}</h{level}>'
     )
 
 
-def gdrs_render_subheader(st, text: str, *, theme: str = "dark") -> None:
-    if str(theme or "").strip().lower() == "light":
-        html = gdrs_light_heading_html(text, level=3)
-        if html:
-            st.markdown(html, unsafe_allow_html=True)
-        return
-    st.subheader(text)
+def gdrs_light_heading_html(text: str, *, level: int = 3) -> str:
+    return gdrs_section_heading_html(text, theme="light", level=level)
+
+
+def gdrs_render_subheader(st, text: str, *, theme: str = "dark", level: int = 3) -> None:
+    html = gdrs_section_heading_html(text, theme=theme, level=level)
+    if html:
+        st.markdown(html, unsafe_allow_html=True)
 
 
 def gdrs_render_table_subheader(
@@ -1021,12 +1026,28 @@ html, body {{
   border: 2px solid #94a3b8;
   border-collapse: separate !important;
   border-spacing: 0 !important;
-  width: max-content;
+  width: 100%;
   min-width: 100%;
+  table-layout: fixed;
   font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-size: 14px;
   background: #ffffff;
   color: {th.text};
+}}
+#{w} .gdrs-matrix-table th.gdrs-col-equal,
+#{w} .gdrs-matrix-table td.gdrs-col-equal {{
+  width: 5.25rem;
+  min-width: 4.5rem;
+  max-width: 6.5rem;
+  white-space: nowrap !important;
+  box-sizing: border-box;
+}}
+#{w} .gdrs-matrix-table th.gdrs-td-text,
+#{w} .gdrs-matrix-table td.gdrs-td-text {{
+  width: auto;
+  min-width: 9rem;
+  max-width: 22rem;
+  white-space: normal !important;
 }}
 #{w} .gdrs-matrix-table th,
 #{w} .gdrs-matrix-table td {{
@@ -1075,10 +1096,15 @@ html, body {{
 }}
 #{w} .gdrs-matrix-table thead tr.gdrs-h-title th,
 #{w} .gdrs-matrix-table thead tr.gdrs-h-period th {{
-  background: #ffffff !important;
+  background: #e5e7eb !important;
   color: #111827 !important;
-  font-size: 17px !important;
   font-weight: 800 !important;
+}}
+#{w} .gdrs-matrix-table thead tr.gdrs-h-title th {{
+  font-size: 18px !important;
+}}
+#{w} .gdrs-matrix-table thead tr.gdrs-h-period th {{
+  font-size: 16px !important;
 }}
 #{w} .gdrs-matrix-table thead th.gdrs-h-plan-group {{
   background: #bbf7d0 !important;

@@ -1016,6 +1016,16 @@ section[data-testid="stSidebar"] [data-testid="stExpander"] {
 section[data-testid="stSidebar"] [data-testid="stExpander"]:has(details[open]) {
     margin-bottom: 24px !important;
 }
+/* Сайдбар: одинаковые отступы сверху/снизу у подпунктов expander */
+section[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] {
+    padding: 10px 10px 10px 10px !important;
+}
+section[data-testid="stSidebar"] [data-testid="stExpander"]:has(details[open]) [data-testid="stVerticalBlock"] {
+    padding-bottom: 0 !important;
+}
+section[data-testid="stSidebar"] [data-testid="stExpander"]:has(details[open]) [data-testid="stVerticalBlock"] > div:last-child {
+    margin-bottom: 0 !important;
+}
 section[data-testid="stSidebar"] [data-testid="stExpander"]:has(details[open]) [data-testid="stVerticalBlock"] {
     gap: 8px !important;
     row-gap: 8px !important;
@@ -1100,11 +1110,13 @@ section[data-testid="stSidebar"] [data-testid="stExpander"]:has(details[open]) [
 [data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stSelectbox"] > label {
     margin-bottom: 6px !important;
 }
-[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stSelectbox"],
-[data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stSelectbox"] {
-    max-width: 320px;
+[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] [data-testid="stSelectbox"],
+[data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] [data-testid="stSelectbox"],
+[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] [data-testid="stMultiSelect"],
+[data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] [data-testid="stMultiSelect"] {
+    max-width: none !important;
+    width: 100% !important;
 }
-
 /* Таблицы st.dataframe: ячейки glide/grid (новые версии Streamlit) */
 [data-testid="stDataFrame"] [role="gridcell"],
 [data-testid="stDataFrame"] [role="columnheader"],

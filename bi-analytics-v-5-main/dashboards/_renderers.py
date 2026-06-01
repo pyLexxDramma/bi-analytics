@@ -1273,24 +1273,10 @@ def _format_gdrs_month_year_title_ru(d_from, d_to, pdf: pd.DataFrame | None, per
 
 
 def _gdrs_delta_pct_cell_bg_style(raw) -> str:
-    """Фон ячейки «Отклонение %»: светло-салатовый при выполнении/перевыполнении (p≤0),
-    плавный переход к красному при росте недовыполнения (p>0, до 100%+)."""
-    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
-        return ""
-    try:
-        p = float(raw)
-    except Exception:
-        return ""
-    if p <= 0:
-        return "background-color:rgba(183,244,183,0.42);"
-    t = min(max(p, 0.0), 100.0) / 100.0
-    lo = (204, 248, 204)
-    hi = (192, 38, 42)
-    rr = int(lo[0] + (hi[0] - lo[0]) * t)
-    gg = int(lo[1] + (hi[1] - lo[1]) * t)
-    bb = int(lo[2] + (hi[2] - lo[2]) * t)
-    alpha = 0.28 + 0.38 * t
-    return f"background-color:rgba({rr},{gg},{bb},{alpha:.3f});"
+    """Фон «Отклонение %» (факт − план в %): >0 зелёный, <0 красный."""
+    from dashboards.gdrs_resursi import gdrs_delta_pct_cell_bg_style
+
+    return gdrs_delta_pct_cell_bg_style(raw)
 
 
 def _gdrs_period_series_to_year(series: pd.Series) -> pd.Series:
@@ -6696,7 +6682,7 @@ def dashboard_plan_fact_dates(df):
         "dates_reason_bucket_filter",
     ]):
         with filters_selectors(st):
-            fl_main1, fl_main2, fl_main3, fl_main4, fl_main5 = st.columns(5)
+            fl_main1, fl_main2, fl_main3, fl_main4, fl_main5 = st.columns(5, gap="small")
             with fl_main1:
                 if "project name" in df.columns:
                     _session_reset_project_if_excluded("dates_project")
@@ -15206,7 +15192,7 @@ def dashboard_technique(df):
             "Для отображения аналитики по технике необходимо загрузить файл с данными о технике."
         )
         st.info(
-            "Ожидаемые колонки: Проект, Контрагент, Период, План, Среднее за месяц или Среднее за неделю, 1–5 неделя; «Дельта» / «Дельта (%)» в отчёте: отклонение и отклонение %."
+            "Ожидаемые колонки: Проект, Контрагент, Период, План, Среднее за месяц или Среднее за неделю, 1–5 неделя; «Дельта» / «Отклонение %» в отчёте: отклонение и отклонение %."
         )
         return
 
@@ -15323,7 +15309,7 @@ def dashboard_technique(df):
                     return col
         return None
 
-    # sample_resources_data.csv: Проект, Контрагент, Период, План, Среднее за месяц, 1–5 неделя, Дельта, Дельта (%)
+    # sample_resources_data.csv: Проект, Контрагент, Период, План, Среднее за месяц, 1–5 неделя, Дельта, Отклонение %
     # Use Russian column names directly
 
     # Check required columns - Контрагент is essential
@@ -15436,16 +15422,17 @@ def dashboard_technique(df):
         # Calculate delta as plan - fact (week_sum)
         work_df["Дельта_numeric"] = work_df["План_numeric"] - work_df["week_sum"]
 
-    # Process Дельта (%) (Delta %) if available - extract numeric value from percentage string
+    # Process Отклонение % (Delta %) if available - extract numeric value from percentage string
     # Try to find column by partial match
     delta_pct_col = None
-    if "Дельта (%)" in work_df.columns:
-        delta_pct_col = "Дельта (%)"
+    if "Отклонение %" in work_df.columns:
+        delta_pct_col = "Отклонение %"
     else:
         delta_pct_col = find_column_by_partial(
             work_df,
             [
                 "Дельта (%)",
+                "Отклонение %",
                 "Дельта %",
                 "дельта (%)",
                 "дельта %",
@@ -16355,15 +16342,15 @@ def dashboard_technique(df):
         # Group by Контрагент and aggregate for pie chart (Delta %)
         # Ensure Дельта_процент_numeric exists - check if it was created in work_df
         if "Дельта_процент_numeric" not in project_filtered_df.columns:
-            # Try to find Дельта (%) column by partial match
+            # Try to find Отклонение % column by partial match
             delta_pct_col = None
-            if "Дельта (%)" in project_filtered_df.columns:
-                delta_pct_col = "Дельта (%)"
+            if "Отклонение %" in project_filtered_df.columns:
+                delta_pct_col = "Отклонение %"
             else:
                 delta_pct_col = find_column_by_partial(
                     project_filtered_df,
                     [
-                        "Дельта (%)",
+                        "Отклонение %",
                         "Дельта %",
                         "дельта (%)",
                         "дельта %",
@@ -16994,7 +16981,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             st.info(
                 "Ожидаемые колонки: Проект (или Название), Контрагент, Период, План, "
                 "**Среднее за месяц** (люди) или **Среднее за неделю** (техника), 1–5 неделя; "
-                "при необходимости — «Дельта» / «Дельта (%)». "
+                "при необходимости — «Дельта» / «Отклонение %». "
                 "Файл техники из web/ с именем *resursi* может оказаться только в «ресурсах» — тогда "
                 "техника определяется по наличию колонки «Среднее за неделю» или по строкам data_source=техника."
             )
@@ -17192,7 +17179,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     return col
         return None
 
-    # sample_technique_data.csv: Проект, Контрагент, Период, План, Среднее за неделю, 1–5 неделя, Дельта, Дельта (%)
+    # sample_technique_data.csv: Проект, Контрагент, Период, План, Среднее за неделю, 1–5 неделя, Дельта, Отклонение %
     # Use Russian column names directly
 
     # Check required columns - Контрагент is essential
@@ -17378,16 +17365,17 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             pd.to_numeric(work_df["week_sum"], errors="coerce").fillna(0.0) / week_fact_den
         )
 
-    # Process Дельта (%) (Delta %) if available - extract numeric value from percentage string
+    # Process Отклонение % (Delta %) if available - extract numeric value from percentage string
     # Try to find column by partial match
     delta_pct_col = None
-    if "Дельта (%)" in work_df.columns:
-        delta_pct_col = "Дельта (%)"
+    if "Отклонение %" in work_df.columns:
+        delta_pct_col = "Отклонение %"
     else:
         delta_pct_col = find_column_by_partial(
             work_df,
             [
                 "Дельта (%)",
+                "Отклонение %",
                 "Дельта %",
                 "дельта (%)",
                 "дельта %",
@@ -18147,7 +18135,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             ).round(0)
             _ref["План"] = pd.to_numeric(_ref["План"], errors="coerce").fillna(0.0)
             _ref["Отклонение"] = _ref["План"] - _ref["СКУД"]
-            _ref["Дельта (%)"] = _ref.apply(
+            _ref["Отклонение %"] = _ref.apply(
                 lambda r: round(float(r["Отклонение"]) / float(r["План"]) * 100.0, 1)
                 if float(r["План"]) != 0.0
                 else None,
@@ -18205,7 +18193,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 _pct = round((_dev / _plan) * 100.0, 1) if _plan != 0.0 else None
                 _plan_i = int(round(_plan))
                 _pw = {pk: _plan_i for pk in GDRS_WEEK_PLAN_KEYS}
-                return {"План": _plan, "СКУД": _skud, "Отклонение": _dev, **_pw, **_ws, "Дельта (%)": _pct}
+                return {"План": _plan, "СКУД": _skud, "Отклонение": _dev, **_pw, **_ws, "Отклонение %": _pct}
 
             _rows = []
             for _proj in sorted(_ref["_Проект"].unique(), key=lambda x: str(x)):
@@ -18224,7 +18212,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                             "Отклонение": _r["Отклонение"],
                             **{pk: int(_r[pk]) for pk in GDRS_WEEK_PLAN_KEYS},
                             **{sk: int(_r[sk]) for sk in GDRS_WEEK_SKUD_KEYS},
-                            "Дельта (%)": _r["Дельта (%)"],
+                            "Отклонение %": _r["Отклонение %"],
                         }
                     )
 
@@ -18239,14 +18227,14 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 ],
                 ignore_index=True,
             )
-            _view["_delta_pct_raw"] = pd.to_numeric(_view["Дельта (%)"], errors="coerce")
+            _view["_delta_pct_raw"] = pd.to_numeric(_view["Отклонение %"], errors="coerce")
             for _c in (
                 ["План", "СКУД", "Отклонение"]
                 + list(GDRS_WEEK_PLAN_KEYS)
                 + list(GDRS_WEEK_SKUD_KEYS)
             ):
                 _view[_c] = pd.to_numeric(_view[_c], errors="coerce").fillna(0).round(0).astype(int)
-            _view["Дельта (%)"] = _view["_delta_pct_raw"].apply(
+            _view["Отклонение %"] = _view["_delta_pct_raw"].apply(
                 lambda v: f"{float(v):.1f}%" if v is not None and pd.notna(v) else "—"
             )
 
@@ -18266,7 +18254,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 ["Контрагент", "Вид работы", "План", "СКУД", "Отклонение"]
                 + list(GDRS_WEEK_PLAN_KEYS)
                 + list(GDRS_WEEK_SKUD_KEYS)
-                + ["Дельта (%)"]
+                + ["Отклонение %"]
             )
             _render_cols = (
                 (["__row_kind", "_delta_pct_raw"] + _show_cols)
@@ -18367,7 +18355,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                                 elif fn < 0:
                                     cls = "pos"
                                     _span_style = "color:#27ae60 !important;font-weight:700;"
-                        elif c == "Дельта (%)":
+                        elif c == "Отклонение %":
                             raw_pct = row.get("_delta_pct_raw")
                             num = pd.to_numeric(raw_pct, errors="coerce")
                             if pd.notna(num):
@@ -18396,7 +18384,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 _gdrs_mtx_html(
                     _view[_render_cols],
                     fixed_cols=["Контрагент", "Вид работы", "План", "СКУД", "Отклонение"],
-                    delta_col="Дельта (%)",
+                    delta_col="Отклонение %",
                     kind_col="__row_kind",
                     title_line=_gdrs_ref_line1,
                     period_line=_period_row_display,
@@ -19618,9 +19606,7 @@ def _gdrs_dynamics_chart_panel(
     dyn_to = pd.Timestamp(dyn_to_iso)
     if theme == "light":
         inject_gdrs_light_preview_css(st)
-        gdrs_render_subheader(st, dyn_title, theme=theme)
-    else:
-        st.subheader(dyn_title)
+    gdrs_render_subheader(st, dyn_title, theme=theme)
     _agg_options = ["День", "Неделя", "Месяц", "Год"]
     _agg_key = f"gdrs_dyn_kind_{vid_locked or 'any'}_{theme}"
     _agg_default = 0
@@ -19802,19 +19788,19 @@ def _gdrs_dynamics_chart_panel(
             "План": _plan_s.round(0).astype(int),
             "Факт": _fact_s.round(0).astype(int),
         })
-        _dyn_tbl["%"] = [
-            f"{int(round(float(f) / float(p) * 100))}%"
+        _dyn_tbl["Отклонение"] = (_fact_s - _plan_s).round(0).astype(int)
+        _dyn_tbl["Отклонение %"] = [
+            ((float(f) - float(p)) / float(p) * 100.0)
             if float(p) > 0
-            else "—"
+            else float("nan")
             for f, p in zip(_fact_s, _plan_s)
         ]
-        _dyn_tbl["Δ"] = (_fact_s - _plan_s).round(0).astype(int)
-        st.markdown("**Детализация по периодам**")
-        _render_html_table(
-            _dyn_tbl,
-            max_rows=500,
-            column_role={"План": "baseline", "Факт": "fact", "Δ": "dev", "%": "dev"},
-            iframe_light=(theme == "light"),
+        gdrs_render_subheader(st, "Детализация по периодам", theme=theme, level=4)
+        render_report_html_table(
+            _gdrs_summary_table_to_html(_dyn_tbl, theme=theme),
+            export_df=_dyn_tbl,
+            file_stem=_export_file_stem("Детализация по периодам"),
+            key_prefix=f"gdrs_dyn_detail_{abs(id(_dyn_tbl))}",
         )
     except Exception as _e:
         st.warning(f"Plotly недоступен: {_e}")
@@ -19825,14 +19811,19 @@ def _gdrs_dynamics_chart_panel(
             "План": _plan_fb.round(0).astype(int),
             "Факт": _fact_fb.round(0).astype(int),
         })
-        _fb_tbl["%"] = [
-            f"{int(round(float(f) / float(p) * 100))}%"
+        _fb_tbl["Отклонение"] = (_fact_fb - _plan_fb).round(0).astype(int)
+        _fb_tbl["Отклонение %"] = [
+            ((float(f) - float(p)) / float(p) * 100.0)
             if float(p) > 0
-            else "—"
+            else float("nan")
             for f, p in zip(_fact_fb, _plan_fb)
         ]
-        _fb_tbl["Δ"] = (_fact_fb - _plan_fb).round(0).astype(int)
-        _render_html_table(_fb_tbl, max_rows=500)
+        render_report_html_table(
+            _gdrs_summary_table_to_html(_fb_tbl, theme=theme),
+            export_df=_fb_tbl,
+            file_stem=_export_file_stem("Детализация по периодам"),
+            key_prefix=f"gdrs_dyn_detail_fb_{abs(id(_fb_tbl))}",
+        )
 
 
 # ==================== DASHBOARD: ГДРС (новая реализация по ТЗ 2026-05-07) ====================
@@ -19967,8 +19958,10 @@ def _gdrs_summary_table_to_html(df: pd.DataFrame, *, theme: str = "dark") -> str
         f"<{tag} id=\"{wrap_id}\" class=\"{_wrap_cls}\" "
         f"style=\"overflow-x:auto;min-width:0;margin:0.75em 0;\">",
         f"<style>"
-        f"#{wrap_id} table {{ width:100%; border-collapse:collapse; font-size:15px; "
+        f"#{wrap_id} table {{ width:100%; table-layout:fixed; border-collapse:collapse; font-size:15px; "
         f"background-color:{_th.table_bg}; color:{_th.table_text}; }}"
+        f"#{wrap_id} th.col-num, #{wrap_id} td.col-num {{ width:6.5rem; min-width:5rem; max-width:7.5rem; white-space:nowrap!important; }}"
+        f"#{wrap_id} th.col-text, #{wrap_id} td.col-text {{ width:auto; min-width:9rem; }}"
         f"#{wrap_id} th, #{wrap_id} td {{ border:1px solid {_th.border}; padding:8px 10px; color:{_th.table_text} !important; font-weight:700; }}"
         f"#{wrap_id} th, #{wrap_id} td, #{wrap_id} th *, #{wrap_id} td * {{ color:{_th.table_text} !important; }}"
         f"#{wrap_id} th {{ background-color:{_th.table_header_bg}; {_th.table_header_font_css}; text-align:center!important; white-space:normal;word-wrap:break-word;overflow-wrap:anywhere;line-height:1.25;max-width:11em;overflow:visible;text-overflow:clip;vertical-align:bottom; }}"
@@ -20178,71 +20171,84 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
     ]
     if use_radio:
         _gdrs_reset_keys.append(f"gdrs_filter_vid_{_gdrs_key_suffix}")
-    fcol_specs = [1.4, 1.4, 1.0, 1.6, 1.0] if use_radio else [1.4, 1.4, 1.6, 1.0]
     with filters_panel(st, reset_keys=_gdrs_reset_keys):
-        fcols = st.columns(fcol_specs)
         project_options = project_labels_for_filter(long_fact["project_name"])
-        with fcols[0]:
-            sel_projects, _ = project_filter_multiselect(st, project_options,
-                key=f"gdrs_filter_projects_{_gdrs_key_suffix}",
-            )
-        _lf_proj = filter_dataframe_by_project_labels(
-            long_fact, sel_projects, col="project_name"
-        )
-        contractor_options = sorted(
-            _lf_proj["contractor_name"].dropna().unique().tolist()
-        )
-        with fcols[1]:
-            sel_contractors = st.multiselect(
-                "Контрагент", contractor_options, default=[],
-                key=f"gdrs_filter_contractors_{_gdrs_key_suffix}",
-                help="Пусто = все контрагенты выбранных проектов",
-                placeholder="Выберите контрагентов",
-            )
-        if use_radio:
-            with fcols[2]:
-                sel_vid = st.radio(
-                    "Вид ресурсов", ["Рабочие", "Техника"], horizontal=True,
-                    key=f"gdrs_filter_vid_{_gdrs_key_suffix}",
-                )
-            date_idx, plan_idx = 3, 4
-        else:
-            sel_vid = vid_locked
-            date_idx, plan_idx = 2, 3
-        with fcols[date_idx]:
-            _default_months = [_month_labels[-1]] if _month_labels else []
-            sel_month_labels = st.multiselect(
-                "Месяц",
-                _month_labels,
-                default=_default_months,
-                key=f"gdrs_filter_months_{_gdrs_key_suffix}",
-                placeholder="Все месяцы",
-                help="Один или несколько календарных месяцев. Пусто — все месяцы с данными.",
-            )
         _agg_opts = gdrs_agg_select_options()
-        _ac1, _ac2 = st.columns(2)
-        with _ac1:
-            _plan_lbl = st.selectbox(
-                "План",
-                _agg_opts,
-                index=0,
-                key=f"gdrs_filter_plan_agg_{_gdrs_key_suffix}",
-                help="Среднее за месяц — план из 1С на конец периода; "
-                "N неделя — план из 1С на последний день этой недели в периоде",
+        with filters_selectors(st):
+            if use_radio:
+                _fc1, _fc2, _fc3, _fc4, _fc5, _fc6 = st.columns(6, gap="small")
+            else:
+                _fc1, _fc2, _fc3, _fc4, _fc5 = st.columns(5, gap="small")
+            with _fc1:
+                sel_projects, _ = project_filter_multiselect(
+                    st,
+                    project_options,
+                    key=f"gdrs_filter_projects_{_gdrs_key_suffix}",
+                )
+            _lf_proj = filter_dataframe_by_project_labels(
+                long_fact, sel_projects, col="project_name"
             )
-        with _ac2:
-            _skud_lbl = st.selectbox(
-                "СКУД",
-                _agg_opts,
-                index=0,
-                key=f"gdrs_filter_skud_agg_{_gdrs_key_suffix}",
-                help="Среднее за месяц — среднее факт/день за весь период (CSV); "
-                "N неделя — среднее факт/день только в выбранной неделе",
+            contractor_options = sorted(
+                _lf_proj["contractor_name"].dropna().unique().tolist()
             )
+            with _fc2:
+                sel_contractors = st.multiselect(
+                    "Контрагент",
+                    contractor_options,
+                    default=[],
+                    key=f"gdrs_filter_contractors_{_gdrs_key_suffix}",
+                    help="Пусто = все контрагенты выбранных проектов",
+                    placeholder="Выберите контрагентов",
+                )
+            if use_radio:
+                with _fc3:
+                    sel_vid = st.radio(
+                        "Вид ресурсов",
+                        ["Рабочие", "Техника"],
+                        horizontal=True,
+                        key=f"gdrs_filter_vid_{_gdrs_key_suffix}",
+                    )
+                _month_col = _fc4
+                _plan_col = _fc5
+                _skud_col = _fc6
+            else:
+                sel_vid = vid_locked
+                _month_col = _fc3
+                _plan_col = _fc4
+                _skud_col = _fc5
+            with _month_col:
+                _default_months = [_month_labels[-1]] if _month_labels else []
+                sel_month_labels = st.multiselect(
+                    "Месяц",
+                    _month_labels,
+                    default=_default_months,
+                    key=f"gdrs_filter_months_{_gdrs_key_suffix}",
+                    placeholder="Все месяцы",
+                    help="Один или несколько календарных месяцев. Пусто — все месяцы с данными.",
+                )
+            with _plan_col:
+                _plan_lbl = st.selectbox(
+                    "План",
+                    _agg_opts,
+                    index=0,
+                    key=f"gdrs_filter_plan_agg_{_gdrs_key_suffix}",
+                    help="Среднее за месяц — план из 1С на конец периода; "
+                    "N неделя — план из 1С на последний день этой недели в периоде",
+                )
+            with _skud_col:
+                _skud_lbl = st.selectbox(
+                    "СКУД",
+                    _agg_opts,
+                    index=0,
+                    key=f"gdrs_filter_skud_agg_{_gdrs_key_suffix}",
+                    help="Среднее за месяц — среднее факт/день за весь период (CSV); "
+                    "N неделя — среднее факт/день только в выбранной неделе",
+                )
 
         with filters_toggles(st):
             only_with_plan = st.checkbox(
-                "Только с планом", value=True,
+                "Только с планом",
+                value=True,
                 key=f"gdrs_filter_only_plan_{_gdrs_key_suffix}",
                 help="Скрыть подрядчиков без плана в активном договоре",
             )

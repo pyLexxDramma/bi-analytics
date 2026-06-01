@@ -830,6 +830,9 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
             section[data-testid="stSidebar"] [data-testid="stExpander"]:has(details[open]) {
                 margin-bottom: 24px !important;
             }
+            section[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] {
+                padding: 10px 10px 10px 10px !important;
+            }
             section[data-testid="stSidebar"] [data-testid="stExpander"]:has(details[open]) [data-testid="stVerticalBlock"] {
                 gap: 8px !important;
                 row-gap: 8px !important;

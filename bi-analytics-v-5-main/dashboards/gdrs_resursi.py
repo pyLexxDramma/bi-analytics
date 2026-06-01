@@ -2067,23 +2067,20 @@ GDRS_WEEK_SKUD_KEYS: tuple[str, ...] = ("w1", "w2", "w3", "w4", "w5", "w6")
 
 
 def gdrs_delta_pct_cell_bg_style(raw) -> str:
-    """Фон ячейки «Отклонение %» / «Дельта (%)» по значению отклонения."""
+    """Фон ячейки «Отклонение %» (факт − план в %): >0 зелёный, <0 красный, 0 нейтральный."""
     if raw is None or (isinstance(raw, float) and pd.isna(raw)):
         return ""
     try:
-        p = float(raw)
+        v = float(raw)
     except Exception:
         return ""
-    if p <= 0:
-        return "background-color:rgba(255,84,84,0.35) !important;"
-    t = min(max(p, 0.0), 100.0) / 100.0
-    lo = (204, 248, 204)
-    hi = (192, 38, 42)
-    rr = int(lo[0] + (hi[0] - lo[0]) * t)
-    gg = int(lo[1] + (hi[1] - lo[1]) * t)
-    bb = int(lo[2] + (hi[2] - lo[2]) * t)
-    alpha = 0.32 + 0.42 * t
-    return f"background-color:rgba({rr},{gg},{bb},{alpha:.3f}) !important;"
+    if v > 0:
+        return "background-color:rgba(70,214,138,0.32) !important;"
+    if v < 0:
+        t = min(max(-v, 0.0), 100.0) / 100.0
+        alpha = 0.24 + 0.36 * t
+        return f"background-color:rgba(255,84,84,{alpha:.3f}) !important;"
+    return "background-color:rgba(136,153,170,0.18) !important;"
 
 
 def gdrs_deviation_cell_bg_style(raw) -> str:
@@ -2143,10 +2140,26 @@ html, body {{
   border: 3px solid #ffffff;
   border-collapse: separate !important;
   border-spacing: 0 !important;
-  width: max-content;
+  width: 100%;
   min-width: 100%;
+  table-layout: fixed;
   font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-size: 13px;
+}}
+#{w} .gdrs-matrix-table th.gdrs-col-equal,
+#{w} .gdrs-matrix-table td.gdrs-col-equal {{
+  width: 5.25rem;
+  min-width: 4.5rem;
+  max-width: 6.5rem;
+  white-space: nowrap !important;
+  box-sizing: border-box;
+}}
+#{w} .gdrs-matrix-table th.gdrs-td-text,
+#{w} .gdrs-matrix-table td.gdrs-td-text {{
+  width: auto;
+  min-width: 9rem;
+  max-width: 22rem;
+  white-space: normal !important;
 }}
 #{w} .gdrs-matrix-table th,
 #{w} .gdrs-matrix-table td {{
@@ -2181,19 +2194,23 @@ html, body {{
 #{w} .gdrs-matrix-table tbody td.gdrs-col-skud,
 #{w} .gdrs-matrix-table tbody td.gdrs-col-dev {{
   white-space: nowrap !important;
-  max-width: none !important;
+}}
+#{w} .gdrs-matrix-table thead th.gdrs-col-equal,
+#{w} .gdrs-matrix-table tbody td.gdrs-col-equal {{
+  max-width: 6.5rem !important;
 }}
 #{w} .gdrs-matrix-table thead tr.gdrs-h-title th,
 #{w} .gdrs-matrix-table thead tr.gdrs-h-period th {{
-  background: #161f2b !important;
+  background: #17314b !important;
   color: #ffffff !important;
-  font-size: 16px !important;
   font-weight: 800 !important;
 }}
 #{w} .gdrs-matrix-table thead tr.gdrs-h-title th {{
+  font-size: 18px !important;
   border-bottom: none !important;
 }}
 #{w} .gdrs-matrix-table thead tr.gdrs-h-period th {{
+  font-size: 16px !important;
   border-top: none !important;
 }}
 #{w} .gdrs-matrix-table thead th.gdrs-h-plan-group {{
@@ -2420,6 +2437,8 @@ def render_gdrs_matrix_table_html(
         mc = _metric_cls(col)
         if mc:
             cls += f" {mc}"
+        if col not in text_cols:
+            cls += " gdrs-col-equal"
         if col in text_cols:
             cls += " gdrs-td-text"
             if is_detail and col in ("Контрагент",):
@@ -2530,6 +2549,8 @@ def render_gdrs_matrix_table_html(
         for ci, col in enumerate(fixed_cols):
             hmc = _th_metric_cls(col)
             hcls = _border_cls(ci) + (f" {hmc}" if hmc else "")
+            if col not in text_cols:
+                hcls += " gdrs-col-equal"
             _sort = ' data-gdrs-sort="1" data-sort-label="' + html_module.escape(col) + '"' if col in ("Контрагент", "Вид работ", "План", "СКУД", "Отклонение") else ""
             thead_parts.append(
                 f'<th rowspan="2" class="{hcls.strip()}"{_sort}>{html_module.escape(col)}</th>'
@@ -2540,9 +2561,9 @@ def render_gdrs_matrix_table_html(
         thead_parts.append(
             f'<th colspan="{wk_n}" class="gdrs-h-skud-group gdrs-sep-l-strong gdrs-sep-r-strong">СКУД</th>'
         )
-        delta_title = "Итого (%)" if delta_col == "Дельта (%)" else delta_col
+        delta_title = "Отклонение %" if delta_col in ("Дельта (%)", "Дельта %", "Δ %", "Δ%") else delta_col
         thead_parts.append(
-            f'<th rowspan="2" class="{_border_cls(i_delta)}">{html_module.escape(delta_title)}</th>'
+            f'<th rowspan="2" class="{_border_cls(i_delta)} gdrs-col-equal">{html_module.escape(delta_title)}</th>'
         )
         thead_parts.append("</tr><tr>")
         for wi, lbl in enumerate(GDRS_WEEK_LABELS):
@@ -2551,6 +2572,7 @@ def render_gdrs_matrix_table_html(
                 wcls += " gdrs-sep-l-strong"
             if wi == wk_n - 1:
                 wcls += " gdrs-sep-r-strong"
+            wcls += " gdrs-col-equal"
             thead_parts.append(f'<th class="{wcls}" data-gdrs-sort="1" data-sort-label="{html_module.escape(lbl)}">{html_module.escape(lbl)}</th>')
         for wi, lbl in enumerate(GDRS_WEEK_LABELS):
             wcls = "gdrs-h-week gdrs-h-week-skud gdrs-col-skud"
@@ -2558,12 +2580,15 @@ def render_gdrs_matrix_table_html(
                 wcls += " gdrs-sep-l-strong"
             if wi == wk_n - 1:
                 wcls += " gdrs-sep-r-strong"
+            wcls += " gdrs-col-equal"
             thead_parts.append(f'<th class="{wcls}" data-gdrs-sort="1" data-sort-label="{html_module.escape(lbl)}">{html_module.escape(lbl)}</th>')
         thead_parts.append("</tr>")
     else:
         for ci, col in enumerate(show_cols):
             hmc = _th_metric_cls(col)
             hcls = _border_cls(ci) + (f" {hmc}" if hmc else "")
+            if col not in text_cols:
+                hcls += " gdrs-col-equal"
             _sort = ' data-gdrs-sort="1" data-sort-label="' + html_module.escape(col) + '"' if col in ("Контрагент", "Вид работ", "План", "СКУД", "Отклонение") else ""
             thead_parts.append(
                 f'<th class="{hcls.strip()}"{_sort}>{html_module.escape(col)}</th>'
