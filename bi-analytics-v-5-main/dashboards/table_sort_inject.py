@@ -249,12 +249,18 @@ _TABLE_SORT_JS = r"""
           return;
         }
       }
-      var fcBox = document.querySelector(".fc-table-scroll-wrap");
-      if (fcBox && fcBox.getBoundingClientRect) {
-        var fr = fcBox.getBoundingClientRect();
-        var fh = Math.ceil(fr.height || 0) + 8;
-        if (fh > 0) {
-          window.parent.postMessage({ type: "streamlit:setFrameHeight", height: fh }, "*");
+      var fcBox = document.querySelector(".fc-table-scroll-wrap")
+        || document.querySelector(".pred-detail-wrap")
+        || document.querySelector(".budget-table-scroll");
+      if (fcBox) {
+        var fcTbl0 = fcBox.querySelector("table");
+        var fcContent = fcTbl0 ? Math.ceil(fcTbl0.getBoundingClientRect().height)
+                               : Math.ceil(fcBox.scrollHeight || 0);
+        var fcCap = 560;
+        var fcPad = 24;
+        var fcH = fcContent > fcCap ? (fcCap + fcPad) : Math.max(160, fcContent + fcPad);
+        if (fcH > 0) {
+          window.parent.postMessage({ type: "streamlit:setFrameHeight", height: fcH }, "*");
           return;
         }
       }
@@ -352,9 +358,16 @@ _COMPACT_FRAME_FIT_JS = r"""
           return;
         }
       }
-      var fc = document.querySelector(".fc-table-scroll-wrap");
+      var fc = document.querySelector(".fc-table-scroll-wrap")
+        || document.querySelector(".pred-detail-wrap")
+        || document.querySelector(".budget-table-scroll");
       if (fc) {
-        var fh = Math.ceil((window.innerHeight || document.documentElement.clientHeight || 0)) + 4;
+        var fcTbl = fc.querySelector("table");
+        var fcContent = fcTbl ? Math.ceil(fcTbl.getBoundingClientRect().height)
+                              : Math.ceil(fc.scrollHeight || 0);
+        var fcCap = 560;
+        var fcPad = 24;
+        var fh = fcContent > fcCap ? (fcCap + fcPad) : Math.max(160, fcContent + fcPad);
         if (fh > 0) {
           window.parent.postMessage({ type: "streamlit:setFrameHeight", height: fh }, "*");
           return;
@@ -436,15 +449,21 @@ html:has(.pred-detail-wrap),body:has(.pred-detail-wrap){overflow:hidden!importan
 .pred-detail-wrap thead th>div{justify-content:center!important;align-items:center!important}
 .pred-detail-wrap thead th .bi-sort-label{text-align:center!important}
 .pred-detail-wrap thead th.pred-col-crit,.pred-detail-wrap thead th.pred-col-crit .bi-sort-label{white-space:nowrap!important}
-.bi-sortable-html-root:has(.fc-table-scroll-wrap){overflow:visible!important;overflow-x:hidden!important;height:auto!important;max-height:none!important}
-html:has(.fc-table-scroll-wrap),body:has(.fc-table-scroll-wrap){overflow:hidden!important;margin:0;padding:0;height:auto!important;max-height:none!important}
+.bi-sortable-html-root:has(.fc-table-scroll-wrap){
+  overflow:hidden!important;overflow-x:hidden!important;
+  height:100%!important;max-height:100%!important;min-height:0!important;
+}
+html:has(.fc-table-scroll-wrap),body:has(.fc-table-scroll-wrap){
+  overflow:hidden!important;margin:0;padding:0;
+  height:100%!important;min-height:0!important;max-height:100%!important;
+}
 .fc-table-scroll-wrap{
   display:block;width:100%!important;margin:0;padding:0;
   height:100%!important;max-height:100%!important;min-height:0!important;
-  overflow-x:auto!important;overflow-y:scroll!important;
+  overflow-x:auto!important;overflow-y:auto!important;
+  -webkit-overflow-scrolling:touch;
   scrollbar-gutter:stable;scrollbar-width:thin;box-sizing:border-box;
 }
-html:has(.fc-table-scroll-wrap),body:has(.fc-table-scroll-wrap){height:100%!important;min-height:0!important;max-height:100%!important;}
 .fc-table-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;vertical-align:middle!important;text-align:center!important}
 .fc-table-scroll-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important}
 html,body{
@@ -810,7 +829,8 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
     # в _TABLE_CSS ложно матчатся подстрокой и все таблицы уходят в одну ветку.
     _b = re.sub(r"<style[^>]*>.*?</style>", "", html or "", flags=re.I | re.S)
     if "pred-detail-wrap" in _b:
-        components.html(doc, height=548, scrolling=False)
+        doc_sc = doc.replace("</head>", '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}html body .fc-table-scroll-wrap,html body .pred-detail-wrap,html body .budget-table-scroll{height:100%!important;max-height:100%!important;min-height:0!important;overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;}html body .fc-table-scroll-wrap thead th,html body .pred-detail-wrap thead th,html body .budget-table-scroll thead th{position:sticky!important;top:0!important;z-index:5!important;}</style>' + "</head>", 1)
+        components.html(doc_sc, height=584, scrolling=False)
         return
     if "pf-dates-scroll-wrap" in _b:
         _h_scroll = min(640, max(280, _estimate_html_block_height(html)))
@@ -820,7 +840,8 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
         components.html(doc, height=648, scrolling=False)
         return
     if "fc-table-scroll-wrap" in _b:
-        components.html(doc, height=1052, scrolling=False)
+        doc_sc = doc.replace("</head>", '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}html body .fc-table-scroll-wrap,html body .pred-detail-wrap,html body .budget-table-scroll{height:100%!important;max-height:100%!important;min-height:0!important;overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;}html body .fc-table-scroll-wrap thead th,html body .pred-detail-wrap thead th,html body .budget-table-scroll thead th{position:sticky!important;top:0!important;z-index:5!important;}</style>' + "</head>", 1)
+        components.html(doc_sc, height=584, scrolling=False)
         return
     # Не st.html: <script> сортировки в основной DOM часто не выполняется (↕ видны, клик мёртвый).
     _compact = (

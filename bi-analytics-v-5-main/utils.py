@@ -262,7 +262,7 @@ table.bi-sortable-table thead th .bi-sort-label{text-align:center!important}
   .pred-detail-wrap{height:min(55vh,420px)!important;max-height:min(55vh,420px)!important}
   .fc-table-scroll-wrap{height:100%!important;max-height:100%!important}
 }
-.fc-table-scroll-wrap{height:100%!important;max-height:100%!important;overflow-y:scroll!important;overflow-x:auto!important;-webkit-overflow-scrolling:touch!important;scrollbar-gutter:stable}
+.fc-table-scroll-wrap{height:100%!important;max-height:100%!important;overflow-y:auto!important;overflow-x:auto!important;-webkit-overflow-scrolling:touch!important;scrollbar-gutter:stable}
 .fc-table-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important}
 @media (max-width:700px){
   .main .block-container{padding-left:.75rem!important;padding-right:.75rem!important}
@@ -1783,7 +1783,7 @@ def format_dataframe_as_html(
             f"<style>"
             f".fc-table-scroll-wrap{{display:block;width:100%;max-width:100%;margin:0.35em 0 0 0;"
             f"height:100%;max-height:100%;min-height:0;"
-            f"overflow-x:auto;overflow-y:scroll;-webkit-overflow-scrolling:touch;"
+            f"overflow-x:auto;overflow-y:auto;-webkit-overflow-scrolling:touch;"
             f"scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:#4a5568 #1a1c23;"
             f"border:1px solid rgba(255,255,255,0.25);border-radius:10px;}}"
             f".fc-table-scroll-wrap thead th{{position:sticky;top:0;z-index:5;"
@@ -2028,6 +2028,27 @@ def _download_button_compat(
         st.download_button(**kw)
 
 
+def _html_body_without_style(html: str) -> str:
+    return re.sub(r"<style[^>]*>.*?</style>", "", html or "", flags=re.I | re.S)
+
+
+def _scroll_box_table_html(html: str) -> bool:
+    """Таблицы с вертикальной прокруткой: единый scroll-box + кнопка сразу под ним."""
+    b = _html_body_without_style(html)
+    return (
+        "fc-table-scroll-wrap" in b
+        or "pred-detail-wrap" in b
+        or ("budget-deviation-table-wrap" in b and "budget-table-scroll" in b)
+    )
+
+
+def _scroll_box_height_px(html: str, *, cap: int = 560) -> int:
+    _rows_m = re.search(r'data-bi-rows="(\d+)"', html or "")
+    _rows_n = int(_rows_m.group(1)) if _rows_m else 0
+    _est = 84 + _rows_n * 34
+    return min(cap, max(220, _est))
+
+
 def render_report_html_table(
     html: str,
     *,
@@ -2096,15 +2117,15 @@ def render_report_html_table(
         except Exception:
             st.markdown(html, unsafe_allow_html=True)
 
-    if _compact_tbl and ("pred-detail-wrap" in (html or "") or "fc-table-scroll-wrap" in (html or "")):
-        _fc_tbl = "fc-table-scroll-wrap" in (html or "")
+    if _compact_tbl and _scroll_box_table_html(html):
+        _scroll_tbl = True
         st.markdown(
             "<style>"
-            ".bi-sortable-html-root:has(.pred-detail-wrap),.bi-sortable-html-root:has(.fc-table-scroll-wrap){overflow:visible!important;overflow-x:hidden!important;}"
+            ".bi-sortable-html-root:has(.pred-detail-wrap),.bi-sortable-html-root:has(.fc-table-scroll-wrap),.bi-sortable-html-root:has(.budget-table-scroll){overflow:visible!important;overflow-x:hidden!important;}"
             ".pred-detail-wrap{height:min(70vh,520px)!important;max-height:min(70vh,520px)!important;"
             "overflow-y:scroll!important;overflow-x:auto!important;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch;}"
-            ".fc-table-scroll-wrap{height:100%!important;max-height:100%!important;}"
-            "overflow-y:scroll!important;overflow-x:auto!important;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch;}"
+            ".fc-table-scroll-wrap{height:100%!important;max-height:100%!important;min-height:0!important;"
+            "overflow-y:auto!important;overflow-x:auto!important;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch;}"
             "div[data-testid='stElementContainer']:has(iframe){overflow:visible!important;margin:0!important;padding:0!important;"
             "max-width:100%!important;height:auto!important;min-height:0!important;}"
             "div[data-testid='stElementContainer']:has(iframe) iframe{display:block!important;margin:0!important;padding:0!important;"
@@ -2127,7 +2148,7 @@ def render_report_html_table(
             unsafe_allow_html=True,
         )
     if _compact_tbl:
-        _gap_fc = "fc-table-scroll-wrap" in (html or "")
+        _scroll_box = _scroll_box_table_html(html)
         st.markdown(
             "<style>"
             "div[data-testid='stHtml'],div[data-testid='stElementContainer']:has(iframe){"
@@ -2143,14 +2164,16 @@ def render_report_html_table(
             "</style>",
             unsafe_allow_html=True,
         )
-        if _gap_fc:
+        if _scroll_box:
+            # a29a014: scroll-box + кнопка сразу под ним (fc / pred / budget scroll).
+            _fc_box_h = _scroll_box_height_px(html)
             try:
                 _tbl_outer = st.container(border=False, gap=None, key=_wrap_key)
             except TypeError:
                 _tbl_outer = st.container(border=False)
             with _tbl_outer:
                 try:
-                    _tbl_box = st.container(border=False, height=1052, gap=None)
+                    _tbl_box = st.container(border=False, height=_fc_box_h, gap=None)
                 except TypeError:
                     _tbl_box = st.container(border=False)
                 with _tbl_box:

@@ -21,7 +21,7 @@ def suppress_caption(*_args, **_kwargs) -> None:
 
 # --- Единый блок фильтров ---------------------------------------------------------
 
-_SESSION_CSS_FLAG_KEY = "_bi_unified_filters_css_v4"
+_SESSION_CSS_FLAG_KEY = "_bi_unified_filters_css_v5"
 _DEFAULT_FIELD_MIN_PX = 260
 
 UNIFIED_FILTERS_CSS = """
@@ -119,6 +119,43 @@ UNIFIED_FILTERS_CSS = """
 .bi-filters-selectors div[data-testid="column"] [data-testid="stRadio"] {
     width: 100%;
 }
+.bi-filters-selectors div[data-testid="stHorizontalBlock"] {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    gap: 12px !important;
+    column-gap: 12px !important;
+    width: 100% !important;
+}
+.bi-filters-selectors div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+    flex: 1 1 0% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    width: 0 !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+}
+.bi-filters-selectors div[data-testid="column"] [data-testid="stSelectbox"],
+.bi-filters-selectors div[data-testid="column"] [data-testid="stMultiSelect"],
+.bi-filters-selectors div[data-testid="column"] [data-testid="stDateInput"] {
+    max-width: none !important;
+    width: 100% !important;
+}
+.bi-filters-toggles div[data-testid="stHorizontalBlock"] {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    gap: 12px !important;
+    column-gap: 12px !important;
+    width: 100% !important;
+}
+.bi-filters-toggles div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+    flex: 1 1 0% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    width: 0 !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+}
+
 .bi-filters-toggles {
     margin: var(--bi-filter-rhythm, 14px) 0 0;
     padding: var(--bi-filter-rhythm, 14px) 0 0;

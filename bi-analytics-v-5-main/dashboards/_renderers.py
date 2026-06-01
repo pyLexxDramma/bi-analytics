@@ -3908,7 +3908,7 @@ def _render_deviations_combined_shared_filters(df):
     use_flat_bs = _deviations_use_flat_block_section_task(df)
 
     with filters_panel(st, panel_key="deviations_combined", expanded=False):
-        col1, col2, col3, col4, col5 = st.columns(5)
+        col1, col2, col3, col4, col5 = st.columns(5, gap="small")
         with col1:
             if "project name" in df.columns:
                 _session_reset_project_if_excluded("devcombo_project")
@@ -4128,7 +4128,7 @@ def _render_deviations_combined_shared_filters(df):
         _period_lbl_opts = ["Весь период"] + _deviations_report_period_options(
             _df_period_src, _pt_en_shared
         )
-        _row2 = st.columns(4)
+        _row2 = st.columns(4, gap="small")
         with _row2[0]:
             st.selectbox(
                 "Группировать по",
@@ -4151,7 +4151,7 @@ def _render_deviations_combined_shared_filters(df):
                 key="reasons_view_type",
             )
         with filters_toggles(st):
-            _row3_cb1, _row3_cb2 = st.columns(2)
+            _row3_cb1, _row3_cb2, _row3_cb3 = st.columns(3, gap="small")
             with _row3_cb1:
                 st.checkbox(
                     "ТОП 5 причин отклонений",
@@ -4293,7 +4293,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             "reason_project", "reason_block", "reason_building",
             "reason_period_range",
         ]):
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3 = st.columns(3, gap="small")
 
             with col1:
                 try:
@@ -4585,7 +4585,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                 else 0.0
             )
 
-    m1, m2 = st.columns(2)
+    m1, m2 = st.columns(2, gap="small")
     with m1:
         st.metric("Основная причина отклонения", main_reason_name[:50] + ("…" if len(main_reason_name) > 50 else ""))
     with m2:
@@ -5058,7 +5058,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         period_type_en = _deviations_period_type_en_from_ru(period_type)
     else:
         with filters_panel(st, reset_keys=["dynamics_period", "dynamics_project", "dynamics_reason"]):
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3 = st.columns(3, gap="small")
 
             with col1:
                 period_type = st.selectbox(
@@ -5458,7 +5458,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
 
     # Visualizations
     if len(group_cols) == 1:  # Only period
-        col1, col2 = st.columns(2)
+        col1, col2 = st.columns(2, gap="small")
 
         with col1:
             fig = px.bar(
@@ -7173,7 +7173,7 @@ def dashboard_plan_fact_dates(df):
         st.markdown(_PLAN_FACT_DISPLAY_OPTS_CSS, unsafe_allow_html=True)
         with filters_toggles(st):
 
-            _cb_r1_1, _cb_r1_2, _cb_r1_3 = st.columns(3)
+            _cb_r1_1, _cb_r1_2, _cb_r1_3 = st.columns(3, gap="small")
             with _cb_r1_1:
                 dates_show_reason_notes = st.checkbox(
                     "Показать причины отклонений",
@@ -7198,7 +7198,7 @@ def dashboard_plan_fact_dates(df):
                     key="dates_only_covenants",
                 )
 
-            _cb_r2_1, _cb_r2_2, _cb_r2_3 = st.columns(3)
+            _cb_r2_1, _cb_r2_2, _cb_r2_3 = st.columns(3, gap="small")
             with _cb_r2_1:
                 only_negative_dev_dates = st.checkbox(
                     "Отображать только диаграммы, где отклонение окончания < 0",
@@ -8681,7 +8681,7 @@ def dashboard_deviation_by_tasks_current_month(df):
         "deviation_tasks_project", "deviation_tasks_block_l2", "deviation_tasks_building_l3",
         "deviation_tasks_detail_lvl", "deviation_tasks_block_col", "deviation_tasks_building_col",
     ]):
-        f_proj, f_block, f_build, f_det = st.columns(4)
+        f_proj, f_block, f_build, f_det = st.columns(4, gap="small")
         with f_proj:
             projects = ["Все"] + all_projects
             selected_project = st.selectbox(
@@ -9010,7 +9010,7 @@ def dashboard_deviation_by_tasks_current_month(df):
             return
 
         # Checkboxes row 2: Top 5 and Completion percentage
-        col5, col6 = st.columns(2)
+        col5, col6 = st.columns(2, gap="small")
 
         with col5:
             # Checkbox for Top 5 filter
@@ -9271,7 +9271,7 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
             "reasons_period", "reasons_reason", "reasons_project", "reasons_building",
             "reasons_view_type", "reasons_dynamics_show_trend_line",
         ]):
-            col1, col2, col3, col4 = st.columns(4)
+            col1, col2, col3, col4 = st.columns(4, gap="small")
 
             with col1:
                 period_type = st.selectbox(
@@ -10386,11 +10386,12 @@ def dashboard_budget_by_period(df):
 
     filtered_df = df.copy()
     with filters_panel(st):
-        col1, col2, col3 = st.columns(3)
+        with filters_selectors(st):
+            col1, col2, col3, col4, col5 = st.columns(5, gap="small")
 
-        with col1:
-            period_type = st.selectbox(
-                "Группировать по", ["Месяц", "Квартал", "Год"], key="budget_period"
+            with col1:
+                period_type = st.selectbox(
+                    "Группировать по", ["Месяц", "Квартал", "Год"], key="budget_period"
             )
             period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
             period_type_en = period_map.get(period_type, "Month")
@@ -10483,13 +10484,17 @@ def dashboard_budget_by_period(df):
                         _bdds_cal_start = _start_dt
                         _bdds_cal_end = _end_dt
 
-    # П.9 ТЗ: чекбоксы после фильтров; отклонение на графике — только по явному включению.
-    show_deviation = st.checkbox(
-        "Показать отклонение",
-        value=False,
-        key="budget_period_show_deviation",
-        help="По умолчанию на графике только план и факт; при включении добавляются столбцы отклонения.",
-    )
+        with filters_toggles(st):
+            _bd_cb1, _bd_cb2, _bd_cb3 = st.columns(3, gap="small")
+            with _bd_cb1:
+                st.checkbox(
+                    "Показать отклонение",
+                    value=False,
+                    key="budget_period_show_deviation",
+                    help="По умолчанию на графике только план и факт; при включении добавляются столбцы отклонения.",
+                )
+
+    show_deviation = bool(st.session_state.get("budget_period_show_deviation", False))
     hide_reserve = not show_deviation
 
     # Единый fallback бюджета: MSP -> 1С dannye при пустых budget колонках.
@@ -11354,7 +11359,7 @@ def dashboard_budget_cumulative(df):
 
 
     with filters_panel(st):
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3 = st.columns(3, gap="small")
 
         with col1:
             period_type = st.selectbox(
@@ -11372,7 +11377,7 @@ def dashboard_budget_cumulative(df):
             else:
                 selected_project = "Все"
     
-        col3 = st.columns(1)[0]
+        col3 = st.columns(1, gap="small")[0]
         with col3:
             if "section" in df.columns:
                 sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
@@ -11766,7 +11771,7 @@ def dashboard_budget_by_section(df):
         suppress_caption("По месяцам или накопительно — переключатель в блоке графика ниже.")
 
     with filters_panel(st):
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3 = st.columns(3, gap="small")
 
         with col1:
             period_type = st.selectbox(
@@ -12339,7 +12344,7 @@ def dashboard_bdr(df):
     _bdr_cal_end = None
     # Как БДДС: период / проект / год — список проектов из MSP; год после фильтра по проекту.
     with filters_panel(st):
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3 = st.columns(3, gap="small")
         with col1:
             period_type = st.selectbox(
                 "Группировать по", ["Месяц", "Квартал", "Год"], key="bdr_period"
@@ -13554,7 +13559,7 @@ def _rd_plan_fallback_view(
     except Exception:
         df["_rd_fact_n"] = 0.0
 
-    m1, m2, m3 = st.columns(3)
+    m1, m2, m3 = st.columns(3, gap="small")
     m1.metric("Всего разделов", f"{total_sections}")
     m2.metric("С отклонением (дн. > 0)", f"{overdue}")
     m3.metric("Ср. задержка, дн.", f"{avg_delay:.1f}" if overdue > 0 else "0")
@@ -14554,7 +14559,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 )
                 _n = len(_ind_df)
                 _cols_n = min(4, max(1, _n))
-                _cols_row = st.columns(_cols_n)
+                _cols_row = st.columns(_cols_n, gap="small")
                 for _i, (_idx, _row) in enumerate(_ind_df.iterrows()):
                     _proj = str(_row["Проект"])
                     _dev = float(_row["_dev"]) if pd.notna(_row["_dev"]) else 0.0
@@ -14707,7 +14712,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                             _tessa_detail_table[_optional].astype(str).str.strip().eq("").all()
                         ):
                             _tessa_detail_table = _tessa_detail_table.drop(columns=[_optional])
-                    sort_col1, sort_col2 = st.columns([3, 1])
+                    sort_col1, sort_col2 = st.columns([3, 1], gap="small")
                     with sort_col1:
                         _t_sort_col = st.selectbox(
                             "Сортировка по колонке",
@@ -14986,7 +14991,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             detail_table.insert(0, "Проект", detail_df[project_col].astype(str).str.strip())
 
         if not _msp_detail_disabled:
-            sort_col1, sort_col2 = st.columns([3, 1])
+            sort_col1, sort_col2 = st.columns([3, 1], gap="small")
             with sort_col1:
                 detail_sort_column = st.selectbox(
                     "Сортировка по колонке",
@@ -15156,7 +15161,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 suppress_caption(f"Не удалось построить динамику окончания ПД/РД: {_e_dyn}")
 
         # Summary metrics
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3 = st.columns(3, gap="small")
         with col1:
             total_deviation = chart_data[dev_col].sum()
             st.metric(
@@ -15549,7 +15554,7 @@ def dashboard_technique(df):
                 work_df["Период"] = _dt_fb.iloc[0].to_period("M")
                 period_col = "Период"
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3 = st.columns(3, gap="small")
 
     with col1:
         if project_col and project_col in work_df.columns:
@@ -15839,7 +15844,7 @@ def dashboard_technique(df):
                 source_labels_hist.append("Техника")
             else:
                 source_labels_hist.append(str(s))
-        hist_cols = st.columns(max(1, len(sources_hist)))
+        hist_cols = st.columns(max(1, len(sources_hist, gap="small")))
         for idx, (src, label) in enumerate(zip(sources_hist, source_labels_hist)):
             if src is None:
                 df_hist = filtered_df.copy()
@@ -16065,7 +16070,7 @@ def dashboard_technique(df):
                 labels_fb.append("Техника")
             else:
                 labels_fb.append(str(s))
-        fb_cols = st.columns(max(1, len(sources_fb)))
+        fb_cols = st.columns(max(1, len(sources_fb, gap="small")))
         for fbi, (src_fb, lab_fb) in enumerate(zip(sources_fb, labels_fb)):
             if src_fb is None:
                 df_fb = filtered_df.copy()
@@ -16873,7 +16878,7 @@ def dashboard_technique(df):
         _render_budget_table_html(summary_table, finance_deviation_column="Отклонение")
 
         # Summary metrics
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3 = st.columns(3, gap="small")
 
         with col1:
             total_plan = contractor_data["План"].sum()
@@ -17527,7 +17532,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 if _kind_sel != "Все":
                     work_df = work_df.loc[_kind_raw.eq(str(_kind_sel).strip())].copy()
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3 = st.columns(3, gap="small")
 
         with col1:
             if project_col and project_col in work_df.columns:
@@ -18007,7 +18012,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
         _kp_dev_color = (
             "#ff5454" if _kp_dev > 0 else ("#46d68a" if _kp_dev < 0 else "#8899aa")
         )
-        _km1, _km2, _km3 = st.columns(3)
+        _km1, _km2, _km3 = st.columns(3, gap="small")
         with _km1:
             st.metric("План (сумма)", f"{int(round(_kp_plan))}")
         with _km2:
@@ -18450,7 +18455,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             key=f"{key_prefix}_dyn_grain",
             help="PDF: «Динамика по рабочим/технике» — неделя / месяц / год.",
         )
-        hist_cols = st.columns(max(1, len(sources_hist)))
+        hist_cols = st.columns(max(1, len(sources_hist, gap="small")))
         for idx, (src, label) in enumerate(zip(sources_hist, source_labels_hist)):
             if src is None:
                 df_hist = filtered_df.copy()
@@ -18776,7 +18781,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             st.subheader("План/Факт техника")
         else:
             st.subheader("План/Факт рабочие")
-        pf_cols = st.columns(len(projects_to_process))
+        pf_cols = st.columns(len(projects_to_process, gap="small"))
         for _ix, _pname in enumerate(projects_to_process):
             _pdf = filtered_df.copy()
             if project_col in _pdf.columns and _pname != "Все проекты":
@@ -18787,7 +18792,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             with pf_cols[_ix]:
                 st.markdown(f"##### {_pname}")
                 if fig_pf is not None and met_pf is not None:
-                    a1, a2 = st.columns([3, 2])
+                    a1, a2 = st.columns([3, 2], gap="small")
                     with a1:
                         render_chart(
                             fig_pf,
@@ -18831,7 +18836,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 labels_wfb.append("Техника")
             else:
                 labels_wfb.append(str(s))
-        wfb_cols = st.columns(max(1, len(sources_wfb)))
+        wfb_cols = st.columns(max(1, len(sources_wfb, gap="small")))
         for wfi, (src_wfb, lab_wfb) in enumerate(zip(sources_wfb, labels_wfb)):
             if src_wfb is None:
                 df_wfb = filtered_df.copy()
@@ -19123,7 +19128,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 st.subheader("Доля факта по подрядчикам (рабочие)")
             fig_cf, met_cf = _gdrs_contractor_fact_fig_and_metrics(project_filtered_df)
             if fig_cf is not None and met_cf is not None:
-                cf_c1, cf_c2 = st.columns([3, 2])
+                cf_c1, cf_c2 = st.columns([3, 2], gap="small")
                 with cf_c1:
                     render_chart(
                         fig_cf,
@@ -19486,7 +19491,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 )
 
             # Summary metrics
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3 = st.columns(3, gap="small")
 
             with col1:
                 total_plan = contractor_data["План"].sum()
@@ -21692,7 +21697,7 @@ def dashboard_debit_credit(df):
     issue_end = None
 
     with filters_panel(st):
-        fp1, fp2, fp3, fp4 = st.columns([2, 2, 2, 2])
+        fp1, fp2, fp3, fp4 = st.columns([2, 2, 2, 2], gap="small")
         with fp1:
             if project_col and project_col in work.columns:
                 _proj_series = work[project_col].replace("", pd.NA).dropna()
@@ -22858,7 +22863,7 @@ def dashboard_executive_documentation(df):
         "exec_doc_object", "exec_doc_contr", "exec_doc_kind",
         "exec_doc_period", "exec_doc_granularity", "exec_doc_hide_overdue_signed",
     ]):
-        fc1, fc2, fc3 = st.columns(3)
+        fc1, fc2, fc3 = st.columns(3, gap="small")
         with fc1:
             if obj_col:
                 _exec_proj_opts = sorted(
@@ -22884,7 +22889,7 @@ def dashboard_executive_documentation(df):
             else:
                 sel_kind = "Все"
 
-        fp1, fp2 = st.columns([2, 1])
+        fp1, fp2 = st.columns([2, 1], gap="small")
         with fp1:
             if pd.notna(dmin) and pd.notna(dmax):
                 min_date = dmin.date() if hasattr(dmin, "date") else dmin
@@ -23113,7 +23118,7 @@ def dashboard_executive_documentation(df):
         cmp_periods = sorted(cmp_source["_cmp_period"].dropna().unique().tolist())
         if cmp_periods:
             cmp_labels = {_exec_period_human_label(p): p for p in cmp_periods}
-            cmp_col1, cmp_col2 = st.columns([3, 1])
+            cmp_col1, cmp_col2 = st.columns([3, 1], gap="small")
             with cmp_col1:
                 st.subheader("Изменения за период к предыдущему")
             with cmp_col2:
@@ -23179,7 +23184,7 @@ def dashboard_executive_documentation(df):
                 ),
             )
 
-    oc1, oc2 = st.columns(2)
+    oc1, oc2 = st.columns(2, gap="small")
 
     def _exec_ts_naive_norm(ts) -> pd.Timestamp:
         """Приводит значение к timezone-naive Timestamp (полночь), чтобы безопасно вычитать даты."""
@@ -23244,7 +23249,7 @@ def dashboard_executive_documentation(df):
             b1 = int(((sub_c["_late_days"] >= 0) & (sub_c["_late_days"] <= 7)).sum())
             b2 = int(((sub_c["_late_days"] > 7) & (sub_c["_late_days"] <= 30)).sum())
             b3 = int((sub_c["_late_days"] > 30).sum())
-            bc1, bc2, bc3 = st.columns(3)
+            bc1, bc2, bc3 = st.columns(3, gap="small")
             bc1.metric("До 7 дней", b1)
             bc2.metric("7–30 дней", b2)
             bc3.metric("> 30 дней", b3)
@@ -23264,7 +23269,7 @@ def dashboard_executive_documentation(df):
         sub_u = filtered.loc[overdue_mask & is_on_agree].copy()
         if plan_col and not sub_u.empty:
             sub_u["_late_days"] = sub_u.apply(_row_days_late_plan, axis=1)
-            u1, u2, u3 = st.columns(3)
+            u1, u2, u3 = st.columns(3, gap="small")
             u1.metric("До 7 дней", int(((sub_u["_late_days"] >= 0) & (sub_u["_late_days"] <= 7)).sum()))
             u2.metric("7–30 дней", int(((sub_u["_late_days"] > 7) & (sub_u["_late_days"] <= 30)).sum()))
             u3.metric("> 30 дней", int((sub_u["_late_days"] > 30).sum()))
@@ -24412,7 +24417,7 @@ def dashboard_documentation(
                                 showlegend=False,
                                 margin=dict(l=0, r=0, t=0, b=0),
                             )
-                            _pc_l, _pc_c, _pc_r = st.columns([0.08, 0.84, 0.08])
+                            _pc_l, _pc_c, _pc_r = st.columns([0.08, 0.84, 0.08], gap="small")
                             with _pc_c:
                                 render_chart(
                                     fig_pie,
@@ -24661,7 +24666,7 @@ def dashboard_documentation(
                 remaining_to_plan = max(plan_total - fact_to_date, 0.0)
                 required_productivity = (remaining_to_plan / remaining_weeks) if remaining_weeks > 0 else float("inf")
 
-                c1, c2, c3, c4 = st.columns(4)
+                c1, c2, c3, c4 = st.columns(4, gap="small")
                 with c1:
                     st.metric("План по проекту", _fmt_rd_whole_metric(plan_total))
                 with c2:
@@ -24726,7 +24731,7 @@ def dashboard_documentation(
                                 "используется дата по правому краю кривой динамики (приблизительно)."
                             )
 
-                    pw1, pw2, pw3 = st.columns(3)
+                    pw1, pw2, pw3 = st.columns(3, gap="small")
                     with pw1:
                         st.metric(
                             "Плановая производительность",
@@ -24744,7 +24749,7 @@ def dashboard_documentation(
                         )
                 else:
                     suppress_caption("Прогноз производительности (РД в неделю)")
-                    p1, p2 = st.columns(2)
+                    p1, p2 = st.columns(2, gap="small")
                     with p1:
                         st.metric(
                             "Текущая производительность в неделю",
@@ -24991,7 +24996,7 @@ def dashboard_documentation(
                     done_sec = m_sec & (pc >= 99.99)
                     fact_to_date = int(done_sec.sum())
                     deviation_to_date = float(plan_to_date - fact_to_date)
-                    c1, c2, c3, c4 = st.columns(4)
+                    c1, c2, c3, c4 = st.columns(4, gap="small")
                     with c1:
                         st.metric("План по проекту (БП)", f"{plan_total:,.0f}".replace(",", " "))
                     with c2:
@@ -25029,7 +25034,7 @@ def dashboard_documentation(
                         "За неделю": "Необходимая производительность (за неделю)",
                         "За месяц": "Необходимая производительность (за месяц)",
                     }[granularity_label]
-                    pw1, pw2 = st.columns(2)
+                    pw1, pw2 = st.columns(2, gap="small")
                     with pw1:
                         st.metric(_prod_title, f"{prod_n:,.0f}".replace(",", " "))
                     with pw2:
@@ -26082,7 +26087,7 @@ def dashboard_budget_by_type(df):
     ensure_date_columns(df)
     if "project name" in df.columns:
         df = _project_column_apply_canonical(df, "project name")
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3 = st.columns(3, gap="small")
 
     with col1:
         if "project name" in df.columns:
@@ -26186,7 +26191,7 @@ def dashboard_budget_by_type(df):
     metric_decimals = 2 if metric_unit == "млн" else 2
 
     render_table_subheader(st, "Сводный дашборд план/факт")
-    kpi_gauge_col, kpi_plan_col, kpi_fact_col = st.columns([1.3, 1, 1])
+    kpi_gauge_col, kpi_plan_col, kpi_fact_col = st.columns([1.3, 1, 1], gap="small")
     with kpi_gauge_col:
         fig_kpi = go.Figure(
             go.Indicator(
@@ -26518,7 +26523,7 @@ def dashboard_budget_by_type(df):
 def dashboard_budget_old_charts(df):
 
     with filters_panel(st, reset_keys=["budget_old_period", "budget_old_project", "budget_old_section"]):
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3 = st.columns(3, gap="small")
 
         with col1:
             period_type = st.selectbox(
@@ -26648,7 +26653,7 @@ def dashboard_budget_old_charts(df):
     budget_by_type_df["Сумма"] = (budget_by_type_df["Сумма"] / 1e6).round(2)
 
     # Visualizations
-    col1, col2 = st.columns(2)
+    col1, col2 = st.columns(2, gap="small")
 
     with col1:
         # Stacked area chart showing all budget types
@@ -26719,7 +26724,7 @@ def dashboard_budget_old_charts(df):
     render_chart(fig, caption_below="Сравнение типов бюджета по периоду")
 
     # Summary metrics (суммы уже в млн руб.)
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4 = st.columns(4, gap="small")
     with col1:
         total_plan = budget_by_type_df[
             budget_by_type_df["Тип бюджета"] == "Бюджет План"
@@ -28619,7 +28624,7 @@ def _render_forecast_lot_editor_widgets(
         _dist0 = str(_r.get("Условие распределения", "") or dist_options[0])
         _di = dist_options.index(_dist0) if _dist0 in dist_options else 0
         _use_abc = _forecast_row_modes_use_abc(_dist0)
-        _c = st.columns([1.25, 1.35, 0.95, 0.95, 1.05, 1.0, 0.55, 0.55, 0.55])
+        _c = st.columns([1.25, 1.35, 0.95, 0.95, 1.05, 1.0, 0.55, 0.55, 0.55], gap="small")
         with _c[0]:
             st.text(_lot[:48] + ("…" if len(_lot) > 48 else ""))
         with _c[1]:
@@ -28789,70 +28794,92 @@ def dashboard_forecast_budget(df):
     period_label = "Месяц"
 
     with filters_panel(st):
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            period_type_ru = st.selectbox(
-                "Группировать по",
-                ["Месяц", "Квартал", "Год"],
-                key="forecast_bddcs_period_group",
-                help="Способ суммирования прогнозного БДДС по времени.",
-            )
-            _pmap_fc = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
-            period_type_en = _pmap_fc.get(period_type_ru, "Month")
-            period_label = {"Month": "Месяц", "Quarter": "Квартал", "Year": "Год"}.get(period_type_en, "Месяц")
+        with filters_selectors(st):
+            c1, c2, c3, c4, c5 = st.columns(5, gap="small")
+            with c1:
+                period_type_ru = st.selectbox(
+                    "Группировать по",
+                    ["Месяц", "Квартал", "Год"],
+                    key="forecast_bddcs_period_group",
+                    help="Способ суммирования прогнозного БДДС по времени.",
+                )
+                _pmap_fc = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
+                period_type_en = _pmap_fc.get(period_type_ru, "Month")
+                period_label = {"Month": "Месяц", "Quarter": "Квартал", "Year": "Год"}.get(period_type_en, "Месяц")
 
-        with c2:
-            project_opts_fc = ["Все"] + _unique_project_labels_for_select(filtered_scope[project_col])
-            selected_project_scope = st.selectbox(
-                "Проект",
-                project_opts_fc,
-                key="forecast_bddcs_project_filter",
-            )
-
-        if selected_project_scope != "Все":
-            filtered_scope = filtered_scope[
-                filtered_scope[project_col].map(_project_filter_norm_key)
-                == _project_filter_norm_key(selected_project_scope)
-            ].copy()
-
-        with c3:
-            st.selectbox(
-                "Представление",
-                ["По месяцам", "Накопительно"],
-                key="forecast_bddcs_period_view",
-                help="По умолчанию — как отчёт «БДДС». Накопительно — сумма с начала интервала.",
-            )
-
-        ensure_date_columns(filtered_scope)
-        if "plan end" in filtered_scope.columns:
-            _pe_fc = pd.to_datetime(filtered_scope["plan end"], errors="coerce")
-            if _pe_fc.notna().any():
-                _def_sf = _pe_fc.min().date() if pd.notna(_pe_fc.min()) else None
-                _def_st = _pe_fc.max().date() if pd.notna(_pe_fc.max()) else None
-                try:
-                    _pe_all_fc = pd.to_datetime(df_work["plan end"], errors="coerce")
-                    if _pe_all_fc.notna().any():
-                        _mn_all_fc = _pe_all_fc.min().date()
-                        _mx_all_fc = _pe_all_fc.max().date()
-                    else:
-                        _mn_all_fc, _mx_all_fc = _def_sf, _def_st
-                except Exception:
-                    _mn_all_fc, _mx_all_fc = _def_sf, _def_st
-
-                _cf_in, _ct_in = period_date_range_input(
-                    st,
-                    "forecast_bddcs_cal_range",
-                    min_value=_mn_all_fc or _def_sf,
-                    max_value=_mx_all_fc or _def_st,
-                    default=(_def_sf, _def_st) if _def_sf and _def_st else None,
-                    help="Диапазон по датам окончания плана MSP.",
+            with c2:
+                project_opts_fc = ["Все"] + _unique_project_labels_for_select(filtered_scope[project_col])
+                selected_project_scope = st.selectbox(
+                    "Проект",
+                    project_opts_fc,
+                    key="forecast_bddcs_project_filter",
                 )
 
-                filtered_scope = _forecast_filter_rows_by_plan_end_range(
-                    filtered_scope, date_from=_cf_in, date_to=_ct_in
-                )
-                _cal_from_eff, _cal_to_eff = _cf_in, _ct_in
+            if selected_project_scope != "Все":
+                filtered_scope = filtered_scope[
+                    filtered_scope[project_col].map(_project_filter_norm_key)
+                    == _project_filter_norm_key(selected_project_scope)
+                ].copy()
 
+            with c3:
+                st.selectbox(
+                    "Представление",
+                    ["По месяцам", "Накопительно"],
+                    key="forecast_bddcs_period_view",
+                    help="По умолчанию — как отчёт «БДДС». Накопительно — сумма с начала интервала.",
+                )
+
+            ensure_date_columns(filtered_scope)
+            with c4:
+                if "plan end" in filtered_scope.columns:
+                    _pe_fc = pd.to_datetime(filtered_scope["plan end"], errors="coerce")
+                    if _pe_fc.notna().any():
+                        _def_sf = _pe_fc.min().date() if pd.notna(_pe_fc.min()) else None
+                        _def_st = _pe_fc.max().date() if pd.notna(_pe_fc.max()) else None
+                        try:
+                            _pe_all_fc = pd.to_datetime(df_work["plan end"], errors="coerce")
+                            if _pe_all_fc.notna().any():
+                                _mn_all_fc = _pe_all_fc.min().date()
+                                _mx_all_fc = _pe_all_fc.max().date()
+                            else:
+                                _mn_all_fc, _mx_all_fc = _def_sf, _def_st
+                        except Exception:
+                            _mn_all_fc, _mx_all_fc = _def_sf, _def_st
+
+                        _cf_in, _ct_in = period_date_range_input(
+                            st,
+                            "forecast_bddcs_cal_range",
+                            min_value=_mn_all_fc or _def_sf,
+                            max_value=_mx_all_fc or _def_st,
+                            default=(_def_sf, _def_st) if _def_sf and _def_st else None,
+                            help="Диапазон по датам окончания плана MSP.",
+                        )
+
+                        filtered_scope = _forecast_filter_rows_by_plan_end_range(
+                            filtered_scope, date_from=_cf_in, date_to=_ct_in
+                        )
+                        _cal_from_eff, _cal_to_eff = _cf_in, _ct_in
+
+        _npk_fc_filters = (
+            "__all__"
+            if selected_project_scope == "Все"
+            else _project_filter_norm_key(str(selected_project_scope))
+        )
+        with filters_toggles(st):
+            _fc_cb1, _fc_cb2, _fc_cb3 = st.columns(3, gap="small")
+            with _fc_cb1:
+                st.radio(
+                    "Отклонение от БДДС прогноз считать к",
+                    ["БДДС план", "БДДС факт"],
+                    horizontal=True,
+                    key=f"forecast_bddcs_dev_base_{_npk_fc_filters}",
+                )
+            with _fc_cb2:
+                st.checkbox(
+                    "Скрыть отклонение",
+                    value=False,
+                    key=f"forecast_bddcs_hide_dev_{_npk_fc_filters}",
+                )
     if getattr(filtered_scope, "empty", True):
         st.info("Нет строк для выбранных фильтров.")
         return
@@ -28873,17 +28900,8 @@ def dashboard_forecast_budget(df):
     _fc_abc_src = None
     _fc_row_modes = None
 
-    _dev_base_fc = st.radio(
-        "Отклонение от БДДС прогноз считать к",
-        ["БДДС план", "БДДС факт"],
-        horizontal=True,
-        key=f"forecast_bddcs_dev_base_{_npk_fc}",
-    )
-    _hide_dev_fc = st.checkbox(
-        "Скрыть отклонение",
-        value=False,
-        key=f"forecast_bddcs_hide_dev_{_npk_fc}",
-    )
+    _dev_base_fc = str(st.session_state.get(f"forecast_bddcs_dev_base_{_npk_fc}", "БДДС план"))
+    _hide_dev_fc = bool(st.session_state.get(f"forecast_bddcs_hide_dev_{_npk_fc}", False))
 
     if _many_projects_fc:
         try:
@@ -29038,7 +29056,7 @@ def dashboard_forecast_budget(df):
                     f"Лотов **{_n_lots_fc}** — редактирование по **{_FORECAST_LOT_EDITOR_PAGE_SIZE}** строк на страницу "
                     f"(иначе страница долго грузится)."
                 )
-                _pg_cols = st.columns([1, 2, 1])
+                _pg_cols = st.columns([1, 2, 1], gap="small")
                 with _pg_cols[0]:
                     if st.button("←", key=f"forecast_pg_prev_{_npk_fc}", disabled=int(st.session_state[_page_key]) <= 1):
                         st.session_state[_page_key] = max(1, int(st.session_state[_page_key]) - 1)
@@ -32143,7 +32161,7 @@ def dashboard_predpisania(df):
             )
         else:
             contractors_ms = []
-        fc1, fc2, fc3, fc4 = st.columns([2, 2, 2, 2])
+        fc1, fc2, fc3, fc4 = st.columns([2, 2, 2, 2], gap="small")
         sel_curator = "Все кураторы"
     
         with fc1:
@@ -32377,7 +32395,7 @@ def dashboard_predpisania(df):
         suppress_caption(
             f"Период выдачи предписаний: {issue_start.strftime('%d.%m.%Y')} — {issue_end.strftime('%d.%m.%Y')}"
         )
-    pm1, pm2, pm3 = st.columns(3)
+    pm1, pm2, pm3 = st.columns(3, gap="small")
     with pm1:
         st.metric("Всего предписаний", n_total)
     with pm2:
@@ -32385,7 +32403,7 @@ def dashboard_predpisania(df):
     with pm3:
         st.metric("Неустраненные", n_unresolved)
 
-    col_chart, col_kpi = st.columns([3, 1])
+    col_chart, col_kpi = st.columns([3, 1], gap="small")
 
     with col_chart:
         # Легенда визуала по макету заказчика 07.05.2026 (скрин 5):
@@ -33193,7 +33211,7 @@ def render_control_points_milestones_admin_settings(*, key_prefix: str = "cp_das
             height=380,
             key=_js_key,
         )
-        b1, b2, b3 = st.columns(3)
+        b1, b2, b3 = st.columns(3, gap="small")
         uname = str(user.get("username") or "admin")
         with b1:
             if st.button("Сохранить", type="primary", key=f"{_kp}_ms_save"):
@@ -33297,7 +33315,7 @@ def render_developer_projects_matrix_admin_settings(*, key_prefix: str = "admin_
             height=420,
             key=_tx_key,
         )
-        b1, b2, b3 = st.columns(3)
+        b1, b2, b3 = st.columns(3, gap="small")
         with b1:
             if st.button("Сохранить JSON", type="primary", key=f"{_kp}_save_json"):
                 ok, msg = save_developer_projects_matrix_prefs_json(txt, uname)
@@ -33415,7 +33433,7 @@ def _prepare_project_schedule_data(
         )
         return None
 
-    flt_cols = st.columns(5)
+    flt_cols = st.columns(5, gap="small")
     with flt_cols[0]:
         if proj_col:
             projs = ["Все"] + sorted(
@@ -33454,7 +33472,7 @@ def _prepare_project_schedule_data(
             key=f"{key_prefix}_value_mode",
         )
 
-    flt2 = st.columns(4)
+    flt2 = st.columns(4, gap="small")
     with flt2[0]:
         hide_done = st.checkbox(
             "Скрыть задачи со 100% выполнения", value=False, key=f"{key_prefix}_hide_done"
@@ -34048,7 +34066,7 @@ def _render_project_schedule_barchart(df: pd.DataFrame) -> None:
     rows = prep["rows"]
     show_reasons = prep["show_reasons"]
 
-    metric_cols = st.columns(2)
+    metric_cols = st.columns(2, gap="small")
     with metric_cols[0]:
         metric = st.radio(
             "Метрика отклонения",
@@ -34286,7 +34304,7 @@ def _render_project_schedule_covenants(df: pd.DataFrame) -> None:
         st.warning("Нужны колонки «plan end» и/или «base end».")
         return
 
-    flt = st.columns(2)
+    flt = st.columns(2, gap="small")
     with flt[0]:
         if proj_col:
             projs = ["Все"] + sorted(
@@ -35208,7 +35226,7 @@ def dashboard_project_schedule_chart(df):
         sel_block = "Все"
         sel_building = "Все"
 
-        _flt_cols = st.columns(4 if _has_building_filter else 3)
+        _flt_cols = st.columns(4 if _has_building_filter else 3, gap="small")
         f1 = _flt_cols[0]
         f2 = _flt_cols[1]
         _ix = 2
