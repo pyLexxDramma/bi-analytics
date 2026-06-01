@@ -37,7 +37,7 @@ div[data-testid="collapsedControl"] {
     font-size: 2.5rem;
     font-weight: bold;
     color: #1f77b4;
-    margin-bottom: 1rem;
+    margin-bottom: 16px;
 }
 .metric-card {
     background-color: #262730;
@@ -1057,6 +1057,52 @@ section[data-testid="stSidebar"] [data-testid="stExpander"]:has(details[open]) [
 }
 .main [data-testid="stExpander"] summary svg {
     fill: #f1f5f9 !important;
+}
+
+
+/* Фильтры отчёта: одинаковые вертикальные отступы (заголовок → панель → поля) */
+[data-testid="stMain"],
+[data-testid="stMainBlockContainer"] {
+    --bi-filter-rhythm: 16px;
+}
+[data-testid="stMain"] [data-testid="stHeadingWithActionElements"],
+[data-testid="stMainBlockContainer"] [data-testid="stHeadingWithActionElements"] {
+    margin-bottom: var(--bi-filter-rhythm) !important;
+    padding-bottom: 0 !important;
+}
+[data-testid="stMain"] h1.main-header,
+[data-testid="stMainBlockContainer"] h1.main-header {
+    margin-top: 0 !important;
+    margin-bottom: var(--bi-filter-rhythm) !important;
+}
+[data-testid="stMain"] [data-testid="stExpander"],
+[data-testid="stMainBlockContainer"] [data-testid="stExpander"] {
+    margin-top: 0 !important;
+    margin-bottom: var(--bi-filter-rhythm) !important;
+}
+[data-testid="stMain"] [data-testid="stExpander"] summary,
+[data-testid="stMainBlockContainer"] [data-testid="stExpander"] summary {
+    padding: 10px 14px !important;
+}
+[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"],
+[data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] {
+    padding: var(--bi-filter-rhythm) 16px var(--bi-filter-rhythm) !important;
+}
+[data-testid="stMain"] [data-testid="stExpander"] details [data-testid="stVerticalBlock"],
+[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] [data-testid="stVerticalBlock"],
+[data-testid="stMainBlockContainer"] [data-testid="stExpander"] details [data-testid="stVerticalBlock"],
+[data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] [data-testid="stVerticalBlock"] {
+    gap: var(--bi-filter-rhythm) !important;
+    row-gap: var(--bi-filter-rhythm) !important;
+}
+[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stSelectbox"] > label,
+[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stMultiSelect"] > label,
+[data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stSelectbox"] > label {
+    margin-bottom: 6px !important;
+}
+[data-testid="stMain"] [data-testid="stExpander"] [data-testid="stSelectbox"],
+[data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stSelectbox"] {
+    max-width: 320px;
 }
 
 /* Таблицы st.dataframe: ячейки glide/grid (новые версии Streamlit) */

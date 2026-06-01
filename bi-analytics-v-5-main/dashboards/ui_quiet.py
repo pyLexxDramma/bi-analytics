@@ -26,17 +26,20 @@ _DEFAULT_FIELD_MIN_PX = 260
 
 UNIFIED_FILTERS_CSS = """
 <style>
+[data-testid="stMain"] .bi-filters-scope {
+    --bi-filter-rhythm: 16px;
+}
 /* Сетка в popover / expander: равные колонки, без «разъезда» по ширине */
-section.main [data-testid="stPopoverBody"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
-section.main [data-testid="stExpander"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
-section.main div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
-section.main .bi-filters-scope div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+[data-testid="stMain"] [data-testid="stPopoverBody"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
+[data-testid="stMain"] [data-testid="stExpander"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
+[data-testid="stMain"] div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
+[data-testid="stMain"] .bi-filters-scope div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
     flex: 1 1 0% !important;
     min-width: """ + str(_DEFAULT_FIELD_MIN_PX) + """px !important;
     max-width: 320px !important;
 }
-section.main [data-testid="stPopoverBody"] [data-testid="stVerticalBlock"] > label,
-section.main .bi-filters-scope [data-testid="stVerticalBlock"] > label {
+[data-testid="stMain"] [data-testid="stPopoverBody"] [data-testid="stVerticalBlock"] > label,
+[data-testid="stMain"] .bi-filters-scope [data-testid="stVerticalBlock"] > label {
     font-size: 13px !important;
     font-weight: 600 !important;
 }
@@ -74,7 +77,7 @@ section.main .bi-filters-scope [data-testid="stVerticalBlock"] > label {
 }
 
 .bi-filters-selectors {
-    margin: 0 0 0.35rem 0;
+    margin: 0 0 var(--bi-filter-rhythm, 14px) 0;
 }
 .bi-filters-selectors div[data-testid="stHorizontalBlock"] {
     flex-wrap: wrap;
@@ -92,8 +95,8 @@ section.main .bi-filters-scope [data-testid="stVerticalBlock"] > label {
     width: 100%;
 }
 .bi-filters-toggles {
-    margin: 0.5rem 0 0;
-    padding: 0.5rem 0 0;
+    margin: var(--bi-filter-rhythm, 14px) 0 0;
+    padding: var(--bi-filter-rhythm, 14px) 0 0;
     border-top: 1px solid rgba(148,163,184,.18);
 }
 .bi-filters-toggles [data-testid="stCheckbox"] {

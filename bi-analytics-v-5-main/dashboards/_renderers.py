@@ -25742,14 +25742,15 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
         budget_df = _project_column_apply_canonical(budget_df, "project name")
 
     with filters_panel(st, reset_keys=["approved_budget_project"]):
-        if "project name" in budget_df.columns:
-            projects = ["Все"] + _unique_project_labels_for_select(budget_df["project name"])
-            selected_project = st.selectbox(
-                "Проект", projects, key="approved_budget_project"
-            )
-        else:
-            selected_project = "Все"
-            st.info("Колонка 'project name' не найдена.")
+        with filters_selectors(st):
+            if "project name" in budget_df.columns:
+                projects = ["Все"] + _unique_project_labels_for_select(budget_df["project name"])
+                selected_project = st.selectbox(
+                    "Проект", projects, key="approved_budget_project"
+                )
+            else:
+                selected_project = "Все"
+                st.info("Колонка 'project name' не найдена.")
 
     filtered_df = budget_df.copy()
     if selected_project != "Все" and "project name" in filtered_df.columns:
