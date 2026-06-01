@@ -21,6 +21,8 @@ from config import MSP_PROJECT_FILTER_EXCLUDE_NAMES, RUSSIAN_MONTHS
 from .ui_quiet import (
     inject_unified_filters_css,
     filters_panel,
+    filters_selectors,
+    filters_toggles,
     suppress_caption,
     project_filter_multiselect,
     period_date_range_input,
@@ -4116,7 +4118,7 @@ def _render_deviations_combined_shared_filters(df):
         _period_lbl_opts = ["Весь период"] + _deviations_report_period_options(
             _df_period_src, _pt_en_shared
         )
-        _row2 = st.columns(5)
+        _row2 = st.columns(4)
         with _row2[0]:
             st.selectbox(
                 "Группировать по",
@@ -4138,17 +4140,20 @@ def _render_deviations_combined_shared_filters(df):
                 ["По причинам", "По месяцам"],
                 key="reasons_view_type",
             )
-        with _row2[4]:
-            st.checkbox(
-                "ТОП 5 причин отклонений",
-                value=False,
-                key="reason_top5",
-            )
-            st.checkbox(
-                "Показывать линию тренда",
-                value=False,
-                key="reasons_dynamics_show_trend_line",
-            )
+        with filters_toggles(st):
+            _row3_cb1, _row3_cb2 = st.columns(2)
+            with _row3_cb1:
+                st.checkbox(
+                    "ТОП 5 причин отклонений",
+                    value=False,
+                    key="reason_top5",
+                )
+            with _row3_cb2:
+                st.checkbox(
+                    "Показывать линию тренда",
+                    value=False,
+                    key="reasons_dynamics_show_trend_line",
+                )
 
     filtered_df = _apply_deviations_combined_filters(df, building_col=building_col)
 
@@ -6690,233 +6695,251 @@ def dashboard_plan_fact_dates(df):
         "dates_only_neg_end", "dates_tbl_dur", "dates_task_label_mode",
         "dates_reason_bucket_filter",
     ]):
-        fl_main1, fl_main2, fl_main3, fl_main4 = st.columns(4)
-        with fl_main1:
-            if "project name" in df.columns:
-                _session_reset_project_if_excluded("dates_project")
-                projects = ["Все"] + _project_name_select_options(df["project name"])
-                selected_project = st.selectbox(
-                    "Проект",
-                    projects,
-                    key="dates_project",
+        with filters_selectors(st):
+            fl_main1, fl_main2, fl_main3, fl_main4, fl_main5 = st.columns(5)
+            with fl_main1:
+                if "project name" in df.columns:
+                    _session_reset_project_if_excluded("dates_project")
+                    projects = ["Все"] + _project_name_select_options(df["project name"])
+                    selected_project = st.selectbox(
+                        "Проект",
+                        projects,
+                        key="dates_project",
+                    )
+                else:
+                    selected_project = "Все"
+
+            pf_dates_proj_df = df.copy()
+            if selected_project != "Все" and "project name" in pf_dates_proj_df.columns:
+                pf_dates_proj_df = pf_dates_proj_df[
+                    pf_dates_proj_df["project name"].map(_project_filter_norm_key)
+                    == _project_filter_norm_key(selected_project)
+                ]
+            pf_dates_proj_df = pf_dates_proj_df.reset_index(drop=True)
+
+            # Как в «График проекта»: списки «Функциональный блок» / «Строение» из полей MSP
+            # (block / section / building), а не из имён задач по outline — иначе в фильтр
+            # попадают листовые работы («Акт …») при нетипичной нумерации уровней.
+            def _pf_dates_norm_colname(s: str) -> str:
+                t = (
+                    str(s)
+                    .replace("\ufeff", "")
+                    .replace("\u00a0", " ")
+                    .replace("\u202f", " ")
+                    .replace("\u2007", " ")
                 )
-            else:
-                selected_project = "Все"
+                t = re.sub(r"[\s\t\n\r]+", " ", t).strip().lower()
+                return t
 
-        pf_dates_proj_df = df.copy()
-        if selected_project != "Все" and "project name" in pf_dates_proj_df.columns:
-            pf_dates_proj_df = pf_dates_proj_df[
-                pf_dates_proj_df["project name"].map(_project_filter_norm_key)
-                == _project_filter_norm_key(selected_project)
-            ]
-        pf_dates_proj_df = pf_dates_proj_df.reset_index(drop=True)
-
-        # Как в «График проекта»: списки «Функциональный блок» / «Строение» из полей MSP
-        # (block / section / building), а не из имён задач по outline — иначе в фильтр
-        # попадают листовые работы («Акт …») при нетипичной нумерации уровней.
-        def _pf_dates_norm_colname(s: str) -> str:
-            t = (
-                str(s)
-                .replace("\ufeff", "")
-                .replace("\u00a0", " ")
-                .replace("\u202f", " ")
-                .replace("\u2007", " ")
-            )
-            t = re.sub(r"[\s\t\n\r]+", " ", t).strip().lower()
-            return t
-
-        def _pf_dates_sched_col(d: pd.DataFrame, candidates):
-            if d is None or getattr(d, "empty", True):
+            def _pf_dates_sched_col(d: pd.DataFrame, candidates):
+                if d is None or getattr(d, "empty", True):
+                    return None
+                cols_norm = {_pf_dates_norm_colname(c): c for c in d.columns}
+                for name in candidates:
+                    n = _pf_dates_norm_colname(name)
+                    if n in cols_norm:
+                        return cols_norm[n]
                 return None
-            cols_norm = {_pf_dates_norm_colname(c): c for c in d.columns}
-            for name in candidates:
-                n = _pf_dates_norm_colname(name)
-                if n in cols_norm:
-                    return cols_norm[n]
-            return None
 
-        def _pf_dates_col_contains(d, needles, exclude=()):
-            if d is None or getattr(d, "empty", True):
+            def _pf_dates_col_contains(d, needles, exclude=()):
+                if d is None or getattr(d, "empty", True):
+                    return None
+                ex = tuple(str(x).lower() for x in exclude)
+                for c in d.columns:
+                    sl = _pf_dates_norm_colname(c)
+                    if any(e in sl for e in ex):
+                        continue
+                    for n in needles:
+                        if n.lower() in sl:
+                            return c
                 return None
-            ex = tuple(str(x).lower() for x in exclude)
-            for c in d.columns:
-                sl = _pf_dates_norm_colname(c)
-                if any(e in sl for e in ex):
-                    continue
-                for n in needles:
-                    if n.lower() in sl:
-                        return c
-            return None
 
-        def _pf_dates_is_generic_block_value(v) -> bool:
-            s = str(v).strip().lower()
-            if not s:
-                return True
-            return bool(re.match(r"^(блок|block)\s*[-_a-zа-я]*\d+$", s))
+            def _pf_dates_is_generic_block_value(v) -> bool:
+                s = str(v).strip().lower()
+                if not s:
+                    return True
+                return bool(re.match(r"^(блок|block)\s*[-_a-zа-я]*\d+$", s))
 
-        _pfd_fb = pf_dates_proj_df
-        pf_dates_block_col_msp = _pf_dates_sched_col(_pfd_fb, ["block", "БЛОК", "Блок"])
-        pf_dates_block_col_res = (
-            pf_dates_block_col_msp
-            or _pf_dates_sched_col(_pfd_fb, ["Функциональный блок", "Functional block"])
-            or _pf_dates_sched_col(_pfd_fb, ["section", "Раздел"])
-        )
-        pf_dates_section_col_res = _pf_dates_sched_col(_pfd_fb, ["section", "Раздел", "БЛОК", "блок"])
-        pf_dates_building_col_res = (
-            _pf_dates_sched_col(
-                _pfd_fb,
-                [
-                    "building",
-                    "Building",
-                    "строение",
-                    "Строение",
-                    "корпус",
-                    "Корпус",
-                    "объект",
-                    "Объект",
-                ],
+            _pfd_fb = pf_dates_proj_df
+            pf_dates_block_col_msp = _pf_dates_sched_col(_pfd_fb, ["block", "БЛОК", "Блок"])
+            pf_dates_block_col_res = (
+                pf_dates_block_col_msp
+                or _pf_dates_sched_col(_pfd_fb, ["Функциональный блок", "Functional block"])
+                or _pf_dates_sched_col(_pfd_fb, ["section", "Раздел"])
             )
-            or _pf_dates_col_contains(
-                _pfd_fb,
-                ("строени", "building", "корпус", "объект"),
-                exclude=("приоритет", "риск", "severity"),
-            )
-        )
-
-        pf_dates_msp_block_filter_col: str | None = None
-        pf_dates_msp_block_values: list[str] = []
-        if pf_dates_block_col_res and pf_dates_block_col_res in _pfd_fb.columns:
-            _raw_b = sorted(
-                _pfd_fb[pf_dates_block_col_res]
-                .dropna()
-                .astype(str)
-                .map(str.strip)
-                .unique()
-                .tolist()
-            )
-            _raw_b = [b for b in _raw_b if b and b.lower() != "nan"]
-            _non_gen = [b for b in _raw_b if not _pf_dates_is_generic_block_value(b)]
-            _block_vals = _non_gen if _non_gen else _raw_b
-            if pf_dates_block_col_msp:
-                _block_vals = _raw_b
-            else:
-                if (
-                    (not _non_gen)
-                    and pf_dates_section_col_res
-                    and pf_dates_section_col_res in _pfd_fb.columns
-                    and pf_dates_section_col_res != pf_dates_block_col_res
-                ):
-                    _sec_v = (
-                        _pfd_fb[pf_dates_section_col_res]
-                        .dropna()
-                        .astype(str)
-                        .map(str.strip)
-                    )
-                    _sec_u = sorted({s for s in _sec_v.tolist() if s and s.lower() != "nan"})
-                    _sec_ng = [s for s in _sec_u if not _pf_dates_is_generic_block_value(s)]
-                    if _sec_ng:
-                        _block_vals = sorted(_sec_ng)
-                        pf_dates_block_col_res = pf_dates_section_col_res
-            if _block_vals:
-                pf_dates_msp_block_filter_col = pf_dates_block_col_res
-                pf_dates_msp_block_values = _block_vals
-
-        pf_dates_level_col = _dev_tasks_resolve_level_column(pf_dates_proj_df)
-        pf_dates_task_col = (
-            "task name"
-            if "task name" in pf_dates_proj_df.columns
-            else find_column(
-                pf_dates_proj_df,
-                ["Задача", "task", "Task Name", "Название"],
-            )
-        )
-        pf_dates_work_proj = _dev_tasks_build_ancestor_keys(
-            pf_dates_proj_df, pf_dates_level_col, pf_dates_task_col
-        )
-        # Второй и третий ярусы в выгрузке (часто 2 и 3; иначе — по фактическим уровням в файле).
-        pf_dates_blk_tier, pf_dates_bld_tier = 2, 3
-        if pf_dates_level_col and pf_dates_level_col in pf_dates_work_proj.columns:
-            _pf_lv_s = _dev_outline_level_numeric(
-                pf_dates_work_proj[pf_dates_level_col]
-            )
-            pf_dates_blk_tier, pf_dates_bld_tier = _deviations_msp_tier_levels(_pf_lv_s)
-
-        selected_block_dates = "Все"
-        selected_building_dates = "Все"
-        pf_dates_block_filter_mode = "none"  # column | l2 | section | block
-        pf_dates_block_filter_col: str | None = None
-        pf_dates_building_filter_mode = "none"  # column | l3_key
-        pf_dates_building_filter_col: str | None = None
-        def _pf_is_generic_block_name(v) -> bool:
-            s = str(v).strip().lower()
-            if not s:
-                return True
-            return bool(re.match(r"^(блок|block)\s*[-_a-zа-я]*\d+$", s))
-
-        with fl_main2:
-            if pf_dates_msp_block_values and pf_dates_msp_block_filter_col:
-                pf_dates_block_filter_mode = "column"
-                pf_dates_block_filter_col = pf_dates_msp_block_filter_col
-                blks = ["Все"] + list(pf_dates_msp_block_values)
-                selected_block_dates = st.selectbox(
-                    "Функциональный блок",
-                    blks,
-                    key="dates_block_msp_col",
+            pf_dates_section_col_res = _pf_dates_sched_col(_pfd_fb, ["section", "Раздел", "БЛОК", "блок"])
+            pf_dates_building_col_res = (
+                _pf_dates_sched_col(
+                    _pfd_fb,
+                    [
+                        "building",
+                        "Building",
+                        "строение",
+                        "Строение",
+                        "корпус",
+                        "Корпус",
+                        "объект",
+                        "Объект",
+                    ],
                 )
-            else:
-                hierarchy_ok = (
-                    bool(pf_dates_level_col)
-                    and bool(pf_dates_task_col)
-                    and pf_dates_level_col in pf_dates_work_proj.columns
+                or _pf_dates_col_contains(
+                    _pfd_fb,
+                    ("строени", "building", "корпус", "объект"),
+                    exclude=("приоритет", "риск", "severity"),
                 )
-                l2_names: list = []
-                if hierarchy_ok:
-                    _ln_b = _dev_outline_level_numeric(
-                        pf_dates_work_proj[pf_dates_level_col]
-                    )
-                    l2_names = sorted(
-                        pf_dates_work_proj.loc[
-                            _ln_b == float(pf_dates_blk_tier), pf_dates_task_col
-                        ]
-                        .dropna()
-                        .astype(str)
-                        .str.strip()
-                        .unique()
-                        .tolist()
-                    )
-                    l2_names = [x for x in l2_names if x]
-                    l2_names = [x for x in l2_names if not _pf_is_generic_block_name(x)]
-                    if not l2_names and "_dt_lvl2_key" in pf_dates_work_proj.columns:
-                        _k2 = (
-                            pf_dates_work_proj["_dt_lvl2_key"]
+            )
+
+            pf_dates_msp_block_filter_col: str | None = None
+            pf_dates_msp_block_values: list[str] = []
+            if pf_dates_block_col_res and pf_dates_block_col_res in _pfd_fb.columns:
+                _raw_b = sorted(
+                    _pfd_fb[pf_dates_block_col_res]
+                    .dropna()
+                    .astype(str)
+                    .map(str.strip)
+                    .unique()
+                    .tolist()
+                )
+                _raw_b = [b for b in _raw_b if b and b.lower() != "nan"]
+                _non_gen = [b for b in _raw_b if not _pf_dates_is_generic_block_value(b)]
+                _block_vals = _non_gen if _non_gen else _raw_b
+                if pf_dates_block_col_msp:
+                    _block_vals = _raw_b
+                else:
+                    if (
+                        (not _non_gen)
+                        and pf_dates_section_col_res
+                        and pf_dates_section_col_res in _pfd_fb.columns
+                        and pf_dates_section_col_res != pf_dates_block_col_res
+                    ):
+                        _sec_v = (
+                            _pfd_fb[pf_dates_section_col_res]
+                            .dropna()
                             .astype(str)
-                            .str.strip()
+                            .map(str.strip)
                         )
-                        _k2 = _k2[_k2.ne("") & _k2.str.lower().ne("nan")]
-                        if len(_k2):
-                            l2_names = sorted(pd.unique(_k2).tolist())
+                        _sec_u = sorted({s for s in _sec_v.tolist() if s and s.lower() != "nan"})
+                        _sec_ng = [s for s in _sec_u if not _pf_dates_is_generic_block_value(s)]
+                        if _sec_ng:
+                            _block_vals = sorted(_sec_ng)
+                            pf_dates_block_col_res = pf_dates_section_col_res
+                if _block_vals:
+                    pf_dates_msp_block_filter_col = pf_dates_block_col_res
+                    pf_dates_msp_block_values = _block_vals
 
-                if l2_names:
-                    pf_dates_block_filter_mode = "l2"
-                    blks = ["Все"] + l2_names
+            pf_dates_level_col = _dev_tasks_resolve_level_column(pf_dates_proj_df)
+            pf_dates_task_col = (
+                "task name"
+                if "task name" in pf_dates_proj_df.columns
+                else find_column(
+                    pf_dates_proj_df,
+                    ["Задача", "task", "Task Name", "Название"],
+                )
+            )
+            pf_dates_work_proj = _dev_tasks_build_ancestor_keys(
+                pf_dates_proj_df, pf_dates_level_col, pf_dates_task_col
+            )
+            # Второй и третий ярусы в выгрузке (часто 2 и 3; иначе — по фактическим уровням в файле).
+            pf_dates_blk_tier, pf_dates_bld_tier = 2, 3
+            if pf_dates_level_col and pf_dates_level_col in pf_dates_work_proj.columns:
+                _pf_lv_s = _dev_outline_level_numeric(
+                    pf_dates_work_proj[pf_dates_level_col]
+                )
+                pf_dates_blk_tier, pf_dates_bld_tier = _deviations_msp_tier_levels(_pf_lv_s)
+
+            selected_block_dates = "Все"
+            selected_building_dates = "Все"
+            pf_dates_block_filter_mode = "none"  # column | l2 | section | block
+            pf_dates_block_filter_col: str | None = None
+            pf_dates_building_filter_mode = "none"  # column | l3_key
+            pf_dates_building_filter_col: str | None = None
+            def _pf_is_generic_block_name(v) -> bool:
+                s = str(v).strip().lower()
+                if not s:
+                    return True
+                return bool(re.match(r"^(блок|block)\s*[-_a-zа-я]*\d+$", s))
+
+            with fl_main2:
+                if pf_dates_msp_block_values and pf_dates_msp_block_filter_col:
+                    pf_dates_block_filter_mode = "column"
+                    pf_dates_block_filter_col = pf_dates_msp_block_filter_col
+                    blks = ["Все"] + list(pf_dates_msp_block_values)
                     selected_block_dates = st.selectbox(
                         "Функциональный блок",
                         blks,
-                        key="dates_block_l2",
+                        key="dates_block_msp_col",
                     )
-                elif "section" in pf_dates_proj_df.columns:
-                    _sec = pf_dates_proj_df["section"].dropna().astype(str).map(str.strip)
-                    _sec = _sec[_sec.ne("") & _sec.str.lower().ne("nan")]
-                    _uniq = sorted(pd.unique(_sec)) if len(_sec) else []
-                    _uniq = [x for x in _uniq if not _pf_is_generic_block_name(x)]
-                    if _uniq:
-                        pf_dates_block_filter_mode = "section"
-                        blks = ["Все"] + list(_uniq)
+                else:
+                    hierarchy_ok = (
+                        bool(pf_dates_level_col)
+                        and bool(pf_dates_task_col)
+                        and pf_dates_level_col in pf_dates_work_proj.columns
+                    )
+                    l2_names: list = []
+                    if hierarchy_ok:
+                        _ln_b = _dev_outline_level_numeric(
+                            pf_dates_work_proj[pf_dates_level_col]
+                        )
+                        l2_names = sorted(
+                            pf_dates_work_proj.loc[
+                                _ln_b == float(pf_dates_blk_tier), pf_dates_task_col
+                            ]
+                            .dropna()
+                            .astype(str)
+                            .str.strip()
+                            .unique()
+                            .tolist()
+                        )
+                        l2_names = [x for x in l2_names if x]
+                        l2_names = [x for x in l2_names if not _pf_is_generic_block_name(x)]
+                        if not l2_names and "_dt_lvl2_key" in pf_dates_work_proj.columns:
+                            _k2 = (
+                                pf_dates_work_proj["_dt_lvl2_key"]
+                                .astype(str)
+                                .str.strip()
+                            )
+                            _k2 = _k2[_k2.ne("") & _k2.str.lower().ne("nan")]
+                            if len(_k2):
+                                l2_names = sorted(pd.unique(_k2).tolist())
+
+                    if l2_names:
+                        pf_dates_block_filter_mode = "l2"
+                        blks = ["Все"] + l2_names
                         selected_block_dates = st.selectbox(
                             "Функциональный блок",
                             blks,
-                            key="dates_block_section",
+                            key="dates_block_l2",
                         )
+                    elif "section" in pf_dates_proj_df.columns:
+                        _sec = pf_dates_proj_df["section"].dropna().astype(str).map(str.strip)
+                        _sec = _sec[_sec.ne("") & _sec.str.lower().ne("nan")]
+                        _uniq = sorted(pd.unique(_sec)) if len(_sec) else []
+                        _uniq = [x for x in _uniq if not _pf_is_generic_block_name(x)]
+                        if _uniq:
+                            pf_dates_block_filter_mode = "section"
+                            blks = ["Все"] + list(_uniq)
+                            selected_block_dates = st.selectbox(
+                                "Функциональный блок",
+                                blks,
+                                key="dates_block_section",
+                            )
+                        elif "block" in pf_dates_proj_df.columns:
+                            pf_dates_block_filter_mode = "block"
+                            blks = ["Все"] + sorted(
+                                pf_dates_proj_df["block"]
+                                .dropna()
+                                .astype(str)
+                                .str.strip()
+                                .unique()
+                                .tolist()
+                            )
+                            selected_block_dates = st.selectbox(
+                                "Функциональный блок",
+                                blks,
+                                key="dates_block",
+                            )
+                        else:
+                            selected_block_dates = "Все"
                     elif "block" in pf_dates_proj_df.columns:
                         pf_dates_block_filter_mode = "block"
                         blks = ["Все"] + sorted(
@@ -6934,284 +6957,265 @@ def dashboard_plan_fact_dates(df):
                         )
                     else:
                         selected_block_dates = "Все"
-                elif "block" in pf_dates_proj_df.columns:
-                    pf_dates_block_filter_mode = "block"
-                    blks = ["Все"] + sorted(
-                        pf_dates_proj_df["block"]
+            with fl_main3:
+                _pfd3 = pf_dates_proj_df
+                if (
+                    pf_dates_block_filter_mode == "column"
+                    and pf_dates_block_filter_col
+                    and pf_dates_block_filter_col in _pfd3.columns
+                    and str(selected_block_dates).strip() != "Все"
+                ):
+                    _pfd3 = _pfd3[
+                        _pfd3[pf_dates_block_filter_col].astype(str).str.strip()
+                        == str(selected_block_dates).strip()
+                    ].copy()
+                # «Строение»: как в «Причины отклонений» — сначала L3 по plan-строкам ганта,
+                # затем MSP-колонка building/Строение; иначе запасные варианты (уровни/outline).
+                _l3_b_opts_pf: list[str] = []
+                if (
+                    pf_dates_level_col
+                    and pf_dates_task_col
+                    and pf_dates_level_col in _pfd3.columns
+                    and pf_dates_task_col in _pfd3.columns
+                ):
+                    _l3_b_opts_pf = _deviations_l3_building_option_labels(
+                        _pfd3, pf_dates_level_col, pf_dates_task_col
+                    )
+                _msp_bld_pf = _deviations_msp_gantt_style_building_col(_pfd3)
+
+                if _l3_b_opts_pf:
+                    pf_dates_building_filter_mode = "l3_plan_slice"
+                    pf_dates_building_filter_col = None
+                    bopts = ["Все"] + _l3_b_opts_pf
+                    selected_building_dates = st.selectbox(
+                        "Строение",
+                        bopts,
+                        key="dates_building_l3_gantt",
+                    )
+                elif _msp_bld_pf and _msp_bld_pf in _pfd3.columns:
+                    pf_dates_building_filter_mode = "column"
+                    pf_dates_building_filter_col = _msp_bld_pf
+                    bopts = ["Все"] + sorted(
+                        _pfd3[_msp_bld_pf]
                         .dropna()
                         .astype(str)
                         .str.strip()
                         .unique()
                         .tolist()
                     )
-                    selected_block_dates = st.selectbox(
-                        "Функциональный блок",
-                        blks,
-                        key="dates_block",
+                    selected_building_dates = st.selectbox(
+                        "Строение",
+                        bopts,
+                        key="dates_building_msp_col",
+                    )
+                elif (
+                    pf_dates_building_col_res
+                    and pf_dates_building_col_res in _pfd3.columns
+                ):
+                    pf_dates_building_filter_mode = "column"
+                    pf_dates_building_filter_col = pf_dates_building_col_res
+                    bopts = ["Все"] + sorted(
+                        _pfd3[pf_dates_building_col_res]
+                        .dropna()
+                        .astype(str)
+                        .str.strip()
+                        .unique()
+                        .tolist()
+                    )
+                    selected_building_dates = st.selectbox(
+                        "Строение",
+                        bopts,
+                        key="dates_building_msp_res",
+                    )
+                elif (
+                    pf_dates_level_col
+                    and pf_dates_task_col
+                    and pf_dates_level_col in pf_dates_work_proj.columns
+                ):
+                    pf_dates_building_filter_mode = "l3_key"
+                    pf_dates_building_filter_col = None
+                    _ln_g = _dev_outline_level_numeric(
+                        pf_dates_work_proj[pf_dates_level_col]
+                    )
+                    w3_pf = pf_dates_work_proj[
+                        _ln_g == float(pf_dates_bld_tier)
+                    ].copy()
+                    if str(selected_block_dates).strip() != "Все":
+                        if (
+                            pf_dates_block_filter_mode == "column"
+                            and pf_dates_block_filter_col
+                            and pf_dates_block_filter_col in pf_dates_proj_df.columns
+                        ):
+                            _mask_blk = (
+                                pf_dates_proj_df.reindex(w3_pf.index)[pf_dates_block_filter_col]
+                                .astype(str)
+                                .str.strip()
+                                == str(selected_block_dates).strip()
+                            )
+                            w3_pf = w3_pf[_mask_blk.fillna(False).to_numpy()].copy()
+                        else:
+                            w3_pf = w3_pf[
+                                w3_pf["_dt_lvl2_key"].astype(str).str.strip()
+                                == str(selected_block_dates).strip()
+                            ]
+                    _go = sorted(
+                        w3_pf[pf_dates_task_col]
+                        .dropna()
+                        .astype(str)
+                        .str.strip()
+                        .unique()
+                        .tolist()
+                    )
+                    _go = [x for x in _go if x]
+                    if (
+                        not _go
+                        and str(selected_block_dates).strip() != "Все"
+                        and "_dt_lvl3_key" in w3_pf.columns
+                    ):
+                        _k3pf = w3_pf["_dt_lvl3_key"].astype(str).str.strip()
+                        _k3pf = _k3pf[_k3pf.ne("") & _k3pf.str.lower().ne("nan")]
+                        if len(_k3pf):
+                            _go = sorted(pd.unique(_k3pf).tolist())
+                    bopts = ["Все"] + _go
+                    selected_building_dates = st.selectbox(
+                        "Строение",
+                        bopts,
+                        key="dates_building_l3",
+                    )
+                elif dates_building_col and dates_building_col in pf_dates_proj_df.columns:
+                    pf_dates_building_filter_mode = "column"
+                    pf_dates_building_filter_col = dates_building_col
+                    bopts = ["Все"] + sorted(
+                        _pfd3[dates_building_col]
+                        .dropna()
+                        .astype(str)
+                        .str.strip()
+                        .unique()
+                        .tolist()
+                    )
+                    selected_building_dates = st.selectbox(
+                        "Строение",
+                        bopts,
+                        key="dates_building",
                     )
                 else:
-                    selected_block_dates = "Все"
-        with fl_main3:
-            _pfd3 = pf_dates_proj_df
-            if (
-                pf_dates_block_filter_mode == "column"
-                and pf_dates_block_filter_col
-                and pf_dates_block_filter_col in _pfd3.columns
-                and str(selected_block_dates).strip() != "Все"
-            ):
-                _pfd3 = _pfd3[
-                    _pfd3[pf_dates_block_filter_col].astype(str).str.strip()
-                    == str(selected_block_dates).strip()
-                ].copy()
-            # «Строение»: как в «Причины отклонений» — сначала L3 по plan-строкам ганта,
-            # затем MSP-колонка building/Строение; иначе запасные варианты (уровни/outline).
-            _l3_b_opts_pf: list[str] = []
-            if (
-                pf_dates_level_col
-                and pf_dates_task_col
-                and pf_dates_level_col in _pfd3.columns
-                and pf_dates_task_col in _pfd3.columns
-            ):
-                _l3_b_opts_pf = _deviations_l3_building_option_labels(
-                    _pfd3, pf_dates_level_col, pf_dates_task_col
-                )
-            _msp_bld_pf = _deviations_msp_gantt_style_building_col(_pfd3)
-
-            if _l3_b_opts_pf:
-                pf_dates_building_filter_mode = "l3_plan_slice"
-                pf_dates_building_filter_col = None
-                bopts = ["Все"] + _l3_b_opts_pf
-                selected_building_dates = st.selectbox(
-                    "Строение",
-                    bopts,
-                    key="dates_building_l3_gantt",
-                )
-            elif _msp_bld_pf and _msp_bld_pf in _pfd3.columns:
-                pf_dates_building_filter_mode = "column"
-                pf_dates_building_filter_col = _msp_bld_pf
-                bopts = ["Все"] + sorted(
-                    _pfd3[_msp_bld_pf]
-                    .dropna()
-                    .astype(str)
-                    .str.strip()
-                    .unique()
-                    .tolist()
-                )
-                selected_building_dates = st.selectbox(
-                    "Строение",
-                    bopts,
-                    key="dates_building_msp_col",
-                )
-            elif (
-                pf_dates_building_col_res
-                and pf_dates_building_col_res in _pfd3.columns
-            ):
-                pf_dates_building_filter_mode = "column"
-                pf_dates_building_filter_col = pf_dates_building_col_res
-                bopts = ["Все"] + sorted(
-                    _pfd3[pf_dates_building_col_res]
-                    .dropna()
-                    .astype(str)
-                    .str.strip()
-                    .unique()
-                    .tolist()
-                )
-                selected_building_dates = st.selectbox(
-                    "Строение",
-                    bopts,
-                    key="dates_building_msp_res",
-                )
-            elif (
-                pf_dates_level_col
-                and pf_dates_task_col
-                and pf_dates_level_col in pf_dates_work_proj.columns
-            ):
-                pf_dates_building_filter_mode = "l3_key"
-                pf_dates_building_filter_col = None
-                _ln_g = _dev_outline_level_numeric(
-                    pf_dates_work_proj[pf_dates_level_col]
-                )
-                w3_pf = pf_dates_work_proj[
-                    _ln_g == float(pf_dates_bld_tier)
-                ].copy()
-                if str(selected_block_dates).strip() != "Все":
-                    if (
-                        pf_dates_block_filter_mode == "column"
-                        and pf_dates_block_filter_col
-                        and pf_dates_block_filter_col in pf_dates_proj_df.columns
+                    pf_dates_building_filter_mode = "none"
+                    pf_dates_building_filter_col = None
+                    selected_building_dates = "Все"
+            with fl_main4:
+                _lvl_opts_tz = [
+                    "Уровень 4 (укрупнённо)",
+                    "Уровень 5 (детально)",
+                ]
+                if plan_fact_dates_outline_col and plan_fact_dates_outline_col in df.columns:
+                    _legacy_lvl = st.session_state.get("dates_level")
+                    if _legacy_lvl in (
+                        "Сводные (1–3 ур.)",
+                        "Все уровни",
+                        "Укрупнённо (уровень 4)",
                     ):
-                        _mask_blk = (
-                            pf_dates_proj_df.reindex(w3_pf.index)[pf_dates_block_filter_col]
-                            .astype(str)
-                            .str.strip()
-                            == str(selected_block_dates).strip()
-                        )
-                        w3_pf = w3_pf[_mask_blk.fillna(False).to_numpy()].copy()
-                    else:
-                        w3_pf = w3_pf[
-                            w3_pf["_dt_lvl2_key"].astype(str).str.strip()
-                            == str(selected_block_dates).strip()
-                        ]
-                _go = sorted(
-                    w3_pf[pf_dates_task_col]
-                    .dropna()
-                    .astype(str)
-                    .str.strip()
-                    .unique()
-                    .tolist()
-                )
-                _go = [x for x in _go if x]
-                if (
-                    not _go
-                    and str(selected_block_dates).strip() != "Все"
-                    and "_dt_lvl3_key" in w3_pf.columns
-                ):
-                    _k3pf = w3_pf["_dt_lvl3_key"].astype(str).str.strip()
-                    _k3pf = _k3pf[_k3pf.ne("") & _k3pf.str.lower().ne("nan")]
-                    if len(_k3pf):
-                        _go = sorted(pd.unique(_k3pf).tolist())
-                bopts = ["Все"] + _go
-                selected_building_dates = st.selectbox(
-                    "Строение",
-                    bopts,
-                    key="dates_building_l3",
-                )
-            elif dates_building_col and dates_building_col in pf_dates_proj_df.columns:
-                pf_dates_building_filter_mode = "column"
-                pf_dates_building_filter_col = dates_building_col
-                bopts = ["Все"] + sorted(
-                    _pfd3[dates_building_col]
-                    .dropna()
-                    .astype(str)
-                    .str.strip()
-                    .unique()
-                    .tolist()
-                )
-                selected_building_dates = st.selectbox(
-                    "Строение",
-                    bopts,
-                    key="dates_building",
-                )
-            else:
-                pf_dates_building_filter_mode = "none"
-                pf_dates_building_filter_col = None
-                selected_building_dates = "Все"
-        with fl_main4:
-            _lvl_opts_tz = [
-                "Уровень 4 (укрупнённо)",
-                "Уровень 5 (детально)",
-            ]
-            if plan_fact_dates_outline_col and plan_fact_dates_outline_col in df.columns:
-                _legacy_lvl = st.session_state.get("dates_level")
-                if _legacy_lvl in (
-                    "Сводные (1–3 ур.)",
-                    "Все уровни",
-                    "Укрупнённо (уровень 4)",
-                ):
-                    st.session_state["dates_level"] = _lvl_opts_tz[0]
-                elif _legacy_lvl in ("Детально (уровень 5)", "Уровень 5 (детально)"):
-                    st.session_state["dates_level"] = _lvl_opts_tz[1]
-                elif _legacy_lvl not in _lvl_opts_tz:
-                    st.session_state["dates_level"] = _lvl_opts_tz[0]
-                selected_level = st.selectbox(
-                    "Детализация",
-                    _lvl_opts_tz,
-                    index=0,
-                    key="dates_level",
-                )
-            else:
-                selected_level = _lvl_opts_tz[0]
+                        st.session_state["dates_level"] = _lvl_opts_tz[0]
+                    elif _legacy_lvl in ("Детально (уровень 5)", "Уровень 5 (детально)"):
+                        st.session_state["dates_level"] = _lvl_opts_tz[1]
+                    elif _legacy_lvl not in _lvl_opts_tz:
+                        st.session_state["dates_level"] = _lvl_opts_tz[0]
+                    selected_level = st.selectbox(
+                        "Детализация",
+                        _lvl_opts_tz,
+                        index=0,
+                        key="dates_level",
+                    )
+                else:
+                    selected_level = _lvl_opts_tz[0]
+
+            with fl_main5:
+                selected_reason_bucket_dates = "Все"
+                _rbuckets: list[str] = []
+                if (not st.session_state.get("dates_only_covenants", False)) and "reason of deviation" in df.columns:
+                    _rvals = (
+                        df["reason of deviation"]
+                        .dropna()
+                        .astype(str)
+                        .str.strip()
+                    )
+                    _rvals = _rvals[_rvals.ne("") & _rvals.str.lower().ne("nan")]
+                    _rbuckets = sorted(
+                        {
+                            _deviations_reason_bucket_label(v)
+                            for v in _rvals.tolist()
+                            if _deviations_reason_bucket_label(v)
+                        }
+                    )
+                if _rbuckets:
+                    selected_reason_bucket_dates = st.selectbox(
+                        "Причина отклонения (категория)",
+                        ["Все"] + _rbuckets,
+                        key="dates_reason_bucket_filter",
+                    )
+                else:
+                    st.selectbox(
+                        "Причина отклонения (категория)",
+                        ["Все"],
+                        key="dates_reason_bucket_filter_idle",
+                        disabled=True,
+                    )
 
         st.markdown(_PLAN_FACT_DISPLAY_OPTS_CSS, unsafe_allow_html=True)
-        st.markdown('<div class="pf-dates-opts-block">', unsafe_allow_html=True)
+        with filters_toggles(st):
 
-        _cb_r1_1, _cb_r1_2, _cb_r1_3 = st.columns(3)
-        with _cb_r1_1:
-            dates_show_reason_notes = st.checkbox(
-                "Показать причины отклонений",
-                value=False,
-                key="dates_show_reason_notes",
-                help=(
-                    "При включении: в таблице добавляются колонки «Причины отклонений» и «Заметки», "
-                    "отображаются задачи уровня 5 и все родительские задачи выше. "
-                    "Селектор «Детализация» игнорируется."
-                ),
-            )
-        with _cb_r1_2:
-            hide_completed_dates = st.checkbox(
-                "Скрыть завершённые (100%)",
-                value=False,
-                key="dates_hide_done",
-            )
-        with _cb_r1_3:
-            force_covenant_ui = st.checkbox(
-                "Только ковенанты",
-                value=False,
-                key="dates_only_covenants",
-            )
+            _cb_r1_1, _cb_r1_2, _cb_r1_3 = st.columns(3)
+            with _cb_r1_1:
+                dates_show_reason_notes = st.checkbox(
+                    "Показать причины отклонений",
+                    value=False,
+                    key="dates_show_reason_notes",
+                    help=(
+                        "При включении: в таблице добавляются колонки «Причины отклонений» и «Заметки», "
+                        "отображаются задачи уровня 5 и все родительские задачи выше. "
+                        "Селектор «Детализация» игнорируется."
+                    ),
+                )
+            with _cb_r1_2:
+                hide_completed_dates = st.checkbox(
+                    "Скрыть завершённые (100%)",
+                    value=False,
+                    key="dates_hide_done",
+                )
+            with _cb_r1_3:
+                force_covenant_ui = st.checkbox(
+                    "Только ковенанты",
+                    value=False,
+                    key="dates_only_covenants",
+                )
 
-        _cb_r2_1, _cb_r2_2, _cb_r2_3 = st.columns(3)
-        with _cb_r2_1:
-            only_negative_dev_dates = st.checkbox(
-                "Отображать только диаграммы, где отклонение окончания < 0",
-                value=False,
-                key="dates_only_neg_end",
-            )
-        with _cb_r2_2:
-            tbl_show_dur = st.checkbox(
-                "Показать «Отклонение длительности» в таблице",
-                value=True,
-                key="dates_tbl_dur",
-            )
+            _cb_r2_1, _cb_r2_2, _cb_r2_3 = st.columns(3)
+            with _cb_r2_1:
+                only_negative_dev_dates = st.checkbox(
+                    "Отображать только диаграммы, где отклонение окончания < 0",
+                    value=False,
+                    key="dates_only_neg_end",
+                )
+            with _cb_r2_2:
+                tbl_show_dur = st.checkbox(
+                    "Показать «Отклонение длительности» в таблице",
+                    value=True,
+                    key="dates_tbl_dur",
+                )
 
-        if dates_lot_col:
-            task_label_mode = st.radio(
-                "Подписи на графике и в таблице",
-                ("По наименованию MSP", "По лоту"),
-                horizontal=True,
-                key="dates_task_label_mode",
-            )
-        else:
-            task_label_mode = "По наименованию MSP"
-
-        dates_value_type = "Даты (план/факт)"
-        tbl_show_start = True
-        tbl_show_end = True
-
-        selected_reason_bucket_dates = "Все"
-        _rbuckets: list[str] = []
-        if (not force_covenant_ui) and "reason of deviation" in df.columns:
-            _rvals = (
-                df["reason of deviation"]
-                .dropna()
-                .astype(str)
-                .str.strip()
-            )
-            _rvals = _rvals[_rvals.ne("") & _rvals.str.lower().ne("nan")]
-            _rbuckets = sorted(
-                {
-                    _deviations_reason_bucket_label(v)
-                    for v in _rvals.tolist()
-                    if _deviations_reason_bucket_label(v)
-                }
-            )
-        _rsb_col, _ = st.columns([2, 3])
-        with _rsb_col:
-            if _rbuckets:
-                selected_reason_bucket_dates = st.selectbox(
-                    "Причина отклонения (категория)",
-                    ["Все"] + _rbuckets,
-                    key="dates_reason_bucket_filter",
+            if dates_lot_col:
+                task_label_mode = st.radio(
+                    "Подписи на графике и в таблице",
+                    ("По наименованию MSP", "По лоту"),
+                    horizontal=True,
+                    key="dates_task_label_mode",
                 )
             else:
-                st.selectbox(
-                    "Причина отклонения (категория)",
-                    ["Все"],
-                    key="dates_reason_bucket_filter_idle",
-                    disabled=True,
-                )
+                task_label_mode = "По наименованию MSP"
 
-        st.markdown("</div>", unsafe_allow_html=True)
+            dates_value_type = "Даты (план/факт)"
+            tbl_show_start = True
+            tbl_show_end = True
+
 
     # По ТЗ в таблице показываем только строки, где есть отклонение (|дней| > 0) по началу или окончанию.
 
@@ -11366,12 +11370,36 @@ def dashboard_budget_cumulative(df):
                 )
             else:
                 selected_section = "Все"
-    
-        hide_reserve = st.checkbox(
-            "Скрыть отклонение (столбец на графике)",
-            value=False,
-            key="budget_cum_hide_reserve",
-        )
+
+        _bcc_preview = df.copy()
+        if selected_project != "Все" and "project name" in _bcc_preview.columns:
+            _bcc_preview = _bcc_preview[
+                _bcc_preview["project name"].map(_project_filter_norm_key)
+                == _project_filter_norm_key(selected_project)
+            ]
+        if selected_section != "Все" and "section" in _bcc_preview.columns:
+            _bcc_preview = _bcc_preview[
+                _bcc_preview["section"].astype(str).str.strip()
+                == str(selected_section).strip()
+            ]
+        selected_year = "Все"
+        ensure_date_columns(_bcc_preview)
+        if "plan end" in _bcc_preview.columns:
+            pe_y = pd.to_datetime(_bcc_preview["plan end"], errors="coerce")
+            if pe_y.notna().any():
+                _years = sorted({int(y) for y in pe_y.dt.year.dropna().unique().tolist()})
+                selected_year = st.selectbox(
+                    "Год",
+                    ["Все"] + [str(y) for y in _years],
+                    key="budget_cum_year",
+                )
+
+        with filters_toggles(st):
+            hide_reserve = st.checkbox(
+                "Скрыть отклонение (столбец на графике)",
+                value=False,
+                key="budget_cum_hide_reserve",
+            )
 
     filtered_df = df.copy()
     if selected_project != "Все" and "project name" in filtered_df.columns:
@@ -11384,27 +11412,14 @@ def dashboard_budget_cumulative(df):
             filtered_df["section"].astype(str).str.strip()
             == str(selected_section).strip()
         ]
-
-    ensure_date_columns(filtered_df)
-    if "plan end" in filtered_df.columns:
-        pe_y = pd.to_datetime(filtered_df["plan end"], errors="coerce")
-        if pe_y.notna().any():
-            filtered_df["_filter_year_bdd"] = pe_y.dt.year
-            _years = sorted(
-                {int(y) for y in filtered_df["_filter_year_bdd"].dropna().unique().tolist()}
-            )
-            selected_year = st.selectbox(
-                "Год",
-                ["Все"] + [str(y) for y in _years],
-                key="budget_cum_year",
-            )
-            if selected_year != "Все":
-                try:
-                    filtered_df = filtered_df[
-                        filtered_df["_filter_year_bdd"] == int(selected_year)
-                    ].copy()
-                except (TypeError, ValueError):
-                    pass
+    if selected_year != "Все":
+        ensure_date_columns(filtered_df)
+        if "plan end" in filtered_df.columns:
+            pe_y = pd.to_datetime(filtered_df["plan end"], errors="coerce")
+            try:
+                filtered_df = filtered_df[pe_y.dt.year == int(selected_year)].copy()
+            except (TypeError, ValueError):
+                pass
 
     ensure_budget_columns(filtered_df)
     from dashboards.finance_from_1c import ensure_budget_frame_with_fallback
@@ -11761,9 +11776,10 @@ def dashboard_budget_by_section(df):
         with col3:
             pass
 
-        hide_reserve = st.checkbox(
-            "Скрыть отклонение", value=True, key="budget_section_hide_reserve"
-        )
+        with filters_toggles(st):
+            hide_reserve = st.checkbox(
+                "Скрыть отклонение", value=True, key="budget_section_hide_reserve"
+            )
 
     # Apply filters
     filtered_df = df.copy()
@@ -20203,12 +20219,6 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 placeholder="Все месяцы",
                 help="Один или несколько календарных месяцев. Пусто — все месяцы с данными.",
             )
-        with fcols[plan_idx]:
-            only_with_plan = st.checkbox(
-                "Только с планом", value=True,
-                key=f"gdrs_filter_only_plan_{_gdrs_key_suffix}",
-                help="Скрыть подрядчиков без плана в активном договоре",
-            )
         _agg_opts = gdrs_agg_select_options()
         _ac1, _ac2 = st.columns(2)
         with _ac1:
@@ -20228,6 +20238,13 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 key=f"gdrs_filter_skud_agg_{_gdrs_key_suffix}",
                 help="Среднее за месяц — среднее факт/день за весь период (CSV); "
                 "N неделя — среднее факт/день только в выбранной неделе",
+            )
+
+        with filters_toggles(st):
+            only_with_plan = st.checkbox(
+                "Только с планом", value=True,
+                key=f"gdrs_filter_only_plan_{_gdrs_key_suffix}",
+                help="Скрыть подрядчиков без плана в активном договоре",
             )
 
 
@@ -22836,7 +22853,7 @@ def dashboard_executive_documentation(df):
             else:
                 sel_kind = "Все"
 
-        fp1, fp2, fp3 = st.columns([2, 1, 2])
+        fp1, fp2 = st.columns([2, 1])
         with fp1:
             if pd.notna(dmin) and pd.notna(dmax):
                 min_date = dmin.date() if hasattr(dmin, "date") else dmin
@@ -22870,7 +22887,7 @@ def dashboard_executive_documentation(df):
                 key="exec_doc_granularity",
                 help="Шаг агрегации для блока «Изменения к предыдущему периоду» и вкладки «Динамика».",
             )
-        with fp3:
+        with filters_toggles(st):
             hide_overdue_if_done = st.checkbox(
                 "Не отображать просрочку, если ИД сдана (подписана/согласована)",
                 value=True,
@@ -35250,48 +35267,49 @@ def dashboard_project_schedule_chart(df):
             if not level_col:
                 suppress_caption("Нет колонки уровня.")
 
-    _gcb_a, _gcb_b, _gcb_c = st.columns((1, 1, 1), gap="small")
-    with _gcb_a:
-        show_reasons = st.checkbox(
-            "Показать причины отклонений",
-            value=False,
-            key="gantt_show_deviation_cols",
-            help=(
-                "По ТЗ: при включении в выборку добавляются задачи уровня 5 "
-                "(только в них есть причины отклонений и заметки) и все родительские "
-                "задачи выше. Селектор «Уровень отображения задач» игнорируется."
-            ),
-        )
-    with _gcb_b:
-        show_lots = st.checkbox(
-            "Отображать в лотах",
-            value=False,
-            key="gantt_show_lots",
-        )
-        label_pct = st.checkbox(
-            "Показать %",
-            value=False,
-            key="gantt_bar_label_pct",
-            help=(
-                "Включено: одна полоса на задачу и подпись с % выполнения из MSP. "
-                "Выключено (по умолчанию): две полосы (план и факт) с датами начала и окончания."
-            ),
-        )
-    with _gcb_c:
-        hide_completed = st.checkbox(
-            "Скрыть задачи с 100% выполнения",
-            value=False,
-            key="gantt_hide_completed",
-        )
-        only_finish_delay = st.checkbox(
-            "На диаграмме только просрочка по окончанию (базовое − факт/plan < 0 дн.)",
-            value=True,
-            key="gantt_only_finish_delay",
-            help=(
-                "По ТЗ: только задачи, где базовое окончание раньше "
-                "планового/фактического (просрочка по «базовое окончание − окончание»)."
-            ),
-        )
+        with filters_toggles(st):
+            _gcb_a, _gcb_b, _gcb_c = st.columns((1, 1, 1), gap="small")
+            with _gcb_a:
+                show_reasons = st.checkbox(
+                    "Показать причины отклонений",
+                    value=False,
+                    key="gantt_show_deviation_cols",
+                    help=(
+                        "По ТЗ: при включении в выборку добавляются задачи уровня 5 "
+                        "(только в них есть причины отклонений и заметки) и все родительские "
+                        "задачи выше. Селектор «Уровень отображения задач» игнорируется."
+                    ),
+                )
+            with _gcb_b:
+                show_lots = st.checkbox(
+                    "Отображать в лотах",
+                    value=False,
+                    key="gantt_show_lots",
+                )
+                label_pct = st.checkbox(
+                    "Показать %",
+                    value=False,
+                    key="gantt_bar_label_pct",
+                    help=(
+                        "Включено: одна полоса на задачу и подпись с % выполнения из MSP. "
+                        "Выключено (по умолчанию): две полосы (план и факт) с датами начала и окончания."
+                    ),
+                )
+            with _gcb_c:
+                hide_completed = st.checkbox(
+                    "Скрыть задачи с 100% выполнения",
+                    value=False,
+                    key="gantt_hide_completed",
+                )
+                only_finish_delay = st.checkbox(
+                    "На диаграмме только просрочка по окончанию (базовое − факт/plan < 0 дн.)",
+                    value=True,
+                    key="gantt_only_finish_delay",
+                    help=(
+                        "По ТЗ: только задачи, где базовое окончание раньше "
+                        "планового/фактического (просрочка по «базовое окончание − окончание»)."
+                    ),
+                )
 
     _gantt_row_cap = _GANTT_MAX_ROWS
     view_mode = "Гантт (полосы)"

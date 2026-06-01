@@ -72,6 +72,48 @@ section.main .bi-filters-scope [data-testid="stVerticalBlock"] > label {
     letter-spacing: 0.04em;
     margin: 8px 0 6px 0;
 }
+
+.bi-filters-selectors {
+    margin: 0 0 0.35rem 0;
+}
+.bi-filters-selectors div[data-testid="stHorizontalBlock"] {
+    flex-wrap: wrap;
+    gap: 0.25rem 0;
+}
+.bi-filters-selectors div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+    flex: 1 1 0% !important;
+    min-width: 140px !important;
+    max-width: none !important;
+    width: auto !important;
+}
+.bi-filters-selectors div[data-testid="column"] [data-testid="stSelectbox"],
+.bi-filters-selectors div[data-testid="column"] [data-testid="stMultiSelect"],
+.bi-filters-selectors div[data-testid="column"] [data-testid="stDateInput"] {
+    width: 100%;
+}
+.bi-filters-toggles {
+    margin: 0.5rem 0 0;
+    padding: 0.5rem 0 0;
+    border-top: 1px solid rgba(148,163,184,.18);
+}
+.bi-filters-toggles [data-testid="stCheckbox"] {
+    min-height: 2.75rem;
+    display: flex;
+    align-items: flex-start;
+}
+.bi-filters-toggles [data-testid="stCheckbox"] label {
+    align-items: flex-start;
+    width: 100%;
+}
+.bi-filters-toggles [data-testid="stCheckbox"] label p,
+.bi-filters-toggles [data-testid="stRadio"] label p {
+    font-size: 0.92rem;
+    line-height: 1.35;
+    margin: 0;
+}
+.bi-filters-toggles [data-testid="column"] {
+    min-height: 2.75rem;
+}
 </style>
 """
 
@@ -158,6 +200,30 @@ def filters_section_title(st: Any, title: str) -> None:
         f'<p class="bi-filters-section-title">{html_escape(str(title or "").strip())}</p>',
         unsafe_allow_html=True,
     )
+
+
+
+
+@contextmanager
+def filters_selectors(st: Any) -> Generator[None, None, None]:
+    """Селекторы (selectbox/multiselect/date/radio-режимы) — отдельным блоком сверху."""
+    inject_unified_filters_css(st)
+    st.markdown('<div class="bi-filters-selectors">', unsafe_allow_html=True)
+    try:
+        yield
+    finally:
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+@contextmanager
+def filters_toggles(st: Any) -> Generator[None, None, None]:
+    """Чекбоксы и переключатели отображения — отдельным блоком ниже селекторов."""
+    inject_unified_filters_css(st)
+    st.markdown('<div class="bi-filters-toggles">', unsafe_allow_html=True)
+    try:
+        yield
+    finally:
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
 @contextmanager
