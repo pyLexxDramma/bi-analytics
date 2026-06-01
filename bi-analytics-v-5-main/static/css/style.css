@@ -1010,6 +1010,16 @@ section[data-testid="stSidebar"] [data-testid="stExpander"] summary svg {
     border-radius: 6px !important;
     forced-color-adjust: none !important;
 }
+section[data-testid="stSidebar"] [data-testid="stExpander"] {
+    margin-bottom: 0 !important;
+}
+section[data-testid="stSidebar"] [data-testid="stExpander"]:has(details[open]) {
+    margin-bottom: 24px !important;
+}
+section[data-testid="stSidebar"] [data-testid="stExpander"]:has(details[open]) [data-testid="stVerticalBlock"] {
+    gap: 8px !important;
+    row-gap: 8px !important;
+}
 [data-testid="stSidebar"] [data-testid="stExpander"] > div {
     background-color: #0d2b47 !important;
 }
