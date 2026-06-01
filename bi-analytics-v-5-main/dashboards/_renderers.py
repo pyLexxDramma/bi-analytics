@@ -25458,24 +25458,27 @@ _APPR_PF_SUMMARY_GAUGE_CSS = """
 
 
 def _plan_fact_gauge_axis_ticks(
-    hi: float, plan_v: float, *, value_format: str, unit: str
+    hi: float,
+    plan_v: float,
+    fact_v: float,
+    *,
+    value_format: str,
+    unit: str,
 ) -> tuple[list[float], list[str]]:
+    """Деления шкалы: 0, план (фиолетовая линия), факт (если отличается)."""
     hi = float(hi or 0.0)
     if hi <= 0:
         return [0.0], ["0"]
     plan_v = float(plan_v or 0.0)
-    raw = [0.0, hi]
+    fact_v = float(fact_v or 0.0)
+    raw = [0.0]
     if plan_v > 0:
         raw.append(plan_v)
-        if plan_v < hi:
-            raw.append(plan_v * 0.5)
-    else:
-        raw.extend([hi / 3.0, 2.0 * hi / 3.0])
+    if fact_v > 0 and abs(fact_v - plan_v) > 1e-6 and fact_v <= hi + 1e-9:
+        raw.append(fact_v)
     ticks = sorted({round(v, 4) for v in raw if 0.0 <= v <= hi + 1e-9})
-    if ticks[0] != 0.0:
+    if not ticks or ticks[0] != 0.0:
         ticks.insert(0, 0.0)
-    if abs(ticks[-1] - hi) > 1e-6:
-        ticks.append(hi)
     texts = [f"{v:{value_format}} {unit}".strip() for v in ticks]
     return ticks, texts
 
@@ -25498,13 +25501,38 @@ def _render_plan_fact_summary_dashboard(
     fact_v = fact_rub / scale
     plan_mln = plan_rub / 1e6
     fact_mln = fact_rub / 1e6
-    hi = max(plan_v, fact_v, 1e-9) * 1.08
+    # Верх шкалы: при перерасходе — чуть выше факта (без «пустого хвоста»),
+    # при экономии — запас над планом для читаемости порога.
+    if fact_v >= plan_v:
+        hi = max(fact_v, 1e-9) * 1.01
+    else:
+        hi = max(plan_v, fact_v, 1e-9) * 1.05
     pct_of_plan = (100.0 * fact_rub / plan_rub) if plan_rub > 0 else float("nan")
     bar_color = _plan_fact_summary_gauge_color(plan_rub, fact_rub)
 
     tickvals, ticktext = _plan_fact_gauge_axis_ticks(
-        hi, plan_v, value_format=vf, unit=unit
+        hi, plan_v, fact_v, value_format=vf, unit=unit
     )
+    _gauge_track = "rgba(255,255,255,0.08)"
+    _gauge_outer_green = "#27ae60"
+    _gauge_bar_thickness = 0.72
+    gauge_steps: list[dict] = []
+    if plan_v > 0:
+        gauge_steps.append(
+            {
+                "range": [0.0, float(plan_v)],
+                "color": _gauge_outer_green,
+                "thickness": 1,
+            }
+        )
+        if plan_v < hi - 1e-9:
+            gauge_steps.append(
+                {
+                    "range": [float(plan_v), float(hi)],
+                    "color": _gauge_track,
+                    "thickness": 1,
+                }
+            )
     gauge_kw: dict = {
         "shape": "angular",
         "axis": {
@@ -25518,10 +25546,12 @@ def _render_plan_fact_summary_dashboard(
             "tickfont": {"size": 15, "color": "#e8eef5"},
             "showticklabels": True,
         },
-        "bar": {"color": bar_color, "thickness": 0.72},
-        "bgcolor": "rgba(255,255,255,0.08)",
+        "bar": {"color": bar_color, "thickness": _gauge_bar_thickness},
+        "bgcolor": _gauge_track,
         "borderwidth": 0,
     }
+    if gauge_steps:
+        gauge_kw["steps"] = gauge_steps
     if plan_v > 0:
         gauge_kw["threshold"] = {
             "line": {"color": "#5e35b1", "width": 3},
@@ -25666,7 +25696,7 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
     hist_by_type_df["Сумма_млн"] = hist_by_type_df["Сумма"] / 1e6
     hist_by_type_df["bar_text"] = _finance_bar_text_mln_rub(
         hist_by_type_df["Сумма"],
-        unit_suffix=" млн рублей",
+        unit_suffix=" млн.руб.",
     )
     fig_hist = px.bar(
         hist_by_type_df,
@@ -25674,7 +25704,7 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
         y="Сумма_млн",
         color="Тип бюджета",
         title=None,
-        labels={"project name": "Проект", "Сумма_млн": "млн рублей"},
+        labels={"project name": "Проект", "Сумма_млн": "млн.руб."},
         barmode="group",
         text="bar_text",
         color_discrete_map={
@@ -25687,7 +25717,7 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
     )
     fig_hist.update_layout(
         xaxis_title="Проект",
-        yaxis_title="млн рублей",
+        yaxis_title="млн.руб.",
         height=600,
         xaxis=dict(tickangle=-45, tickfont=dict(size=12)),
         legend=dict(title="Тип бюджета", orientation="v", yanchor="top", y=1, xanchor="left", x=1.02),
@@ -25829,19 +25859,19 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
     fact_total = float(agg["fact"].sum())
     dev_total = fact_total - plan_total
 
+    _render_plan_fact_summary_dashboard(
+        st,
+        plan_rub=plan_total,
+        fact_rub=fact_total,
+        key_suffix=_project_filter_norm_key(str(selected_project)),
+    )
+
     _render_budget_histogram_plan_fact_by_projects(filtered_df)
 
     _render_plan_fact_detail_table(
         st,
         filtered_df,
         msp_df=df if used_1c_approved else None,
-        key_suffix=_project_filter_norm_key(str(selected_project)),
-    )
-
-    _render_plan_fact_summary_dashboard(
-        st,
-        plan_rub=plan_total,
-        fact_rub=fact_total,
         key_suffix=_project_filter_norm_key(str(selected_project)),
     )
 
