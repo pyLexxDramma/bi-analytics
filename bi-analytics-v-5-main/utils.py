@@ -1367,11 +1367,14 @@ def budget_table_to_html(
             else ""
         )
         + (
-            f'#{wrap_id} .budget-table-scroll {{ max-height: {_scroll_vh:.1f}vh; overflow: auto; '
-            f'-webkit-overflow-scrolling: touch; }}'
+            f'#{wrap_id} .budget-table-scroll {{ height: 100%; max-height: 100%; min-height: 0; '
+            f'overflow: auto; -webkit-overflow-scrolling: touch; scrollbar-gutter: stable; }}'
+            f'#{wrap_id}.budget-deviation-table-wrap {{ display: flex; flex-direction: column; '
+            f'height: 100%; min-height: 0; overflow: hidden; width: 100%; }}'
             f'#{wrap_id} thead th {{ position: sticky; top: 0; z-index: 5; }}'
             f'#{wrap_id} tr.bd-total-row td {{ position: sticky; bottom: 0; z-index: 4; '
             f'box-shadow: 0 -3px 10px rgba(0,0,0,0.35); }}'
+            f'#{wrap_id} .budget-table-scroll table {{ width: max-content; min-width: 100%; }}'
             if _scroll_vh
             else ""
         )
@@ -1382,9 +1385,11 @@ def budget_table_to_html(
     )
     parts = [
         _html_table_caption(table_caption),
-        f'<div id="{wrap_id}" class="budget-deviation-table-wrap" data-bi-rows="{len(df)}" style="overflow-x: auto; min-width: 0; margin: 0; padding: 0;">',
+        f'<div id="{wrap_id}" class="budget-deviation-table-wrap" data-bi-rows="{len(df)}" style="overflow: hidden; min-width: 0; margin: 0; padding: 0; height: 100%;">',
         f"<style>{_style_css}</style>",
-        f'<div class="budget-table-scroll">' if _scroll_vh else "",
+        (
+            f'<div class="budget-table-scroll" data-scroll-vh="{_scroll_vh:.1f}">' if _scroll_vh else ""
+        ),
         f'<table class="bi-sortable-table bi-sort-click-only" style="width:100%; border-collapse: collapse; background-color: {TABLE_BG_COLOR}; color: {TABLE_TEXT_COLOR}; font-size: {_tbl_px}px;">',
         "<thead><tr>",
     ]
@@ -2042,7 +2047,16 @@ def _scroll_box_table_html(html: str) -> bool:
     )
 
 
-def _scroll_box_height_px(html: str, *, cap: int = 560) -> int:
+def _scroll_box_height_px(html: str, *, cap: int = 640) -> int:
+    """Высота scroll-box под iframe: для budget-table-scroll — по vh из разметки таблицы."""
+    _body = html or ""
+    if "budget-table-scroll" in _body:
+        _m_vh = re.search(r'data-scroll-vh="([\d.]+)"', _body) or re.search(
+            r"max-height:\s*([\d.]+)vh", _body
+        )
+        if _m_vh:
+            _vh = float(_m_vh.group(1))
+            return int(min(cap, max(280, _vh * 10 + 56)))
     _rows_m = re.search(r'data-bi-rows="(\d+)"', html or "")
     _rows_n = int(_rows_m.group(1)) if _rows_m else 0
     _est = 84 + _rows_n * 34

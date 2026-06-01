@@ -250,8 +250,7 @@ _TABLE_SORT_JS = r"""
         }
       }
       var fcBox = document.querySelector(".fc-table-scroll-wrap")
-        || document.querySelector(".pred-detail-wrap")
-        || document.querySelector(".budget-table-scroll");
+        || document.querySelector(".pred-detail-wrap");
       if (fcBox) {
         var fcTbl0 = fcBox.querySelector("table");
         var fcContent = fcTbl0 ? Math.ceil(fcTbl0.getBoundingClientRect().height)
@@ -261,6 +260,14 @@ _TABLE_SORT_JS = r"""
         var fcH = fcContent > fcCap ? (fcCap + fcPad) : Math.max(160, fcContent + fcPad);
         if (fcH > 0) {
           window.parent.postMessage({ type: "streamlit:setFrameHeight", height: fcH }, "*");
+          return;
+        }
+      }
+      var btsBox = document.querySelector(".budget-table-scroll");
+      if (btsBox) {
+        var btsH = Math.ceil(btsBox.getBoundingClientRect().height) + 8;
+        if (btsH > 0) {
+          window.parent.postMessage({ type: "streamlit:setFrameHeight", height: btsH }, "*");
           return;
         }
       }
@@ -359,8 +366,7 @@ _COMPACT_FRAME_FIT_JS = r"""
         }
       }
       var fc = document.querySelector(".fc-table-scroll-wrap")
-        || document.querySelector(".pred-detail-wrap")
-        || document.querySelector(".budget-table-scroll");
+        || document.querySelector(".pred-detail-wrap");
       if (fc) {
         var fcTbl = fc.querySelector("table");
         var fcContent = fcTbl ? Math.ceil(fcTbl.getBoundingClientRect().height)
@@ -370,6 +376,14 @@ _COMPACT_FRAME_FIT_JS = r"""
         var fh = fcContent > fcCap ? (fcCap + fcPad) : Math.max(160, fcContent + fcPad);
         if (fh > 0) {
           window.parent.postMessage({ type: "streamlit:setFrameHeight", height: fh }, "*");
+          return;
+        }
+      }
+      var bts = document.querySelector(".budget-table-scroll");
+      if (bts) {
+        var bsh = Math.ceil(bts.getBoundingClientRect().height) + 8;
+        if (bsh > 0) {
+          window.parent.postMessage({ type: "streamlit:setFrameHeight", height: bsh }, "*");
           return;
         }
       }
@@ -465,6 +479,26 @@ html:has(.fc-table-scroll-wrap),body:has(.fc-table-scroll-wrap){
   scrollbar-gutter:stable;scrollbar-width:thin;box-sizing:border-box;
 }
 .fc-table-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;vertical-align:middle!important;text-align:center!important}
+.bi-sortable-html-root:has(.budget-table-scroll){
+  overflow:hidden!important;height:100%!important;max-height:100%!important;min-height:0!important;
+}
+html:has(.budget-table-scroll),body:has(.budget-table-scroll){
+  overflow:hidden!important;margin:0;padding:0;height:100%!important;min-height:0!important;
+}
+.budget-deviation-table-wrap{
+  display:flex!important;flex-direction:column!important;height:100%!important;min-height:0!important;
+  overflow:hidden!important;width:100%!important;max-width:100%!important;box-sizing:border-box;
+}
+.budget-table-scroll{
+  display:block!important;width:100%!important;height:100%!important;max-height:100%!important;
+  min-height:0!important;overflow:auto!important;-webkit-overflow-scrolling:touch!important;
+  scrollbar-gutter:stable;scrollbar-width:thin;box-sizing:border-box;
+}
+.budget-table-scroll table{width:max-content!important;min-width:100%!important;table-layout:auto!important}
+.budget-table-scroll thead th{position:sticky!important;top:0!important;z-index:5!important}
+.budget-table-scroll tr.bd-total-row td{position:sticky!important;bottom:0!important;z-index:4!important;
+  box-shadow:0 -3px 10px rgba(0,0,0,0.35)!important}
+
 .fc-table-scroll-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important}
 html,body{
   height:auto!important;min-height:0!important;
@@ -838,6 +872,25 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
         return
     if "gantt-schedule-scroll-wrap" in _b:
         components.html(doc, height=648, scrolling=False)
+        return
+    if "budget-deviation-table-wrap" in _b and "budget-table-scroll" in _b:
+        _m_vh = re.search(r'data-scroll-vh="([\d.]+)"', html or "") or re.search(
+            r"max-height:\s*([\d.]+)vh", html or ""
+        )
+        _vh = float(_m_vh.group(1)) if _m_vh else 52.0
+        _h_b = int(min(640, max(280, _vh * 10 + 56)))
+        doc_sc = doc.replace(
+            "</head>",
+            '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
+            '.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}'
+            'html body .budget-table-scroll{height:100%!important;max-height:100%!important;min-height:0!important;'
+            'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;}'
+            'html body .budget-table-scroll thead th{position:sticky!important;top:0!important;z-index:5!important;}'
+            'html body .budget-table-scroll tr.bd-total-row td{position:sticky!important;bottom:0!important;z-index:4!important;}'
+            '</style></head>',
+            1,
+        )
+        components.html(doc_sc, height=_h_b, scrolling=False)
         return
     if "fc-table-scroll-wrap" in _b:
         doc_sc = doc.replace("</head>", '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}html body .fc-table-scroll-wrap,html body .pred-detail-wrap,html body .budget-table-scroll{height:100%!important;max-height:100%!important;min-height:0!important;overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;}html body .fc-table-scroll-wrap thead th,html body .pred-detail-wrap thead th,html body .budget-table-scroll thead th{position:sticky!important;top:0!important;z-index:5!important;}</style>' + "</head>", 1)

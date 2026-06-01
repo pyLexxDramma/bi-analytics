@@ -2462,13 +2462,20 @@ def _plotly_legend_horizontal_below_plot(
     """
     try:
         fig.update_layout(
+            showlegend=True,
             legend=dict(
                 orientation="h",
                 x=0.5,
                 xanchor="center",
                 y=legend_y,
                 yanchor="top",
-                font=dict(size=11, color="#e8eef5"),
+                font=dict(size=12, color="#e8eef5"),
+                bgcolor="rgba(15, 28, 45, 0.92)",
+                bordercolor="rgba(122, 158, 196, 0.55)",
+                borderwidth=1,
+                itemsizing="constant",
+                itemwidth=32,
+                tracegroupgap=4,
             ),
             margin=dict(l=56, r=36, t=top_px, b=bottom_px),
         )
@@ -10059,30 +10066,40 @@ def _render_finance_bar_chart(
         )
 
 
-_DK_BAR_PX_SLOT = 220  # эталон: «С группировкой» (стек); тот же слот для «Без группировки»
+_DK_BAR_PX_SLOT = 220  # «С группировкой» (стек)
+_DK_BAR_PX_SLOT_GROUP = 367  # «Без группировки»: 220 × 2.5
 _DK_BAR_SCROLL_VP_PX = 1420
 
 
 
 
-def _dk_chart_axis_peak_mln(chart_df: pd.DataFrame, *, has_deviation: bool) -> float:
-    """Верх шкалы Y (млн): эталон — сумма стека «С группировкой» + договор для сопоставимости."""
-    peaks: list[float] = []
-    for col in ("КС-2", "Аванс"):
-        if col in chart_df.columns:
-            peaks.append(float(pd.to_numeric(chart_df[col], errors="coerce").fillna(0.0).max()))
-    if "КС-2" in chart_df.columns and "Аванс" in chart_df.columns:
-        _stack_sum = (
-            pd.to_numeric(chart_df["КС-2"], errors="coerce").fillna(0.0)
-            + pd.to_numeric(chart_df["Аванс"], errors="coerce").fillna(0.0)
-        )
-        peaks.append(float(_stack_sum.max()))
+def _dk_chart_axis_peak_mln(
+    chart_df: pd.DataFrame,
+    *,
+    has_deviation: bool,
+    side_by_side: bool,
+) -> float:
+    """Верх шкалы Y (млн): только серии, которые реально рисуются на графике."""
+    if side_by_side:
+        peaks: list[float] = []
+        for col in ("Аванс", "КС-2"):
+            if col in chart_df.columns:
+                peaks.append(float(pd.to_numeric(chart_df[col], errors="coerce").fillna(0.0).max()))
+        if has_deviation and "Отклонение" in chart_df.columns:
+            _dev = pd.to_numeric(chart_df["Отклонение"], errors="coerce").fillna(0.0)
+            peaks.append(float(_dev.clip(lower=0.0).max()))
+            _neg = float(_dev.min())
+            if _neg < 0:
+                peaks.append(abs(_neg))
+        return max(peaks) if peaks else 0.0
+    _stack = pd.Series(0.0, index=chart_df.index, dtype=float)
     if has_deviation and "Отклонение" in chart_df.columns:
         _dev = pd.to_numeric(chart_df["Отклонение"], errors="coerce").fillna(0.0)
-        peaks.append(float(_dev.clip(lower=0.0).max()))
-    if "Договор стоимость" in chart_df.columns:
-        peaks.append(float(pd.to_numeric(chart_df["Договор стоимость"], errors="coerce").fillna(0.0).max()))
-    return max(peaks) if peaks else 0.0
+        _stack = _stack + _dev.clip(lower=0.0)
+    for col in ("КС-2", "Аванс"):
+        if col in chart_df.columns:
+            _stack = _stack + pd.to_numeric(chart_df[col], errors="coerce").fillna(0.0)
+    return float(_stack.max()) if len(_stack) else 0.0
 
 
 def _dk_chart_yaxis_layout(
@@ -10098,13 +10115,19 @@ def _dk_chart_yaxis_layout(
         else pd.Series(0.0, index=chart_df.index)
     )
     _neg_min = float(_dev_all.min()) if side_by_side else 0.0
-    _peak = _dk_chart_axis_peak_mln(chart_df, has_deviation=has_deviation)
+    _peak = _dk_chart_axis_peak_mln(
+        chart_df, has_deviation=has_deviation, side_by_side=side_by_side
+    )
     _dtick_fc, _y_top_fc = _finance_bar_yaxis_tight(
-        max(_peak, 0.01), outside_labels=True, tick_stride=4
+        max(_peak, 0.01), outside_labels=True, tick_stride=1
     )
     if side_by_side and _neg_min < 0:
-        _pad_bot = max(abs(_neg_min) * 0.32, 1.2)
-        _y_rng = [_neg_min - _pad_bot, _y_top_fc]
+        _neg_abs = abs(_neg_min)
+        _, _y_bot_fc = _finance_bar_yaxis_tight(
+            max(_neg_abs, 0.01), outside_labels=True, tick_stride=1
+        )
+        _pad_bot = max(_neg_abs * 0.12, 0.8)
+        _y_rng = [-(_y_bot_fc + _pad_bot), _y_top_fc]
     else:
         _y_rng = [0, _y_top_fc]
     return dict(
@@ -10117,10 +10140,10 @@ def _dk_chart_yaxis_layout(
 
 
 def _dk_plotly_canvas_width(n_cats: int, *, grouped: bool = True) -> tuple[bool, int]:
-    """Ширина canvas: один слот на категорию (как в режиме «С группировкой»)."""
+    """Ширина canvas: слот на категорию; «Без группировки» — в 2.5× шире."""
     n = max(1, int(n_cats))
     vp = int(_DK_BAR_SCROLL_VP_PX)
-    px = int(_DK_BAR_PX_SLOT)
+    px = int(_DK_BAR_PX_SLOT_GROUP if grouped else _DK_BAR_PX_SLOT)
     content_w = n * px + 80
     if n >= 5:
         return True, int(min(18000, content_w))
@@ -10133,7 +10156,7 @@ def _render_debit_credit_bar_chart(
     fig,
     *,
     categories: list,
-    grouped: bool,
+    stack: bool = False,
     caption_below: str = "",
     tick_labels: list | None = None,
 ) -> None:
@@ -10145,9 +10168,9 @@ def _render_debit_credit_bar_chart(
     if len(ticktext) != len(cats):
         ticktext = cats
     n = max(1, len(cats))
-    grouped = bool(grouped)
-    fig_h = int(max(560, min(960, 520 + n * 8)))
-    need_hscroll, canvas_w = _dk_plotly_canvas_width(n, grouped=grouped)
+    stack = bool(stack)
+    fig_h = int(max(720, min(1120, 680 + n * 14)))
+    need_hscroll, canvas_w = _dk_plotly_canvas_width(n, grouped=not stack)
     fixed_w = int(canvas_w) if need_hscroll else None
 
     try:
@@ -10158,11 +10181,25 @@ def _render_debit_credit_bar_chart(
             fixed_canvas_width=fixed_w if need_hscroll else None,
         )
         _bg = 0.10 if need_hscroll else max(0.05, min(0.12, 1.6 / n))
-        if grouped:
-            fig.update_layout(barmode="group", bargap=_bg, bargroupgap=0.18)
-        else:
+        if stack:
             fig.update_layout(barmode="stack", bargap=_bg, bargroupgap=0.04)
             fig.update_traces(width=0.82, selector=dict(type="bar"))
+        else:
+            _n_bar_tr = max(
+                1,
+                sum(
+                    1
+                    for tr in (fig.data or [])
+                    if getattr(tr, "type", None) == "bar" or type(tr).__name__ == "Bar"
+                ),
+            )
+            _bar_w_grp = max(0.14, min(0.55, (0.82 / _n_bar_tr) * 1.67))
+            fig.update_layout(barmode="group", bargap=_bg, bargroupgap=0.04)
+            fig.update_traces(
+                width=_bar_w_grp,
+                offsetgroup="dk_side",
+                selector=dict(type="bar"),
+            )
     except Exception:
         pass
 
@@ -10230,42 +10267,45 @@ def _render_debit_credit_bar_chart(
     try:
         _m = fig.layout.margin
         _b = int(_m.b) if _m is not None and _m.b is not None else 96
+        _leg_b = max(_b, 168) if need_hscroll else min(_b, 110)
         fig.update_layout(
             margin=dict(
                 l=int(_m.l or 56) if _m is not None else 56,
                 r=int(_m.r or 36) if _m is not None else 36,
-                t=int(_m.t or 64) if _m is not None else 64,
-                b=max(_b, 140) if need_hscroll else min(_b, 110),
+                t=int(_m.t or 88) if _m is not None else 88,
+                b=_leg_b,
             )
         )
     except Exception:
         pass
-    _plotly_js = "cdn"
-    if st.session_state.get("_pf_dk_bar_plotly_js"):
-        _plotly_js = False
-    else:
-        st.session_state["_pf_dk_bar_plotly_js"] = True
     try:
+        import streamlit.components.v1 as components
+
         plot_div = fig.to_html(
             full_html=False,
-            include_plotlyjs=_plotly_js,
+            include_plotlyjs="cdn",
             config=cfg,
             default_width=f"{w}px",
             default_height=f"{h}px",
         )
         shell = (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
             f"<style>"
-            f".pf-dkbar-{uid}-wrap{{width:100%;max-width:100%;overflow-x:auto;overflow-y:visible;"
-            f"-webkit-overflow-scrolling:touch;box-sizing:border-box;line-height:0;"
-            f"background:transparent;border:none;margin:0 0 6px 0;padding:0 0 10px 0;}}"
-            f".pf-dkbar-{uid}-inner{{width:{w}px;min-width:{w}px;max-width:{w}px;display:block;"
-            f"line-height:normal;}}"
-            f".pf-dkbar-{uid}-inner .plotly-graph-div{{width:{w}px!important;"
-            f"min-width:{w}px!important;max-width:{w}px!important;height:{h}px!important;}}"
-            f"</style>"
+            f"html,body{{margin:0;padding:0;background:transparent;overflow:hidden;}}"
+            f".pf-dkbar-{uid}-wrap{{width:100%;max-width:100%;overflow-x:auto;overflow-y:hidden;"
+            f"-webkit-overflow-scrolling:touch;box-sizing:border-box;}}"
+            f".pf-dkbar-{uid}-inner{{width:{w}px;min-width:{w}px;display:block;}}"
+            f".pf-dkbar-{uid}-inner .plotly-graph-div,.pf-dkbar-{uid}-inner .js-plotly-plot{{"
+            f"width:{w}px!important;min-width:{w}px!important;height:{h}px!important;}}"
+            f"</style></head><body>"
             f'<div class="pf-dkbar-{uid}-wrap"><div class="pf-dkbar-{uid}-inner">{plot_div}</div></div>'
+            "<script>"
+            "function _dkRsz(){try{var gd=document.querySelector('.plotly-graph-div');"
+            "if(gd&&window.Plotly)Plotly.Plots.resize(gd);}catch(e){}}"
+            "window.addEventListener('load',_dkRsz);setTimeout(_dkRsz,120);setTimeout(_dkRsz,600);"
+            "</script></body></html>"
         )
-        st.html(shell, width="stretch", unsafe_allow_javascript=True)
+        components.html(shell, height=int(h + 8), scrolling=False)
         if need_hscroll:
             st.caption("Длинный ряд подрядчиков — **прокрутите график вправо** в полосе под диаграммой.")
         if caption_below:
@@ -10861,7 +10901,7 @@ def dashboard_budget_by_period(df):
                         x=_dev_x,
                         y=_y_fact_lt_plan,
                         name="Отклонение (факт < план)",
-                        marker_color="#e74c3c",
+                        marker_color="#F1948A",
                         text=_txt_under,
                         textposition=_txt_pos,
                         textfont=dict(size=_tfs, color="#f0f4f8"),
@@ -21697,63 +21737,66 @@ def dashboard_debit_credit(df):
     issue_end = None
 
     with filters_panel(st):
-        fp1, fp2, fp3, fp4 = st.columns([2, 2, 2, 2], gap="small")
-        with fp1:
-            if project_col and project_col in work.columns:
-                _proj_series = work[project_col].replace("", pd.NA).dropna()
-                all_projects = ["Все"] + _unique_project_labels_for_select(
-                    _proj_series, apply_exclude_names=False
+        with filters_selectors(st):
+            fp1, fp2, fp3, fp4, fp5 = st.columns(5, gap="small")
+            with fp1:
+                if project_col and project_col in work.columns:
+                    _proj_series = work[project_col].replace("", pd.NA).dropna()
+                    all_projects = ["Все"] + _unique_project_labels_for_select(
+                        _proj_series, apply_exclude_names=False
+                    )
+                    sel_project = st.selectbox("Проект", all_projects, key="debit_credit_project")
+                else:
+                    sel_project = "Все"
+                    st.selectbox("Проект", ["—"], disabled=True, key="debit_credit_project_dis")
+            with fp2:
+                if contractor_col and contractor_col in work.columns:
+                    all_contractors = ["Все"] + sorted(
+                        {
+                            str(v).strip()
+                            for v in work[contractor_col].dropna().astype(str).tolist()
+                            if str(v).strip()
+                        },
+                        key=lambda x: x.casefold(),
+                    )
+                    sel_contractor = st.selectbox("Подрядчик", all_contractors, key="debit_credit_contractor")
+                else:
+                    sel_contractor = "Все"
+                    st.selectbox("Подрядчик", ["—"], disabled=True, key="debit_credit_contractor_dis")
+            with fp3:
+                contract_q = st.text_input(
+                    "№ договора (частичный поиск)",
+                    key="debit_credit_contract_q",
+                    placeholder="Все договоры",
                 )
-                sel_project = st.selectbox("Проект", all_projects, key="debit_credit_project")
-            else:
-                sel_project = "Все"
-                st.selectbox("Проект", ["—"], disabled=True, key="debit_credit_project_dis")
-        with fp2:
-            if contractor_col and contractor_col in work.columns:
-                all_contractors = ["Все"] + sorted(
-                    {
-                        str(v).strip()
-                        for v in work[contractor_col].dropna().astype(str).tolist()
-                        if str(v).strip()
-                    },
-                    key=lambda x: x.casefold(),
+            with fp4:
+                if work["_dc_period_dt"].notna().any():
+                    mn = work["_dc_period_dt"].min().date()
+                    mx = work["_dc_period_dt"].max().date()
+                    dr = st.date_input(
+                        "Период",
+                        value=(mn, mx),
+                        min_value=mn,
+                        max_value=mx,
+                        key="debit_credit_period_range",
+                        format="DD.MM.YYYY",
+                    )
+                    if isinstance(dr, tuple) and len(dr) == 2:
+                        issue_start, issue_end = dr[0], dr[1]
+                    elif hasattr(dr, "year"):
+                        issue_start = issue_end = dr
+                else:
+                    st.caption("Нет колонки «Дата договора» — период не применяется.")
+            with fp5:
+                dk_display_view = st.selectbox(
+                    "Вид отображения",
+                    ["Без группировки", "С группировкой"],
+                    index=0,
+                    key="debit_credit_display_view",
+                    help="Без группировки — столбцы рядом (визуал 1). "
+                    "С группировкой — стек: отклонение ≥0, КС-2, аванс (визуал 2). "
+                    "Отклонение <0 — только без группировки.",
                 )
-                sel_contractor = st.selectbox("Подрядчик", all_contractors, key="debit_credit_contractor")
-            else:
-                sel_contractor = "Все"
-                st.selectbox("Подрядчик", ["—"], disabled=True, key="debit_credit_contractor_dis")
-        with fp3:
-            contract_q = st.text_input(
-                "№ договора (частичный поиск)",
-                key="debit_credit_contract_q",
-                placeholder="Все договоры",
-            )
-        with fp4:
-            if work["_dc_period_dt"].notna().any():
-                mn = work["_dc_period_dt"].min().date()
-                mx = work["_dc_period_dt"].max().date()
-                dr = st.date_input(
-                    "Период",
-                    value=(mn, mx),
-                    min_value=mn,
-                    max_value=mx,
-                    key="debit_credit_period_range",
-                    format="DD.MM.YYYY",
-                )
-                if isinstance(dr, tuple) and len(dr) == 2:
-                    issue_start, issue_end = dr[0], dr[1]
-                elif hasattr(dr, "year"):
-                    issue_start = issue_end = dr
-            else:
-                st.caption("Нет колонки «Дата договора» — период не применяется.")
-        dk_display_view = st.selectbox(
-            "Вид отображения",
-            ["Без группировки", "С группировкой"],
-            index=0,
-            key="debit_credit_display_view",
-            help="Без группировки — столбцы рядом (визуал 1). "
-            "С группировкой — стек: отклонение ≥0, КС-2, аванс (визуал 2). Отклонение <0 — только без группировки.",
-        )
 
     if project_col and project_col in work.columns:
         try:
@@ -21839,9 +21882,8 @@ def dashboard_debit_credit(df):
 
     # ТЗ: «Без группировки» — столбцы рядом (group); «С группировкой» — стек (stack).
     _dk_side_by_side = dk_display_view == "Без группировки"
+    _dk_is_stack = dk_display_view == "С группировкой"
     _has_deviation_col = "Отклонение" in chart_df.columns
-    _is_stack = not _dk_side_by_side
-    _dk_chart_grouped = _dk_side_by_side
 
     value_cols = [c for c in chart_df.columns if c != chart_label]
     if not value_cols:
@@ -21849,8 +21891,11 @@ def dashboard_debit_credit(df):
     else:
         # При большом числе категорий столбцы становятся слишком узкими:
         # оставляем топ по максимальной абсолютной метрике.
+        _dk_max_bars = 28
         chart_df["_bar_rank"] = chart_df[value_cols].abs().max(axis=1)
-        chart_df = _limit_bar_categories(chart_df, "_bar_rank", max_bars=28, label="контрагентов/договоров")
+        chart_df = _limit_bar_categories(
+            chart_df, "_bar_rank", max_bars=_dk_max_bars, label="контрагентов/договоров"
+        )
         chart_df = chart_df.drop(columns=["_bar_rank"], errors="ignore")
         value_cols = [c for c in chart_df.columns if c != chart_label]
         fig = go.Figure()
@@ -21862,11 +21907,11 @@ def dashboard_debit_credit(df):
             "КС-2": "#F1C40F",
         }
         _value_cols_for_chart = [c for c in value_cols if c != "Отклонение"]
-        if _dk_chart_grouped:
+        if _dk_side_by_side:
             _value_cols_for_chart = [
-                c for c in ("Договор стоимость", "Аванс", "КС-2") if c in _value_cols_for_chart
+                c for c in ("Аванс", "КС-2") if c in _value_cols_for_chart
             ]
-        elif _is_stack:
+        elif _dk_is_stack:
             _value_cols_for_chart = [
                 c for c in ("КС-2", "Аванс") if c in _value_cols_for_chart
             ]
@@ -21888,7 +21933,7 @@ def dashboard_debit_credit(df):
             cliponaxis=False,
             textfont=dict(size=11, color="#e8eef5"),
         )
-        if _has_deviation_col and _is_stack:
+        if _has_deviation_col and _dk_is_stack:
             _dev_s = pd.to_numeric(chart_df["Отклонение"], errors="coerce").fillna(0.0)
             _dev_pos = _dev_s.clip(lower=0.0)
             fig.add_trace(
@@ -21896,8 +21941,8 @@ def dashboard_debit_credit(df):
                     name="Отклонение, если больше или = 0",
                     x=x,
                     y=_dev_pos,
-                    offsetgroup="dk_grp",
                     marker_color="#95A5A6",
+                    showlegend=True,
                     text=_dev_pos.apply(_dk_chart_bar_text),
                     textposition="outside",
                     textangle=0,
@@ -21922,10 +21967,11 @@ def dashboard_debit_credit(df):
                 hovertemplate=f"<b>{col}</b><br>%{{x}}<br>%{{customdata}}<extra></extra>",
                 **_dk_bar_label_style,
             )
-            if _dk_chart_grouped:
-                _bar_kw["offsetgroup"] = "dk_grp"
+            _bar_kw["showlegend"] = True
+            if _dk_side_by_side:
+                _bar_kw["offsetgroup"] = "dk_side"
             fig.add_trace(go.Bar(**_bar_kw))
-        if _has_deviation_col and not _is_stack:
+        if _has_deviation_col and _dk_side_by_side:
             _dev_s = pd.to_numeric(chart_df["Отклонение"], errors="coerce").fillna(0.0)
             _dev_pos = _dev_s.where(_dev_s >= 0, 0.0)
             _dev_neg = _dev_s.where(_dev_s < 0, 0.0)
@@ -21934,8 +21980,9 @@ def dashboard_debit_credit(df):
                     name="Отклонение, если больше или = 0",
                     x=x,
                     y=_dev_pos,
-                    offsetgroup="dk_grp",
+                    offsetgroup="dk_side",
                     marker_color="#95A5A6",
+                    showlegend=True,
                     text=_dev_pos.apply(_dk_chart_bar_text),
                     textposition="outside",
                     textangle=0,
@@ -21952,8 +21999,8 @@ def dashboard_debit_credit(df):
                     name="Отклонение, если меньше 0",
                     x=x,
                     y=_dev_neg,
-                    offsetgroup="dk_grp",
-                    marker_color="#e74c3c",
+                    offsetgroup="dk_side",
+                    marker_color="#F1948A",
                     text=_dev_neg.apply(_dk_chart_bar_text),
                     textposition="outside",
                     textangle=0,
@@ -21963,15 +22010,17 @@ def dashboard_debit_credit(df):
                         lambda v: f"{v:.1f} млн" if pd.notna(v) else "0,0 млн"
                     ),
                     hovertemplate="<b>Отклонение &lt;0</b><br>%{x}<br>%{customdata}<extra></extra>",
+                    showlegend=True,
                 )
             )
         _yaxis_kw = _dk_chart_yaxis_layout(
             chart_df,
             has_deviation=_has_deviation_col,
-            side_by_side=_dk_chart_grouped,
+            side_by_side=_dk_side_by_side,
         )
         fig.update_layout(
-            barmode="stack" if _is_stack else "group",
+            barmode="stack" if _dk_is_stack else "group",
+            showlegend=True,
             yaxis=_yaxis_kw,
             margin=dict(r=40, b=120, t=88, l=64),
         )
@@ -21985,26 +22034,30 @@ def dashboard_debit_credit(df):
         except Exception:
             pass
         _nfc_dk = max(1, len(chart_df))
-        _leg_bottom_dk = int(max(120, min(200, 100 + _nfc_dk * 2)))
-        _leg_y_dk = -0.22 if _nfc_dk <= 16 else (-0.28 if _nfc_dk <= 24 else -0.34)
+        _leg_bottom_dk = int(max(148, min(220, 128 + _nfc_dk * 2)))
+        _leg_y_dk = -0.18 if _nfc_dk <= 12 else (-0.22 if _nfc_dk <= 18 else -0.28)
+        fig = apply_chart_background(fig)
         fig = _plotly_legend_horizontal_below_plot(
             fig,
             bottom_px=_leg_bottom_dk,
             legend_y=_leg_y_dk,
             top_px=88,
         )
-        fig = apply_chart_background(fig)
+        try:
+            fig.update_layout(showlegend=True)
+        except Exception:
+            pass
         base = "Суммы по подрядчику" if contractor_col else "Суммы по договору"
-        if _dk_chart_grouped:
+        if _dk_side_by_side:
             cap = (
                 base
-                + ". Без группировки: Договор (зел.), Аванс (син.), КС-2 (жёлт.), "
+                + ". Без группировки: Аванс (син.), КС-2 (жёлт.), "
                 "отклонение ≥0 (сер.), отклонение <0 (красн., ниже 0)."
             )
         else:
             cap = (
                 base
-                + ". С группировкой (стек): Договор → отклонение ≥0 (сер.) → КС-2 (жёлт.) → Аванс (син.)."
+                + ". С группировкой (стек): отклонение ≥0 (сер.) → КС-2 (жёлт.) → Аванс (син.)."
             )
         _cats_full = chart_df[chart_label].astype(str).tolist()
         _cats_tick = _dk_x_tick_labels(_cats_full)
@@ -22012,7 +22065,7 @@ def dashboard_debit_credit(df):
             fig,
             categories=_cats_full,
             tick_labels=_cats_tick,
-            grouped=_dk_chart_grouped,
+            stack=_dk_is_stack,
             caption_below=cap,
         )
 
