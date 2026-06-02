@@ -1095,6 +1095,88 @@ def merge_budget_summary_by_norm_project_month(
     return merged[cols] if cols else merged
 
 
+def _is_parent_project_norm_key(parent_pk: str, child_pk: str) -> bool:
+    """True, если parent_pk - базовое имя MSP, а child_pk - тот же проект с номером/суффиксом."""
+    if not parent_pk or not child_pk or parent_pk == child_pk:
+        return False
+    from dashboards._renderers import _project_norm_key_matches_msp_keys
+
+    if not _project_norm_key_matches_msp_keys(child_pk, {parent_pk}):
+        return False
+    if child_pk.startswith(parent_pk + " "):
+        return True
+    return len(child_pk) > len(parent_pk)
+
+
+def consolidate_budget_summary_parent_child_aliases(
+    summary: pd.DataFrame,
+    *,
+    period_col: str,
+    period_original_col: str = "period_original",
+    project_col: str = "project name",
+) -> pd.DataFrame:
+    """Ubrat roditelskie MSP-stroki, esli na tot zhe mesyac est dochernij klyuch 1S."""
+    if summary is None or summary.empty or project_col not in summary.columns:
+        return summary
+    if period_original_col not in summary.columns:
+        return summary
+    from dashboards._renderers import _project_filter_norm_key
+
+    out = summary.copy()
+    out["_norm_pk"] = out[project_col].map(_project_filter_norm_key)
+    drop_idx: list[Any] = []
+
+    for _, grp in out.groupby(period_original_col, dropna=False):
+        pks = {pk for pk in grp["_norm_pk"].tolist() if pk}
+        if len(pks) < 2:
+            continue
+        parent_pks = {
+            pk
+            for pk in pks
+            if any(_is_parent_project_norm_key(pk, other) for other in pks if other != pk)
+        }
+        if not parent_pks:
+            continue
+        drop_idx.extend(grp.index[grp["_norm_pk"].isin(parent_pks)].tolist())
+
+    if drop_idx:
+        out = out.drop(index=drop_idx)
+    return out.drop(columns=["_norm_pk"], errors="ignore").reset_index(drop=True)
+
+
+def finalize_budget_summary_for_display(
+    summary: pd.DataFrame,
+    *,
+    period_col: str,
+    period_start: Any | None = None,
+    period_end: Any | None = None,
+    reference_1c_dannye: Optional[pd.DataFrame] = None,
+    project_norm_keys: set[str] | None = None,
+    narrow_to_project_norm_key: str | None = None,
+) -> pd.DataFrame:
+    """Normalizaciya svodki pered grafikom i tablicami BDDS."""
+    if summary is None or summary.empty:
+        return summary
+    out, _ = overlay_1c_on_budget_summary(
+        summary,
+        period_col=period_col,
+        period_start=period_start,
+        period_end=period_end,
+        project_norm_keys=project_norm_keys,
+        narrow_to_project_norm_key=narrow_to_project_norm_key,
+        reference_1c_dannye=reference_1c_dannye,
+    )
+    out = consolidate_budget_summary_parent_child_aliases(
+        out,
+        period_col=period_col,
+    )
+    out = merge_budget_summary_by_norm_project_month(
+        out,
+        period_col=period_col,
+    )
+    return out
+
+
 def resolve_reference_1c_dannye(
     reference_1c_dannye: Optional[pd.DataFrame] = None,
 ) -> Optional[pd.DataFrame]:
