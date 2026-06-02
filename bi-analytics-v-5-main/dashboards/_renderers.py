@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta, date
 import numpy as np
 import re
+import json
 import textwrap
 import html as html_module
 from urllib.parse import urlencode
@@ -10553,6 +10554,27 @@ def _render_debit_credit_bar_chart(
 ) -> None:
     # ДЗ/КЗ: широкие столбцы; длинный ряд - гориз. скролл (как БДДС).
     import uuid
+
+    _leg_items: list[tuple[str, str]] = []
+    try:
+        for _tr in (fig.data or []):
+            _nm = getattr(_tr, "name", None) or ""
+            if not _nm or getattr(_tr, "showlegend", True) is False:
+                continue
+            _mc = None
+            try:
+                _mc = _tr.marker.color
+            except Exception:
+                pass
+            if isinstance(_mc, (list, tuple)):
+                _mc = _mc[0] if _mc else None
+            _leg_items.append((_nm, str(_mc or "#888")))
+    except Exception:
+        pass
+    try:
+        fig.update_layout(showlegend=False)
+    except Exception:
+        pass
 
     cats = [str(c) for c in (categories or [])]
     ticktext = [str(t) for t in (tick_labels or cats)]
@@ -30384,6 +30406,275 @@ def _load_dogovor_lookup() -> dict[str, dict]:
     return out
 
 
+
+_CONTRACT_NO_HOMO_MAP = {
+
+        "\u0430": "a",
+        "\u0441": "c",
+        "\u0435": "e",
+        "\u043d": "h",
+        "\u043a": "k",
+        "\u043c": "m",
+        "\u043e": "o",
+        "\u0440": "p",
+        "\u0442": "t",
+        "\u0445": "x",
+        "\u0443": "y",
+        "\u0432": "v",
+    }
+_CONTRACT_NO_HOMOGLYPHS = str.maketrans(_CONTRACT_NO_HOMO_MAP)
+
+
+def _contract_no_search_key(val: object) -> str:
+    """Нормализация № договора для поиска (casefold + латиница/кириллица)."""
+    t = str(val or "").strip().casefold().replace("\xa0", " ")
+    return t.translate(_CONTRACT_NO_HOMOGLYPHS)
+
+
+def _contract_no_latin_alias(val: object) -> str:
+    """Латинский alias для подсказок при неверной раскладке."""
+    out: list[str] = []
+    for ch in str(val or ""):
+        rep = _CONTRACT_NO_HOMO_MAP.get(ch.casefold())
+        if rep is None:
+            out.append(ch)
+        elif ch.isupper():
+            out.append(rep.upper())
+        else:
+            out.append(rep)
+    return "".join(out)
+
+
+def _contract_no_filter_matches(
+    query: str, contracts: list[str], *, limit: int = 30
+) -> list[str]:
+    q = _contract_no_search_key(query)
+    if not q:
+        return []
+    out: list[str] = []
+    for c in contracts:
+        if q in _contract_no_search_key(c):
+            out.append(c)
+            if len(out) >= limit:
+                break
+    return out
+
+
+def _contract_no_select_options(contracts: list[str]) -> list[str]:
+    """Опции selectbox: реальные № + латинские alias для homoglyphs."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for c in contracts:
+        cs = str(c).strip()
+        if not cs:
+            continue
+        ck = cs.casefold()
+        if ck not in seen:
+            out.append(cs)
+            seen.add(ck)
+        alias = _contract_no_latin_alias(cs)
+        ak = alias.casefold()
+        if ak and ak not in seen:
+            out.append(alias)
+            seen.add(ak)
+    return sorted(out, key=lambda x: x.casefold())
+
+
+
+
+
+def _collect_contract_filter_options(
+    pred: pd.DataFrame,
+    contract_col: str | None,
+) -> list[str]:
+    """All contract numbers: pred + 1c Dogovor + DK."""
+    nums: set[str] = set()
+    _uuid_re = re.compile(
+        r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        re.I,
+    )
+
+    def _add(val: object) -> None:
+        s = str(val or "").strip()
+        if not s or s.lower() in ("nan", "none", "nat") or _uuid_re.match(s):
+            return
+        nums.add(s)
+
+    if contract_col and contract_col in pred.columns:
+        for x in pred[contract_col].dropna().tolist():
+            _add(x)
+    try:
+        for rec in (_load_dogovor_lookup() or {}).values():
+            if isinstance(rec, dict):
+                _add(rec.get("Номер_Договора") or rec.get("Номер_Договор"))
+    except Exception:
+        pass
+    try:
+        dk_df = st.session_state.get("debit_credit_data")
+        if dk_df is not None and not getattr(dk_df, "empty", True):
+            num_col = _tessa_find_column(
+                dk_df,
+                ["Номер договора", "НомерДоговора", "ContractNumber"],
+            )
+            if num_col and num_col in dk_df.columns:
+                for x in dk_df[num_col].dropna().tolist():
+                    _add(x)
+    except Exception:
+        pass
+    return sorted(nums, key=lambda x: x.casefold())
+
+
+def _inject_contract_no_datalist(
+    options: list[str], *, list_id: str = "bi-pred-contract-ac"
+) -> None:
+    """Подсказки № договора: фильтрация по мере ввода (клиентский autocomplete)."""
+    if not options:
+        return
+    opts_json = json.dumps(options, ensure_ascii=False)
+    box_id = json.dumps(list_id + "-box")
+    lid_json = json.dumps(list_id)
+    label_json = json.dumps("№ договора (частичный поиск)")
+    components.html(
+        f"""
+        <script>
+        (function() {{
+          const OPTIONS = {opts_json};
+          const BOX_ID = {box_id};
+          const LIST_ID = {lid_json};
+          const LABEL_TEXT = {label_json};
+          const HOMO = {{"\u0430":"a","\u0441":"c","\u0435":"e","\u043d":"h","\u043a":"k","\u043c":"m","\u043e":"o","\u0440":"p","\u0442":"t","\u0445":"x","\u0443":"y","\u0432":"v"}};
+          const MAX = 25;
+          function normKey(s) {{
+            return String(s || "")
+              .toLowerCase()
+              .replace(/\\u00a0/g, " ")
+              .split("")
+              .map(function(ch) {{ return HOMO[ch] || ch; }})
+              .join("");
+          }}
+          function resolveDoc() {{
+            try {{
+              if (window.parent && window.parent.document && window.parent.document.body)
+                return window.parent.document;
+            }} catch (e0) {{}}
+            return document.body ? document : null;
+          }}
+          function setInputValue(input, val) {{
+            try {{
+              const desc = Object.getOwnPropertyDescriptor(
+                window.HTMLInputElement.prototype, "value"
+              );
+              if (desc && desc.set) desc.set.call(input, val);
+              else input.value = val;
+            }} catch (e1) {{
+              input.value = val;
+            }}
+            input.dispatchEvent(new Event("input", {{ bubbles: true }}));
+            input.dispatchEvent(new Event("change", {{ bubbles: true }}));
+          }}
+          function ensureBox(doc, _anchor) {{
+            let box = doc.getElementById(BOX_ID);
+            if (box) return box;
+            box = doc.createElement("div");
+            box.id = BOX_ID;
+            box.style.cssText =
+              "display:none;position:fixed;z-index:100000;max-height:240px;overflow:auto;" +
+              "background:#1e293b;border:1px solid #475569;border-radius:6px;" +
+              "box-shadow:0 8px 24px rgba(0,0,0,.45);min-width:200px;";
+            doc.body.appendChild(box);
+            return box;
+          }}
+          function hideBox(doc) {{
+            const box = doc.getElementById(BOX_ID);
+            if (box) box.style.display = "none";
+          }}
+          function renderBox(doc, input, q) {{
+            const nq = normKey(q);
+            if (!nq) {{ hideBox(doc); return; }}
+            const hits = [];
+            for (let i = 0; i < OPTIONS.length; i++) {{
+              const v = OPTIONS[i];
+              if (normKey(v).indexOf(nq) >= 0) {{
+                hits.push(v);
+                if (hits.length >= MAX) break;
+              }}
+            }}
+            if (!hits.length) {{ hideBox(doc); return; }}
+            const box = ensureBox(doc, null);
+            box.innerHTML = "";
+            const rect = input.getBoundingClientRect();
+            box.style.left = rect.left + "px";
+            box.style.top = (rect.bottom + 2) + "px";
+            box.style.width = Math.max(rect.width, 220) + "px";
+            box.style.display = "block";
+            hits.forEach(function(v) {{
+              const row = doc.createElement("div");
+              row.textContent = v;
+              row.style.cssText =
+                "padding:6px 10px;cursor:pointer;color:#e2e8f0;font-size:14px;line-height:1.3;";
+              row.onmouseenter = function() {{ row.style.background = "#334155"; }};
+              row.onmouseleave = function() {{ row.style.background = "transparent"; }};
+              row.onmousedown = function(ev) {{
+                ev.preventDefault();
+                setInputValue(input, v);
+                hideBox(doc);
+              }};
+              box.appendChild(row);
+            }});
+          }}
+          function wireInput(doc, input) {{
+            if (input.dataset.biContractAc === "1") return;
+            input.dataset.biContractAc = "1";
+            input.setAttribute("autocomplete", "off");
+            input.removeAttribute("list");
+            input.addEventListener("input", function() {{
+              renderBox(doc, input, input.value || "");
+            }});
+            input.addEventListener("focus", function() {{
+              if ((input.value || "").trim()) renderBox(doc, input, input.value || "");
+            }});
+            input.addEventListener("blur", function() {{
+              setTimeout(function() {{ hideBox(doc); }}, 150);
+            }});
+          }}
+          function findInput(doc) {{
+            const inputs = doc.querySelectorAll('[data-testid="stTextInput"] input[type="text"]');
+            for (let i = 0; i < inputs.length; i++) {{
+              const aria = (inputs[i].getAttribute("aria-label") || "").toLowerCase();
+              if (aria.indexOf("\u0434\u043e\u0433\u043e\u0432\u043e\u0440") >= 0) return inputs[i];
+            }}
+            for (let j = 0; j < inputs.length; j++) {{
+              const inp = inputs[j];
+              const block = inp.closest('[data-testid="stTextInput"]');
+              if (!block) continue;
+              const labelEl = block.querySelector("label");
+              const labelTxt = labelEl ? (labelEl.textContent || "") : "";
+              if (labelTxt.indexOf("\u0434\u043e\u0433\u043e\u0432\u043e\u0440") >= 0) return inp;
+            }}
+            return null;
+          }}
+          function attach() {{
+            const doc = resolveDoc();
+            if (!doc || !doc.body) return;
+            const input = findInput(doc);
+            if (input) wireInput(doc, input);
+          }}
+          attach();
+          try {{
+            const doc = resolveDoc();
+            if (doc && doc.body) {{
+              const obs = new MutationObserver(function() {{ attach(); }});
+              obs.observe(doc.body, {{ childList: true, subtree: true }});
+            }}
+          }} catch (e2) {{}}
+        }})();
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
 def _pred_guess_contract_column(df, exclude=None):
     """Если явного столбца договора нет — ищем по подстроке в имени колонки."""
     if df is None or not hasattr(df, "columns"):
@@ -32774,49 +33065,29 @@ def dashboard_predpisania(df):
             contract_q = ""
             contract_exact = False
             if contract_col and contract_col in pred.columns:
-                _contract_unique = sorted(
-                    {
-                        str(x).strip()
-                        for x in pred[contract_col].dropna().tolist()
-                        if str(x).strip()
-                        and str(x).strip().lower() not in ("nan", "none", "nat")
-                        and not re.match(
-                            r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                            str(x).strip(),
-                            re.I,
-                        )
-                    },
-                    key=lambda x: x.casefold(),
-                )
+                _contract_unique = _collect_contract_filter_options(pred, contract_col)
+                _contract_ac_opts = _contract_no_select_options(_contract_unique)
                 contract_q_raw = st.text_input(
                     "№ договора (частичный поиск)",
                     "",
                     key="pred_m_contract",
+                    placeholder="Все договоры",
                 )
-                cq = str(contract_q_raw or "").strip()
-                _matches = (
-                    [c for c in _contract_unique if cq.casefold() in c.casefold()]
-                    if cq
-                    else []
-                )
-                if _matches:
-                    _pick_key = "pred_m_contract_pick"
-                    if cq != st.session_state.get("_pred_contract_q_prev"):
-                        st.session_state.pop(_pick_key, None)
-                        st.session_state["_pred_contract_q_prev"] = cq
-                    contract_q = st.selectbox(
-                        "Совпадения № договора",
-                        options=_matches,
-                        key=_pick_key,
-                    )
-                    contract_exact = True
-                elif cq:
-                    contract_q = cq
-                    contract_exact = False
-                    st.caption("Нет совпадений в загруженных № договоров")
-                else:
-                    contract_q = ""
-                    contract_exact = False
+                _inject_contract_no_datalist(_contract_ac_opts)
+                contract_q = str(contract_q_raw or "").strip()
+                contract_exact = bool(contract_q and contract_q in _contract_unique)
+                if contract_q and not contract_exact:
+                    _srv_hits = _contract_no_filter_matches(contract_q, _contract_unique, limit=20)
+                    if _srv_hits:
+                        _srv_pick = st.selectbox(
+                            "Совпадения",
+                            _srv_hits,
+                            key="pred_m_contract_srv",
+                            label_visibility="collapsed",
+                        )
+                        if _srv_pick:
+                            contract_q = _srv_pick
+                            contract_exact = _srv_pick in _contract_unique
             else:
                 contract_q = st.text_input(
                     "№ договора (частичный поиск)",
@@ -32931,8 +33202,11 @@ def dashboard_predpisania(df):
         if contract_exact:
             filtered = filtered[_cc == _cq]
         else:
+            _qkey = _contract_no_search_key(_cq)
             filtered = filtered[
-                _cc.str.casefold().str.contains(_cq.casefold(), na=False)
+                _cc.map(_contract_no_search_key).str.contains(
+                    re.escape(_qkey), regex=True, na=False
+                )
             ]
     if issue_start is not None and issue_end is not None:
         filtered = filtered[
