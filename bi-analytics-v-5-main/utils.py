@@ -2110,7 +2110,7 @@ def render_report_html_table(
         )
         or file_stem in (
             "plan_fact_dates", "plan_fact_covenant", "predpisania", "debit_credit", "executive_docs",
-            "forecast_bddcs_financier_status", "gdrs", "budget", "dev_reasons",
+            "forecast_bddcs_financier_status", "gdrs", "budget", "dev_reasons", "gantt_schedule",
         )
         or "exec-doc-table-wrap" in (html or "")
         or "bi-styled-table-wrap" in (html or "")

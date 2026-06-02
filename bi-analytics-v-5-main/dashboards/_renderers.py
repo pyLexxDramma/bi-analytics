@@ -294,8 +294,8 @@ _TABLE_CSS = """
   text-align:center!important; vertical-align:middle!important;
 }
 .gantt-schedule-scroll-wrap{
-  display:block;width:100%!important;max-width:100%!important;margin:0.35rem 0 0.15rem 0;padding:0;
-  height:min(70vh,640px)!important;max-height:min(70vh,640px)!important;
+  display:block;width:100%!important;max-width:100%!important;margin:0.15rem 0 0.05rem 0;padding:0;
+  max-height:min(70vh,640px)!important;
   overflow-x:auto!important;overflow-y:auto!important;
   -webkit-overflow-scrolling:touch;scrollbar-gutter:stable;box-sizing:border-box;
 }
@@ -306,18 +306,58 @@ _TABLE_CSS = """
   width:100%!important; max-width:100%!important; box-sizing:border-box;
   overflow:visible!important;
 }
-.gantt-schedule-table-wrap .rendered-table {
-  width:100%!important; min-width:100%!important; max-width:100%!important;
-  table-layout:fixed;
+.gantt-schedule-table-wrap .rendered-table,
+.gantt-schedule-table-wrap .pf-dates-table {
+  width:max-content!important; min-width:100%!important; max-width:none!important;
+  table-layout:auto!important;
 }
+.gantt-schedule-table-wrap .rendered-table th,
 .gantt-schedule-table-wrap .rendered-table td,
-.gantt-schedule-table-wrap .rendered-table th {
-  white-space:normal; overflow:visible; text-overflow:clip;
-  word-break:break-word; max-width:none!important;
+.gantt-schedule-table-wrap .pf-dates-table th,
+.gantt-schedule-table-wrap .pf-dates-table td {
+  vertical-align:middle!important;
+}
+.gantt-schedule-table-wrap .rendered-table th.col-gantt-id,
+.gantt-schedule-table-wrap .rendered-table td.col-gantt-id,
+.gantt-schedule-table-wrap .rendered-table th.col-gantt-lvl,
+.gantt-schedule-table-wrap .rendered-table td.col-gantt-lvl,
+.gantt-schedule-table-wrap .rendered-table th.col-gantt-pct,
+.gantt-schedule-table-wrap .rendered-table td.col-gantt-pct {
+  white-space:nowrap!important; text-align:center!important; max-width:none!important;
+}
+.gantt-schedule-table-wrap .rendered-table th.col-gantt-task,
+.gantt-schedule-table-wrap .rendered-table td.col-gantt-task {
+  min-width:8em; max-width:18em!important; width:18em;
+  white-space:nowrap!important; overflow:hidden!important;
+  text-overflow:ellipsis!important; text-align:left!important;
+}
+.gantt-schedule-table-wrap .rendered-table th.col-pf-project,
+.gantt-schedule-table-wrap .rendered-table td.col-pf-project {
+  min-width:8em; max-width:14em!important; width:14em;
+  white-space:nowrap!important; overflow:hidden!important;
+  text-overflow:ellipsis!important; text-align:left!important;
 }
 .gantt-schedule-table-wrap .rendered-table th.col-text,
 .gantt-schedule-table-wrap .rendered-table td.col-text {
-  max-width:none; width:38%;
+  min-width:8em; max-width:18em!important;
+  white-space:nowrap!important; overflow:hidden!important;
+  text-overflow:ellipsis!important; text-align:left!important;
+}
+.gantt-schedule-table-wrap .rendered-table th.col-gantt-reason,
+.gantt-schedule-table-wrap .rendered-table td.col-gantt-reason,
+.gantt-schedule-table-wrap .rendered-table th.col-gantt-notes,
+.gantt-schedule-table-wrap .rendered-table td.col-gantt-notes {
+  min-width:10em; max-width:22em; text-align:center!important;
+  white-space:normal; word-wrap:break-word; overflow-wrap:anywhere;
+}
+.gantt-schedule-table-wrap .rendered-table th.col-pf-start,
+.gantt-schedule-table-wrap .rendered-table td.col-pf-start,
+.gantt-schedule-table-wrap .rendered-table th.col-pf-end,
+.gantt-schedule-table-wrap .rendered-table td.col-pf-end {
+  white-space:nowrap!important; text-align:center!important; max-width:none!important;
+}
+.gantt-schedule-table-wrap tr.bd-group-row td {
+  font-weight:700!important; text-align:left!important; white-space:nowrap!important;
 }
 .rendered-table th.col-pf-project,
 .rendered-table td.col-pf-project,
@@ -521,10 +561,22 @@ def _plan_fact_dates_col_css_class(col: str) -> str:
         return "col-pf-end"
     if c in ("Баз. длит.", "Длительность", "Отклонение длительности", "Откл. длит."):
         return "col-pf-dur"
+    if c in ("ИД",):
+        return "col-gantt-id"
+    if c in ("Ур",):
+        return "col-gantt-lvl"
+    if c in ("Название задачи",):
+        return "col-gantt-task"
+    if c == "% завершения":
+        return "col-gantt-pct"
+    if c in ("Причины отклонений", "Причина отклонения"):
+        return "col-gantt-reason"
+    if c == "Заметки":
+        return "col-gantt-notes"
     cl = c.casefold()
     if ("проект" in cl or "project" in cl) and "задач" not in cl and "task" not in cl:
         return "col-pf-project"
-    if any(k in cl for k in ("задач","блок","строен","причин","замет","id задач","функц","контрагент","подряд","назван")):
+    if any(k in cl for k in ("задач", "назван")):
         return "col-text"
     return ""
 
@@ -812,6 +864,8 @@ def _render_gantt_schedule_html_table(
     numeric_df: pd.DataFrame | None = None,
     *,
     max_rows: int = 80,
+    group_by_project: bool = False,
+    project_col_name: str = "Проект",
 ) -> None:
     """Таблица под «График проекта»: сортировка, прокраска отклонений, без обрезки текста."""
     if display_df is None or getattr(display_df, "empty", True):
@@ -822,19 +876,32 @@ def _render_gantt_schedule_html_table(
     show_num = num.reindex(show_disp.index)
 
     _dev_cols = {
+        "Отклонение начала",
         "Отклонение окончания",
         "Отклонение Начала",
         "Отклонение Окончания",
     }
-    _gantt_dev_keys = ("Отклонение окончания", "Отклонение Окончания", "Отклонение Начала")
-    _date_cols = {"Окончание", "Базовое окончание"}
+    _gantt_dev_end_keys = ("Отклонение окончания", "Отклонение Окончания")
+    _gantt_dev_start_keys = ("Отклонение начала", "Отклонение Начала")
+    _date_cols = {
+        "Начало",
+        "Базовое начало",
+        "Окончание",
+        "Базовое окончание",
+    }
     _num_cols = {"ИД", "Ур", "% завершения"}
     _reason_cols = {"Причины отклонений", "Причина отклонения", "Заметки"}
+    _ncols = len(show_disp.columns)
+    _use_groups = bool(
+        group_by_project
+        and project_col_name
+        and project_col_name in show_disp.columns
+    )
 
     parts = [
-        '<div class="gantt-schedule-scroll-wrap">',
+        f'<div class="gantt-schedule-scroll-wrap" data-bi-rows="{len(show_disp)}">',
         '<div class="rendered-table-wrap gantt-schedule-table-wrap pf-dates-table-wrap">',
-        '<table class="rendered-table bi-sortable-table bi-sort-click-only">',
+        '<table class="rendered-table bi-sortable-table pf-dates-table bi-sort-click-only">',
         "<thead><tr>",
     ]
     for c in show_disp.columns:
@@ -845,20 +912,30 @@ def _render_gantt_schedule_html_table(
             f'<span class="bi-sort-label">{c_esc} \u21c5</span></th>'
         )
     parts.append("</tr></thead><tbody>")
-    for i in range(len(show_disp)):
+
+    def _append_group_row(project_label: str) -> None:
+        p_esc = html_module.escape(str(project_label).strip())
+        parts.append(
+            f'<tr class="bd-group-row">'
+            f'<td colspan="{_ncols}" class="col-pf-project">{p_esc}</td>'
+            f"</tr>"
+        )
+
+    def _append_data_row(i: int) -> None:
         num_row = show_num.iloc[i]
-        dev_end = _plan_fact_pick_dev_value(num_row, _gantt_dev_keys)
+        dev_start = _plan_fact_pick_dev_value(num_row, _gantt_dev_start_keys)
+        dev_end = _plan_fact_pick_dev_value(num_row, _gantt_dev_end_keys)
         parts.append("<tr>")
         for c in show_disp.columns:
             cls = _plan_fact_dates_col_css_class(c)
             txt = show_disp.iloc[i][c]
             sort_attr = ""
             style_parts: list[str] = []
-            if c in _date_cols or c in _dev_cols:
-                if dev_end is not None:
-                    bg = _plan_fact_deviation_bg_style(dev_end)
-                    if bg:
-                        style_parts.append(bg)
+            tint_n = _plan_fact_dev_nval_for_col(c, dev_start, dev_end, None)
+            if tint_n is not None:
+                bg = _plan_fact_deviation_bg_style(tint_n)
+                if bg:
+                    style_parts.append(bg)
             if c in _dev_cols and c in show_num.columns:
                 nv = show_num.iloc[i][c]
                 sort_attr = _plan_fact_sort_attr(nv)
@@ -899,14 +976,31 @@ def _render_gantt_schedule_html_table(
                     if pd.notna(txt) and str(txt).strip() not in ("", "nan", "None")
                     else ""
                 )
-            if c in _dev_cols or c in _num_cols:
-                style_parts.append("text-align:right;")
-            else:
-                style_parts.append("text-align:center;")
+            style_parts.append(
+                _plan_fact_td_align_style(
+                    c,
+                    in_dev=c in _dev_cols,
+                    in_num=c in _num_cols,
+                    in_date=c in _date_cols,
+                )
+            )
             align = f' style="{"".join(style_parts)}"' if style_parts else ""
             parts.append(f'<td class="{cls}"{sort_attr}{align}>{cell}</td>')
         parts.append("</tr>")
-    parts.append("</tbody></table></div>")
+
+    if _use_groups:
+        _cur_proj = None
+        for i in range(len(show_disp)):
+            _p = str(show_disp.iloc[i][project_col_name]).strip()
+            if _p and _p.lower() not in ("", "nan", "none") and _p != _cur_proj:
+                _cur_proj = _p
+                _append_group_row(_p)
+            _append_data_row(i)
+    else:
+        for i in range(len(show_disp)):
+            _append_data_row(i)
+
+    parts.append("</tbody></table></div></div>")
     render_report_html_table(
         _TABLE_CSS + mark_html_table_sortable("".join(parts)),
         export_df=display_df,
@@ -918,6 +1012,7 @@ def _render_gantt_schedule_html_table(
             f"Показано {max_rows} из {len(display_df)} записей. "
             "Скачайте CSV для полных данных."
         )
+
 
 
 from utils import (
@@ -35718,7 +35813,7 @@ def dashboard_project_schedule_chart(df):
                     # Если и там нет, подставляем имена задач уровня 2.
                     if (not _non_generic_blocks) and level_col and block_col != section_col:
                         try:
-                            _lvl_num = pd.to_numeric(plot_df[level_col], errors="coerce")
+                            _lvl_num = pd.to_numeric(_tbl_df[level_col], errors="coerce")
                             _task_name_col = _sched_col(plot_df, ["task name", "Task Name", "Название"])
                             if _task_name_col and _lvl_num.notna().any():
                                 _l2_names = (
@@ -35852,6 +35947,15 @@ def dashboard_project_schedule_chart(df):
                     ),
                 )
             with _gcb_c:
+                show_all_gantt_tasks = st.checkbox(
+                    "Показать все задачи на графике",
+                    value=False,
+                    key="gantt_show_all_tasks",
+                    help=(
+                        "По умолчанию на диаграмме не более 30 задач после фильтров; "
+                        "в таблице ниже — полный список. Включите, чтобы снять лимит на графике."
+                    ),
+                )
                 hide_completed = st.checkbox(
                     "Скрыть задачи с 100% выполнения",
                     value=False,
@@ -35867,7 +35971,7 @@ def dashboard_project_schedule_chart(df):
                     ),
                 )
 
-    _gantt_row_cap = _GANTT_MAX_ROWS
+    _gantt_row_cap = None if show_all_gantt_tasks else _GANTT_MAX_ROWS
     view_mode = "Гантт (полосы)"
 
     _render_project_schedule_gantt_legend(show_covenant=False, label_pct=label_pct)
@@ -36044,7 +36148,7 @@ def dashboard_project_schedule_chart(df):
 
     # Фильтры и лимит строк после назначения «% выполнения» (ТЗ: скрыть 100%; только просрочка по окончанию).
     if hide_completed:
-        pcn = pd.to_numeric(plot_df["pct complete"], errors="coerce")
+        pcn = _gantt_coerce_pct_series(plot_df["pct complete"])
         plot_df = plot_df.loc[~(pcn >= 99.999)].copy()
 
     if only_finish_delay:
@@ -36091,11 +36195,12 @@ def dashboard_project_schedule_chart(df):
     else:
         plot_df = plot_df.sort_values(sort_cols, ascending=sort_asc, na_position="last")
     _gantt_rows_total = len(plot_df)
+    _tbl_source_df = plot_df.copy()
     if _gantt_row_cap is not None and len(plot_df) > _gantt_row_cap:
         plot_df = plot_df.head(_gantt_row_cap)
         suppress_caption(
-            f"На диаграмме и в таблице показаны первые {_gantt_row_cap} из {_gantt_rows_total} задач "
-            "после фильтров. Уточните фильтры для более узкой выборки."
+            f"На диаграмме показаны первые {_gantt_row_cap} из {_gantt_rows_total} задач "
+            "после фильтров. В таблице ниже — полный список. Уточните фильтры для более узкой выборки."
         )
     _gantt_rows_shown = len(plot_df)
 
@@ -36987,30 +37092,31 @@ def dashboard_project_schedule_chart(df):
 
     # Правки куратора 08.05.2026: подпись «Таблица под графиком» убрана.
 
+    _tbl_df = _tbl_source_df
     dev_start_src = _sched_col(
-        plot_df,
+        _tbl_df,
         ["deviation start days", "Отклонение_начала", "deviation start"],
     )
     dev_end_src = _sched_col(
-        plot_df,
+        _tbl_df,
         ["deviation in days", "Отклонение_окончания"],
     )
-    reason_src = _gantt_resolve_reason_column(plot_df)
-    notes_src = _gantt_resolve_notes_column(plot_df)
+    reason_src = _gantt_resolve_reason_column(_tbl_df)
+    notes_src = _gantt_resolve_notes_column(_tbl_df)
 
     # ТЗ заказчика 2026-05-06 (Блок 4, рисунок 6/8): таблица под графиком
     d_end_num = None
-    if dev_end_src and dev_end_src in plot_df.columns:
-        d_end_num = pd.to_numeric(plot_df[dev_end_src], errors="coerce")
-    elif "base end" in plot_df.columns:
+    if dev_end_src and dev_end_src in _tbl_df.columns:
+        d_end_num = pd.to_numeric(_tbl_df[dev_end_src], errors="coerce")
+    elif "base end" in _tbl_df.columns:
         d_end_num = (
-            plot_df["plan end"] - pd.to_datetime(plot_df["base end"], errors="coerce")
+            _tbl_df["plan end"] - pd.to_datetime(_tbl_df["base end"], errors="coerce")
         ).dt.days
 
     # ИД задачи MSP («Ид» в исходнике → canonical "task id seq" после web_loader._MSP_RENAME).
     # Fallback на любые «id-подобные» поля (ID, Ид, task id, ID_задачи, Уникальный_идентификатор).
     id_col = _sched_col(
-        plot_df,
+        _tbl_df,
         [
             "task id seq",
             "Ид",
@@ -37023,11 +37129,11 @@ def dashboard_project_schedule_chart(df):
             "ID_задачи",
             "id задачи",
         ],
-    ) or _sched_col(plot_df, ["unique id", "Уникальный_идентификатор"])
+    ) or _sched_col(_tbl_df, ["unique id", "Уникальный_идентификатор"])
 
-    tbl_view = pd.DataFrame(index=plot_df.index)
-    if id_col and id_col in plot_df.columns:
-        _id_ser = plot_df[id_col]
+    tbl_view = pd.DataFrame(index=_tbl_df.index)
+    if id_col and id_col in _tbl_df.columns:
+        _id_ser = _tbl_df[id_col]
         if isinstance(_id_ser, pd.DataFrame):
             _id_ser = _id_ser.iloc[:, 0]
         # Целые числа без '.0', NaN → ""
@@ -37039,39 +37145,75 @@ def dashboard_project_schedule_chart(df):
         else:
             tbl_view["ИД"] = _id_ser.astype(str).where(_id_ser.notna(), "")
     else:
-        tbl_view["ИД"] = pd.Series("", index=plot_df.index, dtype=object)
+        tbl_view["ИД"] = pd.Series("", index=_tbl_df.index, dtype=object)
 
     # ТЗ заказчика 2026-05-06 (скрин 1): после «Ид» в таблице идёт колонка
     # «Ур» — уровень иерархии MSP (3/4/5). Берём из level_col, если есть.
-    if level_col and level_col in plot_df.columns:
-        _lvl_num = pd.to_numeric(plot_df[level_col], errors="coerce")
+    if level_col and level_col in _tbl_df.columns:
+        _lvl_num = pd.to_numeric(_tbl_df[level_col], errors="coerce")
         tbl_view["Ур"] = _lvl_num.map(
             lambda v: "" if pd.isna(v) else f"{int(v)}"
         )
     else:
-        tbl_view["Ур"] = pd.Series("", index=plot_df.index, dtype=object)
+        tbl_view["Ур"] = pd.Series("", index=_tbl_df.index, dtype=object)
 
-    if task_col and task_col in plot_df.columns:
+    if task_col and task_col in _tbl_df.columns:
         tbl_view["Название задачи"] = (
-            plot_df[task_col].fillna("").astype(str).map(_gantt_clean_task_label)
+            _tbl_df[task_col].fillna("").astype(str).map(_gantt_clean_task_label)
         )
     else:
         tbl_view["Название задачи"] = ""
 
-    if "pct complete" in plot_df.columns:
-        _pct = _gantt_coerce_pct_series(plot_df["pct complete"]).round().astype("Int64")
+    if sel_proj == "Все" and proj_col and proj_col in _tbl_df.columns:
+        _proj_ser = _tbl_df[proj_col]
+        if isinstance(_proj_ser, pd.DataFrame):
+            _proj_ser = _proj_ser.iloc[:, 0]
+        tbl_view["Проект"] = _proj_ser.fillna("").astype(str).str.strip()
+    else:
+        tbl_view["Проект"] = pd.Series("", index=_tbl_df.index, dtype=object)
+
+    if "pct complete" in _tbl_df.columns:
+        _pct = _gantt_coerce_pct_series(_tbl_df["pct complete"]).round().astype("Int64")
         tbl_view["% завершения"] = _pct.map(lambda v: "" if pd.isna(v) else f"{int(v)}%")
     else:
         tbl_view["% завершения"] = ""
 
-    if "plan end" in plot_df.columns:
-        _pe = pd.to_datetime(plot_df["plan end"], errors="coerce")
+    if "plan start" in _tbl_df.columns:
+        _ps = pd.to_datetime(_tbl_df["plan start"], errors="coerce")
+        tbl_view["Начало"] = [x.strftime("%d.%m.%Y") if pd.notna(x) else "" for x in _ps]
+    else:
+        tbl_view["Начало"] = ""
+
+    if "base start" in _tbl_df.columns:
+        _bs = pd.to_datetime(_tbl_df["base start"], errors="coerce")
+        tbl_view["Базовое начало"] = [
+            x.strftime("%d.%m.%Y") if pd.notna(x) else "" for x in _bs
+        ]
+    else:
+        tbl_view["Базовое начало"] = ""
+
+    d_start_num = None
+    if dev_start_src and dev_start_src in _tbl_df.columns:
+        d_start_num = pd.to_numeric(_tbl_df[dev_start_src], errors="coerce")
+    elif "base start" in _tbl_df.columns and "plan start" in _tbl_df.columns:
+        d_start_num = (
+            pd.to_datetime(_tbl_df["plan start"], errors="coerce")
+            - pd.to_datetime(_tbl_df["base start"], errors="coerce")
+        ).dt.days
+
+    if d_start_num is not None:
+        tbl_view["Отклонение начала"] = d_start_num.reindex(tbl_view.index).map(_fmt_dev_days)
+    else:
+        tbl_view["Отклонение начала"] = ""
+
+    if "plan end" in _tbl_df.columns:
+        _pe = pd.to_datetime(_tbl_df["plan end"], errors="coerce")
         tbl_view["Окончание"] = [x.strftime("%d.%m.%Y") if pd.notna(x) else "" for x in _pe]
     else:
         tbl_view["Окончание"] = ""
 
-    if "base end" in plot_df.columns:
-        _be = pd.to_datetime(plot_df["base end"], errors="coerce")
+    if "base end" in _tbl_df.columns:
+        _be = pd.to_datetime(_tbl_df["base end"], errors="coerce")
         tbl_view["Базовое окончание"] = [
             x.strftime("%d.%m.%Y") if pd.notna(x) else "" for x in _be
         ]
@@ -37086,26 +37228,32 @@ def dashboard_project_schedule_chart(df):
     if show_reasons:
         # ТЗ заказчика 2026-05-06: «Причины отклонений» (множ. число),
         # «Заметки». Подсветка непустых ячеек зелёным — в _render_gantt_schedule_html_table.
-        if reason_src and reason_src in plot_df.columns:
-            _r = plot_df[reason_src].astype(str).fillna("")
+        if reason_src and reason_src in _tbl_df.columns:
+            _r = _tbl_df[reason_src].astype(str).fillna("")
             tbl_view["Причины отклонений"] = _r.where(_r.str.lower() != "nan", "")
         else:
             tbl_view["Причины отклонений"] = ""
-        if notes_src and notes_src in plot_df.columns:
-            _n = plot_df[notes_src].astype(str).fillna("")
+        if notes_src and notes_src in _tbl_df.columns:
+            _n = _tbl_df[notes_src].astype(str).fillna("")
             tbl_view["Заметки"] = _n.where(_n.str.lower() != "nan", "")
         else:
             tbl_view["Заметки"] = ""
 
-    _gantt_tbl_order = [
+    _gantt_tbl_order = []
+    if "Проект" in tbl_view.columns and sel_proj == "Все":
+        _gantt_tbl_order.append("Проект")
+    _gantt_tbl_order.extend([
         "ИД",
         "Ур",
         "Название задачи",
         "% завершения",
+        "Начало",
+        "Базовое начало",
+        "Отклонение начала",
         "Окончание",
         "Базовое окончание",
         "Отклонение окончания",
-    ]
+    ])
     if show_reasons:
         _gantt_tbl_order.extend(["Причины отклонений", "Заметки"])
     _ordered = [c for c in _gantt_tbl_order if c in tbl_view.columns]
@@ -37116,13 +37264,25 @@ def dashboard_project_schedule_chart(df):
         tbl_numeric["Отклонение окончания"] = (
             -pd.to_numeric(d_end_num.reindex(tbl_show.index), errors="coerce")
         )
-    if "plan end" in plot_df.columns and "Окончание" in tbl_numeric.columns:
-        tbl_numeric["Окончание"] = pd.to_datetime(
-            plot_df["plan end"], errors="coerce"
+    if "plan start" in _tbl_df.columns and "Начало" in tbl_numeric.columns:
+        tbl_numeric["Начало"] = pd.to_datetime(
+            _tbl_df["plan start"], errors="coerce"
         ).reindex(tbl_show.index)
-    if "base end" in plot_df.columns and "Базовое окончание" in tbl_numeric.columns:
+    if "base start" in _tbl_df.columns and "Базовое начало" in tbl_numeric.columns:
+        tbl_numeric["Базовое начало"] = pd.to_datetime(
+            _tbl_df["base start"], errors="coerce"
+        ).reindex(tbl_show.index)
+    if d_start_num is not None and "Отклонение начала" in tbl_numeric.columns:
+        tbl_numeric["Отклонение начала"] = pd.to_numeric(
+            d_start_num.reindex(tbl_show.index), errors="coerce"
+        )
+    if "plan end" in _tbl_df.columns and "Окончание" in tbl_numeric.columns:
+        tbl_numeric["Окончание"] = pd.to_datetime(
+            _tbl_df["plan end"], errors="coerce"
+        ).reindex(tbl_show.index)
+    if "base end" in _tbl_df.columns and "Базовое окончание" in tbl_numeric.columns:
         tbl_numeric["Базовое окончание"] = pd.to_datetime(
-            plot_df["base end"], errors="coerce"
+            _tbl_df["base end"], errors="coerce"
         ).reindex(tbl_show.index)
     if "Ур" in tbl_numeric.columns:
         tbl_numeric["Ур"] = pd.to_numeric(tbl_numeric["Ур"], errors="coerce")
@@ -37139,12 +37299,14 @@ def dashboard_project_schedule_chart(df):
         _render_gantt_schedule_html_table(
             tbl_show,
             tbl_numeric,
-            max_rows=_gantt_rows_shown,
+            max_rows=len(tbl_show),
+            group_by_project=(sel_proj == "Все" and "Проект" in tbl_show.columns),
+            project_col_name="Проект",
         )
         if _gantt_rows_total > _gantt_rows_shown:
             suppress_caption(
-                f"Таблица и диаграмма: показано {_gantt_rows_shown} из {_gantt_rows_total} "
-                "задач после фильтров."
+                f"Диаграмма: {_gantt_rows_shown} из {_gantt_rows_total} задач; "
+                f"таблица — все {_gantt_rows_total} после фильтров."
             )
 
 
