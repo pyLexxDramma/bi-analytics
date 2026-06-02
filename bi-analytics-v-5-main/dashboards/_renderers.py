@@ -698,7 +698,7 @@ def _plan_fact_deviation_span(nval, text: str) -> str:
         n = int(round(float(nval)))
     except (TypeError, ValueError):
         return html_module.escape(str(text))
-    cls = "pf-dev-red" if n < 0 else ("pf-dev-green" if n == 0 else "pf-dev-neu")
+    cls = "pf-dev-red" if n < 0 else "pf-dev-green"
     disp = str(text).strip() if str(text).strip() else str(n)
     return f'<span class="{cls}">{html_module.escape(disp)}</span>'
 
@@ -3281,10 +3281,31 @@ def render_chart(
             _shell = (
                 "<!DOCTYPE html><html><head><meta charset='utf-8'>"
                 "<style>html,body{margin:0;padding:0;background:transparent;overflow:hidden;}"
-                f".pf-gantt-view{{max-height:{_vh}px;overflow-y:auto;overflow-x:auto;-webkit-overflow-scrolling:touch;"
-                "border:1px solid rgba(148,163,184,0.22);border-radius:8px;}"
+                f".pf-gantt-shell{{display:flex;flex-direction:column;height:{_vh}px;max-height:{_vh}px;overflow:hidden;"
+                "border:1px solid rgba(148,163,184,0.22);border-radius:8px;}}"
+                f".pf-gantt-view{{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:auto;-webkit-overflow-scrolling:touch;}}"
+                ".pf-gantt-view .xaxislayer-above,.pf-gantt-view .xaxislayer-below{visibility:hidden;}"
+                ".pf-gantt-xaxis-pin{flex:0 0 auto;height:44px;overflow:hidden;background:hsl(209,72%,6%);"
+                "border-top:1px solid rgba(148,163,184,0.18);}"
                 "</style></head><body>"
-                f'<div class="pf-gantt-view">{_plot_div}</div>'
+                f'<div class="pf-gantt-shell"><div class="pf-gantt-view">{_plot_div}</div>'
+                f'<div class="pf-gantt-xaxis-pin" id="pf-xaxis-pin"></div></div>'
+                "<script>(function(){"
+                "var view=document.querySelector('.pf-gantt-view');"
+                "var pin=document.getElementById('pf-xaxis-pin');"
+                "var gd=view&&view.querySelector('.js-plotly-plot');"
+                "if(!view||!pin||!gd)return;"
+                "function sync(){"
+                "var xa=gd.querySelector('.xaxislayer-above')||gd.querySelector('.xaxislayer-below');"
+                "if(!xa){pin.innerHTML='';return;}"
+                "var svg=document.createElementNS('http://www.w3.org/2000/svg','svg');"
+                "var vb=xa.getAttribute('viewBox');if(vb)svg.setAttribute('viewBox',vb);"
+                "svg.setAttribute('width','100%');svg.setAttribute('height','44');"
+                "svg.appendChild(xa.cloneNode(true));pin.innerHTML='';pin.appendChild(svg);"
+                "}"
+                "if(window.Plotly&&gd.on){gd.on('plotly_afterplot',sync);}"
+                "setTimeout(sync,400);setTimeout(sync,1200);window.addEventListener('resize',sync);"
+                "})();</script>"
                 "</body></html>"
             )
             components.html(_shell, height=_vh + 2, scrolling=False)
@@ -6676,6 +6697,8 @@ _PLAN_FACT_KPI_PLATES_CSS = """
 .pf-kpi-cell{flex:1 1 200px;min-width:160px;}
 .pf-kpi-lbl{font-size:12px;color:#c7d2fe;font-weight:500;line-height:1.3;margin:0 0 10px 0;}
 .pf-kpi-val{font-size:30px;font-weight:700;color:#fafafa;line-height:1.1;letter-spacing:.01em;}
+.pf-kpi-val-late{color:#ef4444!important;}
+.pf-kpi-val-early{color:#22c55e!important;}
 .pf-kpi-val-proj{font-size:22px;line-height:1.15;}
 </style>
 """
@@ -6764,8 +6787,13 @@ def render_plan_fact_dates_metric_plates(
         project_name: str = "",
         *,
         show_proj_col: bool = False,
+        max_dev_class: str = "",
     ) -> str:
-        cells: list[str] = []
+        dev_cls = f" {max_dev_class}" if max_dev_class else ""
+        cells: list[str] = [
+            f'<div class="pf-kpi-cell"><div class="pf-kpi-lbl">Максимальное отклонение (дней)</div>'
+            f'<div class="pf-kpi-val{dev_cls}">{html_module.escape(max_lbl)}</div></div>',
+        ]
         if show_proj_col:
             cells.append(
                 f'<div class="pf-kpi-cell"><div class="pf-kpi-lbl">Проект</div>'
@@ -6774,8 +6802,6 @@ def render_plan_fact_dates_metric_plates(
             )
         cells.extend(
             [
-                f'<div class="pf-kpi-cell"><div class="pf-kpi-lbl">Максимальное отклонение (дней)</div>'
-                f'<div class="pf-kpi-val">{html_module.escape(max_lbl)}</div></div>',
                 f'<div class="pf-kpi-cell"><div class="pf-kpi-lbl">План окончания проекта</div>'
                 f'<div class="pf-kpi-val">{html_module.escape(plan_lbl)}</div></div>',
                 f'<div class="pf-kpi-cell"><div class="pf-kpi-lbl">Факт окончания проекта</div>'
@@ -6786,12 +6812,12 @@ def render_plan_fact_dates_metric_plates(
 
     parts: list[str] = [_PLAN_FACT_KPI_PLATES_CSS, '<div class="pf-kpi-wrap">']
 
-    def _row_for_scope(scope: pd.DataFrame) -> tuple[str, str, str]:
+    def _row_for_scope(scope: pd.DataFrame) -> tuple[str, str, str, str]:
         if scope is None or getattr(scope, "empty", True):
-            return nd, nd, nd
+            return nd, nd, nd, ""
         ensure_date_columns(scope)
         if "plan end" not in scope.columns or "base end" not in scope.columns:
-            return nd, nd, nd
+            return nd, nd, nd, ""
         pe = pd.to_datetime(scope["plan end"], errors="coerce", dayfirst=True)
         be = pd.to_datetime(scope["base end"], errors="coerce", dayfirst=True)
         both = pe.notna() & be.notna()
@@ -6810,15 +6836,20 @@ def render_plan_fact_dates_metric_plates(
             dates_milestone_col=dates_milestone_col,
         )
         plan_lbl = fact_lbl = nd
+        max_dev_class = ""
         if row is not None:
             ps = _plan_fact_zos_format_date_cell(row.get("plan end"))
             fs = _plan_fact_zos_format_date_cell(row.get("base end"))
             plan_lbl = ps if str(ps).strip() else nd
             fact_lbl = fs if str(fs).strip() else nd
-        return max_lbl, plan_lbl, fact_lbl
+            _pe = pd.to_datetime(row.get("plan end"), errors="coerce", dayfirst=True)
+            _be = pd.to_datetime(row.get("base end"), errors="coerce", dayfirst=True)
+            if pd.notna(_pe) and pd.notna(_be):
+                max_dev_class = "pf-kpi-val-late" if _pe > _be else "pf-kpi-val-early"
+        return max_lbl, plan_lbl, fact_lbl, max_dev_class
 
     if scope_df is None or getattr(scope_df, "empty", True):
-        parts.append(_one_row_html(nd, nd, nd))
+        parts.append(_one_row_html(nd, nd, nd, max_dev_class=""))
         parts.append("</div>")
         st.markdown("".join(parts), unsafe_allow_html=True)
         return
@@ -6841,13 +6872,13 @@ def render_plan_fact_dates_metric_plates(
             _sub = w[w["project name"].map(_project_filter_norm_key) == _pk]
             if _sub.empty:
                 continue
-            _max, _plan, _fact = _row_for_scope(_sub)
+            _max, _plan, _fact, _dev_cls = _row_for_scope(_sub)
             parts.append(
-                _one_row_html(_max, _plan, _fact, project_name=_pn, show_proj_col=True)
+                _one_row_html(_max, _plan, _fact, project_name=_pn, show_proj_col=True, max_dev_class=_dev_cls)
             )
     else:
-        _max, _plan, _fact = _row_for_scope(w)
-        parts.append(_one_row_html(_max, _plan, _fact))
+        _max, _plan, _fact, _dev_cls = _row_for_scope(w)
+        parts.append(_one_row_html(_max, _plan, _fact, max_dev_class=_dev_cls))
 
     parts.append("</div>")
     st.markdown("".join(parts), unsafe_allow_html=True)
@@ -8211,7 +8242,7 @@ def dashboard_plan_fact_dates(df):
             lh = float(max(13.0, _PF_GANTT_TASK_FONT * 1.42))
             bars_block = 20.0
             row_h = int(max(36, max_lines * lh + bars_block))
-            chart_h = max(160, int(n_rows_local * row_h + 48))
+            chart_h = max(160, int(n_rows_local * row_h + 20))
             return chart_h, max_lines
 
         def _pf_gantt_label_domain(y_order_local: list[str]) -> float:
@@ -8272,10 +8303,11 @@ def dashboard_plan_fact_dates(df):
             return 4
 
         _PF_GANTT_VIEWPORT = 1720  # видимая высота блока графика (×2 от 860)
+        _PF_GANTT_BAR_WIDTH = 0.12  # ~в 4 раза уже стандартной полосы Plotly
         _PF_GANTT_LEGEND = dict(
             orientation="h",
             yanchor="top",
-            y=-0.18,
+            y=-0.06,
             xanchor="left",
             x=0,
         )
@@ -8323,11 +8355,18 @@ def dashboard_plan_fact_dates(df):
                 xv = local[col]
                 if not xv.notna().any():
                     return
+                _txt = [
+                    _pf_fmt_day_short(v) if pd.notna(v) else ""
+                    for v in xv.tolist()
+                ]
                 fig.add_trace(
                     go.Scatter(
                         x=xv,
                         y=_y,
-                        mode="markers",
+                        mode="markers+text",
+                        text=_txt,
+                        textposition="middle right",
+                        textfont=dict(size=10, color=color),
                         name=legend_name,
                         marker=dict(size=10, color=color, symbol=symbol, line=dict(width=1, color="#fff")),
                         customdata=_full,
@@ -8348,7 +8387,7 @@ def dashboard_plan_fact_dates(df):
                 yaxis_title=None,
                 height=_chart_h,
                 xaxis=dict(type="date", tickformat="%d.%m.%Y", automargin=True),
-                margin=dict(l=4, r=72, t=12, b=56),
+                margin=dict(l=4, r=96, t=8, b=48),
                 legend=_PF_GANTT_LEGEND,
             )
             _pf_apply_gantt_y_labels(fig, y_order)
@@ -8445,6 +8484,7 @@ def dashboard_plan_fact_dates(df):
                     x=base_len_ms,
                     y=y_labels,
                     base=base_base_ms,
+                    width=_PF_GANTT_BAR_WIDTH,
                     marker=dict(color="#14b8a6"),
                     text=base_txt,
                     textposition="outside",
@@ -8460,6 +8500,7 @@ def dashboard_plan_fact_dates(df):
                     x=cur_len_ms,
                     y=y_labels,
                     base=cur_base_ms,
+                    width=_PF_GANTT_BAR_WIDTH,
                     marker=dict(color="#fb923c"),
                     text=cur_txt,
                     textposition="outside",
@@ -8481,10 +8522,10 @@ def dashboard_plan_fact_dates(df):
                     range=[_origin_ms, _x_max_ms + _x_pad_ms],
                     title=dict(text="Дата (от начала шкалы до окончания)", standoff=22, font=dict(size=13, color="#e8eef5")),
                 ),
-                margin=dict(l=4, r=56, t=12, b=88),
+                margin=dict(l=4, r=56, t=8, b=48),
                 legend=_PF_GANTT_LEGEND,
-                bargap=0.02,
-                bargroupgap=0.03,
+                bargap=0.35,
+                bargroupgap=0.45,
             )
             _pf_apply_gantt_y_labels(fig, y_order)
             _pf_bar_chart_h = _chart_h
