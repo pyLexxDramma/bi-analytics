@@ -323,9 +323,11 @@ def _opencode_workspace_url(public_base: str) -> str:
     return f"{base}/L3dvcmtzcGFjZQ/"
 
 
-# OpenCode Web UI: ai.conall.ru/opencode/ (прокси dash-ai). opencode.ai.conall.ru — после DNS.
+# OpenCode Web UI: только поддомен в корне (slug = 1-й сегмент пути → /workspace).
+# Подпуть /opencode/ ломает SPA: первый сегмент = "opencode" → OpenCode открывает root /.
+AI_ASSISTANT_URL_SUBDOMAIN_DEFAULT = "https://opencode.ai.conall.ru/L3dvcmtzcGFjZQ/"
 AI_ASSISTANT_URL_PATH_FALLBACK = "https://ai.conall.ru/opencode/L3dvcmtzcGFjZQ/"
-AI_ASSISTANT_WEB_UI_DEFAULT = AI_ASSISTANT_URL_PATH_FALLBACK
+AI_ASSISTANT_WEB_UI_DEFAULT = AI_ASSISTANT_URL_SUBDOMAIN_DEFAULT
 AI_ASSISTANT_URL_DEV_DEFAULT = AI_ASSISTANT_WEB_UI_DEFAULT
 AI_ASSISTANT_URL_PROD_DEFAULT = AI_ASSISTANT_WEB_UI_DEFAULT
 AI_ASSISTANT_URL_EMBEDDED_DEFAULT = "https://bi-analytics-dev.streamlit.app/_opencode_ai"
@@ -357,12 +359,10 @@ def _embedded_ai_url_for_current_app() -> str:
 
 
 def _normalize_ai_assistant_public_url(url: str) -> str:
-    """OpenCode Web UI: всегда slug /workspace, не корень / (Lw)."""
+    """OpenCode Web UI: slug /workspace первым сегментом пути (поддомен в корне)."""
     u = (url or "").strip()
     if not u or "_opencode_ai" in u.lower():
         return u
-    if "opencode.ai.conall.ru" in u.lower():
-        u = "https://ai.conall.ru/opencode"
     try:
         mod = _opencode_ui_url_module()
         if mod is not None and mod.is_opencode_web_ui_url(u):
