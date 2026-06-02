@@ -21,7 +21,7 @@ def suppress_caption(*_args, **_kwargs) -> None:
 
 # --- Единый блок фильтров ---------------------------------------------------------
 
-_SESSION_CSS_FLAG_KEY = "_bi_unified_filters_css_v5"
+_SESSION_CSS_FLAG_KEY = "_bi_unified_filters_css_v6"
 _DEFAULT_FIELD_MIN_PX = 260
 
 UNIFIED_FILTERS_CSS = """
@@ -179,6 +179,51 @@ UNIFIED_FILTERS_CSS = """
 .bi-filters-toggles [data-testid="column"] {
     min-height: 2.75rem;
 }
+
+/* bi-filters-scope: единая сетка селекторов и чекбоксов во всех дашбордах */
+.bi-filters-scope div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"] [data-testid="stSelectbox"]),
+.bi-filters-scope div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"] [data-testid="stMultiSelect"]),
+.bi-filters-scope div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"] [data-testid="stDateInput"]) {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    gap: 12px !important;
+    column-gap: 12px !important;
+    width: 100% !important;
+    align-items: flex-start !important;
+}
+.bi-filters-scope div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"] [data-testid="stSelectbox"]) > div[data-testid="column"],
+.bi-filters-scope div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"] [data-testid="stMultiSelect"]) > div[data-testid="column"],
+.bi-filters-scope div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"] [data-testid="stDateInput"]) > div[data-testid="column"] {
+    flex: 1 1 0% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    width: 0 !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+}
+.bi-filters-scope div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"] [data-testid="stCheckbox"]) {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    gap: 12px !important;
+    column-gap: 12px !important;
+    width: 100% !important;
+    align-items: flex-start !important;
+}
+.bi-filters-scope div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"] [data-testid="stCheckbox"]) > div[data-testid="column"] {
+    flex: 1 1 0% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    width: 0 !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+}
+.bi-filters-scope div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"] [data-testid="stSelectbox"]) [data-testid="stSelectbox"],
+.bi-filters-scope div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"] [data-testid="stMultiSelect"]) [data-testid="stMultiSelect"],
+.bi-filters-scope div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"] [data-testid="stDateInput"]) [data-testid="stDateInput"] {
+    max-width: none !important;
+    width: 100% !important;
+}
+
 </style>
 """
 
@@ -348,6 +393,13 @@ def filters_popover(
 
 
 @contextmanager
+def filter_columns(st: Any, n: int = 5):
+    """Равные колонки для строки селекторов или чекбоксов (по умолчанию 5)."""
+    inject_unified_filters_css(st)
+    return st.columns(max(1, int(n)), gap="small")
+
+
+@contextmanager
 def filters_panel(
     st: Any,
     title: str = "Фильтры",
@@ -363,7 +415,12 @@ def filters_panel(
     with filters_popover(
         st, label=title, reset_keys=reset_keys, panel_key=panel_key, expanded=expanded
     ) as _fp:
-        yield
+        inject_unified_filters_css(st)
+        st.markdown('<div class="bi-filters-scope">', unsafe_allow_html=True)
+        try:
+            yield
+        finally:
+            st.markdown("</div>", unsafe_allow_html=True)
         _fp.set_chips([])
 
 

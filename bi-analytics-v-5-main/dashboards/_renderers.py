@@ -2545,6 +2545,73 @@ def _finance_bar_text_from_mln_series(
     return out
 
 
+
+_FINANCE_DEV_LABEL_RED = "hsl(348,100%,63%)"
+_FINANCE_DEV_LABEL_GREEN = "hsl(148,100%,63%)"
+_FINANCE_DEV_BAR_RED = "#e74c3c"
+_FINANCE_DEV_BAR_GREEN = "#27ae60"
+
+
+def _finance_bdr_expense_deviation_chart_parts(
+    plan_rub: pd.Series,
+    fact_rub: pd.Series,
+    *,
+    threshold_mln: float = 0.01,
+    min_abs_mln: float = 0.01,
+    decimals: int = 1,
+    unit_suffix: str = " млн рублей",
+) -> tuple[pd.Series, pd.Series, list[str], list[str], list[str], list[str]]:
+    """БДР/БДДС расходы: plan−fact; положительное выше (зелёный), отрицательное ниже (красный).
+
+    Подписи: факт<план → «−…» красным, факт>план → «+…» зелёным (как таблица БДДС).
+    """
+    dev_mln = (plan_rub.astype(float) - fact_rub.astype(float)) / 1e6
+    thr = float(threshold_mln)
+    y_pos = dev_mln.where(dev_mln > thr)
+    y_neg = dev_mln.where(dev_mln < -thr)
+    floor_rub = float(min_abs_mln or 0.0) * 1e6
+    d = max(0, int(decimals))
+    suf = str(unit_suffix or "")
+    txt_pos: list[str] = []
+    clr_pos: list[str] = []
+    txt_neg: list[str] = []
+    clr_neg: list[str] = []
+    for p, f, yp, yn in zip(plan_rub, fact_rub, y_pos, y_neg):
+        try:
+            pv = float(p)
+            fv = float(f)
+        except (TypeError, ValueError):
+            pv = fv = 0.0
+        diff_rub = fv - pv
+        if pd.notna(yp):
+            if abs(diff_rub) < floor_rub:
+                txt_pos.append("")
+                clr_pos.append("#f0f4f8")
+            elif fv < pv:
+                txt_pos.append(f"-{abs(diff_rub) / 1e6:.{d}f}{suf}")
+                clr_pos.append(_FINANCE_DEV_LABEL_RED)
+            else:
+                txt_pos.append("")
+                clr_pos.append("#f0f4f8")
+        else:
+            txt_pos.append("")
+            clr_pos.append("#f0f4f8")
+        if pd.notna(yn):
+            if abs(diff_rub) < floor_rub:
+                txt_neg.append("")
+                clr_neg.append("#f0f4f8")
+            elif fv > pv:
+                txt_neg.append(f"+{abs(diff_rub) / 1e6:.{d}f}{suf}")
+                clr_neg.append(_FINANCE_DEV_LABEL_GREEN)
+            else:
+                txt_neg.append("")
+                clr_neg.append("#f0f4f8")
+        else:
+            txt_neg.append("")
+            clr_neg.append("#f0f4f8")
+    return y_pos, y_neg, txt_pos, clr_pos, txt_neg, clr_neg
+
+
 def _forecast_bdd_bar_value_labels(
     values_rub: pd.Series,
     *,
@@ -7180,8 +7247,8 @@ def dashboard_plan_fact_dates(df):
         st.markdown(_PLAN_FACT_DISPLAY_OPTS_CSS, unsafe_allow_html=True)
         with filters_toggles(st):
 
-            _cb_r1_1, _cb_r1_2, _cb_r1_3 = st.columns(3, gap="small")
-            with _cb_r1_1:
+            _cb1, _cb2, _cb3, _cb4, _cb5 = st.columns(5, gap="small")
+            with _cb1:
                 dates_show_reason_notes = st.checkbox(
                     "Показать причины отклонений",
                     value=False,
@@ -7192,27 +7259,25 @@ def dashboard_plan_fact_dates(df):
                         "Селектор «Детализация» игнорируется."
                     ),
                 )
-            with _cb_r1_2:
+            with _cb2:
                 hide_completed_dates = st.checkbox(
                     "Скрыть завершённые (100%)",
                     value=False,
                     key="dates_hide_done",
                 )
-            with _cb_r1_3:
+            with _cb3:
                 force_covenant_ui = st.checkbox(
                     "Только ковенанты",
                     value=False,
                     key="dates_only_covenants",
                 )
-
-            _cb_r2_1, _cb_r2_2, _cb_r2_3 = st.columns(3, gap="small")
-            with _cb_r2_1:
+            with _cb4:
                 only_negative_dev_dates = st.checkbox(
                     "Отображать только диаграммы, где отклонение окончания < 0",
                     value=False,
                     key="dates_only_neg_end",
                 )
-            with _cb_r2_2:
+            with _cb5:
                 tbl_show_dur = st.checkbox(
                     "Показать «Отклонение длительности» в таблице",
                     value=True,
@@ -9952,6 +10017,28 @@ def _render_finance_bar_chart(
     """Grouped bar: короткий ряд — на всю ширину; длинный — components.html + гориз. скролл."""
     import uuid
 
+    # Извлекаем легенду из фигуры → рендерим статично под полосой скролла
+    _leg_items: list[tuple[str, str]] = []
+    try:
+        for _tr in (fig.data or []):
+            _nm = getattr(_tr, "name", None) or ""
+            if not _nm or getattr(_tr, "showlegend", True) is False:
+                continue
+            _mc = None
+            try:
+                _mc = _tr.marker.color
+            except Exception:
+                pass
+            if isinstance(_mc, (list, tuple)):
+                _mc = _mc[0] if _mc else None
+            _leg_items.append((_nm, str(_mc or "#888")))
+    except Exception:
+        pass
+    try:
+        fig.update_layout(showlegend=False)
+    except Exception:
+        pass
+
     n = max(1, int(n_periods))
     cats = [str(c) for c in (categories or [])]
     fig_h = int(height)
@@ -10055,6 +10142,21 @@ def _render_finance_bar_chart(
         components.html(shell, height=h + 36, scrolling=False)
         if caption_below:
             _chart_caption_below(caption_below)
+        # Статичная легенда под полосой скролла
+        if _leg_items:
+            _leg_html = (
+                '<div style="display:flex;flex-wrap:wrap;gap:8px 20px;'
+                'padding:10px 4px 4px 4px;font-size:12px;line-height:1.4;">'
+            )
+            for _ln, _lc in _leg_items:
+                _leg_html += (
+                    f'<span style="display:flex;align-items:center;gap:5px;">'
+                    f'<span style="display:inline-block;width:14px;height:14px;'
+                    f'border-radius:2px;background:{_lc};flex-shrink:0;"></span>'
+                    f'<span style="color:#e2e8f0;">{_ln}</span></span>'
+                )
+            _leg_html += "</div>"
+            components.html(_leg_html, height=44, scrolling=False)
     except Exception:
         render_chart(
             fig,
@@ -10064,6 +10166,20 @@ def _render_finance_bar_chart(
             omit_default_width=True,
             plotly_config_extra={"responsive": False},
         )
+        if _leg_items:
+            _leg_html = (
+                '<div style="display:flex;flex-wrap:wrap;gap:8px 20px;'
+                'padding:10px 4px 4px 4px;font-size:12px;line-height:1.4;">'
+            )
+            for _ln, _lc in _leg_items:
+                _leg_html += (
+                    f'<span style="display:flex;align-items:center;gap:5px;">'
+                    f'<span style="display:inline-block;width:14px;height:14px;'
+                    f'border-radius:2px;background:{_lc};flex-shrink:0;"></span>'
+                    f'<span style="color:#e2e8f0;">{_ln}</span></span>'
+                )
+            _leg_html += "</div>"
+            components.html(_leg_html, height=44, scrolling=False)
 
 
 _DK_BAR_PX_SLOT = 220  # «С группировкой» (стек)
@@ -10310,6 +10426,21 @@ def _render_debit_credit_bar_chart(
             st.caption("Длинный ряд подрядчиков — **прокрутите график вправо** в полосе под диаграммой.")
         if caption_below:
             _chart_caption_below(caption_below)
+        # Статичная легенда под полосой горизонтального скролла
+        if _leg_items:
+            _lh = (
+                '<div style="display:flex;flex-wrap:wrap;gap:8px 20px;'
+                'padding:10px 4px 4px 4px;font-size:12px;line-height:1.4;">'
+            )
+            for _ln, _lc in _leg_items:
+                _lh += (
+                    f'<span style="display:flex;align-items:center;gap:5px;">'
+                    f'<span style="display:inline-block;width:14px;height:14px;'
+                    f'border-radius:2px;background:{_lc};flex-shrink:0;"></span>'
+                    f'<span style="color:#e2e8f0;">{_ln}</span></span>'
+                )
+            _lh += "</div>"
+            components.html(_lh, height=44, scrolling=False)
     except Exception:
         render_chart(
             fig,
@@ -10319,6 +10450,20 @@ def _render_debit_credit_bar_chart(
             omit_default_width=True,
             plotly_config_extra={"responsive": False},
         )
+        if _leg_items:
+            _lh = (
+                '<div style="display:flex;flex-wrap:wrap;gap:8px 20px;'
+                'padding:10px 4px 4px 4px;font-size:12px;line-height:1.4;">'
+            )
+            for _ln, _lc in _leg_items:
+                _lh += (
+                    f'<span style="display:flex;align-items:center;gap:5px;">'
+                    f'<span style="display:inline-block;width:14px;height:14px;'
+                    f'border-radius:2px;background:{_lc};flex-shrink:0;"></span>'
+                    f'<span style="color:#e2e8f0;">{_ln}</span></span>'
+                )
+            _lh += "</div>"
+            components.html(_lh, height=44, scrolling=False)
 
 
 def dashboard_budget_by_period(df):
@@ -10432,100 +10577,99 @@ def dashboard_budget_by_period(df):
             with col1:
                 period_type = st.selectbox(
                     "Группировать по", ["Месяц", "Квартал", "Год"], key="budget_period"
-            )
+                )
             period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
             period_type_en = period_map.get(period_type, "Month")
 
-        with col2:
-            if "project name" in filtered_df.columns:
-                _project_opts = _unique_project_labels_for_select(
-                    filtered_df["project name"]
+            with col2:
+                if "project name" in filtered_df.columns:
+                    _project_opts = _unique_project_labels_for_select(
+                        filtered_df["project name"]
+                    )
+                    selected_projects, _bdds_all_projects = project_filter_multiselect(st, _project_opts,
+                        key="budget_project",
+                    )
+                else:
+                    selected_projects = []
+                    _bdds_all_projects = True
+
+            with col3:
+                st.selectbox(
+                    "Представление",
+                    ["По месяцам", "Накопительно"],
+                    key="budget_period_view",
+                    help="Как строить график и нижнюю сводную таблицу: по периодам или накопительно.",
                 )
-                selected_projects, _bdds_all_projects = project_filter_multiselect(st, _project_opts,
-                    key="budget_project",
+
+            _bdds_sel_projects = list(selected_projects or [])
+            _bdds_proj_df = filtered_df.copy()
+            if _bdds_sel_projects and "project name" in _bdds_proj_df.columns:
+                _bdds_proj_df = _filter_df_by_project_labels(
+                    _bdds_proj_df, _bdds_sel_projects
                 )
-            else:
-                selected_projects = []
-                _bdds_all_projects = True
+
+            ensure_date_columns(_bdds_proj_df)
+            _period_from, _period_to = None, None
+            with col4:
+                if "plan end" in _bdds_proj_df.columns:
+                    _pe_series = pd.to_datetime(_bdds_proj_df["plan end"], errors="coerce")
+                    if _pe_series.notna().any():
+                        _pe_min = _pe_series.min()
+                        _pe_max = _pe_series.max()
+                        _def_start = _pe_min.date() if pd.notna(_pe_min) else None
+                        _def_end = _pe_max.date() if pd.notna(_pe_max) else None
+                        try:
+                            _pe_all = pd.to_datetime(df["plan end"], errors="coerce")
+                            if _pe_all.notna().any():
+                                _bdds_min_all = _pe_all.min().date()
+                                _bdds_max_all = _pe_all.max().date()
+                            else:
+                                _bdds_min_all, _bdds_max_all = _def_start, _def_end
+                        except Exception:
+                            _bdds_min_all, _bdds_max_all = _def_start, _def_end
+                        if _def_start and _def_end:
+                            _bdds_scope = tuple(sorted(_bdds_sel_projects)) if _bdds_sel_projects else ("__all__",)
+                            if st.session_state.get("_bdds_period_scope") != _bdds_scope:
+                                st.session_state["_bdds_period_scope"] = _bdds_scope
+                                st.session_state.pop("budget_period_range", None)
+                        _period_from, _period_to = period_date_range_input(
+                            st,
+                            "budget_period_range",
+                            min_value=_bdds_min_all or _def_start,
+                            max_value=_bdds_max_all or _def_end,
+                            default=(_def_start, _def_end) if _def_start and _def_end else None,
+                            help="Диапазон по полю «Конец план».",
+                        )
+
         selected_projects = list(selected_projects or [])
-
-        if selected_projects and "project name" in filtered_df.columns:
-            filtered_df = _filter_df_by_project_labels(
-                filtered_df, selected_projects
-            )
-
-        with col3:
-            st.selectbox(
-                "Представление",
-                ["По месяцам", "Накопительно"],
-                key="budget_period_view",
-                help="Как строить график и нижнюю сводную таблицу: по периодам или накопительно.",
-            )
-
-        ensure_date_columns(filtered_df)
+        filtered_df = _bdds_proj_df.copy()
         _bdds_cal_start = None
         _bdds_cal_end = None
-        # R23-13.1 (стр.34): календарь «Период» по диапазону «plan end»; дополнительно
-        # селектор «Год» (колонка фильтров) и «Группировать по» (месяц/квартал/год).
-        if "plan end" in filtered_df.columns:
+        if _period_from is not None and _period_to is not None and "plan end" in filtered_df.columns:
             _pe_series = pd.to_datetime(filtered_df["plan end"], errors="coerce")
-            if _pe_series.notna().any():
-                _pe_min = _pe_series.min()
-                _pe_max = _pe_series.max()
-                _def_start = _pe_min.date() if pd.notna(_pe_min) else None
-                _def_end = _pe_max.date() if pd.notna(_pe_max) else None
-                # Правки куратора 08.05.2026: min/max календаря брать из ВСЕГО df,
-                # иначе при единственной дате у проекта календарь «залипает»
-                # (min_value == max_value) и ничего нельзя выбрать.
-                try:
-                    _pe_all = pd.to_datetime(df["plan end"], errors="coerce")
-                    if _pe_all.notna().any():
-                        _bdds_min_all = _pe_all.min().date()
-                        _bdds_max_all = _pe_all.max().date()
-                    else:
-                        _bdds_min_all, _bdds_max_all = _def_start, _def_end
-                except Exception:
-                    _bdds_min_all, _bdds_max_all = _def_start, _def_end
-                # По умолчанию — весь период проекта; при смене проекта сбрасываем диапазон.
-                if _def_start and _def_end:
-                    _bdds_scope = tuple(sorted(selected_projects)) if selected_projects else ("__all__",)
-                    if st.session_state.get("_bdds_period_scope") != _bdds_scope:
-                        st.session_state["_bdds_period_scope"] = _bdds_scope
-                        st.session_state.pop("budget_period_range", None)
-                _period_from, _period_to = period_date_range_input(
-                    st,
-                    "budget_period_range",
-                    min_value=_bdds_min_all or _def_start,
-                    max_value=_bdds_max_all or _def_end,
-                    default=(_def_start, _def_end) if _def_start and _def_end else None,
-                    help="Диапазон по полю «Конец план».",
-                )
-                if _period_from is not None and _period_to is not None:
-                    _start_dt = pd.to_datetime(_period_from, errors="coerce")
-                    _end_dt = pd.to_datetime(_period_to, errors="coerce")
-                    if pd.notna(_start_dt) and pd.notna(_end_dt):
-                        if _start_dt > _end_dt:
-                            _start_dt, _end_dt = _end_dt, _start_dt
-                        _end_inclusive = _end_dt + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-                        if "plan start" in filtered_df.columns:
-                            _ps_series = pd.to_datetime(
-                                filtered_df["plan start"], errors="coerce"
-                            )
-                            filtered_df = filtered_df[
-                                _pe_series.notna()
-                                & _ps_series.notna()
-                                & (_ps_series <= _end_inclusive)
-                                & (_pe_series >= _start_dt)
-                            ].copy()
-                        else:
-                            filtered_df = filtered_df[
-                                (_pe_series >= _start_dt) & (_pe_series <= _end_inclusive)
-                            ].copy()
-                        _bdds_cal_start = _start_dt
-                        _bdds_cal_end = _end_dt
+            _start_dt = pd.to_datetime(_period_from, errors="coerce")
+            _end_dt = pd.to_datetime(_period_to, errors="coerce")
+            if pd.notna(_start_dt) and pd.notna(_end_dt):
+                if _start_dt > _end_dt:
+                    _start_dt, _end_dt = _end_dt, _start_dt
+                _end_inclusive = _end_dt + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+                if "plan start" in filtered_df.columns:
+                    _ps_series = pd.to_datetime(filtered_df["plan start"], errors="coerce")
+                    filtered_df = filtered_df[
+                        _pe_series.notna()
+                        & _ps_series.notna()
+                        & (_ps_series <= _end_inclusive)
+                        & (_pe_series >= _start_dt)
+                    ].copy()
+                else:
+                    filtered_df = filtered_df[
+                        (_pe_series >= _start_dt) & (_pe_series <= _end_inclusive)
+                    ].copy()
+                _bdds_cal_start = _start_dt
+                _bdds_cal_end = _end_dt
 
         with filters_toggles(st):
-            _bd_cb1, _bd_cb2, _bd_cb3 = st.columns(3, gap="small")
+            _bd_cb1, _bd_cb2, _bd_cb3, _bd_cb4, _bd_cb5 = st.columns(5, gap="small")
             with _bd_cb1:
                 st.checkbox(
                     "Показать отклонение",
@@ -10533,6 +10677,14 @@ def dashboard_budget_by_period(df):
                     key="budget_period_show_deviation",
                     help="По умолчанию на графике только план и факт; при включении добавляются столбцы отклонения.",
                 )
+            with _bd_cb2:
+                if period_type_en == "Month" and str(st.session_state.get("budget_period_view", "По месяцам")) == "По месяцам":
+                    st.checkbox(
+                        "Скрывать месяцы, где план и факт равны 0",
+                        value=bool(_bdds_all_projects),
+                        key="budget_period_hide_zero_months",
+                        help="Скрывает месяцы с нулевым планом и фактом на графике и в таблице ниже.",
+                    )
 
     show_deviation = bool(st.session_state.get("budget_period_show_deviation", False))
     hide_reserve = not show_deviation
@@ -10773,14 +10925,11 @@ def dashboard_budget_by_period(df):
         else:
             project_data = project_data.sort_values("period_original").copy()
 
-        _hide_zero_months = False
-        if period_type_en == "Month" and view_type == "По месяцам":
-            _hide_zero_months = st.checkbox(
-                "Скрывать месяцы, где план и факт равны 0",
-                value=bool(_bdds_all_projects),
-                key="budget_period_hide_zero_months",
-                help="Скрывает месяцы с нулевым планом и фактом на графике и в таблице ниже.",
-            )
+        _hide_zero_months = bool(
+            period_type_en == "Month"
+            and view_type == "По месяцам"
+            and st.session_state.get("budget_period_hide_zero_months", _bdds_all_projects)
+        )
 
         def _bdds_chart_drop_empty_months(_df: pd.DataFrame) -> pd.DataFrame:
             if _df is None or _df.empty:
@@ -10836,7 +10985,7 @@ def dashboard_budget_by_period(df):
             _leg_b_pre = max(340, min(520, 300 + int(_n * 4.8)))
         elif _n > 24:
             _leg_b_pre = max(300, min(460, 280 + int(_n * 3.5)))
-        _top_px_pre = 72 if (_hide_bar_value_labels and _n > 20) else 88
+        _top_px_pre = 72 if (_hide_bar_value_labels and _n > 20) else 140
         _min_plot_core_px = 400
         _ch_base = 600 if _n <= 20 else int(min(1100, 520 + int(_n * 1.4)))
         _ch = max(_ch_base, _top_px_pre + _leg_b_pre + _min_plot_core_px)
@@ -10847,12 +10996,12 @@ def dashboard_budget_by_period(df):
         _plan_txt = (
             None
             if _hide_bar_value_labels
-            else _finance_bar_text_mln_rub(project_data["budget plan"], min_abs_mln=_tlbl)
+            else _finance_bar_text_mln_rub(project_data["budget plan"], min_abs_mln=_tlbl, unit_suffix=" млн. руб.")
         )
         _fact_txt = (
             None
             if _hide_bar_value_labels
-            else _finance_bar_text_mln_rub(project_data["budget fact"], min_abs_mln=_tlbl)
+            else _finance_bar_text_mln_rub(project_data["budget fact"], min_abs_mln=_tlbl, unit_suffix=" млн. руб.")
         )
         _txt_pos = "none" if _hide_bar_value_labels else "outside"
 
@@ -10971,18 +11120,14 @@ def dashboard_budget_by_period(df):
             ),
         )
         fig = _apply_finance_bar_label_layout(fig)
-        if _n > 10:
-            try:
-                fig.update_layout(uniformtext=dict(minsize=5, mode="hide"))
-            except Exception:
-                pass
+        try:
+            fig.update_layout(uniformtext=dict(minsize=6, mode="hide"))
+        except Exception:
+            pass
         # Легенда под графиком (margin b согласован с расчётом высоты _ch выше).
         _leg_b = _leg_b_pre
         _leg_y = -0.34 if _n <= 20 else (-0.38 if _n <= 36 else -0.44)
         _top_px = _top_px_pre
-        fig = _plotly_legend_horizontal_below_plot(
-            fig, bottom_px=_leg_b, legend_y=_leg_y, top_px=_top_px
-        )
         try:
             fig.update_xaxes(
                 title=dict(text=period_label, standoff=_x_standoff),
@@ -11015,19 +11160,14 @@ def dashboard_budget_by_period(df):
                 if _ymax > 0 or _ymin < 0:
                     fig.update_layout(yaxis=dict(range=[_ymin, max(_ymax * 1.22, 0.01)]))
         fig = apply_chart_background(fig)
-        try:
-            _finance_plotly_apply_bar_width(
-                fig,
-                _n,
-                project_data[period_col].astype(str).tolist(),
-            )
-        except Exception:
-            pass
-        render_chart(
+        _render_finance_bar_chart(
             fig,
-            caption_below=f"БДДС{title_suffix}",
+            n_periods=_n,
             height=_ch,
-            max_height=None,
+            caption_below=f"БДДС{title_suffix}",
+            categories=project_data[period_col].astype(str).tolist(),
+            px_per_month=400,
+            force_hscroll=True,
         )
 
         # Сводная таблица синхронизирована с «Вид отображения» (по месяцам / накопительно).
@@ -11399,63 +11539,66 @@ def dashboard_budget_cumulative(df):
 
 
     with filters_panel(st):
-        col1, col2, col3 = st.columns(3, gap="small")
+        with filters_selectors(st):
+            col1, col2, col3, col4, col5 = st.columns(5, gap="small")
 
-        with col1:
-            period_type = st.selectbox(
-                "Группировать по", ["Месяц", "Квартал", "Год"], key="budget_cum_period"
-            )
+            with col1:
+                period_type = st.selectbox(
+                    "Группировать по", ["Месяц", "Квартал", "Год"], key="budget_cum_period"
+                )
             period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
             period_type_en = period_map.get(period_type, "Month")
 
-        with col2:
-            if "project name" in df.columns:
-                projects = ["Все"] + _unique_project_labels_for_select(df["project name"])
-                selected_project = st.selectbox(
-                    "Проект", projects, key="budget_cum_project"
-                )
-            else:
-                selected_project = "Все"
-    
-        col3 = st.columns(1, gap="small")[0]
-        with col3:
-            if "section" in df.columns:
-                sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
-                selected_section = st.selectbox(
-                    "Этап", sections, key="budget_cum_section"
-                )
-            else:
-                selected_section = "Все"
+            with col2:
+                if "project name" in df.columns:
+                    projects = ["Все"] + _unique_project_labels_for_select(df["project name"])
+                    selected_project = st.selectbox(
+                        "Проект", projects, key="budget_cum_project"
+                    )
+                else:
+                    selected_project = "Все"
 
-        _bcc_preview = df.copy()
-        if selected_project != "Все" and "project name" in _bcc_preview.columns:
-            _bcc_preview = _bcc_preview[
-                _bcc_preview["project name"].map(_project_filter_norm_key)
-                == _project_filter_norm_key(selected_project)
-            ]
-        if selected_section != "Все" and "section" in _bcc_preview.columns:
-            _bcc_preview = _bcc_preview[
-                _bcc_preview["section"].astype(str).str.strip()
-                == str(selected_section).strip()
-            ]
-        selected_year = "Все"
-        ensure_date_columns(_bcc_preview)
-        if "plan end" in _bcc_preview.columns:
-            pe_y = pd.to_datetime(_bcc_preview["plan end"], errors="coerce")
-            if pe_y.notna().any():
-                _years = sorted({int(y) for y in pe_y.dt.year.dropna().unique().tolist()})
-                selected_year = st.selectbox(
-                    "Год",
-                    ["Все"] + [str(y) for y in _years],
-                    key="budget_cum_year",
-                )
+            with col3:
+                if "section" in df.columns:
+                    sections = ["Все"] + sorted(df["section"].dropna().unique().tolist())
+                    selected_section = st.selectbox(
+                        "Этап", sections, key="budget_cum_section"
+                    )
+                else:
+                    selected_section = "Все"
+
+            _bcc_preview = df.copy()
+            if selected_project != "Все" and "project name" in _bcc_preview.columns:
+                _bcc_preview = _bcc_preview[
+                    _bcc_preview["project name"].map(_project_filter_norm_key)
+                    == _project_filter_norm_key(selected_project)
+                ]
+            if selected_section != "Все" and "section" in _bcc_preview.columns:
+                _bcc_preview = _bcc_preview[
+                    _bcc_preview["section"].astype(str).str.strip()
+                    == str(selected_section).strip()
+                ]
+            selected_year = "Все"
+            ensure_date_columns(_bcc_preview)
+            with col4:
+                if "plan end" in _bcc_preview.columns:
+                    pe_y = pd.to_datetime(_bcc_preview["plan end"], errors="coerce")
+                    if pe_y.notna().any():
+                        _years = sorted({int(y) for y in pe_y.dt.year.dropna().unique().tolist()})
+                        selected_year = st.selectbox(
+                            "Год",
+                            ["Все"] + [str(y) for y in _years],
+                            key="budget_cum_year",
+                        )
 
         with filters_toggles(st):
-            hide_reserve = st.checkbox(
-                "Скрыть отклонение (столбец на графике)",
-                value=False,
-                key="budget_cum_hide_reserve",
-            )
+            _bcc_cb1, _bcc_cb2, _bcc_cb3, _bcc_cb4, _bcc_cb5 = st.columns(5, gap="small")
+            with _bcc_cb1:
+                hide_reserve = st.checkbox(
+                    "Скрыть отклонение (столбец на графике)",
+                    value=False,
+                    key="budget_cum_hide_reserve",
+                )
 
     filtered_df = df.copy()
     if selected_project != "Все" and "project name" in filtered_df.columns:
@@ -12384,22 +12527,64 @@ def dashboard_bdr(df):
     _bdr_cal_end = None
     # Как БДДС: период / проект / год — список проектов из MSP; год после фильтра по проекту.
     with filters_panel(st):
-        col1, col2, col3 = st.columns(3, gap="small")
-        with col1:
-            period_type = st.selectbox(
-                "Группировать по", ["Месяц", "Квартал", "Год"], key="bdr_period"
-            )
+        with filters_selectors(st):
+            col1, col2, col3, col4, _col5 = st.columns(5, gap="small")
+            with col1:
+                period_type = st.selectbox(
+                    "Группировать по", ["Месяц", "Квартал", "Год"], key="bdr_period"
+                )
             period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
             period_type_en = period_map.get(period_type, "Month")
-        with col2:
-            if "project name" in df_src.columns:
-                projects = ["Все"] + _unique_project_labels_for_select(df_src["project name"])
-                selected_project = st.selectbox(
-                    "Проект", projects, key="bdr_project"
+            with col2:
+                if "project name" in df_src.columns:
+                    projects = ["Все"] + _unique_project_labels_for_select(df_src["project name"])
+                    selected_project = st.selectbox(
+                        "Проект", projects, key="bdr_project"
+                    )
+                else:
+                    selected_project = "Все"
+            with col3:
+                st.selectbox(
+                    "Представление",
+                    ["По месяцам", "Накопительно"],
+                    key="bdr_period_view",
+                    help="Как строить график и сводную таблицу: по периодам или накопительно.",
                 )
-            else:
-                selected_project = "Все"
-    
+
+            _bdr_proj_df = df_work.copy()
+            if selected_project != "Все" and "project name" in _bdr_proj_df.columns:
+                _bdr_proj_df = _bdr_proj_df[
+                    _bdr_proj_df["project name"].map(_project_filter_norm_key)
+                    == _project_filter_norm_key(selected_project)
+                ].copy()
+            ensure_date_columns(_bdr_proj_df)
+            _bdr_period_from, _bdr_period_to = None, None
+            with col4:
+                if "plan end" in _bdr_proj_df.columns:
+                    _pe_series_bdr = pd.to_datetime(_bdr_proj_df["plan end"], errors="coerce")
+                    if _pe_series_bdr.notna().any():
+                        _bdr_min = _pe_series_bdr.min()
+                        _bdr_max = _pe_series_bdr.max()
+                        _bdr_start = _bdr_min.date() if pd.notna(_bdr_min) else None
+                        _bdr_end = _bdr_max.date() if pd.notna(_bdr_max) else None
+                        try:
+                            _pe_all_bdr = pd.to_datetime(df["plan end"], errors="coerce")
+                            if _pe_all_bdr.notna().any():
+                                _bdr_min_all = _pe_all_bdr.min().date()
+                                _bdr_max_all = _pe_all_bdr.max().date()
+                            else:
+                                _bdr_min_all, _bdr_max_all = _bdr_start, _bdr_end
+                        except Exception:
+                            _bdr_min_all, _bdr_max_all = _bdr_start, _bdr_end
+                        _bdr_period_from, _bdr_period_to = period_date_range_input(
+                            st,
+                            "bdr_period_range",
+                            min_value=_bdr_min_all or _bdr_start,
+                            max_value=_bdr_max_all or _bdr_end,
+                            default=(_bdr_start, _bdr_end) if _bdr_start and _bdr_end else None,
+                            help="Диапазон по полю «Конец план».",
+                        )
+
         if period_type_en == "Month":
             period_col = "plan_month"
             period_label = "Месяц"
@@ -12409,63 +12594,51 @@ def dashboard_bdr(df):
         else:
             period_col = "plan_year"
             period_label = "Год"
-    
+
         if period_col not in df_work.columns:
             st.warning(f"Столбец периода «{period_col}» не найден. Добавьте даты в данные.")
             return
-    
-        filtered_df = df_work.copy()
-        if selected_project != "Все" and "project name" in filtered_df.columns:
-            filtered_df = filtered_df[
-                filtered_df["project name"].map(_project_filter_norm_key)
-                == _project_filter_norm_key(selected_project)
-            ].copy()
 
-        with col3:
-            st.selectbox(
-                "Представление",
-                ["По месяцам", "Накопительно"],
-                key="bdr_period_view",
-                help="Как строить график и сводную таблицу: по периодам или накопительно.",
-            )
-
-        ensure_date_columns(filtered_df)
-        if "plan end" in filtered_df.columns:
+        filtered_df = _bdr_proj_df.copy()
+        if _bdr_period_from is not None and _bdr_period_to is not None and "plan end" in filtered_df.columns:
             _pe_series_bdr = pd.to_datetime(filtered_df["plan end"], errors="coerce")
-            if _pe_series_bdr.notna().any():
-                _bdr_min = _pe_series_bdr.min()
-                _bdr_max = _pe_series_bdr.max()
-                _bdr_start = _bdr_min.date() if pd.notna(_bdr_min) else None
-                _bdr_end = _bdr_max.date() if pd.notna(_bdr_max) else None
-                try:
-                    _pe_all_bdr = pd.to_datetime(df["plan end"], errors="coerce")
-                    if _pe_all_bdr.notna().any():
-                        _bdr_min_all = _pe_all_bdr.min().date()
-                        _bdr_max_all = _pe_all_bdr.max().date()
+            _bdr_from = pd.to_datetime(_bdr_period_from, errors="coerce")
+            _bdr_to = pd.to_datetime(_bdr_period_to, errors="coerce")
+            if pd.notna(_bdr_from) and pd.notna(_bdr_to):
+                if _bdr_from > _bdr_to:
+                    _bdr_from, _bdr_to = _bdr_to, _bdr_from
+                filtered_df = filtered_df[
+                    (_pe_series_bdr >= _bdr_from)
+                    & (_pe_series_bdr <= (_bdr_to + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)))
+                ].copy()
+                _bdr_cal_start = _bdr_from
+                _bdr_cal_end = _bdr_to
+
+        _bdr_all_projects = str(selected_project).strip() in ("", "Все")
+        _bdr_view_monthly = str(st.session_state.get("bdr_period_view", "По месяцам")) == "По месяцам"
+        with filters_toggles(st):
+            _bdr_cb1, _bdr_cb2, _bdr_cb3, _bdr_cb4, _bdr_cb5 = st.columns(5, gap="small")
+            with _bdr_cb1:
+                if bdr_tz_mode:
+                    st.checkbox(
+                        "Скрыть отклонение",
+                        value=False,
+                        key="bdr_hide_deviation_tz",
+                    )
+            with _bdr_cb2:
+                if period_type_en == "Month" and _bdr_view_monthly:
+                    if bdr_tz_mode:
+                        st.checkbox(
+                            "Скрывать месяцы, где план и факт расходов равны 0",
+                            value=bool(_bdr_all_projects),
+                            key="bdr_hide_zero_months_tz",
+                        )
                     else:
-                        _bdr_min_all, _bdr_max_all = _bdr_start, _bdr_end
-                except Exception:
-                    _bdr_min_all, _bdr_max_all = _bdr_start, _bdr_end
-                _bdr_period_from, _bdr_period_to = period_date_range_input(
-                    st,
-                    "bdr_period_range",
-                    min_value=_bdr_min_all or _bdr_start,
-                    max_value=_bdr_max_all or _bdr_end,
-                    default=(_bdr_start, _bdr_end) if _bdr_start and _bdr_end else None,
-                    help="Диапазон по полю «Конец план».",
-                )
-                if _bdr_period_from is not None and _bdr_period_to is not None:
-                    _bdr_from = pd.to_datetime(_bdr_period_from, errors="coerce")
-                    _bdr_to = pd.to_datetime(_bdr_period_to, errors="coerce")
-                    if pd.notna(_bdr_from) and pd.notna(_bdr_to):
-                        if _bdr_from > _bdr_to:
-                            _bdr_from, _bdr_to = _bdr_to, _bdr_from
-                        filtered_df = filtered_df[
-                            (_pe_series_bdr >= _bdr_from)
-                            & (_pe_series_bdr <= (_bdr_to + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)))
-                        ].copy()
-                        _bdr_cal_start = _bdr_from
-                        _bdr_cal_end = _bdr_to
+                        st.checkbox(
+                            "Скрывать месяцы, где доходы и расходы равны 0",
+                            value=True,
+                            key="bdr_hide_zero_months",
+                        )
     
     if bdr_tz_mode:
         filtered_df["_plan_exp"] = _coerce_bdr_amount_series(filtered_df[plan_ec]).fillna(0.0)
@@ -12522,11 +12695,7 @@ def dashboard_bdr(df):
         title_suffix = ""
 
         if bdr_tz_mode:
-            hide_deviation = st.checkbox(
-                "Скрыть отклонение",
-                value=False,
-                key="bdr_hide_deviation_tz",
-            )
+            hide_deviation = bool(st.session_state.get("bdr_hide_deviation_tz", False))
             if view_type == "Накопительно":
                 chart_df["План расходов"] = chart_df["План расходов"].cumsum()
                 chart_df["Факт расходов"] = chart_df["Факт расходов"].cumsum()
@@ -12548,13 +12717,11 @@ def dashboard_bdr(df):
                 _keep = (_dp.abs() + _dfx.abs()) >= _FINANCE_CHART_MIN_MONTH_RUB
                 return _cdf.loc[_keep].copy()
 
-            _bdr_hide_zero = False
-            if period_type_en == "Month" and view_type == "По месяцам":
-                _bdr_hide_zero = st.checkbox(
-                    "Скрывать месяцы, где план и факт расходов равны 0",
-                    value=bool(_bdr_all_projects),
-                    key="bdr_hide_zero_months_tz",
-                )
+            _bdr_hide_zero = bool(
+                period_type_en == "Month"
+                and view_type == "По месяцам"
+                and st.session_state.get("bdr_hide_zero_months_tz", _bdr_all_projects)
+            )
             if period_type_en == "Month" and view_type == "По месяцам" and not chart_df.empty:
                 chart_df = _bdr_drop_empty_months(chart_df)
             if (
@@ -12590,7 +12757,9 @@ def dashboard_bdr(df):
             elif _nb > 24:
                 _leg_b_pre = max(300, min(460, 280 + int(_nb * 3.5)))
             # Больше верхнего поля — чтобы подписи «outside» и высокие столбцы не обрезались при прокрутке/зуме.
-            _top_px_pre = 124 if not _hide_bar_value_labels else (72 if _nb > 20 else 88)
+            _top_px_pre = (
+                168 if _nb <= 12 else (188 if _nb <= 20 else 208)
+            ) if not _hide_bar_value_labels else (72 if _nb > 20 else 88)
             _min_plot_core_px = 400
             _bdr_h_base = 600 if _nb <= 20 else int(min(1100, 520 + int(_nb * 1.4)))
             _bdr_h = max(_bdr_h_base, _top_px_pre + _leg_b_pre + _min_plot_core_px)
@@ -12598,6 +12767,8 @@ def dashboard_bdr(df):
             _xb = -45 if _nb <= 18 else -50 if _nb <= 36 else -55
             _x_standoff = 30 if _nb <= 18 else (44 if _nb <= 36 else 56)
             _txt_pos_b = "none" if _hide_bar_value_labels else "outside"
+            # Короткий суффикс чтобы подпись влезла в ширину бара при горизонтальном расположении
+            _suf_b = " млн. руб."
             _plan_txt_b = (
                 None
                 if _hide_bar_value_labels
@@ -12605,6 +12776,7 @@ def dashboard_bdr(df):
                     chart_df["План расходов"],
                     min_abs_mln=_tlbl_b,
                     decimals=1,
+                    unit_suffix=_suf_b,
                 )
             )
             _fact_txt_b = (
@@ -12614,6 +12786,7 @@ def dashboard_bdr(df):
                     chart_df["Факт расходов"],
                     min_abs_mln=_tlbl_b,
                     decimals=1,
+                    unit_suffix=_suf_b,
                 )
             )
 
@@ -12646,25 +12819,33 @@ def dashboard_bdr(df):
                 )
             )
             if not hide_deviation:
-                _dev_mln_b = chart_df["Отклонение"].div(1e6)
                 _dev_thr_b = 0.01
-                _y_b_fact_lt = _dev_mln_b.where(_dev_mln_b > _dev_thr_b)
-                _y_b_fact_gt = _dev_mln_b.where(_dev_mln_b < -_dev_thr_b)
+                (
+                    _y_b_fact_lt,
+                    _y_b_fact_gt,
+                    _dev_txt_lt,
+                    _dev_clr_lt,
+                    _dev_txt_gt,
+                    _dev_clr_gt,
+                ) = _finance_bdr_expense_deviation_chart_parts(
+                    chart_df["План расходов"],
+                    chart_df["Факт расходов"],
+                    threshold_mln=_dev_thr_b,
+                    min_abs_mln=_tlbl_dev,
+                    decimals=1,
+                    unit_suffix=" млн",
+                )
+                # Подписи отклонения убраны — значения видны в hover и в таблице ниже
                 if _y_b_fact_lt.notna().any():
-                    _dev_txt_lt = (
-                        None
-                        if _hide_bar_value_labels
-                        else _finance_bar_text_from_mln_series(_y_b_fact_lt, decimals=1)
-                    )
                     fig.add_trace(
                         go.Bar(
                             x=x_vals,
                             y=_y_b_fact_lt,
                             name="Отклонение (факт < план)",
-                            marker_color="#e74c3c",
-                            text=_dev_txt_lt,
-                            textposition=_txt_pos_b,
-                            textfont=dict(size=_tfs_b, color="#f0f4f8"),
+                            marker_color=_FINANCE_DEV_BAR_GREEN,
+                            text=None if _hide_bar_value_labels else _dev_txt_lt,
+                            textposition="outside" if not _hide_bar_value_labels else "none",
+                            textfont=dict(size=_tfs_b, color=_dev_clr_lt),
                             customdata=_y_b_fact_lt.map(
                                 lambda v: format_million_rub(float(v) * 1e6) if pd.notna(v) else ""
                             ),
@@ -12672,20 +12853,15 @@ def dashboard_bdr(df):
                         )
                     )
                 if _y_b_fact_gt.notna().any():
-                    _dev_txt_gt = (
-                        None
-                        if _hide_bar_value_labels
-                        else _finance_bar_text_from_mln_series(_y_b_fact_gt, decimals=1)
-                    )
                     fig.add_trace(
                         go.Bar(
                             x=x_vals,
                             y=_y_b_fact_gt,
                             name="Отклонение (факт > план)",
-                            marker_color="#27ae60",
-                            text=_dev_txt_gt,
-                            textposition=_txt_pos_b,
-                            textfont=dict(size=_tfs_b, color="#f0f4f8"),
+                            marker_color=_FINANCE_DEV_BAR_RED,
+                            text=None if _hide_bar_value_labels else _dev_txt_gt,
+                            textposition="outside" if not _hide_bar_value_labels else "none",
+                            textfont=dict(size=_tfs_b, color=_dev_clr_gt),
                             customdata=_y_b_fact_gt.map(
                                 lambda v: format_million_rub(float(v) * 1e6) if pd.notna(v) else ""
                             ),
@@ -12699,7 +12875,7 @@ def dashboard_bdr(df):
                 barmode="group",
                 bargap=_bgb,
                 bargroupgap=_bggb,
-                uniformtext=dict(minsize=7, mode="show"),
+                uniformtext=dict(minsize=6, mode="hide"),
                 xaxis=dict(
                     title=dict(text=period_label, standoff=_x_standoff),
                     tickangle=_xb,
@@ -12717,18 +12893,15 @@ def dashboard_bdr(df):
                 _ymax = float(np.nanmax(np.concatenate(_series_for_range)))
                 _ymin = float(np.nanmin(np.concatenate(_series_for_range)))
                 if np.isfinite(_ymax) and np.isfinite(_ymin):
-                    pad = max(abs(_ymax), abs(_ymin), 1e-6) * 0.22
+                    pad = max(abs(_ymax), abs(_ymin), 1e-6) * 0.28
                     span = float(max(_ymax - _ymin, 1e-6))
-                    head = max(span * 0.22, abs(_ymax) * 0.14, 0.55)
-                    foot = pad if _ymin >= 0 else max(pad, abs(_ymin) * 0.18)
+                    head = max(span * 0.32, abs(_ymax) * 0.2, 0.75)
+                    foot = pad if _ymin >= 0 else max(pad, abs(_ymin) * 0.24)
                     fig.update_layout(yaxis=dict(range=[_ymin - foot, _ymax + pad + head]))
             fig = _apply_finance_bar_label_layout(fig, y_rangemode=None)
             _leg_b = _leg_b_pre
             _leg_y = -0.34 if _nb <= 20 else (-0.38 if _nb <= 36 else -0.44)
             _top_px = _top_px_pre
-            fig = _plotly_legend_horizontal_below_plot(
-                fig, bottom_px=_leg_b, legend_y=_leg_y, top_px=_top_px
-            )
             try:
                 fig.update_xaxes(
                     title=dict(text=period_label, standoff=_x_standoff),
@@ -12737,19 +12910,15 @@ def dashboard_bdr(df):
             except Exception:
                 pass
             fig = apply_chart_background(fig)
-            try:
-                _finance_plotly_apply_bar_width(
-                    fig,
-                    _nb,
-                    chart_df["Период"].astype(str).tolist(),
-                )
-            except Exception:
-                pass
-            render_chart(
+            # px_per_month=400; статичная легенда под скроллом через _render_finance_bar_chart
+            _render_finance_bar_chart(
                 fig,
-                caption_below=f"БДР. План/факт расходов{title_suffix}",
+                n_periods=_nb,
                 height=_bdr_h,
-                max_height=None,
+                caption_below=f"БДР. План/факт расходов{title_suffix}",
+                categories=chart_df["Период"].astype(str).tolist(),
+                px_per_month=400,
+                force_hscroll=True,
             )
 
             st.subheader(_bdr_tz_table_title)
@@ -12914,13 +13083,11 @@ def dashboard_bdr(df):
             chart_df["Сальдо"] = chart_df["Доходы"] - chart_df["Расходы"]
             title_suffix = " (накопительно)"
 
-        _bdr_hide_zero = False
-        if period_type_en == "Month" and view_type == "По месяцам":
-            _bdr_hide_zero = st.checkbox(
-                "Скрывать месяцы, где доходы и расходы равны 0",
-                value=True,
-                key="bdr_hide_zero_months",
-            )
+        _bdr_hide_zero = bool(
+            period_type_en == "Month"
+            and view_type == "По месяцам"
+            and st.session_state.get("bdr_hide_zero_months", True)
+        )
         if (
             _bdr_hide_zero
             and period_type_en == "Month"
@@ -29822,7 +29989,9 @@ def _load_dogovor_lookup() -> dict[str, dict]:
             guid = str(r.get("ID_Договора") or "").strip().lower()
             if not guid:
                 continue
-            num = str(r.get("Номер_Договора") or "").strip()
+            num = str(
+                r.get("Номер_Договора") or r.get("Номер_договора") or ""
+            ).strip()
             name = str(r.get("Наименование_Договора") or "").strip()
             contractor = str(r.get("Наименование_Контрагента") or "").strip()
             try:
@@ -32055,7 +32224,7 @@ def dashboard_predpisania(df):
                 rec = _dog_lookup.get(key)
                 if not rec:
                     return v
-                num = (rec.get("Номер_Договора") or "").strip()
+                num = (rec.get("Номер_Договора") or rec.get("Номер_договора") or "").strip()
                 return num if num else v
             pred[contract_col] = pred[contract_col].map(_resolve_contract_no)
 
@@ -32247,6 +32416,11 @@ def dashboard_predpisania(df):
                         for x in pred[contract_col].dropna().tolist()
                         if str(x).strip()
                         and str(x).strip().lower() not in ("nan", "none", "nat")
+                        and not re.match(
+                            r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            str(x).strip(),
+                            re.I,
+                        )
                     },
                     key=lambda x: x.casefold(),
                 )
@@ -32261,18 +32435,23 @@ def dashboard_predpisania(df):
                     if cq
                     else []
                 )
-                if len(_matches) == 1:
-                    contract_q = _matches[0]
-                    contract_exact = True
-                elif len(_matches) > 1:
+                if _matches:
+                    _pick_key = "pred_m_contract_pick"
+                    if cq != st.session_state.get("_pred_contract_q_prev"):
+                        st.session_state.pop(_pick_key, None)
+                        st.session_state["_pred_contract_q_prev"] = cq
                     contract_q = st.selectbox(
                         "Совпадения № договора",
                         options=_matches,
-                        key="pred_m_contract_pick",
+                        key=_pick_key,
                     )
                     contract_exact = True
-                else:
+                elif cq:
                     contract_q = cq
+                    contract_exact = False
+                    st.caption("Нет совпадений в загруженных № договоров")
+                else:
+                    contract_q = ""
                     contract_exact = False
             else:
                 contract_q = st.text_input(
