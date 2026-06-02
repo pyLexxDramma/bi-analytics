@@ -35029,9 +35029,9 @@ def _project_schedule_gantt_x_range(
     lo_bars = min(start_pts) if start_pts else min(pts)
     hi_bars = max(pts)
     span = max((hi_bars - lo_bars).total_seconds() / 86400.0, 1.0)
-    text_pad_l = timedelta(days=max(10.0, span * 0.022))
+    text_pad_l = timedelta(days=max(14.0, span * 0.030))
     text_pad_r = timedelta(days=max(10.0, span * 0.022))
-    lo_pad = lo_bars - timedelta(days=max(0.5, span * 0.003))
+    lo_pad = lo_bars - text_pad_l
     hi_pad = hi_bars + timedelta(days=max(8.0, span * 0.030))
     if label_left_x:
         try:
@@ -35107,15 +35107,17 @@ def _project_schedule_gantt_label_column_layout(
 
 
 
+_GANTT_SCHEDULE_BAR_WIDTH = 0.12  # толщина полосы по оси Y (~в 4 раза уже прежней ~0.48)
+_GANTT_SCHEDULE_BARGROUPGAP = 0.03
+
+
 def _gantt_grouped_bar_lane_offset(lane: str, *, has_fact_trace: bool) -> float:
     """Смещение центра полосы plan/fact относительно индекса строки (grouped bar)."""
     if not has_fact_trace:
         return 0.0
     n_traces = 2
-    bargap = 0.02
-    bargroupgap = 0.03
-    group_span = 1.0 - bargap
-    bar_size = (group_span - bargroupgap * (n_traces - 1)) / n_traces
+    bar_size = float(_GANTT_SCHEDULE_BAR_WIDTH)
+    bargroupgap = float(_GANTT_SCHEDULE_BARGROUPGAP)
     idx = 0 if lane == "plan" else 1
     return (idx - (n_traces - 1) / 2.0) * (bar_size + bargroupgap)
 
@@ -36567,6 +36569,7 @@ def dashboard_project_schedule_chart(df):
                 x=plan_len_ms,
                 y=_plan_y,
                 base=plan_base_ms,
+                width=_GANTT_SCHEDULE_BAR_WIDTH,
                 marker=dict(color=_GANTT_PLAN_COLOR),
                 text=_plan_trace_text,
                 textposition="outside" if label_pct else "none",
@@ -36585,6 +36588,7 @@ def dashboard_project_schedule_chart(df):
                     x=fact_len_ms,
                     y=_fact_y,
                     base=fact_base_ms,
+                    width=_GANTT_SCHEDULE_BAR_WIDTH,
                     marker=dict(color=_GANTT_FACT_COLOR),
                     text=[""] * len(y_labels),
                     textposition="none",
@@ -36681,8 +36685,8 @@ def dashboard_project_schedule_chart(df):
             yaxis_title=None,
             margin=dict(l=left_m, r=_right_m, t=36, b=112),
             showlegend=False,
-            bargap=0.02,
-            bargroupgap=0.03,
+            bargap=0.78,
+            bargroupgap=_GANTT_SCHEDULE_BARGROUPGAP,
             uirevision="gantt_project_schedule_bars",
         )
         if _y_name_ann or _date_ann:
