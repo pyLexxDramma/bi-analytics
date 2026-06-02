@@ -339,14 +339,12 @@ def probe_ssh_workspace() -> tuple[bool, str]:
 def get_opencode_browser_url() -> str:
     from opencode_ui_url import (
         DEFAULT_XCA_WORKSPACE,
-        build_xca_ui_url,
         normalize_opencode_browser_url,
-        workspace_slug,
     )
 
     api_base = get_opencode_base_url()
     browser_base = _opencode_browser_base_url()
-    url = normalize_opencode_browser_url(build_xca_ui_url(browser_base))
+    url = normalize_opencode_browser_url(browser_base)
     try:
         r = requests.post(
             f"{api_base.rstrip('/')}/session",
@@ -357,8 +355,8 @@ def get_opencode_browser_url() -> str:
         if r.status_code < 400:
             sid = str(r.json().get("id", "")).strip()
             if sid:
-                slug = workspace_slug()
-                return f"{browser_base.rstrip('/')}/{slug}/session/{sid}"
+                ui_base = url.rstrip("/")
+                return f"{ui_base}/session/{sid}"
     except requests.RequestException:
         pass
     return url

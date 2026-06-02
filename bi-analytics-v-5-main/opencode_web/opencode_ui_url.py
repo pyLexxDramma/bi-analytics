@@ -31,6 +31,15 @@ def decode_directory_slug(slug: str) -> str | None:
         return None
 
 
+def _strip_directory_slug_suffix(base: str, slug: str) -> str:
+    """Remove trailing /{slug} from URL path (root or workspace)."""
+    b = base.rstrip("/")
+    for s in (slug, ROOT_SLASH_SLUG):
+        if b.endswith(f"/{s}"):
+            return b[: -len(s) - 1]
+    return b
+
+
 def build_xca_ui_url(base_url: str, workspace_dir: str | None = None) -> str:
     """
     Открывать проект /workspace: http://127.0.0.1:4096/L3dvcmtzcGFjZQ/
@@ -38,7 +47,8 @@ def build_xca_ui_url(base_url: str, workspace_dir: str | None = None) -> str:
     """
     directory = (workspace_dir or DEFAULT_XCA_WORKSPACE).strip() or DEFAULT_XCA_WORKSPACE
     slug = encode_directory_slug(directory)
-    return f"{base_url.rstrip('/')}/{slug}/"
+    base = _strip_directory_slug_suffix((base_url or "").strip().rstrip("/"), slug)
+    return f"{base.rstrip('/')}/{slug}/"
 
 def workspace_slug(workspace_dir: str | None = None) -> str:
     directory = (workspace_dir or DEFAULT_XCA_WORKSPACE).strip() or DEFAULT_XCA_WORKSPACE
@@ -51,10 +61,20 @@ def normalize_opencode_browser_url(url: str, workspace_dir: str | None = None) -
     raw = (url or "").strip()
     if not raw:
         return build_xca_ui_url("http://127.0.0.1:4096", directory)
-    if f"/{slug}/" in raw or raw.rstrip("/").endswith(f"/{slug}"):
-        return raw if raw.endswith("/") else raw + "/"
-    base = raw.split("?", 1)[0].split("#", 1)[0].rstrip("/")
-    if base.endswith(f"/{ROOT_SLASH_SLUG}"):
-        base = base[: -len(ROOT_SLASH_SLUG) - 1]
+    path_part = raw.split("?", 1)[0].split("#", 1)[0]
+    if f"/{slug}/" in path_part or path_part.rstrip("/").endswith(f"/{slug}"):
+        clean = raw.split("#", 1)[0]
+        return clean if clean.endswith("/") else clean + "/"
+    base = _strip_directory_slug_suffix(path_part.rstrip("/"), slug)
     return build_xca_ui_url(base or "http://127.0.0.1:4096", directory)
+
+
+def is_opencode_web_ui_url(url: str) -> bool:
+    u = (url or "").strip().lower()
+    if not u or "_opencode_ai" in u:
+        return False
+    return any(
+        hint in u
+        for hint in ("/opencode", ":4096", "opencode.ai.conall.ru", "opencode.conall.ru")
+    )
 

@@ -289,21 +289,35 @@ def is_dev_branch() -> bool:
     return br == "dev" or br.startswith("dev/") or br.startswith("dev-")
 
 
+def _xca_workspace_dir() -> str:
+    ws = _read_env_or_secret("XCA_WORKSPACE_DIR").strip()
+    return ws or "/workspace"
+
+
+def _opencode_ui_url_module():
+    import sys
+    from pathlib import Path as _Path
+
+    ow = _Path(__file__).resolve().parent / "opencode_web"
+    if not ow.is_dir():
+        return None
+    ow_s = str(ow)
+    if ow_s not in sys.path:
+        sys.path.insert(0, ow_s)
+    import opencode_ui_url as mod
+
+    return mod
+
+
 def _opencode_workspace_url(public_base: str) -> str:
     """Public OpenCode Web UI URL (/workspace)."""
     base = (public_base or "").strip().rstrip("/")
     if not base:
         return ""
     try:
-        import sys
-        from pathlib import Path as _Path
-        ow = _Path(__file__).resolve().parent / "opencode_web"
-        if ow.is_dir():
-            ow_s = str(ow)
-            if ow_s not in sys.path:
-                sys.path.insert(0, ow_s)
-            from opencode_ui_url import build_xca_ui_url
-            return build_xca_ui_url(base)
+        mod = _opencode_ui_url_module()
+        if mod is not None:
+            return mod.normalize_opencode_browser_url(base, _xca_workspace_dir())
     except Exception:
         pass
     return f"{base}/L3dvcmtzcGFjZQ/"
@@ -343,12 +357,18 @@ def _embedded_ai_url_for_current_app() -> str:
 
 
 def _normalize_ai_assistant_public_url(url: str) -> str:
-    """opencode.ai.conall.ru без DNS → рабочий путь ai.conall.ru/opencode/…"""
+    """OpenCode Web UI: всегда slug /workspace, не корень / (Lw)."""
     u = (url or "").strip()
     if not u or "_opencode_ai" in u.lower():
         return u
     if "opencode.ai.conall.ru" in u.lower():
-        return AI_ASSISTANT_URL_PATH_FALLBACK
+        u = "https://ai.conall.ru/opencode"
+    try:
+        mod = _opencode_ui_url_module()
+        if mod is not None and mod.is_opencode_web_ui_url(u):
+            return mod.normalize_opencode_browser_url(u, _xca_workspace_dir())
+    except Exception:
+        pass
     return u
 
 
