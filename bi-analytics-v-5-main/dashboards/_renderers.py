@@ -1,4 +1,4 @@
-﻿"""
+"""
 Отрисовка дашбордов. Код перенесён из project_visualization_app.py для уменьшения главного файла.
 """
 import streamlit as st
@@ -1754,6 +1754,133 @@ _DEV_REASONS_FULL_TABLE_CSS = """
 """
 
 
+
+_DEV_MAKET_COL_BG = "#9cc2e5"
+
+
+def _deviations_maket_task_id_col(frame: pd.DataFrame) -> str | None:
+    if frame is None or getattr(frame, "empty", True):
+        return None
+    lower_map = {str(c).strip().lower(): c for c in frame.columns}
+    for key in (
+        "unique id", "unique_id", "task id seq", "task id", "ид", "id",
+        "уникальный_идентификатор", "external task id",
+    ):
+        if key in lower_map:
+            return lower_map[key]
+    return None
+
+
+def _deviations_maket_prepare_df(table_reason_df: pd.DataFrame) -> pd.DataFrame:
+    """MSP level 5, filled reason, finish deviation < 0; sorted most negative first."""
+    if table_reason_df is None or getattr(table_reason_df, "empty", True):
+        return table_reason_df.iloc[0:0].copy() if table_reason_df is not None else pd.DataFrame()
+    work_m = table_reason_df.copy()
+    if "_dt_lvl3_key" not in work_m.columns or "_dt_lvl2_key" not in work_m.columns:
+        _lc_m = _dev_tasks_resolve_level_column(work_m)
+        _tc_m = (
+            "task name" if "task name" in work_m.columns
+            else find_column(work_m, ["Задача", "task", "Task Name", "Название"])
+        )
+        if _lc_m and _tc_m:
+            work_m = _dev_tasks_build_ancestor_keys(work_m, _lc_m, _tc_m)
+    try:
+        ensure_date_columns(work_m)
+    except Exception:
+        pass
+    if "plan end" in work_m.columns:
+        work_m["plan end"] = pd.to_datetime(work_m["plan end"], errors="coerce", dayfirst=True)
+    if "base end" in work_m.columns:
+        work_m["base end"] = pd.to_datetime(work_m["base end"], errors="coerce", dayfirst=True)
+    work_m["_end_diff"] = np.nan
+    if "plan end" in work_m.columns and "base end" in work_m.columns:
+        _m = work_m["plan end"].notna() & work_m["base end"].notna()
+        work_m.loc[_m, "_end_diff"] = (
+            work_m.loc[_m, "base end"] - work_m.loc[_m, "plan end"]
+        ).dt.total_seconds() / 86400.0
+    mask_r = pd.Series(True, index=work_m.index)
+    if "reason of deviation" in work_m.columns:
+        mask_r = (
+            work_m["reason of deviation"].notna()
+            & (work_m["reason of deviation"].astype(str).str.strip() != "")
+        )
+    mask_l = pd.Series(True, index=work_m.index)
+    if "level" in work_m.columns:
+        mask_l = pd.to_numeric(work_m["level"], errors="coerce") == 5
+    mask_neg = work_m["_end_diff"].notna() & (work_m["_end_diff"] < 0)
+    maket_df = work_m[mask_r & mask_l & mask_neg].copy()
+    _dd_key_cols = [
+        c for c in ["project name", "task name", "plan end", "base end", "reason of deviation"]
+        if c in maket_df.columns
+    ]
+    if _dd_key_cols and not maket_df.empty:
+        _dd_tmp = maket_df.copy()
+        for _ddc in _dd_key_cols:
+            _dd_tmp[_ddc] = _dd_tmp[_ddc].astype(str).str.strip()
+        maket_df = maket_df[~_dd_tmp.duplicated(subset=_dd_key_cols, keep="first")].copy()
+    if not maket_df.empty:
+        maket_df = maket_df.sort_values("_end_diff", ascending=True).reset_index(drop=True)
+    return maket_df
+
+
+def _deviations_stacked_bar_add_totals(
+    fig,
+    frame: pd.DataFrame,
+    *,
+    period_col: str,
+    value_col: str,
+    min_segments: int = 2,
+) -> None:
+    if frame is None or frame.empty or period_col not in frame.columns or value_col not in frame.columns:
+        return
+    tot = (
+        frame.groupby(period_col, observed=False)[value_col]
+        .sum()
+        .reset_index()
+    )
+    for _, row in tot.iterrows():
+        x_pos = row[period_col]
+        sub = frame[frame[period_col].astype(str) == str(x_pos)]
+        nz = pd.to_numeric(sub[value_col], errors="coerce").fillna(0)
+        if (nz != 0).sum() < min_segments:
+            continue
+        v = row[value_col]
+        if pd.isna(v) or float(v) == 0:
+            continue
+        txt = str(int(round(float(v), 0)))
+        fv = float(v)
+        fig.add_annotation(
+            x=x_pos,
+            y=fv,
+            text=f"<b>{txt}</b>",
+            showarrow=False,
+            xref="x",
+            yref="y",
+            xanchor="center",
+            yanchor="bottom",
+            yshift=10,
+            font=dict(color="#f5f5f5", size=14),
+        )
+
+
+def _deviations_plotly_project_chart_title(fig, project_name: str) -> None:
+    name = str(project_name or "").strip()
+    if not name:
+        return
+    try:
+        fig.update_layout(
+            title=dict(text=name, x=0.5, xanchor="center", font=dict(size=18, color="#e8eef5")),
+            margin=dict(t=72),
+        )
+        fig.for_each_annotation(
+            lambda a: a.update(text=name)
+            if a.text and str(a.text).startswith("project name=")
+            else None
+        )
+    except Exception:
+        pass
+
+
 def _dev_days_diff(a, b):
     """Разница (a − b) в днях; NaN если нет дат."""
     if a is None or b is None:
@@ -1940,48 +2067,9 @@ def build_deviations_maket_export_df(
     table_reason_df, building_col=None, notes_col=None
 ) -> pd.DataFrame:
     """Строки таблицы по макету (ур. 5, причина, отклонение окончания < 0) — как выгрузка maket."""
-    from utils import ensure_date_columns
-
-    if table_reason_df is None or getattr(table_reason_df, "empty", True):
-        return pd.DataFrame()
-    work_m = table_reason_df.copy()
-    try:
-        ensure_date_columns(work_m)
-    except Exception:
-        pass
-    if "plan end" in work_m.columns:
-        work_m["plan end"] = pd.to_datetime(
-            work_m["plan end"], errors="coerce", dayfirst=True
-        )
-    if "base end" in work_m.columns:
-        work_m["base end"] = pd.to_datetime(
-            work_m["base end"], errors="coerce", dayfirst=True
-        )
-
-    work_m["_end_diff"] = np.nan
-    if "plan end" in work_m.columns and "base end" in work_m.columns:
-        _m = work_m["plan end"].notna() & work_m["base end"].notna()
-        work_m.loc[_m, "_end_diff"] = (
-            work_m.loc[_m, "base end"] - work_m.loc[_m, "plan end"]
-        ).dt.total_seconds() / 86400.0
-
-    mask_r = pd.Series(True, index=work_m.index)
-    if "reason of deviation" in work_m.columns:
-        mask_r = (
-            work_m["reason of deviation"].notna()
-            & (work_m["reason of deviation"].astype(str).str.strip() != "")
-        )
-    mask_l = pd.Series(True, index=work_m.index)
-    if "level" in work_m.columns:
-        _ln = pd.to_numeric(work_m["level"], errors="coerce")
-        mask_l = _ln == 5
-    mask_neg = work_m["_end_diff"].notna() & (work_m["_end_diff"] < 0)
-    maket_df = work_m[mask_r & mask_l & mask_neg].copy()
-    maket_df = maket_df.sort_values("_end_diff", ascending=True)
-
+    maket_df = _deviations_maket_prepare_df(table_reason_df)
     if maket_df.empty:
         return pd.DataFrame()
-
     notes_col_m = (
         notes_col
         if notes_col and notes_col in maket_df.columns
@@ -1989,26 +2077,40 @@ def build_deviations_maket_export_df(
             maket_df, ("note", "заметк", "comment", "remark", "notes")
         )
     )
+    _id_col_m = _deviations_maket_task_id_col(maket_df)
     _maket_out = []
-    for i, (_, rr) in enumerate(maket_df.iterrows(), start=1):
-        row = {"№": i, "Проект": _clean_display_str(rr.get("project name"))}
-        if "block" in maket_df.columns:
-            row["Функциональный блок"] = _clean_display_str(rr.get("block"))
-        if building_col and building_col in maket_df.columns:
-            row["Строение"] = _clean_display_str(rr.get(building_col))
+    for _, rr in maket_df.iterrows():
+        fb = _clean_display_str(rr.get("block")) if "block" in maket_df.columns else ""
+        if not fb and "_dt_lvl2_key" in maket_df.columns:
+            fb = _clean_display_str(rr.get("_dt_lvl2_key"))
+        stv = _clean_display_str(rr.get("_dt_lvl3_key")) if "_dt_lvl3_key" in maket_df.columns else ""
+        if not stv and building_col and building_col in maket_df.columns:
+            stv = _clean_display_str(rr.get(building_col))
         pe = rr.get("plan end")
-        fe = rr.get("base end")
+        be = rr.get("base end")
         ed = rr.get("_end_diff")
-        row["Базовое окончание"] = pe.strftime("%d.%m.%Y") if pd.notna(pe) else ""
-        row["Окончание"] = fe.strftime("%d.%m.%Y") if pd.notna(fe) else ""
-        row["Отклонение"] = int(round(float(ed), 0)) if pd.notna(ed) else ""
-        row["Причина отклонения"] = _clean_display_str(rr.get("reason of deviation"))
-        row["Заметки"] = (
-            _clean_display_str(rr.get(notes_col_m))
-            if notes_col_m and notes_col_m in maket_df.columns
-            else ""
+        tid = ""
+        if _id_col_m and _id_col_m in maket_df.columns:
+            _raw_id = rr.get(_id_col_m)
+            if pd.notna(_raw_id) and str(_raw_id).strip() not in ("", "nan", "none"):
+                tid = str(_raw_id).strip()
+        _maket_out.append(
+            {
+                "ID задачи": tid,
+                "Проект": _clean_display_str(rr.get("project name")),
+                "Функциональный блок": fb,
+                "Строение": stv,
+                "Базовое окончание": be.strftime("%d.%m.%Y") if pd.notna(be) else "",
+                "Окончание": pe.strftime("%d.%m.%Y") if pd.notna(pe) else "",
+                "Отклонение": int(round(float(ed), 0)) if pd.notna(ed) else "",
+                "Причина отклонения": _clean_display_str(rr.get("reason of deviation")),
+                "Заметки": (
+                    _clean_display_str(rr.get(notes_col_m))
+                    if notes_col_m and notes_col_m in maket_df.columns
+                    else ""
+                ),
+            }
         )
-        _maket_out.append(row)
     return pd.DataFrame(_maket_out)
 
 
@@ -4515,16 +4617,16 @@ def dashboard_deviations_combined(df):
         )
     with tab_reasons:
         _render_tab_safe(
-            dashboard_dynamics_of_reasons,
+            dashboard_dynamics_of_deviations,
             filtered_shared,
-            tab_label="Динамика причин отклонений по месяцам",
+            tab_label="Динамика отклонений по месяцам",
             hide_shared_filters=True,
         )
     with tab_dynamics:
         _render_tab_safe(
-            dashboard_dynamics_of_deviations,
+            dashboard_dynamics_of_reasons,
             filtered_shared,
-            tab_label="Динамика отклонений по месяцам",
+            tab_label="Динамика причин отклонений по месяцам",
             hide_shared_filters=True,
         )
 
@@ -5041,160 +5143,82 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
     notes_col_m = _find_column_by_keywords(
         filtered_df, ("note", "заметк", "comment", "remark", "notes")
     )
-    work_m = table_reason_df.copy()
-    if "_dt_lvl3_key" not in work_m.columns or "_dt_lvl2_key" not in work_m.columns:
-        _lc_m = _dev_tasks_resolve_level_column(work_m)
-        _tc_m = (
-            "task name" if "task name" in work_m.columns
-            else find_column(work_m, ["Задача", "task", "Task Name", "Название"])
-        )
-        if _lc_m and _tc_m:
-            work_m = _dev_tasks_build_ancestor_keys(work_m, _lc_m, _tc_m)
-    try:
-        ensure_date_columns(work_m)
-    except Exception:
-        pass
-    if "plan end" in work_m.columns:
-        work_m["plan end"] = pd.to_datetime(
-            work_m["plan end"], errors="coerce", dayfirst=True
-        )
-    if "base end" in work_m.columns:
-        work_m["base end"] = pd.to_datetime(
-            work_m["base end"], errors="coerce", dayfirst=True
-        )
-
-    work_m["_end_diff"] = np.nan
-    if "plan end" in work_m.columns and "base end" in work_m.columns:
-        _m = work_m["plan end"].notna() & work_m["base end"].notna()
-        work_m.loc[_m, "_end_diff"] = (
-            work_m.loc[_m, "base end"] - work_m.loc[_m, "plan end"]
-        ).dt.total_seconds() / 86400.0
-
-    mask_r = pd.Series(True, index=work_m.index)
-    if "reason of deviation" in work_m.columns:
-        mask_r = (
-            work_m["reason of deviation"].notna()
-            & (work_m["reason of deviation"].astype(str).str.strip() != "")
-        )
-    mask_l = pd.Series(True, index=work_m.index)
-    if "level" in work_m.columns:
-        _ln = pd.to_numeric(work_m["level"], errors="coerce")
-        mask_l = _ln == 5
-    mask_neg = work_m["_end_diff"].notna() & (work_m["_end_diff"] < 0)
-    maket_df = work_m[mask_r & mask_l & mask_neg].copy()
-    _dd_key_cols = [c for c in ["project name", "task name", "plan end", "base end", "reason of deviation"] if c in maket_df.columns]
-    if _dd_key_cols and not maket_df.empty:
-        _dd_tmp = maket_df.copy()
-        for _ddc in _dd_key_cols:
-            _dd_tmp[_ddc] = _dd_tmp[_ddc].astype(str).str.strip()
-        _dd_mask = ~_dd_tmp.duplicated(subset=_dd_key_cols, keep="first")
-        maket_df = maket_df[_dd_mask.values].copy()
-    maket_df = maket_df.sort_values("_end_diff", ascending=True)
+    maket_df = _deviations_maket_prepare_df(table_reason_df)
+    _id_col_m = _deviations_maket_task_id_col(maket_df)
 
     if maket_df.empty:
         st.info(
-            "По макету нет строк: уровень 5, непустая причина, отклонение окончания < 0. "
-            "Ниже — полная выгрузка по текущим фильтрам."
+            "По макету нет строк: уровень 5, непустая причина, отклонение окончания < 0."
         )
     else:
-        _date_bg_m = "rgba(46, 134, 171, 0.22)"
+        _date_bg_m = _DEV_MAKET_COL_BG
         _maket_wrap_id = f"dev_reason_maket_{abs(id(maket_df))}"
+        _hdrs = [
+            "ID задачи",
+            "Проект",
+            "Функциональный блок",
+            "Строение",
+            "Базовое окончание",
+            "Окончание",
+            "Отклонение",
+            "Причина отклонения",
+            "Заметки",
+        ]
+        _bg_hdrs = {"Базовое окончание", "Окончание", "Отклонение"}
         _tbl_m = [
-            f'<div id="{_maket_wrap_id}" class="rendered-table-wrap">',
-            '<table class="rendered-table bi-sortable-table bi-sort-click-only" style="border-collapse:collapse;width:100%">',
+            f'<div id="{_maket_wrap_id}" class="pred-detail-wrap rendered-table-wrap dev-maket-table-wrap" data-bi-rows="{len(maket_df)}">',
+            '<table class="rendered-table bi-sortable-table bi-sort-click-only dev-maket-table" style="border-collapse:collapse;width:100%">',
             "<thead><tr>",
         ]
-        _hdrs = ["№", "Проект"]
-        if "block" in maket_df.columns:
-            _hdrs.append("Функциональный блок")
-        _has_bld_data = (building_col and building_col in maket_df.columns) or ("_dt_lvl3_key" in maket_df.columns)
-        if _has_bld_data:
-            _hdrs.append("Строение")
-        _hdrs.extend(
-            [
-                "Базовое окончание",
-                "Окончание",
-                "Отклонение",
-                "Причина отклонения",
-                "Заметки",
-            ]
-        )
         for h in _hdrs:
-            _tbl_m.append(f"<th>{html_module.escape(h)}</th>")
+            _hst = f' style="background:{_date_bg_m};color:#0b1f33;"' if h in _bg_hdrs else ""
+            _hcls = ' class="dev-mak-col-proj"' if h == "Проект" else ""
+            _tbl_m.append(f"<th{_hcls}{_hst}>{html_module.escape(h)}</th>")
         _tbl_m.append("</tr></thead><tbody>")
 
-        for i, (_, rr) in enumerate(maket_df.iterrows(), start=1):
+        for _, rr in maket_df.iterrows():
             pr = _clean_display_str(rr.get("project name"))
-            fb = (
-                _clean_display_str(rr.get("block"))
-                if "block" in maket_df.columns
-                else ""
-            )
+            fb = _clean_display_str(rr.get("block")) if "block" in maket_df.columns else ""
             if not fb and "_dt_lvl2_key" in maket_df.columns:
                 fb = _clean_display_str(rr.get("_dt_lvl2_key"))
-            stv = ""
-            if "_dt_lvl3_key" in maket_df.columns:
-                stv = _clean_display_str(rr.get("_dt_lvl3_key"))
+            stv = _clean_display_str(rr.get("_dt_lvl3_key")) if "_dt_lvl3_key" in maket_df.columns else ""
             if not stv and building_col and building_col in maket_df.columns:
                 stv = _clean_display_str(rr.get(building_col))
             pe = rr.get("plan end")
-            fe = rr.get("base end")
+            be = rr.get("base end")
             ed = rr.get("_end_diff")
+            be_s = be.strftime("%d.%m.%Y") if pd.notna(be) else ""
             pe_s = pe.strftime("%d.%m.%Y") if pd.notna(pe) else ""
-            fe_s = fe.strftime("%d.%m.%Y") if pd.notna(fe) else ""
-            ed_s = ""
-            if pd.notna(ed):
-                ed_s = str(int(round(float(ed), 0)))
+            ed_s = str(int(round(float(ed), 0))) if pd.notna(ed) else ""
             rs = _clean_display_str(rr.get("reason of deviation"))
-            nt = ""
-            if notes_col_m and notes_col_m in maket_df.columns:
-                nt = _clean_display_str(rr.get(notes_col_m))
+            nt = _clean_display_str(rr.get(notes_col_m)) if notes_col_m and notes_col_m in maket_df.columns else ""
+            tid = ""
+            if _id_col_m and _id_col_m in maket_df.columns:
+                _raw_id = rr.get(_id_col_m)
+                if pd.notna(_raw_id) and str(_raw_id).strip() not in ("", "nan", "none"):
+                    tid = str(_raw_id).strip()
+            if pd.notna(ed):
+                ev = float(pd.to_numeric(ed, errors="coerce"))
+                _c_sp = "#ff5454" if ev < 0 else "#46d68a"
+            else:
+                _c_sp = "#e0e0e0"
 
             _tbl_m.append("<tr>")
-            _tbl_m.append(f"<td>{html_module.escape(str(i))}</td>")
-            _tbl_m.append(f"<td>{html_module.escape(pr)}</td>")
-            if "block" in maket_df.columns:
-                _tbl_m.append(f"<td>{html_module.escape(fb)}</td>")
-            if _has_bld_data:
-                _tbl_m.append(f"<td>{html_module.escape(stv)}</td>")
-            _tbl_m.append(
-                f'<td style="background:{_date_bg_m}">{html_module.escape(pe_s)}</td>'
-            )
-            _tbl_m.append(
-                f'<td style="background:{_date_bg_m}">{html_module.escape(fe_s)}</td>'
-            )
+            _tbl_m.append(f"<td>{html_module.escape(tid)}</td>")
+            _tbl_m.append(f'<td class="dev-mak-col-proj">{html_module.escape(pr)}</td>')
+            _tbl_m.append(f"<td>{html_module.escape(fb)}</td>")
+            _tbl_m.append(f"<td>{html_module.escape(stv)}</td>")
+            _tbl_m.append(f'<td style="background:{_date_bg_m}">{html_module.escape(be_s)}</td>')
+            _tbl_m.append(f'<td style="background:{_date_bg_m}">{html_module.escape(pe_s)}</td>')
             if pd.isna(ed):
-                _tbl_m.append(
-                    f'<td style="background:{_date_bg_m}">{html_module.escape("—")}</td>'
-                )
+                _tbl_m.append(f'<td style="background:{_date_bg_m}">—</td>')
             else:
-                ev = pd.to_numeric(ed, errors="coerce")
-                if pd.isna(ev):
-                    _tbl_m.append(
-                        f'<td style="background:{_date_bg_m}">{html_module.escape(ed_s)}</td>'
-                    )
-                else:
-                    ev = float(ev)
-                    if ev < 0:
-                        _dv_cls = "dev-mak-u"
-                        _c_sp = "#ff5454"
-                    elif ev > 0:
-                        _dv_cls = "dev-mak-o"
-                        _c_sp = "#46d68a"
-                    else:
-                        _dv_cls = "dev-mak-z"
-                        _c_sp = "#8899aa"
-                    _tbl_m.append(
-                        f'<td class="{_dv_cls}" style="background:{_date_bg_m};text-align:right">'
-                        f'<span style="color:{_c_sp}!important;font-weight:600">{html_module.escape(ed_s)}</span></td>'
-                    )
-            _bk_tbl = (
-                _deviations_reason_bucket_label(rr.get("reason of deviation"))
-                if "reason of deviation" in maket_df.columns
-                else "Прочее"
-            )
-            _clr_map_rt = _deviations_reason_bucket_colors()
-            _clr_tbl = _clr_map_rt.get(str(_bk_tbl).strip(), "") if _clr_map_rt else ""
+                _tbl_m.append(
+                    f'<td style="background:{_date_bg_m};text-align:right">'
+                    f'<span style="color:{_c_sp}!important;font-weight:600">{html_module.escape(ed_s)}</span></td>'
+                )
+            _bk_tbl = _deviations_reason_bucket_label(rr.get("reason of deviation")) if "reason of deviation" in maket_df.columns else "Прочее"
+            _clr_tbl = _deviations_reason_bucket_colors().get(str(_bk_tbl).strip(), "")
             _rs_esc = html_module.escape(rs)
             if _clr_tbl:
                 _tbl_m.append(
@@ -5206,26 +5230,18 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             _tbl_m.append("</tr>")
 
         _tbl_m.append("</tbody></table></div>")
-        # st.markdown может вырезать class/style у ячеек — выводим таблицу в iframe.
         _maket_iframe_css = (
             "<style>"
             "html,body{margin:0;padding:6px 8px;background:#0e1117;color:#e0e0e0;"
             "font-family:Inter,system-ui,sans-serif;font-size:13px;}"
-            f"#{_maket_wrap_id} .rendered-table td.dev-mak-u,"
-            f"#{_maket_wrap_id} .rendered-table td.dev-mak-u *"
-            "{color:#ff5454!important;font-weight:600!important;}"
-            f"#{_maket_wrap_id} .rendered-table td.dev-mak-o,"
-            f"#{_maket_wrap_id} .rendered-table td.dev-mak-o *"
-            "{color:#46d68a!important;font-weight:600!important;}"
-            f"#{_maket_wrap_id} .rendered-table td.dev-mak-z,"
-            f"#{_maket_wrap_id} .rendered-table td.dev-mak-z *"
-            "{color:#8899aa!important;font-weight:600!important;}"
+            f"#{_maket_wrap_id} .dev-mak-col-proj,"
+            f"#{_maket_wrap_id} th.dev-mak-col-proj"
+            "{white-space:nowrap!important;min-width:9em;max-width:none!important;word-break:keep-all;}"
+            f"#{_maket_wrap_id} thead th{{position:sticky;top:0;z-index:5;background:#0e1117;}}"
             "</style>"
         )
         st.markdown(f"**Записей (по макету):** {len(maket_df)}")
-        maket_csv_df = build_deviations_maket_export_df(
-            table_reason_df, building_col, notes_col_m
-        )
+        maket_csv_df = build_deviations_maket_export_df(table_reason_df, building_col, notes_col_m)
         render_report_html_table(
             _maket_iframe_css + _TABLE_CSS + "".join(_tbl_m),
             export_df=maket_csv_df,
@@ -5233,7 +5249,6 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             key_prefix="devtable_maket",
         )
 
-    _render_deviations_reasons_full_table(table_reason_df, building_col, notes_col_m)
 
 
 def _deviations_contrast_text_on_fill(fill_hex: str | None) -> str:
@@ -5799,6 +5814,366 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             else:
                 st.info("Нет данных по дням отклонений.")
     else:  # Grouped by project and/or reason
+        # Show by reason if reason is in group
+        if "reason of deviation" in group_cols:
+            if not hide_shared_filters:
+                st.subheader("По причинам")
+            # Агрегируем по периоду и причинам; при нескольких проектах — сохраняем «project name» для стека/фасетов
+            reason_data = grouped_data.copy()
+            reason_data["_reason_bucket"] = reason_data["reason of deviation"].map(
+                _deviations_reason_bucket_label
+            )
+            if "project name" in group_cols:
+                reason_data = (
+                    reason_data.groupby(
+                        ["period", "project name", "_reason_bucket"], observed=False
+                    )
+                    .agg({"Всего дней отклонений": "sum", "Количество задач": "sum"})
+                    .reset_index()
+                )
+            else:
+                reason_data = (
+                    reason_data.groupby(["period", "_reason_bucket"], observed=False)
+                    .agg({"Всего дней отклонений": "sum", "Количество задач": "sum"})
+                    .reset_index()
+                )
+
+            _reason_order = list(DEVIATIONS_REASON_BUCKET_ORDER)
+            _clr_map = _deviations_reason_bucket_colors()
+            _periods_grid = (
+                list(_period_cat_labels)
+                if _period_cat_labels
+                else reason_data["period"].drop_duplicates().tolist()
+            )
+            _period_x_title = f"Период ({str(period_label).lower()})"
+            _n_proj = (
+                int(reason_data["project name"].nunique(dropna=True))
+                if "project name" in reason_data.columns
+                else 0
+            )
+            _multi_proj = _n_proj > 1
+
+            def _seg_cnt_lbl(v) -> str:
+                if pd.isna(v):
+                    return ""
+                n = int(round(float(v), 0))
+                return str(n) if n != 0 else ""
+
+            # R23-04 page_10: проект важен в hover и при одном проекте — сохраняем
+            # единственное имя проекта в буферной переменной, чтобы добавить в hover.
+            _single_proj_name = None
+            if not _multi_proj and "project name" in reason_data.columns:
+                _vals = (
+                    reason_data["project name"].dropna().astype(str).str.strip().unique().tolist()
+                )
+                _vals = [x for x in _vals if x]
+                _single_proj_name = _vals[0] if _vals else None
+                reason_data = reason_data.drop(columns=["project name"], errors="ignore")
+
+            _DYN_GRID_MAX_PERIODS = 30
+            if not _multi_proj:
+                if _periods_grid and len(_periods_grid) <= _DYN_GRID_MAX_PERIODS:
+                    _grid_idx = pd.MultiIndex.from_product(
+                        [_periods_grid, _reason_order],
+                        names=["period", "_reason_bucket"],
+                    )
+                    reason_data = (
+                        reason_data.set_index(["period", "_reason_bucket"])
+                        .reindex(_grid_idx)
+                        .reset_index()
+                    )
+                    reason_data["Всего дней отклонений"] = reason_data[
+                        "Всего дней отклонений"
+                    ].fillna(0.0)
+                    reason_data["Количество задач"] = reason_data[
+                        "Количество задач"
+                    ].fillna(0.0)
+            elif _multi_proj:
+                # Полная сетка период × проект × причина — на каждом фасете одинаковое число
+                # категорий по X (как у «По проектам»), ширина столбцов согласована.
+                _projs_rd = sorted(
+                    reason_data["project name"].dropna().astype(str).str.strip().unique().tolist()
+                )
+                if (
+                    _periods_grid
+                    and _projs_rd
+                    and len(_periods_grid) <= _DYN_GRID_MAX_PERIODS
+                ):
+                    _grid_m = pd.MultiIndex.from_product(
+                        [_periods_grid, _projs_rd, _reason_order],
+                        names=["period", "project name", "_reason_bucket"],
+                    )
+                    reason_data = (
+                        reason_data.set_index(
+                            ["period", "project name", "_reason_bucket"]
+                        )
+                        .reindex(_grid_m)
+                        .reset_index()
+                    )
+                    reason_data["Всего дней отклонений"] = reason_data[
+                        "Всего дней отклонений"
+                    ].fillna(0.0)
+                    reason_data["Количество задач"] = reason_data[
+                        "Количество задач"
+                    ].fillna(0.0)
+
+            reason_data["_seg_lbl"] = reason_data["Количество задач"].map(_seg_cnt_lbl)
+            try:
+                reason_data["period"] = pd.Categorical(
+                    reason_data["period"],
+                    categories=_periods_grid,
+                    ordered=True,
+                )
+            except (ValueError, TypeError):
+                pass
+
+            if _multi_proj:
+                _projs_loop = sorted(
+                    reason_data["project name"].dropna().astype(str).str.strip().unique().tolist()
+                )
+                _n_per_facet = int(
+                    len(_periods_grid)
+                    if _periods_grid
+                    else reason_data["period"].nunique(dropna=True) or 0
+                )
+                _panel_h = int(max(520, 420 + min(_n_per_facet, 32) * 22))
+                _cap_dyn_multi = (
+                    "Каждый столбец — период; стек по причинам; отдельный график на проект. "
+                    "В сегменте — число отклонений по причине; над столбцом — итог за период. "
+                    "В подсказке (hover) — проект, причина, период, количество задач."
+                )
+                _hover_tpl_panel = (
+                    "<b>Причина: %{fullData.name}</b>"
+                    "<br>Проект: "
+                    + "{proj}"
+                    + "<br>Период: %{x}"
+                    "<br>Количество задач: %{y}<extra></extra>"
+                )
+                for _pname in _projs_loop:
+                    _rd_p = reason_data[
+                        reason_data["project name"].astype(str).str.strip() == _pname
+                    ].copy()
+                    _rd_p = _rd_p.drop(columns=["project name"], errors="ignore")
+                    fig = px.bar(
+                        _rd_p,
+                        x="period",
+                        y="Количество задач",
+                        color="_reason_bucket",
+                        title=None,
+                        color_discrete_map=_clr_map or None,
+                        category_orders={
+                            "period": _periods_grid,
+                            "_reason_bucket": _reason_order,
+                        },
+                        labels={
+                            "period": _period_x_title,
+                            "Количество задач": "Количество отклонений",
+                            "_reason_bucket": "Причина отклонения",
+                        },
+                        text="_seg_lbl",
+                    )
+                    _panel_ly = dict(
+                        barmode="stack",
+                        bargap=0.34,
+                        bargroupgap=0.06,
+                        showlegend=True,
+                        legend=dict(
+                            title=dict(text="Причина отклонения"),
+                            orientation="v",
+                            yanchor="top",
+                            y=1,
+                            x=1.02,
+                            xanchor="left",
+                            font=dict(size=12),
+                            traceorder="normal",
+                            itemsizing="constant",
+                        ),
+                        margin=dict(l=56, r=260, t=72, b=280),
+                        height=_panel_h,
+                        xaxis=dict(
+                            title=dict(
+                                text=_period_x_title,
+                                standoff=40,
+                                font=dict(size=13, color="#e8eef5"),
+                            ),
+                            tickangle=-45,
+                            tickfont=dict(size=12, color="#e8eef5"),
+                            automargin=True,
+                        ),
+                        yaxis=dict(
+                            title=dict(
+                                text="Количество отклонений",
+                                standoff=8,
+                                font=dict(size=13, color="#e8eef5"),
+                            ),
+                            automargin=True,
+                            tickfont=dict(size=12, color="#e8eef5"),
+                        ),
+                    )
+                    _g_f = _plotly_bargaps_sparse_x_like_gdrs(_n_per_facet)
+                    if _g_f:
+                        _panel_ly.update(_g_f)
+                    fig.update_layout(**_panel_ly)
+                    if _n_per_facet > 18:
+                        fig.update_xaxes(ticklabelstep=2)
+                    _deviations_plotly_project_chart_title(fig, _pname)
+                    _deviations_stacked_bar_add_totals(
+                        fig,
+                        _rd_p,
+                        period_col="period",
+                        value_col="Количество задач",
+                    )
+                    fig.update_traces(
+                        texttemplate="%{text}",
+                        textposition="inside",
+                        insidetextanchor="middle",
+                        textangle=0,
+                        cliponaxis=False,
+                        selector=dict(type="bar"),
+                    )
+                    _hov = _hover_tpl_panel.format(
+                        proj=html_module.escape(_pname)
+                    )
+                    for tr in fig.data:
+                        if getattr(tr, "type", None) != "bar":
+                            continue
+                        mc = getattr(tr.marker, "color", None)
+                        if isinstance(mc, str):
+                            tc = _deviations_contrast_text_on_fill(mc)
+                            tr.update(insidetextfont=dict(color=tc, size=13))
+                        tr.update(hovertemplate=_hov)
+                    fig = _plotly_bar_hide_legacy_textfont(fig)
+                    fig = apply_chart_background(fig, skip_uniformtext=True)
+                    render_chart(
+                        fig,
+                        caption_below=_dynamics_caption(_cap_dyn_multi),
+                    )
+                fig = None
+            else:
+                fig = px.bar(
+                    reason_data,
+                    x="period",
+                    y="Количество задач",
+                    color="_reason_bucket",
+                    title=None,
+                    color_discrete_map=_clr_map or None,
+                    category_orders={
+                        "period": _periods_grid,
+                        "_reason_bucket": _reason_order,
+                    },
+                    labels={
+                        "period": _period_x_title,
+                        "Количество задач": "Количество отклонений",
+                        "_reason_bucket": "Причина отклонения",
+                    },
+                    text="_seg_lbl",
+                )
+                _n_per_single = int(len(_periods_grid) if _periods_grid else reason_data["period"].nunique(dropna=True) or 0)
+                _single_h = int(max(1120, 880 + min(_n_per_single, 36) * 40))
+                _single_ly = dict(
+                    barmode="stack",
+                    bargap=0.34,
+                    bargroupgap=0.06,
+                    legend=dict(
+                        title=dict(text="Причина отклонения"),
+                        orientation="v",
+                        yanchor="top",
+                        y=1,
+                        x=1.02,
+                        xanchor="left",
+                        font=dict(size=12),
+                        traceorder="normal",
+                        itemsizing="constant",
+                    ),
+                    margin=dict(l=56, r=260, t=48, b=280),
+                    xaxis=dict(
+                        title=dict(text=_period_x_title, standoff=40, font=dict(size=13, color="#e8eef5")),
+                        tickangle=-45,
+                        tickfont=dict(size=12, color="#e8eef5"),
+                        automargin=True,
+                    ),
+                    yaxis=dict(
+                        title=dict(text="Количество отклонений", standoff=8, font=dict(size=13, color="#e8eef5")),
+                        automargin=True,
+                        tickfont=dict(size=12, color="#e8eef5"),
+                    ),
+                    height=_single_h,
+                )
+                _g_s = _plotly_bargaps_sparse_x_like_gdrs(_n_per_single)
+                if _g_s:
+                    _single_ly.update(_g_s)
+                fig.update_layout(**_single_ly)
+                if _n_per_single > 18:
+                    fig.update_xaxes(ticklabelstep=2)
+                # Один «взрывной» период по сумме стека — остальные не видны.
+                try:
+                    _stk = (
+                        reason_data.groupby("period", observed=False)["Количество задач"]
+                        .sum()
+                        .astype(float)
+                    )
+                    if len(_stk) > 0:
+                        _mxs = float(_stk.max())
+                        _p95s = float(_stk.quantile(0.95))
+                        if _mxs > 0 and _mxs > max(_p95s * 2.5, 30.0) and _p95s > 0:
+                            fig.update_yaxes(
+                                range=[0.0, max(_p95s * 1.15, 1.0)],
+                                autorange=False,
+                            )
+                except Exception:
+                    pass
+            if not _multi_proj:
+                fig.update_traces(
+                    texttemplate="%{text}",
+                    textposition="inside",
+                    insidetextanchor="middle",
+                    textangle=0,
+                    cliponaxis=False,
+                    selector=dict(type="bar"),
+                )
+                # R23-04 page_10: hover включает проект (даже для одного проекта),
+                # чтобы было очевидно, из какого проекта данные.
+                _proj_hover_line = (
+                    f"<br>Проект: {html_module.escape(_single_proj_name)}"
+                    if _single_proj_name
+                    else ""
+                )
+                _hover_tpl_single = (
+                    "<b>Причина: %{fullData.name}</b>"
+                    + _proj_hover_line
+                    + "<br>Период: %{x}"
+                    "<br>Количество задач: %{y}<extra></extra>"
+                )
+                for tr in fig.data:
+                    if getattr(tr, "type", None) != "bar":
+                        continue
+                    mc = getattr(tr.marker, "color", None)
+                    if isinstance(mc, str):
+                        tc = _deviations_contrast_text_on_fill(mc)
+                        tr.update(insidetextfont=dict(color=tc, size=13))
+                    tr.update(hovertemplate=_hover_tpl_single)
+
+                if _single_proj_name:
+                    _deviations_plotly_project_chart_title(fig, _single_proj_name)
+                _deviations_stacked_bar_add_totals(
+                    fig,
+                    reason_data,
+                    period_col="period",
+                    value_col="Количество задач",
+                )
+
+                fig = _plotly_bar_hide_legacy_textfont(fig)
+                fig = apply_chart_background(fig, skip_uniformtext=True)
+                _cap_dyn = (
+                    "Каждый столбец — период; стек по причинам. "
+                    "В сегменте — число отклонений по причине; над столбцом — итог за период. "
+                    "В подсказке (hover) — проект, причина, период, количество задач."
+                )
+                render_chart(
+                    fig,
+                    caption_below=_dynamics_caption(_cap_dyn),
+                )
+
         # Show by project if project is in group
         if "project name" in group_cols:
             if not hide_shared_filters:
@@ -5935,365 +6310,6 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             render_chart(
                 fig,
                 caption_below=_dynamics_caption("Дни отклонений по периоду"),
-            )
-
-        # Show by reason if reason is in group
-        if "reason of deviation" in group_cols:
-            if not hide_shared_filters:
-                st.subheader("По причинам")
-            # Агрегируем по периоду и причинам; при нескольких проектах — сохраняем «project name» для стека/фасетов
-            reason_data = grouped_data.copy()
-            reason_data["_reason_bucket"] = reason_data["reason of deviation"].map(
-                _deviations_reason_bucket_label
-            )
-            if "project name" in group_cols:
-                reason_data = (
-                    reason_data.groupby(
-                        ["period", "project name", "_reason_bucket"], observed=False
-                    )
-                    .agg({"Всего дней отклонений": "sum", "Количество задач": "sum"})
-                    .reset_index()
-                )
-            else:
-                reason_data = (
-                    reason_data.groupby(["period", "_reason_bucket"], observed=False)
-                    .agg({"Всего дней отклонений": "sum", "Количество задач": "sum"})
-                    .reset_index()
-                )
-
-            _reason_order = list(DEVIATIONS_REASON_BUCKET_ORDER)
-            _clr_map = _deviations_reason_bucket_colors()
-            _periods_grid = (
-                list(_period_cat_labels)
-                if _period_cat_labels
-                else reason_data["period"].drop_duplicates().tolist()
-            )
-            _period_x_title = f"Период ({str(period_label).lower()})"
-            _n_proj = (
-                int(reason_data["project name"].nunique(dropna=True))
-                if "project name" in reason_data.columns
-                else 0
-            )
-            _multi_proj = _n_proj > 1
-
-            def _seg_cnt_lbl(v) -> str:
-                if pd.isna(v):
-                    return ""
-                n = int(round(float(v), 0))
-                return str(n) if n != 0 else ""
-
-            # R23-04 page_10: проект важен в hover и при одном проекте — сохраняем
-            # единственное имя проекта в буферной переменной, чтобы добавить в hover.
-            _single_proj_name = None
-            if not _multi_proj and "project name" in reason_data.columns:
-                _vals = (
-                    reason_data["project name"].dropna().astype(str).str.strip().unique().tolist()
-                )
-                _vals = [x for x in _vals if x]
-                _single_proj_name = _vals[0] if _vals else None
-                reason_data = reason_data.drop(columns=["project name"], errors="ignore")
-
-            _DYN_GRID_MAX_PERIODS = 30
-            if not _multi_proj:
-                if _periods_grid and len(_periods_grid) <= _DYN_GRID_MAX_PERIODS:
-                    _grid_idx = pd.MultiIndex.from_product(
-                        [_periods_grid, _reason_order],
-                        names=["period", "_reason_bucket"],
-                    )
-                    reason_data = (
-                        reason_data.set_index(["period", "_reason_bucket"])
-                        .reindex(_grid_idx)
-                        .reset_index()
-                    )
-                    reason_data["Всего дней отклонений"] = reason_data[
-                        "Всего дней отклонений"
-                    ].fillna(0.0)
-                    reason_data["Количество задач"] = reason_data[
-                        "Количество задач"
-                    ].fillna(0.0)
-            elif _multi_proj:
-                # Полная сетка период × проект × причина — на каждом фасете одинаковое число
-                # категорий по X (как у «По проектам»), ширина столбцов согласована.
-                _projs_rd = sorted(
-                    reason_data["project name"].dropna().astype(str).str.strip().unique().tolist()
-                )
-                if (
-                    _periods_grid
-                    and _projs_rd
-                    and len(_periods_grid) <= _DYN_GRID_MAX_PERIODS
-                ):
-                    _grid_m = pd.MultiIndex.from_product(
-                        [_periods_grid, _projs_rd, _reason_order],
-                        names=["period", "project name", "_reason_bucket"],
-                    )
-                    reason_data = (
-                        reason_data.set_index(
-                            ["period", "project name", "_reason_bucket"]
-                        )
-                        .reindex(_grid_m)
-                        .reset_index()
-                    )
-                    reason_data["Всего дней отклонений"] = reason_data[
-                        "Всего дней отклонений"
-                    ].fillna(0.0)
-                    reason_data["Количество задач"] = reason_data[
-                        "Количество задач"
-                    ].fillna(0.0)
-
-            reason_data["_seg_lbl"] = reason_data["Количество задач"].map(_seg_cnt_lbl)
-            try:
-                reason_data["period"] = pd.Categorical(
-                    reason_data["period"],
-                    categories=_periods_grid,
-                    ordered=True,
-                )
-            except (ValueError, TypeError):
-                pass
-
-            if _multi_proj:
-                # Раньше до 4 колонок в ряд — панели слишком узкие. Одна колонка: полная ширина на проект.
-                _wrap = 1
-                _facet_rows = max(1, int(np.ceil(_n_proj / float(_wrap))))
-                _n_per_facet = int(len(_periods_grid) if _periods_grid else reason_data["period"].nunique(dropna=True) or 0)
-                _panel_h = int(max(520, 420 + min(_n_per_facet, 32) * 22))
-                fig = px.bar(
-                    reason_data,
-                    x="period",
-                    y="Количество задач",
-                    color="_reason_bucket",
-                    facet_col="project name",
-                    facet_col_wrap=_wrap,
-                    facet_row_spacing=0.12,
-                    facet_col_spacing=0.06,
-                    title=None,
-                    color_discrete_map=_clr_map or None,
-                    category_orders={
-                        "period": _periods_grid,
-                        "_reason_bucket": _reason_order,
-                    },
-                    labels={
-                        "period": _period_x_title,
-                        "Количество задач": "Количество отклонений",
-                        "_reason_bucket": "Причина отклонения",
-                        "project name": "Проект",
-                    },
-                    text="_seg_lbl",
-                )
-                _facet_ly = dict(
-                    barmode="stack",
-                    bargap=0.34,
-                    bargroupgap=0.06,
-                    legend=dict(
-                        title=dict(text="Причина отклонения"),
-                        orientation="v",
-                        yanchor="top",
-                        y=1,
-                        x=1.02,
-                        xanchor="left",
-                        font=dict(size=12),
-                        traceorder="normal",
-                        itemsizing="constant",
-                    ),
-                    margin=dict(l=56, r=260, t=96, b=360),
-                    height=min(
-                        3200,
-                        120 + _facet_rows * (_panel_h + 64),
-                    ),
-                )
-                _g_f = _plotly_bargaps_sparse_x_like_gdrs(_n_per_facet)
-                if _g_f:
-                    _facet_ly.update(_g_f)
-                fig.update_layout(**_facet_ly)
-                fig.update_xaxes(
-                    tickangle=-45,
-                    automargin=True,
-                    tickfont=dict(size=11, color="#e8eef5"),
-                    title=dict(text=_period_x_title, standoff=48, font=dict(size=12, color="#e8eef5")),
-                    ticklabelstandoff=12,
-                )
-                fig.update_yaxes(
-                    title=dict(text="Количество отклонений", standoff=8, font=dict(size=12, color="#e8eef5")),
-                    automargin=True,
-                    tickfont=dict(size=11, color="#e8eef5"),
-                )
-                if _n_per_facet > 18:
-                    fig.update_xaxes(ticklabelstep=2)
-                # По умолчанию yaxis2.matches='y' — общая шкала Y на всех фасетах; один пик
-                # «убивает» мелкие проекты. Снимаем привязку — автомасштаб на панель.
-                try:
-                    fig.update_yaxes(matches=None)
-                except Exception:
-                    pass
-            else:
-                fig = px.bar(
-                    reason_data,
-                    x="period",
-                    y="Количество задач",
-                    color="_reason_bucket",
-                    title=None,
-                    color_discrete_map=_clr_map or None,
-                    category_orders={
-                        "period": _periods_grid,
-                        "_reason_bucket": _reason_order,
-                    },
-                    labels={
-                        "period": _period_x_title,
-                        "Количество задач": "Количество отклонений",
-                        "_reason_bucket": "Причина отклонения",
-                    },
-                    text="_seg_lbl",
-                )
-                _n_per_single = int(len(_periods_grid) if _periods_grid else reason_data["period"].nunique(dropna=True) or 0)
-                _single_h = int(max(1120, 880 + min(_n_per_single, 36) * 40))
-                _single_ly = dict(
-                    barmode="stack",
-                    bargap=0.34,
-                    bargroupgap=0.06,
-                    legend=dict(
-                        title=dict(text="Причина отклонения"),
-                        orientation="v",
-                        yanchor="top",
-                        y=1,
-                        x=1.02,
-                        xanchor="left",
-                        font=dict(size=12),
-                        traceorder="normal",
-                        itemsizing="constant",
-                    ),
-                    margin=dict(l=56, r=260, t=48, b=280),
-                    xaxis=dict(
-                        title=dict(text=_period_x_title, standoff=40, font=dict(size=13, color="#e8eef5")),
-                        tickangle=-45,
-                        tickfont=dict(size=12, color="#e8eef5"),
-                        automargin=True,
-                    ),
-                    yaxis=dict(
-                        title=dict(text="Количество отклонений", standoff=8, font=dict(size=13, color="#e8eef5")),
-                        automargin=True,
-                        tickfont=dict(size=12, color="#e8eef5"),
-                    ),
-                    height=_single_h,
-                )
-                _g_s = _plotly_bargaps_sparse_x_like_gdrs(_n_per_single)
-                if _g_s:
-                    _single_ly.update(_g_s)
-                fig.update_layout(**_single_ly)
-                if _n_per_single > 18:
-                    fig.update_xaxes(ticklabelstep=2)
-                # Один «взрывной» период по сумме стека — остальные не видны.
-                try:
-                    _stk = (
-                        reason_data.groupby("period", observed=False)["Количество задач"]
-                        .sum()
-                        .astype(float)
-                    )
-                    if len(_stk) > 0:
-                        _mxs = float(_stk.max())
-                        _p95s = float(_stk.quantile(0.95))
-                        if _mxs > 0 and _mxs > max(_p95s * 2.5, 30.0) and _p95s > 0:
-                            fig.update_yaxes(
-                                range=[0.0, max(_p95s * 1.15, 1.0)],
-                                autorange=False,
-                            )
-                except Exception:
-                    pass
-            fig.update_traces(
-                texttemplate="%{text}",
-                textposition="inside",
-                insidetextanchor="middle",
-                textangle=0,
-                cliponaxis=False,
-                selector=dict(type="bar"),
-            )
-            # R23-04 page_10: hover включает проект (даже для одного проекта),
-            # чтобы было очевидно, из какого проекта данные.
-            _proj_hover_line = (
-                f"<br>Проект: {html_module.escape(_single_proj_name)}"
-                if (not _multi_proj and _single_proj_name)
-                else ""
-            )
-            _hover_tpl_single = (
-                "<b>Причина: %{fullData.name}</b>"
-                + _proj_hover_line
-                + "<br>Период: %{x}"
-                "<br>Количество задач: %{y}<extra></extra>"
-            )
-            _hover_tpl_multi = (
-                "<b>Причина: %{fullData.name}</b>"
-                "<br>Проект: %{customdata[0]}"
-                "<br>Период: %{x}"
-                "<br>Количество задач: %{y}<extra></extra>"
-            )
-            for tr in fig.data:
-                if getattr(tr, "type", None) != "bar":
-                    continue
-                mc = getattr(tr.marker, "color", None)
-                if isinstance(mc, str):
-                    tc = _deviations_contrast_text_on_fill(mc)
-                    tr.update(insidetextfont=dict(color=tc, size=13))
-                tr.update(hovertemplate=_hover_tpl_single)
-
-            if not _multi_proj:
-                tot_period = (
-                    reason_data.groupby("period", observed=False)["Количество задач"]
-                    .sum()
-                    .reset_index()
-                )
-                for _, row in tot_period.iterrows():
-                    x_pos = row["period"]
-                    _sub_pd = reason_data[
-                        reason_data["period"].astype(str) == str(x_pos)
-                    ]
-                    _nz = _sub_pd[
-                        pd.to_numeric(
-                            _sub_pd["Количество задач"], errors="coerce"
-                        ).fillna(0)
-                        != 0
-                    ]
-                    if len(_nz) <= 1:
-                        continue
-                    v = row["Количество задач"]
-                    if pd.isna(v):
-                        continue
-                    txt = str(int(round(float(v), 0)))
-                    fv = float(v)
-                    if fv >= 0:
-                        fig.add_annotation(
-                            x=x_pos,
-                            y=fv,
-                            text=f"<b>{txt}</b>",
-                            showarrow=False,
-                            xref="x",
-                            yref="y",
-                            xanchor="center",
-                            yanchor="bottom",
-                            yshift=8,
-                            font=dict(color="#f5f5f5", size=14),
-                        )
-                    else:
-                        fig.add_annotation(
-                            x=x_pos,
-                            y=fv,
-                            text=f"<b>{txt}</b>",
-                            showarrow=False,
-                            xref="x",
-                            yref="y",
-                            xanchor="center",
-                            yanchor="top",
-                            yshift=-8,
-                            font=dict(color="#f5f5f5", size=14),
-                        )
-
-            fig = _plotly_bar_hide_legacy_textfont(fig)
-            fig = apply_chart_background(fig, skip_uniformtext=True)
-            _cap_dyn = (
-                "Каждый столбец — период; стек по причинам; при нескольких проектах — отдельная панель на проект. "
-                "В сегменте — число отклонений по причине; над столбцом — итог за период. "
-                "В подсказке (hover) — проект, причина, период, количество задач."
-            )
-            render_chart(
-                fig,
-                caption_below=_dynamics_caption(_cap_dyn),
             )
 
     # Summary table
