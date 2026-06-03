@@ -4305,250 +4305,250 @@ def _render_deviations_combined_shared_filters(df):
     use_flat_bs = _deviations_use_flat_block_section_task(df)
 
     with filters_panel(st, panel_key="deviations_combined", expanded=False):
-        col1, col2, col3, col4, col5 = st.columns(5, gap="small")
-        with col1:
-            if "project name" in df.columns:
-                _session_reset_project_if_excluded("devcombo_project")
-                projects = ["Все"] + _project_name_select_options(df["project name"])
-                st.selectbox("Проект", projects, key="devcombo_project")
-        with col2:
-            df_opts = _deviations_project_slice_by_key(df, "devcombo_project")
-            msp_blk_col_dc, msp_blk_vals_dc = _deviations_msp_gantt_style_block_meta(
-                df_opts
-            )
-            if msp_blk_vals_dc and msp_blk_col_dc:
-                st.selectbox(
-                    "Функциональный блок",
-                    ["Все"] + msp_blk_vals_dc,
-                    key="devcombo_block",
+        with filters_selectors(st):
+            col1, col2, col3, col4, col5, col6, col7, col8, col9 = st.columns(9, gap="small")
+            with col1:
+                if "project name" in df.columns:
+                    _session_reset_project_if_excluded("devcombo_project")
+                    projects = ["Все"] + _project_name_select_options(df["project name"])
+                    st.selectbox("Проект", projects, key="devcombo_project")
+            with col2:
+                df_opts = _deviations_project_slice_by_key(df, "devcombo_project")
+                msp_blk_col_dc, msp_blk_vals_dc = _deviations_msp_gantt_style_block_meta(
+                    df_opts
                 )
-            elif use_hierarchy:
-                _ln_opts = _dev_outline_level_numeric(df_opts[level_col])
-                _blv, _bdv = _deviations_msp_tier_levels(_ln_opts)
-                wh = _dev_tasks_build_ancestor_keys(
-                    df_opts.copy(),
-                    level_col,
-                    task_col,
-                    block_outline_level=_blv,
-                    building_outline_level=_bdv,
-                )
-                ln = _dev_outline_level_numeric(wh[level_col])
-                _raw_l2 = (
-                    wh.loc[ln == _blv, task_col]
-                    .dropna()
-                    .astype(str)
-                    .str.strip()
-                    .unique()
-                    .tolist()
-                )
-                _raw_l2 = [x for x in _raw_l2 if x and not _is_generic_block_name(x)]
-                block_opts = ["Все"] + sorted(_raw_l2)
-                if len(block_opts) <= 1 and "_dt_lvl2_key" in wh.columns:
-                    _k2c = wh["_dt_lvl2_key"].astype(str).str.strip()
-                    _k2c = _k2c[_k2c.ne("") & _k2c.str.lower().ne("nan")]
-                    if len(_k2c):
-                        _k2c_list = [
-                            x
-                            for x in pd.unique(_k2c).tolist()
-                            if not _is_generic_block_name(x)
-                        ]
-                        block_opts = ["Все"] + sorted(_k2c_list)
-                st.selectbox(
-                    "Функциональный блок",
-                    block_opts,
-                    key="devcombo_block",
-                )
-            elif use_flat_bs:
-                fb_opts = _deviations_flat_functional_block_options(df_opts)
-                fb_opts = [
-                    x for x in fb_opts if x == "Все" or not _is_generic_block_name(x)
-                ]
-                st.selectbox(
-                    "Функциональный блок",
-                    fb_opts,
-                    key="devcombo_block",
-                )
-            elif "block" in df.columns:
-                blocks_raw = sorted(
-                    df["block"].dropna().astype(str).str.strip().unique().tolist()
-                )
-                blocks_raw = [x for x in blocks_raw if not _is_generic_block_name(x)]
-                blocks = ["Все"] + blocks_raw
-                st.selectbox("Функциональный блок", blocks, key="devcombo_block")
-            else:
-                suppress_caption("Нет колонки блока")
-        with col3:
-            df_opts = _deviations_project_slice_by_key(df, "devcombo_project")
-            sb = st.session_state.get("devcombo_block", "Все")
-            msp_blk_c3, msp_blk_vals_c3 = _deviations_msp_gantt_style_block_meta(df_opts)
-            msp_bld_c3 = _deviations_msp_gantt_style_building_col(df_opts)
-            d3b = df_opts
-            if (
-                msp_blk_c3
-                and msp_blk_vals_c3
-                and sb != "Все"
-                and msp_blk_c3 in d3b.columns
-            ):
-                d3b = d3b[
-                    d3b[msp_blk_c3].astype(str).str.strip() == str(sb).strip()
-                ].copy()
-            _lc_d3 = level_col if (level_col and level_col in d3b.columns) else ""
-            _tc_d3 = task_col if (task_col and task_col in d3b.columns) else ""
-            _l3_opts_d3 = _deviations_l3_building_option_labels(d3b, _lc_d3, _tc_d3)
-            if _l3_opts_d3:
-                st.selectbox(
-                    "Строение",
-                    ["Все"] + _l3_opts_d3,
-                    key="devcombo_building",
-                )
-            elif msp_bld_c3 and msp_bld_c3 in d3b.columns:
-                build_opts = ["Все"] + sorted(
-                    d3b[msp_bld_c3]
-                    .dropna()
-                    .astype(str)
-                    .str.strip()
-                    .unique()
-                    .tolist()
-                )
-                st.selectbox(
-                    "Строение",
-                    build_opts,
-                    key="devcombo_building",
-                )
-            elif use_hierarchy:
-                _ln_opts_b = _dev_outline_level_numeric(df_opts[level_col])
-                _blv_b, _bdv_b = _deviations_msp_tier_levels(_ln_opts_b)
-                wh = _dev_tasks_build_ancestor_keys(
-                    df_opts.copy(),
-                    level_col,
-                    task_col,
-                    block_outline_level=_blv_b,
-                    building_outline_level=_bdv_b,
-                )
-                ln = _dev_outline_level_numeric(wh[level_col])
-                w3 = wh[ln == _bdv_b]
-                if sb != "Все":
-                    if (
-                        msp_blk_c3
-                        and msp_blk_vals_c3
-                        and msp_blk_c3 in df_opts.columns
-                    ):
-                        _mask_sb = (
-                            df_opts[msp_blk_c3].astype(str).str.strip()
-                            == str(sb).strip()
-                        )
-                        w3 = w3.loc[
-                            _mask_sb.reindex(w3.index).fillna(False).to_numpy()
-                        ].copy()
-                    else:
-                        w3 = w3[
-                            w3["_dt_lvl2_key"].astype(str).str.strip()
-                            == str(sb).strip()
-                        ]
-                build_opts = ["Все"] + sorted(
-                    w3[task_col].dropna().astype(str).str.strip().unique().tolist()
-                )
-                if len(build_opts) <= 1 and sb != "Все" and "_dt_lvl3_key" in w3.columns:
-                    _k3b = w3["_dt_lvl3_key"].astype(str).str.strip()
-                    _k3b = _k3b[_k3b.ne("") & _k3b.str.lower().ne("nan")]
-                    if len(_k3b):
-                        build_opts = ["Все"] + sorted(pd.unique(_k3b).tolist())
-                st.selectbox(
-                    "Строение",
-                    build_opts,
-                    key="devcombo_building",
-                )
-            elif use_flat_bs:
-                _tc_fb = _deviations_resolve_task_col(df_opts)
-                _sb_fb = st.session_state.get("devcombo_block", "Все")
-                _bld_opts = _deviations_flat_building_options(df_opts, _sb_fb, _tc_fb)
-                st.selectbox(
-                    "Строение",
-                    _bld_opts,
-                    key="devcombo_building",
-                )
-            elif building_col and building_col in df_opts.columns:
-                bvals = ["Все"] + sorted(
-                    df_opts[building_col]
-                    .dropna()
-                    .astype(str)
-                    .str.strip()
-                    .unique()
-                    .tolist()
-                )
-                st.selectbox("Строение", bvals, key="devcombo_building")
-            else:
-                suppress_caption("Нет строения")
+                if msp_blk_vals_dc and msp_blk_col_dc:
+                    st.selectbox(
+                        "Функциональный блок",
+                        ["Все"] + msp_blk_vals_dc,
+                        key="devcombo_block",
+                    )
+                elif use_hierarchy:
+                    _ln_opts = _dev_outline_level_numeric(df_opts[level_col])
+                    _blv, _bdv = _deviations_msp_tier_levels(_ln_opts)
+                    wh = _dev_tasks_build_ancestor_keys(
+                        df_opts.copy(),
+                        level_col,
+                        task_col,
+                        block_outline_level=_blv,
+                        building_outline_level=_bdv,
+                    )
+                    ln = _dev_outline_level_numeric(wh[level_col])
+                    _raw_l2 = (
+                        wh.loc[ln == _blv, task_col]
+                        .dropna()
+                        .astype(str)
+                        .str.strip()
+                        .unique()
+                        .tolist()
+                    )
+                    _raw_l2 = [x for x in _raw_l2 if x and not _is_generic_block_name(x)]
+                    block_opts = ["Все"] + sorted(_raw_l2)
+                    if len(block_opts) <= 1 and "_dt_lvl2_key" in wh.columns:
+                        _k2c = wh["_dt_lvl2_key"].astype(str).str.strip()
+                        _k2c = _k2c[_k2c.ne("") & _k2c.str.lower().ne("nan")]
+                        if len(_k2c):
+                            _k2c_list = [
+                                x
+                                for x in pd.unique(_k2c).tolist()
+                                if not _is_generic_block_name(x)
+                            ]
+                            block_opts = ["Все"] + sorted(_k2c_list)
+                    st.selectbox(
+                        "Функциональный блок",
+                        block_opts,
+                        key="devcombo_block",
+                    )
+                elif use_flat_bs:
+                    fb_opts = _deviations_flat_functional_block_options(df_opts)
+                    fb_opts = [
+                        x for x in fb_opts if x == "Все" or not _is_generic_block_name(x)
+                    ]
+                    st.selectbox(
+                        "Функциональный блок",
+                        fb_opts,
+                        key="devcombo_block",
+                    )
+                elif "block" in df.columns:
+                    blocks_raw = sorted(
+                        df["block"].dropna().astype(str).str.strip().unique().tolist()
+                    )
+                    blocks_raw = [x for x in blocks_raw if not _is_generic_block_name(x)]
+                    blocks = ["Все"] + blocks_raw
+                    st.selectbox("Функциональный блок", blocks, key="devcombo_block")
+                else:
+                    suppress_caption("Нет колонки блока")
+            with col3:
+                df_opts = _deviations_project_slice_by_key(df, "devcombo_project")
+                sb = st.session_state.get("devcombo_block", "Все")
+                msp_blk_c3, msp_blk_vals_c3 = _deviations_msp_gantt_style_block_meta(df_opts)
+                msp_bld_c3 = _deviations_msp_gantt_style_building_col(df_opts)
+                d3b = df_opts
+                if (
+                    msp_blk_c3
+                    and msp_blk_vals_c3
+                    and sb != "Все"
+                    and msp_blk_c3 in d3b.columns
+                ):
+                    d3b = d3b[
+                        d3b[msp_blk_c3].astype(str).str.strip() == str(sb).strip()
+                    ].copy()
+                _lc_d3 = level_col if (level_col and level_col in d3b.columns) else ""
+                _tc_d3 = task_col if (task_col and task_col in d3b.columns) else ""
+                _l3_opts_d3 = _deviations_l3_building_option_labels(d3b, _lc_d3, _tc_d3)
+                if _l3_opts_d3:
+                    st.selectbox(
+                        "Строение",
+                        ["Все"] + _l3_opts_d3,
+                        key="devcombo_building",
+                    )
+                elif msp_bld_c3 and msp_bld_c3 in d3b.columns:
+                    build_opts = ["Все"] + sorted(
+                        d3b[msp_bld_c3]
+                        .dropna()
+                        .astype(str)
+                        .str.strip()
+                        .unique()
+                        .tolist()
+                    )
+                    st.selectbox(
+                        "Строение",
+                        build_opts,
+                        key="devcombo_building",
+                    )
+                elif use_hierarchy:
+                    _ln_opts_b = _dev_outline_level_numeric(df_opts[level_col])
+                    _blv_b, _bdv_b = _deviations_msp_tier_levels(_ln_opts_b)
+                    wh = _dev_tasks_build_ancestor_keys(
+                        df_opts.copy(),
+                        level_col,
+                        task_col,
+                        block_outline_level=_blv_b,
+                        building_outline_level=_bdv_b,
+                    )
+                    ln = _dev_outline_level_numeric(wh[level_col])
+                    w3 = wh[ln == _bdv_b]
+                    if sb != "Все":
+                        if (
+                            msp_blk_c3
+                            and msp_blk_vals_c3
+                            and msp_blk_c3 in df_opts.columns
+                        ):
+                            _mask_sb = (
+                                df_opts[msp_blk_c3].astype(str).str.strip()
+                                == str(sb).strip()
+                            )
+                            w3 = w3.loc[
+                                _mask_sb.reindex(w3.index).fillna(False).to_numpy()
+                            ].copy()
+                        else:
+                            w3 = w3[
+                                w3["_dt_lvl2_key"].astype(str).str.strip()
+                                == str(sb).strip()
+                            ]
+                    build_opts = ["Все"] + sorted(
+                        w3[task_col].dropna().astype(str).str.strip().unique().tolist()
+                    )
+                    if len(build_opts) <= 1 and sb != "Все" and "_dt_lvl3_key" in w3.columns:
+                        _k3b = w3["_dt_lvl3_key"].astype(str).str.strip()
+                        _k3b = _k3b[_k3b.ne("") & _k3b.str.lower().ne("nan")]
+                        if len(_k3b):
+                            build_opts = ["Все"] + sorted(pd.unique(_k3b).tolist())
+                    st.selectbox(
+                        "Строение",
+                        build_opts,
+                        key="devcombo_building",
+                    )
+                elif use_flat_bs:
+                    _tc_fb = _deviations_resolve_task_col(df_opts)
+                    _sb_fb = st.session_state.get("devcombo_block", "Все")
+                    _bld_opts = _deviations_flat_building_options(df_opts, _sb_fb, _tc_fb)
+                    st.selectbox(
+                        "Строение",
+                        _bld_opts,
+                        key="devcombo_building",
+                    )
+                elif building_col and building_col in df_opts.columns:
+                    bvals = ["Все"] + sorted(
+                        df_opts[building_col]
+                        .dropna()
+                        .astype(str)
+                        .str.strip()
+                        .unique()
+                        .tolist()
+                    )
+                    st.selectbox("Строение", bvals, key="devcombo_building")
+                else:
+                    suppress_caption("Нет строения")
     
-        _devcombo_pmin = None
-        _devcombo_pmax = None
-        if "plan end" in df.columns:
-            _pe_dev = pd.to_datetime(df["plan end"], errors="coerce", dayfirst=True)
-            if _pe_dev.notna().any():
-                _devcombo_pmin = _pe_dev.min().date()
-                _devcombo_pmax = _pe_dev.max().date()
-        elif "plan_month" in df.columns:
-            _pm_dev = df["plan_month"].dropna()
-            if len(_pm_dev):
-                _devcombo_pmin = _pm_dev.min().start_time.date()
-                _devcombo_pmax = _pm_dev.max().end_time.date()
+            _devcombo_pmin = None
+            _devcombo_pmax = None
+            if "plan end" in df.columns:
+                _pe_dev = pd.to_datetime(df["plan end"], errors="coerce", dayfirst=True)
+                if _pe_dev.notna().any():
+                    _devcombo_pmin = _pe_dev.min().date()
+                    _devcombo_pmax = _pe_dev.max().date()
+            elif "plan_month" in df.columns:
+                _pm_dev = df["plan_month"].dropna()
+                if len(_pm_dev):
+                    _devcombo_pmin = _pm_dev.min().start_time.date()
+                    _devcombo_pmax = _pm_dev.max().end_time.date()
 
-        with col4:
-            if _devcombo_pmin and _devcombo_pmax:
-                period_date_range_input(
-                    st,
-                    "devcombo_period_range",
-                    min_value=_devcombo_pmin,
-                    max_value=_devcombo_pmax,
-                    default=(_devcombo_pmin, _devcombo_pmax),
+            with col4:
+                if _devcombo_pmin and _devcombo_pmax:
+                    period_date_range_input(
+                        st,
+                        "devcombo_period_range",
+                        min_value=_devcombo_pmin,
+                        max_value=_devcombo_pmax,
+                        default=(_devcombo_pmin, _devcombo_pmax),
+                    )
+                else:
+                    suppress_caption("Нет данных для фильтра периода")
+
+            with col5:
+                if "reason of deviation" in df.columns:
+                    _reason_opts = ["Все"] + sorted(
+                        df["reason of deviation"]
+                        .dropna()
+                        .astype(str)
+                        .str.strip()
+                        .unique()
+                        .tolist()
+                    )
+                    st.selectbox("Причина", _reason_opts, key="devcombo_reason")
+                else:
+                    suppress_caption("Нет колонки причин отклонений")
+
+            _pt_lbl = st.session_state.get("dynamics_period", "Месяц")
+            _pt_en_shared = _deviations_period_type_en_from_ru(_pt_lbl)
+            _df_period_src = _deviations_project_slice_by_key(df, "devcombo_project")
+            _period_lbl_opts = ["Весь период"] + _deviations_report_period_options(
+                _df_period_src, _pt_en_shared
+            )
+            with col6:
+                st.selectbox(
+                    "Группировать по",
+                    ["Месяц", "Квартал", "Год"],
+                    key="dynamics_period",
                 )
-            else:
-                suppress_caption("Нет данных для фильтра периода")
-
-        with col5:
-            if "reason of deviation" in df.columns:
-                _reason_opts = ["Все"] + sorted(
-                    df["reason of deviation"]
-                    .dropna()
-                    .astype(str)
-                    .str.strip()
-                    .unique()
-                    .tolist()
+            with col7:
+                st.selectbox("Период", _period_lbl_opts, key="devcombo_report_period")
+            with col8:
+                st.radio(
+                    "Ось времени",
+                    [_DEV_TIME_AXIS_PLAN, _DEV_TIME_AXIS_SNAPSHOT],
+                    horizontal=True,
+                    key="dynamics_time_axis_combo",
                 )
-                st.selectbox("Причина", _reason_opts, key="devcombo_reason")
-            else:
-                suppress_caption("Нет колонки причин отклонений")
-
-        _pt_lbl = st.session_state.get("dynamics_period", "Месяц")
-        _pt_en_shared = _deviations_period_type_en_from_ru(_pt_lbl)
-        _df_period_src = _deviations_project_slice_by_key(df, "devcombo_project")
-        _period_lbl_opts = ["Весь период"] + _deviations_report_period_options(
-            _df_period_src, _pt_en_shared
-        )
-        _row2 = st.columns(4, gap="small")
-        with _row2[0]:
-            st.selectbox(
-                "Группировать по",
-                ["Месяц", "Квартал", "Год"],
-                key="dynamics_period",
-            )
-        with _row2[1]:
-            st.selectbox("Период", _period_lbl_opts, key="devcombo_report_period")
-        with _row2[2]:
-            st.radio(
-                "Ось времени",
-                [_DEV_TIME_AXIS_PLAN, _DEV_TIME_AXIS_SNAPSHOT],
-                horizontal=True,
-                key="dynamics_time_axis_combo",
-            )
-        with _row2[3]:
-            st.selectbox(
-                "Вид отображения",
-                ["По причинам", "По месяцам"],
-                key="reasons_view_type",
-            )
+            with col9:
+                st.selectbox(
+                    "Вид отображения",
+                    ["По причинам", "По месяцам"],
+                    key="reasons_view_type",
+                )
         with filters_toggles(st):
-            _row3_cb1, _row3_cb2, _row3_cb3 = st.columns(3, gap="small")
+            _row3_cb1, _row3_cb2 = st.columns(2, gap="small")
             with _row3_cb1:
                 st.checkbox(
                     "ТОП 5 причин отклонений",
@@ -4561,7 +4561,6 @@ def _render_deviations_combined_shared_filters(df):
                     value=False,
                     key="reasons_dynamics_show_trend_line",
                 )
-
     filtered_df = _apply_deviations_combined_filters(df, building_col=building_col)
 
     return filtered_df, building_col
