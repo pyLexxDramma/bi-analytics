@@ -263,7 +263,7 @@ table.bi-sortable-table thead th .bi-sort-label{text-align:center!important}
   .fc-table-scroll-wrap{height:100%!important;max-height:100%!important}
 }
 .fc-table-scroll-wrap{height:100%!important;max-height:100%!important;overflow-y:auto!important;overflow-x:auto!important;-webkit-overflow-scrolling:touch!important;scrollbar-gutter:stable}
-.fc-table-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important}
+.fc-table-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;background:hsl(209,72%,6%)!important}
 @media (max-width:700px){
   .main .block-container{padding-left:.75rem!important;padding-right:.75rem!important}
   [data-testid="stPlotlyChart"]{min-height:240px!important}

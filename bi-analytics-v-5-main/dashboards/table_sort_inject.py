@@ -492,7 +492,7 @@ html:has(.fc-table-scroll-wrap),body:has(.fc-table-scroll-wrap){
   -webkit-overflow-scrolling:touch;
   scrollbar-gutter:stable;scrollbar-width:thin;box-sizing:border-box;
 }
-.fc-table-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;vertical-align:middle!important;text-align:center!important}
+.fc-table-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;vertical-align:middle!important;text-align:center!important;background:hsl(209,72%,6%)!important}
 .bi-sortable-html-root:has(.budget-table-scroll){
   overflow:hidden!important;height:100%!important;max-height:100%!important;min-height:0!important;
 }
@@ -901,7 +901,7 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
     # в _TABLE_CSS ложно матчатся подстрокой и все таблицы уходят в одну ветку.
     _b = re.sub(r"<style[^>]*>.*?</style>", "", html or "", flags=re.I | re.S)
     if "pred-detail-wrap" in _b:
-        doc_sc = doc.replace("</head>", '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}html body .fc-table-scroll-wrap,html body .pred-detail-wrap,html body .budget-table-scroll{height:100%!important;max-height:100%!important;min-height:0!important;overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;}html body .fc-table-scroll-wrap thead th,html body .pred-detail-wrap thead th,html body .budget-table-scroll thead th{position:sticky!important;top:0!important;z-index:5!important;}</style>' + "</head>", 1)
+        doc_sc = doc.replace("</head>", '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}html body .fc-table-scroll-wrap,html body .pred-detail-wrap,html body .budget-table-scroll{height:100%!important;max-height:100%!important;min-height:0!important;overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;}html body .fc-table-scroll-wrap thead th,html body .pred-detail-wrap thead th,html body .budget-table-scroll thead th{position:sticky!important;top:0!important;z-index:5!important;background:hsl(209,72%,6%)!important;}</style>' + "</head>", 1)
         components.html(doc_sc, height=584, scrolling=False)
         return
     if "pf-dates-scroll-wrap" in _b:

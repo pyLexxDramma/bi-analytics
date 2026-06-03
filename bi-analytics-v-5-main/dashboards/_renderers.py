@@ -29143,6 +29143,9 @@ def _forecast_financier_status_table_html(df: pd.DataFrame) -> str:
         "<style>"
         ".fc-st-cell-red, .fc-st-cell-red * { color: hsl(348,100%,63%) !important; }"
         ".fc-st-cell-green, .fc-st-cell-green * { color: hsl(148,100%,63%) !important; }"
+        f".fc-table-scroll-wrap thead th {{ position: sticky; top: 0; z-index: 5; "
+        f"background-color: {TABLE_HEADER_BG_COLOR} !important; color: {TABLE_TEXT_COLOR}; "
+        f"{TABLE_HEADER_FONT_CSS} }}"
         "</style>",
         f'<div class="fc-table-scroll-wrap bi-styled-table-wrap" data-bi-rows="{len(df)}">',
         f'<table class="rendered-table bi-sortable-table bi-sort-click-only" style="width:100%;border-collapse:collapse;background-color:{TABLE_BG_COLOR};color:{TABLE_TEXT_COLOR};font-size:14px;">',
@@ -29151,7 +29154,8 @@ def _forecast_financier_status_table_html(df: pd.DataFrame) -> str:
     for c in df.columns:
         _cn = str(c).strip()
         parts.append(
-            f'<th style="border:1px solid rgba(255,255,255,0.25);padding:8px 6px;text-align:center;vertical-align:middle;" '
+            f'<th style="border:1px solid rgba(255,255,255,0.25);padding:8px 6px;text-align:center;vertical-align:middle;'
+            f'background-color:{TABLE_HEADER_BG_COLOR};color:{TABLE_TEXT_COLOR};{TABLE_HEADER_FONT_CSS};" '
             f'data-sort-label="{html_module.escape(_cn, quote=True)}">{html_module.escape(_cn)}</th>'
         )
     parts.append("</tr></thead><tbody>")
