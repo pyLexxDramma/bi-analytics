@@ -1655,7 +1655,13 @@ def render_styled_table_to_html(styler, hide_index: bool = True) -> str:
     if styler is None or (hasattr(styler, "data") and styler.data.empty):
         return "<p>Нет данных для отображения.</p>"
     try:
-        html = styler.to_html(index=not hide_index)
+        _sty = styler
+        if hide_index:
+            try:
+                _sty = styler.hide(axis="index")
+            except Exception:
+                _sty = styler
+        html = _sty.to_html()
         html = mark_html_table_sortable(html)
         border_css = (
             "<style>"
@@ -2058,6 +2064,7 @@ def _scroll_box_table_html(html: str) -> bool:
     b = _html_body_without_style(html)
     return (
         "fc-table-scroll-wrap" in b
+        or "pd-dynamics-scroll-wrap" in b
         or "pred-detail-wrap" in b
         or ("budget-deviation-table-wrap" in b and "budget-table-scroll" in b)
     )
@@ -2073,11 +2080,67 @@ def _scroll_box_height_px(html: str, *, cap: int = 640) -> int:
         if _m_vh:
             _vh = float(_m_vh.group(1))
             return int(min(cap, max(280, _vh * 10 + 56)))
+    if "pd-dynamics-scroll-wrap" in _body:
+        _rows_m = re.search(r'data-bi-rows="(\d+)"', html or "")
+        _rows_n = int(_rows_m.group(1)) if _rows_m else 0
+        _est = 84 + _rows_n * 34
+        return int(min(720, max(520, _est)))
     _rows_m = re.search(r'data-bi-rows="(\d+)"', html or "")
     _rows_n = int(_rows_m.group(1)) if _rows_m else 0
     _est = 84 + _rows_n * 34
     return min(cap, max(220, _est))
 
+
+
+
+def _render_pd_dynamics_html_table(
+    html: str,
+    export_df: pd.DataFrame | None,
+    *,
+    file_stem: str,
+    key_prefix: str,
+    popover_key: str,
+) -> None:
+    """Таблица ПД: фиксированная высота iframe до кнопки «Скачать таблицу»."""
+    from dashboards.table_sort_inject import render_sortable_html_block
+
+    _pd_h = int(_scroll_box_height_px(html))
+    _wrap_key = "bitblwrap_" + str(key_prefix).replace(" ", "_")
+    if "data-pd-box-h=" not in (html or ""):
+        html = (html or "").replace(
+            "pd-dynamics-scroll-wrap",
+            f'pd-dynamics-scroll-wrap" data-pd-box-h="{_pd_h}',
+            1,
+        )
+    st.markdown(
+        "<style>"
+        f"div[class*='st-key-{_wrap_key}'] div[data-testid='stVerticalBlock']{{gap:0!important;}}"
+        f"div[class*='st-key-{_wrap_key}'] div[data-testid='stElementContainer']:has(iframe){{"
+        f"height:{_pd_h}px!important;min-height:{_pd_h}px!important;max-height:{_pd_h}px!important;"
+        "margin:0!important;padding:0!important;overflow:hidden!important;width:100%!important;}}"
+        f"div[class*='st-key-{_wrap_key}'] iframe{{"
+        f"height:{_pd_h}px!important;min-height:{_pd_h}px!important;width:100%!important;"
+        "max-width:100%!important;display:block!important;border:0!important;}}"
+        f"div[class*='st-key-{_wrap_key}'] [data-testid='stPopover']{{margin-top:8px!important;}}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+    try:
+        _outer = st.container(border=False, gap=None, key=_wrap_key)
+    except TypeError:
+        _outer = st.container(border=False)
+    with _outer:
+        try:
+            render_sortable_html_block(html, compact_iframe=True)
+        except Exception:
+            st.markdown(html, unsafe_allow_html=True)
+        if export_df is not None:
+            render_dataframe_excel_csv_downloads(
+                export_df,
+                file_stem=file_stem,
+                key_prefix=key_prefix,
+                popover_key=popover_key,
+            )
 
 def render_report_html_table(
     html: str,
@@ -2104,6 +2167,15 @@ def render_report_html_table(
     _kp = key_prefix or f"tbl_{_export_file_stem(file_stem)}"
     _pop_key = f"{_kp}_dl"
     _wrap_key = "bitblwrap_" + str(_kp).replace(' ', '_')
+    if file_stem == "pd_dynamics_table":
+        _render_pd_dynamics_html_table(
+            html,
+            export_df,
+            file_stem=file_stem,
+            key_prefix=_kp,
+            popover_key=_pop_key,
+        )
+        return
     if "bi_tbl_wrap_scoped_css" not in st.session_state:
         st.session_state.bi_tbl_wrap_scoped_css = True
         st.markdown(
@@ -2156,6 +2228,9 @@ def render_report_html_table(
             "overflow-y:scroll!important;overflow-x:auto!important;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch;}"
             ".fc-table-scroll-wrap{height:100%!important;max-height:100%!important;min-height:0!important;"
             "overflow-y:auto!important;overflow-x:auto!important;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch;}"
+            ".pd-dynamics-scroll-wrap{height:100%!important;max-height:100%!important;min-height:100%!important;"
+            "overflow-y:auto!important;overflow-x:auto!important;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch;"
+            "box-sizing:border-box!important;}"
             "div[data-testid='stElementContainer']:has(iframe){overflow:visible!important;margin:0!important;padding:0!important;"
             "max-width:100%!important;height:auto!important;min-height:0!important;}"
             "div[data-testid='stElementContainer']:has(iframe) iframe{display:block!important;margin:0!important;padding:0!important;"
@@ -2177,6 +2252,20 @@ def render_report_html_table(
             "</style>",
             unsafe_allow_html=True,
         )
+    if _compact_tbl and file_stem == "pd_dynamics_table":
+        st.markdown(
+            "<style>"
+            "[data-testid='stMainBlockContainer'] div[class*='st-key-bitblwrap_pd_dyn_tbl'],"
+            "div[class*='st-key-bitblwrap_pd_dyn_tbl'],"
+            "div[class*='st-key-bitblwrap_pd_dyn_tbl'] div[data-testid='stVerticalBlock'],"
+            "div[class*='st-key-bitblwrap_pd_dyn_tbl'] div[data-testid='stElementContainer'],"
+            "div[class*='st-key-bitblwrap_pd_dyn_tbl'] div[data-testid='stElementContainer']:has(iframe),"
+            "div[class*='st-key-bitblwrap_pd_dyn_tbl'] iframe,"
+            "div[class*='st-key-bitblwrap_pd_dyn_tbl'] iframe[title='streamlit_components_v1']"
+            "{width:100%!important;max-width:100%!important;min-width:0!important;display:block!important;}"
+            "</style>",
+            unsafe_allow_html=True,
+        )
     if _compact_tbl:
         _scroll_box = _scroll_box_table_html(html)
         st.markdown(
@@ -2194,8 +2283,8 @@ def render_report_html_table(
             "</style>",
             unsafe_allow_html=True,
         )
-        if _scroll_box:
-            # a29a014: scroll-box + кнопка сразу под ним (fc / pred / budget scroll).
+        if _scroll_box and "pd-dynamics-scroll-wrap" not in _html_body_without_style(html):
+            # a29a014: scroll-box + кнопка сразу под нim (fc / pred / budget scroll).
             _fc_box_h = _scroll_box_height_px(html)
             try:
                 _tbl_outer = st.container(border=False, gap=None, key=_wrap_key)

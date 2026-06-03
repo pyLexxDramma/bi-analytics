@@ -107,6 +107,7 @@ _TABLE_SORT_JS = r"""
     var ths = theadRow.querySelectorAll("th");
     ths.forEach(function (th, colIdx) {
       if (th.getAttribute("data-bi-sort-th") === "1") return;
+      if (th.classList && th.classList.contains("blank")) return;
       if (tbl.classList.contains("gdrs-matrix-table") && th.getAttribute("data-gdrs-sort") !== "1") return;
       colIdx = th.cellIndex;
       th.setAttribute("data-bi-sort-th", "1");
@@ -260,6 +261,17 @@ _TABLE_SORT_JS = r"""
           return;
         }
       }
+      var pdScrollBox = document.querySelector(".pd-dynamics-scroll-wrap");
+      if (pdScrollBox) {
+        var pdTbl0 = pdScrollBox.querySelector("table");
+        var pdContent = pdTbl0 ? Math.ceil(pdTbl0.getBoundingClientRect().height)
+                               : Math.ceil(pdScrollBox.scrollHeight || 0);
+        var pdAttr = pdScrollBox.getAttribute("data-pd-box-h");
+        var pdBoxH = pdAttr ? parseInt(pdAttr, 10) : 520;
+        if (!pdBoxH || pdBoxH < 120) pdBoxH = 520;
+        window.parent.postMessage({ type: "streamlit:setFrameHeight", height: pdBoxH }, "*");
+        return;
+      }
       var fcBox = document.querySelector(".fc-table-scroll-wrap")
         || document.querySelector(".pred-detail-wrap");
       if (fcBox) {
@@ -338,7 +350,8 @@ _TABLE_SORT_JS = r"""
   bootDoc(document);
   try {
     var ro = new ResizeObserver(function () { reportFrameHeight(); });
-    var tgt = document.querySelector(".pf-covenant-table-wrap")
+    var tgt = document.querySelector(".pd-dynamics-scroll-wrap")
+      || document.querySelector(".pf-covenant-table-wrap")
       || document.querySelector(".pf-dates-table-wrap")
       || document.querySelector(".pred-detail-wrap")
       || document.querySelector(".fc-table-scroll-wrap")
@@ -357,6 +370,62 @@ _COMPACT_FRAME_FIT_JS = r"""
 (function () {
   function fit() {
     try {
+      var pdScroll = document.querySelector(".pd-dynamics-scroll-wrap");
+      if (pdScroll) {
+        try {
+          var fePd = window.frameElement;
+          if (fePd) {
+            fePd.style.setProperty("width", "100%", "important");
+            fePd.style.setProperty("max-width", "100%", "important");
+            fePd.style.setProperty("display", "block", "important");
+          }
+        } catch (e) {}
+        pdScroll.style.setProperty("width", "100%", "important");
+        pdScroll.style.setProperty("min-height", "520px", "important");
+        pdScroll.style.setProperty("height", "100%", "important");
+        pdScroll.style.setProperty("box-sizing", "border-box", "important");
+        var pdTbl = pdScroll.querySelector("table");
+        if (pdTbl) {
+          pdTbl.style.setProperty("width", "100%", "important");
+          pdTbl.style.setProperty("min-width", "100%", "important");
+          pdTbl.style.setProperty("table-layout", "fixed", "important");
+        }
+        var pdRoot = document.querySelector(".bi-sortable-html-root");
+        if (pdRoot) {
+          pdRoot.style.setProperty("width", "100%", "important");
+          pdRoot.style.setProperty("height", "100%", "important");
+        }
+        var pdContent = pdTbl ? Math.ceil(pdTbl.getBoundingClientRect().height)
+                              : Math.ceil(pdScroll.scrollHeight || 0);
+        var pdAttr2 = pdScroll.getAttribute("data-pd-box-h");
+        var pdBoxH2 = pdAttr2 ? parseInt(pdAttr2, 10) : 520;
+        if (!pdBoxH2 || pdBoxH2 < 120) pdBoxH2 = 520;
+        window.parent.postMessage({ type: "streamlit:setFrameHeight", height: pdBoxH2 }, "*");
+        return;
+      }
+      var pdWrap = document.querySelector(".pd-dynamics-table-wrap");
+      if (pdWrap) {
+        try {
+          var fe = window.frameElement;
+          if (fe) {
+            fe.style.setProperty("width", "100%", "important");
+            fe.style.setProperty("max-width", "100%", "important");
+            fe.style.setProperty("display", "block", "important");
+          }
+        } catch (e) {}
+        var tbl = pdWrap.querySelector("table");
+        if (tbl) {
+          tbl.style.setProperty("width", "100%", "important");
+          tbl.style.setProperty("min-width", "100%", "important");
+          tbl.style.setProperty("table-layout", "fixed", "important");
+        }
+        var root = document.querySelector(".bi-sortable-html-root");
+        if (root) {
+          root.style.setProperty("width", "100%", "important");
+          root.style.setProperty("max-width", "100%", "important");
+        }
+      }
+
       var ganttScroll = document.querySelector(".gantt-schedule-scroll-wrap");
       if (ganttScroll) {
         var gTbl = ganttScroll.querySelector("table");
@@ -492,6 +561,8 @@ html:has(.fc-table-scroll-wrap),body:has(.fc-table-scroll-wrap){
   -webkit-overflow-scrolling:touch;
   scrollbar-gutter:stable;scrollbar-width:thin;box-sizing:border-box;
 }
+.pd-dynamics-scroll-wrap{display:block!important;width:100%!important;max-width:100%!important;min-height:520px!important;height:100%!important;max-height:100%!important;overflow-y:auto!important;overflow-x:auto!important;-webkit-overflow-scrolling:touch!important;scrollbar-gutter:stable!important;scrollbar-width:thin!important;scrollbar-color:#4a5568 #1a1c23!important;border:1px solid rgba(255,255,255,0.25)!important;border-radius:10px!important;margin:0.35em 0 0 0!important;box-sizing:border-box!important;}
+.pd-dynamics-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;vertical-align:middle!important;background:hsl(209,72%,6%)!important;}
 .fc-table-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;vertical-align:middle!important;text-align:center!important;background:hsl(209,72%,6%)!important}
 .bi-sortable-html-root:has(.budget-table-scroll){
   overflow:hidden!important;height:100%!important;max-height:100%!important;min-height:0!important;
@@ -563,6 +634,21 @@ html,body{
 .bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table{width:max-content!important;min-width:100%!important;max-width:none!important;}
 .bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table th.col-pf-start,.bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table th.col-pf-end,.bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table th.col-pf-dur,.bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table td.col-pf-start,.bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table td.col-pf-end,.bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table td.col-pf-dur{white-space:nowrap!important;text-align:center!important;max-width:none!important;}
 .pf-covenant-table-wrap{display:block;width:100%!important;max-width:100%!important;}
+.pd-dynamics-table-wrap{display:block;width:100%!important;max-width:100%!important;box-sizing:border-box!important;margin:0!important;}
+.bi-sortable-html-root:has(.pd-dynamics-table-wrap){
+  width:100%!important;max-width:100%!important;display:block!important;
+}
+.bi-sortable-html-root:has(.pd-dynamics-table-wrap) table,
+.bi-sortable-html-root:has(.pd-dynamics-table-wrap) table.bi-sortable-table,
+.bi-sortable-html-root:has(.pd-dynamics-table-wrap) table.dataframe{
+  width:100%!important;min-width:100%!important;max-width:100%!important;table-layout:fixed!important;
+  margin:0!important;
+}
+.bi-sortable-html-root:has(.pd-dynamics-table-wrap) table th,
+.bi-sortable-html-root:has(.pd-dynamics-table-wrap) table td{
+  white-space:normal!important;word-wrap:break-word!important;overflow-wrap:anywhere!important;
+}
+
 @media (max-width:900px){
   .bi-sortable-html-root table.bi-sortable-table{min-width:640px;}
 }
@@ -748,6 +834,15 @@ def _estimate_html_block_height(html: str) -> int:
         row_h = 28
         extra = 12
         cap = 640
+    elif "pd-dynamics-scroll-wrap" in html_l:
+        thead_h = 42
+        row_h = 27
+        extra = 48
+        cap = 720
+    elif "pd-dynamics-table-wrap" in html_l:
+        thead_h = 42
+        row_h = 27
+        extra = 4
     elif "pf-covenant-table-wrap" in html_l:
         thead_h = 42
         row_h = 27
@@ -790,6 +885,10 @@ def _estimate_html_block_height(html: str) -> int:
         return int(min(cap, max(200, est)))
     if "pf-dates-scroll-wrap" in html_l:
         return int(min(cap, max(200, est)))
+    if "pd-dynamics-scroll-wrap" in html_l:
+        return int(min(cap, max(520, est + 24)))
+    if "pd-dynamics-table-wrap" in html_l:
+        return int(max(68, est))
     if "pf-covenant-table-wrap" in html_l:
         return int(max(68, est))
     if "pf-dates-table-wrap" in html_l or "pf-dates-table" in html_l:
@@ -857,6 +956,7 @@ def _build_sortable_html_document(html: str) -> str:
                     "budget-deviation-table-wrap" in html_l
                     and "budget-table-scroll" in html_l
                 )
+                or "pd-dynamics-table-wrap" in html_l
                 or "bi-styled-table-wrap" in html_l
                 or "rendered-table-wrap" in html_l
                 or "dev-reasons-wrap" in html_l
@@ -883,6 +983,7 @@ def _html_block_compact(html: str) -> bool:
         or "gantt-schedule-scroll-wrap" in html_l
         or "rendered-table-wrap" in html_l
         or "dev-reasons-wrap" in html_l
+        or "pd-dynamics-table-wrap" in html_l
         or "bi-styled-table-wrap" in html_l
         or "fc-table-scroll-wrap" in html_l
         or "budget-deviation-table-wrap" in html_l
@@ -931,6 +1032,22 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
         )
         components.html(doc_sc, height=_h_b, scrolling=False)
         return
+    if "pd-dynamics-scroll-wrap" in _b:
+        _m_pd = re.search(r'data-pd-box-h="(\d+)"', html or "")
+        _h_pd = int(_m_pd.group(1)) if _m_pd else min(720, max(520, _estimate_html_block_height(html)))
+        doc_sc = doc.replace(
+            "</head>",
+            '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
+            '.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}'
+            'html body .pd-dynamics-scroll-wrap{height:100%!important;max-height:100%!important;min-height:100%!important;'
+            'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;'
+            'scrollbar-gutter:stable!important;box-sizing:border-box!important;}'
+            'html body .pd-dynamics-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;'
+            'background:hsl(209,72%,6%)!important;}</style></head>',
+            1,
+        )
+        components.html(doc_sc, height=_h_pd, scrolling=False)
+        return
     if "fc-table-scroll-wrap" in _b:
         doc_sc = doc.replace("</head>", '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}html body .fc-table-scroll-wrap,html body .pred-detail-wrap,html body .budget-table-scroll{height:100%!important;max-height:100%!important;min-height:0!important;overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;}html body .fc-table-scroll-wrap thead th,html body .pred-detail-wrap thead th,html body .budget-table-scroll thead th{position:sticky!important;top:0!important;z-index:5!important;}</style>' + "</head>", 1)
         components.html(doc_sc, height=584, scrolling=False)
@@ -944,6 +1061,7 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
     if _compact:
         _h_compact = _estimate_html_block_height(html)
         _covenant_tbl = "pf-covenant-table-wrap" in _b
+        _pd_tbl = "pd-dynamics-table-wrap" in _b and "pd-dynamics-scroll-wrap" not in _b
         _wide_tbl = (
             "pf-dates-table-wrap" in _b
             or "pf-dates-table" in _b
@@ -952,7 +1070,7 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
         # scrolling=False: iframe ужимается по высоте контента (setFrameHeight),
         # без пустоты под таблицей. Горизонтальный скролл широкой таблицы —
         # внутри обёртки .pf-dates-table-wrap (overflow-x:auto), pad — запас на скроллбар.
-        if _covenant_tbl:
+        if _covenant_tbl or _pd_tbl:
             _pad_h = 2
         elif "budget-deviation-table-wrap" in (html or ""):
             _pad_h = 4
@@ -962,7 +1080,7 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
             _pad_h = 10
         components.html(
             doc,
-            height=max(68 if _covenant_tbl else 96, _h_compact + _pad_h),
+            height=max(68 if (_covenant_tbl or _pd_tbl) else 96, _h_compact + _pad_h),
             scrolling=False,
         )
         return
