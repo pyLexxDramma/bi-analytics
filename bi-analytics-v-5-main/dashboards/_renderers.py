@@ -328,21 +328,21 @@ _TABLE_CSS = """
 }
 .gantt-schedule-table-wrap .rendered-table th.col-gantt-task,
 .gantt-schedule-table-wrap .rendered-table td.col-gantt-task {
-  min-width:8em; max-width:18em!important; width:18em;
-  white-space:nowrap!important; overflow:hidden!important;
-  text-overflow:ellipsis!important; text-align:left!important;
+  min-width:8em; max-width:none!important; width:auto;
+  white-space:nowrap!important; overflow:visible!important;
+  text-overflow:clip!important; text-align:left!important;
 }
 .gantt-schedule-table-wrap .rendered-table th.col-pf-project,
 .gantt-schedule-table-wrap .rendered-table td.col-pf-project {
-  min-width:8em; max-width:14em!important; width:14em;
-  white-space:nowrap!important; overflow:hidden!important;
-  text-overflow:ellipsis!important; text-align:left!important;
+  min-width:8em; max-width:none!important; width:auto;
+  white-space:nowrap!important; overflow:visible!important;
+  text-overflow:clip!important; text-align:left!important;
 }
 .gantt-schedule-table-wrap .rendered-table th.col-text,
 .gantt-schedule-table-wrap .rendered-table td.col-text {
-  min-width:8em; max-width:18em!important;
-  white-space:nowrap!important; overflow:hidden!important;
-  text-overflow:ellipsis!important; text-align:left!important;
+  min-width:12em; max-width:none!important;
+  white-space:nowrap!important; overflow:visible!important;
+  text-overflow:clip!important; text-align:left!important;
 }
 .gantt-schedule-table-wrap .rendered-table th.col-gantt-reason,
 .gantt-schedule-table-wrap .rendered-table td.col-gantt-reason,
@@ -37659,7 +37659,7 @@ def dashboard_project_schedule_chart(df):
             tbl_show,
             tbl_numeric,
             max_rows=len(tbl_show),
-            group_by_project=(sel_proj == "Все" and "Проект" in tbl_show.columns),
+            group_by_project=False,
             project_col_name="Проект",
         )
         if _gantt_rows_total > _gantt_rows_shown:
