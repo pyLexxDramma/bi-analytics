@@ -1120,7 +1120,7 @@ def style_dataframe_for_dark_theme(
                     if s and s not in ("", "nan", "None"):
                         num = float(s)
                     else:
-                        match = re.search(r"-?\d+[.,]?\d*", str(v))
+                        match = re.search(r"[+-]?\d+[.,]?\d*", str(v))
                         if match:
                             num = float(match.group().replace(",", "."))
                 except (TypeError, ValueError):
@@ -1294,13 +1294,40 @@ def _parse_finance_value(v) -> Optional[float]:
             return float(s)
     except (TypeError, ValueError):
         pass
-    match = re.search(r"-?\d+[.,]?\d*", str(v))
+    match = re.search(r"[+-]?\d+[.,]?\d*", str(v))
     if match:
         try:
             return float(match.group().replace(",", "."))
         except (TypeError, ValueError):
             pass
     return None
+
+
+def _html_cell_sort_attr(val) -> str:
+    """data-sort-val для клиентской сортировки (числа, даты как timestamp)."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return ""
+    if isinstance(val, pd.Timestamp):
+        if pd.isna(val):
+            return ""
+        return f' data-sort-val="{float(val.timestamp())}"'
+    num = _parse_finance_value(val)
+    if num is not None:
+        return f' data-sort-val="{num}"'
+    if isinstance(val, (int, float, np.integer, np.floating)):
+        fv = float(val)
+        if not pd.isna(fv):
+            return f' data-sort-val="{fv}"'
+    try:
+        ts = pd.to_datetime(val, errors="coerce", dayfirst=True)
+        if ts is not None and pd.notna(ts) and not isinstance(val, (int, float, np.integer, np.floating)):
+            return f' data-sort-val="{float(ts.timestamp())}"'
+    except Exception:
+        pass
+    s = str(val).strip()
+    if s and s.lower() not in ("nan", "none", "nat", ""):
+        return f' data-sort-val="{html_module.escape(s, quote=True)}"'
+    return ""
 
 
 def budget_table_to_html(
@@ -1463,6 +1490,7 @@ def budget_table_to_html(
             val = row[col]
             val_str = "" if (val is None or (isinstance(val, float) and pd.isna(val))) else str(val)
             val_esc = html_module.escape(val_str)
+            _sort_attr = _html_cell_sort_attr(val)
             _is_row_label_col = col == visible_cols[0] or _is_table_label_column(col)
             _label_css = (
                 label_columns_font_css
@@ -1553,7 +1581,7 @@ def budget_table_to_html(
                     parts.append(
                         f'<td class="{cell_class}{_extra_cls} {_cc}" style="padding: {_pad_y}px {_pad_x}px; font-weight: bold; '
                         f'background-color: {_cell_bg}; {_td_css} {_align} '
-                        f'box-sizing: border-box;">{val_esc}</td>'
+                        f'box-sizing: border-box;"{_sort_attr}>{val_esc}</td>'
                     )
                 else:
                     _cc = table_column_css_class(col)
@@ -1561,14 +1589,14 @@ def budget_table_to_html(
                     _align = "text-align:center;vertical-align:middle;" if _cc == "col-num" else "text-align:left;vertical-align:top;"
                     parts.append(
                         f'<td class="{_cc}" style="padding: {_pad_y}px {_pad_x}px; color: {TABLE_TEXT_COLOR}; '
-                        f'background-color: {_cell_bg}; {_td_css} {_align} {_label_css}">{val_esc}</td>'
+                        f'background-color: {_cell_bg}; {_td_css} {_align} {_label_css}"{_sort_attr}>{val_esc}</td>'
                     )
             else:
                 _cc = table_column_css_class(col)
                 _td_css = HTML_TABLE_TD_COMPACT_CSS if _cc == "col-num" else HTML_TABLE_TD_TEXT_CSS
                 _align = "text-align:center;vertical-align:middle;" if _cc == "col-num" else "text-align:left;vertical-align:top;"
                 parts.append(
-                    f'<td class="{_cc}" style="padding: {_pad_y}px {_pad_x}px; color: {TABLE_TEXT_COLOR}; background-color: {_cell_bg}; {_td_css} {_align} {_label_css}">{val_esc}</td>'
+                    f'<td class="{_cc}" style="padding: {_pad_y}px {_pad_x}px; color: {TABLE_TEXT_COLOR}; background-color: {_cell_bg}; {_td_css} {_align} {_label_css}"{_sort_attr}>{val_esc}</td>'
                 )
         parts.append("</tr>")
     parts.append("</tbody></table>")

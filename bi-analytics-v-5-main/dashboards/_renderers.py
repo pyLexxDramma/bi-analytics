@@ -674,21 +674,31 @@ def _plan_fact_td_align_style(col: str, *, in_dev: bool, in_num: bool, in_date: 
 def _plan_fact_sort_attr(nval) -> str:
     if nval is None or (isinstance(nval, float) and pd.isna(nval)):
         return ""
-    try:
-        ts = pd.Timestamp(nval)
-        if pd.notna(ts):
-            return f' data-sort-val="{float(ts.timestamp())}"'
-    except Exception:
-        pass
+    if isinstance(nval, pd.Timestamp):
+        if pd.isna(nval):
+            return ""
+        return f' data-sort-val="{float(nval.timestamp())}"'
+    if isinstance(nval, (int, float, np.integer, np.floating)):
+        fv = float(nval)
+        if pd.isna(fv):
+            return ""
+        return f' data-sort-val="{fv}"'
     try:
         fv = float(nval)
         if pd.isna(fv):
             return ""
         return f' data-sort-val="{fv}"'
     except (TypeError, ValueError):
-        s = str(nval).strip()
-        if s and s.lower() not in ("nan", "none", "nat"):
-            return f' data-sort-val="{html_module.escape(s, quote=True)}"'
+        pass
+    try:
+        ts = pd.to_datetime(nval, errors="coerce", dayfirst=True)
+        if ts is not None and pd.notna(ts):
+            return f' data-sort-val="{float(ts.timestamp())}"'
+    except Exception:
+        pass
+    s = str(nval).strip()
+    if s and s.lower() not in ("nan", "none", "nat"):
+        return f' data-sort-val="{html_module.escape(s, quote=True)}"'
     return ""
 
 
@@ -700,7 +710,12 @@ def _plan_fact_deviation_span(nval, text: str) -> str:
     except (TypeError, ValueError):
         return html_module.escape(str(text))
     cls = "pf-dev-red" if n < 0 else "pf-dev-green"
-    disp = str(text).strip() if str(text).strip() else str(n)
+    if n > 0:
+        disp = f"+{n}"
+    elif n < 0:
+        disp = str(n)
+    else:
+        disp = "0"
     return f'<span class="{cls}">{html_module.escape(disp)}</span>'
 
 
@@ -8888,7 +8903,6 @@ def dashboard_plan_fact_dates(df):
     out_cols = [c for c in out_cols if c in summary_df.columns]
     summary_df = summary_df[out_cols]
 
-    _sort_col = None
     if dates_show_reason_notes and "Ур" in summary_df.columns:
         summary_df["_sort_ур"] = pd.to_numeric(summary_df["Ур"], errors="coerce")
         summary_df = summary_df.sort_values(
@@ -8896,17 +8910,6 @@ def dashboard_plan_fact_dates(df):
             ascending=[True, True],
             na_position="last",
         ).drop(columns=["_sort_ур"], errors="ignore").reset_index(drop=True)
-    else:
-        for _sc in ("Отклонение окончания", "Откл. окончания"):
-            if _sc in summary_df.columns:
-                _sort_col = _sc
-                break
-        if _sort_col:
-            summary_df = summary_df.sort_values(
-                _sort_col,
-                ascending=True,
-                na_position="last",
-            ).reset_index(drop=True)
 
     _col_short = {
         "Функциональный блок": "Функц. блок",
