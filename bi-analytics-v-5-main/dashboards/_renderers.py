@@ -1806,7 +1806,10 @@ def _deviations_maket_prepare_df(table_reason_df: pd.DataFrame) -> pd.DataFrame:
             & (work_m["reason of deviation"].astype(str).str.strip() != "")
         )
     mask_l = pd.Series(True, index=work_m.index)
-    if "level" in work_m.columns:
+    _lc_maket = _dev_tasks_resolve_level_column(work_m)
+    if _lc_maket and _lc_maket in work_m.columns:
+        mask_l = pd.to_numeric(work_m[_lc_maket], errors="coerce") == 5
+    elif "level" in work_m.columns:
         mask_l = pd.to_numeric(work_m["level"], errors="coerce") == 5
     mask_neg = work_m["_end_diff"].notna() & (work_m["_end_diff"] < 0)
     maket_df = work_m[mask_r & mask_l & mask_neg].copy()
@@ -1830,7 +1833,7 @@ def _deviations_stacked_bar_add_totals(
     *,
     period_col: str,
     value_col: str,
-    min_segments: int = 2,
+    min_segments: int = 1,
 ) -> None:
     if frame is None or frame.empty or period_col not in frame.columns or value_col not in frame.columns:
         return
@@ -1873,9 +1876,11 @@ def _deviations_plotly_project_chart_title(fig, project_name: str) -> None:
             title=dict(text=name, x=0.5, xanchor="center", font=dict(size=18, color="#e8eef5")),
             margin=dict(t=72),
         )
+        _pn_prefixes = ("project name=", "Проект=", "project=")
         fig.for_each_annotation(
             lambda a: a.update(text=name)
-            if a.text and str(a.text).startswith("project name=")
+            if a.text
+            and any(str(a.text).startswith(p) for p in _pn_prefixes)
             else None
         )
     except Exception:
@@ -5123,22 +5128,8 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
 
     # Детальная таблица по макету (п. 11): уровень 5, причина заполнена, отклонение окончания < 0
     st.subheader("Детальные данные")
+    # Таблица макета: те же фильтры, что у отчёта (без отдельного selectbox).
     table_reason_df = filtered_df
-    selected_reason_table = "Все"
-    if has_reason_col and not hide_shared_filters:
-        _reason_opts_tbl = ["Все"] + sorted(
-            filtered_df["reason of deviation"].dropna().astype(str).str.strip().unique().tolist()
-        )
-        selected_reason_table = st.selectbox(
-            "Причина",
-            _reason_opts_tbl,
-            key="reason_filter_table_only",
-        )
-        if selected_reason_table != "Все":
-            table_reason_df = filtered_df[
-                filtered_df["reason of deviation"].astype(str).str.strip()
-                == str(selected_reason_table).strip()
-            ]
     notes_col_m = _find_column_by_keywords(
         filtered_df, ("note", "заметк", "comment", "remark", "notes")
     )
@@ -5644,124 +5635,6 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
     except (ValueError, TypeError):
         pass
 
-    # ТЗ визуал 2 (комбо): по дате снимка файла — стек типовых причин по месяцам, итог над столбцами, красная линия итога.
-    if (
-        hide_shared_filters
-        and use_snapshot_period
-        and period_type_en == "Month"
-        and "reason of deviation" in filtered_df.columns
-    ):
-        _tz_fd = filtered_df.copy()
-        _tz_fd["_reason_bucket"] = _tz_fd["reason of deviation"].map(
-            _deviations_reason_bucket_label
-        )
-        _ps_tz = sorted(
-            _tz_fd["period"].dropna().unique(),
-            key=_dynamics_period_sort_key,
-        )
-        _pl_tz = [format_period_ru(x) for x in _ps_tz]
-        _tz_fd["_per_lbl"] = _tz_fd["period"].map(format_period_ru)
-        _agg_tz = (
-            _tz_fd.groupby(["_per_lbl", "_reason_bucket"], observed=False)
-            .size()
-            .reset_index(name="Количество")
-        )
-        _ord_tz = list(DEVIATIONS_REASON_BUCKET_ORDER)
-        _clr_tz = _deviations_reason_bucket_colors()
-        _n_per_tz = len(_pl_tz)
-        _h_tz = int(max(1120, 840 + min(_n_per_tz, 36) * 36))
-        fig_tz = px.bar(
-            _agg_tz,
-            x="_per_lbl",
-            y="Количество",
-            color="_reason_bucket",
-            title=None,
-            color_discrete_map=_clr_tz or None,
-            category_orders={"_per_lbl": _pl_tz, "_reason_bucket": _ord_tz},
-            labels={
-                "_per_lbl": str(period_label),
-                "Количество": "Количество",
-                "_reason_bucket": "Типовая причина",
-            },
-            text="Количество",
-        )
-        fig_tz.update_layout(
-            barmode="stack",
-            bargap=0.22,
-            showlegend=True,
-            legend=dict(
-                title=dict(text="Типовая причина"),
-                orientation="v",
-                yanchor="top",
-                y=1,
-                x=1.02,
-                xanchor="left",
-                font=dict(size=12),
-            ),
-            margin=dict(l=48, r=200, t=48, b=260),
-            height=_h_tz,
-            xaxis=dict(
-                title=dict(text=str(period_label), standoff=48, font=dict(size=13, color="#e8eef5")),
-                tickangle=-45,
-                automargin=True,
-                tickfont=dict(size=12, color="#e8eef5"),
-            ),
-            yaxis=dict(
-                title=dict(text="Количество", standoff=8, font=dict(size=13, color="#e8eef5")),
-                automargin=True,
-                tickfont=dict(size=12, color="#e8eef5"),
-            ),
-        )
-        if _n_per_tz > 18:
-            fig_tz.update_xaxes(ticklabelstep=2)
-        fig_tz.update_traces(
-            texttemplate="%{text}",
-            textposition="inside",
-            insidetextanchor="middle",
-            textangle=0,
-            cliponaxis=False,
-        )
-        for tr in fig_tz.data:
-            if getattr(tr, "type", None) == "bar":
-                mc = getattr(tr.marker, "color", None)
-                if isinstance(mc, str):
-                    tr.update(insidetextfont=dict(color="#f0f4f8", size=12))
-        _tot_tz = (
-            _agg_tz.groupby("_per_lbl", observed=False)["Количество"]
-            .sum()
-            .reindex(_pl_tz)
-            .fillna(0)
-            .astype(float)
-        )
-        fig_tz.add_trace(
-            go.Scatter(
-                x=_pl_tz,
-                y=_tot_tz.values,
-                mode="lines+markers",
-                name="Итого",
-                line=dict(color="#e53935", width=3),
-                marker=dict(color="#e53935", size=9),
-                yaxis="y",
-            )
-        )
-        for _xl, _yv in zip(_pl_tz, _tot_tz.values):
-            if _yv > 0:
-                fig_tz.add_annotation(
-                    x=_xl,
-                    y=float(_yv),
-                    text=f"<b>{int(round(_yv, 0))}</b>",
-                    showarrow=False,
-                    xref="x",
-                    yref="y",
-                    xanchor="center",
-                    yanchor="bottom",
-                    yshift=8,
-                    font=dict(color="#ffcdd2", size=14),
-                )
-        fig_tz = _plotly_bar_hide_legacy_textfont(fig_tz)
-        fig_tz = apply_chart_background(fig_tz, skip_uniformtext=True)
-        render_chart(fig_tz, caption_below=_dynamics_caption(""))
-
     # Visualizations
     if len(group_cols) == 1:  # Only period
         col1, col2 = st.columns(2, gap="small")
@@ -6031,8 +5904,8 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         cliponaxis=False,
                         selector=dict(type="bar"),
                     )
-                    _hov = _hover_tpl_panel.format(
-                        proj=html_module.escape(_pname)
+                    _hov = _hover_tpl_panel.replace(
+                        "{proj}", html_module.escape(_pname)
                     )
                     for tr in fig.data:
                         if getattr(tr, "type", None) != "bar":
@@ -6044,6 +5917,20 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         tr.update(hovertemplate=_hov)
                     fig = _plotly_bar_hide_legacy_textfont(fig)
                     fig = apply_chart_background(fig, skip_uniformtext=True)
+                    fig.update_layout(
+                        showlegend=True,
+                        legend=dict(
+                            title=dict(text="Причины отклонений"),
+                            orientation="v",
+                            yanchor="top",
+                            y=1,
+                            x=1.02,
+                            xanchor="left",
+                            font=dict(size=12),
+                            traceorder="normal",
+                            itemsizing="constant",
+                        ),
+                    )
                     render_chart(
                         fig,
                         caption_below=_dynamics_caption(_cap_dyn_multi),
@@ -6174,6 +6061,124 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     fig,
                     caption_below=_dynamics_caption(_cap_dyn),
                 )
+
+    # ТЗ визуал 2 (комбо): по дате снимка файла — стек типовых причин по месяцам, итог над столбцами, красная линия итога.
+    if (
+        hide_shared_filters
+        and use_snapshot_period
+        and period_type_en == "Month"
+        and "reason of deviation" in filtered_df.columns
+    ):
+        _tz_fd = filtered_df.copy()
+        _tz_fd["_reason_bucket"] = _tz_fd["reason of deviation"].map(
+            _deviations_reason_bucket_label
+        )
+        _ps_tz = sorted(
+            _tz_fd["period"].dropna().unique(),
+            key=_dynamics_period_sort_key,
+        )
+        _pl_tz = [format_period_ru(x) for x in _ps_tz]
+        _tz_fd["_per_lbl"] = _tz_fd["period"].map(format_period_ru)
+        _agg_tz = (
+            _tz_fd.groupby(["_per_lbl", "_reason_bucket"], observed=False)
+            .size()
+            .reset_index(name="Количество")
+        )
+        _ord_tz = list(DEVIATIONS_REASON_BUCKET_ORDER)
+        _clr_tz = _deviations_reason_bucket_colors()
+        _n_per_tz = len(_pl_tz)
+        _h_tz = int(max(1120, 840 + min(_n_per_tz, 36) * 36))
+        fig_tz = px.bar(
+            _agg_tz,
+            x="_per_lbl",
+            y="Количество",
+            color="_reason_bucket",
+            title=None,
+            color_discrete_map=_clr_tz or None,
+            category_orders={"_per_lbl": _pl_tz, "_reason_bucket": _ord_tz},
+            labels={
+                "_per_lbl": str(period_label),
+                "Количество": "Количество",
+                "_reason_bucket": "Типовая причина",
+            },
+            text="Количество",
+        )
+        fig_tz.update_layout(
+            barmode="stack",
+            bargap=0.22,
+            showlegend=True,
+            legend=dict(
+                title=dict(text="Типовая причина"),
+                orientation="v",
+                yanchor="top",
+                y=1,
+                x=1.02,
+                xanchor="left",
+                font=dict(size=12),
+            ),
+            margin=dict(l=48, r=200, t=48, b=260),
+            height=_h_tz,
+            xaxis=dict(
+                title=dict(text=str(period_label), standoff=48, font=dict(size=13, color="#e8eef5")),
+                tickangle=-45,
+                automargin=True,
+                tickfont=dict(size=12, color="#e8eef5"),
+            ),
+            yaxis=dict(
+                title=dict(text="Количество", standoff=8, font=dict(size=13, color="#e8eef5")),
+                automargin=True,
+                tickfont=dict(size=12, color="#e8eef5"),
+            ),
+        )
+        if _n_per_tz > 18:
+            fig_tz.update_xaxes(ticklabelstep=2)
+        fig_tz.update_traces(
+            texttemplate="%{text}",
+            textposition="inside",
+            insidetextanchor="middle",
+            textangle=0,
+            cliponaxis=False,
+        )
+        for tr in fig_tz.data:
+            if getattr(tr, "type", None) == "bar":
+                mc = getattr(tr.marker, "color", None)
+                if isinstance(mc, str):
+                    tr.update(insidetextfont=dict(color="#f0f4f8", size=12))
+        _tot_tz = (
+            _agg_tz.groupby("_per_lbl", observed=False)["Количество"]
+            .sum()
+            .reindex(_pl_tz)
+            .fillna(0)
+            .astype(float)
+        )
+        fig_tz.add_trace(
+            go.Scatter(
+                x=_pl_tz,
+                y=_tot_tz.values,
+                mode="lines+markers",
+                name="Итого",
+                line=dict(color="#e53935", width=3),
+                marker=dict(color="#e53935", size=9),
+                yaxis="y",
+            )
+        )
+        for _xl, _yv in zip(_pl_tz, _tot_tz.values):
+            if _yv > 0:
+                fig_tz.add_annotation(
+                    x=_xl,
+                    y=float(_yv),
+                    text=f"<b>{int(round(_yv, 0))}</b>",
+                    showarrow=False,
+                    xref="x",
+                    yref="y",
+                    xanchor="center",
+                    yanchor="bottom",
+                    yshift=8,
+                    font=dict(color="#ffcdd2", size=14),
+                )
+        fig_tz = _plotly_bar_hide_legacy_textfont(fig_tz)
+        fig_tz = apply_chart_background(fig_tz, skip_uniformtext=True)
+        render_chart(fig_tz, caption_below=_dynamics_caption(""))
 
         # Show by project if project is in group
         if "project name" in group_cols:
