@@ -1820,7 +1820,7 @@ def _deviations_maket_prepare_df(table_reason_df: pd.DataFrame) -> pd.DataFrame:
             _dd_tmp[_ddc] = _dd_tmp[_ddc].astype(str).str.strip()
         maket_df = maket_df[~_dd_tmp.duplicated(subset=_dd_key_cols, keep="first")].copy()
     if not maket_df.empty:
-        maket_df = maket_df.sort_values("_end_diff", ascending=True).reset_index(drop=True)
+        maket_df = maket_df.sort_values("_end_diff", ascending=False).reset_index(drop=True)
     return maket_df
 
 
@@ -5688,6 +5688,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         fig_tz.update_layout(
             barmode="stack",
             bargap=0.22,
+            showlegend=True,
             legend=dict(
                 title=dict(text="Типовая причина"),
                 orientation="v",
@@ -6073,6 +6074,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     barmode="stack",
                     bargap=0.34,
                     bargroupgap=0.06,
+                    showlegend=True,
                     legend=dict(
                         title=dict(text="Причина отклонения"),
                         orientation="v",
@@ -9870,15 +9872,24 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
             _gdrs_gap_rs = _plotly_bargaps_sparse_x_like_gdrs(n_rs)
             _ly_rs = dict(
                 height=max(520, int(180 + n_rs * 52)),
-                margin=dict(l=28, r=28, t=110, b=246),
+                margin=dict(l=28, r=220, t=110, b=246),
                 yaxis=dict(
                     range=[0, _y_top_rs],
                     title="Количество отклонений",
                     automargin=True,
                 ),
                 xaxis=dict(automargin=True, title_standoff=16),
-                showlegend=False,
-                legend=dict(orientation="v"),
+                showlegend=True,
+                legend=dict(
+                    title=dict(text="Причины отклонений"),
+                    orientation="v",
+                    yanchor="top",
+                    y=1,
+                    x=1.02,
+                    xanchor="left",
+                    font=dict(size=11, color="#e8eef5"),
+                    bgcolor="rgba(0,0,0,0)",
+                ),
             )
             if _gdrs_gap_rs:
                 _ly_rs.update(_gdrs_gap_rs)
@@ -9961,8 +9972,10 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
                 # Отодвигаем легенду ещё ниже оси X и увеличиваем нижнее поле,
                 # чтобы «Линия тренда» и подписи месяцев гарантированно не пересекались.
                 fig.update_layout(
+                    showlegend=True,
                     margin=dict(l=56, r=36, t=72, b=208),
                     legend=dict(
+                        title=dict(text="Причины отклонений"),
                         orientation="h",
                         x=0.5,
                         xanchor="center",
@@ -10091,6 +10104,23 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
 
         fig = _apply_bar_uniformtext(fig)
         fig = apply_chart_background(fig)
+        if view_type == "По причинам":
+            fig.update_layout(
+                showlegend=True,
+                margin=dict(l=28, r=220, t=110, b=246),
+                legend=dict(
+                    title=dict(text="Причины отклонений"),
+                    orientation="v",
+                    yanchor="top",
+                    y=1,
+                    x=1.02,
+                    xanchor="left",
+                    font=dict(size=11, color="#e8eef5"),
+                    bgcolor="rgba(0,0,0,0)",
+                ),
+            )
+        elif view_type == "По месяцам" and chart_project_scope != "Все":
+            fig.update_layout(showlegend=True)
         render_chart(fig, caption_below=None)
 
         # Summary table - always show by reason (summarized values)

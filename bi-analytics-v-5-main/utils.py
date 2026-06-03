@@ -817,11 +817,27 @@ def apply_chart_background(fig, *, skip_uniformtext: bool = False):
     if not skip_uniformtext:
         layout_kwargs["uniformtext"] = dict(minsize=8, mode="show")
     if keep_vertical_legend:
-        # Только цвета шрифта/фона легенды; положение x/y/orientation оставляем как в дашборде
-        layout_kwargs["legend"] = dict(
+        legend_merged = dict(
             font=dict(color=TABLE_TEXT_COLOR, size=12),
             bgcolor="rgba(0,0,0,0)",
+            orientation="v",
         )
+        if prev_leg is not None:
+            for key in (
+                "x", "y", "xanchor", "yanchor", "xref", "yref",
+                "orientation", "title", "traceorder", "itemsizing",
+            ):
+                val = getattr(prev_leg, key, None)
+                if val is None:
+                    continue
+                if key == "title" and hasattr(val, "to_plotly_json"):
+                    legend_merged[key] = val.to_plotly_json()
+                else:
+                    legend_merged[key] = val
+        layout_kwargs["legend"] = legend_merged
+        prev_showlegend = getattr(layout, "showlegend", None) if layout is not None else None
+        if prev_showlegend is not None:
+            layout_kwargs["showlegend"] = bool(prev_showlegend)
     else:
         # Дефолт — полоска легенды под графиком. Если дашборд уже задал y/yanchor (напр. y<0, yanchor=top),
         # не затирать — иначе легенда снова уезжает «вверх»/в центр после этого вызова.
