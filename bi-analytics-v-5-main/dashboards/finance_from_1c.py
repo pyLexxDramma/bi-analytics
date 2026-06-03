@@ -404,7 +404,7 @@ def try_approved_budget_from_1c_dannye(
         .str.casefold()
     )
     has_bdr_marker = art_norm.str.contains(r"\(бдр\)", regex=True, na=False) | art_norm.eq("бдр")
-    amt = _coerce_1c_money_series(bdds[c_amt]).fillna(0.0) * 1000.0  # тыс.руб → руб
+    amt = _amount_series_to_rubles(bdds, c_amt)
 
     plan_mask = scen.eq("план") & ~has_bdr_marker
     fact_mask = scen.eq("факт")
@@ -765,7 +765,7 @@ def try_synthetic_bdr_from_1c_dannye(
         | scm.str.contains("план", na=False)
     ) & ~fact_rows
 
-    t["_amt"] = _coerce_1c_money_series(t[amt]).fillna(0.0) * 1000.0
+    t["_amt"] = _amount_series_to_rubles(t, amt)
 
     rs = t[rd].astype(str).str.casefold()
     is_inc = rs.str.contains("поступ", na=False)
