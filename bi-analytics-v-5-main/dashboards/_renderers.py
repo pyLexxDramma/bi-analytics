@@ -27730,8 +27730,9 @@ def compute_bddcs_forecast_monthly(
         for m, v in dp.items():
             fc_totals[m] = fc_totals.get(m, 0.0) + float(v)
 
+    _abc_warn = None
     if abc_errors:
-        return pd.DataFrame(), "Исправьте доли A/B/C (сумма ровно 100%): " + "; ".join(abc_errors[:8])
+        _abc_warn = "Исправьте доли A/B/C (сумма ровно 100%): " + "; ".join(abc_errors[:8])
 
     all_m = sorted(set(plan_totals.keys()) | set(fc_totals.keys()) | set(fact_totals.keys()))
     if not all_m:
@@ -27747,7 +27748,9 @@ def compute_bddcs_forecast_monthly(
         }
         rows.append(row_out)
     out = pd.DataFrame(rows).sort_values("month").reset_index(drop=True)
-    return out, None
+    if out.empty and _abc_warn:
+        return out, _abc_warn
+    return out, _abc_warn
 
 
 def _forecast_per_lot_distribution_totals(
@@ -28689,6 +28692,25 @@ def _forecast_editor_visible_mask(pdf: pd.DataFrame) -> pd.Series:
     return has_sum | (~structural)
 
 
+def _forecast_deduplicate_msp_rows(pdf: pd.DataFrame) -> pd.DataFrame:
+    """Один лот (метка + plan start/end) — одна строка; при дублях оставляем с большей суммой."""
+    if pdf is None or getattr(pdf, "empty", True):
+        return pdf
+    work = pdf.copy().reset_index(drop=True)
+    if "plan start" not in work.columns or "plan end" not in work.columns:
+        return work
+    work["_fc_lot_key"] = _forecast_lot_label_series(work).astype(str).str.strip().str.casefold()
+    work["_fc_ps"] = pd.to_datetime(work["plan start"], errors="coerce").dt.normalize()
+    work["_fc_pe"] = pd.to_datetime(work["plan end"], errors="coerce").dt.normalize()
+    work["_fc_score"] = (
+        pd.to_numeric(work.get("budget plan"), errors="coerce").fillna(0.0)
+        + pd.to_numeric(work.get("budget fact"), errors="coerce").fillna(0.0)
+    )
+    work = work.sort_values("_fc_score", ascending=False)
+    work = work.drop_duplicates(subset=["_fc_lot_key", "_fc_ps", "_fc_pe"], keep="first")
+    return work.drop(columns=["_fc_lot_key", "_fc_ps", "_fc_pe", "_fc_score"], errors="ignore").reset_index(drop=True)
+
+
 def _forecast_prepare_msp_slice(pdf_raw: pd.DataFrame, project_display_name: str) -> tuple[Optional[pd.DataFrame], Optional[str]]:
     pdf = pdf_raw.copy()
     ensure_budget_columns(pdf)
@@ -28733,6 +28755,7 @@ def _forecast_prepare_msp_slice(pdf_raw: pd.DataFrame, project_display_name: str
     pdf["section"] = pdf["section"].apply(_clean_display_str)
     if "task name" not in pdf.columns:
         pdf["task name"] = ""
+    pdf = _forecast_deduplicate_msp_rows(pdf)
     return pdf, None
 
 
@@ -29294,6 +29317,7 @@ def _render_forecast_lot_editor_widgets(
                 value=float(pd.to_numeric(_r.get("БДДС план (утверждённый), млн руб."), errors="coerce") or 0.0),
                 format="%.4f",
                 key=f"{key_prefix}_bp_{_idx}",
+                step=0.0001,
                 label_visibility="collapsed",
             )
         with _c[5]:
@@ -29302,6 +29326,7 @@ def _render_forecast_lot_editor_widgets(
                 value=float(pd.to_numeric(_r.get("БДДС факт, млн руб."), errors="coerce") or 0.0),
                 format="%.4f",
                 key=f"{key_prefix}_bf_{_idx}",
+                step=0.0001,
                 label_visibility="collapsed",
             )
         with _c[6]:
@@ -29309,7 +29334,7 @@ def _render_forecast_lot_editor_widgets(
                 "a",
                 value=float(pd.to_numeric(_r.get("A, %"), errors="coerce") or 0.0),
                 format="%.2f",
-                disabled=not _use_abc,
+                step=0.01,
                 key=f"{key_prefix}_a_{_idx}",
                 label_visibility="collapsed",
             )
@@ -29318,7 +29343,7 @@ def _render_forecast_lot_editor_widgets(
                 "b",
                 value=float(pd.to_numeric(_r.get("B, %"), errors="coerce") or 0.0),
                 format="%.2f",
-                disabled=not _use_abc,
+                step=0.01,
                 key=f"{key_prefix}_b_{_idx}",
                 label_visibility="collapsed",
             )
@@ -29327,7 +29352,7 @@ def _render_forecast_lot_editor_widgets(
                 "c",
                 value=float(pd.to_numeric(_r.get("C, %"), errors="coerce") or 0.0),
                 format="%.2f",
-                disabled=not _use_abc,
+                step=0.01,
                 key=f"{key_prefix}_c_{_idx}",
                 label_visibility="collapsed",
             )
@@ -29722,22 +29747,23 @@ def dashboard_forecast_budget(df):
             _i1 = min(_i0 + _FORECAST_LOT_EDITOR_PAGE_SIZE, _n_lots_fc)
             _page_orig_idx = _visible_idx_fc[_i0:_i1]
             _slice_df = _edit_df_live.iloc[_page_orig_idx].copy().reset_index(drop=True)
-            with st.form(f"forecast_edit_form_{_npk_fc}", clear_on_submit=False):
-                st.caption(
-                    f"Строки **{_i0 + 1}–{_i1}** из {_n_lots_fc} в редакторе "
-                    f"(всего в проекте {_n_lots_all_fc}). **«Применить правки»** — только эта страница."
+            st.caption(
+                f"Строки **{_i0 + 1}–{_i1}** из {_n_lots_fc} в редакторе "
+                f"(всего в проекте {_n_lots_all_fc}). **«Применить правки»** — только эта страница."
+            )
+            _render_forecast_lot_editor_sticky_header()
+            _body_h = int(min(540, max(200, 56 + len(_slice_df) * 44)))
+            with st.container(height=_body_h, border=True):
+                _form_slice = _render_forecast_lot_editor_widgets(
+                    _slice_df,
+                    key_prefix=f"fcw_{_npk_fc}_p{_pg}",
+                    dist_options=_dist_options,
                 )
-                _render_forecast_lot_editor_sticky_header()
-                _body_h = int(min(540, max(200, 56 + len(_slice_df) * 44)))
-                with st.container(height=_body_h, border=True):
-                    _form_slice = _render_forecast_lot_editor_widgets(
-                        _slice_df,
-                        key_prefix=f"fcw_{_npk_fc}_p{_pg}",
-                        dist_options=_dist_options,
-                    )
-                _fc_apply = st.form_submit_button(
-                    "Применить правки", type="primary", use_container_width=False
-                )
+            _fc_apply = st.button(
+                "Применить правки",
+                type="primary",
+                key=f"forecast_apply_{_npk_fc}_p{_pg}",
+            )
             if _fc_apply:
                 _full = st.session_state[_data_key].copy()
                 for _j, _orig_i in enumerate(_page_orig_idx):
@@ -29798,9 +29824,11 @@ def dashboard_forecast_budget(df):
         _fc_row_modes = row_modes
 
 
-    if calc_error:
+    if calc_error and forecast_budget_df.empty:
         st.error(calc_error)
         return
+    if calc_error:
+        st.warning(calc_error)
 
     if forecast_budget_df.empty:
         st.info("Нет данных для расчёта прогнозного БДДС по выбранным фильтрам.")
@@ -30015,14 +30043,23 @@ def dashboard_forecast_budget(df):
         _sum_rows[_dev_col_fc] = (mf_fc["_dev"] / 1e6).astype(float)
     summary_numeric = pd.DataFrame(_sum_rows)
 
+    _tot_plan_mln = float(
+        pd.to_numeric(mf_tot_snapshot["bdds_plan_msp"], errors="coerce").fillna(0.0).sum() / 1e6
+    )
+    _tot_fc_mln = float(
+        pd.to_numeric(mf_tot_snapshot["bdds_forecast"], errors="coerce").fillna(0.0).sum() / 1e6
+    )
     _total_row = {
         _period_hdr: "ИТОГО",
-        "БДДС план": float(_tot_approved_mln),
+        "БДДС план": _tot_plan_mln,
         "БДДС факт": float(_tot_fact_mln) if pd.notna(_tot_fact_mln) else 0.0,
-        "БДДС прогноз": float(_tot_approved_mln),
+        "БДДС прогноз": _tot_fc_mln,
     }
     if not _hide_dev_fc:
-        _total_row[_dev_col_fc] = float(_total_row["БДДС план"]) - float(_total_row["БДДС прогноз"])
+        if _dev_base_fc == "БДДС факт":
+            _total_row[_dev_col_fc] = float(_total_row["БДДС факт"]) - _tot_fc_mln
+        else:
+            _total_row[_dev_col_fc] = _tot_plan_mln - _tot_fc_mln
     summary_numeric = pd.concat([summary_numeric, pd.DataFrame([_total_row])], ignore_index=True)
 
     _baseline_monthly_key = f"forecast_file_baseline_monthly_v8_{_npk_fc}"
