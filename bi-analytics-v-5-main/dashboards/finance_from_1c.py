@@ -73,9 +73,14 @@ def _filter_1c_frame_by_article_lot_sublot(frame: pd.DataFrame, *, art_col: Opti
 def _turnover_rows_in_full_rubles(frame: pd.DataFrame) -> pd.Series:
     """
     Эвристика масштаба сумм: JSON 1С (*_dannye) — в тыс. руб.; demo CSV (new_csv/sample_budget) — в руб.
+
+    Колонка ``__source_file`` (SQLite) помечает только demo-строки как уже в рублях; для 1С JSON
+    по-прежнему используется median(Сумма) ≥ 500_000.
     """
     if frame is None or getattr(frame, "empty", True):
         return pd.Series(dtype=bool)
+    idx = frame.index
+    demo_mask = pd.Series(False, index=idx)
     src_col = None
     for c in frame.columns:
         cl = str(c).strip().casefold()
@@ -84,16 +89,23 @@ def _turnover_rows_in_full_rubles(frame: pd.DataFrame) -> pd.Series:
             break
     if src_col is not None:
         src = frame[src_col].fillna("").astype(str).str.lower()
-        return (
+        demo_mask = (
             src.str.contains("sample_budget")
             | src.str.contains("/new_csv/")
             | src.str.startswith("new_csv/")
         )
     amt_col = _pick_col(frame, ("Сумма", "amount"))
     if not amt_col:
-        return pd.Series(False, index=frame.index)
-    med = float(_coerce_1c_money_series(frame[amt_col]).abs().median() or 0.0)
-    return pd.Series(med >= 500_000.0, index=frame.index)
+        return demo_mask
+    check_idx = idx[~demo_mask] if bool(demo_mask.any()) else idx
+    if len(check_idx) == 0:
+        return demo_mask
+    med = float(
+        _coerce_1c_money_series(frame.loc[check_idx, amt_col]).abs().median() or 0.0
+    )
+    full_rub = demo_mask.copy()
+    full_rub.loc[check_idx] = med >= 500_000.0
+    return full_rub
 
 
 def _amount_series_to_rubles(frame: pd.DataFrame, amt_col: str) -> pd.Series:

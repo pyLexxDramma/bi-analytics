@@ -13061,7 +13061,7 @@ def dashboard_bdr(df):
             }
         )
         bdr_summary["Отклонение"] = (
-            bdr_summary["План расходов"] - bdr_summary["Факт расходов"]
+            bdr_summary["Факт расходов"] - bdr_summary["План расходов"]
         )
     else:
         filtered_df["_inc"] = _coerce_bdr_amount_series(filtered_df[income_col]).fillna(0.0)
@@ -13101,10 +13101,10 @@ def dashboard_bdr(df):
             if view_type == "Накопительно":
                 chart_df["План расходов"] = chart_df["План расходов"].cumsum()
                 chart_df["Факт расходов"] = chart_df["Факт расходов"].cumsum()
-                chart_df["Отклонение"] = chart_df["План расходов"] - chart_df["Факт расходов"]
+                chart_df["Отклонение"] = chart_df["Факт расходов"] - chart_df["План расходов"]
                 title_suffix = " (накопительно)"
             else:
-                chart_df["Отклонение"] = chart_df["План расходов"] - chart_df["Факт расходов"]
+                chart_df["Отклонение"] = chart_df["Факт расходов"] - chart_df["План расходов"]
 
             _bdr_all_projects = str(st.session_state.get("bdr_project", selected_project)).strip() in (
                 "",
@@ -13222,21 +13222,10 @@ def dashboard_bdr(df):
             )
             if not hide_deviation:
                 _dev_thr_b = 0.01
-                (
-                    _y_b_fact_lt,
-                    _y_b_fact_gt,
-                    _dev_txt_lt,
-                    _dev_clr_lt,
-                    _dev_txt_gt,
-                    _dev_clr_gt,
-                ) = _finance_bdr_expense_deviation_chart_parts(
-                    chart_df["План расходов"],
-                    chart_df["Факт расходов"],
-                    threshold_mln=_dev_thr_b,
-                    min_abs_mln=_tlbl_dev,
-                    decimals=1,
-                    unit_suffix=" млн. руб.",
-                )
+                # БДДС-конвенция: отклонение = факт − план; <0 (факт<план) — красный и ниже нуля, >0 (факт>план) — зелёный и выше нуля.
+                _dev_mln_b = chart_df["Отклонение"].div(1e6)
+                _y_b_fact_lt = _dev_mln_b.where(_dev_mln_b < -_dev_thr_b)
+                _y_b_fact_gt = _dev_mln_b.where(_dev_mln_b > _dev_thr_b)
                 _dev_txt_lt = _finance_deviation_bar_text_signed_mln(
                     _y_b_fact_lt,
                     min_abs_mln=_tlbl_dev,
@@ -13255,10 +13244,10 @@ def dashboard_bdr(df):
                             x=x_vals,
                             y=_y_b_fact_lt,
                             name="Отклонение (факт < план)",
-                            marker_color=_FINANCE_DEV_BAR_GREEN,
+                            marker_color=_FINANCE_DEV_BAR_RED,
                             text=None if _hide_bar_value_labels else _dev_txt_lt,
                             textposition="outside" if not _hide_bar_value_labels else "none",
-                            textfont=dict(size=_tfs_b, color=_FINANCE_DEV_LABEL_GREEN),
+                            textfont=dict(size=_tfs_b, color=_FINANCE_DEV_LABEL_RED),
                             cliponaxis=False,
                             customdata=_y_b_fact_lt.map(
                                 lambda v: format_million_rub(float(v) * 1e6) if pd.notna(v) else ""
@@ -13272,10 +13261,10 @@ def dashboard_bdr(df):
                             x=x_vals,
                             y=_y_b_fact_gt,
                             name="Отклонение (факт > план)",
-                            marker_color=_FINANCE_DEV_BAR_RED,
+                            marker_color=_FINANCE_DEV_BAR_GREEN,
                             text=None if _hide_bar_value_labels else _dev_txt_gt,
                             textposition="outside" if not _hide_bar_value_labels else "none",
-                            textfont=dict(size=_tfs_b, color=_FINANCE_DEV_LABEL_RED),
+                            textfont=dict(size=_tfs_b, color=_FINANCE_DEV_LABEL_GREEN),
                             cliponaxis=False,
                             customdata=_y_b_fact_gt.map(
                                 lambda v: format_million_rub(float(v) * 1e6) if pd.notna(v) else ""
@@ -13373,7 +13362,7 @@ def dashboard_bdr(df):
                     if view_type == "Накопительно":
                         _s["План расходов"] = _s["План расходов"].cumsum()
                         _s["Факт расходов"] = _s["Факт расходов"].cumsum()
-                    _s["Отклонение"] = _s["План расходов"] - _s["Факт расходов"]
+                    _s["Отклонение"] = _s["Факт расходов"] - _s["План расходов"]
                     if (
                         _bdr_hide_zero
                         and period_type_en == "Month"
@@ -13462,7 +13451,7 @@ def dashboard_bdr(df):
                     "__rk": "total",
                     "План расходов": _tot_plan,
                     "Факт расходов": _tot_fact,
-                    "Отклонение": _tot_plan - _tot_fact,
+                    "Отклонение": _tot_fact - _tot_plan,
                 }
             tbl_disp = pd.concat([tbl_raw, pd.DataFrame([tot_row_tz])], ignore_index=True)
             tbl_disp = tbl_disp.rename(columns={"Период": period_label})
@@ -13473,8 +13462,25 @@ def dashboard_bdr(df):
                     return ""
                 return format_million_rub(v, decimals=1)
 
+            def _fmt_tz_dev_cell(v):
+                if v is None or v == "" or (isinstance(v, float) and pd.isna(v)):
+                    return ""
+                try:
+                    fv = float(v)
+                except (TypeError, ValueError):
+                    return _fmt_tz_cell(v)
+                s = format_million_rub(abs(fv), decimals=1)
+                if fv > 0:
+                    return "+" + s
+                if fv < 0:
+                    return "-" + s
+                return s
+
             for _cn in _tz_money_cols:
-                tbl_disp[_cn] = tbl_disp[_cn].map(_fmt_tz_cell)
+                if _cn == "Отклонение":
+                    tbl_disp[_cn] = tbl_disp[_cn].map(_fmt_tz_dev_cell)
+                else:
+                    tbl_disp[_cn] = tbl_disp[_cn].map(_fmt_tz_cell)
             tbl_disp = tbl_disp.rename(
                 columns={
                     period_label: "Период",
