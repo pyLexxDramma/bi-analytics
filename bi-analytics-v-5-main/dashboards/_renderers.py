@@ -2786,8 +2786,8 @@ def _finance_bdr_expense_deviation_chart_parts(
                 txt_pos.append("")
                 clr_pos.append("#f0f4f8")
             elif fv < pv:
-                txt_pos.append(f"-{abs(diff_rub) / 1e6:.{d}f}{suf}")
-                clr_pos.append(_FINANCE_DEV_LABEL_RED)
+                txt_pos.append(f"+{abs(diff_rub) / 1e6:.{d}f}{suf}")
+                clr_pos.append(_FINANCE_DEV_LABEL_GREEN)
             else:
                 txt_pos.append("")
                 clr_pos.append("#f0f4f8")
@@ -2799,8 +2799,8 @@ def _finance_bdr_expense_deviation_chart_parts(
                 txt_neg.append("")
                 clr_neg.append("#f0f4f8")
             elif fv > pv:
-                txt_neg.append(f"+{abs(diff_rub) / 1e6:.{d}f}{suf}")
-                clr_neg.append(_FINANCE_DEV_LABEL_GREEN)
+                txt_neg.append(f"-{abs(diff_rub) / 1e6:.{d}f}{suf}")
+                clr_neg.append(_FINANCE_DEV_LABEL_RED)
             else:
                 txt_neg.append("")
                 clr_neg.append("#f0f4f8")
@@ -2835,10 +2835,8 @@ def _finance_signed_deviation_bar_text(
         if abs(fv) < floor_mln:
             out.append("")
             continue
-        if fv > 0:
-            out.append(f"-{abs(fv):.{d}f}{suf}")
-        else:
-            out.append(f"+{abs(fv):.{d}f}{suf}")
+        sign = "+" if fv > 0 else ("-" if fv < 0 else "")
+        out.append(f"{sign}{abs(fv):.{d}f}{suf}" if sign else f"{abs(fv):.{d}f}{suf}")
     return out
 
 
@@ -12193,7 +12191,7 @@ def dashboard_budget_cumulative(df):
                     y=chart_src["reserve_cum"].div(1e6),
                     name="Отклонение (накопительно)",
                     marker_color="#e74c3c",
-                    text=_finance_bar_text_mln_rub(chart_src["reserve_cum"]),
+                    text=_finance_deviation_bar_text_signed_mln(chart_src["reserve_cum"].div(1e6), decimals=1, unit_suffix=" млн. руб."),
                     textposition="outside",
                     textfont=dict(size=11, color="#f0f4f8"),
                     visible="legendonly",
@@ -12482,7 +12480,7 @@ def dashboard_budget_by_section(df):
                         y=section_data["reserve budget"].div(1e6),
                         name="Отклонение",
                         marker_color=dev_colors_sec,
-                        text=_finance_bar_text_mln_rub(section_data["reserve budget"]),
+                        text=_finance_deviation_bar_text_signed_mln(section_data["reserve budget"].div(1e6), decimals=1, unit_suffix=" млн. руб."),
                         textposition="outside",
                         textfont=dict(size=18, color="white"),
                     )
@@ -12539,7 +12537,7 @@ def dashboard_budget_by_section(df):
                         x=section_chart_data["reserve budget"].div(1e6),
                         name="Отклонение",
                         marker_color=dev_colors_sec,
-                        text=_finance_bar_text_mln_rub(section_chart_data["reserve budget"]),
+                        text=_finance_deviation_bar_text_signed_mln(section_chart_data["reserve budget"].div(1e6), decimals=1, unit_suffix=" млн. руб."),
                         textposition="outside",
                         textfont=dict(size=18, color="white"),
                         orientation="h",
@@ -13206,13 +13204,13 @@ def dashboard_bdr(df):
                     decimals=1,
                     unit_suffix=" млн. руб.",
                 )
-                _dev_txt_lt = _finance_signed_deviation_bar_text(
+                _dev_txt_lt = _finance_deviation_bar_text_signed_mln(
                     _y_b_fact_lt,
                     min_abs_mln=_tlbl_dev,
                     decimals=1,
                     unit_suffix=" млн. руб.",
                 )
-                _dev_txt_gt = _finance_signed_deviation_bar_text(
+                _dev_txt_gt = _finance_deviation_bar_text_signed_mln(
                     _y_b_fact_gt,
                     min_abs_mln=_tlbl_dev,
                     decimals=1,
