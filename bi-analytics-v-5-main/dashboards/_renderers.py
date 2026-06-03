@@ -10576,6 +10576,32 @@ def _dk_plotly_canvas_width(n_cats: int, *, grouped: bool = True) -> tuple[bool,
     return True, int(min(18000, content_w))
 
 
+
+
+def _render_dk_chart_html_legend(_leg_items: list[tuple[str, str]]) -> None:
+    """Статичная легенда под графиком ДЗ/КЗ (plotly showlegend отключён)."""
+    if not _leg_items:
+        return
+    try:
+        import streamlit.components.v1 as components
+
+        _lh = (
+            '<div style="display:flex;flex-wrap:wrap;gap:8px 20px;'
+            'padding:10px 4px 4px 4px;font-size:12px;line-height:1.4;">'
+        )
+        for _ln, _lc in _leg_items:
+            _lh += (
+                f'<span style="display:flex;align-items:center;gap:5px;">'
+                f'<span style="display:inline-block;width:14px;height:14px;'
+                f'border-radius:2px;background:{_lc};flex-shrink:0;"></span>'
+                f'<span style="color:#e2e8f0;">{_ln}</span></span>'
+            )
+        _lh += "</div>"
+        components.html(_lh, height=44, scrolling=False)
+    except Exception:
+        pass
+
+
 def _render_debit_credit_bar_chart(
     fig,
     *,
@@ -10642,7 +10668,6 @@ def _render_debit_credit_bar_chart(
             fig.update_layout(barmode="group", bargap=_bg, bargroupgap=0.04)
             fig.update_traces(
                 width=_bar_w_grp,
-                offsetgroup="dk_side",
                 selector=dict(type="bar"),
             )
     except Exception:
@@ -10702,6 +10727,7 @@ def _render_debit_credit_bar_chart(
             max_height=None,
             omit_default_width=True,
         )
+        _render_dk_chart_html_legend(_leg_items)
         return
 
     uid = uuid.uuid4().hex[:8]
@@ -10755,21 +10781,7 @@ def _render_debit_credit_bar_chart(
             st.caption("Длинный ряд подрядчиков — **прокрутите график вправо** в полосе под диаграммой.")
         if caption_below:
             _chart_caption_below(caption_below)
-        # Статичная легенда под полосой горизонтального скролла
-        if _leg_items:
-            _lh = (
-                '<div style="display:flex;flex-wrap:wrap;gap:8px 20px;'
-                'padding:10px 4px 4px 4px;font-size:12px;line-height:1.4;">'
-            )
-            for _ln, _lc in _leg_items:
-                _lh += (
-                    f'<span style="display:flex;align-items:center;gap:5px;">'
-                    f'<span style="display:inline-block;width:14px;height:14px;'
-                    f'border-radius:2px;background:{_lc};flex-shrink:0;"></span>'
-                    f'<span style="color:#e2e8f0;">{_ln}</span></span>'
-                )
-            _lh += "</div>"
-            components.html(_lh, height=44, scrolling=False)
+        _render_dk_chart_html_legend(_leg_items)
     except Exception:
         render_chart(
             fig,
@@ -10779,20 +10791,7 @@ def _render_debit_credit_bar_chart(
             omit_default_width=True,
             plotly_config_extra={"responsive": False},
         )
-        if _leg_items:
-            _lh = (
-                '<div style="display:flex;flex-wrap:wrap;gap:8px 20px;'
-                'padding:10px 4px 4px 4px;font-size:12px;line-height:1.4;">'
-            )
-            for _ln, _lc in _leg_items:
-                _lh += (
-                    f'<span style="display:flex;align-items:center;gap:5px;">'
-                    f'<span style="display:inline-block;width:14px;height:14px;'
-                    f'border-radius:2px;background:{_lc};flex-shrink:0;"></span>'
-                    f'<span style="color:#e2e8f0;">{_ln}</span></span>'
-                )
-            _lh += "</div>"
-            components.html(_lh, height=44, scrolling=False)
+        _render_dk_chart_html_legend(_leg_items)
 
 
 def dashboard_budget_by_period(df):
@@ -22553,8 +22552,6 @@ def dashboard_debit_credit(df):
                 **_dk_bar_label_style,
             )
             _bar_kw["showlegend"] = True
-            if _dk_side_by_side:
-                _bar_kw["offsetgroup"] = "dk_side"
             fig.add_trace(go.Bar(**_bar_kw))
         if _has_deviation_col and _dk_side_by_side:
             _dev_s = pd.to_numeric(chart_df["Отклонение"], errors="coerce").fillna(0.0)
@@ -22565,7 +22562,6 @@ def dashboard_debit_credit(df):
                     name="Отклонение, если больше или = 0",
                     x=x,
                     y=_dev_pos,
-                    offsetgroup="dk_side",
                     marker_color="#95A5A6",
                     showlegend=True,
                     text=_dev_pos.apply(_dk_chart_bar_text),
@@ -22584,7 +22580,6 @@ def dashboard_debit_credit(df):
                     name="Отклонение, если меньше 0",
                     x=x,
                     y=_dev_neg,
-                    offsetgroup="dk_side",
                     marker_color="#F1948A",
                     text=_dev_neg.apply(_dk_chart_bar_text),
                     textposition="outside",
