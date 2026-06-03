@@ -2764,11 +2764,11 @@ def _finance_bdr_expense_deviation_chart_parts(
     decimals: int = 1,
     unit_suffix: str = " млн рублей",
 ) -> tuple[pd.Series, pd.Series, list[str], list[str], list[str], list[str]]:
-    """БДР/БДДС расходы: plan−fact; положительное выше (зелёный), отрицательное ниже (красный).
+    """БДР/БДДС расходы: факт−план; >0 выше нуля (зелёный), <0 ниже (красный).
 
     Подписи: факт<план → «−…» красным, факт>план → «+…» зелёным (как таблица БДДС).
     """
-    dev_mln = (plan_rub.astype(float) - fact_rub.astype(float)) / 1e6
+    dev_mln = (fact_rub.astype(float) - plan_rub.astype(float)) / 1e6
     thr = float(threshold_mln)
     y_pos = dev_mln.where(dev_mln > thr)
     y_neg = dev_mln.where(dev_mln < -thr)
@@ -2790,7 +2790,7 @@ def _finance_bdr_expense_deviation_chart_parts(
             if abs(diff_rub) < floor_rub:
                 txt_pos.append("")
                 clr_pos.append("#f0f4f8")
-            elif fv < pv:
+            elif fv > pv:
                 txt_pos.append(f"+{abs(diff_rub) / 1e6:.{d}f}{suf}")
                 clr_pos.append(_FINANCE_DEV_LABEL_GREEN)
             else:
@@ -2803,7 +2803,7 @@ def _finance_bdr_expense_deviation_chart_parts(
             if abs(diff_rub) < floor_rub:
                 txt_neg.append("")
                 clr_neg.append("#f0f4f8")
-            elif fv > pv:
+            elif fv < pv:
                 txt_neg.append(f"-{abs(diff_rub) / 1e6:.{d}f}{suf}")
                 clr_neg.append(_FINANCE_DEV_LABEL_RED)
             else:
@@ -2912,6 +2912,22 @@ def _finance_deviation_bar_text_signed_mln(
         sign = "+" if fv > 0 else ("-" if fv < 0 else "")
         out.append(f"{sign}{abs(fv):.{d}f}{suf}" if sign else f"{abs(fv):.{d}f}{suf}")
     return out
+
+
+def _finance_fmt_signed_million_deviation(v) -> str:
+    """Ячейка отклонения: факт − план, со знаком +/− (как подписи на графике БДДС)."""
+    if v is None or v == "" or (isinstance(v, float) and pd.isna(v)):
+        return ""
+    try:
+        fv = float(v)
+    except (TypeError, ValueError):
+        return format_million_rub(v, decimals=1)
+    s = format_million_rub(abs(fv), decimals=1)
+    if fv > 0:
+        return "+" + s
+    if fv < 0:
+        return "-" + s
+    return s
 
 
 def _forecast_bdd_bar_value_labels(
@@ -13048,7 +13064,7 @@ def dashboard_bdr(df):
         if dev_ec is not None:
             filtered_df["_dev"] = _coerce_bdr_amount_series(filtered_df[dev_ec]).fillna(0.0)
         else:
-            filtered_df["_dev"] = filtered_df["_plan_exp"] - filtered_df["_fact_exp"]
+            filtered_df["_dev"] = filtered_df["_fact_exp"] - filtered_df["_plan_exp"]
         bdr_summary = (
             filtered_df.groupby(period_col, dropna=False)
             .agg({"_plan_exp": "sum", "_fact_exp": "sum"})
@@ -13463,18 +13479,7 @@ def dashboard_bdr(df):
                 return format_million_rub(v, decimals=1)
 
             def _fmt_tz_dev_cell(v):
-                if v is None or v == "" or (isinstance(v, float) and pd.isna(v)):
-                    return ""
-                try:
-                    fv = float(v)
-                except (TypeError, ValueError):
-                    return _fmt_tz_cell(v)
-                s = format_million_rub(abs(fv), decimals=1)
-                if fv > 0:
-                    return "+" + s
-                if fv < 0:
-                    return "-" + s
-                return s
+                return _finance_fmt_signed_million_deviation(v)
 
             for _cn in _tz_money_cols:
                 if _cn == "Отклонение":
@@ -13494,7 +13499,7 @@ def dashboard_bdr(df):
                     tbl_disp,
                     row_kind_column="__rk",
                     finance_deviation_column=_bdr_tz_dev_col,
-                    deviation_red_if_negative=True,
+                    deviation_color_fact_vs_plan=True,
                     emphasize_row_kinds=("project", "total"),
                     **_BDR_TABLE_HTML_KW,
                 )
@@ -13715,13 +13720,15 @@ def dashboard_bdr(df):
                 .agg({"_plan_exp": "sum", "_fact_exp": "sum"})
                 .reset_index()
             )
-            by_p["Отклонение"] = by_p["_plan_exp"] - by_p["_fact_exp"]
+            by_p["Отклонение"] = by_p["_fact_exp"] - by_p["_plan_exp"]
             proj_tbl = pd.DataFrame(
                 {
                     "Проект": by_p["project name"].astype(str),
                     "План, млн. руб.": by_p["_plan_exp"].map(format_million_rub),
                     "Факт, млн. руб.": by_p["_fact_exp"].map(format_million_rub),
-                    "Отклонение, млн. руб.": by_p["Отклонение"].map(format_million_rub),
+                    "Отклонение, млн. руб.": by_p["Отклонение"].map(
+                        _finance_fmt_signed_million_deviation
+                    ),
                     "_row_kind": "",
                 }
             )
@@ -13737,8 +13744,8 @@ def dashboard_bdr(df):
                                     "Проект": "ИТОГО",
                                     "План, млн. руб.": format_million_rub(_bdr_plan_tot),
                                     "Факт, млн. руб.": format_million_rub(_bdr_fact_tot),
-                                    "Отклонение, млн. руб.": format_million_rub(
-                                        _bdr_plan_tot - _bdr_fact_tot
+                                    "Отклонение, млн. руб.": _finance_fmt_signed_million_deviation(
+                                        _bdr_fact_tot - _bdr_plan_tot
                                     ),
                                     "_row_kind": "total",
                                 }
@@ -13748,12 +13755,12 @@ def dashboard_bdr(df):
                     ignore_index=True,
                 )
             suppress_caption(
-                "План/факт расходов и отклонение (план минус факт) по проекту за выбранные фильтры."
+                "План/факт расходов и отклонение (факт минус план) по проекту за выбранные фильтры."
             )
             _render_budget_table_html(
                     proj_tbl,
                     finance_deviation_column="Отклонение, млн. руб.",
-                    deviation_red_if_negative=True,
+                    deviation_color_fact_vs_plan=True,
                     row_kind_column="_row_kind",
                     emphasize_row_kinds=("total",),
                     **_BDR_TABLE_HTML_KW,
