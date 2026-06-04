@@ -283,7 +283,7 @@ _TABLE_SORT_JS = r"""
         var gTbl = ganttScrollBox.querySelector("table");
         var gcontent = gTbl ? Math.ceil(gTbl.getBoundingClientRect().height)
                             : Math.ceil(ganttScrollBox.scrollHeight || 0);
-        var gsh = Math.min(640, gcontent + 16);
+        var gsh = gcontent + 16;
         if (gsh > 0) {
           window.parent.postMessage({ type: "streamlit:setFrameHeight", height: gsh }, "*");
           return;
@@ -470,7 +470,7 @@ _COMPACT_FRAME_FIT_JS = r"""
         var gTbl = ganttScroll.querySelector("table");
         var gcontent = gTbl ? Math.ceil(gTbl.getBoundingClientRect().height)
                             : Math.ceil(ganttScroll.scrollHeight || 0);
-        var gh = Math.min(640, gcontent + 16);
+        var gh = gcontent + 16;
         if (gh > 0) {
           window.parent.postMessage({ type: "streamlit:setFrameHeight", height: gh }, "*");
           return;
@@ -550,11 +550,9 @@ html, body {
 
 .gantt-schedule-scroll-wrap{
   display:block;width:100%!important;max-width:100%!important;margin:0;padding:0;
-  max-height:min(70vh,640px)!important;
-  overflow-x:auto!important;overflow-y:auto!important;
-  -webkit-overflow-scrolling:touch;scrollbar-gutter:stable;box-sizing:border-box;
+  overflow-x:auto!important;overflow-y:visible!important;
+  -webkit-overflow-scrolling:touch;box-sizing:border-box;
 }
-.gantt-schedule-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:4!important;background:hsl(209,72%,6%)!important;}
 .pf-dates-table-wrap,.gantt-schedule-table-wrap{
   display:block;width:100%;max-width:100%;margin:0;padding:0;
   overflow-x:visible!important;overflow-y:visible;
@@ -921,7 +919,7 @@ def _estimate_html_block_height(html: str) -> int:
             return int(max(120, min(est, vh_cap)))
         return int(max(120, est))
     if "gantt-schedule-scroll-wrap" in html_l:
-        return int(min(cap, max(200, est)))
+        return int(max(96, est))
     if "pf-dates-scroll-wrap" in html_l:
         return int(min(cap, max(200, est)))
     if "pd-dynamics-scroll-wrap" in html_l:
@@ -1049,7 +1047,10 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
         components.html(doc, height=_h_scroll, scrolling=False)
         return
     if "gantt-schedule-scroll-wrap" in _b:
-        _h_gantt = min(640, max(220, _estimate_html_block_height(html)))
+        # Таблица задач «График проекта» подгоняется по высоте контента (как
+        # «Причины отклонений»): кнопка «Скачать таблицу» сразу под таблицей,
+        # без пустого пространства и без внутренней вертикальной прокрутки.
+        _h_gantt = max(96, _estimate_html_block_height(html))
         components.html(doc, height=_h_gantt, scrolling=False)
         return
     if "budget-deviation-table-wrap" in _b and "budget-table-scroll" in _b:

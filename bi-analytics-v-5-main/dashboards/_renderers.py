@@ -296,13 +296,11 @@ _TABLE_CSS = """
 }
 .gantt-schedule-scroll-wrap{
   display:block;width:100%!important;max-width:100%!important;margin:0.15rem 0 0.05rem 0;padding:0;
-  max-height:min(70vh,640px)!important;
-  overflow-x:auto!important;overflow-y:auto!important;
-  -webkit-overflow-scrolling:touch;scrollbar-gutter:stable;box-sizing:border-box;
+  overflow-x:auto!important;overflow-y:visible!important;
+  -webkit-overflow-scrolling:touch;box-sizing:border-box;
 }
 .gantt-schedule-scroll-wrap::-webkit-scrollbar{width:10px;height:10px}
 .gantt-schedule-scroll-wrap::-webkit-scrollbar-thumb{background:rgba(148,163,184,0.45);border-radius:5px}
-.gantt-schedule-scroll-wrap thead th{position:sticky;top:0;z-index:4;background:hsl(209,72%,6%)!important;}
 .gantt-schedule-table-wrap {
   width:100%!important; max-width:100%!important; box-sizing:border-box;
   overflow:visible!important;
@@ -3408,44 +3406,37 @@ def render_chart(
     if _use_scroll:
         _vh = int(scroll_viewport_height)
         try:
+            # Длинный Gantt: рендерим график на ПОЛНУЮ высоту (_layout_h) и
+            # помещаем в iframe фиксированной высоты _vh с НАТИВНОЙ вертикальной
+            # прокруткой (scrolling=True) — это самый надёжный способ получить
+            # рабочую полосу прокрутки. scrollZoom отключаем, чтобы колесо мыши
+            # прокручивало список задач, а не масштабировало график (масштаб — в
+            # панели Plotly: +/−, рамка).
+            _cfg_scroll = dict(cfg)
+            _cfg_scroll["responsive"] = True
+            _cfg_scroll["scrollZoom"] = False
+            try:
+                fig.update_layout(autosize=True, height=_layout_h, width=None)
+            except Exception:
+                pass
             _plot_div = fig.to_html(
                 full_html=False,
                 include_plotlyjs="cdn",
-                config=cfg,
+                config=_cfg_scroll,
                 default_width="100%",
                 default_height=f"{_layout_h}px",
             )
             _shell = (
                 "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-                "<style>html,body{margin:0;padding:0;background:transparent;overflow:hidden;}"
-                f".pf-gantt-shell{{display:flex;flex-direction:column;height:{_vh}px;max-height:{_vh}px;overflow:hidden;"
-                "border:1px solid rgba(148,163,184,0.22);border-radius:8px;}}"
-                f".pf-gantt-view{{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:auto;-webkit-overflow-scrolling:touch;}}"
-                ".pf-gantt-view .xaxislayer-above,.pf-gantt-view .xaxislayer-below{visibility:hidden;}"
-                ".pf-gantt-xaxis-pin{flex:0 0 auto;height:44px;overflow:hidden;background:hsl(209,72%,6%);"
-                "border-top:1px solid rgba(148,163,184,0.18);}"
+                "<style>html,body{margin:0;padding:0;background:transparent;}"
+                f"body{{min-height:{_layout_h}px;}}"
+                f".pf-gantt-plot,.pf-gantt-plot .js-plotly-plot,.pf-gantt-plot .plotly-graph-div{{"
+                f"height:{_layout_h}px!important;min-height:{_layout_h}px!important;width:100%!important;}}"
                 "</style></head><body>"
-                f'<div class="pf-gantt-shell"><div class="pf-gantt-view">{_plot_div}</div>'
-                f'<div class="pf-gantt-xaxis-pin" id="pf-xaxis-pin"></div></div>'
-                "<script>(function(){"
-                "var view=document.querySelector('.pf-gantt-view');"
-                "var pin=document.getElementById('pf-xaxis-pin');"
-                "var gd=view&&view.querySelector('.js-plotly-plot');"
-                "if(!view||!pin||!gd)return;"
-                "function sync(){"
-                "var xa=gd.querySelector('.xaxislayer-above')||gd.querySelector('.xaxislayer-below');"
-                "if(!xa){pin.innerHTML='';return;}"
-                "var svg=document.createElementNS('http://www.w3.org/2000/svg','svg');"
-                "var vb=xa.getAttribute('viewBox');if(vb)svg.setAttribute('viewBox',vb);"
-                "svg.setAttribute('width','100%');svg.setAttribute('height','44');"
-                "svg.appendChild(xa.cloneNode(true));pin.innerHTML='';pin.appendChild(svg);"
-                "}"
-                "if(window.Plotly&&gd.on){gd.on('plotly_afterplot',sync);}"
-                "setTimeout(sync,400);setTimeout(sync,1200);window.addEventListener('resize',sync);"
-                "})();</script>"
+                f'<div class="pf-gantt-plot">{_plot_div}</div>'
                 "</body></html>"
             )
-            components.html(_shell, height=_vh + 2, scrolling=False)
+            components.html(_shell, height=_vh, scrolling=True)
             if caption_below:
                 _chart_caption_below(caption_below, tight=True)
             return
@@ -36179,7 +36170,11 @@ def _gantt_distinct_str_values_from_series(series: pd.Series) -> list:
 
 
 _GANTT_MAX_ROWS = 30
-_GANTT_VIEWPORT_MAX_HEIGHT = 960
+# Высота видимой области диаграммы Ганта. Если полная высота графика больше —
+# график помещается в прокручиваемый блок фиксированной высоты (вертикальная
+# прокрутка внутри графика), чтобы видеть все задачи/проекты, не растягивая
+# страницу. Делаем ниже типовой высоты графика, иначе scroll-обёртка не включается.
+_GANTT_VIEWPORT_MAX_HEIGHT = 640
 _GANTT_CHART_MAX_HEIGHT = 1200  # legacy; для Gantt используется scroll_viewport, не clamp
 _GANTT_TABLE_MAX_ROWS = 30
 _GANTT_MIN_TASK_FONT = 12
@@ -37935,6 +37930,10 @@ def dashboard_project_schedule_chart(df):
     except Exception:
         _h_g = 0
     _gantt_render_h = _h_g if _h_g > 0 else _gantt_render_h
+    st.caption(
+        f"DIAG gantt: render_h={_gantt_render_h} viewport={_GANTT_VIEWPORT_MAX_HEIGHT} "
+        f"use_scroll={_gantt_render_h > _GANTT_VIEWPORT_MAX_HEIGHT} rows_shown={_gantt_rows_shown}"
+    )
     render_chart(
         fig_gantt,
         key="gantt_project_schedule",
