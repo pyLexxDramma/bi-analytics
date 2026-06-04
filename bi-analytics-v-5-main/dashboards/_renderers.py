@@ -21965,6 +21965,19 @@ def _gdrs_merge_plan_from_1c_spravochniki(
 def dashboard_debit_credit(df):
     """Дебиторская и кредиторская задолженность подрядчиков: график и таблица по данным из файла."""
 
+    # КС-2 берётся из оборотов 1С (reference_1c_dannye). В отличие от БДДС/прогноза
+    # этот дашборд раньше только читал session_state, поэтому при rerun/навигации
+    # КС-2 «пропадал» (есть до переключения вида, нет — после). Бутстрапим референс
+    # на каждом рендере, как это делают БДДС и «Прогнозный бюджет».
+    try:
+        from dashboards.finance_from_1c import resolve_reference_1c_dannye
+
+        _dk_ref_boot = resolve_reference_1c_dannye()
+        if _dk_ref_boot is not None and not getattr(_dk_ref_boot, "empty", True):
+            st.session_state["reference_1c_dannye"] = _dk_ref_boot
+    except Exception:
+        pass
+
     data = st.session_state.get("debit_credit_data", None)
     if (data is None or data.empty) and (df is not None and not df.empty):
         data = df
