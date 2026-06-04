@@ -313,25 +313,20 @@ def _bddds_impute_missing_plan_from_fact_ratio(odf: pd.DataFrame) -> pd.DataFram
     (часто прошлый год), то после агрегации «budget plan» обнуляется при ненулевом факте.
 
     Оценка плана для таких строк: факт × (Σплан/Σфакт) по месяцам, где обе величины > 0,
-    сначала внутри проекта, иначе общий коэффициент по всему набору строк.
+    только внутри проекта и только если у проекта уже есть хотя бы один месяц с планом > 0.
+    Межпроектная подстановка (глобальный коэффициент) не применяется — иначе проекты без
+    сценария «План» (например, Есипово) получали бы искусственный план на графике.
     """
     if odf is None or getattr(odf, "empty", True):
         return odf
     out = odf.copy()
-    bp_all = pd.to_numeric(out["budget plan"], errors="coerce").fillna(0.0)
-    bf_all = pd.to_numeric(out["budget fact"], errors="coerce").fillna(0.0)
-    sel_pairs = (bp_all > 0.0) & (bf_all > 0.0)
-    global_ratio: float | None = None
-    if bool(sel_pairs.any()):
-        gbp = float(bp_all.loc[sel_pairs].sum())
-        gbf = float(bf_all.loc[sel_pairs].sum())
-        if gbf > 0.0 and np.isfinite(gbp):
-            global_ratio = gbp / gbf
     imputed_any = False
     for _proj, chunk in out.groupby("project name"):
         idx = chunk.index
         bp = pd.to_numeric(out.loc[idx, "budget plan"], errors="coerce").fillna(0.0)
         bf = pd.to_numeric(out.loc[idx, "budget fact"], errors="coerce").fillna(0.0)
+        if float(bp.sum()) <= 0.0:
+            continue
         sel = (bp > 0.0) & (bf > 0.0)
         ratio: float | None = None
         if bool(sel.any()):
@@ -339,8 +334,6 @@ def _bddds_impute_missing_plan_from_fact_ratio(odf: pd.DataFrame) -> pd.DataFram
             sf = float(bf.loc[sel].sum())
             if sf > 0.0 and np.isfinite(sp):
                 ratio = sp / sf
-        if ratio is None and global_ratio is not None and np.isfinite(global_ratio) and global_ratio > 0.0:
-            ratio = global_ratio
         if ratio is None or not np.isfinite(ratio) or ratio <= 0.0:
             continue
         need = (bp <= 0.0) & (bf > 0.0)
@@ -351,6 +344,68 @@ def _bddds_impute_missing_plan_from_fact_ratio(odf: pd.DataFrame) -> pd.DataFram
         imputed_any = True
     if imputed_any:
         out.attrs["bddds_plan_imputed_ratio"] = True
+    return out
+
+
+def bddds_project_norm_keys_without_plan_scenario(
+    reference_1c_dannye: Optional[pd.DataFrame] = None,
+) -> set[str]:
+    """
+    Ключи проектов (_project_filter_norm_key), у которых в 1С есть обороты БДДС,
+    но нет ни одной строки сценария «План» (план=0 по всем месяцам до impute).
+    """
+    syn = try_synthetic_budget_from_1c_dannye(
+        reference_1c_dannye=reference_1c_dannye,
+        impute_plan=False,
+    )
+    if syn is None or syn.empty or "project name" not in syn.columns:
+        return set()
+    from dashboards._renderers import _project_filter_norm_key
+
+    out: set[str] = set()
+    for _proj, chunk in syn.groupby("project name", dropna=False):
+        bp = pd.to_numeric(chunk.get("budget plan"), errors="coerce").fillna(0.0)
+        bf = pd.to_numeric(chunk.get("budget fact"), errors="coerce").fillna(0.0)
+        if float(bf.abs().sum()) <= 0.0 and float(bp.abs().sum()) <= 0.0:
+            continue
+        if float(bp.sum()) <= 0.0:
+            pk = _project_filter_norm_key(_proj)
+            if pk:
+                out.add(pk)
+    return out
+
+
+def zero_budget_plan_for_projects_without_1c_plan(
+    summary: pd.DataFrame,
+    *,
+    reference_1c_dannye: Optional[pd.DataFrame] = None,
+    project_norm_keys: set[str] | None = None,
+) -> pd.DataFrame:
+    """Обнуляет budget plan в сводке для проектов без сценария «План» в 1С."""
+    if summary is None or summary.empty or "project name" not in summary.columns:
+        return summary
+    no_plan = project_norm_keys if project_norm_keys is not None else bddds_project_norm_keys_without_plan_scenario(
+        reference_1c_dannye
+    )
+    if not no_plan:
+        return summary
+    from dashboards._renderers import (
+        _project_filter_norm_key,
+        _project_norm_key_matches_msp_keys,
+    )
+
+    out = summary.copy()
+    for pk in no_plan:
+        mask = out["project name"].map(_project_filter_norm_key).map(
+            lambda rk: _project_norm_key_matches_msp_keys(rk, {pk})
+        )
+        if not bool(mask.any()):
+            continue
+        out.loc[mask, "budget plan"] = 0.0
+        if "reserve budget" in out.columns and "budget fact" in out.columns:
+            out.loc[mask, "reserve budget"] = pd.to_numeric(
+                out.loc[mask, "budget fact"], errors="coerce"
+            ).fillna(0.0)
     return out
 
 
@@ -456,6 +511,7 @@ def try_approved_budget_from_1c_dannye(
 def try_synthetic_budget_from_1c_dannye(
     *,
     reference_1c_dannye: Optional[pd.DataFrame] = None,
+    impute_plan: bool = True,
 ) -> Optional[pd.DataFrame]:
     """
     Собирает DataFrame в формате дашборда БДДС: project name, plan end, budget plan, budget fact,
@@ -612,7 +668,16 @@ def try_synthetic_budget_from_1c_dannye(
     odf["plan_month"] = _pe.dt.to_period("M")
     odf["plan_quarter"] = _pe.dt.to_period("Q")
     odf["plan_year"] = _pe.dt.to_period("Y")
-    odf = _bddds_impute_missing_plan_from_fact_ratio(odf)
+    _no_plan_before_impute = set(
+        odf.groupby("project name")["budget plan"]
+        .sum()
+        .loc[lambda s: pd.to_numeric(s, errors="coerce").fillna(0.0) <= 0.0]
+        .index.astype(str)
+    )
+    if impute_plan:
+        odf = _bddds_impute_missing_plan_from_fact_ratio(odf)
+        if _no_plan_before_impute:
+            odf.loc[odf["project name"].astype(str).isin(_no_plan_before_impute), "budget plan"] = 0.0
     odf.attrs["data_source_1c_synthetic"] = True
     return odf
 
@@ -1186,7 +1251,10 @@ def finalize_budget_summary_for_display(
         out,
         period_col=period_col,
     )
-    return out
+    return zero_budget_plan_for_projects_without_1c_plan(
+        out,
+        reference_1c_dannye=reference_1c_dannye,
+    )
 
 
 def resolve_reference_1c_dannye(
@@ -1986,6 +2054,10 @@ def overlay_1c_on_budget_summary(
         out,
         period_col=period_col,
         canonical_project_name=canon,
+    )
+    out = zero_budget_plan_for_projects_without_1c_plan(
+        out,
+        reference_1c_dannye=ref,
     )
     return out, True
 

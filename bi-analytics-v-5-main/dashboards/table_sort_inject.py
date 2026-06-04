@@ -181,8 +181,22 @@ _TABLE_SORT_JS = r"""
             } else {
               var allBody = [];
               split.blocks.forEach(function (blk) {
+                var projLabel = "";
+                if (blk.header && blk.header.cells && blk.header.cells.length) {
+                  projLabel = (blk.header.cells[0].textContent || "").trim();
+                }
                 if (blk.header) blk.header.style.display = "none";
-                blk.body.forEach(function (r) { allBody.push(r); });
+                blk.body.forEach(function (r) {
+                  if (projLabel && r.cells && r.cells.length) {
+                    var pc = r.cells[0];
+                    var pt = (pc.textContent || "").trim();
+                    if (!pt && pc) {
+                      pc.textContent = projLabel;
+                      pc.setAttribute("data-sort-val", projLabel);
+                    }
+                  }
+                  allBody.push(r);
+                });
               });
               allBody.sort(function (a, b) {
                 return compareCells(cellSortKey(a, colIdx), cellSortKey(b, colIdx), sortDir);

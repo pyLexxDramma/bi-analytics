@@ -10922,13 +10922,6 @@ def dashboard_budget_by_period(df):
             col1, col2, col3, col4, col5 = st.columns(5, gap="small")
 
             with col1:
-                period_type = st.selectbox(
-                    "Группировать по", ["Месяц", "Квартал", "Год"], key="budget_period"
-                )
-            period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
-            period_type_en = period_map.get(period_type, "Month")
-
-            with col2:
                 if "project name" in filtered_df.columns:
                     _project_opts = _unique_project_labels_for_select(
                         filtered_df["project name"]
@@ -10940,14 +10933,6 @@ def dashboard_budget_by_period(df):
                     selected_projects = []
                     _bdds_all_projects = True
 
-            with col3:
-                st.selectbox(
-                    "Представление",
-                    ["По месяцам", "Накопительно"],
-                    key="budget_period_view",
-                    help="Как строить график и нижнюю сводную таблицу: по периодам или накопительно.",
-                )
-
             _bdds_sel_projects = list(selected_projects or [])
             _bdds_proj_df = filtered_df.copy()
             if _bdds_sel_projects and "project name" in _bdds_proj_df.columns:
@@ -10957,7 +10942,7 @@ def dashboard_budget_by_period(df):
 
             ensure_date_columns(_bdds_proj_df)
             _period_from, _period_to = None, None
-            with col4:
+            with col2:
                 if "plan end" in _bdds_proj_df.columns:
                     _pe_series = pd.to_datetime(_bdds_proj_df["plan end"], errors="coerce")
                     if _pe_series.notna().any():
@@ -10987,6 +10972,21 @@ def dashboard_budget_by_period(df):
                             default=(_def_start, _def_end) if _def_start and _def_end else None,
                             help="Диапазон по полю «Конец план».",
                         )
+
+            with col3:
+                period_type = st.selectbox(
+                    "Группировать по", ["Месяц", "Квартал", "Год"], key="budget_period"
+                )
+            period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
+            period_type_en = period_map.get(period_type, "Month")
+
+            with col4:
+                st.selectbox(
+                    "Представление",
+                    ["По месяцам", "Накопительно"],
+                    key="budget_period_view",
+                    help="Как строить график и нижнюю сводную таблицу: по периодам или накопительно.",
+                )
 
         selected_projects = list(selected_projects or [])
         filtered_df = _bdds_proj_df.copy()
@@ -11069,10 +11069,7 @@ def dashboard_budget_by_period(df):
     ensure_budget_columns(filtered_df)
     from dashboards.data_quality_hints import collect_budget_1c_hints, render_quality_hints
 
-    _bdds_q_hints = collect_budget_1c_hints(
-        dict(getattr(filtered_df, "attrs", {}) or {}),
-        used_fallback_1c=bool(_bdds_used_1c),
-    )
+    _bdds_q_hints: list[str] = []
     has_budget = "budget plan" in filtered_df.columns and "budget fact" in filtered_df.columns
     if not has_budget:
         st.warning("Столбцы бюджета (budget plan, budget fact) не найдены: загрузите MSP с бюджетом и/или `*_dannye.json` с **Сценарий** + **Сумма**.")
@@ -11370,19 +11367,24 @@ def dashboard_budget_by_period(df):
         _txt_pos = "none" if _hide_bar_value_labels else "outside"
 
         fig = go.Figure()
-        fig.add_trace(
-            go.Bar(
-                x=project_data[period_col],
-                y=project_data["budget plan"].div(1e6),
-                name="БДДС план",
-                marker_color="#2E86AB",
-                text=_plan_txt,
-                textposition=_txt_pos,
-                textfont=dict(size=_tfs, color="#f0f4f8"),
-                customdata=project_data["budget plan"].apply(format_million_rub),
-                hovertemplate="<b>%{x}</b><br>БДДС план: %{customdata}<br><extra></extra>",
-            )
+        _bdds_show_plan = (
+            float(project_data["budget plan"].fillna(0.0).abs().sum())
+            >= _FINANCE_CHART_MIN_MONTH_RUB
         )
+        if _bdds_show_plan:
+            fig.add_trace(
+                go.Bar(
+                    x=project_data[period_col],
+                    y=project_data["budget plan"].div(1e6),
+                    name="БДДС план",
+                    marker_color="#2E86AB",
+                    text=_plan_txt,
+                    textposition=_txt_pos,
+                    textfont=dict(size=_tfs, color="#f0f4f8"),
+                    customdata=project_data["budget plan"].apply(format_million_rub),
+                    hovertemplate="<b>%{x}</b><br>БДДС план: %{customdata}<br><extra></extra>",
+                )
+            )
         fig.add_trace(
             go.Bar(
                 x=project_data[period_col],
@@ -11951,6 +11953,36 @@ def dashboard_budget_by_period(df):
                 emphasize_row_kinds=("total",),
                 **_BDDS_TABLE_HTML_KW,
             )
+
+    from dashboards.finance_from_1c import bddds_project_norm_keys_without_plan_scenario
+
+    _bdds_hint_attrs = dict(getattr(filtered_df, "attrs", {}) or {})
+    _bs_for_hints = budget_summary.copy()
+    if not _bdds_all_projects and selected_projects:
+        _bs_for_hints = _filter_df_by_project_labels(_bs_for_hints, selected_projects)
+    _hint_plan_sum = float(
+        pd.to_numeric(_bs_for_hints.get("budget plan"), errors="coerce").fillna(0.0).sum()
+    )
+    _hint_fact_sum = float(
+        pd.to_numeric(_bs_for_hints.get("budget fact"), errors="coerce").fillna(0.0).sum()
+    )
+    if _hint_plan_sum < _FINANCE_CHART_MIN_MONTH_RUB:
+        _bdds_hint_attrs.pop("bddds_plan_imputed_ratio", None)
+    _no_plan_keys = bddds_project_norm_keys_without_plan_scenario(_bdds_ref_1c)
+    _display_no_plan = False
+    if _no_plan_keys and _hint_fact_sum >= _FINANCE_CHART_MIN_MONTH_RUB:
+        if not _bdds_all_projects and selected_projects:
+            _display_no_plan = any(
+                _project_filter_norm_key(p) in _no_plan_keys for p in selected_projects
+            )
+        elif _bdds_all_projects:
+            _display_no_plan = True
+    _bdds_q_hints = collect_budget_1c_hints(
+        _bdds_hint_attrs,
+        used_fallback_1c=bool(_bdds_used_1c),
+        display_has_plan=_hint_plan_sum >= _FINANCE_CHART_MIN_MONTH_RUB,
+        display_no_plan_scenario=_display_no_plan,
+    )
 
     render_quality_hints(_bdds_q_hints)
 
@@ -12951,12 +12983,6 @@ def dashboard_bdr(df):
         with filters_selectors(st):
             col1, col2, col3, col4, _col5 = st.columns(5, gap="small")
             with col1:
-                period_type = st.selectbox(
-                    "Группировать по", ["Месяц", "Квартал", "Год"], key="bdr_period"
-                )
-            period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
-            period_type_en = period_map.get(period_type, "Month")
-            with col2:
                 if "project name" in df_src.columns:
                     projects = ["Все"] + _unique_project_labels_for_select(df_src["project name"])
                     selected_project = st.selectbox(
@@ -12964,23 +12990,15 @@ def dashboard_bdr(df):
                     )
                 else:
                     selected_project = "Все"
-            with col3:
-                st.selectbox(
-                    "Представление",
-                    ["По месяцам", "Накопительно"],
-                    key="bdr_period_view",
-                    help="Как строить график и сводную таблицу: по периодам или накопительно.",
-                )
-
-            _bdr_proj_df = df_work.copy()
-            if selected_project != "Все" and "project name" in _bdr_proj_df.columns:
-                _bdr_proj_df = _bdr_proj_df[
-                    _bdr_proj_df["project name"].map(_project_filter_norm_key)
-                    == _project_filter_norm_key(selected_project)
-                ].copy()
-            ensure_date_columns(_bdr_proj_df)
-            _bdr_period_from, _bdr_period_to = None, None
-            with col4:
+            with col2:
+                _bdr_proj_df = df_work.copy()
+                if selected_project != "Все" and "project name" in _bdr_proj_df.columns:
+                    _bdr_proj_df = _bdr_proj_df[
+                        _bdr_proj_df["project name"].map(_project_filter_norm_key)
+                        == _project_filter_norm_key(selected_project)
+                    ].copy()
+                ensure_date_columns(_bdr_proj_df)
+                _bdr_period_from, _bdr_period_to = None, None
                 if "plan end" in _bdr_proj_df.columns:
                     _pe_series_bdr = pd.to_datetime(_bdr_proj_df["plan end"], errors="coerce")
                     if _pe_series_bdr.notna().any():
@@ -13005,6 +13023,19 @@ def dashboard_bdr(df):
                             default=(_bdr_start, _bdr_end) if _bdr_start and _bdr_end else None,
                             help="Диапазон по полю «Конец план».",
                         )
+            with col3:
+                period_type = st.selectbox(
+                    "Группировать по", ["Месяц", "Квартал", "Год"], key="bdr_period"
+                )
+            period_map = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
+            period_type_en = period_map.get(period_type, "Month")
+            with col4:
+                st.selectbox(
+                    "Представление",
+                    ["По месяцам", "Накопительно"],
+                    key="bdr_period_view",
+                    help="Как строить график и сводную таблицу: по периодам или накопительно.",
+                )
 
         if period_type_en == "Month":
             period_col = "plan_month"
@@ -13409,8 +13440,8 @@ def dashboard_bdr(df):
                     _body_b = _s[
                         ["Период", "План расходов", "Факт расходов", "Отклонение"]
                     ].copy()
-                    # Правки куратора 08.05.2026: Проект — первый, Период — второй.
-                    _body_b.insert(0, "Проект", "")
+                    # Проект в каждой строке — чтобы при сортировке по другим колонкам название не пропадало.
+                    _body_b.insert(0, "Проект", str(_pl))
                     _body_b["__rk"] = ""
                     _parts_bdr.extend([_hdr_b, _body_b])
                 tbl_raw = (
