@@ -4602,11 +4602,10 @@ def dashboard_deviations_combined(df):
         "Категории в диаграммах и таблицах приведены к перечню из последних правок по отчёту "
         "(стек долей, легенда и детальная таблица)."
     )
-    tab_by_month, tab_reasons, tab_dynamics = st.tabs(
+    tab_by_month, tab_reasons = st.tabs(
         [
             "Доли причин отклонений по проекту",
             "Динамика причин отклонений по месяцам",
-            "Динамика отклонений по месяцам",
         ]
     )
 
@@ -4643,13 +4642,6 @@ def dashboard_deviations_combined(df):
     with tab_reasons:
         _render_tab_safe(
             dashboard_dynamics_of_deviations,
-            filtered_shared,
-            tab_label="Динамика отклонений по месяцам",
-            hide_shared_filters=True,
-        )
-    with tab_dynamics:
-        _render_tab_safe(
-            dashboard_dynamics_of_reasons,
             filtered_shared,
             tab_label="Динамика причин отклонений по месяцам",
             hide_shared_filters=True,
@@ -5087,7 +5079,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
 
         # Круг «Доли причин»: в секторах только %; причины — легенда столбиком слева.
         n_reasons = len(reason_counts)
-        _pie_h = int(max(1280, 1080 + min(n_reasons, 28) * 44))
+        _pie_h = int(max(640, 540 + min(n_reasons, 28) * 22))
         fig = px.pie(
             reason_counts,
             values="Количество",
@@ -5952,6 +5944,9 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                             itemsizing="constant",
                         ),
                     )
+                    # apply_chart_background обнуляет title.text — заголовок с
+                    # названием проекта ставим ПОСЛЕ него.
+                    _deviations_plotly_project_chart_title(fig, _pname)
                     render_chart(
                         fig,
                         caption_below=_dynamics_caption(_cap_dyn_multi),
@@ -6073,6 +6068,10 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
 
                 fig = _plotly_bar_hide_legacy_textfont(fig)
                 fig = apply_chart_background(fig, skip_uniformtext=True)
+                # apply_chart_background обнуляет title.text — заголовок с
+                # названием проекта ставим ПОСЛЕ него.
+                if _single_proj_name:
+                    _deviations_plotly_project_chart_title(fig, _single_proj_name)
                 _cap_dyn = (
                     "Каждый столбец — период; стек по причинам. "
                     "В сегменте — число отклонений по причине; над столбцом — итог за период. "
@@ -10133,8 +10132,14 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
                     bgcolor="rgba(0,0,0,0)",
                 ),
             )
+            if chart_project_scope != "Все":
+                # Подпись графика — чистое название проекта (без префикса «Проект=…»).
+                _deviations_plotly_project_chart_title(fig, chart_project_scope)
         elif view_type == "По месяцам" and chart_project_scope != "Все":
             fig.update_layout(showlegend=True)
+            # Подпись графика — чистое название проекта (без префикса «Проект=…»),
+            # чтобы было видно, к какому проекту относится диаграмма.
+            _deviations_plotly_project_chart_title(fig, chart_project_scope)
         render_chart(fig, caption_below=None)
 
         # Summary table - always show by reason (summarized values)
