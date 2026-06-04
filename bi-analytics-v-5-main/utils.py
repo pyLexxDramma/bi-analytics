@@ -1926,7 +1926,18 @@ def format_dataframe_as_html(
                     except Exception:
                         pass
                 _cc_td = table_column_css_class(col)
-                _td_st = _td_base + _bg_extra + f"color:{color};font-weight:bold;"
+                if _is_tot:
+                    # Итоговая строка: фон и шрифт как у соседних итоговых ячеек,
+                    # но цвет значения оставляем красным/зелёным.
+                    _cond_base = (
+                        _td_group.replace(
+                            TABLE_GROUP_ROW_BG_COLOR, TABLE_TOTAL_ROW_BG_COLOR
+                        )
+                        + TABLE_TOTAL_ROW_FONT_CSS
+                    )
+                    _td_st = _cond_base + _bg_extra + f"color:{color};"
+                else:
+                    _td_st = _td_base + _bg_extra + f"color:{color};font-weight:bold;"
                 if _cc_td == "col-num":
                     _td_st = _td_st.replace(HTML_TABLE_TD_TEXT_CSS, HTML_TABLE_TD_COMPACT_CSS) + "text-align:center;vertical-align:middle;"
                 else:

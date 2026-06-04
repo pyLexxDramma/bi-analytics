@@ -28886,15 +28886,27 @@ def _forecast_find_turnover_dataframe():
     return None
 
 
+def _forecast_is_lot_value(s) -> bool:
+    """Признак «лота»: текст содержит «ЛОТ» либо начинается с числового обозначения (17.1, 01, 98 и т.п.)."""
+    txt = _clean_display_str(s)
+    if not txt:
+        return False
+    if "лот" in txt.casefold():
+        return True
+    return bool(re.match(r"^\s*\d", txt))
+
+
 def _forecast_merge_bddcs_from_1c(project_df: pd.DataFrame, project_name: str) -> pd.DataFrame:
     """
     Подставляет суммы из оборотов 1С (БДДС):
 
-    - **БДДС план**: сценарий «Бюджет» / Budget, статья оборотов без «(БДР)».
-    - **БДДС факт**: сценарий «Факт» / Fact, те же ограничения по статье.
-    - Для старых выгрузок: если по «Бюджет» план = 0 — подстраховка сценарием «План» (без «Факт»).
-
-    Распределение по лотам — пропорционально текущему budget plan в MSP для проекта (или поровну).
+    - **БДДС план**: сценарий «Бюджет»/«План», статья оборотов без «(БДР)».
+    - **БДДС факт**: сценарий «Факт», те же ограничения по статье.
+    - Учитываем только **лотовые статьи** оборотов (статья содержит «ЛОТ» или начинается с
+      числового обозначения) и разносим суммы **по лоту** через ключ `ID_Лота` ↔ `ЛОТ_ID`.
+      Сумма лота делится поровну между строками MSP этого лота (чтобы при агрегации по лоту
+      получить исходный итог, а на уровне задач — корректные доли).
+    - Фолбэк (нет лотовых сопоставлений): прежнее пропорциональное распределение по проекту.
     """
     bdf = _forecast_find_turnover_dataframe()
     if bdf is None or bdf.empty or project_df is None or project_df.empty:
@@ -28969,15 +28981,59 @@ def _forecast_merge_bddcs_from_1c(project_df: pd.DataFrame, project_name: str) -
         "fact", case=False, na=False
     ) | _norm_scen.eq("факт")
 
-    plan_sum = float(amt_num.loc[plan_mask].sum())
-    fact_sum = float(amt_num.loc[fact_mask].sum())
-
-    if plan_sum <= 0.0:
+    if plan_mask.sum() == 0:
         legacy_plan_mask = (
             sser.str.contains("план", case=False, na=False)
             & ~sser.str.contains("факт", case=False, na=False)
         ) | _norm_scen.eq("план")
-        plan_sum = float(amt_num.loc[legacy_plan_mask].sum())
+        if legacy_plan_mask.any():
+            plan_mask = legacy_plan_mask
+
+    plan_sum = float(amt_num.loc[plan_mask].sum())
+    fact_sum = float(amt_num.loc[fact_mask].sum())
+
+    # ── Разнос по лоту: только лотовые статьи, ключ ID_Лота ↔ ЛОТ_ID ──
+    lotid_col = _col(t_bd, ("ID_Лота", "ID Лота", "ID_лота", "lot id", "id_lot"))
+    art_ser = t_bd[art].astype(str) if art and art in t_bd.columns else pd.Series("", index=t_bd.index)
+    is_lot_art = art_ser.map(_forecast_is_lot_value)
+    _mps_lotid_col = "ЛОТ_ID" if "ЛОТ_ID" in out.columns else None
+    _per_lot_done = False
+    if lotid_col is not None and _mps_lotid_col is not None:
+        lotid_ser = t_bd[lotid_col].astype(str).str.strip()
+        _plan_sel = plan_mask & is_lot_art
+        _fact_sel = fact_mask & is_lot_art
+        plan_map = (
+            amt_num.loc[_plan_sel].groupby(lotid_ser.loc[_plan_sel]).sum().to_dict()
+            if bool(_plan_sel.any()) else {}
+        )
+        fact_map = (
+            amt_num.loc[_fact_sel].groupby(lotid_ser.loc[_fact_sel]).sum().to_dict()
+            if bool(_fact_sel.any()) else {}
+        )
+        for _bad in ("", "nan", "none", "None"):
+            plan_map.pop(_bad, None)
+            fact_map.pop(_bad, None)
+        if plan_map or fact_map:
+            ids = out[_mps_lotid_col].astype(str).str.strip()
+            counts = ids.value_counts()
+
+            def _per_lot(idv, m):
+                v = m.get(idv)
+                if v is None or idv in ("", "nan", "none", "None"):
+                    return 0.0
+                c = int(counts.get(idv, 1)) or 1
+                return float(v) / c
+
+            out["budget plan"] = [float(_per_lot(i, plan_map)) for i in ids]
+            out["budget fact"] = [float(_per_lot(i, fact_map)) for i in ids]
+            try:
+                out.attrs["forecast_bddcs_injected_from_1c"] = True
+                out.attrs["forecast_bddcs_per_lot"] = True
+            except Exception:
+                pass
+            _per_lot_done = True
+    if _per_lot_done:
+        return out
 
     if "budget plan" in out.columns:
         w = pd.to_numeric(out["budget plan"], errors="coerce").fillna(0.0)
@@ -29161,6 +29217,56 @@ def _forecast_deduplicate_msp_rows(pdf: pd.DataFrame) -> pd.DataFrame:
     work = work.sort_values("_fc_score", ascending=False)
     work = work.drop_duplicates(subset=["_fc_lot_key", "_fc_ps", "_fc_pe"], keep="first")
     return work.drop(columns=["_fc_lot_key", "_fc_ps", "_fc_pe", "_fc_score"], errors="ignore").reset_index(drop=True)
+
+
+def _forecast_aggregate_by_lot(pdf: pd.DataFrame) -> pd.DataFrame:
+    """Один лот = одна строка: группируем по реальному лоту (колонка «ЛОТ»/«lot»),
+    суммируем отдельно БДДС план и БДДС факт; даты — мин. «Планируемое начало» и
+    макс. «Планируемое окончание» среди строк лота. В редактор попадают только строки-лоты
+    (у которых заполнен лот); это убирает дубли строк и БДДС по нелотовым задачам.
+    Фолбэк (нет колонки лота / нет лотовых строк) — группировка по прежней метке (section)."""
+    if pdf is None or getattr(pdf, "empty", True):
+        return pdf
+    work = pdf.copy().reset_index(drop=True)
+    ensure_budget_columns(work)
+    work["plan start"] = pd.to_datetime(work.get("plan start"), errors="coerce", dayfirst=True)
+    work["plan end"] = pd.to_datetime(work.get("plan end"), errors="coerce", dayfirst=True)
+    work["budget plan"] = pd.to_numeric(work.get("budget plan"), errors="coerce").fillna(0.0)
+    work["budget fact"] = pd.to_numeric(work.get("budget fact"), errors="coerce").fillna(0.0)
+    _proj = (
+        work["project name"].iloc[0]
+        if "project name" in work.columns and len(work)
+        else ""
+    )
+
+    _lot_text_col = "ЛОТ" if "ЛОТ" in work.columns else ("lot" if "lot" in work.columns else None)
+    _grouped_by_lot = False
+    if _lot_text_col is not None:
+        _lot_lbl = work[_lot_text_col].map(_clean_display_str)
+        _is_lot = _lot_lbl.map(_forecast_is_lot_value)
+        if bool(_is_lot.any()):
+            work = work.loc[_is_lot].copy()
+            work["_fc_lot"] = _lot_lbl.loc[_is_lot].astype(str).str.strip()
+            _grouped_by_lot = True
+    if not _grouped_by_lot:
+        work["_fc_lot"] = _forecast_lot_label_series(work).astype(str).str.strip()
+
+    rows_out: List[dict] = []
+    for _lot, g in work.groupby("_fc_lot", sort=False):
+        rows_out.append(
+            {
+                "project name": (
+                    g["project name"].iloc[0] if "project name" in g.columns else _proj
+                ),
+                "section": _lot,
+                "task name": _lot,
+                "plan start": g["plan start"].min(),
+                "plan end": g["plan end"].max(),
+                "budget plan": float(g["budget plan"].sum()),
+                "budget fact": float(g["budget fact"].sum()),
+            }
+        )
+    return pd.DataFrame(rows_out)
 
 
 def _forecast_prepare_msp_slice(pdf_raw: pd.DataFrame, project_display_name: str) -> tuple[Optional[pd.DataFrame], Optional[str]]:
@@ -29567,8 +29673,10 @@ def _forecast_financier_status_dataset(
     out["БДДС (прогноз), млн"] = out["forecast_rub"] / 1e6
     out["Отклонение по сумме, млн"] = out["БДДС (прогноз), млн"] - out["БДДС (план), млн"]
     out["Статус для финансиста"] = out["Отклонение по сумме, млн"].map(_stat_txt)
+    # Сортировка хронологическая по периоду (а не по строке «Месяц»).
+    out["_period_sort"] = out["_period"].map(_forecast_norm_month_period)
     disp = (
-        out[
+        out.sort_values(["Проект", "_period_sort"])[
             [
                 "Месяц",
                 "Проект",
@@ -29578,9 +29686,7 @@ def _forecast_financier_status_dataset(
                 "Отклонение по сумме, млн",
                 "Статус для финансиста",
             ]
-        ]
-        .sort_values(["Месяц", "Проект"])
-        .reset_index(drop=True)
+        ].reset_index(drop=True)
     )
     return disp.round(2)
 
@@ -29793,6 +29899,7 @@ def _render_forecast_lot_editor_widgets(
                 step=0.01,
                 key=f"{key_prefix}_a_{_idx}",
                 label_visibility="collapsed",
+                disabled=not _use_abc,
             )
         with _c[7]:
             _b = st.number_input(
@@ -29802,6 +29909,7 @@ def _render_forecast_lot_editor_widgets(
                 step=0.01,
                 key=f"{key_prefix}_b_{_idx}",
                 label_visibility="collapsed",
+                disabled=not _use_abc,
             )
         with _c[8]:
             _cval = st.number_input(
@@ -29811,6 +29919,7 @@ def _render_forecast_lot_editor_widgets(
                 step=0.01,
                 key=f"{key_prefix}_c_{_idx}",
                 label_visibility="collapsed",
+                disabled=not _use_abc,
             )
         _rows.append(
             {
@@ -30018,6 +30127,7 @@ def dashboard_forecast_budget(df):
     _fc_updated_data = None
     _fc_abc_src = None
     _fc_row_modes = None
+    _lot_oldnew_df: Optional[pd.DataFrame] = None
 
     _dev_base_fc = str(st.session_state.get(f"forecast_bddcs_dev_base_{_npk_fc}", "БДДС план"))
     _hide_dev_fc = bool(st.session_state.get(f"forecast_bddcs_hide_dev_{_npk_fc}", False))
@@ -30046,6 +30156,14 @@ def dashboard_forecast_budget(df):
             _merged_1c = bool(project_df.attrs.get("forecast_bddcs_injected_from_1c"))
         except Exception:
             _merged_1c = False
+        # Один лот = одна строка (суммы план/факт по лоту; даты — мин. начало/макс. окончание):
+        # убирает дубли строк с лотами в редакторе.
+        _lot_attrs = dict(getattr(project_df, "attrs", {}) or {})
+        project_df = _forecast_aggregate_by_lot(project_df)
+        try:
+            project_df.attrs.update(_lot_attrs)
+        except Exception:
+            pass
         if float(project_df["budget plan"].sum()) == 0.0 and not _merged_1c:
             st.info(
                 "В файле нет сумм «Бюджет план» и не найдены обороты 1С для проекта — укажите **БДДС план (утверждённый)** "
@@ -30259,7 +30377,9 @@ def dashboard_forecast_budget(df):
 
         _baseline_edit_key = f"forecast_file_baseline_edit_v8_{_npk_fc}"
         _baseline_monthly_key = f"forecast_file_baseline_monthly_v8_{_npk_fc}"
-        if _baseline_edit_key not in st.session_state:
+        if _baseline_edit_key not in st.session_state or len(
+            st.session_state[_baseline_edit_key]
+        ) != len(project_df):
             st.session_state[_baseline_edit_key] = _build_forecast_edit_frame(project_df).copy()
         _base_ed = st.session_state[_baseline_edit_key]
         _base_work, _base_modes, _base_abc = _forecast_work_df_from_edit_rows(project_df, _base_ed)
@@ -30278,6 +30398,53 @@ def dashboard_forecast_budget(df):
         _fc_updated_data = updated_data
         _fc_abc_src = abc_src
         _fc_row_modes = row_modes
+
+        # «Было → стало» по лотам (исходные значения из файла vs текущие правки):
+        # нередактируемая таблица для динамики пересчёта.
+        try:
+            _base_tot = _forecast_per_lot_distribution_totals(
+                _base_work, abc_source=_base_abc, row_modes=_base_modes
+            )
+            _cur_tot = _forecast_per_lot_distribution_totals(
+                updated_data, abc_source=abc_src, row_modes=row_modes
+            )
+            if not _cur_tot.empty:
+                _pcol = "БДДС план (утверждённый), млн руб."
+                _fcol = "БДДС факт, млн руб."
+                _gcol = "БДДС прогноз (итого), млн руб."
+                _base_by_lot = (
+                    _base_tot.set_index("Лот") if not _base_tot.empty else pd.DataFrame()
+                )
+                _on_rows: List[dict] = []
+                for _, _cr in _cur_tot.iterrows():
+                    _lot = str(_cr.get("Лот", ""))
+                    _bp_new = float(_cr.get(_pcol, 0.0) or 0.0)
+                    _bf_new = float(_cr.get(_fcol, 0.0) or 0.0)
+                    _fc_new = float(_cr.get(_gcol, 0.0) or 0.0)
+                    if not _base_by_lot.empty and _lot in _base_by_lot.index:
+                        _br = _base_by_lot.loc[_lot]
+                        _bp_old = float(_br.get(_pcol, 0.0) or 0.0)
+                        _bf_old = float(_br.get(_fcol, 0.0) or 0.0)
+                        _fc_old = float(_br.get(_gcol, 0.0) or 0.0)
+                    else:
+                        _bp_old = _bp_new
+                        _bf_old = _bf_new
+                        _fc_old = _fc_new
+                    _on_rows.append(
+                        {
+                            "Лот": _lot,
+                            "БДДС план было, млн руб.": round(_bp_old, 1),
+                            "БДДС план стало, млн руб.": round(_bp_new, 1),
+                            "БДДС факт было, млн руб.": round(_bf_old, 1),
+                            "БДДС факт стало, млн руб.": round(_bf_new, 1),
+                            "Прогноз было, млн руб.": round(_fc_old, 1),
+                            "Прогноз стало, млн руб.": round(_fc_new, 1),
+                        }
+                    )
+                if _on_rows:
+                    _lot_oldnew_df = pd.DataFrame(_on_rows)
+        except Exception:
+            _lot_oldnew_df = None
 
 
     if calc_error and forecast_budget_df.empty:
@@ -30363,7 +30530,7 @@ def dashboard_forecast_budget(df):
         _ch_fc = int(min(1500, max(_ch_fc_base, _top_px_fc + _leg_fc_pre + 420)))
         _xa_fc = -35 if _nfc > 14 else 0
         _xs_fc = 14
-        _px_fc = 320 if _nfc > 12 else 280 if _nfc > 8 else 260 if _nfc > 5 else 240
+        _px_fc = 440 if _nfc > 12 else 380 if _nfc > 8 else 340 if _nfc > 5 else 300
         _tfs_out_fc = 9 if _nfc > 20 else 10
         _fmt_hover1 = lambda v: format_million_rub(v, decimals=1)  # noqa: E731
         _plan_txt_fc = _finance_bar_text_mln_rub(_chart_df["bdds_plan_msp"], min_abs_mln=0.0)
@@ -30444,7 +30611,9 @@ def dashboard_forecast_budget(df):
                 )
             )
             if np.isfinite(_ymax_fc) and _ymax_fc > 0:
-                _dtick_fc, _ymax_axis_fc = _finance_bar_yaxis_tight(_ymax_fc, outside_labels=True, tick_stride=4)
+                _dtick_fc, _ = _finance_bar_yaxis_tight(_ymax_fc, outside_labels=True, tick_stride=4)
+                # Верх оси = высота самого высокого столбца (без запаса сверху).
+                _ymax_axis_fc = float(_ymax_fc)
                 fig_fc.update_layout(
                     yaxis=dict(range=[0, _ymax_axis_fc], dtick=_dtick_fc, tick0=0)
                 )
@@ -30525,6 +30694,9 @@ def dashboard_forecast_budget(df):
         _skip_cols_fc.add(_dev_col_fc)
     _cell_background_fc = pd.DataFrame("", index=summary_numeric.index, columns=summary_numeric.columns)
     summary_display_fc = summary_numeric.copy()
+    # Колонка прогноза получает текстовые маркеры ▲/▼ → переводим в object,
+    # иначе запись строки в float64-колонку падает с TypeError.
+    summary_display_fc["БДДС прогноз"] = summary_display_fc["БДДС прогноз"].astype(object)
     for _i_fc, _r_fc in summary_numeric.iterrows():
         _pk_fc = str(_r_fc[_period_hdr])
         if _pk_fc == "ИТОГО":
@@ -30546,7 +30718,6 @@ def dashboard_forecast_budget(df):
             _cell_background_fc.at[_i_fc, "БДДС прогноз"] = "rgba(110,231,183,0.35)"
             summary_display_fc.at[_i_fc, "БДДС прогноз"] = f"{_cur_fc:.1f} ▼"
 
-    summary_table_dl = summary_display_fc.round(1)
     _cond_fc = None
     if not _hide_dev_fc:
         _cond_fc = {_dev_col_fc: {"positive_color": "#6ee7b7", "negative_color": "#f87171"}}
@@ -30560,6 +30731,20 @@ def dashboard_forecast_budget(df):
         bold_row_indices={summary_numeric.index[-1]},
         table_scroll_max_height_vh=70.0,
     )
+    if not _many_projects_fc and _lot_oldnew_df is not None and not _lot_oldnew_df.empty:
+        st.subheader("Пересчёт по лотам: было → стало")
+        st.caption(
+            "Исходные значения — из файла; «стало» — после ваших правок. "
+            "Расчёт прогноза распределяет суммы по лоту, затем агрегирует по месяцу."
+        )
+        _render_format_dataframe_html(
+            _lot_oldnew_df,
+            file_stem="forecast_bddcs_lot_oldnew",
+            key_prefix=f"fcast_oldnew_{_npk_fc}",
+            finance_decimal_places=1,
+            table_scroll_max_height_vh=60.0,
+        )
+
     _status_disp = _forecast_financier_status_dataset(
         filtered_scope=filtered_scope,
         project_col=project_col,
