@@ -22333,6 +22333,21 @@ def dashboard_debit_credit(df):
         if c:
             work[f"_num_{c}"] = _to_num(work[c])
 
+    # В выгрузке DK колонка «Аванс» часто пустая (все нули) — фактический
+    # остаток по авансам лежит в «ОстатокНаКонецПериодаПоАвансам». Если прямой
+    # «Аванс» пуст, берём остаток по авансам, иначе столбец аванса в графике/таблице
+    # не отображается (баг «все столбцы, кроме аванса» в режиме «С группировкой»).
+    _adv_sum = (
+        float(work[f"_num_{advance_col}"].abs().sum())
+        if advance_col and f"_num_{advance_col}" in work.columns
+        else 0.0
+    )
+    if _adv_sum <= 1e-6 and _dk_end_adv and _dk_end_adv in work.columns:
+        _adv_alt = _to_num(work[_dk_end_adv])
+        if float(_adv_alt.abs().sum()) > 1e-6:
+            advance_col = _dk_end_adv
+            work[f"_num_{advance_col}"] = _adv_alt
+
     _dc_date_contract = _find_col(work, ["Дата договора", "ДатаДоговора", "Дата Договора"])
     work["_dc_period_dt"] = pd.NaT
     if _dc_date_contract and _dc_date_contract in work.columns:
