@@ -2087,6 +2087,23 @@ def load_all_from_web() -> Dict:
                     f"последняя success-версия id={prev_success['id']}."
                 )
 
+        # Автоочистка архива снимков: храним только N последних версий
+        # (активную не трогаем). Делаем в этой же транзакции — атомарно с commit.
+        try:
+            from web_schema import prune_old_versions
+
+            _pruned = prune_old_versions(cur=cur)
+            if _pruned:
+                result.setdefault("warnings", []).append(
+                    f"Архив снимков: удалено старых версий — {len(_pruned)} "
+                    f"(id: {', '.join(str(x) for x in _pruned[:10])}"
+                    f"{'…' if len(_pruned) > 10 else ''})."
+                )
+        except Exception as _prune_e:
+            result.setdefault("warnings", []).append(
+                f"Не удалось очистить архив старых версий: {_prune_e}"
+            )
+
         conn.commit()
 
     except Exception as e:

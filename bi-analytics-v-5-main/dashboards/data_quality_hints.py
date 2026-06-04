@@ -131,4 +131,46 @@ def collect_developer_projects_hints(
 
 
 def render_quality_hints(_hints: list[str]) -> None:
-    return
+    """Показывает предупреждения о проблемах данных/формата прямо под графиком/таблицей.
+
+    Выводятся только реальные проблемы (неполная выгрузка, эвристики, неверный
+    формат) — собранные ``collect_*`` функциями. При пустом списке — ничего.
+    Управление: ``BI_ANALYTICS_HIDE_QUALITY_HINTS=1`` полностью скрывает блок.
+    """
+    hints = _dedupe_preserve(_hints or [])
+    if not hints:
+        return
+
+    import os
+
+    if str(os.environ.get("BI_ANALYTICS_HIDE_QUALITY_HINTS", "")).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ):
+        return
+
+    try:
+        import html as _html
+
+        import streamlit as st
+    except Exception:
+        return
+
+    items = "".join(
+        f'<li style="margin:0.15rem 0;">{_html.escape(h)}</li>' for h in hints
+    )
+    body = (
+        '<div style="border:1px solid rgba(255,193,7,0.55);border-radius:0.45rem;'
+        "background:rgba(255,193,7,0.10);padding:0.55rem 0.8rem;margin:0.25rem 0 0.6rem 0;"
+        'color:#ffe8a3;line-height:1.4;">'
+        '<div style="font-weight:700;margin-bottom:0.25rem;">'
+        "\u26a0 Данные для этого блока неполные — возможны пропуски/приближения:</div>"
+        f'<ul style="margin:0;padding-left:1.1rem;">{items}</ul>'
+        "</div>"
+    )
+    try:
+        st.markdown(body, unsafe_allow_html=True)
+    except Exception:
+        pass

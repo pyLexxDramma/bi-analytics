@@ -1103,8 +1103,15 @@ def main():
                 safe_stderr_log(f"[web_load] hydrate from DB failed: {_e}")
                 return False
 
-        def _perform_load_from_web_folder(*, quiet: bool = False, force_rescan: bool = False) -> None:
-            """Сканирование web/, запись в SQLite и обновление session_state (как кнопка «Загрузить из web/»)."""
+        def _perform_load_from_web_folder(
+            *, quiet: bool = False, force_rescan: bool = False, smart_after_ftp: bool = False
+        ) -> None:
+            """Сканирование web/, запись в SQLite и обновление session_state (как кнопка «Загрузить из web/»).
+
+            ``smart_after_ftp=True`` (логин): FTP тянем всегда, но тяжёлую пересборку
+            запускаем только если FTP скачал новые/изменённые файлы. Иначе быстро
+            поднимаем активный снимок из БД.
+            """
             if force_rescan:
                 for _k in ("_auto_hydrated_from_db", "_auto_hydrated_from_web"):
                     st.session_state.pop(_k, None)
@@ -1132,6 +1139,22 @@ def main():
                     "ни пути из переменной BI_ANALYTICS_WEB_EXTRA_PATHS."
                 )
                 return
+
+            # «Умный» режим логина: если FTP не принёс новых/изменённых файлов —
+            # не запускаем 5–15 мин пересборку, а быстро поднимаем активный снимок.
+            if smart_after_ftp:
+                _ftp_changed = bool(
+                    (st.session_state.get("last_ftp_sync_result") or {}).get("downloaded")
+                )
+                if not _ftp_changed:
+                    try:
+                        if get_all_versions() and _hydrate_from_active_db(quiet=quiet):
+                            safe_stderr_log(
+                                "[web_load] smart login: FTP без изменений → поднят активный снимок из БД"
+                            )
+                            return
+                    except Exception as _sm_e:
+                        safe_stderr_log(f"[web_load] smart hydrate failed: {_sm_e!r}")
 
             if not force_rescan:
                 try:
@@ -1237,10 +1260,15 @@ def main():
         ):
             _load_quiet = bool(st.session_state.pop("_pending_web_load_quiet", True))
             _force_rescan = bool(st.session_state.pop("_pending_web_force_rescan", False))
-            if _session_has_loaded_data() and not _force_rescan:
+            _smart_after_ftp = bool(st.session_state.pop("_pending_web_smart_after_ftp", False))
+            if _session_has_loaded_data() and not _force_rescan and not _smart_after_ftp:
                 pass
             else:
-                _perform_load_from_web_folder(quiet=_load_quiet, force_rescan=_force_rescan)
+                _perform_load_from_web_folder(
+                    quiet=_load_quiet,
+                    force_rescan=_force_rescan,
+                    smart_after_ftp=_smart_after_ftp,
+                )
                 if _force_rescan and not _load_quiet:
                     try:
                         from web_schema import get_active_version_id
@@ -1322,6 +1350,12 @@ def main():
             st.session_state["last_data_contract"] = _ctr
             if _admin_data_ops_sidebar:
                 render_contract_banner(_ctr)
+                try:
+                    from data_readiness import render_data_readiness_expander
+
+                    render_data_readiness_expander()
+                except Exception:
+                    pass
             elif not _ctr.get("ok") and not _is_release_client_mode():
                 for _bl in (_ctr.get("blocking") or [])[:5]:
                     st.error(str(_bl))

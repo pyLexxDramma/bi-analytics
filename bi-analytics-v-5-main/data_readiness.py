@@ -181,11 +181,28 @@ def build_data_readiness_report(
 
 
 def render_data_readiness_expander() -> None:
-    """Показать в Streamlit expander, если last_data_readiness в session_state."""
+    """Показать в Streamlit expander, если last_data_readiness в session_state.
+
+    Проблемные участки (err/warn) подсвечиваются и поднимаются наверх; блок
+    свёрнут по умолчанию, в заголовке — сводка по числу ошибок/предупреждений.
+    """
     rep = st.session_state.get("last_data_readiness")
     if not rep:
         return
-    with st.expander("Проверка загрузки: готовность данных по дашбордам", expanded=True):
+
+    rows = list(rep.get("reports") or [])
+    _n_err = sum(1 for r in rows if str(r.get("level", "")).lower() == "err")
+    _n_warn = sum(1 for r in rows if str(r.get("level", "")).lower() == "warn")
+    _n_ok = sum(1 for r in rows if str(r.get("level", "")).lower() == "ok")
+
+    if _n_err:
+        _title = f"Проверка загрузки: ⛔ {_n_err} ошибок · ⚠ {_n_warn} предупреждений"
+    elif _n_warn:
+        _title = f"Проверка загрузки: ⚠ {_n_warn} предупреждений (ошибок нет)"
+    else:
+        _title = "Проверка загрузки: ✓ данные готовы для всех дашбордов"
+
+    with st.expander(_title, expanded=False):
         s = rep.get("summary") or {}
         st.markdown(
             f"**Строки в сессии:** project_data={s.get('project_data_rows', 0)}, "
@@ -193,16 +210,50 @@ def render_data_readiness_expander() -> None:
             f"TESSA={s.get('tessa_rows', 0)}, TESSA task={s.get('tessa_tasks_rows', 0)}, "
             f"DK={s.get('debit_credit_rows', 0)}."
         )
-        rows = rep.get("reports") or []
-        if rows:
-            # Показываем таблицу полностью (без внутреннего скролла), чтобы
-            # пользователь прокручивал только страницу целиком.
-            _row_h = 34
-            _header_h = 38
-            _table_h = _header_h + max(1, len(rows)) * _row_h
-            st.dataframe(
-                pd.DataFrame(rows),
-                use_container_width=True,
-                hide_index=True,
-                height=_table_h,
-            )
+        if not rows:
+            return
+
+        _icon = {"err": "⛔", "warn": "⚠", "ok": "✓"}
+        _order = {"err": 0, "warn": 1, "ok": 2}
+        # Проблемные участки — наверх, внутри группы сохраняем исходный порядок.
+        _sorted = sorted(
+            rows, key=lambda r: _order.get(str(r.get("level", "")).lower(), 3)
+        )
+        _disp = pd.DataFrame(
+            [
+                {
+                    "": _icon.get(str(r.get("level", "")).lower(), ""),
+                    "Дашборд / отчёт": r.get("name", ""),
+                    "Статус": str(r.get("level", "")).lower(),
+                    "Источник": r.get("source", ""),
+                    "Что проверить / положить": r.get("message", ""),
+                }
+                for r in _sorted
+            ]
+        )
+
+        def _row_style(row: pd.Series) -> list[str]:
+            lvl = str(row.get("Статус", "")).lower()
+            if lvl == "err":
+                css = "background-color: rgba(255,70,70,0.20); color: #ffd9d9;"
+            elif lvl == "warn":
+                css = "background-color: rgba(255,193,7,0.16); color: #ffe8a3;"
+            else:
+                css = ""
+            return [css] * len(row)
+
+        try:
+            _styler = _disp.style.apply(_row_style, axis=1)
+            _table_obj: Any = _styler
+        except Exception:
+            _table_obj = _disp
+
+        _row_h = 34
+        _header_h = 38
+        _table_h = _header_h + max(1, len(_disp)) * _row_h
+        st.dataframe(
+            _table_obj,
+            use_container_width=True,
+            hide_index=True,
+            height=_table_h,
+        )

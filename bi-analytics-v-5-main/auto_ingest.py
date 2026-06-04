@@ -492,11 +492,18 @@ def maybe_run_auto_ingest_on_startup() -> None:
 
 
 def schedule_ftp_reload_after_login(session_state) -> None:
-    """После входа: FTP → полная пересборка БД → баннер о новых файлах."""
+    """После входа: FTP всегда, пересборка БД — только если FTP принёс изменения.
+
+    «Умный» режим (``_pending_web_smart_after_ftp``): всегда синхронизируемся с FTP,
+    но тяжёлый ``load_all_from_web()`` запускаем только когда реально скачаны новые/
+    изменённые файлы. Если на сервере те же версии — быстро поднимаем активный снимок
+    из БД (без 5–15 мин пересборки). Баннер о новых файлах показываем в любом случае.
+    """
     session_state["_pending_login_ftp_reload"] = True
     session_state["_pending_web_folder_load"] = True
     session_state["_pending_web_load_quiet"] = False
     session_state["_pending_web_force_rescan"] = True
+    session_state["_pending_web_smart_after_ftp"] = True
     session_state["_show_ftp_sync_notice"] = True
     for _k in ("_auto_hydrated_from_db", "_auto_hydrated_from_web"):
         session_state.pop(_k, None)

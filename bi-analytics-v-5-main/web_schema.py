@@ -171,3 +171,53 @@ def activate_version(version_id: int):
         cur = conn.cursor()
         cur.execute("UPDATE web_versions SET is_active = 0")
         cur.execute("UPDATE web_versions SET is_active = 1 WHERE id = ?", (version_id,))
+
+
+def _keep_versions_limit() -> int:
+    """Сколько последних снимков хранить (архив выбора версии). 0/неположит. = без очистки."""
+    import os
+
+    try:
+        n = int(os.environ.get("BI_ANALYTICS_KEEP_VERSIONS", "10") or "10")
+    except (TypeError, ValueError):
+        n = 10
+    return max(0, n)
+
+
+def prune_old_versions(keep: int | None = None, *, cur=None) -> list[int]:
+    """Удаляет старые снимки сверх ``keep`` последних (по id), не трогая активную.
+
+    Возвращает список удалённых version_id. Каскад web_data/web_files делаем вручную
+    (FK без ON DELETE). Если передан ``cur`` — работаем в текущей транзакции
+    (вызов из load_all_from_web до commit), иначе открываем свою.
+    """
+    if keep is None:
+        keep = _keep_versions_limit()
+    if not keep or keep <= 0:
+        return []
+
+    def _do(c) -> list[int]:
+        rows = c.execute(
+            "SELECT id, is_active FROM web_versions ORDER BY id DESC"
+        ).fetchall()
+        if len(rows) <= keep:
+            return []
+        keep_ids: set[int] = set()
+        for r in rows[:keep]:
+            keep_ids.add(int(r["id"]))
+        for r in rows:
+            if int(r["is_active"] or 0) == 1:
+                keep_ids.add(int(r["id"]))
+        to_delete = [int(r["id"]) for r in rows if int(r["id"]) not in keep_ids]
+        if not to_delete:
+            return []
+        placeholders = ",".join("?" for _ in to_delete)
+        c.execute(f"DELETE FROM web_data WHERE version_id IN ({placeholders})", to_delete)
+        c.execute(f"DELETE FROM web_files WHERE version_id IN ({placeholders})", to_delete)
+        c.execute(f"DELETE FROM web_versions WHERE id IN ({placeholders})", to_delete)
+        return to_delete
+
+    if cur is not None:
+        return _do(cur)
+    with get_web_connection() as conn:
+        return _do(conn.cursor())
