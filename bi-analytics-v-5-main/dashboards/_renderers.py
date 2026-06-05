@@ -4341,7 +4341,7 @@ def _render_deviations_combined_shared_filters(df):
 
     with filters_panel(st, panel_key="deviations_combined", expanded=False):
         with filters_selectors(st):
-            col1, col2, col3, col4, col5, col6, col7, col8, col9 = st.columns(9, gap="small")
+            col1, col2, col3, col4, col5 = st.columns(5, gap="small")
             with col1:
                 if "project name" in df.columns:
                     _session_reset_project_if_excluded("devcombo_project")
@@ -4555,47 +4555,22 @@ def _render_deviations_combined_shared_filters(df):
                 else:
                     suppress_caption("Нет колонки причин отклонений")
 
-            _pt_lbl = st.session_state.get("dynamics_period", "Месяц")
-            _pt_en_shared = _deviations_period_type_en_from_ru(_pt_lbl)
-            _df_period_src = _deviations_project_slice_by_key(df, "devcombo_project")
-            _period_lbl_opts = ["Весь период"] + _deviations_report_period_options(
-                _df_period_src, _pt_en_shared
-            )
-            with col6:
-                st.selectbox(
-                    "Группировать по",
-                    ["Месяц", "Квартал", "Год"],
-                    key="dynamics_period",
-                )
-            with col7:
-                st.selectbox("Период", _period_lbl_opts, key="devcombo_report_period")
-            with col8:
-                st.radio(
-                    "Ось времени",
-                    [_DEV_TIME_AXIS_PLAN, _DEV_TIME_AXIS_SNAPSHOT],
-                    horizontal=True,
-                    key="dynamics_time_axis_combo",
-                )
-            with col9:
-                st.selectbox(
-                    "Вид отображения",
-                    ["По причинам", "По месяцам"],
-                    key="reasons_view_type",
-                )
+            # Правки по ТЗ (скриншот): убраны селекторы «Группировать по» (сегментация
+            # по кварталу/году), дублирующий «Период», «Ось времени» и «Вид отображения».
+            # Фиксируем значения по умолчанию для нижестоящей логики вкладок: помесячная
+            # группировка, отчёт за весь период, ось по дате окончания плана, доли по причинам.
+            st.session_state["dynamics_period"] = "Месяц"
+            st.session_state["devcombo_report_period"] = "Весь период"
+            st.session_state["dynamics_time_axis_combo"] = _DEV_TIME_AXIS_PLAN
+            st.session_state["reasons_view_type"] = "По причинам"
         with filters_toggles(st):
-            _row3_cb1, _row3_cb2 = st.columns(2, gap="small")
-            with _row3_cb1:
-                st.checkbox(
-                    "ТОП 5 причин отклонений",
-                    value=False,
-                    key="reason_top5",
-                )
-            with _row3_cb2:
-                st.checkbox(
-                    "Показывать линию тренда",
-                    value=False,
-                    key="reasons_dynamics_show_trend_line",
-                )
+            st.checkbox(
+                "ТОП 5 причин отклонений",
+                value=False,
+                key="reason_top5",
+            )
+        # Линия тренда убрана по ТЗ (скриншот) — фиксируем выключенной.
+        st.session_state["reasons_dynamics_show_trend_line"] = False
     filtered_df = _apply_deviations_combined_filters(df, building_col=building_col)
 
     return filtered_df, building_col
@@ -4689,6 +4664,13 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         snap = st.session_state.get("project_data_all_snapshots")
         if snap is not None and not getattr(snap, "empty", True):
             _snap_df = snap.copy()
+            # ТЗ (скриншот, п.3): отклонения берём по последнему, самому свежему
+            # снимку MSP каждого проекта, а не накопительно за все выгрузки.
+            try:
+                from web_loader import _deduplicate_project_snapshots
+                _snap_df = _deduplicate_project_snapshots(_snap_df)
+            except Exception:
+                pass
             ensure_msp_hierarchy_columns(_snap_df)
             if "project name" in _snap_df.columns:
                 _snap_df = _project_column_apply_canonical(_snap_df, "project name")
@@ -5057,7 +5039,13 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         _gdrs_rc = _plotly_bargaps_sparse_x_like_gdrs(n)
         _ly_rc = dict(
             height=_bar_h,
-            margin=dict(l=48, r=28, t=48, b=240 if n > 6 else 168),
+            margin=dict(l=48, r=28, t=84, b=240 if n > 6 else 168),
+            title=dict(
+                text="Причины отклонений (за отчетный период)",
+                x=0.5,
+                xanchor="center",
+                font=dict(size=18, color="#e8eef5"),
+            ),
             yaxis=dict(
                 range=[0, _y_top],
                 title=dict(text="Количество", standoff=10, font=dict(size=14, color="#e8eef5")),
