@@ -402,6 +402,7 @@ def _render_html_table(
     column_role: dict = None,
     iframe_light: bool = False,
     colored_dev_columns=None,
+    scroll: bool = False,
 ):
     """Render a DataFrame as a styled HTML table (bypasses broken st.dataframe canvas).
 
@@ -446,8 +447,14 @@ def _render_html_table(
         return ""
 
     if True:
+        # scroll=True: вертикальная прокрутка с липкой шапкой (класс pred-detail-wrap
+        # подхватывает единый scroll-box в render_report_html_table/utils).
+        _wrap_cls = (
+            "rendered-table-wrap pred-detail-wrap" if scroll else "rendered-table-wrap"
+        )
+        _wrap_attr = f' data-bi-rows="{len(show)}"' if scroll else ""
         parts = [
-            '<div class="rendered-table-wrap">',
+            f'<div class="{_wrap_cls}"{_wrap_attr}>',
             '<table class="rendered-table bi-sortable-table bi-sort-click-only" style="border-collapse:collapse;width:100%">',
             "<thead><tr>",
         ]
@@ -14326,10 +14333,10 @@ def _rd_plan_fallback_view(
                 )
                 fig_pie_fb = _pie_apply_percent_inside_legend_left(
                     fig_pie_fb,
-                    height=500,
-                    pct_fontsize=17 if _nk_fb <= 5 else 14,
-                    legend_fontsize=11,
-                    left_margin=min(380, max(236, int(218 + _nk_fb * 26))),
+                    height=960,
+                    pct_fontsize=26 if _nk_fb <= 5 else 22,
+                    legend_fontsize=16,
+                    left_margin=min(420, max(260, int(240 + _nk_fb * 28))),
                     text_show_value_and_percent=True,
                 )
                 fig_pie_fb.update_traces(
@@ -14338,7 +14345,11 @@ def _rd_plan_fallback_view(
                     ),
                 )
                 fig_pie_fb = apply_chart_background(fig_pie_fb)
-                render_chart(fig_pie_fb, caption_below="Исполнение РД")
+                render_chart(
+                    fig_pie_fb,
+                    key=f"rdfb_pie_{fb_k}",
+                    caption_below="Исполнение РД",
+                )
         except Exception:
             pass
 
@@ -14440,7 +14451,11 @@ def _rd_plan_fallback_view(
                     fig_m_fb.update_traces(textposition="inside", textfont=dict(size=10))
                     fig_m_fb = _apply_bar_uniformtext(fig_m_fb)
                     fig_m_fb = apply_chart_background(fig_m_fb)
-                    render_chart(fig_m_fb, caption_below="Структура план/факт по месяцам")
+                    render_chart(
+                        fig_m_fb,
+                        key=f"rdfb_months_{fb_k}",
+                        caption_below="Структура план/факт по месяцам",
+                    )
         except Exception:
             pass
 
@@ -14451,7 +14466,9 @@ def _rd_plan_fallback_view(
             _pm = df["_plan_dt"].notna()
             if _pm.any():
                 _gp = df.loc[_pm].copy()
-                _gp["_dn"] = _gp["_plan_dt"].dt.normalize()
+                # Помесячный шаг (правка ТЗ): подписи на накопительной кривой не
+                # наслаиваются, т.к. точек на оси в разы меньше, чем при по-дневной.
+                _gp["_dn"] = _gp["_plan_dt"].dt.to_period("M").dt.to_timestamp()
                 _pg = _gp.groupby("_dn").size().reset_index(name="Количество")
                 _pg.columns = ["Дата", "Количество"]
                 _pg["Тип"] = "План"
@@ -14459,7 +14476,7 @@ def _rd_plan_fallback_view(
             _fm = df["_fact_dt"].notna()
             if _fm.any():
                 _gf = df.loc[_fm].copy()
-                _gf["_dn"] = _gf["_fact_dt"].dt.normalize()
+                _gf["_dn"] = _gf["_fact_dt"].dt.to_period("M").dt.to_timestamp()
                 _fg = _gf.groupby("_dn").size().reset_index(name="Количество")
                 _fg.columns = ["Дата", "Количество"]
                 _fg["Тип"] = "Факт"
@@ -14540,7 +14557,11 @@ def _rd_plan_fallback_view(
                 )
                 fig_fb = apply_chart_background(fig_fb)
                 st.subheader("Динамика выдачи РД")
-                render_chart(fig_fb, caption_below="Динамика выдачи РД")
+                render_chart(
+                    fig_fb,
+                    key=f"rdfb_dyn_{fb_k}",
+                    caption_below="Динамика выдачи РД",
+                )
         except Exception:
             pass
 
@@ -14613,6 +14634,7 @@ def _rd_plan_fallback_view(
     render_table_subheader(st, "Детальная таблица")
     _render_html_table(
         detail_show,
+        scroll=True,
         colored_dev_columns=(
             {
                 "Отклонение от даты по договору, дн",
