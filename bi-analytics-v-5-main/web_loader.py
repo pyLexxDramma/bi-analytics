@@ -2429,6 +2429,17 @@ def read_version_to_session(version_id: int):
     elif st.session_state.get("tessa_tasks_data") is None:
         st.session_state["tessa_tasks_data"] = None
 
+    # ── План выдачи РД/ПД (other_*_rd.csv / other_*_pd.csv) ────────────────
+    # Восстанавливаем из БД, иначе после перезапуска (сессия пустая, версия
+    # читается из БД) дашборды «Просрочка выдачи РД/ПД» теряют источник плана
+    # (`rd_plan_data`/`pd_plan_data` кладётся только при импорте файлов).
+    for _plan_kind, _plan_key in (("rd_plan", "rd_plan_data"), ("pd_plan", "pd_plan_data")):
+        _plan_df = _load_version_data(version_id, _plan_kind, _db_mtime)
+        if _plan_df is not None and not _plan_df.empty:
+            st.session_state[_plan_key] = _plan_df
+        elif st.session_state.get(_plan_key) is None:
+            st.session_state[_plan_key] = None
+
     # ── Обороты 1С (dannye / бюджетные JSON): в БД как reference_dannye ───────
     rd_ref = _load_version_data(version_id, "reference_dannye", _db_mtime)
     if rd_ref is not None and not rd_ref.empty:
