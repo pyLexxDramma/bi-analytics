@@ -23418,6 +23418,25 @@ _EXEC_DOC_DETAIL_CSS = """
 .exec-kpi-subtitle { color:#97a9bc; font-size:12px; margin-top:8px; line-height:1.4; }
 .exec-kpi-delta-pos { color:#4ade80; font-size:12px; font-weight:700; margin-top:8px; }
 .exec-kpi-delta-neg { color:#f87171; font-size:12px; font-weight:700; margin-top:8px; }
+/* Прокрутка детальной таблицы (scroll-box pred-detail-wrap), но сохраняем исходный
+   вид шапки/ячеек ИД — перебиваем общие правила .pred-detail-wrap большей специфичностью. */
+.exec-doc-table-wrap.pred-detail-wrap { border-radius:14px; border:1px solid rgba(82,104,130,0.45); margin:0.75rem 0 0.5rem; }
+.exec-doc-table-wrap.pred-detail-wrap table { border:none !important; border-collapse:collapse !important; }
+.exec-doc-table-wrap.pred-detail-wrap thead th {
+  background:#16283a !important; color:#f8fbff !important; font-size:11px !important;
+  font-weight:700 !important; padding:6px 8px !important; text-transform:uppercase !important;
+  border:none !important; border-bottom:1px solid rgba(138,160,184,0.28) !important;
+}
+.exec-doc-table-wrap.pred-detail-wrap tbody td {
+  font-size:13px !important; padding:5px 8px !important; color:#e8eef5 !important;
+  vertical-align:top !important; border:none !important;
+  border-bottom:1px solid rgba(82,104,130,0.28) !important;
+  white-space:normal !important; overflow:visible !important; text-overflow:clip !important;
+}
+.exec-doc-table-wrap.pred-detail-wrap tbody td.exec-col-num,
+.exec-doc-table-wrap.pred-detail-wrap tbody td.exec-col-dly,
+.exec-doc-table-wrap.pred-detail-wrap tbody td.exec-col-date,
+.exec-doc-table-wrap.pred-detail-wrap tbody td.exec-col-st { white-space:nowrap !important; text-align:center !important; }
 </style>
 """
 
@@ -23453,6 +23472,27 @@ def _exec_delay_cell_html(val: str) -> str:
     if re.search(r"^[\d\s\+\-]+.*дн", s, re.I):
         return f'<span class="exec-delay-val">{esc(s)}</span>'
     return esc(s)
+
+
+def _exec_int_str(v) -> str:
+    """№ документа — целое число без дробной части (451.0 → «451»). ТЗ ИД, п.3."""
+    if v is None:
+        return ""
+    try:
+        if pd.isna(v):
+            return ""
+    except Exception:
+        pass
+    s = str(v).strip()
+    if not s or s.lower() in ("nan", "none", "nat"):
+        return ""
+    try:
+        f = float(s.replace(" ", "").replace(",", "."))
+        if f == int(f):
+            return str(int(f))
+    except (ValueError, TypeError):
+        pass
+    return re.sub(r"[.,]0+$", "", s)
 
 
 def _exec_query_param_value(name: str, default: str = "") -> str:
@@ -23641,8 +23681,11 @@ def _exec_detail_table_html(
             body_parts.append(f'<td class="{esc(c_cls, quote=True)}"{sort_attr}>{inner}</td>')
         body_parts.append("</tr>")
     body_parts.append("</tbody>")
+    # ТЗ (скриншот, п.5): вертикальная прокрутка детальной таблицы (липкая шапка,
+    # ограниченная высота) — класс pred-detail-wrap подключает единый scroll-box.
     return (
-        '<div class="exec-doc-table-wrap"><table class="exec-doc-table bi-sortable-table bi-sort-click-only">'
+        f'<div class="exec-doc-table-wrap pred-detail-wrap" data-bi-rows="{len(show)}">'
+        '<table class="exec-doc-table bi-sortable-table bi-sort-click-only">'
         + thead
         + "".join(body_parts)
         + "</table></div>"
@@ -23934,8 +23977,11 @@ def dashboard_executive_documentation(df):
     with filters_panel(st, reset_keys=[
         "exec_doc_object", "exec_doc_contr", "exec_doc_kind",
         "exec_doc_period", "exec_doc_granularity", "exec_doc_hide_overdue_signed",
+        "exec_doc_compare_month",
     ]):
-        fc1, fc2, fc3 = st.columns(3, gap="small")
+        # ТЗ (скриншот): блок фильтров как в «Отклонение от базового плана» —
+        # все селекторы одной шириной в одну линию, чекбоксы отдельным блоком.
+        fc1, fc2, fc3, fc4, fc5, fc6 = st.columns(6, gap="small")
         with fc1:
             if obj_col:
                 _exec_proj_opts = sorted(
@@ -23960,9 +24006,7 @@ def dashboard_executive_documentation(df):
                 sel_kind = st.selectbox("Вид документа", kinds, key="exec_doc_kind")
             else:
                 sel_kind = "Все"
-
-        fp1, fp2 = st.columns([2, 1], gap="small")
-        with fp1:
+        with fc4:
             if pd.notna(dmin) and pd.notna(dmax):
                 min_date = dmin.date() if hasattr(dmin, "date") else dmin
                 max_date = dmax.date() if hasattr(dmax, "date") else dmax
@@ -23982,7 +24026,7 @@ def dashboard_executive_documentation(df):
                 p_start = p_end = None
                 with st.expander("Период по дате создания", expanded=False):
                     suppress_caption("В данных нет распознанной колонки даты создания — период не применяется.")
-        with fp2:
+        with fc5:
             _gran_opts = list(_exec_granularity_freq_map().keys())
             try:
                 _gi = _gran_opts.index("Месяц")
@@ -23995,6 +24039,31 @@ def dashboard_executive_documentation(df):
                 key="exec_doc_granularity",
                 help="Шаг агрегации для блока «Изменения к предыдущему периоду» и вкладки «Динамика».",
             )
+        # ТЗ (скриншот, п.1): селектор периода сравнения перенесён в блок фильтров
+        # (раньше висел справа над «Изменения за период к предыдущему»).
+        _cmp_freq_flt = _exec_granularity_freq_map().get(
+            str(st.session_state.get("exec_doc_granularity") or "Месяц"), "M"
+        )
+        try:
+            _cd_flt = (
+                pd.to_datetime(work["_cd"], errors="coerce")
+                if "_cd" in work.columns
+                else pd.Series(dtype="datetime64[ns]")
+            )
+            _cmp_periods_flt = sorted(_cd_flt.dropna().dt.to_period(_cmp_freq_flt).unique().tolist())
+        except Exception:
+            _cmp_periods_flt = []
+        _cmp_labels_flt = [_exec_period_human_label(p) for p in _cmp_periods_flt]
+        with fc6:
+            if _cmp_labels_flt:
+                if st.session_state.get("exec_doc_compare_month") not in _cmp_labels_flt:
+                    st.session_state["exec_doc_compare_month"] = _cmp_labels_flt[-1]
+                st.selectbox(
+                    "Период сравнения",
+                    _cmp_labels_flt,
+                    key="exec_doc_compare_month",
+                    help="Период для блока «Изменения за период к предыдущему».",
+                )
         with filters_toggles(st):
             hide_overdue_if_done = st.checkbox(
                 "Не отображать просрочку, если ИД сдана (подписана/согласована)",
@@ -24190,16 +24259,11 @@ def dashboard_executive_documentation(df):
         cmp_periods = sorted(cmp_source["_cmp_period"].dropna().unique().tolist())
         if cmp_periods:
             cmp_labels = {_exec_period_human_label(p): p for p in cmp_periods}
-            cmp_col1, cmp_col2 = st.columns([3, 1], gap="small")
-            with cmp_col1:
-                st.subheader("Изменения за период к предыдущему")
-            with cmp_col2:
-                selected_cmp_label = st.selectbox(
-                    "Выберите период",
-                    list(cmp_labels.keys()),
-                    index=len(cmp_labels) - 1,
-                    key="exec_doc_compare_month",
-                )
+            st.subheader("Изменения за период к предыдущему")
+            # Период сравнения выбирается в блоке фильтров (ключ exec_doc_compare_month).
+            selected_cmp_label = st.session_state.get("exec_doc_compare_month")
+            if selected_cmp_label not in cmp_labels:
+                selected_cmp_label = list(cmp_labels.keys())[-1]
             selected_cmp_period = cmp_labels[selected_cmp_label]
             prev_cmp_period = selected_cmp_period - 1
             cur_cmp_df = cmp_source[cmp_source["_cmp_period"] == selected_cmp_period]
@@ -24470,7 +24534,7 @@ def dashboard_executive_documentation(df):
             row_dict = {
                 "Контрагент": row.get(contr_col, "") if contr_col else "",
                 "Объект": row.get(obj_col, "") if obj_col else "",
-                "№ документа": row.get("DocNumber", row.get("DocID", "")),
+                "№ документа": _exec_int_str(row.get("DocNumber", row.get("DocID", ""))),
                 "Тип": row.get(kind_col, "") if kind_col else "",
                 "Плановая дата сдачи": plan_dt.strftime("%d.%m.%Y") if pd.notna(plan_dt) else "",
                 "Факт сдачи": fact_dt.strftime("%d.%m.%Y") if pd.notna(fact_dt) else "",
@@ -24539,11 +24603,19 @@ def dashboard_executive_documentation(df):
                 fig3 = _apply_finance_bar_label_layout(fig3)
                 fig3 = _apply_vertical_category_bar_width(fig3)
                 fig3 = apply_chart_background(fig3)
+                # ТЗ (скриншот, п.4): столбцы уже + масштаб по высоте, чтобы подписи
+                # значений и оси не обрезались (особенно при малом числе периодов).
+                _nx3 = _plotly_n_x_categories_from_bar_figure(fig3) or len(cnt)
+                _gaps3 = _plotly_bargaps_sparse_x_like_gdrs(_nx3)
+                if _nx3 and _nx3 <= 4:
+                    fig3.update_traces(width=0.3, selector=dict(type="bar"))
                 fig3.update_layout(
-                    height=400,
+                    height=500,
+                    margin=dict(t=72, b=120),
                     xaxis_title="Период",
                     yaxis_title="Количество",
                     xaxis=dict(tickangle=-35, categoryorder="array", categoryarray=list(cnt["Период"])),
+                    **_gaps3,
                 )
                 render_chart(
                     fig3,
