@@ -276,14 +276,41 @@ _TABLE_SORT_JS = r"""
     root.querySelectorAll("table.bi-sortable-table").forEach(initTable);
   }
 
+  function __ganttFrameHeight(box) {
+    if (!box) return 0;
+    var tbl = box.querySelector("table");
+    var content = tbl ? Math.ceil(tbl.getBoundingClientRect().height)
+                      : Math.ceil(box.scrollHeight || 0);
+    var capH = content;
+    if (tbl) {
+      var thead = tbl.querySelector("thead");
+      var rows = tbl.querySelectorAll("tbody tr");
+      if (rows.length > 50) {
+        var headH = thead ? Math.ceil(thead.getBoundingClientRect().height) : 36;
+        var sample = 0, cnt = 0, lim = Math.min(rows.length, 50);
+        for (var i = 0; i < lim; i++) {
+          sample += rows[i].getBoundingClientRect().height; cnt++;
+        }
+        var perRow = cnt ? (sample / cnt) : 30;
+        capH = Math.ceil(headH + perRow * 50);
+      }
+    }
+    var boxH = Math.min(content, capH);
+    try {
+      if (capH < content) {
+        box.style.setProperty("max-height", boxH + "px", "important");
+      } else {
+        box.style.removeProperty("max-height");
+      }
+    } catch (e) {}
+    return boxH + 18;
+  }
+
   function reportFrameHeight() {
     try {
       var ganttScrollBox = document.querySelector(".gantt-schedule-scroll-wrap");
       if (ganttScrollBox) {
-        var gTbl = ganttScrollBox.querySelector("table");
-        var gcontent = gTbl ? Math.ceil(gTbl.getBoundingClientRect().height)
-                            : Math.ceil(ganttScrollBox.scrollHeight || 0);
-        var gsh = gcontent + 16;
+        var gsh = __ganttFrameHeight(ganttScrollBox);
         if (gsh > 0) {
           window.parent.postMessage({ type: "streamlit:setFrameHeight", height: gsh }, "*");
           return;
@@ -405,8 +432,110 @@ _TABLE_SORT_JS = r"""
 
 _TABLE_SORT_SCRIPT = f"<script>{_TABLE_SORT_JS}</script>"
 
+# Прокрутка страницы «застревает», когда курсор над iframe-таблицей с внутренним
+# вертикальным скроллом (pd-dynamics-scroll-wrap и т.п.): колесо мыши перехватывает
+# внутренний контейнер и НЕ пробрасывается родительской странице (iframe не делает
+# scroll-chaining к родителю). Этот скрипт вручную прокручивает основную область
+# Streamlit, когда внутренний контейнер достиг границы (или прокручивать нечего).
+_WHEEL_FORWARD_JS = r"""
+(function () {
+  function resolveParentScroller() {
+    var win = window.parent || window;
+    var d;
+    try { d = win.document; } catch (e) { return null; }
+    if (!d) return null;
+    var cands = [
+      d.querySelector('section.main'),
+      d.querySelector('[data-testid="stMain"]'),
+      d.querySelector('[data-testid="stAppViewContainer"] > section'),
+      d.scrollingElement,
+      d.documentElement,
+      d.body
+    ];
+    for (var i = 0; i < cands.length; i++) {
+      var c = cands[i];
+      if (c && c.scrollHeight > c.clientHeight + 1) return c;
+    }
+    return null;
+  }
+
+  function innerScrollable(el) {
+    while (el && el !== document.body && el !== document.documentElement) {
+      try {
+        var cs = getComputedStyle(el);
+        var oy = cs.overflowY;
+        if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight + 1) {
+          return el;
+        }
+      } catch (e) {}
+      el = el.parentElement;
+    }
+    return null;
+  }
+
+  function onWheel(e) {
+    var dy = e.deltaY;
+    if (!dy) return;
+    var sc = innerScrollable(e.target);
+    var atEdge;
+    if (sc) {
+      var atTop = sc.scrollTop <= 0;
+      var atBottom = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 1;
+      atEdge = (dy < 0 && atTop) || (dy > 0 && atBottom);
+    } else {
+      // под курсором нет вертикального скролла — колесо должно листать страницу
+      atEdge = true;
+    }
+    if (!atEdge) return;
+    var ps = resolveParentScroller();
+    if (ps) {
+      ps.scrollTop += dy;
+      // гасим только когда реально передали прокрутку родителю
+      if (e.cancelable) e.preventDefault();
+    }
+  }
+
+  try {
+    window.addEventListener('wheel', onWheel, { passive: false });
+  } catch (e) {
+    try { window.addEventListener('wheel', onWheel); } catch (e2) {}
+  }
+})();
+"""
+
+_WHEEL_FORWARD_SCRIPT = f"<script>{_WHEEL_FORWARD_JS}</script>"
+
 _COMPACT_FRAME_FIT_JS = r"""
 (function () {
+  function __ganttFrameHeight(box) {
+    if (!box) return 0;
+    var tbl = box.querySelector("table");
+    var content = tbl ? Math.ceil(tbl.getBoundingClientRect().height)
+                      : Math.ceil(box.scrollHeight || 0);
+    var capH = content;
+    if (tbl) {
+      var thead = tbl.querySelector("thead");
+      var rows = tbl.querySelectorAll("tbody tr");
+      if (rows.length > 50) {
+        var headH = thead ? Math.ceil(thead.getBoundingClientRect().height) : 36;
+        var sample = 0, cnt = 0, lim = Math.min(rows.length, 50);
+        for (var i = 0; i < lim; i++) {
+          sample += rows[i].getBoundingClientRect().height; cnt++;
+        }
+        var perRow = cnt ? (sample / cnt) : 30;
+        capH = Math.ceil(headH + perRow * 50);
+      }
+    }
+    var boxH = Math.min(content, capH);
+    try {
+      if (capH < content) {
+        box.style.setProperty("max-height", boxH + "px", "important");
+      } else {
+        box.style.removeProperty("max-height");
+      }
+    } catch (e) {}
+    return boxH + 18;
+  }
   function fit() {
     try {
       var pdScroll = document.querySelector(".pd-dynamics-scroll-wrap");
@@ -467,10 +596,7 @@ _COMPACT_FRAME_FIT_JS = r"""
 
       var ganttScroll = document.querySelector(".gantt-schedule-scroll-wrap");
       if (ganttScroll) {
-        var gTbl = ganttScroll.querySelector("table");
-        var gcontent = gTbl ? Math.ceil(gTbl.getBoundingClientRect().height)
-                            : Math.ceil(ganttScroll.scrollHeight || 0);
-        var gh = gcontent + 16;
+        var gh = __ganttFrameHeight(ganttScroll);
         if (gh > 0) {
           window.parent.postMessage({ type: "streamlit:setFrameHeight", height: gh }, "*");
           return;
@@ -550,9 +676,11 @@ html, body {
 
 .gantt-schedule-scroll-wrap{
   display:block;width:100%!important;max-width:100%!important;margin:0;padding:0;
-  overflow-x:auto!important;overflow-y:visible!important;
+  overflow-x:auto!important;overflow-y:auto!important;
   -webkit-overflow-scrolling:touch;box-sizing:border-box;
+  scrollbar-gutter:stable;scrollbar-width:thin;
 }
+.gantt-schedule-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:4!important;}
 .pf-dates-table-wrap,.gantt-schedule-table-wrap{
   display:block;width:100%;max-width:100%;margin:0;padding:0;
   overflow-x:visible!important;overflow-y:visible;
@@ -657,7 +785,9 @@ html,body{
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table td.col-pf-project,
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table th.col-text,
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table td.col-text{
-  max-width:18em!important; overflow:hidden!important; text-overflow:ellipsis!important;
+  /* ТЗ заказчика (скрин 1): наименование задачи не обрезать — показывать полностью
+     (по горизонтали таблица скроллится). */
+  max-width:none!important; overflow:visible!important; text-overflow:clip!important;
   white-space:nowrap!important; text-align:left!important;
 }
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table th.col-gantt-reason,
@@ -980,7 +1110,7 @@ def _build_sortable_html_document(html: str) -> str:
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"{style_block}{_iframe_shell_css(html)}{fs_css}"
         "</head><body>"
-        f"<div class='bi-sortable-html-root'>{body}{_TABLE_SORT_SCRIPT}"
+        f"<div class='bi-sortable-html-root'>{body}{_TABLE_SORT_SCRIPT}{_WHEEL_FORWARD_SCRIPT}"
         + (
             f"<script>{_COMPACT_FRAME_FIT_JS}</script>"
             if (
