@@ -46,14 +46,74 @@ API:
 """
 from __future__ import annotations
 
+import functools
 import json
 import re
+from datetime import datetime as _dt
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional
 
 import numpy as np
 import pandas as pd
+
+
+@functools.lru_cache(maxsize=200000)
+def _fast_parse_date_cached(s: str):
+    """Быстрый разбор строки-даты с кэшем (строки дат массово повторяются).
+
+    Сохраняет семантику ``_snapshot_history``: сначала ISO, затем dayfirst-fallback.
+    ``datetime.fromisoformat`` на порядок быстрее ``pd.to_datetime`` на скаляре —
+    а кэш по строке убирает повторный разбор одинаковых дат (в ГДРС это десятки
+    тысяч одинаковых значений на загрузку).
+    """
+    try:
+        return pd.Timestamp(_dt.fromisoformat(s))
+    except Exception:
+        pass
+    try:
+        return pd.Timestamp(_dt.fromisoformat(s[:19]))
+    except Exception:
+        pass
+    d = pd.to_datetime(s, errors="coerce", dayfirst=True)
+    return None if pd.isna(d) else pd.Timestamp(d)
+
+
+def _fast_parse_date(d_raw: object):
+    """Скаляр → ``pd.Timestamp`` или ``None`` (быстро, с кэшем)."""
+    if d_raw is None:
+        return None
+    if isinstance(d_raw, pd.Timestamp):
+        return d_raw
+    if isinstance(d_raw, _dt):
+        return pd.Timestamp(d_raw)
+    s = str(d_raw).strip()
+    if not s or s.lower() in ("nan", "none", "null", "nat"):
+        return None
+    return _fast_parse_date_cached(s)
+
+
+def _dearrow_object_columns(df: "pd.DataFrame") -> "pd.DataFrame":
+    """pandas 3.0: строковые колонки по умолчанию arrow-backed (dtype ``str``).
+
+    План ГДРС многократно делает построчный доступ (``.tolist()``/groupby-chop/
+    итерации) по ``project_id``/``contractor_id``/``contract_name`` — на arrow это
+    дорогие ``pyarrow.compute`` вызовы (в профиле — ~8с в ``arrow.array.__getitem__``).
+    Перевод строк в numpy ``object`` ускоряет scalar-доступ и groupby. Идемпотентно.
+    """
+    if df is None or getattr(df, "empty", True):
+        return df
+    try:
+        conv = {}
+        for col, dt in df.dtypes.items():
+            s = str(dt).lower()
+            if s == "str" or s.startswith("string") or "[pyarrow]" in s:
+                conv[col] = "object"
+        if conv:
+            df = df.astype(conv)
+    except Exception:
+        pass
+    return df
 
 # =====================================================================
 # Парсер resursi.csv
@@ -234,6 +294,11 @@ def normalize_name(s: object) -> str:
     txt = str(s).strip()
     if not txt:
         return ""
+    return _normalize_name_cached(txt)
+
+
+@functools.lru_cache(maxsize=100000)
+def _normalize_name_cached(txt: str) -> str:
     txt = re.sub(r"\(.*?\)", " ", txt)
     txt = txt.replace("«", " ").replace("»", " ").replace('"', " ").replace("'", " ")
     txt = _NAME_LEGAL_RE.sub(" ", txt)
@@ -257,10 +322,15 @@ def contract_signatures(s: object) -> list[str]:
     txt = str(s).strip()
     if not txt:
         return []
-    return [
+    return list(_contract_signatures_cached(txt))
+
+
+@functools.lru_cache(maxsize=100000)
+def _contract_signatures_cached(txt: str) -> tuple:
+    return tuple(
         f"{m.group(1)}-са/{m.group(2)}".casefold()
         for m in _CONTRACT_SIG_RE.finditer(txt)
-    ]
+    )
 
 
 def _pick_best_articles(arts: set[str], contract_hint: str) -> str:
@@ -740,11 +810,9 @@ def _snapshot_history(history: object, target_date: Optional[pd.Timestamp]) -> O
             continue
         d_raw = item.get("Дата") or item.get("дата")
         n_raw = item.get("Количество") or item.get("количество")
-        d = pd.to_datetime(d_raw, errors="coerce", format="ISO8601")
-        if pd.isna(d):
-            d = pd.to_datetime(d_raw, errors="coerce", dayfirst=True)
+        d = _fast_parse_date(d_raw)
         n = _coerce_int(n_raw)
-        if pd.isna(d) or n is None:
+        if d is None or n is None:
             continue
         items.append((d, n))
     if not items:
@@ -790,15 +858,17 @@ def load_plan_from_dogovor(
                 "contract_name": str(r.get("Наименование_Договора") or "").strip(),
                 "plan_workers": _snapshot_history(r.get("Количество_Людей"), snapshot_date),
                 "plan_equipment": _snapshot_history(r.get("Количество_Техники"), snapshot_date),
-                "date_start": pd.to_datetime(r.get("Дата_Начала_Договора"), errors="coerce", utc=True),
-                "date_end": pd.to_datetime(r.get("Дата_Окончания_Договора"), errors="coerce", utc=True),
+                # Сырые строки — парсим колонку векторно один раз ниже (без 2× to_datetime на строку).
+                "date_start": r.get("Дата_Начала_Договора"),
+                "date_end": r.get("Дата_Окончания_Договора"),
             }
         )
     df = pd.DataFrame(rows)
     if df.empty:
         return df
-    df["date_start"] = pd.to_datetime(df["date_start"], errors="coerce").dt.tz_localize(None)
-    df["date_end"] = pd.to_datetime(df["date_end"], errors="coerce").dt.tz_localize(None)
+    df = _dearrow_object_columns(df)
+    df["date_start"] = pd.to_datetime(df["date_start"], errors="coerce", utc=True).dt.tz_localize(None)
+    df["date_end"] = pd.to_datetime(df["date_end"], errors="coerce", utc=True).dt.tz_localize(None)
     if snapshot_date is not None:
         # Договоры с реальной Дата_Окончания, истёкшей до даты снапшота, не действуют:
         # их «Количество_Людей» нередко обрывается без закрывающего 0, и snapshot тянет
@@ -839,7 +909,7 @@ def load_plan_from_spravochniki(
                 "plan_equipment": _snapshot_history(r.get("КоличествоСпецТехники"), snapshot_date),
             }
         )
-    return pd.DataFrame(rows)
+    return _dearrow_object_columns(pd.DataFrame(rows))
 
 
 _FILE_DATE_RE = re.compile(r"(\d{2})-(\d{2})-(\d{4})")
@@ -877,26 +947,10 @@ def load_plan_aggregate(
           за день с лишними/транзитными строками ДС.
         - spravochniki.json — fallback, если в Dogovor плана нет.
     """
-    def _dedup_contract_plan(group: pd.DataFrame) -> tuple[float, float, str]:
-        """Схлопнуть строки договоров/ДС: MAX по сигнатуре договора, затем сумма по разным."""
-        pw_by_key: dict[str, float] = {}
-        pe_by_key: dict[str, float] = {}
-        names: set[str] = set()
-        for _, r in group.iterrows():
-            cn = str(r.get("contract_name", "") or "").strip()
-            if cn:
-                names.add(cn)
-            sigs = contract_signatures(cn)
-            key = sigs[0] if sigs else ("name::" + normalize_name(cn))
-            pw = r.get("plan_workers")
-            pe = r.get("plan_equipment")
-            if pw is not None and pd.notna(pw):
-                pw_by_key[key] = max(pw_by_key.get(key, float("-inf")), float(pw))
-            if pe is not None and pd.notna(pe):
-                pe_by_key[key] = max(pe_by_key.get(key, float("-inf")), float(pe))
-        pw_total = float(np.nansum(list(pw_by_key.values()))) if pw_by_key else np.nan
-        pe_total = float(np.nansum(list(pe_by_key.values()))) if pe_by_key else np.nan
-        return pw_total, pe_total, " · ".join(sorted(names))
+    def _contract_key(cn: str) -> str:
+        """Ключ схлопывания: сигнатура договора «NN-СА/YY» или «name::<норм. имя>»."""
+        sigs = contract_signatures(cn)
+        return sigs[0] if sigs else ("name::" + normalize_name(cn))
 
     def _per_file_dog(p: Path) -> pd.DataFrame:
         df = load_plan_from_dogovor(Path(p), snapshot_date=snapshot_date)
@@ -905,21 +959,37 @@ def load_plan_aggregate(
         df = df[(df["project_id"].astype(str).str.strip() != "") | (df["contractor_id"].astype(str).str.strip() != "")]
         if df.empty:
             return pd.DataFrame()
-        out_rows: list[dict] = []
-        for (pid, cid), grp in df.groupby(["project_id", "contractor_id"], dropna=False):
-            pw_total, pe_total, name = _dedup_contract_plan(grp)
-            out_rows.append(
-                {
-                    "project_id": pid,
-                    "contractor_id": cid,
-                    "project_name": grp["project_name"].iloc[0],
-                    "contractor_name": grp["contractor_name"].iloc[0],
-                    "contract_name": name,
-                    "plan_workers": pw_total,
-                    "plan_equipment": pe_total,
-                }
-            )
-        return pd.DataFrame(out_rows)
+        # Векторно вместо построчного _dedup по группам (~22с на 32k групп):
+        # 1) ключ договора по уникальным именам (кэшированные функции),
+        # 2) MAX плана по сигнатуре договора/ДС, 3) сумма по разным договорам.
+        df = df.copy()
+        cn = df["contract_name"].fillna("").astype(str).str.strip()
+        df["__cn__"] = cn
+        uniq = pd.unique(cn.to_numpy())
+        key_map = {nm: _contract_key(nm) for nm in uniq}
+        df["__key__"] = cn.map(key_map)
+        per_key = (
+            df.groupby(["project_id", "contractor_id", "__key__"], dropna=False, as_index=False)[
+                ["plan_workers", "plan_equipment"]
+            ].max()
+        )
+        plan = (
+            per_key.groupby(["project_id", "contractor_id"], dropna=False, as_index=False)[
+                ["plan_workers", "plan_equipment"]
+            ].sum(min_count=1)
+        )
+        meta = df.groupby(["project_id", "contractor_id"], dropna=False, as_index=False).agg(
+            project_name=("project_name", "first"),
+            contractor_name=("contractor_name", "first"),
+            contract_name=("__cn__", lambda s: " · ".join(sorted({x for x in s if x}))),
+        )
+        out = meta.merge(plan, on=["project_id", "contractor_id"], how="left")
+        return out[
+            [
+                "project_id", "contractor_id", "project_name", "contractor_name",
+                "contract_name", "plan_workers", "plan_equipment",
+            ]
+        ]
 
     def _per_file_sprav(p: Path) -> pd.DataFrame:
         df = load_plan_from_spravochniki(Path(p), snapshot_date=snapshot_date)
@@ -929,22 +999,11 @@ def load_plan_aggregate(
         if df.empty:
             return pd.DataFrame()
         return (
-            df.groupby(["project_id", "contractor_id"], dropna=False, as_index=False)
-            .agg(
-                plan_workers=("plan_workers", lambda s: float(np.nansum(s)) if any(pd.notna(s)) else np.nan),
-                plan_equipment=("plan_equipment", lambda s: float(np.nansum(s)) if any(pd.notna(s)) else np.nan),
-            )
+            df.groupby(["project_id", "contractor_id"], dropna=False, as_index=False)[
+                ["plan_workers", "plan_equipment"]
+            ]
+            .sum(min_count=1)
         )
-
-    def _last_valid(s: pd.Series):
-        s2 = s.dropna()
-        return s2.iloc[-1] if len(s2) else np.nan
-
-    def _last_nonempty(s: pd.Series) -> str:
-        for v in reversed(list(s)):
-            if isinstance(v, str) and v.strip():
-                return v
-        return ""
 
     def _ordered_with_index(paths, fn) -> pd.DataFrame:
         """Собрать кадры по файлам, упорядочив по дате снапшота из имени (asc).
@@ -969,21 +1028,27 @@ def load_plan_aggregate(
 
     if not dog_all.empty:
         dog_all = dog_all.sort_values("__order__")
+        # Векторные built-in вместо python-лямбд (_last_valid/_last_nonempty): groupby.last()
+        # пропускает NaN → «последнее непустое значение» в порядке снапшотов. Для contract_name
+        # пустые строки маскируем в NaN, чтобы last() вернул последнее НЕпустое имя.
+        cn = dog_all["contract_name"].astype("object")
+        dog_all["contract_name"] = cn.where(cn.map(lambda v: isinstance(v, str) and v.strip() != ""), np.nan)
         dog_all = (
             dog_all.groupby(["project_id", "contractor_id"], dropna=False, as_index=False)
             .agg(
                 project_name=("project_name", "first"),
                 contractor_name=("contractor_name", "first"),
-                contract_name=("contract_name", _last_nonempty),
-                plan_workers=("plan_workers", _last_valid),
-                plan_equipment=("plan_equipment", _last_valid),
+                contract_name=("contract_name", "last"),
+                plan_workers=("plan_workers", "last"),
+                plan_equipment=("plan_equipment", "last"),
             )
         )
+        dog_all["contract_name"] = dog_all["contract_name"].where(dog_all["contract_name"].notna(), "")
     if not sprav_all.empty:
         sprav_all = sprav_all.sort_values("__order__")
         sprav_all = (
             sprav_all.groupby(["project_id", "contractor_id"], dropna=False, as_index=False)
-            .agg(plan_workers=("plan_workers", _last_valid), plan_equipment=("plan_equipment", _last_valid))
+            .agg(plan_workers=("plan_workers", "last"), plan_equipment=("plan_equipment", "last"))
         )
     merged = merge_plan(dog_all, sprav_all)
     if merged is not None and not merged.empty and "project_name" in merged.columns:
@@ -1244,23 +1309,23 @@ def merge_plan(dogovor: pd.DataFrame, sprav: pd.DataFrame) -> pd.DataFrame:
             ]
         )
     else:
-        d = (
-            dogovor.groupby(["project_id", "contractor_id"], dropna=False, as_index=False)
-            .agg(
-                project_name=("project_name", "first"),
-                contractor_name=("contractor_name", "first"),
-                contract_name=("contract_name", lambda s: " · ".join(sorted({x for x in s if x}))),
-                plan_workers=("plan_workers", lambda s: float(np.nansum(s)) if any(pd.notna(s)) else None),
-                plan_equipment=("plan_equipment", lambda s: float(np.nansum(s)) if any(pd.notna(s)) else None),
-            )
+        gd = dogovor.groupby(["project_id", "contractor_id"], dropna=False, as_index=False)
+        # built-in sum(min_count=1) == float(np.nansum(s)) if any(notna) else None, но в разы быстрее.
+        d = gd.agg(
+            project_name=("project_name", "first"),
+            contractor_name=("contractor_name", "first"),
+            contract_name=("contract_name", lambda s: " · ".join(sorted({x for x in s if x}))),
         )
+        d_sum = gd[["plan_workers", "plan_equipment"]].sum(min_count=1)
+        d["plan_workers"] = d_sum["plan_workers"].to_numpy()
+        d["plan_equipment"] = d_sum["plan_equipment"].to_numpy()
     if sprav is not None and not sprav.empty:
         s = (
-            sprav.groupby(["project_id", "contractor_id"], dropna=False, as_index=False)
-            .agg(
-                plan_workers_s=("plan_workers", lambda s: float(np.nansum(s)) if any(pd.notna(s)) else None),
-                plan_equipment_s=("plan_equipment", lambda s: float(np.nansum(s)) if any(pd.notna(s)) else None),
-            )
+            sprav.groupby(["project_id", "contractor_id"], dropna=False, as_index=False)[
+                ["plan_workers", "plan_equipment"]
+            ]
+            .sum(min_count=1)
+            .rename(columns={"plan_workers": "plan_workers_s", "plan_equipment": "plan_equipment_s"})
         )
         merged = d.merge(s, on=["project_id", "contractor_id"], how="outer")
         merged["plan_workers"] = merged["plan_workers"].combine_first(merged["plan_workers_s"])

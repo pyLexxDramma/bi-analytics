@@ -23,6 +23,34 @@ from settings import SETTING_KEYS
 
 DEV_MATRIX_JSON_KEY = "developer_projects_matrix_json"
 
+
+def _dearrow_object_columns(df: "pd.DataFrame") -> "pd.DataFrame":
+    """pandas 3.0: строковые колонки по умолчанию arrow-backed (dtype ``str``).
+
+    Матрица «Девелоперские проекты» делает тысячи поэлементных ``.at[]``-записей
+    и масок на широком MSP-кадре. На arrow каждая scalar-запись дробит
+    ChunkedArray → последующие ``take`` деградируют (в профиле — десятки секунд
+    в ``pyarrow.compute.take``). Перевод строковых колонок в numpy ``object``
+    делает scalar set ~8x быстрее и убирает фрагментацию. Семантика ``.str`` /
+    масок / сравнения сохраняется (проверено), меняется только бэкенд хранения.
+
+    Конвертация дешёвая и идемпотентная: если arrow-строк нет — кадр возвращается
+    как есть.
+    """
+    if df is None or getattr(df, "empty", True):
+        return df
+    try:
+        conv = {}
+        for col, dt in df.dtypes.items():
+            s = str(dt).lower()
+            if s == "str" or s.startswith("string") or "[pyarrow]" in s:
+                conv[col] = "object"
+        if conv:
+            df = df.astype(conv)
+    except Exception:
+        pass
+    return df
+
 # Подколонки вехи «ПРЕДПИСАНИЯ» (ТЗ 04.05): без План/Факт/Откл.
 _DEV_MATRIX_PREDS_SUBCOLS: Dict[str, str] = {
     "plan": "Всего предписаний",
@@ -1747,6 +1775,11 @@ def build_dev_tz_matrix_blocks(
     """\u041e\u0434\u0438\u043d \u043f\u0440\u043e\u0435\u043a\u0442 \u2014 \u043e\u0434\u043d\u0430 \u0441\u0442\u0440\u043e\u043a\u0430; \u043f\u0440\u0438 \u043d\u0435\u0441\u043a\u043e\u043b\u044c\u043a\u0438\u0445 \u0443\u0447\u0430\u0441\u0442\u043a\u0445 \u2014 \u043d\u0435\u0441\u043a\u043e\u043b\u044c\u043a\u043e \u0441\u0442\u0440\u043e\u043a (\u0443\u0447. \u2116N)."""
     if mdf is None or getattr(mdf, "empty", True):
         return []
+    # pandas 3.0: один раз снимаем arrow-строки (см. _dearrow_object_columns) —
+    # дальше build_dev_tz_matrix_rows работает уже по numpy object.
+    mdf = _dearrow_object_columns(mdf)
+    if project_data is not None:
+        project_data = _dearrow_object_columns(project_data)
     sections = _detect_plot_sections_from_msp(mdf)
     if _msp_is_unified_dmitrovsky(mdf):
         sections = []
@@ -1823,6 +1856,11 @@ def build_dev_tz_matrix_rows(
     mdf = ensure_msp_df_for_dev_matrix(mdf)
     if mdf is None or getattr(mdf, "empty", True):
         return [], ""
+    # pandas 3.0: убираем arrow-строки до тяжёлой поэлементной обработки —
+    # иначе scalar .at[]-записи фрагментируют ChunkedArray и take деградирует.
+    mdf = _dearrow_object_columns(mdf)
+    if project_data is not None:
+        project_data = _dearrow_object_columns(project_data)
 
     # Один столбец матрицы = одна подпись проекта. Если в кадре смешаны сырые «Дмитровский» и «Дмитровский 1»
     # (общий group key), без сужения вехи матчились по всем строкам и бралась задача «чужого» варианта имени.

@@ -290,6 +290,18 @@ def _inject_table_sort_once() -> None:
         logging.getLogger(__name__).warning("table sort inject failed: %s", _e)
 
 
+def _inject_loading_overlay_once() -> None:
+    """Полноэкранный лоадер с блокировкой экрана на время рендера отчётов."""
+    try:
+        from dashboards.loading_overlay import inject_loading_overlay
+
+        inject_loading_overlay()
+    except Exception as _e:
+        import logging
+
+        logging.getLogger(__name__).warning("loading overlay inject failed: %s", _e)
+
+
 def _render_active_dashboard(
     selected_dashboard: str,
     df_for_render: "pd.DataFrame",
@@ -692,6 +704,7 @@ def main():
 
     _inject_ru_labels_once()
     _inject_table_sort_once()
+    _inject_loading_overlay_once()
 
     if not str(st.session_state.get("current_dashboard") or "").strip():
         st.session_state["current_dashboard"] = "Девелоперские проекты"
@@ -1518,11 +1531,22 @@ def main():
                 )
             try:
                 with st.spinner("Загрузка отчёта…"):
-                    _render_active_dashboard(
-                        selected_dashboard,
-                        df_for_render,
-                        release_mode=_is_release_client_mode(),
-                    )
+                    try:
+                        from dashboards.render_profiler import profiled_render
+
+                        profiled_render(
+                            _render_active_dashboard,
+                            selected_dashboard,
+                            df_for_render,
+                            release_mode=_is_release_client_mode(),
+                            report_name=selected_dashboard,
+                        )
+                    except ImportError:
+                        _render_active_dashboard(
+                            selected_dashboard,
+                            df_for_render,
+                            release_mode=_is_release_client_mode(),
+                        )
             finally:
                 gdrs_clear_loading_banner(_gdrs_loading)
         except Exception as e:
