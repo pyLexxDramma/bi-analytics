@@ -20675,7 +20675,7 @@ def _gdrs_dynamics_chart_panel(
     _agg_options = ["День", "Неделя", "Месяц"]
     _agg_key = f"gdrs_dyn_kind_{vid_locked or 'any'}_{theme}"
     if st.session_state.get(_agg_key) not in _agg_options:
-        st.session_state[_agg_key] = "Месяц"
+        st.session_state[_agg_key] = "День"
     agg_kind = st.radio(
         "Группировка", _agg_options, horizontal=True,
         key=_agg_key,

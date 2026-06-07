@@ -799,6 +799,18 @@ def load_plan_from_dogovor(
         return df
     df["date_start"] = pd.to_datetime(df["date_start"], errors="coerce").dt.tz_localize(None)
     df["date_end"] = pd.to_datetime(df["date_end"], errors="coerce").dt.tz_localize(None)
+    if snapshot_date is not None:
+        # Договоры с реальной Дата_Окончания, истёкшей до даты снапшота, не действуют:
+        # их «Количество_Людей» нередко обрывается без закрывающего 0, и snapshot тянет
+        # старое значение в период. Аналогично — ещё не начавшиеся договоры.
+        snap = pd.Timestamp(snapshot_date).normalize()
+        sentinel = pd.Timestamp("0001-01-01")
+        de = df["date_end"]
+        ds = df["date_start"]
+        expired = de.notna() & (de > sentinel) & (de.dt.normalize() < snap)
+        not_started = ds.notna() & (ds > sentinel) & (ds.dt.normalize() > snap)
+        drop = expired | not_started
+        df.loc[drop, ["plan_workers", "plan_equipment"]] = np.nan
     return df
 
 
@@ -830,6 +842,21 @@ def load_plan_from_spravochniki(
     return pd.DataFrame(rows)
 
 
+_FILE_DATE_RE = re.compile(r"(\d{2})-(\d{2})-(\d{4})")
+
+
+def _dogovor_file_date(path: Path) -> Optional[pd.Timestamp]:
+    """Дата снапшота из имени файла «1с_DD-MM-YYYY_…» → Timestamp (или None)."""
+    m = _FILE_DATE_RE.search(Path(path).name)
+    if not m:
+        return None
+    dd, mm, yyyy = m.groups()
+    try:
+        return pd.Timestamp(year=int(yyyy), month=int(mm), day=int(dd))
+    except ValueError:
+        return None
+
+
 def load_plan_aggregate(
     dogovor_paths: Iterable[Path | str],
     sprav_paths: Iterable[Path | str],
@@ -839,16 +866,38 @@ def load_plan_aggregate(
     """Загрузить план из ВСЕХ файлов Dogovor.json + spravochniki.json
     и агрегировать в единую таблицу.
 
-    Преимущество перед `merge_plan(load_dogovor(last), load_sprav(last))`: 
-    некоторые контрагенты/договоры могут отсутствовать в одном snapshot,
-    но присутствовать в другом — берём максимум знания.
-
     Алгоритм:
         - Для каждого Dogovor.json берём snapshot на дату snapshot_date.
-        - Объединяем по (project_id, contractor_id), беря MAX `plan_workers/equipment`
-          (если в одном snapshot план был, а в другом None — оставляем имеющееся).
-        - Аналогично для spravochniki.json (как fallback, если Dogovor=None).
+        - Внутри файла план по (project_id, contractor_id) суммируется по РАЗНЫМ
+          договорам, но дубли одного договора и его доп.соглашений (ДС) схлопываются
+          по сигнатуре «NN-СА/YY»: ДС замещает базовый договор (берём MAX по сигнатуре),
+          а не суммируется с ним — иначе план задваивается.
+        - Между файлами берём значение из ПОСЛЕДНЕГО снапшота ≤ snapshot_date
+          (по дате в имени файла), а не MAX по дням: max завышал план, цепляясь
+          за день с лишними/транзитными строками ДС.
+        - spravochniki.json — fallback, если в Dogovor плана нет.
     """
+    def _dedup_contract_plan(group: pd.DataFrame) -> tuple[float, float, str]:
+        """Схлопнуть строки договоров/ДС: MAX по сигнатуре договора, затем сумма по разным."""
+        pw_by_key: dict[str, float] = {}
+        pe_by_key: dict[str, float] = {}
+        names: set[str] = set()
+        for _, r in group.iterrows():
+            cn = str(r.get("contract_name", "") or "").strip()
+            if cn:
+                names.add(cn)
+            sigs = contract_signatures(cn)
+            key = sigs[0] if sigs else ("name::" + normalize_name(cn))
+            pw = r.get("plan_workers")
+            pe = r.get("plan_equipment")
+            if pw is not None and pd.notna(pw):
+                pw_by_key[key] = max(pw_by_key.get(key, float("-inf")), float(pw))
+            if pe is not None and pd.notna(pe):
+                pe_by_key[key] = max(pe_by_key.get(key, float("-inf")), float(pe))
+        pw_total = float(np.nansum(list(pw_by_key.values()))) if pw_by_key else np.nan
+        pe_total = float(np.nansum(list(pe_by_key.values()))) if pe_by_key else np.nan
+        return pw_total, pe_total, " · ".join(sorted(names))
+
     def _per_file_dog(p: Path) -> pd.DataFrame:
         df = load_plan_from_dogovor(Path(p), snapshot_date=snapshot_date)
         if df is None or df.empty:
@@ -856,16 +905,21 @@ def load_plan_aggregate(
         df = df[(df["project_id"].astype(str).str.strip() != "") | (df["contractor_id"].astype(str).str.strip() != "")]
         if df.empty:
             return pd.DataFrame()
-        return (
-            df.groupby(["project_id", "contractor_id"], dropna=False, as_index=False)
-            .agg(
-                project_name=("project_name", "first"),
-                contractor_name=("contractor_name", "first"),
-                contract_name=("contract_name", lambda s: " · ".join(sorted({x for x in s if x}))),
-                plan_workers=("plan_workers", lambda s: float(np.nansum(s)) if any(pd.notna(s)) else np.nan),
-                plan_equipment=("plan_equipment", lambda s: float(np.nansum(s)) if any(pd.notna(s)) else np.nan),
+        out_rows: list[dict] = []
+        for (pid, cid), grp in df.groupby(["project_id", "contractor_id"], dropna=False):
+            pw_total, pe_total, name = _dedup_contract_plan(grp)
+            out_rows.append(
+                {
+                    "project_id": pid,
+                    "contractor_id": cid,
+                    "project_name": grp["project_name"].iloc[0],
+                    "contractor_name": grp["contractor_name"].iloc[0],
+                    "contract_name": name,
+                    "plan_workers": pw_total,
+                    "plan_equipment": pe_total,
+                }
             )
-        )
+        return pd.DataFrame(out_rows)
 
     def _per_file_sprav(p: Path) -> pd.DataFrame:
         df = load_plan_from_spravochniki(Path(p), snapshot_date=snapshot_date)
@@ -882,29 +936,54 @@ def load_plan_aggregate(
             )
         )
 
-    dogovor_frames = [_per_file_dog(p) for p in dogovor_paths]
-    dogovor_frames = [d for d in dogovor_frames if not d.empty]
-    sprav_frames = [_per_file_sprav(p) for p in sprav_paths]
-    sprav_frames = [d for d in sprav_frames if not d.empty]
+    def _last_valid(s: pd.Series):
+        s2 = s.dropna()
+        return s2.iloc[-1] if len(s2) else np.nan
 
-    dog_all = pd.concat(dogovor_frames, ignore_index=True) if dogovor_frames else pd.DataFrame()
-    sprav_all = pd.concat(sprav_frames, ignore_index=True) if sprav_frames else pd.DataFrame()
+    def _last_nonempty(s: pd.Series) -> str:
+        for v in reversed(list(s)):
+            if isinstance(v, str) and v.strip():
+                return v
+        return ""
+
+    def _ordered_with_index(paths, fn) -> pd.DataFrame:
+        """Собрать кадры по файлам, упорядочив по дате снапшота из имени (asc).
+        Файлы со снапшотом > snapshot_date отбрасываются (берём «последний ≤ даты»);
+        файлы без даты в имени — оставляем как fallback. `__order__` растёт с датой."""
+        items = []
+        for p in paths:
+            fdate = _dogovor_file_date(Path(p))
+            if snapshot_date is not None and fdate is not None and fdate > pd.Timestamp(snapshot_date).normalize():
+                continue
+            fr = fn(Path(p))
+            if fr is None or fr.empty:
+                continue
+            items.append((fdate, fr))
+        items.sort(key=lambda t: t[0] if t[0] is not None else pd.Timestamp.min)
+        for i, (_, fr) in enumerate(items):
+            fr["__order__"] = i
+        return pd.concat([fr for _, fr in items], ignore_index=True) if items else pd.DataFrame()
+
+    dog_all = _ordered_with_index(dogovor_paths, _per_file_dog)
+    sprav_all = _ordered_with_index(sprav_paths, _per_file_sprav)
 
     if not dog_all.empty:
+        dog_all = dog_all.sort_values("__order__")
         dog_all = (
             dog_all.groupby(["project_id", "contractor_id"], dropna=False, as_index=False)
             .agg(
                 project_name=("project_name", "first"),
                 contractor_name=("contractor_name", "first"),
-                contract_name=("contract_name", lambda s: " · ".join(sorted({x for x in s if x}))),
-                plan_workers=("plan_workers", "max"),
-                plan_equipment=("plan_equipment", "max"),
+                contract_name=("contract_name", _last_nonempty),
+                plan_workers=("plan_workers", _last_valid),
+                plan_equipment=("plan_equipment", _last_valid),
             )
         )
     if not sprav_all.empty:
+        sprav_all = sprav_all.sort_values("__order__")
         sprav_all = (
             sprav_all.groupby(["project_id", "contractor_id"], dropna=False, as_index=False)
-            .agg(plan_workers=("plan_workers", "max"), plan_equipment=("plan_equipment", "max"))
+            .agg(plan_workers=("plan_workers", _last_valid), plan_equipment=("plan_equipment", _last_valid))
         )
     merged = merge_plan(dog_all, sprav_all)
     if merged is not None and not merged.empty and "project_name" in merged.columns:
