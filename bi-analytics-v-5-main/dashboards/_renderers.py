@@ -21422,8 +21422,9 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 _dev_colors.append(_col)
                 _dev_abs.append(abs(int(round(float(_fv) - float(_pv)))))
             _bar_axis_sz = 22 if theme == "light" else 14
+            _proj_x_tick_sz = 44 if theme == "light" else 34
             _bar_title_sz = 22 if theme == "light" else 16
-            _bar_margin_b = 150 if theme == "light" else 110
+            _bar_margin_b = 120 if theme == "light" else 100
             fig_pf = _go.Figure()
             fig_pf.add_bar(
                 name="План", x=_proj_labels, y=_plan_vals,
@@ -21449,8 +21450,8 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 font_color=_th.text,
                 xaxis=dict(
                     showgrid=False,
-                    tickfont=dict(size=_bar_axis_sz, color=_th.text, family="Inter, sans-serif"),
-                    tickangle=-25 if theme == "light" else 0,
+                    tickfont=dict(size=_proj_x_tick_sz, color=_th.text, family="Inter, sans-serif"),
+                    tickangle=0,
                 ),
                 yaxis=dict(
                     showgrid=True,
@@ -21458,13 +21459,25 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                     tickfont=dict(size=_bar_axis_sz if theme == "light" else 12, color=_th.text),
                 ),
                 height=560 if theme == "light" else 520,
-                margin=dict(l=56, r=24, t=72, b=_bar_margin_b),
+                margin=dict(l=56, r=24, t=88, b=_bar_margin_b),
                 legend=dict(
-                    orientation="h", yanchor="top", y=-0.18,
-                    xanchor="left", x=0.0, bgcolor="rgba(0,0,0,0)",
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="left",
+                    x=0.0,
+                    bgcolor="rgba(0,0,0,0)",
                 ),
             )
             fig_pf = apply_gdrs_chart_background(fig_pf, _th, skip_uniformtext=True)
+            # apply_gdrs_chart_background сбрасывает tickfont оси X — восстанавливаем крупные горизонтальные подписи проектов.
+            fig_pf.update_xaxes(
+                tickfont=dict(size=_proj_x_tick_sz, color=_th.text, family="Inter, sans-serif"),
+                tickangle=0,
+                ticklabelstandoff=14,
+                automargin=True,
+            )
+            fig_pf.update_layout(margin=dict(l=56, r=24, t=88, b=_bar_margin_b))
             _n_projs = len(_proj_labels)
             if _n_projs <= 2:
                 fig_pf.update_layout(bargap=0.65, bargroupgap=0.15)
