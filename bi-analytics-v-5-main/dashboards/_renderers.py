@@ -20672,11 +20672,10 @@ def _gdrs_dynamics_chart_panel(
     if theme == "light":
         inject_gdrs_light_preview_css(st)
     gdrs_render_subheader(st, dyn_title, theme=theme)
-    _agg_options = ["День", "Неделя", "Месяц", "Год"]
+    _agg_options = ["День", "Неделя", "Месяц"]
     _agg_key = f"gdrs_dyn_kind_{vid_locked or 'any'}_{theme}"
-    _agg_default = 0
-    if _agg_key not in st.session_state or st.session_state[_agg_key] not in _agg_options:
-        st.session_state[_agg_key] = _agg_options[_agg_default]
+    if st.session_state.get(_agg_key) not in _agg_options:
+        st.session_state[_agg_key] = "Месяц"
     agg_kind = st.radio(
         "Группировка", _agg_options, horizontal=True,
         key=_agg_key,
@@ -20684,7 +20683,8 @@ def _gdrs_dynamics_chart_panel(
     st.caption(
         f"По всем загруженным датам: **{dyn_from.strftime('%d.%m.%Y')} — "
         f"{dyn_to.strftime('%d.%m.%Y')}** "
-        f"(по выбранным месяцам в фильтре «Месяц»)."
+        f"(по выбранным месяцам в фильтре «Месяц»). "
+        f"План и факт — **среднее за день** в выбранном периоде группировки."
     )
     uniq_pairs = fact_dyn[
         ["project_id", "project_name", "contractor_id", "contractor_name"]
@@ -20699,7 +20699,7 @@ def _gdrs_dynamics_chart_panel(
     if len(dyn) < 2:
         st.warning(
             "Для выбранной группировки доступен только один период. "
-            "Переключите на «День» или «Неделя» или загрузите CSV за несколько месяцев."
+            "Выберите другую гранулярность или загрузите CSV за несколько месяцев."
         )
     try:
         _x = dyn["bucket"]
@@ -20817,7 +20817,7 @@ def _gdrs_dynamics_chart_panel(
             _x_dtick = "D7"
 
         fig.update_layout(
-            title=f"Фактическое количество — {sel_vid.lower()} (ресурсы)",
+            title=f"Среднее за день — {sel_vid.lower()} (ресурсы)",
             plot_bgcolor=_th.chart_bg,
             paper_bgcolor=_th.chart_bg,
             font_color=_th.text,
@@ -20825,7 +20825,7 @@ def _gdrs_dynamics_chart_panel(
             margin=dict(l=62, r=32, t=104, b=96),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
             yaxis=dict(
-                title="Количество",
+                title="Среднее за день",
                 range=_comb_range,
                 dtick=_comb_dtick,
                 autorange=False,
@@ -20845,7 +20845,8 @@ def _gdrs_dynamics_chart_panel(
         fig = apply_gdrs_chart_background(fig, _th)
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
-            "План и факт на одной шкале; подписи у факта — значение и % от плана."
+            "План и факт на одной шкале (среднее за день в периоде группировки); "
+            "подписи у факта — значение и % от плана."
         )
 
         _dyn_tbl = pd.DataFrame({

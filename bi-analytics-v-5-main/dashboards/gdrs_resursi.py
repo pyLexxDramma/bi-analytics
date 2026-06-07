@@ -1256,6 +1256,32 @@ def gdrs_dynamics_assign_buckets(dates: pd.Series, agg_kind: str) -> pd.Series:
     return pd.to_datetime(dates).dt.to_period(freq).apply(lambda p: p.start_time.normalize())
 
 
+def _gdrs_bucket_calendar_days(
+    bucket_start: pd.Timestamp,
+    agg_kind: str,
+    date_from: pd.Timestamp,
+    date_to: pd.Timestamp,
+) -> list[pd.Timestamp]:
+    """Календарные дни внутри периода группировки (пересечение с фильтром дат)."""
+    b = pd.Timestamp(bucket_start).normalize()
+    lo = pd.Timestamp(date_from).normalize()
+    hi = pd.Timestamp(date_to).normalize()
+    kind = str(agg_kind or "").strip().casefold()
+    if kind == "день":
+        period_end = b
+    elif kind == "неделя":
+        period_end = b + pd.Timedelta(days=6)
+    elif kind == "месяц":
+        period_end = (b + pd.offsets.MonthEnd(0)).normalize()
+    else:
+        period_end = b
+    start = max(b, lo)
+    end = min(period_end, hi)
+    if end < start:
+        return []
+    return [pd.Timestamp(d).normalize() for d in pd.date_range(start, end, freq="D")]
+
+
 def gdrs_dynamics_bucket_starts(
     date_from: pd.Timestamp,
     date_to: pd.Timestamp,
@@ -1342,21 +1368,29 @@ def gdrs_dynamics_build_series(
     dyn["Факт"] = dyn["Факт"].fillna(0).astype(int)
     dyn["Период"] = dyn["bucket"].dt.strftime("%d.%m.%Y")
 
+    # План и факт — среднее за день внутри периода группировки (день/неделя/месяц).
     plan_cache: dict = {}
     dyn_to = pd.Timestamp(date_to).normalize()
-    unique_snaps: list[pd.Timestamp] = []
-    for bkt in dyn["bucket"]:
-        snap = gdrs_dynamics_bucket_snapshot_end(bkt, agg_kind, dyn_to)
-        unique_snaps.append(pd.Timestamp(snap).normalize())
-    for sk in sorted(set(unique_snaps)):
-        if sk not in plan_cache:
-            plan_df = _load_plan(sk)
-            plan_cache[sk] = _build_plan_lookup(plan_df, plan_col)
+    dyn_from = pd.Timestamp(date_from).normalize()
     plans: list[int] = []
     for bkt in dyn["bucket"]:
-        snap = gdrs_dynamics_bucket_snapshot_end(bkt, agg_kind, dyn_to)
-        sk = pd.Timestamp(snap).normalize()
-        plans.append(gdrs_plan_sum_for_pairs(pairs, *plan_cache[sk]))
+        day_plan_vals: list[float] = []
+        for day in _gdrs_bucket_calendar_days(bkt, agg_kind, dyn_from, dyn_to):
+            snap = gdrs_dynamics_bucket_snapshot_end(day, "День", dyn_to)
+            sk = pd.Timestamp(snap).normalize()
+            if sk not in plan_cache:
+                plan_df = _load_plan(sk)
+                plan_cache[sk] = _build_plan_lookup(plan_df, plan_col)
+            day_plan_vals.append(float(gdrs_plan_sum_for_pairs(pairs, *plan_cache[sk])))
+        if day_plan_vals:
+            plans.append(int(round(float(np.mean(day_plan_vals)))))
+        else:
+            snap = gdrs_dynamics_bucket_snapshot_end(bkt, agg_kind, dyn_to)
+            sk = pd.Timestamp(snap).normalize()
+            if sk not in plan_cache:
+                plan_df = _load_plan(sk)
+                plan_cache[sk] = _build_plan_lookup(plan_df, plan_col)
+            plans.append(int(gdrs_plan_sum_for_pairs(pairs, *plan_cache[sk])))
     dyn["План"] = plans
     return dyn
 
