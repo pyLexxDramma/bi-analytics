@@ -302,6 +302,73 @@ def _inject_loading_overlay_once() -> None:
         logging.getLogger(__name__).warning("loading overlay inject failed: %s", _e)
 
 
+def _render_data_pull_banner() -> None:
+    """После логина: ошибка, если данные не подтянулись с сервера.
+
+    Срабатывает при (а) неудачном FTP-подтягивании или (б) отсутствии данных
+    после загрузки / невыполненном контракте данных. Не блокирует приложение —
+    показывает крупный баннер; отчёты остаются доступны на имеющихся данных.
+    Статус FTP пишет ``_perform_load_from_web_folder`` (ключи ``_data_pull_ftp_*``).
+    """
+    try:
+        # Показываем только после реальной попытки подтянуть/загрузить данные,
+        # иначе на первом кадре после логина (загрузка ещё впереди) выскочит
+        # ложный «loaded=0».
+        _attempted = (
+            "_data_pull_ftp_ok" in st.session_state
+            or st.session_state.get("last_load_result") is not None
+        )
+        if not _attempted:
+            return
+
+        problems: list[str] = []
+        # (а) статус автоподтягивания с FTP (выставляется при попытке загрузки с сервера)
+        if st.session_state.get("_data_pull_ftp_ok") is False:
+            reason = str(st.session_state.get("_data_pull_ftp_reason") or "").strip()
+            problems.append(
+                "Не удалось подтянуть данные с сервера (FTP)."
+                + (f" {reason}" if reason else "")
+            )
+        # (б) данные после загрузки: пусто или контракт данных не выполнен
+        def _has_loaded_data() -> bool:
+            for _k in (
+                "project_data",
+                "tessa_data",
+                "reference_1c_dannye",
+                "debit_credit_data",
+                "resources_data",
+            ):
+                _v = st.session_state.get(_k)
+                if _v is not None and not getattr(_v, "empty", True):
+                    return True
+            return False
+
+        try:
+            _has_data = _has_loaded_data()
+        except Exception:
+            _has_data = False
+        if not _has_data:
+            problems.append("После загрузки нет данных отчётов (loaded=0).")
+        else:
+            _ctr = st.session_state.get("last_data_contract")
+            if isinstance(_ctr, dict) and not _ctr.get("ok"):
+                _bl = [str(x) for x in (_ctr.get("blocking") or [])][:3]
+                problems.append(
+                    "Загрузка данных неполная (контракт данных не выполнен): "
+                    + ("; ".join(_bl) if _bl else "не хватает обязательных источников.")
+                )
+        if not problems:
+            return
+        st.error(
+            "**Данные не подгрузились с сервера.**\n\n"
+            + "\n".join(f"- {p}" for p in problems)
+            + "\n\nОтчёты могут показывать устаревшие или локальные данные. "
+            "Проверьте доступ к FTP и повторите загрузку."
+        )
+    except Exception:
+        pass
+
+
 def _render_active_dashboard(
     selected_dashboard: str,
     df_for_render: "pd.DataFrame",
@@ -701,6 +768,8 @@ def main():
             render_ftp_sync_download_notice(st, _ftp_notice)
         except Exception:
             pass
+
+    _render_data_pull_banner()
 
     _inject_ru_labels_once()
     _inject_table_sort_once()
@@ -1128,8 +1197,20 @@ def main():
             if force_rescan:
                 for _k in ("_auto_hydrated_from_db", "_auto_hydrated_from_web"):
                     st.session_state.pop(_k, None)
+            # Автоподтягивание с сервера: фиксируем явный статус, чтобы после логина
+            # показать ошибку, если данные не подтянулись (см. _render_data_pull_banner).
+            _ftp_ok = False
+            _ftp_reason = ""
             try:
-                from auto_ingest import maybe_ftp_sync_before_web_load
+                from auto_ingest import (
+                    maybe_ftp_sync_before_web_load,
+                    _ftp_credentials_configured,
+                )
+
+                try:
+                    _creds_ok = bool(_ftp_credentials_configured())
+                except Exception:
+                    _creds_ok = False
 
                 if not quiet:
                     with st.spinner(
@@ -1138,12 +1219,37 @@ def main():
                         _ftp_res = maybe_ftp_sync_before_web_load(log_prefix="[force_reload]")
                 else:
                     _ftp_res = maybe_ftp_sync_before_web_load(log_prefix="[force_reload]")
+
                 if isinstance(_ftp_res, dict):
                     st.session_state["last_ftp_sync_result"] = _ftp_res
+                    _errs = _ftp_res.get("errors") or []
+                    if _errs:
+                        _ftp_ok = False
+                        _ftp_reason = (
+                            f"FTP вернул ошибки ({len(_errs)}): "
+                            + "; ".join(str(e) for e in _errs[:3])
+                        )
+                    else:
+                        _ftp_ok = True
+                elif not _creds_ok:
+                    _ftp_reason = (
+                        "FTP-сервер не настроен: нет BI_FTP_HOST / BI_FTP_USER / "
+                        "BI_FTP_PASSWORD (в .env или Streamlit secrets)."
+                    )
+                else:
+                    _ftp_reason = (
+                        "Авто-синхронизация с FTP отключена "
+                        "(BI_ANALYTICS_AUTO_FTP_ON_START=0)."
+                    )
             except Exception as _ftp_e:
                 safe_stderr_log(f"[web_load] ftp sync before load failed: {_ftp_e!r}")
+                _ftp_ok = False
+                _ftp_reason = f"Ошибка или таймаут FTP: {_ftp_e!r}"
                 if not quiet:
                     st.warning(f"FTP: ошибка или таймаут — продолжаем с локальным web/. ({_ftp_e!r})")
+
+            st.session_state["_data_pull_ftp_ok"] = _ftp_ok
+            st.session_state["_data_pull_ftp_reason"] = _ftp_reason
 
             if not web_dir_exists():
                 st.error(
