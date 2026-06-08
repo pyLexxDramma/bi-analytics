@@ -23,7 +23,7 @@ import streamlit.components.v1 as components
 
 
 def loading_overlay_enabled() -> bool:
-    return os.environ.get("BI_ANALYTICS_LOADING_OVERLAY", "1").strip().lower() not in (
+    return os.environ.get("BI_ANALYTICS_LOADING_OVERLAY", "0").strip().lower() not in (
         "0",
         "false",
         "no",
@@ -40,7 +40,7 @@ _OVERLAY_JS = """
 <script>
 (function () {
     try {
-        var KEY = '__BI_LOADING_OVERLAY_V1__';
+        var KEY = '__BI_LOADING_OVERLAY_V2__';
         var SHOW_AFTER_MS = %SHOW_AFTER_MS%;
         var MAX_VISIBLE_MS = %MAX_VISIBLE_MS%;
 
@@ -128,22 +128,21 @@ _OVERLAY_JS = """
         }
 
         function isBusy() {
-            // Индикатор выполнения Streamlit в шапке.
+            // Только индикатор выполнения Streamlit в шапке (Running…).
+            // st.spinner внутри отчёта НЕ учитываем: иначе overlay дублирует
+            // «Загрузка отчёта…» и блокирует экран на всё время тяжёлого рендера
+            // (График проекта + «Показать причины отклонений» → зависание вкладки).
             var sw = doc.querySelector('[data-testid="stStatusWidget"]');
-            if (sw && isVisible(sw)) {
-                var hasContent =
-                    sw.querySelector('svg, img, [data-testid="stStatusWidgetRunningIcon"]') ||
-                    (sw.textContent || '').trim().length > 0;
-                if (hasContent) return true;
-            }
-            // Запасной сигнал: явный спиннер st.spinner в основной области.
-            var sp = doc.querySelector('[data-testid="stSpinner"]');
-            if (sp && isVisible(sp)) return true;
-            return false;
+            if (!sw || !isVisible(sw)) return false;
+            return !!(
+                sw.querySelector('svg, img, [data-testid="stStatusWidgetRunningIcon"]') ||
+                (sw.textContent || '').trim().length > 0
+            );
         }
 
         var busySince = 0;
         var shownAt = 0;
+        var tickPending = false;
 
         function show() {
             if (!ov.classList.contains('bi-lo-on')) {
@@ -157,6 +156,7 @@ _OVERLAY_JS = """
         }
 
         function tick() {
+            tickPending = false;
             if (isBusy()) {
                 var now = Date.now();
                 if (!busySince) busySince = now;
@@ -171,14 +171,23 @@ _OVERLAY_JS = """
             }
         }
 
+        function scheduleTick() {
+            if (tickPending) return;
+            tickPending = true;
+            try {
+                win.requestAnimationFrame(tick);
+            } catch (eRaf) {
+                tickPending = false;
+                tick();
+            }
+        }
+
         var obs = null;
-        try {
-            obs = new MutationObserver(function () { tick(); });
-            obs.observe(doc.body, { childList: true, subtree: true, attributes: true });
-        } catch (eObs) {}
-        var tmr = setInterval(tick, 150);
+        // Без MutationObserver: на тяжёлых отчётах (График проекта) тысячи DOM-изменений
+        // в секунду → лавина callback'ов → «Страница не отвечает». Достаточно polling.
+        var tmr = setInterval(scheduleTick, 500);
         try { win[KEY] = { obs: obs, tmr: tmr }; } catch (eH) {}
-        tick();
+        scheduleTick();
     } catch (e) { /* noop */ }
 })();
 </script>

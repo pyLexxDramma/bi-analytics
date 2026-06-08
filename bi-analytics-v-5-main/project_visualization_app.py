@@ -293,9 +293,17 @@ def _inject_table_sort_once() -> None:
 def _inject_loading_overlay_once() -> None:
     """Полноэкранный лоадер с блокировкой экрана на время рендера отчётов."""
     try:
-        from dashboards.loading_overlay import inject_loading_overlay
+        from dashboards.loading_overlay import inject_loading_overlay, loading_overlay_enabled
 
+        if not loading_overlay_enabled():
+            return
+    except Exception:
+        return
+    if st.session_state.get("_bi_loading_overlay_injected"):
+        return
+    try:
         inject_loading_overlay()
+        st.session_state["_bi_loading_overlay_injected"] = True
     except Exception as _e:
         import logging
 
@@ -1636,23 +1644,22 @@ def main():
                     slot=_gdrs_load_slot,
                 )
             try:
-                with st.spinner("Загрузка отчёта…"):
-                    try:
-                        from dashboards.render_profiler import profiled_render
+                try:
+                    from dashboards.render_profiler import profiled_render
 
-                        profiled_render(
-                            _render_active_dashboard,
-                            selected_dashboard,
-                            df_for_render,
-                            release_mode=_is_release_client_mode(),
-                            report_name=selected_dashboard,
-                        )
-                    except ImportError:
-                        _render_active_dashboard(
-                            selected_dashboard,
-                            df_for_render,
-                            release_mode=_is_release_client_mode(),
-                        )
+                    profiled_render(
+                        _render_active_dashboard,
+                        selected_dashboard,
+                        df_for_render,
+                        release_mode=_is_release_client_mode(),
+                        report_name=selected_dashboard,
+                    )
+                except ImportError:
+                    _render_active_dashboard(
+                        selected_dashboard,
+                        df_for_render,
+                        release_mode=_is_release_client_mode(),
+                    )
             finally:
                 gdrs_clear_loading_banner(_gdrs_loading)
         except Exception as e:

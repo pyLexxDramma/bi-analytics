@@ -7705,7 +7705,23 @@ def dashboard_plan_fact_dates(df):
         elif "level" in filtered_df.columns:
             _mask_lvl_col = "level"
     _pf_wbs_col = _msp_resolve_wbs_column(filtered_df)
-    if dates_show_reason_notes and _mask_lvl_col and _mask_lvl_col in filtered_df.columns:
+    # ТЗ заказчика: задачи блока «Ковенанты» лежат на уровне 5 (+заголовок ур.2),
+    # поэтому фильтр «Детализация=Уровень 4» вырезал их целиком и весь блок (таблица
+    # и график ковенантов) пропадал с «Нет данных». При выборе блока «Ковенанты»
+    # (или галочки «Только ковенанты») фильтр уровня пропускаем — показываем все задачи.
+    _covenant_block_selected = bool(
+        force_covenant_ui
+        or (
+            str(selected_block_dates).strip() != "Все"
+            and any(
+                tok in str(selected_block_dates).lower()
+                for tok in ("ковенант", "ковен", "covenant", "coven")
+            )
+        )
+    )
+    if _covenant_block_selected:
+        pass
+    elif dates_show_reason_notes and _mask_lvl_col and _mask_lvl_col in filtered_df.columns:
         filtered_df = _msp_filter_level5_with_ancestors(
             filtered_df,
             _mask_lvl_col,
@@ -8436,7 +8452,7 @@ def dashboard_plan_fact_dates(df):
             _y = local["_y"]
             _full = local.get("_y_full", _y)
 
-            def _cov_scatter(col, legend_name, color, symbol):
+            def _cov_scatter(col, legend_name, color, symbol, text_color=None):
                 if col not in local.columns:
                     return
                 xv = local[col]
@@ -8452,13 +8468,13 @@ def dashboard_plan_fact_dates(df):
                         y=_y,
                         mode="markers+text",
                         text=_txt,
-                        # ТЗ заказчика (скрин 8): подписи дат — мелко НАД точками
-                        # (вехи с подписями дат, как было раньше).
+                        # ТЗ заказчика (скрины): вехи — ТОЧКАМИ, а даты — мелкой подписью
+                        # НАД каждой точкой (вехи вместе с подписями дат).
                         textposition="top center",
-                        textfont=dict(size=9, color=color),
+                        textfont=dict(size=9, color=(text_color or color)),
                         cliponaxis=False,
                         name=legend_name,
-                        marker=dict(size=10, color=color, symbol=symbol, line=dict(width=1, color="#fff")),
+                        marker=dict(size=11, color=color, symbol=symbol, line=dict(width=1, color="#fff")),
                         customdata=_full,
                         hovertemplate="%{customdata}<br>"
                         + legend_name
@@ -8466,10 +8482,10 @@ def dashboard_plan_fact_dates(df):
                     )
                 )
 
-            _cov_scatter("base start", "Базовое начало", "#3B82F6", "circle-open")
-            _cov_scatter(fe_col, "Базовое окончание", "#14b8a6", "diamond")
-            _cov_scatter("plan start", "Начало", "#fb923c", "circle")
-            _cov_scatter(pe_col, "Окончание", "#EF4444", "diamond-open")
+            _cov_scatter("base start", "Базовое начало", "#3B82F6", "circle-open", text_color="#93c5fd")
+            _cov_scatter(fe_col, "Базовое окончание", "#14b8a6", "diamond", text_color="#5eead4")
+            _cov_scatter("plan start", "Начало", "#fb923c", "circle", text_color="#fdba74")
+            _cov_scatter(pe_col, "Окончание", "#EF4444", "diamond-open", text_color="#fca5a5")
             fig.update_layout(
                 autosize=True,
                 width=None,
@@ -24029,13 +24045,12 @@ def dashboard_executive_documentation(df):
     today = date.today()
 
     with filters_panel(st, reset_keys=[
-        "exec_doc_object", "exec_doc_contr", "exec_doc_kind",
+        "exec_doc_object", "exec_doc_contr",
         "exec_doc_period", "exec_doc_granularity", "exec_doc_hide_overdue_signed",
-        "exec_doc_compare_month",
     ]):
         # ТЗ (скриншот): блок фильтров как в «Отклонение от базового плана» —
         # все селекторы одной шириной в одну линию, чекбоксы отдельным блоком.
-        fc1, fc2, fc3, fc4, fc5, fc6 = st.columns(6, gap="small")
+        fc1, fc2, fc3, fc4 = st.columns(4, gap="small")
         with fc1:
             if obj_col:
                 _exec_proj_opts = sorted(
@@ -24055,12 +24070,6 @@ def dashboard_executive_documentation(df):
             else:
                 sel_contr = "Все"
         with fc3:
-            if kind_col:
-                kinds = ["Все"] + sorted(work[kind_col].dropna().astype(str).str.strip().unique().tolist())
-                sel_kind = st.selectbox("Вид документа", kinds, key="exec_doc_kind")
-            else:
-                sel_kind = "Все"
-        with fc4:
             if pd.notna(dmin) and pd.notna(dmax):
                 min_date = dmin.date() if hasattr(dmin, "date") else dmin
                 max_date = dmax.date() if hasattr(dmax, "date") else dmax
@@ -24080,7 +24089,7 @@ def dashboard_executive_documentation(df):
                 p_start = p_end = None
                 with st.expander("Период по дате создания", expanded=False):
                     suppress_caption("В данных нет распознанной колонки даты создания — период не применяется.")
-        with fc5:
+        with fc4:
             _gran_opts = list(_exec_granularity_freq_map().keys())
             try:
                 _gi = _gran_opts.index("Месяц")
@@ -24091,33 +24100,8 @@ def dashboard_executive_documentation(df):
                 options=_gran_opts,
                 index=_gi,
                 key="exec_doc_granularity",
-                help="Шаг агрегации для блока «Изменения к предыдущему периоду» и вкладки «Динамика».",
+                help="Шаг агрегации для вкладки «Динамика».",
             )
-        # ТЗ (скриншот, п.1): селектор периода сравнения перенесён в блок фильтров
-        # (раньше висел справа над «Изменения за период к предыдущему»).
-        _cmp_freq_flt = _exec_granularity_freq_map().get(
-            str(st.session_state.get("exec_doc_granularity") or "Месяц"), "M"
-        )
-        try:
-            _cd_flt = (
-                pd.to_datetime(work["_cd"], errors="coerce")
-                if "_cd" in work.columns
-                else pd.Series(dtype="datetime64[ns]")
-            )
-            _cmp_periods_flt = sorted(_cd_flt.dropna().dt.to_period(_cmp_freq_flt).unique().tolist())
-        except Exception:
-            _cmp_periods_flt = []
-        _cmp_labels_flt = [_exec_period_human_label(p) for p in _cmp_periods_flt]
-        with fc6:
-            if _cmp_labels_flt:
-                if st.session_state.get("exec_doc_compare_month") not in _cmp_labels_flt:
-                    st.session_state["exec_doc_compare_month"] = _cmp_labels_flt[-1]
-                st.selectbox(
-                    "Период сравнения",
-                    _cmp_labels_flt,
-                    key="exec_doc_compare_month",
-                    help="Период для блока «Изменения за период к предыдущему».",
-                )
         with filters_toggles(st):
             hide_overdue_if_done = st.checkbox(
                 "Не отображать просрочку, если ИД сдана (подписана/согласована)",
@@ -24137,8 +24121,6 @@ def dashboard_executive_documentation(df):
         filtered_base = _filter_df_by_norm_key_col(filtered_base, obj_col, sel_obj)
     if sel_contr != "Все" and contr_col:
         filtered_base = filtered_base[filtered_base[contr_col].astype(str).str.strip() == sel_contr]
-    if sel_kind != "Все" and kind_col:
-        filtered_base = filtered_base[filtered_base[kind_col].astype(str).str.strip() == sel_kind]
 
     # tessa_data объединяет все snapshot-файлы → один документ может иметь несколько
     # записей (по дате snapshot). Для «текущего состояния» (карточки, бар-чарт
@@ -24188,8 +24170,6 @@ def dashboard_executive_documentation(df):
                 _empty_reasons.append(f"для объекта «{sel_obj}»")
             if sel_contr != "Все":
                 _empty_reasons.append(f"для контрагента «{sel_contr}»")
-            if sel_kind != "Все":
-                _empty_reasons.append(f"для вида документа «{sel_kind}»")
         else:
             _date_str = (
                 f"{p_start.strftime('%d.%m.%Y') if hasattr(p_start, 'strftime') else p_start}"
@@ -24254,125 +24234,6 @@ def dashboard_executive_documentation(df):
         _exec_metric_cards_html(summary_cards),
         unsafe_allow_html=True,
     )
-
-    def _exec_n_docs(dfp):
-        if card_col and card_col in dfp.columns:
-            return int(dfp[card_col].nunique())
-        return int(len(dfp))
-
-    def _exec_metrics_snapshot(dfp: pd.DataFrame) -> dict[str, int]:
-        if dfp is None or dfp.empty:
-            return {
-                "Всего документов": 0,
-                "Отказы": 0,
-                "На согласовании": 0,
-                "Принято": 0,
-                "У подрядчика": 0,
-                "Просрочка подрядчика": 0,
-                "Просрочка заказчика": 0,
-            }
-        # Дедуплицируем по DocID (одна строка = один документ, последний snapshot
-        # в данной выборке) — иначе .sum() считает строки snapshot-истории.
-        dfp = _latest_snapshot(dfp)
-        stu_loc = dfp["Статус"].astype(str)
-        sl_loc = stu_loc.str.lower()
-        # См. фикс выше: переходные «На согласовании» / «На подписании» / «У заказчика»
-        # не должны учитываться в «Принято».
-        on_agree_loc = stu_loc.str.strip().str.casefold().eq("на согласовании")
-        rework_loc = stu_loc.str.strip().str.casefold().eq("на доработке")
-        declined_loc = stu_loc.str.strip().str.casefold().eq("отказ")
-        signed_loc = stu_loc.str.strip().str.casefold().eq("подписан")
-        if "KrStateID" in dfp.columns:
-            signed_loc = signed_loc | (pd.to_numeric(dfp["KrStateID"], errors="coerce").eq(8))
-        signed_loc = signed_loc & (~on_agree_loc)
-        if "KrState" in dfp.columns:
-            kb_loc = dfp["KrState"].map(_krstate_bucket)
-            # KPI snapshot: только русские статусы.
-        overdue_loc = (~signed_loc) & (~declined_loc)
-        return {
-            "Всего документов": _exec_n_docs(dfp),
-            "Отказы": int(declined_loc.sum()),
-            "На согласовании": int(on_agree_loc.sum()),
-            "Принято": int(signed_loc.sum()),
-            "У подрядчика": int(rework_loc.sum()),
-            "Просрочка подрядчика": int((overdue_loc & rework_loc).sum()),
-            "Просрочка заказчика": int((overdue_loc & on_agree_loc).sum()),
-        }
-
-    compare_panel_payload: tuple[str, str] | None = None
-    if creation_col and filtered_base["_cd"].notna().any():
-        cmp_source = filtered_base[filtered_base["_cd"].notna()].copy()
-        _gran_map = _exec_granularity_freq_map()
-        _g_label = str(st.session_state.get("exec_doc_granularity") or "Месяц")
-        _freq = _gran_map.get(_g_label, "M")
-        try:
-            cmp_source["_cmp_period"] = cmp_source["_cd"].dt.to_period(_freq)
-        except Exception:
-            cmp_source["_cmp_period"] = cmp_source["_cd"].dt.to_period("M")
-            _g_label = "Месяц"
-        cmp_periods = sorted(cmp_source["_cmp_period"].dropna().unique().tolist())
-        if cmp_periods:
-            cmp_labels = {_exec_period_human_label(p): p for p in cmp_periods}
-            st.subheader("Изменения за период к предыдущему")
-            # Период сравнения выбирается в блоке фильтров (ключ exec_doc_compare_month).
-            selected_cmp_label = st.session_state.get("exec_doc_compare_month")
-            if selected_cmp_label not in cmp_labels:
-                selected_cmp_label = list(cmp_labels.keys())[-1]
-            selected_cmp_period = cmp_labels[selected_cmp_label]
-            prev_cmp_period = selected_cmp_period - 1
-            cur_cmp_df = cmp_source[cmp_source["_cmp_period"] == selected_cmp_period]
-            prev_cmp_df = cmp_source[cmp_source["_cmp_period"] == prev_cmp_period]
-            cur_metrics = _exec_metrics_snapshot(cur_cmp_df)
-            prev_metrics = _exec_metrics_snapshot(prev_cmp_df)
-
-            compare_cards = []
-            tone_map = {
-                "Отказы": "alert",
-                "Просрочка подрядчика": "alert",
-                "Просрочка заказчика": "warn",
-                "Принято": "ok",
-            }
-            for title in (
-                "Всего документов",
-                "Отказы",
-                "На согласовании",
-                "Принято",
-                "Просрочка подрядчика",
-                "Просрочка заказчика",
-            ):
-                cur_val = int(cur_metrics.get(title, 0))
-                prev_val = int(prev_metrics.get(title, 0))
-                diff = cur_val - prev_val
-                pct = None
-                if prev_val != 0:
-                    pct = diff / prev_val * 100.0
-                delta_txt = f"{diff:+d}"
-                if pct is not None:
-                    delta_txt = f"{delta_txt} ({pct:+.1f}%)"
-                compare_cards.append(
-                    {
-                        "title": title,
-                        "value": cur_val,
-                        "delta": delta_txt,
-                        "subtitle": f"Было: {prev_val}",
-                        "tone": tone_map.get(title, ""),
-                    }
-                )
-            prev_cmp_label = (
-                _exec_period_human_label(prev_cmp_period)
-                if prev_cmp_period in cmp_periods
-                else "предыдущим периодом"
-            )
-            compare_panel_payload = (
-                f"Изменения за {selected_cmp_label} по сравнению с {prev_cmp_label}",
-                _exec_metric_cards_html(
-                    compare_cards,
-                    caption=(
-                        "Показывает абсолютное изменение и процент относительно предыдущего периода "
-                        f"(гранулярность: {_g_label}) в текущей выборке по фильтрам."
-                    ),
-                ),
-            )
 
     oc1, oc2 = st.columns(2, gap="small")
 
@@ -24477,11 +24338,6 @@ def dashboard_executive_documentation(df):
                 key="exec_overdue_customer",
             )
         suppress_caption("Блок показывает документы, зависшие на согласовании у заказчика.")
-
-    if compare_panel_payload is not None:
-        compare_title, compare_html = compare_panel_payload
-        st.subheader(compare_title)
-        st.markdown(compare_html, unsafe_allow_html=True)
 
     tab_sum, tab_detail, tab_dyn = st.tabs(["Накопительным итогом", "Детальный отчёт", "Динамика"])
 
@@ -36891,21 +36747,95 @@ def _gantt_resolve_y_labels(
     return labels, chart_h
 
 
-def _render_project_schedule_gantt_legend(*, show_covenant: bool = False, label_pct: bool = False) -> None:
+_GANTT_DATE_LABEL_OFFSET_PX = 38
+
+
+def _gantt_side_date_label_annotation(
+    x,
+    y,
+    text: str,
+    *,
+    side: str,
+    color: str,
+    font_size: int = 9,
+    offset_px: int = _GANTT_DATE_LABEL_OFFSET_PX,
+) -> dict:
+    """Подпись даты слева/справа от точки. Plotly игнорирует ax/ay при showarrow=False."""
+    _ax = -int(offset_px) if side == "left" else int(offset_px)
+    _xanchor = "right" if side == "left" else "left"
+    return dict(
+        x=x,
+        y=y,
+        text=text,
+        xref="x",
+        yref="y",
+        xanchor=_xanchor,
+        yanchor="middle",
+        axref="pixel",
+        ayref="pixel",
+        ax=_ax,
+        ay=0,
+        showarrow=True,
+        arrowhead=0,
+        arrowwidth=0,
+        arrowcolor="rgba(0,0,0,0)",
+        font=dict(size=font_size, color=color, family="Arial"),
+    )
+
+
+def _gantt_legend_symbol_html(color: str, symbol: str) -> str:
+    """Маркер легенды ганта: совпадает с символами Plotly на графике ковенант."""
+    if symbol == "diamond":
+        return (
+            f'<span style="display:inline-block;width:9px;height:9px;background:{color};'
+            f'transform:rotate(45deg);margin-right:8px;flex-shrink:0;"></span>'
+        )
+    if symbol == "circle":
+        return (
+            f'<span style="display:inline-block;width:10px;height:10px;background:{color};'
+            f'border-radius:50%;margin-right:7px;flex-shrink:0;"></span>'
+        )
+    if symbol == "circle-open":
+        return (
+            f'<span style="display:inline-block;width:10px;height:10px;border:2px solid {color};'
+            f'border-radius:50%;background:transparent;margin-right:7px;flex-shrink:0;"></span>'
+        )
+    if symbol == "square":
+        return (
+            f'<span style="display:inline-block;width:10px;height:10px;background:{color};'
+            f'margin-right:7px;flex-shrink:0;"></span>'
+        )
+    return (
+        f'<span style="display:inline-block;width:16px;height:10px;background:{color};'
+        f'border-radius:2px;margin-right:7px;flex-shrink:0;"></span>'
+    )
+
+
+def _render_project_schedule_gantt_legend(
+    *,
+    show_covenant: bool = False,
+    label_pct: bool = False,
+    covenant_points_mode: bool = False,
+) -> None:
     """Легенда между фильтрами и чекбоксами (вне Plotly-iframe)."""
-    if label_pct:
-        items = [("#14b8a6", "План (% выполнения)")]
+    if covenant_points_mode:
+        items = [
+            ("#14b8a6", "diamond", "План"),
+            ("#fb923c", "diamond", "Факт"),
+        ]
+    elif label_pct:
+        items = [("#14b8a6", "bar", "План (% выполнения)")]
     else:
-        items = [("#14b8a6", "План"), ("#fb923c", "Факт")]
-    if show_covenant:
-        items.append(("#C084FC", "Ковенанта (базовое окончание)"))
+        items = [("#14b8a6", "bar", "План"), ("#fb923c", "bar", "Факт")]
+        if show_covenant:
+            items.append(("#C084FC", "diamond", "Ковенанта (базовое окончание)"))
     parts = []
-    for color, label in items:
+    for color, symbol, label in items:
         esc = html_module.escape(label)
+        sym = _gantt_legend_symbol_html(color, symbol)
         parts.append(
             '<span style="display:inline-flex;align-items:center;margin-right:1.35rem;">'
-            f'<span style="display:inline-block;width:16px;height:10px;background:{color};'
-            f'border-radius:2px;margin-right:7px;"></span>'
+            f"{sym}"
             f'<span style="color:#e8eef5;font-size:0.92rem;">{esc}</span></span>'
         )
     st.markdown(
@@ -37813,10 +37743,22 @@ def dashboard_project_schedule_chart(df):
                     ),
                 )
 
-    _gantt_row_cap = None if show_all_gantt_tasks else _GANTT_MAX_ROWS
+    _covenant_mode_gantt = bool(
+        sel_block != "Все"
+        and any(
+            tok in str(sel_block).lower()
+            for tok in ("ковенант", "ковен", "covenant", "coven")
+        )
+    )
+
+    _gantt_row_cap = None
     view_mode = "Гантт (полосы)"
 
-    _render_project_schedule_gantt_legend(show_covenant=False, label_pct=label_pct)
+    _render_project_schedule_gantt_legend(
+        show_covenant=False,
+        label_pct=label_pct,
+        covenant_points_mode=_covenant_mode_gantt,
+    )
 
     # ── Применяем фильтр уровня (по селектору) или show_reasons-override (ур. 5 + предки) ──
     # Делаем здесь, чтобы значение чекбокса show_reasons уже было известно и могло
@@ -37843,6 +37785,18 @@ def dashboard_project_schedule_chart(df):
             # для иерархических MSP-выгрузок, где иерархия плоская по level.
             plot_df = plot_df[ln_all.notna() & (ln_all <= 5)]
         # если уровня 5 в выборке нет — оставляем плот как есть, чтобы не получить пустоту.
+    elif (
+        sel_block != "Все"
+        and any(
+            tok in str(sel_block).lower()
+            for tok in ("ковенант", "ковен", "covenant", "coven")
+        )
+    ):
+        # ТЗ заказчика: задачи блока «Ковенанты» лежат на уровне 5 — фильтр
+        # «Верхний уровень» (ур.4) вырезал их полностью и график пропадал
+        # («Нет строк после фильтров»). При выбранном блоке «Ковенанты»
+        # фильтр уровня пропускаем — показываем все задачи блока.
+        pass
     elif level_col and level_sel != "Все уровни":
         lvl_map = {
             "Верхний уровень": 4,
@@ -38490,25 +38444,16 @@ def dashboard_project_schedule_chart(df):
             if not text or x_edge is None:
                 return
             _txt_color = _GANTT_FACT_COLOR if lane == "fact" else _GANTT_PLAN_COLOR
-            if edge == "start":
-                xanchor, ax = "right", -4
-            else:
-                xanchor, ax = "left", 4
+            _side = "left" if edge == "start" else "right"
             _date_ann.append(
-                dict(
-                    x=x_edge,
-                    y=_lane_y_pos(y_idx, lane),
-                    text=text,
-                    xref="x",
-                    yref="y",
-                    xanchor=xanchor,
-                    yanchor="middle",
-                    axref="pixel",
-                    ayref="pixel",
-                    ax=ax,
-                    ay=0,
-                    showarrow=False,
-                    font=dict(size=_lbl_font, color=_txt_color, family="Arial"),
+                _gantt_side_date_label_annotation(
+                    x_edge,
+                    _lane_y_pos(y_idx, lane),
+                    text,
+                    side=_side,
+                    color=_txt_color,
+                    font_size=_lbl_font,
+                    offset_px=10,
                 )
             )
 
@@ -38740,21 +38685,36 @@ def dashboard_project_schedule_chart(df):
         return fig
 
     def _build_covenants_points_figure(d: pd.DataFrame, policy: dict):
-        """Режим «Ковенанты»: базовое окончание (синяя точка) и окончание (красная) с подписями дат."""
+        """Режим «Ковенанты»: две вехи на задачу — план (бирюза) и факт (оранжевый) с датами над точками."""
+        _GANTT_PLAN_COLOR = "#14b8a6"
+        _GANTT_FACT_COLOR = "#fb923c"
         _df = d.copy()
+        for _dc in ("plan end", "base end"):
+            if _dc in _df.columns:
+                _df[_dc] = pd.to_datetime(_df[_dc], errors="coerce", dayfirst=True)
         _y = _df["_gantt_y_label"].astype(str)
         date_fmt = policy.get("date_fmt", "%d.%m.%Y")
-
-        base_end = (
-            pd.to_datetime(_df["base end"], errors="coerce") if "base end" in _df.columns else pd.Series(pd.NaT, index=_df.index)
-        )
         fact_end_col = _gantt_find_fact_end_column(_df)
-        fact_end = (
-            pd.to_datetime(_df[fact_end_col], errors="coerce")
-            if fact_end_col and fact_end_col in _df.columns
-            else pd.to_datetime(_df["plan end"], errors="coerce")
-        )
-        fact_label = "Факт: окончание" if fact_end_col else "План: окончание"
+
+        if "base end" in _df.columns and _df["base end"].notna().any():
+            plan_end = _df["base end"]
+            plan_label = "План"
+        elif "plan end" in _df.columns:
+            plan_end = _df["plan end"]
+            plan_label = "План"
+        else:
+            plan_end = pd.Series(pd.NaT, index=_df.index)
+            plan_label = "План"
+
+        if fact_end_col and fact_end_col in _df.columns and _df[fact_end_col].notna().any():
+            fact_end = pd.to_datetime(_df[fact_end_col], errors="coerce", dayfirst=True)
+            fact_label = "Факт"
+        elif "plan end" in _df.columns:
+            fact_end = _df["plan end"]
+            fact_label = "Факт"
+        else:
+            fact_end = pd.Series(pd.NaT, index=_df.index)
+            fact_label = "Факт"
 
         def _fmt_ts(ts):
             if ts is None or (isinstance(ts, float) and pd.isna(ts)):
@@ -38769,63 +38729,84 @@ def dashboard_project_schedule_chart(df):
             except Exception:
                 return str(ts).strip()
 
-        base_text = [_fmt_ts(x) for x in base_end.tolist()]
-        fact_text = [_fmt_ts(x) for x in fact_end.tolist()]
-        _show_cov_text = len(_df.index) <= _GANTT_LINES_TEXT_MAX_ROWS
+        _task_names = (
+            _df[task_col].astype(str).values
+            if task_col and task_col in _df.columns
+            else _y.values
+        )
 
         fig = go.Figure()
-        fig.add_trace(
-            go.Scatter(
-                x=base_end,
-                y=_y,
-                mode="markers+text" if _show_cov_text else "markers",
-                text=base_text if _show_cov_text else None,
-                textposition="middle right",
-                textfont=dict(size=policy.get("label_font", 11), color="#f8fafc"),
-                marker=dict(
-                    size=policy.get("marker_size", 8),
-                    color="#3B82F6",
-                    symbol="circle",
-                    line=dict(width=max(1, int(round(_GANTT_STROKE_SCALE))), color="#ffffff"),
-                ),
-                name="Базовое окончание",
-                customdata=np.stack(
-                    [
-                        _df[task_col].astype(str).values,
-                        pd.to_datetime(base_end, errors="coerce").dt.strftime(_CHART_PLOT_DATE_FMT).fillna("").values,
-                    ],
-                    axis=-1,
-                ),
-                hovertemplate="<b>%{customdata[0]}</b><br>База: %{customdata[1]}<extra></extra>",
+        _date_ann: list[dict] = []
+
+        def _cov_scatter(xv, legend_name, color):
+            if xv is None or not xv.notna().any():
+                return
+            fig.add_trace(
+                go.Scatter(
+                    x=xv,
+                    y=_y,
+                    mode="markers",
+                    cliponaxis=False,
+                    name=legend_name,
+                    marker=dict(
+                        size=11,
+                        color=color,
+                        symbol="diamond",
+                        line=dict(width=1, color="#ffffff"),
+                    ),
+                    showlegend=False,
+                    customdata=np.stack(
+                        [
+                            _task_names,
+                            pd.to_datetime(xv, errors="coerce")
+                            .dt.strftime(_CHART_PLOT_DATE_FMT)
+                            .fillna("")
+                            .values,
+                        ],
+                        axis=-1,
+                    ),
+                    hovertemplate=(
+                        f"<b>%{{customdata[0]}}</b><br>{legend_name}: "
+                        "%{customdata[1]}<extra></extra>"
+                    ),
+                )
             )
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=fact_end,
-                y=_y,
-                mode="markers+text" if _show_cov_text else "markers",
-                text=fact_text if _show_cov_text else None,
-                textposition="middle right",
-                textfont=dict(size=policy.get("label_font", 11), color="#f8fafc"),
-                marker=dict(
-                    size=policy.get("marker_size", 8),
-                    color="#EF4444",
-                    symbol="diamond",
-                    line=dict(width=max(1, int(round(_GANTT_STROKE_SCALE))), color="#ffffff"),
-                ),
-                name=fact_label,
-                customdata=np.stack(
-                    [
-                        _df[task_col].astype(str).values,
-                        pd.to_datetime(fact_end, errors="coerce").dt.strftime(_CHART_PLOT_DATE_FMT).fillna("").values,
-                    ],
-                    axis=-1,
-                ),
-                hovertemplate="<b>%{customdata[0]}</b><br>"
-                + f"{fact_label}: "
-                + "%{customdata[1]}<extra></extra>",
+
+        def _add_cov_date_label(x_ts, y_lbl: str, text: str, *, side: str) -> None:
+            if not text or x_ts is None or (isinstance(x_ts, float) and pd.isna(x_ts)):
+                return
+            try:
+                if pd.isna(x_ts):
+                    return
+            except Exception:
+                pass
+            _color = "#5eead4" if side == "plan" else "#fdba74"
+            _date_ann.append(
+                _gantt_side_date_label_annotation(
+                    pd.Timestamp(x_ts),
+                    y_lbl,
+                    text,
+                    side="left" if side == "plan" else "right",
+                    color=_color,
+                )
             )
-        )
+
+        _cov_scatter(plan_end, plan_label, _GANTT_PLAN_COLOR)
+        _cov_scatter(fact_end, fact_label, _GANTT_FACT_COLOR)
+
+        for i, y_lbl in enumerate(_y.tolist()):
+            _add_cov_date_label(
+                plan_end.iloc[i] if hasattr(plan_end, "iloc") else plan_end[i],
+                y_lbl,
+                _fmt_ts(plan_end.iloc[i] if hasattr(plan_end, "iloc") else plan_end[i]),
+                side="plan",
+            )
+            _add_cov_date_label(
+                fact_end.iloc[i] if hasattr(fact_end, "iloc") else fact_end[i],
+                y_lbl,
+                _fmt_ts(fact_end.iloc[i] if hasattr(fact_end, "iloc") else fact_end[i]),
+                side="fact",
+            )
 
         n = len(_df.index)
         _y_list = _y.tolist()
@@ -38850,11 +38831,17 @@ def dashboard_project_schedule_chart(df):
             uirevision="gantt_project_schedule_covenants",
         )
         fig.update_yaxes(title=dict(text=""))
-        fig.update_xaxes(title_text="Дата", automargin=True, showgrid=True)
+        fig.update_xaxes(title_text="Дата", automargin=True, showgrid=True, fixedrange=False)
 
         try:
-            _bar_dates = pd.concat([base_end, fact_end]).dropna().tolist()
-            lo_pad, hi_pad = _project_schedule_gantt_x_range(_bar_dates)
+            _bar_dates = pd.concat([plan_end, fact_end], ignore_index=True).dropna().tolist()
+            _left_lbl = pd.to_datetime(plan_end, errors="coerce").dropna().tolist()
+            _right_lbl = pd.to_datetime(fact_end, errors="coerce").dropna().tolist()
+            lo_pad, hi_pad = _project_schedule_gantt_x_range(
+                _bar_dates,
+                label_left_x=_left_lbl,
+                label_right_x=_right_lbl,
+            )
             if lo_pad is not None and hi_pad is not None:
                 fig.update_xaxes(range=[lo_pad, hi_pad], autorange=False)
                 tvals, ttext = _gantt_ru_date_ticks(lo_pad, hi_pad, max_ticks=policy.get("max_ticks", 22))
@@ -38878,11 +38865,13 @@ def dashboard_project_schedule_chart(df):
             task_font=_task_font,
         )
         _cov_margin["l"] = left_m
-        if _y_name_ann:
-            fig.update_layout(annotations=list(_y_name_ann), margin=_cov_margin, showlegend=False)
-        else:
-            fig.update_layout(margin=_cov_margin, showlegend=False)
-        fig.update_xaxes(domain=[_x_domain_start, 1.0])
+        _all_ann = list(_y_name_ann) + list(_date_ann)
+        fig.update_layout(
+            annotations=_all_ann if _all_ann else None,
+            margin=_cov_margin,
+            showlegend=False,
+        )
+        fig.update_xaxes(domain=[_x_domain_start, 1.0], fixedrange=False)
         return fig, fact_end_col, fact_label
 
     _readability = _gantt_readability_policy(plot_df)
@@ -38920,14 +38909,22 @@ def dashboard_project_schedule_chart(df):
         _pct_values = [np.nan] * len(plot_df)
 
     _dfmt_lbl = _readability["date_fmt"]
-    fig_gantt = _build_grouped_plan_fact_gantt_figure(
-        plot_df,
-        _readability,
-        label_pct=label_pct,
-        pct_values=_pct_values,
-        date_fmt=_dfmt_lbl,
-        show_covenant_markers=False,
-    )
+    if _covenant_mode_gantt:
+        # ТЗ заказчика: блок «Ковенанты» рисуем ромбами с подписями дат
+        # (как в отчёте «Отклонение от базового плана»), а не полосами.
+        fig_gantt, _, _ = _build_covenants_points_figure(
+            plot_df,
+            {**_readability, "date_fmt": _dfmt_lbl},
+        )
+    else:
+        fig_gantt = _build_grouped_plan_fact_gantt_figure(
+            plot_df,
+            _readability,
+            label_pct=label_pct,
+            pct_values=_pct_values,
+            date_fmt=_dfmt_lbl,
+            show_covenant_markers=False,
+        )
     chart_h = int(getattr(fig_gantt.layout, "height", None) or 520)
 
     # Названия задач — paper-annotations слева (см. _project_schedule_gantt_apply_y_labels).
@@ -38944,13 +38941,8 @@ def dashboard_project_schedule_chart(df):
         max_height=None,
         skip_clamp_zoom=True,
         omit_default_width=True,
-        scroll_viewport_height=_GANTT_VIEWPORT_MAX_HEIGHT,
+        scroll_viewport_height=None,
     )
-    if _gantt_render_h > _GANTT_VIEWPORT_MAX_HEIGHT:
-        suppress_caption(
-            f"Диаграмма: {_gantt_rows_shown} задач — прокрутите блок графика "
-            f"(полная высота {_gantt_render_h} px, на экране до {_GANTT_VIEWPORT_MAX_HEIGHT} px)."
-        )
 
     try:
         _h_g = int(getattr(fig_gantt.layout, "height", None) or 0)
@@ -38963,9 +38955,13 @@ def dashboard_project_schedule_chart(df):
         height=_gantt_render_h,
         caption_below=(
             (
-                "Одна полоса (план) с подписью % выполнения из MSP. "
-                if label_pct
-                else "План (бирюзовая) и факт (оранжевая); у каждой полосы — даты начала и окончания. "
+                "Блок «Ковенанты»: вехи план (бирюза) и факт (оранжевый); даты слева и справа от ромбов. "
+                if _covenant_mode_gantt
+                else (
+                    "Одна полоса (план) с подписью % выполнения из MSP. "
+                    if label_pct
+                    else "План (бирюзовая) и факт (оранжевая); у каждой полосы — даты начала и окончания. "
+                )
             )
             + "Масштаб — колесом мыши или панелью (+/−, рамка)."
         ),
@@ -39178,18 +39174,14 @@ def dashboard_project_schedule_chart(df):
 
         gdrs_render_subheader(st, "Таблица задач", theme="dark", level=4)
         suppress_caption("Сортировка: клик по заголовку колонки.")
+        _gantt_tbl_cap = len(tbl_show)
         _render_gantt_schedule_html_table(
             tbl_show,
             tbl_numeric,
-            max_rows=len(tbl_show),
+            max_rows=_gantt_tbl_cap,
             group_by_project=False,
             project_col_name="Проект",
         )
-        if _gantt_rows_total > _gantt_rows_shown:
-            suppress_caption(
-                f"Диаграмма: {_gantt_rows_shown} из {_gantt_rows_total} задач; "
-                f"таблица — все {_gantt_rows_total} после фильтров."
-            )
 
 
 def dashboard_pd_delay(df):

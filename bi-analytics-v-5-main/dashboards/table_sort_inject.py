@@ -281,40 +281,38 @@ _TABLE_SORT_JS = r"""
     var tbl = box.querySelector("table");
     var content = tbl ? Math.ceil(tbl.getBoundingClientRect().height)
                       : Math.ceil(box.scrollHeight || 0);
-    var capH = content;
-    if (tbl) {
-      var thead = tbl.querySelector("thead");
-      var rows = tbl.querySelectorAll("tbody tr");
-      if (rows.length > 50) {
-        var headH = thead ? Math.ceil(thead.getBoundingClientRect().height) : 36;
-        var sample = 0, cnt = 0, lim = Math.min(rows.length, 50);
-        for (var i = 0; i < lim; i++) {
-          sample += rows[i].getBoundingClientRect().height; cnt++;
-        }
-        var perRow = cnt ? (sample / cnt) : 30;
-        capH = Math.ceil(headH + perRow * 50);
-      }
-    }
-    var boxH = Math.min(content, capH);
+    var cap = 600, pad = 24;
     try {
-      if (capH < content) {
-        box.style.setProperty("max-height", boxH + "px", "important");
+      if (content > cap) {
+        box.style.setProperty("max-height", cap + "px", "important");
       } else {
         box.style.removeProperty("max-height");
       }
     } catch (e) {}
-    return boxH + 18;
+    return content > cap ? (cap + pad) : Math.max(160, content + pad);
   }
 
+  var _rfhScheduled = false;
   function reportFrameHeight() {
+    if (_rfhScheduled) return;
+    _rfhScheduled = true;
     try {
-      var ganttScrollBox = document.querySelector(".gantt-schedule-scroll-wrap");
-      if (ganttScrollBox) {
-        var gsh = __ganttFrameHeight(ganttScrollBox);
-        if (gsh > 0) {
-          window.parent.postMessage({ type: "streamlit:setFrameHeight", height: gsh }, "*");
-          return;
-        }
+      requestAnimationFrame(function () {
+        _rfhScheduled = false;
+        __reportFrameHeightNow();
+      });
+    } catch (e) {
+      _rfhScheduled = false;
+      __reportFrameHeightNow();
+    }
+  }
+
+  function __reportFrameHeightNow() {
+    try {
+      // «График проекта»: высота iframe задаётся с Python (scrolling=False) —
+      // postMessage/setFrameHeight + ResizeObserver давали петлю → зависание вкладки.
+      if (document.querySelector(".gantt-schedule-scroll-wrap")) {
+        return;
       }
       var pfScrollBox = document.querySelector(".pf-dates-scroll-wrap");
       if (pfScrollBox) {
@@ -415,17 +413,19 @@ _TABLE_SORT_JS = r"""
 
   bootDoc(document);
   try {
-    var ro = new ResizeObserver(function () { reportFrameHeight(); });
-    var tgt = document.querySelector(".pd-dynamics-scroll-wrap")
-      || document.querySelector(".pf-covenant-table-wrap")
-      || document.querySelector(".pf-dates-table-wrap")
-      || document.querySelector(".pred-detail-wrap")
-      || document.querySelector(".fc-table-scroll-wrap")
-      || document.querySelector(".gantt-schedule-table-wrap")
-      || document.querySelector(".budget-deviation-table-wrap")
-      || document.querySelector(".bi-sortable-html-root")
-      || document.body;
-    if (tgt) ro.observe(tgt);
+    if (!document.querySelector(".gantt-schedule-scroll-wrap")) {
+      var ro = new ResizeObserver(function () { reportFrameHeight(); });
+      var tgt = document.querySelector(".pd-dynamics-scroll-wrap")
+        || document.querySelector(".pf-covenant-table-wrap")
+        || document.querySelector(".pf-dates-table-wrap")
+        || document.querySelector(".pred-detail-wrap")
+        || document.querySelector(".fc-table-scroll-wrap")
+        || document.querySelector(".gantt-schedule-table-wrap")
+        || document.querySelector(".budget-deviation-table-wrap")
+        || document.querySelector(".bi-sortable-html-root")
+        || document.body;
+      if (tgt) ro.observe(tgt);
+    }
   } catch (e) {}
 })();
 """
@@ -512,32 +512,22 @@ _COMPACT_FRAME_FIT_JS = r"""
     var tbl = box.querySelector("table");
     var content = tbl ? Math.ceil(tbl.getBoundingClientRect().height)
                       : Math.ceil(box.scrollHeight || 0);
-    var capH = content;
-    if (tbl) {
-      var thead = tbl.querySelector("thead");
-      var rows = tbl.querySelectorAll("tbody tr");
-      if (rows.length > 50) {
-        var headH = thead ? Math.ceil(thead.getBoundingClientRect().height) : 36;
-        var sample = 0, cnt = 0, lim = Math.min(rows.length, 50);
-        for (var i = 0; i < lim; i++) {
-          sample += rows[i].getBoundingClientRect().height; cnt++;
-        }
-        var perRow = cnt ? (sample / cnt) : 30;
-        capH = Math.ceil(headH + perRow * 50);
-      }
-    }
-    var boxH = Math.min(content, capH);
+    var cap = 600, pad = 24;
     try {
-      if (capH < content) {
-        box.style.setProperty("max-height", boxH + "px", "important");
+      if (content > cap) {
+        box.style.setProperty("max-height", cap + "px", "important");
       } else {
         box.style.removeProperty("max-height");
       }
     } catch (e) {}
-    return boxH + 18;
+    return content > cap ? (cap + pad) : Math.max(160, content + pad);
   }
   function fit() {
     try {
+      // «График проекта»: iframe с фиксированной высотой (Python, scrolling=False).
+      if (document.querySelector(".gantt-schedule-scroll-wrap")) {
+        return;
+      }
       var pdScroll = document.querySelector(".pd-dynamics-scroll-wrap");
       if (pdScroll) {
         try {
@@ -1114,11 +1104,12 @@ def _build_sortable_html_document(html: str) -> str:
         + (
             f"<script>{_COMPACT_FRAME_FIT_JS}</script>"
             if (
+                "gantt-schedule-scroll-wrap" not in html_l
+                and (
                 "pf-dates-table-wrap" in html_l
                 or "pf-covenant-table-wrap" in html_l
                 or "pf-dates-table" in html_l
                 or "gantt-schedule-table-wrap" in html_l
-                or "gantt-schedule-scroll-wrap" in html_l
                 or (
                     "budget-deviation-table-wrap" in html_l
                     and "budget-table-scroll" in html_l
@@ -1129,6 +1120,7 @@ def _build_sortable_html_document(html: str) -> str:
                 or "dev-reasons-wrap" in html_l
                 or "fc-table-scroll-wrap" in html_l
                 or "pf-dates-scroll-wrap" in html_l
+                )
             )
             else ""
         )
@@ -1177,11 +1169,22 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
         components.html(doc, height=_h_scroll, scrolling=False)
         return
     if "gantt-schedule-scroll-wrap" in _b:
-        # Таблица задач «График проекта» подгоняется по высоте контента (как
-        # «Причины отклонений»): кнопка «Скачать таблицу» сразу под таблицей,
-        # без пустого пространства и без внутренней вертикальной прокрутки.
-        _h_gantt = max(96, _estimate_html_block_height(html))
-        components.html(doc, height=_h_gantt, scrolling=False)
+        # Таблица задач «График проекта»: фиксированная высота окна с внутренней
+        # вертикальной прокруткой (как «Причины отклонений»/«Прогноз БДДС»).
+        # Кнопка «Скачать таблицу» — сразу под таблицей, без пустого пространства.
+        # Горизонтальный скролл — внутри обёртки (overflow-x:auto), шапка sticky.
+        doc_sc = doc.replace(
+            "</head>",
+            '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
+            '.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}'
+            'html body .gantt-schedule-scroll-wrap{height:100%!important;max-height:100%!important;min-height:0!important;'
+            'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;}'
+            'html body .gantt-schedule-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;'
+            'background:hsl(209,72%,6%)!important;}</style></head>',
+            1,
+        )
+        _h_gantt = min(624, max(180, _estimate_html_block_height(html) + 24))
+        components.html(doc_sc, height=_h_gantt, scrolling=False)
         return
     if "budget-deviation-table-wrap" in _b and "budget-table-scroll" in _b:
         _m_vh = re.search(r'data-scroll-vh="([\d.]+)"', html or "") or re.search(
