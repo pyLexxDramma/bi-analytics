@@ -10,7 +10,8 @@
 
 Public API: ``inject_loading_overlay``, ``loading_overlay_enabled``.
 
-``BI_ANALYTICS_LOADING_OVERLAY=0`` отключает. Безопасно: есть аварийный
+По умолчанию включён на всех ветках/деплоях. ``BI_ANALYTICS_LOADING_OVERLAY=0``
+отключает. Безопасно: есть аварийный
 авто-сброс overlay (если индикатор «завис»), чтобы экран не остался
 заблокированным навсегда.
 """
@@ -23,7 +24,7 @@ import streamlit.components.v1 as components
 
 
 def loading_overlay_enabled() -> bool:
-    return os.environ.get("BI_ANALYTICS_LOADING_OVERLAY", "0").strip().lower() not in (
+    return os.environ.get("BI_ANALYTICS_LOADING_OVERLAY", "1").strip().lower() not in (
         "0",
         "false",
         "no",
