@@ -1808,10 +1808,13 @@ def _deviations_maket_task_id_col(frame: pd.DataFrame) -> str | None:
 
 
 def _deviations_maket_prepare_df(table_reason_df: pd.DataFrame) -> pd.DataFrame:
-    """MSP level 5, filled reason, finish deviation < 0; sorted most negative first."""
+    """MSP level 5, filled reason, finish deviation < 0; worst deviation (most negative) first."""
     if table_reason_df is None or getattr(table_reason_df, "empty", True):
         return table_reason_df.iloc[0:0].copy() if table_reason_df is not None else pd.DataFrame()
     work_m = table_reason_df.copy()
+    _reason_col_m = _gantt_resolve_reason_column(work_m)
+    if _reason_col_m and _reason_col_m != "reason of deviation":
+        work_m = work_m.rename(columns={_reason_col_m: "reason of deviation"})
     if "_dt_lvl3_key" not in work_m.columns or "_dt_lvl2_key" not in work_m.columns:
         _lc_m = _dev_tasks_resolve_level_column(work_m)
         _tc_m = (
@@ -1858,7 +1861,7 @@ def _deviations_maket_prepare_df(table_reason_df: pd.DataFrame) -> pd.DataFrame:
             _dd_tmp[_ddc] = _dd_tmp[_ddc].astype(str).str.strip()
         maket_df = maket_df[~_dd_tmp.duplicated(subset=_dd_key_cols, keep="first")].copy()
     if not maket_df.empty:
-        maket_df = maket_df.sort_values("_end_diff", ascending=False).reset_index(drop=True)
+        maket_df = maket_df.sort_values("_end_diff", ascending=True).reset_index(drop=True)
     return maket_df
 
 
@@ -2153,6 +2156,130 @@ def build_deviations_maket_export_df(
             }
         )
     return pd.DataFrame(_maket_out)
+
+
+def _render_deviations_maket_table(
+    table_reason_df,
+    building_col=None,
+    notes_col=None,
+    *,
+    file_stem: str = "deviations_detail_maket",
+    key_prefix: str = "devtable_maket",
+):
+    """Таблица по макету: ур. 5, причина, отклонение окончания < 0."""
+    notes_col_m = (
+        notes_col
+        if notes_col
+        else _find_column_by_keywords(
+            table_reason_df, ("note", "заметк", "comment", "remark", "notes")
+        )
+    )
+    maket_df = _deviations_maket_prepare_df(table_reason_df)
+    _id_col_m = _deviations_maket_task_id_col(maket_df)
+
+    if maket_df.empty:
+        st.info(
+            "По макету нет строк: уровень 5, непустая причина, отклонение окончания < 0."
+        )
+        return
+
+    _date_bg_m = _DEV_MAKET_COL_BG
+    _maket_wrap_id = f"dev_reason_maket_{abs(id(maket_df))}"
+    _hdrs = [
+        "ID задачи",
+        "Проект",
+        "Функциональный блок",
+        "Строение",
+        "Базовое окончание",
+        "Окончание",
+        "Отклонение",
+        "Причина отклонения",
+        "Заметки",
+    ]
+    _bg_hdrs = {"Базовое окончание", "Окончание", "Отклонение"}
+    _tbl_m = [
+        f'<div id="{_maket_wrap_id}" class="pred-detail-wrap rendered-table-wrap dev-maket-table-wrap" data-bi-rows="{len(maket_df)}">',
+        '<table class="rendered-table bi-sortable-table bi-sort-click-only dev-maket-table" style="border-collapse:collapse;width:100%">',
+        "<thead><tr>",
+    ]
+    for h in _hdrs:
+        _hst = f' style="background:{_date_bg_m};color:#0b1f33;"' if h in _bg_hdrs else ""
+        _hcls = ' class="dev-mak-col-proj"' if h == "Проект" else ""
+        _tbl_m.append(f"<th{_hcls}{_hst}>{html_module.escape(h)}</th>")
+    _tbl_m.append("</tr></thead><tbody>")
+
+    for _, rr in maket_df.iterrows():
+        pr = _clean_display_str(rr.get("project name"))
+        fb = _clean_display_str(rr.get("block")) if "block" in maket_df.columns else ""
+        if not fb and "_dt_lvl2_key" in maket_df.columns:
+            fb = _clean_display_str(rr.get("_dt_lvl2_key"))
+        stv = _clean_display_str(rr.get("_dt_lvl3_key")) if "_dt_lvl3_key" in maket_df.columns else ""
+        if not stv and building_col and building_col in maket_df.columns:
+            stv = _clean_display_str(rr.get(building_col))
+        pe = rr.get("plan end")
+        be = rr.get("base end")
+        ed = rr.get("_end_diff")
+        be_s = be.strftime("%d.%m.%Y") if pd.notna(be) else ""
+        pe_s = pe.strftime("%d.%m.%Y") if pd.notna(pe) else ""
+        ed_s = str(int(round(float(ed), 0))) if pd.notna(ed) else ""
+        rs = _clean_display_str(rr.get("reason of deviation"))
+        nt = _clean_display_str(rr.get(notes_col_m)) if notes_col_m and notes_col_m in maket_df.columns else ""
+        tid = ""
+        if _id_col_m and _id_col_m in maket_df.columns:
+            _raw_id = rr.get(_id_col_m)
+            if pd.notna(_raw_id) and str(_raw_id).strip() not in ("", "nan", "none"):
+                tid = str(_raw_id).strip()
+        if pd.notna(ed):
+            ev = float(pd.to_numeric(ed, errors="coerce"))
+            _c_sp = "#ff5454" if ev < 0 else "#46d68a"
+        else:
+            _c_sp = "#e0e0e0"
+
+        _tbl_m.append("<tr>")
+        _tbl_m.append(f"<td>{html_module.escape(tid)}</td>")
+        _tbl_m.append(f'<td class="dev-mak-col-proj">{html_module.escape(pr)}</td>')
+        _tbl_m.append(f"<td>{html_module.escape(fb)}</td>")
+        _tbl_m.append(f"<td>{html_module.escape(stv)}</td>")
+        _tbl_m.append(f'<td style="background:{_date_bg_m}">{html_module.escape(be_s)}</td>')
+        _tbl_m.append(f'<td style="background:{_date_bg_m}">{html_module.escape(pe_s)}</td>')
+        if pd.isna(ed):
+            _tbl_m.append(f'<td style="background:{_date_bg_m}">—</td>')
+        else:
+            _tbl_m.append(
+                f'<td style="background:{_date_bg_m};text-align:right">'
+                f'<span style="color:{_c_sp}!important;font-weight:600">{html_module.escape(ed_s)}</span></td>'
+            )
+        _bk_tbl = _deviations_reason_bucket_label(rr.get("reason of deviation")) if "reason of deviation" in maket_df.columns else "Прочее"
+        _clr_tbl = _deviations_reason_bucket_colors().get(str(_bk_tbl).strip(), "")
+        _rs_esc = html_module.escape(rs)
+        if _clr_tbl:
+            _tbl_m.append(
+                f'<td style="border-left:4px solid {_clr_tbl};padding-left:6px;color:#e8eaed;font-weight:600">{_rs_esc}</td>'
+            )
+        else:
+            _tbl_m.append(f"<td>{_rs_esc}</td>")
+        _tbl_m.append(f"<td>{html_module.escape(nt)}</td>")
+        _tbl_m.append("</tr>")
+
+    _tbl_m.append("</tbody></table></div>")
+    _maket_iframe_css = (
+        "<style>"
+        "html,body{margin:0;padding:6px 8px;background:#0e1117;color:#e0e0e0;"
+        "font-family:Inter,system-ui,sans-serif;font-size:13px;}"
+        f"#{_maket_wrap_id} .dev-mak-col-proj,"
+        f"#{_maket_wrap_id} th.dev-mak-col-proj"
+        "{white-space:nowrap!important;min-width:9em;max-width:none!important;word-break:keep-all;}"
+        f"#{_maket_wrap_id} thead th{{position:sticky;top:0;z-index:5;background:#0e1117;}}"
+        "</style>"
+    )
+    st.markdown(f"**Записей (по макету):** {len(maket_df)}")
+    maket_csv_df = build_deviations_maket_export_df(table_reason_df, building_col, notes_col_m)
+    render_report_html_table(
+        _maket_iframe_css + _TABLE_CSS + "".join(_tbl_m),
+        export_df=maket_csv_df,
+        file_stem=file_stem,
+        key_prefix=key_prefix,
+    )
 
 
 def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_col):
@@ -5151,116 +5278,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
 
     # Детальная таблица по макету (п. 11): уровень 5, причина заполнена, отклонение окончания < 0
     st.subheader("Детальные данные")
-    # Таблица макета: те же фильтры, что у отчёта (без отдельного selectbox).
-    table_reason_df = filtered_df
-    notes_col_m = _find_column_by_keywords(
-        filtered_df, ("note", "заметк", "comment", "remark", "notes")
-    )
-    maket_df = _deviations_maket_prepare_df(table_reason_df)
-    _id_col_m = _deviations_maket_task_id_col(maket_df)
-
-    if maket_df.empty:
-        st.info(
-            "По макету нет строк: уровень 5, непустая причина, отклонение окончания < 0."
-        )
-    else:
-        _date_bg_m = _DEV_MAKET_COL_BG
-        _maket_wrap_id = f"dev_reason_maket_{abs(id(maket_df))}"
-        _hdrs = [
-            "ID задачи",
-            "Проект",
-            "Функциональный блок",
-            "Строение",
-            "Базовое окончание",
-            "Окончание",
-            "Отклонение",
-            "Причина отклонения",
-            "Заметки",
-        ]
-        _bg_hdrs = {"Базовое окончание", "Окончание", "Отклонение"}
-        _tbl_m = [
-            f'<div id="{_maket_wrap_id}" class="pred-detail-wrap rendered-table-wrap dev-maket-table-wrap" data-bi-rows="{len(maket_df)}">',
-            '<table class="rendered-table bi-sortable-table bi-sort-click-only dev-maket-table" style="border-collapse:collapse;width:100%">',
-            "<thead><tr>",
-        ]
-        for h in _hdrs:
-            _hst = f' style="background:{_date_bg_m};color:#0b1f33;"' if h in _bg_hdrs else ""
-            _hcls = ' class="dev-mak-col-proj"' if h == "Проект" else ""
-            _tbl_m.append(f"<th{_hcls}{_hst}>{html_module.escape(h)}</th>")
-        _tbl_m.append("</tr></thead><tbody>")
-
-        for _, rr in maket_df.iterrows():
-            pr = _clean_display_str(rr.get("project name"))
-            fb = _clean_display_str(rr.get("block")) if "block" in maket_df.columns else ""
-            if not fb and "_dt_lvl2_key" in maket_df.columns:
-                fb = _clean_display_str(rr.get("_dt_lvl2_key"))
-            stv = _clean_display_str(rr.get("_dt_lvl3_key")) if "_dt_lvl3_key" in maket_df.columns else ""
-            if not stv and building_col and building_col in maket_df.columns:
-                stv = _clean_display_str(rr.get(building_col))
-            pe = rr.get("plan end")
-            be = rr.get("base end")
-            ed = rr.get("_end_diff")
-            be_s = be.strftime("%d.%m.%Y") if pd.notna(be) else ""
-            pe_s = pe.strftime("%d.%m.%Y") if pd.notna(pe) else ""
-            ed_s = str(int(round(float(ed), 0))) if pd.notna(ed) else ""
-            rs = _clean_display_str(rr.get("reason of deviation"))
-            nt = _clean_display_str(rr.get(notes_col_m)) if notes_col_m and notes_col_m in maket_df.columns else ""
-            tid = ""
-            if _id_col_m and _id_col_m in maket_df.columns:
-                _raw_id = rr.get(_id_col_m)
-                if pd.notna(_raw_id) and str(_raw_id).strip() not in ("", "nan", "none"):
-                    tid = str(_raw_id).strip()
-            if pd.notna(ed):
-                ev = float(pd.to_numeric(ed, errors="coerce"))
-                _c_sp = "#ff5454" if ev < 0 else "#46d68a"
-            else:
-                _c_sp = "#e0e0e0"
-
-            _tbl_m.append("<tr>")
-            _tbl_m.append(f"<td>{html_module.escape(tid)}</td>")
-            _tbl_m.append(f'<td class="dev-mak-col-proj">{html_module.escape(pr)}</td>')
-            _tbl_m.append(f"<td>{html_module.escape(fb)}</td>")
-            _tbl_m.append(f"<td>{html_module.escape(stv)}</td>")
-            _tbl_m.append(f'<td style="background:{_date_bg_m}">{html_module.escape(be_s)}</td>')
-            _tbl_m.append(f'<td style="background:{_date_bg_m}">{html_module.escape(pe_s)}</td>')
-            if pd.isna(ed):
-                _tbl_m.append(f'<td style="background:{_date_bg_m}">—</td>')
-            else:
-                _tbl_m.append(
-                    f'<td style="background:{_date_bg_m};text-align:right">'
-                    f'<span style="color:{_c_sp}!important;font-weight:600">{html_module.escape(ed_s)}</span></td>'
-                )
-            _bk_tbl = _deviations_reason_bucket_label(rr.get("reason of deviation")) if "reason of deviation" in maket_df.columns else "Прочее"
-            _clr_tbl = _deviations_reason_bucket_colors().get(str(_bk_tbl).strip(), "")
-            _rs_esc = html_module.escape(rs)
-            if _clr_tbl:
-                _tbl_m.append(
-                    f'<td style="border-left:4px solid {_clr_tbl};padding-left:6px;color:#e8eaed;font-weight:600">{_rs_esc}</td>'
-                )
-            else:
-                _tbl_m.append(f"<td>{_rs_esc}</td>")
-            _tbl_m.append(f"<td>{html_module.escape(nt)}</td>")
-            _tbl_m.append("</tr>")
-
-        _tbl_m.append("</tbody></table></div>")
-        _maket_iframe_css = (
-            "<style>"
-            "html,body{margin:0;padding:6px 8px;background:#0e1117;color:#e0e0e0;"
-            "font-family:Inter,system-ui,sans-serif;font-size:13px;}"
-            f"#{_maket_wrap_id} .dev-mak-col-proj,"
-            f"#{_maket_wrap_id} th.dev-mak-col-proj"
-            "{white-space:nowrap!important;min-width:9em;max-width:none!important;word-break:keep-all;}"
-            f"#{_maket_wrap_id} thead th{{position:sticky;top:0;z-index:5;background:#0e1117;}}"
-            "</style>"
-        )
-        st.markdown(f"**Записей (по макету):** {len(maket_df)}")
-        maket_csv_df = build_deviations_maket_export_df(table_reason_df, building_col, notes_col_m)
-        render_report_html_table(
-            _maket_iframe_css + _TABLE_CSS + "".join(_tbl_m),
-            export_df=maket_csv_df,
-            file_stem="deviations_detail_maket",
-            key_prefix="devtable_maket",
-        )
+    _render_deviations_maket_table(filtered_df, building_col)
 
 
 
@@ -7545,12 +7563,11 @@ def dashboard_plan_fact_dates(df):
             with _cb1:
                 dates_show_reason_notes = st.checkbox(
                     "Показать причины отклонений",
-                    value=False,
+                    value=True,
                     key="dates_show_reason_notes",
                     help=(
-                        "При включении: в таблице добавляются колонки «Причины отклонений» и «Заметки», "
-                        "отображаются задачи уровня 5 и все родительские задачи выше. "
-                        "Селектор «Детализация» игнорируется."
+                        "При включении: таблица по макету «Причины отклонений» — только задачи MSP уровня 5 "
+                        "с заполненной причиной и отклонением окончания < 0. Селектор «Детализация» игнорируется."
                     ),
                 )
             with _cb2:
@@ -7722,11 +7739,8 @@ def dashboard_plan_fact_dates(df):
     if _covenant_block_selected:
         pass
     elif dates_show_reason_notes and _mask_lvl_col and _mask_lvl_col in filtered_df.columns:
-        filtered_df = _msp_filter_level5_with_ancestors(
-            filtered_df,
-            _mask_lvl_col,
-            _pf_wbs_col,
-        )
+        level_num = pd.to_numeric(filtered_df[_mask_lvl_col], errors="coerce")
+        filtered_df = filtered_df[level_num == 5]
     elif _mask_lvl_col and _mask_lvl_col in filtered_df.columns:
         level_num = pd.to_numeric(filtered_df[_mask_lvl_col], errors="coerce")
         if selected_level == "Сводные (1–3 ур.)":
@@ -8508,21 +8522,39 @@ def dashboard_plan_fact_dates(df):
                     return None
                 return float(t.timestamp() * 1000.0)
 
-            _timeline_pts: list = []
-            for _dc in (fe_col, pe_col):
-                _timeline_pts.extend(
-                    pd.to_datetime(local[_dc], errors="coerce").dropna().tolist()
+            _bar_rows: list[dict] = []
+            for _, row in local.iterrows():
+                y_lbl = str(row["_y"])
+                be = row.get(fe_col)
+                pe = row.get(pe_col)
+                be_ms = _epoch_ms(be) if pd.notna(be) else None
+                pe_ms = _epoch_ms(pe) if pd.notna(pe) else None
+                if be_ms is None and pe_ms is None:
+                    continue
+                _bar_rows.append(
+                    {
+                        "y": y_lbl,
+                        "be": be,
+                        "pe": pe,
+                        "be_ms": be_ms,
+                        "pe_ms": pe_ms,
+                    }
                 )
-            if not _timeline_pts:
+
+            if not _bar_rows:
                 st.info(
                     "Нет задач с датами «Базовое окончание» или «Окончание» для диаграммы."
                 )
                 return
-            _origin_ts = pd.Timestamp(min(_timeline_pts)).normalize() - pd.Timedelta(days=30)
-            _origin_ms = _epoch_ms(_origin_ts)
-            if _origin_ms is None:
-                st.warning("Не удалось определить начало шкалы для диаграммы.")
-                return
+
+            _plot_ms = [
+                float(ms)
+                for r in _bar_rows
+                for ms in (r.get("be_ms"), r.get("pe_ms"))
+                if ms is not None
+            ]
+            _origin_ms = min(_plot_ms)
+            _origin_ts = pd.to_datetime(_origin_ms, unit="ms", utc=True).tz_convert(None).normalize()
 
             y_labels: list[str] = []
             base_len_ms: list[float] = []
@@ -8534,12 +8566,12 @@ def dashboard_plan_fact_dates(df):
             cust_b: list[tuple[str, str]] = []
             cust_p: list[tuple[str, str]] = []
 
-            for _, row in local.iterrows():
-                y_lbl = str(row["_y"])
-                be = row.get(fe_col)
-                pe = row.get(pe_col)
-                be_ms = _epoch_ms(be) if pd.notna(be) else None
-                pe_ms = _epoch_ms(pe) if pd.notna(pe) else None
+            for r in _bar_rows:
+                y_lbl = r["y"]
+                be = r["be"]
+                pe = r["pe"]
+                be_ms = r["be_ms"]
+                pe_ms = r["pe_ms"]
                 b_len = max(0.0, float(be_ms - _origin_ms)) if be_ms is not None else 0.0
                 c_len = max(0.0, float(pe_ms - _origin_ms)) if pe_ms is not None else 0.0
                 if b_len <= 0.0 and c_len <= 0.0:
@@ -9008,7 +9040,17 @@ def dashboard_plan_fact_dates(df):
         _render_plan_fact_dates_main_table(summary_display, summary_numeric)
 
     _pf_n_after_filters = len(df_after_hide)
-    _pf_n_table = len(summary_source_df)
+    if dates_show_reason_notes:
+        _pf_maket_src = df_after_hide.copy()
+        _pf_reason_col = _gantt_resolve_reason_column(_pf_maket_src)
+        if _pf_reason_col and _pf_reason_col != "reason of deviation":
+            _pf_maket_src = _pf_maket_src.rename(
+                columns={_pf_reason_col: "reason of deviation"}
+            )
+        _pf_n_table = len(_deviations_maket_prepare_df(_pf_maket_src))
+    else:
+        _pf_maket_src = None
+        _pf_n_table = len(summary_source_df)
     _pf_n_chart = len(chart_df)
     _pf_chart_cap = 400
 
@@ -9029,7 +9071,8 @@ def dashboard_plan_fact_dates(df):
             parts.append("На графике — только отклонение окончания < 0.")
         if dates_show_reason_notes:
             parts.append(
-                "Режим «Причины отклонений»: уровень 5 и родители; «Детализация» не действует."
+                "Режим «Причины отклонений»: только уровень 5, заполненная причина, отклонение < 0; "
+                "сортировка по отклонению (худшие сверху). «Детализация» не действует."
             )
         elif _mask_lvl_col:
             parts.append(f"Детализация: {selected_level}.")
@@ -9037,9 +9080,20 @@ def dashboard_plan_fact_dates(df):
         return " ".join(parts)
 
     if not show_covenant_ui:
-        st.subheader("Отклонение от базового плана (таблица)")
-        suppress_caption(_pf_dates_scope_caption())
-        _render_dates_main_table()
+        if dates_show_reason_notes:
+            st.subheader("Причины отклонений (таблица)")
+            suppress_caption(_pf_dates_scope_caption())
+            _render_deviations_maket_table(
+                _pf_maket_src,
+                dates_building_col,
+                dates_notes_col,
+                file_stem="plan_fact_reasons_maket",
+                key_prefix="pf_reasons_maket",
+            )
+        else:
+            st.subheader("Отклонение от базового плана (таблица)")
+            suppress_caption(_pf_dates_scope_caption())
+            _render_dates_main_table()
     else:
         with st.expander("Полная таблица отклонений по всем задачам фильтра", expanded=True):
             _render_dates_main_table()
@@ -27392,7 +27446,7 @@ def _render_plan_fact_detail_table(
                 "План, млн руб.": f"{plan / 1e6:.2f}",
                 "Факт, млн руб.": f"{fact / 1e6:.2f}",
                 "Остаток, млн руб.": f"{(plan - fact) / 1e6:.2f}",
-                "Отклонение, млн руб.": f"{(fact - plan) / 1e6:.2f}",
+                "Отклонение, млн руб.": _finance_fmt_signed_million_deviation(fact - plan),
                 "% выполнения": _plan_fact_pct_label(fact, plan),
                 "% покрытия контрактами": _plan_fact_contract_pct_label(
                     contract if _msp_contract_by_proj is None else float(
@@ -27418,7 +27472,9 @@ def _render_plan_fact_detail_table(
                             "План, млн руб.": f"{plan_total / 1e6:.2f}",
                             "Факт, млн руб.": f"{fact_total / 1e6:.2f}",
                             "Остаток, млн руб.": f"{(plan_total - fact_total) / 1e6:.2f}",
-                            "Отклонение, млн руб.": f"{(fact_total - plan_total) / 1e6:.2f}",
+                            "Отклонение, млн руб.": _finance_fmt_signed_million_deviation(
+                                fact_total - plan_total
+                            ),
                             "% выполнения": _plan_fact_pct_label(fact_total, plan_total),
                             "% покрытия контрактами": _plan_fact_pct_label(
                                 contract_total, plan_total
@@ -27437,7 +27493,7 @@ def _render_plan_fact_detail_table(
     _render_budget_table_html(
         display,
         finance_deviation_column="Отклонение, млн руб.",
-        deviation_red_if_positive_only=True,
+        deviation_color_fact_vs_plan=True,
         color_fact_column=False,
         expense_overrun_style=False,
         header_font_css="font-weight:700;font-size:1.15em;",
@@ -27549,8 +27605,9 @@ def _render_plan_fact_summary_dashboard(
     plan_rub: float,
     fact_rub: float,
     key_suffix: str = "",
+    reporting_label: str = "",
 ) -> None:
-    """Сводка план/факт: gauge (факт к плану) + шкала с делениями и подписями оси."""
+    """Сводка план/факт: gauge (накопительный БДДС) — план красный, факт зелёный."""
     plan_rub = float(plan_rub or 0.0)
     fact_rub = float(fact_rub or 0.0)
     use_bln = max(plan_rub, fact_rub, 1.0) >= 1e9
@@ -27561,27 +27618,25 @@ def _render_plan_fact_summary_dashboard(
     fact_v = fact_rub / scale
     plan_mln = plan_rub / 1e6
     fact_mln = fact_rub / 1e6
-    # Верх шкалы: при перерасходе — чуть выше факта (без «пустого хвоста»),
-    # при экономии — запас над планом для читаемости порога.
     if fact_v >= plan_v:
         hi = max(fact_v, 1e-9) * 1.01
     else:
         hi = max(plan_v, fact_v, 1e-9) * 1.05
     pct_of_plan = (100.0 * fact_rub / plan_rub) if plan_rub > 0 else float("nan")
-    bar_color = _plan_fact_summary_gauge_color(plan_rub, fact_rub)
+    _gauge_plan_red = "#e74c3c"
+    _gauge_fact_green = "#27ae60"
 
     tickvals, ticktext = _plan_fact_gauge_axis_ticks(
         hi, plan_v, fact_v, value_format=vf, unit=unit
     )
     _gauge_track = "rgba(255,255,255,0.08)"
-    _gauge_outer_green = "#27ae60"
     _gauge_bar_thickness = 0.72
     gauge_steps: list[dict] = []
     if plan_v > 0:
         gauge_steps.append(
             {
                 "range": [0.0, float(plan_v)],
-                "color": _gauge_outer_green,
+                "color": _gauge_plan_red,
                 "thickness": 1,
             }
         )
@@ -27606,7 +27661,7 @@ def _render_plan_fact_summary_dashboard(
             "tickfont": {"size": 15, "color": "#e8eef5"},
             "showticklabels": True,
         },
-        "bar": {"color": bar_color, "thickness": _gauge_bar_thickness},
+        "bar": {"color": _gauge_fact_green, "thickness": _gauge_bar_thickness},
         "bgcolor": _gauge_track,
         "borderwidth": 0,
     }
@@ -27614,7 +27669,7 @@ def _render_plan_fact_summary_dashboard(
         gauge_kw["steps"] = gauge_steps
     if plan_v > 0:
         gauge_kw["threshold"] = {
-            "line": {"color": "#5e35b1", "width": 3},
+            "line": {"color": _gauge_plan_red, "width": 3},
             "thickness": 0.82,
             "value": float(plan_v),
         }
@@ -27640,6 +27695,8 @@ def _render_plan_fact_summary_dashboard(
     fig = apply_chart_background(fig)
 
     render_table_subheader(st, "Сводный дашборд план/факт")
+    if reporting_label:
+        st.caption(f"Накопительный БДДС на дату: {reporting_label}")
     st.markdown(_APPR_PF_SUMMARY_GAUGE_CSS, unsafe_allow_html=True)
     st.markdown('<div class="appr-pf-summary-anchor"></div>', unsafe_allow_html=True)
     g_col, val_col = st.columns([1.2, 1], gap="medium", vertical_alignment="center")
@@ -27649,8 +27706,9 @@ def _render_plan_fact_summary_dashboard(
             height=_gauge_h,
             chart_key=f"appr_budget_summary_gauge_{key_suffix}",
         )
+    _pct_color = _gauge_fact_green if fact_rub >= plan_rub else _gauge_plan_red
     _pct_html = (
-        f'<p style="font-size:1.2rem;font-weight:700;margin:0.75rem 0 0;color:{bar_color};">'
+        f'<p style="font-size:1.2rem;font-weight:700;margin:0.75rem 0 0;color:{_pct_color};">'
         f"{pct_of_plan:.1f}% от плана</p>"
         if plan_rub > 0 and np.isfinite(pct_of_plan)
         else ""
@@ -27659,7 +27717,7 @@ def _render_plan_fact_summary_dashboard(
         st.markdown(
             f'<div class="appr-pf-summary-kpi">'
             f'<div class="appr-pf-summary-kpi-col">'
-            f'<p style="font-size:1.15rem;font-weight:800;margin:0 0 0.45rem 0;color:#2E86AB;'
+            f'<p style="font-size:1.15rem;font-weight:800;margin:0 0 0.45rem 0;color:{_gauge_plan_red};'
             f'letter-spacing:0.02em;">План</p>'
             f'<p style="font-size:1.65rem;font-weight:700;margin:0 0 0.25rem 0;color:#f8fbff;">'
             f"{plan_v:{vf}} {unit}</p>"
@@ -27668,7 +27726,7 @@ def _render_plan_fact_summary_dashboard(
             f'<p style="font-size:1.2rem;font-weight:700;margin:0.75rem 0 0;color:#f8fbff;">100%</p>'
             f"</div>"
             f'<div class="appr-pf-summary-kpi-col">'
-            f'<p style="font-size:1.15rem;font-weight:800;margin:0 0 0.45rem 0;color:#A23B72;'
+            f'<p style="font-size:1.15rem;font-weight:800;margin:0 0 0.45rem 0;color:{_gauge_fact_green};'
             f'letter-spacing:0.02em;">Факт</p>'
             f'<p style="font-size:1.65rem;font-weight:700;margin:0 0 0.25rem 0;color:#f8fbff;">'
             f"{fact_v:{vf}} {unit}</p>"
@@ -27693,14 +27751,8 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
         adjusted_budget_col = "adjusted budget"
 
     show_reserve = st.checkbox(
-        "Показать отклонение", value=False, key="budget_show_reserve"
+        "Показать отклонение", value=True, key="budget_show_reserve"
     )
-    selected_budget_types = ["Бюджет План", "Бюджет Факт"]
-    if adjusted_budget_col:
-        selected_budget_types.append("Бюджет Корректировка")
-    if show_reserve:
-        selected_budget_types.append("Отклонение (перерасход)")
-        selected_budget_types.append("Отклонение (экономия)")
 
     hist_df = filtered_df.copy()
     if hist_df.empty:
@@ -27709,7 +27761,7 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
 
     hist_df["budget plan"] = pd.to_numeric(hist_df["budget plan"], errors="coerce").fillna(0)
     hist_df["budget fact"] = pd.to_numeric(hist_df["budget fact"], errors="coerce").fillna(0)
-    hist_df["reserve budget"] = hist_df["budget plan"] - hist_df["budget fact"]
+    hist_df["reserve budget"] = hist_df["budget fact"] - hist_df["budget plan"]
 
     if "project name" not in hist_df.columns:
         st.warning("Колонка project name не найдена в данных для построения гистограммы.")
@@ -27728,70 +27780,135 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
     else:
         budget_by_project["budget adjusted"] = 0.0
 
-    hist_melted: list[dict] = []
-    for _, row in budget_by_project.iterrows():
-        project = row["project name"]
-        if "Бюджет План" in selected_budget_types:
-            hist_melted.append({"project name": project, "Тип бюджета": "Бюджет План", "Сумма": row["budget plan"]})
-        if "Бюджет Факт" in selected_budget_types:
-            hist_melted.append({"project name": project, "Тип бюджета": "Бюджет Факт", "Сумма": row["budget fact"]})
-        if "Бюджет Корректировка" in selected_budget_types and adjusted_budget_col:
-            hist_melted.append(
-                {"project name": project, "Тип бюджета": "Бюджет Корректировка", "Сумма": row["budget adjusted"]}
+    _projects = budget_by_project["project name"].astype(str).tolist()
+    _tlbl = 0.005
+    fig_hist = go.Figure()
+    fig_hist.add_trace(
+        go.Bar(
+            x=_projects,
+            y=budget_by_project["budget plan"].div(1e6),
+            name="Бюджет План",
+            marker_color="#2E86AB",
+            text=_finance_bar_text_mln_rub(
+                budget_by_project["budget plan"],
+                min_abs_mln=_tlbl,
+                unit_suffix=" млн.руб.",
+            ),
+            textposition="outside",
+            textfont=dict(size=12, color="#f0f4f8"),
+        )
+    )
+    fig_hist.add_trace(
+        go.Bar(
+            x=_projects,
+            y=budget_by_project["budget fact"].div(1e6),
+            name="Бюджет Факт",
+            marker_color="#A23B72",
+            text=_finance_bar_text_mln_rub(
+                budget_by_project["budget fact"],
+                min_abs_mln=_tlbl,
+                unit_suffix=" млн.руб.",
+            ),
+            textposition="outside",
+            textfont=dict(size=12, color="#f0f4f8"),
+        )
+    )
+    if adjusted_budget_col and float(budget_by_project["budget adjusted"].abs().sum()) > 0:
+        fig_hist.add_trace(
+            go.Bar(
+                x=_projects,
+                y=budget_by_project["budget adjusted"].div(1e6),
+                name="Бюджет Корректировка",
+                marker_color="#F18F01",
+                text=_finance_bar_text_mln_rub(
+                    budget_by_project["budget adjusted"],
+                    min_abs_mln=_tlbl,
+                    unit_suffix=" млн.руб.",
+                ),
+                textposition="outside",
+                textfont=dict(size=12, color="#f0f4f8"),
             )
-        if "Отклонение (перерасход)" in selected_budget_types and row["reserve budget"] >= 0:
-            hist_melted.append(
-                {"project name": project, "Тип бюджета": "Отклонение (перерасход)", "Сумма": row["reserve budget"]}
+        )
+    if show_reserve:
+        _dev_mln = budget_by_project["reserve budget"].div(1e6)
+        _dev_thr_mln = 0.01
+        _y_fact_lt_plan = _dev_mln.where(_dev_mln < -_dev_thr_mln)
+        _y_fact_gt_plan = _dev_mln.where(_dev_mln > _dev_thr_mln)
+        _dev_txt_lt = _finance_deviation_bar_text_signed_mln(
+            _y_fact_lt_plan,
+            min_abs_mln=_tlbl,
+            decimals=1,
+            unit_suffix=" млн. руб.",
+        )
+        _dev_txt_gt = _finance_deviation_bar_text_signed_mln(
+            _y_fact_gt_plan,
+            min_abs_mln=_tlbl,
+            decimals=1,
+            unit_suffix=" млн. руб.",
+        )
+        if _y_fact_lt_plan.notna().any():
+            fig_hist.add_trace(
+                go.Bar(
+                    x=_projects,
+                    y=_y_fact_lt_plan,
+                    name="Отклонение (факт < план)",
+                    marker_color=_FINANCE_DEV_BAR_RED,
+                    text=_dev_txt_lt,
+                    textposition="outside",
+                    textfont=dict(size=12, color=_FINANCE_DEV_LABEL_RED),
+                    cliponaxis=False,
+                )
             )
-        if "Отклонение (экономия)" in selected_budget_types and row["reserve budget"] < 0:
-            hist_melted.append(
-                {"project name": project, "Тип бюджета": "Отклонение (экономия)", "Сумма": row["reserve budget"]}
+        if _y_fact_gt_plan.notna().any():
+            fig_hist.add_trace(
+                go.Bar(
+                    x=_projects,
+                    y=_y_fact_gt_plan,
+                    name="Отклонение (факт > план)",
+                    marker_color=_FINANCE_DEV_BAR_GREEN,
+                    text=_dev_txt_gt,
+                    textposition="outside",
+                    textfont=dict(size=12, color=_FINANCE_DEV_LABEL_GREEN),
+                    cliponaxis=False,
+                )
             )
 
-    hist_by_type_df = pd.DataFrame(hist_melted)
-    if hist_by_type_df.empty:
-        st.info("Нет данных для отображения с выбранными типами бюджета.")
-        return
-
-    hist_by_type_df["Сумма_млн"] = hist_by_type_df["Сумма"] / 1e6
-    hist_by_type_df["bar_text"] = _finance_bar_text_mln_rub(
-        hist_by_type_df["Сумма"],
-        unit_suffix=" млн.руб.",
-    )
-    fig_hist = px.bar(
-        hist_by_type_df,
-        x="project name",
-        y="Сумма_млн",
-        color="Тип бюджета",
-        title=None,
-        labels={"project name": "Проект", "Сумма_млн": "млн.руб."},
-        barmode="group",
-        text="bar_text",
-        color_discrete_map={
-            "Бюджет План": "#2E86AB",
-            "Бюджет Факт": "#A23B72",
-            "Бюджет Корректировка": "#F18F01",
-            "Отклонение (перерасход)": "#e74c3c",
-            "Отклонение (экономия)": "#27ae60",
-        },
-    )
     fig_hist.update_layout(
         xaxis_title="Проект",
         yaxis_title="млн.руб.",
         height=600,
+        barmode="group",
         xaxis=dict(tickangle=-45, tickfont=dict(size=12)),
         legend=dict(title="Тип бюджета", orientation="v", yanchor="top", y=1, xanchor="left", x=1.02),
         margin=dict(l=56, r=220, t=72, b=120),
     )
-    fig_hist.update_traces(
-        textposition="outside",
-        texttemplate="%{text}",
-        textfont=dict(size=12, color="white"),
+    _ymax = float(
+        np.nanmax(
+            np.concatenate(
+                [
+                    budget_by_project["budget plan"].div(1e6).to_numpy(),
+                    budget_by_project["budget fact"].div(1e6).to_numpy(),
+                    *(
+                        [budget_by_project["reserve budget"].div(1e6).to_numpy()]
+                        if show_reserve
+                        else []
+                    ),
+                ]
+            )
+        )
     )
-    try:
+    _ymin = 0.0
+    if show_reserve:
+        _ymin_dev = float(np.nanmin(budget_by_project["reserve budget"].div(1e6).to_numpy()))
+        if np.isfinite(_ymin_dev) and _ymin_dev < 0:
+            _ymin = _ymin_dev * 1.15
+    if np.isfinite(_ymax):
+        if _ymax > 0 or _ymin < 0:
+            fig_hist.update_layout(yaxis=dict(range=[_ymin, max(_ymax * 1.22, 0.01)], tickformat=".1f"))
+        else:
+            fig_hist.update_layout(yaxis=dict(tickformat=".1f"))
+    else:
         fig_hist.update_layout(yaxis=dict(tickformat=".1f"))
-    except Exception:
-        pass
     fig_hist = _apply_finance_bar_label_layout(fig_hist)
     fig_hist = apply_chart_background(fig_hist)
     render_chart(fig_hist, caption_below="Бюджет план/факт/корректировка/отклонение по проектам")
@@ -27806,7 +27923,7 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
                 "Проект": str(row["project name"]),
                 "Бюджет План, млн руб.": f"{plan / 1e6:.2f}",
                 "Бюджет Факт, млн руб.": f"{fact / 1e6:.2f}",
-                "Отклонение, млн руб.": f"{(fact - plan) / 1e6:.2f}",
+                "Отклонение, млн руб.": _finance_fmt_signed_million_deviation(fact - plan),
             }
         )
     if len(budget_by_project) > 1:
@@ -27817,13 +27934,15 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
                 "Проект": "ИТОГО",
                 "Бюджет План, млн руб.": f"{plan_total / 1e6:.2f}",
                 "Бюджет Факт, млн руб.": f"{fact_total / 1e6:.2f}",
-                "Отклонение, млн руб.": f"{(fact_total - plan_total) / 1e6:.2f}",
+                "Отклонение, млн руб.": _finance_fmt_signed_million_deviation(
+                    fact_total - plan_total
+                ),
             }
         )
     _render_budget_table_html(
         pd.DataFrame(_sum_rows),
         finance_deviation_column="Отклонение, млн руб.",
-        deviation_red_if_positive_only=True,
+        deviation_color_fact_vs_plan=True,
         color_fact_column=False,
         expense_overrun_style=False,
         header_font_css="font-weight:700;font-size:1.15em;",
@@ -27832,6 +27951,141 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
         file_stem="budget_summary",
         key_prefix="budget_summary",
     )
+
+def _approved_budget_get_monthly_slice(
+    filtered_df: pd.DataFrame,
+    selected_project: str,
+) -> tuple[pd.DataFrame | None, str]:
+    """Помесячные строки БДДС до отчётной даты (budget_period_to или последний месяц)."""
+    from dashboards.finance_from_1c import try_synthetic_budget_from_1c_dannye
+
+    ref = st.session_state.get("reference_1c_dannye")
+    syn = try_synthetic_budget_from_1c_dannye(reference_1c_dannye=ref)
+    sub: pd.DataFrame | None = None
+    if syn is not None and not syn.empty:
+        sub = syn.copy()
+    elif filtered_df is not None and not filtered_df.empty:
+        sub = filtered_df.copy()
+        ensure_date_columns(sub)
+        if "plan end" in sub.columns:
+            _pe = pd.to_datetime(sub["plan end"], errors="coerce")
+            _mask = _pe.notna()
+            if _mask.any() and "plan_month" not in sub.columns:
+                sub.loc[_mask, "plan_month"] = _pe.loc[_mask].dt.to_period("M")
+
+    if sub is None or sub.empty:
+        return None, ""
+
+    if selected_project and selected_project != "Все" and "project name" in sub.columns:
+        sub = sub[
+            sub["project name"].map(_project_filter_norm_key)
+            == _project_filter_norm_key(selected_project)
+        ].copy()
+    if sub.empty:
+        return None, ""
+
+    if "plan_month" not in sub.columns and "plan end" in sub.columns:
+        _pe2 = pd.to_datetime(sub["plan end"], errors="coerce")
+        sub = sub.assign(plan_month=_pe2.dt.to_period("M"))
+    if "plan_month" not in sub.columns:
+        return None, ""
+
+    sub["budget plan"] = pd.to_numeric(sub.get("budget plan", 0), errors="coerce").fillna(0.0)
+    sub["budget fact"] = pd.to_numeric(sub.get("budget fact", 0), errors="coerce").fillna(0.0)
+    sub = sub[sub["plan_month"].notna()].copy()
+    if sub.empty:
+        return None, ""
+
+    reporting_label = ""
+    pt = st.session_state.get("budget_period_to")
+    if pt is not None:
+        te = pd.to_datetime(pt, errors="coerce")
+        if pd.notna(te):
+            report_period = te.to_period("M")
+            sub = sub[sub["plan_month"] <= report_period].copy()
+            reporting_label = format_period_ru(report_period)
+    if sub.empty:
+        return None, reporting_label
+
+    if not reporting_label:
+        reporting_label = format_period_ru(sub["plan_month"].max())
+
+    return sub, str(reporting_label)
+
+
+def _approved_budget_cumulative_by_project(
+    monthly_slice: pd.DataFrame,
+) -> pd.DataFrame:
+    """Накопительный план/факт по каждому проекту на конец среза monthly_slice."""
+    if monthly_slice is None or monthly_slice.empty:
+        return pd.DataFrame(columns=["project name", "budget plan", "budget fact"])
+
+    rows: list[dict] = []
+    if "project name" in monthly_slice.columns:
+        for proj, grp in monthly_slice.groupby("project name", dropna=False):
+            g = (
+                grp.groupby("plan_month", dropna=False)[["budget plan", "budget fact"]]
+                .sum()
+                .reset_index()
+                .sort_values("plan_month")
+            )
+            if g.empty:
+                continue
+            g = g.copy()
+            g["plan_cum"] = g["budget plan"].cumsum()
+            g["fact_cum"] = g["budget fact"].cumsum()
+            last = g.iloc[-1]
+            rows.append(
+                {
+                    "project name": str(proj),
+                    "budget plan": float(last["plan_cum"]),
+                    "budget fact": float(last["fact_cum"]),
+                }
+            )
+    else:
+        g = (
+            monthly_slice.groupby("plan_month", dropna=False)[["budget plan", "budget fact"]]
+            .sum()
+            .reset_index()
+            .sort_values("plan_month")
+        )
+        if not g.empty:
+            g = g.copy()
+            g["plan_cum"] = g["budget plan"].cumsum()
+            g["fact_cum"] = g["budget fact"].cumsum()
+            last = g.iloc[-1]
+            rows.append(
+                {
+                    "project name": "Итого",
+                    "budget plan": float(last["plan_cum"]),
+                    "budget fact": float(last["fact_cum"]),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _approved_budget_cumulative_totals(
+    filtered_df: pd.DataFrame,
+    selected_project: str,
+    *,
+    fallback_plan: float,
+    fallback_fact: float,
+) -> tuple[float, float, str, bool]:
+    """Накопительный БДДС план/факт до отчётной даты (budget_period_to или последний месяц)."""
+    monthly_slice, reporting_label = _approved_budget_get_monthly_slice(
+        filtered_df, selected_project
+    )
+    if monthly_slice is None or monthly_slice.empty:
+        return float(fallback_plan), float(fallback_fact), reporting_label, False
+
+    cum_proj = _approved_budget_cumulative_by_project(monthly_slice)
+    if cum_proj.empty:
+        return float(fallback_plan), float(fallback_fact), reporting_label, False
+
+    plan_total = float(cum_proj["budget plan"].sum())
+    fact_total = float(cum_proj["budget fact"].sum())
+    return plan_total, fact_total, reporting_label, True
+
 
 def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
     """Утверждённый бюджет план/факт (ТЗ «ФИНАНСЫ» от 2026-05-07).
@@ -27917,20 +28171,38 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
 
     plan_total = float(agg["plan"].sum())
     fact_total = float(agg["fact"].sum())
-    dev_total = fact_total - plan_total
+
+    monthly_slice, reporting_label = _approved_budget_get_monthly_slice(
+        budget_df, selected_project
+    )
+    used_cumulative = monthly_slice is not None and not monthly_slice.empty
+    if used_cumulative:
+        display_df = _approved_budget_cumulative_by_project(monthly_slice)
+        cum_plan = float(display_df["budget plan"].sum())
+        cum_fact = float(display_df["budget fact"].sum())
+    else:
+        display_df = filtered_df
+        cum_plan, cum_fact = plan_total, fact_total
+        st.caption(
+            "Накопительный БДДС недоступен (нет помесячных данных) — показаны полные суммы."
+        )
+
+    if used_cumulative and reporting_label:
+        st.caption(f"План/факт на дату: {reporting_label} (накопительный БДДС, как на вкладке БДДС).")
 
     _render_plan_fact_summary_dashboard(
         st,
-        plan_rub=plan_total,
-        fact_rub=fact_total,
+        plan_rub=cum_plan,
+        fact_rub=cum_fact,
+        reporting_label=reporting_label,
         key_suffix=_project_filter_norm_key(str(selected_project)),
     )
 
-    _render_budget_histogram_plan_fact_by_projects(filtered_df)
+    _render_budget_histogram_plan_fact_by_projects(display_df)
 
     _render_plan_fact_detail_table(
         st,
-        filtered_df,
+        display_df,
         msp_df=df if used_1c_approved else None,
         key_suffix=_project_filter_norm_key(str(selected_project)),
     )
@@ -27939,10 +28211,21 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
     # в текущий «Утверждённый бюджет план/факт» (план/факт по месяцам + сводная таблица).
     # Месячный график/таблица — из того же среза, что и верхняя диаграмма (1С или MSP),
     # иначе при синтетике из dannye остаётся сырой MSP «все проекты».
-    _render_approved_budget_monthly_block(filtered_df, selected_project)
+    _render_approved_budget_monthly_block(
+        monthly_slice if used_cumulative else filtered_df,
+        selected_project,
+        reporting_label=reporting_label if used_cumulative else "",
+        skip_msp_fallback=used_cumulative,
+    )
 
 
-def _render_approved_budget_monthly_block(df: pd.DataFrame, selected_project: str) -> None:
+def _render_approved_budget_monthly_block(
+    df: pd.DataFrame,
+    selected_project: str,
+    *,
+    reporting_label: str = "",
+    skip_msp_fallback: bool = False,
+) -> None:
     """График «Утверждённый бюджет (план/факт) по месяцам» + сводная таблица по месяцам.
 
     Источник — MSP-фрейм (`budget plan` / `budget fact` + `plan end` или `plan_month`).
@@ -27954,10 +28237,14 @@ def _render_approved_budget_monthly_block(df: pd.DataFrame, selected_project: st
     if df is None or df.empty:
         return
     src = df.copy()
-    ensure_budget_columns(src)
-    src, _ = ensure_budget_frame_with_fallback(src, show_caption=False)
-    ensure_budget_columns(src)
-    ensure_date_columns(src)
+    if skip_msp_fallback:
+        ensure_budget_columns(src)
+        ensure_date_columns(src)
+    else:
+        ensure_budget_columns(src)
+        src, _ = ensure_budget_frame_with_fallback(src, show_caption=False)
+        ensure_budget_columns(src)
+        ensure_date_columns(src)
 
     if "budget plan" not in src.columns or "budget fact" not in src.columns:
         return
@@ -27966,7 +28253,7 @@ def _render_approved_budget_monthly_block(df: pd.DataFrame, selected_project: st
         "project name" if "project name" in src.columns
         else ("Проект" if "Проект" in src.columns else None)
     )
-    if selected_project and selected_project != "Все" and project_col:
+    if not skip_msp_fallback and selected_project and selected_project != "Все" and project_col:
         src = src[
             src[project_col].map(_project_filter_norm_key)
             == _project_filter_norm_key(selected_project)
@@ -27974,15 +28261,17 @@ def _render_approved_budget_monthly_block(df: pd.DataFrame, selected_project: st
     if src.empty:
         return
 
-    if "plan end" in src.columns:
+    if "plan_month" not in src.columns and "plan end" in src.columns:
         plan_end = pd.to_datetime(src["plan end"], errors="coerce")
         mask = plan_end.notna()
-        if mask.any() and "plan_month" not in src.columns:
+        if mask.any():
             src.loc[mask, "plan_month"] = plan_end.loc[mask].dt.to_period("M")
     if "plan_month" not in src.columns:
         return
 
     render_table_subheader(st, "Утверждённый бюджет (план/факт) по месяцам")
+    if reporting_label:
+        st.caption(f"Помесячные обороты до {reporting_label} (тот же срез, что спидометр).")
     _appr_hide_zero = st.checkbox(
         "Скрывать месяцы, где план и факт равны 0",
         value=True,
@@ -27999,7 +28288,7 @@ def _render_approved_budget_monthly_block(df: pd.DataFrame, selected_project: st
         return
 
     monthly_rows["Месяц"] = monthly_rows["plan_month"].apply(format_period_ru)
-    monthly_rows["reserve budget"] = monthly_rows["budget plan"] - monthly_rows["budget fact"]
+    monthly_rows["reserve budget"] = monthly_rows["budget fact"] - monthly_rows["budget plan"]
 
     if _appr_hide_zero:
         _pl0 = monthly_rows["budget plan"].fillna(0.0)
@@ -28101,20 +28390,22 @@ def _render_approved_budget_monthly_block(df: pd.DataFrame, selected_project: st
     summary_table = monthly_rows[
         ["Месяц", "budget plan", "budget fact", "reserve budget"]
     ].copy()
-    for c in ("budget plan", "budget fact", "reserve budget"):
-        summary_table[c] = (summary_table[c] / 1e6).round(1).apply(
-            lambda x: f"{float(x):.1f}" if pd.notna(x) else ""
-        )
-    summary_table = summary_table.rename(
-        columns={
-            "budget plan": "БДДС план, млн руб.",
-            "budget fact": "БДДС факт, млн руб.",
-            "reserve budget": "Отклонение, млн руб.",
-        }
+    summary_table["БДДС план, млн руб."] = summary_table["budget plan"].apply(
+        lambda x: f"{float(x) / 1e6:.1f}" if pd.notna(x) else ""
     )
+    summary_table["БДДС факт, млн руб."] = summary_table["budget fact"].apply(
+        lambda x: f"{float(x) / 1e6:.1f}" if pd.notna(x) else ""
+    )
+    summary_table["Отклонение, млн руб."] = summary_table["reserve budget"].apply(
+        _finance_fmt_signed_million_deviation
+    )
+    summary_table = summary_table[
+        ["Месяц", "БДДС план, млн руб.", "БДДС факт, млн руб.", "Отклонение, млн руб."]
+    ]
     _render_budget_table_html(
         summary_table,
         finance_deviation_column="Отклонение, млн руб.",
+        deviation_color_fact_vs_plan=True,
         header_font_css="font-weight:700;font-size:1.15em;",
         label_columns_font_css="font-weight:700;font-size:1.08em;",
         table_font_size_px=16,
