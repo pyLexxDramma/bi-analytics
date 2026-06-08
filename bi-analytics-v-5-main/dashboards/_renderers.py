@@ -14716,6 +14716,8 @@ def dashboard_rd_delay(df, is_pd: bool = False):
     # st.subheader(f"⏱️ Просрочка выдачи {doc_code}")
     st.subheader(f"Просрочка выдачи {doc_code}")
 
+    _pd_masks_delay = _pd_section_masks(df) if is_pd else None
+
     # Find column names (they might have different formats)
     # Try to find columns by partial name matching
     def find_column(df, possible_names):
@@ -14957,14 +14959,19 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         with filter_col3:
             if _msp_cipher_col and _msp_cipher_col in df.columns:
                 # R23-07 (стр.17/21): значения = «Шифр — Наименование раздела» из MSP.
-                _cip = df[_msp_cipher_col].astype(str).str.strip()
+                _sec_src_df = df
+                if is_pd and _pd_masks_delay is not None:
+                    _dyn_opt = _pd_masks_delay["dynamics_mask"].fillna(False)
+                    if bool(_dyn_opt.any()):
+                        _sec_src_df = df.loc[_dyn_opt]
+                _cip = _sec_src_df[_msp_cipher_col].astype(str).str.strip()
                 _cip = _cip.where(~_cip.str.lower().isin({"nan", "none", "<na>"}), other="")
-                if _msp_name_col_for_label and _msp_name_col_for_label in df.columns:
-                    _nm = df[_msp_name_col_for_label].astype(str).str.strip()
+                if _msp_name_col_for_label and _msp_name_col_for_label in _sec_src_df.columns:
+                    _nm = _sec_src_df[_msp_name_col_for_label].astype(str).str.strip()
                     _nm = _nm.where(~_nm.str.lower().isin({"nan", "none", "<na>"}), other="")
                 else:
-                    _nm = pd.Series([""] * len(df), index=df.index)
-                _combined = pd.Series([""] * len(df), index=df.index, dtype=object)
+                    _nm = pd.Series([""] * len(_sec_src_df), index=_sec_src_df.index)
+                _combined = pd.Series([""] * len(_sec_src_df), index=_sec_src_df.index, dtype=object)
                 _both = _cip.ne("") & _nm.ne("")
                 _only_cip = _cip.ne("") & ~_both
                 _only_nm = _nm.ne("") & ~_both
@@ -14987,7 +14994,9 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     ["Все"] + section_options,
                     key="rd_delay_section",
                 )
-                df["_tessa_section_label"] = _combined
+                _full_combined = pd.Series([""] * len(df), index=df.index, dtype=object)
+                _full_combined.loc[_combined.index] = _combined
+                df["_tessa_section_label"] = _full_combined
             elif section_col and section_col in df.columns:
                 section_options = sorted(
                     {
@@ -15247,7 +15256,100 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         show_by_section = str(rd_delay_view_mode).strip() == "По разделу"
         show_by_tasks = False
 
-        if show_by_tasks:
+        if is_pd and _pd_masks_delay is not None:
+            _dyn_delay = _pd_masks_delay["dynamics_mask"].reindex(
+                filtered_df.index, fill_value=False
+            )
+            filtered_df = filtered_df.loc[_dyn_delay.fillna(False)].copy()
+            if filtered_df.empty:
+                st.info("Нет задач ПД для выбранных фильтров.")
+                return
+            _today_pd = date.today()
+            _ts_pd = pd.Timestamp(_today_pd)
+            _pct_pd_col = _pd_msp_pct_complete_col(filtered_df)
+            _pc_pd = (
+                pd.to_numeric(filtered_df[_pct_pd_col], errors="coerce").fillna(0.0)
+                if _pct_pd_col and _pct_pd_col in filtered_df.columns
+                else pd.Series(0.0, index=filtered_df.index)
+            )
+            filtered_df["_pd_row_plan"] = (
+                _bf_dt.notna() & (_bf_dt.dt.normalize() <= _ts_pd)
+            ).astype(int)
+            filtered_df["_pd_row_fact"] = (_pc_pd >= 99.99).astype(int)
+            filtered_df["_pd_row_overdue"] = (
+                filtered_df["_pd_row_plan"] - filtered_df["_pd_row_fact"]
+            ).clip(lower=0).astype(int)
+
+            if show_by_section:
+                _cipher_pd = (
+                    _msp_cipher_col
+                    if _msp_cipher_col and _msp_cipher_col in filtered_df.columns
+                    else find_column(filtered_df, ["abbreviation", "Шифр_ПД_и_РД", "Шифр"])
+                )
+                if _cipher_pd and _cipher_pd in filtered_df.columns:
+                    filtered_df["_pd_chart_y"] = (
+                        filtered_df[_cipher_pd].astype(str).str.strip()
+                    )
+                else:
+                    filtered_df["_pd_chart_y"] = filtered_df[task_col].astype(str)
+                _grp_col = "_pd_chart_y"
+                y_title = "Раздел"
+            elif project_col and project_col in filtered_df.columns:
+                filtered_df["_pd_chart_y"] = (
+                    filtered_df[project_col].astype(str).str.strip()
+                )
+                _grp_col = "_pd_chart_y"
+                y_title = "Проект"
+            else:
+                st.info("Нет данных для построения графика.")
+                return
+
+            chart_data = (
+                filtered_df.groupby(_grp_col, as_index=False)
+                .agg(
+                    _pd_plan_cnt=("_pd_row_plan", "sum"),
+                    _pd_fact_cnt=("_pd_row_fact", "sum"),
+                    _pd_overdue_cnt=("_pd_row_overdue", "sum"),
+                )
+                .rename(columns={_grp_col: y_title})
+            )
+            y_column = y_title
+            if chart_data.empty:
+                st.info("Нет данных для построения графика.")
+                return
+
+            fig = _pd_delay_plan_fact_figure(
+                chart_data,
+                y_col=y_column,
+            )
+            render_chart(fig, caption_below=f"Просрочка выдачи {doc_code}")
+
+            if y_title == "Проект" and project_col and project_col in filtered_df.columns:
+                st.markdown(f"**Индикаторы просрочки {doc_code} по проектам**")
+                _ind_cols = st.columns(min(4, max(1, len(chart_data))), gap="small")
+                for _i, (_idx, _row) in enumerate(chart_data.iterrows()):
+                    _proj = str(_row[y_title])
+                    _plan_i = int(_row.get("_pd_plan_cnt", 0) or 0)
+                    _fact_i = int(_row.get("_pd_fact_cnt", 0) or 0)
+                    _ovd_i = int(_row.get("_pd_overdue_cnt", 0) or 0)
+                    with _ind_cols[_i % len(_ind_cols)]:
+                        st.markdown(
+                            (
+                                f"<div style='background:#1e2a3a; color:white; padding:10px 14px; "
+                                f"border-radius:8px; margin-bottom:8px;'>"
+                                f"<div style='font-size:13px; opacity:0.9;'>{_proj}</div>"
+                                f"<div style='font-size:14px; margin-top:6px;'>"
+                                f"<span style='background:#F1C40F;color:#1a1a1a;padding:2px 8px;"
+                                f"border-radius:4px;margin-right:6px;'>План: {_plan_i}</span>"
+                                f"<span style='background:#27AE60;padding:2px 8px;border-radius:4px;"
+                                f"margin-right:6px;'>Факт: {_fact_i}</span>"
+                                f"<span style='background:#C0392B;padding:2px 8px;border-radius:4px;'>"
+                                f"Просрочка: {_ovd_i}</span>"
+                                f"</div></div>"
+                            ),
+                            unsafe_allow_html=True,
+                        )
+        elif show_by_tasks:
             # Prepare data for chart - each task is a separate bar
             if section_col and section_col in filtered_df.columns:
                 filtered_df["Задача_полная"] = (
@@ -15364,188 +15466,189 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 st.info("Нет данных для построения графика.")
                 return
 
-        if chart_data.empty:
-            st.info("Нет данных для построения графика.")
-            return
+        if not is_pd:
+            if chart_data.empty:
+                st.info("Нет данных для построения графика.")
+                return
 
-        # Текст на столбцах: отклонение и % выполнения РД/ПД
-        text_values = []
-        for _, row in chart_data.iterrows():
-            val = row[dev_col]
-            pct = row.get("% выполнения РД/ПД", "") or ""
-            overdue_pct = row.get("_overdue_share_pct", 0)
-            plan_total = row.get("_rd_plan_n", 0)
-            if pd.notna(val):
-                dev_str = f"{int(round(val, 0))}"
-                if pd.notna(plan_total) and float(plan_total) > 0:
-                    plan_str = f"{int(round(float(plan_total), 0))}"
-                    pct_str = f"{float(overdue_pct):.0f}%"
-                    text_values.append(f"{dev_str} из {plan_str} ({pct_str})")
+            # Текст на столбцах: отклонение и % выполнения РД/ПД
+            text_values = []
+            for _, row in chart_data.iterrows():
+                val = row[dev_col]
+                pct = row.get("% выполнения РД/ПД", "") or ""
+                overdue_pct = row.get("_overdue_share_pct", 0)
+                plan_total = row.get("_rd_plan_n", 0)
+                if pd.notna(val):
+                    dev_str = f"{int(round(val, 0))}"
+                    if pd.notna(plan_total) and float(plan_total) > 0:
+                        plan_str = f"{int(round(float(plan_total), 0))}"
+                        pct_str = f"{float(overdue_pct):.0f}%"
+                        text_values.append(f"{dev_str} из {plan_str} ({pct_str})")
+                    else:
+                        text_values.append(f"{dev_str} ({pct})" if pct and str(pct).strip() != "—" else dev_str)
                 else:
-                    text_values.append(f"{dev_str} ({pct})" if pct and str(pct).strip() != "—" else dev_str)
+                    text_values.append(pct if pct else "")
+
+            _has_dur = all(
+                c in chart_data.columns for c in ("_base_dur", "_cur_dur", "_dev_dur")
+            )
+            if _has_dur:
+                fig = _rd_delay_duration_figure(
+                    chart_data,
+                    y_col=y_column,
+                    dev_col=dev_col,
+                    caption=f"Просрочка выдачи {doc_code}",
+                )
+                render_chart(fig, caption_below=f"Просрочка выдачи {doc_code}")
             else:
-                text_values.append(pct if pct else "")
+                chart_data["_severity"] = chart_data[dev_col].clip(lower=0)
+                severity_max = float(chart_data["_severity"].max()) if not chart_data.empty else 0.0
+                severity_max = max(severity_max, 1.0)
+                _dev_vals = pd.to_numeric(chart_data[dev_col], errors="coerce").fillna(0.0)
+                _tick_labels = [
+                    (f"🔴 {lbl}" if float(d) > 0 else f"🟢 {lbl}")
+                    for lbl, d in zip(chart_data[y_column].astype(str).tolist(), _dev_vals.tolist())
+                ]
+                fig = px.bar(
+                    chart_data,
+                    x=dev_col,
+                    y=y_column,
+                    orientation="h",
+                    title=None,
+                    labels={y_column: y_title, dev_col: dev_col},
+                    text=text_values,
+                    color="_severity",
+                    color_continuous_scale=[(0.0, "#27AE60"), (0.5, "#F1C40F"), (1.0, "#C0392B")],
+                    range_color=(0.0, severity_max),
+                )
+                fig.update_traces(
+                    textposition="outside",
+                    textfont=dict(size=14, color="white"),
+                    marker=dict(line=dict(width=1, color="white")),
+                    showlegend=False,
+                )
+                fig.add_vline(x=0, line_dash="dash", line_color="gray")
+                category_list = chart_data[y_column].tolist()
+                fig.update_layout(
+                    xaxis_title=dev_col,
+                    yaxis_title=y_title,
+                    height=max(600, len(chart_data) * 40),
+                    showlegend=False,
+                    coloraxis_showscale=False,
+                    yaxis=dict(
+                        tickangle=0,
+                        categoryorder="array",
+                        categoryarray=list(reversed(category_list)),
+                        tickmode="array",
+                        tickvals=category_list,
+                        ticktext=list(reversed(_tick_labels)),
+                    ),
+                    bargap=0.1,
+                )
+                fig = _apply_bar_uniformtext(fig)
+                fig = apply_chart_background(fig)
+                render_chart(fig, caption_below=f"Просрочка выдачи {doc_code}")
 
-        _has_dur = all(
-            c in chart_data.columns for c in ("_base_dur", "_cur_dur", "_dev_dur")
-        )
-        if _has_dur:
-            fig = _rd_delay_duration_figure(
-                chart_data,
-                y_col=y_column,
-                dev_col=dev_col,
-                caption=f"Просрочка выдачи {doc_code}",
-            )
-            render_chart(fig, caption_below=f"Просрочка выдачи {doc_code}")
-        else:
-            chart_data["_severity"] = chart_data[dev_col].clip(lower=0)
-            severity_max = float(chart_data["_severity"].max()) if not chart_data.empty else 0.0
-            severity_max = max(severity_max, 1.0)
-            _dev_vals = pd.to_numeric(chart_data[dev_col], errors="coerce").fillna(0.0)
-            _tick_labels = [
-                (f"🔴 {lbl}" if float(d) > 0 else f"🟢 {lbl}")
-                for lbl, d in zip(chart_data[y_column].astype(str).tolist(), _dev_vals.tolist())
-            ]
-            fig = px.bar(
-                chart_data,
-                x=dev_col,
-                y=y_column,
-                orientation="h",
-                title=None,
-                labels={y_column: y_title, dev_col: dev_col},
-                text=text_values,
-                color="_severity",
-                color_continuous_scale=[(0.0, "#27AE60"), (0.5, "#F1C40F"), (1.0, "#C0392B")],
-                range_color=(0.0, severity_max),
-            )
-            fig.update_traces(
-                textposition="outside",
-                textfont=dict(size=14, color="white"),
-                marker=dict(line=dict(width=1, color="white")),
-                showlegend=False,
-            )
-            fig.add_vline(x=0, line_dash="dash", line_color="gray")
-            category_list = chart_data[y_column].tolist()
-            fig.update_layout(
-                xaxis_title=dev_col,
-                yaxis_title=y_title,
-                height=max(600, len(chart_data) * 40),
-                showlegend=False,
-                coloraxis_showscale=False,
-                yaxis=dict(
-                    tickangle=0,
-                    categoryorder="array",
-                    categoryarray=list(reversed(category_list)),
-                    tickmode="array",
-                    tickvals=category_list,
-                    ticktext=list(reversed(_tick_labels)),
-                ),
-                bargap=0.1,
-            )
-            fig = _apply_bar_uniformtext(fig)
-            fig = apply_chart_background(fig)
-            render_chart(fig, caption_below=f"Просрочка выдачи {doc_code}")
+            # R23-07 (стр.22): индикаторы просрочки по проектам — карточки с градиентом зелёный→красный.
+            try:
+                if (
+                    y_title == "Проект"
+                    and not chart_data.empty
+                    and project_col
+                    and project_col in filtered_df.columns
+                ):
+                    st.markdown(f"**Индикаторы просрочки {doc_code} по проектам**")
+                    # П.2 (ПД): индикатор = ЧИСЛО документов с просрочкой по проекту
+                    # (строки с положительным отклонением), а не сумма дней просрочки.
+                    _ind_metric_is_count = bool(is_pd)
+                    _overdue_count_by_project = {}
+                    if _ind_metric_is_count:
+                        try:
+                            _ov_mask = pd.to_numeric(
+                                filtered_df["rd_deviation_numeric"], errors="coerce"
+                            ).fillna(0.0) > 0
+                            _overdue_count_by_project = (
+                                filtered_df.loc[_ov_mask, project_col]
+                                .astype(str)
+                                .str.strip()
+                                .value_counts()
+                                .to_dict()
+                            )
+                        except Exception:
+                            _overdue_count_by_project = {}
+                            _ind_metric_is_count = False
+                    if _ind_metric_is_count:
+                        _dev_series = pd.Series(
+                            [float(v) for v in _overdue_count_by_project.values()]
+                        )
+                    else:
+                        _dev_series = chart_data[dev_col].astype(float).clip(lower=0.0)
+                    _dev_max = float(_dev_series.max()) if not _dev_series.empty else 0.0
 
-        # R23-07 (стр.22): индикаторы просрочки по проектам — карточки с градиентом зелёный→красный.
-        try:
-            if (
-                y_title == "Проект"
-                and not chart_data.empty
-                and project_col
-                and project_col in filtered_df.columns
-            ):
-                st.markdown(f"**Индикаторы просрочки {doc_code} по проектам**")
-                # П.2 (ПД): индикатор = ЧИСЛО документов с просрочкой по проекту
-                # (строки с положительным отклонением), а не сумма дней просрочки.
-                _ind_metric_is_count = bool(is_pd)
-                _overdue_count_by_project = {}
-                if _ind_metric_is_count:
-                    try:
-                        _ov_mask = pd.to_numeric(
-                            filtered_df["rd_deviation_numeric"], errors="coerce"
-                        ).fillna(0.0) > 0
-                        _overdue_count_by_project = (
-                            filtered_df.loc[_ov_mask, project_col]
+                    def _proj_indicator_color(val: float) -> str:
+                        if _dev_max <= 0 or val <= 0:
+                            return "#1E8449"
+                        r = min(max(val / _dev_max, 0.0), 1.0)
+                        if r < 0.5:
+                            t = r / 0.5
+                            r1, g1, b1 = 0x27, 0xAE, 0x60
+                            r2, g2, b2 = 0xF1, 0xC4, 0x0F
+                        else:
+                            t = (r - 0.5) / 0.5
+                            r1, g1, b1 = 0xF1, 0xC4, 0x0F
+                            r2, g2, b2 = 0xC0, 0x39, 0x2B
+                        rr = int(r1 + (r2 - r1) * t)
+                        gg = int(g1 + (g2 - g1) * t)
+                        bb = int(b1 + (b2 - b1) * t)
+                        return f"#{rr:02X}{gg:02X}{bb:02X}"
+
+                    _ind_df = (
+                        chart_data[["Проект", dev_col]]
+                        .rename(columns={dev_col: "_dev"})
+                        .reset_index(drop=True)
+                    )
+                    if _ind_metric_is_count:
+                        _ind_df["_dev"] = (
+                            _ind_df["Проект"]
                             .astype(str)
                             .str.strip()
-                            .value_counts()
-                            .to_dict()
+                            .map(lambda p: float(_overdue_count_by_project.get(p, 0)))
                         )
-                    except Exception:
-                        _overdue_count_by_project = {}
-                        _ind_metric_is_count = False
-                if _ind_metric_is_count:
-                    _dev_series = pd.Series(
-                        [float(v) for v in _overdue_count_by_project.values()]
-                    )
-                else:
-                    _dev_series = chart_data[dev_col].astype(float).clip(lower=0.0)
-                _dev_max = float(_dev_series.max()) if not _dev_series.empty else 0.0
+                    _ind_df = _ind_df.sort_values("_dev", ascending=False).reset_index(drop=True)
+                    _n = len(_ind_df)
+                    _cols_n = min(4, max(1, _n))
+                    _cols_row = st.columns(_cols_n, gap="small")
+                    for _i, (_idx, _row) in enumerate(_ind_df.iterrows()):
+                        _proj = str(_row["Проект"])
+                        _dev = float(_row["_dev"]) if pd.notna(_row["_dev"]) else 0.0
+                        _bg = _proj_indicator_color(_dev)
+                        if _ind_metric_is_count:
+                            _label = (
+                                "Без просрочки"
+                                if _dev <= 0
+                                else f"Просрочка: {int(round(_dev))} док."
+                            )
+                        else:
+                            _label = (
+                                "Без просрочки"
+                                if _dev <= 0
+                                else f"Просрочка: {int(round(_dev))}"
+                            )
+                        with _cols_row[_i % _cols_n]:
+                            st.markdown(
+                                (
+                                    f"<div style='background:{_bg}; color:white; padding:10px 14px; "
+                                    f"border-radius:8px; margin-bottom:8px;'>"
+                                    f"<div style='font-size:13px; opacity:0.9;'>{_proj}</div>"
+                                    f"<div style='font-size:18px; font-weight:600;'>{_label}</div>"
+                                    f"</div>"
+                                ),
+                                unsafe_allow_html=True,
+                            )
+            except Exception as _ind_err:
+                suppress_caption(f"Не удалось построить индикаторы просрочки: {_ind_err}")
 
-                def _proj_indicator_color(val: float) -> str:
-                    if _dev_max <= 0 or val <= 0:
-                        return "#1E8449"
-                    r = min(max(val / _dev_max, 0.0), 1.0)
-                    if r < 0.5:
-                        t = r / 0.5
-                        r1, g1, b1 = 0x27, 0xAE, 0x60
-                        r2, g2, b2 = 0xF1, 0xC4, 0x0F
-                    else:
-                        t = (r - 0.5) / 0.5
-                        r1, g1, b1 = 0xF1, 0xC4, 0x0F
-                        r2, g2, b2 = 0xC0, 0x39, 0x2B
-                    rr = int(r1 + (r2 - r1) * t)
-                    gg = int(g1 + (g2 - g1) * t)
-                    bb = int(b1 + (b2 - b1) * t)
-                    return f"#{rr:02X}{gg:02X}{bb:02X}"
-
-                _ind_df = (
-                    chart_data[["Проект", dev_col]]
-                    .rename(columns={dev_col: "_dev"})
-                    .reset_index(drop=True)
-                )
-                if _ind_metric_is_count:
-                    _ind_df["_dev"] = (
-                        _ind_df["Проект"]
-                        .astype(str)
-                        .str.strip()
-                        .map(lambda p: float(_overdue_count_by_project.get(p, 0)))
-                    )
-                _ind_df = _ind_df.sort_values("_dev", ascending=False).reset_index(drop=True)
-                _n = len(_ind_df)
-                _cols_n = min(4, max(1, _n))
-                _cols_row = st.columns(_cols_n, gap="small")
-                for _i, (_idx, _row) in enumerate(_ind_df.iterrows()):
-                    _proj = str(_row["Проект"])
-                    _dev = float(_row["_dev"]) if pd.notna(_row["_dev"]) else 0.0
-                    _bg = _proj_indicator_color(_dev)
-                    if _ind_metric_is_count:
-                        _label = (
-                            "Без просрочки"
-                            if _dev <= 0
-                            else f"Просрочка: {int(round(_dev))} док."
-                        )
-                    else:
-                        _label = (
-                            "Без просрочки"
-                            if _dev <= 0
-                            else f"Просрочка: {int(round(_dev))}"
-                        )
-                    with _cols_row[_i % _cols_n]:
-                        st.markdown(
-                            (
-                                f"<div style='background:{_bg}; color:white; padding:10px 14px; "
-                                f"border-radius:8px; margin-bottom:8px;'>"
-                                f"<div style='font-size:13px; opacity:0.9;'>{_proj}</div>"
-                                f"<div style='font-size:18px; font-weight:600;'>{_label}</div>"
-                                f"</div>"
-                            ),
-                            unsafe_allow_html=True,
-                        )
-        except Exception as _ind_err:
-            suppress_caption(f"Не удалось построить индикаторы просрочки: {_ind_err}")
-
-        if plan_end_col and plan_end_col in filtered_df.columns:
+        if not is_pd and plan_end_col and plan_end_col in filtered_df.columns:
             month_df = filtered_df[filtered_df["_plan_end_dt"].notna()].copy()
             if not month_df.empty:
                 today_ts = pd.Timestamp(date.today())
@@ -16006,17 +16109,17 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     .fillna("—")
                 )
 
-            _pd_dev_start = (_pd_sstart_dt - _bs_dt).dt.days
-            _pd_dev_end = (_sf_dt - _bf_dt).dt.days
-            _pd_section_name = (
-                filtered_df[section_col].astype(str).str.strip()
-                if section_col and section_col in filtered_df.columns
-                else detail_df["_detail_section_name"]
+            _pd_dev_start = (_bs_dt - _pd_sstart_dt).dt.days
+            _pd_dev_end = (_bf_dt - _sf_dt).dt.days
+            _pd_cipher_detail = (
+                _msp_cipher_col
+                if _msp_cipher_col and _msp_cipher_col in filtered_df.columns
+                else find_column(filtered_df, ["abbreviation", "Шифр_ПД_и_РД", "Шифр"])
             )
-            _pd_razdel = (
-                filtered_df[task_col].astype(str).str.strip()
-                if task_col and task_col in filtered_df.columns
-                else pd.Series(["—"] * len(filtered_df), index=filtered_df.index)
+            _pd_section_name, _pd_razdel = _pd_detail_table_labels(
+                filtered_df,
+                task_col=task_col,
+                cipher_col=_pd_cipher_detail,
             )
             _pd_tbl = pd.DataFrame(
                 {
@@ -16032,26 +16135,22 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     "Статус": _pd_pct.map(_pd_status_label),
                     "Начало": _fmt_pd_date(_pd_sstart_dt),
                     "Базовое начало": _fmt_pd_date(_bs_dt),
-                    "Отклонение начала, дн": _pd_dev_start.apply(
-                        lambda x: int(round(float(x))) if pd.notna(x) else ""
-                    ),
+                    "_dev_start_n": _pd_dev_start,
                     "Окончание": _fmt_pd_date(_sf_dt),
                     "Базовое окончание": _fmt_pd_date(_bf_dt),
-                    "Отклонение окончания, дн": _pd_dev_end.apply(
-                        lambda x: int(round(float(x))) if pd.notna(x) else ""
-                    ),
+                    "_dev_end_n": _pd_dev_end,
                 }
             )
-            # Только строки уровня «Раздел» (если такие есть), иначе — все строки.
-            _pd_is_razdel = _pd_razdel.str.contains("раздел", case=False, na=False)
-            if bool(_pd_is_razdel.any()):
-                _pd_tbl = _pd_tbl[_pd_is_razdel.values].copy()
-            # Дефолтная сортировка: худшее отклонение окончания сверху (дальше — клик по заголовку).
+            _pd_masks_tbl = _pd_section_masks(filtered_df)
+            _pd_tbl_m = _pd_masks_tbl["dynamics_mask"].reindex(_pd_tbl.index, fill_value=False)
+            if bool(_pd_tbl_m.any()):
+                _pd_tbl = _pd_tbl.loc[_pd_tbl_m.fillna(False)].copy()
             _pd_tbl = _pd_tbl.assign(
-                _ord=pd.to_numeric(_pd_tbl["Отклонение окончания, дн"], errors="coerce").fillna(
-                    -(10**9)
-                )
-            ).sort_values("_ord", ascending=False).drop(columns=["_ord"]).reset_index(drop=True)
+                _ord=pd.to_numeric(_pd_tbl["_dev_end_n"], errors="coerce").fillna(-(10**9))
+            ).sort_values("_ord", ascending=True).drop(columns=["_ord"])
+            _pd_tbl["Отклонение начала, дн"] = _pd_tbl["_dev_start_n"].map(_pd_fmt_deviation_days)
+            _pd_tbl["Отклонение окончания, дн"] = _pd_tbl["_dev_end_n"].map(_pd_fmt_deviation_days)
+            _pd_tbl = _pd_tbl.drop(columns=["_dev_start_n", "_dev_end_n"]).reset_index(drop=True)
             if _pd_tbl.empty:
                 st.info("Нет данных для детальной таблицы ПД.")
             else:
@@ -16063,6 +16162,8 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                         _pd_tbl,
                         days_column="Отклонение окончания, дн",
                         extra_days_columns=("Отклонение начала, дн",),
+                        days_positive_is_ahead=True,
+                        days_deviation_gradient=True,
                     )
                 )
                 _pd_styled_html = _pd_styled_html.replace(
@@ -16123,24 +16224,41 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     key_prefix="rd_delay_detail",
                 )
 
-        # Summary table (с % выполнения РД/ПД и раскраской отклонения: >0 красный, <=0 зелёный)
+        # Summary table
         render_table_subheader(st, "Сводка по просрочке")
-        if show_by_tasks:
+        if is_pd and {"_pd_plan_cnt", "_pd_fact_cnt", "_pd_overdue_cnt"}.issubset(
+            chart_data.columns
+        ):
+            _pd_sum_y = y_column if y_column in chart_data.columns else chart_data.columns[0]
+            summary_table = chart_data[
+                [_pd_sum_y, "_pd_plan_cnt", "_pd_fact_cnt", "_pd_overdue_cnt"]
+            ].copy()
+            summary_table = summary_table.rename(
+                columns={
+                    "_pd_plan_cnt": "План",
+                    "_pd_fact_cnt": "Факт",
+                    "_pd_overdue_cnt": "Просрочка",
+                }
+            )
+            for _cnt_col in ("План", "Факт", "Просрочка"):
+                summary_table[_cnt_col] = summary_table[_cnt_col].apply(
+                    lambda x: int(round(float(x), 0)) if pd.notna(x) else 0
+                )
+        elif show_by_tasks:
             summary_table = chart_data[
                 ["Задача_полная", dev_col, "% выполнения РД/ПД"]
             ].copy()
             summary_table = summary_table.rename(columns={"Задача_полная": "Задача"})
+            if dev_col in summary_table.columns:
+                summary_table[dev_col] = summary_table[dev_col].apply(
+                    lambda x: int(round(float(x), 0)) if pd.notna(x) else ""
+                )
         else:
             summary_table = chart_data[["Проект", dev_col, "% выполнения РД/ПД"]].copy()
-        if dev_col in summary_table.columns:
-            summary_table[dev_col] = summary_table[dev_col].apply(
-                lambda x: int(round(float(x), 0)) if pd.notna(x) else ""
-            )
-        # Раскраска: отклонение > 0 — красный, <= 0 — зелёный
-        # st.table(style_dataframe_for_dark_theme(
-        #     summary_table,
-        #     days_column=dev_col,
-        # ))
+            if dev_col in summary_table.columns:
+                summary_table[dev_col] = summary_table[dev_col].apply(
+                    lambda x: int(round(float(x), 0)) if pd.notna(x) else ""
+                )
         _render_format_dataframe_html(
             summary_table,
             file_stem="rd_delay_summary",
@@ -24564,6 +24682,160 @@ def _pd_msp_immediate_parent_names(
     return pd.Series(out, index=df.index)
 
 
+def _pd_msp_hierarchy_cols(df: pd.DataFrame) -> tuple[
+    Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]
+]:
+    """Иерархия MSP: level structure (outline), level (Уровень), task name, block."""
+    hier_col = "level structure" if "level structure" in df.columns else None
+    outline_col = hier_col
+    level_col = "level" if "level" in df.columns else None
+    name_col = (
+        "task name"
+        if "task name" in df.columns
+        else None
+    )
+    block_col = "block" if "block" in df.columns else None
+    return hier_col, outline_col, level_col, name_col, block_col
+
+
+def _pd_msp_ancestor_under_pd_stage(
+    df: pd.DataFrame,
+    level_col: str,
+    name_col: str,
+    block_col: Optional[str] = None,
+) -> pd.Series:
+    """Предок в ветке «Проектная документация» (по стеку) или block=ПД."""
+    lv = outline_level_numeric(df[level_col])
+    nm = df[name_col].map(lambda x: "" if pd.isna(x) else str(x))
+    blk_series = (
+        df[block_col].astype(str).str.strip().str.casefold()
+        if block_col and block_col in df.columns
+        else pd.Series("", index=df.index)
+    )
+    stack: list[tuple[float, str]] = []
+    out: list[bool] = []
+    for i in range(len(df)):
+        raw_l = lv.iloc[i]
+        n = nm.iloc[i] or ""
+        if pd.isna(raw_l):
+            out.append(False)
+            continue
+        l = float(raw_l)
+        while stack and stack[-1][0] >= l:
+            stack.pop()
+        ancestors = [s[1] for s in stack]
+        is_pd = any(
+            "проектная документация" in str(a).casefold()
+            for a in ancestors
+            if a
+        )
+        blk = blk_series.iloc[i]
+        if blk in ("пд", "пд и рд"):
+            is_pd = True
+        out.append(is_pd)
+        stack.append((l, n))
+    return pd.Series(out, index=df.index)
+
+
+def _pd_section_masks(df: pd.DataFrame) -> dict:
+    """
+    Маски ПД по ТЗ:
+    - metrics: Уровень_структуры=4 + шифр + ветка ПД
+    - dynamics: Уровень=5 + «Раздел» в названии + шифр + ветка ПД
+    """
+    hier_col, outline_col, level_col, name_col, block_col = _pd_msp_hierarchy_cols(df)
+    cipher_col, cipher_ok = _pd_cipher_filled_mask(df)
+    empty = pd.Series(False, index=df.index)
+    result: dict = {
+        "metrics_mask": empty,
+        "dynamics_mask": empty,
+        "cipher_col": cipher_col,
+        "hier_col": hier_col,
+        "outline_col": outline_col,
+        "level_col": level_col,
+        "name_col": name_col,
+    }
+    if (
+        not hier_col
+        or hier_col not in df.columns
+        or not name_col
+        or name_col not in df.columns
+    ):
+        return result
+    ancestor_pd = _pd_msp_ancestor_under_pd_stage(
+        df, hier_col, name_col, block_col=block_col
+    )
+    cipher_m = cipher_ok.fillna(False) if cipher_col else empty
+    lv_num = (
+        outline_level_numeric(df[level_col])
+        if level_col and level_col in df.columns
+        else pd.Series(np.nan, index=df.index)
+    )
+    if outline_col and outline_col in df.columns:
+        lv_struct = outline_level_numeric(df[outline_col])
+        # Ур.4 в Ленинском; ур.3+Уровень=5 — в Дмитровском (разные выгрузки MSP).
+        result["metrics_mask"] = (
+            (lv_struct.eq(4) | (lv_struct.eq(3) & lv_num.eq(5)))
+            & ancestor_pd
+            & cipher_m
+        )
+    if level_col and level_col in df.columns:
+        tn = df[name_col].astype(str)
+        result["dynamics_mask"] = (
+            lv_num.eq(5)
+            & tn.str.contains("Раздел", case=False, na=False)
+            & ancestor_pd
+            & cipher_m
+        )
+    return result
+
+
+def _pd_fmt_deviation_days(v) -> str:
+    """Формат отклонения окончания ПД: +N / −N / 0 (опережение = плюс)."""
+    num = pd.to_numeric(v, errors="coerce")
+    if pd.isna(num):
+        return ""
+    n = int(round(float(num)))
+    if n == 0:
+        return "0"
+    return f"{n:+d}"
+
+
+def _pd_detail_table_labels(
+    df: pd.DataFrame,
+    *,
+    task_col: Optional[str],
+    cipher_col: Optional[str],
+) -> tuple:
+    """
+    Подписи для детальной таблицы ПД:
+    - наименование: полное имя задачи MSP (Раздел N «…»);
+    - раздел: шифр ПД/РД или краткая метка «Раздел N», не этап/лот.
+    """
+    idx = df.index
+    tn = (
+        df[task_col].astype(str).str.strip().replace({"nan": "", "None": "", "<NA>": ""})
+        if task_col and task_col in df.columns
+        else pd.Series([""] * len(df), index=idx)
+    )
+    cipher = (
+        df[cipher_col].astype(str).str.strip().replace({"nan": "", "None": "", "<NA>": ""})
+        if cipher_col and cipher_col in df.columns
+        else pd.Series([""] * len(df), index=idx)
+    )
+    razdel_from_task = tn.str.extract(
+        r"(Раздел\s+[\d.]+(?:\.\d+)?)", flags=re.I, expand=False
+    ).fillna("")
+    razdel = cipher.where(cipher.ne(""), razdel_from_task)
+    razdel = razdel.where(razdel.ne(""), razdel_from_task)
+    stage_only = (
+        razdel.str.casefold().str.contains("проектная документация", na=False)
+        & ~razdel.str.contains("Раздел", case=False, na=False)
+    )
+    razdel = razdel.where(~stage_only, razdel_from_task)
+    work_name = tn.where(tn.ne(""), "—")
+    razdel = razdel.where(razdel.ne(""), "—")
+    return work_name, razdel
 
 
 def _doc_section_labels_series(
@@ -24594,30 +24866,15 @@ def _doc_section_labels_series(
                 ],
             )
             cipher_ok = pd.Series(False, index=df.index)
-        hier_col = find_column_fn(df, ["Структура", "Outline Number", "outline number"])
-        outline_col = find_column_fn(df, ["Outline Level", "outline level", "Уровень"])
         name_col_task = (
             "task name"
             if "task name" in df.columns
             else find_column_fn(df, ["Название задачи", "Задача", "Task Name", "Name"])
         )
-        if (
-            hier_col
-            and outline_col
-            and name_col_task
-            and hier_col in df.columns
-            and outline_col in df.columns
-            and name_col_task in df.columns
-        ):
-            parents = _pd_msp_immediate_parent_names(df, hier_col, name_col_task)
-            lv = outline_level_numeric(df[outline_col])
-            tn = df[name_col_task].astype(str)
-            parent_pd = parents.astype(str).str.contains(
-                "Проектная документация", case=False, na=False
-            )
-            pd_base_mask = lv.eq(5) & parent_pd & cipher_ok.fillna(False)
-            if pd_base_mask.any():
-                work = df.loc[pd_base_mask.fillna(False)].copy()
+        _pd_masks = _pd_section_masks(df)
+        _dyn_m = _pd_masks["dynamics_mask"].fillna(False)
+        if _dyn_m.any():
+            work = df.loc[_dyn_m].copy()
         name_col = find_column_fn(
             work,
             [
@@ -24851,6 +25108,114 @@ def _rd_delay_duration_figure(
         tickvals=y_labels,
         ticktext=ticktext,
         # П.8: подписи в области графика, выравнивание по левому краю, без обрезания.
+        ticklabelposition="inside",
+        tickfont=dict(size=11),
+        automargin=True,
+    )
+    fig.update_xaxes(range=[0, x_max * 1.12])
+    fig = _apply_bar_uniformtext(fig)
+    fig = apply_chart_background(fig)
+    return fig
+
+
+def _pd_delay_plan_fact_figure(
+    rows: pd.DataFrame,
+    *,
+    y_col: str,
+    plan_col: str = "_pd_plan_cnt",
+    fact_col: str = "_pd_fact_cnt",
+    overdue_col: str = "_pd_overdue_cnt",
+) -> "go.Figure":
+    """Горизонтальные наложенные полосы ПД: план (жёлтый), факт (зелёный), просрочка (красный)."""
+    import plotly.graph_objects as go
+
+    work = rows.copy()
+    work = work.sort_values(overdue_col, ascending=False)
+    y_labels = work[y_col].astype(str).tolist()
+    plan_v = pd.to_numeric(work[plan_col], errors="coerce").fillna(0.0)
+    fact_v = pd.to_numeric(work[fact_col], errors="coerce").fillna(0.0)
+    overdue_v = pd.to_numeric(work[overdue_col], errors="coerce").fillna(0.0)
+
+    def _wrap_label(text: str, width: int = 26) -> str:
+        words = str(text).split()
+        if not words:
+            return str(text)
+        lines: list[str] = []
+        cur = ""
+        for w in words:
+            if not cur:
+                cur = w
+            elif len(cur) + 1 + len(w) <= width:
+                cur = f"{cur} {w}"
+            else:
+                lines.append(cur)
+                cur = w
+        if cur:
+            lines.append(cur)
+        return "<br>".join(lines)
+
+    ticktext = [_wrap_label(lbl) for lbl in y_labels]
+    x_max = float(max(plan_v.max() if len(plan_v) else 0, 1.0))
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            name="План на дату отчёта",
+            orientation="h",
+            y=y_labels,
+            x=plan_v,
+            marker=dict(color="#F1C40F"),
+            text=[f"{int(v)}" if float(v) > 0 else "" for v in plan_v],
+            textposition="inside",
+            insidetextanchor="middle",
+            textfont=dict(color="#1a1a1a", size=12),
+            hovertemplate="%{y}<br>План: %{x:.0f} разд.<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            name="Факт (100%)",
+            orientation="h",
+            y=y_labels,
+            x=fact_v,
+            marker=dict(color="#27AE60"),
+            text=[f"{int(v)}" if float(v) > 0 else "" for v in fact_v],
+            textposition="inside",
+            insidetextanchor="middle",
+            textfont=dict(color="white", size=12),
+            hovertemplate="%{y}<br>Факт: %{x:.0f} разд.<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            name="Просрочка",
+            orientation="h",
+            y=y_labels,
+            x=overdue_v,
+            marker=dict(color="#C0392B"),
+            text=[f"{int(v)}" if float(v) > 0 else "" for v in overdue_v],
+            textposition="inside",
+            insidetextanchor="middle",
+            textfont=dict(color="white", size=12),
+            hovertemplate="%{y}<br>Просрочка: %{x:.0f} разд.<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        barmode="overlay",
+        xaxis_title="Количество разделов ПД",
+        yaxis_title="",
+        height=max(480, len(y_labels) * 54),
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=12, r=48, t=56, b=48),
+        bargap=0.18,
+    )
+    fig.update_yaxes(
+        categoryorder="array",
+        categoryarray=list(reversed(y_labels)),
+        tickmode="array",
+        tickvals=y_labels,
+        ticktext=ticktext,
         ticklabelposition="inside",
         tickfont=dict(size=11),
         automargin=True,
@@ -25740,24 +26105,19 @@ def dashboard_documentation(
             ):
                 st.warning("Для ПД нужны колонки уровня иерархии MSP и наименование задачи.")
             else:
-                parents = _pd_msp_immediate_parent_names(df, hier_col, name_col)
-                lv = outline_level_numeric(df[outline_col])
-                tn = df[name_col].astype(str)
-                cipher_col_pie, cipher_ok = _pd_cipher_filled_mask(df)
+                _pd_masks_pie = _pd_section_masks(df)
+                cipher_col_pie = _pd_masks_pie["cipher_col"]
+                cipher_ok = _pd_cipher_filled_mask(df)[1]
                 if not cipher_col_pie or cipher_col_pie not in df.columns:
                     suppress_caption(
                         "Колонка «шифр ПД РД» не найдена — диаграмма исполнения ПД по ТЗ недоступна."
                     )
-                parent_pd = parents.astype(str).str.contains(
-                    "Проектная документация", case=False, na=False
-                )
-                pd_base_mask_pie = lv.eq(5) & parent_pd & cipher_ok
                 pct_col = _pd_msp_pct_complete_col(df)
                 if pct_col and pct_col in df.columns:
                     pc = pd.to_numeric(df[pct_col], errors='coerce').fillna(0.0)
                 else:
                     pc = pd.Series(0.0, index=df.index)
-                m = pd_base_mask_pie.fillna(False)
+                m = _pd_masks_pie["metrics_mask"].fillna(False)
                 done_v = int((m & (pc >= 99.99)).sum())
                 prog_v = int((m & (pc > 0) & (pc < 99.99)).sum())
                 wait_v = int((m & (pc <= 0)).sum())
@@ -26324,19 +26684,19 @@ def dashboard_documentation(
             ):
                 st.warning("Для графика ПД нужны колонки уровня и наименования задач MSP.")
             else:
-                parents = _pd_msp_immediate_parent_names(df, hier_col, name_col)
-                lv = outline_level_numeric(df[outline_col])
-                tn = df[name_col].astype(str)
-                cipher_col, cipher_ok = _pd_cipher_filled_mask(df)
+                _pd_masks_dyn = _pd_section_masks(df)
+                pd_metrics_mask = _pd_masks_dyn["metrics_mask"].fillna(False)
+                pd_section_mask = _pd_masks_dyn["dynamics_mask"].fillna(False)
+                cipher_col = _pd_masks_dyn["cipher_col"]
+                cipher_ok = (
+                    _pd_cipher_filled_mask(df)[1]
+                    if cipher_col
+                    else pd.Series(False, index=df.index)
+                )
                 if not cipher_col or cipher_col not in df.columns:
                     suppress_caption(
                         "Колонка «шифр ПД РД» не найдена — сводные показатели ПД по ТЗ (по шифру раздела) недоступны."
                     )
-                parent_pd = parents.astype(str).str.contains(
-                    "Проектная документация", case=False, na=False
-                )
-                pd_base_mask = lv.eq(5) & parent_pd & cipher_ok
-                pd_section_mask = pd_base_mask & tn.str.contains("Раздел", case=False, na=False)
                 b_fin_col = _pd_msp_find_baseline_finish_col(df)
                 if b_fin_col is None and plan_end_col and plan_end_col in df.columns:
                     b_fin_col = plan_end_col
@@ -26404,12 +26764,13 @@ def dashboard_documentation(
                     dynamics_df = dynamics_df.sort_values(["Тип", "Дата"])
                     today = date.today()
                     ts_today = pd.Timestamp(today)
-                    plan_total = float(pd_base_mask.sum())
+                    m_met = pd_metrics_mask.fillna(False)
                     m_sec = pd_section_mask.fillna(False)
+                    plan_total = float(m_met.sum())
                     plan_to_date = int(
-                        (m_sec & bf.notna() & (bf.dt.normalize() <= ts_today)).sum()
+                        (m_met & bf.notna() & (bf.dt.normalize() <= ts_today)).sum()
                     )
-                    done_sec = m_sec & (pc >= 99.99)
+                    done_sec = m_met & (pc >= 99.99)
                     fact_to_date = int(done_sec.sum())
                     deviation_to_date = float(plan_to_date - fact_to_date)
                     c1, c2, c3, c4 = st.columns(4, gap="small")
@@ -26424,7 +26785,10 @@ def dashboard_documentation(
                     # П.7: Необходимая производительность = |отклонение на текущую дату| /
                     # (остаток дней от даты отчёта = сегодня до Базового окончания) × множитель
                     # периода (×1/×7/×30). Базовое окончание — максимальная из всех доступных дат.
-                    last_bf = bf.dropna().max().date() if bf.notna().any() else None
+                    _bf_pd = bf.loc[m_sec | m_met]
+                    last_bf = (
+                        _bf_pd.dropna().max().date() if _bf_pd.notna().any() else None
+                    )
                     rem_days = (last_bf - today).days if last_bf is not None else None
                     nec = None
                     if rem_days is not None and rem_days > 0:
@@ -26469,11 +26833,6 @@ def dashboard_documentation(
                     dynamics_df["Текст"] = dynamics_df["Количество"].apply(
                         lambda x: f"{x:.0f}" if pd.notna(x) and float(x) != 0.0 else ""
                     )
-                    # R23-07 (стр.19): цвет линии «Прогноз по проекту» —
-                    # оранжевый `#F39C12`, если все задачи 5-го уровня
-                    # выполнены на 100%; иначе — нейтральный голубой `#5DADE2`.
-                    _all_done_5lvl = bool(m_sec.any()) and bool((pc[m_sec] >= 99.99).all())
-                    _fcst_color = "#F39C12" if _all_done_5lvl else "#5DADE2"
                     fig_dynamics = px.line(
                         dynamics_df,
                         x="Дата",
@@ -26485,7 +26844,7 @@ def dashboard_documentation(
                         text="Текст",
                         color_discrete_map={
                             "План по проекту (БП)": "#2E86AB",
-                            "Прогноз по проекту": _fcst_color,
+                            "Прогноз по проекту": "#F39C12",
                         },
                     )
                     _pd_dates_axis = pd.to_datetime(dynamics_df["Дата"], errors="coerce").dropna().sort_values().unique()
@@ -26540,21 +26899,22 @@ def dashboard_documentation(
                     render_chart(fig_dynamics, caption_below="Динамика выдачи ПД")
 
                     render_table_subheader(st, "Таблица по проектной документации")
-                    idx_sec = df.index[m_sec.fillna(False)]
+                    idx_sec = df.index[m_met.fillna(False)]
                     if len(idx_sec) == 0:
                         st.info(
-                            "Нет строк для таблицы (задачи с «Раздел» в названии и заполненным шифром раздела)."
+                            "Нет строк для таблицы (разделы ПД с заполненным шифром в ветке «Проектная документация»)."
                         )
                     else:
+                        _tn_tbl = df[name_col].astype(str) if name_col in df.columns else pd.Series("", index=df.index)
                         sec_disp = (
                             df.loc[idx_sec, cipher_col].astype(str).str.strip()
                             if cipher_col and cipher_col in df.columns
-                            else tn.loc[idx_sec].astype(str)
+                            else _tn_tbl.loc[idx_sec].astype(str)
                         )
                         tbl_raw = pd.DataFrame({"Раздел": sec_disp.values}, index=idx_sec)
                         tbl_raw["_bf"] = bf.reindex(idx_sec).dt.normalize()
                         tbl_raw["_sf"] = sf.reindex(idx_sec).dt.normalize()
-                        tbl_raw["_dev"] = (tbl_raw["_sf"] - tbl_raw["_bf"]).dt.days
+                        tbl_raw["_dev"] = (tbl_raw["_bf"] - tbl_raw["_sf"]).dt.days
                         secs_sorted = sorted(
                             {
                                 str(x).strip()
@@ -26600,12 +26960,14 @@ def dashboard_documentation(
                                     "Раздел": tbl_f["Раздел"].map(lambda x: sanitize_display_label(x)),
                                     "Базовое окончание": tbl_f["_bf"].dt.strftime("%d.%m.%Y"),
                                     "Окончание": tbl_f["_sf"].dt.strftime("%d.%m.%Y"),
-                                    "Отклонение окончания": tbl_f["_dev"],
+                                    "Отклонение окончания": tbl_f["_dev"].map(_pd_fmt_deviation_days),
                                 }
                             )
                             sty_tbl = style_dataframe_for_dark_theme(
                                 tbl_show,
                                 days_column="Отклонение окончания",
+                                days_positive_is_ahead=True,
+                                days_deviation_gradient=True,
                             )
                             st.markdown(
                                 "<style>"

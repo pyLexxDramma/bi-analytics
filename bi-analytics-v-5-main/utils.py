@@ -1,4 +1,4 @@
-﻿
+
 """
 Общие утилиты для дашбордов и приложения.
 """
@@ -1000,6 +1000,8 @@ def style_dataframe_for_dark_theme(
     percent_deviation_gradient_column: Optional[str] = None,
     *,
     extra_days_columns: Optional[tuple] = None,
+    days_positive_is_ahead: bool = False,
+    days_deviation_gradient: bool = False,
     finance_deviation_abs_min_mln: float = 0.01,
 ):
     """
@@ -1082,17 +1084,69 @@ def style_dataframe_for_dark_theme(
             )
 
     # Подсветка по дням отклонения (одна или несколько колонок «дней»)
+    def _parse_signed_days_display(v):
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s or s.lower() in ("nan", "none", "—"):
+            return None
+        m = re.search(r"([+-]?)\s*(\d+)", s)
+        if not m:
+            return pd.to_numeric(s, errors="coerce")
+        val = int(m.group(2))
+        sg = m.group(1) or ""
+        if sg == "-":
+            return -val
+        if sg == "+":
+            return val
+        return val
+
     def _days_cell_color(series):
         result = []
         for v in series:
-            num = pd.to_numeric(v, errors="coerce")
-            if pd.isna(num):
+            num = _parse_signed_days_display(v)
+            if num is None or (isinstance(num, float) and pd.isna(num)):
                 result.append(_table_cell_style(TABLE_BG_COLOR, TABLE_TEXT_COLOR))
-            elif num > 0:
+            elif days_positive_is_ahead:
+                if float(num) > 0:
+                    result.append(_table_cell_style("#27ae60", "#ffffff"))
+                elif float(num) < 0:
+                    result.append(_table_cell_style("#c0392b", "#ffffff"))
+                else:
+                    result.append(_table_cell_style(TABLE_BG_COLOR, TABLE_TEXT_COLOR))
+            elif float(num) > 0:
                 result.append(_table_cell_style("#c0392b", "#ffffff"))
             else:
                 result.append(_table_cell_style("#27ae60", "#ffffff"))
         return result
+
+    def _days_gradient_style(series):
+        nums = series.map(_parse_signed_days_display)
+        valid = pd.to_numeric(nums, errors="coerce").dropna()
+        vmax = float(valid.abs().max()) if not valid.empty else 1.0
+        vmax = max(vmax, 1.0)
+        out = []
+        for v in series:
+            num = _parse_signed_days_display(v)
+            if num is None or (isinstance(num, float) and pd.isna(num)) or float(num) == 0.0:
+                out.append(_table_cell_style(TABLE_BG_COLOR, TABLE_TEXT_COLOR))
+                continue
+            t = min(abs(float(num)) / vmax, 1.0)
+            if days_positive_is_ahead and float(num) > 0:
+                r = int(46 + (39 - 46) * t)
+                g = int(204 + (174 - 204) * t)
+                b = int(113 + (96 - 113) * t)
+            elif float(num) < 0 or not days_positive_is_ahead:
+                r = int(255 + (192 - 255) * t)
+                g = int(179 + (57 - 179) * t)
+                b = int(179 + (43 - 179) * t)
+            else:
+                r, g, b = 46, 204, 113
+            fg = "#ffffff"
+            out.append(
+                _table_cell_style(f"rgb({r},{g},{b})", fg, extra="font-weight: 600")
+            )
+        return out
 
     _dev_day_cols = []
     if days_column and days_column in df.columns:
@@ -1102,10 +1156,20 @@ def style_dataframe_for_dark_theme(
             if _c and _c in df.columns and _c not in _dev_day_cols:
                 _dev_day_cols.append(_c)
     for _dc in _dev_day_cols:
-        base = base.apply(
-            lambda c, _name=_dc: _days_cell_color(c) if c.name == _name else [""] * len(c),
-            axis=0,
-        )
+        if days_deviation_gradient:
+            base = base.apply(
+                lambda c, _name=_dc: _days_gradient_style(c)
+                if c.name == _name
+                else [""] * len(c),
+                axis=0,
+            )
+        else:
+            base = base.apply(
+                lambda c, _name=_dc: _days_cell_color(c)
+                if c.name == _name
+                else [""] * len(c),
+                axis=0,
+            )
 
     # Подсветка финансовых отклонений
     if finance_deviation_column and finance_deviation_column in df.columns:
