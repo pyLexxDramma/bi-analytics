@@ -14921,15 +14921,29 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         _msp_cipher_col = find_column(
             df,
             [
+                "abbreviation",
                 "Шифр_ПД_и_РД",
                 "Шифр ПД и РД",
                 "Шифр ПД/РД",
+                "Шифр ПД РД",
                 "Шифр раздела",
                 "Шифр",
                 "DivisionCipher",
                 "Cipher",
             ],
         )
+        if is_pd and (
+            not _msp_cipher_col
+            or _msp_cipher_col not in df.columns
+            or _msp_cipher_col == section_col
+        ):
+            _pd_cc_delay, _ = _pd_cipher_filled_mask(df)
+            if _pd_cc_delay and _pd_cc_delay in df.columns:
+                _msp_cipher_col = _pd_cc_delay
+            elif _pd_masks_delay and _pd_masks_delay.get("cipher_col"):
+                _pd_cc2 = _pd_masks_delay["cipher_col"]
+                if _pd_cc2 and _pd_cc2 in df.columns:
+                    _msp_cipher_col = _pd_cc2
         # Наименование раздела: MSP "Наименование разделов работ" / section_col / task_col.
         _msp_section_name_col = find_column(
             df, ["Наименование разделов работ", "Наименование раздела", "Раздел"]
@@ -14966,38 +14980,57 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                         _sec_src_df = df.loc[_dyn_opt]
                 _cip = _sec_src_df[_msp_cipher_col].astype(str).str.strip()
                 _cip = _cip.where(~_cip.str.lower().isin({"nan", "none", "<na>"}), other="")
-                if _msp_name_col_for_label and _msp_name_col_for_label in _sec_src_df.columns:
-                    _nm = _sec_src_df[_msp_name_col_for_label].astype(str).str.strip()
-                    _nm = _nm.where(~_nm.str.lower().isin({"nan", "none", "<na>"}), other="")
+                if is_pd:
+                    section_options = sorted(
+                        {
+                            v
+                            for v in _cip.tolist()
+                            if isinstance(v, str)
+                            and v.strip()
+                            and v.strip().lower() not in ("nan", "none", "<na>")
+                        },
+                        key=lambda x: x.casefold(),
+                    )
+                    _rd_sec_opts = ["Все"] + section_options
+                    _sync_selectbox_session_state("rd_delay_section", _rd_sec_opts)
+                    selected_section = st.selectbox(
+                        "Вид раздела",
+                        _rd_sec_opts,
+                        key="rd_delay_section",
+                    )
                 else:
-                    _nm = pd.Series([""] * len(_sec_src_df), index=_sec_src_df.index)
-                _combined = pd.Series([""] * len(_sec_src_df), index=_sec_src_df.index, dtype=object)
-                _both = _cip.ne("") & _nm.ne("")
-                _only_cip = _cip.ne("") & ~_both
-                _only_nm = _nm.ne("") & ~_both
-                _combined.loc[_both] = _cip[_both] + " — " + _nm[_both]
-                _combined.loc[_only_cip] = _cip[_only_cip]
-                _combined.loc[_only_nm] = _nm[_only_nm]
-                _combined = _combined.astype(str).replace(
-                    {"nan": "", "None": "", "<NA>": "", "NaT": ""}
-                )
-                section_options = sorted(
-                    {
-                        v.strip()
-                        for v in _combined.tolist()
-                        if isinstance(v, str) and v.strip()
-                    },
-                    key=lambda x: x.casefold(),
-                )
-                selected_section = st.selectbox(
-                    ("Вид раздела" if is_pd else "Вид раздела"),
-                    ["Все"] + section_options,
-                    key="rd_delay_section",
-                )
-                _full_combined = pd.Series([""] * len(df), index=df.index, dtype=object)
-                _full_combined.loc[_combined.index] = _combined
-                df["_tessa_section_label"] = _full_combined
-            elif section_col and section_col in df.columns:
+                    if _msp_name_col_for_label and _msp_name_col_for_label in _sec_src_df.columns:
+                        _nm = _sec_src_df[_msp_name_col_for_label].astype(str).str.strip()
+                        _nm = _nm.where(~_nm.str.lower().isin({"nan", "none", "<na>"}), other="")
+                    else:
+                        _nm = pd.Series([""] * len(_sec_src_df), index=_sec_src_df.index)
+                    _combined = pd.Series([""] * len(_sec_src_df), index=_sec_src_df.index, dtype=object)
+                    _both = _cip.ne("") & _nm.ne("")
+                    _only_cip = _cip.ne("") & ~_both
+                    _only_nm = _nm.ne("") & ~_both
+                    _combined.loc[_both] = _cip[_both] + " — " + _nm[_both]
+                    _combined.loc[_only_cip] = _cip[_only_cip]
+                    _combined.loc[_only_nm] = _nm[_only_nm]
+                    _combined = _combined.astype(str).replace(
+                        {"nan": "", "None": "", "<NA>": "", "NaT": ""}
+                    )
+                    section_options = sorted(
+                        {
+                            v.strip()
+                            for v in _combined.tolist()
+                            if isinstance(v, str) and v.strip()
+                        },
+                        key=lambda x: x.casefold(),
+                    )
+                    selected_section = st.selectbox(
+                        "Вид раздела",
+                        ["Все"] + section_options,
+                        key="rd_delay_section",
+                    )
+                    _full_combined = pd.Series([""] * len(df), index=df.index, dtype=object)
+                    _full_combined.loc[_combined.index] = _combined
+                    df["_tessa_section_label"] = _full_combined
+            elif (not is_pd) and section_col and section_col in df.columns:
                 section_options = sorted(
                     {
                         str(v).strip()
@@ -15007,7 +15040,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     key=lambda x: x.casefold(),
                 )
                 selected_section = st.selectbox(
-                    ("Вид раздела" if is_pd else "Вид раздела"),
+                    "Вид раздела",
                     ["Все"] + section_options,
                     key="rd_delay_section",
                 )
@@ -15049,7 +15082,15 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         ]
 
     if selected_section != "Все":
-        if "_tessa_section_label" in filtered_df.columns:
+        if (
+            is_pd
+            and _msp_cipher_col
+            and _msp_cipher_col in filtered_df.columns
+        ):
+            filtered_df = filtered_df[
+                filtered_df[_msp_cipher_col].astype(str).str.strip() == selected_section
+            ]
+        elif "_tessa_section_label" in filtered_df.columns:
             filtered_df = filtered_df[
                 filtered_df["_tessa_section_label"].astype(str).str.strip() == selected_section
             ]
@@ -15264,6 +15305,11 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             if filtered_df.empty:
                 st.info("Нет задач ПД для выбранных фильтров.")
                 return
+            # Даты считали до среза dynamics_mask — выровнять индекс, иначе в
+            # детальной таблице появляются строки с датами и nan в «Проект»/«Раздел».
+            _bf_dt = _bf_dt.reindex(filtered_df.index)
+            _sf_dt = _sf_dt.reindex(filtered_df.index)
+            _bs_dt = _bs_dt.reindex(filtered_df.index)
             _today_pd = date.today()
             _ts_pd = pd.Timestamp(_today_pd)
             _pct_pd_col = _pd_msp_pct_complete_col(filtered_df)
@@ -15272,8 +15318,9 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 if _pct_pd_col and _pct_pd_col in filtered_df.columns
                 else pd.Series(0.0, index=filtered_df.index)
             )
+            _plan_dt_pd = _sf_dt.where(_sf_dt.notna(), _bf_dt)
             filtered_df["_pd_row_plan"] = (
-                _bf_dt.notna() & (_bf_dt.dt.normalize() <= _ts_pd)
+                _plan_dt_pd.notna() & (_plan_dt_pd.dt.normalize() <= _ts_pd)
             ).astype(int)
             filtered_df["_pd_row_fact"] = (_pc_pd >= 99.99).astype(int)
             filtered_df["_pd_row_overdue"] = (
@@ -16141,10 +16188,12 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     "_dev_end_n": _pd_dev_end,
                 }
             )
-            _pd_masks_tbl = _pd_section_masks(filtered_df)
-            _pd_tbl_m = _pd_masks_tbl["dynamics_mask"].reindex(_pd_tbl.index, fill_value=False)
-            if bool(_pd_tbl_m.any()):
-                _pd_tbl = _pd_tbl.loc[_pd_tbl_m.fillna(False)].copy()
+            if _pd_masks_delay is not None:
+                _pd_tbl_m = _pd_masks_delay["dynamics_mask"].reindex(
+                    _pd_tbl.index, fill_value=False
+                )
+                if bool(_pd_tbl_m.any()):
+                    _pd_tbl = _pd_tbl.loc[_pd_tbl_m.fillna(False)].copy()
             _pd_tbl = _pd_tbl.assign(
                 _ord=pd.to_numeric(_pd_tbl["_dev_end_n"], errors="coerce").fillna(-(10**9))
             ).sort_values("_ord", ascending=True).drop(columns=["_ord"])
@@ -24659,6 +24708,44 @@ def dashboard_executive_documentation(df):
     st.markdown("</div>", unsafe_allow_html=True)
 
 
+def _sync_multiselect_session_state(
+    key: str,
+    options: list,
+    *,
+    all_by_default: bool = True,
+) -> None:
+    """Сбросить устаревшие значения multiselect после смены списка options."""
+    if not options:
+        if key in st.session_state:
+            st.session_state[key] = []
+        return
+    opt_set = set(options)
+    if key not in st.session_state:
+        st.session_state[key] = list(options) if all_by_default else []
+        return
+    prev = st.session_state.get(key)
+    if not isinstance(prev, list):
+        st.session_state[key] = list(options) if all_by_default else []
+        return
+    clean = [v for v in prev if v in opt_set]
+    st.session_state[key] = clean if clean else (list(options) if all_by_default else [])
+
+
+def _sync_selectbox_session_state(
+    key: str,
+    options: list,
+    *,
+    fallback: str = "Все",
+) -> None:
+    """Сбросить устаревшее значение selectbox, если его нет в options."""
+    if not options:
+        return
+    opt_set = set(options)
+    fb = fallback if fallback in opt_set else options[0]
+    if key not in st.session_state or st.session_state[key] not in opt_set:
+        st.session_state[key] = fb
+
+
 def _pd_msp_immediate_parent_names(
     df: pd.DataFrame, level_col: str, name_col: str
 ) -> pd.Series:
@@ -24737,11 +24824,23 @@ def _pd_msp_ancestor_under_pd_stage(
     return pd.Series(out, index=df.index)
 
 
+def _pd_msp_parent_is_pd_stage(parent_name: str) -> bool:
+    """Родитель ур.4 «Этап … Проектная документация» (без корректировок и смешанных этапов)."""
+    s = str(parent_name or "").casefold()
+    if "этап" not in s or "проектная документация" not in s:
+        return False
+    if "корректиров" in s:
+        return False
+    if "рабоч" in s:
+        return False
+    return True
+
+
 def _pd_section_masks(df: pd.DataFrame) -> dict:
     """
     Маски ПД по ТЗ:
     - metrics: Уровень_структуры=4 + шифр + ветка ПД
-    - dynamics: Уровень=5 + «Раздел» в названии + шифр + ветка ПД
+    - dynamics: Уровень=5 + шифр + родитель «Этап Проектная документация» (ур.4)
     """
     hier_col, outline_col, level_col, name_col, block_col = _pd_msp_hierarchy_cols(df)
     cipher_col, cipher_ok = _pd_cipher_filled_mask(df)
@@ -24780,13 +24879,9 @@ def _pd_section_masks(df: pd.DataFrame) -> dict:
             & cipher_m
         )
     if level_col and level_col in df.columns:
-        tn = df[name_col].astype(str)
-        result["dynamics_mask"] = (
-            lv_num.eq(5)
-            & tn.str.contains("Раздел", case=False, na=False)
-            & ancestor_pd
-            & cipher_m
-        )
+        parent_names = _pd_msp_immediate_parent_names(df, hier_col, name_col)
+        parent_pd_stage = parent_names.map(_pd_msp_parent_is_pd_stage)
+        result["dynamics_mask"] = lv_num.eq(5) & parent_pd_stage & cipher_m
     return result
 
 
@@ -25618,15 +25713,12 @@ def dashboard_documentation(
                             },
                             key=lambda x: x.casefold(),
                         )
-                _sec_default = st.session_state.get(
-                    f"{_doc_fk}section_filter_ms",
-                    section_options,
-                )
+                _sec_ms_key = f"{_doc_fk}section_filter_ms"
+                _sync_multiselect_session_state(_sec_ms_key, section_options)
                 selected_sections_doc = st.multiselect(
                     "Вид раздела",
                     options=section_options,
-                    default=_sec_default,
-                    key=f"{_doc_fk}section_filter_ms",
+                    key=_sec_ms_key,
                     placeholder="Все разделы",
                     help="Шифр раздела и наименование через пробел.",
                 )
@@ -25639,15 +25731,12 @@ def dashboard_documentation(
                     },
                     key=lambda x: x.casefold(),
                 )
-                _sec_default = st.session_state.get(
-                    f"{_doc_fk}section_filter_ms",
-                    section_options,
-                )
+                _sec_ms_key = f"{_doc_fk}section_filter_ms"
+                _sync_multiselect_session_state(_sec_ms_key, section_options)
                 selected_sections_doc = st.multiselect(
                     "Вид раздела",
                     options=section_options,
-                    default=_sec_default,
-                    key=f"{_doc_fk}section_filter_ms",
+                    key=_sec_ms_key,
                     placeholder="Все разделы",
                 )
             else:
@@ -25663,15 +25752,12 @@ def dashboard_documentation(
                     },
                     key=lambda x: x.casefold(),
                 )
-                _sec_default = st.session_state.get(
-                    f"{_doc_fk}section_filter_ms",
-                    section_options,
-                )
+                _sec_ms_key = f"{_doc_fk}section_filter_ms"
+                _sync_multiselect_session_state(_sec_ms_key, section_options)
                 selected_sections_doc = st.multiselect(
                     "Раздел",
                     options=section_options,
-                    default=_sec_default,
-                    key=f"{_doc_fk}section_filter_ms",
+                    key=_sec_ms_key,
                     placeholder="Все разделы",
                     help="Подпись: шифр раздела и наименование через пробел.",
                 )
@@ -25684,15 +25770,12 @@ def dashboard_documentation(
                     },
                     key=lambda x: x.casefold(),
                 )
-                _sec_default = st.session_state.get(
-                    f"{_doc_fk}section_filter_ms",
-                    section_options,
-                )
+                _sec_ms_key = f"{_doc_fk}section_filter_ms"
+                _sync_multiselect_session_state(_sec_ms_key, section_options)
                 selected_sections_doc = st.multiselect(
                     "Раздел",
                     options=section_options,
-                    default=_sec_default,
-                    key=f"{_doc_fk}section_filter_ms",
+                    key=_sec_ms_key,
                     placeholder="Все разделы",
                 )
             else:
