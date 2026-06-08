@@ -22491,6 +22491,12 @@ def dashboard_debit_credit(df):
     work = data.copy()
     work.columns = [str(c).strip() for c in work.columns]
 
+    def _dc_clean_project_val(v) -> str:
+        s = str(v or "").strip()
+        if not s or s.lower() in ("nan", "none", "nat", "<na>"):
+            return ""
+        return s
+
     contractor_col = _find_col(work, ["Название контрагента", "Название организации", "подрядчик", "Подрядчик", "contractor", "Организация"])
     project_col = _find_project_display_col(work) or _find_col(
         work,
@@ -22558,8 +22564,9 @@ def dashboard_debit_credit(df):
             work["_project_mapped"] = work[contractor_col].map(
                 lambda x: merged.get(norm_partner_join_key(x), "")
             )
-            project_col = "_project_mapped"
-            project_from_reference = True
+            if work["_project_mapped"].map(_dc_clean_project_val).ne("").any():
+                project_col = "_project_mapped"
+                project_from_reference = True
     _proj_name_lookup: dict[str, str] = {}
     try:
         _proj_name_lookup = _load_project_id_to_name_lookup()
@@ -22692,8 +22699,59 @@ def dashboard_debit_credit(df):
             return m2.group(0).strip().lower()
         return ""
 
-    if not project_col or project_col not in work.columns:
-        # Шаг 1 — из Dogovor.json
+    def _dc_project_col_has_data(col) -> bool:
+        if not col or col not in work.columns:
+            return False
+        return work[col].map(_dc_clean_project_val).ne("").any()
+
+    def _dc_project_from_contract_text(text, known_names: list[str]) -> str:
+        raw = str(text or "")
+        low = raw.casefold().replace("ё", "е")
+        for name in sorted(known_names, key=len, reverse=True):
+            nlow = name.casefold().replace("ё", "е")
+            if nlow in low:
+                return name
+            ncompact = re.sub(r"[\s\-]+", "", nlow)
+            if ncompact and ncompact in re.sub(r"[\s\-]+", "", low):
+                return name
+        m = re.search(r"есипово[\s\-]*(\d+)", low)
+        if m:
+            return f"Есипово-{m.group(1)}"
+        m = re.search(r"дмитровский[\s\-]*(\d+)", low)
+        if m:
+            return f"Дмитровский-{m.group(1)}"
+        if "ленинский" in low:
+            return "Ленинский"
+        return ""
+
+    _known_project_names = sorted(
+        {str(v).strip() for v in (_proj_name_lookup or {}).values() if _dc_clean_project_val(v)},
+        key=len,
+        reverse=True,
+    )
+    for _rec in (_dog_lookup_dc or {}).values():
+        _pname = _dc_clean_project_val(_rec.get("Наименование_Проекта"))
+        if _pname and _pname not in _known_project_names:
+            _known_project_names.append(_pname)
+
+    _dog_num_to_project: dict[str, str] = {}
+    _dog_partner_to_project: dict[str, str] = {}
+    for _rec in (_dog_lookup_dc or {}).values():
+        _pname = _dc_clean_project_val(_rec.get("Наименование_Проекта"))
+        if not _pname:
+            continue
+        _num_key = _contract_no_search_key(_rec.get("Номер_Договора"))
+        if _num_key:
+            _dog_num_to_project.setdefault(_num_key, _pname)
+        _name_key = _contract_no_search_key(_rec.get("Наименование_Договора"))
+        if _name_key and _name_key not in _dog_num_to_project:
+            _dog_num_to_project.setdefault(_name_key, _pname)
+        _pk = norm_partner_join_key(_rec.get("Наименование_Контрагента"))
+        if _pk:
+            _dog_partner_to_project.setdefault(_pk, _pname)
+
+    if not _dc_project_col_has_data(project_col):
+        # Шаг 1 — из Dogovor.json по guid договора
         if _dog_lookup_dc:
             def _resolve_project_name(v):
                 if not v:
@@ -22701,19 +22759,42 @@ def dashboard_debit_credit(df):
                 rec = _dog_lookup_dc.get(str(v).strip().lower())
                 if not rec:
                     return ""
-                return str(rec.get("Наименование_Проекта") or "").strip()
+                return _dc_clean_project_val(rec.get("Наименование_Проекта"))
             work["_project_from_dogovor"] = work["_id_dogovor_norm"].map(_resolve_project_name)
         else:
             work["_project_from_dogovor"] = ""
 
+        # 1.1) Dogovor.json по текстовому № договора
+        if contract_col and contract_col in work.columns and _dog_num_to_project:
+            work["_project_from_dogovor_num"] = work[contract_col].map(
+                lambda v: _dog_num_to_project.get(_contract_no_search_key(v), "")
+            )
+        else:
+            work["_project_from_dogovor_num"] = ""
+
+        # 1.2) Dogovor.json по подрядчику
+        if contractor_col and contractor_col in work.columns and _dog_partner_to_project:
+            work["_project_from_dogovor_partner"] = work[contractor_col].map(
+                lambda v: _dog_partner_to_project.get(norm_partner_join_key(_extract_partner_name(v)), "")
+            )
+        else:
+            work["_project_from_dogovor_partner"] = ""
+
+        # 1.3) Из текста № договора в DK (напр. «… (Есипово-5)»)
+        if contract_col and contract_col in work.columns and _known_project_names:
+            work["_project_from_contract_text"] = work[contract_col].map(
+                lambda v: _dc_project_from_contract_text(v, _known_project_names)
+            )
+        else:
+            work["_project_from_contract_text"] = ""
+
         # Правки куратора 08.05.2026: только 5 из 121 ID_Договора в DK совпадают
         # с Dogovor.json — поэтому добавляем основной маппинг по ID_Договора через
         # 1С dannye (где «Проект» проставлен на каждой строке оборотов).
-        #   2.1) dannye: ID_Договора → Проект (по нашему опыту покрытие ~100%).
-        #   2.2) reference_partner_to_project (имя/ID контрагента) — на крайний случай.
         ref_dn = st.session_state.get("reference_1c_dannye")
         _dann_dog_to_project: dict = {}
         _dann_partner_to_project: dict = {}
+        _dann_contract_to_project: dict = {}
         if ref_dn is not None and not getattr(ref_dn, "empty", True):
             try:
                 _rdf = ref_dn.copy()
@@ -22721,18 +22802,28 @@ def dashboard_debit_credit(df):
                 _id_dog_d = _find_col(_rdf, ["ID_Договора", "id_договора", "id_dogovora"])
                 _idc = _find_col(_rdf, ["ID_Контрагента", "id_контрагента"])
                 _prj = _find_col(_rdf, ["Проект", "project name", "Наименование_Проекта"])
+                _dog_txt_d = _find_col(
+                    _rdf,
+                    ["ДоговорКонтрагента", "Договор", "Номер_Договора", "Номер договора"],
+                )
                 if _prj and _id_dog_d:
                     for _, r in _rdf[[_id_dog_d, _prj]].dropna().iterrows():
                         kk = str(r[_id_dog_d]).strip().lower()
-                        vv = str(r[_prj]).strip()
+                        vv = _dc_clean_project_val(r[_prj])
                         if kk and vv:
                             _dann_dog_to_project.setdefault(kk, vv)
                 if _prj and _idc:
                     for _, r in _rdf[[_idc, _prj]].dropna().iterrows():
                         kk = str(r[_idc]).strip().lower()
-                        vv = str(r[_prj]).strip()
+                        vv = _dc_clean_project_val(r[_prj])
                         if kk and vv:
                             _dann_partner_to_project.setdefault(kk, vv)
+                if _prj and _dog_txt_d:
+                    for _, r in _rdf[[_dog_txt_d, _prj]].dropna().iterrows():
+                        kk = _contract_no_search_key(r[_dog_txt_d])
+                        vv = _dc_clean_project_val(r[_prj])
+                        if kk and vv:
+                            _dann_contract_to_project.setdefault(kk, vv)
             except Exception:
                 pass
 
@@ -22743,6 +22834,23 @@ def dashboard_debit_credit(df):
         else:
             work["_project_from_dannye_by_dog"] = ""
 
+        if contract_col and contract_col in work.columns and _dann_contract_to_project:
+            def _project_from_dannye_contract(v) -> str:
+                key = _contract_no_search_key(v)
+                if not key:
+                    return ""
+                if key in _dann_contract_to_project:
+                    return _dann_contract_to_project[key]
+                for _dk, _pv in _dann_contract_to_project.items():
+                    if key in _dk or _dk in key:
+                        return _pv
+                return ""
+            work["_project_from_dannye_by_contract"] = work[contract_col].map(
+                _project_from_dannye_contract
+            )
+        else:
+            work["_project_from_dannye_by_contract"] = ""
+
         pmap = st.session_state.get("reference_partner_to_project") or {}
         if contractor_col and contractor_col in work.columns and (pmap or _dann_partner_to_project):
             def _project_from_partner(v) -> str:
@@ -22752,13 +22860,12 @@ def dashboard_debit_credit(df):
                 pname = _extract_partner_name(v)
                 k = norm_partner_join_key(pname)
                 if k and k in pmap:
-                    return str(pmap[k])
+                    return _dc_clean_project_val(pmap[k])
                 return ""
             work["_project_from_partner"] = work[contractor_col].map(_project_from_partner)
         else:
             work["_project_from_partner"] = ""
 
-        # Также прямой ID_Контрагента из flatten DK (если есть отдельной колонкой).
         _id_partner_col_dk = _find_col(
             work,
             [
@@ -22774,21 +22881,27 @@ def dashboard_debit_credit(df):
         else:
             work["_project_from_partner_id_dk"] = ""
 
-        # Финальная колонка: каскад dogovor → dannye(dogovor) → partner_id_dk → partner_name.
-        work["_project_resolved"] = work["_project_from_dogovor"].astype(str).str.strip()
-        _empty = work["_project_resolved"].eq("")
-        work.loc[_empty, "_project_resolved"] = (
-            work.loc[_empty, "_project_from_dannye_by_dog"].astype(str).str.strip()
+        def _dc_cascade_pick(*vals) -> str:
+            for v in vals:
+                s = _dc_clean_project_val(v)
+                if s:
+                    return s
+            return ""
+
+        work["_project_resolved"] = work.apply(
+            lambda r: _dc_cascade_pick(
+                r.get("_project_from_dogovor"),
+                r.get("_project_from_dogovor_num"),
+                r.get("_project_from_dannye_by_dog"),
+                r.get("_project_from_dannye_by_contract"),
+                r.get("_project_from_contract_text"),
+                r.get("_project_from_partner_id_dk"),
+                r.get("_project_from_dogovor_partner"),
+                r.get("_project_from_partner"),
+            ),
+            axis=1,
         )
-        _empty = work["_project_resolved"].eq("")
-        work.loc[_empty, "_project_resolved"] = (
-            work.loc[_empty, "_project_from_partner_id_dk"].astype(str).str.strip()
-        )
-        _empty = work["_project_resolved"].eq("")
-        work.loc[_empty, "_project_resolved"] = (
-            work.loc[_empty, "_project_from_partner"].astype(str).str.strip()
-        )
-        if (work["_project_resolved"].astype(str).str.strip() != "").any():
+        if _dc_project_col_has_data("_project_resolved"):
             project_col = "_project_resolved"
             project_from_reference = True
     paid_col = _find_col(work, ["Выплачено", "выплачено", "Выплаченная сумма", "ВсегоОплат", "paid"])
@@ -22865,6 +22978,8 @@ def dashboard_debit_credit(df):
     work["_dc_period_dt"] = pd.NaT
     if _dc_date_contract and _dc_date_contract in work.columns:
         work["_dc_period_dt"] = pd.to_datetime(work[_dc_date_contract], errors="coerce", dayfirst=True)
+        _dc_sentinel_mask = work["_dc_period_dt"].notna() & (work["_dc_period_dt"].dt.year <= 1)
+        work.loc[_dc_sentinel_mask, "_dc_period_dt"] = pd.NaT
 
     # Правки куратора 08.05.2026: считаем «Выполнено (КС-2)» из 1С dannye.
     # КС-2 = sum(Сумма) по строкам, у которых СтатьяОборотов содержит
@@ -22999,6 +23114,18 @@ def dashboard_debit_credit(df):
     if _ks2_diag.get("reason"):
         suppress_caption(f"КС-2 (из dannye): {_ks2_diag['reason']}")
 
+    _num_adv_fulfilled = (
+        work[f"_num_{advance_col}"]
+        if advance_col and f"_num_{advance_col}" in work.columns
+        else pd.Series(0.0, index=work.index)
+    )
+    _num_ks2_fulfilled = (
+        work["_num_ks2"]
+        if "_num_ks2" in work.columns
+        else pd.Series(0.0, index=work.index)
+    )
+    work["_num_fulfilled"] = _num_adv_fulfilled.fillna(0.0) + _num_ks2_fulfilled.fillna(0.0)
+
     issue_start = None
     issue_end = None
 
@@ -23036,9 +23163,10 @@ def dashboard_debit_credit(df):
                     placeholder="Все договоры",
                 )
             with fp4:
-                if work["_dc_period_dt"].notna().any():
-                    mn = work["_dc_period_dt"].min().date()
-                    mx = work["_dc_period_dt"].max().date()
+                _dc_valid_period = work["_dc_period_dt"].dropna()
+                if _dc_valid_period.notna().any():
+                    mn = _dc_valid_period.min().date()
+                    mx = _dc_valid_period.max().date()
                     dr = st.date_input(
                         "Период",
                         value=(mn, mx),
@@ -23335,17 +23463,31 @@ def dashboard_debit_credit(df):
     table_group_cols = [contract_col]
     if contractor_col:
         table_group_cols = [contractor_col, contract_col]
-    if contractor_col and project_col and project_col in filtered.columns:
-        table_group_cols = [project_col, contractor_col, contract_col]
+    _tbl_proj_lookup: dict[tuple[str, str], str] = {}
+    if (
+        project_col
+        and project_col in filtered.columns
+        and contractor_col
+        and contract_col
+        and contractor_col in filtered.columns
+        and contract_col in filtered.columns
+    ):
+        for _, _pr in filtered[[contractor_col, contract_col, project_col]].iterrows():
+            _pk = (str(_pr[contractor_col]).strip(), str(_pr[contract_col]).strip())
+            _pv = _dc_clean_project_val(_pr[project_col])
+            if _pv and _pk[0] and _pk[1]:
+                _tbl_proj_lookup.setdefault(_pk, _pv)
     tbl_built = {}
     # Правки куратора 08.05.2026: всё в млн руб., до десятых.
     # Структура столбцов по ТЗ:
     #   Договор стоимость | Всего выполненных обязательств по платежам | Аванс |
-    #   Выполнено (КС-2) | Остаток | Отклонение (КС-2 − Договор) | КС-2 − Аванс
+    #   Выполнено (КС-2) | Остаток | КС-2 − Аванс
     if total_col and f"_num_{total_col}" in filtered.columns:
         tbl_built["Договор стоимость"] = filtered.groupby(table_group_cols)[f"_num_{total_col}"].sum() / _SCALE_MLN
-    if paid_col and f"_num_{paid_col}" in filtered.columns:
-        tbl_built["Всего выполненных обязательств по платежам"] = filtered.groupby(table_group_cols)[f"_num_{paid_col}"].sum() / _SCALE_MLN
+    if "_num_fulfilled" in filtered.columns:
+        tbl_built["Всего выполненных обязательств по платежам"] = (
+            filtered.groupby(table_group_cols)["_num_fulfilled"].sum() / _SCALE_MLN
+        )
     if advance_col and f"_num_{advance_col}" in filtered.columns:
         tbl_built["Аванс"] = filtered.groupby(table_group_cols)[f"_num_{advance_col}"].sum() / _SCALE_MLN
     if "_num_ks2" in filtered.columns:
@@ -23359,8 +23501,6 @@ def dashboard_debit_credit(df):
         return
     table_df = pd.DataFrame(tbl_built).reset_index()
     rename_map = {}
-    if project_col and project_col in table_df.columns:
-        rename_map[project_col] = "Проект"
     if contractor_col and contractor_col in table_df.columns:
         rename_map[contractor_col] = "Подрядчик"
     if contract_col and contract_col in table_df.columns:
@@ -23369,6 +23509,16 @@ def dashboard_debit_credit(df):
         table_df = table_df.rename(columns=rename_map)
     elif contract_col and contract_col in table_df.columns:
         table_df = table_df.rename(columns={contract_col: "Договор"})
+    if _tbl_proj_lookup and "Подрядчик" in table_df.columns and "Договор" in table_df.columns:
+        table_df["Проект"] = table_df.apply(
+            lambda r: _tbl_proj_lookup.get(
+                (str(r.get("Подрядчик", "")).strip(), str(r.get("Договор", "")).strip()),
+                "",
+            ),
+            axis=1,
+        )
+    elif project_col and project_col in table_df.columns:
+        table_df = table_df.rename(columns={project_col: "Проект"})
     # Убираем пустые ключи группировки, чтобы не было «пустой строки» в начале таблицы.
     if "Подрядчик" in table_df.columns:
         table_df = table_df[
@@ -23386,16 +23536,8 @@ def dashboard_debit_credit(df):
     group_dim_cols = [c for c in ("Проект", "Подрядчик", "Договор") if c in table_df.columns]
     value_cols_t = [c for c in table_df.columns if c not in group_dim_cols]
 
-    # Правки куратора 08.05.2026: расчётные колонки «Отклонение» и «КС-2 − Аванс».
-    # «Отклонение» = «Выполнено (КС-2)» − «Договор стоимость» (≥0 — зел., <0 — красн.)
+    # Правки куратора 08.05.2026: расчётная колонка «КС-2 − Аванс».
     # «КС-2 − Аванс» = «Выполнено (КС-2)» − «Аванс».
-    if "Выполнено (КС-2)" in value_cols_t and "Договор стоимость" in value_cols_t:
-        table_df["Отклонение"] = pd.to_numeric(
-            table_df["Выполнено (КС-2)"], errors="coerce"
-        ).fillna(0.0) - pd.to_numeric(
-            table_df["Договор стоимость"], errors="coerce"
-        ).fillna(0.0)
-        value_cols_t.append("Отклонение")
     if "Выполнено (КС-2)" in value_cols_t and "Аванс" in value_cols_t:
         table_df["КС-2 − Аванс"] = pd.to_numeric(
             table_df["Выполнено (КС-2)"], errors="coerce"
@@ -23445,9 +23587,7 @@ def dashboard_debit_credit(df):
     table_df = pd.concat([table_df, pd.DataFrame([total_row])], ignore_index=True)
     display_df = table_df.copy()
     if "Проект" in display_df.columns:
-        _proj_s = display_df["Проект"].astype(str).str.strip()
-        _proj_s = _proj_s.mask(_proj_s.str.lower().isin(("nan", "none", "")), "")
-        display_df["Проект"] = _proj_s.replace("", pd.NA).ffill().fillna("")
+        display_df["Проект"] = display_df["Проект"].map(_dc_clean_project_val)
     for col in value_cols_t:
         display_df[col] = display_df[col].apply(
             lambda x: f"{float(x):.1f}" if pd.notna(x) and not isinstance(x, str) else x
@@ -23460,7 +23600,6 @@ def dashboard_debit_credit(df):
         "Аванс ≥60%",
         "Выполнено (КС-2)",
         "Остаток",
-        "Отклонение",
         "КС-2 − Аванс",
     ]
     final_order = [c for c in group_dim_cols if c in display_df.columns]
@@ -23474,11 +23613,11 @@ def dashboard_debit_credit(df):
     suppress_caption(
         f"Строк данных: {_n_data_rows} • Финансы — млн руб., до десятых • "
         "Строка «ИТОГО» закреплена внизу при прокрутке; "
-        "колонки «Остаток», «Отклонение», «КС-2 − Аванс» — прокрутите таблицу вправо →"
+        "колонки «Остаток», «КС-2 − Аванс» — прокрутите таблицу вправо →"
     )
     _render_budget_table_html(
             display_df,
-            finance_deviation_column="Отклонение",
+            finance_deviation_column=None,
             deviation_abs_min_mln=0.01,
             file_stem="debit_credit",
             key_prefix="debit_credit",
