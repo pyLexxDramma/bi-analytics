@@ -32594,9 +32594,7 @@ def _pred_status_chip_html(status: str, overdue_days, resolved: bool) -> str:
     s = str(status or "").strip() or "Неизвестно"
     if resolved:
         return f'<span class="pred-chip pred-chip-ok">{esc(s)}</span>'
-    if pd.notna(pd.to_numeric(overdue_days, errors="coerce")) and float(pd.to_numeric(overdue_days, errors="coerce")) > 0:
-        return f'<span class="pred-chip pred-chip-overdue">{esc(s)}</span>'
-    return f'<span class="pred-chip pred-chip-neutral">{esc(s)}</span>'
+    return f'<span class="pred-chip pred-chip-overdue">{esc(s)}</span>'
 
 
 def _pred_detail_col_class(col_name: str) -> str:
