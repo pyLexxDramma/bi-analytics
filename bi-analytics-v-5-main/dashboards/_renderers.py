@@ -25641,6 +25641,48 @@ def _pd_cumsum_by_granularity(dates, row_mask, gran_key: str):
     return daily[["Дата", "Количество"]]
 
 
+def _pd_pick_finish_col(
+    df: pd.DataFrame,
+    row_mask: pd.Series,
+    *,
+    baseline_col: Optional[str],
+    schedule_col: Optional[str],
+) -> Optional[str]:
+    """Колонка даты окончания с наибольшим числом валидных дат на строках маски."""
+    m = row_mask.fillna(False)
+    best_col: Optional[str] = None
+    best_n = -1
+    for cand in (baseline_col, schedule_col):
+        if not cand or cand not in df.columns:
+            continue
+        dt = pd.to_datetime(df[cand], errors="coerce", dayfirst=True, format="mixed")
+        n = int((m & dt.notna()).sum()) if m.any() else int(dt.notna().sum())
+        if n > best_n:
+            best_n = n
+            best_col = cand
+    return best_col
+
+
+def _pd_dynamics_chart_row_mask(
+    metrics_mask: pd.Series,
+    dynamics_mask: pd.Series,
+    finish_dates,
+) -> tuple:
+    """Маска строк для накопительного графика ПД (fallback на metrics при пустой dynamics)."""
+    m_met = metrics_mask.fillna(False)
+    m_dyn = dynamics_mask.fillna(False)
+    dt = pd.to_datetime(finish_dates, errors="coerce", dayfirst=True, format="mixed")
+
+    def _dated_count(mask: pd.Series) -> int:
+        return int((mask & dt.notna()).sum())
+
+    if _dated_count(m_dyn) > 0:
+        return m_dyn, False
+    if _dated_count(m_met) > 0:
+        return m_met, True
+    return (m_dyn if m_dyn.any() else m_met), not bool(m_dyn.any())
+
+
 def _pd_axis_date_tick_label_ru(ts: Any) -> str:
     """Подпись даты на оси графика ПД: «2 мар. 2025» (рус.)."""
     t = pd.Timestamp(ts)
@@ -26982,6 +27024,38 @@ def dashboard_documentation(
                 s_fin_col = _pd_msp_find_schedule_finish_col(df)
                 if s_fin_col is None and plan_end_col and plan_end_col in df.columns:
                     s_fin_col = plan_end_col
+                _plan_end_ref = (
+                    plan_end_col if plan_end_col and plan_end_col in df.columns else None
+                )
+                m_met_pre = pd_metrics_mask.fillna(False)
+                _b_base_raw = _pd_msp_find_baseline_finish_col(df)
+                b_fin_col = (
+                    _pd_pick_finish_col(
+                        df,
+                        m_met_pre,
+                        baseline_col=b_fin_col,
+                        schedule_col=_plan_end_ref,
+                    )
+                    or b_fin_col
+                )
+                s_fin_col = (
+                    _pd_pick_finish_col(
+                        df,
+                        m_met_pre,
+                        baseline_col=s_fin_col,
+                        schedule_col=_plan_end_ref,
+                    )
+                    or s_fin_col
+                )
+                if (
+                    b_fin_col
+                    and _b_base_raw
+                    and b_fin_col != _b_base_raw
+                ):
+                    suppress_caption(
+                        "Колонка «Базовое окончание» без дат по разделам ПД — "
+                        "для графика и KPI используется plan end."
+                    )
                 pct_col = _pd_msp_pct_complete_col(df)
                 if pct_col and pct_col in df.columns:
                     pc = pd.to_numeric(df[pct_col], errors='coerce').fillna(0.0)
@@ -27013,9 +27087,20 @@ def dashboard_documentation(
                     }
                     gran_key, mult_nec, win_days = _gran_cfg[granularity_label]
 
-                    plan_curve = _pd_cumsum_by_granularity(df[b_fin_col], pd_section_mask, gran_key)
+                    pd_chart_mask, _chart_mask_fb = _pd_dynamics_chart_row_mask(
+                        pd_metrics_mask,
+                        pd_section_mask,
+                        df[b_fin_col] if b_fin_col and b_fin_col in df.columns else pd.Series(index=df.index),
+                    )
+                    if _chart_mask_fb:
+                        suppress_caption(
+                            "График строится по разделам ур.4 (как KPI): для задач ур.5 "
+                            "нет валидных дат окончания."
+                        )
+
+                    plan_curve = _pd_cumsum_by_granularity(df[b_fin_col], pd_chart_mask, gran_key)
                     plan_curve["Тип"] = "План по проекту (БП)"
-                    fcst_curve = _pd_cumsum_by_granularity(df[s_fin_col], pd_section_mask, gran_key)
+                    fcst_curve = _pd_cumsum_by_granularity(df[s_fin_col], pd_chart_mask, gran_key)
                     fcst_curve["Тип"] = "Прогноз по проекту"
                     curves = [plan_curve, fcst_curve]
                     dynamics_df = pd.concat(curves, ignore_index=True)
@@ -27041,7 +27126,7 @@ def dashboard_documentation(
                     today = date.today()
                     ts_today = pd.Timestamp(today)
                     m_met = pd_metrics_mask.fillna(False)
-                    m_sec = pd_section_mask.fillna(False)
+                    m_sec = pd_chart_mask.fillna(False)
                     plan_total = float(m_met.sum())
                     plan_to_date = int(
                         (m_met & bf.notna() & (bf.dt.normalize() <= ts_today)).sum()
@@ -27109,70 +27194,76 @@ def dashboard_documentation(
                     dynamics_df["Текст"] = dynamics_df["Количество"].apply(
                         lambda x: f"{x:.0f}" if pd.notna(x) and float(x) != 0.0 else ""
                     )
-                    fig_dynamics = px.line(
-                        dynamics_df,
-                        x="Дата",
-                        y="Количество",
-                        color="Тип",
-                        title=None,
-                        markers=True,
-                        labels={"Количество": "Количество разделов ПД", "Дата": "Дата"},
-                        text="Текст",
-                        color_discrete_map={
-                            "План по проекту (БП)": "#2E86AB",
-                            "Прогноз по проекту": "#F39C12",
-                        },
-                    )
-                    _pd_dates_axis = pd.to_datetime(dynamics_df["Дата"], errors="coerce").dropna().sort_values().unique()
-                    _pd_tickvals = [pd.Timestamp(x) for x in _pd_dates_axis]
-                    if len(_pd_tickvals) > 52:
-                        _pd_ix = np.linspace(0, len(_pd_tickvals) - 1, num=52, dtype=int)
-                        _pd_tickvals = [_pd_tickvals[int(i)] for i in sorted(set(_pd_ix))]
-                    _pd_ticktext = [_pd_axis_date_tick_label_ru(v) for v in _pd_tickvals]
-                    _pd_y = pd.to_numeric(dynamics_df["Количество"], errors="coerce").dropna()
-                    _pd_y_max = float(_pd_y.max()) if not _pd_y.empty else 1.0
-                    _pd_y_min = float(_pd_y.min()) if not _pd_y.empty else 0.0
-                    _pd_span = max(_pd_y_max - _pd_y_min, 1.0)
-                    _pd_foot = max(_pd_span * 0.12, _pd_y_max * 0.08, 4.0)
-                    _pd_head = max(_pd_span * 0.12, _pd_y_max * 0.08, 2.0)
-                    _pd_y_lo = (
-                        _pd_y_min - _pd_foot
-                        if _pd_y_min >= 0
-                        else _pd_y_min - max(_pd_foot, abs(_pd_y_min) * 0.15)
-                    )
-                    fig_dynamics.update_layout(
-                        margin=dict(l=56, r=36, t=48, b=138),
-                        yaxis_title="Количество разделов ПД",
-                        hovermode="x unified",
-                        height=550,
-                        xaxis=dict(
-                            title=dict(text="Период", standoff=56),
-                            tickmode="array",
-                            tickvals=_pd_tickvals,
-                            ticktext=_pd_ticktext,
-                            tickangle=-45,
-                            tickfont=dict(size=10),
-                            automargin=False,
-                        ),
-                        yaxis=dict(
+                    if plan_curve.empty and fcst_curve.empty:
+                        st.warning(
+                            "Нет данных с датами для графика «Динамика выдачи ПД» "
+                            "(проверьте базовое/плановое окончание в MSP)."
+                        )
+                    else:
+                        fig_dynamics = px.line(
+                            dynamics_df,
+                            x="Дата",
+                            y="Количество",
+                            color="Тип",
+                            title=None,
+                            markers=True,
+                            labels={"Количество": "Количество разделов ПД", "Дата": "Дата"},
+                            text="Текст",
+                            color_discrete_map={
+                                "План по проекту (БП)": "#2E86AB",
+                                "Прогноз по проекту": "#F39C12",
+                            },
+                        )
+                        _pd_dates_axis = pd.to_datetime(dynamics_df["Дата"], errors="coerce").dropna().sort_values().unique()
+                        _pd_tickvals = [pd.Timestamp(x) for x in _pd_dates_axis]
+                        if len(_pd_tickvals) > 52:
+                            _pd_ix = np.linspace(0, len(_pd_tickvals) - 1, num=52, dtype=int)
+                            _pd_tickvals = [_pd_tickvals[int(i)] for i in sorted(set(_pd_ix))]
+                        _pd_ticktext = [_pd_axis_date_tick_label_ru(v) for v in _pd_tickvals]
+                        _pd_y = pd.to_numeric(dynamics_df["Количество"], errors="coerce").dropna()
+                        _pd_y_max = float(_pd_y.max()) if not _pd_y.empty else 1.0
+                        _pd_y_min = float(_pd_y.min()) if not _pd_y.empty else 0.0
+                        _pd_span = max(_pd_y_max - _pd_y_min, 1.0)
+                        _pd_foot = max(_pd_span * 0.12, _pd_y_max * 0.08, 4.0)
+                        _pd_head = max(_pd_span * 0.12, _pd_y_max * 0.08, 2.0)
+                        _pd_y_lo = (
+                            _pd_y_min - _pd_foot
+                            if _pd_y_min >= 0
+                            else _pd_y_min - max(_pd_foot, abs(_pd_y_min) * 0.15)
+                        )
+                        fig_dynamics.update_layout(
+                            margin=dict(l=56, r=36, t=48, b=138),
+                            yaxis_title="Количество разделов ПД",
+                            hovermode="x unified",
+                            height=550,
+                            xaxis=dict(
+                                title=dict(text="Период", standoff=56),
+                                tickmode="array",
+                                tickvals=_pd_tickvals,
+                                ticktext=_pd_ticktext,
+                                tickangle=-45,
+                                tickfont=dict(size=10),
+                                automargin=False,
+                            ),
+                            yaxis=dict(
+                                range=[_pd_y_lo, _pd_y_max + _pd_head],
+                                autorange=False,
+                            ),
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, title_text=""),
+                        )
+                        fig_dynamics.update_traces(
+                            line=dict(width=2),
+                            marker=dict(size=6),
+                            mode="lines+markers+text",
+                            textposition="top center",
+                            textfont=dict(size=10, color="white"),
+                        )
+                        fig_dynamics = apply_chart_background(fig_dynamics)
+                        fig_dynamics.update_yaxes(
                             range=[_pd_y_lo, _pd_y_max + _pd_head],
                             autorange=False,
-                        ),
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, title_text=""),
-                    )
-                    fig_dynamics.update_traces(
-                        line=dict(width=2),
-                        marker=dict(size=6),
-                        mode="lines+markers+text",
-                        textposition="top center",
-                        textfont=dict(size=10, color="white"),
-                    )
-                    fig_dynamics = apply_chart_background(fig_dynamics)
-                    fig_dynamics.update_yaxes(
-                        range=[_pd_y_lo, _pd_y_max + _pd_head],
-                        autorange=False,
-                    )
-                    render_chart(fig_dynamics, caption_below="Динамика выдачи ПД")
+                        )
+                        render_chart(fig_dynamics, caption_below="Динамика выдачи ПД")
 
                     render_table_subheader(st, "Таблица по проектной документации")
                     idx_sec = df.index[m_met.fillna(False)]
