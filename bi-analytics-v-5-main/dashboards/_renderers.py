@@ -14005,8 +14005,7 @@ def _rd_plan_fallback_view(
     else:
         df["_fact_dt"] = pd.NaT
 
-    _src_glob = "other_*_pd.csv" if source_key == "pd_plan_data" else "other_*_rd.csv"
-    st.subheader(f"План выдачи {doc_code} (источник: `web/AI/{_src_glob}`)")
+    st.subheader(f"План выдачи {doc_code}")
 
     if proj_col and proj_col in df.columns:
         try:
@@ -14575,12 +14574,19 @@ def _rd_plan_fallback_view(
                     text="Текст",
                     color_discrete_map={"План": "#2E86AB", "Факт": "#F39C12"},
                 )
+                _rd_tickvals, _rd_ticktext = _rd_dynamics_chart_month_ticks_ru(dynamics_df["Дата"])
                 fig_fb.update_layout(
                     xaxis_title="Дата (Старт План)",
                     yaxis_title="Количество",
                     hovermode="x unified",
                     height=550,
-                    xaxis=dict(tickangle=-45, tickfont=dict(size=10)),
+                    xaxis=dict(
+                        tickmode="array",
+                        tickvals=_rd_tickvals,
+                        ticktext=_rd_ticktext,
+                        tickangle=-45,
+                        tickfont=dict(size=10),
+                    ),
                     yaxis=dict(rangemode="tozero"),
                     legend=dict(
                         orientation="h",
@@ -24992,6 +24998,22 @@ def _pd_axis_date_tick_label_ru(ts: Any) -> str:
     return f"{int(t.day)} {short} {int(t.year)}"
 
 
+def _rd_dynamics_chart_month_ticks_ru(dates) -> tuple[list, list]:
+    """Подписи оси X для «Динамика выдачи РД»: «Май 2025» (рус.)."""
+    all_dates = pd.to_datetime(dates, errors="coerce").dropna()
+    if all_dates.empty:
+        return [], []
+    p_min = all_dates.min().to_period("M")
+    p_max = all_dates.max().to_period("M")
+    periods = pd.period_range(p_min, p_max, freq="M")
+    tickvals = [p.to_timestamp() for p in periods]
+    ticktext = [format_period_ru(p) for p in periods]
+    if len(tickvals) > 18:
+        step = max(1, (len(tickvals) + 11) // 12)
+        tickvals = tickvals[::step]
+        ticktext = ticktext[::step]
+    return tickvals, ticktext
+
 # ==================== DASHBOARD 8.7: Documentation ====================
 def dashboard_documentation(
     df,
@@ -26220,12 +26242,19 @@ def dashboard_documentation(
                     color_discrete_map={"План": "#2E86AB", "Факт": _rd_fact_color},
                 )
 
+                _rd_tickvals, _rd_ticktext = _rd_dynamics_chart_month_ticks_ru(dynamics_df["Дата"])
                 fig_dynamics.update_layout(
                     xaxis_title="Дата (Старт План)",
                     yaxis_title="Количество",
                     hovermode="x unified",
                     height=550,
-                    xaxis=dict(tickangle=-45, tickfont=dict(size=10)),
+                    xaxis=dict(
+                        tickmode="array",
+                        tickvals=_rd_tickvals,
+                        ticktext=_rd_ticktext,
+                        tickangle=-45,
+                        tickfont=dict(size=10),
+                    ),
                     yaxis=dict(rangemode="tozero"),
                     legend=dict(
                         orientation="h",
@@ -36777,7 +36806,7 @@ def _gantt_side_date_label_annotation(
         ay=0,
         showarrow=True,
         arrowhead=0,
-        arrowwidth=0,
+        arrowwidth=0.1,
         arrowcolor="rgba(0,0,0,0)",
         font=dict(size=font_size, color=color, family="Arial"),
     )
