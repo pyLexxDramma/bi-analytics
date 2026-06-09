@@ -35948,9 +35948,7 @@ def dashboard_predpisania(df):
         )
         render_chart(fig3, key="pred_by_obj", caption_below="Количество предписаний по объектам")
 
-    render_table_subheader(st, "Детальная таблица по предписаниям")
-    with st.expander("Примечание к таблице", expanded=False):
-        suppress_caption("Клик по заголовку колонки — сортировка по возрастанию/убыванию. Просроченные — розовым, устранённые — салатовым. Колонка «Блок выдачи предписания» — из поля Comment в tessa_*-id.csv / *-rd.csv (пока в карточках часто пусто).")
+    st.subheader("Детальная таблица по предписаниям")
     show = filtered.copy()
     show = show.sort_values(["_critical", "_overdue_days"], ascending=[False, False])
 
