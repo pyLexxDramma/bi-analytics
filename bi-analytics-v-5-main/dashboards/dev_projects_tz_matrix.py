@@ -2917,8 +2917,12 @@ _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS = """
   max-height:calc(100% - 48px)!important;overflow:auto!important;-webkit-overflow-scrolling:touch!important;
 }
 /* Контрольные точки: несколько таблиц в одном iframe */
-.cp-tables-stack{display:flex;flex-direction:column;align-items:stretch;gap:14px;width:100%;
-  padding:0 6px 10px;box-sizing:border-box}
+.cp-tables-stack{display:flex;flex-direction:column;align-items:stretch;gap:40px;width:100%;
+  padding:8px 8px 18px;box-sizing:border-box}
+.cp-table-wrap.cp-table-block{
+  background:#121a24;border:2px solid rgba(255,255,255,0.42);border-radius:10px;
+  padding:12px 14px;box-shadow:0 6px 18px rgba(0,0,0,0.42);isolation:isolate}
+.cp-table-wrap.cp-table-block+.cp-table-wrap.cp-table-block{margin-top:0}
 .matrix-fs-body.cp-body-stack{overflow-x:hidden!important;overflow-y:auto!important;
   -webkit-overflow-scrolling:touch}
 /* Полноэкран — как «Девелоперские проекты»: 100% ширина, центр по вертикали (JS) */
@@ -4353,12 +4357,29 @@ def build_control_points_df(mdf: pd.DataFrame, *, hide_completed: bool = False) 
 
 _CONTROL_POINTS_CSS = """
 <style>
+.cp-tables-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 40px;
+  width: 100%;
+  padding: 8px 8px 18px;
+  box-sizing: border-box;
+}
 .cp-table-wrap {
   overflow-x: auto;
   min-width: 0;
   max-width: 100%;
   scrollbar-width: thin;
   scrollbar-color: rgba(121, 154, 192, 0.5) #141820;
+}
+.cp-table-wrap.cp-table-block {
+  background: #121a24;
+  border: 2px solid rgba(255, 255, 255, 0.42);
+  border-radius: 10px;
+  padding: 12px 14px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.42);
+  isolation: isolate;
 }
 .cp-table-wrap::-webkit-scrollbar {
   height: 10px;
@@ -4495,6 +4516,18 @@ _CONTROL_POINTS_CSS = """
 .cp-table-wrap .rendered-table thead th.cp-col-project,
 .cp-table-wrap .rendered-table tbody td.cp-col-project {
   box-shadow: inset -3px 0 0 #ffffff;
+}
+/* Зазор между блоками вех (горизонтальный) */
+.cp-table-wrap .rendered-table th.cp-ms-sep,
+.cp-table-wrap .rendered-table td.cp-ms-sep {
+  border-left: 16px solid #121a24 !important;
+}
+.cp-table-wrap .rendered-table th.cp-ghead.cp-ms-block.cp-ms-sep {
+  box-shadow: inset 3px 0 0 #ffffff, inset -3px 0 0 #ffffff;
+}
+.cp-table-wrap .rendered-table th.cp-ms-first.cp-ms-sep,
+.cp-table-wrap .rendered-table td.cp-ms-first.cp-ms-sep {
+  box-shadow: inset 3px 0 0 #ffffff;
 }
 /* Закрыто на 100% — оранжевый текст #f09355 в План/Факт */
 .cp-table-wrap .rendered-table td.cp-td-pct-done {
@@ -4948,6 +4981,11 @@ html,body{margin:0;padding:0;background:#0e1520;overflow-x:hidden;overflow-y:aut
    все flex-родители должны иметь min-width:0 (иначе flex-item с width:max-content
    раздвигает родителя, и горизонтальный скролл не появляется). */
 .matrix-fs-root,.matrix-fs-body{min-width:0!important;max-width:100%!important;width:100%!important}
+.cp-tables-stack{display:flex!important;flex-direction:column!important;align-items:stretch!important;
+  gap:40px!important;width:100%!important;padding:8px 8px 18px!important;box-sizing:border-box!important}
+.cp-table-wrap.cp-table-block{background:#121a24!important;border:2px solid rgba(255,255,255,0.42)!important;
+  border-radius:10px!important;padding:12px 14px!important;box-shadow:0 6px 18px rgba(0,0,0,0.42)!important;
+  isolation:isolate!important}
 .cp-table-wrap{width:100%!important;max-width:100%!important;min-width:0!important;
   overflow-x:auto!important;overflow-y:hidden!important;
   -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;
@@ -5019,6 +5057,12 @@ html,body{margin:0;padding:0;background:#0e1520;overflow-x:hidden;overflow-y:aut
   border-right:3px solid #ffffff!important;box-shadow:inset -3px 0 0 #fff}
 .cp-table-wrap .rendered-table thead th.cp-col-project,
 .cp-table-wrap .rendered-table tbody td.cp-col-project{box-shadow:inset -3px 0 0 #fff}
+.cp-table-wrap .rendered-table th.cp-ms-sep,
+.cp-table-wrap .rendered-table td.cp-ms-sep{border-left:16px solid #121a24!important}
+.cp-table-wrap .rendered-table th.cp-ghead.cp-ms-block.cp-ms-sep{
+  box-shadow:inset 3px 0 0 #fff,inset -3px 0 0 #fff}
+.cp-table-wrap .rendered-table th.cp-ms-first.cp-ms-sep,
+.cp-table-wrap .rendered-table td.cp-ms-first.cp-ms-sep{box-shadow:inset 3px 0 0 #fff}
 """
     _head_styles = _cp_css_raw + _sticky_css
 
@@ -5036,14 +5080,16 @@ html,body{margin:0;padding:0;background:#0e1520;overflow-x:hidden;overflow-y:aut
         ]
         for _i, (title, _slug) in enumerate(grp):
             # На каждую веху — 4 подколонки: ● (статус) | План | Факт | Откл.
+            _sep = " cp-ms-sep" if _i > 0 else ""
             thead1.append(
-                f'<th colspan="4" class="cp-ghead cp-ms-block">{esc(title)}</th>'
+                f'<th colspan="4" class="cp-ghead cp-ms-block{_sep}">{esc(title)}</th>'
             )
         sub_headers: List[str] = []
         for _i, (_title, _slug) in enumerate(grp):
+            _sep = " cp-ms-sep" if _i > 0 else ""
             sub_headers.extend(
                 [
-                    '<th class="cp-sub cp-sub-status cp-ms-first" title="Статус вехи">●</th>',
+                    f'<th class="cp-sub cp-sub-status cp-ms-first{_sep}" title="Статус вехи">●</th>',
                     f'<th class="cp-sub">{esc("План")}</th>',
                     f'<th class="cp-sub">{esc("Факт")}</th>',
                     f'<th class="cp-sub cp-ms-last">{esc("Откл.")}</th>',
@@ -5105,7 +5151,8 @@ html,body{margin:0;padding:0;background:#0e1520;overflow-x:hidden;overflow-y:aut
                     quote=True,
                 )
                 _tip = f"Таблица задач по вехе. {dot_al} Откройте кликом или клавишей Enter."
-                status_cell_cls = "cp-col-cell-status cp-ms-first"
+                _sep = " cp-ms-sep" if i > 0 else ""
+                status_cell_cls = f"cp-col-cell-status cp-ms-first{_sep}"
                 cells.append(
                     f'<td class="{status_cell_cls}" title="{esc(_tip)}">'
                     f'<span class="cp-status-hit" data-cp-b64="{_b64_attr}" tabindex="0" role="button" '
@@ -5139,7 +5186,7 @@ html,body{margin:0;padding:0;background:#0e1520;overflow-x:hidden;overflow-y:aut
             + "</table>"
         )
         table_blocks.append(
-            '<div class="rendered-table-wrap cp-table-wrap">' + html_tbl + "</div>"
+            '<div class="rendered-table-wrap cp-table-wrap cp-table-block">' + html_tbl + "</div>"
         )
 
     if not table_blocks:
@@ -5153,8 +5200,9 @@ html,body{margin:0;padding:0;background:#0e1520;overflow-x:hidden;overflow-y:aut
         extra_body_suffix=_CONTROL_POINTS_POPOVER_FRAGMENT + _CONTROL_POINTS_SORT_SCRIPT,
         body_class="cp-body-stack",
     )
-    _gap = 14 * max(0, len(table_blocks) - 1)
-    _iframe_h = min(3200, 52 + len(table_blocks) * _table_h_each + _gap)
+    _gap = 40 * max(0, len(table_blocks) - 1)
+    _card_pad = 24 * len(table_blocks)
+    _iframe_h = min(3200, 52 + len(table_blocks) * _table_h_each + _gap + _card_pad)
     _components.html(_iframe_html, height=_iframe_h, scrolling=False)
 
     drop_ok = [
