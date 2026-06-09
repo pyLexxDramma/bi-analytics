@@ -35912,15 +35912,19 @@ def dashboard_predpisania(df):
             ascending=[False, True],
             kind="mergesort",
         ).drop(columns=["_sort_name"]).reset_index(drop=True)
-        fig3 = px.bar(
-            by_obj,
-            x=obj_col,
-            y="Количество",
-            text="Количество",
-            labels={obj_col: "Объект"},
-            color_discrete_sequence=["#06A77D"],
+        fig3 = go.Figure()
+        fig3.add_trace(
+            go.Bar(
+                x=by_obj[obj_col].astype(str).tolist(),
+                y=by_obj["Количество"].tolist(),
+                text=[str(int(v)) for v in by_obj["Количество"]],
+                textposition="inside",
+                insidetextanchor="middle",
+                textfont=dict(size=22, color="#ffffff", family="Inter, Arial, sans-serif"),
+                marker=dict(color="#06A77D"),
+                hovertemplate="<b>%{x}</b><br>Количество: %{y}<extra></extra>",
+            )
         )
-        fig3.update_traces(textposition="outside", textfont=dict(size=13, color="white"))
         fig3 = _apply_finance_bar_label_layout(fig3)
         fig3 = apply_chart_background(fig3)
         _n_obj = len(by_obj.index)
@@ -35928,12 +35932,18 @@ def dashboard_predpisania(df):
         fig3.update_traces(width=max(0.08, 0.46 / 5), selector=dict(type="bar"))
         fig3.update_layout(
             height=450,
-            xaxis_title="Объект",
+            xaxis_title="",
             yaxis_title="Количество",
-            xaxis_tickangle=-45,
             uirevision="pred_by_obj",
-            xaxis=dict(fixedrange=True, categoryorder="array", categoryarray=by_obj[obj_col].tolist()),
+            xaxis=dict(
+                fixedrange=True,
+                categoryorder="array",
+                categoryarray=by_obj[obj_col].tolist(),
+                tickangle=0,
+                tickfont=dict(size=16, color="#ffffff"),
+            ),
             yaxis=dict(fixedrange=True),
+            margin=dict(l=56, r=36, t=72, b=72),
             **_obj_gaps,
         )
         render_chart(fig3, key="pred_by_obj", caption_below="Количество предписаний по объектам")
