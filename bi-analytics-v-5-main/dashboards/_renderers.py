@@ -32892,7 +32892,7 @@ def _pred_build_seven_column_df(
         contr_s = sub if sub else "—"
         proj_s = pod if pod else "—"
         dog = _pred_fmt_num(_cell(contract_col)) if contract_col and contract_col in show.columns else "—"
-        num = _pred_fmt_num(_cell(doc_num_col)) if doc_num_col and doc_num_col in show.columns else "—"
+        num = _pred_fmt_doc_full(_cell(doc_num_col)) if doc_num_col and doc_num_col in show.columns else "—"
         due_s = _pred_fmt_due(_cell(due_col)) if due_col and due_col in show.columns else ""
         days = _pred_fmt_days_display(_cell("_overdue_days"))
         cv = _cell("_critical")
@@ -33019,10 +33019,9 @@ def _pred_build_detail_table_df(
         overdue_display = _pred_fmt_days_display(overdue_raw)
         if full_doc_col and full_doc_col in show.columns:
             doc_full_s = _pred_fmt_doc_full(row.get(full_doc_col))
-        elif doc_num_col and doc_num_col in show.columns:
-            doc_full_s = _pred_fmt_doc_full(row.get(doc_num_col))
         else:
             doc_full_s = "—"
+        pred_num_raw = row.get(doc_num_col) if doc_num_col and doc_num_col in show.columns else None
         rows.append(
             {
                 "Статус предписания": _pred_status_display_label(row.get("Статус"), resolved=resolved_raw),
@@ -33030,7 +33029,7 @@ def _pred_build_detail_table_df(
                 "Проект": _clean_display_str(row.get(obj_col), empty="—") if obj_col and obj_col in show.columns else "—",
                 "№ договора": _pred_fmt_num(row.get(contract_col)) if contract_col and contract_col in show.columns else "Без номера",
                 "№ документа": doc_full_s,
-                "№ предписания": _pred_fmt_num(row.get(doc_num_col)) if doc_num_col and doc_num_col in show.columns else "Без номера",
+                "№ предписания": _pred_fmt_doc_full(pred_num_raw) if pred_num_raw is not None and not (isinstance(pred_num_raw, float) and pd.isna(pred_num_raw)) and str(pred_num_raw).strip() not in ("", "nan", "None") else "Без номера",
                 "Дата выдачи предписания": _pred_fmt_due(issue_raw),
                 "Блок выдачи предписания": _clean_display_str(block_raw, empty="—"),
                 "Срок устранения": _pred_fmt_due(due_raw),
@@ -33343,7 +33342,7 @@ def _pred_build_overdue_mock_blocks(
             cnum = _pred_fmt_num(r.get(contract_col))
         num = "—"
         if doc_num_col and doc_num_col in d.columns:
-            num = _pred_fmt_num(r.get(doc_num_col))
+            num = _pred_fmt_doc_full(r.get(doc_num_col))
         due_s = ""
         if due_col and due_col in d.columns:
             due_s = _pred_fmt_due(r.get(due_col))
@@ -35225,47 +35224,61 @@ def dashboard_predpisania(df):
             "ДатаИсполнения",
         ],
     )
-    doc_num_col = _tessa_find_column(
+    internal_id_col = _tessa_find_column(
         pred,
-        [
-            "DocNumber",
-            "Номер предписания",
-            "НомерПредписания",
-            "Number",
-            "DirectiveNumber",
-            "НомерПоручения",
-        ],
+        ["InternalID", "Internal Id", "InternalId", "internalid"],
     )
-    full_doc_col = _tessa_find_column(
+    doc_card_col = _tessa_find_column(
         pred,
-        [
-            "FullDocumentNumber",
-            "DocumentFullNumber",
-            "RegNumber",
-            "RegistrationNumber",
-            "РегистрационныйНомерДокумента",
-            "НомерДокументаПолный",
-            "ПолныйНомерДокумента",
-            "FullNumber",
-            "DocRegNumber",
-            "НомерДокумента",
-            "DocumentNumber",
-        ],
+        ["DocNumber", "DocumentNumber", "НомерДокумента"],
     )
+    pred_num_col = internal_id_col
+    if not pred_num_col:
+        pred_num_col = _tessa_find_column(
+            pred,
+            [
+                "Номер предписания",
+                "НомерПредписания",
+                "Number",
+                "DirectiveNumber",
+                "НомерПоручения",
+            ],
+        )
+    if not pred_num_col:
+        for col in pred.columns:
+            k = str(col).strip().lower()
+            if contract_col is not None and str(col) == str(contract_col):
+                continue
+            if internal_id_col is not None and str(col) == str(internal_id_col):
+                continue
+            if doc_card_col is not None and str(col) == str(doc_card_col):
+                continue
+            if "номер" in k and "договор" not in k and "contract" not in k:
+                pred_num_col = col
+                break
+    doc_num_col = pred_num_col
+    full_doc_col = doc_card_col
+    if not full_doc_col:
+        full_doc_col = _tessa_find_column(
+            pred,
+            [
+                "FullDocumentNumber",
+                "DocumentFullNumber",
+                "RegNumber",
+                "RegistrationNumber",
+                "РегистрационныйНомерДокумента",
+                "НомерДокументаПолный",
+                "ПолныйНомерДокумента",
+                "FullNumber",
+                "DocRegNumber",
+            ],
+        )
     if (
         full_doc_col
         and doc_num_col
         and str(full_doc_col).strip() == str(doc_num_col).strip()
     ):
-        full_doc_col = None
-    if not doc_num_col:
-        for col in pred.columns:
-            k = str(col).strip().lower()
-            if contract_col is not None and str(col) == str(contract_col):
-                continue
-            if "номер" in k and "договор" not in k and "contract" not in k:
-                doc_num_col = col
-                break
+        full_doc_col = doc_card_col
 
     # Q30 (08.05.2026): «№ договора» в детальной таблице должен быть текстовым.
     # В TESSA лежит GUID `1C_ID_DOG`; человекочитаемый № берём из `1с_*_Dogovor.json`
@@ -35364,7 +35377,7 @@ def dashboard_predpisania(df):
         if r["_resolved"]:
             d_comp = _pred_row_calendar_date(r.get("_completion_dt"))
             if d_due and d_comp:
-                return (d_comp - d_due).days
+                return max(0, (d_comp - d_due).days)
             return 0
         if d_due and date.today() > d_due:
             return (date.today() - d_due).days
