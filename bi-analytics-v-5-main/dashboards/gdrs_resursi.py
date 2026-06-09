@@ -309,6 +309,9 @@ def _normalize_name_cached(txt: str) -> str:
 _CONTRACT_SIG_RE = re.compile(
     r"(?i)(?<![\w/])(\d{1,4})\s*[-_]\s*[СC]\s*[АA]\s*[/ _]?\s*(\d{2,4})(?![\w/])"
 )
+_CONTRACT_SIG_SKA_RE = re.compile(
+    r"(?i)(?<![\w/])(\d{1,4})\s*[-_]\s*[СC]\s*[КK]\s*[АA]\s*[/ _]?\s*(\d{2,4})(?![\w/])"
+)
 
 
 def contract_signatures(s: object) -> list[str]:
@@ -327,10 +330,12 @@ def contract_signatures(s: object) -> list[str]:
 
 @functools.lru_cache(maxsize=100000)
 def _contract_signatures_cached(txt: str) -> tuple:
-    return tuple(
-        f"{m.group(1)}-са/{m.group(2)}".casefold()
-        for m in _CONTRACT_SIG_RE.finditer(txt)
-    )
+    sigs: list[str] = []
+    for m in _CONTRACT_SIG_RE.finditer(txt):
+        sigs.append(f"{m.group(1)}-са/{m.group(2)}".casefold())
+    for m in _CONTRACT_SIG_SKA_RE.finditer(txt):
+        sigs.append(f"{m.group(1)}-ска/{m.group(2)}".casefold())
+    return tuple(sigs)
 
 
 def _pick_best_articles(arts: set[str], contract_hint: str) -> str:
@@ -915,8 +920,16 @@ def load_plan_from_spravochniki(
 _FILE_DATE_RE = re.compile(r"(\d{2})-(\d{2})-(\d{4})")
 
 
-def _dogovor_file_date(path: Path) -> Optional[pd.Timestamp]:
-    """Дата снапшота из имени файла «1с_DD-MM-YYYY_…» → Timestamp (или None)."""
+def _first_nonempty(series) -> str:
+    for x in series:
+        s = str(x).strip()
+        if s and s.lower() not in ("nan", "none"):
+            return s
+    return ""
+
+
+def _source_file_date(path: Path) -> Optional[pd.Timestamp]:
+    """Дата снапшота из имени файла «…_DD-MM-YYYY_…» (Dogovor, resursi) → Timestamp."""
     m = _FILE_DATE_RE.search(Path(path).name)
     if not m:
         return None
@@ -925,6 +938,11 @@ def _dogovor_file_date(path: Path) -> Optional[pd.Timestamp]:
         return pd.Timestamp(year=int(yyyy), month=int(mm), day=int(dd))
     except ValueError:
         return None
+
+
+def _dogovor_file_date(path: Path) -> Optional[pd.Timestamp]:
+    """Дата снапшота из имени файла «1с_DD-MM-YYYY_…» → Timestamp (или None)."""
+    return _source_file_date(path)
 
 
 def load_plan_aggregate(
@@ -1036,8 +1054,8 @@ def load_plan_aggregate(
         dog_all = (
             dog_all.groupby(["project_id", "contractor_id"], dropna=False, as_index=False)
             .agg(
-                project_name=("project_name", "first"),
-                contractor_name=("contractor_name", "first"),
+                project_name=("project_name", _first_nonempty),
+                contractor_name=("contractor_name", _first_nonempty),
                 contract_name=("contract_name", "last"),
                 plan_workers=("plan_workers", "last"),
                 plan_equipment=("plan_equipment", "last"),
@@ -1312,8 +1330,8 @@ def merge_plan(dogovor: pd.DataFrame, sprav: pd.DataFrame) -> pd.DataFrame:
         gd = dogovor.groupby(["project_id", "contractor_id"], dropna=False, as_index=False)
         # built-in sum(min_count=1) == float(np.nansum(s)) if any(notna) else None, но в разы быстрее.
         d = gd.agg(
-            project_name=("project_name", "first"),
-            contractor_name=("contractor_name", "first"),
+            project_name=("project_name", _first_nonempty),
+            contractor_name=("contractor_name", _first_nonempty),
             contract_name=("contract_name", lambda s: " · ".join(sorted({x for x in s if x}))),
         )
         d_sum = gd[["plan_workers", "plan_equipment"]].sum(min_count=1)
@@ -1771,13 +1789,32 @@ _GDRS_MONTH_NAMES_RU = (
 )
 
 
-def gdrs_month_select_options(long_fact: pd.DataFrame) -> list[tuple[str, pd.Period]]:
-    """Список (подпись «Апрель 2026», Period[M]) по датам факта, от старых к новым."""
-    if long_fact is None or long_fact.empty or "date" not in long_fact.columns:
+def gdrs_month_periods_from_paths(paths: Iterable[Path | str]) -> set[pd.Period]:
+    """Календарные месяцы из дат в именах файлов (Dogovor, resursi)."""
+    out: set[pd.Period] = set()
+    for raw in paths:
+        ts = _source_file_date(Path(raw))
+        if ts is not None and pd.notna(ts):
+            out.add(ts.to_period("M"))
+    return out
+
+
+def gdrs_month_select_options(
+    long_fact: pd.DataFrame,
+    *,
+    extra_paths: Optional[Iterable[Path | str]] = None,
+) -> list[tuple[str, pd.Period]]:
+    """Список (подпись «Апрель 2026», Period[M]) по датам факта и снапшотов файлов."""
+    period_set: set[pd.Period] = set()
+    if long_fact is not None and not long_fact.empty and "date" in long_fact.columns:
+        for p in pd.to_datetime(long_fact["date"], errors="coerce").dt.to_period("M").dropna().unique():
+            period_set.add(p)
+    if extra_paths:
+        period_set |= gdrs_month_periods_from_paths(extra_paths)
+    if not period_set:
         return []
-    periods = pd.to_datetime(long_fact["date"], errors="coerce").dt.to_period("M").dropna().unique()
     out: list[tuple[str, pd.Period]] = []
-    for p in sorted(periods):
+    for p in sorted(period_set):
         try:
             m = int(p.month)
             y = int(p.year)
@@ -1813,6 +1850,28 @@ def gdrs_filter_fact_by_months(
     pset = set(plist)
     mask = fact["date"].dt.to_period("M").isin(pset)
     return fact[mask].copy()
+
+
+def _filter_plan_slice(
+    plan: pd.DataFrame,
+    projects: Optional[list[str]] = None,
+    contractors: Optional[list[str]] = None,
+) -> pd.DataFrame:
+    if plan is None or plan.empty:
+        return pd.DataFrame()
+    work = plan.copy()
+    if projects:
+        try:
+            from dashboards.project_labels import filter_dataframe_by_project_labels
+
+            work = filter_dataframe_by_project_labels(work, list(projects), col="project_name")
+        except Exception:
+            proj_keys = {p.strip().casefold() for p in projects}
+            work = work[work["project_name"].astype(str).str.strip().str.casefold().isin(proj_keys)]
+    if contractors:
+        c_keys = {c.strip().casefold() for c in contractors}
+        work = work[work["contractor_name"].astype(str).str.strip().str.casefold().isin(c_keys)]
+    return work
 
 
 def _filter_fact_slice(
@@ -1943,6 +2002,129 @@ def gdrs_matrix_show_week_columns(plan_agg: str, skud_agg: str) -> bool:
     )
 
 
+def gdrs_matrix_week_labels(
+    date_from: pd.Timestamp,
+    date_to: pd.Timestamp,
+    dates: pd.Series,
+) -> list[str]:
+    """Подписи недель 1–6 в порядке периода с диапазоном дат (для шапки таблицы)."""
+    _default = [f"{i} нед" for i in range(1, 7)]
+    dts = pd.to_datetime(dates, errors="coerce").dropna()
+    if dts.empty:
+        return _default
+    lo = pd.Timestamp(date_from).normalize()
+    hi = pd.Timestamp(date_to).normalize()
+    dts = dts[(dts >= lo) & (dts <= hi)]
+    if dts.empty:
+        return _default
+    week_idx, _ = _iso_week_groups(dts)
+    labels: list[str] = []
+    for wi in range(1, 7):
+        mask = week_idx == wi
+        if not mask.any():
+            labels.append(f"{wi} нед")
+            continue
+        sub = dts[mask]
+        labels.append(f"{wi} нед ({sub.min().strftime('%d.%m')}-{sub.max().strftime('%d.%m')})")
+    return labels
+
+
+def build_gdrs_audit_export_frames(
+    long_fact: pd.DataFrame,
+    plan: pd.DataFrame,
+    dogovor_paths: Iterable[Path | str],
+    *,
+    vid: str,
+    date_from: pd.Timestamp,
+    date_to: pd.Timestamp,
+    plan_snapshot: pd.Timestamp,
+    projects: Optional[list[str]] = None,
+    contractors: Optional[list[str]] = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """CSV для проверки: факт СКУД, агрегированный план, план по каждому договору на дату среза."""
+    plan_col = "plan_workers" if str(vid).casefold() == "рабочие" else "plan_equipment"
+    fact_slice = _filter_fact_slice(
+        long_fact,
+        vid=vid,
+        date_from=date_from,
+        date_to=date_to,
+        projects=projects,
+        contractors=contractors,
+    )
+    fact_export = fact_slice.copy()
+    if not fact_export.empty:
+        fact_export = fact_export.sort_values(["project_name", "contractor_name", "date"])
+
+    plan_slice = _filter_plan_slice(plan, projects, contractors)
+    if plan_slice is not None and not plan_slice.empty:
+        plan_export = plan_slice[
+            [
+                c
+                for c in (
+                    "project_id",
+                    "project_name",
+                    "contractor_id",
+                    "contractor_name",
+                    "contract_name",
+                    plan_col,
+                )
+                if c in plan_slice.columns
+            ]
+        ].copy()
+        plan_export = plan_export.rename(columns={plan_col: "План_1С"})
+    else:
+        plan_export = pd.DataFrame()
+
+    snap = pd.Timestamp(plan_snapshot).normalize()
+    latest_path: Optional[Path] = None
+    latest_date: Optional[pd.Timestamp] = None
+    for raw_p in dogovor_paths:
+        p = Path(raw_p)
+        fdate = _dogovor_file_date(p)
+        if fdate is None:
+            continue
+        if fdate > snap:
+            continue
+        if latest_date is None or fdate >= latest_date:
+            latest_date = fdate
+            latest_path = p
+    if latest_path is None:
+        contract_export = pd.DataFrame()
+    else:
+        raw = load_plan_from_dogovor(latest_path, snapshot_date=snap)
+        if projects:
+            try:
+                from dashboards.project_labels import filter_dataframe_by_project_labels
+
+                raw = filter_dataframe_by_project_labels(raw, list(projects), col="project_name")
+            except Exception:
+                pass
+        if contractors:
+            c_keys = {c.strip().casefold() for c in contractors}
+            raw = raw[raw["contractor_name"].astype(str).str.strip().str.casefold().isin(c_keys)]
+        keep = [
+            c
+            for c in (
+                "project_id",
+                "project_name",
+                "contractor_id",
+                "contractor_name",
+                "contract_name",
+                "plan_workers",
+                "plan_equipment",
+                "date_start",
+                "date_end",
+            )
+            if c in raw.columns
+        ]
+        contract_export = raw[keep].copy() if not raw.empty else pd.DataFrame()
+        if not contract_export.empty:
+            contract_export.insert(0, "Срез_плана", snap.strftime("%Y-%m-%d"))
+            contract_export.insert(1, "Файл_Dogovor", latest_path.name)
+
+    return fact_export, plan_export, contract_export
+
+
 def build_main_table(
     long_fact: pd.DataFrame,
     plan: pd.DataFrame,
@@ -1976,8 +2158,8 @@ def build_main_table(
     - plan: из plan-таблицы 1С на срез `plan_agg` (конец недели или конец периода).
     - deviation = skud − План (факт − план); delta_pct = (deviation / План) × 100 (при План≠0).
   """
-    if long_fact is None or long_fact.empty:
-        return pd.DataFrame()
+    if long_fact is None:
+        long_fact = pd.DataFrame()
     fact = _filter_fact_slice(
         long_fact,
         vid=vid,
@@ -1986,51 +2168,106 @@ def build_main_table(
         projects=projects,
         contractors=contractors,
     )
-    if fact.empty:
-        return pd.DataFrame()
 
     plan_col = "plan_workers" if vid.casefold() == "рабочие" else "plan_equipment"
     by_id, by_id_name, by_norm = _build_plan_lookup(plan, plan_col)
 
-    fact["date"] = pd.to_datetime(fact["date"])
-    week_idx, days_per_week = _iso_week_groups(fact["date"])
-    fact["week"] = week_idx
-    total_days = int(fact["date"].dt.normalize().nunique())
+    id_pick = pd.DataFrame(columns=["project_name", "contractor_name", "project_id", "contractor_id"])
+    if fact is not None and not fact.empty:
+        fact = fact.copy()
+        fact["date"] = pd.to_datetime(fact["date"])
+        week_idx, days_per_week = _iso_week_groups(fact["date"])
+        fact["week"] = week_idx
 
-    id_pick = (
-        fact.groupby(["project_name", "contractor_name"], dropna=False)
-        .agg(
-            project_id=("project_id", lambda s: next((x for x in s.astype(str) if x.strip()), "")),
-            contractor_id=("contractor_id", lambda s: next((x for x in s.astype(str) if x.strip()), "")),
+        id_pick = (
+            fact.groupby(["project_name", "contractor_name"], dropna=False)
+            .agg(
+                project_id=("project_id", lambda s: next((x for x in s.astype(str) if x.strip()), "")),
+                contractor_id=("contractor_id", lambda s: next((x for x in s.astype(str) if x.strip()), "")),
+            )
+            .reset_index()
         )
-        .reset_index()
-    )
 
-    week_sum = (
-        fact.groupby(["project_name", "contractor_name", "week"], dropna=False)["fact"]
-        .sum()
-        .reset_index(name="daily_sum")
-    )
-    week_sum["weekly_avg"] = week_sum.apply(
-        lambda r: r["daily_sum"] / max(1, days_per_week.get(int(r["week"]), 1)), axis=1
-    )
+        week_sum = (
+            fact.groupby(["project_name", "contractor_name", "week"], dropna=False)["fact"]
+            .sum()
+            .reset_index(name="daily_sum")
+        )
+        week_sum["weekly_avg"] = week_sum.apply(
+            lambda r: r["daily_sum"] / max(1, days_per_week.get(int(r["week"]), 1)), axis=1
+        )
 
-    pivot = week_sum.pivot_table(
-        index=["project_name", "contractor_name"],
-        columns="week",
-        values="weekly_avg",
-        aggfunc="sum",
-        fill_value=0.0,
-    ).reset_index()
+        pivot = week_sum.pivot_table(
+            index=["project_name", "contractor_name"],
+            columns="week",
+            values="weekly_avg",
+            aggfunc="sum",
+            fill_value=0.0,
+        ).reset_index()
+    else:
+        pivot = pd.DataFrame(columns=["project_name", "contractor_name"])
+
     for w in (1, 2, 3, 4, 5, 6):
         if w not in pivot.columns:
             pivot[w] = 0.0
+    if "project_name" not in pivot.columns:
+        pivot["project_name"] = []
+        pivot["contractor_name"] = []
     pivot.rename(columns={1: "w1", 2: "w2", 3: "w3", 4: "w4", 5: "w5", 6: "w6"}, inplace=True)
 
-    skud_per = _skud_agg_per_pair(fact, skud_agg).rename(columns={"skud_val": "skud_avg"})
+    plan_pairs_df = _filter_plan_slice(plan, projects, contractors)
+    if plan_pairs_df is not None and not plan_pairs_df.empty:
+        plan_pairs_df = plan_pairs_df.copy()
+        try:
+            from dashboards.project_labels import apply_unified_project_column
+
+            plan_pairs_df = apply_unified_project_column(plan_pairs_df, "project_name")
+        except Exception:
+            pass
+        plan_pairs_df["_plan_val"] = pd.to_numeric(plan_pairs_df[plan_col], errors="coerce").fillna(0.0)
+        plan_pairs_df = plan_pairs_df[plan_pairs_df["_plan_val"] > 0]
+        if not plan_pairs_df.empty:
+            extra_pairs = plan_pairs_df[["project_name", "contractor_name"]].drop_duplicates()
+            pivot_pairs = pivot[["project_name", "contractor_name"]].drop_duplicates()
+            all_pairs = pd.concat([pivot_pairs, extra_pairs], ignore_index=True).drop_duplicates()
+            pivot = all_pairs.merge(pivot, on=["project_name", "contractor_name"], how="left")
+            for wc in ("w1", "w2", "w3", "w4", "w5", "w6"):
+                if wc in pivot.columns:
+                    pivot[wc] = pd.to_numeric(pivot[wc], errors="coerce").fillna(0.0)
+                else:
+                    pivot[wc] = 0.0
+            plan_ids = (
+                plan_pairs_df.groupby(["project_name", "contractor_name"], dropna=False)
+                .agg(
+                    project_id=("project_id", _first_nonempty),
+                    contractor_id=("contractor_id", _first_nonempty),
+                )
+                .reset_index()
+            )
+            id_pick = pd.concat([id_pick, plan_ids], ignore_index=True).drop_duplicates(
+                subset=["project_name", "contractor_name"], keep="first"
+            )
+
+    if fact is not None and not fact.empty:
+        skud_per = _skud_agg_per_pair(fact, skud_agg).rename(columns={"skud_val": "skud_avg"})
+    else:
+        skud_per = pivot[["project_name", "contractor_name"]].copy()
+        skud_per["skud_val"] = 0.0
 
     rows = pivot.merge(skud_per, on=["project_name", "contractor_name"], how="left")
-    rows = rows.merge(id_pick, on=["project_name", "contractor_name"], how="left")
+    if "skud_avg" not in rows.columns:
+        if "skud_val" in rows.columns:
+            rows["skud_avg"] = rows["skud_val"]
+        else:
+            rows["skud_avg"] = 0.0
+    if id_pick is not None and not id_pick.empty:
+        rows = rows.merge(id_pick, on=["project_name", "contractor_name"], how="left")
+    else:
+        rows["project_id"] = ""
+        rows["contractor_id"] = ""
+
+    if rows.empty:
+        return pd.DataFrame()
 
     rows["plan"] = rows.apply(
         lambda r: _lookup_plan(
@@ -2058,6 +2295,7 @@ def build_main_table(
         axis=1,
     )
     rows["skud"] = rows["skud_avg"].fillna(0.0).round(0)
+    rows = rows.drop(columns=["skud_val"], errors="ignore")
     # Отклонение = Факт (СКУД) − План: «+» если факт > плана, «−» если наоборот.
     # Отклонение % = (Отклонение / План) × 100.
     rows["deviation"] = (rows["skud"] - rows["plan"]).round(0)
@@ -2522,6 +2760,7 @@ def render_gdrs_matrix_table_html(
     period_line: str = "",
     delta_bg_style=None,
     show_week_columns: bool = True,
+    week_labels: Optional[list[str]] = None,
     theme: str = "dark",
 ) -> str:
     """HTML-таблица ГДРС: двухуровневая шапка «План» / «СКУД» над неделями 1–6 или компакт без недель."""
@@ -2533,7 +2772,11 @@ def render_gdrs_matrix_table_html(
     if delta_bg_style is None:
         delta_bg_style = gdrs_delta_pct_cell_bg_style
 
-    wk_n = len(GDRS_WEEK_LABELS)
+    wk_labels = list(week_labels or GDRS_WEEK_LABELS)
+    if len(wk_labels) < 6:
+        wk_labels = wk_labels + list(GDRS_WEEK_LABELS[len(wk_labels):])
+    wk_labels = wk_labels[:6]
+    wk_n = len(wk_labels)
     plan_keys = list(GDRS_WEEK_PLAN_KEYS)
     skud_keys = list(GDRS_WEEK_SKUD_KEYS)
     if show_week_columns:
@@ -2744,7 +2987,7 @@ def render_gdrs_matrix_table_html(
             f'<th rowspan="2" class="{_border_cls(i_delta)} gdrs-col-equal">{html_module.escape(delta_title)}</th>'
         )
         thead_parts.append("</tr><tr>")
-        for wi, lbl in enumerate(GDRS_WEEK_LABELS):
+        for wi, lbl in enumerate(wk_labels):
             wcls = "gdrs-h-week gdrs-h-week-plan gdrs-col-plan"
             if wi == 0:
                 wcls += " gdrs-sep-l-strong"
@@ -2752,7 +2995,7 @@ def render_gdrs_matrix_table_html(
                 wcls += " gdrs-sep-r-strong"
             wcls += " gdrs-col-equal"
             thead_parts.append(f'<th class="{wcls}" data-gdrs-sort="1" data-sort-label="{html_module.escape(lbl)}">{html_module.escape(lbl)}</th>')
-        for wi, lbl in enumerate(GDRS_WEEK_LABELS):
+        for wi, lbl in enumerate(wk_labels):
             wcls = "gdrs-h-week gdrs-h-week-skud gdrs-col-skud"
             if wi == 0:
                 wcls += " gdrs-sep-l-strong"

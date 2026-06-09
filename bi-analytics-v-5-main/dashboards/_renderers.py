@@ -21458,6 +21458,8 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         gdrs_agg_select_options,
         gdrs_filter_fact_by_months,
         gdrs_matrix_show_week_columns,
+        gdrs_matrix_week_labels,
+        build_gdrs_audit_export_frames,
         gdrs_month_select_options,
         gdrs_months_date_range,
         gdrs_plan_snapshot_date,
@@ -21506,7 +21508,10 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
 
     long_fact = gdrs_filter_fact_kontr_intersection(long_fact, _kontr_index)
 
-    _month_options = gdrs_month_select_options(long_fact)
+    _month_options = gdrs_month_select_options(
+        long_fact,
+        extra_paths=list(resursi_files) + list(dogovor_files),
+    )
     _month_labels = [lbl for lbl, _ in _month_options]
     _month_label_to_period = {lbl: per for lbl, per in _month_options}
 
@@ -21799,6 +21804,13 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             f"({date_from.strftime('%d.%m.%Y')} — {(date_from + _pd.Timedelta(days=42)).strftime('%d.%m.%Y')}); "
             f"неделя 7+ не помещается в макет ТЗ. Сократите период до месяца, чтобы увидеть все недели."
         )
+    _show_week_cols = gdrs_matrix_show_week_columns(_plan_agg, _skud_agg)
+    if _show_week_cols:
+        st.caption(
+            "Колонки «План / СКУД / Отклонение» — **среднее за день за весь выбранный период**. "
+            "Колонки «N нед» — порядковые ISO-недели **с начала периода** (1-я = самая ранняя неделя в фильтре); "
+            "план по неделе — срез 1С на последний день этой недели в периоде (сумма по всем действующим договорам)."
+        )
     view = main_t.copy()
     view["Контрагент"] = view.apply(
         lambda r: (
@@ -21829,7 +21841,6 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
     _tbl_period = (
         _format_gdrs_month_year_title_ru(date_from, date_to, long_fact_period, None) or period_label
     )
-    _show_week_cols = gdrs_matrix_show_week_columns(_plan_agg, _skud_agg)
     _week_ren = {
         "p1": "План 1 нед", "p2": "План 2 нед", "p3": "План 3 нед",
         "p4": "План 4 нед", "p5": "План 5 нед", "p6": "План 6 нед",
@@ -21842,6 +21853,11 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
     }
     _mtx_export = view.drop(columns=[c for c in view.columns if c in _mtx_drop], errors="ignore")
     _mtx_export = _mtx_export.rename(columns={k: v for k, v in _week_ren.items() if k in _mtx_export.columns})
+    _week_hdr_labels = (
+        gdrs_matrix_week_labels(date_from, date_to, long_fact_period["date"])
+        if _show_week_cols
+        else None
+    )
     render_report_html_table(
         render_gdrs_matrix_table_html(
             view,
@@ -21852,12 +21868,62 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             period_line=_tbl_period,
             delta_bg_style=_gdrs_delta_pct_cell_bg_style,
             show_week_columns=_show_week_cols,
+            week_labels=_week_hdr_labels,
             theme=theme,
         ),
         export_df=_mtx_export,
         file_stem=_export_file_stem(_tbl_title),
         key_prefix=f"gdrs_matrix_{abs(id(view))}",
     )
+    try:
+        _fact_aud, _plan_aud, _contract_aud = build_gdrs_audit_export_frames(
+            long_fact_period,
+            plan,
+            dogovor_files,
+            vid=sel_vid,
+            date_from=date_from,
+            date_to=date_to,
+            plan_snapshot=_plan_snap,
+            projects=sel_projects or None,
+            contractors=sel_contractors or None,
+        )
+        from utils import render_dataframe_excel_csv_downloads
+
+        with st.expander("Выгрузка CSV для проверки расчёта", expanded=False):
+            st.caption(
+                "Факт — строки СКУД из resursi.csv по текущим фильтрам; "
+                "План (пары) — агрегат 1С на дату среза; "
+                "План (договоры) — каждый договор из последнего Dogovor.json ≤ даты среза."
+            )
+            if _fact_aud is not None and not _fact_aud.empty:
+                render_dataframe_excel_csv_downloads(
+                    _fact_aud,
+                    file_stem="gdrs_audit_fact_skud",
+                    key_prefix=f"gdrs_audit_fact_{_gdrs_key_suffix}",
+                    csv_label="СКУД (факт по дням, CSV)",
+                )
+            if _plan_aud is not None and not _plan_aud.empty:
+                render_dataframe_excel_csv_downloads(
+                    _plan_aud,
+                    file_stem="gdrs_audit_plan_pairs",
+                    key_prefix=f"gdrs_audit_plan_{_gdrs_key_suffix}",
+                    csv_label="План по проект×контрагент (CSV)",
+                )
+            if _contract_aud is not None and not _contract_aud.empty:
+                render_dataframe_excel_csv_downloads(
+                    _contract_aud,
+                    file_stem="gdrs_audit_plan_dogovor",
+                    key_prefix=f"gdrs_audit_dog_{_gdrs_key_suffix}",
+                    csv_label="План по договорам 1С (CSV)",
+                )
+            if (
+                (_fact_aud is None or _fact_aud.empty)
+                and (_plan_aud is None or _plan_aud.empty)
+                and (_contract_aud is None or _contract_aud.empty)
+            ):
+                st.info("Нет строк для выгрузки по текущим фильтрам.")
+    except Exception as _aud_e:
+        st.warning(f"Выгрузка для проверки: {_aud_e}")
 
     st.markdown("---")
     gdrs_render_subheader(st, "ГДРС по выбранным контрагентам", theme=theme)
