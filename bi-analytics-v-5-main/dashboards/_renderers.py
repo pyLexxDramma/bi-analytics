@@ -1822,7 +1822,7 @@ def _deviations_maket_task_id_col(frame: pd.DataFrame) -> str | None:
 
 
 def _deviations_maket_prepare_df(table_reason_df: pd.DataFrame) -> pd.DataFrame:
-    """MSP level 5, filled reason, finish deviation < 0; worst deviation (most negative) first."""
+    """MSP level 5, filled reason, finish deviation < 0; sort by deviation descending (max at top)."""
     if table_reason_df is None or getattr(table_reason_df, "empty", True):
         return table_reason_df.iloc[0:0].copy() if table_reason_df is not None else pd.DataFrame()
     work_m = table_reason_df.copy()
@@ -1875,8 +1875,67 @@ def _deviations_maket_prepare_df(table_reason_df: pd.DataFrame) -> pd.DataFrame:
             _dd_tmp[_ddc] = _dd_tmp[_ddc].astype(str).str.strip()
         maket_df = maket_df[~_dd_tmp.duplicated(subset=_dd_key_cols, keep="first")].copy()
     if not maket_df.empty:
-        maket_df = maket_df.sort_values("_end_diff", ascending=True).reset_index(drop=True)
+        maket_df = maket_df.sort_values("_end_diff", ascending=False).reset_index(drop=True)
     return maket_df
+
+
+def _deviations_maket_scope_df(table_reason_df: pd.DataFrame) -> pd.DataFrame:
+    """Макет (ур. 5, причина, окончание < 0) + колонки для агрегации диаграмм."""
+    out = _deviations_maket_prepare_df(table_reason_df)
+    if out.empty:
+        return out
+    out = out.copy()
+    out["_maket_cnt"] = 1
+    if "_end_diff" in out.columns:
+        out["deviation in days"] = pd.to_numeric(out["_end_diff"], errors="coerce").abs()
+    return out
+
+
+def _deviations_maket_grouped_rename(grouped_data: pd.DataFrame) -> pd.DataFrame:
+    """Переименование колонок после groupby по макет-данным."""
+    g = grouped_data.copy()
+    cnt_src = "_maket_cnt" if "_maket_cnt" in g.columns else "deviation"
+    if "deviation in days" in g.columns:
+        g = g.rename(
+            columns={
+                cnt_src: "Количество задач",
+                "deviation in days": "Всего дней отклонений",
+            }
+        )
+        _cnt = g["Количество задач"].replace(0, np.nan)
+        g["Среднее дней отклонений"] = (
+            g["Всего дней отклонений"] / _cnt
+        ).round(0).fillna(0)
+    else:
+        g = g.rename(columns={cnt_src: "Количество задач"})
+        g["Всего дней отклонений"] = 0
+        g["Среднее дней отклонений"] = 0
+    return g
+
+
+def _deviations_period_labels_nonzero(
+    period_labels: list,
+    frame: pd.DataFrame,
+    *,
+    period_col: str = "period",
+    value_col: str = "Количество задач",
+) -> list:
+    """Ось X: только периоды с ненулевым итогом (без пустого хвоста до первой точки)."""
+    if not period_labels or frame is None or getattr(frame, "empty", True):
+        return list(period_labels or [])
+    if period_col not in frame.columns or value_col not in frame.columns:
+        return list(period_labels)
+    try:
+        totals = (
+            frame.groupby(period_col, observed=False)[value_col]
+            .sum()
+            .astype(float)
+        )
+    except Exception:
+        return list(period_labels)
+    nz = {str(k) for k, v in totals.items() if float(v) > 0}
+    trimmed = [p for p in period_labels if str(p) in nz]
+    return trimmed if trimmed else list(period_labels)
 
 
 def _deviations_stacked_bar_add_totals(
@@ -5059,38 +5118,19 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             filtered_df, "reason_period_range"
         )
 
-    # Filter tasks relevant for "dynamics of deviations": deviation=1/True OR reason of deviation filled
-    try:
-        has_deviation_col = "deviation" in filtered_df.columns
-        has_reason_col = "reason of deviation" in filtered_df.columns
-    except (AttributeError, TypeError):
-        has_deviation_col = False
-        has_reason_col = False
-
-    if has_deviation_col or has_reason_col:
-        # Rows with deviation flag = 1/True
-        if has_deviation_col:
-            deviation_flag = (
-                (filtered_df["deviation"] == True)
-                | (filtered_df["deviation"] == 1)
-                | (filtered_df["deviation"].astype(str).str.lower() == "true")
-                | (filtered_df["deviation"].astype(str).str.strip() == "1")
-            )
-        else:
-            deviation_flag = pd.Series(False, index=filtered_df.index)
-        # Rows with non-empty reason of deviation (для project_fixed: показываем и при причине)
-        if has_reason_col:
-            reason_filled = (
-                filtered_df["reason of deviation"].notna()
-                & (filtered_df["reason of deviation"].astype(str).str.strip() != "")
-            )
-        else:
-            reason_filled = pd.Series(False, index=filtered_df.index)
-        filtered_df = filtered_df[deviation_flag | reason_filled]
-
-    if filtered_df.empty:
-        st.info("Нет данных для выбранных фильтров.")
+    # ТЗ (макет): диаграммы и таблица — один набор строк (ур. 5, причина, отклонение < 0).
+    maket_df = _deviations_maket_scope_df(filtered_df)
+    if maket_df.empty:
+        st.info(
+            "По макету нет строк: уровень 5, непустая причина, отклонение окончания < 0."
+        )
         return
+    filtered_df = maket_df
+    _maket_n = len(maket_df)
+    suppress_caption(
+        f"Диаграммы и детальная таблица: {_maket_n} задач "
+        "(ур. 5, причина, отклонение окончания < 0)."
+    )
 
     if hide_shared_filters:
         top5_only = bool(st.session_state.get("reason_top5", False))
@@ -5442,28 +5482,18 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 == str(selected_reason).strip()
             ]
 
-    # Filter tasks: deviation=1/True OR reason of deviation filled
-    if "deviation" in filtered_df.columns:
-        deviation_flag = (
-            (filtered_df["deviation"] == True)
-            | (filtered_df["deviation"] == 1)
-            | (filtered_df["deviation"].astype(str).str.lower() == "true")
-            | (filtered_df["deviation"].astype(str).str.strip() == "1")
-        )
-    else:
-        deviation_flag = pd.Series(False, index=filtered_df.index)
-    if "reason of deviation" in filtered_df.columns:
-        reason_filled = (
-            filtered_df["reason of deviation"].notna()
-            & (filtered_df["reason of deviation"].astype(str).str.strip() != "")
-        )
-    else:
-        reason_filled = pd.Series(False, index=filtered_df.index)
-    filtered_df = filtered_df[deviation_flag | reason_filled]
-
+    # ТЗ (макет): те же строки, что в таблице «Детальные данные» на вкладке «Доли причин».
+    filtered_df = _deviations_maket_scope_df(filtered_df)
     if filtered_df.empty:
-        st.info("Нет данных для выбранных фильтров.")
+        st.info(
+            "По макету нет строк: уровень 5, непустая причина, отклонение окончания < 0."
+        )
         return
+    if hide_shared_filters:
+        suppress_caption(
+            f"Диаграммы: {len(filtered_df)} задач по макету "
+            "(ур. 5, причина, отклонение < 0; ось X — только периоды с данными)."
+        )
 
     use_snapshot_period = (
         _time_axis.startswith("По дате снимка")
@@ -5556,10 +5586,9 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         group_cols.append("reason of deviation")
 
     # Aggregate: count tasks and sum deviation days
-    # For average: sum deviation days / number of tasks (grouped by project if project is in group)
-    agg_dict = {"deviation": "count"}  # Count tasks
+    agg_dict = {"_maket_cnt": "sum"}
     if "deviation in days" in filtered_df.columns:
-        agg_dict["deviation in days"] = "sum"  # Sum deviation days
+        agg_dict["deviation in days"] = "sum"
 
     grouped_data = filtered_df.groupby(group_cols).agg(agg_dict).reset_index()
 
@@ -5598,34 +5627,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         except:
             pass
 
-    # Calculate average: sum of deviation days / number of tasks
-    if "deviation in days" in filtered_df.columns:
-        # Rename columns
-        if "deviation in days" in grouped_data.columns:
-            grouped_data = grouped_data.rename(
-                columns={
-                    "deviation": "Количество задач",
-                    "deviation in days": "Всего дней отклонений",
-                }
-            )
-        else:
-            grouped_data = grouped_data.rename(
-                columns={"deviation": "Количество задач"}
-            )
-            grouped_data["Всего дней отклонений"] = 0
-
-        # Calculate average: sum / count of tasks (деление на 0 — в 0 дней задач)
-        _cnt = grouped_data["Количество задач"].replace(0, np.nan)
-        grouped_data["Среднее дней отклонений"] = (
-            grouped_data["Всего дней отклонений"] / _cnt
-        ).round(0)
-        grouped_data["Среднее дней отклонений"] = grouped_data[
-            "Среднее дней отклонений"
-        ].fillna(0)
-    else:
-        grouped_data = grouped_data.rename(columns={"deviation": "Количество задач"})
-        grouped_data["Всего дней отклонений"] = 0
-        grouped_data["Среднее дней отклонений"] = 0
+    grouped_data = _deviations_maket_grouped_rename(grouped_data)
 
     def _dynamics_period_sort_key(p):
         """Ключ для хронологической сортировки периода (до format_period_ru)."""
@@ -5663,7 +5665,16 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         grouped_data["period"].dropna().unique(),
         key=_dynamics_period_sort_key,
     )
+    _period_tot = (
+        grouped_data.groupby("period", observed=False)["Количество задач"]
+        .sum()
+        .astype(float)
+    )
+    _period_uniq_sorted = [
+        p for p in _period_uniq_sorted if float(_period_tot.get(p, 0.0)) > 0.0
+    ]
     _period_cat_labels = [format_period_ru(x) for x in _period_uniq_sorted]
+    grouped_data = grouped_data[grouped_data["period"].isin(_period_uniq_sorted)].copy()
     grouped_data["period"] = grouped_data["period"].map(format_period_ru)
     try:
         grouped_data["period"] = pd.Categorical(
@@ -5756,6 +5767,9 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 list(_period_cat_labels)
                 if _period_cat_labels
                 else reason_data["period"].drop_duplicates().tolist()
+            )
+            _periods_grid = _deviations_period_labels_nonzero(
+                _periods_grid, reason_data
             )
             _period_x_title = f"Период ({str(period_label).lower()})"
             _n_proj = (
@@ -6130,6 +6144,15 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             .size()
             .reset_index(name="Количество")
         )
+        _tot_tz_lbl = (
+            _agg_tz.groupby("_per_lbl", observed=False)["Количество"]
+            .sum()
+            .astype(float)
+        )
+        _pl_tz = [p for p in _pl_tz if float(_tot_tz_lbl.get(p, 0.0)) > 0.0]
+        if not _pl_tz:
+            st.info("Нет периодов с отклонениями для выбранных фильтров.")
+            return
         _ord_tz = list(DEVIATIONS_REASON_BUCKET_ORDER)
         _clr_tz = _deviations_reason_bucket_colors()
         _n_per_tz = len(_pl_tz)
@@ -6252,6 +6275,14 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             )
             _pd_top_projs = sorted(
                 project_data["project name"].dropna().astype(str).str.strip().unique().tolist()
+            )
+            _val_col_top = (
+                "Количество задач"
+                if "Количество задач" in project_data.columns
+                else "Всего дней отклонений"
+            )
+            _pd_top_periods = _deviations_period_labels_nonzero(
+                _pd_top_periods, project_data, value_col=_val_col_top
             )
             # Полная сетка сильно ужимает столбцы при длинной оси X; при >30 периодов — без декартова reindex.
             _DYN_GRID_MAX_PERIODS = 30
@@ -6395,18 +6426,12 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         ).strip()
 
         # Aggregate by project (and reason if present) - sum across selected periods
+        _ps_agg: dict[str, str] = {"_maket_cnt": "sum"}
+        if "deviation in days" in filtered_df_for_summary.columns:
+            _ps_agg["deviation in days"] = "sum"
         project_summary = (
             filtered_df_for_summary.groupby(project_summary_cols)
-            .agg(
-                {
-                    "deviation": "count",  # Count tasks
-                    "deviation in days": (
-                        "sum"
-                        if "deviation in days" in filtered_df_for_summary.columns
-                        else "count"
-                    ),
-                }
-            )
+            .agg(_ps_agg)
             .reset_index()
         )
 
@@ -6417,7 +6442,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             else "Всего дней отклонений"
         )
         col_ru_summary = {
-            "deviation": "Количество отклонений",
+            "_maket_cnt": "Количество отклонений",
             "deviation in days": period_col_name,
             "project name": "Проект",
             "reason of deviation": "Причина отклонений",
@@ -7988,7 +8013,19 @@ def dashboard_plan_fact_dates(df):
 
     chart_df_all = df_after_hide.copy()
     chart_df = chart_df_all.copy()
-    if only_negative_dev_dates and not _covenant_mode:
+    if dates_show_reason_notes:
+        _pf_maket_chart = _deviations_maket_scope_df(df_after_hide)
+        if _pf_maket_chart.empty:
+            st.info(
+                "По макету нет строк: уровень 5, непустая причина, отклонение окончания < 0."
+            )
+            return
+        chart_df_all = _pf_maket_chart.copy()
+        chart_df = chart_df_all.copy()
+        if "plan_end_diff" not in chart_df.columns and "_end_diff" in chart_df.columns:
+            chart_df["plan_end_diff"] = chart_df["_end_diff"]
+            chart_df_all["plan_end_diff"] = chart_df_all["_end_diff"]
+    elif only_negative_dev_dates and not _covenant_mode:
         chart_df = chart_df[
             chart_df["plan_end_diff"].notna()
             & (chart_df["plan_end_diff"] < 0)
@@ -8365,62 +8402,32 @@ def dashboard_plan_fact_dates(df):
             chart_h = max(160, int(n_rows_local * row_h + 20))
             return chart_h, max_lines
 
-        def _pf_gantt_label_domain(y_order_local: list[str]) -> float:
-            _, domain_start = _project_schedule_gantt_label_column_layout(
-                y_order_local,
-                task_font=_PF_GANTT_TASK_FONT,
-                plot_min_px=480,
-                plot_ref_px=_GANTT_LABEL_DOMAIN_REF_PX,
-            )
-            return domain_start
-
-        def _pf_gantt_y_label_annotations(
-            y_order_local: list[str], *, domain_start: float
-        ) -> list[dict]:
-            out: list[dict] = []
-            _x_lab, _x_anchor = _gantt_y_label_paper_x(domain_start)
-            for y in y_order_local:
-                txt = str(y).strip()
-                if not txt:
-                    continue
-                out.append(
-                    dict(
-                        x=_x_lab,
-                        y=y,
-                        xref="paper",
-                        yref="y",
-                        text=txt,
-                        showarrow=False,
-                        xanchor=_x_anchor,
-                        yanchor="middle",
-                        xshift=0,
-                        align="left",
-                        font=dict(
-                            size=_PF_GANTT_TASK_FONT,
-                            color=TABLE_TEXT_COLOR,
-                            family="Arial",
-                        ),
-                    )
-                )
-            return out
-
         def _pf_apply_gantt_y_labels(fig_obj, y_order_local: list[str]) -> int:
-            n_local = len(y_order_local)
-            domain_start = _pf_gantt_label_domain(y_order_local)
-            y_ann = _pf_gantt_y_label_annotations(y_order_local, domain_start=domain_start)
-            fig_obj.update_yaxes(
-                categoryorder="array",
-                categoryarray=list(y_order_local),
-                autorange="reversed",
-                range=[n_local - 0.5, -0.5] if n_local > 0 else None,
-                fixedrange=True,
-                side="left",
-                showticklabels=False,
+            """Колонка названий — нативные tick-подписи оси Y + automargin (без paper-annotations)."""
+            left_m, _x0, _ann = _project_schedule_gantt_apply_y_labels(
+                fig_obj,
+                y_order_local,
+                dense=False,
+                task_font=_PF_GANTT_TASK_FONT,
             )
-            fig_obj.update_xaxes(domain=[domain_start, 1.0])
-            if y_ann:
-                fig_obj.update_layout(annotations=y_ann)
-            return 4
+            n_local = len(y_order_local)
+            if n_local > 0:
+                # Как раньше: первая строка (наибольшее отклонение) — сверху.
+                fig_obj.update_yaxes(
+                    autorange="reversed",
+                    range=[n_local - 0.5, -0.5],
+                )
+            fig_obj.update_xaxes(domain=[float(_x0), 1.0])
+            _m = fig_obj.layout.margin
+            fig_obj.update_layout(
+                margin=dict(
+                    l=max(int(left_m), 48),
+                    r=int(getattr(_m, "r", None) or 56),
+                    t=int(getattr(_m, "t", None) or 8),
+                    b=int(getattr(_m, "b", None) or 48),
+                ),
+            )
+            return int(left_m)
 
         _PF_GANTT_VIEWPORT = 1720  # видимая высота блока графика (×2 от 860)
         _PF_GANTT_BAR_WIDTH = 0.12  # ~в 4 раза уже стандартной полосы Plotly
@@ -8558,6 +8565,7 @@ def dashboard_plan_fact_dates(df):
             ]
             _origin_ms = min(_plot_ms)
             _origin_ts = pd.to_datetime(_origin_ms, unit="ms", utc=True).tz_convert(None).normalize()
+            _min_bar_ms = 0.5 * 86400000.0  # подпись только если полоса видима
 
             y_labels: list[str] = []
             base_len_ms: list[float] = []
@@ -8585,10 +8593,14 @@ def dashboard_plan_fact_dates(df):
                 base_len_ms.append(b_len)
                 cur_len_ms.append(c_len)
                 base_txt.append(
-                    pd.Timestamp(be).strftime("%d.%m.%Y") if pd.notna(be) else ""
+                    pd.Timestamp(be).strftime("%d.%m.%Y")
+                    if pd.notna(be) and b_len >= _min_bar_ms
+                    else ""
                 )
                 cur_txt.append(
-                    pd.Timestamp(pe).strftime("%d.%m.%Y") if pd.notna(pe) else ""
+                    pd.Timestamp(pe).strftime("%d.%m.%Y")
+                    if pd.notna(pe) and c_len >= _min_bar_ms
+                    else ""
                 )
                 cust_b.append(
                     (
@@ -9066,7 +9078,7 @@ def dashboard_plan_fact_dates(df):
                 f"График: до {min(_pf_n_chart, _pf_chart_cap)} из {_pf_n_chart} "
                 f"(лимит {_pf_chart_cap} строк)."
             )
-        elif _pf_n_chart != _pf_n_table:
+        elif _pf_n_chart != _pf_n_table and not dates_show_reason_notes:
             parts.append(f"График: {_pf_n_chart} задач.")
         if not dates_show_reason_notes:
             parts.append("В таблице — только строки с отклонением окончания < 0.")
@@ -9074,8 +9086,11 @@ def dashboard_plan_fact_dates(df):
             parts.append("На графике — только отклонение окончания < 0.")
         if dates_show_reason_notes:
             parts.append(
+                f"График и таблица: {_pf_n_table} задач (один набор по макету)."
+            )
+            parts.append(
                 "Режим «Причины отклонений»: только уровень 5, заполненная причина, отклонение < 0; "
-                "сортировка по отклонению (худшие сверху). «Детализация» не действует."
+                "сортировка по отклонению (максимальное сверху). «Детализация» не действует."
             )
         elif _mask_lvl_col:
             parts.append(f"Детализация: {selected_level}.")
