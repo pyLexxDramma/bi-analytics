@@ -1637,6 +1637,13 @@ def main():
                 except Exception:
                     pass
             _gdrs_loading = None
+            _gantt_loading = None
+            if selected_dashboard == "График проекта":
+                _gantt_loading = gdrs_show_loading_banner(
+                    st,
+                    "Загрузка графика проекта…",
+                    slot=_gdrs_load_slot,
+                )
             if _gdrs_light_sel:
                 _gdrs_loading = gdrs_show_loading_banner(
                     st,
@@ -1662,6 +1669,7 @@ def main():
                     )
             finally:
                 gdrs_clear_loading_banner(_gdrs_loading)
+                gdrs_clear_loading_banner(_gantt_loading)
         except Exception as e:
             st.error(f"Ошибка при отображении графика '{selected_dashboard}': {str(e)}")
             st.exception(e)

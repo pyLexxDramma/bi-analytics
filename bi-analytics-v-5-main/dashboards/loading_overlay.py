@@ -195,6 +195,46 @@ _OVERLAY_JS = """
 """
 
 
+def release_loading_overlay() -> None:
+    """Скрыть overlay после завершения тяжёлого рендера."""
+    if not loading_overlay_enabled():
+        return
+    components.html(
+        """
+<script>
+(function () {
+    try {
+        var doc = window.parent && window.parent.document ? window.parent.document : document;
+        var ov = doc.getElementById('bi-loading-overlay');
+        if (ov) ov.classList.remove('bi-lo-on');
+    } catch (e) {}
+})();
+</script>
+""",
+        height=0,
+    )
+
+
+def pulse_loading_overlay() -> None:
+    """Сразу показать overlay (тяжёлые отчёты: stStatusWidget может не успеть)."""
+    if not loading_overlay_enabled():
+        return
+    components.html(
+        """
+<script>
+(function () {
+    try {
+        var doc = window.parent && window.parent.document ? window.parent.document : document;
+        var ov = doc.getElementById('bi-loading-overlay');
+        if (ov) ov.classList.add('bi-lo-on');
+    } catch (e) {}
+})();
+</script>
+""",
+        height=0,
+    )
+
+
 def inject_loading_overlay() -> None:
     """Навесить overlay на родительский документ (вызывать один раз на rerun)."""
     if not loading_overlay_enabled():
