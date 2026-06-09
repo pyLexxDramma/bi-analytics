@@ -38629,7 +38629,7 @@ def dashboard_project_schedule_chart(df):
         # из session_state — Streamlit обновляет его до перезапуска скрипта, поэтому
         # здесь оно уже актуально. Так селектор «Проект» остаётся в одной линии с
         # остальными выпадающими фильтрами (одинаковая ширина колонок).
-        show_all_projects = bool(st.session_state.get("gantt_show_all_projects", False))
+        show_all_projects = bool(st.session_state.get("gantt_show_all_projects", True))
         with f1:
             if proj_col:
                 projs = [_GANTT_PROJECT_PLACEHOLDER] + _gantt_distinct_str_values_from_series(
@@ -38789,11 +38789,12 @@ def dashboard_project_schedule_chart(df):
             with _gcb_a:
                 st.checkbox(
                     "Показать все проекты",
+                    value=True,
                     key="gantt_show_all_projects",
                     help=(
-                        "Медленно: данных по всем проектам много. На диаграмме показываются "
-                        "первые 600 задач, в таблице — 1000; полный список — в выгрузке CSV. "
-                        "По умолчанию выберите один проект для быстрой загрузки."
+                        "Включено по умолчанию: строятся все проекты (может занять время). "
+                        "На диаграмме — первые 600 задач (защита от зависания), в таблице ниже — "
+                        "полный список. Чтобы ускорить загрузку, снимите галочку и выберите один проект."
                     ),
                 )
                 show_reasons = st.checkbox(
@@ -38864,8 +38865,9 @@ def dashboard_project_schedule_chart(df):
     if show_all_projects:
         st.warning(
             "Режим «все проекты»: данных много, построение может занять время. "
-            "На диаграмме показываются первые 600 задач, в таблице — 1000; "
-            "полный список доступен в выгрузке CSV."
+            "На диаграмме показываются первые 600 задач (защита от зависания браузера); "
+            "в таблице ниже — полный список. Для ускорения снимите «Показать все проекты» "
+            "и выберите один проект."
         )
 
     _covenant_mode_gantt = bool(
@@ -39551,9 +39553,10 @@ def dashboard_project_schedule_chart(df):
             margin=_cov_margin,
             showlegend=False,
             uirevision="gantt_project_schedule_covenants",
+            dragmode=False,
         )
-        fig.update_yaxes(title=dict(text=""))
-        fig.update_xaxes(title_text="Дата", automargin=True, showgrid=True, fixedrange=False)
+        fig.update_yaxes(title=dict(text=""), fixedrange=True)
+        fig.update_xaxes(title_text="Дата", automargin=True, showgrid=True, fixedrange=True)
 
         try:
             _bar_dates = pd.concat([plan_end, fact_end], ignore_index=True).dropna().tolist()
@@ -39577,7 +39580,7 @@ def dashboard_project_schedule_chart(df):
                 _extra = timedelta(days=max(60.0, _span_days * 0.12))
                 lo_pad = pd.Timestamp(lo_pad) - _extra
                 hi_pad = pd.Timestamp(hi_pad) + _extra
-                fig.update_xaxes(range=[lo_pad, hi_pad], autorange=False)
+                fig.update_xaxes(range=[lo_pad, hi_pad], autorange=False, fixedrange=True)
                 tvals, ttext = _gantt_ru_date_ticks(lo_pad, hi_pad, max_ticks=policy.get("max_ticks", 22))
                 if tvals and ttext and len(tvals) == len(ttext):
                     fig.update_xaxes(
@@ -39605,7 +39608,7 @@ def dashboard_project_schedule_chart(df):
             margin=_cov_margin,
             showlegend=False,
         )
-        fig.update_xaxes(domain=[_x_domain_start, 1.0], fixedrange=False)
+        fig.update_xaxes(domain=[_x_domain_start, 1.0], fixedrange=True)
         return fig, fact_end_col, fact_label
 
     _readability = _gantt_readability_policy(plot_df)
@@ -39709,25 +39712,21 @@ def dashboard_project_schedule_chart(df):
     except Exception:
         _h_g = 0
     _gantt_render_h = _h_g if _h_g > 0 else _gantt_render_h
-    # В режиме «Все»/«%» масштаб по времени отключён (оси фиксированы), поэтому
-    # убираем панель зума и scrollZoom, чтобы курсор не превращался в стрелки <->.
-    # В «Ковенантах» масштаб оставляем как есть.
-    _gantt_cfg_extra = (
-        None
-        if _covenant_mode_gantt
-        else {
-            "scrollZoom": False,
-            "modeBarButtonsToRemove": [
-                "zoom2d",
-                "pan2d",
-                "zoomIn2d",
-                "zoomOut2d",
-                "autoScale2d",
-                "select2d",
-                "lasso2d",
-            ],
-        }
-    )
+    # Масштаб по времени отключён во всех режимах графика проекта (оси фиксированы),
+    # поэтому убираем панель зума и scrollZoom, чтобы курсор не превращался в
+    # стрелки <-> и не появлялась неработающая панель (и в «Все»/«%», и в «Ковенантах»).
+    _gantt_cfg_extra = {
+        "scrollZoom": False,
+        "modeBarButtonsToRemove": [
+            "zoom2d",
+            "pan2d",
+            "zoomIn2d",
+            "zoomOut2d",
+            "autoScale2d",
+            "select2d",
+            "lasso2d",
+        ],
+    }
     with stage_timer("gantt: render_chart"):
         render_chart(
             fig_gantt,
@@ -39749,18 +39748,9 @@ def dashboard_project_schedule_chart(df):
                     )
                 )
                 + (
-                    (
-                        "Список прокручивается колёсиком или полосой справа; масштаб по времени — "
-                        "панелью (+/−, рамка) вверху графика."
-                        if _scroll_h
-                        else "Масштаб — колесом мыши или панелью (+/−, рамка)."
-                    )
-                    if _covenant_mode_gantt
-                    else (
-                        "Список прокручивается колёсиком или полосой справа."
-                        if _scroll_h
-                        else ""
-                    )
+                    "Список прокручивается колёсиком или полосой справа."
+                    if _scroll_h
+                    else ""
                 )
             ),
             **_gantt_plot_kw,
@@ -39972,9 +39962,10 @@ def dashboard_project_schedule_chart(df):
 
         gdrs_render_subheader(st, "Таблица задач", theme="dark", level=4)
         suppress_caption("Сортировка: клик по заголовку колонки.")
-        # Не отправляем тысячи строк в браузер — рендер HTML-таблицы тоже тяжёлый.
-        # Полный список доступен кнопкой выгрузки CSV (см. подпись под таблицей).
-        _gantt_tbl_cap = min(len(tbl_show), _GANTT_TABLE_PERF_CAP)
+        # Таблица отдаётся полностью (по просьбе заказчика — «подгружать абсолютно все»).
+        # Потолок остаётся только на ДИАГРАММЕ (_GANTT_DIAGRAM_PERF_CAP) как защита
+        # браузера от тысяч полос; HTML-таблица переносит больше строк, плюс есть CSV.
+        _gantt_tbl_cap = len(tbl_show)
         with stage_timer("gantt: таблица HTML"):
             _render_gantt_schedule_html_table(
                 tbl_show,
