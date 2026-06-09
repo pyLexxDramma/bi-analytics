@@ -11,8 +11,21 @@ import streamlit as st
 
 
 def gantt_resolve_date_label_mode(n_rows: int) -> str:
-    """Всегда full — порог по числу строк отключён (эксперимент)."""
-    return "full"
+    """Режим подписей дат по числу строк: full → end_only → hover_only.
+
+    Плавная деградация защищает от тормозов на больших выборках (полные подписи
+    для каждой полосы строятся как отдельные точки текста — это дорого).
+    """
+    from dashboards._renderers import (
+        _GANTT_DATE_LABELS_END_ONLY_ROWS,
+        _GANTT_DATE_LABELS_FULL_ROWS,
+    )
+
+    if n_rows <= _GANTT_DATE_LABELS_FULL_ROWS:
+        return "full"
+    if n_rows <= _GANTT_DATE_LABELS_END_ONLY_ROWS:
+        return "end_only"
+    return "hover_only"
 
 
 def _msp_pick_col(d: pd.DataFrame, candidates: tuple[str, ...]) -> Optional[str]:
@@ -135,20 +148,20 @@ def build_grouped_plan_fact_gantt_figure(
     from utils import apply_chart_background
 
     local = d.copy()
+    # Даты в данных — ISO (YYYY-MM-DD). dayfirst=True ломал их (менял местами
+    # месяц/день: «2025-04-02» → 2025-02-04), из-за чего интервалы инвертировались
+    # или обнулялись и полосы становились невидимыми (пустота). Парсим как остальное
+    # приложение — без dayfirst.
     for _dc in ("plan start", "plan end", "base start", "base end"):
         if _dc in local.columns:
-            local[_dc] = pd.to_datetime(local[_dc], errors="coerce", dayfirst=True)
+            local[_dc] = pd.to_datetime(local[_dc], errors="coerce")
 
     fact_end_col = _find_fact_end_column(local)
     fact_start_col = _find_fact_start_column(local)
     if fact_end_col and fact_end_col in local.columns:
-        local[fact_end_col] = pd.to_datetime(
-            local[fact_end_col], errors="coerce", dayfirst=True
-        )
+        local[fact_end_col] = pd.to_datetime(local[fact_end_col], errors="coerce")
     if fact_start_col and fact_start_col in local.columns:
-        local[fact_start_col] = pd.to_datetime(
-            local[fact_start_col], errors="coerce", dayfirst=True
-        )
+        local[fact_start_col] = pd.to_datetime(local[fact_start_col], errors="coerce")
 
     def _epoch_ms(ts) -> Optional[float]:
         if ts is None or (isinstance(ts, float) and pd.isna(ts)):
@@ -203,17 +216,10 @@ def build_grouped_plan_fact_gantt_figure(
     _use_baseline_as_plan = not label_pct
 
     for i, (_, row) in enumerate(local.iterrows()):
-        y = str(row["_gantt_y_label"])
-        if y in _seen_y:
-            _seen_y[y] += 1
-            y = f"{y} #{_seen_y[y]}"
-        else:
-            _seen_y[y] = 1
         cs = row.get("plan start")
         ce = row.get("plan end")
         if pd.isna(cs) or pd.isna(ce):
             continue
-        y_labels.append(y)
 
         if _use_baseline_as_plan:
             plan_s = row.get("base start")
@@ -222,14 +228,10 @@ def build_grouped_plan_fact_gantt_figure(
             plan_s, plan_e = cs, ce
         p0 = _epoch_ms(plan_s)
         p1 = _epoch_ms(plan_e)
-        if p0 is not None and p1 is not None and p1 >= p0:
-            plan_base_ms.append(float(p0))
-            plan_len_ms.append(max(0.0, float(p1 - p0)))
-            cust_plan.append((_fmt_bar_date(plan_s), _fmt_bar_date(plan_e)))
-        else:
-            plan_base_ms.append(0.0)
-            plan_len_ms.append(0.0)
-            cust_plan.append(("—", "—"))
+        # «Видимая» полоса — только с положительной длительностью. Нулевая длина
+        # (старт = окончание) рисуется невидимой полосой и даёт две наложенные
+        # одинаковые подписи дат — такие интервалы не считаем видимыми.
+        plan_ok = p0 is not None and p1 is not None and p1 > p0
 
         if _use_baseline_as_plan:
             fs, fe = (cs, ce)
@@ -237,9 +239,38 @@ def build_grouped_plan_fact_gantt_figure(
             fs, fe = _resolve_fact_interval(row)
         f0 = _epoch_ms(fs)
         f1 = _epoch_ms(fe)
-        if f0 is not None and f1 is not None and f1 >= f0:
+        fact_ok = f0 is not None and f1 is not None and f1 > f0
+
+        # Строка без единой видимой полосы (нет дат / нулевая длительность) только
+        # занимает место по оси Y (пустота сверху графика) и показывает дубль
+        # одинаковых дат — пропускаем её целиком. В режиме «Показать %» рисуется
+        # только полоса плана, поэтому там нужна видимая плановая полоса.
+        if label_pct:
+            if not plan_ok:
+                continue
+        elif not plan_ok and not fact_ok:
+            continue
+
+        y = str(row["_gantt_y_label"])
+        if y in _seen_y:
+            _seen_y[y] += 1
+            y = f"{y} #{_seen_y[y]}"
+        else:
+            _seen_y[y] = 1
+        y_labels.append(y)
+
+        if plan_ok:
+            plan_base_ms.append(float(p0))
+            plan_len_ms.append(float(p1 - p0))
+            cust_plan.append((_fmt_bar_date(plan_s), _fmt_bar_date(plan_e)))
+        else:
+            plan_base_ms.append(0.0)
+            plan_len_ms.append(0.0)
+            cust_plan.append(("—", "—"))
+
+        if fact_ok:
             fact_base_ms.append(float(f0))
-            fact_len_ms.append(max(0.0, float(f1 - f0)))
+            fact_len_ms.append(float(f1 - f0))
             cust_fact.append((_fmt_bar_date(fs), _fmt_bar_date(fe)))
             _n_fact_ok += 1
         else:
@@ -264,6 +295,8 @@ def build_grouped_plan_fact_gantt_figure(
                 "fs": fs,
                 "fe": fe,
                 "pct": pv,
+                "plan_ok": plan_ok,
+                "fact_ok": fact_ok,
             }
         )
 
@@ -306,21 +339,32 @@ def build_grouped_plan_fact_gantt_figure(
         _bucket["text"].append(text)
 
     def _flush_date_text_traces() -> None:
-        _pos = {"start": "middle right", "end": "middle left"}
+        # Даты — СНАРУЖИ полос, как на «Ковенантах»: начало слева от левого края,
+        # окончание справа от правого края (не внутри полосы).
+        _pos = {"start": "middle left", "end": "middle right"}
+        # Зазор от края полосы до подписи — 4 неразрывных пробела (как в «Ковенантах»):
+        # scatter-текст не поддерживает пиксельный сдвиг, поэтому добиваем пробелами
+        # со стороны полосы.
+        _gap = "\u00a0\u00a0\u00a0\u00a0"
         for (lane, edge), data in _date_text.items():
             if not data["x"]:
                 continue
             _color = _GANTT_FACT_COLOR if lane == "fact" else _GANTT_PLAN_COLOR
+            if edge == "end":
+                _txt = [_gap + str(t) for t in data["text"]]
+            else:
+                _txt = [str(t) + _gap for t in data["text"]]
             fig.add_trace(
                 go.Scatter(
                     x=data["x"],
                     y=data["y"],
                     mode="text",
-                    text=data["text"],
+                    text=_txt,
                     textposition=_pos[edge],
                     textfont=dict(size=_lbl_font, color=_color, family="Arial"),
                     hoverinfo="skip",
                     showlegend=False,
+                    cliponaxis=False,
                 )
             )
 
@@ -386,7 +430,7 @@ def build_grouped_plan_fact_gantt_figure(
     if label_pct:
         for meta in _row_meta:
             pe = meta.get("pe")
-            if pe is None:
+            if pe is None or not meta.get("plan_ok"):
                 continue
             pv = meta.get("pct")
             _ptxt = "н/д"
@@ -403,33 +447,52 @@ def build_grouped_plan_fact_gantt_figure(
                 edge="end",
             )
 
+    def _same_day(a, b) -> bool:
+        # Полное совпадение дат план/факт по дню: дубль подписи не нужен.
+        if a is None or b is None:
+            return False
+        try:
+            ta, tb = pd.Timestamp(a), pd.Timestamp(b)
+            if pd.isna(ta) or pd.isna(tb):
+                return False
+            return ta.normalize() == tb.normalize()
+        except Exception:
+            return False
+
     _date_mode = str(policy.get("date_label_mode") or "full")
     if not label_pct and _date_mode in ("full", "end_only"):
         for meta in _row_meta:
             y_idx = int(meta["y_idx"])
             ps, pe = meta["ps"], meta["pe"]
             fs, fe = meta["fs"], meta["fe"]
+            _plan_ok = bool(meta.get("plan_ok"))
+            _fact_ok = bool(meta.get("fact_ok"))
             if _date_mode == "full":
-                if ps is not None and pe is not None:
+                if _plan_ok and ps is not None and pe is not None:
                     _add_bar_edge_date_label(
                         ps, y_idx, _fmt_bar_date(ps), lane="plan", edge="start"
                     )
                     _add_bar_edge_date_label(
                         pe, y_idx, _fmt_bar_date(pe), lane="plan", edge="end"
                     )
-                if fs is not None and fe is not None:
-                    _add_bar_edge_date_label(
-                        fs, y_idx, _fmt_bar_date(fs), lane="fact", edge="start"
-                    )
-                    _add_bar_edge_date_label(
-                        fe, y_idx, _fmt_bar_date(fe), lane="fact", edge="end"
-                    )
+                if _fact_ok and fs is not None and fe is not None:
+                    # Если дата факта совпадает с планом по дню — не дублируем подпись
+                    # (иначе бирюзовая и оранжевая печатаются стопкой). Рисуем факт
+                    # только когда есть расхождение и план-подпись не показана.
+                    if not (_plan_ok and _same_day(fs, ps)):
+                        _add_bar_edge_date_label(
+                            fs, y_idx, _fmt_bar_date(fs), lane="fact", edge="start"
+                        )
+                    if not (_plan_ok and _same_day(fe, pe)):
+                        _add_bar_edge_date_label(
+                            fe, y_idx, _fmt_bar_date(fe), lane="fact", edge="end"
+                        )
             else:
-                if pe is not None:
+                if _plan_ok and pe is not None:
                     _add_bar_edge_date_label(
                         pe, y_idx, _fmt_bar_date(pe), lane="plan", edge="end"
                     )
-                if fe is not None:
+                if _fact_ok and fe is not None and not (_plan_ok and _same_day(fe, pe)):
                     _add_bar_edge_date_label(
                         fe, y_idx, _fmt_bar_date(fe), lane="fact", edge="end"
                     )
@@ -484,6 +547,7 @@ def build_grouped_plan_fact_gantt_figure(
         bargroupgap=_GANTT_SCHEDULE_BARGROUPGAP,
         uirevision="gantt_project_schedule_bars",
         hovermode="closest",
+        dragmode=False,
     )
     if _y_name_ann:
         fig.update_layout(annotations=list(_y_name_ann))
@@ -492,8 +556,9 @@ def build_grouped_plan_fact_gantt_figure(
         tickformat=_CHART_PLOT_DATE_FMT,
         automargin=True,
         domain=[_x_domain_start, 1.0],
-        fixedrange=False,
+        fixedrange=True,
     )
+    fig.update_yaxes(fixedrange=True)
 
     try:
         _bar_dates: list = []
@@ -527,7 +592,15 @@ def build_grouped_plan_fact_gantt_figure(
             label_right_x=_label_right_x or None,
         )
         if lo_pad is not None and hi_pad is not None:
-            fig.update_xaxes(range=[lo_pad, hi_pad], autorange=False, fixedrange=False)
+            # Небольшой запас по краям под подписи дат (начало — слева, окончание —
+            # справа). Раньше брали 12% диапазона: на многолетней выборке это давало
+            # широкую пустую полосу до первых полос. Теперь запас пропорционален
+            # диапазону, но с жёстким верхним ограничением, чтобы пустоты не было.
+            _span_days = max(1.0, (pd.Timestamp(hi_pad) - pd.Timestamp(lo_pad)).days)
+            _extra = pd.Timedelta(days=min(45.0, max(10.0, _span_days * 0.05)))
+            lo_pad = pd.Timestamp(lo_pad) - _extra
+            hi_pad = pd.Timestamp(hi_pad) + _extra
+            fig.update_xaxes(range=[lo_pad, hi_pad], autorange=False, fixedrange=True)
             tvals, ttext = _gantt_ru_date_ticks(
                 lo_pad,
                 hi_pad,
@@ -573,7 +646,7 @@ def cached_grouped_gantt_figure(
     date_fmt: str,
     show_covenant_markers: bool,
     row_block_scale: float,
-    _fig_cache_version: int = 7,
+    _fig_cache_version: int = 18,
 ) -> go.Figure:
     """Кэш построения fig — ускоряет rerun при тех же фильтрах."""
     policy = json.loads(policy_json)

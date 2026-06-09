@@ -3568,65 +3568,29 @@ def render_chart(
     )
     if _use_scroll:
         _vh = int(scroll_viewport_height)
-        # Очень высокий Gantt (>8000px) в iframe подвешивает вкладку на минуты —
-        # отдаём через st.plotly_chart, прокрутка страницы.
-        if _layout_h is not None and int(_layout_h) > 8000:
-            _use_scroll = False
+        # Длинный Gantt: рендерим график на ПОЛНУЮ высоту (_layout_h) в нативном
+        # прокручиваемом контейнере Streamlit (st.container(height=...)). Это
+        # надёжнее iframe + to_html(CDN): Plotly рендерится штатно на всю ширину,
+        # без проблем с асинхронной загрузкой и нулевой шириной (из-за чего полосы
+        # не отрисовывались). Колёсико прокручивает список; масштаб — панель Plotly.
         try:
-            # Длинный Gantt: рендерим график на ПОЛНУЮ высоту (_layout_h) и
-            # помещаем в iframe фиксированной высоты _vh с НАТИВНОЙ вертикальной
-            # прокруткой (scrolling=True) — это самый надёжный способ получить
-            # прокрутку списка задач даёт scrolling=True у iframe (полоса справа).
-            # scrollZoom отключён: при сотнях подписей relayout по колёсику подвешивает вкладку;
-            # масштаб по времени — панель Plotly (+/−, рамка) вверху блока.
-            _cfg_scroll = dict(cfg)
-            _cfg_scroll["responsive"] = True
-            _cfg_scroll["scrollZoom"] = False
-            _cfg_scroll["doubleClick"] = "reset"
-            try:
-                fig.update_layout(autosize=True, height=_layout_h, width=None)
-            except Exception:
-                pass
-            _plot_div = fig.to_html(
-                full_html=False,
-                include_plotlyjs="cdn",
-                config=_cfg_scroll,
-                default_width="100%",
-                default_height=f"{_layout_h}px",
-            )
-            _shell = (
-                "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-                "<style>html,body{margin:0;padding:0;background:transparent;width:100%;box-sizing:border-box;}"
-                f"body{{min-height:{_layout_h}px;}}"
-                ".pf-gantt-plot{width:100%!important;box-sizing:border-box;}"
-                f".pf-gantt-plot,.pf-gantt-plot .js-plotly-plot,.pf-gantt-plot .plotly-graph-div{{"
-                f"height:{_layout_h}px!important;min-height:{_layout_h}px!important;width:100%!important;}}"
-                ".pf-gantt-plot .modebar-container{position:sticky!important;top:0!important;"
-                "z-index:1001!important;background:rgba(15,23,42,0.92)!important;}"
-                "</style></head><body>"
-                f'<div class="pf-gantt-plot">{_plot_div}</div>'
-                "<script>"
-                "(function(){"
-                "function rz(){try{var gd=document.querySelector('.plotly-graph-div');"
-                "if(gd&&window.Plotly&&gd.offsetWidth>0)Plotly.Plots.resize(gd);}catch(e){}}"
-                "var _t=null;function drz(){if(_t)clearTimeout(_t);_t=setTimeout(rz,200);}"
-                # Plotly с CDN грузится асинхронно, ширина iframe появляется не сразу:
-                # несколько отложенных resize гарантируют корректную отрисовку.
-                "[100,300,600,1200].forEach(function(ms){setTimeout(rz,ms);});"
-                "window.addEventListener('load',rz);"
-                "window.addEventListener('resize',drz,{passive:true});"
-                "if(window.ResizeObserver){try{new ResizeObserver(drz).observe(document.body);}catch(e){}}"
-                "})();</script>"
-                "</body></html>"
-            )
-            components.html(_shell, height=_vh, scrolling=True)
+            fig.update_layout(autosize=True, height=_layout_h, width=None)
+        except Exception:
+            pass
+        _scroll_kwargs = dict(kwargs)
+        _cfg_scroll = dict(cfg)
+        _cfg_scroll["scrollZoom"] = False
+        _scroll_kwargs["config"] = _cfg_scroll
+        try:
+            _scroll_box = st.container(height=_vh, border=False)
+            with _scroll_box:
+                st.plotly_chart(fig, **_scroll_kwargs)
             if caption_below:
                 _chart_caption_below(caption_below, tight=True)
             return
         except Exception:
-            fig.update_layout(height=_vh)
-            _layout_h = _vh
-            _use_scroll = False
+            # Фолбэк: график во всю высоту, прокрутка страницей.
+            pass
     st.plotly_chart(fig, **kwargs)
     if caption_below:
         _chart_caption_below(caption_below)
@@ -38069,13 +38033,17 @@ def _project_schedule_gantt_apply_y_labels(
     )
     if numeric_row_y:
         _lane_pad = 0.35
+        # ВАЖНО: autorange=False (не "reversed"). При truthy-autorange Plotly
+        # игнорирует явный range и считает диапазон сам, добавляя запас — из-за
+        # этого над полосами появлялась пустота. Обратный (сверху вниз) порядок
+        # задаём убывающим диапазоном [max, min], а не autorange="reversed".
         fig.update_yaxes(
             type="linear",
             tickmode="array",
             tickvals=list(range(n)),
             ticktext=_ticktext,
             tickfont=_tickfont,
-            autorange="reversed",
+            autorange=False,
             range=[n - 0.5 + _lane_pad, -0.5 - _lane_pad] if n > 0 else None,
             fixedrange=True,
             side="left",
@@ -38090,7 +38058,7 @@ def _project_schedule_gantt_apply_y_labels(
             tickvals=list(y_labels),
             ticktext=_ticktext,
             tickfont=_tickfont,
-            autorange="reversed",
+            autorange=False,
             range=[n - 0.5, -0.5] if n > 0 else None,
             fixedrange=True,
             side="left",
@@ -38136,11 +38104,20 @@ _GANTT_TABLE_MAX_ROWS = 30
 _GANTT_MIN_TASK_FONT = 12
 _GANTT_MIN_LABEL_FONT = 13
 _GANTT_MIN_ROW_PX = 24
-# Подписи дат: full (≤120 строк) → end_only (≤250) → hover (tooltip).
-_GANTT_DATE_LABELS_FULL_ROWS = 120
-_GANTT_DATE_LABELS_END_ONLY_ROWS = 250
-_GANTT_DATE_LABELS_HOVER_ONLY_ROWS = 250
+# Подписи дат: full (≤600 строк) → end_only (≤900) → hover (tooltip).
+# Диаграмма ограничена _GANTT_DIAGRAM_PERF_CAP (600), а подписи рендерятся лёгким
+# scatter-текстом (не layout-annotations) — поэтому full-порог = лимиту строк:
+# на видимой (ограниченной) диаграмме всегда есть даты начала и окончания.
+_GANTT_DATE_LABELS_FULL_ROWS = 600
+_GANTT_DATE_LABELS_END_ONLY_ROWS = 900
+_GANTT_DATE_LABELS_HOVER_ONLY_ROWS = 900
 _GANTT_SCROLL_VISIBLE_ROWS = 30
+# Потолок производительности: при «Все проекты» + «Показать причины отклонений»
+# выборка раздувается до уровня 5 со всеми предками (тысячи строк). Plotly рисует
+# ВСЕ полосы (виртуализации нет) → браузер грузит десятки секунд. Ограничиваем
+# число строк, отправляемых на отрисовку; полный список остаётся в CSV.
+_GANTT_DIAGRAM_PERF_CAP = 600
+_GANTT_TABLE_PERF_CAP = 1000
 _GANTT_LINES_TEXT_MAX_ROWS = 20
 _CHART_PLOT_DATE_FMT = "%d-%m-%y"
 _GANTT_LABEL_X_LEFT = 0.006
@@ -38164,19 +38141,22 @@ def _gantt_plan_fact_end_series(
         empty = pd.Series(dtype="datetime64[ns]")
         return empty, empty, False
 
+    # Даты ISO (YYYY-MM-DD) — без dayfirst (как в остальных фильтрах диаграммы),
+    # иначе сравнение план/факт идёт по искажённым датам и чекбокс «совпадающие
+    # даты» работает некорректно.
     _base = (
-        pd.to_datetime(d["base end"], errors="coerce", dayfirst=True)
+        pd.to_datetime(d["base end"], errors="coerce")
         if "base end" in d.columns
         else pd.Series(pd.NaT, index=d.index)
     )
     _plan = (
-        pd.to_datetime(d["plan end"], errors="coerce", dayfirst=True)
+        pd.to_datetime(d["plan end"], errors="coerce")
         if "plan end" in d.columns
         else pd.Series(pd.NaT, index=d.index)
     )
     _fact_col = _find_fact_end_column(d)
     _fact = (
-        pd.to_datetime(d[_fact_col], errors="coerce", dayfirst=True)
+        pd.to_datetime(d[_fact_col], errors="coerce")
         if _fact_col and _fact_col in d.columns
         else pd.Series(pd.NaT, index=d.index)
     )
@@ -38644,12 +38624,31 @@ def dashboard_project_schedule_chart(df):
             _ix += 1
         f_level = _flt_cols[_ix]
 
+        _GANTT_PROJECT_PLACEHOLDER = "— выберите проект —"
+        # Значение чекбокса «Показать все проекты» (он ниже, в ряду тумблеров) читаем
+        # из session_state — Streamlit обновляет его до перезапуска скрипта, поэтому
+        # здесь оно уже актуально. Так селектор «Проект» остаётся в одной линии с
+        # остальными выпадающими фильтрами (одинаковая ширина колонок).
+        show_all_projects = bool(st.session_state.get("gantt_show_all_projects", False))
         with f1:
             if proj_col:
-                projs = ["Все"] + _gantt_distinct_str_values_from_series(plot_df[proj_col])
-                sel_proj = st.selectbox("Проект", projs, key="gantt_project_filter")
-                if sel_proj != "Все":
-                    plot_df = plot_df[plot_df[proj_col].astype(str).str.strip() == str(sel_proj).strip()]
+                projs = [_GANTT_PROJECT_PLACEHOLDER] + _gantt_distinct_str_values_from_series(
+                    plot_df[proj_col]
+                )
+                sel_proj = st.selectbox(
+                    "Проект",
+                    projs,
+                    key="gantt_project_filter_v2",
+                    disabled=show_all_projects,
+                )
+                if show_all_projects:
+                    # Режим «все проекты»: внутренняя метка «Все» сохраняет прежнюю
+                    # логику (колонка/префикс «Проект», сортировка по проекту).
+                    sel_proj = "Все"
+                elif sel_proj != _GANTT_PROJECT_PLACEHOLDER:
+                    plot_df = plot_df[
+                        plot_df[proj_col].astype(str).str.strip() == str(sel_proj).strip()
+                    ]
             else:
                 suppress_caption("Колонка проекта не найдена.")
         with f2:
@@ -38788,6 +38787,15 @@ def dashboard_project_schedule_chart(df):
         with filters_toggles(st):
             _gcb_a, _gcb_b, _gcb_c = st.columns((1, 1, 1), gap="small")
             with _gcb_a:
+                st.checkbox(
+                    "Показать все проекты",
+                    key="gantt_show_all_projects",
+                    help=(
+                        "Медленно: данных по всем проектам много. На диаграмме показываются "
+                        "первые 600 задач, в таблице — 1000; полный список — в выгрузке CSV. "
+                        "По умолчанию выберите один проект для быстрой загрузки."
+                    ),
+                )
                 show_reasons = st.checkbox(
                     "Показать причины отклонений",
                     value=False,
@@ -38795,7 +38803,8 @@ def dashboard_project_schedule_chart(df):
                     help=(
                         "По ТЗ: при включении в выборку добавляются задачи уровня 5 "
                         "(только в них есть причины отклонений и заметки) и все родительские "
-                        "задачи выше. Селектор «Уровень отображения задач» игнорируется."
+                        "задачи выше. Разворот выполняется в рамках выбранного проекта "
+                        "(не по всем сразу). Селектор «Уровень отображения задач» игнорируется."
                     ),
                 )
             with _gcb_b:
@@ -38841,6 +38850,24 @@ def dashboard_project_schedule_chart(df):
                     ),
                 )
 
+    # ── Ленивый рендер: без явного выбора проекта тяжёлый граф/таблица не строятся ──
+    # По умолчанию (плейсхолдер выбран, режим «все проекты» выключен) показываем
+    # заглушку и выходим ДО построения фигуры/таблицы. Это убирает дорогой рендер
+    # «по всем проектам» при открытии отчёта.
+    if proj_col and not show_all_projects and sel_proj == _GANTT_PROJECT_PLACEHOLDER:
+        st.info(
+            "Выберите проект в фильтре выше, чтобы построить график и таблицу. "
+            "Либо включите «Показать все проекты» (медленнее)."
+        )
+        return
+
+    if show_all_projects:
+        st.warning(
+            "Режим «все проекты»: данных много, построение может занять время. "
+            "На диаграмме показываются первые 600 задач, в таблице — 1000; "
+            "полный список доступен в выгрузке CSV."
+        )
+
     _covenant_mode_gantt = bool(
         sel_block != "Все"
         and any(
@@ -38849,7 +38876,9 @@ def dashboard_project_schedule_chart(df):
         )
     )
 
-    _gantt_row_cap = None
+    # Потолок строк на диаграмме — только защита от «тысяч полос» (browser-меллтдаун).
+    # Для обычных выборок (< потолка) не срабатывает; таблица ниже и CSV — полные.
+    _gantt_row_cap = _GANTT_DIAGRAM_PERF_CAP
     view_mode = "Гантт (полосы)"
 
     _render_project_schedule_gantt_legend(
@@ -39347,9 +39376,10 @@ def dashboard_project_schedule_chart(df):
         _GANTT_PLAN_COLOR = "#14b8a6"
         _GANTT_FACT_COLOR = "#fb923c"
         _df = d.copy()
+        # ISO-даты (YYYY-MM-DD) — без dayfirst (иначе месяц/день меняются местами).
         for _dc in ("plan end", "base end"):
             if _dc in _df.columns:
-                _df[_dc] = pd.to_datetime(_df[_dc], errors="coerce", dayfirst=True)
+                _df[_dc] = pd.to_datetime(_df[_dc], errors="coerce")
         _y = _df["_gantt_y_label"].astype(str)
         date_fmt = policy.get("date_fmt", "%d.%m.%Y")
         fact_end_col = _gantt_find_fact_end_column(_df)
@@ -39365,7 +39395,7 @@ def dashboard_project_schedule_chart(df):
             plan_label = "План"
 
         if fact_end_col and fact_end_col in _df.columns and _df[fact_end_col].notna().any():
-            fact_end = pd.to_datetime(_df[fact_end_col], errors="coerce", dayfirst=True)
+            fact_end = pd.to_datetime(_df[fact_end_col], errors="coerce")
             fact_label = "Факт"
         elif "plan end" in _df.columns:
             fact_end = _df["plan end"]
@@ -39645,7 +39675,15 @@ def dashboard_project_schedule_chart(df):
     except Exception:
         pass
 
-    _n_gantt_rows = len(y_labels)
+    # Билдер отбрасывает строки без видимых полос (нулевая длительность/без дат),
+    # поэтому реальных строк в фигуре может быть меньше, чем len(plot_df). Берём
+    # фактическое число строк фигуры (тики оси Y) — иначе высота/скролл считаются
+    # по «лишним» строкам и сверху графика появляется пустота.
+    try:
+        _fig_rows = len(list(getattr(fig_gantt.layout.yaxis, "tickvals", None) or []))
+    except Exception:
+        _fig_rows = 0
+    _n_gantt_rows = _fig_rows if _fig_rows > 0 else len(y_labels)
     _gantt_viewport_h = _project_schedule_gantt_chart_height(
         min(_n_gantt_rows, _GANTT_SCROLL_VISIBLE_ROWS),
         dense=bool(_readability.get("is_dense")),
@@ -39671,6 +39709,25 @@ def dashboard_project_schedule_chart(df):
     except Exception:
         _h_g = 0
     _gantt_render_h = _h_g if _h_g > 0 else _gantt_render_h
+    # В режиме «Все»/«%» масштаб по времени отключён (оси фиксированы), поэтому
+    # убираем панель зума и scrollZoom, чтобы курсор не превращался в стрелки <->.
+    # В «Ковенантах» масштаб оставляем как есть.
+    _gantt_cfg_extra = (
+        None
+        if _covenant_mode_gantt
+        else {
+            "scrollZoom": False,
+            "modeBarButtonsToRemove": [
+                "zoom2d",
+                "pan2d",
+                "zoomIn2d",
+                "zoomOut2d",
+                "autoScale2d",
+                "select2d",
+                "lasso2d",
+            ],
+        }
+    )
     with stage_timer("gantt: render_chart"):
         render_chart(
             fig_gantt,
@@ -39680,6 +39737,7 @@ def dashboard_project_schedule_chart(df):
                 else "gantt_project_schedule_bars"
             ),
             height=_gantt_render_h,
+            plotly_config_extra=_gantt_cfg_extra,
             caption_below=(
                 (
                     "Блок «Ковенанты»: вехи план (бирюза) и факт (оранжевый); даты слева и справа от ромбов. "
@@ -39691,10 +39749,18 @@ def dashboard_project_schedule_chart(df):
                     )
                 )
                 + (
-                    "Прокрутка списка — полосой справа; масштаб по времени — панелью (+/−, рамка) "
-                    "вверху блока (колёсико прокручивает список)."
-                    if _scroll_h
-                    else "Масштаб — колесом мыши или панелью (+/−, рамка)."
+                    (
+                        "Список прокручивается колёсиком или полосой справа; масштаб по времени — "
+                        "панелью (+/−, рамка) вверху графика."
+                        if _scroll_h
+                        else "Масштаб — колесом мыши или панелью (+/−, рамка)."
+                    )
+                    if _covenant_mode_gantt
+                    else (
+                        "Список прокручивается колёсиком или полосой справа."
+                        if _scroll_h
+                        else ""
+                    )
                 )
             ),
             **_gantt_plot_kw,
@@ -39906,7 +39972,9 @@ def dashboard_project_schedule_chart(df):
 
         gdrs_render_subheader(st, "Таблица задач", theme="dark", level=4)
         suppress_caption("Сортировка: клик по заголовку колонки.")
-        _gantt_tbl_cap = len(tbl_show)
+        # Не отправляем тысячи строк в браузер — рендер HTML-таблицы тоже тяжёлый.
+        # Полный список доступен кнопкой выгрузки CSV (см. подпись под таблицей).
+        _gantt_tbl_cap = min(len(tbl_show), _GANTT_TABLE_PERF_CAP)
         with stage_timer("gantt: таблица HTML"):
             _render_gantt_schedule_html_table(
                 tbl_show,
