@@ -52,7 +52,7 @@ import re
 from datetime import datetime as _dt
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 import numpy as np
 import pandas as pd
@@ -647,6 +647,127 @@ class GdrsKontrIndex:
     id_by_norm: dict[str, str]
 
 
+@dataclass(frozen=True)
+class GdrsTerminationIndex:
+    """Даты расторжения по парам проект×контрагент (из Dogovor.json)."""
+
+    by_id: dict[tuple[str, str], pd.Timestamp]
+    by_norm: dict[tuple[str, str], pd.Timestamp]
+
+    @staticmethod
+    def empty() -> GdrsTerminationIndex:
+        return GdrsTerminationIndex(by_id={}, by_norm={})
+
+
+def load_gdrs_termination_index(
+    dogovor_paths: Iterable[Path | str],
+) -> GdrsTerminationIndex:
+    """Минимальная дата расторжения по (project_id, contractor_id) из последнего Dogovor.json."""
+    dated: list[tuple[pd.Timestamp, Path]] = []
+    undated: list[Path] = []
+    for raw in dogovor_paths:
+        p = Path(raw)
+        fd = _dogovor_file_date(p)
+        if fd is None:
+            undated.append(p)
+            continue
+        dated.append((fd, p))
+    if not dated:
+        path = undated[0] if undated else None
+    else:
+        dated.sort(key=lambda t: t[0])
+        path = dated[-1][1]
+    if path is None:
+        return GdrsTerminationIndex.empty()
+    raw = load_plan_from_dogovor(path, snapshot_date=None)
+    if raw is None or raw.empty or "date_termination" not in raw.columns:
+        return GdrsTerminationIndex.empty()
+    sentinel = pd.Timestamp("0001-01-01")
+    by_id: dict[tuple[str, str], pd.Timestamp] = {}
+    by_norm: dict[tuple[str, str], pd.Timestamp] = {}
+    for _, r in raw.iterrows():
+        term = r.get("date_termination")
+        if term is None or (isinstance(term, float) and pd.isna(term)):
+            continue
+        term_ts = pd.to_datetime(term, errors="coerce")
+        if term_ts is None or not pd.notna(term_ts):
+            continue
+        term_ts = pd.Timestamp(term_ts).normalize()
+        if term_ts <= sentinel:
+            continue
+        pid = str(r.get("project_id", "")).strip()
+        cid = str(r.get("contractor_id", "")).strip()
+        pn = normalize_name(str(r.get("project_name", "")))
+        cn = normalize_name(str(r.get("contractor_name", "")))
+        if pid and cid:
+            key = (pid, cid)
+            by_id[key] = min(by_id[key], term_ts) if key in by_id else term_ts
+        if pn and cn:
+            nkey = (pn, cn)
+            by_norm[nkey] = min(by_norm[nkey], term_ts) if nkey in by_norm else term_ts
+    return GdrsTerminationIndex(by_id=by_id, by_norm=by_norm)
+
+
+def _gdrs_contractor_termination_date(
+    project_id: str,
+    contractor_id: str,
+    project_name: str,
+    contractor_name: str,
+    term_index: Optional[GdrsTerminationIndex],
+) -> Optional[pd.Timestamp]:
+    if term_index is None:
+        return None
+    pid, cid = str(project_id or "").strip(), str(contractor_id or "").strip()
+    if pid and cid and (pid, cid) in term_index.by_id:
+        return term_index.by_id[(pid, cid)]
+    pn = normalize_name(project_name)
+    cn = normalize_name(contractor_name)
+    if pn and cn and (pn, cn) in term_index.by_norm:
+        return term_index.by_norm[(pn, cn)]
+    return None
+
+
+def gdrs_contractor_terminated_as_of(
+    project_id: str,
+    contractor_id: str,
+    project_name: str,
+    contractor_name: str,
+    as_of: pd.Timestamp,
+    term_index: Optional[GdrsTerminationIndex],
+) -> bool:
+    """С даты расторжения (включительно) контрагент не учитывается в плане и факте."""
+    term = _gdrs_contractor_termination_date(
+        project_id, contractor_id, project_name, contractor_name, term_index
+    )
+    if term is None or not pd.notna(term):
+        return False
+    return pd.Timestamp(as_of).normalize() >= pd.Timestamp(term).normalize()
+
+
+def gdrs_filter_fact_by_termination(
+    df: pd.DataFrame,
+    term_index: Optional[GdrsTerminationIndex],
+) -> pd.DataFrame:
+    if df is None or df.empty or term_index is None:
+        return df
+    if not term_index.by_id and not term_index.by_norm:
+        return df
+    work = df.copy()
+    work["date"] = pd.to_datetime(work["date"], errors="coerce")
+    mask = work.apply(
+        lambda r: not gdrs_contractor_terminated_as_of(
+            str(r.get("project_id", "")),
+            str(r.get("contractor_id", "")),
+            str(r.get("project_name", "")),
+            str(r.get("contractor_name", "")),
+            r["date"],
+            term_index,
+        ),
+        axis=1,
+    )
+    return work.loc[mask].copy()
+
+
 def load_1c_kontr_index(paths: Iterable[Path | str]) -> GdrsKontrIndex:
     ids: set[str] = set()
     norm_names: set[str] = set()
@@ -693,6 +814,57 @@ def build_dogovor_contractor_id_lookup(
                 if pid:
                     by_proj.setdefault((pid, nn), cid)
     return by_proj, by_name
+
+
+def build_dogovor_project_id_lookup(
+    dogovor_paths: Iterable[Path | str],
+) -> tuple[dict[str, str], dict[tuple[str, str], str]]:
+    """norm(project_name) → project_id; (norm(project), norm(contractor)) → project_id."""
+    by_name: dict[str, str] = {}
+    by_pair: dict[tuple[str, str], str] = {}
+    for p in dogovor_paths:
+        df = load_plan_from_dogovor(Path(p), snapshot_date=None)
+        if df is None or df.empty:
+            continue
+        for _, r in df.iterrows():
+            pid = str(r.get("project_id", "")).strip()
+            pname = str(r.get("project_name", "")).strip()
+            cname = str(r.get("contractor_name", "")).strip()
+            if not pid:
+                continue
+            pn = normalize_name(pname)
+            cn = normalize_name(cname)
+            if pn:
+                by_name.setdefault(pn, pid)
+            if pn and cn:
+                by_pair.setdefault((pn, cn), pid)
+    return by_name, by_pair
+
+
+def enrich_gdrs_fact_project_ids(
+    df: pd.DataFrame,
+    *,
+    dogovor_paths: Optional[Iterable[Path | str]] = None,
+) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    work = df.copy()
+    by_name, by_pair = build_dogovor_project_id_lookup(dogovor_paths or [])
+
+    def _resolve_pid(row: pd.Series) -> str:
+        cur = str(row.get("project_id", "")).strip()
+        if cur:
+            return cur
+        pn = normalize_name(str(row.get("project_name", "")))
+        cn = normalize_name(str(row.get("contractor_name", "")))
+        if pn and cn and (pn, cn) in by_pair:
+            return by_pair[(pn, cn)]
+        if pn and pn in by_name:
+            return by_name[pn]
+        return ""
+
+    work["project_id"] = work.apply(_resolve_pid, axis=1)
+    return work
 
 
 def enrich_gdrs_fact_contractor_ids(
@@ -796,6 +968,24 @@ def _safe_json(path: Path) -> object:
             return None
 
 
+# Точное имя поля расторжения в 1С сообщат позже — перечисляем известные варианты.
+_CONTRACT_TERMINATION_KEYS = (
+    "Дата_Расторжения_Договора",
+    "Дата расторжения договора",
+    "ДатаРасторженияДоговора",
+)
+
+
+def _contract_termination_date_raw(record: dict) -> object:
+    if not isinstance(record, dict):
+        return None
+    for key in _CONTRACT_TERMINATION_KEYS:
+        val = record.get(key)
+        if val is not None and str(val).strip() not in ("", "0001-01-01T00:00:00Z"):
+            return val
+    return None
+
+
 def _snapshot_history(history: object, target_date: Optional[pd.Timestamp]) -> Optional[float]:
     """Из истории `[{'Дата': 'YYYY-MM-DD', 'Количество': 'N'}, ...]` взять последнее значение
     с `Дата <= target_date`. Если history скаляр — вернуть его. Если target_date is None —
@@ -848,6 +1038,7 @@ def load_plan_from_dogovor(
             columns=[
                 "project_id", "contractor_id", "project_name", "contractor_name",
                 "contract_name", "plan_workers", "plan_equipment", "date_start", "date_end",
+                "date_termination",
             ]
         )
     rows = []
@@ -866,6 +1057,7 @@ def load_plan_from_dogovor(
                 # Сырые строки — парсим колонку векторно один раз ниже (без 2× to_datetime на строку).
                 "date_start": r.get("Дата_Начала_Договора"),
                 "date_end": r.get("Дата_Окончания_Договора"),
+                "date_termination": _contract_termination_date_raw(r),
             }
         )
     df = pd.DataFrame(rows)
@@ -874,17 +1066,20 @@ def load_plan_from_dogovor(
     df = _dearrow_object_columns(df)
     df["date_start"] = pd.to_datetime(df["date_start"], errors="coerce", utc=True).dt.tz_localize(None)
     df["date_end"] = pd.to_datetime(df["date_end"], errors="coerce", utc=True).dt.tz_localize(None)
+    df["date_termination"] = pd.to_datetime(df["date_termination"], errors="coerce", utc=True).dt.tz_localize(None)
     if snapshot_date is not None:
         # Договоры с реальной Дата_Окончания, истёкшей до даты снапшота, не действуют:
         # их «Количество_Людей» нередко обрывается без закрывающего 0, и snapshot тянет
-        # старое значение в период. Аналогично — ещё не начавшиеся договоры.
+        # старое значение в период. Аналогично — ещё не начавшиеся договоры и расторжение.
         snap = pd.Timestamp(snapshot_date).normalize()
         sentinel = pd.Timestamp("0001-01-01")
         de = df["date_end"]
         ds = df["date_start"]
+        dt = df["date_termination"]
         expired = de.notna() & (de > sentinel) & (de.dt.normalize() < snap)
         not_started = ds.notna() & (ds > sentinel) & (ds.dt.normalize() > snap)
-        drop = expired | not_started
+        terminated = dt.notna() & (dt > sentinel) & (dt.dt.normalize() <= snap)
+        drop = expired | not_started | terminated
         df.loc[drop, ["plan_workers", "plan_equipment"]] = np.nan
     return df
 
@@ -945,6 +1140,35 @@ def _dogovor_file_date(path: Path) -> Optional[pd.Timestamp]:
     return _source_file_date(path)
 
 
+def _pick_dogovor_path_for_snapshot(
+    paths: Iterable[Path | str],
+    snapshot_date: Optional[pd.Timestamp],
+) -> Optional[Path]:
+    """Файл Dogovor для среза плана: последний с датой в имени ≤ snapshot_date;
+    если таких нет — самый поздний из будущих (в нём полнее история Количество_Людей)."""
+    snap = pd.Timestamp(snapshot_date).normalize() if snapshot_date is not None else None
+    dated: list[tuple[pd.Timestamp, Path]] = []
+    undated: list[Path] = []
+    for raw in paths:
+        p = Path(raw)
+        fd = _dogovor_file_date(p)
+        if fd is None:
+            undated.append(p)
+            continue
+        dated.append((fd, p))
+    if not dated:
+        return undated[0] if undated else None
+    if snap is None:
+        dated.sort(key=lambda t: t[0])
+        return dated[-1][1]
+    le = [t for t in dated if t[0] <= snap]
+    if le:
+        le.sort(key=lambda t: t[0])
+        return le[-1][1]
+    dated.sort(key=lambda t: t[0])
+    return dated[-1][1]
+
+
 def load_plan_aggregate(
     dogovor_paths: Iterable[Path | str],
     sprav_paths: Iterable[Path | str],
@@ -974,7 +1198,10 @@ def load_plan_aggregate(
         df = load_plan_from_dogovor(Path(p), snapshot_date=snapshot_date)
         if df is None or df.empty:
             return pd.DataFrame()
-        df = df[(df["project_id"].astype(str).str.strip() != "") | (df["contractor_id"].astype(str).str.strip() != "")]
+        df = df[
+            (df["project_id"].astype(str).str.strip() != "")
+            & (df["contractor_id"].astype(str).str.strip() != "")
+        ]
         if df.empty:
             return pd.DataFrame()
         # Векторно вместо построчного _dedup по группам (~22с на 32k групп):
@@ -1025,17 +1252,26 @@ def load_plan_aggregate(
 
     def _ordered_with_index(paths, fn) -> pd.DataFrame:
         """Собрать кадры по файлам, упорядочив по дате снапшота из имени (asc).
-        Файлы со снапшотом > snapshot_date отбрасываются (берём «последний ≤ даты»);
-        файлы без даты в имени — оставляем как fallback. `__order__` растёт с датой."""
-        items = []
+        Файлы со снапшотом > snapshot_date отбрасываются (берём «последний ≤ даты»).
+        Если таких нет — берём самый поздний доступный файл: в актуальной выгрузке
+        история «Количество_Людей» полнее, чем в ранних снапшотах (февраль при выгрузке в мае).
+        Файлы без даты в имени — fallback. `__order__` растёт с датой."""
+        snap = pd.Timestamp(snapshot_date).normalize() if snapshot_date is not None else None
+        items_le: list[tuple[Optional[pd.Timestamp], pd.DataFrame]] = []
+        items_future: list[tuple[Optional[pd.Timestamp], pd.DataFrame]] = []
         for p in paths:
             fdate = _dogovor_file_date(Path(p))
-            if snapshot_date is not None and fdate is not None and fdate > pd.Timestamp(snapshot_date).normalize():
-                continue
             fr = fn(Path(p))
             if fr is None or fr.empty:
                 continue
-            items.append((fdate, fr))
+            if snap is not None and fdate is not None and fdate > snap:
+                items_future.append((fdate, fr))
+            else:
+                items_le.append((fdate, fr))
+        items = items_le
+        if not items and items_future:
+            items_future.sort(key=lambda t: t[0] if t[0] is not None else pd.Timestamp.min)
+            items = [items_future[-1]]
         items.sort(key=lambda t: t[0] if t[0] is not None else pd.Timestamp.min)
         for i, (_, fr) in enumerate(items):
             fr["__order__"] = i
@@ -1412,10 +1648,32 @@ def _gdrs_dynamics_period_freq(agg_kind: str) -> str:
     return "W"
 
 
-def gdrs_dynamics_assign_buckets(dates: pd.Series, agg_kind: str) -> pd.Series:
+def _gdrs_calendar_week_num(day: pd.Timestamp, month_lo: pd.Timestamp) -> int:
+    d = int(pd.Timestamp(day).normalize().day)
+    return min(max((d - 1) // 7 + 1, 1), 6)
+
+
+def _gdrs_calendar_week_bucket_start(day: pd.Timestamp, month_lo: pd.Timestamp) -> pd.Timestamp:
+    lo = pd.Timestamp(month_lo).normalize()
+    start_day = (_gdrs_calendar_week_num(day, lo) - 1) * 7 + 1
+    return pd.Timestamp(lo.year, lo.month, start_day)
+
+
+def gdrs_dynamics_assign_buckets(
+    dates: pd.Series,
+    agg_kind: str,
+    *,
+    date_from: Optional[pd.Timestamp] = None,
+    date_to: Optional[pd.Timestamp] = None,
+) -> pd.Series:
     """Начало периода (неделя/месяц/год) для каждой даты факта — как в groupby динамики."""
+    dts = pd.to_datetime(dates, errors="coerce")
+    kind = str(agg_kind or "").strip().casefold()
+    if kind == "неделя" and _gdrs_single_calendar_month(date_from, date_to):
+        lo = pd.Timestamp(date_from).normalize()
+        return dts.apply(lambda d: _gdrs_calendar_week_bucket_start(d, lo))
     freq = _gdrs_dynamics_period_freq(agg_kind)
-    return pd.to_datetime(dates).dt.to_period(freq).apply(lambda p: p.start_time.normalize())
+    return dts.dt.to_period(freq).apply(lambda p: p.start_time.normalize())
 
 
 def _gdrs_bucket_calendar_days(
@@ -1431,6 +1689,10 @@ def _gdrs_bucket_calendar_days(
     kind = str(agg_kind or "").strip().casefold()
     if kind == "день":
         period_end = b
+    elif kind == "неделя" and _gdrs_single_calendar_month(lo, hi):
+        wn = _gdrs_calendar_week_num(b, lo)
+        end = gdrs_week_period_end(lo, hi, wn)
+        period_end = end if end is not None and pd.notna(end) else b + pd.Timedelta(days=6)
     elif kind == "неделя":
         period_end = b + pd.Timedelta(days=6)
     elif kind == "месяц":
@@ -1454,6 +1716,16 @@ def gdrs_dynamics_bucket_starts(
     end = pd.Timestamp(date_to).normalize()
     if end < start:
         start, end = end, start
+    kind = str(agg_kind or "").strip().casefold()
+    if kind == "неделя" and _gdrs_single_calendar_month(start, end):
+        month_last = int((start + pd.offsets.MonthEnd(0)).day)
+        buckets: list[pd.Timestamp] = []
+        for wn in range(1, 7):
+            sd = (wn - 1) * 7 + 1
+            if sd > month_last:
+                break
+            buckets.append(pd.Timestamp(start.year, start.month, sd))
+        return pd.DatetimeIndex(buckets)
     freq = _gdrs_dynamics_period_freq(agg_kind)
     p0, p1 = start.to_period(freq), end.to_period(freq)
     periods = pd.period_range(p0, p1, freq=freq)
@@ -1461,11 +1733,60 @@ def gdrs_dynamics_bucket_starts(
     return buckets.unique().sort_values()
 
 
+def gdrs_plan_period_month_weighted_average(
+    *,
+    date_from: pd.Timestamp,
+    date_to: pd.Timestamp,
+    project_id: str,
+    contractor_id: str,
+    project_name: str,
+    contractor_name: str,
+    plan_col: str,
+    plan_aggregate_loader: Callable[[pd.Timestamp], pd.DataFrame],
+    term_index: Optional[GdrsTerminationIndex] = None,
+    month_lookup_cache: Optional[dict[pd.Timestamp, tuple]] = None,
+) -> float:
+    """Среднее план/день за мульти-месячный период: вес по числу дней в каждом месяце."""
+    lo = pd.Timestamp(date_from).normalize()
+    hi = pd.Timestamp(date_to).normalize()
+    if hi < lo or not pd.notna(lo) or not pd.notna(hi):
+        return 0.0
+    cache = month_lookup_cache if month_lookup_cache is not None else {}
+    weighted = 0.0
+    days_total = 0
+    for per in pd.period_range(lo.to_period("M"), hi.to_period("M"), freq="M"):
+        seg_lo = max(lo, per.start_time.normalize())
+        seg_hi = min(hi, per.end_time.normalize())
+        nd = int((seg_hi - seg_lo).days) + 1
+        if nd <= 0:
+            continue
+        snap = pd.Timestamp(seg_hi).normalize()
+        if snap not in cache:
+            cache[snap] = _build_plan_lookup(plan_aggregate_loader(snap), plan_col)
+        lu = cache[snap]
+        weighted += nd * _lookup_plan(
+            project_id,
+            contractor_id,
+            project_name,
+            contractor_name,
+            lu[0],
+            lu[1],
+            lu[2],
+            as_of_date=snap,
+            term_index=term_index,
+        )
+        days_total += nd
+    return weighted / days_total if days_total else 0.0
+
+
 def gdrs_plan_sum_for_pairs(
     pairs: pd.DataFrame,
     by_id: dict,
     by_id_name: dict,
     by_norm: dict,
+    *,
+    as_of_date: Optional[pd.Timestamp] = None,
+    term_index: Optional[GdrsTerminationIndex] = None,
 ) -> int:
     """Сумма плана по уникальным парам проект×подрядчик (без повторного матчинга)."""
     if pairs is None or pairs.empty:
@@ -1481,7 +1802,10 @@ def gdrs_plan_sum_for_pairs(
         if key in seen:
             continue
         seen.add(key)
-        total += _lookup_plan(pid, cid, pn, cn, by_id, by_id_name, by_norm)
+        total += _lookup_plan(
+            pid, cid, pn, cn, by_id, by_id_name, by_norm,
+            as_of_date=as_of_date, term_index=term_index,
+        )
     return int(round(total))
 
 
@@ -1497,6 +1821,7 @@ def gdrs_dynamics_build_series(
     *,
     plan_aggregate_loader=None,
     month_periods: Optional[Iterable[pd.Period]] = None,
+    term_index: Optional[GdrsTerminationIndex] = None,
 ) -> pd.DataFrame:
     """Факт по периодам + план из 1С на конец каждого периода; сетка по всему диапазону фильтра.
 
@@ -1506,9 +1831,12 @@ def gdrs_dynamics_build_series(
     if _load_plan is None:
         def _load_plan(snap: pd.Timestamp) -> pd.DataFrame:
             return load_plan_aggregate(dogovor_paths, sprav_paths, snapshot_date=snap)
-    f2 = fact_df.copy()
+    f2 = gdrs_filter_fact_by_termination(fact_df, term_index)
+    f2 = f2.copy()
     f2["date"] = pd.to_datetime(f2["date"])
-    f2["bucket"] = gdrs_dynamics_assign_buckets(f2["date"], agg_kind)
+    f2["bucket"] = gdrs_dynamics_assign_buckets(
+        f2["date"], agg_kind, date_from=date_from, date_to=date_to
+    )
     f2["_day"] = f2["date"].dt.normalize()
 
     daily_totals = (
@@ -1538,21 +1866,29 @@ def gdrs_dynamics_build_series(
     for bkt in dyn["bucket"]:
         day_plan_vals: list[float] = []
         for day in _gdrs_bucket_calendar_days(bkt, agg_kind, dyn_from, dyn_to):
-            snap = gdrs_dynamics_bucket_snapshot_end(day, "День", dyn_to)
+            snap = gdrs_dynamics_bucket_snapshot_end(
+                day, "День", dyn_to, date_from=dyn_from, date_to=dyn_to
+            )
             sk = pd.Timestamp(snap).normalize()
             if sk not in plan_cache:
                 plan_df = _load_plan(sk)
                 plan_cache[sk] = _build_plan_lookup(plan_df, plan_col)
-            day_plan_vals.append(float(gdrs_plan_sum_for_pairs(pairs, *plan_cache[sk])))
+            day_plan_vals.append(float(gdrs_plan_sum_for_pairs(
+                pairs, *plan_cache[sk], as_of_date=sk, term_index=term_index,
+            )))
         if day_plan_vals:
             plans.append(int(round(float(np.mean(day_plan_vals)))))
         else:
-            snap = gdrs_dynamics_bucket_snapshot_end(bkt, agg_kind, dyn_to)
+            snap = gdrs_dynamics_bucket_snapshot_end(
+                bkt, agg_kind, dyn_to, date_from=dyn_from, date_to=dyn_to
+            )
             sk = pd.Timestamp(snap).normalize()
             if sk not in plan_cache:
                 plan_df = _load_plan(sk)
                 plan_cache[sk] = _build_plan_lookup(plan_df, plan_col)
-            plans.append(int(gdrs_plan_sum_for_pairs(pairs, *plan_cache[sk])))
+            plans.append(int(gdrs_plan_sum_for_pairs(
+                pairs, *plan_cache[sk], as_of_date=sk, term_index=term_index,
+            )))
     dyn["План"] = plans
     return dyn
 
@@ -1561,14 +1897,28 @@ def gdrs_dynamics_bucket_snapshot_end(
     bucket_start: pd.Timestamp,
     agg_kind: str,
     period_end: pd.Timestamp,
+    *,
+    date_from: Optional[pd.Timestamp] = None,
+    date_to: Optional[pd.Timestamp] = None,
 ) -> pd.Timestamp:
     """Конец периода группировки (неделя/месяц/год) для snapshot плана из 1С."""
     b = pd.Timestamp(bucket_start).normalize()
     end = pd.Timestamp(period_end).normalize()
+    lo = pd.Timestamp(date_from).normalize() if date_from is not None else None
+    hi = pd.Timestamp(date_to).normalize() if date_to is not None else None
     kind = str(agg_kind or "").strip().casefold()
-    if kind == "день":
-        # План из 1С не меняется ежедневно — snapshot на конец ISO-недели (иначе N загрузок JSON).
+    if kind == "день" and lo is not None and hi is not None and _gdrs_single_calendar_month(lo, hi):
+        wn = _gdrs_calendar_week_num(b, lo)
+        snap = gdrs_week_period_end(lo, hi, wn)
+        if snap is None or not pd.notna(snap):
+            snap = b
+    elif kind == "день":
         snap = pd.Timestamp(b.to_period("W").end_time).normalize()
+    elif kind == "неделя" and lo is not None and hi is not None and _gdrs_single_calendar_month(lo, hi):
+        wn = _gdrs_calendar_week_num(b, lo)
+        snap = gdrs_week_period_end(lo, hi, wn)
+        if snap is None or not pd.notna(snap):
+            snap = b + pd.Timedelta(days=6)
     elif kind == "неделя":
         snap = b + pd.Timedelta(days=6)
     elif kind == "месяц":
@@ -1577,7 +1927,7 @@ def gdrs_dynamics_bucket_snapshot_end(
         snap = (b + pd.offsets.YearEnd(0)).normalize()
     else:
         snap = b
-    return min(snap, end)
+    return min(pd.Timestamp(snap).normalize(), end)
 
 
 def gdrs_dynamics_plan_total_for_pairs(
@@ -1616,6 +1966,8 @@ def _lookup_plan(
     by_norm: dict,
     *,
     fuzzy_threshold: float = 0.86,
+    as_of_date: Optional[pd.Timestamp] = None,
+    term_index: Optional[GdrsTerminationIndex] = None,
 ) -> float:
     """Многоуровневый матчинг плана:
     1) точно по (project_id, contractor_id);
@@ -1625,6 +1977,11 @@ def _lookup_plan(
        (typo: «Констракшн»↔«Контракшн», «Констракшн»↔«Констракшен» и т.п.).
     """
     import difflib as _dl
+
+    if as_of_date is not None and gdrs_contractor_terminated_as_of(
+        project_id, contractor_id, project_name, contractor_name, as_of_date, term_index
+    ):
+        return 0.0
 
     pid, cid = str(project_id or "").strip(), str(contractor_id or "").strip()
     if pid and cid and (pid, cid) in by_id:
@@ -1739,6 +2096,73 @@ def _iso_week_groups(dates: pd.Series) -> tuple[pd.Series, dict[int, int]]:
     return week_idx, days_per_week
 
 
+def _gdrs_single_calendar_month(
+    date_from: Optional[pd.Timestamp],
+    date_to: Optional[pd.Timestamp],
+) -> bool:
+    """Один календарный месяц в фильтре — недели 1–6 считаем по дням месяца (1–7, 8–14, …)."""
+    if date_from is None or date_to is None:
+        return False
+    lo = pd.Timestamp(date_from).normalize()
+    hi = pd.Timestamp(date_to).normalize()
+    return lo.to_period("M") == hi.to_period("M")
+
+
+def _gdrs_week_groups(
+    dates: pd.Series,
+    *,
+    date_from: Optional[pd.Timestamp] = None,
+    date_to: Optional[pd.Timestamp] = None,
+) -> tuple[pd.Series, dict[int, int]]:
+    """Недели 1..6 в таблице ГДРС.
+
+    Для одного календарного месяца — «1-я неделя» = дни 1–7, «3-я» = 15–21 (как в 1С).
+    Иначе — ISO-недели по факту в выборке.
+    """
+    dates = pd.to_datetime(dates, errors="coerce")
+    if _gdrs_single_calendar_month(date_from, date_to):
+        days = dates.dt.day
+        week_idx = ((days - 1) // 7 + 1).clip(lower=1, upper=6).astype(int)
+        days_per_week: dict[int, int] = {}
+        for wi in sorted(week_idx.unique()):
+            if int(wi) <= 0:
+                continue
+            mask = week_idx == wi
+            days_per_week[int(wi)] = int(dates[mask].dt.normalize().nunique())
+        return week_idx, days_per_week
+    return _iso_week_groups(dates)
+
+
+def gdrs_week_period_end(
+    date_from: pd.Timestamp,
+    date_to: pd.Timestamp,
+    week_num: int,
+) -> Optional[pd.Timestamp]:
+    """Последний день N-й недели периода (для среза плана из 1С)."""
+    lo = pd.Timestamp(date_from).normalize()
+    hi = pd.Timestamp(date_to).normalize()
+    wn = int(week_num)
+    if wn < 1 or wn > 6:
+        return None
+    if _gdrs_single_calendar_month(lo, hi):
+        month_last = int((lo + pd.offsets.MonthEnd(0)).day)
+        start_day = (wn - 1) * 7 + 1
+        if start_day > month_last:
+            return None
+        end_day = min(wn * 7, month_last)
+        end = pd.Timestamp(lo.year, lo.month, end_day)
+        return min(end, hi)
+    # Мульти-месяц: последний день N-й ISO-недели в диапазоне (без привязки к факту).
+    grid = pd.date_range(lo, hi, freq="D")
+    if len(grid) == 0:
+        return None
+    week_idx, _ = _iso_week_groups(pd.Series(grid))
+    mask = week_idx == wn
+    if not mask.any():
+        return None
+    return pd.to_datetime(grid[mask.to_numpy()]).max()
+
+
 GDRS_AGG_MONTH = "month_avg"
 GDRS_AGG_LABELS: dict[str, str] = {
     GDRS_AGG_MONTH: "Среднее за месяц",
@@ -1825,6 +2249,23 @@ def gdrs_month_select_options(
     return out
 
 
+def gdrs_resolve_month_periods(
+    month_options: list[tuple[str, pd.Period]],
+    selected_labels: Optional[list[str]],
+) -> tuple[list[pd.Period], bool]:
+    """Периоды для фильтра; при устаревшем выборе — все доступные месяцы."""
+    if not month_options:
+        return [], False
+    label_to_period = {lbl: per for lbl, per in month_options}
+    labels = [str(x).strip() for x in (selected_labels or []) if str(x).strip()]
+    if not labels:
+        return [per for _, per in month_options], False
+    periods = [label_to_period[lbl] for lbl in labels if lbl in label_to_period]
+    if periods:
+        return periods, False
+    return [per for _, per in month_options], True
+
+
 def gdrs_months_date_range(periods: Iterable[pd.Period]) -> tuple[pd.Timestamp, pd.Timestamp]:
     """Календарные границы выбранных месяцев (для плана/подписей)."""
     plist = list(periods)
@@ -1850,6 +2291,45 @@ def gdrs_filter_fact_by_months(
     pset = set(plist)
     mask = fact["date"].dt.to_period("M").isin(pset)
     return fact[mask].copy()
+
+
+def gdrs_contractor_filter_options(
+    long_fact: pd.DataFrame,
+    dogovor_paths: Iterable[Path | str],
+    sprav_paths: Iterable[Path | str],
+    *,
+    projects: Optional[list[str]] = None,
+    snapshot_date: Optional[pd.Timestamp] = None,
+) -> list[str]:
+    """Список контрагентов для фильтра: факт (СКУД) + план (1С), т.к. в CSV факта может не быть."""
+    names: set[str] = set()
+    if long_fact is not None and not long_fact.empty and "contractor_name" in long_fact.columns:
+        fact = long_fact
+        if projects:
+            try:
+                from dashboards.project_labels import filter_dataframe_by_project_labels
+
+                fact = filter_dataframe_by_project_labels(fact, list(projects), col="project_name")
+            except Exception:
+                proj_keys = {p.strip().casefold() for p in projects}
+                fact = fact[
+                    fact["project_name"].astype(str).str.strip().str.casefold().isin(proj_keys)
+                ]
+        for raw in fact["contractor_name"].dropna().unique():
+            s = str(raw).strip()
+            if s:
+                names.add(s)
+    try:
+        plan = load_plan_aggregate(dogovor_paths, sprav_paths, snapshot_date=snapshot_date)
+        plan = _filter_plan_slice(plan, projects, None)
+        if plan is not None and not plan.empty:
+            for raw in plan["contractor_name"].dropna().unique():
+                s = str(raw).strip()
+                if s:
+                    names.add(s)
+    except Exception:
+        pass
+    return sorted(names, key=lambda x: x.casefold())
 
 
 def _filter_plan_slice(
@@ -1888,9 +2368,9 @@ def _filter_fact_slice(
     fact = long_fact[long_fact["vid_resursa"].astype(str).str.casefold() == vid.casefold()].copy()
     if fact.empty:
         return fact
-    if date_from is not None:
+    if date_from is not None and pd.notna(date_from):
         fact = fact[fact["date"] >= pd.to_datetime(date_from)]
-    if date_to is not None:
+    if date_to is not None and pd.notna(date_to):
         fact = fact[fact["date"] <= pd.to_datetime(date_to)]
     if projects:
         try:
@@ -1916,7 +2396,7 @@ def week_end_in_filtered_fact(
     projects: Optional[list[str]] = None,
     contractors: Optional[list[str]] = None,
 ) -> Optional[pd.Timestamp]:
-    """Последний календарный день N-й ISO-недели в выборке (нумерация как в таблице w1..w6)."""
+    """Последний день N-й недели в выборке (нумерация как в таблице w1..w6)."""
     fact = _filter_fact_slice(
         long_fact,
         vid=vid,
@@ -1926,12 +2406,12 @@ def week_end_in_filtered_fact(
         contractors=contractors,
     )
     if fact.empty:
-        return None
+        return gdrs_week_period_end(date_from, date_to, week_num)
     dates = pd.to_datetime(fact["date"])
-    week_idx, _ = _iso_week_groups(dates)
+    week_idx, _ = _gdrs_week_groups(dates, date_from=date_from, date_to=date_to)
     mask = week_idx == int(week_num)
     if not mask.any():
-        return None
+        return gdrs_week_period_end(date_from, date_to, week_num)
     return pd.to_datetime(dates[mask]).max()
 
 
@@ -1965,6 +2445,9 @@ def gdrs_plan_snapshot_date(
 def _skud_agg_per_pair(
     fact: pd.DataFrame,
     skud_agg: str,
+    *,
+    date_from: Optional[pd.Timestamp] = None,
+    date_to: Optional[pd.Timestamp] = None,
 ) -> pd.DataFrame:
     """СКУД (среднее за день) по паре проект×контрагент для режима month_avg или week:N."""
     total_days = int(fact["date"].dt.normalize().nunique())
@@ -1978,7 +2461,9 @@ def _skud_agg_per_pair(
         skud_sum["skud_val"] = skud_sum["skud_sum"] / max(1, total_days)
         return skud_sum[["project_name", "contractor_name", "skud_val"]]
 
-    week_idx, days_per_week = _iso_week_groups(fact["date"])
+    week_idx, days_per_week = _gdrs_week_groups(
+        fact["date"], date_from=date_from, date_to=date_to
+    )
     fact = fact.assign(week=week_idx)
     week_sum = (
         fact.groupby(["project_name", "contractor_name", "week"], dropna=False)["fact"]
@@ -2017,12 +2502,16 @@ def gdrs_matrix_week_labels(
     dts = dts[(dts >= lo) & (dts <= hi)]
     if dts.empty:
         return _default
-    week_idx, _ = _iso_week_groups(dts)
+    week_idx, _ = _gdrs_week_groups(dts, date_from=lo, date_to=hi)
     labels: list[str] = []
     for wi in range(1, 7):
         mask = week_idx == wi
         if not mask.any():
-            labels.append(f"{wi} нед")
+            end = gdrs_week_period_end(lo, hi, wi)
+            if end is not None and pd.notna(end):
+                labels.append(f"{wi} нед ({end.strftime('%d.%m')})")
+            else:
+                labels.append(f"{wi} нед")
             continue
         sub = dts[mask]
         labels.append(f"{wi} нед ({sub.min().strftime('%d.%m')}-{sub.max().strftime('%d.%m')})")
@@ -2076,18 +2565,7 @@ def build_gdrs_audit_export_frames(
         plan_export = pd.DataFrame()
 
     snap = pd.Timestamp(plan_snapshot).normalize()
-    latest_path: Optional[Path] = None
-    latest_date: Optional[pd.Timestamp] = None
-    for raw_p in dogovor_paths:
-        p = Path(raw_p)
-        fdate = _dogovor_file_date(p)
-        if fdate is None:
-            continue
-        if fdate > snap:
-            continue
-        if latest_date is None or fdate >= latest_date:
-            latest_date = fdate
-            latest_path = p
+    latest_path = _pick_dogovor_path_for_snapshot(dogovor_paths, snap)
     if latest_path is None:
         contract_export = pd.DataFrame()
     else:
@@ -2114,6 +2592,7 @@ def build_gdrs_audit_export_frames(
                 "plan_equipment",
                 "date_start",
                 "date_end",
+                "date_termination",
             )
             if c in raw.columns
         ]
@@ -2143,7 +2622,11 @@ def build_main_table(
     plan_agg: str = GDRS_AGG_MONTH,
     skud_agg: str = GDRS_AGG_MONTH,
     weekly_plan_by_week: Optional[dict[int, pd.DataFrame]] = None,
+    weekly_plan_as_of: Optional[dict[int, pd.Timestamp]] = None,
     kontr_index: Optional[GdrsKontrIndex] = None,
+    term_index: Optional[GdrsTerminationIndex] = None,
+    plan_as_of: Optional[pd.Timestamp] = None,
+    plan_aggregate_loader: Optional[Callable[[pd.Timestamp], pd.DataFrame]] = None,
 ) -> pd.DataFrame:
     """Сборка главной таблицы (Скрин 11): Контрагент × недели × отклонение × дельта.
 
@@ -2168,15 +2651,21 @@ def build_main_table(
         projects=projects,
         contractors=contractors,
     )
+    fact = gdrs_filter_fact_by_termination(fact, term_index)
 
     plan_col = "plan_workers" if vid.casefold() == "рабочие" else "plan_equipment"
     by_id, by_id_name, by_norm = _build_plan_lookup(plan, plan_col)
+    _plan_snap = pd.Timestamp(plan_as_of).normalize() if plan_as_of is not None and pd.notna(plan_as_of) else (
+        pd.Timestamp(date_to).normalize() if date_to is not None and pd.notna(date_to) else None
+    )
 
     id_pick = pd.DataFrame(columns=["project_name", "contractor_name", "project_id", "contractor_id"])
     if fact is not None and not fact.empty:
         fact = fact.copy()
         fact["date"] = pd.to_datetime(fact["date"])
-        week_idx, days_per_week = _iso_week_groups(fact["date"])
+        week_idx, days_per_week = _gdrs_week_groups(
+            fact["date"], date_from=date_from, date_to=date_to
+        )
         fact["week"] = week_idx
 
         id_pick = (
@@ -2249,7 +2738,9 @@ def build_main_table(
             )
 
     if fact is not None and not fact.empty:
-        skud_per = _skud_agg_per_pair(fact, skud_agg).rename(columns={"skud_val": "skud_avg"})
+        skud_per = _skud_agg_per_pair(
+            fact, skud_agg, date_from=date_from, date_to=date_to
+        ).rename(columns={"skud_val": "skud_avg"})
     else:
         skud_per = pivot[["project_name", "contractor_name"]].copy()
         skud_per["skud_val"] = 0.0
@@ -2269,14 +2760,52 @@ def build_main_table(
     if rows.empty:
         return pd.DataFrame()
 
-    rows["plan"] = rows.apply(
-        lambda r: _lookup_plan(
-            str(r.get("project_id", "")), str(r.get("contractor_id", "")),
-            str(r.get("project_name", "")), str(r.get("contractor_name", "")),
-            by_id, by_id_name, by_norm,
-        ),
-        axis=1,
-    ).astype(float)
+    _use_period_plan_avg = (
+        gdrs_agg_week_num(plan_agg) is None
+        and date_from is not None
+        and date_to is not None
+        and pd.notna(date_from)
+        and pd.notna(date_to)
+        and not _gdrs_single_calendar_month(date_from, date_to)
+        and plan_aggregate_loader is not None
+    )
+    _month_plan_lu_cache: dict[pd.Timestamp, tuple] = {}
+    if _use_period_plan_avg:
+        _plo = pd.Timestamp(date_from).normalize()
+        _phi = pd.Timestamp(date_to).normalize()
+        for _per in pd.period_range(_plo.to_period("M"), _phi.to_period("M"), freq="M"):
+            _snap = pd.Timestamp(min(_phi, _per.end_time.normalize())).normalize()
+            if _snap not in _month_plan_lu_cache:
+                _month_plan_lu_cache[_snap] = _build_plan_lookup(
+                    plan_aggregate_loader(_snap), plan_col
+                )
+
+    if _use_period_plan_avg:
+        rows["plan"] = rows.apply(
+            lambda r: gdrs_plan_period_month_weighted_average(
+                date_from=pd.Timestamp(date_from),
+                date_to=pd.Timestamp(date_to),
+                project_id=str(r.get("project_id", "")),
+                contractor_id=str(r.get("contractor_id", "")),
+                project_name=str(r.get("project_name", "")),
+                contractor_name=str(r.get("contractor_name", "")),
+                plan_col=plan_col,
+                plan_aggregate_loader=plan_aggregate_loader,
+                term_index=term_index,
+                month_lookup_cache=_month_plan_lu_cache,
+            ),
+            axis=1,
+        ).astype(float)
+    else:
+        rows["plan"] = rows.apply(
+            lambda r: _lookup_plan(
+                str(r.get("project_id", "")), str(r.get("contractor_id", "")),
+                str(r.get("project_name", "")), str(r.get("contractor_name", "")),
+                by_id, by_id_name, by_norm,
+                as_of_date=_plan_snap, term_index=term_index,
+            ),
+            axis=1,
+        ).astype(float)
     rows["contract_name"] = rows.apply(
         lambda r: _lookup_contract_name(str(r.get("project_name", "")), str(r.get("contractor_name", "")), by_id_name),
         axis=1,
@@ -2316,8 +2845,11 @@ def build_main_table(
     for wi, pk in enumerate(("p1", "p2", "p3", "p4", "p5", "p6"), start=1):
         if _show_week_cols and wi in _weekly_plan_lu:
             _lu = _weekly_plan_lu[wi]
+            _wasof = None
+            if weekly_plan_as_of and wi in weekly_plan_as_of:
+                _wasof = pd.Timestamp(weekly_plan_as_of[wi]).normalize()
             rows[pk] = rows.apply(
-                lambda r, _lookup=_lu: _lookup_plan(
+                lambda r, _lookup=_lu, _snap=_wasof: _lookup_plan(
                     str(r.get("project_id", "")),
                     str(r.get("contractor_id", "")),
                     str(r.get("project_name", "")),
@@ -2325,6 +2857,8 @@ def build_main_table(
                     _lookup[0],
                     _lookup[1],
                     _lookup[2],
+                    as_of_date=_snap,
+                    term_index=term_index,
                 ),
                 axis=1,
             ).astype(float).round(0)
@@ -2430,6 +2964,8 @@ def build_summary_table(
     projects: Optional[list[str]] = None,
     contractors: Optional[list[str]] = None,
     skud_agg: str = GDRS_AGG_MONTH,
+    term_index: Optional[GdrsTerminationIndex] = None,
+    plan_as_of: Optional[pd.Timestamp] = None,
 ) -> pd.DataFrame:
     """Сводка по контрагентам (Скрин 5): Контрагент / План / Среднее за месяц / Отклонение."""
     if long_fact is None or long_fact.empty:
@@ -2442,11 +2978,15 @@ def build_summary_table(
         projects=projects,
         contractors=contractors,
     )
+    fact = gdrs_filter_fact_by_termination(fact, term_index)
     if fact.empty:
         return pd.DataFrame()
 
     plan_col = "plan_workers" if vid.casefold() == "рабочие" else "plan_equipment"
     by_id, by_id_name, by_norm = _build_plan_lookup(plan, plan_col)
+    _plan_snap = pd.Timestamp(plan_as_of).normalize() if plan_as_of is not None and pd.notna(plan_as_of) else (
+        pd.Timestamp(date_to).normalize() if date_to is not None and pd.notna(date_to) else None
+    )
 
     fact["date"] = pd.to_datetime(fact["date"])
     id_pick = (
@@ -2465,6 +3005,7 @@ def build_summary_table(
             str(r.get("project_id", "")), str(r.get("contractor_id", "")),
             str(r.get("project_name", "")), str(r.get("contractor_name", "")),
             by_id, by_id_name, by_norm,
+            as_of_date=_plan_snap, term_index=term_index,
         ),
         axis=1,
     ).astype(float)

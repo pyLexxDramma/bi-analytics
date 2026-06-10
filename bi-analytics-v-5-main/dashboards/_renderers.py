@@ -26,6 +26,7 @@ from .ui_quiet import (
     filters_toggles,
     suppress_caption,
     project_filter_multiselect,
+    migrate_gdrs_month_multiselect_state,
     period_date_range_input,
     LABEL_PERIOD,
 )
@@ -2861,6 +2862,67 @@ def _plotly_bargaps_sparse_x_like_gdrs(n_x_categories: int) -> dict[str, float]:
     if nx <= 4:
         return dict(bargap=0.66, bargroupgap=0.17)
     return {}
+
+
+def _gdrs_add_plan_fact_deviation_traces(
+    fig: go.Figure,
+    labels: list[str],
+    plan_vals: list,
+    fact_vals: list,
+    dev_abs: list,
+    dev_colors: list,
+    theme: Any,
+) -> tuple[list[str], str]:
+    """Три столбца План/Факт/Отклонение; при одной сущности — равные промежутки по оси X."""
+    _metric_x = ("План", "Факт", "Отклонение")
+    if len(labels) == 1:
+        _dc = dev_colors[0] if dev_colors else theme.bad
+        fig.add_bar(name="План", x=[_metric_x[0]], y=[plan_vals[0]], marker_color=theme.bar_plan)
+        fig.add_bar(name="Факт", x=[_metric_x[1]], y=[fact_vals[0]], marker_color=theme.bar_fact)
+        fig.add_bar(
+            name="Отклонение (факт − план)",
+            x=[_metric_x[2]],
+            y=[dev_abs[0]],
+            marker_color=_dc,
+        )
+        return list(_metric_x), f" — {labels[0]}"
+    fig.add_bar(name="План", x=labels, y=plan_vals, marker_color=theme.bar_plan)
+    fig.add_bar(name="Факт", x=labels, y=fact_vals, marker_color=theme.bar_fact)
+    fig.add_bar(
+        name="Отклонение (факт − план)",
+        x=labels,
+        y=dev_abs,
+        marker_color=dev_colors,
+    )
+    return list(labels), ""
+
+
+def _gdrs_apply_plan_fact_grouped_bar_spacing(
+    fig: go.Figure,
+    n_x_categories: int,
+    *,
+    metrics_axis: bool = False,
+) -> go.Figure:
+    """План / Факт / Отклонение: узкие столбцы с равными промежутками."""
+    if metrics_axis:
+        fig.update_layout(bargap=0.42, bargroupgap=0.0, barmode="group")
+        fig.update_traces(width=0.40, selector=dict(type="bar"))
+        return fig
+    nx = max(1, int(n_x_categories))
+    n_slots = 3
+    group_span = 0.52 if nx <= 2 else 0.68
+    bar_width = group_span / (2 * n_slots - 1)
+    if nx <= 1:
+        bargap = 0.90
+    elif nx <= 2:
+        bargap = 0.84
+    elif nx <= 4:
+        bargap = 0.58
+    else:
+        bargap = 0.34
+    fig.update_layout(bargap=bargap, bargroupgap=1.0, barmode="group")
+    fig.update_traces(width=bar_width, selector=dict(type="bar"))
+    return fig
 
 
 def _plotly_n_x_categories_from_bar_figure(fig: go.Figure) -> int | None:
@@ -20958,6 +21020,7 @@ def _gdrs_dynamics_chart_panel(
     dyn_title: str,
     vid_locked: str | None,
     month_periods: list | None = None,
+    term_index=None,
     *,
     theme: str = "dark",
 ):
@@ -21004,6 +21067,7 @@ def _gdrs_dynamics_chart_panel(
             [], [], uniq_pairs, plan_col,
             plan_aggregate_loader=_gdrs_plan_loader(dog_sig, spr_sig),
             month_periods=month_periods,
+            term_index=term_index,
         )
     if len(dyn) < 2:
         st.warning(
@@ -21484,6 +21548,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         gdrs_matrix_week_labels,
         build_gdrs_audit_export_frames,
         gdrs_month_select_options,
+        gdrs_resolve_month_periods,
         gdrs_months_date_range,
         gdrs_plan_snapshot_date,
         load_1c_dannye_article_maps,
@@ -21493,7 +21558,11 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         enrich_gdrs_fact_contractor_ids,
         enrich_gdrs_fact_project_ids,
         gdrs_filter_fact_kontr_intersection,
+        load_gdrs_termination_index,
+        gdrs_filter_fact_by_termination,
         week_end_in_filtered_fact,
+        _gdrs_plan_loader,
+        gdrs_contractor_filter_options,
     )
 
     web_dir = _Path(_root) / "web"
@@ -21535,6 +21604,8 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
     )
 
     long_fact = gdrs_filter_fact_kontr_intersection(long_fact, _kontr_index)
+    _term_index = load_gdrs_termination_index(dogovor_files)
+    long_fact = gdrs_filter_fact_by_termination(long_fact, _term_index)
 
     _month_options = gdrs_month_select_options(
         long_fact,
@@ -21573,8 +21644,17 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             _lf_proj = filter_dataframe_by_project_labels(
                 long_fact, sel_projects, col="project_name"
             )
-            contractor_options = sorted(
-                _lf_proj["contractor_name"].dropna().unique().tolist()
+            _filter_plan_snap = (
+                _pd.Timestamp(_month_label_to_period[_month_labels[-1]].end_time).normalize()
+                if _month_labels
+                else None
+            )
+            contractor_options = gdrs_contractor_filter_options(
+                long_fact,
+                dogovor_files,
+                sprav_files,
+                projects=sel_projects or None,
+                snapshot_date=_filter_plan_snap,
             )
             with _fc2:
                 sel_contractors = st.multiselect(
@@ -21603,6 +21683,12 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 _skud_col = _fc5
             with _month_col:
                 _default_months = [_month_labels[-1]] if _month_labels else []
+                migrate_gdrs_month_multiselect_state(
+                    st,
+                    f"gdrs_filter_months_{_gdrs_key_suffix}",
+                    _month_labels,
+                    default_labels=_default_months,
+                )
                 sel_month_labels = st.multiselect(
                     "Месяц",
                     _month_labels,
@@ -21639,10 +21725,12 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             )
 
 
-    if sel_month_labels:
-        _sel_periods = [_month_label_to_period[lbl] for lbl in sel_month_labels if lbl in _month_label_to_period]
-    else:
-        _sel_periods = [per for _, per in _month_options]
+    _sel_periods, _month_stale = gdrs_resolve_month_periods(_month_options, sel_month_labels)
+    if _month_stale:
+        st.warning(
+            "Выбранный месяц отсутствует в данных — показаны все доступные месяцы. "
+            "Выберите период из списка (например, Февраль 2026)."
+        )
     date_from, date_to = gdrs_months_date_range(_sel_periods)
     date_from = _pd.to_datetime(date_from)
     date_to = _pd.to_datetime(date_to)
@@ -21664,6 +21752,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
     )
 
     _weekly_plan_by_week: dict[int, _pd.DataFrame] = {}
+    _weekly_plan_as_of: dict[int, _pd.Timestamp] = {}
     if gdrs_matrix_show_week_columns(_plan_agg, _skud_agg):
         for _wn in range(1, 7):
             _w_end = week_end_in_filtered_fact(
@@ -21677,10 +21766,11 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             )
             if _w_end is None or not _pd.notna(_w_end):
                 continue
+            _weekly_plan_as_of[_wn] = _pd.Timestamp(_w_end).normalize()
             _weekly_plan_by_week[_wn] = _gdrs_cached_plan_aggregate(
                 _dog_sig,
                 _spr_sig,
-                _pd.Timestamp(_w_end).normalize().isoformat(),
+                _weekly_plan_as_of[_wn].isoformat(),
             )
 
     _dannye_paths: list[_Path] = []
@@ -21708,7 +21798,11 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         plan_agg=_plan_agg,
         skud_agg=_skud_agg,
         weekly_plan_by_week=_weekly_plan_by_week or None,
+        weekly_plan_as_of=_weekly_plan_as_of or None,
         kontr_index=_kontr_index,
+        term_index=_term_index,
+        plan_as_of=_pd.Timestamp(_plan_snap).normalize(),
+        plan_aggregate_loader=_gdrs_plan_loader(_dog_sig, _spr_sig),
     )
     if main_t is None or main_t.empty:
         st.info("Нет данных для выбранных фильтров.")
@@ -21745,21 +21839,19 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             _bar_title_sz = 22 if theme == "light" else 16
             _bar_margin_b = 120 if theme == "light" else 100
             fig_pf = _go.Figure()
-            fig_pf.add_bar(
-                name="План", x=_proj_labels, y=_plan_vals,
-                marker_color=_th.bar_plan,
+            _bar_x_labels, _bar_title_suffix = _gdrs_add_plan_fact_deviation_traces(
+                fig_pf,
+                _proj_labels,
+                _plan_vals,
+                _fact_vals,
+                _dev_abs,
+                _dev_colors,
+                _th,
             )
-            fig_pf.add_bar(
-                name="Факт", x=_proj_labels, y=_fact_vals,
-                marker_color=_th.bar_fact,
-            )
-            fig_pf.add_bar(
-                name="Отклонение (факт − план)", x=_proj_labels, y=_dev_abs,
-                marker_color=_dev_colors,
-            )
+            _metrics_axis = len(_proj_labels) == 1
             fig_pf.update_layout(
                 title=dict(
-                    text="План / Факт / Отклонение по проектам",
+                    text=f"План / Факт / Отклонение по проектам{_bar_title_suffix}",
                     font=dict(size=_bar_title_sz, color=_th.text, family="Inter, sans-serif"),
                     x=0.0, xanchor="left", y=0.96, yanchor="top",
                 ),
@@ -21797,20 +21889,18 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 automargin=True,
             )
             fig_pf.update_layout(margin=dict(l=56, r=24, t=88, b=_bar_margin_b))
-            _n_projs = len(_proj_labels)
-            if _n_projs <= 2:
-                fig_pf.update_layout(bargap=0.65, bargroupgap=0.15)
-            elif _n_projs <= 4:
-                fig_pf.update_layout(bargap=0.45, bargroupgap=0.1)
             fig_pf = gdrs_apply_grouped_bar_labels(
                 fig_pf,
                 _th,
-                _proj_labels,
+                _bar_x_labels,
                 [
                     ([f"{v}" for v in _plan_vals], _th.bar_plan_text),
                     ([f"{v}" for v in _fact_vals], _th.bar_fact_text),
                     (_dev_text, _dev_colors),
                 ],
+            )
+            fig_pf = _gdrs_apply_plan_fact_grouped_bar_spacing(
+                fig_pf, len(_proj_labels), metrics_axis=_metrics_axis
             )
             st.plotly_chart(fig_pf, use_container_width=True, key="gdrs_proj_bar_light")
         except Exception as _e:
@@ -21854,8 +21944,8 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         view["Вид работ"] = view["contract_name"].fillna("").astype(str).apply(
             lambda s: s if s else "—"
         )
-    view["План"] = view["plan"].fillna(0).astype(int)
-    view["СКУД"] = view["skud"].fillna(0).astype(int)
+    view["План"] = view["plan"].fillna(0).round(0).astype(int)
+    view["СКУД"] = view["skud"].fillna(0).round(0).astype(int)
     view["Отклонение"] = view["deviation"].round(0).astype(int)
     view["__kind__"] = view["row_kind"]
     view["_delta_pct_raw"] = view["delta_pct"]
@@ -21962,34 +22052,34 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             import plotly.graph_objects as _go
             _bar_axis_sz = 22 if theme == "light" else 14
             _bar_margin_b = 150 if theme == "light" else 140
-            fig2 = _go.Figure()
-            fig2.add_bar(
-                name="План", x=chart_df["Контрагент"], y=chart_df["План"],
-                marker_color=_th.bar_plan,
-            )
-            fig2.add_bar(
-                name="Факт", x=chart_df["Контрагент"], y=chart_df["Факт"],
-                marker_color=_th.bar_fact,
-            )
+            _ctr_labels = chart_df["Контрагент"].astype(str).tolist()
+            _ctr_plan = chart_df["План"].fillna(0).astype(int).tolist()
+            _ctr_fact = chart_df["Факт"].fillna(0).astype(int).tolist()
             _ctr_dev_text, _ctr_dev_colors, _ctr_dev_abs = [], [], []
             for _pv, _fv in zip(chart_df["План"], chart_df["Факт"]):
                 _lbl, _col = gdrs_deviation_vs_plan_text_and_color(_pv, _fv, _th)
                 _ctr_dev_text.append(_lbl)
                 _ctr_dev_colors.append(_col)
                 _ctr_dev_abs.append(abs(int(round(float(_fv) - float(_pv)))))
-            fig2.add_bar(
-                name="Отклонение (факт − план)",
-                x=chart_df["Контрагент"],
-                y=_ctr_dev_abs,
-                marker_color=_ctr_dev_colors,
+            fig2 = _go.Figure()
+            _ctr_bar_x, _ctr_title_suffix = _gdrs_add_plan_fact_deviation_traces(
+                fig2,
+                _ctr_labels,
+                _ctr_plan,
+                _ctr_fact,
+                _ctr_dev_abs,
+                _ctr_dev_colors,
+                _th,
             )
+            _ctr_metrics_axis = len(_ctr_labels) == 1
             fig2.update_layout(
+                title=dict(text=f"План / Факт / Отклонение{_ctr_title_suffix}") if _ctr_title_suffix else {},
                 barmode="group",
                 plot_bgcolor=_th.chart_bg,
                 paper_bgcolor=_th.chart_bg,
                 font_color=_th.text,
                 xaxis=dict(
-                    tickangle=-45,
+                    tickangle=0 if _ctr_metrics_axis else -45,
                     tickfont=dict(size=_bar_axis_sz, color=_th.text, family="Inter, system-ui, sans-serif"),
                 ),
                 yaxis=dict(
@@ -22003,12 +22093,15 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             fig2 = gdrs_apply_grouped_bar_labels(
                 fig2,
                 _th,
-                chart_df["Контрагент"].astype(str).tolist(),
+                _ctr_bar_x,
                 [
-                    ([f"{int(v)}" for v in chart_df["План"]], _th.bar_plan_text),
-                    ([f"{int(v)}" for v in chart_df["Факт"]], _th.bar_fact_text),
+                    ([f"{int(v)}" for v in _ctr_plan], _th.bar_plan_text),
+                    ([f"{int(v)}" for v in _ctr_fact], _th.bar_fact_text),
                     (_ctr_dev_text, _ctr_dev_colors),
                 ],
+            )
+            fig2 = _gdrs_apply_plan_fact_grouped_bar_spacing(
+                fig2, len(_ctr_labels), metrics_axis=_ctr_metrics_axis
             )
             st.plotly_chart(fig2, use_container_width=True, key="gdrs_ctr_bar_light")
         except Exception as _e:
@@ -22045,6 +22138,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             _dyn_title,
             vid_locked,
             month_periods=_sel_periods,
+            term_index=_term_index,
             theme=theme,
         )
 
