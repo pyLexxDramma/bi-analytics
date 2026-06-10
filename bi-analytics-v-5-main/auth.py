@@ -47,9 +47,6 @@ _ROLE_REPORT_DENYLIST: Dict[str, frozenset] = {
             "БДР",
             "Бюджет план/факт",
             "Утвержденный бюджет",
-            "БДДС (утверждённый/прогнозный)",
-            "Прогнозный БДДС",
-            "Прогнозный бюджет",
             "Дебиторская и кредиторская задолженность подрядчиков",
         }
     ),
@@ -66,9 +63,9 @@ _REPORT_ROLE_ALLOWLIST: Dict[str, frozenset] = {
     "БДР": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "Бюджет план/факт": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "Утвержденный бюджет": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
-    "БДДС (утверждённый/прогнозный)": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
-    "Прогнозный БДДС": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
-    "Прогнозный бюджет": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
+    "БДДС (утверждённый/прогнозный)": frozenset({"manager", "analyst", "rp", "financier", "admin", "superadmin"}),
+    "Прогнозный БДДС": frozenset({"manager", "analyst", "rp", "financier", "admin", "superadmin"}),
+    "Прогнозный бюджет": frozenset({"manager", "analyst", "rp", "financier", "admin", "superadmin"}),
     "Дебиторская и кредиторская задолженность": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "Дебиторская и кредиторская задолженность подрядчиков": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "Причины отклонений": frozenset({"manager", "analyst", "rp", "gip", "financier", "admin", "superadmin"}),
@@ -91,15 +88,23 @@ _REPORT_ROLE_ALLOWLIST: Dict[str, frozenset] = {
     "Просрочка выдачи ПД": frozenset({"manager", "analyst", "rp", "gip", "financier", "admin", "superadmin"}),
 }
 
+# Роли с правом редактирования таблиц БДДС / «Прогнозный бюджет» (лоты, суммы, даты).
+_FINANCE_TABLE_EDIT_ROLES = frozenset({"superadmin", "admin", "rp", "financier"})
+
+
+def _normalize_role(role: str | None) -> str:
+    return str(role or "").strip().lower()
+
 
 def user_can_open_report(role: str, report_name: str) -> bool:
     """Проверка доступа к одному отчёту по роли."""
-    if role in ("superadmin", "admin"):
+    r = _normalize_role(role)
+    if r in ("superadmin", "admin"):
         return True
-    if report_name in _ROLE_REPORT_DENYLIST.get(role, frozenset()):
+    if report_name in _ROLE_REPORT_DENYLIST.get(r, frozenset()):
         return False
     allowed_only = _REPORT_ROLE_ALLOWLIST.get(report_name)
-    if allowed_only is not None and role not in allowed_only:
+    if allowed_only is not None and r not in allowed_only:
         return False
     return True
 
@@ -424,18 +429,22 @@ def delete_user(user_id: int, deleted_by: str) -> Tuple[bool, str]:
 
 def user_can_edit_finance_tables(role: str | None) -> bool:
     """Редактирование таблиц БДДС/прогноза: админ, суперадмин, РП, финансист."""
-    r = str(role or "").strip().lower()
-    return r in {"superadmin", "admin", "rp", "financier"}
+    return _normalize_role(role) in _FINANCE_TABLE_EDIT_ROLES
+
+
+def user_can_edit_forecast_budget(role: str | None) -> bool:
+    """Редактирование данных в отчёте «Прогнозный бюджет» (менеджер, аналитик, ГИП — нет)."""
+    return user_can_edit_finance_tables(role)
 
 
 def has_admin_access(user_role: str) -> bool:
     """Проверка доступа к административной панели"""
-    return str(user_role or "").strip().lower() in ("superadmin", "admin")
+    return _normalize_role(user_role) in ("superadmin", "admin")
 
 
 def has_report_access(user_role: str) -> bool:
     """Проверка доступа к отчетам"""
-    return user_role in REPORT_ROLES
+    return _normalize_role(user_role) in REPORT_ROLES
 
 
 def get_user_role_display(role: str) -> str:

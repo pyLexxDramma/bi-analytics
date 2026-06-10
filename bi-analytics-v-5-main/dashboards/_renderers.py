@@ -31424,7 +31424,11 @@ _FORECAST_EDITOR_HELP_MD = (
 
 def dashboard_forecast_budget(df):
     """Панель «БДДС (утверждённый/прогнозный)» (ранее «Прогнозный бюджет»)."""
+    from auth import get_current_user, get_user_role_display, user_can_edit_forecast_budget
     from dashboards.finance_from_1c import resolve_reference_1c_dannye
+
+    _fc_user = get_current_user() or st.session_state.get("user") or {}
+    _fc_role = str(_fc_user.get("role") or "")
 
     _fc_ref_boot = resolve_reference_1c_dannye()
     if _fc_ref_boot is not None and not _fc_ref_boot.empty:
@@ -31564,16 +31568,10 @@ def dashboard_forecast_budget(df):
     _hide_dev_fc = bool(st.session_state.get(f"forecast_bddcs_hide_dev_{_npk_fc}", False))
 
     if _many_projects_fc:
-        try:
-            from auth import get_current_user, user_can_edit_finance_tables
-
-            _u_fc_all = get_current_user() or st.session_state.get("user") or {}
-            if user_can_edit_finance_tables(_u_fc_all.get("role")):
-                st.info(
-                    "Редактирование лотов в таблице: в фильтре **Проект** выберите **один** проект (не «Все»)."
-                )
-        except Exception:
-            pass
+        if user_can_edit_forecast_budget(_fc_role):
+            st.info(
+                "Редактирование лотов в таблице: в фильтре **Проект** выберите **один** проект (не «Все»)."
+            )
         forecast_budget_df, _tot_approved_mln, _combine_note = _forecast_combine_monthly_all_projects(
             filtered_scope, project_col
         )
@@ -31633,28 +31631,25 @@ def dashboard_forecast_budget(df):
                 }
             )
 
-        from auth import get_current_user, get_user_role_display, user_can_edit_finance_tables
-
-        _cur_user = get_current_user() or st.session_state.get("user") or {}
-        _role_fc = str(_cur_user.get("role") or "")
+        _role_fc = _fc_role
         if not _role_fc and st.session_state.get("authenticated"):
             _role_fc = str((st.session_state.get("user") or {}).get("role") or "")
-        _can_edit_finance = user_can_edit_finance_tables(_role_fc)
+        _can_edit_finance = user_can_edit_forecast_budget(_role_fc)
 
-        st.subheader("Редактирование данных задач")
-        with st.expander("Как редактировать таблицу лотов", expanded=False):
-            st.markdown(_FORECAST_EDITOR_HELP_MD)
         if _can_edit_finance:
+            st.subheader("Редактирование данных задач")
+            with st.expander("Как редактировать таблицу лотов", expanded=False):
+                st.markdown(_FORECAST_EDITOR_HELP_MD)
             st.caption(
                 "Поля ввода ниже → **«Применить правки»** (только текущая страница). "
                 "Правки в сессии до перезагрузки вкладки."
             )
         else:
+            st.subheader("Данные задач (только просмотр)")
             _role_lbl = get_user_role_display(_role_fc) if _role_fc else "не выполнен вход"
             st.warning(
-                f"Таблица **только для просмотра**. Ваша роль: **{_role_lbl}**. "
-                "Редактирование: **Администратор**, **Суперадминистратор**, **РП** или **Финансист** — "
-                "выйдите и войдите под нужной учётной записью."
+                f"Редактирование недоступно. Ваша роль: **{_role_lbl}**. "
+                "Правки в таблице лотов: **Администратор**, **Суперадминистратор**, **РП** или **Финансист**."
             )
 
         _data_key = f"forecast_edit_data_v8_{_npk_fc}"
