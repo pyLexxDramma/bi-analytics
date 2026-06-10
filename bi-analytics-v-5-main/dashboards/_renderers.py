@@ -219,6 +219,20 @@ _TABLE_CSS = """
 .pf-zos-table-wrap{margin-bottom:0.2rem!important}
 .pf-covenant-table-wrap .pf-dates-table{width:100%!important;min-width:100%!important;max-width:100%!important;table-layout:auto}
 .pf-dates-table-wrap .pf-dates-table {width:max-content; min-width:100%; table-layout:auto}
+.pd-dynamics-scroll-wrap.pd-dynamics-table-wrap,
+.pd-dynamics-table-wrap.pd-dynamics-scroll-wrap{
+  width:100%!important;max-width:100%!important;box-sizing:border-box!important;
+}
+.pd-dynamics-scroll-wrap .pf-dates-table,
+.pd-dynamics-table-wrap .pf-dates-table{
+  width:100%!important;min-width:100%!important;max-width:100%!important;table-layout:fixed!important;
+}
+.pd-dynamics-scroll-wrap .pf-dates-table th,
+.pd-dynamics-scroll-wrap .pf-dates-table td,
+.pd-dynamics-table-wrap .pf-dates-table th,
+.pd-dynamics-table-wrap .pf-dates-table td{
+  overflow:hidden;text-overflow:ellipsis;
+}
 .pf-dates-scroll-wrap{
   overflow-x:auto!important;overflow-y:auto!important;
   max-height:min(70vh,640px);width:100%!important;max-width:100%!important;
@@ -747,6 +761,7 @@ def _render_plan_fact_dates_main_table(
     wrap_class: str = "",
     file_stem: str = "plan_fact_dates",
     key_prefix: str | None = None,
+    export_df: pd.DataFrame | None = None,
 ) -> None:
     if display_df is None or getattr(display_df, "empty", True):
         st.info("Нет данных для таблицы.")
@@ -853,7 +868,7 @@ def _render_plan_fact_dates_main_table(
     _kp = key_prefix or f"pf_dates_{abs(id(display_df))}"
     render_report_html_table(
         _TABLE_CSS + mark_html_table_sortable("".join(parts)),
-        export_df=display_df,
+        export_df=export_df if export_df is not None else display_df,
         file_stem=file_stem,
         key_prefix=_kp,
     )
@@ -25210,6 +25225,50 @@ def _pd_msp_hierarchy_cols(df: pd.DataFrame) -> tuple[
     return hier_col, outline_col, level_col, name_col, block_col
 
 
+def _pd_dedupe_msp_tasks_latest(df: pd.DataFrame) -> pd.DataFrame:
+    """Оставляет последний снимок MSP по каждой задаче (проект + id) для отчёта ПД."""
+    if df is None or getattr(df, "empty", True):
+        return df
+    out = df.copy()
+    if "snapshot_date" not in out.columns:
+        out["snapshot_date"] = pd.NaT
+    if "__source_file" in out.columns:
+        try:
+            from web_loader import _parse_snapshot_date
+        except Exception:
+            _parse_snapshot_date = None  # type: ignore
+        if _parse_snapshot_date is not None:
+            def _snap_from_src(src) -> pd.Timestamp:
+                s = str(src or "")
+                m = re.search(r"(\d{2}-\d{2}-\d{4})", s)
+                if not m:
+                    return pd.NaT
+                d = _parse_snapshot_date(m.group(1))
+                return pd.Timestamp(d) if d is not None else pd.NaT
+
+            miss = out["snapshot_date"].isna()
+            if miss.any():
+                out.loc[miss, "snapshot_date"] = out.loc[miss, "__source_file"].map(_snap_from_src)
+    out["snapshot_date"] = pd.to_datetime(out["snapshot_date"], errors="coerce")
+    pc = "project name" if "project name" in out.columns else None
+    id_col = next(
+        (c for c in ("unique id", "task id seq", "Ид") if c in out.columns),
+        None,
+    )
+    if not pc or not id_col:
+        return out
+    ok = out[id_col].notna() & (out[id_col].astype(str).str.strip().ne(""))
+    if not ok.any():
+        return out
+    part_ok = (
+        out.loc[ok]
+        .sort_values("snapshot_date", ascending=True, kind="mergesort")
+        .drop_duplicates(subset=[pc, id_col], keep="last")
+    )
+    part_miss = out.loc[~ok]
+    return pd.concat([part_miss, part_ok]).sort_index().reset_index(drop=True)
+
+
 def _pd_table_row_mask(df: pd.DataFrame, metrics_mask: pd.Series, dynamics_mask: pd.Series) -> pd.Series:
     """Строки для таблицы ПД: metrics (разделы ур.4) → dynamics → строки с шифром."""
     m_met = metrics_mask.fillna(False)
@@ -25852,6 +25911,19 @@ def _pd_msp_find_schedule_start_col(df: pd.DataFrame):
     return None
 
 
+def _pd_mask_with_finish(
+    df: pd.DataFrame,
+    row_mask: pd.Series,
+    finish_col: Optional[str],
+) -> pd.Series:
+    """Строки маски с валидной датой окончания (для накопительного графика ПД)."""
+    m = row_mask.fillna(False)
+    if finish_col and finish_col in df.columns:
+        fe = pd.to_datetime(df[finish_col], errors="coerce", dayfirst=True, format="mixed")
+        m = m & fe.notna()
+    return m
+
+
 def _pd_mask_with_start_finish(
     df: pd.DataFrame,
     row_mask: pd.Series,
@@ -25869,8 +25941,10 @@ def _pd_mask_with_start_finish(
     return m
 
 
-_PD_PLAN_LINE_COLOR = "#14b8a6"
-_PD_FCST_LINE_COLOR = "#fb923c"
+from dashboards.gdrs_theme import GDRS_THEME_DARK
+
+_PD_PLAN_LINE_COLOR = GDRS_THEME_DARK.line_plan
+_PD_FCST_LINE_COLOR = GDRS_THEME_DARK.line_fact
 
 
 def _pd_necessary_productivity(
@@ -25881,8 +25955,8 @@ def _pd_necessary_productivity(
 ) -> Optional[float]:
     """
     |отклонение| / (max БО − дата отчёта) × множитель (×1 / ×7 / ×30).
-    max БО — максимальное базовое окончание среди задач плана (все доступные даты).
-    Если срок max БО уже прошёл или отклонение 0 — None.
+    max БО — максимальное базовое окончание среди задач плана (только base end / Baseline Finish).
+    Если срок max БО уже прошёл, нет валидных БО или отклонение 0 — None.
     """
     bf = pd.to_datetime(baseline_finish, errors="coerce", dayfirst=True, format="mixed").dropna()
     if bf.empty or not abs(float(deviation_to_date or 0)):
@@ -25894,6 +25968,18 @@ def _pd_necessary_productivity(
     if rem_days <= 0:
         return None
     return (abs(float(deviation_to_date)) / float(rem_days)) * float(period_multiplier)
+
+
+def _pd_baseline_finish_series(
+    df: pd.DataFrame,
+    baseline_col: Optional[str],
+) -> pd.Series:
+    """Даты базового окончания (БП); plan end / Finish не подставляются."""
+    if baseline_col and baseline_col in df.columns:
+        return pd.to_datetime(
+            df[baseline_col], errors="coerce", dayfirst=True, format="mixed"
+        )
+    return pd.Series(pd.NaT, index=df.index)
 
 
 def _pd_msp_find_schedule_finish_col(df: pd.DataFrame):
@@ -26029,6 +26115,37 @@ def _pd_pick_finish_col(
             best_n = n
             best_col = cand
     return best_col
+
+
+def _pd_dynamics_line_tasks_mask(df: pd.DataFrame, masks: dict) -> pd.Series:
+    """
+    Задачи для линий «План» / «Прогноз» на графике «Динамика выдачи ПД»:
+    ур.5, родитель ур.4 «Этап … Проектная документация», в названии — «Раздел».
+    """
+    empty = pd.Series(False, index=df.index)
+    level_col = masks.get("level_col")
+    name_col = masks.get("name_col")
+    hier_col = masks.get("hier_col")
+    if (
+        not level_col
+        or not name_col
+        or not hier_col
+        or level_col not in df.columns
+        or name_col not in df.columns
+        or hier_col not in df.columns
+    ):
+        return masks.get("dynamics_mask", empty).fillna(False)
+    lv_num = outline_level_numeric(df[level_col])
+    parent_names = _pd_msp_immediate_parent_names(df, hier_col, name_col)
+    parent_pd = parent_names.map(_pd_msp_parent_is_pd_stage)
+    razdel_m = df[name_col].astype(str).str.contains("раздел", case=False, na=False)
+    strict = lv_num.eq(5) & parent_pd & razdel_m
+    if strict.any():
+        return strict
+    dyn = masks.get("dynamics_mask", empty).fillna(False)
+    if dyn.any():
+        return dyn
+    return masks.get("metrics_mask", empty).fillna(False)
 
 
 def _pd_dynamics_chart_row_mask(
@@ -26235,6 +26352,8 @@ def dashboard_documentation(
     )
     if project_col and project_col in df.columns:
         df = _project_column_apply_canonical(df, project_col)
+    if is_pd:
+        df = _pd_dedupe_msp_tasks_latest(df)
 
     # Подпись раздела для фильтра: «Шифр + Наименование» (ПД и РД).
     rd_section_labels_series: Optional[pd.Series] = _doc_section_labels_series(
@@ -26430,6 +26549,12 @@ def dashboard_documentation(
 
     # Apply filters to data
     filtered_df = df.copy()
+    pd_report_date = date.today()
+    if is_pd:
+        if selected_date_end:
+            pd_report_date = selected_date_end
+        elif selected_date_start:
+            pd_report_date = selected_date_start
 
     # Apply project filter
     # R23-06 (стр.17): если выбраны все опции — фильтр не сужает выборку (эквивалент «Все»).
@@ -26473,9 +26598,10 @@ def dashboard_documentation(
                     filtered_df[section_col].astype(str).str.strip().isin(_sset)
                 ]
 
-    # Apply date filter
+    # Apply date filter (РД — срез по plan end; ПД — только дата отчёта для KPI, строки не отсекаем)
     if (
-        selected_date_start
+        not is_pd
+        and selected_date_start
         and selected_date_end
         and period_source_col
         and period_source_col in df.columns
@@ -26554,7 +26680,7 @@ def dashboard_documentation(
             status_mask = status_mask | (rework_numeric > 0)
 
         if "Просрочено подрядчиком" in selected_statuses:
-            today_d = date.today()
+            today_d = pd_report_date if is_pd else date.today()
             pe = pd.Series(pd.NaT, index=filtered_df.index)
             if plan_end_col and plan_end_col in filtered_df.columns:
                 pe = pd.to_datetime(
@@ -26586,6 +26712,30 @@ def dashboard_documentation(
             overdue_plan = pe.notna() & (pe.dt.date < today_d)
             oc_mask = issued & overdue_plan & (~done_on_time)
             status_mask = status_mask | oc_mask
+            if is_pd:
+                _pct_oc = _pd_msp_pct_complete_col(filtered_df)
+                _pc_oc = (
+                    pd.to_numeric(filtered_df[_pct_oc], errors="coerce").fillna(0.0)
+                    if _pct_oc and _pct_oc in filtered_df.columns
+                    else pd.Series(0.0, index=filtered_df.index)
+                )
+                _pe_oc = (
+                    pd.to_datetime(
+                        filtered_df[plan_end_col], errors="coerce", dayfirst=True, format="mixed"
+                    )
+                    if plan_end_col and plan_end_col in filtered_df.columns
+                    else pd.Series(pd.NaT, index=filtered_df.index)
+                )
+                _be_oc = (
+                    pd.to_datetime(
+                        filtered_df[base_end_col], errors="coerce", dayfirst=True, format="mixed"
+                    )
+                    if base_end_col and base_end_col in filtered_df.columns
+                    else pd.Series(pd.NaT, index=filtered_df.index)
+                )
+                _fin_oc = _pe_oc.where(_pe_oc.notna(), _be_oc)
+                _pd_oc = _fin_oc.notna() & (_fin_oc.dt.date < today_d) & (_pc_oc < 99.99)
+                status_mask = status_mask | _pd_oc
 
         filtered_df = filtered_df[status_mask].copy()
 
@@ -27481,26 +27631,53 @@ def dashboard_documentation(
                     }
                     gran_key, mult_nec, win_days = _gran_cfg[granularity_label]
 
-                    pd_chart_mask, _chart_mask_fb = _pd_dynamics_chart_row_mask(
-                        pd_metrics_mask,
-                        pd_section_mask,
-                        df[b_fin_col] if b_fin_col and b_fin_col in df.columns else pd.Series(index=df.index),
-                    )
-                    if _chart_mask_fb:
-                        suppress_caption(
-                            "График строится по разделам ур.4 (как KPI): для задач ур.5 "
-                            "«Раздел» нет валидных дат окончания."
-                        )
+                    pd_chart_mask = _pd_dynamics_line_tasks_mask(df, _pd_masks_dyn)
+                    if not pd_chart_mask.any():
+                        pd_chart_mask = _pd_table_row_mask(
+                            df, pd_metrics_mask, pd_section_mask
+                        ).fillna(False)
+                    _chart_b_fin_col = _b_base_raw or _pd_msp_find_baseline_finish_col(df)
+                    _chart_b_start_col = _pd_msp_find_baseline_start_col(df)
+                    _chart_s_fin_col = _pd_msp_find_schedule_finish_col(df)
+                    _chart_s_start_col = _pd_msp_find_schedule_start_col(df)
                     plan_line_mask = _pd_mask_with_start_finish(
-                        df, pd_chart_mask, b_start_col, b_fin_col
+                        df, pd_chart_mask, _chart_b_start_col, _chart_b_fin_col
                     )
                     fcst_line_mask = _pd_mask_with_start_finish(
-                        df, pd_chart_mask, s_start_col, s_fin_col
+                        df, pd_chart_mask, _chart_s_start_col, _chart_s_fin_col
+                    )
+                    if not plan_line_mask.any():
+                        plan_line_mask = _pd_mask_with_finish(
+                            df, pd_chart_mask, _chart_b_fin_col
+                        )
+                    if not fcst_line_mask.any():
+                        fcst_line_mask = _pd_mask_with_finish(
+                            df, pd_chart_mask, _chart_s_fin_col
+                        )
+
+                    _chart_bf = (
+                        pd.to_datetime(
+                            df[_chart_b_fin_col], errors="coerce", dayfirst=True, format="mixed"
+                        )
+                        if _chart_b_fin_col and _chart_b_fin_col in df.columns
+                        else pd.Series(pd.NaT, index=df.index)
+                    )
+                    _chart_bf_bp = _pd_baseline_finish_series(df, _b_base_raw)
+                    _chart_sf = (
+                        pd.to_datetime(
+                            df[_chart_s_fin_col], errors="coerce", dayfirst=True, format="mixed"
+                        )
+                        if _chart_s_fin_col and _chart_s_fin_col in df.columns
+                        else pd.Series(pd.NaT, index=df.index)
                     )
 
-                    plan_curve = _pd_cumsum_by_granularity(df[b_fin_col], plan_line_mask, gran_key)
+                    plan_curve = _pd_cumsum_by_granularity(
+                        _chart_bf, plan_line_mask, gran_key
+                    )
                     plan_curve["Тип"] = "План по проекту (БП)"
-                    fcst_curve = _pd_cumsum_by_granularity(df[s_fin_col], fcst_line_mask, gran_key)
+                    fcst_curve = _pd_cumsum_by_granularity(
+                        _chart_sf, fcst_line_mask, gran_key
+                    )
                     fcst_curve["Тип"] = "Прогноз по проекту"
                     curves = [plan_curve, fcst_curve]
                     dynamics_df = pd.concat(curves, ignore_index=True)
@@ -27523,14 +27700,16 @@ def dashboard_documentation(
                         )
                         dynamics_df = pd.concat([zplan, zfcst, dynamics_df], ignore_index=True)
                     dynamics_df = dynamics_df.sort_values(["Тип", "Дата"])
-                    today = date.today()
+                    today = pd_report_date if is_pd else date.today()
                     ts_today = pd.Timestamp(today)
                     m_kpi = plan_line_mask.fillna(False)
-                    plan_total = float(m_kpi.sum())
+                    # KPI «План (БП)» и необходимая производительность — только по базовому окончанию.
+                    m_kpi_bp = m_kpi & _chart_bf_bp.notna()
+                    plan_total = float(m_kpi_bp.sum())
                     plan_to_date = int(
-                        (m_kpi & bf.notna() & (bf.dt.normalize() <= ts_today)).sum()
+                        (m_kpi_bp & (_chart_bf_bp.dt.normalize() <= ts_today)).sum()
                     )
-                    done_sec = m_kpi & (
+                    done_sec = m_kpi_bp & (
                         (pc >= 99.99)
                         | (af.notna() & (af.dt.normalize() <= ts_today))
                     )
@@ -27545,10 +27724,10 @@ def dashboard_documentation(
                         st.metric("Факт на текущую дату", f"{fact_to_date:,.0f}".replace(",", " "))
                     with c4:
                         st.metric("Отклонение на текущую дату", f"{deviation_to_date:+,.0f}".replace(",", " "))
-                    # П.7: |отклонение| / (дней до max БО по задачам плана) × ×1/×7/×30
+                    # П.7: |отклонение| / (дней до max БО по задачам плана) × ×1/×7/×30; max БО — только base end
                     nec = _pd_necessary_productivity(
                         deviation_to_date,
-                        bf.loc[m_kpi],
+                        _chart_bf_bp.loc[m_kpi_bp],
                         today,
                         mult_nec,
                     )
@@ -27650,20 +27829,23 @@ def dashboard_documentation(
                             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, title_text=""),
                         )
                         fig_dynamics.update_traces(
-                            line=dict(width=2),
-                            marker=dict(size=6),
                             mode="lines+markers+text",
                             textposition="top center",
-                            textfont=dict(size=10, color="white"),
                         )
                         for _tr in fig_dynamics.data:
                             _tn = str(_tr.name or "")
                             if "План" in _tn:
                                 _tr.line.color = _PD_PLAN_LINE_COLOR
+                                _tr.line.width = 2.5
                                 _tr.marker.color = _PD_PLAN_LINE_COLOR
+                                _tr.marker.size = 8
+                                _tr.textfont = dict(color=_PD_PLAN_LINE_COLOR, size=10)
                             elif "Прогноз" in _tn:
                                 _tr.line.color = _PD_FCST_LINE_COLOR
+                                _tr.line.width = 3
                                 _tr.marker.color = _PD_FCST_LINE_COLOR
+                                _tr.marker.size = 9
+                                _tr.textfont = dict(color=_PD_FCST_LINE_COLOR, size=10)
                         fig_dynamics = apply_chart_background(fig_dynamics)
                         fig_dynamics.update_yaxes(
                             range=[_pd_y_lo, _pd_y_max + _pd_head],
@@ -27686,13 +27868,45 @@ def dashboard_documentation(
                             else _tn_tbl.loc[idx_sec].astype(str)
                         )
                         tbl_raw = pd.DataFrame({"Раздел": sec_disp.values}, index=idx_sec)
-                        if project_col and project_col in df.columns:
-                            tbl_raw["Проект"] = (
-                                df.loc[idx_sec, project_col].astype(str).str.strip().values
+                        _proj_src = (
+                            project_col
+                            if project_col and project_col in df.columns
+                            else (
+                                "project name"
+                                if "project name" in df.columns
+                                else find_column(df, ["Проект", "project"])
                             )
+                        )
+                        if _proj_src and _proj_src in df.columns:
+                            tbl_raw["Проект"] = (
+                                df.loc[idx_sec, _proj_src].astype(str).str.strip().values
+                            )
+                        else:
+                            tbl_raw["Проект"] = ""
                         tbl_raw["_bf"] = bf.reindex(idx_sec).dt.normalize()
                         tbl_raw["_sf"] = sf.reindex(idx_sec).dt.normalize()
                         tbl_raw["_dev"] = (tbl_raw["_bf"] - tbl_raw["_sf"]).dt.days
+                        if "snapshot_date" in df.columns:
+                            tbl_raw["_snap"] = pd.to_datetime(
+                                df.loc[idx_sec, "snapshot_date"], errors="coerce"
+                            ).values
+                        else:
+                            tbl_raw["_snap"] = pd.NaT
+                        _tbl_keys = [c for c in ("Проект", "Раздел") if c in tbl_raw.columns]
+                        if _tbl_keys:
+                            tbl_raw["_ord_snap"] = pd.to_datetime(
+                                tbl_raw["_snap"], errors="coerce"
+                            ).fillna(pd.Timestamp(0))
+                            tbl_raw["_ord_dt"] = tbl_raw[["_bf", "_sf"]].max(axis=1)
+                            tbl_raw = (
+                                tbl_raw.sort_values(
+                                    ["_ord_snap", "_ord_dt"] + _tbl_keys,
+                                    ascending=True,
+                                    kind="mergesort",
+                                )
+                                .drop_duplicates(subset=_tbl_keys, keep="last")
+                                .drop(columns=["_snap", "_ord_snap", "_ord_dt"], errors="ignore")
+                            )
                         secs_sorted = sorted(
                             {
                                 str(x).strip()
@@ -27709,15 +27923,19 @@ def dashboard_documentation(
                         _date_parts = [tbl_raw["_bf"].dropna(), tbl_raw["_sf"].dropna()]
                         _date_union = pd.concat(_date_parts) if _date_parts else pd.Series(dtype="datetime64[ns]")
                         if _date_union.empty:
-                            d_lo = d_hi = today
+                            d_lo = d_hi = pd_report_date if is_pd else today
                         else:
                             d_lo = _date_union.min().date()
                             d_hi = _date_union.max().date()
+                        if is_pd:
+                            _def_p_lo, _def_p_hi = d_lo, pd_report_date
+                        else:
+                            _def_p_lo, _def_p_hi = d_lo, d_hi
                         _period_key = _doc_fk + "pd_tbl_period"
                         _period_sig_key = _doc_fk + "pd_tbl_period_sig"
-                        _tbl_sig = f"{len(tbl_raw)}|{d_lo}|{d_hi}"
+                        _tbl_sig = f"{len(tbl_raw)}|{d_lo}|{d_hi}|{pd_report_date if is_pd else ''}"
                         if st.session_state.get(_period_sig_key) != _tbl_sig:
-                            st.session_state[_period_key] = (d_lo, d_hi)
+                            st.session_state[_period_key] = (_def_p_lo, _def_p_hi)
                             st.session_state[_period_sig_key] = _tbl_sig
                         dr = st.date_input(
                             "Период (по базовому или текущему окончанию)",
@@ -27741,31 +27959,28 @@ def dashboard_documentation(
                         if tbl_f.empty:
                             st.info("Нет строк по выбранным фильтрам таблицы ПД.")
                         else:
+                            _sort_cols = ["Проект", "_dev", "Раздел"]
                             tbl_f = tbl_f.sort_values(
-                                ["_dev", "Раздел"],
-                                ascending=[False, True],
+                                _sort_cols,
+                                ascending=[True, False, True],
                                 kind="mergesort",
                             )
-                            tbl_show = {"№": range(1, len(tbl_f) + 1)}
-                            if "Проект" in tbl_f.columns:
-                                tbl_show["Проект"] = tbl_f["Проект"].map(
-                                    lambda x: sanitize_display_label(x)
-                                )
-                            tbl_show.update(
+                            tbl_show = pd.DataFrame(
                                 {
-                                    "Раздел": tbl_f["Раздел"].map(lambda x: sanitize_display_label(x)),
+                                    "№": range(1, len(tbl_f) + 1),
+                                    "Проект": tbl_f["Проект"].map(sanitize_display_label),
+                                    "Раздел": tbl_f["Раздел"].map(sanitize_display_label),
                                     "Базовое окончание": tbl_f["_bf"].dt.strftime("%d.%m.%Y"),
                                     "Окончание": tbl_f["_sf"].dt.strftime("%d.%m.%Y"),
-                                    "Отклонение окончания": tbl_f["_dev"].map(_pd_fmt_deviation_days),
+                                    "Отклонение окончания": "",
                                 }
                             )
-                            tbl_show = pd.DataFrame(tbl_show)
-                            sty_tbl = style_dataframe_for_dark_theme(
-                                tbl_show,
-                                days_column="Отклонение окончания",
-                                days_positive_is_ahead=True,
-                                days_deviation_gradient=True,
-                            )
+                            tbl_numeric = tbl_show.copy()
+                            tbl_numeric["Базовое окончание"] = tbl_f["_bf"].values
+                            tbl_numeric["Окончание"] = tbl_f["_sf"].values
+                            tbl_numeric["Отклонение окончания"] = pd.to_numeric(
+                                tbl_f["_dev"], errors="coerce"
+                            ).values
                             st.markdown(
                                 "<style>"
                                 "div[class*='st-key-bitblwrap_pd_dyn_tbl'],"
@@ -27775,8 +27990,11 @@ def dashboard_documentation(
                                 "div[class*='st-key-bitblwrap_pd_dyn_tbl'] div[data-testid='stElementContainer']:has(iframe),"
                                 "div[class*='st-key-bitblwrap_pd_dyn_tbl'] iframe"
                                 "{width:100%!important;max-width:100%!important;min-width:0!important;display:block!important;}"
-                                ".pd-dynamics-table-wrap,.pd-dynamics-table-wrap table"
-                                "{width:100%!important;min-width:100%!important;max-width:100%!important;table-layout:fixed!important;}"
+                                ".pd-dynamics-table-wrap,.pd-dynamics-table-wrap table,"
+                                ".pd-dynamics-scroll-wrap,.pd-dynamics-scroll-wrap table,"
+                                ".pd-dynamics-scroll-wrap .pf-dates-table"
+                                "{width:100%!important;min-width:100%!important;max-width:100%!important;"
+                                "table-layout:fixed!important;}"
                                 ".pd-dynamics-table-wrap,.pd-dynamics-scroll-wrap"
                                 "{margin:0.35em 0 0.85em 0!important;box-sizing:border-box!important;}"
                                 ".pd-dynamics-scroll-wrap{min-height:520px!important;height:100%!important;"
@@ -27790,23 +28008,17 @@ def dashboard_documentation(
                                 "</style>",
                                 unsafe_allow_html=True,
                             )
-                            _pd_tbl_html = render_styled_table_to_html(sty_tbl, hide_index=True)
-                            _pd_nrows = len(tbl_show)
-                            _pd_tbl_html = _pd_tbl_html.replace(
-                                'class="bi-styled-table-wrap"',
-                                f'class="bi-styled-table-wrap pd-dynamics-table-wrap pd-dynamics-scroll-wrap" data-bi-rows="{_pd_nrows}"',
-                                1,
+                            _export_tbl = tbl_show.copy()
+                            _export_tbl["Отклонение окончания"] = tbl_f["_dev"].map(
+                                _pd_fmt_deviation_days
                             )
-                            _pd_tbl_html = _pd_tbl_html.replace(
-                                'style="overflow-x:auto;min-width:0;width:100%;max-width:100%;margin:0.35em 0 0 0;',
-                                'style="overflow-x:auto;min-width:0;width:100%!important;max-width:100%!important;margin:0.35em 0 0 0;',
-                                1,
-                            )
-                            render_report_html_table(
-                                _pd_tbl_html,
-                                export_df=tbl_show,
+                            _render_plan_fact_dates_main_table(
+                                tbl_show,
+                                tbl_numeric,
+                                wrap_class="pd-dynamics-scroll-wrap pd-dynamics-table-wrap",
                                 file_stem="pd_dynamics_table",
                                 key_prefix="pd_dyn_tbl",
+                                export_df=_export_tbl,
                             )
                             suppress_caption(
                                 "Сортировка по клику на заголовок столбца; "

@@ -1090,6 +1090,10 @@ def style_dataframe_for_dark_theme(
         s = str(v).strip()
         if not s or s.lower() in ("nan", "none", "—"):
             return None
+        s_num = s.replace("\u2212", "-").replace(",", ".")
+        num = pd.to_numeric(s_num, errors="coerce")
+        if pd.notna(num):
+            return int(round(float(num)))
         m = re.search(r"([+-]?)\s*(\d+)", s)
         if not m:
             return pd.to_numeric(s, errors="coerce")
