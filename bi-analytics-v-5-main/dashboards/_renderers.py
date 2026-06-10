@@ -1859,11 +1859,14 @@ def _deviations_maket_prepare_df(table_reason_df: pd.DataFrame) -> pd.DataFrame:
             & (work_m["reason of deviation"].astype(str).str.strip() != "")
         )
     mask_l = pd.Series(True, index=work_m.index)
-    _lc_maket = _dev_tasks_resolve_level_column(work_m)
-    if _lc_maket and _lc_maket in work_m.columns:
-        mask_l = pd.to_numeric(work_m[_lc_maket], errors="coerce") == 5
-    elif "level" in work_m.columns:
+    # Макет (ТЗ): «уровень 5» — колонка «Уровень» (level), не outline (level structure).
+    # В MSP-выгрузках (напр. Есипово) Уровень=5 при Уровень_структуры=3.
+    if "level" in work_m.columns and pd.to_numeric(work_m["level"], errors="coerce").notna().any():
         mask_l = pd.to_numeric(work_m["level"], errors="coerce") == 5
+    else:
+        _lc_maket = _dev_tasks_resolve_level_column(work_m)
+        if _lc_maket and _lc_maket in work_m.columns:
+            mask_l = pd.to_numeric(work_m[_lc_maket], errors="coerce") == 5
     mask_neg = work_m["_end_diff"].notna() & (work_m["_end_diff"] < 0)
     maket_df = work_m[mask_r & mask_l & mask_neg].copy()
     _dd_key_cols = [
@@ -2258,6 +2261,7 @@ def _render_deviations_maket_table(
         return
 
     _date_bg_m = _DEV_MAKET_COL_BG
+    _date_cell_st = f' style="background:{_date_bg_m};color:#0b1f33;"'
     _maket_wrap_id = f"dev_reason_maket_{abs(id(maket_df))}"
     _hdrs = [
         "ID задачи",
@@ -2277,8 +2281,15 @@ def _render_deviations_maket_table(
         "<thead><tr>",
     ]
     for h in _hdrs:
-        _hst = f' style="background:{_date_bg_m};color:#0b1f33;"' if h in _bg_hdrs else ""
-        _hcls = ' class="dev-mak-col-proj"' if h == "Проект" else ""
+        if h in _bg_hdrs:
+            _hst = f' style="background:{_date_bg_m};color:#f5f5f5;"'
+            _hcls = ' class="dev-mak-col-date"'
+        elif h == "Проект":
+            _hst = ""
+            _hcls = ' class="dev-mak-col-proj"'
+        else:
+            _hst = ""
+            _hcls = ""
         _tbl_m.append(f"<th{_hcls}{_hst}>{html_module.escape(h)}</th>")
     _tbl_m.append("</tr></thead><tbody>")
 
@@ -2314,13 +2325,13 @@ def _render_deviations_maket_table(
         _tbl_m.append(f'<td class="dev-mak-col-proj">{html_module.escape(pr)}</td>')
         _tbl_m.append(f"<td>{html_module.escape(fb)}</td>")
         _tbl_m.append(f"<td>{html_module.escape(stv)}</td>")
-        _tbl_m.append(f'<td style="background:{_date_bg_m}">{html_module.escape(be_s)}</td>')
-        _tbl_m.append(f'<td style="background:{_date_bg_m}">{html_module.escape(pe_s)}</td>')
+        _tbl_m.append(f"<td{_date_cell_st}>{html_module.escape(be_s)}</td>")
+        _tbl_m.append(f"<td{_date_cell_st}>{html_module.escape(pe_s)}</td>")
         if pd.isna(ed):
-            _tbl_m.append(f'<td style="background:{_date_bg_m}">—</td>')
+            _tbl_m.append(f"<td{_date_cell_st}>—</td>")
         else:
             _tbl_m.append(
-                f'<td style="background:{_date_bg_m};text-align:right">'
+                f'<td style="background:{_date_bg_m};color:#0b1f33;text-align:right">'
                 f'<span style="color:{_c_sp}!important;font-weight:600">{html_module.escape(ed_s)}</span></td>'
             )
         _bk_tbl = _deviations_reason_bucket_label(rr.get("reason of deviation")) if "reason of deviation" in maket_df.columns else "Прочее"
@@ -2344,6 +2355,9 @@ def _render_deviations_maket_table(
         f"#{_maket_wrap_id} th.dev-mak-col-proj"
         "{white-space:nowrap!important;min-width:9em;max-width:none!important;word-break:keep-all;}"
         f"#{_maket_wrap_id} thead th{{position:sticky;top:0;z-index:5;background:#0e1117;}}"
+        f"#{_maket_wrap_id} th.dev-mak-col-date{{color:#f5f5f5!important;}}"
+        f"#{_maket_wrap_id} td[style*='{_date_bg_m}']"
+        "{{color:#0b1f33!important;}}"
         "</style>"
     )
     st.markdown(f"**Записей (по макету):** {len(maket_df)}")
@@ -5296,6 +5310,9 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         if _gdrs_rc:
             _ly_rc.update(_gdrs_rc)
         fig.update_layout(**_ly_rc)
+        if n == 1:
+            fig.update_traces(width=0.14, selector=dict(type="bar"))
+            fig.update_layout(bargap=0.92, bargroupgap=0.28)
         if n > 6:
             fig.update_xaxes(tickangle=-45, ticklabelstandoff=14)
         else:
