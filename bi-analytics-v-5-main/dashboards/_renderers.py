@@ -10808,6 +10808,22 @@ def _dk_plotly_canvas_width(n_cats: int, *, grouped: bool = True) -> tuple[bool,
 
 
 
+def _dk_chart_legend_items(*, stack: bool) -> list[tuple[str, str]]:
+    """Фиксированная легенда ДЗ/КЗ (визуал 1 / визуал 2), не зависит от нулевых серий."""
+    if stack:
+        return [
+            ("Отклонение, если больше или = 0", "#95A5A6"),
+            ("КС-2", "#F1C40F"),
+            ("Аванс", "#2E86AB"),
+        ]
+    return [
+        ("Аванс", "#2E86AB"),
+        ("КС-2", "#F1C40F"),
+        ("Отклонение, если больше или = 0", "#95A5A6"),
+        ("Отклонение, если меньше 0", "#F1948A"),
+    ]
+
+
 def _render_dk_chart_html_legend(_leg_items: list[tuple[str, str]]) -> None:
     """Статичная легенда под графиком ДЗ/КЗ (plotly showlegend отключён)."""
     if not _leg_items:
@@ -10827,7 +10843,8 @@ def _render_dk_chart_html_legend(_leg_items: list[tuple[str, str]]) -> None:
                 f'<span style="color:#e2e8f0;">{_ln}</span></span>'
             )
         _lh += "</div>"
-        components.html(_lh, height=44, scrolling=False)
+        _leg_h = int(max(44, 28 + 22 * max(1, (len(_leg_items) + 1) // 2)))
+        components.html(_lh, height=_leg_h, scrolling=False)
     except Exception:
         pass
 
@@ -10843,22 +10860,7 @@ def _render_debit_credit_bar_chart(
     # ДЗ/КЗ: широкие столбцы; длинный ряд - гориз. скролл (как БДДС).
     import uuid
 
-    _leg_items: list[tuple[str, str]] = []
-    try:
-        for _tr in (fig.data or []):
-            _nm = getattr(_tr, "name", None) or ""
-            if not _nm or getattr(_tr, "showlegend", True) is False:
-                continue
-            _mc = None
-            try:
-                _mc = _tr.marker.color
-            except Exception:
-                pass
-            if isinstance(_mc, (list, tuple)):
-                _mc = _mc[0] if _mc else None
-            _leg_items.append((_nm, str(_mc or "#888")))
-    except Exception:
-        pass
+    _leg_items: list[tuple[str, str]] = _dk_chart_legend_items(stack=stack)
     try:
         fig.update_layout(showlegend=False)
     except Exception:
@@ -22291,11 +22293,18 @@ def _resolve_project_display_labels(series: pd.Series, lookup: dict[str, str]) -
 
 
 def _to_num(series):
-    """Приведение к числу (пробелы, запятая как десятичный разделитель)."""
-    return pd.to_numeric(
-        series.astype(str).str.replace(" ", "").str.replace(",", "."),
-        errors="coerce",
-    ).fillna(0)
+    """Приведение к числу (пробелы; запятая — десятичный или тысячный разделитель)."""
+    s = (
+        series.astype(str)
+        .str.replace("\u00a0", "", regex=False)
+        .str.replace(" ", "", regex=False)
+        .str.strip()
+    )
+    # 11,700,000.00 — запятая как разделитель тысяч при наличии точки.
+    _both_sep = s.str.contains(",") & s.str.contains(r"\.")
+    s = s.where(~_both_sep, s.str.replace(",", "", regex=False))
+    s = s.str.replace(",", ".", regex=False)
+    return pd.to_numeric(s, errors="coerce").fillna(0)
 
 
 def _ref_score_contractor_column(name: str) -> int:
@@ -23300,10 +23309,11 @@ def dashboard_debit_credit(df):
             if not _so_col or not _sum_col:
                 _ks2_diag["reason"] = "в 1С dannye нет колонок «СтатьяОборотов» / «Сумма»"
             else:
-                # КС-2: только точные значения «СтатьяОборотов» из ТЗ (без синонимов «основная деятельность»).
+                # КС-2: статьи из ТЗ + фактическая выгрузка 1С («Поступления по основной деятельности»).
                 _ks2_articles_cf = {
                     "поступление товаров и услуг",
                     "поступление услуг из переработки",
+                    "поступления по основной деятельности",
                 }
                 _so_cf = _rd[_so_col].astype(str).str.strip().str.casefold()
                 _rd_ks2 = _rd[_so_cf.isin(_ks2_articles_cf)].copy()
