@@ -32742,6 +32742,20 @@ _PRED_DASH_MOCK_CSS = """
   font-size:11px;
   line-height:1;
 }
+.pred-days-ok {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:2.4em;
+  height:2.4em;
+  padding:0 6px;
+  border-radius:999px;
+  background:rgba(45, 106, 79, 0.55);
+  color:#e8fff0;
+  font-weight:700;
+  font-size:11px;
+  line-height:1;
+}
 </style>
 """
 
@@ -33300,11 +33314,17 @@ def _pred_filter_by_projekts_registry(df: pd.DataFrame, obj_col: str | None) -> 
     return df.iloc[0:0].copy()
 
 
-def _pred_status_display_label(status: Any, *, resolved: bool = False) -> str:
-    """«На ознакомлении» в UI → «Не устранено» (открытые предписания)."""
-    s = _clean_display_str(status, empty="Неизвестно")
+def _pred_status_display_label(
+    status: Any, *, resolved: bool = False, overdue_days: int | float | None = None
+) -> str:
+    """«На ознакомлении» → «Не устранено»; устранённые в срок → «Сдано в срок»."""
+    try:
+        od = int(round(float(overdue_days))) if overdue_days is not None and not pd.isna(overdue_days) else 0
+    except (TypeError, ValueError):
+        od = 0
     if resolved:
-        return s
+        return "Сдано в срок" if od <= 0 else "Устранено с просрочкой"
+    s = _clean_display_str(status, empty="Неизвестно")
     if str(s).strip().casefold() == "на ознакомлении":
         return "Не устранено"
     return s
@@ -33312,10 +33332,12 @@ def _pred_status_display_label(status: Any, *, resolved: bool = False) -> str:
 
 def _pred_status_pie_color(status_label: str) -> str:
     sl = str(status_label).strip().casefold()
-    if "снято" in sl:
+    if "сдано в срок" in sl or "снято" in sl:
         return "#2ecc71"
     if "на ознакомлени" in sl or "не устранено" in sl:
         return "#e67e22"
+    if "просрочк" in sl:
+        return "#c0392b"
     return "#94a3b8"
 
 
@@ -33365,7 +33387,9 @@ def _pred_build_detail_table_df(
         pred_num_raw = row.get(doc_num_col) if doc_num_col and doc_num_col in show.columns else None
         rows.append(
             {
-                "Статус предписания": _pred_status_display_label(row.get("Статус"), resolved=resolved_raw),
+                "Статус предписания": _pred_status_display_label(
+                    row.get("Статус"), resolved=resolved_raw, overdue_days=overdue_num
+                ),
                 "Подрядчик": _clean_display_str(row.get(contr_col), empty="—") if contr_col and contr_col in show.columns else "—",
                 "Проект": _clean_display_str(row.get(obj_col), empty="—") if obj_col and obj_col in show.columns else "—",
                 "№ договора": _pred_fmt_num(row.get(contract_col)) if contract_col and contract_col in show.columns else "Без номера",
@@ -33537,8 +33561,14 @@ def _pred_sort_table_df(df: pd.DataFrame, sort_col: str, sort_order: str) -> pd.
 def _pred_status_chip_html(status: str, overdue_days, resolved: bool) -> str:
     esc = html_module.escape
     s = str(status or "").strip() or "Неизвестно"
+    try:
+        od = int(round(float(overdue_days))) if overdue_days is not None and not pd.isna(overdue_days) else 0
+    except (TypeError, ValueError):
+        od = 0
+    if resolved and od <= 0:
+        return f'<span class="pred-chip pred-chip-ok">{esc("Сдано в срок")}</span>'
     if resolved:
-        return f'<span class="pred-chip pred-chip-ok">{esc(s)}</span>'
+        return f'<span class="pred-chip pred-chip-overdue">{esc(s)}</span>'
     return f'<span class="pred-chip pred-chip-overdue">{esc(s)}</span>'
 
 
@@ -33645,7 +33675,12 @@ def _pred_detail_table_html(
             if col == "Статус предписания":
                 inner = _pred_status_chip_html(str(val), row.get("_overdue_num"), is_resolved)
             elif col == "Дней просрочки" and str(val).strip():
-                inner = f'<span class="pred-days-neg">{esc(str(val))}</span>'
+                try:
+                    _od = int(round(float(row.get("_overdue_num", 0))))
+                except (TypeError, ValueError):
+                    _od = 0
+                _days_cls = "pred-days-ok" if _od <= 0 else "pred-days-neg"
+                inner = f'<span class="{_days_cls}">{esc(str(val))}</span>'
             else:
                 inner = esc(str(val))
             c_cls = _pred_detail_col_class(col)
@@ -36011,6 +36046,7 @@ def dashboard_predpisania(df):
     n_unresolved = int(unres_mask.sum())
     n_resolved = int(resolved_mask.sum())
     n_overdue = int((unres_mask & (filtered["_overdue_days"] > 0)).sum())
+    n_non_overdue = int((filtered["_overdue_days"] <= 0).sum())
     n_critical = int((unres_mask & filtered["_critical"]).sum())
 
     chart_df = filtered.loc[unres_mask].copy() if hide_resolved else filtered.copy()
@@ -36026,13 +36062,15 @@ def dashboard_predpisania(df):
         suppress_caption(
             f"Период выдачи предписаний: {issue_start.strftime('%d.%m.%Y')} — {issue_end.strftime('%d.%m.%Y')}"
         )
-    pm1, pm2, pm3 = st.columns(3, gap="small")
+    pm1, pm2, pm3, pm4 = st.columns(4, gap="small")
     with pm1:
         st.metric("Всего предписаний", n_total)
     with pm2:
         st.metric("Устраненные предписания", n_resolved)
     with pm3:
         st.metric("Неустраненные", n_unresolved)
+    with pm4:
+        st.metric("Непросроченные", n_non_overdue)
 
     col_chart, col_kpi = st.columns([3, 1], gap="small")
 
@@ -36207,9 +36245,10 @@ def dashboard_predpisania(df):
             unsafe_allow_html=True,
         )
         suppress_caption(
-            "Маппинг KPI: «Всего» и «Устраненные» — из id.csv (KindName «Предписания», KrStateID=13); "
-            "«Неустраненные» = всего − устранённые; «Просроченные» — открытые с истёкшим id_Deadline; "
-            "«Критические» — тег «КРИТИЧНЫЙ» и указанный KindID."
+            "Маппинг KPI: «Всего» и «Устраненные» — id.csv (KindName «Предписания», KrStateID=13); "
+            "«Неустраненные» = всего − устранённые; «Непросроченные» — id_Deadline не нарушен "
+            "(счётчик над графиком и в подписи таблицы); «Просроченные» — открытые с истёкшим сроком; "
+            "«Критические» — тег «КРИТИЧНЫЙ». Факт устранения — «Проверка»/«Принято» в task.csv."
         )
 
     _viz_df = chart_df
@@ -36217,6 +36256,7 @@ def dashboard_predpisania(df):
         lambda r: _pred_status_display_label(
             r.get("Статус"),
             resolved=bool(r.get("_resolved", False)),
+            overdue_days=r.get("_overdue_days"),
         ),
         axis=1,
     )
@@ -36324,7 +36364,8 @@ def dashboard_predpisania(df):
 
     overdue_cnt = int((show["_overdue_days"] > 0).sum())
     suppress_caption(
-        f"Записей: {len(table_df)} · просроченных: {overdue_cnt} · устраненных: {int(show['_resolved'].sum())}"
+        f"Записей: {len(table_df)} · просроченных: {overdue_cnt} · "
+        f"непросроченных: {n_non_overdue} · устраненных: {int(show['_resolved'].sum())}"
     )
     render_report_html_table(
         _PRED_DASH_MOCK_CSS + _pred_detail_table_html(table_df),
