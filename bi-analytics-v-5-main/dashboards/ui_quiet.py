@@ -545,6 +545,33 @@ def migrate_project_multiselect_state(
         pass
 
 
+def migrate_gdrs_month_multiselect_state(
+    st: Any,
+    key: str,
+    month_labels: Sequence[str],
+    *,
+    default_labels: Optional[Sequence[str]] = None,
+) -> None:
+    """Убрать из session_state месяцы, которых нет в актуальном списке опций."""
+    if not hasattr(st, "session_state"):
+        return
+    opts_set = {str(o).strip() for o in month_labels if str(o).strip()}
+    if not opts_set:
+        return
+    fallback = [str(x).strip() for x in (default_labels or []) if str(x).strip() in opts_set]
+    try:
+        raw = st.session_state.get(key)
+        if not isinstance(raw, list):
+            return
+        cleaned = [x for x in raw if str(x).strip() in opts_set]
+        if raw and not cleaned:
+            st.session_state[key] = list(fallback)
+        elif cleaned != raw:
+            st.session_state[key] = cleaned
+    except Exception:
+        pass
+
+
 def project_filter_multiselect(
     st: Any,
     options: Sequence[str],
