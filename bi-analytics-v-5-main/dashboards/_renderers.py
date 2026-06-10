@@ -652,6 +652,7 @@ _PF_DUR_TINT_COLS = frozenset(
         "Отклонение длительности",
     }
 )
+_PF_CIPHER_TINT_COLS = frozenset({"Раздел", "Шифр"})
 
 
 def _plan_fact_pick_dev_value(row: pd.Series, keys: tuple[str, ...]):
@@ -691,6 +692,8 @@ def _plan_fact_deviation_td_style(nval) -> str:
 
 def _plan_fact_dev_nval_for_col(col: str, dev_start, dev_end, dev_dur):
     c = str(col).strip()
+    if c in _PF_CIPHER_TINT_COLS:
+        return dev_end
     if c in _PF_START_TINT_COLS:
         return dev_start
     if c in _PF_END_TINT_COLS:
@@ -816,13 +819,11 @@ def _render_plan_fact_dates_main_table(
             if c in _dev_cols and c in numeric_df.columns:
                 nv = numeric_df.iloc[i][c]
                 sort_attr = _plan_fact_sort_attr(nv)
-                disp = str(txt).strip() if pd.notna(txt) and str(txt).strip() not in ("", "nan", "None") else ""
-                if not disp and pd.notna(nv):
-                    try:
-                        disp = str(int(round(float(nv))))
-                    except (TypeError, ValueError):
-                        pass
-                cell = _plan_fact_deviation_span(nv, disp) if (disp or pd.notna(nv)) else ""
+                cell = (
+                    _plan_fact_deviation_span(nv, "")
+                    if pd.notna(nv) and str(nv).strip().lower() not in ("", "nan", "none")
+                    else ""
+                )
             elif c in _reason_cols:
                 s = str(txt).strip() if pd.notna(txt) else ""
                 if s and s.lower() not in ("", "nan", "none"):
@@ -15055,6 +15056,9 @@ def dashboard_rd_delay(df, is_pd: bool = False):
 
     if project_col and project_col in df.columns:
         df = _project_column_apply_canonical(df, project_col)
+    if is_pd:
+        df = _pd_dedupe_msp_tasks_latest(df)
+        _pd_masks_delay = _pd_section_masks(df)
 
     def _to_numeric_series(series):
         return pd.to_numeric(
@@ -15240,6 +15244,14 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 selected_statuses_rd = []
         else:
             suppress_caption("Нет колонок статусов РД для фильтра.")
+        pd_report_date = date.today()
+        if is_pd:
+            pd_report_date = st.date_input(
+                "Дата отчёта",
+                value=date.today(),
+                key=f"rd_delay_pd_report_date_{doc_code}",
+                format="DD.MM.YYYY",
+            )
     # Apply filters
     filtered_df = df.copy()
 
@@ -15478,17 +15490,16 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             _bf_dt = _bf_dt.reindex(filtered_df.index)
             _sf_dt = _sf_dt.reindex(filtered_df.index)
             _bs_dt = _bs_dt.reindex(filtered_df.index)
-            _today_pd = date.today()
-            _ts_pd = pd.Timestamp(_today_pd)
+            _af_dt = filtered_df["_fact_end_dt"].reindex(filtered_df.index)
+            _ts_pd = pd.Timestamp(pd_report_date).normalize()
             _pct_pd_col = _pd_msp_pct_complete_col(filtered_df)
             _pc_pd = (
                 pd.to_numeric(filtered_df[_pct_pd_col], errors="coerce").fillna(0.0)
                 if _pct_pd_col and _pct_pd_col in filtered_df.columns
                 else pd.Series(0.0, index=filtered_df.index)
             )
-            _plan_dt_pd = _sf_dt.where(_sf_dt.notna(), _bf_dt)
             filtered_df["_pd_row_plan"] = (
-                _plan_dt_pd.notna() & (_plan_dt_pd.dt.normalize() <= _ts_pd)
+                _bf_dt.notna() & (_bf_dt.dt.normalize() <= _ts_pd)
             ).astype(int)
             filtered_df["_pd_row_fact"] = (_pc_pd >= 99.99).astype(int)
             filtered_df["_pd_row_overdue"] = (
@@ -15512,42 +15523,84 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     filtered_df["_pd_chart_y"] = _ci.where(_ci_ok, _pd_raz_lbl.astype(str))
                 else:
                     filtered_df["_pd_chart_y"] = _pd_raz_lbl.astype(str)
+                if project_col and project_col in filtered_df.columns:
+                    _proj_lbl = filtered_df[project_col].astype(str).str.strip()
+                    filtered_df["_pd_chart_y"] = (
+                        _proj_lbl + " | " + filtered_df["_pd_chart_y"].astype(str)
+                    )
                 filtered_df["_pd_chart_y"] = (
                     filtered_df["_pd_chart_y"].astype(str).str.strip().replace({"": "—", "nan": "—"})
                 )
-                _grp_col = "_pd_chart_y"
-                y_title = "Раздел"
-            elif project_col and project_col in filtered_df.columns:
-                filtered_df["_pd_chart_y"] = (
-                    filtered_df[project_col].astype(str).str.strip()
+                _sec_rows = _pd_build_delay_section_rows(
+                    filtered_df,
+                    y_col="_pd_chart_y",
+                    bs_dt=_bs_dt,
+                    bf_dt=_bf_dt,
+                    sf_dt=_sf_dt,
+                    af_dt=_af_dt,
+                    pct=_pc_pd,
+                    report_date=pd_report_date,
                 )
-                _grp_col = "_pd_chart_y"
-                y_title = "Проект"
+                if _sec_rows.empty:
+                    st.info("Нет данных для построения графика.")
+                    return
+                fig = _pd_delay_section_duration_figure(_sec_rows, y_col="_pd_chart_y")
+                render_chart(fig, caption_below=f"Просрочка выдачи {doc_code}")
+                if project_col and project_col in filtered_df.columns:
+                    chart_data = (
+                        filtered_df.groupby(project_col, as_index=False)
+                        .agg(
+                            _pd_plan_cnt=("_pd_row_plan", "sum"),
+                            _pd_fact_cnt=("_pd_row_fact", "sum"),
+                            _pd_overdue_cnt=("_pd_row_overdue", "sum"),
+                        )
+                        .rename(columns={project_col: "Проект"})
+                    )
+                    y_column = "Проект"
+                else:
+                    chart_data = filtered_df[
+                        ["_pd_chart_y", "_pd_row_plan", "_pd_row_fact", "_pd_row_overdue"]
+                    ].copy()
+                    chart_data = chart_data.rename(
+                        columns={
+                            "_pd_chart_y": "Раздел",
+                            "_pd_row_plan": "_pd_plan_cnt",
+                            "_pd_row_fact": "_pd_fact_cnt",
+                            "_pd_row_overdue": "_pd_overdue_cnt",
+                        }
+                    )
+                    y_column = "Раздел"
             else:
-                st.info("Нет данных для построения графика.")
-                return
+                if project_col and project_col in filtered_df.columns:
+                    filtered_df["_pd_chart_y"] = (
+                        filtered_df[project_col].astype(str).str.strip()
+                    )
+                    _grp_col = "_pd_chart_y"
+                    y_title = "Проект"
+                else:
+                    st.info("Нет данных для построения графика.")
+                    return
 
-            chart_data = (
-                filtered_df.groupby(_grp_col, as_index=False)
-                .agg(
-                    _pd_plan_cnt=("_pd_row_plan", "sum"),
-                    _pd_fact_cnt=("_pd_row_fact", "sum"),
-                    _pd_overdue_cnt=("_pd_row_overdue", "sum"),
+                chart_data = (
+                    filtered_df.groupby(_grp_col, as_index=False)
+                    .agg(
+                        _pd_plan_cnt=("_pd_row_plan", "sum"),
+                        _pd_fact_cnt=("_pd_row_fact", "sum"),
+                        _pd_overdue_cnt=("_pd_row_overdue", "sum"),
+                    )
+                    .rename(columns={_grp_col: y_title})
                 )
-                .rename(columns={_grp_col: y_title})
-            )
-            y_column = y_title
-            if chart_data.empty:
-                st.info("Нет данных для построения графика.")
-                return
+                y_column = y_title
+                if chart_data.empty:
+                    st.info("Нет данных для построения графика.")
+                    return
 
-            fig = _pd_delay_plan_fact_figure(
-                chart_data,
-                y_col=y_column,
-            )
-            render_chart(fig, caption_below=f"Просрочка выдачи {doc_code}")
+                fig = _pd_delay_plan_fact_figure(
+                    chart_data,
+                    y_col=y_column,
+                )
+                render_chart(fig, caption_below=f"Просрочка выдачи {doc_code}")
 
-            if y_title == "Проект" and project_col and project_col in filtered_df.columns:
                 st.markdown(f"**Индикаторы просрочки {doc_code} по проектам**")
                 _ind_cols = st.columns(min(4, max(1, len(chart_data))), gap="small")
                 for _i, (_idx, _row) in enumerate(chart_data.iterrows()):
@@ -25396,40 +25449,48 @@ def _pd_section_masks(df: pd.DataFrame) -> dict:
 
 def _pd_delay_row_mask(df: pd.DataFrame, masks: dict) -> pd.Series:
     """
-    Просрочка ПД: разделы «Раздел N …» (ур.4/ур.3 структуры MSP) с шифром,
-    без дочерних задач ур.5 (Вентиляция, Кровля и т.п.).
+    Просрочка ПД: разделы в ветке «Этап … Проектная документация» (ур.4 структуры
+    или ур.5 «Раздел …»), с шифром ПД. Без подзадач ур.5+ (Вентиляция, Кровля и т.п.).
     """
+    empty = pd.Series(False, index=df.index)
     hier_col = masks.get("hier_col")
     outline_col = masks.get("outline_col")
     name_col = masks.get("name_col")
     block_col = masks.get("block_col")
-    cipher_col = masks.get("cipher_col")
-    dyn = masks["dynamics_mask"].fillna(False)
-    empty = pd.Series(False, index=df.index)
-    if (
-        not hier_col
-        or not outline_col
-        or not name_col
-        or hier_col not in df.columns
-        or outline_col not in df.columns
-        or name_col not in df.columns
-    ):
-        return masks["metrics_mask"].fillna(False) & ~dyn
-    anc = _pd_msp_ancestor_under_pd_stage(
-        df, hier_col, name_col, block_col=block_col
-    )
-    lv_s = outline_level_numeric(df[outline_col])
+    dyn = masks.get("dynamics_mask", empty).fillna(False)
+    m_met = masks.get("metrics_mask", empty).fillna(False)
     _, cipher_ok = _pd_cipher_filled_mask(df)
+    cipher_m = cipher_ok.fillna(False)
+
+    if not hier_col or hier_col not in df.columns or not name_col or name_col not in df.columns:
+        return m_met & ~dyn
+
+    anc = _pd_msp_ancestor_under_pd_stage(df, hier_col, name_col, block_col=block_col)
+    anc_m = anc.fillna(False)
     nm = df[name_col].astype(str)
-    section_row = nm.str.contains(r"Раздел\s+[\d.]", case=False, na=False)
-    level_ok = lv_s.eq(4) | lv_s.eq(3)
-    m = level_ok & anc & cipher_ok & section_row & ~dyn
-    if cipher_col and cipher_col in df.columns:
-        abbr = df[cipher_col].astype(str).str.strip()
-        m = m & abbr.str.match(r"^[A-ZА-Я0-9]{2,6}$", na=False)
-    if m.any():
-        return m
-    return masks["metrics_mask"].fillna(False) & ~dyn
+    razdel_m = nm.str.contains(r"Раздел\s+[\d.]", case=False, na=False) | nm.str.contains(
+        "раздел", case=False, na=False
+    )
+
+    # Ур.5 «Раздел …» под этапом ПД (основной срез для графика просрочки).
+    m_dyn_sec = dyn & anc_m & cipher_m & razdel_m
+    if m_dyn_sec.any():
+        return m_dyn_sec
+
+    # Ур.4 структуры (Ленинский и аналоги): «Раздел N …», не дочерние ур.5.
+    if outline_col and outline_col in df.columns:
+        lv_s = outline_level_numeric(df[outline_col])
+        parent_names = _pd_msp_immediate_parent_names(df, hier_col, name_col)
+        parent_pd = parent_names.map(_pd_msp_parent_is_pd_stage).fillna(False)
+        m_l4 = lv_s.eq(4) & parent_pd & cipher_m & razdel_m & ~dyn
+        if m_l4.any():
+            return m_l4
+
+    m_fallback = m_met & anc_m & cipher_m & razdel_m & ~dyn
+    if m_fallback.any():
+        return m_fallback
+
+    return m_met & anc_m & cipher_m & ~dyn
 
 
 def _pd_fmt_deviation_days(v) -> str:
@@ -25760,6 +25821,254 @@ def _rd_delay_duration_figure(
     return fig
 
 
+def _pd_chart_date_label(v) -> str:
+    ts = pd.to_datetime(v, errors="coerce")
+    if pd.isna(ts):
+        return ""
+    try:
+        return pd.Timestamp(ts).strftime("%d.%m.%Y")
+    except Exception:
+        return ""
+
+
+def _pd_build_delay_section_rows(
+    filtered_df: pd.DataFrame,
+    *,
+    y_col: str,
+    bs_dt: pd.Series,
+    bf_dt: pd.Series,
+    sf_dt: pd.Series,
+    af_dt: pd.Series,
+    pct: pd.Series,
+    report_date: date,
+) -> pd.DataFrame:
+    """Строки для графика «По разделу»: жёлтый БО, зелёный факт 100%, красная просрочка."""
+    ts_report = pd.Timestamp(report_date).normalize()
+    rows: list[dict] = []
+    for idx, row in filtered_df.iterrows():
+        y_lbl = str(row.get(y_col, "") or "").strip() or "—"
+        bs = bs_dt.loc[idx] if idx in bs_dt.index else pd.NaT
+        bf = bf_dt.loc[idx] if idx in bf_dt.index else pd.NaT
+        af = af_dt.loc[idx] if idx in af_dt.index else pd.NaT
+        sf = sf_dt.loc[idx] if idx in sf_dt.index else pd.NaT
+        pc = float(pct.loc[idx]) if idx in pct.index else 0.0
+        start = bs if pd.notna(bs) else bf
+        if pd.isna(start) or pd.isna(bf):
+            continue
+        start_n = pd.Timestamp(start).normalize()
+        bf_n = pd.Timestamp(bf).normalize()
+        base_dur = max(int((bf_n - start_n).days), 0)
+        done = pc >= 99.99
+        fin = pd.NaT
+        if done:
+            fin = af if pd.notna(af) else sf
+        fact_dur = 0
+        if done and pd.notna(fin):
+            fact_dur = max(int((pd.Timestamp(fin).normalize() - start_n).days), 0)
+        delay_dur = 0
+        if not done and ts_report > bf_n:
+            delay_dur = max(int((ts_report - bf_n).days), 0)
+        bf_lbl = _pd_chart_date_label(bf_n)
+        af_lbl = _pd_chart_date_label(fin) if done and pd.notna(fin) else ""
+        gap_small = False
+        if done and pd.notna(fin):
+            gap_small = abs(int((bf_n - pd.Timestamp(fin).normalize()).days)) <= 5
+        lbl_yellow = bf_lbl
+        lbl_green = "" if (not done or gap_small or fact_dur <= 0) else af_lbl
+        if done and gap_small and af_lbl:
+            lbl_yellow = bf_lbl
+            lbl_green = ""
+        lbl_red = (
+            f"{bf_lbl}/{_pd_chart_date_label(ts_report)}"
+            if delay_dur > 0 and bf_lbl
+            else ""
+        )
+        rows.append(
+            {
+                y_col: y_lbl,
+                "_base_dur": float(base_dur),
+                "_fact_dur": float(fact_dur),
+                "_delay_dur": float(delay_dur),
+                "_lbl_yellow": lbl_yellow,
+                "_lbl_green": lbl_green,
+                "_lbl_red": lbl_red,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _pd_delay_label_annotation(
+    seg_start: float,
+    seg_width: float,
+    text: str,
+    *,
+    inside_color: str,
+    outside_color: str = "#E8E8E8",
+    min_inside: float = 26.0,
+    anchor_end: bool = True,
+) -> dict | None:
+    text = str(text or "").strip()
+    if not text or float(seg_width) <= 0:
+        return None
+    w = float(seg_width)
+    s = float(seg_start)
+    if w >= min_inside:
+        if anchor_end:
+            return {
+                "x": s + w * 0.96,
+                "text": text,
+                "xanchor": "right",
+                "font": {"size": 10, "color": inside_color},
+            }
+        return {
+            "x": s + w * 0.5,
+            "text": text,
+            "xanchor": "center",
+            "font": {"size": 10, "color": inside_color},
+        }
+    return {
+        "x": s + w + max(2.0, w * 0.04),
+        "text": text,
+        "xanchor": "left",
+        "font": {"size": 9, "color": outside_color},
+    }
+
+
+def _pd_delay_section_duration_figure(
+    rows: pd.DataFrame,
+    *,
+    y_col: str,
+) -> "go.Figure":
+    """ПД «По разделу»: жёлтый БП, зелёный факт 100%, красная просрочка с подписями дат."""
+    import plotly.graph_objects as go
+
+    work = rows.copy()
+    if work.empty:
+        work = pd.DataFrame(
+            columns=[y_col, "_base_dur", "_fact_dur", "_delay_dur", "_lbl_yellow", "_lbl_green", "_lbl_red"]
+        )
+    work = work.sort_values("_delay_dur", ascending=False)
+    y_labels = work[y_col].astype(str).tolist()
+    base_d = pd.to_numeric(work["_base_dur"], errors="coerce").fillna(0.0).tolist()
+    fact_d = pd.to_numeric(work["_fact_dur"], errors="coerce").fillna(0.0).tolist()
+    delay_d = pd.to_numeric(work["_delay_dur"], errors="coerce").fillna(0.0).tolist()
+
+    def _wrap_label(text: str, width: int = 28) -> str:
+        words = str(text).split()
+        if not words:
+            return str(text)
+        lines: list[str] = []
+        cur = ""
+        for w in words:
+            if not cur:
+                cur = w
+            elif len(cur) + 1 + len(w) <= width:
+                cur = f"{cur} {w}"
+            else:
+                lines.append(cur)
+                cur = w
+        if cur:
+            lines.append(cur)
+        return "<br>".join(lines)
+
+    ticktext = [_wrap_label(lbl) for lbl in y_labels]
+    x_max = 1.0
+    for b, d in zip(base_d, delay_d):
+        x_max = max(x_max, float(b) + float(d))
+    for f in fact_d:
+        x_max = max(x_max, float(f))
+
+    for f in fact_d:
+        x_max = max(x_max, float(f))
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            name="Базовое окончание",
+            orientation="h",
+            y=y_labels,
+            x=base_d,
+            marker=dict(color="#F1C40F"),
+            hovertemplate="%{y}<br>Базовое окончание: %{x:.0f} дн.<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            name="Факт (100%)",
+            orientation="h",
+            y=y_labels,
+            x=fact_d,
+            marker=dict(color="#27AE60"),
+            hovertemplate="%{y}<br>Факт: %{x:.0f} дн.<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            name="Просрочка",
+            orientation="h",
+            y=y_labels,
+            x=delay_d,
+            base=base_d,
+            marker=dict(color="#C0392B"),
+            hovertemplate="%{y}<br>Просрочка: %{x:.0f} дн.<extra></extra>",
+        )
+    )
+    for y_lbl, b, f, d, ly, lg, lr in zip(
+        y_labels,
+        base_d,
+        fact_d,
+        delay_d,
+        work["_lbl_yellow"].fillna("").astype(str).tolist(),
+        work["_lbl_green"].fillna("").astype(str).tolist(),
+        work["_lbl_red"].fillna("").astype(str).tolist(),
+    ):
+        _ann_kw = dict(y=y_lbl, showarrow=False, yanchor="middle")
+        _y_ann = _pd_delay_label_annotation(
+            0.0, b, ly, inside_color="#1a1a1a", min_inside=30.0, anchor_end=True
+        )
+        if _y_ann:
+            fig.add_annotation(**_ann_kw, **_y_ann)
+        _g_ann = _pd_delay_label_annotation(
+            0.0, f, lg, inside_color="#FFFFFF", min_inside=24.0, anchor_end=True
+        )
+        if _g_ann:
+            fig.add_annotation(**_ann_kw, **_g_ann)
+        _r_ann = _pd_delay_label_annotation(
+            float(b),
+            float(d),
+            lr,
+            inside_color="#FFFFFF",
+            outside_color="#E8E8E8",
+            min_inside=36.0,
+            anchor_end=False,
+        )
+        if _r_ann:
+            fig.add_annotation(**_ann_kw, **_r_ann)
+    fig.update_layout(
+        barmode="overlay",
+        xaxis_title="Длительность / просрочка, дн.",
+        yaxis_title="",
+        height=max(520, len(y_labels) * 54),
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=16, r=120, t=56, b=48),
+        bargap=0.16,
+    )
+    fig.update_yaxes(
+        categoryorder="array",
+        categoryarray=list(reversed(y_labels)),
+        tickmode="array",
+        tickvals=y_labels,
+        ticktext=ticktext,
+        ticklabelposition="outside",
+        tickfont=dict(size=11),
+        automargin=True,
+    )
+    fig.update_xaxes(range=[0, x_max * 1.18], automargin=True)
+    fig = apply_chart_background(fig)
+    return fig
+
+
 def _pd_delay_plan_fact_figure(
     rows: pd.DataFrame,
     *,
@@ -25811,6 +26120,7 @@ def _pd_delay_plan_fact_figure(
             textposition="inside",
             insidetextanchor="middle",
             textfont=dict(color="#1a1a1a", size=12),
+            cliponaxis=False,
             hovertemplate="%{y}<br>План: %{x:.0f} разд.<extra></extra>",
         )
     )
@@ -25825,6 +26135,7 @@ def _pd_delay_plan_fact_figure(
             textposition="inside",
             insidetextanchor="middle",
             textfont=dict(color="white", size=12),
+            cliponaxis=False,
             hovertemplate="%{y}<br>Факт: %{x:.0f} разд.<extra></extra>",
         )
     )
@@ -25839,6 +26150,7 @@ def _pd_delay_plan_fact_figure(
             textposition="inside",
             insidetextanchor="middle",
             textfont=dict(color="white", size=12),
+            cliponaxis=False,
             hovertemplate="%{y}<br>Просрочка: %{x:.0f} разд.<extra></extra>",
         )
     )
@@ -25851,6 +26163,7 @@ def _pd_delay_plan_fact_figure(
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         margin=dict(l=12, r=48, t=56, b=48),
         bargap=0.18,
+        uniformtext=dict(minsize=9, mode="show"),
     )
     fig.update_yaxes(
         categoryorder="array",
@@ -25858,11 +26171,11 @@ def _pd_delay_plan_fact_figure(
         tickmode="array",
         tickvals=y_labels,
         ticktext=ticktext,
-        ticklabelposition="inside",
+        ticklabelposition="outside",
         tickfont=dict(size=11),
         automargin=True,
     )
-    fig.update_xaxes(range=[0, x_max * 1.12])
+    fig.update_xaxes(range=[0, x_max * 1.12], automargin=True)
     fig = _apply_bar_uniformtext(fig)
     fig = apply_chart_background(fig)
     return fig
@@ -27965,6 +28278,7 @@ def dashboard_documentation(
                                 ascending=[True, False, True],
                                 kind="mergesort",
                             )
+                            _dev_round = pd.to_numeric(tbl_f["_dev"], errors="coerce").round()
                             tbl_show = pd.DataFrame(
                                 {
                                     "№": range(1, len(tbl_f) + 1),
@@ -27972,15 +28286,13 @@ def dashboard_documentation(
                                     "Раздел": tbl_f["Раздел"].map(sanitize_display_label),
                                     "Базовое окончание": tbl_f["_bf"].dt.strftime("%d.%m.%Y"),
                                     "Окончание": tbl_f["_sf"].dt.strftime("%d.%m.%Y"),
-                                    "Отклонение окончания": "",
+                                    "Отклонение окончания": _dev_round.map(_pd_fmt_deviation_days),
                                 }
                             )
                             tbl_numeric = tbl_show.copy()
                             tbl_numeric["Базовое окончание"] = tbl_f["_bf"].values
                             tbl_numeric["Окончание"] = tbl_f["_sf"].values
-                            tbl_numeric["Отклонение окончания"] = pd.to_numeric(
-                                tbl_f["_dev"], errors="coerce"
-                            ).values
+                            tbl_numeric["Отклонение окончания"] = _dev_round.values
                             st.markdown(
                                 "<style>"
                                 "div[class*='st-key-bitblwrap_pd_dyn_tbl'],"
@@ -28009,9 +28321,6 @@ def dashboard_documentation(
                                 unsafe_allow_html=True,
                             )
                             _export_tbl = tbl_show.copy()
-                            _export_tbl["Отклонение окончания"] = tbl_f["_dev"].map(
-                                _pd_fmt_deviation_days
-                            )
                             _render_plan_fact_dates_main_table(
                                 tbl_show,
                                 tbl_numeric,
