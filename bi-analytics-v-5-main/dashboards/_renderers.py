@@ -15047,9 +15047,9 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 # R23-07 (стр.17/21): значения = «Шифр — Наименование раздела» из MSP.
                 _sec_src_df = df
                 if is_pd and _pd_masks_delay is not None:
-                    _dyn_opt = _pd_masks_delay["dynamics_mask"].fillna(False)
-                    if bool(_dyn_opt.any()):
-                        _sec_src_df = df.loc[_dyn_opt]
+                    _met_opt = _pd_delay_row_mask(df, _pd_masks_delay)
+                    if bool(_met_opt.any()):
+                        _sec_src_df = df.loc[_met_opt]
                 _cip = _sec_src_df[_msp_cipher_col].astype(str).str.strip()
                 _cip = _cip.where(~_cip.str.lower().isin({"nan", "none", "<na>"}), other="")
                 if is_pd:
@@ -15370,14 +15370,14 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         show_by_tasks = False
 
         if is_pd and _pd_masks_delay is not None:
-            _dyn_delay = _pd_masks_delay["dynamics_mask"].reindex(
+            _pd_delay_m = _pd_delay_row_mask(filtered_df, _pd_masks_delay).reindex(
                 filtered_df.index, fill_value=False
             )
-            filtered_df = filtered_df.loc[_dyn_delay.fillna(False)].copy()
+            filtered_df = filtered_df.loc[_pd_delay_m.fillna(False)].copy()
             if filtered_df.empty:
-                st.info("Нет задач ПД для выбранных фильтров.")
+                st.info("Нет разделов ПД (ур.4) для выбранных фильтров.")
                 return
-            # Даты считали до среза dynamics_mask — выровнять индекс, иначе в
+            # Даты считали до среза metrics_mask — выровнять индекс, иначе в
             # детальной таблице появляются строки с датами и nan в «Проект»/«Раздел».
             _bf_dt = _bf_dt.reindex(filtered_df.index)
             _sf_dt = _sf_dt.reindex(filtered_df.index)
@@ -15405,12 +15405,20 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     if _msp_cipher_col and _msp_cipher_col in filtered_df.columns
                     else find_column(filtered_df, ["abbreviation", "Шифр_ПД_и_РД", "Шифр"])
                 )
+                _, _pd_raz_lbl = _pd_detail_table_labels(
+                    filtered_df,
+                    task_col=task_col,
+                    cipher_col=_cipher_pd,
+                )
                 if _cipher_pd and _cipher_pd in filtered_df.columns:
-                    filtered_df["_pd_chart_y"] = (
-                        filtered_df[_cipher_pd].astype(str).str.strip()
-                    )
+                    _ci = filtered_df[_cipher_pd].astype(str).str.strip()
+                    _ci_ok = _ci.ne("") & ~_ci.str.lower().isin({"nan", "none", "<na>"})
+                    filtered_df["_pd_chart_y"] = _ci.where(_ci_ok, _pd_raz_lbl.astype(str))
                 else:
-                    filtered_df["_pd_chart_y"] = filtered_df[task_col].astype(str)
+                    filtered_df["_pd_chart_y"] = _pd_raz_lbl.astype(str)
+                filtered_df["_pd_chart_y"] = (
+                    filtered_df["_pd_chart_y"].astype(str).str.strip().replace({"": "—", "nan": "—"})
+                )
                 _grp_col = "_pd_chart_y"
                 y_title = "Раздел"
             elif project_col and project_col in filtered_df.columns:
@@ -16261,7 +16269,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 }
             )
             if _pd_masks_delay is not None:
-                _pd_tbl_m = _pd_masks_delay["dynamics_mask"].reindex(
+                _pd_tbl_m = _pd_delay_row_mask(filtered_df, _pd_masks_delay).reindex(
                     _pd_tbl.index, fill_value=False
                 )
                 if bool(_pd_tbl_m.any()):
@@ -21483,6 +21491,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         load_resursi_files,
         load_1c_kontr_index,
         enrich_gdrs_fact_contractor_ids,
+        enrich_gdrs_fact_project_ids,
         gdrs_filter_fact_kontr_intersection,
         week_end_in_filtered_fact,
     )
@@ -21519,6 +21528,10 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         long_fact,
         dogovor_paths=dogovor_files,
         kontr=_kontr_index,
+    )
+    long_fact = enrich_gdrs_fact_project_ids(
+        long_fact,
+        dogovor_paths=dogovor_files,
     )
 
     long_fact = gdrs_filter_fact_kontr_intersection(long_fact, _kontr_index)
@@ -25050,16 +25063,35 @@ def _pd_msp_hierarchy_cols(df: pd.DataFrame) -> tuple[
     Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]
 ]:
     """Иерархия MSP: level structure (outline), level (Уровень), task name, block."""
+    if df is None or getattr(df, "empty", True):
+        return None, None, None, None, None
+    ensure_msp_hierarchy_columns(df)
+    if "block" not in df.columns:
+        for c in df.columns:
+            if str(c).strip().casefold() in ("блок", "block"):
+                df["block"] = df[c]
+                break
     hier_col = "level structure" if "level structure" in df.columns else None
     outline_col = hier_col
     level_col = "level" if "level" in df.columns else None
-    name_col = (
-        "task name"
-        if "task name" in df.columns
-        else None
-    )
+    name_col = "task name" if "task name" in df.columns else None
     block_col = "block" if "block" in df.columns else None
     return hier_col, outline_col, level_col, name_col, block_col
+
+
+def _pd_table_row_mask(df: pd.DataFrame, metrics_mask: pd.Series, dynamics_mask: pd.Series) -> pd.Series:
+    """Строки для таблицы ПД: metrics (разделы ур.4) → dynamics → строки с шифром."""
+    m_met = metrics_mask.fillna(False)
+    if m_met.any():
+        return m_met
+    bcol = _pd_msp_find_baseline_finish_col(df)
+    finish = df[bcol] if bcol and bcol in df.columns else pd.Series(pd.NaT, index=df.index)
+    chart_mask, _ = _pd_dynamics_chart_row_mask(metrics_mask, dynamics_mask, finish)
+    m = chart_mask.fillna(False)
+    if m.any():
+        return m
+    _, cipher_ok = _pd_cipher_filled_mask(df)
+    return cipher_ok.fillna(False)
 
 
 def _pd_msp_ancestor_under_pd_stage(
@@ -25130,6 +25162,7 @@ def _pd_section_masks(df: pd.DataFrame) -> dict:
         "outline_col": outline_col,
         "level_col": level_col,
         "name_col": name_col,
+        "block_col": block_col,
     }
     if (
         not hier_col
@@ -25158,8 +25191,55 @@ def _pd_section_masks(df: pd.DataFrame) -> dict:
     if level_col and level_col in df.columns:
         parent_names = _pd_msp_immediate_parent_names(df, hier_col, name_col)
         parent_pd_stage = parent_names.map(_pd_msp_parent_is_pd_stage)
-        result["dynamics_mask"] = lv_num.eq(5) & parent_pd_stage & cipher_m
+        nm = df[name_col].astype(str)
+        razdel_m = nm.str.contains("раздел", case=False, na=False)
+        result["dynamics_mask"] = lv_num.eq(5) & parent_pd_stage & razdel_m
+        if not result["dynamics_mask"].any():
+            result["dynamics_mask"] = lv_num.eq(5) & parent_pd_stage & cipher_m
+        if not result["dynamics_mask"].any():
+            result["dynamics_mask"] = lv_num.eq(5) & parent_pd_stage
+    if not result["metrics_mask"].any() and cipher_m.any():
+        result["metrics_mask"] = cipher_m
+        result["dynamics_mask"] = cipher_m
     return result
+
+
+def _pd_delay_row_mask(df: pd.DataFrame, masks: dict) -> pd.Series:
+    """
+    Просрочка ПД: разделы «Раздел N …» (ур.4/ур.3 структуры MSP) с шифром,
+    без дочерних задач ур.5 (Вентиляция, Кровля и т.п.).
+    """
+    hier_col = masks.get("hier_col")
+    outline_col = masks.get("outline_col")
+    name_col = masks.get("name_col")
+    block_col = masks.get("block_col")
+    cipher_col = masks.get("cipher_col")
+    dyn = masks["dynamics_mask"].fillna(False)
+    empty = pd.Series(False, index=df.index)
+    if (
+        not hier_col
+        or not outline_col
+        or not name_col
+        or hier_col not in df.columns
+        or outline_col not in df.columns
+        or name_col not in df.columns
+    ):
+        return masks["metrics_mask"].fillna(False) & ~dyn
+    anc = _pd_msp_ancestor_under_pd_stage(
+        df, hier_col, name_col, block_col=block_col
+    )
+    lv_s = outline_level_numeric(df[outline_col])
+    _, cipher_ok = _pd_cipher_filled_mask(df)
+    nm = df[name_col].astype(str)
+    section_row = nm.str.contains(r"Раздел\s+[\d.]", case=False, na=False)
+    level_ok = lv_s.eq(4) | lv_s.eq(3)
+    m = level_ok & anc & cipher_ok & section_row & ~dyn
+    if cipher_col and cipher_col in df.columns:
+        abbr = df[cipher_col].astype(str).str.strip()
+        m = m & abbr.str.match(r"^[A-ZА-Я0-9]{2,6}$", na=False)
+    if m.any():
+        return m
+    return masks["metrics_mask"].fillna(False) & ~dyn
 
 
 def _pd_fmt_deviation_days(v) -> str:
@@ -25610,6 +25690,79 @@ def _pd_msp_find_baseline_finish_col(df: pd.DataFrame):
         if cl.startswith("base") and ("end" in cl or "finish" in cl):
             return c
     return None
+
+
+def _pd_msp_find_baseline_start_col(df: pd.DataFrame):
+    for cand in ("base start", "baseline start"):
+        if cand in df.columns:
+            return cand
+    for c in df.columns:
+        cl = str(c).strip().lower()
+        if ("baseline" in cl or "базов" in cl) and ("start" in cl or "начал" in cl):
+            return c
+        if cl.startswith("base") and ("start" in cl or "begin" in cl):
+            return c
+    return None
+
+
+def _pd_msp_find_schedule_start_col(df: pd.DataFrame):
+    for cand in ("plan start", "start"):
+        if cand in df.columns:
+            return cand
+    for c in df.columns:
+        cs = str(c).strip()
+        cl = cs.lower()
+        if "базов" in cl or "baseline" in cl or cl.startswith("base"):
+            continue
+        if cl in ("start", "начало", "plan start") or (
+            cl.endswith("начало") and "план" not in cl and "факт" not in cl
+        ):
+            return c
+    return None
+
+
+def _pd_mask_with_start_finish(
+    df: pd.DataFrame,
+    row_mask: pd.Series,
+    start_col: Optional[str],
+    finish_col: Optional[str],
+) -> pd.Series:
+    """Строки маски с валидной парой дат начала и окончания."""
+    m = row_mask.fillna(False)
+    if start_col and start_col in df.columns:
+        ss = pd.to_datetime(df[start_col], errors="coerce", dayfirst=True, format="mixed")
+        m = m & ss.notna()
+    if finish_col and finish_col in df.columns:
+        fe = pd.to_datetime(df[finish_col], errors="coerce", dayfirst=True, format="mixed")
+        m = m & fe.notna()
+    return m
+
+
+_PD_PLAN_LINE_COLOR = "#14b8a6"
+_PD_FCST_LINE_COLOR = "#fb923c"
+
+
+def _pd_necessary_productivity(
+    deviation_to_date: float,
+    baseline_finish: pd.Series,
+    report_date: date,
+    period_multiplier: float,
+) -> Optional[float]:
+    """
+    |отклонение| / (max БО − дата отчёта) × множитель (×1 / ×7 / ×30).
+    max БО — максимальное базовое окончание среди задач плана (все доступные даты).
+    Если срок max БО уже прошёл или отклонение 0 — None.
+    """
+    bf = pd.to_datetime(baseline_finish, errors="coerce", dayfirst=True, format="mixed").dropna()
+    if bf.empty or not abs(float(deviation_to_date or 0)):
+        return None
+    last_bf = bf.max()
+    if pd.isna(last_bf):
+        return None
+    rem_days = (last_bf.date() - report_date).days
+    if rem_days <= 0:
+        return None
+    return (abs(float(deviation_to_date)) / float(rem_days)) * float(period_multiplier)
 
 
 def _pd_msp_find_schedule_finish_col(df: pd.DataFrame):
@@ -26497,6 +26650,7 @@ def dashboard_documentation(
                 if "task name" in df.columns
                 else find_column(df, ["Название задачи", "Задача", "Task Name", "Имя задачи"])
             )
+            _can_pd_pie = True
             if (
                 not hier_col
                 or not outline_col
@@ -26505,8 +26659,12 @@ def dashboard_documentation(
                 or outline_col not in df.columns
                 or name_col not in df.columns
             ):
-                st.warning("Для ПД нужны колонки уровня иерархии MSP и наименование задачи.")
-            else:
+                _pm_pie = _pd_section_masks(df)
+                _, _ok_pie = _pd_cipher_filled_mask(df)
+                if not _pm_pie["metrics_mask"].any() and not _ok_pie.fillna(False).any():
+                    st.warning("Для ПД нужны колонки уровня иерархии MSP и наименование задачи.")
+                    _can_pd_pie = False
+            if _can_pd_pie:
                 _pd_masks_pie = _pd_section_masks(df)
                 cipher_col_pie = _pd_masks_pie["cipher_col"]
                 cipher_ok = _pd_cipher_filled_mask(df)[1]
@@ -27084,8 +27242,15 @@ def dashboard_documentation(
                 or outline_col not in df.columns
                 or name_col not in df.columns
             ):
-                st.warning("Для графика ПД нужны колонки уровня и наименования задач MSP.")
-            else:
+                _pd_masks_probe = _pd_section_masks(df)
+                _cipher_probe, _cipher_ok_probe = _pd_cipher_filled_mask(df)
+                if not _pd_masks_probe["metrics_mask"].any() and not _cipher_ok_probe.fillna(False).any():
+                    st.warning("Для графика ПД нужны колонки уровня и наименования задач MSP.")
+                elif not hier_col or hier_col not in df.columns:
+                    suppress_caption(
+                        "Иерархия MSP без «Уровень_структуры» — таблица и график строятся по строкам с шифром ПД/РД."
+                    )
+            if True:
                 _pd_masks_dyn = _pd_section_masks(df)
                 pd_metrics_mask = _pd_masks_dyn["metrics_mask"].fillna(False)
                 pd_section_mask = _pd_masks_dyn["dynamics_mask"].fillna(False)
@@ -27108,15 +27273,19 @@ def dashboard_documentation(
                 s_fin_col = _pd_msp_find_schedule_finish_col(df)
                 if s_fin_col is None and plan_end_col and plan_end_col in df.columns:
                     s_fin_col = plan_end_col
+                b_start_col = _pd_msp_find_baseline_start_col(df)
+                s_start_col = _pd_msp_find_schedule_start_col(df)
+                if s_start_col is None and plan_start_col and plan_start_col in df.columns:
+                    s_start_col = plan_start_col
                 _plan_end_ref = (
                     plan_end_col if plan_end_col and plan_end_col in df.columns else None
                 )
-                m_met_pre = pd_metrics_mask.fillna(False)
+                m_dyn_pre = pd_section_mask.fillna(False)
                 _b_base_raw = _pd_msp_find_baseline_finish_col(df)
                 b_fin_col = (
                     _pd_pick_finish_col(
                         df,
-                        m_met_pre,
+                        m_dyn_pre,
                         baseline_col=b_fin_col,
                         schedule_col=_plan_end_ref,
                     )
@@ -27125,7 +27294,7 @@ def dashboard_documentation(
                 s_fin_col = (
                     _pd_pick_finish_col(
                         df,
-                        m_met_pre,
+                        m_dyn_pre,
                         baseline_col=s_fin_col,
                         schedule_col=_plan_end_ref,
                     )
@@ -27148,6 +27317,16 @@ def dashboard_documentation(
                 act_fn = _pd_msp_actual_finish_col(df)
                 bf = pd.to_datetime(df[b_fin_col], errors='coerce', dayfirst=True, format='mixed') if b_fin_col else pd.NaT
                 sf = pd.to_datetime(df[s_fin_col], errors='coerce', dayfirst=True, format='mixed') if s_fin_col else pd.NaT
+                bs = (
+                    pd.to_datetime(df[b_start_col], errors="coerce", dayfirst=True, format="mixed")
+                    if b_start_col and b_start_col in df.columns
+                    else pd.Series(pd.NaT, index=df.index)
+                )
+                ss = (
+                    pd.to_datetime(df[s_start_col], errors="coerce", dayfirst=True, format="mixed")
+                    if s_start_col and s_start_col in df.columns
+                    else pd.Series(pd.NaT, index=df.index)
+                )
                 af = (
                     pd.to_datetime(df[act_fn], errors='coerce', dayfirst=True, format='mixed')
                     if act_fn and act_fn in df.columns
@@ -27179,12 +27358,18 @@ def dashboard_documentation(
                     if _chart_mask_fb:
                         suppress_caption(
                             "График строится по разделам ур.4 (как KPI): для задач ур.5 "
-                            "нет валидных дат окончания."
+                            "«Раздел» нет валидных дат окончания."
                         )
+                    plan_line_mask = _pd_mask_with_start_finish(
+                        df, pd_chart_mask, b_start_col, b_fin_col
+                    )
+                    fcst_line_mask = _pd_mask_with_start_finish(
+                        df, pd_chart_mask, s_start_col, s_fin_col
+                    )
 
-                    plan_curve = _pd_cumsum_by_granularity(df[b_fin_col], pd_chart_mask, gran_key)
+                    plan_curve = _pd_cumsum_by_granularity(df[b_fin_col], plan_line_mask, gran_key)
                     plan_curve["Тип"] = "План по проекту (БП)"
-                    fcst_curve = _pd_cumsum_by_granularity(df[s_fin_col], pd_chart_mask, gran_key)
+                    fcst_curve = _pd_cumsum_by_granularity(df[s_fin_col], fcst_line_mask, gran_key)
                     fcst_curve["Тип"] = "Прогноз по проекту"
                     curves = [plan_curve, fcst_curve]
                     dynamics_df = pd.concat(curves, ignore_index=True)
@@ -27209,13 +27394,15 @@ def dashboard_documentation(
                     dynamics_df = dynamics_df.sort_values(["Тип", "Дата"])
                     today = date.today()
                     ts_today = pd.Timestamp(today)
-                    m_met = pd_metrics_mask.fillna(False)
-                    m_sec = pd_chart_mask.fillna(False)
-                    plan_total = float(m_met.sum())
+                    m_kpi = plan_line_mask.fillna(False)
+                    plan_total = float(m_kpi.sum())
                     plan_to_date = int(
-                        (m_met & bf.notna() & (bf.dt.normalize() <= ts_today)).sum()
+                        (m_kpi & bf.notna() & (bf.dt.normalize() <= ts_today)).sum()
                     )
-                    done_sec = m_met & (pc >= 99.99)
+                    done_sec = m_kpi & (
+                        (pc >= 99.99)
+                        | (af.notna() & (af.dt.normalize() <= ts_today))
+                    )
                     fact_to_date = int(done_sec.sum())
                     deviation_to_date = float(plan_to_date - fact_to_date)
                     c1, c2, c3, c4 = st.columns(4, gap="small")
@@ -27227,17 +27414,13 @@ def dashboard_documentation(
                         st.metric("Факт на текущую дату", f"{fact_to_date:,.0f}".replace(",", " "))
                     with c4:
                         st.metric("Отклонение на текущую дату", f"{deviation_to_date:+,.0f}".replace(",", " "))
-                    # П.7: Необходимая производительность = |отклонение на текущую дату| /
-                    # (остаток дней от даты отчёта = сегодня до Базового окончания) × множитель
-                    # периода (×1/×7/×30). Базовое окончание — максимальная из всех доступных дат.
-                    _bf_pd = bf.loc[m_sec | m_met]
-                    last_bf = (
-                        _bf_pd.dropna().max().date() if _bf_pd.notna().any() else None
+                    # П.7: |отклонение| / (дней до max БО по задачам плана) × ×1/×7/×30
+                    nec = _pd_necessary_productivity(
+                        deviation_to_date,
+                        bf.loc[m_kpi],
+                        today,
+                        mult_nec,
                     )
-                    rem_days = (last_bf - today).days if last_bf is not None else None
-                    nec = None
-                    if rem_days is not None and rem_days > 0:
-                        nec = (abs(deviation_to_date) / float(rem_days)) * float(mult_nec)
                     period_start = today - timedelta(days=int(win_days) - 1)
                     ts_ps = pd.Timestamp(period_start)
                     prod_n = int(
@@ -27294,8 +27477,8 @@ def dashboard_documentation(
                             labels={"Количество": "Количество разделов ПД", "Дата": "Дата"},
                             text="Текст",
                             color_discrete_map={
-                                "План по проекту (БП)": "#2E86AB",
-                                "Прогноз по проекту": "#F39C12",
+                                "План по проекту (БП)": _PD_PLAN_LINE_COLOR,
+                                "Прогноз по проекту": _PD_FCST_LINE_COLOR,
                             },
                         )
                         _pd_dates_axis = pd.to_datetime(dynamics_df["Дата"], errors="coerce").dropna().sort_values().unique()
@@ -27342,6 +27525,14 @@ def dashboard_documentation(
                             textposition="top center",
                             textfont=dict(size=10, color="white"),
                         )
+                        for _tr in fig_dynamics.data:
+                            _tn = str(_tr.name or "")
+                            if "План" in _tn:
+                                _tr.line.color = _PD_PLAN_LINE_COLOR
+                                _tr.marker.color = _PD_PLAN_LINE_COLOR
+                            elif "Прогноз" in _tn:
+                                _tr.line.color = _PD_FCST_LINE_COLOR
+                                _tr.marker.color = _PD_FCST_LINE_COLOR
                         fig_dynamics = apply_chart_background(fig_dynamics)
                         fig_dynamics.update_yaxes(
                             range=[_pd_y_lo, _pd_y_max + _pd_head],
@@ -27350,7 +27541,8 @@ def dashboard_documentation(
                         render_chart(fig_dynamics, caption_below="Динамика выдачи ПД")
 
                     render_table_subheader(st, "Таблица по проектной документации")
-                    idx_sec = df.index[m_met.fillna(False)]
+                    _tbl_row_mask = _pd_table_row_mask(df, pd_metrics_mask, pd_section_mask)
+                    idx_sec = df.index[_tbl_row_mask.fillna(False)]
                     if len(idx_sec) == 0:
                         st.info(
                             "Нет строк для таблицы (разделы ПД с заполненным шифром в ветке «Проектная документация»)."
@@ -27363,6 +27555,10 @@ def dashboard_documentation(
                             else _tn_tbl.loc[idx_sec].astype(str)
                         )
                         tbl_raw = pd.DataFrame({"Раздел": sec_disp.values}, index=idx_sec)
+                        if project_col and project_col in df.columns:
+                            tbl_raw["Проект"] = (
+                                df.loc[idx_sec, project_col].astype(str).str.strip().values
+                            )
                         tbl_raw["_bf"] = bf.reindex(idx_sec).dt.normalize()
                         tbl_raw["_sf"] = sf.reindex(idx_sec).dt.normalize()
                         tbl_raw["_dev"] = (tbl_raw["_bf"] - tbl_raw["_sf"]).dt.days
@@ -27379,16 +27575,22 @@ def dashboard_documentation(
                             default=secs_sorted,
                             key=_doc_fk + "pd_tbl_sections",
                         )
-                        bf_ok = tbl_raw["_bf"].dropna()
-                        if bf_ok.empty:
+                        _date_parts = [tbl_raw["_bf"].dropna(), tbl_raw["_sf"].dropna()]
+                        _date_union = pd.concat(_date_parts) if _date_parts else pd.Series(dtype="datetime64[ns]")
+                        if _date_union.empty:
                             d_lo = d_hi = today
                         else:
-                            d_lo = bf_ok.min().date()
-                            d_hi = bf_ok.max().date()
+                            d_lo = _date_union.min().date()
+                            d_hi = _date_union.max().date()
+                        _period_key = _doc_fk + "pd_tbl_period"
+                        _period_sig_key = _doc_fk + "pd_tbl_period_sig"
+                        _tbl_sig = f"{len(tbl_raw)}|{d_lo}|{d_hi}"
+                        if st.session_state.get(_period_sig_key) != _tbl_sig:
+                            st.session_state[_period_key] = (d_lo, d_hi)
+                            st.session_state[_period_sig_key] = _tbl_sig
                         dr = st.date_input(
-                            "Период (по базовому окончанию)",
-                            value=(d_lo, d_hi),
-                            key=_doc_fk + "pd_tbl_period",
+                            "Период (по базовому или текущему окончанию)",
+                            key=_period_key,
                         )
                         if isinstance(dr, tuple) and len(dr) == 2:
                             p_lo, p_hi = dr[0], dr[1]
@@ -27400,20 +27602,33 @@ def dashboard_documentation(
                             else pd.Series(True, index=tbl_raw.index)
                         )
                         _bdn = tbl_raw["_bf"].dt.normalize()
-                        m_dt = _bdn.notna() & (_bdn.dt.date >= p_lo) & (_bdn.dt.date <= p_hi)
+                        _sdn = tbl_raw["_sf"].dt.normalize()
+                        m_bf = _bdn.notna() & (_bdn.dt.date >= p_lo) & (_bdn.dt.date <= p_hi)
+                        m_sf = _sdn.notna() & (_sdn.dt.date >= p_lo) & (_sdn.dt.date <= p_hi)
+                        m_dt = m_bf | m_sf
                         tbl_f = tbl_raw.loc[m_tbl & m_dt].copy()
                         if tbl_f.empty:
                             st.info("Нет строк по выбранным фильтрам таблицы ПД.")
                         else:
-                            tbl_show = pd.DataFrame(
+                            tbl_f = tbl_f.sort_values(
+                                ["_dev", "Раздел"],
+                                ascending=[False, True],
+                                kind="mergesort",
+                            )
+                            tbl_show = {"№": range(1, len(tbl_f) + 1)}
+                            if "Проект" in tbl_f.columns:
+                                tbl_show["Проект"] = tbl_f["Проект"].map(
+                                    lambda x: sanitize_display_label(x)
+                                )
+                            tbl_show.update(
                                 {
-                                    "№": range(1, len(tbl_f) + 1),
                                     "Раздел": tbl_f["Раздел"].map(lambda x: sanitize_display_label(x)),
                                     "Базовое окончание": tbl_f["_bf"].dt.strftime("%d.%m.%Y"),
                                     "Окончание": tbl_f["_sf"].dt.strftime("%d.%m.%Y"),
                                     "Отклонение окончания": tbl_f["_dev"].map(_pd_fmt_deviation_days),
                                 }
                             )
+                            tbl_show = pd.DataFrame(tbl_show)
                             sty_tbl = style_dataframe_for_dark_theme(
                                 tbl_show,
                                 days_column="Отклонение окончания",
@@ -38721,31 +38936,26 @@ def dashboard_project_schedule_chart(df):
             _ix += 1
         f_level = _flt_cols[_ix]
 
-        _GANTT_PROJECT_PLACEHOLDER = "— выберите проект —"
-        # Значение чекбокса «Показать все проекты» (он ниже, в ряду тумблеров) читаем
-        # из session_state — Streamlit обновляет его до перезапуска скрипта, поэтому
-        # здесь оно уже актуально. Так селектор «Проект» остаётся в одной линии с
-        # остальными выпадающими фильтрами (одинаковая ширина колонок).
-        show_all_projects = bool(st.session_state.get("gantt_show_all_projects", True))
         with f1:
             if proj_col:
-                projs = [_GANTT_PROJECT_PLACEHOLDER] + _gantt_distinct_str_values_from_series(
-                    plot_df[proj_col]
+                # Стандартный мультиселект проектов (как в остальных отчётах):
+                # пустой выбор → все проекты; один/несколько — фильтр по ним.
+                _proj_opts = _gantt_distinct_str_values_from_series(plot_df[proj_col])
+                _sel_projs, _is_all_projs = project_filter_multiselect(
+                    st,
+                    _proj_opts,
+                    key="gantt_project_filter_ms",
+                    label="Проект",
+                    help="По умолчанию — все проекты. Отметьте один или несколько.",
                 )
-                sel_proj = st.selectbox(
-                    "Проект",
-                    projs,
-                    key="gantt_project_filter_v2",
-                    disabled=show_all_projects,
-                )
-                if show_all_projects:
-                    # Режим «все проекты»: внутренняя метка «Все» сохраняет прежнюю
-                    # логику (колонка/префикс «Проект», сортировка по проекту).
-                    sel_proj = "Все"
-                elif sel_proj != _GANTT_PROJECT_PLACEHOLDER:
+                if _sel_projs:
+                    _sel_keys = {str(p).strip() for p in _sel_projs}
                     plot_df = plot_df[
-                        plot_df[proj_col].astype(str).str.strip() == str(sel_proj).strip()
+                        plot_df[proj_col].astype(str).str.strip().isin(_sel_keys)
                     ]
+                # Внутренняя метка: ровно один проект → одиночный вид (без колонки
+                # «Проект»); все/несколько → «Все» (колонка и сортировка по проекту).
+                sel_proj = _sel_projs[0] if len(_sel_projs) == 1 else "Все"
             else:
                 suppress_caption("Колонка проекта не найдена.")
         with f2:
@@ -38884,16 +39094,6 @@ def dashboard_project_schedule_chart(df):
         with filters_toggles(st):
             _gcb_a, _gcb_b, _gcb_c = st.columns((1, 1, 1), gap="small")
             with _gcb_a:
-                st.checkbox(
-                    "Показать все проекты",
-                    value=True,
-                    key="gantt_show_all_projects",
-                    help=(
-                        "Включено по умолчанию: строятся все проекты (может занять время). "
-                        "На диаграмме — первые 600 задач (защита от зависания), в таблице ниже — "
-                        "полный список. Чтобы ускорить загрузку, снимите галочку и выберите один проект."
-                    ),
-                )
                 show_reasons = st.checkbox(
                     "Показать причины отклонений",
                     value=False,
@@ -38929,42 +39129,22 @@ def dashboard_project_schedule_chart(df):
                     key="gantt_hide_completed",
                 )
                 only_finish_delay = st.checkbox(
-                    "На диаграмме только просрочка по окончанию (базовое − факт/plan < 0 дн.)",
+                    "Отображать только диаграммы, где отклонение окончания < 0",
                     value=False,
                     key="gantt_only_finish_delay",
                     help=(
-                        "По ТЗ: только задачи, где базовое окончание раньше "
-                        "планового/фактического (просрочка по «базовое окончание − окончание»)."
-                    ),
-                )
-                show_equal_plan_fact = st.checkbox(
-                    "Показать задачи с совпадающими датами план/факт",
-                    value=False,
-                    key="gantt_show_equal_plan_fact",
-                    help=(
-                        "По умолчанию на диаграмме только строки, где дата окончания плана "
-                        "и факта различаются (есть расхождение). Включите, чтобы добавить "
-                        "задачи с одинаковыми датами."
+                        "Только задачи с просрочкой по окончанию: дата факта позже даты "
+                        "плана (план «План» = базовый план; «Факт» = плановое окончание)."
                     ),
                 )
 
-    # ── Ленивый рендер: без явного выбора проекта тяжёлый граф/таблица не строятся ──
-    # По умолчанию (плейсхолдер выбран, режим «все проекты» выключен) показываем
-    # заглушку и выходим ДО построения фигуры/таблицы. Это убирает дорогой рендер
-    # «по всем проектам» при открытии отчёта.
-    if proj_col and not show_all_projects and sel_proj == _GANTT_PROJECT_PLACEHOLDER:
-        st.info(
-            "Выберите проект в фильтре выше, чтобы построить график и таблицу. "
-            "Либо включите «Показать все проекты» (медленнее)."
-        )
-        return
-
-    if show_all_projects:
+    # Несколько/все проекты: данных много — предупреждаем о времени построения и
+    # о потолке полос на диаграмме (таблица ниже — полный список).
+    if sel_proj == "Все" and proj_col:
         st.warning(
-            "Режим «все проекты»: данных много, построение может занять время. "
+            "Выбрано несколько проектов: данных много, построение может занять время. "
             "На диаграмме показываются первые 600 задач (защита от зависания браузера); "
-            "в таблице ниже — полный список. Для ускорения снимите «Показать все проекты» "
-            "и выберите один проект."
+            "в таблице ниже — полный список. Для ускорения выберите один проект."
         )
 
     _covenant_mode_gantt = bool(
@@ -39183,35 +39363,6 @@ def dashboard_project_schedule_chart(df):
             fe = pd.to_datetime(plot_df["plan end"], errors="coerce")
             _fin_dev = (be - fe).dt.days
             plot_df = plot_df.loc[_fin_dev.notna() & (_fin_dev < 0)].copy()
-
-    if not show_equal_plan_fact:
-        _plan_e, _fact_e, _pf_valid = _gantt_plan_fact_end_series(
-            plot_df, covenant=_covenant_mode_gantt
-        )
-        if _pf_valid:
-            _both = _plan_e.notna() & _fact_e.notna()
-            _unequal = _both & (_plan_e.dt.normalize() != _fact_e.dt.normalize())
-            _only_one = _plan_e.notna() ^ _fact_e.notna()
-            _keep_pf = _unequal | _only_one
-            _pf_before = len(plot_df)
-            _filtered_pf = plot_df.loc[_keep_pf].copy()
-            if _filtered_pf.empty:
-                st.info(
-                    "Нет задач с расхождением дат план/факт для выбранных фильтров. "
-                    "Включите «Показать задачи с совпадающими датами план/факт»."
-                )
-                return
-            plot_df = _filtered_pf
-            if len(plot_df) < _pf_before:
-                suppress_caption(
-                    f"На диаграмме задачи с одинаковыми датами план/факт скрыты: "
-                    f"{len(plot_df)} из {_pf_before}. Включите соответствующий чекбокс, чтобы показать все."
-                )
-        else:
-            suppress_caption(
-                "Фильтр расхождения дат план/факт не применён: в выборке нет двух "
-                "разных источников дат (например, «Базовое окончание»)."
-            )
 
     if plot_df.empty:
         st.info("Нет строк после фильтров «Скрыть 100%» / «Только просрочка по окончанию».")
