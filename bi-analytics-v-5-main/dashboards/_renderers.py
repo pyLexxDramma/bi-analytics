@@ -21753,7 +21753,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
 
     _weekly_plan_by_week: dict[int, _pd.DataFrame] = {}
     _weekly_plan_as_of: dict[int, _pd.Timestamp] = {}
-    if gdrs_matrix_show_week_columns(_plan_agg, _skud_agg):
+    if gdrs_matrix_show_week_columns(_plan_agg, _skud_agg, date_from=date_from, date_to=date_to):
         for _wn in range(1, 7):
             _w_end = week_end_in_filtered_fact(
                 long_fact_period,
@@ -21902,7 +21902,11 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             fig_pf = _gdrs_apply_plan_fact_grouped_bar_spacing(
                 fig_pf, len(_proj_labels), metrics_axis=_metrics_axis
             )
-            st.plotly_chart(fig_pf, use_container_width=True, key="gdrs_proj_bar_light")
+            st.plotly_chart(
+                fig_pf,
+                use_container_width=True,
+                key=f"gdrs_proj_bar_{_gdrs_key_suffix}_{_plan_agg}_{_skud_agg}",
+            )
         except Exception as _e:
             st.warning(f"Plotly недоступен: {_e}")
         _gdrs_render_plan_fact_summary_table(
@@ -21922,7 +21926,9 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             f"({date_from.strftime('%d.%m.%Y')} — {(date_from + _pd.Timedelta(days=42)).strftime('%d.%m.%Y')}); "
             f"неделя 7+ не помещается в макет ТЗ. Сократите период до месяца, чтобы увидеть все недели."
         )
-    _show_week_cols = gdrs_matrix_show_week_columns(_plan_agg, _skud_agg)
+    _show_week_cols = gdrs_matrix_show_week_columns(
+        _plan_agg, _skud_agg, date_from=date_from, date_to=date_to
+    )
     if _show_week_cols:
         st.caption(
             "Колонки «План / СКУД / Отклонение» — **среднее за день за весь выбранный период**. "
@@ -22103,7 +22109,11 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             fig2 = _gdrs_apply_plan_fact_grouped_bar_spacing(
                 fig2, len(_ctr_labels), metrics_axis=_ctr_metrics_axis
             )
-            st.plotly_chart(fig2, use_container_width=True, key="gdrs_ctr_bar_light")
+            st.plotly_chart(
+                fig2,
+                use_container_width=True,
+                key=f"gdrs_ctr_bar_{_gdrs_key_suffix}_{_plan_agg}_{_skud_agg}",
+            )
         except Exception as _e:
             st.warning(f"Plotly недоступен: {_e}")
 

@@ -2479,12 +2479,20 @@ def _skud_agg_per_pair(
     ).assign(skud_val=lambda d: d["skud_val"].fillna(0.0))
 
 
-def gdrs_matrix_show_week_columns(plan_agg: str, skud_agg: str) -> bool:
-    """Колонки «1–6 неделя» — только при «Среднее за месяц» в фильтрах План и СКУД."""
-    return (
-        gdrs_agg_week_num(plan_agg) is None
-        and gdrs_agg_week_num(skud_agg) is None
-    )
+def gdrs_matrix_show_week_columns(
+    plan_agg: str,
+    skud_agg: str,
+    *,
+    date_from: Optional[pd.Timestamp] = None,
+    date_to: Optional[pd.Timestamp] = None,
+) -> bool:
+    """Колонки «1–6 неделя» — только «Среднее за месяц» и один календарный месяц в фильтре."""
+    if gdrs_agg_week_num(plan_agg) is not None or gdrs_agg_week_num(skud_agg) is not None:
+        return False
+    if date_from is not None and date_to is not None and pd.notna(date_from) and pd.notna(date_to):
+        if not _gdrs_single_calendar_month(date_from, date_to):
+            return False
+    return True
 
 
 def gdrs_matrix_week_labels(
@@ -2834,7 +2842,9 @@ def build_main_table(
         else np.nan,
         axis=1,
     )
-    _show_week_cols = gdrs_matrix_show_week_columns(plan_agg, skud_agg)
+    _show_week_cols = gdrs_matrix_show_week_columns(
+        plan_agg, skud_agg, date_from=date_from, date_to=date_to
+    )
     _weekly_plan_lu: dict[int, tuple] = {}
     if _show_week_cols and weekly_plan_by_week:
         for _wn, _wp_df in weekly_plan_by_week.items():
@@ -2873,7 +2883,9 @@ def build_main_table(
         if rows.empty:
             return pd.DataFrame()
 
-    _compact = not gdrs_matrix_show_week_columns(plan_agg, skud_agg)
+    _compact = not gdrs_matrix_show_week_columns(
+        plan_agg, skud_agg, date_from=date_from, date_to=date_to
+    )
     if _compact:
         rows = rows[(rows["plan"] > 0) | (rows["skud"] > 0)].copy()
         if rows.empty:
