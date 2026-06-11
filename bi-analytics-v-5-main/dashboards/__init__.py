@@ -271,17 +271,42 @@ def _get_dashboards() -> Dict[str, Callable]:
 # Ленивая загрузка, чтобы при импорте dashboards не тянуть project_visualization_app
 # Увеличьте версию при изменении реестра отчётов — иначе долгоживущий процесс Streamlit
 # может держать устаревший словарь в памяти.
-_DASHBOARDS_REGISTRY_VERSION = 96
+_DASHBOARDS_REGISTRY_VERSION = 100
 _dashboards_cache: Dict[str, Callable] = {}
 _dashboards_cache_version: int = 0
+_renderers_mtime: float = 0.0
 
 
 def get_dashboards() -> Dict[str, Callable]:
     """Возвращает словарь DASHBOARDS (кэшируется)."""
-    global _dashboards_cache, _dashboards_cache_version
-    if not _dashboards_cache or _dashboards_cache_version != _DASHBOARDS_REGISTRY_VERSION:
+    global _dashboards_cache, _dashboards_cache_version, _renderers_mtime
+    import importlib
+    import os
+
+    from dashboards import _renderers
+
+    _path = getattr(_renderers, "__file__", None)
+    _mt = float(os.path.getmtime(_path)) if _path else 0.0
+    _stale = (
+        not _dashboards_cache
+        or _dashboards_cache_version != _DASHBOARDS_REGISTRY_VERSION
+        or _mt != _renderers_mtime
+    )
+    if _stale:
+        importlib.reload(_renderers)
+        _renderers_mtime = _mt
         _dashboards_cache = _get_dashboards()
         _dashboards_cache_version = _DASHBOARDS_REGISTRY_VERSION
+    else:
+        # На каждый rerun подхватываем правки _renderers.py без ручного рестарта.
+        try:
+            _mt_live = float(os.path.getmtime(_path)) if _path else 0.0
+        except OSError:
+            _mt_live = _renderers_mtime
+        if _mt_live > _renderers_mtime:
+            importlib.reload(_renderers)
+            _renderers_mtime = _mt_live
+            _dashboards_cache = _get_dashboards()
     return _dashboards_cache
 
 
