@@ -447,6 +447,34 @@ PERIOD_MODE_ALL_TIME = "Весь период (за всё время)"
 PERIOD_MODE_CUSTOM = "Выбор диапазона дат"
 
 
+def _clamp_date_to_bounds(value: Any, min_value: Any, max_value: Any) -> Any:
+    if value is None:
+        return value
+    d = value.date() if hasattr(value, "date") and callable(value.date) else value
+    if min_value is not None and d < min_value:
+        return min_value
+    if max_value is not None and d > max_value:
+        return max_value
+    return d
+
+
+def _clamp_date_range_pair(
+    pair: Any,
+    min_value: Any,
+    max_value: Any,
+) -> Tuple[Any, Any]:
+    if isinstance(pair, tuple) and len(pair) == 2:
+        start = _clamp_date_to_bounds(pair[0], min_value, max_value)
+        end = _clamp_date_to_bounds(pair[1], min_value, max_value)
+        if start is not None and end is not None and start > end:
+            start, end = end, start
+        return start, end
+    if hasattr(pair, "year"):
+        d = _clamp_date_to_bounds(pair, min_value, max_value)
+        return d, d
+    return pair, pair
+
+
 def period_date_range_input(
     st: Any,
     key: str,
@@ -464,6 +492,12 @@ def period_date_range_input(
     """
     if min_value is None or max_value is None:
         return None, None
+    ss = getattr(st, "session_state", {})
+    if key in ss:
+        start, end = _clamp_date_range_pair(ss[key], min_value, max_value)
+        ss[key] = (start, end)
+    if default is not None:
+        default = _clamp_date_range_pair(default, min_value, max_value)
     kw: dict = {
         "label": label,
         "min_value": min_value,
@@ -471,7 +505,7 @@ def period_date_range_input(
         "key": key,
         "format": date_format,
     }
-    if default is not None and key not in getattr(st, "session_state", {}):
+    if default is not None and key not in ss:
         kw["value"] = default
     dr = st.date_input(**kw, help=help)
     if isinstance(dr, tuple) and len(dr) == 2:

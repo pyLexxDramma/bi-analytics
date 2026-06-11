@@ -1859,9 +1859,9 @@ def _deviations_maket_prepare_df(table_reason_df: pd.DataFrame) -> pd.DataFrame:
     except Exception:
         pass
     if "plan end" in work_m.columns:
-        work_m["plan end"] = pd.to_datetime(work_m["plan end"], errors="coerce", dayfirst=True)
+        work_m["plan end"] = _deviations_coerce_datetime(work_m["plan end"])
     if "base end" in work_m.columns:
-        work_m["base end"] = pd.to_datetime(work_m["base end"], errors="coerce", dayfirst=True)
+        work_m["base end"] = _deviations_coerce_datetime(work_m["base end"])
     work_m["_end_diff"] = np.nan
     if "plan end" in work_m.columns and "base end" in work_m.columns:
         _m = work_m["plan end"].notna() & work_m["base end"].notna()
@@ -1956,6 +1956,57 @@ def _deviations_period_labels_nonzero(
     nz = {str(k) for k, v in totals.items() if float(v) > 0}
     trimmed = [p for p in period_labels if str(p) in nz]
     return trimmed if trimmed else list(period_labels)
+
+
+def _deviations_coerce_datetime(series: pd.Series) -> pd.Series:
+    """ISO YYYY-MM-DD из БД — без dayfirst; DD.MM.YY из MSP CSV — с dayfirst."""
+    if series is None or getattr(series, "empty", True):
+        return series
+    if pd.api.types.is_datetime64_any_dtype(series.dtype):
+        return pd.to_datetime(series, errors="coerce")
+    raw = series.copy()
+    as_str = raw.astype(str).str.strip()
+    invalid = as_str.str.lower().isin(["", "nan", "none", "nat", "нд", "nd"])
+    iso = as_str.str.match(r"^\d{4}-\d{2}-\d{2}", na=False)
+    out = pd.Series(pd.NaT, index=raw.index, dtype="datetime64[ns]")
+    if iso.any():
+        out.loc[iso] = pd.to_datetime(raw.loc[iso], errors="coerce")
+    other = ~invalid & ~iso
+    if other.any():
+        out.loc[other] = pd.to_datetime(raw.loc[other], errors="coerce", dayfirst=True)
+    return out
+
+
+def _deviations_exclude_future_plan_rows(
+    df: pd.DataFrame,
+    *,
+    date_col: str = "plan end",
+    period_type_en: str = "Month",
+) -> pd.DataFrame:
+    """Не считать отклонения с датой в будущем календарном периоде."""
+    if df is None or getattr(df, "empty", True):
+        return df
+    if date_col not in df.columns:
+        return df
+    dt = _deviations_coerce_datetime(df[date_col])
+    mask = dt.notna()
+    if not mask.any():
+        return df
+    today = pd.Timestamp(date.today())
+    if period_type_en == "Day":
+        keep = dt.loc[mask].dt.normalize() <= today.normalize()
+    elif period_type_en == "Quarter":
+        cutoff = today.to_period("Q")
+        keep = dt.loc[mask].dt.to_period("Q") <= cutoff
+    elif period_type_en == "Year":
+        cutoff = today.to_period("Y")
+        keep = dt.loc[mask].dt.to_period("Y") <= cutoff
+    else:
+        cutoff = today.to_period("M")
+        keep = dt.loc[mask].dt.to_period("M") <= cutoff
+    out_mask = pd.Series(False, index=df.index)
+    out_mask.loc[mask] = keep
+    return df[out_mask].copy()
 
 
 def _deviations_stacked_bar_add_totals(
@@ -4491,7 +4542,7 @@ def _deviations_filter_df_by_period_range(
         _start_dt, _end_dt = _end_dt, _start_dt
     _end_inclusive = _end_dt + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
     if "plan end" in filtered_df.columns:
-        _pe = pd.to_datetime(filtered_df["plan end"], errors="coerce", dayfirst=True)
+        _pe = _deviations_coerce_datetime(filtered_df["plan end"])
         return filtered_df[
             _pe.notna() & (_pe >= _start_dt) & (_pe <= _end_inclusive)
         ].copy()
@@ -4519,7 +4570,7 @@ def _deviations_period_type_en_from_ru(label: str) -> str:
 def _deviations_report_period_options(df: pd.DataFrame, period_type_en: str) -> list[str]:
     if df is None or getattr(df, "empty", True) or "plan end" not in df.columns:
         return []
-    pe = pd.to_datetime(df["plan end"], errors="coerce", dayfirst=True)
+    pe = _deviations_coerce_datetime(df["plan end"])
     pe = pe[pe.notna()]
     if pe.empty:
         return []
@@ -4531,6 +4582,19 @@ def _deviations_report_period_options(df: pd.DataFrame, period_type_en: str) -> 
         vals = pe.dt.to_period("Y")
     else:
         vals = pe.dt.to_period("M")
+    today = pd.Timestamp(date.today())
+    if period_type_en == "Day":
+        cutoff = today.normalize()
+        vals = vals[vals <= cutoff]
+    elif period_type_en == "Quarter":
+        cutoff = today.to_period("Q")
+        vals = vals[vals <= cutoff]
+    elif period_type_en == "Year":
+        cutoff = today.to_period("Y")
+        vals = vals[vals <= cutoff]
+    else:
+        cutoff = today.to_period("M")
+        vals = vals[vals <= cutoff]
     labels = [format_period_ru(v) for v in pd.unique(vals)]
     labels = [x for x in labels if str(x).strip()]
     return sorted(set(labels), key=lambda s: str(s))
@@ -4556,7 +4620,7 @@ def _deviations_apply_report_period_filter(
     if sel in ("", "Весь период") or "plan end" not in df.columns:
         return df
     out = df.copy()
-    pe = pd.to_datetime(out["plan end"], errors="coerce", dayfirst=True)
+    pe = _deviations_coerce_datetime(out["plan end"])
     mask = pe.notna()
     if period_type_en == "Day":
         temp = pe.dt.date
@@ -4605,6 +4669,9 @@ def _apply_deviations_combined_filters(
         st.session_state.get("dynamics_period", "Месяц")
     )
     filtered_df = _deviations_apply_report_period_filter(
+        filtered_df, period_type_en=_pt_en
+    )
+    filtered_df = _deviations_exclude_future_plan_rows(
         filtered_df, period_type_en=_pt_en
     )
 
@@ -4804,15 +4871,15 @@ def _render_deviations_combined_shared_filters(df):
             _devcombo_pmin = None
             _devcombo_pmax = None
             if "plan end" in df.columns:
-                _pe_dev = pd.to_datetime(df["plan end"], errors="coerce", dayfirst=True)
+                _pe_dev = _deviations_coerce_datetime(df["plan end"])
                 if _pe_dev.notna().any():
                     _devcombo_pmin = _pe_dev.min().date()
-                    _devcombo_pmax = _pe_dev.max().date()
+                    _devcombo_pmax = min(_pe_dev.max().date(), date.today())
             elif "plan_month" in df.columns:
                 _pm_dev = df["plan_month"].dropna()
                 if len(_pm_dev):
                     _devcombo_pmin = _pm_dev.min().start_time.date()
-                    _devcombo_pmax = _pm_dev.max().end_time.date()
+                    _devcombo_pmax = min(_pm_dev.max().end_time.date(), date.today())
 
             with col4:
                 if _devcombo_pmin and _devcombo_pmax:
@@ -5212,6 +5279,8 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
 
     # ТЗ (макет): диаграммы и таблица — один набор строк (ур. 5, причина, отклонение < 0).
     maket_df = _deviations_maket_scope_df(filtered_df)
+    if not hide_shared_filters:
+        maket_df = _deviations_exclude_future_plan_rows(maket_df)
     if maket_df.empty:
         st.info(
             "По макету нет строк: уровень 5, непустая причина, отклонение окончания < 0."
@@ -5579,6 +5648,20 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
 
     # ТЗ (макет): те же строки, что в таблице «Детальные данные» на вкладке «Доли причин».
     filtered_df = _deviations_maket_scope_df(filtered_df)
+    _will_snap_period = (
+        _time_axis.startswith("По дате снимка")
+        and "snapshot_date" in getattr(filtered_df, "columns", [])
+    )
+    if _will_snap_period:
+        filtered_df = _deviations_exclude_future_plan_rows(
+            filtered_df,
+            date_col="snapshot_date",
+            period_type_en=period_type_en,
+        )
+    else:
+        filtered_df = _deviations_exclude_future_plan_rows(
+            filtered_df, period_type_en=period_type_en
+        )
     if filtered_df.empty:
         st.info(
             "По макету нет строк: уровень 5, непустая причина, отклонение окончания < 0."
@@ -5619,42 +5702,43 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         if not mask.any():
             st.warning("Нет заполненной snapshot_date после фильтров.")
             return
-    # Extract period from plan end dates
+    # Extract period from plan end dates (ISO из БД — без dayfirst)
     elif period_type_en == "Day":
-        # Use date (day level)
         if "plan end" in filtered_df.columns:
-            mask = filtered_df["plan end"].notna()
-            filtered_df.loc[mask, "period"] = filtered_df.loc[mask, "plan end"].dt.date
+            _pe_dyn = _deviations_coerce_datetime(filtered_df["plan end"])
+            filtered_df["plan end"] = _pe_dyn
+            mask = _pe_dyn.notna()
+            filtered_df.loc[mask, "period"] = _pe_dyn.loc[mask].dt.date
             period_label = "День"
         else:
             st.warning("Поле 'plan end' не найдено для группировки по дням.")
             return
     elif period_type_en == "Month":
         if "plan end" in filtered_df.columns:
-            mask = filtered_df["plan end"].notna()
-            filtered_df.loc[mask, "period"] = filtered_df.loc[
-                mask, "plan end"
-            ].dt.to_period("M")
+            _pe_dyn = _deviations_coerce_datetime(filtered_df["plan end"])
+            filtered_df["plan end"] = _pe_dyn
+            mask = _pe_dyn.notna()
+            filtered_df.loc[mask, "period"] = _pe_dyn.loc[mask].dt.to_period("M")
             period_label = "Месяц"
         else:
             st.warning("Поле 'plan end' не найдено для группировки по месяцам.")
             return
     elif period_type_en == "Quarter":
         if "plan end" in filtered_df.columns:
-            mask = filtered_df["plan end"].notna()
-            filtered_df.loc[mask, "period"] = filtered_df.loc[
-                mask, "plan end"
-            ].dt.to_period("Q")
+            _pe_dyn = _deviations_coerce_datetime(filtered_df["plan end"])
+            filtered_df["plan end"] = _pe_dyn
+            mask = _pe_dyn.notna()
+            filtered_df.loc[mask, "period"] = _pe_dyn.loc[mask].dt.to_period("Q")
             period_label = "Квартал"
         else:
             st.warning("Поле 'plan end' не найдено для группировки по кварталам.")
             return
     else:  # Year
         if "plan end" in filtered_df.columns:
-            mask = filtered_df["plan end"].notna()
-            filtered_df.loc[mask, "period"] = filtered_df.loc[
-                mask, "plan end"
-            ].dt.to_period("Y")
+            _pe_dyn = _deviations_coerce_datetime(filtered_df["plan end"])
+            filtered_df["plan end"] = _pe_dyn
+            mask = _pe_dyn.notna()
+            filtered_df.loc[mask, "period"] = _pe_dyn.loc[mask].dt.to_period("Y")
             period_label = "Год"
         else:
             st.warning("Поле 'plan end' не найдено для группировки по годам.")
@@ -10031,6 +10115,13 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
         st.warning(f"Столбец периода '{period_col}' не найден.")
         return
 
+    filtered_df = _deviations_exclude_future_plan_rows(
+        filtered_df, period_type_en=period_type_en
+    )
+    if filtered_df.empty:
+        st.info("Нет данных для выбранных фильтров.")
+        return
+
     # Group by period and категория причины (как «Доли причин» / «Динамика отклонений» — _deviations_reason_bucket_label)
     if "reason of deviation" in filtered_df.columns:
         _rd_slice = filtered_df[filtered_df[period_col].notna()].copy()
@@ -10506,14 +10597,16 @@ def _finance_plotly_apply_bar_width(
     *,
     fixed_canvas_width: int | None = None,
     n_bar_slots: int | None = None,
+    stack: bool = False,
 ) -> None:
     """Grouped bar: bargap + горизонтальные подписи; fixed_canvas_width — для гориз. скролла."""
     n = max(1, int(n_periods))
     bg, bgg, bar_w = _finance_plotly_bar_layout(n)
+    stack = bool(stack)
     try:
-        barmode = str(fig.layout.barmode or "group").lower()
+        barmode = "stack" if stack else str(fig.layout.barmode or "group").lower()
     except Exception:
-        barmode = "group"
+        barmode = "stack" if stack else "group"
     n_bar = sum(
         1
         for tr in (fig.data or [])
@@ -10526,7 +10619,9 @@ def _finance_plotly_apply_bar_width(
     else:
         bgg = max(bgg, 0.14) if barmode == "group" and slots > 1 else bgg
     fig.update_layout(bargap=bg, bargroupgap=bgg)
-    if barmode == "group" and slots > 1:
+    if stack:
+        fig.update_traces(width=0.82, selector=dict(type="bar"))
+    elif barmode == "group" and slots > 1:
         _tw = _finance_plotly_bar_trace_width(slots, bargroupgap=bgg)
         fig.update_traces(width=_tw, selector=dict(type="bar"))
     elif barmode != "group" or n_bar <= 1:
@@ -10824,6 +10919,81 @@ def _dk_plotly_canvas_width(n_cats: int, *, grouped: bool = True) -> tuple[bool,
 
 
 
+def _dk_plotly_finalize_stack_bars(fig) -> None:
+    """«С группировкой»: overlay + явный base — один столбец (без split offsetgroup в Plotly.js)."""
+    try:
+        fig.update_layout(barmode="overlay", bargroupgap=0.04)
+        fig.update_traces(
+            offsetgroup="dk_stack",
+            alignmentgroup="dk_stack",
+            width=0.82,
+            selector=dict(type="bar"),
+        )
+    except Exception:
+        pass
+
+
+def _dk_make_stack_bar_figure(
+    chart_df: pd.DataFrame,
+    chart_label: str,
+    *,
+    has_deviation: bool,
+    text_fn,
+) -> go.Figure:
+    """Стек ДЗ/КЗ: отклонение ≥0 → КС-2 → Аванс (один столбец на подрядчика)."""
+    x = chart_df[chart_label].astype(str).tolist()
+    n = len(x)
+    _cum = np.zeros(n, dtype=float)
+    traces: list = []
+    _grp = dict(offsetgroup="dk_stack", alignmentgroup="dk_stack", width=0.82)
+    _bar_style = dict(
+        textposition="outside",
+        textangle=0,
+        cliponaxis=False,
+        textfont=dict(size=11, color="#e8eef5"),
+        **_grp,
+    )
+    _series: list[tuple[str, np.ndarray, str, str]] = []
+    if has_deviation and "Отклонение" in chart_df.columns:
+        _dev_pos = (
+            pd.to_numeric(chart_df["Отклонение"], errors="coerce")
+            .fillna(0.0)
+            .clip(lower=0.0)
+            .to_numpy(dtype=float)
+        )
+        _series.append(
+            (
+                "Отклонение, если больше или = 0",
+                _dev_pos,
+                "#95A5A6",
+                "<b>Отклонение ≥0</b><br>%{x}<br>%{text}<extra></extra>",
+            )
+        )
+    for col, color in (("КС-2", "#F1C40F"), ("Аванс", "#2E86AB")):
+        if col not in chart_df.columns:
+            continue
+        _y = pd.to_numeric(chart_df[col], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+        _series.append((col, _y, color, f"<b>{col}</b><br>%{{x}}<br>%{{text}}<extra></extra>"))
+    for name, y_vals, color, hover_tpl in _series:
+        traces.append(
+            go.Bar(
+                name=name,
+                x=x,
+                y=y_vals,
+                base=_cum.tolist(),
+                marker=dict(color=color),
+                showlegend=True,
+                text=[text_fn(v) for v in y_vals],
+                hovertemplate=hover_tpl,
+                **_bar_style,
+            )
+        )
+        _cum = _cum + y_vals
+    fig = go.Figure(data=traces, layout=go.Layout(barmode="overlay", bargroupgap=0.04))
+    _dk_plotly_finalize_stack_bars(fig)
+    return fig
+
+
 def _dk_chart_legend_items(*, stack: bool) -> list[tuple[str, str]]:
     """Фиксированная легенда ДЗ/КЗ (визуал 1 / визуал 2), не зависит от нулевых серий."""
     if stack:
@@ -10892,18 +11062,20 @@ def _render_debit_credit_bar_chart(
     need_hscroll, canvas_w = _dk_plotly_canvas_width(n, grouped=not stack)
     fixed_w = int(canvas_w) if need_hscroll else None
 
-    try:
-        _finance_plotly_apply_bar_width(
-            fig,
-            n,
-            cats,
-            fixed_canvas_width=fixed_w if need_hscroll else None,
-        )
-        _bg = 0.10 if need_hscroll else max(0.05, min(0.12, 1.6 / n))
-        if stack:
-            fig.update_layout(barmode="stack", bargap=_bg, bargroupgap=0.04)
-            fig.update_traces(width=0.82, selector=dict(type="bar"))
-        else:
+    _bg = 0.10 if need_hscroll else max(0.05, min(0.12, 1.6 / n))
+    if stack:
+        fig.update_layout(barmode="overlay", bargap=_bg, bargroupgap=0.04)
+        _dk_plotly_finalize_stack_bars(fig)
+    else:
+        try:
+            fig.update_layout(barmode="group")
+            _finance_plotly_apply_bar_width(
+                fig,
+                n,
+                cats,
+                fixed_canvas_width=fixed_w if need_hscroll else None,
+                stack=False,
+            )
             _n_bar_tr = max(
                 1,
                 sum(
@@ -10916,10 +11088,11 @@ def _render_debit_credit_bar_chart(
             fig.update_layout(barmode="group", bargap=_bg, bargroupgap=0.04)
             fig.update_traces(
                 width=_bar_w_grp,
+                offsetgroup="dk_side",
                 selector=dict(type="bar"),
             )
-    except Exception:
-        pass
+        except Exception:
+            pass
 
     try:
         fig.update_layout(height=fig_h, autosize=not need_hscroll)
@@ -10966,6 +11139,8 @@ def _render_debit_credit_bar_chart(
         except Exception:
             pass
     _apply_plotly_spec_411_labels(fig)
+    if stack:
+        _dk_plotly_finalize_stack_bars(fig)
 
     if not need_hscroll:
         render_chart(
@@ -11000,9 +11175,12 @@ def _render_debit_credit_bar_chart(
     try:
         import streamlit.components.v1 as components
 
+        if stack:
+            _dk_plotly_finalize_stack_bars(fig)
+        # inline plotly.js — CDN-версия иначе ломает overlay+base (split столбцов).
         plot_div = fig.to_html(
             full_html=False,
-            include_plotlyjs="cdn",
+            include_plotlyjs=True,
             config=cfg,
             default_width=f"{w}px",
             default_height=f"{h}px",
@@ -23643,10 +23821,14 @@ def dashboard_debit_credit(df):
 
     chart_df = pd.DataFrame(built).reset_index()
     chart_df = chart_df.rename(columns={chart_group_col: chart_label})
+    chart_df[chart_label] = chart_df[chart_label].astype(str).str.strip()
+    _dk_num_cols = [c for c in chart_df.columns if c != chart_label]
+    if _dk_num_cols:
+        chart_df = chart_df.groupby(chart_label, as_index=False)[_dk_num_cols].sum()
 
     # ТЗ: «Без группировки» — столбцы рядом (group); «С группировкой» — стек (stack).
-    _dk_side_by_side = dk_display_view == "Без группировки"
-    _dk_is_stack = dk_display_view == "С группировкой"
+    _dk_side_by_side = str(dk_display_view or "").strip() == "Без группировки"
+    _dk_is_stack = not _dk_side_by_side
     _has_deviation_col = "Отклонение" in chart_df.columns
 
     value_cols = [c for c in chart_df.columns if c != chart_label]
@@ -23662,23 +23844,11 @@ def dashboard_debit_credit(df):
         )
         chart_df = chart_df.drop(columns=["_bar_rank"], errors="ignore")
         value_cols = [c for c in chart_df.columns if c != chart_label]
-        fig = go.Figure()
-        x = chart_df[chart_label].astype(str)
-        # Цвета по ТЗ (скрин): синий — Аванс, жёлтый — КС-2, серый — откл. ≥0, красный — откл. <0, зелёный — договор.
         colors = {
             "Договор стоимость": "#27ae60",
             "Аванс": "#2E86AB",
             "КС-2": "#F1C40F",
         }
-        _value_cols_for_chart = [c for c in value_cols if c != "Отклонение"]
-        if _dk_side_by_side:
-            _value_cols_for_chart = [
-                c for c in ("Аванс", "КС-2") if c in _value_cols_for_chart
-            ]
-        elif _dk_is_stack:
-            _value_cols_for_chart = [
-                c for c in ("КС-2", "Аванс") if c in _value_cols_for_chart
-            ]
 
         def _dk_chart_bar_text(v, *, min_abs: float = 0.05) -> str:
             if v is None or (isinstance(v, float) and pd.isna(v)):
@@ -23697,89 +23867,87 @@ def dashboard_debit_credit(df):
             cliponaxis=False,
             textfont=dict(size=11, color="#e8eef5"),
         )
-        if _has_deviation_col and _dk_is_stack:
-            _dev_s = pd.to_numeric(chart_df["Отклонение"], errors="coerce").fillna(0.0)
-            _dev_pos = _dev_s.clip(lower=0.0)
-            fig.add_trace(
-                go.Bar(
-                    name="Отклонение, если больше или = 0",
+        if _dk_is_stack:
+            fig = _dk_make_stack_bar_figure(
+                chart_df,
+                chart_label,
+                has_deviation=_has_deviation_col,
+                text_fn=_dk_chart_bar_text,
+            )
+        else:
+            fig = go.Figure()
+            x = chart_df[chart_label].astype(str)
+            _value_cols_for_chart = [
+                c for c in value_cols if c != "Отклонение"
+            ]
+            _value_cols_for_chart = [
+                c for c in ("Аванс", "КС-2") if c in _value_cols_for_chart
+            ]
+            for col in _value_cols_for_chart:
+                _bar_kw = dict(
+                    name=col,
                     x=x,
-                    y=_dev_pos,
-                    marker_color="#95A5A6",
-                    showlegend=True,
-                    text=_dev_pos.apply(_dk_chart_bar_text),
-                    textposition="outside",
-                    textangle=0,
-                    cliponaxis=False,
-                    textfont=dict(size=11, color="#e8eef5"),
-                    customdata=_dev_pos.apply(
-                        lambda v: f"{v:.1f} млн" if pd.notna(v) else "0,0 млн"
+                    y=chart_df[col],
+                    marker_color=colors.get(col, None),
+                    text=chart_df[col].apply(_dk_chart_bar_text),
+                    customdata=chart_df[col].apply(
+                        lambda v: f"{v:.1f} млн руб" if pd.notna(v) else "0,0 млн руб"
                     ),
-                    hovertemplate="<b>Отклонение ≥0</b><br>%{x}<br>%{customdata}<extra></extra>",
+                    hovertemplate=f"<b>{col}</b><br>%{{x}}<br>%{{customdata}}<extra></extra>",
+                    **_dk_bar_label_style,
                 )
-            )
-        for col in _value_cols_for_chart:
-            _bar_kw = dict(
-                name=col,
-                x=x,
-                y=chart_df[col],
-                marker_color=colors.get(col, None),
-                text=chart_df[col].apply(_dk_chart_bar_text),
-                customdata=chart_df[col].apply(
-                    lambda v: f"{v:.1f} млн руб" if pd.notna(v) else "0,0 млн руб"
-                ),
-                hovertemplate=f"<b>{col}</b><br>%{{x}}<br>%{{customdata}}<extra></extra>",
-                **_dk_bar_label_style,
-            )
-            _bar_kw["showlegend"] = True
-            fig.add_trace(go.Bar(**_bar_kw))
-        if _has_deviation_col and _dk_side_by_side:
-            _dev_s = pd.to_numeric(chart_df["Отклонение"], errors="coerce").fillna(0.0)
-            _dev_pos = _dev_s.where(_dev_s >= 0, 0.0)
-            _dev_neg = _dev_s.where(_dev_s < 0, 0.0)
-            fig.add_trace(
-                go.Bar(
-                    name="Отклонение, если больше или = 0",
-                    x=x,
-                    y=_dev_pos,
-                    marker_color="#95A5A6",
-                    showlegend=True,
-                    text=_dev_pos.apply(_dk_chart_bar_text),
-                    textposition="outside",
-                    textangle=0,
-                    cliponaxis=False,
-                    textfont=dict(size=16, color="#f0f4f8"),
-                    customdata=_dev_pos.apply(
-                        lambda v: f"{v:.1f} млн" if pd.notna(v) else "0,0 млн"
-                    ),
-                    hovertemplate="<b>Отклонение ≥0</b><br>%{x}<br>%{customdata}<extra></extra>",
+                _bar_kw["showlegend"] = True
+                _bar_kw["offsetgroup"] = "dk_side"
+                fig.add_trace(go.Bar(**_bar_kw))
+            if _has_deviation_col:
+                _dev_s = pd.to_numeric(chart_df["Отклонение"], errors="coerce").fillna(0.0)
+                _dev_pos = _dev_s.where(_dev_s >= 0, 0.0)
+                _dev_neg = _dev_s.where(_dev_s < 0, 0.0)
+                fig.add_trace(
+                    go.Bar(
+                        name="Отклонение, если больше или = 0",
+                        x=x,
+                        y=_dev_pos,
+                        offsetgroup="dk_side",
+                        marker_color="#95A5A6",
+                        showlegend=True,
+                        text=_dev_pos.apply(_dk_chart_bar_text),
+                        textposition="outside",
+                        textangle=0,
+                        cliponaxis=False,
+                        textfont=dict(size=16, color="#f0f4f8"),
+                        customdata=_dev_pos.apply(
+                            lambda v: f"{v:.1f} млн" if pd.notna(v) else "0,0 млн"
+                        ),
+                        hovertemplate="<b>Отклонение ≥0</b><br>%{x}<br>%{customdata}<extra></extra>",
+                    )
                 )
-            )
-            fig.add_trace(
-                go.Bar(
-                    name="Отклонение, если меньше 0",
-                    x=x,
-                    y=_dev_neg,
-                    marker_color="#F1948A",
-                    text=_dev_neg.apply(_dk_chart_bar_text),
-                    textposition="outside",
-                    textangle=0,
-                    cliponaxis=False,
-                    textfont=dict(size=16, color="#f0f4f8"),
-                    customdata=_dev_neg.apply(
-                        lambda v: f"{v:.1f} млн" if pd.notna(v) else "0,0 млн"
-                    ),
-                    hovertemplate="<b>Отклонение &lt;0</b><br>%{x}<br>%{customdata}<extra></extra>",
-                    showlegend=True,
+                fig.add_trace(
+                    go.Bar(
+                        name="Отклонение, если меньше 0",
+                        x=x,
+                        y=_dev_neg,
+                        offsetgroup="dk_side",
+                        marker_color="#F1948A",
+                        text=_dev_neg.apply(_dk_chart_bar_text),
+                        textposition="outside",
+                        textangle=0,
+                        cliponaxis=False,
+                        textfont=dict(size=16, color="#f0f4f8"),
+                        customdata=_dev_neg.apply(
+                            lambda v: f"{v:.1f} млн" if pd.notna(v) else "0,0 млн"
+                        ),
+                        hovertemplate="<b>Отклонение &lt;0</b><br>%{x}<br>%{customdata}<extra></extra>",
+                        showlegend=True,
+                    )
                 )
-            )
         _yaxis_kw = _dk_chart_yaxis_layout(
             chart_df,
             has_deviation=_has_deviation_col,
             side_by_side=_dk_side_by_side,
         )
         fig.update_layout(
-            barmode="stack" if _dk_is_stack else "group",
+            barmode="overlay" if _dk_is_stack else "group",
             showlegend=True,
             yaxis=_yaxis_kw,
             margin=dict(r=40, b=120, t=88, l=64),
@@ -23821,6 +23989,8 @@ def dashboard_debit_credit(df):
             )
         _cats_full = chart_df[chart_label].astype(str).tolist()
         _cats_tick = _dk_x_tick_labels(_cats_full)
+        if _dk_is_stack:
+            _dk_plotly_finalize_stack_bars(fig)
         _render_debit_credit_bar_chart(
             fig,
             categories=_cats_full,
