@@ -1368,6 +1368,13 @@ def _tessa_counts(ss: Any, project_name_hint: str = "") -> Tuple[str, str, str, 
         if pred_f is not None and not pred_f.empty:
             pred = pred_f
         else:
+            any_loaded = any(
+                (ss.get(k) is not None and not getattr(ss.get(k), "empty", True))
+                for k in ("tessa_tasks_data", "tessa_data")
+                if hasattr(ss, "get")
+            )
+            if any_loaded:
+                return "0", "0", "0", ""
             return "Н/Д", "Н/Д", "Н/Д", "Нет строк предписаний Tessa после фильтра по проекту."
     pred = _tessa_pred_exclude_project_rows(pred)
     if pred.empty:
@@ -1487,9 +1494,13 @@ def build_predpisaniya_detail_df(ss: Any, project_name_hint: str = "") -> pd.Dat
                     return False
                 if nk == pk:
                     return True
-                if len(pk) >= 4 and (pk in nk or nk in pk):
-                    return True
-                return False
+                try:
+                    if _control_points_project_group_key(hint) == _control_points_project_group_key(x):
+                        return True
+                except Exception:
+                    pass
+                a, b = (nk, pk) if len(nk) <= len(pk) else (pk, nk)
+                return len(a) >= 4 and (a in b)
 
             m = pred[proj_c].map(_row_match_cell)
             if m.fillna(False).any():
@@ -1497,7 +1508,7 @@ def build_predpisaniya_detail_df(ss: Any, project_name_hint: str = "") -> pd.Dat
                 matched = True
                 break
         if not matched and pk:
-            pass
+            return pd.DataFrame()
     return pred.reset_index(drop=True)
 
 
