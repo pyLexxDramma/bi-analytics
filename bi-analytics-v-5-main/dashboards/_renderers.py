@@ -3700,6 +3700,7 @@ def render_chart(
     skip_clamp_zoom: bool = False,
     omit_default_width: bool = False,
     scroll_viewport_height: int = None,
+    compact: bool = False,
 ) -> None:
     """
     Единая точка вывода Plotly-графика с адаптивной конфигурацией.
@@ -3711,6 +3712,7 @@ def render_chart(
     на оси X в Streamlit иногда даёт пустую область графика).
     omit_default_width: не подставлять layout.width=1150 — чтобы график реально растягивался на ширину контейнера.
     scroll_viewport_height: для длинных Gantt — figure на полную высоту, прокрутка внутри блока (px).
+    compact: фиксированная высота fig без autosize (короткие bar-графики ПД без внутреннего скролла).
     """
     cfg = dict(_PLOTLY_CONFIG)
     if plotly_config_extra:
@@ -3748,10 +3750,16 @@ def render_chart(
     if not skip_clamp_zoom:
         _clamp_plotly_scroll_zoom_padding(fig)
     _apply_plotly_spec_411_labels(fig)
-    try:
-        fig.update_layout(autosize=True)
-    except Exception:
-        pass
+    if compact and _layout_h is not None:
+        try:
+            fig.update_layout(autosize=False, height=_layout_h)
+        except Exception:
+            pass
+    elif not compact:
+        try:
+            fig.update_layout(autosize=True)
+        except Exception:
+            pass
     try:
         _yax = fig.layout.yaxis
         if _yax is not None and getattr(_yax, "autorange", None) is False:
@@ -15618,6 +15626,16 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             if _bs_col and _bs_col in filtered_df.columns
             else pd.Series(pd.NaT, index=filtered_df.index)
         )
+        _ss_col = (
+            "plan start"
+            if "plan start" in filtered_df.columns
+            else _pd_msp_find_schedule_start_col(filtered_df)
+        )
+        _ss_dt = (
+            _to_datetime_series(filtered_df[_ss_col])
+            if _ss_col and _ss_col in filtered_df.columns
+            else pd.Series(pd.NaT, index=filtered_df.index)
+        )
         _sf_dt = (
             _to_datetime_series(filtered_df[_sfin])
             if _sfin and _sfin in filtered_df.columns
@@ -15656,6 +15674,22 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         show_by_tasks = False
 
         if is_pd and _pd_masks_delay is not None:
+            _pd_pre_delay_df = filtered_df.copy()
+            _pd_dt_bs = _bs_dt.copy()
+            _pd_dt_ss = _ss_dt.copy()
+            _pd_dt_bf = _bf_dt.copy()
+            _pd_dt_sf = _sf_dt.copy()
+            _pd_dt_af = filtered_df["_fact_end_dt"].copy()
+            _pd_pct_col_all = _pd_msp_pct_complete_col(_pd_pre_delay_df)
+            _pd_chart_src_m = _pd_delay_chart_source_mask(
+                _pd_pre_delay_df, _pd_masks_delay
+            ).reindex(_pd_pre_delay_df.index, fill_value=False)
+            _pd_chart_src_df = _pd_pre_delay_df.loc[_pd_chart_src_m.fillna(False)].copy()
+            _pd_pct_all = (
+                pd.to_numeric(_pd_pre_delay_df[_pd_pct_col_all], errors="coerce").fillna(0.0)
+                if _pd_pct_col_all and _pd_pct_col_all in _pd_pre_delay_df.columns
+                else pd.Series(0.0, index=_pd_pre_delay_df.index)
+            )
             _pd_delay_m = _pd_delay_row_mask(filtered_df, _pd_masks_delay).reindex(
                 filtered_df.index, fill_value=False
             )
@@ -15668,6 +15702,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             _bf_dt = _bf_dt.reindex(filtered_df.index)
             _sf_dt = _sf_dt.reindex(filtered_df.index)
             _bs_dt = _bs_dt.reindex(filtered_df.index)
+            _ss_dt = _ss_dt.reindex(filtered_df.index)
             _af_dt = filtered_df["_fact_end_dt"].reindex(filtered_df.index)
             _ts_pd = pd.Timestamp(pd_report_date).normalize()
             _pct_pd_col = _pd_msp_pct_complete_col(filtered_df)
@@ -15701,7 +15736,11 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 if _cipher_pd and _cipher_pd in filtered_df.columns:
                     _ci = filtered_df[_cipher_pd].astype(str).str.strip()
                     _ci_ok = _ci.ne("") & ~_ci.str.lower().isin({"nan", "none", "<na>"})
-                    filtered_df["_pd_chart_y"] = _ci.where(_ci_ok, _pd_raz_lbl.astype(str))
+                    _pd_y_core = _pd_raz_lbl.where(
+                        _pd_raz_lbl.astype(str).str.contains("Раздел", case=False, na=False),
+                        _ci.where(_ci_ok, _pd_raz_lbl.astype(str)),
+                    )
+                    filtered_df["_pd_chart_y"] = _pd_y_core.astype(str)
                 else:
                     filtered_df["_pd_chart_y"] = _pd_raz_lbl.astype(str)
                 if project_col and project_col in filtered_df.columns:
@@ -15715,18 +15754,23 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 _sec_rows = _pd_build_delay_section_rows(
                     filtered_df,
                     y_col="_pd_chart_y",
-                    bs_dt=_bs_dt,
-                    bf_dt=_bf_dt,
-                    sf_dt=_sf_dt,
-                    af_dt=_af_dt,
-                    pct=_pc_pd,
+                    source_df=_pd_pre_delay_df,
+                    project_col=project_col,
+                    cipher_col=_cipher_pd,
+                    hier_col=_pd_masks_delay.get("hier_col"),
+                    bs_dt=_pd_dt_bs,
+                    ss_dt=_pd_dt_ss,
+                    bf_dt=_pd_dt_bf,
+                    sf_dt=_pd_dt_sf,
+                    af_dt=_pd_dt_af,
+                    pct=_pd_pct_all,
                     report_date=pd_report_date,
                 )
                 if _sec_rows.empty:
                     st.info("Нет данных для построения графика.")
                     return
                 fig = _pd_delay_section_duration_figure(_sec_rows, y_col="_pd_chart_y")
-                render_chart(fig, caption_below=f"Просрочка выдачи {doc_code}")
+                _render_pd_delay_duration_chart(fig, f"Просрочка выдачи {doc_code}")
                 if project_col and project_col in filtered_df.columns:
                     chart_data = (
                         filtered_df.groupby(project_col, as_index=False)
@@ -15753,42 +15797,59 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     y_column = "Раздел"
             else:
                 if project_col and project_col in filtered_df.columns:
-                    filtered_df["_pd_chart_y"] = (
-                        filtered_df[project_col].astype(str).str.strip()
+                    chart_data = (
+                        filtered_df.groupby(project_col, as_index=False)
+                        .agg(
+                            _pd_plan_cnt=("_pd_row_plan", "sum"),
+                            _pd_fact_cnt=("_pd_row_fact", "sum"),
+                        )
+                        .rename(columns={project_col: "Проект"})
                     )
-                    _grp_col = "_pd_chart_y"
-                    y_title = "Проект"
+                    chart_data["_pd_dev_cnt"] = (
+                        chart_data["_pd_plan_cnt"] - chart_data["_pd_fact_cnt"]
+                    ).clip(lower=0)
+                    if chart_data.empty:
+                        st.info("Нет данных для построения графика.")
+                        return
+                    fig = _pd_delay_plan_fact_figure(
+                        chart_data,
+                        y_col="Проект",
+                        overdue_col="_pd_dev_cnt",
+                    )
+                    _h_proj = max(
+                        280,
+                        len(chart_data) * _PD_DELAY_CHART_ROW_PX + 120,
+                    )
+                    render_chart(
+                        fig,
+                        key=_PD_DELAY_CHART_RENDER_KEY,
+                        height=_h_proj,
+                        max_height=None,
+                        caption_below=f"Просрочка выдачи {doc_code}",
+                        skip_clamp_zoom=True,
+                        compact=True,
+                    )
+                    y_column = "Проект"
                 else:
                     st.info("Нет данных для построения графика.")
                     return
 
-                chart_data = (
-                    filtered_df.groupby(_grp_col, as_index=False)
-                    .agg(
-                        _pd_plan_cnt=("_pd_row_plan", "sum"),
-                        _pd_fact_cnt=("_pd_row_fact", "sum"),
-                        _pd_overdue_cnt=("_pd_row_overdue", "sum"),
-                    )
-                    .rename(columns={_grp_col: y_title})
-                )
-                y_column = y_title
                 if chart_data.empty:
                     st.info("Нет данных для построения графика.")
                     return
 
-                fig = _pd_delay_plan_fact_figure(
-                    chart_data,
-                    y_col=y_column,
-                )
-                render_chart(fig, caption_below=f"Просрочка выдачи {doc_code}")
-
                 st.markdown(f"**Индикаторы просрочки {doc_code} по проектам**")
                 _ind_cols = st.columns(min(4, max(1, len(chart_data))), gap="small")
                 for _i, (_idx, _row) in enumerate(chart_data.iterrows()):
-                    _proj = str(_row[y_title])
+                    _proj = str(_row[y_column])
                     _plan_i = int(_row.get("_pd_plan_cnt", 0) or 0)
                     _fact_i = int(_row.get("_pd_fact_cnt", 0) or 0)
-                    _ovd_i = int(_row.get("_pd_overdue_cnt", 0) or 0)
+                    _ovd_i = int(
+                        max(
+                            0,
+                            _plan_i - _fact_i,
+                        )
+                    )
                     with _ind_cols[_i % len(_ind_cols)]:
                         st.markdown(
                             (
@@ -15797,11 +15858,11 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                                 f"<div style='font-size:13px; opacity:0.9;'>{_proj}</div>"
                                 f"<div style='font-size:14px; margin-top:6px;'>"
                                 f"<span style='background:#F1C40F;color:#1a1a1a;padding:2px 8px;"
-                                f"border-radius:4px;margin-right:6px;'>План: {_plan_i}</span>"
+                                f"border-radius:4px;margin-right:6px;'>План: {_plan_i} док.</span>"
                                 f"<span style='background:#27AE60;padding:2px 8px;border-radius:4px;"
-                                f"margin-right:6px;'>Факт: {_fact_i}</span>"
+                                f"margin-right:6px;'>Факт: {_fact_i} док.</span>"
                                 f"<span style='background:#C0392B;padding:2px 8px;border-radius:4px;'>"
-                                f"Просрочка: {_ovd_i}</span>"
+                                f"Отклонение: {_ovd_i} док.</span>"
                                 f"</div></div>"
                             ),
                             unsafe_allow_html=True,
@@ -25701,6 +25762,131 @@ def _pd_delay_row_mask(df: pd.DataFrame, masks: dict) -> pd.Series:
     return m_met & anc_m & cipher_m & ~dyn
 
 
+def _pd_delay_chart_source_mask(df: pd.DataFrame, masks: dict) -> pd.Series:
+    """Все задачи ПД с шифром (ур.≥5) — для min/max дат по разделу/проекту на графике."""
+    empty = pd.Series(False, index=df.index)
+    hier_col = masks.get("hier_col")
+    name_col = masks.get("name_col")
+    level_col = masks.get("level_col")
+    block_col = masks.get("block_col")
+    if not hier_col or hier_col not in df.columns or not name_col or name_col not in df.columns:
+        return empty
+    anc = _pd_msp_ancestor_under_pd_stage(
+        df, hier_col, name_col, block_col=block_col
+    ).fillna(False)
+    _, cipher_ok = _pd_cipher_filled_mask(df)
+    cipher_m = cipher_ok.fillna(False)
+    if level_col and level_col in df.columns:
+        lv = pd.to_numeric(df[level_col], errors="coerce")
+        return anc & cipher_m & lv.ge(5)
+    return anc & cipher_m
+
+
+def _pd_aggregate_delay_segments_for_indices(
+    idx: pd.Index,
+    *,
+    bs_dt: pd.Series,
+    ss_dt: pd.Series,
+    bf_dt: pd.Series,
+    sf_dt: pd.Series,
+    af_dt: pd.Series,
+    pct: pd.Series,
+    ts_report: pd.Timestamp,
+) -> dict | None:
+    """Крайние сроки MSP по группе задач: min начало, max БП, max окончание."""
+    if len(idx) == 0:
+        return None
+    bs = bs_dt.reindex(idx)
+    ss = ss_dt.reindex(idx)
+    bf = bf_dt.reindex(idx)
+    af = af_dt.reindex(idx)
+    sf = sf_dt.reindex(idx)
+    pc = pct.reindex(idx).fillna(0.0)
+    starts: list[pd.Timestamp] = []
+    for i in idx:
+        s = bs.loc[i]
+        if pd.isna(s):
+            s = ss.loc[i]
+        if pd.isna(s):
+            s = bf.loc[i]
+        if pd.notna(s):
+            starts.append(pd.Timestamp(s).normalize())
+    bf_valid = [
+        pd.Timestamp(bf.loc[i]).normalize() for i in idx if pd.notna(bf.loc[i])
+    ]
+    sf_valid = [
+        pd.Timestamp(sf.loc[i]).normalize() for i in idx if pd.notna(sf.loc[i])
+    ]
+    if not starts and not bf_valid and not sf_valid:
+        return None
+    start_n = (
+        min(starts)
+        if starts
+        else (min(sf_valid) if sf_valid else (min(bf_valid) if bf_valid else pd.NaT))
+    )
+    if pd.isna(start_n):
+        return None
+    bf_n = max(bf_valid) if bf_valid else pd.NaT
+    # ТЗ п.6b: зелёный — только задачи со 100% выполнением.
+    fin_dates: list[pd.Timestamp] = []
+    for i in idx:
+        if pc.loc[i] < 99.99:
+            continue
+        fin_i = af.loc[i] if pd.notna(af.loc[i]) else sf.loc[i]
+        if pd.notna(fin_i):
+            fin_dates.append(pd.Timestamp(fin_i).normalize())
+    fin_n = max(fin_dates) if fin_dates else pd.NaT
+    if pd.isna(bf_n) and pd.notna(fin_n):
+        bf_n = fin_n
+    if pd.isna(bf_n):
+        return None
+    done = bool(fin_dates)
+    seg = _pd_delay_chart_segments(
+        start_n,
+        bf_n,
+        fin_n,
+        done=done,
+        ts_report=ts_report,
+    )
+    return seg
+
+
+def _pd_segment_from_row_idx(
+    idx,
+    *,
+    bs_dt: pd.Series,
+    ss_dt: pd.Series,
+    bf_dt: pd.Series,
+    sf_dt: pd.Series,
+    af_dt: pd.Series,
+    pct: pd.Series,
+    ts_report: pd.Timestamp,
+) -> dict | None:
+    """Одна строка MSP «Раздел …» — даты для графика по ТЗ (п.5–6)."""
+    if idx not in bs_dt.index:
+        return None
+    bs = bs_dt.loc[idx]
+    ss = ss_dt.loc[idx] if idx in ss_dt.index else pd.NaT
+    bf = bf_dt.loc[idx]
+    af = af_dt.loc[idx] if idx in af_dt.index else pd.NaT
+    sf = sf_dt.loc[idx] if idx in sf_dt.index else pd.NaT
+    pc = float(pct.loc[idx]) if idx in pct.index else 0.0
+    start = bs if pd.notna(bs) else (ss if pd.notna(ss) else bf)
+    if pd.isna(start) or pd.isna(bf):
+        return None
+    done = pc >= 99.99
+    fin = pd.NaT
+    if done:
+        fin = af if pd.notna(af) else sf
+    return _pd_delay_chart_segments(
+        pd.Timestamp(start).normalize(),
+        pd.Timestamp(bf).normalize(),
+        fin,
+        done=done and pd.notna(fin),
+        ts_report=ts_report,
+    )
+
+
 def _pd_fmt_deviation_days(v) -> str:
     """Формат отклонения окончания ПД: +N / −N / 0 (опережение = плюс)."""
     num = pd.to_numeric(v, errors="coerce")
@@ -26039,69 +26225,162 @@ def _pd_chart_date_label(v) -> str:
         return ""
 
 
+def _pd_delay_chart_segments(
+    start_n: pd.Timestamp,
+    bf_n: pd.Timestamp,
+    fin_n: pd.Timestamp | None,
+    *,
+    done: bool,
+    ts_report: pd.Timestamp,
+) -> dict:
+    """Длительности и даты для графика ПД: жёлтый БП, зелёное окончание, красная просрочка."""
+    start_n = pd.Timestamp(start_n).normalize()
+    bf_n = pd.Timestamp(bf_n).normalize()
+    fin_ts = (
+        pd.Timestamp(fin_n).normalize()
+        if fin_n is not None and pd.notna(fin_n)
+        else pd.NaT
+    )
+    base_dur = max(int((bf_n - start_n).days), 0)
+    fact_dur = (
+        max(int((fin_ts - start_n).days), 0)
+        if done and pd.notna(fin_ts)
+        else 0
+    )
+    delay_dur = 0
+    delay_end = pd.NaT
+    bf_lbl = _pd_chart_date_label(bf_n)
+    af_lbl = _pd_chart_date_label(fin_ts) if done and pd.notna(fin_ts) else ""
+    if done and pd.notna(fin_ts) and fin_ts > bf_n:
+        delay_dur = int((fin_ts - bf_n).days)
+        delay_end = fin_ts
+        lbl_red = f"{bf_lbl}/{af_lbl}"
+    elif not done and ts_report > bf_n:
+        # ТЗ п.6c: красное — от базового окончания до даты отчёта.
+        delay_dur = int((ts_report - bf_n).days)
+        delay_end = ts_report
+        lbl_red = f"{bf_lbl}/{_pd_chart_date_label(ts_report)}"
+    else:
+        lbl_red = ""
+    gap_small = (
+        done
+        and pd.notna(fin_ts)
+        and abs(int((bf_n - fin_ts).days)) <= 5
+    )
+    lbl_yellow = bf_lbl
+    lbl_green = "" if (not done or gap_small or fact_dur <= 0) else af_lbl
+    if done and gap_small and af_lbl:
+        lbl_green = ""
+    return {
+        "_start_dt": start_n,
+        "_bf_dt": bf_n,
+        "_fin_dt": fin_ts if done and pd.notna(fin_ts) else pd.NaT,
+        "_delay_end_dt": delay_end,
+        "_base_dur": float(base_dur),
+        "_fact_dur": float(fact_dur),
+        "_delay_dur": float(delay_dur),
+        "_lbl_yellow": lbl_yellow,
+        "_lbl_green": lbl_green,
+        "_lbl_red": lbl_red,
+    }
+
+
+def _pd_msp_subtree_indices(
+    df: pd.DataFrame,
+    row_idx,
+    *,
+    hier_col: str,
+) -> pd.Index:
+    """Индексы поддерева MSP: строка + все нижестоящие до следующего узла того же уровня."""
+    if row_idx not in df.index or hier_col not in df.columns:
+        return pd.Index([row_idx])
+    lv = outline_level_numeric(df[hier_col])
+    row_lv = lv.loc[row_idx]
+    if pd.isna(row_lv):
+        return pd.Index([row_idx])
+    pos = df.index.get_loc(row_idx)
+    out: list = [row_idx]
+    for j in range(pos + 1, len(df)):
+        i = df.index[j]
+        if lv.loc[i] <= row_lv:
+            break
+        out.append(i)
+    return pd.Index(out)
+
+
 def _pd_build_delay_section_rows(
     filtered_df: pd.DataFrame,
     *,
     y_col: str,
+    source_df: pd.DataFrame,
+    project_col: Optional[str],
+    cipher_col: Optional[str],
+    hier_col: Optional[str],
     bs_dt: pd.Series,
+    ss_dt: pd.Series,
     bf_dt: pd.Series,
     sf_dt: pd.Series,
     af_dt: pd.Series,
     pct: pd.Series,
     report_date: date,
 ) -> pd.DataFrame:
-    """Строки для графика «По разделу»: жёлтый БО, зелёный факт 100%, красная просрочка."""
+    """Строки «По разделу»: каждая задача «Раздел N» из MSP (ТЗ п.5–6)."""
     ts_report = pd.Timestamp(report_date).normalize()
     rows: list[dict] = []
+    seen_y: set[str] = set()
     for idx, row in filtered_df.iterrows():
         y_lbl = str(row.get(y_col, "") or "").strip() or "—"
-        bs = bs_dt.loc[idx] if idx in bs_dt.index else pd.NaT
-        bf = bf_dt.loc[idx] if idx in bf_dt.index else pd.NaT
-        af = af_dt.loc[idx] if idx in af_dt.index else pd.NaT
-        sf = sf_dt.loc[idx] if idx in sf_dt.index else pd.NaT
-        pc = float(pct.loc[idx]) if idx in pct.index else 0.0
-        start = bs if pd.notna(bs) else bf
-        if pd.isna(start) or pd.isna(bf):
+        if y_lbl in seen_y:
             continue
-        start_n = pd.Timestamp(start).normalize()
-        bf_n = pd.Timestamp(bf).normalize()
-        base_dur = max(int((bf_n - start_n).days), 0)
-        done = pc >= 99.99
-        fin = pd.NaT
-        if done:
-            fin = af if pd.notna(af) else sf
-        fact_dur = 0
-        if done and pd.notna(fin):
-            fact_dur = max(int((pd.Timestamp(fin).normalize() - start_n).days), 0)
-        delay_dur = 0
-        if not done and ts_report > bf_n:
-            delay_dur = max(int((ts_report - bf_n).days), 0)
-        bf_lbl = _pd_chart_date_label(bf_n)
-        af_lbl = _pd_chart_date_label(fin) if done and pd.notna(fin) else ""
-        gap_small = False
-        if done and pd.notna(fin):
-            gap_small = abs(int((bf_n - pd.Timestamp(fin).normalize()).days)) <= 5
-        lbl_yellow = bf_lbl
-        lbl_green = "" if (not done or gap_small or fact_dur <= 0) else af_lbl
-        if done and gap_small and af_lbl:
-            lbl_yellow = bf_lbl
-            lbl_green = ""
-        lbl_red = (
-            f"{bf_lbl}/{_pd_chart_date_label(ts_report)}"
-            if delay_dur > 0 and bf_lbl
-            else ""
+        seen_y.add(y_lbl)
+        seg = _pd_segment_from_row_idx(
+            idx,
+            bs_dt=bs_dt,
+            ss_dt=ss_dt,
+            bf_dt=bf_dt,
+            sf_dt=sf_dt,
+            af_dt=af_dt,
+            pct=pct,
+            ts_report=ts_report,
         )
-        rows.append(
-            {
-                y_col: y_lbl,
-                "_base_dur": float(base_dur),
-                "_fact_dur": float(fact_dur),
-                "_delay_dur": float(delay_dur),
-                "_lbl_yellow": lbl_yellow,
-                "_lbl_green": lbl_green,
-                "_lbl_red": lbl_red,
-            }
+        if seg:
+            rows.append({y_col: y_lbl, **seg})
+    return pd.DataFrame(rows)
+
+
+def _pd_build_delay_project_rows(
+    source_df: pd.DataFrame,
+    *,
+    project_col: str,
+    display_projects: pd.Series,
+    bs_dt: pd.Series,
+    ss_dt: pd.Series,
+    bf_dt: pd.Series,
+    sf_dt: pd.Series,
+    af_dt: pd.Series,
+    pct: pd.Series,
+    report_date: date,
+) -> pd.DataFrame:
+    """Строки для графика «По проекту»: min/max по всем задачам ПД проекта в MSP."""
+    if project_col not in source_df.columns:
+        return pd.DataFrame()
+    ts_report = pd.Timestamp(report_date).normalize()
+    rows: list[dict] = []
+    for proj in display_projects.drop_duplicates():
+        proj_lbl = str(proj or "").strip() or "—"
+        idx = source_df.index[source_df[project_col] == proj]
+        seg = _pd_aggregate_delay_segments_for_indices(
+            idx,
+            bs_dt=bs_dt,
+            ss_dt=ss_dt,
+            bf_dt=bf_dt,
+            sf_dt=sf_dt,
+            af_dt=af_dt,
+            pct=pct,
+            ts_report=ts_report,
         )
+        if seg:
+            rows.append({project_col: proj_lbl, **seg})
     return pd.DataFrame(rows)
 
 
@@ -26142,24 +26421,112 @@ def _pd_delay_label_annotation(
     }
 
 
+def _pd_delay_date_annotation(
+    x_end,
+    x_start,
+    text: str,
+    *,
+    inside_color: str,
+    outside_color: str = "#E8E8E8",
+    min_days: int = 26,
+    anchor_end: bool = True,
+) -> dict | None:
+    text = str(text or "").strip()
+    if not text:
+        return None
+    end = pd.to_datetime(x_end, errors="coerce")
+    start = pd.to_datetime(x_start, errors="coerce")
+    if pd.isna(end) or pd.isna(start):
+        return None
+    days = int((pd.Timestamp(end).normalize() - pd.Timestamp(start).normalize()).days)
+    if days <= 0:
+        return None
+    if days >= min_days:
+        if anchor_end:
+            return {
+                "x": end,
+                "text": text,
+                "xanchor": "right",
+                "font": {"size": 10, "color": inside_color},
+            }
+        return {
+            "x": end,
+            "text": text,
+            "xanchor": "center",
+            "font": {"size": 10, "color": inside_color},
+        }
+    return {
+        "x": end,
+        "text": text,
+        "xanchor": "left",
+        "xshift": 6,
+        "font": {"size": 9, "color": outside_color},
+    }
+
+
+_PD_DELAY_CHART_ROW_PX = 54
+_PD_DELAY_CHART_RENDER_KEY = "pd_delay_duration_chart"
+
+_PD_DELAY_CHART_COMPACT_CSS = """
+<style>
+div[class*="st-key-pd_delay_duration_chart"] [data-testid="stPlotlyChart"]{
+  min-height:auto!important;height:auto!important;overflow-y:hidden!important;overflow-x:auto!important;
+}
+div[class*="st-key-pd_delay_duration_chart"] [data-testid="stPlotlyChart"] iframe{
+  min-height:auto!important;display:block!important;
+}
+</style>
+"""
+
+
+def _render_pd_delay_duration_chart(fig, caption_below: str) -> None:
+    if not st.session_state.get("_pd_delay_chart_css_injected"):
+        st.markdown(_PD_DELAY_CHART_COMPACT_CSS, unsafe_allow_html=True)
+        st.session_state["_pd_delay_chart_css_injected"] = True
+    try:
+        _h = int(fig.layout.height)
+    except Exception:
+        _h = 280
+    render_chart(
+        fig,
+        key=_PD_DELAY_CHART_RENDER_KEY,
+        height=_h,
+        max_height=None,
+        caption_below=caption_below,
+        skip_clamp_zoom=True,
+        compact=True,
+    )
+
+
 def _pd_delay_section_duration_figure(
     rows: pd.DataFrame,
     *,
     y_col: str,
 ) -> "go.Figure":
-    """ПД «По разделу»: жёлтый БП, зелёный факт 100%, красная просрочка с подписями дат."""
+    """ПД: жёлтый max БП, зелёное max окончание, красная просрочка; ось X — даты."""
     import plotly.graph_objects as go
 
+    _cols = [
+        y_col,
+        "_start_dt",
+        "_bf_dt",
+        "_fin_dt",
+        "_delay_end_dt",
+        "_delay_dur",
+        "_lbl_yellow",
+        "_lbl_green",
+        "_lbl_red",
+    ]
     work = rows.copy()
     if work.empty:
-        work = pd.DataFrame(
-            columns=[y_col, "_base_dur", "_fact_dur", "_delay_dur", "_lbl_yellow", "_lbl_green", "_lbl_red"]
-        )
+        work = pd.DataFrame(columns=_cols)
     work = work.sort_values("_delay_dur", ascending=False)
     y_labels = work[y_col].astype(str).tolist()
-    base_d = pd.to_numeric(work["_base_dur"], errors="coerce").fillna(0.0).tolist()
-    fact_d = pd.to_numeric(work["_fact_dur"], errors="coerce").fillna(0.0).tolist()
-    delay_d = pd.to_numeric(work["_delay_dur"], errors="coerce").fillna(0.0).tolist()
+    starts = pd.to_datetime(work["_start_dt"], errors="coerce")
+    bf_ends = pd.to_datetime(work["_bf_dt"], errors="coerce")
+    fin_ends = pd.to_datetime(work["_fin_dt"], errors="coerce")
+    delay_ends = pd.to_datetime(work["_delay_end_dt"], errors="coerce")
+    delay_d = pd.to_numeric(work["_delay_dur"], errors="coerce").fillna(0.0)
 
     def _wrap_label(text: str, width: int = 28) -> str:
         words = str(text).split()
@@ -26180,88 +26547,118 @@ def _pd_delay_section_duration_figure(
         return "<br>".join(lines)
 
     ticktext = [_wrap_label(lbl) for lbl in y_labels]
-    x_max = 1.0
-    for b, d in zip(base_d, delay_d):
-        x_max = max(x_max, float(b) + float(d))
-    for f in fact_d:
-        x_max = max(x_max, float(f))
+    fin_plot = fin_ends.fillna(starts)
 
-    for f in fact_d:
-        x_max = max(x_max, float(f))
+    def _pd_plotly_dt_list(series: pd.Series) -> list:
+        out: list = []
+        for v in series:
+            ts = pd.to_datetime(v, errors="coerce")
+            if pd.isna(ts):
+                out.append(None)
+            else:
+                out.append(pd.Timestamp(ts).to_pydatetime())
+        return out
+
+    starts_py = _pd_plotly_dt_list(starts)
+    bf_py = _pd_plotly_dt_list(bf_ends)
+    fin_py = _pd_plotly_dt_list(fin_plot)
 
     fig = go.Figure()
+    # Сначала зелёное окончание, затем жёлтый БП поверх — БП виден до базового срока,
+    # зелёный остаётся только после базового окончания (просрочка без красной полосы).
     fig.add_trace(
         go.Bar(
-            name="Базовое окончание",
+            name="Окончание",
             orientation="h",
             y=y_labels,
-            x=base_d,
-            marker=dict(color="#F1C40F"),
-            hovertemplate="%{y}<br>Базовое окончание: %{x:.0f} дн.<extra></extra>",
-        )
-    )
-    fig.add_trace(
-        go.Bar(
-            name="Факт (100%)",
-            orientation="h",
-            y=y_labels,
-            x=fact_d,
+            x=fin_py,
+            base=starts_py,
             marker=dict(color="#27AE60"),
-            hovertemplate="%{y}<br>Факт: %{x:.0f} дн.<extra></extra>",
+            hovertemplate="%{y}<br>Окончание: %{x|%d.%m.%Y}<extra></extra>",
         )
     )
     fig.add_trace(
         go.Bar(
-            name="Просрочка",
+            name="Базовый план",
             orientation="h",
             y=y_labels,
-            x=delay_d,
-            base=base_d,
-            marker=dict(color="#C0392B"),
-            hovertemplate="%{y}<br>Просрочка: %{x:.0f} дн.<extra></extra>",
+            x=bf_py,
+            base=starts_py,
+            marker=dict(color="#F1C40F"),
+            hovertemplate="%{y}<br>Базовый план: %{x|%d.%m.%Y}<extra></extra>",
         )
     )
-    for y_lbl, b, f, d, ly, lg, lr in zip(
+    red_y: list[str] = []
+    red_x: list = []
+    red_base: list = []
+    for y_lbl, bf_e, d_e, d_days in zip(
+        y_labels, bf_ends.tolist(), delay_ends.tolist(), delay_d.tolist()
+    ):
+        if float(d_days) > 0 and pd.notna(bf_e) and pd.notna(d_e):
+            red_y.append(y_lbl)
+            red_x.append(pd.Timestamp(d_e).to_pydatetime())
+            red_base.append(pd.Timestamp(bf_e).to_pydatetime())
+    if red_y:
+        fig.add_trace(
+            go.Bar(
+                name="Просрочка",
+                orientation="h",
+                y=red_y,
+                x=red_x,
+                base=red_base,
+                marker=dict(color="#C0392B"),
+                hovertemplate="%{y}<br>Просрочка до %{x|%d.%m.%Y}<extra></extra>",
+            )
+        )
+    for y_lbl, st, bf_e, fin_e, d_e, d_days, ly, lg, lr in zip(
         y_labels,
-        base_d,
-        fact_d,
-        delay_d,
+        starts.tolist(),
+        bf_ends.tolist(),
+        fin_ends.tolist(),
+        delay_ends.tolist(),
+        delay_d.tolist(),
         work["_lbl_yellow"].fillna("").astype(str).tolist(),
         work["_lbl_green"].fillna("").astype(str).tolist(),
         work["_lbl_red"].fillna("").astype(str).tolist(),
     ):
         _ann_kw = dict(y=y_lbl, showarrow=False, yanchor="middle")
-        _y_ann = _pd_delay_label_annotation(
-            0.0, b, ly, inside_color="#1a1a1a", min_inside=30.0, anchor_end=True
+        _y_ann = _pd_delay_date_annotation(
+            bf_e, st, ly, inside_color="#1a1a1a", min_days=30, anchor_end=True
         )
         if _y_ann:
             fig.add_annotation(**_ann_kw, **_y_ann)
-        _g_ann = _pd_delay_label_annotation(
-            0.0, f, lg, inside_color="#FFFFFF", min_inside=24.0, anchor_end=True
-        )
-        if _g_ann:
-            fig.add_annotation(**_ann_kw, **_g_ann)
-        _r_ann = _pd_delay_label_annotation(
-            float(b),
-            float(d),
-            lr,
-            inside_color="#FFFFFF",
-            outside_color="#E8E8E8",
-            min_inside=36.0,
-            anchor_end=False,
-        )
-        if _r_ann:
-            fig.add_annotation(**_ann_kw, **_r_ann)
+        if pd.notna(fin_e):
+            _g_ann = _pd_delay_date_annotation(
+                fin_e, st, lg, inside_color="#FFFFFF", min_days=24, anchor_end=True
+            )
+            if _g_ann:
+                fig.add_annotation(**_ann_kw, **_g_ann)
+        if float(d_days) > 0 and pd.notna(bf_e) and pd.notna(d_e):
+            _r_ann = _pd_delay_date_annotation(
+                d_e,
+                bf_e,
+                lr,
+                inside_color="#FFFFFF",
+                outside_color="#E8E8E8",
+                min_days=36,
+                anchor_end=False,
+            )
+            if _r_ann:
+                fig.add_annotation(**_ann_kw, **_r_ann)
+    _n_rows = max(1, len(y_labels))
+    # Как «По разделу»: ~54 px на строку, без раздувания при 2–3 проектах.
+    _chart_h = max(280, _n_rows * _PD_DELAY_CHART_ROW_PX + 120)
     fig.update_layout(
         barmode="overlay",
-        xaxis_title="Длительность / просрочка, дн.",
+        xaxis_title="Период",
         yaxis_title="",
-        height=max(520, len(y_labels) * 54),
+        height=_chart_h,
         showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         margin=dict(l=16, r=120, t=56, b=48),
-        bargap=0.16,
+        bargap=0.34,
     )
+    fig.update_traces(selector=dict(type="bar"), width=0.48)
     fig.update_yaxes(
         categoryorder="array",
         categoryarray=list(reversed(y_labels)),
@@ -26272,7 +26669,22 @@ def _pd_delay_section_duration_figure(
         tickfont=dict(size=11),
         automargin=True,
     )
-    fig.update_xaxes(range=[0, x_max * 1.18], automargin=True)
+    _x_pts = [t for t in starts_py + bf_py + fin_py + red_x if t is not None]
+    if _x_pts:
+        d0 = min(_x_pts)
+        d1 = max(_x_pts)
+        pad = max((d1 - d0).days * 0.06, 4)
+        fig.update_xaxes(
+            type="date",
+            tickformat="%d.%m.%Y",
+            automargin=True,
+            range=[
+                d0 - pd.Timedelta(days=pad),
+                d1 + pd.Timedelta(days=pad),
+            ],
+        )
+    else:
+        fig.update_xaxes(type="date", tickformat="%d.%m.%Y", automargin=True)
     fig = apply_chart_background(fig)
     return fig
 
@@ -26283,17 +26695,24 @@ def _pd_delay_plan_fact_figure(
     y_col: str,
     plan_col: str = "_pd_plan_cnt",
     fact_col: str = "_pd_fact_cnt",
-    overdue_col: str = "_pd_overdue_cnt",
+    overdue_col: str = "_pd_dev_cnt",
 ) -> "go.Figure":
-    """Горизонтальные наложенные полосы ПД: план (жёлтый), факт (зелёный), просрочка (красный)."""
+    """По проекту (ТЗ): жёлтый план, зелёный факт 100%, красное отклонение (план − факт)."""
     import plotly.graph_objects as go
 
     work = rows.copy()
+    if overdue_col not in work.columns:
+        work[overdue_col] = (
+            pd.to_numeric(work.get(plan_col, 0), errors="coerce").fillna(0)
+            - pd.to_numeric(work.get(fact_col, 0), errors="coerce").fillna(0)
+        ).clip(lower=0)
     work = work.sort_values(overdue_col, ascending=False)
     y_labels = work[y_col].astype(str).tolist()
     plan_v = pd.to_numeric(work[plan_col], errors="coerce").fillna(0.0)
     fact_v = pd.to_numeric(work[fact_col], errors="coerce").fillna(0.0)
-    overdue_v = pd.to_numeric(work[overdue_col], errors="coerce").fillna(0.0)
+    overdue_v = pd.to_numeric(work[overdue_col], errors="coerce").fillna(0.0).clip(
+        lower=0.0
+    )
 
     def _wrap_label(text: str, width: int = 26) -> str:
         words = str(text).split()
@@ -26319,7 +26738,7 @@ def _pd_delay_plan_fact_figure(
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
-            name="План на дату отчёта",
+            name="План (разделы ПД)",
             orientation="h",
             y=y_labels,
             x=plan_v,
@@ -26329,7 +26748,7 @@ def _pd_delay_plan_fact_figure(
             insidetextanchor="middle",
             textfont=dict(color="#1a1a1a", size=12),
             cliponaxis=False,
-            hovertemplate="%{y}<br>План: %{x:.0f} разд.<extra></extra>",
+            hovertemplate="%{y}<br>План: %{x:.0f} док.<extra></extra>",
         )
     )
     fig.add_trace(
@@ -26344,35 +26763,39 @@ def _pd_delay_plan_fact_figure(
             insidetextanchor="middle",
             textfont=dict(color="white", size=12),
             cliponaxis=False,
-            hovertemplate="%{y}<br>Факт: %{x:.0f} разд.<extra></extra>",
+            hovertemplate="%{y}<br>Факт: %{x:.0f} док.<extra></extra>",
         )
     )
+    red_base = fact_v.tolist()
     fig.add_trace(
         go.Bar(
-            name="Просрочка",
+            name="Отклонение (план − факт)",
             orientation="h",
             y=y_labels,
             x=overdue_v,
+            base=red_base,
             marker=dict(color="#C0392B"),
             text=[f"{int(v)}" if float(v) > 0 else "" for v in overdue_v],
             textposition="inside",
             insidetextanchor="middle",
             textfont=dict(color="white", size=12),
             cliponaxis=False,
-            hovertemplate="%{y}<br>Просрочка: %{x:.0f} разд.<extra></extra>",
+            hovertemplate="%{y}<br>Отклонение: %{x:.0f} док.<extra></extra>",
         )
     )
+    _n_pf = max(1, len(y_labels))
     fig.update_layout(
         barmode="overlay",
-        xaxis_title="Количество разделов ПД",
+        xaxis_title="Количество разделов ПД, док.",
         yaxis_title="",
-        height=max(480, len(y_labels) * 54),
+        height=max(280, _n_pf * _PD_DELAY_CHART_ROW_PX + 120),
         showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         margin=dict(l=12, r=48, t=56, b=48),
-        bargap=0.18,
+        bargap=0.34,
         uniformtext=dict(minsize=9, mode="show"),
     )
+    fig.update_traces(selector=dict(type="bar"), width=0.48)
     fig.update_yaxes(
         categoryorder="array",
         categoryarray=list(reversed(y_labels)),
