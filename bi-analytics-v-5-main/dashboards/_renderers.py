@@ -15680,9 +15680,12 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 _bf_dt.notna() & (_bf_dt.dt.normalize() <= _ts_pd)
             ).astype(int)
             filtered_df["_pd_row_fact"] = (_pc_pd >= 99.99).astype(int)
+            # Просрочка: разделы, у которых «Окончание» > «Базовое окончание».
+            _pd_bf_n = _bf_dt.dt.normalize()
+            _pd_sf_n = _sf_dt.dt.normalize()
             filtered_df["_pd_row_overdue"] = (
-                filtered_df["_pd_row_plan"] - filtered_df["_pd_row_fact"]
-            ).clip(lower=0).astype(int)
+                _bf_dt.notna() & _sf_dt.notna() & (_pd_sf_n > _pd_bf_n)
+            ).astype(int)
 
             if show_by_section:
                 _cipher_pd = (
@@ -16691,12 +16694,16 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             ].copy()
             summary_table = summary_table.rename(
                 columns={
-                    "_pd_plan_cnt": "План",
-                    "_pd_fact_cnt": "Факт",
-                    "_pd_overdue_cnt": "Просрочка",
+                    "_pd_plan_cnt": f"План {doc_code}",
+                    "_pd_fact_cnt": f"Факт {doc_code}",
+                    "_pd_overdue_cnt": f"Просрочка {doc_code}",
                 }
             )
-            for _cnt_col in ("План", "Факт", "Просрочка"):
+            for _cnt_col in (
+                f"План {doc_code}",
+                f"Факт {doc_code}",
+                f"Просрочка {doc_code}",
+            ):
                 summary_table[_cnt_col] = summary_table[_cnt_col].apply(
                     lambda x: int(round(float(x), 0)) if pd.notna(x) else 0
                 )
@@ -16715,10 +16722,21 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 summary_table[dev_col] = summary_table[dev_col].apply(
                     lambda x: int(round(float(x), 0)) if pd.notna(x) else ""
                 )
+        _pd_summary_cond = None
+        if is_pd:
+            _ovd_col = f"Просрочка {doc_code}"
+            if _ovd_col in summary_table.columns:
+                _pd_summary_cond = {
+                    _ovd_col: {
+                        "positive_color": "#e74c3c",
+                        "negative_color": TABLE_TEXT_COLOR,
+                    }
+                }
         _render_format_dataframe_html(
             summary_table,
             file_stem="rd_delay_summary",
             key_prefix="rd_delay_summary",
+            conditional_cols=_pd_summary_cond,
         )
 
         # Таблица: План окончания ПД/РД и Факт окончания ПД/РД
