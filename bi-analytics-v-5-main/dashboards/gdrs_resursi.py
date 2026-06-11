@@ -2228,12 +2228,19 @@ def gdrs_month_select_options(
     *,
     extra_paths: Optional[Iterable[Path | str]] = None,
 ) -> list[tuple[str, pd.Period]]:
-    """Список (подпись «Апрель 2026», Period[M]) по датам факта и снапшотов файлов."""
+    """Список (подпись «Апрель 2026», Period[M]) по датам факта СКУД.
+
+    Месяцы из имён файлов (Dogovor/resursi) добавляются только если в long_fact
+    нет ни одной даты — иначе в фильтре появлялись периоды с планом 1С, но без
+    строк СКУД (например «Июнь 2026» из снапшота Dogovor при факте до мая).
+    """
     period_set: set[pd.Period] = set()
+    fact_periods: set[pd.Period] = set()
     if long_fact is not None and not long_fact.empty and "date" in long_fact.columns:
         for p in pd.to_datetime(long_fact["date"], errors="coerce").dt.to_period("M").dropna().unique():
             period_set.add(p)
-    if extra_paths:
+            fact_periods.add(p)
+    if extra_paths and not fact_periods:
         period_set |= gdrs_month_periods_from_paths(extra_paths)
     if not period_set:
         return []
@@ -2247,6 +2254,24 @@ def gdrs_month_select_options(
         except Exception:
             continue
     return out
+
+
+def gdrs_default_month_labels(
+    month_options: list[tuple[str, pd.Period]],
+    long_fact: pd.DataFrame,
+) -> list[str]:
+    """Последний календарный месяц, в котором есть строки факта СКУД."""
+    if not month_options:
+        return []
+    if long_fact is None or long_fact.empty or "date" not in long_fact.columns:
+        return [month_options[-1][0]]
+    fact_periods = set(
+        pd.to_datetime(long_fact["date"], errors="coerce").dt.to_period("M").dropna().unique()
+    )
+    for lbl, per in reversed(month_options):
+        if per in fact_periods:
+            return [lbl]
+    return [month_options[-1][0]]
 
 
 def gdrs_resolve_month_periods(

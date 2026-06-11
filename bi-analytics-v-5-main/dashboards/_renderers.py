@@ -21635,6 +21635,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         gdrs_matrix_week_labels,
         build_gdrs_audit_export_frames,
         gdrs_month_select_options,
+        gdrs_default_month_labels,
         gdrs_resolve_month_periods,
         gdrs_months_date_range,
         gdrs_plan_snapshot_date,
@@ -21769,7 +21770,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 _plan_col = _fc4
                 _skud_col = _fc5
             with _month_col:
-                _default_months = [_month_labels[-1]] if _month_labels else []
+                _default_months = gdrs_default_month_labels(_month_options, long_fact)
                 migrate_gdrs_month_multiselect_state(
                     st,
                     f"gdrs_filter_months_{_gdrs_key_suffix}",
@@ -21822,6 +21823,25 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
     date_from = _pd.to_datetime(date_from)
     date_to = _pd.to_datetime(date_to)
     long_fact_period = gdrs_filter_fact_by_months(long_fact, _sel_periods)
+    if (
+        long_fact is not None
+        and not long_fact.empty
+        and (long_fact_period is None or long_fact_period.empty)
+    ):
+        _fact_periods = set(
+            pd.to_datetime(long_fact["date"], errors="coerce").dt.to_period("M").dropna().unique()
+        )
+        _avail_labels = [lbl for lbl, per in _month_options if per in _fact_periods]
+        _hint = (
+            f" Доступные месяцы с фактом СКУД: {', '.join(_avail_labels[-6:])}."
+            if _avail_labels
+            else ""
+        )
+        st.warning(
+            "За выбранный месяц нет фактических данных СКУД (план 1С может отображаться). "
+            "Выберите период с загруженным фактом."
+            + _hint
+        )
 
     _plan_agg = gdrs_agg_label_to_key(_plan_lbl)
     _skud_agg = gdrs_agg_label_to_key(_skud_lbl)
