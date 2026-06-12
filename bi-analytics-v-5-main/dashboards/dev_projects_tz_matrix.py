@@ -1292,6 +1292,12 @@ def _resolve_tessa_pred_source(ss: Any) -> Tuple[pd.DataFrame, Optional[str], st
             continue
         tk = tdf.copy()
         tk.columns = [str(c).strip() for c in tk.columns]
+        try:
+            from web_loader import _tessa_drop_cancelled_tag_rows
+
+            tk = _tessa_drop_cancelled_tag_rows(tk)
+        except Exception:
+            pass
         kk = _find_col(tk, ["KindName", "kindname", "Вид"])
         if not kk:
             continue

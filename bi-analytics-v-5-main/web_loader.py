@@ -935,6 +935,58 @@ def _merge_partner_project_maps(
     return a
 
 
+def _tessa_tag_column(df) -> Optional[str]:
+    if df is None or not hasattr(df, "columns"):
+        return None
+    cols = [str(c).strip() for c in df.columns]
+    for cand in (
+        "Tessa_Teg",
+        "TessaTag",
+        "TESSA_TEG",
+        "tessa_teg",
+        "ТегТесса",
+        "Тег Тесса",
+    ):
+        cl = cand.casefold()
+        for c in cols:
+            if c.casefold() == cl:
+                return c
+    for c in cols:
+        compact = "".join(c.casefold().replace("\xa0", " ").split())
+        if "tessa" in compact and "teg" in compact:
+            return c
+    return None
+
+
+def _tessa_drop_cancelled_tag_rows(df: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
+    """Исключить документы с тегом «Отмененный» в Tessa_Teg (не попадают в отчёты)."""
+    if df is None or getattr(df, "empty", True):
+        return df
+    tag_col = _tessa_tag_column(df)
+    if not tag_col:
+        return df
+    tags = (
+        df[tag_col]
+        .astype(str)
+        .str.replace("\ufeff", "", regex=False)
+        .str.replace("\xa0", " ", regex=False)
+        .str.strip()
+        .str.casefold()
+    )
+    empty_tag = tags.isin({"", "nan", "none", "<na>", "nat"})
+    cancelled = tags.isin(
+        {
+            "отмененный",
+            "отменённый",
+            "отменен",
+            "отменён",
+            "cancelled",
+            "canceled",
+        }
+    ) | tags.str.contains("отменен", na=False)
+    return df.loc[~(cancelled & ~empty_tag)].copy().reset_index(drop=True)
+
+
 def _load_tessa_file(filepath: Path) -> Optional[pd.DataFrame]:
     encodings = ["utf-8", "utf-8-sig", "windows-1251", "cp1251"]
     seps = [";", ","]
@@ -958,7 +1010,7 @@ def _load_tessa_file(filepath: Path) -> Optional[pd.DataFrame]:
                 if df.empty or len(df.columns) < 3:
                     continue
                 df.attrs["data_type"] = "tessa"
-                return df
+                return _tessa_drop_cancelled_tag_rows(df)
             except (UnicodeDecodeError, pd.errors.ParserError):
                 continue
     return None
@@ -2418,7 +2470,7 @@ def read_version_to_session(version_id: int):
     # ── Данные TESSA (исполнительная документация) ────────────────────────
     tessa = _load_version_data(version_id, "tessa", _db_mtime)
     if tessa is not None and not tessa.empty:
-        st.session_state["tessa_data"] = tessa
+        st.session_state["tessa_data"] = _tessa_drop_cancelled_tag_rows(tessa)
     elif st.session_state.get("tessa_data") is None:
         st.session_state["tessa_data"] = None
 
