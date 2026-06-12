@@ -1515,7 +1515,12 @@ def build_predpisaniya_detail_df(ss: Any, project_name_hint: str = "") -> pd.Dat
                 break
         if not matched and pk:
             return pd.DataFrame()
-    return pred.reset_index(drop=True)
+    try:
+        from tessa_status_utils import tessa_format_status_display_df
+
+        return tessa_format_status_display_df(pred.reset_index(drop=True))
+    except Exception:
+        return pred.reset_index(drop=True)
 
 
 def render_developer_predpisaniya_expander(

@@ -18,6 +18,12 @@ import html as html_module
 from urllib.parse import urlencode
 
 from config import MSP_PROJECT_FILTER_EXCLUDE_NAMES, RUSSIAN_MONTHS
+from tessa_status_utils import (
+    krstate_id_to_label as _krstate_id_to_label,
+    krstate_raw_to_label as _krstate_raw_to_label,
+    tessa_krstate_name_map as _tessa_krstate_name_map,
+    tessa_resolve_status_series as _tessa_resolve_status_series,
+)
 
 from .ui_quiet import (
     inject_unified_filters_css,
@@ -14279,6 +14285,50 @@ def dashboard_bdr(df):
 # и отклонение «Прогноз − План» в днях, чтобы дашборд не зиял пустотой при отсутствии
 # MSP-выгрузки с РД/ПД-полями. Параметр source_key переключает источник:
 # `rd_plan_data` — для РД, `pd_plan_data` — для ПД.
+_RD_PLAN_FOOTER_RE = re.compile(
+    r"^(всего|не\s+выдано|не\s+принято|на\s+рассмотрении|принято)\s*:",
+    re.IGNORECASE,
+)
+
+
+def _rd_plan_drop_footer_rows(
+    df: pd.DataFrame,
+    code_col: str | None = None,
+    name_col: str | None = None,
+    status_col: str | None = None,
+) -> pd.DataFrame:
+    """Убирает итоговые строки CSV (Всего:/Не выдано:), иначе в фильтр «Статус» попадают числа."""
+    if df is None or getattr(df, "empty", True):
+        return df
+    try:
+
+        def _is_footer(row) -> bool:
+            for v in row:
+                s = str(v).strip()
+                if s and _RD_PLAN_FOOTER_RE.match(s):
+                    return True
+            return False
+
+        mask = ~df.apply(_is_footer, axis=1)
+        if status_col and status_col in df.columns:
+            st = df[status_col].fillna("").astype(str).str.strip()
+            num_st = st.str.fullmatch(r"\d+(?:\.\d+)?", na=False)
+            if code_col and code_col in df.columns:
+                cd = df[code_col].fillna("").astype(str).str.strip()
+                mask &= ~(cd.eq("") & num_st)
+            if name_col and name_col in df.columns:
+                nm = df[name_col].fillna("").astype(str).str.strip()
+                mask &= ~(nm.eq("") & num_st)
+        return df.loc[mask].copy()
+    except Exception:
+        return df
+
+
+def _rd_plan_status_display_series(series: pd.Series) -> pd.Series:
+    """Текстовые подписи статуса в плане РД/ПД (KrStateID → русский, иначе как в CSV)."""
+    return series.map(_krstate_raw_to_label).replace("", pd.NA)
+
+
 def _rd_plan_fallback_view(
     page_title: str = "",
     doc_code: str = "РД",
@@ -14354,8 +14404,16 @@ def _rd_plan_fallback_view(
     if not (code_col and plan_col):
         return False
 
+    if source_key == "rd_plan_data" and proj_col and code_col:
+        try:
+            df = _augment_df_with_tessa_rd(df, proj_col, code_col)
+        except Exception:
+            pass
+
     df["_plan_dt"] = pd.to_datetime(df[plan_col], errors="coerce", dayfirst=True, format="mixed")
-    if forecast_col:
+    if "_tessa_production_dt" in df.columns and df["_tessa_production_dt"].notna().any():
+        df["_fact_dt"] = pd.to_datetime(df["_tessa_production_dt"], errors="coerce")
+    elif forecast_col:
         df["_fact_dt"] = pd.to_datetime(df[forecast_col], errors="coerce", dayfirst=True, format="mixed")
     else:
         df["_fact_dt"] = pd.NaT
@@ -14377,7 +14435,29 @@ def _rd_plan_fallback_view(
             if sel:
                 df = df[df[proj_col].astype(str).str.strip().isin(sel)]
 
+    df = _rd_plan_drop_footer_rows(
+        df, code_col=code_col, name_col=name_col, status_col=status_col
+    )
+    if df.empty:
+        st.info("Нет строк после фильтра.")
+        return True
+
     fb_k = f"{source_key}_{doc_code}_{page_title or 'doc'}"
+
+    _detail_tbl_rd = pd.DataFrame()
+    _tessa_loaded = False
+    if source_key == "rd_plan_data":
+        try:
+            _td0 = st.session_state.get("tessa_data")
+        except Exception:
+            _td0 = None
+        _tessa_loaded = _td0 is not None and not getattr(_td0, "empty", True)
+        if _tessa_loaded:
+            _sel_projects_fb = list(sel) if proj_col and sel else None
+            _detail_tbl_rd = _build_tessa_rd_detail_table(
+                selected_projects=_sel_projects_fb,
+                selected_section=None,
+            )
 
     nm_s = (
         df[name_col].fillna("").astype(str).str.strip()
@@ -14395,11 +14475,23 @@ def _rd_plan_fallback_view(
     )
 
     stat_vals: list[str] = []
-    if status_col and status_col in df.columns:
+    _use_tessa_status_filter = (
+        source_key == "rd_plan_data" and _tessa_loaded and not _detail_tbl_rd.empty
+    )
+    if _use_tessa_status_filter and "Статус" in _detail_tbl_rd.columns:
         stat_vals = sorted(
             {
                 str(v).strip()
-                for v in df[status_col].dropna().tolist()
+                for v in _detail_tbl_rd["Статус"].dropna().tolist()
+                if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
+            },
+            key=lambda x: x.casefold(),
+        )
+    elif status_col and status_col in df.columns:
+        stat_vals = sorted(
+            {
+                str(v).strip()
+                for v in _rd_plan_status_display_series(df[status_col]).dropna().tolist()
                 if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
             },
             key=lambda x: x.casefold(),
@@ -14468,9 +14560,15 @@ def _rd_plan_fallback_view(
         df = df[df["_plan_dt"].notna() & (_pn >= d_start) & (_pn <= d_end)].copy()
 
     if sel_st and stat_vals and set(sel_st) != set(stat_vals):
-        df = df[df[status_col].astype(str).str.strip().isin(sel_st)].copy()
+        if _use_tessa_status_filter and "Статус" in _detail_tbl_rd.columns:
+            _detail_tbl_rd = _detail_tbl_rd[
+                _detail_tbl_rd["Статус"].astype(str).str.strip().isin(sel_st)
+            ].copy()
+        elif status_col and status_col in df.columns:
+            _st_lbl = _rd_plan_status_display_series(df[status_col]).astype(str).str.strip()
+            df = df[_st_lbl.isin(sel_st)].copy()
 
-    if df.empty:
+    if df.empty and (_detail_tbl_rd.empty if _use_tessa_status_filter else True):
         st.info("Нет строк после фильтра.")
         return True
 
@@ -14507,32 +14605,16 @@ def _rd_plan_fallback_view(
     if sel_sec and sec_opts and set(sel_sec) != set(sec_opts):
         _sec_allow = {str(x).strip() for x in sel_sec}
 
-    _detail_tbl_rd = pd.DataFrame()
-    _tessa_loaded = False
-    if source_key == "rd_plan_data":
-        try:
-            _td0 = st.session_state.get("tessa_data")
-        except Exception:
-            _td0 = None
-        _tessa_loaded = _td0 is not None and not getattr(_td0, "empty", True)
-        if _tessa_loaded:
-            _sel_projects_fb = list(sel) if proj_col and sel else None
-            _detail_tbl_rd = _build_tessa_rd_detail_table(
-                selected_projects=_sel_projects_fb,
-                selected_section=None,
-            )
-            if not _detail_tbl_rd.empty and _sec_allow is not None:
-                _lbl_d = (
-                    _detail_tbl_rd["Шифр"].fillna("").astype(str).str.strip()
-                    + " "
-                    + _detail_tbl_rd["Наименование разделов работ"]
-                    .fillna("")
-                    .astype(str)
-                    .str.strip()
-                ).str.replace(r"\s+", " ", regex=True).str.strip()
-                _detail_tbl_rd = _detail_tbl_rd.loc[_lbl_d.isin(_sec_allow)].reset_index(
-                    drop=True
-                )
+    if not _detail_tbl_rd.empty and _sec_allow is not None:
+        _lbl_d = (
+            _detail_tbl_rd["Шифр"].fillna("").astype(str).str.strip()
+            + " "
+            + _detail_tbl_rd["Наименование разделов работ"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        ).str.replace(r"\s+", " ", regex=True).str.strip()
+        _detail_tbl_rd = _detail_tbl_rd.loc[_lbl_d.isin(_sec_allow)].reset_index(drop=True)
 
     use_tessa_detail = source_key == "rd_plan_data" and not _detail_tbl_rd.empty
 
@@ -14564,7 +14646,7 @@ def _rd_plan_fallback_view(
                 "Прогноз/Факт выдачи": df["_fact_dt"].dt.strftime("%d.%m.%Y").fillna("—"),
                 "Отклонение, дн.": (df["_fact_dt"] - df["_plan_dt"]).dt.days,
                 _status_label: (
-                    _safe_str(df[status_col])
+                    _rd_plan_status_display_series(df[status_col]).fillna("").astype(str)
                     if status_col and status_col in df.columns
                     else _safe_str("")
                 ),
@@ -15225,6 +15307,25 @@ def dashboard_rd_delay(df, is_pd: bool = False):
     )
     rework_col_rd = find_column(df, ["На доработке", "доработке"])
 
+    if not is_pd:
+        _cipher_enrich_col = find_column(
+            df,
+            [
+                "abbreviation",
+                "Шифр_ПД_и_РД",
+                "Шифр ПД и РД",
+                "Шифр ПД/РД",
+                "Шифр раздела",
+                "Шифр",
+                "DivisionCipher",
+            ],
+        )
+        if project_col and _cipher_enrich_col and _cipher_enrich_col in df.columns:
+            try:
+                df = _augment_df_with_tessa_rd(df, project_col, _cipher_enrich_col)
+            except Exception:
+                pass
+
     # Check if required columns exist (section optional — заменён фильтром по виду документации)
     missing_cols = []
     if not project_col or project_col not in df.columns:
@@ -15409,7 +15510,11 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         rd_status_options_rd: list[str] = []
         if on_approval_col_rd and on_approval_col_rd in df.columns:
             rd_status_options_rd.append("На согласовании")
-        if in_production_col_rd and in_production_col_rd in df.columns:
+        if (
+            ("_tessa_production_dt" in df.columns and df["_tessa_production_dt"].notna().any())
+            or (in_production_col_rd and in_production_col_rd in df.columns)
+            or _rd_has_tessa_production_dates()
+        ):
             rd_status_options_rd.append("Выдано в производство работ")
         if contractor_transfer_col_rd and contractor_transfer_col_rd in df.columns:
             rd_status_options_rd.append("Передано подрядчику")
@@ -15479,20 +15584,10 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 on_approval_series, errors="coerce"
             ).fillna(0)
             status_mask = status_mask | (on_approval_numeric > 0)
-        if (
-            "Выдано в производство работ" in selected_statuses_rd
-            and in_production_col_rd
-            and in_production_col_rd in filtered_df.columns
-        ):
-            in_production_series = (
-                filtered_df[in_production_col_rd]
-                .astype(str)
-                .str.replace(",", ".", regex=False)
+        if "Выдано в производство работ" in selected_statuses_rd:
+            status_mask = status_mask | _rd_in_production_mask(
+                filtered_df, in_production_col_rd
             )
-            in_production_numeric = pd.to_numeric(
-                in_production_series, errors="coerce"
-            ).fillna(0)
-            status_mask = status_mask | (in_production_numeric > 0)
         if (
             "Передано подрядчику" in selected_statuses_rd
             and contractor_transfer_col_rd
@@ -15552,8 +15647,6 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             _overdue_plan = _pe.notna() & (_pe.dt.date < _today_d)
             status_mask = status_mask | (_issued & _overdue_plan & (~_done_on_time))
         filtered_df = filtered_df[status_mask].copy()
-
-    _pd_indicators_df = filtered_df.copy()
 
     if selected_projects:
         _pk_set = {_project_filter_norm_key(p) for p in selected_projects}
@@ -15724,31 +15817,6 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 _bf_dt.notna() & _sf_dt.notna() & (_pd_sf_n > _pd_bf_n)
             ).astype(int)
 
-            _pd_ind_pct_col = _pd_msp_pct_complete_col(_pd_indicators_df)
-            _pd_ind_pct_all = (
-                pd.to_numeric(_pd_indicators_df[_pd_ind_pct_col], errors="coerce").fillna(0.0)
-                if _pd_ind_pct_col and _pd_ind_pct_col in _pd_indicators_df.columns
-                else pd.Series(0.0, index=_pd_indicators_df.index)
-            )
-            _ind_bfin = _pd_msp_find_baseline_finish_col(_pd_indicators_df) or (
-                plan_end_col
-                if plan_end_col and plan_end_col in _pd_indicators_df.columns
-                else None
-            )
-            _ind_bf_dt = (
-                _to_datetime_series(_pd_indicators_df[_ind_bfin])
-                if _ind_bfin and _ind_bfin in _pd_indicators_df.columns
-                else pd.Series(pd.NaT, index=_pd_indicators_df.index)
-            )
-            _pd_indicator_chart_data = _pd_build_project_indicator_chart_data(
-                _pd_indicators_df,
-                project_col=project_col,
-                masks=_pd_masks_delay,
-                report_date=pd_report_date,
-                bf_dt=_ind_bf_dt,
-                pct_series=_pd_ind_pct_all,
-            )
-
             if show_by_section:
                 _cipher_pd = (
                     _msp_cipher_col
@@ -15810,7 +15878,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     )
                     y_column = "Проект"
                     _render_pd_delay_project_indicators(
-                        _pd_indicator_chart_data, y_column, doc_code
+                        chart_data, y_column, doc_code
                     )
                 else:
                     chart_data = filtered_df[
@@ -15876,7 +15944,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     return
 
                 _render_pd_delay_project_indicators(
-                    _pd_indicator_chart_data, y_column, doc_code
+                    chart_data, y_column, doc_code
                 )
         elif show_by_tasks:
             # Prepare data for chart - each task is a separate bar
@@ -16432,17 +16500,29 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             if upload_date_col and upload_date_col in detail_df.columns
             else pd.Series(pd.NaT, index=detail_df.index)
         )
-        detail_df["_detail_production_issue_date"] = (
-            _to_datetime_series(detail_df[production_issue_date_col])
-            if production_issue_date_col and production_issue_date_col in detail_df.columns
-            else detail_df["_fact_end_dt"].copy()
-        )
+        if "_tessa_production_dt" in detail_df.columns:
+            detail_df["_detail_production_issue_date"] = pd.to_datetime(
+                detail_df["_tessa_production_dt"], errors="coerce"
+            )
+        else:
+            detail_df["_detail_production_issue_date"] = (
+                _to_datetime_series(detail_df[production_issue_date_col])
+                if production_issue_date_col and production_issue_date_col in detail_df.columns
+                else detail_df["_fact_end_dt"].copy()
+            )
 
         def _resolve_rd_status_label(row) -> str:
+            if "_tessa_production_dt" in row.index and pd.notna(row.get("_tessa_production_dt")):
+                return "Выдано в производство работ"
             if contractor_transfer_col_rd and contractor_transfer_col_rd in row.index:
                 if float(_to_numeric_series(pd.Series([row[contractor_transfer_col_rd]])).iloc[0]) > 0:
                     return "Передано подрядчику"
             if in_production_col_rd and in_production_col_rd in row.index:
+                _prod_dt = pd.to_datetime(
+                    str(row[in_production_col_rd]), errors="coerce", dayfirst=True, format="mixed"
+                )
+                if pd.notna(_prod_dt):
+                    return "Выдано в производство работ"
                 if float(_to_numeric_series(pd.Series([row[in_production_col_rd]])).iloc[0]) > 0:
                     return "Выдано в производство работ"
             if on_approval_col_rd and on_approval_col_rd in row.index:
@@ -24340,6 +24420,59 @@ def _krstate_bucket(raw) -> str:
     return "other"
 
 
+def _rd_has_tessa_production_dates() -> bool:
+    try:
+        return bool(_rd_task_dates_by_card())
+    except Exception:
+        return False
+
+
+def _rd_in_production_mask(
+    df: pd.DataFrame, in_production_col: str | None = None
+) -> pd.Series:
+    """Строки «выдано в производство»: приоритет — дата из tessa_tasks (ГИП/Подписан)."""
+    if df is None or getattr(df, "empty", True):
+        return pd.Series(dtype=bool)
+    if "_tessa_production_dt" in df.columns:
+        m = df["_tessa_production_dt"].notna()
+        if m.any():
+            return m.fillna(False)
+    if in_production_col and in_production_col in df.columns:
+        s = df[in_production_col]
+        dt = pd.to_datetime(s.astype(str), errors="coerce", dayfirst=True, format="mixed")
+        if dt.notna().any():
+            return dt.notna()
+        num = pd.to_numeric(
+            s.astype(str).str.replace(",", ".", regex=False), errors="coerce"
+        ).fillna(0)
+        return num > 0
+    return pd.Series(False, index=df.index)
+
+
+def _rd_production_fact_date_series(
+    df: pd.DataFrame,
+    in_production_col: str | None = None,
+    fallback_fact_col: str | None = None,
+) -> pd.Series:
+    if df is None or getattr(df, "empty", True):
+        return pd.Series(dtype="datetime64[ns]")
+    if "_tessa_production_dt" in df.columns:
+        ts = pd.to_datetime(df["_tessa_production_dt"], errors="coerce")
+        if ts.notna().any():
+            return ts
+    if in_production_col and in_production_col in df.columns:
+        dt = pd.to_datetime(
+            df[in_production_col].astype(str), errors="coerce", dayfirst=True, format="mixed"
+        )
+        if dt.notna().any():
+            return dt
+    if fallback_fact_col and fallback_fact_col in df.columns:
+        return pd.to_datetime(
+            df[fallback_fact_col].astype(str), errors="coerce", dayfirst=True, format="mixed"
+        )
+    return pd.Series(pd.NaT, index=df.index)
+
+
 # ── Исполнительная документация: детальная таблица (тёмная тема, как остальной дашборд) ──
 _EXEC_DOC_KPI_CSS = """
 <style>
@@ -24929,23 +25062,7 @@ def dashboard_executive_documentation(df):
     except Exception:
         pass
 
-    krstates_df = st.session_state.get("reference_krstates", None)
-    status_map = {}
-    if krstates_df is not None and not krstates_df.empty:
-        for _, row in krstates_df.iterrows():
-            name = str(row.get("Название", "")).strip()
-            ru = str(row.get("ru", "")).strip()
-            if name and ru:
-                status_map[name] = ru
-
-    if "KrState" in work.columns:
-        work["Статус"] = work["KrState"].apply(
-            lambda x: status_map.get(str(x).strip(), str(x).strip()) if pd.notna(x) else "Неизвестно"
-        )
-    elif "KrStateID" in work.columns:
-        work["Статус"] = work["KrStateID"].astype(str)
-    else:
-        work["Статус"] = "Неизвестно"
+    work["Статус"] = _tessa_resolve_status_series(work)
 
     work = _tessa_drop_project_state_rows(work)
     _proj_lookup_exec, _, _ = _pred_projekts_1c_lookup()
@@ -26510,7 +26627,7 @@ def _pd_build_project_indicator_chart_data(
     bf_dt: pd.Series,
     pct_series: pd.Series,
 ) -> pd.DataFrame:
-    """Сводка план/факт по проектам для индикаторов (без фильтра «Проект»)."""
+    """Сводка план/факт по проектам для индикаторов."""
     if (
         source_df is None
         or source_df.empty
@@ -27421,7 +27538,7 @@ def dashboard_documentation(
     if not is_pd:
         if not rd_count_col:
             missing_cols.append("Количество разделов РД по Договору")
-        if not in_production_col:
+        if not in_production_col and not _rd_has_tessa_production_dates():
             missing_cols.append("Выдано в производство работ")
 
     if missing_cols:
@@ -27466,6 +27583,24 @@ def dashboard_documentation(
         df = _project_column_apply_canonical(df, project_col)
     if is_pd:
         df = _pd_dedupe_msp_tasks_latest(df)
+    if not is_pd:
+        _cipher_enrich_doc = find_column(
+            df,
+            [
+                "abbreviation",
+                "Шифр_ПД_и_РД",
+                "Шифр ПД и РД",
+                "Шифр ПД/РД",
+                "Шифр раздела",
+                "Шифр",
+                "DivisionCipher",
+            ],
+        )
+        if project_col and _cipher_enrich_doc and _cipher_enrich_doc in df.columns:
+            try:
+                df = _augment_df_with_tessa_rd(df, project_col, _cipher_enrich_doc)
+            except Exception:
+                pass
 
     # Подпись раздела для фильтра: «Шифр + Наименование» (ПД и РД).
     rd_section_labels_series: Optional[pd.Series] = _doc_section_labels_series(
@@ -27632,7 +27767,11 @@ def dashboard_documentation(
         rd_status_options: list[str] = []
         if on_approval_col and on_approval_col in df.columns:
             rd_status_options.append("На согласовании")
-        if in_production_col and in_production_col in df.columns:
+        if (
+            ("_tessa_production_dt" in df.columns and df["_tessa_production_dt"].notna().any())
+            or (in_production_col and in_production_col in df.columns)
+            or _rd_has_tessa_production_dates()
+        ):
             rd_status_options.append("Выдано в производство работ")
         if contractor_col and contractor_col in df.columns:
             rd_status_options.append(
@@ -27747,20 +27886,10 @@ def dashboard_documentation(
             ).fillna(0)
             status_mask = status_mask | (on_approval_numeric > 0)
 
-        if (
-            "Выдано в производство работ" in selected_statuses
-            and in_production_col
-            and in_production_col in filtered_df.columns
-        ):
-            in_production_series = (
-                filtered_df[in_production_col]
-                .astype(str)
-                .str.replace(",", ".", regex=False)
+        if "Выдано в производство работ" in selected_statuses:
+            status_mask = status_mask | _rd_in_production_mask(
+                filtered_df, in_production_col
             )
-            in_production_numeric = pd.to_numeric(
-                in_production_series, errors="coerce"
-            ).fillna(0)
-            status_mask = status_mask | (in_production_numeric > 0)
 
         if (
             (
@@ -27890,7 +28019,7 @@ def dashboard_documentation(
                 if rd_count_col and rd_count_col in df.columns
                 else 0.0
             )
-            issued_sum = float(_to_numeric_series(df[in_production_col]).sum())
+            issued_sum = float(_rd_in_production_mask(df, in_production_col).sum())
             on_ap_sum = (
                 float(_to_numeric_series(df[on_approval_col]).sum())
                 if on_approval_col and on_approval_col in df.columns
@@ -28211,9 +28340,15 @@ def dashboard_documentation(
                 st.info(_rd_dyn_hint)
                 return
 
-            if not in_production_col or in_production_col not in df.columns:
+            _has_prod_source = (
+                ("_tessa_production_dt" in df.columns and df["_tessa_production_dt"].notna().any())
+                or (in_production_col and in_production_col in df.columns)
+                or _rd_has_tessa_production_dates()
+            )
+            if not _has_prod_source:
                 st.warning(
-                    "Для построения графика 'Динамика выдачи РД' необходима колонка 'Выдано в производство работ'."
+                    "Для построения графика 'Динамика выдачи РД' необходима колонка "
+                    "'Выдано в производство работ' или данные tessa_*-task.csv (ГИП/Подписан)."
                 )
                 st.info(_rd_dyn_hint)
                 return
@@ -28243,12 +28378,15 @@ def dashboard_documentation(
                     if float(cnt_num.sum()) > 0.0:
                         df["rd_plan_numeric"] = cnt_num
 
-            df["in_production_numeric"] = _to_numeric_series(df[in_production_col])
+            _prod_mask = _rd_in_production_mask(df, in_production_col)
+            df["in_production_numeric"] = np.where(
+                _prod_mask,
+                df["rd_plan_numeric"].where(df["rd_plan_numeric"] > 0, 1.0),
+                0.0,
+            )
             df["_doc_plan_date"] = _to_datetime_series(df[plan_date_col])
-            df["_doc_fact_date"] = (
-                _to_datetime_series(df[fact_date_col])
-                if fact_date_col and fact_date_col in df.columns
-                else pd.Series(pd.NaT, index=df.index)
+            df["_doc_fact_date"] = _rd_production_fact_date_series(
+                df, in_production_col, fact_date_col
             )
             if df["_doc_plan_date"].notna().any():
                 max_plan_end_date = df["_doc_plan_date"].max().date()
@@ -35544,6 +35682,22 @@ def _augment_df_with_tessa_rd(
         _pick(p, c, "KrState") for p, c in zip(proj_keys, ciph_keys)
     ]
     out["_tessa_card_count"] = [_count(p, c) for p, c in zip(proj_keys, ciph_keys)]
+    try:
+        _task_dates = _rd_task_dates_by_card() or {}
+    except Exception:
+        _task_dates = {}
+
+    def _production_dt(pk: str, ck: str):
+        doc_id = _pick(pk, ck, "DocID")
+        if not doc_id:
+            return pd.NaT
+        rec = _task_dates.get(str(doc_id)) or {}
+        ts = rec.get("production")
+        return ts if ts is not None and pd.notna(ts) else pd.NaT
+
+    out["_tessa_production_dt"] = [
+        _production_dt(p, c) for p, c in zip(proj_keys, ciph_keys)
+    ]
     return out
 
 
@@ -36656,7 +36810,11 @@ def _build_tessa_rd_detail_table(
                 "Дата загрузки раздела генпроектировщиком": designer_upload_str,
                 "Дата выдачи в производство работ": production_str,
                 "Задача": task,
-                "Статус": _safe(kr_state_col, r) if kr_state_col else "",
+                "Статус": (
+                    _krstate_raw_to_label(r.get(kr_state_col))
+                    if kr_state_col
+                    else ""
+                ),
             }
         )
     out = pd.DataFrame(rows)
@@ -36820,20 +36978,7 @@ def dashboard_predpisania(df):
         pred, ["CardId", "CardID", "cardId", "TaskCardId", "ИдКарточки"]
     )
 
-    krstates_df = st.session_state.get("reference_krstates", None)
-    status_map = {}
-    if krstates_df is not None and not krstates_df.empty:
-        for _, row in krstates_df.iterrows():
-            name = str(row.get("Название", "")).strip()
-            ru = str(row.get("ru", "")).strip()
-            if name and ru:
-                status_map[name] = ru
-    if "KrState" in pred.columns:
-        pred["Статус"] = pred["KrState"].apply(
-            lambda x: status_map.get(str(x).strip(), str(x).strip()) if pd.notna(x) else "Неизвестно"
-        )
-    else:
-        pred["Статус"] = "Неизвестно"
+    pred["Статус"] = _tessa_resolve_status_series(pred)
     # Исключение документов в статусе «Проект» (загружены, но процесс не запущен).
     # Заказчик 07.05.2026 (скрин 7): «нужно исключить из данных все документы
     # в состоянии KrState=Проект». Маппинг KrStateID в выгрузке TESSA
