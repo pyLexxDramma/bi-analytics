@@ -24877,6 +24877,12 @@ def dashboard_executive_documentation(df):
 
     work.columns = [str(c).strip() for c in work.columns]
     try:
+        from web_loader import _tessa_drop_cancelled_tag_rows
+
+        work = _tessa_drop_cancelled_tag_rows(work)
+    except Exception:
+        pass
+    try:
         # Дополняем строки ИД данными карточки/задачи TESSA по ключам DocID/CardId.
         # Это выравнивает поля сроков, передачи заказчику и согласования с фактическими данными TESSA.
         work = _tessa_fill_card_from_doc_lookup(work)
@@ -36730,6 +36736,12 @@ def dashboard_predpisania(df):
         return
 
     work.columns = [str(c).strip() for c in work.columns]
+    try:
+        from web_loader import _tessa_drop_cancelled_tag_rows
+
+        work = _tessa_drop_cancelled_tag_rows(work)
+    except Exception:
+        pass
     work = _tessa_fill_card_from_doc_lookup(work)
 
     kind_col = _tessa_find_column(work, ["KindName", "kindname", "Вид"])
