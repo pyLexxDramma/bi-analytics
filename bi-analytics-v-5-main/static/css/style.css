@@ -1310,12 +1310,9 @@ div[data-baseweb="menu"] li span {
     min-height: 360px !important;
     opacity: 1 !important;
 }
-div[class*="st-key-pd_delay_duration_chart"] [data-testid="stPlotlyChart"] {
-    min-height: unset !important;
+div[class*="st-key-pd_delay_section_chart"] [data-testid="stPlotlyChart"],
+div[class*="st-key-pd_delay_project_chart"] [data-testid="stPlotlyChart"] {
     overflow-y: hidden !important;
-}
-div[class*="st-key-pd_delay_duration_chart"] [data-testid="stPlotlyChart"] iframe {
-    min-height: unset !important;
 }
 
 /* Подзаголовки на экране входа и вне .main (если есть) */

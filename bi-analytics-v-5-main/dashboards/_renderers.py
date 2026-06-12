@@ -15438,14 +15438,8 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 key=f"rd_delay_pd_report_date_{doc_code}",
                 format="DD.MM.YYYY",
             )
-    # Apply filters
+    # Apply filters (проект — после раздела/статуса; индикаторы — без фильтра проекта)
     filtered_df = df.copy()
-
-    if selected_projects:
-        _pk_set = {_project_filter_norm_key(p) for p in selected_projects}
-        filtered_df = filtered_df[
-            filtered_df[project_col].map(_project_filter_norm_key).isin(_pk_set)
-        ]
 
     if selected_section != "Все":
         if (
@@ -15558,6 +15552,14 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             _overdue_plan = _pe.notna() & (_pe.dt.date < _today_d)
             status_mask = status_mask | (_issued & _overdue_plan & (~_done_on_time))
         filtered_df = filtered_df[status_mask].copy()
+
+    _pd_indicators_df = filtered_df.copy()
+
+    if selected_projects:
+        _pk_set = {_project_filter_norm_key(p) for p in selected_projects}
+        filtered_df = filtered_df[
+            filtered_df[project_col].map(_project_filter_norm_key).isin(_pk_set)
+        ]
 
     if filtered_df.empty:
         st.info("Нет данных для выбранных фильтров.")
@@ -15722,6 +15724,31 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 _bf_dt.notna() & _sf_dt.notna() & (_pd_sf_n > _pd_bf_n)
             ).astype(int)
 
+            _pd_ind_pct_col = _pd_msp_pct_complete_col(_pd_indicators_df)
+            _pd_ind_pct_all = (
+                pd.to_numeric(_pd_indicators_df[_pd_ind_pct_col], errors="coerce").fillna(0.0)
+                if _pd_ind_pct_col and _pd_ind_pct_col in _pd_indicators_df.columns
+                else pd.Series(0.0, index=_pd_indicators_df.index)
+            )
+            _ind_bfin = _pd_msp_find_baseline_finish_col(_pd_indicators_df) or (
+                plan_end_col
+                if plan_end_col and plan_end_col in _pd_indicators_df.columns
+                else None
+            )
+            _ind_bf_dt = (
+                _to_datetime_series(_pd_indicators_df[_ind_bfin])
+                if _ind_bfin and _ind_bfin in _pd_indicators_df.columns
+                else pd.Series(pd.NaT, index=_pd_indicators_df.index)
+            )
+            _pd_indicator_chart_data = _pd_build_project_indicator_chart_data(
+                _pd_indicators_df,
+                project_col=project_col,
+                masks=_pd_masks_delay,
+                report_date=pd_report_date,
+                bf_dt=_ind_bf_dt,
+                pct_series=_pd_ind_pct_all,
+            )
+
             if show_by_section:
                 _cipher_pd = (
                     _msp_cipher_col
@@ -15782,6 +15809,9 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                         .rename(columns={project_col: "Проект"})
                     )
                     y_column = "Проект"
+                    _render_pd_delay_project_indicators(
+                        _pd_indicator_chart_data, y_column, doc_code
+                    )
                 else:
                     chart_data = filtered_df[
                         ["_pd_chart_y", "_pd_row_plan", "_pd_row_fact", "_pd_row_overdue"]
@@ -15808,6 +15838,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     chart_data["_pd_dev_cnt"] = (
                         chart_data["_pd_plan_cnt"] - chart_data["_pd_fact_cnt"]
                     ).clip(lower=0)
+                    chart_data["_pd_overdue_cnt"] = chart_data["_pd_dev_cnt"]
                     if chart_data.empty:
                         st.info("Нет данных для построения графика.")
                         return
@@ -15820,9 +15851,15 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                         280,
                         len(chart_data) * _PD_DELAY_CHART_ROW_PX + 120,
                     )
+                    st.markdown(
+                        _pd_delay_chart_compact_css(
+                            _PD_DELAY_CHART_KEY_PROJECT, _h_proj
+                        ),
+                        unsafe_allow_html=True,
+                    )
                     render_chart(
                         fig,
-                        key=_PD_DELAY_CHART_RENDER_KEY,
+                        key=_PD_DELAY_CHART_KEY_PROJECT,
                         height=_h_proj,
                         max_height=None,
                         caption_below=f"Просрочка выдачи {doc_code}",
@@ -15838,35 +15875,9 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     st.info("Нет данных для построения графика.")
                     return
 
-                st.markdown(f"**Индикаторы просрочки {doc_code} по проектам**")
-                _ind_cols = st.columns(min(4, max(1, len(chart_data))), gap="small")
-                for _i, (_idx, _row) in enumerate(chart_data.iterrows()):
-                    _proj = str(_row[y_column])
-                    _plan_i = int(_row.get("_pd_plan_cnt", 0) or 0)
-                    _fact_i = int(_row.get("_pd_fact_cnt", 0) or 0)
-                    _ovd_i = int(
-                        max(
-                            0,
-                            _plan_i - _fact_i,
-                        )
-                    )
-                    with _ind_cols[_i % len(_ind_cols)]:
-                        st.markdown(
-                            (
-                                f"<div style='background:#1e2a3a; color:white; padding:10px 14px; "
-                                f"border-radius:8px; margin-bottom:8px;'>"
-                                f"<div style='font-size:13px; opacity:0.9;'>{_proj}</div>"
-                                f"<div style='font-size:14px; margin-top:6px;'>"
-                                f"<span style='background:#F1C40F;color:#1a1a1a;padding:2px 8px;"
-                                f"border-radius:4px;margin-right:6px;'>План: {_plan_i} док.</span>"
-                                f"<span style='background:#27AE60;padding:2px 8px;border-radius:4px;"
-                                f"margin-right:6px;'>Факт: {_fact_i} док.</span>"
-                                f"<span style='background:#C0392B;padding:2px 8px;border-radius:4px;'>"
-                                f"Отклонение: {_ovd_i} док.</span>"
-                                f"</div></div>"
-                            ),
-                            unsafe_allow_html=True,
-                        )
+                _render_pd_delay_project_indicators(
+                    _pd_indicator_chart_data, y_column, doc_code
+                )
         elif show_by_tasks:
             # Prepare data for chart - each task is a separate bar
             if section_col and section_col in filtered_df.columns:
@@ -16746,11 +16757,17 @@ def dashboard_rd_delay(df, is_pd: bool = False):
 
         # Summary table
         render_table_subheader(st, "Сводка по просрочке")
-        if is_pd and {"_pd_plan_cnt", "_pd_fact_cnt", "_pd_overdue_cnt"}.issubset(
-            chart_data.columns
-        ):
+        if is_pd and {"_pd_plan_cnt", "_pd_fact_cnt"}.issubset(chart_data.columns):
             _pd_sum_y = y_column if y_column in chart_data.columns else chart_data.columns[0]
-            summary_table = chart_data[
+            _pd_sum_src = chart_data.copy()
+            if "_pd_overdue_cnt" not in _pd_sum_src.columns:
+                if "_pd_dev_cnt" in _pd_sum_src.columns:
+                    _pd_sum_src["_pd_overdue_cnt"] = _pd_sum_src["_pd_dev_cnt"]
+                else:
+                    _pd_sum_src["_pd_overdue_cnt"] = (
+                        _pd_sum_src["_pd_plan_cnt"] - _pd_sum_src["_pd_fact_cnt"]
+                    ).clip(lower=0)
+            summary_table = _pd_sum_src[
                 [_pd_sum_y, "_pd_plan_cnt", "_pd_fact_cnt", "_pd_overdue_cnt"]
             ].copy()
             summary_table = summary_table.rename(
@@ -16777,12 +16794,15 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 summary_table[dev_col] = summary_table[dev_col].apply(
                     lambda x: int(round(float(x), 0)) if pd.notna(x) else ""
                 )
-        else:
+        elif not is_pd:
             summary_table = chart_data[["Проект", dev_col, "% выполнения РД/ПД"]].copy()
             if dev_col in summary_table.columns:
                 summary_table[dev_col] = summary_table[dev_col].apply(
                     lambda x: int(round(float(x), 0)) if pd.notna(x) else ""
                 )
+        else:
+            st.info("Нет данных для сводки по просрочке.")
+            summary_table = pd.DataFrame()
         _pd_summary_cond = None
         if is_pd:
             _ovd_col = f"Просрочка {doc_code}"
@@ -16793,12 +16813,13 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                         "negative_color": TABLE_TEXT_COLOR,
                     }
                 }
-        _render_format_dataframe_html(
-            summary_table,
-            file_stem="rd_delay_summary",
-            key_prefix="rd_delay_summary",
-            conditional_cols=_pd_summary_cond,
-        )
+        if not summary_table.empty:
+            _render_format_dataframe_html(
+                summary_table,
+                file_stem="rd_delay_summary",
+                key_prefix="rd_delay_summary",
+                conditional_cols=_pd_summary_cond,
+            )
 
         # Таблица: План окончания ПД/РД и Факт окончания ПД/РД
         # Для ПД скрыта (легаси-таблица выводит все строки MSP без ограничения и
@@ -25741,12 +25762,17 @@ def _pd_delay_row_mask(df: pd.DataFrame, masks: dict) -> pd.Series:
         "раздел", case=False, na=False
     )
 
-    # Ур.5 «Раздел …» под этапом ПД (основной срез для графика просрочки).
+    # ТЗ: все разделы ПД ур.4 структуры (metrics) в ветке ПД — все этапы, не только 1-й.
+    m_all_l4 = m_met & anc_m & cipher_m & razdel_m
+    if m_all_l4.any():
+        return m_all_l4
+
+    # Ур.5 «Раздел …» под этапом ПД — fallback, если в выгрузке нет ур.4.
     m_dyn_sec = dyn & anc_m & cipher_m & razdel_m
     if m_dyn_sec.any():
         return m_dyn_sec
 
-    # Ур.4 структуры (Ленинский и аналоги): «Раздел N …», не дочерние ур.5.
+    # Ур.4 структуры под этапом ПД (узкий fallback).
     if outline_col and outline_col in df.columns:
         lv_s = outline_level_numeric(df[outline_col])
         parent_names = _pd_msp_immediate_parent_names(df, hier_col, name_col)
@@ -26465,31 +26491,167 @@ def _pd_delay_date_annotation(
 
 
 _PD_DELAY_CHART_ROW_PX = 54
-_PD_DELAY_CHART_RENDER_KEY = "pd_delay_duration_chart"
+_PD_DELAY_CHART_KEY_SECTION = "pd_delay_section_chart"
+_PD_DELAY_CHART_KEY_PROJECT = "pd_delay_project_chart"
 
-_PD_DELAY_CHART_COMPACT_CSS = """
-<style>
-div[class*="st-key-pd_delay_duration_chart"] [data-testid="stPlotlyChart"]{
-  min-height:auto!important;height:auto!important;overflow-y:hidden!important;overflow-x:auto!important;
-}
-div[class*="st-key-pd_delay_duration_chart"] [data-testid="stPlotlyChart"] iframe{
-  min-height:auto!important;display:block!important;
-}
-</style>
-"""
+
+def _pd_build_project_indicator_chart_data(
+    source_df: pd.DataFrame,
+    *,
+    project_col: Optional[str],
+    masks: dict,
+    report_date: date,
+    bf_dt: pd.Series,
+    pct_series: pd.Series,
+) -> pd.DataFrame:
+    """Сводка план/факт по проектам для индикаторов (без фильтра «Проект»)."""
+    if (
+        source_df is None
+        or source_df.empty
+        or not project_col
+        or project_col not in source_df.columns
+    ):
+        return pd.DataFrame()
+    delay_m = _pd_delay_row_mask(source_df, masks).reindex(
+        source_df.index, fill_value=False
+    )
+    work = source_df.loc[delay_m.fillna(False)].copy()
+    if work.empty:
+        return pd.DataFrame()
+    bf = bf_dt.reindex(work.index)
+    pc = pct_series.reindex(work.index).fillna(0.0)
+    ts = pd.Timestamp(report_date).normalize()
+    work["_pd_row_plan"] = (bf.notna() & (bf.dt.normalize() <= ts)).astype(int)
+    work["_pd_row_fact"] = (pc >= 99.99).astype(int)
+    return (
+        work.groupby(project_col, as_index=False)
+        .agg(
+            _pd_plan_cnt=("_pd_row_plan", "sum"),
+            _pd_fact_cnt=("_pd_row_fact", "sum"),
+        )
+        .rename(columns={project_col: "Проект"})
+    )
+
+
+def _pd_delay_indicator_color(val: float, dev_max: float) -> str:
+    if dev_max <= 0 or val <= 0:
+        return "#1E8449"
+    r = min(max(val / dev_max, 0.0), 1.0)
+    if r < 0.5:
+        t = r / 0.5
+        r1, g1, b1 = 0x27, 0xAE, 0x60
+        r2, g2, b2 = 0xF1, 0xC4, 0x0F
+    else:
+        t = (r - 0.5) / 0.5
+        r1, g1, b1 = 0xF1, 0xC4, 0x0F
+        r2, g2, b2 = 0xC0, 0x39, 0x2B
+    rr = int(r1 + (r2 - r1) * t)
+    gg = int(g1 + (g2 - g1) * t)
+    bb = int(b1 + (b2 - b1) * t)
+    return f"#{rr:02X}{gg:02X}{bb:02X}"
+
+
+def _pd_delay_project_indicator_card_html(
+    proj: str, bg: str, label: str
+) -> str:
+    """Единый размер карточки (как при трёх проектах в ряд)."""
+    return (
+        f"<div style='background:{bg};color:white;padding:12px 16px;border-radius:8px;"
+        f"margin-bottom:8px;min-height:72px;box-sizing:border-box;'>"
+        f"<div style='font-size:13px;opacity:0.9;'>{proj}</div>"
+        f"<div style='font-size:18px;font-weight:600;margin-top:4px;'>{label}</div>"
+        f"</div>"
+    )
+
+
+def _render_pd_delay_project_indicators(
+    chart_data: pd.DataFrame,
+    y_col: str,
+    doc_code: str,
+    *,
+    plan_col: str = "_pd_plan_cnt",
+    fact_col: str = "_pd_fact_cnt",
+) -> None:
+    """Карточки просрочки по проектам; 1 проект — та же карточка по центру (сетка 3 кол.)."""
+    if chart_data is None or chart_data.empty or y_col not in chart_data.columns:
+        return
+    st.markdown(f"**Индикаторы просрочки {doc_code} по проектам**")
+    rows: list[dict] = []
+    for _, row in chart_data.iterrows():
+        plan_i = int(row.get(plan_col, 0) or 0)
+        fact_i = int(row.get(fact_col, 0) or 0)
+        ovd_i = max(0, plan_i - fact_i)
+        rows.append(
+            {
+                "Проект": str(row[y_col]),
+                "_dev": float(ovd_i),
+            }
+        )
+    ind_df = pd.DataFrame(rows).sort_values("_dev", ascending=False).reset_index(drop=True)
+    dev_max = float(ind_df["_dev"].max()) if not ind_df.empty else 0.0
+    n = len(ind_df)
+
+    def _label(dev: float) -> str:
+        if dev <= 0:
+            return "Без просрочки"
+        return f"Просрочка: {int(round(dev))} док."
+
+    if n <= 3:
+        cols_row = st.columns(3, gap="small")
+        for i, (_, row) in enumerate(ind_df.iterrows()):
+            proj = str(row["Проект"])
+            dev = float(row["_dev"])
+            bg = _pd_delay_indicator_color(dev, dev_max)
+            label = _label(dev)
+            with cols_row[i]:
+                st.markdown(
+                    _pd_delay_project_indicator_card_html(proj, bg, label),
+                    unsafe_allow_html=True,
+                )
+    else:
+        cols_n = min(4, n)
+        cols_row = st.columns(cols_n, gap="small")
+        for i, (_, row) in enumerate(ind_df.iterrows()):
+            proj = str(row["Проект"])
+            dev = float(row["_dev"])
+            bg = _pd_delay_indicator_color(dev, dev_max)
+            label = _label(dev)
+            with cols_row[i % cols_n]:
+                st.markdown(
+                    _pd_delay_project_indicator_card_html(proj, bg, label),
+                    unsafe_allow_html=True,
+                )
+
+
+def _pd_delay_chart_compact_css(key: str, height: int) -> str:
+    """Фиксированная высота блока Plotly — без «раздувания» после загрузки iframe."""
+    h = max(280, int(height))
+    return (
+        f"<style>"
+        f"div[class*=\"st-key-{key}\"] [data-testid=\"stPlotlyChart\"]{{"
+        f"min-height:{h}px!important;height:{h}px!important;max-height:{h}px!important;"
+        f"overflow-y:hidden!important;overflow-x:auto!important;"
+        f"}}"
+        f"div[class*=\"st-key-{key}\"] [data-testid=\"stPlotlyChart\"] iframe{{"
+        f"min-height:{h}px!important;height:{h}px!important;max-height:{h}px!important;"
+        f"display:block!important;"
+        f"}}"
+        f"</style>"
+    )
 
 
 def _render_pd_delay_duration_chart(fig, caption_below: str) -> None:
-    if not st.session_state.get("_pd_delay_chart_css_injected"):
-        st.markdown(_PD_DELAY_CHART_COMPACT_CSS, unsafe_allow_html=True)
-        st.session_state["_pd_delay_chart_css_injected"] = True
     try:
         _h = int(fig.layout.height)
     except Exception:
         _h = 280
+    st.markdown(
+        _pd_delay_chart_compact_css(_PD_DELAY_CHART_KEY_SECTION, _h),
+        unsafe_allow_html=True,
+    )
     render_chart(
         fig,
-        key=_PD_DELAY_CHART_RENDER_KEY,
+        key=_PD_DELAY_CHART_KEY_SECTION,
         height=_h,
         max_height=None,
         caption_below=caption_below,
