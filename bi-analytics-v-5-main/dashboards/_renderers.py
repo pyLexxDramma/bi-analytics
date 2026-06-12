@@ -15510,7 +15510,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         rd_status_options_rd: list[str] = []
         if on_approval_col_rd and on_approval_col_rd in df.columns:
             rd_status_options_rd.append("На согласовании")
-        if (
+        if not is_pd and (
             ("_tessa_production_dt" in df.columns and df["_tessa_production_dt"].notna().any())
             or (in_production_col_rd and in_production_col_rd in df.columns)
             or _rd_has_tessa_production_dates()
@@ -26675,15 +26675,21 @@ def _pd_delay_indicator_color(val: float, dev_max: float) -> str:
 
 
 def _pd_delay_project_indicator_card_html(
-    proj: str, bg: str, label: str
+    proj: str, plan_i: int, fact_i: int, ovd_i: int
 ) -> str:
-    """Единый размер карточки (как при трёх проектах в ряд)."""
+    """Карточка проекта: три цветных бейджа (план / факт / отклонение)."""
     return (
-        f"<div style='background:{bg};color:white;padding:12px 16px;border-radius:8px;"
+        f"<div style='background:#1e2a3a;color:white;padding:12px 16px;border-radius:8px;"
         f"margin-bottom:8px;min-height:72px;box-sizing:border-box;'>"
-        f"<div style='font-size:13px;opacity:0.9;'>{proj}</div>"
-        f"<div style='font-size:18px;font-weight:600;margin-top:4px;'>{label}</div>"
-        f"</div>"
+        f"<div style='font-size:13px;opacity:0.9;margin-bottom:6px;'>{proj}</div>"
+        f"<div style='font-size:13px;line-height:1.7;'>"
+        f"<span style='background:#F1C40F;color:#1a1a1a;padding:2px 8px;border-radius:4px;"
+        f"margin-right:6px;white-space:nowrap;'>План: {plan_i} док.</span>"
+        f"<span style='background:#27AE60;padding:2px 8px;border-radius:4px;margin-right:6px;"
+        f"white-space:nowrap;'>Факт: {fact_i} док.</span>"
+        f"<span style='background:#C0392B;padding:2px 8px;border-radius:4px;"
+        f"white-space:nowrap;'>Отклонение: {ovd_i} док.</span>"
+        f"</div></div>"
     )
 
 
@@ -26695,55 +26701,60 @@ def _render_pd_delay_project_indicators(
     plan_col: str = "_pd_plan_cnt",
     fact_col: str = "_pd_fact_cnt",
 ) -> None:
-    """Карточки просрочки по проектам; 1 проект — та же карточка по центру (сетка 3 кол.)."""
+    """Карточки план / факт / отклонение по проектам (как легенда графика)."""
     if chart_data is None or chart_data.empty or y_col not in chart_data.columns:
         return
     st.markdown(f"**Индикаторы просрочки {doc_code} по проектам**")
+    st.markdown(
+        (
+            "<div style='font-size:12px;opacity:0.85;margin:-2px 0 10px 0;'>"
+            "<span style='background:#F1C40F;color:#1a1a1a;padding:1px 7px;border-radius:3px;"
+            "margin-right:8px;'>План (разделы ПД на дату отчёта)</span>"
+            "<span style='background:#27AE60;padding:1px 7px;border-radius:3px;margin-right:8px;'>"
+            "Факт (100%, разделы ПД)</span>"
+            "<span style='background:#C0392B;padding:1px 7px;border-radius:3px;'>"
+            "Отклонение (план − факт)</span>"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
     rows: list[dict] = []
     for _, row in chart_data.iterrows():
         plan_i = int(row.get(plan_col, 0) or 0)
         fact_i = int(row.get(fact_col, 0) or 0)
         ovd_i = max(0, plan_i - fact_i)
-        rows.append(
-            {
-                "Проект": str(row[y_col]),
-                "_dev": float(ovd_i),
-            }
-        )
-    ind_df = pd.DataFrame(rows).sort_values("_dev", ascending=False).reset_index(drop=True)
-    dev_max = float(ind_df["_dev"].max()) if not ind_df.empty else 0.0
+        rows.append({"Проект": str(row[y_col]), "plan": plan_i, "fact": fact_i, "ovd": ovd_i})
+    ind_df = (
+        pd.DataFrame(rows)
+        .sort_values("ovd", ascending=False)
+        .reset_index(drop=True)
+    )
     n = len(ind_df)
 
-    def _label(dev: float) -> str:
-        if dev <= 0:
-            return "Без просрочки"
-        return f"Просрочка: {int(round(dev))} док."
+    def _render_card(row: pd.Series, col) -> None:
+        with col:
+            st.markdown(
+                _pd_delay_project_indicator_card_html(
+                    str(row["Проект"]),
+                    int(row["plan"]),
+                    int(row["fact"]),
+                    int(row["ovd"]),
+                ),
+                unsafe_allow_html=True,
+            )
 
-    if n <= 3:
+    if n == 1:
+        cols_row = st.columns([1, 2, 1], gap="small")
+        _render_card(ind_df.iloc[0], cols_row[1])
+    elif n <= 3:
         cols_row = st.columns(3, gap="small")
         for i, (_, row) in enumerate(ind_df.iterrows()):
-            proj = str(row["Проект"])
-            dev = float(row["_dev"])
-            bg = _pd_delay_indicator_color(dev, dev_max)
-            label = _label(dev)
-            with cols_row[i]:
-                st.markdown(
-                    _pd_delay_project_indicator_card_html(proj, bg, label),
-                    unsafe_allow_html=True,
-                )
+            _render_card(row, cols_row[i])
     else:
         cols_n = min(4, n)
         cols_row = st.columns(cols_n, gap="small")
         for i, (_, row) in enumerate(ind_df.iterrows()):
-            proj = str(row["Проект"])
-            dev = float(row["_dev"])
-            bg = _pd_delay_indicator_color(dev, dev_max)
-            label = _label(dev)
-            with cols_row[i % cols_n]:
-                st.markdown(
-                    _pd_delay_project_indicator_card_html(proj, bg, label),
-                    unsafe_allow_html=True,
-                )
+            _render_card(row, cols_row[i % cols_n])
 
 
 def _pd_delay_chart_compact_css(key: str, height: int) -> str:
@@ -27018,31 +27029,39 @@ def _pd_delay_plan_fact_figure(
         return "<br>".join(lines)
 
     ticktext = [_wrap_label(lbl) for lbl in y_labels]
-    x_max = float(max(plan_v.max() if len(plan_v) else 0, 1.0))
+    x_max = float(
+        max(
+            plan_v.max() if len(plan_v) else 0,
+            (fact_v + overdue_v).max() if len(fact_v) else 0,
+            1.0,
+        )
+    )
 
     fig = go.Figure()
+    # Жёлтый план — полная ширина; зелёный факт полупрозрачный поверх, чтобы жёлтый был виден.
     fig.add_trace(
         go.Bar(
-            name="План (разделы ПД)",
+            name="План (разделы ПД на дату отчёта)",
             orientation="h",
             y=y_labels,
             x=plan_v,
-            marker=dict(color="#F1C40F"),
+            marker=dict(color="#F1C40F", line=dict(color="#D4AC0D", width=1)),
             text=[f"{int(v)}" if float(v) > 0 else "" for v in plan_v],
-            textposition="inside",
+            textposition="outside",
             insidetextanchor="middle",
-            textfont=dict(color="#1a1a1a", size=12),
+            textfont=dict(color="#F1C40F", size=11),
             cliponaxis=False,
             hovertemplate="%{y}<br>План: %{x:.0f} док.<extra></extra>",
         )
     )
     fig.add_trace(
         go.Bar(
-            name="Факт (100%)",
+            name="Факт (100%, разделы ПД)",
             orientation="h",
             y=y_labels,
             x=fact_v,
             marker=dict(color="#27AE60"),
+            opacity=0.72,
             text=[f"{int(v)}" if float(v) > 0 else "" for v in fact_v],
             textposition="inside",
             insidetextanchor="middle",
