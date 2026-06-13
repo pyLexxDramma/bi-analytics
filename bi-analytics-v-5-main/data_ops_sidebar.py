@@ -37,8 +37,8 @@ def _render_force_reload_button(st: Any, *, key: str) -> None:
     ):
         trigger_ftp_and_force_reload_db(st, quiet=False)
 
-def render_release_data_version_sidebar(st: Any) -> None:
-    """Release: только выбор версии данных в сайдбаре (без источника/FTP/ручной загрузки)."""
+def render_release_data_version_sidebar(st: Any, *, show_ftp_reload: bool = False) -> None:
+    """Release: выбор версии данных; FTP — только для admin/superadmin/analyst."""
     st.markdown(
         '<p class="sidebar-section-title" style="margin-top:0.25rem;">Версия данных</p>',
         unsafe_allow_html=True,
@@ -49,7 +49,8 @@ def render_release_data_version_sidebar(st: Any) -> None:
         init_web_schema()
     except Exception:
         pass
-    _render_force_reload_button(st, key="release_sidebar_ftp_force_reload")
+    if show_ftp_reload:
+        _render_force_reload_button(st, key="release_sidebar_ftp_force_reload")
     _render_version_sidebar_compact(st)
 
 

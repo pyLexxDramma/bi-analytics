@@ -6827,6 +6827,75 @@ def _plan_fact_zos_sanitize_task_label(s: str) -> str:
     ).strip()
 
 
+def _plan_fact_resolved_metric_task_name() -> str:
+    from settings import get_setting
+
+    return (get_setting("baseline_plan_task_for_metrics") or "ЗОС").strip()
+
+
+def _plan_fact_collect_metric_task_rows(
+    frame: pd.DataFrame,
+    *,
+    metric_task: str,
+    dates_notes_col,
+    dates_milestone_col,
+) -> pd.DataFrame:
+    """По одной строке на проект для задачи метрик (настройка админки или fallback)."""
+    if frame is None or getattr(frame, "empty", True) or "task name" not in frame.columns:
+        return frame.iloc[0:0] if frame is not None else pd.DataFrame()
+
+    w = frame.copy()
+    ensure_date_columns(w)
+    if "plan end" not in w.columns or "base end" not in w.columns:
+        return w.iloc[0:0]
+
+    rows: list[pd.Series] = []
+    if "project name" in w.columns and w["project name"].notna().any():
+        _proj_names = sorted(
+            {
+                str(p).strip()
+                for p in w["project name"].dropna().astype(str).tolist()
+                if str(p).strip() and str(p).strip().lower() != "nan"
+            }
+        )
+        for _pn in _proj_names:
+            _pk = _project_filter_norm_key(_pn)
+            _sub = w[w["project name"].map(_project_filter_norm_key) == _pk]
+            if _sub.empty:
+                continue
+            _row = _plan_fact_pick_metric_task_row(
+                _sub,
+                selected_project=_pn,
+                metric_task=metric_task,
+                dates_notes_col=dates_notes_col,
+                dates_milestone_col=dates_milestone_col,
+            )
+            if _row is not None:
+                rows.append(_row)
+    else:
+        _row = _plan_fact_pick_metric_task_row(
+            w,
+            selected_project="Все",
+            metric_task=metric_task,
+            dates_notes_col=dates_notes_col,
+            dates_milestone_col=dates_milestone_col,
+        )
+        if _row is not None:
+            rows.append(_row)
+
+    if not rows:
+        return w.iloc[0:0]
+
+    sub = pd.DataFrame(rows).reset_index(drop=True)
+    sub["_plan_end"] = pd.to_datetime(sub["plan end"], errors="coerce", dayfirst=True)
+    sub["_base_end"] = pd.to_datetime(sub["base end"], errors="coerce", dayfirst=True)
+    sub["_zos_dev"] = (sub["_base_end"] - sub["_plan_end"]).dt.total_seconds() / 86400.0
+    sub = sub[sub["_plan_end"].notna() & sub["_base_end"].notna()].copy()
+    if sub.empty:
+        return sub
+    return sub.sort_values("_zos_dev", ascending=True, na_position="last").reset_index(drop=True)
+
+
 def render_plan_fact_zos_covenant_table(
     zsrc: pd.DataFrame,
     *,
@@ -6834,55 +6903,35 @@ def render_plan_fact_zos_covenant_table(
     dates_milestone_col,
 ) -> None:
     """
-    Таблица «ЗОС»: пересечение маркеров «Ковенанты» и имени ЗОС; отклонение (дней) =
-    базовое окончание (поле ``base end``) − окончание (поле ``plan end``),
-    как в основной таблице отчёта (``plan_end_diff``).
+    Таблица задачи метрик (по умолчанию «ЗОС»): отклонение (дней) =
+    базовое окончание (поле ``base end``) − окончание (поле ``plan end``).
+    Задача задаётся в админке ``baseline_plan_task_for_metrics``.
     """
+    metric_task = _plan_fact_resolved_metric_task_name()
+    task_label = metric_task or "ЗОС"
+    task_col_hdr = f"Наименование задачи («{task_label}»)"
+
     if zsrc is None or getattr(zsrc, "empty", True):
-        st.subheader("ЗОС")
+        st.subheader(task_label)
         return
     if "task name" not in zsrc.columns:
-        st.subheader("ЗОС")
-        return
-    w = zsrc.copy()
-    ensure_date_columns(w)
-    if "plan end" not in w.columns or "base end" not in w.columns:
-        st.subheader("ЗОС")
+        st.subheader(task_label)
         return
 
-    w["_plan_end"] = pd.to_datetime(w["plan end"], errors="coerce", dayfirst=True)
-    w["_base_end"] = pd.to_datetime(w["base end"], errors="coerce", dayfirst=True)
-    w["_zos_dev"] = (w["_base_end"] - w["_plan_end"]).dt.total_seconds() / 86400.0
+    sub = _plan_fact_collect_metric_task_rows(
+        zsrc,
+        metric_task=metric_task,
+        dates_notes_col=dates_notes_col,
+        dates_milestone_col=dates_milestone_col,
+    )
 
-    cm = _plan_fact_covenant_row_mask(w, dates_notes_col, dates_milestone_col)
-    bm = _plan_fact_covenant_block_mask(w)
-    zm = w["task name"].astype(str).map(_plan_fact_zos_task_name_match)
-    sub = w.loc[cm & bm & zm].copy()
-    sub = sub[sub["_plan_end"].notna() & sub["_base_end"].notna()].copy()
-
-    st.subheader("ЗОС")
+    st.subheader(task_label)
     if sub.empty:
         st.caption(
-            "Контрольная точка «ЗОС» (блок «Ковенанты»): задача не найдена "
+            f"Контрольная точка «{task_label}»: задача не найдена "
             "или нет дат базового/текущего окончания."
         )
         return
-
-    sub = sub.sort_values("_zos_dev", ascending=True, na_position="last")
-    show_proj = "project name" in sub.columns
-    sub["_zos_rank"] = sub["task name"].map(_plan_fact_zos_task_rank)
-    if show_proj:
-        sub = (
-            sub.sort_values(
-                ["project name", "_zos_rank", "_zos_dev"],
-                ascending=[True, True, True],
-            )
-            .groupby(sub["project name"].map(_project_filter_norm_key), dropna=False, sort=False)
-            .head(1)
-            .reset_index(drop=True)
-        )
-    elif len(sub) > 1:
-        sub = sub.sort_values(["_zos_rank", "_zos_dev"]).head(1).reset_index(drop=True)
 
     _RED = "#ff6b6b"
     _GRN = "#00e676"
@@ -6899,12 +6948,13 @@ def render_plan_fact_zos_covenant_table(
         fw = "700" if n < 0 else ("600" if n == 0 else "400")
         return f'<span style="color:{col};font-weight:{fw}">{n}</span>'
 
+    show_proj = "project name" in sub.columns
     cols_order: list[str] = []
     if show_proj:
         cols_order.append("Проект")
     cols_order.extend(
         [
-            "Наименование задачи («ЗОС»)",
+            task_col_hdr,
             "Базовое окончание",
             "Окончание",
             "Отклонение",
@@ -6933,7 +6983,7 @@ def render_plan_fact_zos_covenant_table(
             er["Проект"] = pv
         tn = _plan_fact_zos_sanitize_task_label(_clean_display_str(zr.get("task name")))
         parts.append(f"<td>{html_module.escape(str(tn))}</td>")
-        er['Наименование задачи («ЗОС»)'] = str(tn)
+        er[task_col_hdr] = str(tn)
         btxt = _plan_fact_zos_format_date_cell(zr.get("_base_end"))
         otxt = _plan_fact_zos_format_date_cell(zr.get("_plan_end"))
         _be_sort = _plan_fact_sort_attr(zr.get("_base_end"))
@@ -6970,8 +7020,8 @@ def render_plan_fact_zos_covenant_table(
     render_report_html_table(
         _TABLE_CSS + mark_html_table_sortable("".join(parts)),
         export_df=_zos_export,
-        file_stem="zos_covenant_plan_fact",
-        key_prefix="zos_covenant_table",
+        file_stem=f"metric_task_{_export_file_stem(task_label)}_plan_fact",
+        key_prefix="metric_task_covenant_table",
     )
 
 
@@ -7064,12 +7114,10 @@ def render_plan_fact_dates_metric_plates(
 ) -> None:
     """
     Верхние плашки: максимальное |отклонение окончания| (дней), план/факт окончания проекта
-    по задаче из админки `baseline_plan_task_for_metrics` (или эвристика ЗОС в ковенантах).
+    по задаче из админки `baseline_plan_task_for_metrics` (по умолчанию «ЗОС»).
     """
-    from settings import get_setting
-
     nd = "Н/Д"
-    metric_task = (get_setting("baseline_plan_task_for_metrics") or "").strip()
+    metric_task = _plan_fact_resolved_metric_task_name()
 
     def _one_row_html(
         max_lbl: str,

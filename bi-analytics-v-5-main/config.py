@@ -277,10 +277,16 @@ def show_data_ops_ui_for_role(role: Optional[str]) -> bool:
     """
     Показывать панель «Источник данных», FTP, «Загрузить из web/», «Версия данных».
 
-    На release (клиент) — False: данные только из web/, автозагрузка при старте, без ручных табов.
-    На dev/local — True для настройки и отладки.
+    Только admin / superadmin / analyst; на release (клиент) — False.
     """
-    return not is_release_client_mode()
+    if is_release_client_mode():
+        return False
+    try:
+        from auth import user_can_ftp_sync
+
+        return bool(user_can_ftp_sync(role))
+    except Exception:
+        return False
 
 
 def is_dev_branch() -> bool:

@@ -82,7 +82,7 @@ except ImportError as e:
 
 def _render_control_points_msp_tab(user: dict) -> None:
     """
-    Администратор: вкладка «MSP: задача для метрик».
+    Администратор: вкладка «Конфигурация настроек отчетов».
     Вехи, заголовки и соответствие MSP для «Контрольных точек»; задача MSP для «Отклонения от базового плана».
     """
     def _find_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
@@ -159,29 +159,37 @@ def _render_control_points_msp_tab(user: dict) -> None:
     render_developer_projects_matrix_admin_settings(key_prefix="admin_dev_matrix")
 
     st.divider()
-    st.markdown("<h2 class='Duquhununee'>MSP: задача для метрик</h2>", unsafe_allow_html=True)
+    st.markdown(
+        "<h2 class='Duquhununee'>Конфигурация настроек отчетов</h2>",
+        unsafe_allow_html=True,
+    )
 
     st.markdown("### Отчёт «Отклонение от базового плана» — задача для KPI")
-    _cur_task = (get_setting("baseline_plan_task_for_metrics") or "").strip()
+    _cur_task = (get_setting("baseline_plan_task_for_metrics") or "ЗОС").strip()
     task_options, task_col, task_options_hint = _msp_metric_task_options()
     if task_options:
-        option_values = [("", "")] + task_options
-        selected_option = ("", "")
-        if _cur_task:
+        selected_option = None
+        for opt in task_options:
+            if opt[1] == _cur_task:
+                selected_option = opt
+                break
+        if selected_option is None:
             for opt in task_options:
-                if opt[1] == _cur_task:
+                if opt[1].casefold() == "зос":
                     selected_option = opt
                     break
+        if selected_option is None:
+            selected_option = task_options[0]
         try:
-            _sel_idx = option_values.index(selected_option)
+            _sel_idx = task_options.index(selected_option)
         except ValueError:
             _sel_idx = 0
         _selected_task = st.selectbox(
             "Задача для расчёта окончания проекта (MSP)",
-            option_values,
+            task_options,
             index=_sel_idx,
             key="admin_baseline_task_for_metrics_select",
-            format_func=lambda opt: "Автовыбор" if not opt[1] else f"Уровень {opt[0]} - {opt[1]}",
+            format_func=lambda opt: f"Уровень {opt[0]} - {opt[1]}",
         )
         _tf_task = _selected_task[1]
     else:
@@ -195,7 +203,7 @@ def _render_control_points_msp_tab(user: dict) -> None:
     if st.button("Сохранить задачу для метрик", type="primary", key="admin_save_baseline_task"):
         set_setting(
             "baseline_plan_task_for_metrics",
-            str(_tf_task).strip(),
+            str(_tf_task).strip() or "ЗОС",
             description=SETTING_KEYS.get("baseline_plan_task_for_metrics", ""),
             updated_by=user.get("username"),
         )
@@ -820,7 +828,7 @@ def render_admin_panel_tabs(user: dict) -> None:
             "Статистика",
             "Логи",
             "Права доступа",
-            "MSP: задача для метрик",
+            "Конфигурация настроек отчетов",
         ]
     )
 

@@ -1412,6 +1412,7 @@ def main():
 
         if _admin_data_ops_sidebar or _is_release_client_mode():
             try:
+                from auth import user_can_ftp_sync
                 from data_ops_sidebar import (
                     apply_web_version_pick,
                     render_admin_data_ops_sidebar,
@@ -1422,7 +1423,10 @@ def main():
                     if _admin_data_ops_sidebar:
                         render_admin_data_ops_sidebar(st)
                     else:
-                        render_release_data_version_sidebar(st)
+                        render_release_data_version_sidebar(
+                            st,
+                            show_ftp_reload=bool(user_can_ftp_sync(user.get("role"))),
+                        )
                 apply_web_version_pick(st, build_pseudo_lr_from_db=_build_pseudo_lr_from_db)
             except Exception:
                 pass
