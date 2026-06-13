@@ -91,6 +91,9 @@ _REPORT_ROLE_ALLOWLIST: Dict[str, frozenset] = {
 # Роли с правом редактирования таблиц БДДС / «Прогнозный бюджет» (лоты, суммы, даты).
 _FINANCE_TABLE_EDIT_ROLES = frozenset({"superadmin", "admin", "rp", "financier"})
 
+# Роли с доступом к обновлению данных с FTP (сайдбар «FTP + перезагрузить БД» и связанные элементы).
+_FTP_DATA_SYNC_ROLES = frozenset({"superadmin", "admin", "analyst"})
+
 
 def _normalize_role(role: str | None) -> str:
     return str(role or "").strip().lower()
@@ -430,6 +433,11 @@ def delete_user(user_id: int, deleted_by: str) -> Tuple[bool, str]:
 def user_can_edit_finance_tables(role: str | None) -> bool:
     """Редактирование таблиц БДДС/прогноза: админ, суперадмин, РП, финансист."""
     return _normalize_role(role) in _FINANCE_TABLE_EDIT_ROLES
+
+
+def user_can_ftp_sync(role: str | None) -> bool:
+    """Обновление данных с FTP: админ, суперадмин, аналитик."""
+    return _normalize_role(role) in _FTP_DATA_SYNC_ROLES
 
 
 def user_can_edit_forecast_budget(role: str | None) -> bool:
