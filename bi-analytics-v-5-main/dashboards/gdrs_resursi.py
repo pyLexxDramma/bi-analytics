@@ -986,6 +986,85 @@ def _contract_termination_date_raw(record: dict) -> object:
     return None
 
 
+def _is_gdrs_excluded_plan_application(contract_name: object) -> bool:
+    """Заявки, план которых не учитывается в основном «Договоре подряда» (ГДРС)."""
+    cn = str(contract_name or "").casefold().replace("ё", "е")
+    if "заявка на акт" in cn and "строительн" in cn and "площад" in cn:
+        return True
+    if "заявка на соглашение о расторжен" in cn:
+        return True
+    return False
+
+
+def _gdrs_dogovor_contract_key(contract_name: object, contract_number: object = "") -> str:
+    cn = str(contract_name or "").strip()
+    sigs = contract_signatures(cn)
+    if sigs:
+        return sigs[0]
+    num = str(contract_number or "").strip()
+    sigs_num = contract_signatures(num)
+    if sigs_num:
+        return sigs_num[0]
+    return "name::" + normalize_name(cn or num)
+
+
+def _apply_gdrs_dogovor_plan_exclusions(
+    df: pd.DataFrame,
+    *,
+    snapshot_date: Optional[pd.Timestamp] = None,
+) -> pd.DataFrame:
+    """Исключить заявки на акт площадки / расторжение и обнулить основной договор с date_end."""
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    cn = out["contract_name"].fillna("").astype(str).str.strip()
+    excluded = cn.map(_is_gdrs_excluded_plan_application)
+    sentinel = pd.Timestamp("0001-01-01")
+    snap = pd.Timestamp(snapshot_date).normalize() if snapshot_date is not None else None
+    cutoffs: dict[tuple[str, str, str], pd.Timestamp] = {}
+    if bool(excluded.any()):
+        for idx in out.index[excluded]:
+            row = out.loc[idx]
+            de = pd.to_datetime(row.get("date_end"), errors="coerce", utc=True)
+            if de is not None and pd.notna(de):
+                de = pd.Timestamp(de).tz_localize(None).normalize()
+            else:
+                de = pd.NaT
+            if pd.isna(de) or de <= sentinel:
+                continue
+            pid = str(row.get("project_id", "")).strip()
+            cid = str(row.get("contractor_id", "")).strip()
+            cnum = row.get("contract_number", "") if "contract_number" in row.index else ""
+            ck = _gdrs_dogovor_contract_key(row.get("contract_name", ""), cnum)
+            if not pid or not cid or ck.startswith("name::"):
+                continue
+            key = (pid, cid, ck)
+            cutoffs[key] = min(cutoffs[key], de) if key in cutoffs else de
+        out = out.loc[~excluded].copy()
+    if out.empty:
+        return out
+    if snap is not None and cutoffs:
+        cn2 = out["contract_name"].fillna("").astype(str).str.strip()
+        has_num = "contract_number" in out.columns
+        keys = [
+            _gdrs_dogovor_contract_key(
+                cn2.iat[i],
+                out["contract_number"].iat[i] if has_num else "",
+            )
+            for i in range(len(out))
+        ]
+        pids = out["project_id"].astype(str).str.strip()
+        cids = out["contractor_id"].astype(str).str.strip()
+        drop_plan = []
+        for i in range(len(out)):
+            cut = cutoffs.get((pids.iat[i], cids.iat[i], keys[i]))
+            drop_plan.append(cut is not None and snap >= cut)
+        if any(drop_plan):
+            mask = pd.Series(drop_plan, index=out.index)
+            out.loc[mask, ["plan_workers", "plan_equipment"]] = np.nan
+    return out
+
+
 def _snapshot_history(history: object, target_date: Optional[pd.Timestamp]) -> Optional[float]:
     """Из истории `[{'Дата': 'YYYY-MM-DD', 'Количество': 'N'}, ...]` взять последнее значение
     с `Дата <= target_date`. Если history скаляр — вернуть его. Если target_date is None —
@@ -1037,8 +1116,8 @@ def load_plan_from_dogovor(
         return pd.DataFrame(
             columns=[
                 "project_id", "contractor_id", "project_name", "contractor_name",
-                "contract_name", "plan_workers", "plan_equipment", "date_start", "date_end",
-                "date_termination",
+                "contract_name", "contract_number", "plan_workers", "plan_equipment",
+                "date_start", "date_end", "date_termination",
             ]
         )
     rows = []
@@ -1052,6 +1131,7 @@ def load_plan_from_dogovor(
                 "project_name": str(r.get("Наименование_Проекта") or "").strip(),
                 "contractor_name": str(r.get("Наименование_Контрагента") or "").strip(),
                 "contract_name": str(r.get("Наименование_Договора") or "").strip(),
+                "contract_number": str(r.get("Номер_Договора") or "").strip(),
                 "plan_workers": _snapshot_history(r.get("Количество_Людей"), snapshot_date),
                 "plan_equipment": _snapshot_history(r.get("Количество_Техники"), snapshot_date),
                 # Сырые строки — парсим колонку векторно один раз ниже (без 2× to_datetime на строку).
@@ -1191,8 +1271,7 @@ def load_plan_aggregate(
     """
     def _contract_key(cn: str) -> str:
         """Ключ схлопывания: сигнатура договора «NN-СА/YY» или «name::<норм. имя>»."""
-        sigs = contract_signatures(cn)
-        return sigs[0] if sigs else ("name::" + normalize_name(cn))
+        return _gdrs_dogovor_contract_key(cn)
 
     def _per_file_dog(p: Path) -> pd.DataFrame:
         df = load_plan_from_dogovor(Path(p), snapshot_date=snapshot_date)
@@ -1202,6 +1281,9 @@ def load_plan_aggregate(
             (df["project_id"].astype(str).str.strip() != "")
             & (df["contractor_id"].astype(str).str.strip() != "")
         ]
+        if df.empty:
+            return pd.DataFrame()
+        df = _apply_gdrs_dogovor_plan_exclusions(df, snapshot_date=snapshot_date)
         if df.empty:
             return pd.DataFrame()
         # Векторно вместо построчного _dedup по группам (~22с на 32k групп):
@@ -2603,6 +2685,7 @@ def build_gdrs_audit_export_frames(
         contract_export = pd.DataFrame()
     else:
         raw = load_plan_from_dogovor(latest_path, snapshot_date=snap)
+        raw = _apply_gdrs_dogovor_plan_exclusions(raw, snapshot_date=snap)
         if projects:
             try:
                 from dashboards.project_labels import filter_dataframe_by_project_labels

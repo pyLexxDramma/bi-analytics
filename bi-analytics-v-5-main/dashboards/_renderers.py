@@ -22544,6 +22544,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                     _fact_aud,
                     file_stem="gdrs_audit_fact_skud",
                     key_prefix=f"gdrs_audit_fact_{_gdrs_key_suffix}",
+                    popover_label="СКУД (факт по дням)",
                     csv_label="СКУД (факт по дням, CSV)",
                 )
             if _plan_aud is not None and not _plan_aud.empty:
@@ -22551,6 +22552,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                     _plan_aud,
                     file_stem="gdrs_audit_plan_pairs",
                     key_prefix=f"gdrs_audit_plan_{_gdrs_key_suffix}",
+                    popover_label="План по проект×контрагент",
                     csv_label="План по проект×контрагент (CSV)",
                 )
             if _contract_aud is not None and not _contract_aud.empty:
@@ -22558,6 +22560,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                     _contract_aud,
                     file_stem="gdrs_audit_plan_dogovor",
                     key_prefix=f"gdrs_audit_dog_{_gdrs_key_suffix}",
+                    popover_label="План по договорам 1С",
                     csv_label="План по договорам 1С (CSV)",
                 )
             if (
