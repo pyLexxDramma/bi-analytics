@@ -771,6 +771,11 @@ html,body{
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.pf-dates-table{
   width:max-content!important;min-width:100%!important;max-width:none!important;table-layout:auto!important;
 }
+.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.bi-sortable-table[data-gantt-task-ch],
+.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.rendered-table[data-gantt-task-ch],
+.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.pf-dates-table[data-gantt-task-ch]{
+  table-layout:fixed!important;width:max-content!important;min-width:max-content!important;
+}
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table th.col-gantt-id,
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table td.col-gantt-id,
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table th.col-gantt-lvl,
@@ -784,13 +789,16 @@ html,body{
   max-width:none!important; white-space:nowrap!important;
 }
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table th.col-gantt-task,
-.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table td.col-gantt-task,
+.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table td.col-gantt-task{
+  /* Ширина задаётся per-table CSS (data-gantt-task-ch) — не max-content, иначе ломается с «Причины». */
+  overflow:visible!important; text-overflow:clip!important;
+  white-space:nowrap!important; text-align:left!important; box-sizing:border-box!important;
+}
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table th.col-pf-project,
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table td.col-pf-project,
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table th.col-text,
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table td.col-text{
-  /* ТЗ заказчика (скрин 1): наименование задачи не обрезать — показывать полностью
-     (по горизонтали таблица скроллится). */
+  /* Наименование проекта и прочий текст — полностью, горизонтальный скролл таблицы. */
   max-width:none!important; overflow:visible!important; text-overflow:clip!important;
   white-space:nowrap!important; text-align:left!important;
 }

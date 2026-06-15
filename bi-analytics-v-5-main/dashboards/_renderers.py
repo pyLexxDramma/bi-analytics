@@ -333,6 +333,10 @@ _TABLE_CSS = """
   width:max-content!important; min-width:100%!important; max-width:none!important;
   table-layout:auto!important;
 }
+.gantt-schedule-table-wrap .rendered-table[data-gantt-task-ch],
+.gantt-schedule-table-wrap .pf-dates-table[data-gantt-task-ch] {
+  table-layout:fixed!important; width:max-content!important; min-width:max-content!important;
+}
 .gantt-schedule-table-wrap .rendered-table th,
 .gantt-schedule-table-wrap .rendered-table td,
 .gantt-schedule-table-wrap .pf-dates-table th,
@@ -349,9 +353,9 @@ _TABLE_CSS = """
 }
 .gantt-schedule-table-wrap .rendered-table th.col-gantt-task,
 .gantt-schedule-table-wrap .rendered-table td.col-gantt-task {
-  min-width:8em; max-width:none!important; width:auto;
   white-space:nowrap!important; overflow:visible!important;
   text-overflow:clip!important; text-align:left!important;
+  box-sizing:border-box!important;
 }
 .gantt-schedule-table-wrap .rendered-table th.col-pf-project,
 .gantt-schedule-table-wrap .rendered-table td.col-pf-project {
@@ -832,14 +836,11 @@ def _render_plan_fact_dates_main_table(
                 )
             elif c in _reason_cols:
                 s = str(txt).strip() if pd.notna(txt) else ""
-                if s and s.lower() not in ("", "nan", "none"):
-                    cell = (
-                        f'<span style="background-color:#1f6b3b;color:#ffffff;'
-                        f'padding:2px 4px;display:inline-block;">'
-                        f"{html_module.escape(s)}</span>"
-                    )
-                else:
-                    cell = ""
+                cell = (
+                    html_module.escape(s)
+                    if s and s.lower() not in ("", "nan", "none")
+                    else ""
+                )
             elif c in _num_cols and c in numeric_df.columns:
                 sort_attr = _plan_fact_sort_attr(numeric_df.iloc[i][c])
                 cell = (
@@ -918,6 +919,43 @@ def _gantt_deviation_cell_style(v) -> str:
     return "background-color: #27ae60; color: #ffffff"
 
 
+def _gantt_task_name_col_width_ch(display_df: pd.DataFrame, col_name: str = "Название задачи") -> int | None:
+    """Ширина колонки «Название задачи» = max(заголовок, самое длинное имя) в ch."""
+    if display_df is None or col_name not in display_df.columns:
+        return None
+
+    def _txt(v) -> str:
+        if pd.isna(v):
+            return ""
+        s = str(v).strip()
+        return "" if s in ("", "nan", "None") else s
+
+    lens = [len(col_name) + 2]
+    for s in display_df[col_name].map(_txt):
+        if s:
+            lens.append(len(s))
+    if not lens:
+        return None
+    return max(max(lens) + 1, 9)
+
+
+def _gantt_task_col_width_css(ch: int) -> str:
+    """Scoped CSS: ширина «Название задачи» = ch, без растягивания при «Причины отклонений»."""
+    tbl = (
+        f'.bi-sortable-html-root .gantt-schedule-table-wrap '
+        f'table[data-gantt-task-ch="{ch}"]'
+    )
+    cell = f"{tbl} th.col-gantt-task,{tbl} td.col-gantt-task"
+    return (
+        f"{tbl}{{table-layout:fixed!important;width:max-content!important;"
+        f"min-width:max-content!important;max-width:none!important;}}"
+        f"{cell}{{width:{ch}ch!important;max-width:{ch}ch!important;"
+        f"min-width:{ch}ch!important;box-sizing:border-box!important;}}"
+        f"{tbl} colgroup col.col-gantt-task{{width:{ch}ch!important;"
+        f"max-width:{ch}ch!important;}}"
+    )
+
+
 def _render_gantt_schedule_html_table(
     display_df: pd.DataFrame,
     numeric_df: pd.DataFrame | None = None,
@@ -950,6 +988,8 @@ def _render_gantt_schedule_html_table(
     }
     _num_cols = {"ИД", "Ур", "% завершения"}
     _reason_cols = {"Причины отклонений", "Причина отклонения", "Заметки"}
+    _task_col_name = "Название задачи"
+    _task_col_w_ch = _gantt_task_name_col_width_ch(show_disp, _task_col_name)
     _ncols = len(show_disp.columns)
     _use_groups = bool(
         group_by_project
@@ -960,9 +1000,28 @@ def _render_gantt_schedule_html_table(
     parts = [
         f'<div class="gantt-schedule-scroll-wrap" data-bi-rows="{len(show_disp)}">',
         '<div class="rendered-table-wrap gantt-schedule-table-wrap pf-dates-table-wrap">',
-        '<table class="rendered-table bi-sortable-table pf-dates-table bi-sort-click-only">',
-        "<thead><tr>",
     ]
+    if _task_col_w_ch:
+        parts.append(f"<style>{_gantt_task_col_width_css(_task_col_w_ch)}</style>")
+    _task_tbl_attr = f' data-gantt-task-ch="{_task_col_w_ch}"' if _task_col_w_ch else ""
+    parts.append(
+        f'<table class="rendered-table bi-sortable-table pf-dates-table bi-sort-click-only"'
+        f"{_task_tbl_attr}>"
+    )
+    if _task_col_w_ch:
+        parts.append("<colgroup>")
+        for c in show_disp.columns:
+            if c == _task_col_name:
+                parts.append(
+                    f'<col class="col-gantt-task" style="width:{_task_col_w_ch}ch;'
+                    f'max-width:{_task_col_w_ch}ch">'
+                )
+            else:
+                parts.append("<col>")
+        parts.append("</colgroup>")
+    parts.extend([
+        "<thead><tr>",
+    ])
     for c in show_disp.columns:
         cls = _plan_fact_dates_col_css_class(c)
         c_esc = html_module.escape(str(c))
@@ -1029,14 +1088,7 @@ def _render_gantt_schedule_html_table(
                 cell = _plan_fact_deviation_span(nv, disp) if (disp or pd.notna(nv)) else ""
             elif c in _reason_cols:
                 s = _cell_text(txt)
-                if s:
-                    cell = (
-                        f'<span style="background-color:#1f6b3b;color:#ffffff;'
-                        f'padding:2px 4px;display:inline-block;">'
-                        f"{html_module.escape(s)}</span>"
-                    )
-                else:
-                    cell = ""
+                cell = html_module.escape(s) if s else ""
             elif c in _date_cols:
                 nv = _num_arrays[c][i] if _num_arrays.get(c) is not None else None
                 sort_attr = _plan_fact_sort_attr(nv)
@@ -5438,7 +5490,6 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             values="Количество",
             names="Причина",
             title=None,
-            hole=0.28,
         )
         _pie_font = 22 if n_reasons <= 8 else 20 if n_reasons <= 12 else 18
         _lm_reason = min(280, max(180, int(160 + n_reasons * 4)))
@@ -5457,6 +5508,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         )
         fig.update_traces(
             selector=dict(type="pie"),
+            hole=0,
             texttemplate="<b>%{value:.0f}</b> (%{percent:.1%})",
             textinfo="text",
             insidetextorientation="horizontal",
@@ -41860,8 +41912,8 @@ def dashboard_project_schedule_chart(df):
         tbl_view["Отклонение окончания"] = ""
 
     if show_reasons:
-        # ТЗ заказчика 2026-05-06: «Причины отклонений» (множ. число),
-        # «Заметки». Подсветка непустых ячеек зелёным — в _render_gantt_schedule_html_table.
+        # ТЗ заказчика 2026-05-06: «Причины отклонений» (множ. число), «Заметки».
+        # Без заливки ячеек (правка заказчика, скрин «График проекта»).
         if reason_src and reason_src in _tbl_df.columns:
             _r = _tbl_df[reason_src].astype(str).fillna("")
             tbl_view["Причины отклонений"] = _r.where(_r.str.lower() != "nan", "")
