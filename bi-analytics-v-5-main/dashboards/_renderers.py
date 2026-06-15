@@ -596,9 +596,13 @@ def _render_styled_table_report(
     file_stem: str = "table_export",
     key_prefix: str | None = None,
     hide_index: bool = True,
+    full_width: bool = False,
 ) -> None:
+    html = render_styled_table_to_html(styler, hide_index=hide_index)
+    if full_width and export_df is not None and not export_df.empty:
+        html = wrap_styled_table_full_width(html, len(export_df))
     render_report_html_table(
-        render_styled_table_to_html(styler, hide_index=hide_index),
+        html,
         export_df=export_df,
         file_stem=file_stem,
         key_prefix=key_prefix or f"sty_tbl_{file_stem}_{abs(id(export_df))}",
@@ -1203,6 +1207,7 @@ from utils import (
     style_dataframe_for_dark_theme,
     plan_fact_dates_table_to_html,
     render_styled_table_to_html,
+    wrap_styled_table_full_width,
     budget_table_to_html,
     mark_html_table_sortable,
     format_table_title,
@@ -15950,11 +15955,15 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 _bf_dt.notna() & (_bf_dt.dt.normalize() <= _ts_pd)
             ).astype(int)
             filtered_df["_pd_row_fact"] = (_pc_pd >= 99.99).astype(int)
-            # Просрочка: разделы, у которых «Окончание» > «Базовое окончание».
+            # Просрочка: разделы с «Окончание» > «Базовое окончание» среди сроков плана
+            # (базовое окончание на дату отчёта или раньше — тот же охват, что «План ПД»).
             _pd_bf_n = _bf_dt.dt.normalize()
             _pd_sf_n = _sf_dt.dt.normalize()
             filtered_df["_pd_row_overdue"] = (
-                _bf_dt.notna() & _sf_dt.notna() & (_pd_sf_n > _pd_bf_n)
+                _bf_dt.notna()
+                & (_pd_bf_n <= _ts_pd)
+                & _sf_dt.notna()
+                & (_pd_sf_n > _pd_bf_n)
             ).astype(int)
 
             if show_by_section:
@@ -16040,13 +16049,11 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                         .agg(
                             _pd_plan_cnt=("_pd_row_plan", "sum"),
                             _pd_fact_cnt=("_pd_row_fact", "sum"),
+                            _pd_overdue_cnt=("_pd_row_overdue", "sum"),
                         )
                         .rename(columns={project_col: "Проект"})
                     )
-                    chart_data["_pd_dev_cnt"] = (
-                        chart_data["_pd_plan_cnt"] - chart_data["_pd_fact_cnt"]
-                    ).clip(lower=0)
-                    chart_data["_pd_overdue_cnt"] = chart_data["_pd_dev_cnt"]
+                    chart_data["_pd_dev_cnt"] = chart_data["_pd_overdue_cnt"]
                     if chart_data.empty:
                         st.info("Нет данных для построения графика.")
                         return
@@ -16905,28 +16912,18 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             if _pd_tbl.empty:
                 st.info("Нет данных для детальной таблицы ПД.")
             else:
-                # Прокраска отклонений (фон красный >0 / зелёный ≤0) сохранена.
-                # Таблица — на всю ширину страницы + вертикальный скролл (липкая шапка,
-                # клик-сортировка): оборачиваем вывод стайлера в `fc-table-scroll-wrap`.
-                _pd_styled_html = render_styled_table_to_html(
+                _render_styled_table_report(
                     style_dataframe_for_dark_theme(
                         _pd_tbl,
                         days_column="Отклонение окончания, дн",
                         extra_days_columns=("Отклонение начала, дн",),
                         days_positive_is_ahead=True,
                         days_deviation_gradient=True,
-                    )
-                )
-                _pd_styled_html = _pd_styled_html.replace(
-                    'class="bi-styled-table-wrap"',
-                    f'class="fc-table-scroll-wrap bi-styled-table-wrap" data-bi-rows="{len(_pd_tbl)}"',
-                    1,
-                )
-                render_report_html_table(
-                    _pd_styled_html,
+                    ),
                     export_df=_pd_tbl,
                     file_stem="pd_delay_detail",
                     key_prefix="pd_delay_detail",
+                    full_width=True,
                 )
         elif not _msp_detail_disabled:
             sort_col1, sort_col2 = st.columns([3, 1], gap="small")
@@ -16984,9 +16981,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 if "_pd_dev_cnt" in _pd_sum_src.columns:
                     _pd_sum_src["_pd_overdue_cnt"] = _pd_sum_src["_pd_dev_cnt"]
                 else:
-                    _pd_sum_src["_pd_overdue_cnt"] = (
-                        _pd_sum_src["_pd_plan_cnt"] - _pd_sum_src["_pd_fact_cnt"]
-                    ).clip(lower=0)
+                    _pd_sum_src["_pd_overdue_cnt"] = 0
             summary_table = _pd_sum_src[
                 [_pd_sum_y, "_pd_plan_cnt", "_pd_fact_cnt", "_pd_overdue_cnt"]
             ].copy()
@@ -16997,14 +16992,17 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     "_pd_overdue_cnt": f"Просрочка {doc_code}",
                 }
             )
-            for _cnt_col in (
-                f"План {doc_code}",
-                f"Факт {doc_code}",
-                f"Просрочка {doc_code}",
-            ):
+            for _cnt_col in (f"План {doc_code}", f"Факт {doc_code}"):
                 summary_table[_cnt_col] = summary_table[_cnt_col].apply(
                     lambda x: int(round(float(x), 0)) if pd.notna(x) else 0
                 )
+            _ovd_col = f"Просрочка {doc_code}"
+            if _ovd_col in summary_table.columns:
+                # Число разделов с «Окончание» > «Базовое окончание»; для оформления
+                # как «Отклонение окончания, дн»: минус = просрочка (красный), плюс = опережение.
+                summary_table[_ovd_col] = summary_table[_ovd_col].apply(
+                    lambda x: int(round(float(x), 0)) if pd.notna(x) else 0
+                ).map(lambda n: _pd_fmt_deviation_days(-int(n)))
         elif show_by_tasks:
             summary_table = chart_data[
                 ["Задача_полная", dev_col, "% выполнения РД/ПД"]
@@ -17023,23 +17021,26 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         else:
             st.info("Нет данных для сводки по просрочке.")
             summary_table = pd.DataFrame()
-        _pd_summary_cond = None
-        if is_pd:
-            _ovd_col = f"Просрочка {doc_code}"
-            if _ovd_col in summary_table.columns:
-                _pd_summary_cond = {
-                    _ovd_col: {
-                        "positive_color": "#e74c3c",
-                        "negative_color": TABLE_TEXT_COLOR,
-                    }
-                }
         if not summary_table.empty:
-            _render_format_dataframe_html(
-                summary_table,
-                file_stem="rd_delay_summary",
-                key_prefix="rd_delay_summary",
-                conditional_cols=_pd_summary_cond,
-            )
+            if is_pd and f"Просрочка {doc_code}" in summary_table.columns:
+                _render_styled_table_report(
+                    style_dataframe_for_dark_theme(
+                        summary_table,
+                        days_column=f"Просрочка {doc_code}",
+                        days_positive_is_ahead=True,
+                        days_deviation_gradient=True,
+                    ),
+                    export_df=summary_table,
+                    file_stem="rd_delay_summary",
+                    key_prefix="rd_delay_summary",
+                    full_width=True,
+                )
+            else:
+                _render_format_dataframe_html(
+                    summary_table,
+                    file_stem="rd_delay_summary",
+                    key_prefix="rd_delay_summary",
+                )
 
         # Таблица: План окончания ПД/РД и Факт окончания ПД/РД
         # Для ПД скрыта (легаси-таблица выводит все строки MSP без ограничения и
@@ -26817,21 +26818,21 @@ def _pd_delay_indicator_color(val: float, dev_max: float) -> str:
 
 
 def _pd_delay_project_indicator_card_html(
-    proj: str, plan_i: int, fact_i: int, ovd_i: int
+    proj: str, ovd_i: int, *, bg: str
 ) -> str:
-    """Карточка проекта: три цветных бейджа (план / факт / отклонение)."""
+    """Карточка проекта: цвет по уровню просрочки + «Просрочка: N док.»."""
+    _proj = html_module.escape(str(proj))
+    _label = (
+        "Без просрочки"
+        if int(ovd_i) <= 0
+        else f"Просрочка: {int(ovd_i)} док."
+    )
     return (
-        f"<div style='background:#1e2a3a;color:white;padding:12px 16px;border-radius:8px;"
-        f"margin-bottom:8px;min-height:72px;box-sizing:border-box;'>"
-        f"<div style='font-size:13px;opacity:0.9;margin-bottom:6px;'>{proj}</div>"
-        f"<div style='font-size:13px;line-height:1.7;'>"
-        f"<span style='background:#F1C40F;color:#1a1a1a;padding:2px 8px;border-radius:4px;"
-        f"margin-right:6px;white-space:nowrap;'>План: {plan_i} док.</span>"
-        f"<span style='background:#27AE60;padding:2px 8px;border-radius:4px;margin-right:6px;"
-        f"white-space:nowrap;'>Факт: {fact_i} док.</span>"
-        f"<span style='background:#C0392B;padding:2px 8px;border-radius:4px;"
-        f"white-space:nowrap;'>Отклонение: {ovd_i} док.</span>"
-        f"</div></div>"
+        f"<div style='background:{bg};color:white;padding:10px 14px;border-radius:8px;"
+        f"margin-bottom:8px;min-height:68px;box-sizing:border-box;'>"
+        f"<div style='font-size:13px;opacity:0.9;'>{_proj}</div>"
+        f"<div style='font-size:18px;font-weight:600;'>{_label}</div>"
+        f"</div>"
     )
 
 
@@ -26843,60 +26844,42 @@ def _render_pd_delay_project_indicators(
     plan_col: str = "_pd_plan_cnt",
     fact_col: str = "_pd_fact_cnt",
 ) -> None:
-    """Карточки план / факт / отклонение по проектам (как легенда графика)."""
+    """Карточки просрочки по проектам: зелёный → жёлтый → красный по величине."""
     if chart_data is None or chart_data.empty or y_col not in chart_data.columns:
         return
     st.markdown(f"**Индикаторы просрочки {doc_code} по проектам**")
-    st.markdown(
-        (
-            "<div style='font-size:12px;opacity:0.85;margin:-2px 0 10px 0;'>"
-            "<span style='background:#F1C40F;color:#1a1a1a;padding:1px 7px;border-radius:3px;"
-            "margin-right:8px;'>План (разделы ПД на дату отчёта)</span>"
-            "<span style='background:#27AE60;padding:1px 7px;border-radius:3px;margin-right:8px;'>"
-            "Факт (100%, разделы ПД)</span>"
-            "<span style='background:#C0392B;padding:1px 7px;border-radius:3px;'>"
-            "Отклонение (план − факт)</span>"
-            "</div>"
-        ),
-        unsafe_allow_html=True,
-    )
     rows: list[dict] = []
     for _, row in chart_data.iterrows():
         plan_i = int(row.get(plan_col, 0) or 0)
         fact_i = int(row.get(fact_col, 0) or 0)
-        ovd_i = max(0, plan_i - fact_i)
-        rows.append({"Проект": str(row[y_col]), "plan": plan_i, "fact": fact_i, "ovd": ovd_i})
+        if "_pd_overdue_cnt" in chart_data.columns:
+            ovd_i = int(row.get("_pd_overdue_cnt", 0) or 0)
+        elif "_pd_dev_cnt" in chart_data.columns:
+            ovd_i = int(row.get("_pd_dev_cnt", 0) or 0)
+        else:
+            ovd_i = max(0, plan_i - fact_i)
+        rows.append({"Проект": str(row[y_col]), "ovd": ovd_i})
     ind_df = (
         pd.DataFrame(rows)
         .sort_values("ovd", ascending=False)
         .reset_index(drop=True)
     )
+    _dev_max = float(ind_df["ovd"].max()) if not ind_df.empty else 0.0
     n = len(ind_df)
-
-    def _render_card(row: pd.Series, col) -> None:
-        with col:
+    _cols_n = min(4, max(1, n))
+    cols_row = st.columns(_cols_n, gap="small")
+    for i, (_, row) in enumerate(ind_df.iterrows()):
+        ovd_i = int(row["ovd"])
+        bg = _pd_delay_indicator_color(float(ovd_i), _dev_max)
+        with cols_row[i % _cols_n]:
             st.markdown(
                 _pd_delay_project_indicator_card_html(
                     str(row["Проект"]),
-                    int(row["plan"]),
-                    int(row["fact"]),
-                    int(row["ovd"]),
+                    ovd_i,
+                    bg=bg,
                 ),
                 unsafe_allow_html=True,
             )
-
-    if n == 1:
-        cols_row = st.columns([1, 2, 1], gap="small")
-        _render_card(ind_df.iloc[0], cols_row[1])
-    elif n <= 3:
-        cols_row = st.columns(3, gap="small")
-        for i, (_, row) in enumerate(ind_df.iterrows()):
-            _render_card(row, cols_row[i])
-    else:
-        cols_n = min(4, n)
-        cols_row = st.columns(cols_n, gap="small")
-        for i, (_, row) in enumerate(ind_df.iterrows()):
-            _render_card(row, cols_row[i % cols_n])
 
 
 def _pd_delay_chart_compact_css(key: str, height: int) -> str:

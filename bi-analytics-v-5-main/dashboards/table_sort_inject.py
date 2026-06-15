@@ -372,7 +372,28 @@ _TABLE_SORT_JS = r"""
       var fcBox = document.querySelector(".fc-table-scroll-wrap")
         || document.querySelector(".pred-detail-wrap");
       if (fcBox) {
+        try {
+          var feFc0 = window.frameElement;
+          if (feFc0) {
+            feFc0.style.setProperty("width", "100%", "important");
+            feFc0.style.setProperty("max-width", "100%", "important");
+            feFc0.style.setProperty("display", "block", "important");
+          }
+        } catch (e) {}
+        fcBox.style.setProperty("width", "100%", "important");
+        fcBox.style.setProperty("max-width", "100%", "important");
         var fcTbl0 = fcBox.querySelector("table");
+        if (fcTbl0) {
+          fcTbl0.style.setProperty("width", "100%", "important");
+          fcTbl0.style.setProperty("min-width", "100%", "important");
+          fcTbl0.style.setProperty("max-width", "100%", "important");
+          fcTbl0.style.setProperty("table-layout", "fixed", "important");
+        }
+        var fcRoot0 = document.querySelector(".bi-sortable-html-root");
+        if (fcRoot0) {
+          fcRoot0.style.setProperty("width", "100%", "important");
+          fcRoot0.style.setProperty("max-width", "100%", "important");
+        }
         var fcContent = fcTbl0 ? Math.ceil(fcTbl0.getBoundingClientRect().height)
                                : Math.ceil(fcBox.scrollHeight || 0);
         var fcCap = 560;
@@ -643,7 +664,28 @@ _COMPACT_FRAME_FIT_JS = r"""
       var fc = document.querySelector(".fc-table-scroll-wrap")
         || document.querySelector(".pred-detail-wrap");
       if (fc) {
+        try {
+          var feFc = window.frameElement;
+          if (feFc) {
+            feFc.style.setProperty("width", "100%", "important");
+            feFc.style.setProperty("max-width", "100%", "important");
+            feFc.style.setProperty("display", "block", "important");
+          }
+        } catch (e) {}
+        fc.style.setProperty("width", "100%", "important");
+        fc.style.setProperty("max-width", "100%", "important");
         var fcTbl = fc.querySelector("table");
+        if (fcTbl) {
+          fcTbl.style.setProperty("width", "100%", "important");
+          fcTbl.style.setProperty("min-width", "100%", "important");
+          fcTbl.style.setProperty("max-width", "100%", "important");
+          fcTbl.style.setProperty("table-layout", "fixed", "important");
+        }
+        var fcRoot = document.querySelector(".bi-sortable-html-root");
+        if (fcRoot) {
+          fcRoot.style.setProperty("width", "100%", "important");
+          fcRoot.style.setProperty("max-width", "100%", "important");
+        }
         var fcContent = fcTbl ? Math.ceil(fcTbl.getBoundingClientRect().height)
                               : Math.ceil(fc.scrollHeight || 0);
         var fcCap = 560;
@@ -790,7 +832,11 @@ html:has(.budget-table-scroll),body:has(.budget-table-scroll){
 .budget-table-scroll tr.bd-total-row td{position:sticky!important;bottom:0!important;z-index:4!important;
   box-shadow:0 -3px 10px rgba(0,0,0,0.35)!important}
 
-.fc-table-scroll-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important}
+.fc-table-scroll-wrap table,
+.fc-table-scroll-wrap.bi-styled-table-wrap table,
+.bi-sortable-html-root:has(.fc-table-scroll-wrap) table{
+  width:100%!important;min-width:100%!important;max-width:100%!important;table-layout:fixed!important;
+}
 html,body{
   height:auto!important;min-height:0!important;
   margin:0;padding:0;width:100%;max-width:100%;
