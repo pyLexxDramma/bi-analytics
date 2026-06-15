@@ -14436,6 +14436,280 @@ _RD_PLAN_FOOTER_RE = re.compile(
 )
 
 
+def _drop_rd_detail_empty_rows(tbl: pd.DataFrame) -> pd.DataFrame:
+    """ТЗ п.8: убрать полностью пустые строки в конце/середине детальной таблицы РД."""
+    if tbl is None or getattr(tbl, "empty", True):
+        return tbl
+    keys = [
+        c
+        for c in (
+            "Проект",
+            "Шифр",
+            "Наименование разделов работ",
+            "Наименование",
+        )
+        if c in tbl.columns
+    ]
+    if not keys:
+        return tbl
+    _empty_vals = {"", "—", "-", "nan", "none", "<na>", "nat"}
+
+    def _row_empty(row) -> bool:
+        return all(str(row.get(c, "")).strip().casefold() in _empty_vals for c in keys)
+
+    return tbl.loc[~tbl.apply(_row_empty, axis=1)].reset_index(drop=True)
+
+
+def _count_rd_fact_to_date_tessa(
+    selected_projects: list[str] | None = None,
+    *,
+    section_labels_allowlist: set[str] | None = None,
+) -> float:
+    """
+    ТЗ п.4: факт на текущую дату — разделы РД в статусе «Выдано в производство работ»
+    или «На рассмотрении» (KrState / дата выдачи в производство).
+    """
+    try:
+        detail = _build_tessa_rd_detail_table(
+            selected_projects=selected_projects,
+            selected_section=None,
+        )
+    except Exception:
+        detail = pd.DataFrame()
+    if not detail.empty and section_labels_allowlist:
+        _lbl = (
+            detail["Шифр"].fillna("").astype(str).str.strip()
+            + " "
+            + detail["Наименование разделов работ"].fillna("").astype(str).str.strip()
+        ).str.replace(r"\s+", " ", regex=True).str.strip()
+        detail = detail.loc[_lbl.isin(section_labels_allowlist)].copy()
+    if not detail.empty:
+        detail = _drop_rd_detail_empty_rows(detail)
+    if not detail.empty:
+        _prod = (
+            detail["Дата выдачи в производство работ"]
+            .astype(str)
+            .str.strip()
+            .replace({"nan": "", "None": "", "NaT": ""})
+            .ne("")
+        )
+        _st = detail["Статус"].astype(str).str.strip().str.casefold()
+        _review = _st.str.contains("рассмотр", na=False) | _st.str.contains(
+            "согласован", na=False
+        )
+        if "Статус" in detail.columns:
+            _review = _review | detail["Статус"].map(_tessa_krstate_to_pie_bucket).fillna("").eq(
+                "На рассм."
+            )
+        return float((_prod | _review.fillna(False)).sum())
+    _stage = _count_tessa_rd_stages(
+        selected_projects, section_labels_allowlist=section_labels_allowlist
+    )
+    _kr = _count_tessa_rd_krstates(
+        selected_projects, section_labels_allowlist=section_labels_allowlist
+    )
+    return float(
+        int(_stage.get("Выдано в производство работ", 0))
+        + int(_kr.get("На рассм.", 0))
+    )
+
+
+def _render_rd_working_doc_monthly_and_detail(
+    *,
+    work_df: pd.DataFrame,
+    selected_projects: list[str] | None,
+    selected_sections: list[str] | None,
+    metric_mode: str,
+    show_forecast_date: bool,
+    doc_fk: str,
+    plan_end_col: str | None,
+    rd_count_col: str | None,
+    in_production_col: str | None,
+) -> None:
+    """ТЗ п.2: динамика по месяцам и детальная таблица РД (как на вкладке просрочки)."""
+    if work_df is None or getattr(work_df, "empty", True):
+        return
+
+    def _to_numeric_series(series):
+        return pd.to_numeric(
+            series.astype(str)
+            .str.replace(" ", "", regex=False)
+            .str.replace(",", ".", regex=False),
+            errors="coerce",
+        ).fillna(0.0)
+
+    _sec_allow: set[str] | None = None
+    if selected_sections:
+        _sec_allow = {str(x).strip() for x in selected_sections if str(x).strip()}
+
+    if plan_end_col and plan_end_col in work_df.columns and rd_count_col and rd_count_col in work_df.columns:
+        month_df = work_df.copy()
+        month_df["_plan_end_dt"] = pd.to_datetime(
+            month_df[plan_end_col].astype(str),
+            errors="coerce",
+            dayfirst=True,
+            format="mixed",
+        )
+        month_df["_rd_plan_n"] = _to_numeric_series(month_df[rd_count_col])
+        _prod_m = _rd_in_production_mask(work_df, in_production_col)
+        month_df["_rd_fact_n"] = np.where(
+            _prod_m.reindex(month_df.index, fill_value=False),
+            month_df["_rd_plan_n"].where(month_df["_rd_plan_n"] > 0, 1.0),
+            0.0,
+        )
+        month_df = month_df[month_df["_plan_end_dt"].notna()].copy()
+        if not month_df.empty:
+            today_ts = pd.Timestamp(date.today())
+            month_df["_month"] = month_df["_plan_end_dt"].dt.to_period("M")
+            month_df["_done_n"] = np.where(
+                month_df["_rd_fact_n"] > 0,
+                np.minimum(month_df["_rd_plan_n"], month_df["_rd_fact_n"]),
+                0.0,
+            )
+            month_df["_remaining_n"] = (
+                month_df["_rd_plan_n"] - month_df["_done_n"]
+            ).clip(lower=0.0)
+            month_df["_overdue_n"] = np.where(
+                (month_df["_remaining_n"] > 0)
+                & (month_df["_plan_end_dt"] < today_ts),
+                month_df["_remaining_n"],
+                0.0,
+            )
+            month_df["_delta_n"] = (
+                month_df["_remaining_n"] - month_df["_overdue_n"]
+            ).clip(lower=0.0)
+            monthly = (
+                month_df.groupby("_month", as_index=False)
+                .agg(
+                    plan=("_rd_plan_n", "sum"),
+                    done=("_done_n", "sum"),
+                    delta=("_delta_n", "sum"),
+                    overdue=("_overdue_n", "sum"),
+                )
+                .sort_values("_month")
+            )
+            monthly = monthly[monthly["plan"] > 0].copy()
+            if not monthly.empty:
+                monthly["Месяц"] = monthly["_month"].apply(
+                    lambda p: f"{RUSSIAN_MONTHS.get(p.month, str(p.month))} {p.year}"
+                )
+                use_pct = str(metric_mode).strip().startswith("%")
+                if use_pct:
+                    monthly["Выполнено"] = (monthly["done"] / monthly["plan"] * 100).round(1)
+                    monthly["Разница план/факт"] = (
+                        monthly["delta"] / monthly["plan"] * 100
+                    ).round(1)
+                    monthly["Просрочено"] = (
+                        monthly["overdue"] / monthly["plan"] * 100
+                    ).round(1)
+                    _y_title = "% РД"
+                    _y_range = dict(range=[0, 100], ticksuffix="%")
+                else:
+                    monthly["Выполнено"] = monthly["done"].round(1)
+                    monthly["Разница план/факт"] = monthly["delta"].round(1)
+                    monthly["Просрочено"] = monthly["overdue"].round(1)
+                    _y_title = "Количество разделов"
+                    _y_range = {}
+                monthly_plot_df = monthly.melt(
+                    id_vars=["Месяц"],
+                    value_vars=["Выполнено", "Разница план/факт", "Просрочено"],
+                    var_name="Статус",
+                    value_name="Значение",
+                )
+                monthly_plot_df["Подпись"] = monthly_plot_df.apply(
+                    lambda r: (
+                        f"{float(r['Значение']):.0f}%"
+                        if use_pct and pd.notna(r["Значение"]) and float(r["Значение"]) > 0
+                        else (
+                            f"{int(round(float(r['Значение'])))}"
+                            if pd.notna(r["Значение"]) and float(r["Значение"]) > 0
+                            else ""
+                        )
+                    ),
+                    axis=1,
+                )
+                st.subheader(
+                    "Динамика по месяцам (% по плану)"
+                    if use_pct
+                    else "Динамика по месяцам"
+                )
+                fig_months = px.bar(
+                    monthly_plot_df,
+                    x="Месяц",
+                    y="Значение",
+                    color="Статус",
+                    barmode="stack",
+                    text="Подпись",
+                    color_discrete_map={
+                        "Выполнено": "#27AE60",
+                        "Разница план/факт": "#F39C12",
+                        "Просрочено": "#C0392B",
+                    },
+                )
+                fig_months.update_layout(
+                    xaxis_title="Месяц",
+                    yaxis_title=_y_title,
+                    yaxis=_y_range if _y_range else {},
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="left",
+                        x=0,
+                        title_text="",
+                    ),
+                    height=520,
+                )
+                fig_months.update_traces(textposition="inside", textfont=dict(size=10))
+                fig_months = apply_chart_background(fig_months)
+                render_chart(fig_months, caption_below="Динамика по месяцам")
+
+    try:
+        _tessa_tbl = _build_tessa_rd_detail_table(
+            selected_projects=selected_projects or None,
+            selected_section=None,
+        )
+    except Exception:
+        _tessa_tbl = pd.DataFrame()
+    if _tessa_tbl.empty:
+        return
+    if _sec_allow:
+        _lbl_d = (
+            _tessa_tbl["Шифр"].fillna("").astype(str).str.strip()
+            + " "
+            + _tessa_tbl["Наименование разделов работ"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        ).str.replace(r"\s+", " ", regex=True).str.strip()
+        _tessa_tbl = _tessa_tbl.loc[_lbl_d.isin(_sec_allow)].copy()
+    _tessa_tbl = _drop_rd_detail_empty_rows(_tessa_tbl)
+    if _tessa_tbl.empty:
+        return
+    if (
+        "Отклонение, дн" in _tessa_tbl.columns
+        and "Отклонение от прогнозной даты, дн" in _tessa_tbl.columns
+    ):
+        _tessa_tbl = _tessa_tbl.drop(columns=["Отклонение, дн"])
+    if not show_forecast_date and "Прогнозная дата выдачи разделов" in _tessa_tbl.columns:
+        _tessa_tbl = _tessa_tbl.drop(columns=["Прогнозная дата выдачи разделов"])
+        if "Отклонение от прогнозной даты, дн" in _tessa_tbl.columns:
+            _tessa_tbl = _tessa_tbl.drop(columns=["Отклонение от прогнозной даты, дн"])
+    st.subheader("Детальная таблица")
+    _render_styled_table_report(
+        style_dataframe_for_dark_theme(
+            _tessa_tbl,
+            days_column="Отклонение от даты по договору, дн",
+            extra_days_columns=("Отклонение от прогнозной даты, дн",),
+            days_deviation_gradient=True,
+        ),
+        _tessa_tbl,
+        file_stem="rd_work_doc_detail",
+        key_prefix=f"{doc_fk}rd_detail",
+        full_width=True,
+    )
+
+
 def _rd_plan_drop_footer_rows(
     df: pd.DataFrame,
     code_col: str | None = None,
@@ -14472,6 +14746,105 @@ def _rd_plan_drop_footer_rows(
 def _rd_plan_status_display_series(series: pd.Series) -> pd.Series:
     """Текстовые подписи статуса в плане РД/ПД (KrStateID → русский, иначе как в CSV)."""
     return series.map(_krstate_raw_to_label).replace("", pd.NA)
+
+
+def _render_rd_delay_fallback_chart(
+    detail_tbl: pd.DataFrame,
+    *,
+    view_mode: str,
+    doc_code: str,
+) -> None:
+    """График «Просрочка выдачи РД» из TESSA (fallback без MSP-колонки отклонений)."""
+    if detail_tbl is None or getattr(detail_tbl, "empty", True):
+        st.info("Нет данных для графика просрочки.")
+        return
+    tbl = _drop_rd_detail_empty_rows(detail_tbl.copy())
+    dev_c = "Отклонение от даты по договору, дн"
+    if dev_c not in tbl.columns:
+        st.info("Нет колонки отклонения для графика просрочки.")
+        return
+    dev_num = pd.to_numeric(tbl[dev_c], errors="coerce").fillna(0.0)
+    tbl["_dev_n"] = dev_num.clip(lower=0.0)
+    by_section = str(view_mode or "").strip().casefold() == "по разделу"
+    if by_section:
+        tbl["_y"] = (
+            tbl["Шифр"].fillna("").astype(str).str.strip()
+            + " "
+            + tbl["Наименование разделов работ"].fillna("").astype(str).str.strip()
+        ).str.replace(r"\s+", " ", regex=True).str.strip()
+        y_col = "Раздел"
+        y_title = "Раздел"
+    else:
+        tbl["_y"] = tbl["Проект"].fillna("").astype(str).str.strip()
+        y_col = "Проект"
+        y_title = "Проект"
+    tbl["_y"] = tbl["_y"].replace({"": "—", "nan": "—"})
+    chart_data = (
+        tbl.groupby("_y", as_index=False)
+        .agg(_dev_sum=("_dev_n", "sum"), _overdue_cnt=("_dev_n", lambda s: int((s > 0).sum())))
+        .rename(columns={"_y": y_col})
+    )
+    dev_col = f"Отклонение разделов {doc_code}"
+    chart_data[dev_col] = chart_data["_dev_sum"]
+    chart_data = chart_data[chart_data[dev_col] > 0].copy()
+    if chart_data.empty:
+        st.info("Нет просрочки для выбранных фильтров.")
+        return
+    chart_data = chart_data.sort_values(dev_col, ascending=False)
+    text_values = []
+    for _, row in chart_data.iterrows():
+        val = row[dev_col]
+        cnt = int(row.get("_overdue_cnt", 0) or 0)
+        if pd.notna(val) and float(val) > 0:
+            text_values.append(f"{int(round(float(val)))} ({cnt} разд.)")
+        else:
+            text_values.append("")
+    chart_data["_severity"] = chart_data[dev_col].clip(lower=0)
+    severity_max = max(float(chart_data["_severity"].max()), 1.0)
+    _dev_vals = pd.to_numeric(chart_data[dev_col], errors="coerce").fillna(0.0)
+    _tick_labels = [
+        (f"🔴 {lbl}" if float(d) > 0 else f"🟢 {lbl}")
+        for lbl, d in zip(chart_data[y_col].astype(str).tolist(), _dev_vals.tolist())
+    ]
+    fig = px.bar(
+        chart_data,
+        x=dev_col,
+        y=y_col,
+        orientation="h",
+        title=None,
+        labels={y_col: y_title, dev_col: dev_col},
+        text=text_values,
+        color="_severity",
+        color_continuous_scale=[(0.0, "#27AE60"), (0.5, "#F1C40F"), (1.0, "#C0392B")],
+        range_color=(0.0, severity_max),
+    )
+    fig.update_traces(
+        textposition="outside",
+        textfont=dict(size=12, color="white"),
+        marker=dict(line=dict(width=1, color="white")),
+        showlegend=False,
+    )
+    fig.add_vline(x=0, line_dash="dash", line_color="gray")
+    category_list = chart_data[y_col].tolist()
+    fig.update_layout(
+        xaxis_title=dev_col,
+        yaxis_title=y_title,
+        height=max(480, len(chart_data) * 44),
+        showlegend=False,
+        coloraxis_showscale=False,
+        yaxis=dict(
+            tickangle=0,
+            categoryorder="array",
+            categoryarray=list(reversed(category_list)),
+            tickmode="array",
+            tickvals=category_list,
+            ticktext=list(reversed(_tick_labels)),
+        ),
+        bargap=0.12,
+    )
+    fig = _apply_bar_uniformtext(fig)
+    fig = apply_chart_background(fig)
+    render_chart(fig, caption_below=f"Просрочка выдачи {doc_code}")
 
 
 def _rd_plan_fallback_view(
@@ -14563,7 +14936,9 @@ def _rd_plan_fallback_view(
     else:
         df["_fact_dt"] = pd.NaT
 
-    st.subheader(f"План выдачи {doc_code}")
+    _is_delay_fb = "просрочка" in str(page_title or "").casefold()
+    if not _is_delay_fb:
+        st.subheader(f"План выдачи {doc_code}")
 
     if proj_col and proj_col in df.columns:
         try:
@@ -14692,6 +15067,38 @@ def _rd_plan_fallback_view(
             )
         else:
             suppress_caption("В источнике нет заполненной колонки статуса.")
+
+    fb_metric_mode = "Количество разделов"
+    fb_show_forecast = True
+    fb_delay_view_mode = "По проекту"
+    if source_key == "rd_plan_data":
+        if _is_delay_fb:
+            fb_delay_view_mode = st.selectbox(
+                "Отображение",
+                ["По проекту", "По разделу"],
+                index=0,
+                key=f"rd_fb_delay_view_{fb_k}",
+            )
+            fb_show_forecast = st.checkbox(
+                "Показать прогнозную дату выдачи разделов",
+                value=True,
+                key=f"rd_fb_forecast_{fb_k}",
+            )
+        else:
+            _fbm1, _fbm2 = st.columns(2, gap="small")
+            with _fbm1:
+                fb_metric_mode = st.radio(
+                    "Единица отображения",
+                    ["Количество разделов", "% от общего объёма"],
+                    horizontal=True,
+                    key=f"rd_fb_metric_{fb_k}",
+                )
+            with _fbm2:
+                fb_show_forecast = st.checkbox(
+                    "Показать прогнозную дату выдачи разделов",
+                    value=True,
+                    key=f"rd_fb_forecast_{fb_k}",
+                )
 
     if sel_sec and sec_opts and set(sel_sec) != set(sec_opts):
         df = df[_sec_lbl.isin(sel_sec)].copy()
@@ -14882,7 +15289,20 @@ def _rd_plan_fallback_view(
     m2.metric("С отклонением (дн. > 0)", f"{overdue}")
     m3.metric("Ср. задержка, дн.", f"{avg_delay:.1f}" if overdue > 0 else "0")
 
-    if source_key == "rd_plan_data" and _tessa_loaded:
+    if _is_delay_fb:
+        if use_tessa_detail and not _detail_tbl_rd.empty:
+            _render_rd_delay_fallback_chart(
+                _detail_tbl_rd,
+                view_mode=fb_delay_view_mode,
+                doc_code=doc_code,
+            )
+        else:
+            st.info(
+                "Для графика просрочки нужны карточки TESSA (`tessa_*_rd.csv`) "
+                "с датами по договору и фактом выдачи."
+            )
+
+    if source_key == "rd_plan_data" and _tessa_loaded and not _is_delay_fb:
         try:
             _total_units = int(total_sections)
             if _total_units <= 0:
@@ -15033,33 +15453,53 @@ def _rd_plan_fallback_view(
                     monthly_fb["Месяц"] = monthly_fb["_month"].apply(
                         lambda p: f"{RUSSIAN_MONTHS.get(p.month, str(p.month))} {p.year}"
                     )
-                    monthly_fb["Выполнено"] = (
-                        monthly_fb["done"] / monthly_fb["plan"] * 100
-                    ).round(2)
-                    monthly_fb["Разница план/факт"] = (
-                        monthly_fb["delta"] / monthly_fb["plan"] * 100
-                    ).round(2)
-                    monthly_fb["Просрочено"] = (
-                        monthly_fb["overdue"] / monthly_fb["plan"] * 100
-                    ).round(2)
+                    _fb_use_pct = str(fb_metric_mode).strip().startswith("%")
+                    if _fb_use_pct:
+                        monthly_fb["Выполнено"] = (
+                            monthly_fb["done"] / monthly_fb["plan"] * 100
+                        ).round(2)
+                        monthly_fb["Разница план/факт"] = (
+                            monthly_fb["delta"] / monthly_fb["plan"] * 100
+                        ).round(2)
+                        monthly_fb["Просрочено"] = (
+                            monthly_fb["overdue"] / monthly_fb["plan"] * 100
+                        ).round(2)
+                        _fb_x_col = "Процент"
+                        _fb_x_title = "% РД (по месяцу плановой даты)"
+                        _fb_sub = "Динамика по месяцам (% по плану)"
+                    else:
+                        monthly_fb["Выполнено"] = monthly_fb["done"].round(1)
+                        monthly_fb["Разница план/факт"] = monthly_fb["delta"].round(1)
+                        monthly_fb["Просрочено"] = monthly_fb["overdue"].round(1)
+                        _fb_x_col = "Количество"
+                        _fb_x_title = "Количество разделов"
+                        _fb_sub = "Динамика по месяцам"
 
                     monthly_plot_fb = monthly_fb.melt(
                         id_vars=["Месяц", "_month"],
                         value_vars=["Выполнено", "Разница план/факт", "Просрочено"],
                         var_name="Статус",
-                        value_name="Процент",
+                        value_name=_fb_x_col,
                     )
-                    monthly_plot_fb["Подпись"] = monthly_plot_fb["Процент"].apply(
-                        lambda v: f"{v:.2f}%" if pd.notna(v) and float(v) > 0 else ""
+                    monthly_plot_fb["Подпись"] = monthly_plot_fb[_fb_x_col].apply(
+                        lambda v: (
+                            f"{v:.2f}%"
+                            if _fb_use_pct and pd.notna(v) and float(v) > 0
+                            else (
+                                f"{int(round(float(v)))}"
+                                if pd.notna(v) and float(v) > 0
+                                else ""
+                            )
+                        )
                     )
                     _month_cat_desc = monthly_fb.sort_values("_month", ascending=False)[
                         "Месяц"
                     ].tolist()
-                    render_table_subheader(st, "Динамика по месяцам (% по плану)")
+                    st.subheader(_fb_sub)
                     fig_m_fb = px.bar(
                         monthly_plot_fb,
                         y="Месяц",
-                        x="Процент",
+                        x=_fb_x_col,
                         color="Статус",
                         orientation="h",
                         barmode="stack",
@@ -15072,9 +15512,13 @@ def _rd_plan_fallback_view(
                         },
                     )
                     fig_m_fb.update_layout(
-                        xaxis_title="% РД (по месяцу плановой даты)",
+                        xaxis_title=_fb_x_title,
                         yaxis_title="Месяц",
-                        xaxis=dict(range=[0, 100], ticksuffix="%"),
+                        xaxis=dict(
+                            range=[0, 100], ticksuffix="%"
+                        )
+                        if _fb_use_pct
+                        else {},
                         legend=dict(
                             orientation="h",
                             yanchor="bottom",
@@ -15097,7 +15541,7 @@ def _rd_plan_fallback_view(
             pass
 
     # Накопительная динамика по строкам CSV (аналог основного отчёта РД), если нет MSP-колонок.
-    if source_key == "rd_plan_data":
+    if source_key == "rd_plan_data" and not _is_delay_fb:
         try:
             _dyn_parts: list[pd.DataFrame] = []
             _pm = df["_plan_dt"].notna()
@@ -15234,6 +15678,13 @@ def _rd_plan_fallback_view(
         ]
         if _drop_task:
             detail_show = detail_show.drop(columns=_drop_task)
+        if not fb_show_forecast:
+            for _fc in (
+                "Прогнозная дата выдачи разделов",
+                "Отклонение от прогнозной даты, дн",
+            ):
+                if _fc in detail_show.columns:
+                    detail_show = detail_show.drop(columns=[_fc])
         _prefer_cols = [
             "Проект",
             "Наименование разделов работ",
@@ -15271,23 +15722,39 @@ def _rd_plan_fallback_view(
         if drop_cols:
             detail_show = detail_show.drop(columns=drop_cols)
 
+    detail_show = _drop_rd_detail_empty_rows(detail_show)
+
     for c in detail_show.columns:
         if detail_show[c].dtype == object:
             detail_show[c] = detail_show[c].replace({"": "—"})
 
-    render_table_subheader(st, "Детальная таблица")
-    _render_html_table(
-        detail_show,
-        scroll=True,
-        colored_dev_columns=(
-            {
-                "Отклонение от даты по договору, дн",
-                "Отклонение от прогнозной даты, дн",
-            }
-            if use_tessa_detail
-            else None
-        ),
-    )
+    st.subheader("Детальная таблица")
+    if use_tessa_detail:
+        _render_styled_table_report(
+            style_dataframe_for_dark_theme(
+                detail_show,
+                days_column="Отклонение от даты по договору, дн",
+                extra_days_columns=("Отклонение от прогнозной даты, дн",),
+                days_deviation_gradient=True,
+            ),
+            detail_show,
+            file_stem="rd_fb_detail",
+            key_prefix=f"rdfb_detail_{fb_k}",
+            full_width=True,
+        )
+    else:
+        _render_html_table(
+            detail_show,
+            scroll=True,
+            colored_dev_columns=(
+                {
+                    "Отклонение от даты по договору, дн",
+                    "Отклонение от прогнозной даты, дн",
+                }
+                if use_tessa_detail
+                else None
+            ),
+        )
     return True
 
 
@@ -15680,6 +16147,13 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 selected_statuses_rd = []
         else:
             suppress_caption("Нет колонок статусов РД для фильтра.")
+        rd_delay_show_forecast = True
+        if not is_pd:
+            rd_delay_show_forecast = st.checkbox(
+                "Показать прогнозную дату выдачи разделов",
+                value=True,
+                key=f"rd_delay_show_forecast_{doc_code}",
+            )
         pd_report_date = date.today()
         if is_pd:
             pd_report_date = st.date_input(
@@ -16480,7 +16954,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     fig_months = apply_chart_background(fig_months)
                     render_chart(fig_months, caption_below="Динамика по месяцам")
 
-        render_table_subheader(st, "Детальная таблица")
+        st.subheader("Детальная таблица")
 
         # R23-07 part 8: для РД, если загружены карточки TESSA `tessa_*_rd.csv`, —
         # строим детальную таблицу из TESSA (все нужные поля: Шифр, Раздел,
@@ -16502,6 +16976,16 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 )
                 if not _tessa_detail_table.empty:
                     _tessa_rd_detail_active = True
+                    _tessa_detail_table = _drop_rd_detail_empty_rows(_tessa_detail_table)
+                    if not rd_delay_show_forecast:
+                        for _fc in (
+                            "Прогнозная дата выдачи разделов",
+                            "Отклонение от прогнозной даты, дн",
+                        ):
+                            if _fc in _tessa_detail_table.columns:
+                                _tessa_detail_table = _tessa_detail_table.drop(
+                                    columns=[_fc]
+                                )
                     # Легаси-колонка дублирует «Отклонение от прогнозной даты, дн» — скрываем.
                     if (
                         "Отклонение, дн" in _tessa_detail_table.columns
@@ -16552,6 +17036,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                             _tessa_detail_table,
                             days_column="Отклонение от даты по договору, дн",
                             extra_days_columns=("Отклонение от прогнозной даты, дн",),
+                            days_deviation_gradient=True,
                         ),
                         _tessa_detail_table,
                         file_stem="rd_delay_tessa_detail",
@@ -27751,6 +28236,9 @@ def dashboard_documentation(
         df, is_pd=is_pd, find_column_fn=find_column, section_col=section_col
     )
 
+    rd_metric_mode = "Количество разделов"
+    show_forecast_date_col = True
+
     # Add filters
     with filters_panel(st, panel_key=f"{_doc_fk}filters"):
         filter_col1, filter_col2, filter_col3 = st.columns(3, gap="small")
@@ -27941,6 +28429,18 @@ def dashboard_documentation(
                 selected_statuses = []
         else:
             suppress_caption("Нет колонок статусов РД/ПД для фильтра.")
+        if not is_pd:
+            rd_metric_mode = st.radio(
+                "Единица отображения",
+                ["Количество разделов", "% от общего объёма"],
+                horizontal=True,
+                key=f"{_doc_fk}rd_metric_mode",
+            )
+            show_forecast_date_col = st.checkbox(
+                "Показать прогнозную дату выдачи разделов",
+                value=True,
+                key=f"{_doc_fk}show_forecast_date",
+            )
 
     # Apply filters to data
     filtered_df = df.copy()
@@ -28698,6 +29198,12 @@ def dashboard_documentation(
                         planned_weekly = _rd_summ.get("planned_weekly")
                         fact_weekly = _rd_summ.get("fact_weekly")
                         nec_rd = _rd_summ.get("nec_weekly")
+                        if nec_rd is None and deviation_to_date != 0:
+                            _mpp = _rd_summ.get("max_plan_date")
+                            if _mpp is not None:
+                                _dd = (pd.Timestamp(_mpp).date() - today).days
+                                if _dd > 0:
+                                    nec_rd = float(deviation_to_date) / float(_dd) * 7.0
                     else:
                         if max_plan_end_date is not None:
                             plan_end_ref = max_plan_end_date
@@ -29416,6 +29922,22 @@ def dashboard_documentation(
                             )
         except Exception as e:
             st.error(f"Ошибка при построении графика 'Динамика ПД': {str(e)}")
+
+    if not is_pd:
+        try:
+            _render_rd_working_doc_monthly_and_detail(
+                work_df=df,
+                selected_projects=selected_projects_doc or None,
+                selected_sections=selected_sections_doc or None,
+                metric_mode=rd_metric_mode,
+                show_forecast_date=show_forecast_date_col,
+                doc_fk=_doc_fk,
+                plan_end_col=plan_end_col,
+                rd_count_col=rd_count_col,
+                in_production_col=in_production_col,
+            )
+        except Exception as _e_rd_tbl:
+            suppress_caption(f"Детальная таблица РД: {_e_rd_tbl}")
 
     if embed_delay_at_end:
         st.divider()
@@ -36543,7 +37065,7 @@ def _compute_rd_exec_summary_from_csv_tessa(selected_projects: list[str] | None)
     else:
         not_issued = max(plan_total - float(len(internal_ids)), 0.0)
 
-    fact_to_date = 0.0
+    fact_to_date = _count_rd_fact_to_date_tessa(selected_projects)
     returned_rework = 0.0
     max_fact_date = None
     fact_weekly = None
@@ -36598,9 +37120,7 @@ def _compute_rd_exec_summary_from_csv_tessa(selected_projects: list[str] | None)
                     if _kind == "gip":
                         prod_dates.append(pd.Timestamp(_ts))
                 lk = evs[-1][1]
-                if lk == "gip" or lk == "des":
-                    fact_to_date += 1.0
-                elif lk == "ret":
+                if lk == "ret":
                     returned_rework += 1.0
                 for _ts, _kind in evs:
                     if _kind not in ("gip", "des"):
@@ -36632,6 +37152,8 @@ def _compute_rd_exec_summary_from_csv_tessa(selected_projects: list[str] | None)
         denom_days = None
     if denom_days is not None and denom_days > 0:
         nec_weekly = (float(not_issued) + float(returned_rework)) / (denom_days / 7.0)
+    elif deviation_to_date > 0:
+        nec_weekly = float(deviation_to_date) / 7.0
 
     return {
         "plan_total": plan_total,
@@ -36994,7 +37516,7 @@ def _build_tessa_rd_detail_table(
         out["Отклонение от даты по договору, дн"] = pd.NA
         out["Отклонение от прогнозной даты, дн"] = pd.NA
         out["Отклонение, дн"] = pd.NA
-    return out
+    return _drop_rd_detail_empty_rows(out)
 
 
 # ==================== DASHBOARD: Неустраненные предписания (TESSA) ====================
