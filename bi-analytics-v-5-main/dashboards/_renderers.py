@@ -329,16 +329,28 @@ _TABLE_CSS = """
   overflow:visible!important;
 }
 .gantt-schedule-table-wrap .rendered-table,
-.gantt-schedule-table-wrap .pf-dates-table {
-  width:max-content!important; min-width:100%!important; max-width:none!important;
-  table-layout:auto!important;
+.gantt-schedule-table-wrap .pf-dates-table,
+.gantt-schedule-table-wrap .gantt-schedule-table {
+  width:max-content!important; min-width:max-content!important; max-width:none!important;
+  table-layout:fixed!important;
 }
-.gantt-schedule-table-wrap .rendered-table[data-gantt-task-ch],
-.gantt-schedule-table-wrap .pf-dates-table[data-gantt-task-ch] {
-  table-layout:fixed!important; width:max-content!important; min-width:max-content!important;
+.gantt-schedule-table-wrap .rendered-table th.col-gantt-task,
+.gantt-schedule-table-wrap .rendered-table td.col-gantt-task,
+.gantt-schedule-table-wrap .gantt-schedule-table th.col-gantt-task,
+.gantt-schedule-table-wrap .gantt-schedule-table td.col-gantt-task {
+  white-space:nowrap!important; overflow:visible!important;
+  text-overflow:clip!important; text-align:left!important;
+  box-sizing:border-box!important;
+}
+.gantt-schedule-table-wrap th.col-gantt-task > div,
+.gantt-schedule-table-wrap th.col-gantt-task .bi-sort-label {
+  width:auto!important; max-width:none!important; flex:0 0 auto!important;
+  white-space:nowrap!important;
 }
 .gantt-schedule-table-wrap .rendered-table th,
 .gantt-schedule-table-wrap .rendered-table td,
+.gantt-schedule-table-wrap .gantt-schedule-table th,
+.gantt-schedule-table-wrap .gantt-schedule-table td,
 .gantt-schedule-table-wrap .pf-dates-table th,
 .gantt-schedule-table-wrap .pf-dates-table td {
   vertical-align:middle!important;
@@ -350,12 +362,6 @@ _TABLE_CSS = """
 .gantt-schedule-table-wrap .rendered-table th.col-gantt-pct,
 .gantt-schedule-table-wrap .rendered-table td.col-gantt-pct {
   white-space:nowrap!important; text-align:center!important; max-width:none!important;
-}
-.gantt-schedule-table-wrap .rendered-table th.col-gantt-task,
-.gantt-schedule-table-wrap .rendered-table td.col-gantt-task {
-  white-space:nowrap!important; overflow:visible!important;
-  text-overflow:clip!important; text-align:left!important;
-  box-sizing:border-box!important;
 }
 .gantt-schedule-table-wrap .rendered-table th.col-pf-project,
 .gantt-schedule-table-wrap .rendered-table td.col-pf-project {
@@ -919,6 +925,37 @@ def _gantt_deviation_cell_style(v) -> str:
     return "background-color: #27ae60; color: #ffffff"
 
 
+def _gantt_apply_level_display_filter(
+    df: pd.DataFrame,
+    *,
+    level_col: str | None,
+    level_sel: str,
+    wbs_col: str | None,
+    sel_block: str,
+) -> pd.DataFrame:
+    """Фильтр «Уровень отображения задач» (без режима «Показать причины отклонений»)."""
+    if df is None or getattr(df, "empty", True):
+        return df
+    if sel_block != "Все" and any(
+        tok in str(sel_block).lower()
+        for tok in ("ковенант", "ковен", "covenant", "coven")
+    ):
+        return df
+    if not level_col or level_col not in df.columns or level_sel == "Все уровни":
+        return df
+    lvl_map = {"Верхний уровень": 4, "Детальный уровень": 5}
+    target = lvl_map.get(level_sel)
+    if target is None:
+        return df
+    ln = pd.to_numeric(df[level_col], errors="coerce")
+    if ln.notna().any():
+        return df.loc[ln == float(target)].copy()
+    wbs_dep = df[level_col].map(_msp_wbs_tuple).map(lambda t: int(len(t)) if t else np.nan)
+    if wbs_dep.notna().any():
+        return df.loc[wbs_dep == target].copy()
+    return df
+
+
 def _gantt_task_name_col_width_ch(display_df: pd.DataFrame, col_name: str = "Название задачи") -> int | None:
     """Ширина колонки «Название задачи» = max(заголовок, самое длинное имя) в ch."""
     if display_df is None or col_name not in display_df.columns:
@@ -940,19 +977,22 @@ def _gantt_task_name_col_width_ch(display_df: pd.DataFrame, col_name: str = "Н�
 
 
 def _gantt_task_col_width_css(ch: int) -> str:
-    """Scoped CSS: ширина «Название задачи» = ch, без растягивания при «Причины отклонений»."""
+    """Фиксированная ширина «Название задачи» (ch) — одинакова с/без «Причины отклонений»."""
     tbl = (
         f'.bi-sortable-html-root .gantt-schedule-table-wrap '
         f'table[data-gantt-task-ch="{ch}"]'
     )
     cell = f"{tbl} th.col-gantt-task,{tbl} td.col-gantt-task"
+    col = f"{tbl} col.col-gantt-task"
     return (
-        f"{tbl}{{table-layout:fixed!important;width:max-content!important;"
-        f"min-width:max-content!important;max-width:none!important;}}"
-        f"{cell}{{width:{ch}ch!important;max-width:{ch}ch!important;"
-        f"min-width:{ch}ch!important;box-sizing:border-box!important;}}"
-        f"{tbl} colgroup col.col-gantt-task{{width:{ch}ch!important;"
-        f"max-width:{ch}ch!important;}}"
+        f"{tbl}{{width:max-content!important;min-width:max-content!important;"
+        f"table-layout:fixed!important;}}"
+        f"{col}{{width:{ch}ch!important;min-width:{ch}ch!important;max-width:{ch}ch!important;}}"
+        f"{cell}{{width:{ch}ch!important;min-width:{ch}ch!important;max-width:{ch}ch!important;"
+        f"white-space:nowrap!important;box-sizing:border-box!important;overflow:visible!important;"
+        f"text-overflow:clip!important;}}"
+        f"{tbl} th.col-gantt-task > div,{tbl} th.col-gantt-task .bi-sort-label{{"
+        f"width:auto!important;flex:0 0 auto!important;white-space:nowrap!important;}}"
     )
 
 
@@ -963,6 +1003,7 @@ def _render_gantt_schedule_html_table(
     max_rows: int = 80,
     group_by_project: bool = False,
     project_col_name: str = "Проект",
+    task_col_width_ch: int | None = None,
 ) -> None:
     """Таблица под «График проекта»: сортировка, прокраска отклонений, без обрезки текста."""
     if display_df is None or getattr(display_df, "empty", True):
@@ -989,7 +1030,11 @@ def _render_gantt_schedule_html_table(
     _num_cols = {"ИД", "Ур", "% завершения"}
     _reason_cols = {"Причины отклонений", "Причина отклонения", "Заметки"}
     _task_col_name = "Название задачи"
-    _task_col_w_ch = _gantt_task_name_col_width_ch(show_disp, _task_col_name)
+    _task_col_w_ch = (
+        int(task_col_width_ch)
+        if task_col_width_ch
+        else (_gantt_task_name_col_width_ch(show_disp, _task_col_name) or 1)
+    )
     _ncols = len(show_disp.columns)
     _use_groups = bool(
         group_by_project
@@ -1001,24 +1046,22 @@ def _render_gantt_schedule_html_table(
         f'<div class="gantt-schedule-scroll-wrap" data-bi-rows="{len(show_disp)}">',
         '<div class="rendered-table-wrap gantt-schedule-table-wrap pf-dates-table-wrap">',
     ]
-    if _task_col_w_ch:
-        parts.append(f"<style>{_gantt_task_col_width_css(_task_col_w_ch)}</style>")
-    _task_tbl_attr = f' data-gantt-task-ch="{_task_col_w_ch}"' if _task_col_w_ch else ""
+    parts.append(f"<style>{_gantt_task_col_width_css(_task_col_w_ch)}</style>")
+    _task_tbl_attr = f' data-gantt-task-ch="{_task_col_w_ch}"'
     parts.append(
-        f'<table class="rendered-table bi-sortable-table pf-dates-table bi-sort-click-only"'
+        f'<table class="rendered-table bi-sortable-table gantt-schedule-table bi-sort-click-only"'
         f"{_task_tbl_attr}>"
     )
-    if _task_col_w_ch:
-        parts.append("<colgroup>")
-        for c in show_disp.columns:
-            if c == _task_col_name:
-                parts.append(
-                    f'<col class="col-gantt-task" style="width:{_task_col_w_ch}ch;'
-                    f'max-width:{_task_col_w_ch}ch">'
-                )
-            else:
-                parts.append("<col>")
-        parts.append("</colgroup>")
+    parts.append("<colgroup>")
+    for c in show_disp.columns:
+        if c == _task_col_name:
+            parts.append(
+                f'<col class="col-gantt-task" style="width:{_task_col_w_ch}ch;'
+                f'min-width:{_task_col_w_ch}ch;max-width:{_task_col_w_ch}ch">'
+            )
+        else:
+            parts.append("<col>")
+    parts.append("</colgroup>")
     parts.extend([
         "<thead><tr>",
     ])
@@ -11041,15 +11084,28 @@ def _dk_plotly_canvas_width(n_cats: int, *, grouped: bool = True) -> tuple[bool,
 
 
 def _dk_plotly_finalize_stack_bars(fig) -> None:
-    """«С группировкой»: overlay + явный base — один столбец (без split offsetgroup в Plotly.js)."""
+    """«С группировкой»: barmode=stack — один столбец на категорию (без split overlay+base)."""
     try:
-        fig.update_layout(barmode="overlay", bargroupgap=0.04)
-        fig.update_traces(
-            offsetgroup="dk_stack",
-            alignmentgroup="dk_stack",
-            width=0.82,
-            selector=dict(type="bar"),
-        )
+        fig.update_layout(barmode="stack", bargroupgap=0.04)
+        fig.update_traces(width=0.82, selector=dict(type="bar"))
+        for tr in fig.data or []:
+            if getattr(tr, "type", None) != "bar" and type(tr).__name__ != "Bar":
+                continue
+            tr.update(offsetgroup=None, alignmentgroup=None, base=None)
+    except Exception:
+        pass
+
+
+def _dk_plotly_finalize_group_bars(fig, *, bar_width: float = 0.55) -> None:
+    """«Без группировки»: каждая серия — отдельный столбец рядом (уникальный offsetgroup)."""
+    try:
+        fig.update_layout(barmode="group", bargroupgap=0.04)
+        _w = max(0.14, min(0.55, float(bar_width)))
+        for idx, tr in enumerate(fig.data or []):
+            if getattr(tr, "type", None) != "bar" and type(tr).__name__ != "Bar":
+                continue
+            _og = str(getattr(tr, "name", None) or f"dk_grp_{idx}")
+            tr.update(width=_w, offsetgroup=_og, alignmentgroup=None)
     except Exception:
         pass
 
@@ -11063,16 +11119,13 @@ def _dk_make_stack_bar_figure(
 ) -> go.Figure:
     """Стек ДЗ/КЗ: отклонение ≥0 → КС-2 → Аванс (один столбец на подрядчика)."""
     x = chart_df[chart_label].astype(str).tolist()
-    n = len(x)
-    _cum = np.zeros(n, dtype=float)
     traces: list = []
-    _grp = dict(offsetgroup="dk_stack", alignmentgroup="dk_stack", width=0.82)
     _bar_style = dict(
         textposition="outside",
         textangle=0,
         cliponaxis=False,
         textfont=dict(size=11, color="#e8eef5"),
-        **_grp,
+        width=0.82,
     )
     _series: list[tuple[str, np.ndarray, str, str]] = []
     if has_deviation and "Отклонение" in chart_df.columns:
@@ -11101,7 +11154,6 @@ def _dk_make_stack_bar_figure(
                 name=name,
                 x=x,
                 y=y_vals,
-                base=_cum.tolist(),
                 marker=dict(color=color),
                 showlegend=True,
                 text=[text_fn(v) for v in y_vals],
@@ -11109,8 +11161,7 @@ def _dk_make_stack_bar_figure(
                 **_bar_style,
             )
         )
-        _cum = _cum + y_vals
-    fig = go.Figure(data=traces, layout=go.Layout(barmode="overlay", bargroupgap=0.04))
+    fig = go.Figure(data=traces, layout=go.Layout(barmode="stack", bargroupgap=0.04))
     _dk_plotly_finalize_stack_bars(fig)
     return fig
 
@@ -11185,7 +11236,7 @@ def _render_debit_credit_bar_chart(
 
     _bg = 0.10 if need_hscroll else max(0.05, min(0.12, 1.6 / n))
     if stack:
-        fig.update_layout(barmode="overlay", bargap=_bg, bargroupgap=0.04)
+        fig.update_layout(barmode="stack", bargap=_bg, bargroupgap=0.04)
         _dk_plotly_finalize_stack_bars(fig)
     else:
         try:
@@ -11206,12 +11257,8 @@ def _render_debit_credit_bar_chart(
                 ),
             )
             _bar_w_grp = max(0.14, min(0.55, (0.82 / _n_bar_tr) * 1.67))
-            fig.update_layout(barmode="group", bargap=_bg, bargroupgap=0.04)
-            fig.update_traces(
-                width=_bar_w_grp,
-                offsetgroup="dk_side",
-                selector=dict(type="bar"),
-            )
+            fig.update_layout(bargap=_bg)
+            _dk_plotly_finalize_group_bars(fig, bar_width=_bar_w_grp)
         except Exception:
             pass
 
@@ -11298,7 +11345,7 @@ def _render_debit_credit_bar_chart(
 
         if stack:
             _dk_plotly_finalize_stack_bars(fig)
-        # inline plotly.js — CDN-версия иначе ломает overlay+base (split столбцов).
+        # inline plotly.js — стабильный stack без split столбцов.
         plot_div = fig.to_html(
             full_html=False,
             include_plotlyjs=True,
@@ -24187,7 +24234,6 @@ def dashboard_debit_credit(df):
                     **_dk_bar_label_style,
                 )
                 _bar_kw["showlegend"] = True
-                _bar_kw["offsetgroup"] = "dk_side"
                 fig.add_trace(go.Bar(**_bar_kw))
             if _has_deviation_col:
                 _dev_s = pd.to_numeric(chart_df["Отклонение"], errors="coerce").fillna(0.0)
@@ -24198,7 +24244,6 @@ def dashboard_debit_credit(df):
                         name="Отклонение, если больше или = 0",
                         x=x,
                         y=_dev_pos,
-                        offsetgroup="dk_side",
                         marker_color="#95A5A6",
                         showlegend=True,
                         text=_dev_pos.apply(_dk_chart_bar_text),
@@ -24217,7 +24262,6 @@ def dashboard_debit_credit(df):
                         name="Отклонение, если меньше 0",
                         x=x,
                         y=_dev_neg,
-                        offsetgroup="dk_side",
                         marker_color="#F1948A",
                         text=_dev_neg.apply(_dk_chart_bar_text),
                         textposition="outside",
@@ -24237,7 +24281,7 @@ def dashboard_debit_credit(df):
             side_by_side=_dk_side_by_side,
         )
         fig.update_layout(
-            barmode="overlay" if _dk_is_stack else "group",
+            barmode="stack" if _dk_is_stack else "group",
             showlegend=True,
             yaxis=_yaxis_kw,
             margin=dict(r=40, b=120, t=88, l=64),
@@ -24281,6 +24325,18 @@ def dashboard_debit_credit(df):
         _cats_tick = _dk_x_tick_labels(_cats_full)
         if _dk_is_stack:
             _dk_plotly_finalize_stack_bars(fig)
+        else:
+            _n_side = max(
+                1,
+                sum(
+                    1
+                    for tr in (fig.data or [])
+                    if getattr(tr, "type", None) == "bar" or type(tr).__name__ == "Bar"
+                ),
+            )
+            _dk_plotly_finalize_group_bars(
+                fig, bar_width=max(0.14, min(0.55, (0.82 / _n_side) * 1.67))
+            )
         _render_debit_credit_bar_chart(
             fig,
             categories=_cats_full,
@@ -40938,6 +40994,29 @@ def dashboard_project_schedule_chart(df):
         covenant_points_mode=_covenant_mode_gantt,
     )
 
+    # Ширина «Название задачи» — как при выключенном «Показать причины отклонений»
+    # (уровень из селектора, без разворота предков ур.5).
+    _task_col_for_w = _sched_col(plot_df, ["task name", "Task Name", "Название"])
+    _plot_task_w = _gantt_apply_level_display_filter(
+        plot_df,
+        level_col=level_col,
+        level_sel=level_sel,
+        wbs_col=wbs_col,
+        sel_block=sel_block,
+    )
+    if _task_col_for_w and _task_col_for_w in _plot_task_w.columns:
+        _task_names_w = (
+            _plot_task_w[_task_col_for_w].fillna("").astype(str).map(_gantt_clean_task_label)
+        )
+        _gantt_tbl_task_col_w_ch = (
+            _gantt_task_name_col_width_ch(
+                pd.DataFrame({"Название задачи": _task_names_w})
+            )
+            or 9
+        )
+    else:
+        _gantt_tbl_task_col_w_ch = 9
+
     # ── Применяем фильтр уровня (по селектору) или show_reasons-override (ур. 5 + предки) ──
     # Делаем здесь, чтобы значение чекбокса show_reasons уже было известно и могло
     # переопределить выбор уровня согласно ТЗ.
@@ -41993,6 +42072,7 @@ def dashboard_project_schedule_chart(df):
                 max_rows=_gantt_tbl_cap,
                 group_by_project=False,
                 project_col_name="Проект",
+                task_col_width_ch=_gantt_tbl_task_col_w_ch,
             )
 
     try:
