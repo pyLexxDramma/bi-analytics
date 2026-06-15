@@ -7095,9 +7095,16 @@ def _plan_fact_pick_metric_task_row(
                 cand = w.iloc[0:0]
         if not cand.empty:
             return cand.iloc[0]
+    if mt and not _plan_fact_zos_task_name_match(mt):
+        return None
     cm = _plan_fact_covenant_row_mask(w, dates_notes_col, dates_milestone_col)
     zm = w["task name"].astype(str).map(_plan_fact_zos_task_name_match)
     z = w.loc[cm & zm]
+    if not z.empty:
+        z = z.copy()
+        z["_zos_rank"] = z["task name"].map(_plan_fact_zos_task_rank)
+        return z.sort_values("_zos_rank", ascending=True).iloc[0]
+    z = w.loc[zm]
     if not z.empty:
         z = z.copy()
         z["_zos_rank"] = z["task name"].map(_plan_fact_zos_task_rank)
