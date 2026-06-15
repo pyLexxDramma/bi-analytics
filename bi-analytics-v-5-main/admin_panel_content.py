@@ -108,19 +108,38 @@ def _render_control_points_msp_tab(user: dict) -> None:
             return [], task_col, "Не найдены колонки MSP с названием задачи и уровнем."
         levels = outline_level_numeric(df[level_col])
         li = pd.to_numeric(levels, errors="coerce").round()
-        mask = li.isin([2, 3])
-        sub = df.loc[mask, [task_col, level_col]].copy()
-        sub["_msp_lvl"] = li.loc[sub.index].astype(float).round().astype(int)
+        cur_task = (get_setting("baseline_plan_task_for_metrics") or "ЗОС").strip()
+        tn = df[task_col].astype(str).str.strip()
+
+        def _mode_level(mask: pd.Series) -> int | None:
+            lvl = li.loc[mask].dropna()
+            if lvl.empty:
+                return None
+            return int(lvl.mode().iloc[0])
+
+        target_level = None
+        if cur_task:
+            target_level = _mode_level(tn.str.casefold() == cur_task.casefold())
+        if target_level is None:
+            zos_mask = tn.str.contains(
+                r"(?<![а-яёa-z0-9])зос(?![а-яёa-z0-9])",
+                case=False,
+                regex=True,
+            ) | tn.str.contains("заключение о соответствии", case=False)
+            target_level = _mode_level(zos_mask)
+        if target_level is None:
+            target_level = 5
+
+        mask = li == target_level
+        sub = df.loc[mask, [task_col]].copy()
         if sub.empty:
-            return [], task_col, "В текущей выгрузке MSP нет задач уровней 2 и 3."
+            return [], task_col, f"В текущей выгрузке MSP нет задач уровня {target_level}."
         sub[task_col] = sub[task_col].astype(str).str.strip()
         sub = sub[sub[task_col].ne("") & sub[task_col].str.lower().ne("nan")]
-        sub = sub.drop_duplicates(subset=[task_col, "_msp_lvl"]).sort_values(
-            ["_msp_lvl", task_col], kind="stable"
-        )
-        options = [(int(row["_msp_lvl"]), str(row[task_col])) for _, row in sub.iterrows()]
+        sub = sub.drop_duplicates(subset=[task_col]).sort_values(task_col, kind="stable")
+        options = [(target_level, str(row[task_col])) for _, row in sub.iterrows()]
         if not options:
-            return [], task_col, "В MSP не найдено ни одной валидной задачи уровней 2 и 3."
+            return [], task_col, f"В MSP не найдено ни одной валидной задачи уровня {target_level}."
         return options, task_col, None
 
     st.subheader("Email администратора")
