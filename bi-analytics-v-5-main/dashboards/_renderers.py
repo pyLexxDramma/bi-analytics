@@ -14773,7 +14773,7 @@ def _render_rd_delay_fallback_chart(
             + tbl["Наименование разделов работ"].fillna("").astype(str).str.strip()
         ).str.replace(r"\s+", " ", regex=True).str.strip()
         y_col = "Раздел"
-        y_title = "Раздел"
+        y_title = ""
     else:
         tbl["_y"] = tbl["Проект"].fillna("").astype(str).str.strip()
         y_col = "Проект"
@@ -16643,7 +16643,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             chart_data.loc[~mask_plan, "% выполнения РД/ПД"] = "—"
             chart_data = chart_data.sort_values(dev_col, ascending=False)
             y_column = "Раздел"
-            y_title = "Раздел"
+            y_title = ""
         else:
             # Group by project and sum deviations
             if project_col and project_col in filtered_df.columns:
