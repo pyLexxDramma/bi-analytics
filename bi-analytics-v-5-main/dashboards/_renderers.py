@@ -11096,16 +11096,20 @@ def _dk_plotly_finalize_stack_bars(fig) -> None:
         pass
 
 
-def _dk_plotly_finalize_group_bars(fig, *, bar_width: float = 0.55) -> None:
-    """«Без группировки»: каждая серия — отдельный столбец рядом (уникальный offsetgroup)."""
+def _dk_plotly_finalize_group_bars(fig, *, bar_width: float | None = None) -> None:
+    """«Без группировки»: серии — отдельными столбцами рядом по каждой категории.
+
+    Plotly сам делит слот категории между сериями (общий alignmentgroup, разный
+    offsetgroup). Явную width НЕ задаём — иначе при N серий ширина может превысить
+    1/N слота, и столбцы наезжают друг на друга («хаотичное» расположение).
+    """
     try:
-        fig.update_layout(barmode="group", bargroupgap=0.04)
-        _w = max(0.14, min(0.55, float(bar_width)))
+        fig.update_layout(barmode="group", bargap=0.3, bargroupgap=0.25)
         for idx, tr in enumerate(fig.data or []):
             if getattr(tr, "type", None) != "bar" and type(tr).__name__ != "Bar":
                 continue
             _og = str(getattr(tr, "name", None) or f"dk_grp_{idx}")
-            tr.update(width=_w, offsetgroup=_og, alignmentgroup=None)
+            tr.update(width=None, offsetgroup=_og, alignmentgroup="dk_grp")
     except Exception:
         pass
 
@@ -11240,25 +11244,7 @@ def _render_debit_credit_bar_chart(
         _dk_plotly_finalize_stack_bars(fig)
     else:
         try:
-            fig.update_layout(barmode="group")
-            _finance_plotly_apply_bar_width(
-                fig,
-                n,
-                cats,
-                fixed_canvas_width=fixed_w if need_hscroll else None,
-                stack=False,
-            )
-            _n_bar_tr = max(
-                1,
-                sum(
-                    1
-                    for tr in (fig.data or [])
-                    if getattr(tr, "type", None) == "bar" or type(tr).__name__ == "Bar"
-                ),
-            )
-            _bar_w_grp = max(0.14, min(0.55, (0.82 / _n_bar_tr) * 1.67))
-            fig.update_layout(bargap=_bg)
-            _dk_plotly_finalize_group_bars(fig, bar_width=_bar_w_grp)
+            _dk_plotly_finalize_group_bars(fig)
         except Exception:
             pass
 
@@ -24326,17 +24312,7 @@ def dashboard_debit_credit(df):
         if _dk_is_stack:
             _dk_plotly_finalize_stack_bars(fig)
         else:
-            _n_side = max(
-                1,
-                sum(
-                    1
-                    for tr in (fig.data or [])
-                    if getattr(tr, "type", None) == "bar" or type(tr).__name__ == "Bar"
-                ),
-            )
-            _dk_plotly_finalize_group_bars(
-                fig, bar_width=max(0.14, min(0.55, (0.82 / _n_side) * 1.67))
-            )
+            _dk_plotly_finalize_group_bars(fig)
         _render_debit_credit_bar_chart(
             fig,
             categories=_cats_full,
