@@ -137,7 +137,11 @@ TABLE_CELL_BORDER_CSS = f"border: {TABLE_CELL_BORDER};"
 
 def _table_cell_style(background: str, color: str, *, extra: str = "") -> str:
     """Inline-стиль ячейки Styler: фон + цвет + граница (apply() затирает set_properties)."""
-    parts = [f"background-color: {background}", f"color: {color}", TABLE_CELL_BORDER_CSS]
+    parts = [
+        f"background-color: {background} !important",
+        f"color: {color} !important",
+        TABLE_CELL_BORDER_CSS,
+    ]
     if extra:
         parts.append(extra.strip())
     return "; ".join(parts)
@@ -1115,52 +1119,71 @@ def style_dataframe_for_dark_theme(
             return val
         return val
 
-    def _days_cell_color(series):
-        result = []
-        for v in series:
-            num = _parse_signed_days_display(v)
-            if num is None or (isinstance(num, float) and pd.isna(num)):
-                result.append(_table_cell_style(TABLE_BG_COLOR, TABLE_TEXT_COLOR))
-            elif days_positive_is_ahead:
-                if float(num) > 0:
-                    result.append(_table_cell_style("#27ae60", "#ffffff"))
-                elif float(num) < 0:
-                    result.append(_table_cell_style("#c0392b", "#ffffff"))
-                else:
-                    result.append(_table_cell_style(TABLE_BG_COLOR, TABLE_TEXT_COLOR))
-            elif float(num) > 0:
-                result.append(_table_cell_style("#c0392b", "#ffffff"))
-            else:
-                result.append(_table_cell_style("#27ae60", "#ffffff"))
-        return result
+    def _days_gradient_cell_style(v, *, vmax: float):
+        num = _parse_signed_days_display(v)
+        if num is None or (isinstance(num, float) and pd.isna(num)):
+            return _table_cell_style(TABLE_BG_COLOR, TABLE_TEXT_COLOR)
+        if float(num) == 0.0:
+            return _table_cell_style(
+                "rgba(70,214,138,0.35)", "#b8f5c8", extra="font-weight: 600"
+            )
+        t = min(abs(float(num)) / vmax, 1.0)
+        if days_positive_is_ahead and float(num) > 0:
+            alpha = 0.18 + 0.28 * t
+            bg = f"rgba(70,214,138,{alpha:.3f})"
+            fg = "#00e676"
+        elif float(num) < 0 or not days_positive_is_ahead:
+            alpha = 0.24 + 0.36 * t
+            bg = f"rgba(255,84,84,{alpha:.3f})"
+            fg = "#ff6b6b"
+        else:
+            bg = "rgba(70,214,138,0.22)"
+            fg = "#00e676"
+        return _table_cell_style(bg, fg, extra="font-weight: 700")
 
     def _days_gradient_style(series):
         nums = series.map(_parse_signed_days_display)
         valid = pd.to_numeric(nums, errors="coerce").dropna()
         vmax = float(valid.abs().max()) if not valid.empty else 1.0
         vmax = max(vmax, 1.0)
-        out = []
+        return [ _days_gradient_cell_style(v, vmax=vmax) for v in series ]
+
+    def _days_cell_color(series):
+        result = []
         for v in series:
             num = _parse_signed_days_display(v)
-            if num is None or (isinstance(num, float) and pd.isna(num)) or float(num) == 0.0:
-                out.append(_table_cell_style(TABLE_BG_COLOR, TABLE_TEXT_COLOR))
-                continue
-            t = min(abs(float(num)) / vmax, 1.0)
-            if days_positive_is_ahead and float(num) > 0:
-                r = int(46 + (39 - 46) * t)
-                g = int(204 + (174 - 204) * t)
-                b = int(113 + (96 - 113) * t)
-            elif float(num) < 0 or not days_positive_is_ahead:
-                r = int(255 + (192 - 255) * t)
-                g = int(179 + (57 - 179) * t)
-                b = int(179 + (43 - 179) * t)
+            if num is None or (isinstance(num, float) and pd.isna(num)):
+                result.append(_table_cell_style(TABLE_BG_COLOR, TABLE_TEXT_COLOR))
+            elif float(num) == 0.0:
+                result.append(
+                    _table_cell_style(
+                        "rgba(70,214,138,0.35)", "#b8f5c8", extra="font-weight: 600"
+                    )
+                )
+            elif days_positive_is_ahead:
+                if float(num) > 0:
+                    result.append(
+                        _table_cell_style(
+                            "rgba(70,214,138,0.22)", "#00e676", extra="font-weight: 700"
+                        )
+                    )
+                elif float(num) < 0:
+                    result.append(
+                        _table_cell_style(
+                            "rgba(255,84,84,0.28)", "#ff6b6b", extra="font-weight: 700"
+                        )
+                    )
+                else:
+                    result.append(
+                        _table_cell_style(
+                            "rgba(70,214,138,0.22)", TABLE_TEXT_COLOR, extra="font-weight: 600"
+                        )
+                    )
+            elif float(num) > 0:
+                result.append(_table_cell_style("#c0392b", "#ffffff"))
             else:
-                r, g, b = 46, 204, 113
-            fg = "#ffffff"
-            out.append(
-                _table_cell_style(f"rgb({r},{g},{b})", fg, extra="font-weight: 600")
-            )
-        return out
+                result.append(_table_cell_style("#27ae60", "#ffffff"))
+        return result
 
     _dev_day_cols = []
     if days_column and days_column in df.columns:
@@ -1169,21 +1192,39 @@ def style_dataframe_for_dark_theme(
         for _c in extra_days_columns:
             if _c and _c in df.columns and _c not in _dev_day_cols:
                 _dev_day_cols.append(_c)
-    for _dc in _dev_day_cols:
+    if _dev_day_cols:
         if days_deviation_gradient:
-            base = base.apply(
-                lambda c, _name=_dc: _days_gradient_style(c)
-                if c.name == _name
-                else [""] * len(c),
-                axis=0,
-            )
+            _all_parsed = []
+            for _dc in _dev_day_cols:
+                _all_parsed.extend(df[_dc].map(_parse_signed_days_display).tolist())
+            _valid = [
+                abs(float(v))
+                for v in _all_parsed
+                if v is not None
+                and not (isinstance(v, float) and pd.isna(v))
+                and float(v) != 0.0
+            ]
+            _dev_vmax = max(_valid, default=1.0)
+            _dev_vmax = max(_dev_vmax, 1.0)
+
+            def _apply_all_dev_day_gradients(data: pd.DataFrame) -> pd.DataFrame:
+                out = pd.DataFrame("", index=data.index, columns=data.columns)
+                for _dc in _dev_day_cols:
+                    out[_dc] = data[_dc].map(
+                        lambda v, _vm=_dev_vmax: _days_gradient_cell_style(v, vmax=_vm)
+                    )
+                return out
+
+            base = base.apply(_apply_all_dev_day_gradients, axis=None)
         else:
-            base = base.apply(
-                lambda c, _name=_dc: _days_cell_color(c)
-                if c.name == _name
-                else [""] * len(c),
-                axis=0,
-            )
+
+            def _apply_all_dev_day_colors(data: pd.DataFrame) -> pd.DataFrame:
+                out = pd.DataFrame("", index=data.index, columns=data.columns)
+                for _dc in _dev_day_cols:
+                    out[_dc] = _days_cell_color(data[_dc])
+                return out
+
+            base = base.apply(_apply_all_dev_day_colors, axis=None)
 
     # Подсветка финансовых отклонений
     if finance_deviation_column and finance_deviation_column in df.columns:
@@ -1788,6 +1829,25 @@ def render_styled_table_to_html(styler, hide_index: bool = True) -> str:
         )
     except Exception:
         return ""
+
+
+def wrap_styled_table_full_width(html: str, n_rows: int) -> str:
+    """Растянуть styler-таблицу на 100% ширины (как fc-table-scroll-wrap)."""
+    if not html or n_rows <= 0:
+        return html
+    html = html.replace(
+        'class="bi-styled-table-wrap"',
+        f'class="fc-table-scroll-wrap bi-styled-table-wrap" data-bi-rows="{int(n_rows)}"',
+        1,
+    )
+    return html.replace(
+        ".bi-styled-table-wrap table{border-collapse:collapse!important;",
+        ".fc-table-scroll-wrap.bi-styled-table-wrap{width:100%!important;max-width:100%!important;"
+        "display:block!important;}"
+        ".fc-table-scroll-wrap.bi-styled-table-wrap table{width:100%!important;"
+        "min-width:100%!important;table-layout:fixed!important;border-collapse:collapse!important;",
+        1,
+    )
 
 
 def get_report_param_value(report_name: str, parameter_key: str, default: Any = None) -> Any:
