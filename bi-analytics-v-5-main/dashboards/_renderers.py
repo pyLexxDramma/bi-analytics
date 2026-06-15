@@ -14777,7 +14777,7 @@ def _render_rd_delay_fallback_chart(
     else:
         tbl["_y"] = tbl["Проект"].fillna("").astype(str).str.strip()
         y_col = "Проект"
-        y_title = "Проект"
+        y_title = ""
     tbl["_y"] = tbl["_y"].replace({"": "—", "nan": "—"})
     chart_data = (
         tbl.groupby("_y", as_index=False)
@@ -16679,7 +16679,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 ).round(1)
                 chart_data = chart_data.sort_values(dev_col, ascending=False)
                 y_column = "Проект"
-                y_title = "Проект"
+                y_title = ""
             else:
                 st.info("Нет данных для построения графика.")
                 return
