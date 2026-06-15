@@ -33393,17 +33393,6 @@ def dashboard_forecast_budget(df):
         with filters_selectors(st):
             c1, c2, c3, c4, c5 = st.columns(5, gap="small")
             with c1:
-                period_type_ru = st.selectbox(
-                    "Группировать по",
-                    ["Месяц", "Квартал", "Год"],
-                    key="forecast_bddcs_period_group",
-                    help="Способ суммирования прогнозного БДДС по времени.",
-                )
-                _pmap_fc = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
-                period_type_en = _pmap_fc.get(period_type_ru, "Month")
-                period_label = {"Month": "Месяц", "Quarter": "Квартал", "Year": "Год"}.get(period_type_en, "Месяц")
-
-            with c2:
                 project_opts_fc = ["Все"] + _unique_project_labels_for_select(filtered_scope[project_col])
                 selected_project_scope = st.selectbox(
                     "Проект",
@@ -33416,6 +33405,17 @@ def dashboard_forecast_budget(df):
                     filtered_scope[project_col].map(_project_filter_norm_key)
                     == _project_filter_norm_key(selected_project_scope)
                 ].copy()
+
+            with c2:
+                period_type_ru = st.selectbox(
+                    "Группировать по",
+                    ["Месяц", "Квартал", "Год"],
+                    key="forecast_bddcs_period_group",
+                    help="Способ суммирования прогнозного БДДС по времени.",
+                )
+                _pmap_fc = {"Месяц": "Month", "Квартал": "Quarter", "Год": "Year"}
+                period_type_en = _pmap_fc.get(period_type_ru, "Month")
+                period_label = {"Month": "Месяц", "Quarter": "Квартал", "Year": "Год"}.get(period_type_en, "Месяц")
 
             with c3:
                 st.selectbox(
