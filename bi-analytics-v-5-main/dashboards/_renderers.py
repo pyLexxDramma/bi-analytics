@@ -34406,15 +34406,17 @@ _PRED_MOCK_TABLE_COLUMNS = (
 
 
 def _pred_fmt_days_display(val) -> str:
-    """Дни просрочки для таблицы: положительное число дней показываем как −N (как в макете)."""
+    """Дни просрочки: просрочка — −N; сдано в срок раньше — положительная разница (срок − факт)."""
     if val is None or (isinstance(val, float) and pd.isna(val)):
         return ""
     try:
         v = int(round(float(val)))
     except (TypeError, ValueError):
         return str(val).strip()
-    if v <= 0:
-        return "0" if v == 0 else str(v)
+    if v < 0:
+        return str(-v)
+    if v == 0:
+        return "0"
     return f"-{v}"
 
 
@@ -37035,7 +37037,8 @@ def dashboard_predpisania(df):
     «Неустраненные предписания» / «Предписания по подрядчикам»: TESSA `tessa_*-id.csv`,
     KindName «Предписания»; без строк KrState/KrStateID «Проект». Устранено = KrStateID=13.
     Срок — `id_Deadline`; факт устранения — задача «Проверка» / «Принято» (`*-task.csv`, Completed).
-    Просрочка (дней): для открытых — сегодня минус дедлайн; для снятых — дата устранения минус дедлайн.
+    Просрочка (дней): для открытых — сегодня минус дедлайн; для снятых с просрочкой — факт минус срок;
+    для снятых в срок — срок минус факт (положительное число дней до дедлайна).
     Критичность — при теге «КРИТИЧНЫЙ» в Tessa_Teg (синонимы см. код); KindID вида «Предписания»
     проверяется только если поле в строке заполнено (иначе допускается — выборка уже по KindName).
     """
@@ -37385,7 +37388,11 @@ def dashboard_predpisania(df):
         if r["_resolved"]:
             d_comp = _pred_row_calendar_date(r.get("_completion_dt"))
             if d_due and d_comp:
-                return max(0, (d_comp - d_due).days)
+                if d_comp > d_due:
+                    return (d_comp - d_due).days
+                if d_comp < d_due:
+                    return -(d_due - d_comp).days
+                return 0
             return 0
         if d_due and date.today() > d_due:
             return (date.today() - d_due).days
