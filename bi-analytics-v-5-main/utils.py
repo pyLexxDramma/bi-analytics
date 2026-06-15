@@ -220,6 +220,16 @@ table.bi-sortable-table td.col-pf-dur {
   text-align: center !important;
   vertical-align: middle !important;
 }
+.bi-sortable-html-root table.bi-sortable-table th.col-gantt-task,
+.bi-sortable-html-root table.bi-sortable-table td.col-gantt-task,
+table.bi-sortable-table th.col-gantt-task,
+table.bi-sortable-table td.col-gantt-task {
+  white-space: nowrap !important;
+  word-wrap: normal !important;
+  overflow-wrap: normal !important;
+  max-width: none !important;
+  text-align: left !important;
+}
 .bi-sortable-html-root table.bi-sortable-table th.col-pf-start .bi-sort-label,
 .bi-sortable-html-root table.bi-sortable-table th.col-pf-end .bi-sort-label,
 .bi-sortable-html-root table.bi-sortable-table th.col-pf-dur .bi-sort-label,

@@ -110,6 +110,9 @@ _TABLE_SORT_JS = r"""
     if (!theadRow) return;
     bindSortableThs(tbl, theadRow);
     if (gdrsWeekRow) bindSortableThs(tbl, gdrsWeekRow);
+    if (tbl.closest(".gantt-schedule-table-wrap") && tbl.hasAttribute("data-gantt-task-ch")) {
+      __fitGanttTaskColumns(tbl.parentElement || document);
+    }
   }
 
   function bindSortableThs(tbl, theadRow) {
@@ -125,13 +128,16 @@ _TABLE_SORT_JS = r"""
       th.innerHTML = "";
       th.style.verticalAlign = "middle";
       th.style.cursor = "pointer";
+      var isGanttTask = th.classList && th.classList.contains("col-gantt-task");
       var wrap = document.createElement("div");
-      wrap.style.cssText =
-        "display:flex;align-items:center;gap:6px;justify-content:flex-start;width:100%;";
+      wrap.style.cssText = isGanttTask
+        ? "display:flex;align-items:center;gap:4px;justify-content:flex-start;width:auto;"
+        : "display:flex;align-items:center;gap:6px;justify-content:flex-start;width:100%;";
       var label = document.createElement("span");
       label.className = "bi-sort-label";
-      label.style.cssText =
-        "flex:1;min-width:0;white-space:normal;word-wrap:break-word;overflow-wrap:anywhere;overflow:visible;text-overflow:clip;cursor:pointer;user-select:none;";
+      label.style.cssText = isGanttTask
+        ? "flex:0 0 auto;min-width:0;white-space:nowrap;overflow:visible;text-overflow:clip;cursor:pointer;user-select:none;"
+        : "flex:1;min-width:0;white-space:normal;word-wrap:break-word;overflow-wrap:anywhere;overflow:visible;text-overflow:clip;cursor:pointer;user-select:none;";
       label.title = "Клик — сортировка по убыванию, повторный клик — по возрастанию";
       wrap.appendChild(label);
       th.appendChild(wrap);
@@ -263,6 +269,7 @@ _TABLE_SORT_JS = r"""
           th._biSortDir = th._biSortDir >= 0 ? -1 : 1;
         }
         apply();
+        __fitGanttTaskColumns(tbl.parentElement || document);
         reportFrameHeight();
       }
 
@@ -274,6 +281,32 @@ _TABLE_SORT_JS = r"""
   function scan(root) {
     if (!root || !root.querySelectorAll) return;
     root.querySelectorAll("table.bi-sortable-table").forEach(initTable);
+    __fitGanttTaskColumns(root);
+  }
+
+  function __fitGanttTaskColumns(root) {
+    var scope = root && root.querySelectorAll ? root : document;
+    if (!scope.querySelectorAll) return;
+    scope.querySelectorAll(".gantt-schedule-table-wrap table[data-gantt-task-ch]").forEach(function (tbl) {
+      var ch = tbl.getAttribute("data-gantt-task-ch");
+      if (!ch) return;
+      var w = ch + "ch";
+      var col = tbl.querySelector("colgroup col.col-gantt-task");
+      if (col) {
+        col.style.setProperty("width", w, "important");
+        col.style.setProperty("min-width", w, "important");
+        col.style.setProperty("max-width", w, "important");
+      }
+      tbl.querySelectorAll("th.col-gantt-task, td.col-gantt-task").forEach(function (cell) {
+        cell.style.setProperty("width", w, "important");
+        cell.style.setProperty("min-width", w, "important");
+        cell.style.setProperty("max-width", w, "important");
+        cell.style.setProperty("white-space", "nowrap", "important");
+      });
+      tbl.style.setProperty("table-layout", "fixed", "important");
+      tbl.style.setProperty("width", "max-content", "important");
+      tbl.style.setProperty("min-width", "max-content", "important");
+    });
   }
 
   function __ganttFrameHeight(box) {
@@ -427,6 +460,7 @@ _TABLE_SORT_JS = r"""
       if (tgt) ro.observe(tgt);
     }
   } catch (e) {}
+  window.__fitGanttTaskColumns = __fitGanttTaskColumns;
 })();
 """
 
@@ -586,6 +620,9 @@ _COMPACT_FRAME_FIT_JS = r"""
 
       var ganttScroll = document.querySelector(".gantt-schedule-scroll-wrap");
       if (ganttScroll) {
+        if (typeof window.__fitGanttTaskColumns === "function") {
+          window.__fitGanttTaskColumns(document);
+        }
         var gh = __ganttFrameHeight(ganttScroll);
         if (gh > 0) {
           window.parent.postMessage({ type: "streamlit:setFrameHeight", height: gh }, "*");
@@ -766,15 +803,12 @@ html,body{
   box-sizing:border-box;
 }
 .bi-sortable-html-root table.bi-sortable-table{min-width:min(100%,720px);}
+.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.bi-sortable-table{min-width:max-content!important;}
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.bi-sortable-table,
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.rendered-table,
-.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.pf-dates-table{
-  width:max-content!important;min-width:100%!important;max-width:none!important;table-layout:auto!important;
-}
-.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.bi-sortable-table[data-gantt-task-ch],
-.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.rendered-table[data-gantt-task-ch],
-.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.pf-dates-table[data-gantt-task-ch]{
-  table-layout:fixed!important;width:max-content!important;min-width:max-content!important;
+.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.pf-dates-table,
+.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.gantt-schedule-table{
+  width:max-content!important;min-width:max-content!important;max-width:none!important;table-layout:fixed!important;
 }
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table th.col-gantt-id,
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table td.col-gantt-id,
@@ -790,9 +824,12 @@ html,body{
 }
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table th.col-gantt-task,
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table td.col-gantt-task{
-  /* Ширина задаётся per-table CSS (data-gantt-task-ch) — не max-content, иначе ломается с «Причины». */
   overflow:visible!important; text-overflow:clip!important;
   white-space:nowrap!important; text-align:left!important; box-sizing:border-box!important;
+}
+.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table th.col-gantt-task > div,
+.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table th.col-gantt-task .bi-sort-label{
+  width:auto!important;flex:0 0 auto!important;white-space:nowrap!important;
 }
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table th.col-pf-project,
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table td.col-pf-project,
@@ -1202,7 +1239,15 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
             'html body .gantt-schedule-scroll-wrap{height:100%!important;max-height:100%!important;min-height:0!important;'
             'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;}'
             'html body .gantt-schedule-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;'
-            'background:hsl(209,72%,6%)!important;}</style></head>',
+            'background:hsl(209,72%,6%)!important;}'
+            'html body .gantt-schedule-table-wrap table{width:max-content!important;min-width:max-content!important;table-layout:fixed!important;}'
+            'html body .gantt-schedule-table-wrap th.col-gantt-task,'
+            'html body .gantt-schedule-table-wrap td.col-gantt-task{'
+            'white-space:nowrap!important;box-sizing:border-box!important;}'
+            'html body .gantt-schedule-table-wrap th.col-gantt-task > div,'
+            'html body .gantt-schedule-table-wrap th.col-gantt-task .bi-sort-label{'
+            'width:auto!important;flex:0 0 auto!important;white-space:nowrap!important;}'
+            '</style></head>',
             1,
         )
         _h_gantt = min(624, max(180, _estimate_html_block_height(html) + 24))
