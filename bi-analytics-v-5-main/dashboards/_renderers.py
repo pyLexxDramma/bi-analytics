@@ -11096,11 +11096,21 @@ def _dk_plotly_canvas_width(n_cats: int, *, grouped: bool = True) -> tuple[bool,
 
 
 
-def _dk_plotly_finalize_stack_bars(fig) -> None:
+def _dk_plotly_finalize_stack_bars(fig, *, n_cats: int | None = None) -> None:
     """«С группировкой»: barmode=stack — один столбец на категорию (без split overlay+base)."""
     try:
-        fig.update_layout(barmode="stack", bargroupgap=0.04)
-        fig.update_traces(width=0.82, selector=dict(type="bar"))
+        n = max(1, int(n_cats)) if n_cats is not None else None
+        bar_width = 0.82
+        layout_kw: dict = dict(barmode="stack", bargroupgap=0.04)
+        if n is not None and n <= 2:
+            _gaps = _plotly_bargaps_sparse_x_like_gdrs(n)
+            if _gaps:
+                layout_kw.update(_gaps)
+        if n == 1:
+            bar_width = 0.14
+            layout_kw.update(bargap=0.92, bargroupgap=0.28)
+        fig.update_layout(**layout_kw)
+        fig.update_traces(width=bar_width, selector=dict(type="bar"))
         for tr in fig.data or []:
             if getattr(tr, "type", None) != "bar" and type(tr).__name__ != "Bar":
                 continue
@@ -11179,7 +11189,7 @@ def _dk_make_stack_bar_figure(
             )
         )
     fig = go.Figure(data=traces, layout=go.Layout(barmode="stack", bargroupgap=0.04))
-    _dk_plotly_finalize_stack_bars(fig)
+    _dk_plotly_finalize_stack_bars(fig, n_cats=len(x))
     return fig
 
 
@@ -11253,8 +11263,15 @@ def _render_debit_credit_bar_chart(
 
     _bg = 0.10 if need_hscroll else max(0.05, min(0.12, 1.6 / n))
     if stack:
-        fig.update_layout(barmode="stack", bargap=_bg, bargroupgap=0.04)
-        _dk_plotly_finalize_stack_bars(fig)
+        if n <= 2:
+            _gaps = _plotly_bargaps_sparse_x_like_gdrs(n)
+            if _gaps:
+                fig.update_layout(barmode="stack", **_gaps)
+            else:
+                fig.update_layout(barmode="stack", bargap=_bg, bargroupgap=0.04)
+        else:
+            fig.update_layout(barmode="stack", bargap=_bg, bargroupgap=0.04)
+        _dk_plotly_finalize_stack_bars(fig, n_cats=n)
     else:
         try:
             _dk_plotly_finalize_group_bars(fig)
@@ -11307,7 +11324,7 @@ def _render_debit_credit_bar_chart(
             pass
     _apply_plotly_spec_411_labels(fig)
     if stack:
-        _dk_plotly_finalize_stack_bars(fig)
+        _dk_plotly_finalize_stack_bars(fig, n_cats=n)
 
     if not need_hscroll:
         render_chart(
@@ -11343,7 +11360,7 @@ def _render_debit_credit_bar_chart(
         import streamlit.components.v1 as components
 
         if stack:
-            _dk_plotly_finalize_stack_bars(fig)
+            _dk_plotly_finalize_stack_bars(fig, n_cats=n)
         # inline plotly.js — стабильный stack без split столбцов.
         plot_div = fig.to_html(
             full_html=False,
@@ -24341,7 +24358,7 @@ def dashboard_debit_credit(df):
     _dc_date_contract = _find_col(work, ["Дата договора", "ДатаДоговора", "Дата Договора"])
     work["_dc_period_dt"] = pd.NaT
     if _dc_date_contract and _dc_date_contract in work.columns:
-        work["_dc_period_dt"] = pd.to_datetime(work[_dc_date_contract], errors="coerce", dayfirst=True)
+        work["_dc_period_dt"] = _rd_naive_datetime_series(work[_dc_date_contract])
         _dc_sentinel_mask = work["_dc_period_dt"].notna() & (work["_dc_period_dt"].dt.year <= 1)
         work.loc[_dc_sentinel_mask, "_dc_period_dt"] = pd.NaT
 
@@ -24580,13 +24597,15 @@ def dashboard_debit_credit(df):
             == _project_filter_norm_key(sel_project)
         ]
     if issue_start is not None and issue_end is not None and "_dc_period_dt" in filtered.columns:
-        _pd = filtered["_dc_period_dt"]
+        _pd = _rd_naive_datetime_series(filtered["_dc_period_dt"])
+        _period_start = pd.Timestamp(issue_start).normalize()
+        _period_end = pd.Timestamp(issue_end).normalize()
         filtered = filtered[
             _pd.isna()
             | (
                 _pd.notna()
-                & (_pd.dt.normalize().dt.date >= issue_start)
-                & (_pd.dt.normalize().dt.date <= issue_end)
+                & (_pd.dt.normalize() >= _period_start)
+                & (_pd.dt.normalize() <= _period_end)
             )
         ]
 
@@ -24804,7 +24823,7 @@ def dashboard_debit_credit(df):
         _cats_full = chart_df[chart_label].astype(str).tolist()
         _cats_tick = _dk_x_tick_labels(_cats_full)
         if _dk_is_stack:
-            _dk_plotly_finalize_stack_bars(fig)
+            _dk_plotly_finalize_stack_bars(fig, n_cats=len(_cats_full))
         else:
             _dk_plotly_finalize_group_bars(fig)
         _render_debit_credit_bar_chart(
