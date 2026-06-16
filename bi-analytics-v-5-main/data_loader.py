@@ -574,12 +574,16 @@ def update_session_with_loaded_file(df: pd.DataFrame, file_id: str) -> None:
             "columns": list(df.columns),
         }
     elif data_type == "debit_credit":
+        _dk_adv = float(getattr(df, "attrs", {}).get("dk_summary_advance_rub", 0) or 0)
         if st.session_state.debit_credit_data is None:
             st.session_state.debit_credit_data = df
         else:
             st.session_state.debit_credit_data = pd.concat(
                 [st.session_state.debit_credit_data, df], ignore_index=True
             )
+        if _dk_adv > 0:
+            st.session_state.debit_credit_data.attrs["dk_summary_advance_rub"] = _dk_adv
+            st.session_state["dk_summary_advance_rub"] = _dk_adv
         st.session_state.loaded_files_info[file_id] = {
             "type": "debit_credit",
             "rows": len(df),
