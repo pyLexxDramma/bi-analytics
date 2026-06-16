@@ -735,17 +735,6 @@ def main():
 
                         st.rerun()
 
-                st.markdown("<br>", unsafe_allow_html=True)
-
-                with st.container(border=True):
-
-                    st.markdown("""
-                    **Тестовые учетные данные:**
-                    - **Имя пользователя:** `admin`
-                    - **Пароль:** `admin123`
-                    - **Роль:** Суперадминистратор
-                    """)
-
         st.stop()
 
     user = get_current_user()
