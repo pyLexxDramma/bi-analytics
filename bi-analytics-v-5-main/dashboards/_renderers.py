@@ -15670,6 +15670,83 @@ def _rd_plan_fallback_view(
                 dynamics_df["Текст"] = dynamics_df["Количество"].apply(
                     lambda x: f"{float(x):.0f}" if pd.notna(x) and float(x) != 0.0 else ""
                 )
+                if str(page_title or "").strip() == "Рабочая документация":
+                    st.subheader("Динамика выдачи РД")
+                    _fb_msp_prod: Optional[dict[str, Any]] = None
+                    try:
+                        _today_fb = date.today()
+                        _pl_fb = dynamics_df[dynamics_df["Тип"] == "План"].sort_values("Дата")
+                        _fc_fb = dynamics_df[dynamics_df["Тип"] == "Факт"].sort_values("Дата")
+                        _pt_fb = float(_pl_fb["Количество"].max()) if not _pl_fb.empty else 0.0
+                        _pd_fb = 0.0
+                        if not _pl_fb.empty:
+                            _dtp_fb = pd.to_datetime(_pl_fb["Дата"])
+                            _past_pl = _pl_fb[_dtp_fb.dt.date <= _today_fb]
+                            _pd_fb = (
+                                float(_past_pl["Количество"].iloc[-1])
+                                if not _past_pl.empty
+                                else 0.0
+                            )
+                        _fd_fb = 0.0
+                        if not _fc_fb.empty:
+                            _dtf_fb = pd.to_datetime(_fc_fb["Дата"])
+                            _past_fc = _fc_fb[_dtf_fb.dt.date <= _today_fb]
+                            _fd_fb = (
+                                float(_past_fc["Количество"].iloc[-1])
+                                if not _past_fc.empty
+                                else 0.0
+                            )
+                        _dev_fb = float(_pd_fb - _fd_fb)
+                        _max_plan_fb = (
+                            df["_plan_dt"].max().date()
+                            if df["_plan_dt"].notna().any()
+                            else None
+                        )
+                        _max_fact_fb = (
+                            df["_fact_dt"].max().date()
+                            if df["_fact_dt"].notna().any()
+                            else None
+                        )
+                        _last_pl_fb = _pl_fb["Дата"].max() if not _pl_fb.empty else None
+                        _ld_fb = (
+                            pd.Timestamp(_last_pl_fb).date()
+                            if _last_pl_fb is not None
+                            else _today_fb
+                        )
+                        _fb_msp_prod = {
+                            "plan_to_date": _pd_fb,
+                            "fact_to_date": _fd_fb,
+                            "deviation_to_date": _dev_fb,
+                            "fact_to_date_msp": _fd_fb,
+                            "max_plan_end_date": _max_plan_fb,
+                            "max_fact_end_date": _max_fact_fb,
+                            "last_plan_date": _ld_fb,
+                        }
+                        _kc1, _kc2, _kc3, _kc4 = st.columns(4, gap="small")
+                        with _kc1:
+                            st.metric("План по проекту", _fmt_rd_whole_metric(_pt_fb))
+                        with _kc2:
+                            st.metric("План на текущую дату", _fmt_rd_whole_metric(_pd_fb))
+                        with _kc3:
+                            st.metric("Факт на текущую дату", _fmt_rd_whole_metric(_fd_fb))
+                        with _kc4:
+                            try:
+                                _dev_i_fb = int(round(float(_dev_fb)))
+                                _dev_disp_fb = f"{_dev_i_fb:+d}"
+                            except Exception:
+                                _dev_disp_fb = "—"
+                            st.metric("Отклонение на текущую дату", _dev_disp_fb)
+                    except Exception:
+                        _fb_msp_prod = None
+                    try:
+                        _render_rd_weekly_productivity_kpis(
+                            list(sel) if proj_col and sel else None,
+                            msp_fallback=_fb_msp_prod,
+                        )
+                    except Exception as _e_prod_fb:
+                        suppress_caption(
+                            f"Производительность разделов в неделю: {_e_prod_fb}"
+                        )
                 fig_fb = px.line(
                     dynamics_df,
                     x="Дата",
@@ -15725,7 +15802,8 @@ def _rd_plan_fallback_view(
                     )
                 )
                 fig_fb = apply_chart_background(fig_fb)
-                st.subheader("Динамика выдачи РД")
+                if str(page_title or "").strip() != "Рабочая документация":
+                    st.subheader("Динамика выдачи РД")
                 render_chart(
                     fig_fb,
                     key=f"rdfb_dyn_{fb_k}",
