@@ -21,9 +21,71 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from ftplib import FTP, FTP_TLS, error_perm
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+
+
+def _ftp_sync_lock_path() -> Path:
+    """Inter-process lock рядом с web_data.db (Streamlit Cloud: web + worker одновременно)."""
+    try:
+        from web_loader import WEB_DB_PATH
+
+        base = Path(WEB_DB_PATH).resolve().parent
+    except Exception:
+        base = Path(".").resolve()
+    base.mkdir(parents=True, exist_ok=True)
+    return base / ".auto_ingest.lock"
+
+
+def acquire_ftp_sync_lock(stale_seconds: int = 600) -> tuple[bool, str]:
+    """Атомарный lock через O_CREAT|O_EXCL. При успехе вызвать release_ftp_sync_lock() в finally."""
+    lock = _ftp_sync_lock_path()
+    my_pid = os.getpid()
+    if lock.exists():
+        try:
+            age = time.time() - lock.stat().st_mtime
+        except Exception:
+            age = 0.0
+        try:
+            holder_raw = lock.read_text(encoding="utf-8").strip()
+        except Exception:
+            holder_raw = ""
+        try:
+            holder_pid = int(holder_raw.splitlines()[0]) if holder_raw else 0
+        except Exception:
+            holder_pid = 0
+        if holder_pid and holder_pid == my_pid:
+            return False, f"self_reentry pid={holder_pid}"
+        if age < stale_seconds:
+            return False, f"locked by pid={holder_raw or '?'} age={age:.0f}s"
+        try:
+            lock.unlink()
+        except Exception:
+            pass
+    try:
+        fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        try:
+            os.write(fd, f"{my_pid}\n".encode("utf-8"))
+        finally:
+            os.close(fd)
+        return True, "acquired"
+    except FileExistsError:
+        try:
+            holder = lock.read_text(encoding="utf-8").strip()
+        except Exception:
+            holder = "?"
+        return False, f"raced by pid={holder}"
+    except Exception as e:
+        return False, f"lock open failed: {e}"
+
+
+def release_ftp_sync_lock() -> None:
+    try:
+        _ftp_sync_lock_path().unlink()
+    except Exception:
+        pass
 
 
 def _env_config() -> Dict[str, Any]:
@@ -168,14 +230,18 @@ def _safe_size(ftp, name: str) -> Optional[int]:
 
 
 def _retrieve(ftp, name: str, dest: Path) -> None:
-    """Атомарно скачивает RETR в dest через временный *.tmp.
+    """Атомарно скачивает RETR в dest через уникальный *.part.
 
-    Зачем .tmp: если RETR упадёт в середине (на FTP файл занят пишущим
+    Зачем .part: если RETR упадёт в середине (на FTP файл занят пишущим
     процессом — приходит 550 Failed to open file), мы НЕ должны затереть
-    уже валидный локальный файл нулём байт. Поэтому пишем в tmp, и только
-    при успехе переименовываем поверх.
+    уже валидный локальный файл нулём байт. Поэтому пишем во временный файл,
+    и только при успехе переименовываем поверх.
+
+    Имя tmp уникально на процесс (pid + time_ns): на Streamlit Cloud web и
+    worker могут одновременно качать один файл — общий ``file.json.tmp`` давал
+    ENOENT при os.replace.
     """
-    tmp = dest.with_suffix(dest.suffix + ".tmp")
+    tmp: Optional[Path] = dest.with_name(f"{dest.name}.{os.getpid()}.{time.time_ns()}.part")
     try:
         with tmp.open("wb") as fh:
             try:
@@ -185,14 +251,17 @@ def _retrieve(ftp, name: str, dest: Path) -> None:
                 fh.truncate()
                 safe = name.replace('"', '\\"')
                 ftp.retrbinary(f'RETR "{safe}"', fh.write)
+        if not tmp.exists():
+            raise OSError(f"FTP download incomplete: temp file missing for {name!r}")
         # os.replace атомарен на одном томе и работает на Windows
         os.replace(tmp, dest)
+        tmp = None
     finally:
-        try:
-            if tmp.exists():
-                tmp.unlink()
-        except Exception:
-            pass
+        if tmp is not None:
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 def sync_ftp_to_web(
@@ -202,6 +271,7 @@ def sync_ftp_to_web(
     progress: Optional[Callable[[str], None]] = None,
     recursive: Optional[bool] = None,
     force_redownload: Optional[bool] = None,
+    use_interprocess_lock: bool = True,
 ) -> Dict[str, Any]:
     """
     Скачивает файлы из remote_dir в web_dir с инкрементальной проверкой размера.
@@ -238,153 +308,167 @@ def sync_ftp_to_web(
         )
         return out
 
-    if recursive is None:
-        recursive = str(os.environ.get("BI_FTP_RECURSIVE", "1")).strip().lower() not in (
-            "0",
-            "false",
-            "no",
-            "off",
-        )
-    if force_redownload is None:
-        force_redownload = str(os.environ.get("BI_FTP_FORCE_REDOWNLOAD", "0")).strip().lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        )
-
-    web_dir = Path(web_dir).resolve()
-    web_dir.mkdir(parents=True, exist_ok=True)
-
-    remote_dir = cfg.get("remote_dir") or "/"
-    if not remote_dir.startswith("/"):
-        remote_dir = "/" + remote_dir
+    lock_acquired = False
+    if use_interprocess_lock:
+        lock_acquired, lock_reason = acquire_ftp_sync_lock()
+        if not lock_acquired:
+            out["ok"] = False
+            out["errors"].append(
+                f"FTP-sync уже выполняется другим процессом ({lock_reason}). "
+                "Подождите завершения и повторите."
+            )
+            return out
 
     ftp = None
     try:
-        ftp = _connect(cfg)
-        ftp.cwd(remote_dir)
-    except Exception as e:
-        out["ok"] = False
-        out["errors"].append(f"FTP подключение или cwd {remote_dir!r}: {e}")
-        return out
+        if recursive is None:
+            recursive = str(os.environ.get("BI_FTP_RECURSIVE", "1")).strip().lower() not in (
+                "0",
+                "false",
+                "no",
+                "off",
+            )
+        if force_redownload is None:
+            force_redownload = str(os.environ.get("BI_FTP_FORCE_REDOWNLOAD", "0")).strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
 
-    def _log(msg: str) -> None:
-        if progress:
+        web_dir = Path(web_dir).resolve()
+        web_dir.mkdir(parents=True, exist_ok=True)
+
+        remote_dir = cfg.get("remote_dir") or "/"
+        if not remote_dir.startswith("/"):
+            remote_dir = "/" + remote_dir
+
+        try:
+            ftp = _connect(cfg)
+            ftp.cwd(remote_dir)
+        except Exception as e:
+            out["ok"] = False
+            out["errors"].append(f"FTP подключение или cwd {remote_dir!r}: {e}")
+            return out
+
+        def _log(msg: str) -> None:
+            if progress:
+                try:
+                    progress(msg)
+                except Exception:
+                    pass
+
+        try:
             try:
-                progress(msg)
+                ftp.voidcmd("TYPE I")
             except Exception:
                 pass
 
-    try:
-        try:
-            ftp.voidcmd("TYPE I")
-        except Exception:
-            pass
-
-        stack: List[str] = [""]
-        seen_dirs: set = set()
-        while stack:
-            rel = stack.pop()
-            try:
-                if rel:
-                    ftp.cwd(remote_dir.rstrip("/") + "/" + rel)
-                else:
-                    ftp.cwd(remote_dir)
-            except Exception as e:
-                out["errors"].append(f"cwd {(remote_dir + '/' + rel).rstrip('/')!r}: {e}")
-                out["ok"] = False
-                continue
-
-            if rel in seen_dirs:
-                continue
-            seen_dirs.add(rel)
-
-            local_subdir = web_dir / rel if rel else web_dir
-            local_subdir.mkdir(parents=True, exist_ok=True)
-
-            entries = _list_dir(ftp)
-            for name, kind, size_hint in entries:
-                if not name or name in (".", ".."):
-                    continue
-
-                if kind == "unknown":
-                    try:
-                        ftp.cwd(name)
-                        ftp.cwd("..")
-                        kind = "dir"
-                    except error_perm:
-                        kind = "file"
-                    except Exception:
-                        kind = "file"
-
-                if kind == "dir":
-                    if recursive:
-                        sub_rel = (rel + "/" + name).lstrip("/") if rel else name
-                        stack.append(sub_rel)
-                    continue
-
-                low = name.lower()
-                if not any(low.endswith(ext) for ext in extensions):
-                    out["skipped"] += 1
-                    continue
-
-                local_path = local_subdir / name
-                rel_for_report = str(local_path.relative_to(web_dir)).replace("\\", "/")
-
-                remote_size: Optional[int] = size_hint
-                if remote_size is None:
-                    remote_size = _safe_size(ftp, name)
-
-                # Skip ТОЛЬКО если локальный файл существует, его размер > 0
-                # и совпадает с remote. Файлы 0 байт — это мусор от прошлых
-                # неудачных перекачек (до атомарной записи через .tmp), их
-                # форсированно перекачиваем.
-                if (
-                    not force_redownload
-                    and remote_size is not None
-                    and remote_size > 0
-                    and local_path.exists()
-                    and local_path.stat().st_size > 0
-                    and local_path.stat().st_size == remote_size
-                ):
-                    out["skipped_same_size"] += 1
-                    continue
-
+            stack: List[str] = [""]
+            seen_dirs: set = set()
+            while stack:
+                rel = stack.pop()
                 try:
-                    _log(f"Скачивание {rel_for_report!r}…")
-                    _retrieve(ftp, name, local_path)
-                    out["downloaded"].append(rel_for_report)
-                except Exception as e:
-                    msg = str(e)
-                    # «550 Failed to open file», «file busy», «temporarily
-                    # unavailable» — файл сейчас открыт пишущим процессом
-                    # (в нашем случае 1С каждые ~15 мин перезаписывает MSP).
-                    # Это НЕ критичная ошибка пайплайна: атомарная запись
-                    # через .tmp оставила локальный валидный файл нетронутым,
-                    # на следующем sync он скачается. Не помечаем ok=False.
-                    low = msg.lower()
-                    is_transient = (
-                        "550" in msg
-                        or "failed to open" in low
-                        or "file unavailable" in low
-                        or "busy" in low
-                    )
-                    if is_transient:
-                        out["transient_errors"].append(f"{rel_for_report}: {msg}")
+                    if rel:
+                        ftp.cwd(remote_dir.rstrip("/") + "/" + rel)
                     else:
-                        out["errors"].append(f"{rel_for_report}: {msg}")
-                        out["ok"] = False
-    finally:
-        try:
-            if ftp:
-                ftp.quit()
-        except Exception:
+                        ftp.cwd(remote_dir)
+                except Exception as e:
+                    out["errors"].append(f"cwd {(remote_dir + '/' + rel).rstrip('/')!r}: {e}")
+                    out["ok"] = False
+                    continue
+
+                if rel in seen_dirs:
+                    continue
+                seen_dirs.add(rel)
+
+                local_subdir = web_dir / rel if rel else web_dir
+                local_subdir.mkdir(parents=True, exist_ok=True)
+
+                entries = _list_dir(ftp)
+                for name, kind, size_hint in entries:
+                    if not name or name in (".", ".."):
+                        continue
+
+                    if kind == "unknown":
+                        try:
+                            ftp.cwd(name)
+                            ftp.cwd("..")
+                            kind = "dir"
+                        except error_perm:
+                            kind = "file"
+                        except Exception:
+                            kind = "file"
+
+                    if kind == "dir":
+                        if recursive:
+                            sub_rel = (rel + "/" + name).lstrip("/") if rel else name
+                            stack.append(sub_rel)
+                        continue
+
+                    low = name.lower()
+                    if not any(low.endswith(ext) for ext in extensions):
+                        out["skipped"] += 1
+                        continue
+
+                    local_path = local_subdir / name
+                    rel_for_report = str(local_path.relative_to(web_dir)).replace("\\", "/")
+
+                    remote_size: Optional[int] = size_hint
+                    if remote_size is None:
+                        remote_size = _safe_size(ftp, name)
+
+                    # Skip ТОЛЬКО если локальный файл существует, его размер > 0
+                    # и совпадает с remote. Файлы 0 байт — это мусор от прошлых
+                    # неудачных перекачек, их форсированно перекачиваем.
+                    if (
+                        not force_redownload
+                        and remote_size is not None
+                        and remote_size > 0
+                        and local_path.exists()
+                        and local_path.stat().st_size > 0
+                        and local_path.stat().st_size == remote_size
+                    ):
+                        out["skipped_same_size"] += 1
+                        continue
+
+                    try:
+                        _log(f"Скачивание {rel_for_report!r}…")
+                        _retrieve(ftp, name, local_path)
+                        out["downloaded"].append(rel_for_report)
+                    except Exception as e:
+                        msg = str(e)
+                        # «550 Failed to open file», «file busy», «temporarily
+                        # unavailable» — файл сейчас открыт пишущим процессом
+                        # (в нашем случае 1С каждые ~15 мин перезаписывает MSP).
+                        # Это НЕ критичная ошибка пайплайна: атомарная запись
+                        # через .part оставила локальный валидный файл нетронутым,
+                        # на следующем sync он скачается. Не помечаем ok=False.
+                        low = msg.lower()
+                        is_transient = (
+                            "550" in msg
+                            or "failed to open" in low
+                            or "file unavailable" in low
+                            or "busy" in low
+                        )
+                        if is_transient:
+                            out["transient_errors"].append(f"{rel_for_report}: {msg}")
+                        else:
+                            out["errors"].append(f"{rel_for_report}: {msg}")
+                            out["ok"] = False
+        finally:
             try:
                 if ftp:
-                    ftp.close()
+                    ftp.quit()
             except Exception:
-                pass
+                try:
+                    if ftp:
+                        ftp.close()
+                except Exception:
+                    pass
+    finally:
+        if lock_acquired:
+            release_ftp_sync_lock()
 
     return out
 

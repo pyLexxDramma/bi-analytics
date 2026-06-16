@@ -275,7 +275,7 @@ def run_ftp_sync_to_web(*, log_prefix: str = "[auto_ingest]") -> dict | None:
         from web_loader import get_web_dir
 
         web_dir = get_web_dir()
-        result = sync_ftp_to_web(web_dir)
+        result = sync_ftp_to_web(web_dir, use_interprocess_lock=False)
         downloaded = len(result.get("downloaded", []))
         same = result.get("skipped_same_size", 0)
         errs = result.get("errors", [])
@@ -351,79 +351,22 @@ def _do_load_all() -> dict | None:
 
 def _lock_path() -> Path:
     """Inter-process lock рядом с web_data.db (на эфемерном диске)."""
-    try:
-        from web_loader import WEB_DB_PATH
+    from ftp_sync import _ftp_sync_lock_path
 
-        base = Path(WEB_DB_PATH).resolve().parent
-    except Exception:
-        base = Path(".").resolve()
-    base.mkdir(parents=True, exist_ok=True)
-    return base / ".auto_ingest.lock"
+    return _ftp_sync_lock_path()
 
 
 def _acquire_lock(stale_seconds: int = 600) -> tuple[bool, str]:
-    """Атомарный inter-process lock через O_CREAT|O_EXCL.
+    """Атомарный inter-process lock через O_CREAT|O_EXCL."""
+    from ftp_sync import acquire_ftp_sync_lock
 
-    Возвращает (acquired, reason). Если acquired=True — текущий процесс
-    обязан вызвать _release_lock() в finally.
-    Stale-lock (старше N секунд) автоматически удаляется и берётся заново
-    (на случай SIGKILL предыдущего инстанса).
-    """
-    lock = _lock_path()
-    my_pid = os.getpid()
-    if lock.exists():
-        try:
-            age = time.time() - lock.stat().st_mtime
-        except Exception:
-            age = 0.0
-        try:
-            holder_raw = lock.read_text(encoding="utf-8").strip()
-        except Exception:
-            holder_raw = ""
-        try:
-            holder_pid = int(holder_raw.splitlines()[0]) if holder_raw else 0
-        except Exception:
-            holder_pid = 0
-        # Reentry в том же процессе (Streamlit Cloud делает несколько script_run
-        # подряд при cold start, а наш in-process flag _AUTO_INGEST_DONE_IN_PROCESS
-        # ещё не выставлен — потому что первый ingest идёт в фоне). Это НЕ гонка,
-        # тихо отдаём «уже идёт у нас же», вызывающая сторона должна выйти.
-        if holder_pid and holder_pid == my_pid:
-            return False, f"self_reentry pid={holder_pid} (ingest already running in this process)"
-        if age < stale_seconds:
-            return False, f"locked by pid={holder_raw or '?'} age={age:.0f}s"
-        # stale — удалим и попробуем взять заново.
-        try:
-            lock.unlink()
-            safe_stderr_log(
-                f"[auto_ingest] removed stale lock (age={age:.0f}s > {stale_seconds}s)"
-            )
-        except Exception:
-            pass
-    try:
-        fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-        try:
-            os.write(fd, f"{my_pid}\n".encode("utf-8"))
-        finally:
-            os.close(fd)
-        return True, "acquired"
-    except FileExistsError:
-        # Кто-то опередил между exists()-проверкой и open() — это и есть гонка
-        # двух процессов Streamlit Cloud. Отдаём управление победителю.
-        try:
-            holder = lock.read_text(encoding="utf-8").strip()
-        except Exception:
-            holder = "?"
-        return False, f"raced by pid={holder}"
-    except Exception as e:
-        return False, f"lock open failed: {e}"
+    return acquire_ftp_sync_lock(stale_seconds=stale_seconds)
 
 
 def _release_lock() -> None:
-    try:
-        _lock_path().unlink()
-    except Exception:
-        pass
+    from ftp_sync import release_ftp_sync_lock
+
+    release_ftp_sync_lock()
 
 
 def maybe_run_auto_ingest_on_startup() -> None:
