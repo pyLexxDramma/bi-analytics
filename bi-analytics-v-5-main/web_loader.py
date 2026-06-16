@@ -781,16 +781,41 @@ def _load_1c_json_dk(filepath: Path) -> Optional[pd.DataFrame]:
         if not raw or not isinstance(raw, list):
             return None
         rows = []
+        _summary_adv_rub = 0.0
         for item in raw:
             try:
-                flat = {}
                 org = item.get("Организация") or {}
+                contr = item.get("Контрагент") or {}
+                dog = item.get("Договор") or {}
+                # Итоговая строка выгрузки (Контрагент/Договор/Организация = null) — не контрагент.
+                if not isinstance(contr, dict):
+                    contr = {}
+                if not isinstance(dog, dict):
+                    dog = {}
+                if not isinstance(org, dict):
+                    org = {}
+                _has_contr = bool(
+                    str(contr.get("НаименованиеКонтрагента", "") or "").strip()
+                    or str(contr.get("ID_Контрагента", "") or "").strip()
+                )
+                _has_dog = bool(
+                    str(dog.get("ID_Договора", "") or "").strip()
+                    or str(dog.get("НомерДоговора", "") or "").strip()
+                )
+                _has_org = bool(str(org.get("ID_Организации", "") or "").strip())
+                if not _has_contr and not _has_dog and not _has_org:
+                    try:
+                        _summary_adv_rub += float(
+                            item.get("ОстатокНаКонецПериодаПоАвансам", 0) or 0
+                        )
+                    except (TypeError, ValueError):
+                        pass
+                    continue
+                flat = {}
                 flat["Название организации"] = org.get("НаименованиеОрганизации", "")
                 flat["ID_Организации"] = org.get("ID_Организации", "")
-                contr = item.get("Контрагент") or {}
                 flat["Название контрагента"] = contr.get("НаименованиеКонтрагента", "")
                 flat["ID_Контрагента"] = contr.get("ID_Контрагента", "")
-                dog = item.get("Договор") or {}
                 flat["Номер договора"] = str(dog.get("НомерДоговора", "") or "").strip()
                 flat["ID_Договора"] = dog.get("ID_Договора", "")
                 flat["Дата договора"] = dog.get("ДатаДоговора", "")
@@ -819,6 +844,8 @@ def _load_1c_json_dk(filepath: Path) -> Optional[pd.DataFrame]:
             return None
         df = pd.DataFrame(rows)
         df.attrs["data_type"] = "debit_credit"
+        if _summary_adv_rub > 0:
+            df.attrs["dk_summary_advance_rub"] = float(_summary_adv_rub)
         return df
     except Exception:
         return None
@@ -2456,6 +2483,9 @@ def read_version_to_session(version_id: int):
     deb = _load_version_data(version_id, "debit_credit", _db_mtime)
     if deb is not None and not deb.empty:
         st.session_state.debit_credit_data = deb
+        _dk_adv = float(getattr(deb, "attrs", {}).get("dk_summary_advance_rub", 0) or 0)
+        if _dk_adv > 0:
+            st.session_state["dk_summary_advance_rub"] = _dk_adv
     else:
         st.session_state.debit_credit_data = None
 

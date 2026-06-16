@@ -11009,7 +11009,7 @@ def _render_finance_bar_chart(
 
 
 _DK_BAR_PX_SLOT = 220  # «С группировкой» (стек)
-_DK_BAR_PX_SLOT_GROUP = 367  # «Без группировки»: 220 × 2.5
+_DK_BAR_PX_SLOT_GROUP = 440  # «Без группировки»: 2× ширина слота категории
 _DK_BAR_SCROLL_VP_PX = 1420
 
 
@@ -11082,7 +11082,7 @@ def _dk_chart_yaxis_layout(
 
 
 def _dk_plotly_canvas_width(n_cats: int, *, grouped: bool = True) -> tuple[bool, int]:
-    """Ширина canvas: слот на категорию; «Без группировки» — в 2.5× шире."""
+    """Ширина canvas: «Без группировки» — слот категории в 2× шире стека."""
     n = max(1, int(n_cats))
     vp = int(_DK_BAR_SCROLL_VP_PX)
     px = int(_DK_BAR_PX_SLOT_GROUP if grouped else _DK_BAR_PX_SLOT)
@@ -11119,20 +11119,47 @@ def _dk_plotly_finalize_stack_bars(fig, *, n_cats: int | None = None) -> None:
         pass
 
 
-def _dk_plotly_finalize_group_bars(fig, *, bar_width: float | None = None) -> None:
-    """«Без группировки»: серии — отдельными столбцами рядом по каждой категории.
-
-    Plotly сам делит слот категории между сериями (общий alignmentgroup, разный
-    offsetgroup). Явную width НЕ задаём — иначе при N серий ширина может превысить
-    1/N слота, и столбцы наезжают друг на друга («хаотичное» расположение).
-    """
+def _dk_plotly_finalize_group_bars(
+    fig,
+    *,
+    n_cats: int | None = None,
+    bargap: float | None = None,
+) -> None:
+    """«Без группировки»: серии рядом; ширина столбца — как БДДС, без offsetgroup."""
     try:
-        fig.update_layout(barmode="group", bargap=0.3, bargroupgap=0.25)
-        for idx, tr in enumerate(fig.data or []):
+        n = max(1, int(n_cats)) if n_cats is not None else None
+        _bg = (
+            float(bargap)
+            if bargap is not None
+            else (max(0.05, min(0.12, 1.6 / n)) if n else 0.10)
+        )
+        _n_tr = sum(
+            1
+            for tr in (fig.data or [])
+            if getattr(tr, "type", None) == "bar" or type(tr).__name__ == "Bar"
+        )
+        _n_tr = max(1, _n_tr)
+        _bgg = 0.16 if _n_tr > 1 else 0.04
+        layout_kw: dict = dict(barmode="group", bargap=_bg, bargroupgap=_bgg)
+        if n is not None and n <= 2:
+            _gaps = _plotly_bargaps_sparse_x_like_gdrs(n)
+            if _gaps:
+                layout_kw.update(_gaps)
+        if n == 1:
+            layout_kw.update(bargap=0.92, bargroupgap=0.28)
+        fig.update_layout(**layout_kw)
+        if _n_tr > 1:
+            _trace_w = _finance_plotly_bar_trace_width(_n_tr, bargroupgap=_bgg)
+            _trace_w = min(_trace_w, max(0.08, (0.82 * (1.0 - _bgg)) / _n_tr))
+        elif n == 1:
+            _trace_w = 0.14
+        else:
+            _trace_w = 0.82
+        fig.update_traces(width=_trace_w, selector=dict(type="bar"))
+        for tr in fig.data or []:
             if getattr(tr, "type", None) != "bar" and type(tr).__name__ != "Bar":
                 continue
-            _og = str(getattr(tr, "name", None) or f"dk_grp_{idx}")
-            tr.update(width=None, offsetgroup=_og, alignmentgroup="dk_grp")
+            tr.update(offsetgroup=None, alignmentgroup=None, base=None)
     except Exception:
         pass
 
@@ -11274,7 +11301,7 @@ def _render_debit_credit_bar_chart(
         _dk_plotly_finalize_stack_bars(fig, n_cats=n)
     else:
         try:
-            _dk_plotly_finalize_group_bars(fig)
+            _dk_plotly_finalize_group_bars(fig, n_cats=n, bargap=_bg)
         except Exception:
             pass
 
@@ -23843,6 +23870,199 @@ def _gdrs_merge_plan_from_1c_spravochniki(
     return out
 
 
+def _dc_is_dk_summary_row(
+    row: pd.Series,
+    *,
+    contractor_col: str | None,
+    contract_col: str | None,
+    extract_partner_name,
+    extract_partner_id,
+) -> bool:
+    """Итоговая строка DK без контрагента и договора (даёт «пустой» столбец на графике)."""
+    keys: list[str] = []
+    if contractor_col and contractor_col in row.index:
+        keys.append(str(extract_partner_name(row.get(contractor_col)) or "").strip())
+        keys.append(str(extract_partner_id(row.get(contractor_col)) or "").strip())
+    if contract_col and contract_col in row.index:
+        keys.append(str(row.get(contract_col, "") or "").strip())
+    if "_id_dogovor_norm" in row.index:
+        keys.append(str(row.get("_id_dogovor_norm", "") or "").strip())
+    for _idc in ("ID_Контрагента", "Контрагент_ID_Контрагента", "Контрагент.ID_Контрагента"):
+        if _idc in row.index:
+            keys.append(str(row.get(_idc, "") or "").strip().lower())
+            break
+    for k in keys:
+        if k and k.lower() not in ("nan", "none", "nat", "<na>"):
+            return False
+    return True
+
+
+def _dc_partner_brand_key(name: str) -> str:
+    """Ключ «семейства» контрагента (ИС ЕСИПОВО 5 / ИС ЕСИПОВО → одна группа)."""
+    k = norm_partner_join_key(name)
+    if not k:
+        return k
+    m = re.search(r"\b(ис\s+есипово)\b", k)
+    if m:
+        return m.group(1)
+    return k
+
+
+def _dc_merge_chart_rows_by_partner_key(
+    chart_df: pd.DataFrame, chart_label: str, value_cols: list[str]
+) -> pd.DataFrame:
+    """Один столбец на контрагента: объединение вариантов написания по norm_partner_join_key."""
+    if chart_df is None or chart_df.empty or chart_label not in chart_df.columns:
+        return chart_df
+    out = chart_df.copy()
+    out[chart_label] = out[chart_label].astype(str).str.strip()
+    out["_dk_join_key"] = out[chart_label].map(_dc_partner_brand_key)
+    _empty_key = out["_dk_join_key"].astype(str).str.len().eq(0)
+    if _empty_key.any():
+        out = out.loc[~_empty_key].copy()
+    if out.empty:
+        return out
+    _num_cols = [c for c in value_cols if c in out.columns]
+    _label_by_key = (
+        out.groupby("_dk_join_key", as_index=True)[chart_label]
+        .agg(lambda s: max(s, key=lambda x: (len(str(x)), str(x).casefold())))
+    )
+    grouped = out.groupby("_dk_join_key", as_index=False)[_num_cols].sum()
+    grouped[chart_label] = grouped["_dk_join_key"].map(_label_by_key)
+    return grouped.drop(columns=["_dk_join_key"], errors="ignore")
+
+
+def _dc_apply_orphan_advances_to_chart(
+    chart_df: pd.DataFrame,
+    chart_label: str,
+    orphan_totals: dict[str, float],
+    *,
+    advance_col_name: str = "Аванс",
+    ks2_col_name: str = "КС-2",
+) -> pd.DataFrame:
+    """
+    Аванс из итоговой строки DK (отдельный «пустой» столбец) переносим в стек
+    контрагента с max КС-2 — чтобы серый/жёлтый/синий были в одном столбце.
+    """
+    if chart_df is None or chart_df.empty or chart_label not in chart_df.columns:
+        return chart_df
+    _orph_adv = float(orphan_totals.get(advance_col_name, 0.0) or 0.0)
+    if _orph_adv <= 1e-6 or ks2_col_name not in chart_df.columns:
+        return chart_df
+    out = chart_df.copy()
+    _ks2 = pd.to_numeric(out[ks2_col_name], errors="coerce").fillna(0.0)
+    if not (_ks2 > 1e-6).any():
+        return out
+    _adv = (
+        pd.to_numeric(out[advance_col_name], errors="coerce").fillna(0.0)
+        if advance_col_name in out.columns
+        else pd.Series(0.0, index=out.index)
+    )
+    # Приоритет: «ис есипово», иначе max КС-2 при нулевом авансе на строке.
+    _brand_keys = out[chart_label].map(_dc_partner_brand_key)
+    _pick_idx = None
+    _esipovo = _brand_keys.eq("ис есипово") & (_ks2 > 1e-6)
+    if _esipovo.any():
+        _pick_idx = _ks2.loc[_esipovo].idxmax()
+    else:
+        _candidates = out.index[_adv.abs() <= 1e-6]
+        if len(_candidates):
+            _pick_idx = _ks2.loc[_candidates].idxmax()
+        else:
+            _pick_idx = _ks2.idxmax()
+    if advance_col_name not in out.columns:
+        out[advance_col_name] = 0.0
+    out.at[_pick_idx, advance_col_name] = float(out.at[_pick_idx, advance_col_name]) + _orph_adv
+    if "Отклонение" in out.columns and ks2_col_name in out.columns:
+        out["Отклонение"] = (
+            pd.to_numeric(out[ks2_col_name], errors="coerce").fillna(0.0)
+            - pd.to_numeric(out[advance_col_name], errors="coerce").fillna(0.0)
+        )
+    return out
+
+
+def _dc_read_orphan_advance_mln(work: pd.DataFrame, *, advance_num_col: str | None) -> float:
+    """Аванс из итоговой строки DK (отфильтрован в web_loader, сохранён в attrs/session)."""
+    _rub = 0.0
+    try:
+        _rub = float(getattr(work, "attrs", {}).get("dk_summary_advance_rub", 0) or 0)
+    except (TypeError, ValueError):
+        _rub = 0.0
+    if _rub <= 1e-6:
+        try:
+            _rub = float(st.session_state.get("dk_summary_advance_rub", 0) or 0)
+        except (TypeError, ValueError):
+            _rub = 0.0
+    if _rub <= 1e-6 and advance_num_col and advance_num_col in work.columns:
+        _summary_mask = work.index.to_series().map(lambda _i: False)
+        try:
+            _summary_mask = work.apply(
+                lambda r: _dc_is_dk_summary_row(
+                    r,
+                    contractor_col=None,
+                    contract_col=None,
+                    extract_partner_name=lambda v: str(v or "").strip(),
+                    extract_partner_id=lambda v: "",
+                ),
+                axis=1,
+            )
+        except Exception:
+            pass
+        if _summary_mask.any():
+            _rub = float(work.loc[_summary_mask, advance_num_col].sum())
+    if _rub <= 1e-6:
+        try:
+            import glob
+            import json as _json
+            import os as _os
+            from pathlib import Path as _Path
+
+            _web = _Path(__file__).resolve().parent.parent / "web"
+            for _fp in sorted(_web.glob("1*DK*.json"), key=_os.path.getmtime, reverse=True)[:5]:
+                try:
+                    _raw = _json.loads(_fp.read_text(encoding="utf-8-sig"))
+                except Exception:
+                    continue
+                if not isinstance(_raw, list):
+                    continue
+                _tot = 0.0
+                for _item in _raw:
+                    if not isinstance(_item, dict):
+                        continue
+                    _contr = _item.get("Контрагент") or {}
+                    _dog = _item.get("Договор") or {}
+                    _org = _item.get("Организация") or {}
+                    _hc = bool(
+                        isinstance(_contr, dict)
+                        and (
+                            str(_contr.get("НаименованиеКонтрагента", "") or "").strip()
+                            or str(_contr.get("ID_Контрагента", "") or "").strip()
+                        )
+                    )
+                    _hd = bool(
+                        isinstance(_dog, dict)
+                        and (
+                            str(_dog.get("ID_Договора", "") or "").strip()
+                            or str(_dog.get("НомерДоговора", "") or "").strip()
+                        )
+                    )
+                    _ho = bool(
+                        isinstance(_org, dict)
+                        and str(_org.get("ID_Организации", "") or "").strip()
+                    )
+                    if not _hc and not _hd and not _ho:
+                        try:
+                            _tot += float(_item.get("ОстатокНаКонецПериодаПоАвансам", 0) or 0)
+                        except (TypeError, ValueError):
+                            pass
+                if _tot > 1e-6:
+                    _rub = _tot
+                    break
+        except Exception:
+            pass
+    return _rub / 1e6
+
+
 def dashboard_debit_credit(df):
     """Дебиторская и кредиторская задолженность подрядчиков: график и таблица по данным из файла."""
 
@@ -24355,6 +24575,23 @@ def dashboard_debit_credit(df):
             advance_col = _dk_end_adv
             work[f"_num_{advance_col}"] = _adv_alt
 
+    _dc_orphan_adv_mln = _dc_read_orphan_advance_mln(
+        work,
+        advance_num_col=f"_num_{advance_col}" if advance_col and f"_num_{advance_col}" in work.columns else None,
+    )
+    _summary_mask = work.apply(
+        lambda r: _dc_is_dk_summary_row(
+            r,
+            contractor_col=contractor_col,
+            contract_col=contract_col,
+            extract_partner_name=_extract_partner_name,
+            extract_partner_id=_extract_partner_id_local,
+        ),
+        axis=1,
+    )
+    if _summary_mask.any():
+        work = work.loc[~_summary_mask].copy()
+
     _dc_date_contract = _find_col(work, ["Дата договора", "ДатаДоговора", "Дата Договора"])
     work["_dc_period_dt"] = pd.NaT
     if _dc_date_contract and _dc_date_contract in work.columns:
@@ -24634,6 +24871,11 @@ def dashboard_debit_credit(df):
 
     chart_group_col = contractor_col if contractor_col else contract_col
     chart_label = "Подрядчик" if contractor_col else "Договор"
+    if contractor_col and contractor_col in filtered.columns:
+        filtered["_dc_chart_partner"] = filtered[contractor_col].map(
+            lambda v: _extract_partner_name(v) or str(v or "").strip()
+        )
+        chart_group_col = "_dc_chart_partner"
     if not contractor_col:
         st.warning("Колонка подрядчика не найдена — диаграмма сгруппирована по договору.")
 
@@ -24660,7 +24902,13 @@ def dashboard_debit_credit(df):
     chart_df[chart_label] = chart_df[chart_label].astype(str).str.strip()
     _dk_num_cols = [c for c in chart_df.columns if c != chart_label]
     if _dk_num_cols:
-        chart_df = chart_df.groupby(chart_label, as_index=False)[_dk_num_cols].sum()
+        chart_df = _dc_merge_chart_rows_by_partner_key(chart_df, chart_label, _dk_num_cols)
+    if _dc_orphan_adv_mln > 1e-6:
+        chart_df = _dc_apply_orphan_advances_to_chart(
+            chart_df,
+            chart_label,
+            {"Аванс": _dc_orphan_adv_mln},
+        )
 
     # ТЗ: «Без группировки» — столбцы рядом (group); «С группировкой» — стек (stack).
     _dk_side_by_side = str(dk_display_view or "").strip() == "Без группировки"
@@ -24825,7 +25073,9 @@ def dashboard_debit_credit(df):
         if _dk_is_stack:
             _dk_plotly_finalize_stack_bars(fig, n_cats=len(_cats_full))
         else:
-            _dk_plotly_finalize_group_bars(fig)
+            _nfc = max(1, len(_cats_full))
+            _bg_dk = 0.10 if _nfc >= 5 else max(0.05, min(0.12, 1.6 / _nfc))
+            _dk_plotly_finalize_group_bars(fig, n_cats=len(_cats_full), bargap=_bg_dk)
         _render_debit_credit_bar_chart(
             fig,
             categories=_cats_full,
