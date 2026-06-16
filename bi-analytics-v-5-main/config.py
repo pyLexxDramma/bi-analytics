@@ -378,11 +378,23 @@ def _normalize_ai_assistant_public_url(url: str) -> str:
     return u
 
 
+def _ai_assistant_use_streamlit_embedded() -> bool:
+    """
+    Streamlit-страница /_opencode_ai — только явный opt-in (локальная отладка чата).
+
+    ``AI_ASSISTANT_TARGET=embedded`` на Streamlit Cloud / release больше не включает обёртку:
+    кнопка открывает нативный Web UI OpenCode (поддомен).
+    """
+    if not _env_truthy("AI_ASSISTANT_USE_EMBEDDED"):
+        return False
+    target = _read_env_or_secret("AI_ASSISTANT_TARGET").strip().lower()
+    return target in ("embedded", "streamlit", "wrap", "wrapper")
+
+
 def is_ai_assistant_embedded_page() -> bool:
     """True only for in-app Streamlit chat (/_opencode_ai), not native OpenCode Web UI."""
-    target = _read_env_or_secret("AI_ASSISTANT_TARGET").strip().lower()
-    if target == "embedded":
-        return True
+    if not _ai_assistant_use_streamlit_embedded():
+        return False
     url = (get_ai_assistant_open_url() or "").strip().lower()
     return "_opencode_ai" in url
 
@@ -394,8 +406,9 @@ def get_ai_assistant_open_url() -> str:
     Приоритет:
     1. AI_ASSISTANT_URL (или XCA_AI_CHAT_URL / AI_CHAT_PUBLIC_URL)
     2. AI_ASSISTANT_TARGET=dev|prod|embedded|off|auto (по умолчанию auto)
-       - dev → AI_ASSISTANT_URL_DEV; release → AI_ASSISTANT_URL_PROD (один Web UI OpenCode)
-       - embedded на release → тоже Web UI; embedded только на dev/local без release_mode
+       - dev → AI_ASSISTANT_URL_DEV; release → AI_ASSISTANT_URL_PROD (Web UI OpenCode, поддомен)
+       - embedded без AI_ASSISTANT_USE_EMBEDDED=1 → тот же Web UI, не Streamlit /_opencode_ai
+       - Streamlit-обёртка: AI_ASSISTANT_USE_EMBEDDED=1 и AI_ASSISTANT_TARGET=embedded (локально)
     """
     for key in ("AI_ASSISTANT_URL", "XCA_AI_CHAT_URL", "AI_CHAT_PUBLIC_URL"):
         u = _read_env_or_secret(key).strip()
@@ -417,10 +430,13 @@ def get_ai_assistant_open_url() -> str:
         return prod_url
 
     if target == "embedded":
-        # release client — тот же Web UI OpenCode, что и dev (не Streamlit /_opencode_ai)
+        if _ai_assistant_use_streamlit_embedded():
+            return _embedded_ai_url_for_current_app()
         if is_release_client_mode():
             return prod_url
-        return _embedded_ai_url_for_current_app()
+        if _is_streamlit_dev_deployment() or _is_streamlit_cloud_deployment():
+            return dev_url
+        return dev_url
 
     if target == "dev":
         return dev_url
