@@ -119,8 +119,10 @@ def gdrs_deviation_vs_plan_text_and_color(plan_v, fact_v, theme: GdrsTheme) -> t
 
 
 def is_gdrs_light_preview_report(report_name: str) -> bool:
-    n = str(report_name or "").strip().casefold()
-    return n.startswith("гдрс") and "превью" in n and "светл" in n
+    """Обратная совместимость: любое светлое превью (не только ГДРС)."""
+    from dashboards.light_theme import is_light_preview_report
+
+    return is_light_preview_report(report_name)
 
 
 
@@ -196,9 +198,17 @@ html body [data-testid="stAppViewContainer"] > section {{
   color-scheme: light !important;
 }}
 html body .stApp,
-html body [data-testid="stAppViewContainer"] {{
+html body [data-testid="stAppViewContainer"],
+html body.gdrs-light-preview,
+html body.gdrs-light-preview .stApp {{
   --themeFontColor: {g_text} !important;
+  --themeBackgroundColor: {g_white} !important;
+  --themeDarkBackgroundColor: #f3f4f6 !important;
+  --themeSecondaryBackgroundColor: #f3f4f6 !important;
+  --primary-color: #2563eb !important;
+  --secondary-background-color: #e5e7eb !important;
   --theColor: 220, 13%, 18% !important;
+  color-scheme: light !important;
 }}
 html body .main,
 html body section.main,
@@ -600,9 +610,16 @@ html body.gdrs-light-preview [data-testid="stPlotlyChart"] .annotation-text-g te
   stroke-width: 0 !important;
   paint-order: fill !important;
   font-weight: 400 !important;
-  -webkit-text-fill-color: unset !important;
   -webkit-text-stroke: 0 !important;
-  color: unset !important;
+}}
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] .xtick text,
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] .ytick text,
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] .legend text,
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] g.xtitle text,
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] g.ytitle text {{
+  fill: #111827 !important;
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
 }}
 html body [data-testid="stPlotlyChart"] {{
 

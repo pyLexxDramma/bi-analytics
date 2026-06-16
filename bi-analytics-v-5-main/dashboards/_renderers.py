@@ -2783,11 +2783,20 @@ def _chart_caption_below(title: str, *, tight: bool = False) -> None:
     _mb = "1.35rem" if tight else "1.15rem"
     _mt = "0.05rem" if tight else "0.12rem"
     st.markdown(
-        f"<p class='bi-chart-caption-below' style='text-align:center;color:#e8eef5;"
+        f"<p class='bi-chart-caption-below' style='text-align:center;color:{_fin_chart_caption_color()};"
         f"margin:{_mt} 0 {_mb};font-size:1.08rem;font-weight:700;position:relative;z-index:1;'>"
         f"{esc}</p>",
         unsafe_allow_html=True,
     )
+
+
+def _fin_chart_caption_color() -> str:
+    try:
+        from dashboards.light_theme import finance_chart_caption_color
+
+        return finance_chart_caption_color()
+    except Exception:
+        return "#e8eef5"
 
 
 # Единая конфигурация Plotly для всех графиков (как на вкладке БДДС):
@@ -3247,6 +3256,93 @@ _FINANCE_DEV_BAR_RED = "#e74c3c"
 _FINANCE_DEV_BAR_GREEN = "#27ae60"
 
 
+def _fin_chart_label_color(*, dark: str = "#f0f4f8", light: str = "#111827") -> str:
+    try:
+        from dashboards.light_theme import finance_chart_label_color
+
+        return finance_chart_label_color(dark=dark, light=light)
+    except Exception:
+        return dark
+
+
+def _fin_chart_neutral_color() -> str:
+    try:
+        from dashboards.light_theme import finance_chart_neutral_label_color
+
+        return finance_chart_neutral_label_color()
+    except Exception:
+        return "#f0f4f8"
+
+
+def _fin_chart_legend_text_color() -> str:
+    try:
+        from dashboards.light_theme import finance_chart_legend_text_color
+
+        return finance_chart_legend_text_color()
+    except Exception:
+        return "#e2e8f0"
+
+
+def _fin_chart_axis_color() -> str:
+    return _fin_chart_label_color(dark="#f0f4f8", light="#111827")
+
+
+def _apply_finance_light_preview_chart_colors(fig) -> None:
+    """Iframe Plotly изолирован от CSS страницы — цвета осей/подписей в JSON фигуры."""
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if not is_light_preview_active():
+            return
+    except Exception:
+        return
+    _ax = _fin_chart_axis_color()
+    _lbl = _fin_chart_label_color()
+    try:
+        fig.update_layout(font=dict(color=_ax))
+        fig.update_xaxes(
+            tickfont=dict(color=_ax),
+            title=dict(font=dict(color=_ax)),
+        )
+        fig.update_yaxes(
+            tickfont=dict(color=_ax),
+            title=dict(font=dict(color=_ax)),
+        )
+        for tr in fig.data or []:
+            if getattr(tr, "type", None) != "bar" and type(tr).__name__ != "Bar":
+                continue
+            tf = getattr(tr, "textfont", None)
+            if tf is None:
+                continue
+            try:
+                cur = tf.color if hasattr(tf, "color") else (tf.get("color") if isinstance(tf, dict) else None)
+            except Exception:
+                cur = None
+            if cur in (None, "#f0f4f8", "#e8eef5", "#e2e8f0", "rgb(240, 244, 248)"):
+                tr.update(textfont=dict(color=_lbl))
+    except Exception:
+        pass
+
+
+def _fin_iframe_plotly_light_css(uid: str) -> str:
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if not is_light_preview_active():
+            return ""
+    except Exception:
+        return ""
+    return (
+        f".pf-fbar-{uid}-inner .plotly text,.pf-fbar-{uid}-inner .js-plotly-plot text,"
+        f".pf-fbar-{uid}-inner svg text,.pf-fbar-{uid}-inner .xtick text,.pf-fbar-{uid}-inner .ytick text,"
+        f".pf-fbar-{uid}-inner g.xtitle text,.pf-fbar-{uid}-inner g.ytitle text,"
+        f".pf-fbar-{uid}-inner .yaxislayer-above text,.pf-fbar-{uid}-inner .yaxislayer-below text,"
+        f".pf-fbar-{uid}-inner .xaxislayer-above text,.pf-fbar-{uid}-inner .xaxislayer-below text{{"
+        f"fill:#111827!important;color:#111827!important;"
+        f"-webkit-text-fill-color:#111827!important;stroke:none!important;}}"
+    )
+
+
 def _finance_bdr_expense_deviation_chart_parts(
     plan_rub: pd.Series,
     fact_rub: pd.Series,
@@ -3281,29 +3377,29 @@ def _finance_bdr_expense_deviation_chart_parts(
         if pd.notna(yp):
             if abs(diff_rub) < floor_rub:
                 txt_pos.append("")
-                clr_pos.append("#f0f4f8")
+                clr_pos.append(_fin_chart_neutral_color())
             elif fv > pv:
                 txt_pos.append(f"+{abs(diff_rub) / 1e6:.{d}f}{suf}")
                 clr_pos.append(_FINANCE_DEV_LABEL_GREEN)
             else:
                 txt_pos.append("")
-                clr_pos.append("#f0f4f8")
+                clr_pos.append(_fin_chart_neutral_color())
         else:
             txt_pos.append("")
-            clr_pos.append("#f0f4f8")
+            clr_pos.append(_fin_chart_neutral_color())
         if pd.notna(yn):
             if abs(diff_rub) < floor_rub:
                 txt_neg.append("")
-                clr_neg.append("#f0f4f8")
+                clr_neg.append(_fin_chart_neutral_color())
             elif fv < pv:
                 txt_neg.append(f"-{abs(diff_rub) / 1e6:.{d}f}{suf}")
                 clr_neg.append(_FINANCE_DEV_LABEL_RED)
             else:
                 txt_neg.append("")
-                clr_neg.append("#f0f4f8")
+                clr_neg.append(_fin_chart_neutral_color())
         else:
             txt_neg.append("")
-            clr_neg.append("#f0f4f8")
+            clr_neg.append(_fin_chart_neutral_color())
     return y_pos, y_neg, txt_pos, clr_pos, txt_neg, clr_neg
 
 
@@ -10903,6 +10999,7 @@ def _render_finance_bar_chart(
             fig.update_layout(title_text="")
         except Exception:
             pass
+    _apply_finance_light_preview_chart_colors(fig)
     _apply_plotly_spec_411_labels(fig)
     _finance_plotly_xaxis_category_pad(fig, n)
 
@@ -10944,6 +11041,12 @@ def _render_finance_bar_chart(
             default_height=f"{h}px",
         )
         _scroll_px = 22
+        _light_plotly_css = _fin_iframe_plotly_light_css(uid)
+        _scroll_track = (
+            "background:rgba(226,232,240,0.85);"
+            if _light_plotly_css
+            else "background:rgba(15,23,42,0.35);"
+        )
         shell = (
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
             f"<style>"
@@ -10960,7 +11063,8 @@ def _render_finance_bar_chart(
             f"height:{h}px!important;}}"
             f".pf-fbar-{uid}-wrap::-webkit-scrollbar{{height:12px;}}"
             f".pf-fbar-{uid}-wrap::-webkit-scrollbar-thumb{{background:rgba(148,163,184,0.55);border-radius:6px;}}"
-            f".pf-fbar-{uid}-wrap::-webkit-scrollbar-track{{background:rgba(15,23,42,0.35);border-radius:6px;}}"
+            f".pf-fbar-{uid}-wrap::-webkit-scrollbar-track{{{_scroll_track}border-radius:6px;}}"
+            f"{_light_plotly_css}"
             f"</style></head><body>"
             f'<div class="pf-fbar-{uid}-wrap"><div class="pf-fbar-{uid}-inner">{plot_div}</div></div>'
             "</body></html>"
@@ -10979,7 +11083,7 @@ def _render_finance_bar_chart(
                     f'<span style="display:flex;align-items:center;gap:5px;">'
                     f'<span style="display:inline-block;width:14px;height:14px;'
                     f'border-radius:2px;background:{_lc};flex-shrink:0;"></span>'
-                    f'<span style="color:#e2e8f0;">{_ln}</span></span>'
+                    f'<span style="color:{_fin_chart_legend_text_color()};">{_ln}</span></span>'
                 )
             _leg_html += "</div>"
             components.html(_leg_html, height=44, scrolling=False)
@@ -11002,7 +11106,7 @@ def _render_finance_bar_chart(
                     f'<span style="display:flex;align-items:center;gap:5px;">'
                     f'<span style="display:inline-block;width:14px;height:14px;'
                     f'border-radius:2px;background:{_lc};flex-shrink:0;"></span>'
-                    f'<span style="color:#e2e8f0;">{_ln}</span></span>'
+                    f'<span style="color:{_fin_chart_legend_text_color()};">{_ln}</span></span>'
                 )
             _leg_html += "</div>"
             components.html(_leg_html, height=44, scrolling=False)
@@ -11073,8 +11177,8 @@ def _dk_chart_yaxis_layout(
     else:
         _y_rng = [0, _y_top_fc]
     return dict(
-        title=dict(text="млн руб.", font=dict(size=15, color="#f0f4f8")),
-        tickfont=dict(size=13, color="#f0f4f8"),
+        title=dict(text="млн руб.", font=dict(size=15, color=_fin_chart_axis_color())),
+        tickfont=dict(size=13, color=_fin_chart_axis_color()),
         range=_y_rng,
         dtick=_dtick_fc,
         tick0=0,
@@ -11252,7 +11356,7 @@ def _render_dk_chart_html_legend(_leg_items: list[tuple[str, str]]) -> None:
                 f'<span style="display:flex;align-items:center;gap:5px;">'
                 f'<span style="display:inline-block;width:14px;height:14px;'
                 f'border-radius:2px;background:{_lc};flex-shrink:0;"></span>'
-                f'<span style="color:#e2e8f0;">{_ln}</span></span>'
+                f'<span style="color:{_fin_chart_legend_text_color()};">{_ln}</span></span>'
             )
         _lh += "</div>"
         _leg_h = int(max(44, 28 + 22 * max(1, (len(_leg_items) + 1) // 2)))
@@ -11326,16 +11430,16 @@ def _render_debit_credit_bar_chart(
                 ticktext=ticktext,
                 tickangle=0,
                 ticklabelstandoff=28 if need_hscroll else 20,
-                tickfont=dict(size=_tick_size, color="#f0f4f8"),
+                tickfont=dict(size=_tick_size, color=_fin_chart_axis_color()),
                 automargin=True,
             )
         else:
             fig.update_xaxes(
                 tickangle=0 if need_hscroll else -42,
-                tickfont=dict(size=_tick_size, color="#f0f4f8"),
+                tickfont=dict(size=_tick_size, color=_fin_chart_axis_color()),
                 automargin=True,
             )
-        fig.update_yaxes(tickfont=dict(size=14, color="#f0f4f8"))
+        fig.update_yaxes(tickfont=dict(size=14, color=_fin_chart_axis_color()))
     except Exception:
         pass
 
@@ -11634,22 +11738,19 @@ def dashboard_budget_by_period(df):
                 _bdds_cal_end = _end_dt
 
         with filters_toggles(st):
-            _bd_cb1, _bd_cb2, _bd_cb3, _bd_cb4, _bd_cb5 = st.columns(5, gap="small")
-            with _bd_cb1:
+            st.checkbox(
+                "Показать отклонение",
+                value=False,
+                key="budget_period_show_deviation",
+                help="По умолчанию на графике только план и факт; при включении добавляются столбцы отклонения.",
+            )
+            if period_type_en == "Month" and str(st.session_state.get("budget_period_view", "По месяцам")) == "По месяцам":
                 st.checkbox(
-                    "Показать отклонение",
-                    value=False,
-                    key="budget_period_show_deviation",
-                    help="По умолчанию на графике только план и факт; при включении добавляются столбцы отклонения.",
+                    "Скрывать месяцы, где план и факт равны 0",
+                    value=bool(_bdds_all_projects),
+                    key="budget_period_hide_zero_months",
+                    help="Скрывает месяцы с нулевым планом и фактом на графике и в таблице ниже.",
                 )
-            with _bd_cb2:
-                if period_type_en == "Month" and str(st.session_state.get("budget_period_view", "По месяцам")) == "По месяцам":
-                    st.checkbox(
-                        "Скрывать месяцы, где план и факт равны 0",
-                        value=bool(_bdds_all_projects),
-                        key="budget_period_hide_zero_months",
-                        help="Скрывает месяцы с нулевым планом и фактом на графике и в таблице ниже.",
-                    )
 
     show_deviation = bool(st.session_state.get("budget_period_show_deviation", False))
     hide_reserve = not show_deviation
@@ -11998,7 +12099,7 @@ def dashboard_budget_by_period(df):
                     marker_color="#2E86AB",
                     text=_plan_txt,
                     textposition=_txt_pos,
-                    textfont=dict(size=_tfs, color="#f0f4f8"),
+                    textfont=dict(size=_tfs, color=_fin_chart_label_color()),
                     customdata=project_data["budget plan"].apply(format_million_rub),
                     hovertemplate="<b>%{x}</b><br>БДДС план: %{customdata}<br><extra></extra>",
                 )
@@ -12011,7 +12112,7 @@ def dashboard_budget_by_period(df):
                 marker_color="#A23B72",
                 text=_fact_txt,
                 textposition=_txt_pos,
-                textfont=dict(size=_tfs, color="#f0f4f8"),
+                textfont=dict(size=_tfs, color=_fin_chart_label_color()),
                 customdata=project_data["budget fact"].apply(format_million_rub),
                 hovertemplate="<b>%{x}</b><br>БДДС факт: %{customdata}<br><extra></extra>",
             )
@@ -12099,7 +12200,7 @@ def dashboard_budget_by_period(df):
                     marker_color="#F18F01",
                     text=_adj_txt,
                     textposition=_txt_pos,
-                    textfont=dict(size=_tfs, color="#f0f4f8"),
+                    textfont=dict(size=_tfs, color=_fin_chart_label_color()),
                     customdata=project_data[adjusted_budget_col].apply(format_million_rub),
                     hovertemplate="<b>%{x}</b><br>Скорректированный бюджет: %{customdata}<br><extra></extra>",
                 )
@@ -13633,6 +13734,11 @@ def dashboard_bdr(df):
                                 _bdr_min_all, _bdr_max_all = _bdr_start, _bdr_end
                         except Exception:
                             _bdr_min_all, _bdr_max_all = _bdr_start, _bdr_end
+                        if _bdr_start and _bdr_end:
+                            _bdr_scope = str(selected_project or "Все").strip() or "Все"
+                            if st.session_state.get("_bdr_period_scope") != _bdr_scope:
+                                st.session_state["_bdr_period_scope"] = _bdr_scope
+                                st.session_state.pop("bdr_period_range", None)
                         _bdr_period_from, _bdr_period_to = period_date_range_input(
                             st,
                             "bdr_period_range",
@@ -39261,14 +39367,26 @@ def _render_dev_detail_table(df, max_rows=500):
 
 
 # ==================== DASHBOARD: Девелоперские проекты ====================
-def dashboard_developer_projects(df):
+_DEV_PROJECTS_DASHBOARD_NAMES = frozenset({
+    "Девелоперские проекты",
+    "Девелоперские проекты (превью — светлая)",
+})
+
+
+def dashboard_developer_projects_preview_light(df):
+    """Превью «Девелоперские проекты» в светлой теме."""
+    return dashboard_developer_projects(df, theme="light")
+
+
+def dashboard_developer_projects(df, *, theme: str = "dark"):
     """
     Отчёт «Девелоперские проекты» — одна таблица: матрица контрольных точек по ТЗ.
+    theme: "dark" (боевой) или "light" (превью).
     """
     _dev_dash_seen = "_dev_projects_prev_dashboard_seen"
     cur_dash = str(st.session_state.get("current_dashboard", "") or "").strip()
     prev_seen = str(st.session_state.get(_dev_dash_seen, "") or "").strip()
-    if cur_dash == "Девелоперские проекты" and prev_seen != "Девелоперские проекты":
+    if cur_dash in _DEV_PROJECTS_DASHBOARD_NAMES and prev_seen not in _DEV_PROJECTS_DASHBOARD_NAMES:
         st.session_state["dev_proj_multi"] = []
     st.session_state[_dev_dash_seen] = cur_dash
 
@@ -39455,7 +39573,7 @@ def dashboard_developer_projects(df):
                 return
             _names = [str(lbl or "").strip() for lbl, _ in _blocks]
             _row_lists = [rows for _, rows in _blocks]
-            render_dev_tz_matrix(_row_lists, "", project_labels=_names, vertical_dates=vert_dates)
+            render_dev_tz_matrix(_row_lists, "", project_labels=_names, vertical_dates=vert_dates, theme=theme)
             rows_blocks_for_export = _row_lists
             export_project_names = _names
         elif _show_all_projects or len(sel_projs_list) > 1:
@@ -39507,7 +39625,7 @@ def dashboard_developer_projects(df):
             if not blocks:
                 st.info("Нет строк MSP для проектов в выборке.")
                 return
-            render_dev_tz_matrix(blocks, "", project_labels=names, vertical_dates=vert_dates)
+            render_dev_tz_matrix(blocks, "", project_labels=names, vertical_dates=vert_dates, theme=theme)
             rows_blocks_for_export = blocks
             export_project_names = names
 

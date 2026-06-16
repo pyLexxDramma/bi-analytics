@@ -1033,11 +1033,47 @@ html, body {
 </style>
 """
 
+_FINANCE_BUDGET_IFRAME_SHELL_CSS_LIGHT = """
+<style>
+.bi-sortable-html-root:has(.budget-table-scroll){
+  overflow:hidden!important;height:100%!important;max-height:100%!important;min-height:0!important;
+}
+html:has(.budget-table-scroll),body:has(.budget-table-scroll){
+  overflow:hidden!important;margin:0;padding:0;height:100%!important;min-height:0!important;
+  background:#ffffff!important;color:#111827!important;
+}
+.budget-deviation-table-wrap{
+  display:flex!important;flex-direction:column!important;height:100%!important;min-height:0!important;
+  overflow:hidden!important;width:100%!important;max-width:100%!important;box-sizing:border-box;
+}
+.budget-table-scroll{
+  display:block!important;width:100%!important;height:100%!important;max-height:100%!important;
+  min-height:0!important;overflow:auto!important;-webkit-overflow-scrolling:touch!important;
+  scrollbar-gutter:stable;scrollbar-width:thin;box-sizing:border-box;
+  scrollbar-color:#94a3b8 #e5e7eb!important;
+}
+.budget-table-scroll table{width:max-content!important;min-width:100%!important;table-layout:auto!important}
+.budget-table-scroll thead th{position:sticky!important;top:0!important;z-index:5!important}
+.budget-table-scroll tr.bd-total-row td{position:sticky!important;bottom:0!important;z-index:4!important;
+  background-color:#e5e7eb!important;color:#111827!important;
+  box-shadow:0 -3px 10px rgba(15,23,42,0.12)!important}
+.budget-table-scroll tr.bd-total-row td,.budget-table-scroll tr.bd-total-row td *{
+  color:#111827!important;-webkit-text-fill-color:#111827!important}
+.budget-table-scroll tr.bd-group-row td{background-color:#f3f4f6!important;color:#111827!important}
+.budget-table-scroll thead th{background-color:#f3f4f6!important;color:#111827!important}
+.budget-table-scroll tbody td{color:#111827!important}
+</style>
+"""
+
+
 def _iframe_shell_css(html: str) -> str:
     html_l = html or ""
-    base = _IFRAME_SHELL_CSS_LIGHT if "gdrs-light-table" in html_l else _IFRAME_SHELL_CSS
+    _light = "gdrs-light-table" in html_l or "bi-light-table" in html_l
+    base = _IFRAME_SHELL_CSS_LIGHT if _light else _IFRAME_SHELL_CSS
     if "gdrs-table-wrap" in html_l:
         return base + _GDRS_TABLE_WRAP_IFRAME_CSS
+    if _light and "budget-deviation-table-wrap" in html_l:
+        return base + _FINANCE_BUDGET_IFRAME_SHELL_CSS_LIGHT
     return base
 
 

@@ -2812,6 +2812,299 @@ _DEV_TZ_MATRIX_CSS = """
 </style>
 """
 
+_DEV_TZ_MATRIX_CSS_LIGHT = """
+<style>
+.dev-tz-matrix-wrap {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin-bottom: 0.75rem;
+  box-sizing: border-box;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: #64748b #e5e7eb;
+}
+.dev-tz-matrix-wrap::-webkit-scrollbar { height: 10px; }
+.dev-tz-matrix-wrap::-webkit-scrollbar-track { background: #e5e7eb; border-radius: 5px; }
+.dev-tz-matrix-wrap::-webkit-scrollbar-thumb {
+  background: #94a3b8; border-radius: 5px; border: 2px solid #e5e7eb;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide {
+  border: 3px solid #94a3b8;
+  border-collapse: separate;
+  border-spacing: 0;
+  width: max-content !important;
+  min-width: max(720px, 100%) !important;
+  max-width: none !important;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th {
+  border-width: 1px !important;
+  border-style: solid !important;
+  border-color: #cbd5e1 !important;
+  border-bottom-width: 2px !important;
+  border-bottom-color: #94a3b8 !important;
+  box-sizing: border-box;
+  background-clip: padding-box;
+  position: relative !important;
+  top: auto !important;
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  max-width: none !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td {
+  border-width: 1px !important;
+  border-style: solid !important;
+  border-color: #cbd5e1 !important;
+  vertical-align: middle !important;
+  text-align: center !important;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.45;
+  padding: 14px 12px !important;
+  color: #111827;
+  background-color: #ffffff !important;
+  background-clip: padding-box;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project {
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-weight: 700;
+  font-size: 17px;
+  padding: 12px 14px;
+  color: #111827;
+  background: #e8f0fe !important;
+  border-top: 3px solid #94a3b8 !important;
+  border-left: 3px solid #94a3b8 !important;
+  border-right: 3px solid #94a3b8 !important;
+  border-bottom: 3px solid #94a3b8 !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead {
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-weight: 700;
+  font-size: 18px;
+  padding: 12px 14px;
+  background: #dcfce7 !important;
+  color: #14532d;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead {
+  border-top: 3px solid #94a3b8 !important;
+  border-bottom: 3px solid #94a3b8 !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-inv {
+  border-right: 3px solid #94a3b8 !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead-life {
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-weight: 700;
+  font-size: 18px;
+  padding: 12px 14px;
+  background: #e2e8f0 !important;
+  color: #1f2937 !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-life {
+  border-left: 3px solid #94a3b8 !important;
+  border-right: 3px solid #94a3b8 !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone {
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.45;
+  min-width: 6.5em;
+  max-width: none !important;
+  white-space: normal !important;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  padding: 12px 10px;
+  color: #111827;
+  background: #f3f4f6 !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub {
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-size: 16px;
+  font-weight: 700;
+  color: #111827;
+  min-width: 4.5em;
+  padding: 10px 8px;
+  background: #f9fafb !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-inv-block,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-inv-block {
+  background: #dcfce7 !important;
+  color: #14532d !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-life-block,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-life-block {
+  background: #e2e8f0 !important;
+  color: #1f2937 !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-td-project {
+  text-align: left !important;
+  font-weight: 700;
+  font-size: 18px;
+  padding: 14px 12px !important;
+  background: #f9fafb !important;
+  color: #111827;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+  vertical-align: middle !important;
+  border-right: 3px solid #94a3b8 !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-text-pct-done {
+  color: #ea580c !important;
+  font-weight: 700 !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-otkl-ok {
+  color: #15803d !important;
+  font-weight: 700 !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-otkl-bad {
+  color: #b91c1c !important;
+  font-weight: 700 !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-ms-block {
+  border-left: 3px solid #94a3b8 !important;
+  border-right: 3px solid #94a3b8 !important;
+  box-shadow: inset 3px 0 0 #94a3b8, inset -3px 0 0 #94a3b8;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-first,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-first {
+  border-left: 3px solid #94a3b8 !important;
+  box-shadow: inset 3px 0 0 #94a3b8;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-last,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-last {
+  border-right: 3px solid #94a3b8 !important;
+  box-shadow: inset -3px 0 0 #94a3b8;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project {
+  box-shadow: inset -3px 0 0 #94a3b8;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-directives-warn {
+  background: rgba(234, 88, 12, 0.12) !important;
+}
+</style>
+"""
+
+
+def _dev_tz_matrix_css_raw(theme: str = "dark") -> str:
+    css = _DEV_TZ_MATRIX_CSS_LIGHT if str(theme or "").strip().lower() == "light" else _DEV_TZ_MATRIX_CSS
+    return css.replace("<style>", "").replace("</style>", "")
+
+
+def _dev_tz_matrix_iframe_sticky_css(theme: str = "dark") -> str:
+    if str(theme or "").strip().lower() == "light":
+        return """
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:#ffffff;color:#111827;overflow:hidden;
+  opacity:1!important;filter:none!important;isolation:isolate}
+.dev-tz-matrix-wrap{width:100%;max-width:100%;margin:0!important;padding:0!important;
+  overflow-x:auto;overflow-y:hidden;
+  -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;
+  scrollbar-width:thin;scrollbar-color:#64748b #e5e7eb}
+.dev-tz-matrix-wrap::-webkit-scrollbar{height:10px}
+.dev-tz-matrix-wrap::-webkit-scrollbar-track{background:#e5e7eb;border-radius:5px}
+.dev-tz-matrix-wrap::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:5px;border:2px solid #e5e7eb}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td{background-color:#ffffff!important;color:#111827!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project{
+  z-index:5!important;background:#e8f0fe!important;color:#111827!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project{
+  z-index:4!important;background:#f9fafb!important;color:#111827!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project{
+  position:sticky!important;left:0!important;
+  border-right:3px solid #94a3b8!important}
+"""
+    return """
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:transparent;color:#e6edf3;overflow:hidden;
+  opacity:1!important;filter:none!important;isolation:isolate}
+.dev-tz-matrix-wrap{width:100%;max-width:100%;margin:0!important;padding:0!important;
+  overflow-x:auto;overflow-y:hidden;
+  -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;
+  scrollbar-width:thin;scrollbar-color:rgba(121,154,192,0.5) transparent}
+.dev-tz-matrix-wrap::-webkit-scrollbar{height:10px}
+.dev-tz-matrix-wrap::-webkit-scrollbar-track{background:transparent;border-radius:5px}
+.dev-tz-matrix-wrap::-webkit-scrollbar-thumb{background:rgba(121,154,192,0.42);border-radius:5px;border:2px solid #141820}
+.dev-tz-matrix-wrap::-webkit-scrollbar-thumb:hover{background:rgba(121,154,192,0.65)}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide{
+  border-collapse:separate!important;border-spacing:0!important;
+  width:max-content!important;min-width:100%!important;
+  font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif!important;
+  font-size:16px!important;font-weight:700!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td{
+  font-size:16px!important;line-height:1.45!important;padding:14px 12px!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project{
+  font-size:17px!important;padding:12px 14px!important;color:#f0f4f8!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project{
+  font-size:18px!important;padding:14px 12px!important;color:#f0f4f8!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead-life{
+  font-size:18px!important;padding:12px 14px!important;color:#f0f4f8!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone{
+  font-size:17px!important;padding:12px 10px!important;color:#f0f4f8!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub{
+  font-size:16px!important;padding:10px 8px!important;color:#f0f4f8!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td{
+  border-width:1px!important;border-style:solid!important;
+  border-color:#5a6f82!important;background-clip:padding-box!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td{
+  background-color:#0c1219!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-ms-block{
+  border-left:3px solid #ffffff!important;
+  border-right:3px solid #ffffff!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-first,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-first{
+  border-left:3px solid #ffffff!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-last,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-last{
+  border-right:3px solid #ffffff!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead{
+  border-top:3px solid #ffffff!important;border-bottom:3px solid #ffffff!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-inv{
+  border-right:3px solid #ffffff!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-life{
+  border-left:3px solid #ffffff!important;border-right:3px solid #ffffff!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project{
+  position:sticky!important;left:0!important;
+  border-right:3px solid #ffffff!important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project{
+  border-top:3px solid #ffffff!important;border-left:3px solid #ffffff!important;
+  border-bottom:3px solid #ffffff!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project{
+  z-index:5!important;background:#1a3328!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project{
+  z-index:4!important;background:#161f2b!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-ms-block{
+  box-shadow:inset 3px 0 0 #fff,inset -3px 0 0 #fff}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-first,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-first{box-shadow:inset 3px 0 0 #fff}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-last,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-last{box-shadow:inset -3px 0 0 #fff}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project{box-shadow:inset -3px 0 0 #fff}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead{
+  box-shadow:inset 0 3px 0 #fff,inset 0 -3px 0 #fff}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-inv{
+  box-shadow:inset -3px 0 0 #fff,inset 0 3px 0 #fff,inset 0 -3px 0 #fff}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-life{
+  box-shadow:inset 3px 0 0 #fff,inset -3px 0 0 #fff,inset 0 3px 0 #fff,inset 0 -3px 0 #fff}
+"""
+
 
 def _dev_tz_matrix_row_key(r: Dict[str, Any]) -> Tuple[str, str]:
     """Стабильный ключ строки матрицы для сопоставления блоков разных проектов."""
@@ -3631,6 +3924,7 @@ def _matrix_iframe_html_document(
     *,
     extra_body_suffix: str = "",
     body_class: str = "",
+    color_scheme: str = "dark",
 ) -> str:
     """
     Полный HTML-документ для st.components.v1.html: матрица + кнопка полноэкранного режима.
@@ -3640,9 +3934,10 @@ def _matrix_iframe_html_document(
     # Сортировка только из extra_body_suffix (dev-tz / control-points).
     # Общий table_sort_inject в iframe не подключаем: даёт дубли <select>Все</select> рядом с кликом по th.
     _extra = extra_body_suffix or ""
+    _scheme = "light" if str(color_scheme or "").strip().lower() == "light" else "dark"
     return (
         '<!DOCTYPE html><html><head><meta charset="utf-8">'
-        '<meta name="color-scheme" content="dark">'
+        f'<meta name="color-scheme" content="{_scheme}">'
         '<meta name="viewport" content="width=device-width,initial-scale=5,viewport-fit=cover">'
         "<style>"
         + head_styles
@@ -3670,6 +3965,7 @@ def render_dev_tz_matrix(
     *,
     project_labels: Optional[List[str]] = None,
     vertical_dates: bool = False,
+    theme: str = "dark",
 ) -> None:
     """
     Первая колонка «Проект» — только название; далее «Инвестиционная фаза» / «Жизнь проекта»
@@ -3796,89 +4092,8 @@ def render_dev_tz_matrix(
     # фиксацию первой колонки при горизонтальном скролле в Streamlit, так как
     # внешние контейнеры st.markdown/st.html ломают position:sticky.
     import streamlit.components.v1 as _components
-    # Общий _TABLE_CSS из _renderers (color:#e0e0e0, col-fact с оранжевым фоном) в iframe
-    # матрицы не подмешиваем — иначе на dev/release цвета блекнут и границы «оранжевят».
-    _dev_css_raw = _DEV_TZ_MATRIX_CSS.replace("<style>", "").replace("</style>", "")
-    _sticky_css = """
-*{box-sizing:border-box}
-html,body{margin:0;padding:0;background:transparent;color:#e6edf3;overflow:hidden;
-  opacity:1!important;filter:none!important;isolation:isolate}
-.dev-tz-matrix-wrap{width:100%;max-width:100%;margin:0!important;padding:0!important;
-  overflow-x:auto;overflow-y:hidden;
-  -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;
-  scrollbar-width:thin;scrollbar-color:rgba(121,154,192,0.5) transparent}
-.dev-tz-matrix-wrap::-webkit-scrollbar{height:10px}
-.dev-tz-matrix-wrap::-webkit-scrollbar-track{background:transparent;border-radius:5px}
-.dev-tz-matrix-wrap::-webkit-scrollbar-thumb{background:rgba(121,154,192,0.42);border-radius:5px;border:2px solid #141820}
-.dev-tz-matrix-wrap::-webkit-scrollbar-thumb:hover{background:rgba(121,154,192,0.65)}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide{
-  border-collapse:separate!important;border-spacing:0!important;
-  width:max-content!important;min-width:100%!important;
-  font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif!important;
-  font-size:16px!important;font-weight:700!important}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td{
-  font-size:16px!important;line-height:1.45!important;padding:14px 12px!important}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project{
-  font-size:17px!important;padding:12px 14px!important;color:#f0f4f8!important}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project{
-  font-size:18px!important;padding:14px 12px!important;color:#f0f4f8!important}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead,
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead-life{
-  font-size:18px!important;padding:12px 14px!important;color:#f0f4f8!important}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone{
-  font-size:17px!important;padding:12px 10px!important;color:#f0f4f8!important}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub{
-  font-size:16px!important;padding:10px 8px!important;color:#f0f4f8!important}
-/* Сетка: только непрозрачные границы (без border-shorthand — не сбрасывает белые 3px). */
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th,
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td{
-  border-width:1px!important;border-style:solid!important;
-  border-color:#5a6f82!important;background-clip:padding-box!important}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td{
-  background-color:#0c1219!important}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-ms-block{
-  border-left:3px solid #ffffff!important;
-  border-right:3px solid #ffffff!important}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-first,
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-first{
-  border-left:3px solid #ffffff!important}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-last,
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-last{
-  border-right:3px solid #ffffff!important}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead{
-  border-top:3px solid #ffffff!important;border-bottom:3px solid #ffffff!important}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-inv{
-  border-right:3px solid #ffffff!important}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-life{
-  border-left:3px solid #ffffff!important;border-right:3px solid #ffffff!important}
-/* Sticky-колонка «Проект» */
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project,
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project{
-  position:sticky!important;left:0!important;
-  border-right:3px solid #ffffff!important;
-}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project{
-  border-top:3px solid #ffffff!important;border-left:3px solid #ffffff!important;
-  border-bottom:3px solid #ffffff!important}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project{
-  z-index:5!important;background:#1a3328!important}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project{
-  z-index:4!important;background:#161f2b!important}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-ms-block{
-  box-shadow:inset 3px 0 0 #fff,inset -3px 0 0 #fff}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-first,
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-first{box-shadow:inset 3px 0 0 #fff}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-last,
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-last{box-shadow:inset -3px 0 0 #fff}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project,
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project{box-shadow:inset -3px 0 0 #fff}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead{
-  box-shadow:inset 0 3px 0 #fff,inset 0 -3px 0 #fff}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-inv{
-  box-shadow:inset -3px 0 0 #fff,inset 0 3px 0 #fff,inset 0 -3px 0 #fff}
-.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-life{
-  box-shadow:inset 3px 0 0 #fff,inset -3px 0 0 #fff,inset 0 3px 0 #fff,inset 0 -3px 0 #fff}
-"""
+    _dev_css_raw = _dev_tz_matrix_css_raw(theme)
+    _sticky_css = _dev_tz_matrix_iframe_sticky_css(theme)
     _n_rows = len(blocks)
     _row_h = 56
     _iframe_h = max(220, 6 + 3 * _row_h + _n_rows * _row_h + 12)
@@ -3889,6 +4104,7 @@ html,body{margin:0;padding:0;background:transparent;color:#e6edf3;overflow:hidde
         _scroll_block,
         body_class="dev-tz-fs-body",
         extra_body_suffix=_DEV_TZ_MATRIX_SORT_SCRIPT,
+        color_scheme=theme,
     )
     st.markdown(_DEV_MATRIX_STREAMLIT_HOST_CSS, unsafe_allow_html=True)
     _components.html(_iframe_html, height=_iframe_h, scrolling=False)

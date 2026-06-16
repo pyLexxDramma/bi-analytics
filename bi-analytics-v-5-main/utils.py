@@ -366,7 +366,16 @@ def mark_html_table_sortable(html: str) -> str:
             )
         return tag[:-1] + ' class="bi-sortable-table bi-sort-click-only"' + tag[-1]
 
-    return re.sub(r"<table\b[^>]*>", _patch_table_tag, html, flags=re.I)
+    out = re.sub(r"<table\b[^>]*>", _patch_table_tag, html, flags=re.I)
+    try:
+        from dashboards.light_theme import is_light_preview_report
+
+        _dash = str(st.session_state.get("current_dashboard") or "").strip()
+        if is_light_preview_report(_dash) and "bi-light-table" not in out and "gdrs-light-table" not in out:
+            out = f'<div class="bi-light-table">{out}</div>'
+    except Exception:
+        pass
+    return out
 
 
 
@@ -926,22 +935,22 @@ def apply_chart_background(fig, *, skip_uniformtext: bool = False):
 
     # Оси X
     fig.update_xaxes(
-        gridcolor="rgba(255,255,255,0.08)",
-        linecolor="rgba(255,255,255,0.25)",
+        gridcolor=CHART_GRID_COLOR,
+        linecolor=CHART_AXIS_LINE_COLOR,
         tickfont=dict(color=TABLE_TEXT_COLOR, size=11),
         title=dict(font=dict(color=TABLE_TEXT_COLOR, size=12)),
-        zerolinecolor="rgba(255,255,255,0.2)",
+        zerolinecolor=CHART_ZEROLINE_COLOR,
         automargin=True,
         ticklabelstandoff=8,
     )
 
     # Оси Y
     fig.update_yaxes(
-        gridcolor="rgba(255,255,255,0.08)",
-        linecolor="rgba(255,255,255,0.25)",
+        gridcolor=CHART_GRID_COLOR,
+        linecolor=CHART_AXIS_LINE_COLOR,
         tickfont=dict(color=TABLE_TEXT_COLOR, size=11),
         title=dict(font=dict(color=TABLE_TEXT_COLOR, size=12)),
-        zerolinecolor="rgba(255,255,255,0.2)",
+        zerolinecolor=CHART_ZEROLINE_COLOR,
         automargin=True,
     )
 
@@ -2147,15 +2156,134 @@ def format_dataframe_as_html(
 
 
 def load_custom_css() -> None:
-    """Загружает CSS из static/css/style.css. Единственное место — импортируй отсюда."""
+    """Загружает CSS. Для светлых превью — без тёмного style.css."""
     from pathlib import Path
+
+    _light_preview = False
+    try:
+        from dashboards.light_theme import apply_light_table_constants, inject_light_preview_css, is_light_preview_report
+
+        _dash = str(st.session_state.get("current_dashboard") or "").strip()
+        if not _dash:
+            try:
+                _qp = st.query_params.get("report", "")
+                _dash = str(_qp[0] if isinstance(_qp, list) and _qp else _qp or "").strip()
+            except Exception:
+                pass
+        _light_preview = is_light_preview_report(_dash)
+        if _light_preview:
+            apply_light_table_constants()
+            inject_light_preview_css(st)
+        else:
+            from dashboards.light_theme import apply_dark_table_constants
+
+            apply_dark_table_constants()
+    except Exception:
+        pass
+
     base = Path(__file__).resolve().parent
-    for name in ("style.css", "bi-responsive.css"):
+    css_names = ("bi-responsive.css",) if _light_preview else ("style.css", "bi-responsive.css")
+    for name in css_names:
         css_path = base / "static" / "css" / name
         if css_path.exists():
             with open(css_path, encoding="utf-8") as f:
                 st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
     st.markdown(BI_TABLE_LAYOUT_CSS + BI_RESPONSIVE_DASHBOARD_CSS, unsafe_allow_html=True)
+    if _light_preview:
+        st.markdown(
+            """
+<style id="bi-light-style-overrides">
+html body section.main div[data-testid="column"]:has([data-testid="stCheckbox"]) {
+  flex: 1 1 14rem !important;
+  min-width: 11rem !important;
+  width: auto !important;
+  max-width: none !important;
+}
+html body .stCheckbox > label,
+html body [data-testid="stCheckbox"] label[data-baseweb="checkbox"],
+html body [data-testid="stCheckbox"] label[data-baseweb="checkbox"] p {
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+}
+html body div[data-baseweb="popover"] li[data-highlighted="true"],
+html body div[data-baseweb="popover"] li[aria-selected="true"],
+html body div[data-baseweb="menu"] li[data-highlighted="true"],
+html body div[data-baseweb="popover"] [role="option"][aria-selected="true"] {
+  background-color: #e5e7eb !important;
+  color: #111827 !important;
+}
+html body div[data-baseweb="popover"] li[data-highlighted="true"] *,
+html body div[data-baseweb="popover"] li[aria-selected="true"] * {
+  background-color: transparent !important;
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+}
+html body div[data-baseweb="popover"] [role="listbox"] [role="option"][data-highlighted="true"],
+html body div[data-baseweb="popover"] [role="listbox"] [role="option"][aria-selected="true"] {
+  background-color: #e5e7eb !important;
+  color: #111827 !important;
+}
+html body div[data-baseweb="popover"] [data-baseweb="calendar"],
+html body div[data-baseweb="popover"] [data-baseweb="datepicker"],
+html body div[data-baseweb="popover"] [role="grid"] {
+  background-color: #ffffff !important;
+  color-scheme: light !important;
+}
+html body div[data-baseweb="popover"] [data-baseweb="calendar"] [role="grid"] [role="gridcell"]::before,
+html body div[data-baseweb="popover"] [data-baseweb="calendar"] [role="grid"] [role="gridcell"]::after {
+  content: none !important;
+  display: none !important;
+  background: transparent !important;
+}
+html body div[data-baseweb="popover"] [data-baseweb="calendar"] [role="gridcell"] > div:first-child {
+  width: 2.25rem !important;
+  height: 2.25rem !important;
+  margin: 0 auto !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 9999px !important;
+  color: #111827 !important;
+  background: transparent !important;
+}
+html body div[data-baseweb="popover"] [data-baseweb="calendar"] [role="gridcell"]:hover > div:first-child,
+html body div[data-baseweb="popover"] [data-baseweb="calendar"] [role="gridcell"][tabindex="0"] > div:first-child {
+  background-color: #f3f4f6 !important;
+}
+html body div[data-baseweb="popover"] [data-baseweb="calendar"] [role="gridcell"][data-bi-selected="1"] > div:first-child {
+  background-color: #2563eb !important;
+  color: #ffffff !important;
+}
+html body section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"] > input + div {
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  border: 2px solid #64748b !important;
+  border-radius: 4px !important;
+  background-color: #ffffff !important;
+  flex-shrink: 0 !important;
+}
+html body section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked) > input + div {
+  background-color: #2563eb !important;
+  border-color: #2563eb !important;
+}
+html body section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked),
+html body section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked) > div:has(p),
+html body section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked) p {
+  background: transparent !important;
+  background-color: transparent !important;
+  color: #111827 !important;
+}
+html body section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"] > div:has(p) {
+  background: transparent !important;
+  border: none !important;
+  width: auto !important;
+  flex: 1 1 auto !important;
+}
+</style>
+""",
+            unsafe_allow_html=True,
+        )
 
 
 def dataframe_to_csv_bytes_for_excel(

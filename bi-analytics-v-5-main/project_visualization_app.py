@@ -258,6 +258,7 @@ if not st.session_state.get("authenticated"):
 # │ ⊗ CSS CONNECT ¤ Start                                                    │ #
 # └──────────────────────────────────────────────────────────────────────────┘ #
 
+# Ранняя загрузка CSS (до deep-link); повторный вызов — после выбора вкладки.
 load_custom_css()
 
 _RU_LABELS_INJECTED_THIS_RUN = False
@@ -776,28 +777,35 @@ def main():
         st.session_state["current_dashboard"] = "Девелоперские проекты"
 
     _dash_title = str(st.session_state.get("current_dashboard") or "").strip()
-    _gdrs_light_preview = False
+    _light_preview = False
     try:
-        from dashboards.gdrs_theme import inject_gdrs_light_preview_css, is_gdrs_light_preview_report
+        from dashboards.light_theme import (
+            inject_light_preview_css,
+            is_light_preview_report,
+            light_preview_heading_html,
+            resolve_light_preview_title,
+        )
 
-        _gdrs_light_preview = is_gdrs_light_preview_report(_dash_title)
-        if _gdrs_light_preview:
-            inject_gdrs_light_preview_css(st)
+        _light_preview = is_light_preview_report(_dash_title)
+        if _light_preview:
+            from dashboards.light_theme import apply_light_table_constants
+
+            apply_light_table_constants()
+            inject_light_preview_css(st)
+        else:
+            from dashboards.light_theme import apply_dark_table_constants
+
+            apply_dark_table_constants()
     except Exception:
         pass
     _h1_text = (
-        "ГДРС"
-        if _gdrs_light_preview
+        resolve_light_preview_title(_dash_title)
+        if _light_preview
         else (_html_escape(_dash_title) if _dash_title else "Панель аналитики проектов")
     )
     _gdrs_load_slot = None
-    if _gdrs_light_preview:
-        st.markdown(
-            f'<h1 class="main-header gdrs-light-heading" '
-            f'style="color:#000000!important;-webkit-text-fill-color:#000000!important;'
-            f'font-weight:800!important;opacity:1!important;">{_h1_text}</h1>',
-            unsafe_allow_html=True,
-        )
+    if _light_preview:
+        st.markdown(light_preview_heading_html(_h1_text), unsafe_allow_html=True)
         _gdrs_load_slot = st.empty()
     else:
         st.markdown(
@@ -1571,6 +1579,7 @@ def main():
         st.session_state.dashboard_selected_from_menu = False
 
         selected_dashboard = st.session_state.current_dashboard
+        load_custom_css()
 
         dashboards_using_technique = (
             "ГДРС",
@@ -1613,22 +1622,26 @@ def main():
             df_for_render = df
 
         try:
-            from dashboards.gdrs_theme import (
-                gdrs_clear_loading_banner,
-                gdrs_show_loading_banner,
-                inject_gdrs_light_preview_css,
-                is_gdrs_light_preview_report,
-            )
+            from dashboards.gdrs_theme import gdrs_clear_loading_banner, gdrs_show_loading_banner
+            from dashboards.light_theme import inject_light_preview_css, is_light_preview_report
 
-            _gdrs_light_sel = is_gdrs_light_preview_report(selected_dashboard)
-            if _gdrs_light_sel:
-                inject_gdrs_light_preview_css(st)
-                try:
-                    from dashboards.gdrs_resursi import warm_gdrs_disk_caches
+            _light_preview_sel = is_light_preview_report(selected_dashboard)
+            if _light_preview_sel:
+                from dashboards.light_theme import apply_light_table_constants
 
-                    warm_gdrs_disk_caches()
-                except Exception:
-                    pass
+                apply_light_table_constants()
+                inject_light_preview_css(st)
+                if selected_dashboard.casefold().startswith("гдрс"):
+                    try:
+                        from dashboards.gdrs_resursi import warm_gdrs_disk_caches
+
+                        warm_gdrs_disk_caches()
+                    except Exception:
+                        pass
+            else:
+                from dashboards.light_theme import apply_dark_table_constants
+
+                apply_dark_table_constants()
             _gdrs_loading = None
             _gantt_loading = None
             if selected_dashboard == "График проекта":
@@ -1637,7 +1650,7 @@ def main():
                     "Загрузка графика проекта…",
                     slot=_gdrs_load_slot,
                 )
-            if _gdrs_light_sel:
+            if _light_preview_sel:
                 _gdrs_loading = gdrs_show_loading_banner(
                     st,
                     "Идёт загрузка дашборда…",
