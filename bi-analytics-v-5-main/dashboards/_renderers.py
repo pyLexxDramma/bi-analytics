@@ -14805,6 +14805,7 @@ def _render_rd_delay_fallback_chart(
     *,
     view_mode: str,
     doc_code: str,
+    metric_mode: str = "Количество разделов",
 ) -> None:
     """График «Просрочка выдачи РД» из TESSA (fallback без MSP-колонки отклонений)."""
     if detail_tbl is None or getattr(detail_tbl, "empty", True):
@@ -14831,59 +14832,80 @@ def _render_rd_delay_fallback_chart(
         y_col = "Проект"
         y_title = ""
     tbl["_y"] = tbl["_y"].replace({"": "—", "nan": "—"})
+    use_pct = str(metric_mode or "").strip().startswith("%")
     chart_data = (
         tbl.groupby("_y", as_index=False)
-        .agg(_dev_sum=("_dev_n", "sum"), _overdue_cnt=("_dev_n", lambda s: int((s > 0).sum())))
+        .agg(
+            _overdue_cnt=("_dev_n", lambda s: int((s > 0).sum())),
+            _total_cnt=("_dev_n", "count"),
+        )
         .rename(columns={"_y": y_col})
     )
-    dev_col = f"Отклонение разделов {doc_code}"
-    chart_data[dev_col] = chart_data["_dev_sum"]
-    chart_data = chart_data[chart_data[dev_col] > 0].copy()
+    chart_data["_overdue_pct"] = np.where(
+        chart_data["_total_cnt"] > 0,
+        chart_data["_overdue_cnt"] / chart_data["_total_cnt"] * 100.0,
+        0.0,
+    )
+    val_col = "_overdue_pct" if use_pct else "_overdue_cnt"
+    x_title = (
+        "% просроченных разделов от объёма"
+        if use_pct
+        else "Количество просроченных разделов"
+    )
+    chart_data = chart_data[chart_data[val_col] > 0].copy()
     if chart_data.empty:
         st.info("Нет просрочки для выбранных фильтров.")
         return
-    chart_data = chart_data.sort_values(dev_col, ascending=False)
+    chart_data = chart_data.sort_values(val_col, ascending=False)
     text_values = []
     for _, row in chart_data.iterrows():
-        val = row[dev_col]
-        cnt = int(row.get("_overdue_cnt", 0) or 0)
-        if pd.notna(val) and float(val) > 0:
-            text_values.append(f"{int(round(float(val)))} ({cnt} разд.)")
+        ovd = int(row.get("_overdue_cnt", 0) or 0)
+        tot = int(row.get("_total_cnt", 0) or 0)
+        pct = float(row.get("_overdue_pct", 0) or 0)
+        if use_pct:
+            text_values.append(
+                f"{pct:.0f}% ({ovd} из {tot})" if tot > 0 else f"{pct:.0f}%"
+            )
         else:
-            text_values.append("")
-    chart_data["_severity"] = chart_data[dev_col].clip(lower=0)
+            text_values.append(
+                f"{ovd} из {tot} ({pct:.0f}%)" if tot > 0 else str(ovd)
+            )
+    chart_data["_severity"] = pd.to_numeric(chart_data[val_col], errors="coerce").fillna(0.0).clip(
+        lower=0.0
+    )
     severity_max = max(float(chart_data["_severity"].max()), 1.0)
-    _dev_vals = pd.to_numeric(chart_data[dev_col], errors="coerce").fillna(0.0)
+    _dev_vals = chart_data["_severity"]
     _tick_labels = [
         (f"🔴 {lbl}" if float(d) > 0 else f"🟢 {lbl}")
         for lbl, d in zip(chart_data[y_col].astype(str).tolist(), _dev_vals.tolist())
     ]
     fig = px.bar(
         chart_data,
-        x=dev_col,
+        x=val_col,
         y=y_col,
         orientation="h",
         title=None,
-        labels={y_col: y_title, dev_col: dev_col},
+        labels={y_col: y_title, val_col: x_title},
         text=text_values,
         color="_severity",
         color_continuous_scale=[(0.0, "#27AE60"), (0.5, "#F1C40F"), (1.0, "#C0392B")],
-        range_color=(0.0, severity_max),
+        range_color=(0.0, severity_max if not use_pct else max(severity_max, 100.0)),
     )
     fig.update_traces(
         textposition="outside",
+        textangle=0,
         textfont=dict(size=12, color="white"),
         marker=dict(line=dict(width=1, color="white")),
         showlegend=False,
     )
-    fig.add_vline(x=0, line_dash="dash", line_color="gray")
     category_list = chart_data[y_col].tolist()
     fig.update_layout(
-        xaxis_title=dev_col,
+        xaxis_title=x_title,
         yaxis_title=y_title,
         height=max(480, len(chart_data) * 44),
         showlegend=False,
         coloraxis_showscale=False,
+        xaxis=dict(range=[0, 100], ticksuffix="%") if use_pct else {},
         yaxis=dict(
             tickangle=0,
             categoryorder="array",
@@ -15136,6 +15158,12 @@ def _rd_plan_fallback_view(
                 value=True,
                 key=f"rd_fb_forecast_{fb_k}",
             )
+            fb_metric_mode = st.radio(
+                "Единица отображения",
+                ["Количество разделов", "% от общего объёма"],
+                horizontal=True,
+                key=f"rd_fb_delay_metric_{fb_k}",
+            )
         else:
             _fbm1, _fbm2 = st.columns(2, gap="small")
             with _fbm1:
@@ -15347,6 +15375,7 @@ def _rd_plan_fallback_view(
                 _detail_tbl_rd,
                 view_mode=fb_delay_view_mode,
                 doc_code=doc_code,
+                metric_mode=fb_metric_mode,
             )
         else:
             st.info(
@@ -16200,11 +16229,18 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         else:
             suppress_caption("Нет колонок статусов РД для фильтра.")
         rd_delay_show_forecast = True
+        rd_delay_metric_mode = "Количество разделов"
         if not is_pd:
             rd_delay_show_forecast = st.checkbox(
                 "Показать прогнозную дату выдачи разделов",
                 value=True,
                 key=f"rd_delay_show_forecast_{doc_code}",
+            )
+            rd_delay_metric_mode = st.radio(
+                "Единица отображения",
+                ["Количество разделов", "% от общего объёма"],
+                horizontal=True,
+                key=f"rd_delay_metric_mode_{doc_code}",
             )
         pd_report_date = date.today()
         if is_pd:
@@ -16631,6 +16667,14 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 filtered_df["Задача_полная"] = filtered_df[task_col].astype(str)
 
             agg_map = {"rd_deviation_numeric": "sum", "_rd_plan_n": "sum", "_rd_fact_n": "sum"}
+            agg_map.update(
+                {
+                    "_overdue_cnt": ("rd_deviation_numeric", _rd_delay_overdue_row_count),
+                    "_total_cnt": ("_rd_plan_n", _rd_delay_total_sections),
+                    "_row_cnt": ("rd_deviation_numeric", "count"),
+                }
+            )
+            agg_map = {k: v for k, v in agg_map.items() if k == "_overdue_cnt" or k == "_total_cnt" or k == "_row_cnt" or k in filtered_df.columns}
             chart_data = (
                 filtered_df.groupby("Задача_полная", as_index=False).agg(agg_map)
             )
@@ -16675,8 +16719,11 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 "_base_dur": "max",
                 "_cur_dur": "max",
                 "_dev_dur": "max",
+                "_overdue_cnt": ("rd_deviation_numeric", _rd_delay_overdue_row_count),
+                "_total_cnt": ("_rd_plan_n", _rd_delay_total_sections),
+                "_row_cnt": ("rd_deviation_numeric", "count"),
             }
-            agg_map = {k: v for k, v in agg_map.items() if k in filtered_df.columns}
+            agg_map = {k: v for k, v in agg_map.items() if k in ("_overdue_cnt", "_total_cnt", "_row_cnt") or k in filtered_df.columns}
             chart_data = (
                 filtered_df.groupby("_rd_delay_section_label", as_index=False).agg(agg_map)
             )
@@ -16706,8 +16753,11 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     "_base_dur": "max",
                     "_cur_dur": "max",
                     "_dev_dur": "max",
+                    "_overdue_cnt": ("rd_deviation_numeric", _rd_delay_overdue_row_count),
+                    "_total_cnt": ("_rd_plan_n", _rd_delay_total_sections),
+                    "_row_cnt": ("rd_deviation_numeric", "count"),
                 }
-                agg_map = {k: v for k, v in agg_map.items() if k in filtered_df.columns}
+                agg_map = {k: v for k, v in agg_map.items() if k in ("_overdue_cnt", "_total_cnt", "_row_cnt") or k in filtered_df.columns}
                 chart_data = (
                     filtered_df.groupby(project_col, as_index=False).agg(agg_map)
                 )
@@ -16740,119 +16790,30 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             if chart_data.empty:
                 st.info("Нет данных для построения графика.")
                 return
-
-            # Текст на столбцах: отклонение и % выполнения РД/ПД
-            text_values = []
-            for _, row in chart_data.iterrows():
-                val = row[dev_col]
-                pct = row.get("% выполнения РД/ПД", "") or ""
-                overdue_pct = row.get("_overdue_share_pct", 0)
-                plan_total = row.get("_rd_plan_n", 0)
-                if pd.notna(val):
-                    dev_str = f"{int(round(val, 0))}"
-                    if pd.notna(plan_total) and float(plan_total) > 0:
-                        plan_str = f"{int(round(float(plan_total), 0))}"
-                        pct_str = f"{float(overdue_pct):.0f}%"
-                        text_values.append(f"{dev_str} из {plan_str} ({pct_str})")
-                    else:
-                        text_values.append(f"{dev_str} ({pct})" if pct and str(pct).strip() != "—" else dev_str)
-                else:
-                    text_values.append(pct if pct else "")
-
-            _has_dur = all(
-                c in chart_data.columns for c in ("_base_dur", "_cur_dur", "_dev_dur")
+            _use_pct = str(rd_delay_metric_mode).strip().startswith("%")
+            _rd_delay_apply_overdue_metric_chart(
+                chart_data,
+                y_col=y_column,
+                y_title=y_title,
+                use_pct=_use_pct,
+                doc_code=doc_code,
             )
-            if _has_dur:
-                fig = _rd_delay_duration_figure(
-                    chart_data,
-                    y_col=y_column,
-                    dev_col=dev_col,
-                    caption=f"Просрочка выдачи {doc_code}",
-                )
-                render_chart(fig, caption_below=f"Просрочка выдачи {doc_code}")
-            else:
-                chart_data["_severity"] = chart_data[dev_col].clip(lower=0)
-                severity_max = float(chart_data["_severity"].max()) if not chart_data.empty else 0.0
-                severity_max = max(severity_max, 1.0)
-                _dev_vals = pd.to_numeric(chart_data[dev_col], errors="coerce").fillna(0.0)
-                _tick_labels = [
-                    (f"🔴 {lbl}" if float(d) > 0 else f"🟢 {lbl}")
-                    for lbl, d in zip(chart_data[y_column].astype(str).tolist(), _dev_vals.tolist())
-                ]
-                fig = px.bar(
-                    chart_data,
-                    x=dev_col,
-                    y=y_column,
-                    orientation="h",
-                    title=None,
-                    labels={y_column: y_title, dev_col: dev_col},
-                    text=text_values,
-                    color="_severity",
-                    color_continuous_scale=[(0.0, "#27AE60"), (0.5, "#F1C40F"), (1.0, "#C0392B")],
-                    range_color=(0.0, severity_max),
-                )
-                fig.update_traces(
-                    textposition="outside",
-                    textfont=dict(size=14, color="white"),
-                    marker=dict(line=dict(width=1, color="white")),
-                    showlegend=False,
-                )
-                fig.add_vline(x=0, line_dash="dash", line_color="gray")
-                category_list = chart_data[y_column].tolist()
-                fig.update_layout(
-                    xaxis_title=dev_col,
-                    yaxis_title=y_title,
-                    height=max(600, len(chart_data) * 40),
-                    showlegend=False,
-                    coloraxis_showscale=False,
-                    yaxis=dict(
-                        tickangle=0,
-                        categoryorder="array",
-                        categoryarray=list(reversed(category_list)),
-                        tickmode="array",
-                        tickvals=category_list,
-                        ticktext=list(reversed(_tick_labels)),
-                    ),
-                    bargap=0.1,
-                )
-                fig = _apply_bar_uniformtext(fig)
-                fig = apply_chart_background(fig)
-                render_chart(fig, caption_below=f"Просрочка выдачи {doc_code}")
 
             # R23-07 (стр.22): индикаторы просрочки по проектам — карточки с градиентом зелёный→красный.
             try:
                 if (
-                    y_title == "Проект"
+                    y_column == "Проект"
                     and not chart_data.empty
                     and project_col
                     and project_col in filtered_df.columns
                 ):
                     st.markdown(f"**Индикаторы просрочки {doc_code} по проектам**")
-                    # П.2 (ПД): индикатор = ЧИСЛО документов с просрочкой по проекту
-                    # (строки с положительным отклонением), а не сумма дней просрочки.
-                    _ind_metric_is_count = bool(is_pd)
-                    _overdue_count_by_project = {}
-                    if _ind_metric_is_count:
-                        try:
-                            _ov_mask = pd.to_numeric(
-                                filtered_df["rd_deviation_numeric"], errors="coerce"
-                            ).fillna(0.0) > 0
-                            _overdue_count_by_project = (
-                                filtered_df.loc[_ov_mask, project_col]
-                                .astype(str)
-                                .str.strip()
-                                .value_counts()
-                                .to_dict()
-                            )
-                        except Exception:
-                            _overdue_count_by_project = {}
-                            _ind_metric_is_count = False
-                    if _ind_metric_is_count:
-                        _dev_series = pd.Series(
-                            [float(v) for v in _overdue_count_by_project.values()]
-                        )
-                    else:
-                        _dev_series = chart_data[dev_col].astype(float).clip(lower=0.0)
+                    _ind_df = (
+                        chart_data[["Проект", "_overdue_cnt"]]
+                        .rename(columns={"_overdue_cnt": "_dev"})
+                        .reset_index(drop=True)
+                    )
+                    _dev_series = pd.to_numeric(_ind_df["_dev"], errors="coerce").fillna(0.0)
                     _dev_max = float(_dev_series.max()) if not _dev_series.empty else 0.0
 
                     def _proj_indicator_color(val: float) -> str:
@@ -16872,18 +16833,6 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                         bb = int(b1 + (b2 - b1) * t)
                         return f"#{rr:02X}{gg:02X}{bb:02X}"
 
-                    _ind_df = (
-                        chart_data[["Проект", dev_col]]
-                        .rename(columns={dev_col: "_dev"})
-                        .reset_index(drop=True)
-                    )
-                    if _ind_metric_is_count:
-                        _ind_df["_dev"] = (
-                            _ind_df["Проект"]
-                            .astype(str)
-                            .str.strip()
-                            .map(lambda p: float(_overdue_count_by_project.get(p, 0)))
-                        )
                     _ind_df = _ind_df.sort_values("_dev", ascending=False).reset_index(drop=True)
                     _n = len(_ind_df)
                     _cols_n = min(4, max(1, _n))
@@ -16892,18 +16841,11 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                         _proj = str(_row["Проект"])
                         _dev = float(_row["_dev"]) if pd.notna(_row["_dev"]) else 0.0
                         _bg = _proj_indicator_color(_dev)
-                        if _ind_metric_is_count:
-                            _label = (
-                                "Без просрочки"
-                                if _dev <= 0
-                                else f"Просрочка: {int(round(_dev))} док."
-                            )
-                        else:
-                            _label = (
-                                "Без просрочки"
-                                if _dev <= 0
-                                else f"Просрочка: {int(round(_dev))}"
-                            )
+                        _label = (
+                            "Без просрочки"
+                            if _dev <= 0
+                            else f"Просрочка: {int(round(_dev))} разд."
+                        )
                         with _cols_row[_i % _cols_n]:
                             st.markdown(
                                 (
@@ -17295,7 +17237,13 @@ def dashboard_rd_delay(df, is_pd: bool = False):
         elif cipher_col and cipher_col in detail_df.columns:
             _cipher_for_detail = cipher_col
         _col_series["Шифр"] = _safe_str_col(_cipher_for_detail)
-        _col_series["Номер шифра"] = _safe_str_col(cipher_no_col)
+        _col_series["Номер шифра"] = _safe_str_col(cipher_no_col).map(
+            lambda x: (
+                _fmt_rd_cipher_number(x)
+                if str(x).strip() not in ("—", "")
+                else x
+            )
+        )
         _col_series["Блок"] = _safe_str_col(block_col)
         _col_series["Шифр полный"] = detail_df["_detail_cipher"]
         # §4.4 / R23-07: «Задача» — при наличии `_rd_tessa_task_display_series` из
@@ -27134,6 +27082,130 @@ def _rd_delay_section_label_series(
     return pd.Series(["(не указано)"] * len(df), index=df.index)
 
 
+def _rd_delay_overdue_row_count(series: pd.Series) -> int:
+    return int((pd.to_numeric(series, errors="coerce").fillna(0.0) > 0).sum())
+
+
+def _rd_delay_total_sections(series: pd.Series) -> float:
+    total = float(pd.to_numeric(series, errors="coerce").fillna(0.0).sum())
+    return max(total, float(len(series)))
+
+
+def _rd_delay_overdue_group_agg_map() -> dict:
+    return {
+        "rd_deviation_numeric": "sum",
+        "_rd_plan_n": "sum",
+        "_rd_fact_n": "sum",
+        "_base_dur": "max",
+        "_cur_dur": "max",
+        "_dev_dur": "max",
+        "_overdue_cnt": ("rd_deviation_numeric", _rd_delay_overdue_row_count),
+        "_total_cnt": ("_rd_plan_n", _rd_delay_total_sections),
+        "_row_cnt": ("rd_deviation_numeric", "count"),
+    }
+
+
+def _rd_delay_apply_overdue_metric_chart(
+    chart_data: pd.DataFrame,
+    *,
+    y_col: str,
+    y_title: str,
+    use_pct: bool,
+    doc_code: str,
+) -> None:
+    """График просрочки РД: количество просроченных разделов или % от объёма по объекту."""
+    if chart_data is None or chart_data.empty or y_col not in chart_data.columns:
+        st.info("Нет данных для построения графика.")
+        return
+    work = chart_data.copy()
+    if "_total_cnt" not in work.columns:
+        work["_total_cnt"] = 0.0
+    if "_overdue_cnt" not in work.columns:
+        work["_overdue_cnt"] = 0
+    if "_row_cnt" not in work.columns:
+        work["_row_cnt"] = 1
+    work["_total_cnt"] = pd.to_numeric(work["_total_cnt"], errors="coerce").fillna(0.0)
+    work.loc[work["_total_cnt"] <= 0, "_total_cnt"] = pd.to_numeric(
+        work.loc[work["_total_cnt"] <= 0, "_row_cnt"], errors="coerce"
+    ).fillna(1.0)
+    work["_overdue_cnt"] = pd.to_numeric(work["_overdue_cnt"], errors="coerce").fillna(0).astype(int)
+    work["_overdue_pct"] = np.where(
+        work["_total_cnt"] > 0,
+        work["_overdue_cnt"] / work["_total_cnt"] * 100.0,
+        0.0,
+    )
+    val_col = "_overdue_pct" if use_pct else "_overdue_cnt"
+    x_title = (
+        "% просроченных разделов от объёма"
+        if use_pct
+        else "Количество просроченных разделов"
+    )
+    work = work.sort_values(val_col, ascending=False)
+    text_values: list[str] = []
+    for _, row in work.iterrows():
+        ovd = int(row["_overdue_cnt"])
+        tot = int(round(float(row["_total_cnt"])))
+        pct = float(row["_overdue_pct"])
+        if use_pct:
+            text_values.append(
+                f"{pct:.0f}% ({ovd} из {tot})" if tot > 0 else f"{pct:.0f}%"
+            )
+        else:
+            text_values.append(
+                f"{ovd} из {tot} ({pct:.0f}%)" if tot > 0 else str(ovd)
+            )
+    work["_severity"] = pd.to_numeric(work[val_col], errors="coerce").fillna(0.0).clip(lower=0.0)
+    severity_max = max(float(work["_severity"].max()), 1.0)
+    _dev_vals = work["_severity"]
+    _tick_labels = [
+        (f"🔴 {lbl}" if float(d) > 0 else f"🟢 {lbl}")
+        for lbl, d in zip(work[y_col].astype(str).tolist(), _dev_vals.tolist())
+    ]
+    fig = px.bar(
+        work,
+        x=val_col,
+        y=y_col,
+        orientation="h",
+        title=None,
+        labels={y_col: y_title, val_col: x_title},
+        text=text_values,
+        color="_severity",
+        color_continuous_scale=[(0.0, "#27AE60"), (0.5, "#F1C40F"), (1.0, "#C0392B")],
+        range_color=(0.0, severity_max if not use_pct else max(severity_max, 100.0)),
+    )
+    fig.update_traces(
+        textposition="outside",
+        textangle=0,
+        textfont=dict(size=12, color="white"),
+        marker=dict(line=dict(width=1, color="white")),
+        showlegend=False,
+    )
+    category_list = work[y_col].tolist()
+    _x_range = [0, 100] if use_pct else None
+    fig.update_layout(
+        xaxis_title=x_title,
+        yaxis_title=y_title,
+        height=max(480, len(work) * 44),
+        showlegend=False,
+        coloraxis_showscale=False,
+        xaxis=dict(range=_x_range, ticksuffix="%" if use_pct else None)
+        if _x_range
+        else {},
+        yaxis=dict(
+            tickangle=0,
+            categoryorder="array",
+            categoryarray=list(reversed(category_list)),
+            tickmode="array",
+            tickvals=category_list,
+            ticktext=list(reversed(_tick_labels)),
+        ),
+        bargap=0.12,
+    )
+    fig = _apply_bar_uniformtext(fig)
+    fig = apply_chart_background(fig)
+    render_chart(fig, caption_below=f"Просрочка выдачи {doc_code}")
+
+
 def _rd_delay_synthetic_deviation_days(
     df: pd.DataFrame,
     *,
@@ -27949,10 +28021,8 @@ def _pd_delay_plan_fact_figure(
             x=fact_v,
             marker=dict(color="#27AE60"),
             opacity=0.72,
-            text=[f"{int(v)}" if float(v) > 0 else "" for v in fact_v],
-            textposition="inside",
-            insidetextanchor="middle",
-            textfont=dict(color="white", size=12),
+            textposition="none",
+            texttemplate=" ",
             cliponaxis=False,
             hovertemplate="%{y}<br>Факт: %{x:.0f} док.<extra></extra>",
         )
@@ -27966,14 +28036,39 @@ def _pd_delay_plan_fact_figure(
             x=overdue_v,
             base=red_base,
             marker=dict(color="#C0392B"),
-            text=[f"{int(v)}" if float(v) > 0 else "" for v in overdue_v],
-            textposition="inside",
-            insidetextanchor="middle",
-            textfont=dict(color="white", size=12),
+            textposition="none",
+            texttemplate=" ",
             cliponaxis=False,
             hovertemplate="%{y}<br>Отклонение: %{x:.0f} док.<extra></extra>",
         )
     )
+    for y_lbl, fv, ov in zip(y_labels, fact_v.tolist(), overdue_v.tolist()):
+        _ann_kw = dict(
+            y=y_lbl,
+            showarrow=False,
+            yanchor="middle",
+            xref="x",
+            yref="y",
+            textangle=0,
+        )
+        fv_f = float(fv)
+        ov_f = float(ov)
+        if fv_f > 0:
+            fig.add_annotation(
+                **_ann_kw,
+                x=fv_f / 2.0,
+                text=f"{int(round(fv_f))}",
+                font=dict(color="#FFFFFF", size=12),
+                xanchor="center",
+            )
+        if ov_f > 0:
+            fig.add_annotation(
+                **_ann_kw,
+                x=fv_f + ov_f / 2.0,
+                text=f"{int(round(ov_f))}",
+                font=dict(color="#FFFFFF", size=12),
+                xanchor="center",
+            )
     _n_pf = max(1, len(y_labels))
     fig.update_layout(
         barmode="overlay",
@@ -27984,7 +28079,6 @@ def _pd_delay_plan_fact_figure(
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         margin=dict(l=12, r=48, t=56, b=48),
         bargap=0.34,
-        uniformtext=dict(minsize=9, mode="show"),
     )
     fig.update_traces(selector=dict(type="bar"), width=0.48)
     fig.update_yaxes(
@@ -27998,7 +28092,6 @@ def _pd_delay_plan_fact_figure(
         automargin=True,
     )
     fig.update_xaxes(range=[0, x_max * 1.12], automargin=True)
-    fig = _apply_bar_uniformtext(fig)
     fig = apply_chart_background(fig)
     return fig
 
@@ -29203,6 +29296,9 @@ def dashboard_documentation(
         except Exception as e:
             st.error(f"Ошибка при построении графика 'Исполнение ПД': {str(e)}")
 
+    _rd_msp_prod_fb: Optional[dict[str, Any]] = None
+    _rd_prod_shown = False
+
     if not is_pd:
         # Prepare data for "Динамика выдачи РД"
         # X-axis: "Старт План" (plan start date)
@@ -29462,79 +29558,24 @@ def dashboard_documentation(
                         _dev_disp = "—"
                     st.metric("Отклонение на текущую дату", _dev_disp)
 
+                _rd_msp_prod_fb = {
+                    "plan_to_date": plan_to_date,
+                    "fact_to_date": fact_to_date,
+                    "deviation_to_date": deviation_to_date,
+                    "fact_to_date_msp": fact_to_date_msp,
+                    "max_plan_end_date": max_plan_end_date,
+                    "max_fact_end_date": max_fact_end_date,
+                    "last_plan_date": last_d if last_plan_date is not None else None,
+                }
+
                 if page_title == "Рабочая документация":
-                    planned_weekly = None
-                    fact_weekly = None
-                    nec_rd = None
-                    use_approx_plan_end = False
-                    if _rd_summ:
-                        suppress_caption(
-                            "Производительность разделов в неделю (п.12–14 ТЗ): расчёт из other_*_rd.csv "
-                            "и журналов Tessa task (CardID↔DocID)."
-                        )
-                        planned_weekly = _rd_summ.get("planned_weekly")
-                        fact_weekly = _rd_summ.get("fact_weekly")
-                        nec_rd = _rd_summ.get("nec_weekly")
-                        if nec_rd is None and deviation_to_date != 0:
-                            _mpp = _rd_summ.get("max_plan_date")
-                            if _mpp is not None:
-                                _dd = (pd.Timestamp(_mpp).date() - today).days
-                                if _dd > 0:
-                                    nec_rd = float(deviation_to_date) / float(_dd) * 7.0
-                    else:
-                        if max_plan_end_date is not None:
-                            plan_end_ref = max_plan_end_date
-                            use_approx_plan_end = False
-                        elif last_plan_date is not None:
-                            plan_end_ref = last_d
-                            use_approx_plan_end = True
-                        else:
-                            plan_end_ref = None
-                            use_approx_plan_end = False
-                        days_to_plan_end = (
-                            (plan_end_ref - today).days if plan_end_ref is not None else None
-                        )
-                        if days_to_plan_end is not None and days_to_plan_end > 0:
-                            nec_rd = deviation_to_date / days_to_plan_end * 7.0
-                        else:
-                            nec_rd = None
+                    _render_rd_weekly_productivity_kpis(
+                        selected_projects_doc or None,
+                        msp_fallback=_rd_msp_prod_fb,
+                    )
+                    _rd_prod_shown = True
 
-                        planned_weekly = None
-                        if max_plan_end_date is not None and max_fact_end_date is not None:
-                            d12 = (max_plan_end_date - max_fact_end_date).days
-                            if d12 > 0:
-                                planned_weekly = plan_to_date / d12 * 7.0
-
-                        fact_weekly = None
-                        if max_fact_end_date is not None:
-                            d13 = (today - max_fact_end_date).days
-                            if d13 > 0:
-                                fact_weekly = fact_to_date / d13 * 7.0
-
-                        suppress_caption("Производительность разделов в неделю (п.12–14 ТЗ)")
-                        if use_approx_plan_end:
-                            suppress_caption(
-                                "Дата окончания плановая: в колонке планового окончания нет валидных дат — "
-                                "используется дата по правому краю кривой динамики (приблизительно)."
-                            )
-
-                    pw1, pw2, pw3 = st.columns(3, gap="small")
-                    with pw1:
-                        st.metric(
-                            "Плановая производительность",
-                            _fmt_rd_whole_metric(planned_weekly),
-                        )
-                    with pw2:
-                        st.metric(
-                            "Фактическая производительность",
-                            _fmt_rd_whole_metric(fact_weekly),
-                        )
-                    with pw3:
-                        st.metric(
-                            "Необходимая производительность",
-                            _fmt_rd_whole_metric(nec_rd),
-                        )
-                else:
+                if page_title != "Рабочая документация":
                     suppress_caption("Прогноз производительности (РД в неделю)")
                     p1, p2 = st.columns(2, gap="small")
                     with p1:
@@ -29673,6 +29714,16 @@ def dashboard_documentation(
         except Exception as e:
             st.error(f"Ошибка при построении графика 'Динамика выдачи РД': {str(e)}")
 
+        if page_title == "Рабочая документация" and not _rd_prod_shown:
+            try:
+                _render_rd_weekly_productivity_kpis(
+                    selected_projects_doc or None,
+                    msp_fallback=_rd_msp_prod_fb,
+                )
+            except Exception as _e_rd_prod:
+                suppress_caption(
+                    f"Производительность разделов в неделю: {_e_rd_prod}"
+                )
 
     else:
         try:
@@ -37183,6 +37234,146 @@ def _fmt_rd_whole_metric(v: Any) -> str:
         return "—"
 
 
+def _fmt_rd_cipher_number(v: Any) -> str:
+    """Номер шифра: целое без десятичной части (467 вместо 467.0)."""
+    if v is None:
+        return ""
+    try:
+        if pd.isna(v):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    s = str(v).strip()
+    if not s or s.lower() in ("nan", "none", "<na>", "nat", "—"):
+        return ""
+    try:
+        fv = float(s.replace(" ", "").replace(",", "."))
+        if np.isnan(fv) or np.isinf(fv):
+            return ""
+        return str(int(round(fv)))
+    except (ValueError, TypeError):
+        return s
+
+
+def _rd_nec_weekly_ref_date(rd_summ: dict[str, Any], today: date) -> Optional[date]:
+    """Дата окончания для расчёта необходимой производительности (план → прогноз)."""
+    _mpp = rd_summ.get("max_plan_date")
+    _mfc = rd_summ.get("max_forecast_date")
+    if _mpp is not None and _mpp >= today:
+        return _mpp
+    if _mfc is not None and _mfc >= today:
+        return _mfc
+    if _mpp is not None:
+        return _mpp
+    if _mfc is not None:
+        return _mfc
+    return None
+
+
+def _render_rd_weekly_productivity_kpis(
+    selected_projects: list[str] | None,
+    *,
+    msp_fallback: Optional[dict[str, Any]] = None,
+) -> None:
+    """KPI п.12–14 ТЗ: плановая / фактическая / необходимая производительность в неделю."""
+    today = date.today()
+    fb = msp_fallback or {}
+    _rd_summ = None
+    try:
+        _rd_summ = _compute_rd_exec_summary_from_csv_tessa(selected_projects)
+    except Exception as _e:
+        suppress_caption(
+            "Производительность разделов в неделю: ошибка расчёта CSV/TESSA — "
+            + str(_e)[:220]
+        )
+
+    planned_weekly = None
+    fact_weekly = None
+    nec_rd = None
+    use_approx_plan_end = False
+
+    if _rd_summ:
+        suppress_caption(
+            "Производительность разделов в неделю (п.12–14 ТЗ): расчёт из other_*_rd.csv "
+            "и журналов Tessa task (CardID↔DocID)."
+        )
+        plan_to_date = float(_rd_summ["plan_to_date"])
+        fact_to_date = float(_rd_summ["fact_to_date"])
+        if fact_to_date <= 0.0 and float(fb.get("fact_to_date_msp", 0)) > 0.0:
+            fact_to_date = float(fb["fact_to_date_msp"])
+        deviation_to_date = float(plan_to_date - fact_to_date)
+        planned_weekly = _rd_summ.get("planned_weekly")
+        fact_weekly = _rd_summ.get("fact_weekly")
+        nec_rd = _rd_summ.get("nec_weekly")
+        if nec_rd is None and deviation_to_date != 0:
+            _ref = _rd_nec_weekly_ref_date(_rd_summ, today)
+            if _ref is not None:
+                _dd = (_ref - today).days
+                if _dd > 0:
+                    nec_rd = float(deviation_to_date) / float(_dd) * 7.0
+                else:
+                    nec_rd = float(deviation_to_date) / 7.0
+            else:
+                nec_rd = float(deviation_to_date) / 7.0
+    else:
+        suppress_caption("Производительность разделов в неделю (п.12–14 ТЗ)")
+        deviation_to_date = float(fb.get("deviation_to_date", 0))
+        plan_to_date = float(fb.get("plan_to_date", 0))
+        fact_to_date = float(fb.get("fact_to_date", 0))
+        max_plan_end_date = fb.get("max_plan_end_date")
+        max_fact_end_date = fb.get("max_fact_end_date")
+        last_plan_date = fb.get("last_plan_date")
+        if max_plan_end_date is not None:
+            plan_end_ref = max_plan_end_date
+            use_approx_plan_end = False
+        elif last_plan_date is not None:
+            plan_end_ref = last_plan_date
+            use_approx_plan_end = True
+        else:
+            plan_end_ref = None
+            use_approx_plan_end = False
+        days_to_plan_end = (
+            (plan_end_ref - today).days if plan_end_ref is not None else None
+        )
+        if days_to_plan_end is not None and days_to_plan_end > 0:
+            nec_rd = deviation_to_date / days_to_plan_end * 7.0
+        elif deviation_to_date > 0:
+            nec_rd = float(deviation_to_date) / 7.0
+
+        if max_plan_end_date is not None and max_fact_end_date is not None:
+            d12 = (max_plan_end_date - max_fact_end_date).days
+            if d12 > 0:
+                planned_weekly = plan_to_date / d12 * 7.0
+
+        if max_fact_end_date is not None:
+            d13 = (today - max_fact_end_date).days
+            if d13 > 0:
+                fact_weekly = fact_to_date / d13 * 7.0
+
+        if use_approx_plan_end:
+            suppress_caption(
+                "Дата окончания плановая: в колонке планового окончания нет валидных дат — "
+                "используется дата по правому краю кривой динамики (приблизительно)."
+            )
+
+    pw1, pw2, pw3 = st.columns(3, gap="small")
+    with pw1:
+        st.metric(
+            "Плановая производительность",
+            _fmt_rd_whole_metric(planned_weekly),
+        )
+    with pw2:
+        st.metric(
+            "Фактическая производительность",
+            _fmt_rd_whole_metric(fact_weekly),
+        )
+    with pw3:
+        st.metric(
+            "Необходимая производительность",
+            _fmt_rd_whole_metric(nec_rd),
+        )
+
+
 def _compute_rd_exec_summary_from_csv_tessa(selected_projects: list[str] | None) -> Optional[dict[str, Any]]:
     """
     Сводные KPI для «Динамика выдачи РД» из `rd_plan_data` (other_*_rd.csv)
@@ -37421,16 +37612,24 @@ def _compute_rd_exec_summary_from_csv_tessa(selected_projects: list[str] | None)
             planned_weekly = float(plan_to_date) / (d12 / 7.0)
 
     nec_weekly = None
+    ref_end = None
     if max_plan_date is not None and max_plan_date >= today_d:
-        denom_days = (max_plan_date - today_d).days
+        ref_end = max_plan_date
+    elif max_fcst_date is not None and max_fcst_date >= today_d:
+        ref_end = max_fcst_date
+    elif max_plan_date is not None:
+        ref_end = max_plan_date
     elif max_fcst_date is not None:
-        denom_days = (max_fcst_date - today_d).days
-    else:
-        denom_days = None
-    if denom_days is not None and denom_days > 0:
-        nec_weekly = (float(not_issued) + float(returned_rework)) / (denom_days / 7.0)
+        ref_end = max_fcst_date
+    denom_days = (ref_end - today_d).days if ref_end is not None else None
+    backlog = float(not_issued) + float(returned_rework)
+    if backlog > 0 and denom_days is not None and denom_days > 0:
+        nec_weekly = backlog / (denom_days / 7.0)
     elif deviation_to_date > 0:
-        nec_weekly = float(deviation_to_date) / 7.0
+        if denom_days is not None and denom_days > 0:
+            nec_weekly = float(deviation_to_date) * 7.0 / float(denom_days)
+        else:
+            nec_weekly = float(deviation_to_date) / 7.0
 
     return {
         "plan_total": plan_total,
@@ -37747,7 +37946,11 @@ def _build_tessa_rd_detail_table(
                 "Наименование разделов работ": section,
                 "Номер договора": contract_no,
                 "Шифр": cipher,
-                "Номер шифра": _safe(doc_number_col, r) if doc_number_col else "",
+                "Номер шифра": (
+                    _fmt_rd_cipher_number(_safe(doc_number_col, r))
+                    if doc_number_col
+                    else ""
+                ),
                 "Блок": "РД",
                 "Шифр полный": _safe(internal_col, r) if internal_col else "",
                 "Дата выдачи разделов по Договору": contract_due_date,
