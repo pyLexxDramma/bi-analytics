@@ -325,14 +325,14 @@ _TABLE_CSS = """
 .gantt-schedule-scroll-wrap::-webkit-scrollbar{width:10px;height:10px}
 .gantt-schedule-scroll-wrap::-webkit-scrollbar-thumb{background:rgba(148,163,184,0.45);border-radius:5px}
 .gantt-schedule-table-wrap {
-  width:100%!important; max-width:100%!important; box-sizing:border-box;
+  width:max-content!important; min-width:100%!important; max-width:none!important; box-sizing:border-box;
   overflow:visible!important;
 }
 .gantt-schedule-table-wrap .rendered-table,
 .gantt-schedule-table-wrap .pf-dates-table,
 .gantt-schedule-table-wrap .gantt-schedule-table {
-  width:max-content!important; min-width:max-content!important; max-width:none!important;
-  table-layout:fixed!important;
+  width:max-content!important; min-width:100%!important; max-width:none!important;
+  table-layout:auto!important;
 }
 .gantt-schedule-table-wrap .rendered-table th.col-gantt-task,
 .gantt-schedule-table-wrap .rendered-table td.col-gantt-task,
@@ -381,6 +381,13 @@ _TABLE_CSS = """
 .gantt-schedule-table-wrap .rendered-table td.col-gantt-notes {
   min-width:10em; max-width:22em; text-align:center!important;
   white-space:normal; word-wrap:break-word; overflow-wrap:anywhere;
+  background:transparent!important; background-color:transparent!important;
+}
+.gantt-schedule-table-wrap tr:nth-child(even) td.col-gantt-reason,
+.gantt-schedule-table-wrap tr:nth-child(even) td.col-gantt-notes,
+.gantt-schedule-table-wrap tr:hover td.col-gantt-reason,
+.gantt-schedule-table-wrap tr:hover td.col-gantt-notes {
+  background:transparent!important; background-color:transparent!important;
 }
 .gantt-schedule-table-wrap .rendered-table th.col-pf-start,
 .gantt-schedule-table-wrap .rendered-table td.col-pf-start,
@@ -990,7 +997,7 @@ def _gantt_task_col_width_css(ch: int) -> str:
     col = f"{tbl} col.col-gantt-task"
     return (
         f"{tbl}{{width:max-content!important;min-width:max-content!important;"
-        f"table-layout:fixed!important;}}"
+        f"table-layout:auto!important;}}"
         f"{col}{{width:{ch}ch!important;min-width:{ch}ch!important;max-width:{ch}ch!important;}}"
         f"{cell}{{width:{ch}ch!important;min-width:{ch}ch!important;max-width:{ch}ch!important;"
         f"white-space:nowrap!important;box-sizing:border-box!important;overflow:visible!important;"
@@ -1118,11 +1125,12 @@ def _render_gantt_schedule_html_table(
             txt = _disp_arrays[c][i]
             sort_attr = ""
             style_parts: list[str] = []
-            tint_n = _plan_fact_dev_nval_for_col(c, dev_start, dev_end, None)
-            if tint_n is not None:
-                bg = _plan_fact_deviation_bg_style(tint_n)
-                if bg:
-                    style_parts.append(bg)
+            if c not in _reason_cols:
+                tint_n = _plan_fact_dev_nval_for_col(c, dev_start, dev_end, None)
+                if tint_n is not None:
+                    bg = _plan_fact_deviation_bg_style(tint_n)
+                    if bg:
+                        style_parts.append(bg)
             if c in _dev_cols:
                 nv = _num_arrays[c][i] if _num_arrays.get(c) is not None else None
                 sort_attr = _plan_fact_sort_attr(nv)
@@ -41482,29 +41490,6 @@ def dashboard_project_schedule_chart(df):
         covenant_points_mode=_covenant_mode_gantt,
     )
 
-    # Ширина «Название задачи» — как при выключенном «Показать причины отклонений»
-    # (уровень из селектора, без разворота предков ур.5).
-    _task_col_for_w = _sched_col(plot_df, ["task name", "Task Name", "Название"])
-    _plot_task_w = _gantt_apply_level_display_filter(
-        plot_df,
-        level_col=level_col,
-        level_sel=level_sel,
-        wbs_col=wbs_col,
-        sel_block=sel_block,
-    )
-    if _task_col_for_w and _task_col_for_w in _plot_task_w.columns:
-        _task_names_w = (
-            _plot_task_w[_task_col_for_w].fillna("").astype(str).map(_gantt_clean_task_label)
-        )
-        _gantt_tbl_task_col_w_ch = (
-            _gantt_task_name_col_width_ch(
-                pd.DataFrame({"Название задачи": _task_names_w})
-            )
-            or 9
-        )
-    else:
-        _gantt_tbl_task_col_w_ch = 9
-
     # ── Применяем фильтр уровня (по селектору) или show_reasons-override (ур. 5 + предки) ──
     # Делаем здесь, чтобы значение чекбокса show_reasons уже было известно и могло
     # переопределить выбор уровня согласно ТЗ.
@@ -42511,6 +42496,29 @@ def dashboard_project_schedule_chart(df):
         _gantt_tbl_order.extend(["Причины отклонений", "Заметки"])
     _ordered = [c for c in _gantt_tbl_order if c in tbl_view.columns]
     tbl_show = tbl_view[_ordered]
+
+    # Ширина «Название задачи» — как при выключенном «Показать причины отклонений»
+    # (уровень из селектора, без разворота предков ур.5).
+    _task_w_df = tbl_view[["Название задачи"]] if "Название задачи" in tbl_view.columns else tbl_show
+    if show_reasons and task_col and task_col in _tbl_df.columns:
+        _plot_task_w = _gantt_apply_level_display_filter(
+            _tbl_df,
+            level_col=level_col,
+            level_sel=level_sel,
+            wbs_col=wbs_col,
+            sel_block=sel_block,
+        )
+        _task_w_df = pd.DataFrame(
+            {
+                "Название задачи": _plot_task_w[task_col]
+                .fillna("")
+                .astype(str)
+                .map(_gantt_clean_task_label)
+            }
+        )
+    _gantt_tbl_task_col_w_ch = (
+        _gantt_task_name_col_width_ch(_task_w_df, "Название задачи") or 9
+    )
 
     tbl_numeric = tbl_show.copy()
     if d_end_num is not None:

@@ -303,7 +303,7 @@ _TABLE_SORT_JS = r"""
         cell.style.setProperty("max-width", w, "important");
         cell.style.setProperty("white-space", "nowrap", "important");
       });
-      tbl.style.setProperty("table-layout", "fixed", "important");
+      tbl.style.setProperty("table-layout", "auto", "important");
       tbl.style.setProperty("width", "max-content", "important");
       tbl.style.setProperty("min-width", "max-content", "important");
     });
@@ -854,7 +854,7 @@ html,body{
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.rendered-table,
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.pf-dates-table,
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table.gantt-schedule-table{
-  width:max-content!important;min-width:max-content!important;max-width:none!important;table-layout:fixed!important;
+  width:max-content!important;min-width:100%!important;max-width:none!important;table-layout:auto!important;
 }
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table th.col-gantt-id,
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table td.col-gantt-id,
@@ -891,6 +891,7 @@ html,body{
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table td.col-gantt-notes{
   min-width:10em; max-width:22em!important; white-space:normal!important;
   word-wrap:break-word!important; overflow-wrap:anywhere!important; text-align:center!important;
+  background:transparent!important; background-color:transparent!important;
 }
 .bi-sortable-html-root:has(.pf-covenant-table-wrap) table.pf-dates-table{width:100%!important;min-width:100%!important;max-width:100%!important;}
 .bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table{width:max-content!important;min-width:100%!important;max-width:none!important;}
@@ -1286,7 +1287,7 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
             'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;}'
             'html body .gantt-schedule-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;'
             'background:hsl(209,72%,6%)!important;}'
-            'html body .gantt-schedule-table-wrap table{width:max-content!important;min-width:max-content!important;table-layout:fixed!important;}'
+            'html body .gantt-schedule-table-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important;}'
             'html body .gantt-schedule-table-wrap th.col-gantt-task,'
             'html body .gantt-schedule-table-wrap td.col-gantt-task{'
             'white-space:nowrap!important;box-sizing:border-box!important;}'
