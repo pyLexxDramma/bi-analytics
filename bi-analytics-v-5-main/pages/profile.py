@@ -55,10 +55,8 @@ from auth import (
     get_user_role_display,
     change_password,
     update_user_email,
-    logout,
     is_streamlit_context,
     render_sidebar_menu,
-    has_admin_access,
 )
 
 from logger import log_action
@@ -67,7 +65,7 @@ from logger import log_action
 def _profile_settings_ui(user) -> None:
     st.markdown("---")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
 
     with col1:
 
@@ -76,12 +74,6 @@ def _profile_settings_ui(user) -> None:
     with col2:
 
         st.metric("Роль", get_user_role_display(user["role"]))
-
-    with col3:
-
-        if st.button("Выйти"):
-            logout()
-            st.rerun()
 
     st.markdown("---")
 
@@ -190,7 +182,7 @@ def _profile_settings_ui(user) -> None:
     st.markdown("---")
 
     st.info(
-        "Для возврата к отчетам используйте меню в боковой панели или нажмите кнопку 'Выйти' для выхода из системы."
+        "Для возврата к отчетам используйте меню в боковой панели. Для выхода из системы нажмите «Выйти» внизу боковой панели."
     )
 
 
@@ -234,13 +226,4 @@ if is_streamlit_context():
 
     st.title("Настройки профиля")
 
-    if has_admin_access(user["role"]):
-        tab_prof, tab_adm = st.tabs(["Профиль", "Административная панель"])
-        with tab_prof:
-            _profile_settings_ui(user)
-        with tab_adm:
-            from admin_panel_content import render_admin_panel_tabs
-
-            render_admin_panel_tabs(user)
-    else:
-        _profile_settings_ui(user)
+    _profile_settings_ui(user)

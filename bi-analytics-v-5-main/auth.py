@@ -819,7 +819,7 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
     Отображение боковой панели с меню навигации
 
     Args:
-        current_page: Текущая страница ("reports", "admin", "profile", "analyst_params")
+        current_page: Текущая страница ("reports", "admin", "profile")
         include_footer: False — только навигация/настройки (версия данных и «Выйти» отдельно после загрузки web/)
     """
     if not is_streamlit_context():
@@ -947,10 +947,15 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
             if st.button("Настройки профиля", width="stretch"):
                 switch_page_app("pages/profile.py")
 
-        # Административная панель: только внутри «Настройки профиля» (вторая вкладка) или прямой URL pages/_admin.py
-
-        if current_page != "analyst_params":
-            if st.button("Параметры отчётов", width="stretch", key="menu_go_analyst_params"):
+        if has_admin_access(user["role"]):
+            if current_page == "admin":
+                st.button(
+                    "Административная панель",
+                    width="stretch",
+                    type="primary",
+                    disabled=True,
+                )
+            elif st.button("Административная панель", width="stretch", key="menu_go_admin"):
                 switch_page_app("pages/_analyst_params.py")
 
         if include_footer:
