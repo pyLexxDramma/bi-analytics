@@ -15702,6 +15702,11 @@ def _rd_plan_fallback_view(
                             if df["_plan_dt"].notna().any()
                             else None
                         )
+                        _min_plan_fb = (
+                            df["_plan_dt"].min().date()
+                            if df["_plan_dt"].notna().any()
+                            else None
+                        )
                         _max_fact_fb = (
                             df["_fact_dt"].max().date()
                             if df["_fact_dt"].notna().any()
@@ -15719,6 +15724,8 @@ def _rd_plan_fallback_view(
                             "deviation_to_date": _dev_fb,
                             "fact_to_date_msp": _fd_fb,
                             "max_plan_end_date": _max_plan_fb,
+                            "min_plan_start_date": _min_plan_fb,
+                            "plan_total": _pt_fb,
                             "max_fact_end_date": _max_fact_fb,
                             "last_plan_date": _ld_fb,
                         }
@@ -37348,6 +37355,40 @@ def _rd_nec_weekly_ref_date(rd_summ: dict[str, Any], today: date) -> Optional[da
     return None
 
 
+def _rd_weekly_from_curve_endpoints(
+    plan_to_date: float,
+    fact_to_date: float,
+    max_plan_end: date | None,
+    max_fact_end: date | None,
+    *,
+    today: date | None = None,
+    min_plan_start: date | None = None,
+    plan_total: float | None = None,
+) -> tuple[float | None, float | None]:
+    """Плановая/фактическая производительность по крайним датам кривой динамики."""
+    today = today or date.today()
+    planned_weekly = None
+    fact_weekly = None
+    if max_plan_end is not None and max_fact_end is not None:
+        d12 = (max_plan_end - max_fact_end).days
+        if d12 > 0:
+            planned_weekly = float(plan_to_date) / d12 * 7.0
+    if (
+        planned_weekly is None
+        and max_plan_end is not None
+        and min_plan_start is not None
+        and plan_total is not None
+    ):
+        d_span = (max_plan_end - min_plan_start).days
+        if d_span > 0:
+            planned_weekly = float(plan_total) / d_span * 7.0
+    if max_fact_end is not None:
+        d13 = (today - max_fact_end).days
+        if d13 > 0:
+            fact_weekly = float(fact_to_date) / d13 * 7.0
+    return planned_weekly, fact_weekly
+
+
 def _render_rd_weekly_productivity_kpis(
     selected_projects: list[str] | None,
     *,
@@ -37383,6 +37424,19 @@ def _render_rd_weekly_productivity_kpis(
         planned_weekly = _rd_summ.get("planned_weekly")
         fact_weekly = _rd_summ.get("fact_weekly")
         nec_rd = _rd_summ.get("nec_weekly")
+        _pw_fb, _fw_fb = _rd_weekly_from_curve_endpoints(
+            plan_to_date,
+            fact_to_date,
+            fb.get("max_plan_end_date"),
+            fb.get("max_fact_end_date"),
+            today=today,
+            min_plan_start=fb.get("min_plan_start_date"),
+            plan_total=fb.get("plan_total"),
+        )
+        if planned_weekly is None:
+            planned_weekly = _pw_fb
+        if fact_weekly is None or (float(fact_weekly or 0) <= 0 and _fw_fb):
+            fact_weekly = _fw_fb
         if nec_rd is None and deviation_to_date != 0:
             _ref = _rd_nec_weekly_ref_date(_rd_summ, today)
             if _ref is not None:
@@ -37401,6 +37455,15 @@ def _render_rd_weekly_productivity_kpis(
         max_plan_end_date = fb.get("max_plan_end_date")
         max_fact_end_date = fb.get("max_fact_end_date")
         last_plan_date = fb.get("last_plan_date")
+        planned_weekly, fact_weekly = _rd_weekly_from_curve_endpoints(
+            plan_to_date,
+            fact_to_date,
+            max_plan_end_date,
+            max_fact_end_date,
+            today=today,
+            min_plan_start=fb.get("min_plan_start_date"),
+            plan_total=fb.get("plan_total"),
+        )
         if max_plan_end_date is not None:
             plan_end_ref = max_plan_end_date
             use_approx_plan_end = False
@@ -37417,16 +37480,6 @@ def _render_rd_weekly_productivity_kpis(
             nec_rd = deviation_to_date / days_to_plan_end * 7.0
         elif deviation_to_date > 0:
             nec_rd = float(deviation_to_date) / 7.0
-
-        if max_plan_end_date is not None and max_fact_end_date is not None:
-            d12 = (max_plan_end_date - max_fact_end_date).days
-            if d12 > 0:
-                planned_weekly = plan_to_date / d12 * 7.0
-
-        if max_fact_end_date is not None:
-            d13 = (today - max_fact_end_date).days
-            if d13 > 0:
-                fact_weekly = fact_to_date / d13 * 7.0
 
         if use_approx_plan_end:
             suppress_caption(
@@ -37688,6 +37741,17 @@ def _compute_rd_exec_summary_from_csv_tessa(selected_projects: list[str] | None)
         d12 = (max_plan_date - max_fact_date).days
         if d12 > 0:
             planned_weekly = float(plan_to_date) / (d12 / 7.0)
+    if planned_weekly is None and max_plan_date is not None:
+        ref_fact = max_fact_date or max_fcst_date
+        if ref_fact is not None:
+            d12 = (max_plan_date - ref_fact).days
+            if d12 > 0:
+                planned_weekly = float(plan_to_date) / (d12 / 7.0)
+        if planned_weekly is None and plan_dt.notna().any():
+            min_plan = plan_dt.min().date()
+            d_span = (max_plan_date - min_plan).days
+            if d_span > 0:
+                planned_weekly = float(plan_total) / (d_span / 7.0)
 
     nec_weekly = None
     ref_end = None
