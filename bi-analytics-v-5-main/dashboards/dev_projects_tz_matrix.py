@@ -2554,6 +2554,22 @@ div[data-testid="stElementContainer"]:has(iframe.dev-tz-matrix-iframe) {
 </style>
 """
 
+_DEV_MATRIX_STREAMLIT_HOST_CSS_LIGHT = """
+<style>
+html body.gdrs-light-preview div[data-testid="stElementContainer"]:has(iframe[title="streamlit_components_v1"]) {
+  background: transparent !important;
+  opacity: 1 !important;
+  filter: none !important;
+}
+html body.gdrs-light-preview iframe[title="streamlit_components_v1"] {
+  opacity: 1 !important;
+  filter: none !important;
+  mix-blend-mode: normal !important;
+  background: transparent !important;
+}
+</style>
+"""
+
 _DEV_TZ_MATRIX_CSS = """
 <style>
 /* Одна таблица: горизонтальный скролл целиком; колонка «Проект» не закреплена. */
@@ -2994,6 +3010,37 @@ _DEV_TZ_MATRIX_CSS_LIGHT = """
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-directives-warn {
   background: rgba(234, 88, 12, 0.12) !important;
 }
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-sortable {
+  cursor: pointer;
+  user-select: none;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-sortable:hover {
+  filter: brightness(0.97);
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody tr:hover td {
+  background: inherit;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody tr:nth-child(even) td {
+  background: inherit;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-date-vert {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  max-height: 7.5em;
+  white-space: nowrap;
+  vertical-align: middle;
+  text-align: center;
+  padding: 8px 4px !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead {
+  box-shadow: inset 0 3px 0 #94a3b8, inset 0 -3px 0 #94a3b8;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-inv {
+  box-shadow: inset -3px 0 0 #94a3b8, inset 0 3px 0 #94a3b8, inset 0 -3px 0 #94a3b8;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-life {
+  box-shadow: inset 3px 0 0 #94a3b8, inset -3px 0 0 #94a3b8, inset 0 3px 0 #94a3b8, inset 0 -3px 0 #94a3b8;
+}
 </style>
 """
 
@@ -3025,6 +3072,32 @@ html,body{margin:0;padding:0;background:#ffffff;color:#111827;overflow:hidden;
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project{
   position:sticky!important;left:0!important;
   border-right:3px solid #94a3b8!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide{
+  border-collapse:separate!important;border-spacing:0!important;
+  width:max-content!important;min-width:100%!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project{
+  border-top:3px solid #94a3b8!important;border-left:3px solid #94a3b8!important;
+  border-bottom:3px solid #94a3b8!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead-life{
+  font-size:18px!important;padding:12px 14px!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone{
+  font-size:17px!important;padding:12px 10px!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub{
+  font-size:16px!important;padding:10px 8px!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-ms-block,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-first,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-first{
+  border-left:3px solid #94a3b8!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-last,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-last{
+  border-right:3px solid #94a3b8!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead{
+  border-top:3px solid #94a3b8!important;border-bottom:3px solid #94a3b8!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-inv{
+  border-right:3px solid #94a3b8!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-life{
+  border-left:3px solid #94a3b8!important;border-right:3px solid #94a3b8!important}
 """
     return """
 *{box-sizing:border-box}
@@ -3333,12 +3406,65 @@ _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS = """
   box-sizing:border-box!important}
 """
 
+_MATRIX_IFRAME_FULLSCREEN_SHELL_CSS_LIGHT = """
+body[data-bi-color-scheme="light"] .matrix-fs-btn{
+  border:1px solid #cbd5e1!important;
+  background:#ffffff!important;
+  color:#111827!important;
+  box-shadow:0 1px 2px rgba(0,0,0,0.06);
+}
+body[data-bi-color-scheme="light"] .matrix-fs-btn:hover{
+  background:#f3f4f6!important;
+  color:#111827!important;
+  border-color:#94a3b8!important;
+}
+body[data-bi-color-scheme="light"] .matrix-fs-btn:focus-visible{
+  outline:2px solid #3b82f6!important;
+  outline-offset:1px;
+}
+body[data-bi-color-scheme="light"] #matrix-fs-root:fullscreen,
+body[data-bi-color-scheme="light"] #matrix-fs-root:-webkit-full-screen,
+body[data-bi-color-scheme="light"] #matrix-fs-root:-moz-full-screen{
+  background:#f3f4f6!important;
+}
+body[data-bi-color-scheme="light"] #matrix-fs-root.matrix-fs-pseudo-on{
+  background:#f3f4f6!important;
+}
+"""
+
+
+def _matrix_iframe_fullscreen_shell_css(theme: str = "dark") -> str:
+    css = _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS
+    if str(theme or "").strip().lower() == "light":
+        css += _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS_LIGHT
+    return css
+
+
 _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
 <script>
 (function(){
   var root=document.getElementById("matrix-fs-root");
   var btn=document.getElementById("matrix-fs-btn");
   if(!root||!btn) return;
+
+  function matrixFsScheme(){
+    var b=document.body;
+    return (b&&b.getAttribute("data-bi-color-scheme")==="light")?"light":"dark";
+  }
+  function matrixFsShellBg(){
+    return matrixFsScheme()==="light"?"#f3f4f6":"#0e1520";
+  }
+  function matrixFsCloseBtnStyle(){
+    if(matrixFsScheme()==="light"){
+      return "width:40px;height:40px;font-size:18px;border-radius:4px;"
+        +"border:1px solid #cbd5e1;background:#ffffff;color:#111827;"
+        +"box-shadow:0 1px 2px rgba(0,0,0,0.06);"
+        +"touch-action:manipulation;-webkit-tap-highlight-color:transparent;";
+    }
+    return "width:40px;height:40px;font-size:18px;border-radius:4px;"
+      +"border:1px solid rgba(121,154,192,0.55);background:rgba(35,43,56,0.96);color:#e8eef5;"
+      +"touch-action:manipulation;-webkit-tap-highlight-color:transparent;";
+  }
 
   var parentDoc=null;
   try{
@@ -3657,7 +3783,7 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
     pseudoShell.setAttribute("style",
       "position:fixed!important;z-index:2147483646!important;left:0!important;top:0!important;right:0!important;bottom:0!important;"
       +"width:100%!important;height:100%!important;max-height:-webkit-fill-available!important;"
-      +"background:#0e1520!important;display:flex!important;flex-direction:column!important;"
+      +"background:"+matrixFsShellBg()+"!important;display:flex!important;flex-direction:column!important;"
       +"padding:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right))"
       +" max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left))!important;"
       +"box-sizing:border-box!important;overflow:hidden!important;");
@@ -3667,9 +3793,7 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
     var xb=doc.createElement("button");
     xb.type="button";
     xb.textContent="\\u2715";
-    xb.setAttribute("style","width:40px;height:40px;font-size:18px;border-radius:4px;"
-      +"border:1px solid rgba(121,154,192,0.55);background:rgba(35,43,56,0.96);color:#e8eef5;"
-      +"touch-action:manipulation;-webkit-tap-highlight-color:transparent;");
+    xb.setAttribute("style",matrixFsCloseBtnStyle());
     xb.addEventListener("click",function(ev){ev.preventDefault();exitPseudo();sync();});
     tb.appendChild(xb);
     var scroll=doc.createElement("div");
@@ -3941,8 +4065,9 @@ def _matrix_iframe_html_document(
         '<meta name="viewport" content="width=device-width,initial-scale=5,viewport-fit=cover">'
         "<style>"
         + head_styles
-        + _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS
-        + "</style></head><body>"
+        + _matrix_iframe_fullscreen_shell_css(color_scheme)
+        + "</style></head><body"
+        + f' data-bi-color-scheme="{_scheme}">'
         + '<div id="matrix-fs-root" class="matrix-fs-root">'
         + '<div class="matrix-fs-topbar" role="toolbar" aria-label="Таблица">'
         + '<button type="button" class="matrix-fs-btn" id="matrix-fs-btn" title="На весь экран">\u26F6</button>'
@@ -4106,7 +4231,12 @@ def render_dev_tz_matrix(
         extra_body_suffix=_DEV_TZ_MATRIX_SORT_SCRIPT,
         color_scheme=theme,
     )
-    st.markdown(_DEV_MATRIX_STREAMLIT_HOST_CSS, unsafe_allow_html=True)
+    st.markdown(
+        _DEV_MATRIX_STREAMLIT_HOST_CSS_LIGHT
+        if str(theme or "").strip().lower() == "light"
+        else _DEV_MATRIX_STREAMLIT_HOST_CSS,
+        unsafe_allow_html=True,
+    )
     _components.html(_iframe_html, height=_iframe_h, scrolling=False)
 
 
