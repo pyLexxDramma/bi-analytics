@@ -70,16 +70,22 @@ REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
         "Сроки",
         [
             "Контрольные точки",
+            "Контрольные точки (превью — светлая)",
             "График проекта",
+            "График проекта (превью — светлая)",
             "Причины отклонений",
+            "Причины отклонений (превью — светлая)",
             "Отклонение от базового плана",
+            "Отклонение от базового плана (превью — светлая)",
         ],
     ),
     (
         "Проектные работы",
         [
             "Проектная документация",
+            "Проектная документация (превью — светлая)",
             "Рабочая документация",
+            "Рабочая документация (превью — светлая)",
         ],
     ),
     (
@@ -91,11 +97,26 @@ REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
             "ГДРС (превью — светлая, техника)",
         ],
     ),
-    ("Предписания", ["Предписания по подрядчикам"]),
-    ("Исполнительная документация", ["Исполнительная документация"]),
+    (
+        "Предписания",
+        [
+            "Предписания по подрядчикам",
+            "Предписания по подрядчикам (превью — светлая)",
+        ],
+    ),
+    (
+        "Исполнительная документация",
+        [
+            "Исполнительная документация",
+            "Исполнительная документация (превью — светлая)",
+        ],
+    ),
     (
         "Дебиторская и кредиторская задолженность",
-        ["Дебиторская и кредиторская задолженность подрядчиков"],
+        [
+            "Дебиторская и кредиторская задолженность подрядчиков",
+            "Дебиторская и кредиторская задолженность подрядчиков (превью — светлая)",
+        ],
     ),
 ]
 
@@ -240,10 +261,13 @@ def _get_dashboards() -> Dict[str, Callable]:
     raw: Dict[str, Callable] = {
         # Сроки: каноническое имя «Причины отклонений» + обратная совместимость
         "Причины отклонений": dashboard_deviations_combined,
+        "Причины отклонений (превью — светлая)": dashboard_deviations_combined,
         "Динамика отклонений": dashboard_deviations_combined,
         "Динамика причин отклонений": dashboard_deviations_combined,
         "Контрольные точки": dashboard_control_points,
+        "Контрольные точки (превью — светлая)": dashboard_control_points,
         "График проекта": dashboard_project_schedule_chart,
+        "График проекта (превью — светлая)": dashboard_project_schedule_chart,
         "БДДС": dashboard_budget_by_period,
         "БДДС (превью — светлая)": dashboard_budget_by_period,
         "БДДС по месяцам": dashboard_budget_by_period,
@@ -268,10 +292,13 @@ def _get_dashboards() -> Dict[str, Callable]:
         "Прогнозный бюджет": dashboard_forecast_budget,
         "Прогнозный бюджет (превью — светлая)": dashboard_forecast_budget,
         "Отклонение от базового плана": dashboard_plan_fact_dates,
+        "Отклонение от базового плана (превью — светлая)": dashboard_plan_fact_dates,
         "Значения отклонений от базового плана": dashboard_pravki_report_hidden,
         "Рабочая/Проектная документация": dashboard_documentation,
         "Рабочая документация": dashboard_working_documentation,
+        "Рабочая документация (превью — светлая)": dashboard_working_documentation,
         "Проектная документация": dashboard_project_documentation,
+        "Проектная документация (превью — светлая)": dashboard_project_documentation,
         # ГДРС: общий экран (выбор люди/техника) + отдельные пункты «(люди)» / «(техника)».
         "ГДРС": dashboard_gdrs,
         "ГДРС (люди)": dashboard_gdrs_people,
@@ -287,12 +314,15 @@ def _get_dashboards() -> Dict[str, Callable]:
         "Проектные работы": dashboard_technique,
         "Дебиторская и кредиторская задолженность": dashboard_debit_credit,
         "Дебиторская и кредиторская задолженность подрядчиков": dashboard_debit_credit,
+        "Дебиторская и кредиторская задолженность подрядчиков (превью — светлая)": dashboard_debit_credit,
         "Исполнительная документация": dashboard_executive_documentation,
+        "Исполнительная документация (превью — светлая)": dashboard_executive_documentation,
         "Просрочка выдачи РД": dashboard_rd_delay,
         "Просрочка выдачи ПД": dashboard_pd_delay,
         "Неустраненные предписания": dashboard_predpisania,
         # Обратная совместимость со старым именем отчёта.
         "Предписания по подрядчикам": dashboard_predpisania,
+        "Предписания по подрядчикам (превью — светлая)": dashboard_predpisania,
         "Девелоперские проекты": dashboard_developer_projects,
         "Девелоперские проекты (превью — светлая)": dashboard_developer_projects_preview_light,
     }
@@ -302,7 +332,7 @@ def _get_dashboards() -> Dict[str, Callable]:
 # Ленивая загрузка, чтобы при импорте dashboards не тянуть project_visualization_app
 # Увеличьте версию при изменении реестра отчётов — иначе долгоживущий процесс Streamlit
 # может держать устаревший словарь в памяти.
-_DASHBOARDS_REGISTRY_VERSION = 103
+_DASHBOARDS_REGISTRY_VERSION = 104
 _dashboards_cache: Dict[str, Callable] = {}
 _dashboards_cache_version: int = 0
 _renderers_mtime: float = 0.0
