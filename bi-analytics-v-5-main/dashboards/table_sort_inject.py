@@ -1243,6 +1243,54 @@ html:has(.fc-table-scroll-wrap),body:has(.fc-table-scroll-wrap){
 </style>
 """
 
+_GANTT_SCHEDULE_IFRAME_SHELL_CSS_LIGHT = """
+<style>
+html:has(.gantt-schedule-scroll-wrap),body:has(.gantt-schedule-scroll-wrap){
+  overflow:hidden!important;margin:0;padding:0;height:auto!important;min-height:0!important;
+  background:#ffffff!important;color:#111827!important;
+}
+.bi-sortable-html-root:has(.gantt-schedule-scroll-wrap){
+  overflow:hidden!important;height:auto!important;max-height:none!important;min-height:0!important;
+}
+.gantt-schedule-scroll-wrap{
+  display:block!important;width:100%!important;max-width:100%!important;min-height:0!important;
+  overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;
+  scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:#94a3b8 #e5e7eb!important;
+  box-sizing:border-box!important;
+}
+.gantt-schedule-scroll-wrap[data-scroll-box-h]{
+  height:auto!important;max-height:none!important;
+}
+.gantt-schedule-scroll-wrap thead th{
+  position:sticky!important;top:0!important;z-index:5!important;
+  background-color:#f3f4f6!important;color:#111827!important;
+}
+.gantt-schedule-scroll-wrap tbody td:not(.pf-dev-red):not(.pf-dev-green){
+  color:#111827!important;-webkit-text-fill-color:#111827!important;
+  border-color:#cbd5e1!important;
+}
+.gantt-schedule-scroll-wrap tr.bd-group-row td{
+  background-color:#f3f4f6!important;color:#111827!important;
+}
+.gantt-schedule-scroll-wrap tr:hover td{background-color:#f9fafb!important;}
+.gantt-schedule-scroll-wrap tr:nth-child(even) td{background-color:#fcfcfd!important;}
+.gantt-schedule-scroll-wrap .rendered-table th{
+  background:#f3f4f6!important;color:#111827!important;border-bottom:2px solid #cbd5e1!important;
+}
+.gantt-schedule-scroll-wrap .rendered-table td{
+  color:#111827!important;border-bottom:1px solid #cbd5e1!important;
+}
+.gantt-schedule-scroll-wrap .pf-dev-red,.gantt-schedule-scroll-wrap .pf-dev-red *{
+  color:hsl(348,100%,63%)!important;-webkit-text-fill-color:hsl(348,100%,63%)!important;
+}
+.gantt-schedule-scroll-wrap .pf-dev-green,.gantt-schedule-scroll-wrap .pf-dev-green *{
+  color:#15803d!important;-webkit-text-fill-color:#15803d!important;
+}
+.gantt-schedule-table-wrap{width:max-content!important;min-width:100%!important;max-width:none!important;}
+.gantt-schedule-table-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important;}
+</style>
+"""
+
 
 def _iframe_shell_css(html: str) -> str:
     html_l = html or ""
@@ -1254,6 +1302,8 @@ def _iframe_shell_css(html: str) -> str:
         return base + _FINANCE_BUDGET_IFRAME_SHELL_CSS_LIGHT
     if _light and "fc-table-scroll-wrap" in html_l:
         return base + _FINANCE_FC_TABLE_IFRAME_SHELL_CSS_LIGHT
+    if _light and "gantt-schedule-scroll-wrap" in html_l:
+        return base + _GANTT_SCHEDULE_IFRAME_SHELL_CSS_LIGHT
     return base
 
 
@@ -1510,18 +1560,24 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
         components.html(doc, height=_h_scroll, scrolling=False)
         return
     if "gantt-schedule-scroll-wrap" in _b:
-        # Таблица задач «График проекта»: фиксированная высота окна с внутренней
-        # вертикальной прокруткой (как «Причины отклонений»/«Прогноз БДДС»).
-        # Кнопка «Скачать таблицу» — сразу под таблицей, без пустого пространства.
-        # Горизонтальный скролл — внутри обёртки (overflow-x:auto), шапка sticky.
+        _gantt_light = "bi-light-table" in _b or "gdrs-light-table" in _b
+        _gantt_th_bg = "#f3f4f6" if _gantt_light else "hsl(209,72%,6%)"
+        _gantt_th_fg = "#111827" if _gantt_light else "#fafafa"
+        _m_gantt_box = re.search(r'data-scroll-box-h="(\d+)"', html or "")
+        _h_gantt = (
+            int(_m_gantt_box.group(1))
+            if _m_gantt_box
+            else int(min(624, max(180, _estimate_html_block_height(html) + 24)))
+        )
         doc_sc = doc.replace(
             "</head>",
-            '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
-            '.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}'
-            'html body .gantt-schedule-scroll-wrap{height:100%!important;max-height:100%!important;min-height:0!important;'
-            'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;}'
-            'html body .gantt-schedule-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;'
-            'background:hsl(209,72%,6%)!important;}'
+            '<style>html,body{height:auto!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
+            '.bi-sortable-html-root{height:auto!important;min-height:0!important;overflow:hidden!important;}'
+            f'html body .gantt-schedule-scroll-wrap{{height:{_h_gantt}px!important;max-height:{_h_gantt}px!important;min-height:0!important;'
+            'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;'
+            'scrollbar-gutter:stable!important;box-sizing:border-box!important;}}'
+            f'html body .gantt-schedule-scroll-wrap thead th{{position:sticky!important;top:0!important;z-index:5!important;'
+            f'background:{_gantt_th_bg}!important;color:{_gantt_th_fg}!important;}}'
             'html body .gantt-schedule-table-wrap{width:max-content!important;min-width:100%!important;max-width:none!important;}'
             'html body .gantt-schedule-table-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important;}'
             'html body .gantt-schedule-table-wrap th.col-gantt-task,'
@@ -1533,7 +1589,6 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
             '</style></head>',
             1,
         )
-        _h_gantt = min(624, max(180, _estimate_html_block_height(html) + 24))
         components.html(doc_sc, height=_h_gantt, scrolling=False)
         return
     if "budget-deviation-table-wrap" in _b and "budget-table-scroll" in _b:

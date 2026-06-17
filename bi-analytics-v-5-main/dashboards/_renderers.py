@@ -433,6 +433,55 @@ _TABLE_CSS = """
 </style>
 """
 
+
+def _gantt_table_css_for_theme() -> str:
+    """CSS таблицы задач ганта: светлая палитра на превью."""
+    css = _TABLE_CSS
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if not is_light_preview_active():
+            return css
+    except Exception:
+        return css
+    for old, new in (
+        ("background:hsl(209, 72%, 6%); color:#fafafa;", "background:#e5e7eb; color:#111827;"),
+        (
+            "padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0;",
+            "padding:7px 10px; border-bottom:1px solid #cbd5e1; color:#111827;",
+        ),
+        (
+            "background:hsl(209, 70%, 7%) !important;",
+            "background:#f3f4f6 !important; color:#111827 !important;",
+        ),
+        (
+            "background:hsl(209, 65%, 10%) !important;",
+            "background:#e5e7eb !important; color:#111827 !important;",
+        ),
+        ("tr:hover td {background:#262833}", "tr:hover td {background:#f3f4f6}"),
+        (
+            "tr:nth-child(even) td {background:rgba(255,255,255,0.02)}",
+            "tr:nth-child(even) td {background:#fcfcfd}",
+        ),
+        (
+            ".pf-dev-red { color:#ff6b6b !important; font-weight:700; }",
+            ".pf-dev-red { color:hsl(348,100%,63%) !important; font-weight:700; }",
+        ),
+        (
+            ".pf-dev-green { color:#00e676 !important; font-weight:600; }",
+            ".pf-dev-green { color:#15803d !important; font-weight:600; }",
+        ),
+        (".pf-dev-neu { color:#e8eef5 !important; }", ".pf-dev-neu { color:#6b7280 !important; }"),
+        ("border-top:2px solid rgba(255,255,255,0.45);", "border-top:2px solid #94a3b8;"),
+        (
+            ".rendered-table th .bi-sort-label:hover { color:#93c5fd; }",
+            ".rendered-table th .bi-sort-label:hover { color:#2563eb; }",
+        ),
+    ):
+        css = css.replace(old, new)
+    return css
+
+
 def _render_html_table(
     df,
     max_rows=500,
@@ -1053,8 +1102,11 @@ def _render_gantt_schedule_html_table(
         and project_col_name in show_disp.columns
     )
 
+    _gantt_box_h = int(min(624, max(180, 44 + len(show_disp) * 28 + 16)))
+
     parts = [
-        f'<div class="gantt-schedule-scroll-wrap" data-bi-rows="{len(show_disp)}">',
+        f'<div class="gantt-schedule-scroll-wrap" data-bi-rows="{len(show_disp)}" '
+        f'data-scroll-box-h="{_gantt_box_h}">',
         '<div class="rendered-table-wrap gantt-schedule-table-wrap">',
     ]
     parts.append(f"<style>{_gantt_task_col_width_css(_task_col_w_ch)}</style>")
@@ -1182,7 +1234,7 @@ def _render_gantt_schedule_html_table(
 
     parts.append("</tbody></table></div></div>")
     render_report_html_table(
-        _TABLE_CSS + mark_html_table_sortable("".join(parts)),
+        _gantt_table_css_for_theme() + mark_html_table_sortable("".join(parts)),
         export_df=display_df,
         file_stem="gantt_schedule",
         key_prefix=f"gantt_tbl_{abs(id(display_df))}",
@@ -3287,6 +3339,33 @@ def _fin_chart_axis_color() -> str:
     return _fin_chart_label_color(dark="#f0f4f8", light="#111827")
 
 
+def _resync_plotly_chart_theme(fig) -> None:
+    """Перед выводом: bgcolor и оси из runtime ``utils`` (кэш ганта не сменяет тему)."""
+    import utils as u
+
+    try:
+        ax_kw = dict(
+            gridcolor=u.CHART_GRID_COLOR,
+            linecolor=u.CHART_AXIS_LINE_COLOR,
+            tickfont=dict(color=u.TABLE_TEXT_COLOR, size=11),
+            title=dict(font=dict(color=u.TABLE_TEXT_COLOR, size=12)),
+            zerolinecolor=u.CHART_ZEROLINE_COLOR,
+        )
+        fig.update_layout(
+            plot_bgcolor=u.CHART_BG_COLOR,
+            paper_bgcolor=u.CHART_BG_COLOR,
+            font=dict(
+                family="Inter, system-ui, sans-serif",
+                color=u.TABLE_TEXT_COLOR,
+                size=13,
+            ),
+        )
+        fig.update_xaxes(**ax_kw)
+        fig.update_yaxes(**ax_kw)
+    except Exception:
+        pass
+
+
 def _apply_finance_light_preview_chart_colors(fig) -> None:
     """Iframe Plotly изолирован от CSS страницы — цвета осей/подписей в JSON фигуры."""
     try:
@@ -4004,6 +4083,7 @@ def render_chart(
     if not skip_clamp_zoom:
         _clamp_plotly_scroll_zoom_padding(fig)
     _apply_plotly_spec_411_labels(fig)
+    _resync_plotly_chart_theme(fig)
     _apply_finance_light_preview_chart_colors(fig)
     if compact and _layout_h is not None:
         try:
@@ -4033,6 +4113,25 @@ def render_chart(
     )
     if _use_scroll:
         _vh = int(scroll_viewport_height)
+        try:
+            from dashboards.light_theme import is_light_preview_active
+
+            if is_light_preview_active() and key:
+                _gk = str(key).replace("-", "_")
+                st.markdown(
+                    f"<style>"
+                    f"html body.gdrs-light-preview div[class*='st-key-{_gk}'] "
+                    f"div[data-testid='stVerticalBlockBorderWrapper']{{"
+                    f"overflow-y:auto!important;overflow-x:hidden!important;"
+                    f"-webkit-overflow-scrolling:touch!important;}}"
+                    f"html body.gdrs-light-preview div[class*='st-key-{_gk}'] "
+                    f"[data-testid='stPlotlyChart']{{overflow:visible!important;"
+                    f"background:#ffffff!important;border:1px solid #cbd5e1!important;}}"
+                    f"</style>",
+                    unsafe_allow_html=True,
+                )
+        except Exception:
+            pass
         # Длинный Gantt: рендерим график на ПОЛНУЮ высоту (_layout_h) в нативном
         # прокручиваемом контейнере Streamlit (st.container(height=...)). Это
         # надёжнее iframe + to_html(CDN): Plotly рендерится штатно на всю ширину,
@@ -41352,10 +41451,11 @@ def _render_project_schedule_gantt_legend(
     for color, symbol, label in items:
         esc = html_module.escape(label)
         sym = _gantt_legend_symbol_html(color, symbol)
+        _leg_txt = _fin_chart_label_color(dark="#e8eef5", light="#374151")
         parts.append(
             '<span style="display:inline-flex;align-items:center;margin-right:1.35rem;">'
             f"{sym}"
-            f'<span style="color:#e8eef5;font-size:0.92rem;">{esc}</span></span>'
+            f'<span style="color:{_leg_txt};font-size:0.92rem;">{esc}</span></span>'
         )
     st.markdown(
         '<div style="margin:0.15rem 0 0.5rem;">' + "".join(parts) + "</div>",
@@ -42972,7 +43072,17 @@ def dashboard_project_schedule_chart(df):
         for (lane, side), data in _cov_text.items():
             if not data["x"]:
                 continue
-            _color = "#5eead4" if lane == "plan" else "#fdba74"
+            try:
+                from dashboards.light_theme import is_light_preview_active as _cov_light
+
+                _cov_light_on = _cov_light()
+            except Exception:
+                _cov_light_on = False
+            _color = (
+                ("#0d9488" if lane == "plan" else "#c2410c")
+                if _cov_light_on
+                else ("#5eead4" if lane == "plan" else "#fdba74")
+            )
             if side == "right":
                 _txt = [_cov_gap + str(t) for t in data["text"]]
             else:
@@ -43115,6 +43225,7 @@ def dashboard_project_schedule_chart(df):
             )
         else:
             from dashboards.gantt_grouped_figure import cached_grouped_gantt_figure
+            from dashboards.light_theme import is_light_preview_active
 
             fig_gantt = cached_grouped_gantt_figure(
                 plot_df,
@@ -43124,6 +43235,7 @@ def dashboard_project_schedule_chart(df):
                 _dfmt_lbl,
                 False,
                 float(_GANTT_ROW_BLOCK_SCALE),
+                _theme_light=is_light_preview_active(),
             )
     chart_h = int(getattr(fig_gantt.layout, "height", None) or 520)
 
@@ -43441,8 +43553,14 @@ def dashboard_project_schedule_chart(df):
         st.info("Нет колонок для таблицы.")
     else:
         from dashboards.gdrs_theme import gdrs_render_subheader
+        from dashboards.light_theme import is_light_preview_active
 
-        gdrs_render_subheader(st, "Таблица задач", theme="dark", level=4)
+        gdrs_render_subheader(
+            st,
+            "Таблица задач",
+            theme="light" if is_light_preview_active() else "dark",
+            level=4,
+        )
         suppress_caption("Сортировка: клик по заголовку колонки.")
         # Таблица отдаётся полностью (по просьбе заказчика — «подгружать абсолютно все»).
         # Потолок остаётся только на ДИАГРАММЕ (_GANTT_DIAGRAM_PERF_CAP) как защита

@@ -619,14 +619,22 @@ def build_grouped_plan_fact_gantt_figure(
 
     try:
         _today_ts = pd.Timestamp.today().normalize()
+        try:
+            from dashboards.light_theme import is_light_preview_active
+
+            _gantt_light = is_light_preview_active()
+        except Exception:
+            _gantt_light = False
+        _today_line = "rgba(100,116,139,0.55)" if _gantt_light else "rgba(255,255,255,0.45)"
+        _today_ann = "rgba(71,85,105,0.9)" if _gantt_light else "rgba(255,255,255,0.75)"
         fig.add_vline(
             x=_today_ts,
             line_dash="dot",
-            line_color="rgba(255,255,255,0.45)",
+            line_color=_today_line,
             line_width=1.2,
             annotation_text="Сегодня",
             annotation_position="top",
-            annotation_font_color="rgba(255,255,255,0.75)",
+            annotation_font_color=_today_ann,
             annotation_font_size=10,
         )
     except Exception:
@@ -646,7 +654,8 @@ def cached_grouped_gantt_figure(
     date_fmt: str,
     show_covenant_markers: bool,
     row_block_scale: float,
-    _fig_cache_version: int = 18,
+    _fig_cache_version: int = 20,
+    _theme_light: bool = False,
 ) -> go.Figure:
     """Кэш построения fig — ускоряет rerun при тех же фильтрах."""
     policy = json.loads(policy_json)

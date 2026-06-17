@@ -2340,6 +2340,27 @@ html body.gdrs-light-preview section.main [data-testid="stCheckbox"] label[data-
   width: auto !important;
   flex: 1 1 auto !important;
 }
+html body.gdrs-light-preview [data-testid="stAlert"] [data-testid="stMarkdownContainer"],
+html body.gdrs-light-preview [data-testid="stAlert"] [data-testid="stMarkdownContainer"] p,
+html body.gdrs-light-preview [data-testid="stAlert"] [data-testid="stMarkdownContainer"] * {
+  color: #92400e !important;
+  -webkit-text-fill-color: #92400e !important;
+}
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] {
+  background-color: #ffffff !important;
+  border: 1px solid #cbd5e1 !important;
+  overflow-x: auto !important;
+  overflow-y: visible !important;
+}
+html body.gdrs-light-preview div[data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stPlotlyChart"]) {
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch !important;
+}
+html body.gdrs-light-preview section.main,
+html body.gdrs-light-preview [data-testid="stMain"],
+html body.gdrs-light-preview [data-testid="stMainBlockContainer"] {
+  overflow-y: auto !important;
+}
 </style>
 """,
             unsafe_allow_html=True,
@@ -2439,6 +2460,7 @@ def _scroll_box_table_html(html: str) -> bool:
         or "pd-dynamics-scroll-wrap" in b
         or "pred-detail-wrap" in b
         or ("budget-deviation-table-wrap" in b and "budget-table-scroll" in b)
+        or ("gantt-schedule-scroll-wrap" in b and 'data-scroll-box-h="' in b)
     )
 
 
@@ -2662,7 +2684,14 @@ def render_report_html_table(
             # a29a014: scroll-box + кнопка сразу под нim (fc / pred / budget scroll).
             _fc_box_h = _scroll_box_height_px(html)
             _body_no_style = _html_body_without_style(html)
-            if "budget-table-scroll" in _body_no_style or "fc-table-scroll-wrap" in _body_no_style:
+            if (
+                "budget-table-scroll" in _body_no_style
+                or "fc-table-scroll-wrap" in _body_no_style
+                or (
+                    "gantt-schedule-scroll-wrap" in _body_no_style
+                    and 'data-scroll-box-h="' in _body_no_style
+                )
+            ):
                 st.markdown(
                     "<style>"
                     f"div[class*='st-key-{_wrap_key}'] div[data-testid='stVerticalBlock']{{gap:0!important;}}"
