@@ -37,14 +37,21 @@ def get_main_panel_report_lists(role: str) -> Tuple[List[str], List[str], List[s
 
 
 REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
-    ("Девелоперские проекты", ["Девелоперские проекты"]),
+    ("Девелоперские проекты", [
+        "Девелоперские проекты",
+        "Девелоперские проекты (превью — светлая)",
+    ]),
     (
         "Финансы",
         [
             "БДДС",
+            "БДДС (превью — светлая)",
             "БДР",
+            "БДР (превью — светлая)",
             "Утверждённый бюджет план/факт",
+            "Утверждённый бюджет план/факт (превью — светлая)",
             "Прогнозный бюджет",
+            "Прогнозный бюджет (превью — светлая)",
         ],
     ),
     (
@@ -182,6 +189,13 @@ def _get_dashboards() -> Dict[str, Callable]:
 
     dashboard_predpisania = _renderers.dashboard_predpisania
     dashboard_developer_projects = _renderers.dashboard_developer_projects
+    dashboard_developer_projects_preview_light = getattr(
+        _renderers, "dashboard_developer_projects_preview_light", None
+    )
+    if dashboard_developer_projects_preview_light is None and dashboard_developer_projects is not None:
+        dashboard_developer_projects_preview_light = lambda df: dashboard_developer_projects(  # noqa: E731
+            df, theme="light"
+        )
     dashboard_control_points = getattr(_renderers, "dashboard_control_points", None)
     dashboard_project_schedule_chart = getattr(_renderers, "dashboard_project_schedule_chart", None)
     dashboard_pravki_report_hidden = getattr(_renderers, "dashboard_pravki_report_hidden", None)
@@ -219,13 +233,16 @@ def _get_dashboards() -> Dict[str, Callable]:
         "Контрольные точки": dashboard_control_points,
         "График проекта": dashboard_project_schedule_chart,
         "БДДС": dashboard_budget_by_period,
+        "БДДС (превью — светлая)": dashboard_budget_by_period,
         "БДДС по месяцам": dashboard_budget_by_period,
         "БДР": dashboard_bdr,
+        "БДР (превью — светлая)": dashboard_bdr,
         "Бюджет по лотам": dashboard_budget_by_period,
         # «Утверждённый бюджет план/факт» — каноническое имя по ТЗ заказчика (2026-05-07).
         # Старые имена «Бюджет план/факт» / «Бюджет План/Прогноз/Факт» оставлены как алиасы,
         # чтобы не сломать сохранённые deep-link'и/закладки/настройки.
         "Утверждённый бюджет план/факт": dashboard_budget_by_type,
+        "Утверждённый бюджет план/факт (превью — светлая)": dashboard_budget_by_type,
         "Бюджет план/факт": dashboard_budget_by_type,
         "Бюджет План/Прогноз/Факт": dashboard_budget_by_type,
         # Правки куратора 08.05.2026: вкладка «Утверждённый бюджет» удалена,
@@ -237,6 +254,7 @@ def _get_dashboards() -> Dict[str, Callable]:
         "БДДС (утверждённый/прогнозный)": dashboard_forecast_budget,
         "Прогнозный БДДС": dashboard_forecast_budget,
         "Прогнозный бюджет": dashboard_forecast_budget,
+        "Прогнозный бюджет (превью — светлая)": dashboard_forecast_budget,
         "Отклонение от базового плана": dashboard_plan_fact_dates,
         "Значения отклонений от базового плана": dashboard_pravki_report_hidden,
         "Рабочая/Проектная документация": dashboard_documentation,
@@ -264,6 +282,7 @@ def _get_dashboards() -> Dict[str, Callable]:
         # Обратная совместимость со старым именем отчёта.
         "Предписания по подрядчикам": dashboard_predpisania,
         "Девелоперские проекты": dashboard_developer_projects,
+        "Девелоперские проекты (превью — светлая)": dashboard_developer_projects_preview_light,
     }
     return raw
 
@@ -271,7 +290,7 @@ def _get_dashboards() -> Dict[str, Callable]:
 # Ленивая загрузка, чтобы при импорте dashboards не тянуть project_visualization_app
 # Увеличьте версию при изменении реестра отчётов — иначе долгоживущий процесс Streamlit
 # может держать устаревший словарь в памяти.
-_DASHBOARDS_REGISTRY_VERSION = 100
+_DASHBOARDS_REGISTRY_VERSION = 102
 _dashboards_cache: Dict[str, Callable] = {}
 _dashboards_cache_version: int = 0
 _renderers_mtime: float = 0.0
