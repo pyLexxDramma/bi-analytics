@@ -11271,6 +11271,138 @@ def _dk_plotly_finalize_group_bars(
         pass
 
 
+def _dk_make_side_by_side_bar_figure(
+    chart_df: pd.DataFrame,
+    chart_label: str,
+    *,
+    has_deviation: bool,
+    value_cols: list[str],
+    colors: dict[str, str],
+    text_fn,
+    bar_label_style: dict,
+) -> tuple[go.Figure, list[str], str | None]:
+    """
+    «Без группировки»: серии рядом (barmode=group).
+
+    Одна категория (один подрядчик/договор) — метрики на оси X, как ГДРС при одной
+    сущности; иначе Plotly рисует столбцы друг на друге.
+    """
+    _dev_pos_style = dict(
+        textposition="outside",
+        textangle=0,
+        cliponaxis=False,
+        textfont=dict(size=16, color="#f0f4f8"),
+    )
+
+    if len(chart_df) == 1:
+        row = chart_df.iloc[0]
+        partner = str(row[chart_label]).strip()
+        specs: list[tuple[str, float, str, str, dict]] = []
+        for col in ("Аванс", "КС-2"):
+            if col not in value_cols or col not in chart_df.columns:
+                continue
+            y = float(pd.to_numeric(row[col], errors="coerce") or 0.0)
+            specs.append((col, y, colors.get(col, "#888888"), col, bar_label_style))
+        if has_deviation and "Отклонение" in chart_df.columns:
+            dev = float(pd.to_numeric(row["Отклонение"], errors="coerce") or 0.0)
+            if dev >= 0:
+                specs.append(
+                    (
+                        "Откл. ≥0",
+                        dev,
+                        "#95A5A6",
+                        "Отклонение, если больше или = 0",
+                        _dev_pos_style,
+                    )
+                )
+            else:
+                specs.append(
+                    (
+                        "Откл. <0",
+                        dev,
+                        "#F1948A",
+                        "Отклонение, если меньше 0",
+                        _dev_pos_style,
+                    )
+                )
+        fig = go.Figure()
+        x_cats: list[str] = []
+        for x_name, y_val, color, legend_name, style in specs:
+            x_cats.append(x_name)
+            fig.add_trace(
+                go.Bar(
+                    name=legend_name,
+                    x=[x_name],
+                    y=[y_val],
+                    marker_color=color,
+                    showlegend=True,
+                    text=[text_fn(y_val)],
+                    customdata=[f"{y_val:.1f} млн руб"],
+                    hovertemplate=(
+                        f"<b>{legend_name}</b><br>{partner}<br>%{{customdata}}<extra></extra>"
+                    ),
+                    **style,
+                )
+            )
+        return fig, x_cats, partner
+
+    fig = go.Figure()
+    x = chart_df[chart_label].astype(str)
+    _value_cols_for_chart = [c for c in value_cols if c != "Отклонение"]
+    _value_cols_for_chart = [c for c in ("Аванс", "КС-2") if c in _value_cols_for_chart]
+    for col in _value_cols_for_chart:
+        fig.add_trace(
+            go.Bar(
+                name=col,
+                x=x,
+                y=chart_df[col],
+                marker_color=colors.get(col, None),
+                text=chart_df[col].apply(text_fn),
+                customdata=chart_df[col].apply(
+                    lambda v: f"{v:.1f} млн руб" if pd.notna(v) else "0,0 млн руб"
+                ),
+                hovertemplate=f"<b>{col}</b><br>%{{x}}<br>%{{customdata}}<extra></extra>",
+                showlegend=True,
+                **bar_label_style,
+            )
+        )
+    if has_deviation:
+        _dev_s = pd.to_numeric(chart_df["Отклонение"], errors="coerce").fillna(0.0)
+        _dev_pos = _dev_s.where(_dev_s >= 0, 0.0)
+        _dev_neg = _dev_s.where(_dev_s < 0, 0.0)
+        fig.add_trace(
+            go.Bar(
+                name="Отклонение, если больше или = 0",
+                x=x,
+                y=_dev_pos,
+                marker_color="#95A5A6",
+                showlegend=True,
+                text=_dev_pos.apply(text_fn),
+                customdata=_dev_pos.apply(
+                    lambda v: f"{v:.1f} млн" if pd.notna(v) else "0,0 млн"
+                ),
+                hovertemplate="<b>Отклонение ≥0</b><br>%{x}<br>%{customdata}<extra></extra>",
+                **_dev_pos_style,
+            )
+        )
+        fig.add_trace(
+            go.Bar(
+                name="Отклонение, если меньше 0",
+                x=x,
+                y=_dev_neg,
+                marker_color="#F1948A",
+                text=_dev_neg.apply(text_fn),
+                customdata=_dev_neg.apply(
+                    lambda v: f"{v:.1f} млн" if pd.notna(v) else "0,0 млн"
+                ),
+                hovertemplate="<b>Отклонение &lt;0</b><br>%{x}<br>%{customdata}<extra></extra>",
+                showlegend=True,
+                **_dev_pos_style,
+            )
+        )
+    return fig, chart_df[chart_label].astype(str).tolist(), None
+
+
 def _dk_make_stack_bar_figure(
     chart_df: pd.DataFrame,
     chart_label: str,
@@ -25093,6 +25225,7 @@ def dashboard_debit_credit(df):
             cliponaxis=False,
             textfont=dict(size=11, color="#e8eef5"),
         )
+        _dk_single_partner = None
         if _dk_is_stack:
             fig = _dk_make_stack_bar_figure(
                 chart_df,
@@ -25100,70 +25233,17 @@ def dashboard_debit_credit(df):
                 has_deviation=_has_deviation_col,
                 text_fn=_dk_chart_bar_text,
             )
+            _cats_full = chart_df[chart_label].astype(str).tolist()
         else:
-            fig = go.Figure()
-            x = chart_df[chart_label].astype(str)
-            _value_cols_for_chart = [
-                c for c in value_cols if c != "Отклонение"
-            ]
-            _value_cols_for_chart = [
-                c for c in ("Аванс", "КС-2") if c in _value_cols_for_chart
-            ]
-            for col in _value_cols_for_chart:
-                _bar_kw = dict(
-                    name=col,
-                    x=x,
-                    y=chart_df[col],
-                    marker_color=colors.get(col, None),
-                    text=chart_df[col].apply(_dk_chart_bar_text),
-                    customdata=chart_df[col].apply(
-                        lambda v: f"{v:.1f} млн руб" if pd.notna(v) else "0,0 млн руб"
-                    ),
-                    hovertemplate=f"<b>{col}</b><br>%{{x}}<br>%{{customdata}}<extra></extra>",
-                    **_dk_bar_label_style,
-                )
-                _bar_kw["showlegend"] = True
-                fig.add_trace(go.Bar(**_bar_kw))
-            if _has_deviation_col:
-                _dev_s = pd.to_numeric(chart_df["Отклонение"], errors="coerce").fillna(0.0)
-                _dev_pos = _dev_s.where(_dev_s >= 0, 0.0)
-                _dev_neg = _dev_s.where(_dev_s < 0, 0.0)
-                fig.add_trace(
-                    go.Bar(
-                        name="Отклонение, если больше или = 0",
-                        x=x,
-                        y=_dev_pos,
-                        marker_color="#95A5A6",
-                        showlegend=True,
-                        text=_dev_pos.apply(_dk_chart_bar_text),
-                        textposition="outside",
-                        textangle=0,
-                        cliponaxis=False,
-                        textfont=dict(size=16, color="#f0f4f8"),
-                        customdata=_dev_pos.apply(
-                            lambda v: f"{v:.1f} млн" if pd.notna(v) else "0,0 млн"
-                        ),
-                        hovertemplate="<b>Отклонение ≥0</b><br>%{x}<br>%{customdata}<extra></extra>",
-                    )
-                )
-                fig.add_trace(
-                    go.Bar(
-                        name="Отклонение, если меньше 0",
-                        x=x,
-                        y=_dev_neg,
-                        marker_color="#F1948A",
-                        text=_dev_neg.apply(_dk_chart_bar_text),
-                        textposition="outside",
-                        textangle=0,
-                        cliponaxis=False,
-                        textfont=dict(size=16, color="#f0f4f8"),
-                        customdata=_dev_neg.apply(
-                            lambda v: f"{v:.1f} млн" if pd.notna(v) else "0,0 млн"
-                        ),
-                        hovertemplate="<b>Отклонение &lt;0</b><br>%{x}<br>%{customdata}<extra></extra>",
-                        showlegend=True,
-                    )
-                )
+            fig, _cats_full, _dk_single_partner = _dk_make_side_by_side_bar_figure(
+                chart_df,
+                chart_label,
+                has_deviation=_has_deviation_col,
+                value_cols=value_cols,
+                colors=colors,
+                text_fn=_dk_chart_bar_text,
+                bar_label_style=_dk_bar_label_style,
+            )
         _yaxis_kw = _dk_chart_yaxis_layout(
             chart_df,
             has_deviation=_has_deviation_col,
@@ -25202,6 +25282,7 @@ def dashboard_debit_credit(df):
         if _dk_side_by_side:
             cap = (
                 base
+                + (f": {_dk_single_partner}" if _dk_single_partner else "")
                 + ". Без группировки: Аванс (син.), КС-2 (жёлт.), "
                 "отклонение ≥0 (сер.), отклонение <0 (красн., ниже 0)."
             )
@@ -25210,7 +25291,6 @@ def dashboard_debit_credit(df):
                 base
                 + ". С группировкой (стек): отклонение ≥0 (сер.) → КС-2 (жёлт.) → Аванс (син.)."
             )
-        _cats_full = chart_df[chart_label].astype(str).tolist()
         _cats_tick = _dk_x_tick_labels(_cats_full)
         if _dk_is_stack:
             _dk_plotly_finalize_stack_bars(fig, n_cats=len(_cats_full))
