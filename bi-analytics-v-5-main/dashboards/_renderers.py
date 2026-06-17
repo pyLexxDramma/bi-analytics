@@ -477,6 +477,10 @@ def _gantt_table_css_for_theme() -> str:
             ".rendered-table th .bi-sort-label:hover { color:#93c5fd; }",
             ".rendered-table th .bi-sort-label:hover { color:#2563eb; }",
         ),
+        (
+            ".pf-dates-scroll-wrap .pf-dates-table thead th{position:sticky;top:0;z-index:4;background:hsl(209,72%,6%)!important;}",
+            ".pf-dates-scroll-wrap .pf-dates-table thead th{position:sticky;top:0;z-index:4;background:#f3f4f6!important;color:#111827!important;}",
+        ),
     ):
         css = css.replace(old, new)
     return css
@@ -740,13 +744,27 @@ def _plan_fact_deviation_bg_style(nval) -> str:
         n = float(nval)
     except (TypeError, ValueError):
         return ""
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        _light = is_light_preview_active()
+    except Exception:
+        _light = False
     if n < 0:
         t = min(max(-n, 0.0), 365.0) / 365.0
+        if _light:
+            alpha = 0.16 + 0.24 * t
+            return f"background-color:rgba(248,113,113,{alpha:.3f}) !important;"
         alpha = 0.24 + 0.36 * t
         return f"background-color:rgba(255,84,84,{alpha:.3f}) !important;"
     if n == 0:
+        if _light:
+            return "background-color:rgba(34,197,94,0.14) !important;"
         return "background-color:rgba(70,214,138,0.22) !important;"
     t = min(max(n, 0.0), 365.0) / 365.0
+    if _light:
+        alpha = 0.12 + 0.2 * t
+        return f"background-color:rgba(34,197,94,{alpha:.3f}) !important;"
     alpha = 0.18 + 0.28 * t
     return f"background-color:rgba(70,214,138,{alpha:.3f}) !important;"
 
@@ -853,8 +871,12 @@ def _render_plan_fact_dates_main_table(
         _wrap_cls = f"{_wrap_cls} {_wrap_extra}"
     elif file_stem == "plan_fact_dates":
         _wrap_cls = f"{_wrap_cls} pf-dates-scroll-wrap"
+    _scroll_attr = ""
+    if "pf-dates-scroll-wrap" in _wrap_cls:
+        _pf_box_h = int(min(640, max(180, 44 + len(display_df) * 28 + 12)))
+        _scroll_attr = f' data-scroll-box-h="{_pf_box_h}"'
     parts = [
-        f'<div class="{_wrap_cls}" data-bi-rows="{len(display_df)}">',
+        f'<div class="{_wrap_cls}" data-bi-rows="{len(display_df)}"{_scroll_attr}>',
         '<table class="rendered-table bi-sortable-table pf-dates-table bi-sort-click-only">',
         "<thead><tr>",
     ]
@@ -931,7 +953,7 @@ def _render_plan_fact_dates_main_table(
     parts.append("</tbody></table></div>")
     _kp = key_prefix or f"pf_dates_{abs(id(display_df))}"
     render_report_html_table(
-        _TABLE_CSS + mark_html_table_sortable("".join(parts)),
+        _gantt_table_css_for_theme() + mark_html_table_sortable("".join(parts)),
         export_df=export_df if export_df is not None else display_df,
         file_stem=file_stem,
         key_prefix=_kp,
@@ -7455,7 +7477,7 @@ def render_plan_fact_zos_covenant_table(
     parts.append("</tbody></table></div>")
     _zos_export = pd.DataFrame(export_rows)
     render_report_html_table(
-        _TABLE_CSS + mark_html_table_sortable("".join(parts)),
+        _gantt_table_css_for_theme() + mark_html_table_sortable("".join(parts)),
         export_df=_zos_export,
         file_stem=f"metric_task_{_export_file_stem(task_label)}_plan_fact",
         key_prefix="metric_task_covenant_table",
@@ -7475,6 +7497,47 @@ _PLAN_FACT_KPI_PLATES_CSS = """
 .pf-kpi-val-proj{font-size:22px;line-height:1.15;}
 </style>
 """
+
+
+def _plan_fact_kpi_plates_css_for_theme() -> str:
+    css = _PLAN_FACT_KPI_PLATES_CSS
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if not is_light_preview_active():
+            return css
+    except Exception:
+        return css
+    for old, new in (
+        (".pf-kpi-wrap{background:#152238;", ".pf-kpi-wrap{background:#f8fafc;"),
+        ("border:1px solid rgba(148,163,184,.22);", "border:1px solid #cbd5e1;"),
+        ("border-bottom:1px solid rgba(148,163,184,.16);", "border-bottom:1px solid #e2e8f0;"),
+        (".pf-kpi-lbl{font-size:12px;color:#c7d2fe;", ".pf-kpi-lbl{font-size:12px;color:#64748b;"),
+        (
+            ".pf-kpi-val{font-size:30px;font-weight:700;color:#fafafa;",
+            ".pf-kpi-val{font-size:30px;font-weight:700;color:#111827;",
+        ),
+        (".pf-kpi-val-late{color:#ef4444!important;}", ".pf-kpi-val-late{color:hsl(348,100%,63%)!important;}"),
+        (".pf-kpi-val-early{color:#22c55e!important;}", ".pf-kpi-val-early{color:#15803d!important;}"),
+    ):
+        css = css.replace(old, new)
+    return css
+
+
+def _plan_fact_display_opts_css_for_theme() -> str:
+    css = _PLAN_FACT_DISPLAY_OPTS_CSS
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if not is_light_preview_active():
+            return css
+    except Exception:
+        return css
+    return css.replace(
+        "border-top:1px solid rgba(148,163,184,.18);",
+        "border-top:1px solid #e2e8f0;",
+    )
+
 
 _PLAN_FACT_SECTION_COMPACT_CSS = """
 <style>
@@ -7593,7 +7656,7 @@ def render_plan_fact_dates_metric_plates(
         )
         return f'<div class="pf-kpi-row">{"".join(cells)}</div>'
 
-    parts: list[str] = [_PLAN_FACT_KPI_PLATES_CSS, '<div class="pf-kpi-wrap">']
+    parts: list[str] = [_plan_fact_kpi_plates_css_for_theme(), '<div class="pf-kpi-wrap">']
 
     def _row_for_scope(scope: pd.DataFrame) -> tuple[str, str, str, str]:
         if scope is None or getattr(scope, "empty", True):
@@ -8269,7 +8332,7 @@ def dashboard_plan_fact_dates(df):
                         disabled=True,
                     )
 
-        st.markdown(_PLAN_FACT_DISPLAY_OPTS_CSS, unsafe_allow_html=True)
+        st.markdown(_plan_fact_display_opts_css_for_theme(), unsafe_allow_html=True)
         with filters_toggles(st):
 
             _cb1, _cb2, _cb3, _cb4, _cb5 = st.columns(5, gap="small")
@@ -9133,6 +9196,8 @@ def dashboard_plan_fact_dates(df):
         y_order = local["_y"].tolist()
         n_rows = len(y_order)
         _chart_h, _max_lines = _pf_gantt_chart_height(y_order)
+        if is_covenant:
+            _chart_h = int(_chart_h * 3)
 
         fig = go.Figure()
         _pf_bar_chart_h: Optional[int] = None
@@ -9186,7 +9251,7 @@ def dashboard_plan_fact_dates(df):
             )
             _pf_apply_gantt_y_labels(fig, y_order)
             _pf_bar_chart_h = _chart_h
-            _pf_bar_chart_viewport = _PF_GANTT_VIEWPORT
+            _pf_bar_chart_viewport = int(_PF_GANTT_VIEWPORT * 3)
         else:
             def _epoch_ms(ts) -> Optional[float]:
                 if ts is None or (isinstance(ts, float) and pd.isna(ts)):
@@ -9320,7 +9385,11 @@ def dashboard_plan_fact_dates(df):
                     tickformat="%d.%m.%Y",
                     automargin=True,
                     range=[_origin_ms, _x_max_ms + _x_pad_ms],
-                    title=dict(text="Дата (от начала шкалы до окончания)", standoff=22, font=dict(size=13, color="#e8eef5")),
+                    title=dict(
+                        text="Дата (от начала шкалы до окончания)",
+                        standoff=22,
+                        font=dict(size=13, color=_fin_chart_axis_color()),
+                    ),
                 ),
                 margin=dict(l=4, r=56, t=8, b=48),
                 legend=_PF_GANTT_LEGEND,

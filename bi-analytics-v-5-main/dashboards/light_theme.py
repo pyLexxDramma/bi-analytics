@@ -11,6 +11,7 @@ LIGHT_PREVIEW_STYLE_TAG_IDS = (
     "bi-light-style-overrides",
     "bi-light-filters-live-css-v12",
     "bi-light-filters-live-css-v13",
+    "bi-light-filters-live-css-v14",
     "bi-light-filters-live-css-v11",
     "bi-light-filters-live-css-v10",
     "bi-light-filters-live-css-v9",
@@ -183,7 +184,7 @@ def sync_light_preview_theme(st) -> None:
 (function(){
   var IS_LIGHT = __IS_LIGHT__;
   var LIGHT_STYLE_IDS = [__STYLE_IDS__];
-  var HANDLE = "__BI_LIGHT_WIDGETS_FIX_V17__";
+  var HANDLE = "__BI_LIGHT_WIDGETS_FIX_V18__";
   function resolveDoc() {
     try {
       if (window.parent && window.parent.document && window.parent.document.body)
@@ -256,8 +257,8 @@ def sync_light_preview_theme(st) -> None:
   setLightStyleTags(true);
   doc.documentElement.classList.add("gdrs-light-preview");
   doc.body.classList.add("gdrs-light-preview");
-  var cssId = "bi-light-filters-live-css-v13";
-  ["bi-light-filters-live-css", "bi-light-filters-live-css-v2", "bi-light-filters-live-css-v3", "bi-light-filters-live-css-v4", "bi-light-filters-live-css-v5", "bi-light-filters-live-css-v6", "bi-light-filters-live-css-v7", "bi-light-filters-live-css-v8", "bi-light-filters-live-css-v9", "bi-light-filters-live-css-v10", "bi-light-filters-live-css-v11", "bi-light-filters-live-css-v12"].forEach(function(id) {
+  var cssId = "bi-light-filters-live-css-v14";
+  ["bi-light-filters-live-css", "bi-light-filters-live-css-v2", "bi-light-filters-live-css-v3", "bi-light-filters-live-css-v4", "bi-light-filters-live-css-v5", "bi-light-filters-live-css-v6", "bi-light-filters-live-css-v7", "bi-light-filters-live-css-v8", "bi-light-filters-live-css-v9", "bi-light-filters-live-css-v10", "bi-light-filters-live-css-v11", "bi-light-filters-live-css-v12", "bi-light-filters-live-css-v13"].forEach(function(id) {
     var node = doc.getElementById(id);
     if (node) node.remove();
   });
@@ -332,12 +333,10 @@ def sync_light_preview_theme(st) -> None:
       "html body.gdrs-light-preview div[data-baseweb=\\"menu\\"] li,",
       "html body.gdrs-light-preview div[data-baseweb=\\"menu\\"] li span {",
       "background:#fff!important;color:#111827!important;}",
-      "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"] li:hover,",
-      "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"] li[data-highlighted],",
-      "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"] li[data-highlighted=\\"true\\"],",
-      "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"] li[aria-selected=\\"true\\"],",
+      "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"]:not(:has([data-baseweb=\\"calendar\\"])):not(:has([data-baseweb=\\"datepicker\\"])) li:hover,",
+      "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"]:not(:has([data-baseweb=\\"calendar\\"])):not(:has([data-baseweb=\\"datepicker\\"])) li[data-highlighted=\\"true\\"],",
+      "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"]:not(:has([data-baseweb=\\"calendar\\"])):not(:has([data-baseweb=\\"datepicker\\"])) li[aria-selected=\\"true\\"],",
       "html body.gdrs-light-preview div[data-baseweb=\\"menu\\"] li:hover,",
-      "html body.gdrs-light-preview div[data-baseweb=\\"menu\\"] li[data-highlighted],",
       "html body.gdrs-light-preview div[data-baseweb=\\"menu\\"] li[data-highlighted=\\"true\\"],",
       "html body.gdrs-light-preview div[data-baseweb=\\"menu\\"] li[aria-selected=\\"true\\"] {",
       "background:#e5e7eb!important;background-color:#e5e7eb!important;color:#111827!important;}",
@@ -391,17 +390,33 @@ def sync_light_preview_theme(st) -> None:
   function isCalendarNode(el) {
     return !!(el && el.closest && el.closest('[data-baseweb="calendar"], [data-baseweb="datepicker"], [role="grid"]'));
   }
+  function resetMenuItemPaint(el) {
+    el.style.removeProperty("background-color");
+    el.style.removeProperty("background");
+    el.style.removeProperty("color");
+    el.querySelectorAll("*").forEach(function(n) {
+      n.style.removeProperty("background-color");
+      n.style.removeProperty("background");
+      n.style.removeProperty("color");
+    });
+  }
   function fixMenuHighlight() {
     doc.querySelectorAll('div[data-baseweb="popover"]').forEach(function(pop) {
       if (pop.querySelector('[data-baseweb="calendar"], [data-baseweb="datepicker"]')) return;
-      pop.querySelectorAll('li[data-highlighted="true"], li[aria-selected="true"], [role="option"][data-highlighted="true"], [role="option"][aria-selected="true"]').forEach(function(el) {
+      pop.querySelectorAll('li, [role="option"]').forEach(function(el) {
         if (isCalendarNode(el)) return;
-        el.style.setProperty("background-color", "#e5e7eb", "important");
-        el.style.setProperty("color", "#111827", "important");
-        el.querySelectorAll("*").forEach(function(n) {
-          n.style.setProperty("background-color", "transparent", "important");
-          n.style.setProperty("color", "#111827", "important");
-        });
+        var active = el.getAttribute("data-highlighted") === "true"
+          || el.getAttribute("aria-selected") === "true";
+        if (active) {
+          el.style.setProperty("background-color", "#e5e7eb", "important");
+          el.style.setProperty("color", "#111827", "important");
+          el.querySelectorAll("*").forEach(function(n) {
+            n.style.setProperty("background-color", "transparent", "important");
+            n.style.setProperty("color", "#111827", "important");
+          });
+        } else {
+          resetMenuItemPaint(el);
+        }
       });
     });
   }
@@ -827,22 +842,19 @@ html body.gdrs-light-preview div[data-baseweb="menu"] li span {
   color: #111827 !important;
   -webkit-text-fill-color: #111827 !important;
 }
-html body.gdrs-light-preview div[data-baseweb="popover"] li:hover,
-html body.gdrs-light-preview div[data-baseweb="popover"] li[data-highlighted],
-html body.gdrs-light-preview div[data-baseweb="popover"] li[data-highlighted="true"],
-html body.gdrs-light-preview div[data-baseweb="popover"] li[aria-selected="true"],
+html body.gdrs-light-preview div[data-baseweb="popover"]:not(:has([data-baseweb="calendar"])):not(:has([data-baseweb="datepicker"])) li:hover,
+html body.gdrs-light-preview div[data-baseweb="popover"]:not(:has([data-baseweb="calendar"])):not(:has([data-baseweb="datepicker"])) li[data-highlighted="true"],
+html body.gdrs-light-preview div[data-baseweb="popover"]:not(:has([data-baseweb="calendar"])):not(:has([data-baseweb="datepicker"])) li[aria-selected="true"],
 html body.gdrs-light-preview div[data-baseweb="menu"] li:hover,
-html body.gdrs-light-preview div[data-baseweb="menu"] li[data-highlighted],
 html body.gdrs-light-preview div[data-baseweb="menu"] li[data-highlighted="true"],
 html body.gdrs-light-preview div[data-baseweb="menu"] li[aria-selected="true"] {
   background-color: #e5e7eb !important;
   color: #111827 !important;
   -webkit-text-fill-color: #111827 !important;
 }
-html body.gdrs-light-preview div[data-baseweb="popover"] li[data-highlighted] *,
 html body.gdrs-light-preview div[data-baseweb="popover"] li[data-highlighted="true"] *,
 html body.gdrs-light-preview div[data-baseweb="popover"] li[aria-selected="true"] *,
-html body.gdrs-light-preview div[data-baseweb="menu"] li[data-highlighted] * {
+html body.gdrs-light-preview div[data-baseweb="menu"] li[data-highlighted="true"] * {
   background-color: transparent !important;
   color: #111827 !important;
   -webkit-text-fill-color: #111827 !important;

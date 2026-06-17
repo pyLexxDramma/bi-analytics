@@ -1342,6 +1342,86 @@ html:has(.dev-maket-table-wrap),body:has(.dev-maket-table-wrap){
 </style>
 """
 
+_PF_DATES_IFRAME_SHELL_CSS_LIGHT = """
+<style>
+html:has(.pf-dates-scroll-wrap),body:has(.pf-dates-scroll-wrap),
+html:has(.pf-covenant-table-wrap),body:has(.pf-covenant-table-wrap),
+html:has(.pf-zos-table-wrap),body:has(.pf-zos-table-wrap),
+html:has(.pf-dates-table-wrap),body:has(.pf-dates-table-wrap){
+  overflow:hidden!important;margin:0;padding:0;height:auto!important;min-height:0!important;
+  background:#ffffff!important;color:#111827!important;
+}
+.bi-sortable-html-root:has(.pf-dates-scroll-wrap),
+.bi-sortable-html-root:has(.pf-covenant-table-wrap),
+.bi-sortable-html-root:has(.pf-zos-table-wrap),
+.bi-sortable-html-root:has(.pf-dates-table-wrap){
+  overflow:hidden!important;height:auto!important;max-height:none!important;min-height:0!important;
+}
+.pf-dates-scroll-wrap{
+  display:block!important;width:100%!important;max-width:100%!important;min-height:0!important;
+  overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;
+  scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:#94a3b8 #e5e7eb!important;
+  box-sizing:border-box!important;
+}
+.pf-dates-scroll-wrap[data-scroll-box-h]{
+  height:auto!important;max-height:none!important;
+}
+.pf-dates-scroll-wrap thead th,
+.pf-covenant-table-wrap thead th,
+.pf-zos-table-wrap thead th,
+.pf-dates-table-wrap thead th{
+  position:sticky!important;top:0!important;z-index:5!important;
+  background-color:#f3f4f6!important;color:#111827!important;
+}
+.pf-dates-scroll-wrap tbody td:not(.pf-dev-red):not(.pf-dev-green),
+.pf-covenant-table-wrap tbody td:not(.pf-dev-red):not(.pf-dev-green),
+.pf-zos-table-wrap tbody td:not(.pf-dev-red):not(.pf-dev-green),
+.pf-dates-table-wrap tbody td:not(.pf-dev-red):not(.pf-dev-green){
+  color:#111827!important;-webkit-text-fill-color:#111827!important;
+  border-color:#cbd5e1!important;
+}
+.pf-dates-scroll-wrap tr:hover td,
+.pf-covenant-table-wrap tr:hover td,
+.pf-zos-table-wrap tr:hover td,
+.pf-dates-table-wrap tr:hover td{background-color:#f9fafb!important;}
+.pf-dates-scroll-wrap tr:nth-child(even) td,
+.pf-covenant-table-wrap tr:nth-child(even) td,
+.pf-zos-table-wrap tr:nth-child(even) td,
+.pf-dates-table-wrap tr:nth-child(even) td{background-color:#fcfcfd!important;}
+.pf-dates-scroll-wrap .pf-dev-red,.pf-dates-scroll-wrap .pf-dev-red *,
+.pf-covenant-table-wrap .pf-dev-red,.pf-covenant-table-wrap .pf-dev-red *,
+.pf-zos-table-wrap .pf-dev-red,.pf-zos-table-wrap .pf-dev-red *,
+.pf-dates-table-wrap .pf-dev-red,.pf-dates-table-wrap .pf-dev-red *{
+  color:hsl(348,100%,63%)!important;-webkit-text-fill-color:hsl(348,100%,63%)!important;
+}
+.pf-dates-scroll-wrap .pf-dev-green,.pf-dates-scroll-wrap .pf-dev-green *,
+.pf-covenant-table-wrap .pf-dev-green,.pf-covenant-table-wrap .pf-dev-green *,
+.pf-zos-table-wrap .pf-dev-green,.pf-zos-table-wrap .pf-dev-green *,
+.pf-dates-table-wrap .pf-dev-green,.pf-dates-table-wrap .pf-dev-green *{
+  color:#15803d!important;-webkit-text-fill-color:#15803d!important;
+}
+.pf-dates-scroll-wrap .rendered-table th,
+.pf-covenant-table-wrap .rendered-table th,
+.pf-zos-table-wrap .rendered-table th,
+.pf-dates-table-wrap .rendered-table th{
+  background:#f3f4f6!important;color:#111827!important;border-bottom:2px solid #cbd5e1!important;
+}
+.pf-dates-scroll-wrap .rendered-table td,
+.pf-covenant-table-wrap .rendered-table td,
+.pf-zos-table-wrap .rendered-table td,
+.pf-dates-table-wrap .rendered-table td{
+  color:#111827!important;border-bottom:1px solid #cbd5e1!important;
+}
+.bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table,
+.bi-sortable-html-root:has(.pf-covenant-table-wrap) table.pf-dates-table{
+  width:max-content!important;min-width:100%!important;max-width:none!important;
+}
+.bi-sortable-html-root:has(.pf-covenant-table-wrap) table.pf-dates-table{
+  width:100%!important;min-width:100%!important;max-width:100%!important;
+}
+</style>
+"""
+
 
 def _iframe_shell_css(html: str) -> str:
     html_l = html or ""
@@ -1357,6 +1437,13 @@ def _iframe_shell_css(html: str) -> str:
         return base + _GANTT_SCHEDULE_IFRAME_SHELL_CSS_LIGHT
     if _light and ("dev-reasons-wrap" in html_l or "dev-maket-table-wrap" in html_l):
         return base + _DEV_REASONS_IFRAME_SHELL_CSS_LIGHT
+    if _light and (
+        "pf-dates-scroll-wrap" in html_l
+        or "pf-covenant-table-wrap" in html_l
+        or "pf-zos-table-wrap" in html_l
+        or "pf-dates-table-wrap" in html_l
+    ):
+        return base + _PF_DATES_IFRAME_SHELL_CSS_LIGHT
     return base
 
 
