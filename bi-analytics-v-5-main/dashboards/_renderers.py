@@ -10783,6 +10783,20 @@ _BDDS_TABLE_HTML_KW = {
 _BDR_TABLE_HTML_KW = dict(_BDDS_TABLE_HTML_KW)
 
 
+def _finance_table_html_kwargs(base: dict | None = None, **overrides) -> dict:
+    kw = dict(base or _BDDS_TABLE_HTML_KW)
+    kw.update(overrides)
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if is_light_preview_active():
+            kw.pop("total_row_bg_color", None)
+            kw.pop("total_row_font_css", None)
+    except Exception:
+        pass
+    return kw
+
+
 # Минимум оборотов (руб.) для месяца на графике БДДС/БДР — иначе ось забивается «пустыми» месяцами.
 _FINANCE_CHART_MIN_MONTH_RUB = 500_000.0
 _BDDS_CHART_MIN_MONTH_RUB = _FINANCE_CHART_MIN_MONTH_RUB
@@ -11050,6 +11064,11 @@ def _render_finance_bar_chart(
             if _light_plotly_css
             else "background:rgba(15,23,42,0.35);"
         )
+        _bar_border = (
+            "1px solid #cbd5e1"
+            if _light_plotly_css
+            else "1px solid rgba(148,163,184,0.22)"
+        )
         shell = (
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
             f"<style>"
@@ -11057,7 +11076,7 @@ def _render_finance_bar_chart(
             f".pf-fbar-{uid}-wrap{{width:100%;max-width:100%;overflow-x:auto;overflow-y:visible;"
             f"-webkit-overflow-scrolling:touch;box-sizing:border-box;line-height:normal;"
             f"padding:0 0 {_scroll_px}px 0;scrollbar-gutter:stable both-edges;"
-            f"border:1px solid rgba(148,163,184,0.22);border-radius:8px;"
+            f"border:{_bar_border};border-radius:8px;"
             f"min-height:{h + _scroll_px}px;}}"
             f".pf-fbar-{uid}-inner{{width:{w}px;min-width:{w}px;max-width:{w}px;display:block;"
             f"line-height:normal;}}"
@@ -12701,14 +12720,14 @@ def dashboard_budget_by_period(df):
                     deviation_color_fact_vs_plan=True,
                     row_kind_column="_row_kind",
                     emphasize_row_kinds=("project", "total"),
-                    **_BDDS_TABLE_HTML_KW,
+                    **_finance_table_html_kwargs(),
                 )
 
     _budget_period_chart()
 
     if not _bdds_all_projects and len(selected_projects or []) == 1:
         _pf_proj = str(selected_projects[0])
-        _pf_kw = {**_BDDS_TABLE_HTML_KW, "table_font_size_px": 14}
+        _pf_kw = _finance_table_html_kwargs(table_font_size_px=14)
         try:
             _pf_tbl = build_bdds_plan_fact_analysis_table(
                 project_name=_pf_proj,
@@ -12805,7 +12824,7 @@ def dashboard_budget_by_period(df):
                 deviation_color_fact_vs_plan=True,
                 row_kind_column="_row_kind",
                 emphasize_row_kinds=("total",),
-                **_BDDS_TABLE_HTML_KW,
+                **_finance_table_html_kwargs(),
             )
 
     from dashboards.finance_from_1c import bddds_project_norm_keys_without_plan_scenario

@@ -168,10 +168,27 @@ def render_quality_hints(_hints: list[str]) -> None:
     items = "".join(
         f'<li style="margin:0.15rem 0;">{_html.escape(h)}</li>' for h in hints
     )
+    _light = False
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        _light = is_light_preview_active()
+    except Exception:
+        pass
+    if _light:
+        _box = (
+            "border:1px solid rgba(180,83,9,0.45);border-radius:0.45rem;"
+            "background:rgba(255,193,7,0.16);padding:0.55rem 0.8rem;margin:0.25rem 0 0.6rem 0;"
+            "color:#78350f;line-height:1.4;"
+        )
+    else:
+        _box = (
+            "border:1px solid rgba(255,193,7,0.55);border-radius:0.45rem;"
+            "background:rgba(255,193,7,0.10);padding:0.55rem 0.8rem;margin:0.25rem 0 0.6rem 0;"
+            "color:#ffe8a3;line-height:1.4;"
+        )
     body = (
-        '<div style="border:1px solid rgba(255,193,7,0.55);border-radius:0.45rem;'
-        "background:rgba(255,193,7,0.10);padding:0.55rem 0.8rem;margin:0.25rem 0 0.6rem 0;"
-        'color:#ffe8a3;line-height:1.4;">'
+        f'<div style="{_box}">'
         '<div style="font-weight:700;margin-bottom:0.25rem;">'
         "\u26a0 Данные для этого блока неполные — возможны пропуски/приближения:</div>"
         f'<ul style="margin:0;padding-left:1.1rem;">{items}</ul>'
