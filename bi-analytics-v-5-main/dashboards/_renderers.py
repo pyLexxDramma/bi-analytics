@@ -8804,10 +8804,6 @@ def dashboard_plan_fact_dates(df):
             except Exception:
                 return "—"
 
-        def _pf_join_lines(parts: list[str]) -> str:
-            esc_lines = [html_module.escape(p) for p in parts if str(p).strip() != ""]
-            return "<br>".join(esc_lines) if esc_lines else ""
-
         def _pf_task_name(row: pd.Series) -> str:
             disp = _bar_task_label_from_row(row, row.get("task name", ""))
             if selected_project == "Все" and "project name" in row.index:
@@ -8829,21 +8825,6 @@ def dashboard_plan_fact_dates(df):
 
         def _pf_simple_task_label(row: pd.Series) -> str:
             return _pf_y_label_wrapped(_pf_task_name(row))
-
-        def _pf_build_y_label(row: pd.Series) -> str:
-            title_wrapped = _pf_y_label_wrapped(_pf_task_name(row))
-            bs = row.get("base start")
-            be = row.get("base end")
-            ps = row.get("plan start")
-            pe = row.get("plan end")
-            line_base = f"БН {_pf_fmt_day_short(bs)} · БО {_pf_fmt_day_short(be)}"
-            line_plan = f"Н {_pf_fmt_day_short(ps)} · О {_pf_fmt_day_short(pe)}"
-            wrapped_base = textwrap.wrap(line_base, width=38, break_long_words=False) or [line_base]
-            wrapped_plan = textwrap.wrap(line_plan, width=38, break_long_words=False) or [line_plan]
-            date_part = _pf_join_lines([*wrapped_base, *wrapped_plan])
-            if title_wrapped and date_part:
-                return f"{title_wrapped}<br>{date_part}"
-            return title_wrapped or date_part
 
         def _pf_gantt_chart_height(y_order: list[str]) -> tuple[int, int]:
             n_rows_local = max(1, len(y_order))
@@ -8892,7 +8873,7 @@ def dashboard_plan_fact_dates(df):
         )
 
         if is_covenant:
-            local["_y_full"] = local.apply(_pf_build_y_label, axis=1)
+            local["_y_full"] = local.apply(_pf_simple_task_label, axis=1)
             _seen_fc: dict[str, int] = {}
             _uniq_fc: list[str] = []
             for lbl in local["_y_full"].tolist():
@@ -8944,8 +8925,6 @@ def dashboard_plan_fact_dates(df):
                         y=_y,
                         mode="markers+text",
                         text=_txt,
-                        # ТЗ заказчика (скрины): вехи — ТОЧКАМИ, а даты — мелкой подписью
-                        # НАД каждой точкой (вехи вместе с подписями дат).
                         textposition="top center",
                         textfont=dict(size=9, color=(text_color or color)),
                         cliponaxis=False,
@@ -9017,15 +8996,12 @@ def dashboard_plan_fact_dates(df):
             ]
             _origin_ms = min(_plot_ms)
             _origin_ts = pd.to_datetime(_origin_ms, unit="ms", utc=True).tz_convert(None).normalize()
-            _min_bar_ms = 0.5 * 86400000.0  # подпись только если полоса видима
 
             y_labels: list[str] = []
             base_len_ms: list[float] = []
             base_base_ms: list[float] = []
-            base_txt: list[str] = []
             cur_len_ms: list[float] = []
             cur_base_ms: list[float] = []
-            cur_txt: list[str] = []
             cust_b: list[tuple[str, str]] = []
             cust_p: list[tuple[str, str]] = []
 
@@ -9044,16 +9020,6 @@ def dashboard_plan_fact_dates(df):
                 cur_base_ms.append(float(_origin_ms))
                 base_len_ms.append(b_len)
                 cur_len_ms.append(c_len)
-                base_txt.append(
-                    pd.Timestamp(be).strftime("%d.%m.%Y")
-                    if pd.notna(be) and b_len >= _min_bar_ms
-                    else ""
-                )
-                cur_txt.append(
-                    pd.Timestamp(pe).strftime("%d.%m.%Y")
-                    if pd.notna(pe) and c_len >= _min_bar_ms
-                    else ""
-                )
                 cust_b.append(
                     (
                         _pf_fmt_day_short(_origin_ts),
@@ -9091,8 +9057,6 @@ def dashboard_plan_fact_dates(df):
                     base=base_base_ms,
                     width=_PF_GANTT_BAR_WIDTH,
                     marker=dict(color="#14b8a6"),
-                    text=base_txt,
-                    textposition="outside",
                     cliponaxis=False,
                     hovertemplate="%{y}<br>Базовое окончание: %{customdata[1]}<extra></extra>",
                     customdata=cust_b,
@@ -9107,8 +9071,6 @@ def dashboard_plan_fact_dates(df):
                     base=cur_base_ms,
                     width=_PF_GANTT_BAR_WIDTH,
                     marker=dict(color="#fb923c"),
-                    text=cur_txt,
-                    textposition="outside",
                     cliponaxis=False,
                     hovertemplate="%{y}<br>Окончание: %{customdata[1]}<extra></extra>",
                     customdata=cust_p,
