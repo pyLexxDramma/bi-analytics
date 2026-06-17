@@ -1004,6 +1004,34 @@ html body.gdrs-light-preview .bi-light-table .budget-deviation-table-wrap tr.bd-
   background-color: #f3f4f6 !important;
   color: #111827 !important;
 }
+html body.gdrs-light-preview .budget-deviation-table-wrap tr.bd-total-row td {
+  border-top: 3px solid #94a3b8 !important;
+  border-bottom: 2px solid #cbd5e1 !important;
+}
+html body.gdrs-light-preview .budget-deviation-table-wrap tr.bd-group-row td {
+  border-top: 1px solid #cbd5e1 !important;
+}
+
+/* Утверждённый бюджет план/факт — gauge+KPI (style.css не грузится на превью) */
+html body.gdrs-light-preview {
+  --appr-pf-gauge-h: 584px;
+}
+html body.gdrs-light-preview .appr-pf-summary-kpi {
+  display: flex;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+html body.gdrs-light-preview .appr-pf-summary-kpi-col {
+  flex: 1 1 140px;
+  min-width: 120px;
+}
+html body.gdrs-light-preview .appr-pf-summary-anchor ~ div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:first-child div[data-testid="stHtml"],
+html body.gdrs-light-preview .appr-pf-summary-anchor ~ div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:first-child [data-testid="stHtml"] iframe {
+  min-height: var(--appr-pf-gauge-h) !important;
+  max-height: var(--appr-pf-gauge-h) !important;
+  height: var(--appr-pf-gauge-h) !important;
+}
 
 /* Прогнозный бюджет — редактор лотов и поля ввода (светлое превью) */
 html body.gdrs-light-preview .fc-fc-lot-hdr-stick {

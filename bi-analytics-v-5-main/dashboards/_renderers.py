@@ -30731,13 +30731,10 @@ def _render_plan_fact_detail_table(
         display,
         finance_deviation_column="Отклонение, млн руб.",
         deviation_color_fact_vs_plan=True,
-        color_fact_column=False,
         expense_overrun_style=False,
-        header_font_css="font-weight:700;font-size:1.15em;",
-        label_columns_font_css="font-weight:700;font-size:1.08em;",
-        table_font_size_px=16,
         file_stem="approved_budget_plan_fact_detail",
         key_prefix=f"appr_budget_detail_{key_suffix}",
+        **_appr_budget_table_html_kwargs(),
     )
 
 
@@ -30808,6 +30805,15 @@ def _render_appr_pf_gauge_chart(fig: go.Figure, *, height: int, chart_key: str) 
             omit_default_width=True,
             max_height=h + 8,
         )
+
+
+def _appr_budget_table_html_kwargs(**overrides) -> dict:
+    return _finance_table_html_kwargs(
+        header_font_css="font-weight:700;font-size:1.15em;",
+        label_columns_font_css="font-weight:700;font-size:1.08em;",
+        table_font_size_px=16,
+        **overrides,
+    )
 
 
 _APPR_PF_SUMMARY_GAUGE_CSS = """
@@ -31213,13 +31219,10 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
         pd.DataFrame(_sum_rows),
         finance_deviation_column="Отклонение, млн руб.",
         deviation_color_fact_vs_plan=True,
-        color_fact_column=False,
         expense_overrun_style=False,
-        header_font_css="font-weight:700;font-size:1.15em;",
-        label_columns_font_css="font-weight:700;font-size:1.08em;",
-        table_font_size_px=16,
         file_stem="budget_summary",
         key_prefix="budget_summary",
+        **_appr_budget_table_html_kwargs(),
     )
 
 def _approved_budget_get_monthly_slice(
@@ -31684,11 +31687,9 @@ def _render_approved_budget_monthly_block(
         summary_table,
         finance_deviation_column="Отклонение, млн руб.",
         deviation_color_fact_vs_plan=True,
-        header_font_css="font-weight:700;font-size:1.15em;",
-        label_columns_font_css="font-weight:700;font-size:1.08em;",
-        table_font_size_px=16,
         file_stem="approved_budget_by_month",
         key_prefix="appr_budget_planfact_summary",
+        **_appr_budget_table_html_kwargs(),
     )
 
 
