@@ -1146,22 +1146,44 @@ def style_dataframe_for_dark_theme(
         num = _parse_signed_days_display(v)
         if num is None or (isinstance(num, float) and pd.isna(num)):
             return _table_cell_style(TABLE_BG_COLOR, TABLE_TEXT_COLOR)
+        try:
+            from dashboards.light_theme import is_light_preview_active
+
+            _light = is_light_preview_active()
+        except Exception:
+            _light = False
         if float(num) == 0.0:
+            if _light:
+                return _table_cell_style(
+                    "rgba(34,197,94,0.18)", "#15803d", extra="font-weight: 600"
+                )
             return _table_cell_style(
                 "rgba(70,214,138,0.35)", "#b8f5c8", extra="font-weight: 600"
             )
         t = min(abs(float(num)) / vmax, 1.0)
         if days_positive_is_ahead and float(num) > 0:
             alpha = 0.18 + 0.28 * t
-            bg = f"rgba(70,214,138,{alpha:.3f})"
-            fg = "#00e676"
+            if _light:
+                bg = f"rgba(34,197,94,{alpha:.3f})"
+                fg = "#15803d"
+            else:
+                bg = f"rgba(70,214,138,{alpha:.3f})"
+                fg = "#00e676"
         elif float(num) < 0 or not days_positive_is_ahead:
             alpha = 0.24 + 0.36 * t
-            bg = f"rgba(255,84,84,{alpha:.3f})"
-            fg = "#ff6b6b"
+            if _light:
+                bg = f"rgba(248,113,113,{0.16 + 0.24 * t:.3f})"
+                fg = "#b91c1c"
+            else:
+                bg = f"rgba(255,84,84,{alpha:.3f})"
+                fg = "#ff6b6b"
         else:
-            bg = "rgba(70,214,138,0.22)"
-            fg = "#00e676"
+            if _light:
+                bg = "rgba(34,197,94,0.16)"
+                fg = "#15803d"
+            else:
+                bg = "rgba(70,214,138,0.22)"
+                fg = "#00e676"
         return _table_cell_style(bg, fg, extra="font-weight: 700")
 
     def _days_gradient_style(series):

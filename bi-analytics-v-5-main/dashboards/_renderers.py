@@ -3572,7 +3572,11 @@ def _apply_finance_light_preview_chart_colors(fig) -> None:
         "#f8fbff",
         "#e8eef5",
         "#e2e8f0",
+        "#ffffff",
+        "#FFFFFF",
+        "white",
         "rgb(240, 244, 248)",
+        "rgb(255, 255, 255)",
     }
     _keep_bar_label_colors = {
         _FINANCE_DEV_LABEL_RED,
@@ -3616,6 +3620,27 @@ def _apply_finance_light_preview_chart_colors(fig) -> None:
                 if cur in _light_bar_label_colors:
                     sz = getattr(tf, "size", None) if hasattr(tf, "size") else None
                     tr.update(textfont=dict(color=_lbl, size=sz))
+                continue
+            if tname == "Scatter" or getattr(tr, "type", None) == "scatter":
+                tf = getattr(tr, "textfont", None)
+                if tf is None:
+                    continue
+                try:
+                    cur = (
+                        tf.color
+                        if hasattr(tf, "color")
+                        else (tf.get("color") if isinstance(tf, dict) else None)
+                    )
+                except Exception:
+                    cur = None
+                if cur in _light_bar_label_colors or str(cur or "").lower() == "white":
+                    sz = getattr(tf, "size", None) if hasattr(tf, "size") else None
+                    line_c = None
+                    try:
+                        line_c = tr.line.color if getattr(tr, "line", None) else None
+                    except Exception:
+                        line_c = None
+                    tr.update(textfont=dict(color=line_c or _lbl, size=sz))
                 continue
             if tname != "Indicator":
                 continue
@@ -4072,8 +4097,18 @@ def _pie_apply_percent_inside_legend_left(
         lm = 230
     dx = domain_x if domain_x is not None else (0.32, 0.97)
     dy = domain_y if domain_y is not None else (0.06, 0.93)
+    _leg_clr = _fin_chart_legend_text_color()
+    _out_txt_clr = _fin_chart_label_color()
     try:
         if text_show_value_and_percent:
+            _pie_line = "rgba(148,163,184,0.75)"
+            try:
+                from dashboards.light_theme import is_light_preview_active
+
+                if not is_light_preview_active():
+                    _pie_line = "rgba(15,23,42,0.85)"
+            except Exception:
+                pass
             fig.update_traces(
                 selector=dict(type="pie"),
                 textinfo="text",
@@ -4081,11 +4116,11 @@ def _pie_apply_percent_inside_legend_left(
                 textposition="outside",
                 textfont=dict(
                     size=max(11, int(pct_fontsize) - 4),
-                    color="#f0f4f8",
+                    color=_out_txt_clr,
                     family="Inter, system-ui, Arial, sans-serif",
                 ),
                 marker_line_width=1,
-                marker_line_color="rgba(15,23,42,0.85)",
+                marker_line_color=_pie_line,
                 domain=dict(x=[float(dx[0]), float(dx[1])], y=[float(dy[0]), float(dy[1])]),
             )
         else:
@@ -4114,7 +4149,7 @@ def _pie_apply_percent_inside_legend_left(
             xanchor="left",
             x=-0.01,
             xref="paper",
-            font=dict(size=int(legend_fontsize), color="#f0f4f8"),
+            font=dict(size=int(legend_fontsize), color=_leg_clr),
             bgcolor="rgba(0,0,0,0)",
             borderwidth=0,
             itemwidth=max(30, int(legend_fontsize) + 16),
@@ -15310,10 +15345,13 @@ def _render_rd_working_doc_monthly_and_detail(
                         "Просрочено": "#C0392B",
                     },
                 )
+                _y_kw = dict(_y_range) if _y_range else {}
+                _y_kw["tickfont"] = dict(color=_fin_chart_axis_color())
+                _y_kw["title_font"] = dict(color=_fin_chart_axis_color())
                 fig_months.update_layout(
                     xaxis_title="Месяц",
                     yaxis_title=_y_title,
-                    yaxis=_y_range if _y_range else {},
+                    yaxis=_y_kw,
                     legend=dict(
                         orientation="h",
                         yanchor="bottom",
@@ -15323,6 +15361,10 @@ def _render_rd_working_doc_monthly_and_detail(
                         title_text="",
                     ),
                     height=520,
+                    xaxis=dict(
+                        tickfont=dict(color=_fin_chart_axis_color()),
+                        title_font=dict(color=_fin_chart_axis_color()),
+                    ),
                 )
                 fig_months.update_traces(textposition="inside", textfont=dict(size=10))
                 fig_months = apply_chart_background(fig_months)
@@ -16407,6 +16449,7 @@ def _rd_plan_fallback_view(
                     textposition="top center",
                     textfont=dict(size=10, color="white"),
                 )
+                _apply_rd_dynamics_line_chart_theme(fig_fb)
                 fig_fb.for_each_trace(
                     lambda t: t.update(
                         name=(
@@ -17512,24 +17555,6 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     )
                     _dev_series = pd.to_numeric(_ind_df["_dev"], errors="coerce").fillna(0.0)
                     _dev_max = float(_dev_series.max()) if not _dev_series.empty else 0.0
-
-                    def _proj_indicator_color(val: float) -> str:
-                        if _dev_max <= 0 or val <= 0:
-                            return "#1E8449"
-                        r = min(max(val / _dev_max, 0.0), 1.0)
-                        if r < 0.5:
-                            t = r / 0.5
-                            r1, g1, b1 = 0x27, 0xAE, 0x60
-                            r2, g2, b2 = 0xF1, 0xC4, 0x0F
-                        else:
-                            t = (r - 0.5) / 0.5
-                            r1, g1, b1 = 0xF1, 0xC4, 0x0F
-                            r2, g2, b2 = 0xC0, 0x39, 0x2B
-                        rr = int(r1 + (r2 - r1) * t)
-                        gg = int(g1 + (g2 - g1) * t)
-                        bb = int(b1 + (b2 - b1) * t)
-                        return f"#{rr:02X}{gg:02X}{bb:02X}"
-
                     _ind_df = _ind_df.sort_values("_dev", ascending=False).reset_index(drop=True)
                     _n = len(_ind_df)
                     _cols_n = min(4, max(1, _n))
@@ -17537,20 +17562,14 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     for _i, (_idx, _row) in enumerate(_ind_df.iterrows()):
                         _proj = str(_row["Проект"])
                         _dev = float(_row["_dev"]) if pd.notna(_row["_dev"]) else 0.0
-                        _bg = _proj_indicator_color(_dev)
-                        _label = (
-                            "Без просрочки"
-                            if _dev <= 0
-                            else f"Просрочка: {int(round(_dev))} разд."
-                        )
+                        _bg = _pd_delay_indicator_color(_dev, _dev_max)
                         with _cols_row[_i % _cols_n]:
                             st.markdown(
-                                (
-                                    f"<div style='background:{_bg}; color:white; padding:10px 14px; "
-                                    f"border-radius:8px; margin-bottom:8px;'>"
-                                    f"<div style='font-size:13px; opacity:0.9;'>{_proj}</div>"
-                                    f"<div style='font-size:18px; font-weight:600;'>{_label}</div>"
-                                    f"</div>"
+                                _pd_delay_project_indicator_card_html(
+                                    _proj,
+                                    int(round(_dev)),
+                                    bg=_bg,
+                                    unit="разд.",
                                 ),
                                 unsafe_allow_html=True,
                             )
@@ -17630,7 +17649,16 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     fig_months.update_layout(
                         xaxis_title="Месяц",
                         yaxis_title="% РД",
-                        yaxis=dict(range=[0, 100], ticksuffix="%"),
+                        yaxis=dict(
+                            range=[0, 100],
+                            ticksuffix="%",
+                            tickfont=dict(color=_fin_chart_axis_color()),
+                            title_font=dict(color=_fin_chart_axis_color()),
+                        ),
+                        xaxis=dict(
+                            tickfont=dict(color=_fin_chart_axis_color()),
+                            title_font=dict(color=_fin_chart_axis_color()),
+                        ),
                         legend=dict(
                             orientation="h",
                             yanchor="bottom",
@@ -27999,6 +28027,15 @@ def _rd_delay_duration_figure(
         automargin=True,
     )
     fig.update_xaxes(range=[0, x_max * 1.12])
+    _ax_clr = _fin_chart_axis_color()
+    fig.update_xaxes(
+        tickfont=dict(color=_ax_clr, size=11),
+        title_font=dict(color=_ax_clr),
+    )
+    fig.update_yaxes(
+        tickfont=dict(color=_ax_clr, size=11),
+        title_font=dict(color=_ax_clr),
+    )
     fig = _apply_bar_uniformtext(fig)
     fig = apply_chart_background(fig)
     return fig
@@ -28322,14 +28359,14 @@ def _pd_delay_indicator_color(val: float, dev_max: float) -> str:
 
 
 def _pd_delay_project_indicator_card_html(
-    proj: str, ovd_i: int, *, bg: str
+    proj: str, ovd_i: int, *, bg: str, unit: str = "док."
 ) -> str:
-    """Карточка проекта: цвет по уровню просрочки + «Просрочка: N док.»."""
+    """Карточка проекта: цвет по уровню просрочки + «Просрочка: N …»."""
     _proj = html_module.escape(str(proj))
     _label = (
         "Без просрочки"
         if int(ovd_i) <= 0
-        else f"Просрочка: {int(ovd_i)} док."
+        else f"Просрочка: {int(ovd_i)} {unit}"
     )
     _border = ""
     try:
@@ -29130,6 +29167,32 @@ def _rd_dynamics_chart_month_ticks_ru(dates) -> tuple[list, list]:
         tickvals = tickvals[::step]
         ticktext = ticktext[::step]
     return tickvals, ticktext
+
+
+def _apply_rd_dynamics_line_chart_theme(
+    fig,
+    *,
+    plan_color: str = "#2E86AB",
+    fact_color: str = "#F39C12",
+) -> None:
+    _ax = _fin_chart_axis_color()
+    fig.update_layout(
+        xaxis=dict(
+            tickfont=dict(size=10, color=_ax),
+            title_font=dict(color=_ax),
+        ),
+        yaxis=dict(
+            tickfont=dict(size=10, color=_ax),
+            title_font=dict(color=_ax),
+        ),
+    )
+    for _tr in fig.data or []:
+        _tn = str(getattr(_tr, "name", "") or "")
+        if "План" in _tn:
+            _tr.textfont = dict(color=plan_color, size=10)
+        elif "Факт" in _tn:
+            _tr.textfont = dict(color=fact_color, size=10)
+
 
 # ==================== DASHBOARD 8.7: Documentation ====================
 def dashboard_documentation(
@@ -30415,6 +30478,7 @@ def dashboard_documentation(
                     textposition="top center",
                     textfont=dict(size=10, color="white"),
                 )
+                _apply_rd_dynamics_line_chart_theme(fig_dynamics)
                 fig_dynamics = apply_chart_background(fig_dynamics)
                 render_chart(fig_dynamics, caption_below="Динамика выдачи РД")
             else:
