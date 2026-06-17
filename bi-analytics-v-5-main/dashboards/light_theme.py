@@ -10,6 +10,7 @@ LIGHT_PREVIEW_STYLE_TAG_IDS = (
     "bi-light-filters-css",
     "bi-light-style-overrides",
     "bi-light-filters-live-css-v12",
+    "bi-light-filters-live-css-v13",
     "bi-light-filters-live-css-v11",
     "bi-light-filters-live-css-v10",
     "bi-light-filters-live-css-v9",
@@ -126,6 +127,15 @@ def is_light_preview_active() -> bool:
 
 def finance_chart_label_color(*, dark: str = "#f0f4f8", light: str = "#111827") -> str:
     return light if is_light_preview_active() else dark
+
+
+FINANCE_DEV_GREEN_DARK = "hsl(148,100%,63%)"
+FINANCE_DEV_GREEN_LIGHT = "#15803d"
+
+
+def finance_dev_negative_color() -> str:
+    """Минус / экономия в таблицах: на светлом фоне — тёмно-зелёный для контраста."""
+    return FINANCE_DEV_GREEN_LIGHT if is_light_preview_active() else FINANCE_DEV_GREEN_DARK
 
 
 def finance_chart_neutral_label_color() -> str:
@@ -246,8 +256,8 @@ def sync_light_preview_theme(st) -> None:
   setLightStyleTags(true);
   doc.documentElement.classList.add("gdrs-light-preview");
   doc.body.classList.add("gdrs-light-preview");
-  var cssId = "bi-light-filters-live-css-v12";
-  ["bi-light-filters-live-css", "bi-light-filters-live-css-v2", "bi-light-filters-live-css-v3", "bi-light-filters-live-css-v4", "bi-light-filters-live-css-v5", "bi-light-filters-live-css-v6", "bi-light-filters-live-css-v7", "bi-light-filters-live-css-v8", "bi-light-filters-live-css-v9", "bi-light-filters-live-css-v10", "bi-light-filters-live-css-v11"].forEach(function(id) {
+  var cssId = "bi-light-filters-live-css-v13";
+  ["bi-light-filters-live-css", "bi-light-filters-live-css-v2", "bi-light-filters-live-css-v3", "bi-light-filters-live-css-v4", "bi-light-filters-live-css-v5", "bi-light-filters-live-css-v6", "bi-light-filters-live-css-v7", "bi-light-filters-live-css-v8", "bi-light-filters-live-css-v9", "bi-light-filters-live-css-v10", "bi-light-filters-live-css-v11", "bi-light-filters-live-css-v12"].forEach(function(id) {
     var node = doc.getElementById(id);
     if (node) node.remove();
   });
@@ -283,9 +293,15 @@ def sync_light_preview_theme(st) -> None:
       "html body.gdrs-light-preview [data-testid=\\"stCheckbox\\"] label[data-baseweb=\\"checkbox\\"] [data-testid=\\"stMarkdownContainer\\"],",
       "html body.gdrs-light-preview [data-testid=\\"stCheckbox\\"] label[data-baseweb=\\"checkbox\\"] [data-testid=\\"stMarkdownContainer\\"] * {",
       "background:transparent!important;background-color:transparent!important;color:#111827!important;}",
-      "html body.gdrs-light-preview [data-testid=\\"stCheckbox\\"] label[data-baseweb=\\"checkbox\\"] > input + div {",
+      "html body.gdrs-light-preview [data-testid=\\"stCheckbox\\"] label[data-baseweb=\\"checkbox\\"] > input + div:not(:has(p)) {",
       "width:16px!important;height:16px!important;min-width:16px!important;max-width:16px!important;flex-shrink:0!important;",
       "display:flex!important;align-items:center!important;justify-content:center!important;",
+      "border:2px solid #64748b!important;border-radius:4px!important;background:#fff!important;}",
+      "html body.gdrs-light-preview [data-testid=\\"stCheckbox\\"] label[data-baseweb=\\"checkbox\\"] > input + div:has(p) {",
+      "background:transparent!important;border:none!important;width:auto!important;height:auto!important;",
+      "max-width:none!important;display:inline-flex!important;align-items:flex-start!important;gap:0.5rem!important;}",
+      "html body.gdrs-light-preview [data-testid=\\"stCheckbox\\"] label[data-baseweb=\\"checkbox\\"] > input + div:has(p) > div:first-child:not(:has(p)) {",
+      "width:16px!important;height:16px!important;min-width:16px!important;max-width:16px!important;flex-shrink:0!important;",
       "border:2px solid #64748b!important;border-radius:4px!important;background:#fff!important;}",
       "html body.gdrs-light-preview [data-testid=\\"stCheckbox\\"] label[data-baseweb=\\"checkbox\\"]:has(input:checked) > input + div:not(:has(p)) {",
       "background:#2563eb!important;border-color:#2563eb!important;}",
@@ -302,6 +318,15 @@ def sync_light_preview_theme(st) -> None:
       "flex:1 1 14rem!important;min-width:11rem!important;width:auto!important;max-width:none!important;}",
       "html body.gdrs-light-preview [data-testid=\\"stCheckbox\\"] label[data-baseweb=\\"checkbox\\"] p {",
       "white-space:normal!important;min-width:8rem!important;max-width:none!important;color:#111827!important;}",
+      "html body.gdrs-light-preview .bi-filters-toggles [data-testid=\\"stRadio\\"] > div {",
+      "flex-direction:row!important;flex-wrap:wrap!important;gap:0.75rem 1.25rem!important;}",
+      "html body.gdrs-light-preview .bi-filters-toggles [data-testid=\\"stRadio\\"] label {",
+      "background:transparent!important;margin:0!important;}",
+      "html body.gdrs-light-preview [data-testid=\\"stNumberInput\\"] input,",
+      "html body.gdrs-light-preview [data-testid=\\"stTextInput\\"] input,",
+      "html body.gdrs-light-preview div[data-testid=\\"stVerticalBlockBorderWrapper\\"] input {",
+      "background:#fff!important;color:#111827!important;-webkit-text-fill-color:#111827!important;",
+      "border-color:#cbd5e1!important;}",
       "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"] li,",
       "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"] li span,",
       "html body.gdrs-light-preview div[data-baseweb=\\"menu\\"] li,",
@@ -642,6 +667,44 @@ html body.gdrs-light-preview [data-testid="stExpanderDetails"] [data-testid="stC
   align-items: center !important;
   justify-content: center !important;
   flex-shrink: 0 !important;
+}
+html body.gdrs-light-preview section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:not(:has(input:checked)) > input + div:has(p),
+html body.gdrs-light-preview [data-testid="stExpanderDetails"] [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:not(:has(input:checked)) > input + div:has(p),
+html body.gdrs-light-preview section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked) > input + div:has(p),
+html body.gdrs-light-preview [data-testid="stExpanderDetails"] [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked) > input + div:has(p) {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  width: auto !important;
+  height: auto !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  display: inline-flex !important;
+  align-items: flex-start !important;
+  gap: 0.5rem !important;
+  flex-wrap: nowrap !important;
+}
+html body.gdrs-light-preview section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"] > input + div:has(p) > div:first-child:not(:has(p)),
+html body.gdrs-light-preview [data-testid="stExpanderDetails"] [data-testid="stCheckbox"] label[data-baseweb="checkbox"] > input + div:has(p) > div:first-child:not(:has(p)) {
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  max-width: 16px !important;
+  margin-top: 2px !important;
+  border: 2px solid #64748b !important;
+  border-radius: 4px !important;
+  background-color: #ffffff !important;
+  box-sizing: border-box !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex-shrink: 0 !important;
+}
+html body.gdrs-light-preview section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked) > input + div:has(p) > div:first-child:not(:has(p)),
+html body.gdrs-light-preview [data-testid="stExpanderDetails"] [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked) > input + div:has(p) > div:first-child:not(:has(p)) {
+  border-color: #2563eb !important;
+  background-color: #2563eb !important;
 }
 html body.gdrs-light-preview [data-testid="stCheckbox"] label[data-baseweb="checkbox"] p,
 html body.gdrs-light-preview [data-testid="stCheckbox"] label[data-baseweb="checkbox"] [data-testid="stMarkdownContainer"],
@@ -1078,6 +1141,33 @@ html body.gdrs-light-preview div[data-testid="stElementContainer"]:has(iframe[ti
   opacity: 1 !important;
   filter: none !important;
   mix-blend-mode: normal !important;
+}
+html body.gdrs-light-preview div[data-testid="stVerticalBlockBorderWrapper"] {
+  border-color: #cbd5e1 !important;
+  background-color: #ffffff !important;
+}
+html body.gdrs-light-preview .bi-filters-toggles [data-testid="stRadio"] label,
+html body.gdrs-light-preview .bi-filters-toggles [data-testid="stRadio"] label p,
+html body.gdrs-light-preview .bi-filters-toggles [data-testid="stRadio"] label span {
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+}
+html body.gdrs-light-preview .bi-filters-toggles [data-testid="stRadio"] > div {
+  flex-direction: row !important;
+  flex-wrap: wrap !important;
+  gap: 0.75rem 1.25rem !important;
+}
+html body.gdrs-light-preview .bi-filters-toggles [data-testid="stRadio"] label {
+  background: transparent !important;
+  margin: 0 !important;
+}
+html body.gdrs-light-preview div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stNumberInput"] input,
+html body.gdrs-light-preview div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stTextInput"] input,
+html body.gdrs-light-preview div[data-testid="stVerticalBlockBorderWrapper"] [data-baseweb="input"] input {
+  color: #111827 !important;
+  background-color: #ffffff !important;
+  border: 1px solid #cbd5e1 !important;
+  -webkit-text-fill-color: #111827 !important;
 }
 </style>
 """,

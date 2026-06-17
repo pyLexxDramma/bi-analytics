@@ -34236,28 +34236,45 @@ def _forecast_financier_status_table_html(df: pd.DataFrame) -> str:
     """«Статус»: ● зелёный при экономии (прогноз < план), красный при перерасходе."""
     if df is None or getattr(df, "empty", True):
         return "<p>Нет данных для статуса.</p>"
+    import utils as u
+    from dashboards.light_theme import finance_dev_negative_color
+
     _col_dev = "Отклонение по сумме, млн"
     _col_stat = "Статус для финансиста"
-    green = "hsl(148,100%,63%)"
+    green = finance_dev_negative_color()
     red = "hsl(348,100%,63%)"
     neutral_bullet = "#94a3b8"
+    _th_border = u.FINANCE_TABLE_CELL_BORDER
+    _td_border = u.TABLE_CELL_BORDER
+    _hdr_bg = u.TABLE_HEADER_BG_COLOR
+    _txt = u.TABLE_TEXT_COLOR
+    _bg = u.TABLE_BG_COLOR
+    _hdr_css = u.TABLE_HEADER_FONT_CSS
+    _wrap_id = "fcst_" + str(abs(id(df)))
+    _st_vh = 52.0
+    _st_box_h = int(min(640, max(280, _st_vh * 10 + 56)))
     parts = [
         "<style>"
         ".fc-st-cell-red, .fc-st-cell-red * { color: hsl(348,100%,63%) !important; }"
-        ".fc-st-cell-green, .fc-st-cell-green * { color: hsl(148,100%,63%) !important; }"
-        f".fc-table-scroll-wrap thead th {{ position: sticky; top: 0; z-index: 5; "
-        f"background-color: {TABLE_HEADER_BG_COLOR} !important; color: {TABLE_TEXT_COLOR}; "
-        f"{TABLE_HEADER_FONT_CSS} }}"
+        ".fc-st-cell-green, .fc-st-cell-green * { color: " + green + " !important; }"
+        f"#{_wrap_id} .budget-table-scroll {{ height: {_st_box_h}px !important; max-height: {_st_box_h}px !important; min-height: 0; "
+        f"overflow: auto; -webkit-overflow-scrolling: touch; scrollbar-gutter: stable; "
+        f"box-sizing: border-box; }}"
+        f"#{_wrap_id}.budget-deviation-table-wrap {{ display: block; overflow: hidden; width: 100%; }}"
+        f"#{_wrap_id} thead th {{ position: sticky; top: 0; z-index: 5; "
+        f"background-color: {_hdr_bg} !important; color: {_txt}; {_hdr_css} }}"
+        f"#{_wrap_id} .budget-table-scroll table {{ width: max-content; min-width: 100%; }}"
         "</style>",
-        f'<div class="fc-table-scroll-wrap bi-styled-table-wrap" data-bi-rows="{len(df)}">',
-        f'<table class="rendered-table bi-sortable-table bi-sort-click-only" style="width:100%;border-collapse:collapse;background-color:{TABLE_BG_COLOR};color:{TABLE_TEXT_COLOR};font-size:14px;">',
+        f'<div id="{_wrap_id}" class="budget-deviation-table-wrap bi-styled-table-wrap" data-bi-rows="{len(df)}">',
+        f'<div class="budget-table-scroll" data-scroll-vh="{_st_vh:.1f}" data-scroll-box-h="{_st_box_h}">',
+        f'<table class="rendered-table bi-sortable-table bi-sort-click-only" style="width:max-content;min-width:100%;border-collapse:collapse;background-color:{_bg};color:{_txt};font-size:14px;">',
         "<thead><tr>",
     ]
     for c in df.columns:
         _cn = str(c).strip()
         parts.append(
-            f'<th style="border:1px solid rgba(255,255,255,0.25);padding:8px 6px;text-align:center;vertical-align:middle;'
-            f'background-color:{TABLE_HEADER_BG_COLOR};color:{TABLE_TEXT_COLOR};{TABLE_HEADER_FONT_CSS};" '
+            f'<th style="border:{_th_border};padding:8px 6px;text-align:center;vertical-align:middle;'
+            f'background-color:{_hdr_bg};color:{_txt};{_hdr_css};" '
             f'data-sort-label="{html_module.escape(_cn, quote=True)}">{html_module.escape(_cn)}</th>'
         )
     parts.append("</tr></thead><tbody>")
@@ -34273,11 +34290,11 @@ def _forecast_financier_status_table_html(df: pd.DataFrame) -> str:
                     num = None
                 if num is None or pd.isna(num):
                     parts.append(
-                        f'<td style="border:1px solid rgba(255,255,255,0.15); padding:5px 8px;">{val_esc}</td>'
+                        f'<td style="border:{_td_border}; padding:5px 8px;">{val_esc}</td>'
                     )
                 elif abs(float(num)) < 1e-9:
                     parts.append(
-                        f'<td style="border:1px solid rgba(255,255,255,0.15); padding:5px 8px;">'
+                        f'<td style="border:{_td_border}; padding:5px 8px;">'
                         f'<span style="font-weight:700">{html_module.escape(f"{float(num):.2f}")}</span></td>'
                     )
                 else:
@@ -34285,7 +34302,7 @@ def _forecast_financier_status_table_html(df: pd.DataFrame) -> str:
                     txt_esc = html_module.escape(txt)
                     _cls = "fc-st-cell-green" if float(num) < 0 else "fc-st-cell-red"
                     parts.append(
-                        f'<td class="{_cls}" style="border:1px solid rgba(255,255,255,0.15); padding:5px 8px; '
+                        f'<td class="{_cls}" style="border:{_td_border}; padding:5px 8px; '
                         f'font-weight:700;"><span>{txt_esc}</span></td>'
                     )
             elif col == _col_stat:
@@ -34300,17 +34317,17 @@ def _forecast_financier_status_table_html(df: pd.DataFrame) -> str:
                 else:
                     bullet = red
                 parts.append(
-                    f'<td style="border:1px solid rgba(255,255,255,0.15); padding:5px 8px;">'
+                    f'<td style="border:{_td_border}; padding:5px 8px;">'
                     f'<span style="color:{bullet};font-weight:700;font-size:1.12em;margin-right:6px">●</span>'
-                    f'<span style="color:{TABLE_TEXT_COLOR};font-weight:600">{val_esc}</span>'
+                    f'<span style="color:{_txt};font-weight:600">{val_esc}</span>'
                     "</td>"
                 )
             else:
                 parts.append(
-                    f'<td style="border:1px solid rgba(255,255,255,0.15); padding:5px 8px;">{val_esc}</td>'
+                    f'<td style="border:{_td_border}; padding:5px 8px;">{val_esc}</td>'
                 )
         parts.append("</tr>")
-    parts.append("</tbody></table></div>")
+    parts.append("</tbody></table></div></div>")
     return "".join(parts)
 
 
@@ -34651,6 +34668,13 @@ def dashboard_forecast_budget(df):
                     value=False,
                     key=f"forecast_bddcs_hide_dev_{_npk_fc_filters}",
                 )
+            with _fc_cb3:
+                if period_type_en == "Month":
+                    st.checkbox(
+                        "Скрывать месяцы, где план, факт и прогноз равны 0",
+                        value=True,
+                        key=f"forecast_bddcs_hide_zero_{_npk_fc_filters}_Month",
+                    )
     if getattr(filtered_scope, "empty", True):
         st.info("Нет строк для выбранных фильтров.")
         return
@@ -35036,13 +35060,11 @@ def dashboard_forecast_budget(df):
     x_label_fc = period_label
     _chart_df = mf_fc.copy()
     _hide_zero_chk = period_type_en == "Month"
-    _fc_hide_zero = False
-    if _hide_zero_chk:
-        _fc_hide_zero = st.checkbox(
-            "Скрывать месяцы, где план, факт и прогноз равны 0",
-            value=True,
-            key=f"forecast_bddcs_hide_zero_{_npk_fc}_{period_type_en}",
-        )
+    _fc_hide_zero = (
+        bool(st.session_state.get(f"forecast_bddcs_hide_zero_{_npk_fc}_Month", True))
+        if _hide_zero_chk
+        else False
+    )
     if not _chart_df.empty:
         _chart_df = _forecast_filter_chart_months(
             _chart_df,
@@ -35070,6 +35092,7 @@ def dashboard_forecast_budget(df):
         _plan_txt_fc = _finance_bar_text_mln_rub(_chart_df["bdds_plan_msp"], min_abs_mln=0.0)
         _fact_txt_fc = _finance_bar_text_mln_rub(_chart_df["bdds_fact"], min_abs_mln=0.0)
         _frc_txt_fc = _finance_bar_text_mln_rub(_chart_df["bdds_forecast"], min_abs_mln=0.0)
+        _bar_lbl_fc = _fin_chart_label_color()
         fig_fc = go.Figure()
         x_fc = _chart_df["Период"].astype(str)
         fig_fc.add_trace(
@@ -35082,7 +35105,7 @@ def dashboard_forecast_budget(df):
                 textposition="outside",
                 textangle=0,
                 cliponaxis=False,
-                textfont=dict(size=_tfs_out_fc, color="#e8eef5"),
+                textfont=dict(size=_tfs_out_fc, color=_bar_lbl_fc),
                 customdata=_chart_df["bdds_plan_msp"].apply(_fmt_hover1),
                 hovertemplate="<b>%{x}</b><br>БДДС план: %{customdata}<extra></extra>",
             )
@@ -35097,7 +35120,7 @@ def dashboard_forecast_budget(df):
                 textposition="outside",
                 textangle=0,
                 cliponaxis=False,
-                textfont=dict(size=_tfs_out_fc, color="#e8eef5"),
+                textfont=dict(size=_tfs_out_fc, color=_bar_lbl_fc),
                 customdata=_chart_df["bdds_fact"].apply(_fmt_hover1),
                 hovertemplate="<b>%{x}</b><br>БДДС факт: %{customdata}<extra></extra>",
             )
@@ -35112,7 +35135,7 @@ def dashboard_forecast_budget(df):
                 textposition="outside",
                 textangle=0,
                 cliponaxis=False,
-                textfont=dict(size=_tfs_out_fc, color="#e8eef5"),
+                textfont=dict(size=_tfs_out_fc, color=_bar_lbl_fc),
                 customdata=_chart_df["bdds_forecast"].apply(_fmt_hover1),
                 hovertemplate="<b>%{x}</b><br>БДДС прогноз: %{customdata}<extra></extra>",
             )
@@ -35254,7 +35277,14 @@ def dashboard_forecast_budget(df):
 
     _cond_fc = None
     if not _hide_dev_fc:
-        _cond_fc = {_dev_col_fc: {"positive_color": "#6ee7b7", "negative_color": "#f87171"}}
+        from dashboards.light_theme import finance_dev_negative_color
+
+        _cond_fc = {
+            _dev_col_fc: {
+                "positive_color": "hsl(348,100%,63%)",
+                "negative_color": finance_dev_negative_color(),
+            }
+        }
     _render_format_dataframe_html(
         summary_display_fc,
         file_stem="forecast_bddcs_summary",

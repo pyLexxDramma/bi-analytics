@@ -275,6 +275,40 @@ html body [data-testid="stAppViewContainer"] [data-testid="stMainBlockContainer"
   -webkit-text-fill-color: {g_text} !important;
   opacity: 1 !important;
 }}
+html body.gdrs-light-preview [data-testid="stCheckbox"] label[data-baseweb="checkbox"] p,
+html body.gdrs-light-preview [data-testid="stCheckbox"] label[data-baseweb="checkbox"] [data-testid="stMarkdownContainer"],
+html body.gdrs-light-preview [data-testid="stCheckbox"] label[data-baseweb="checkbox"] [data-testid="stMarkdownContainer"] * {{
+  background: transparent !important;
+  background-color: transparent !important;
+  color: {g_text} !important;
+  -webkit-text-fill-color: {g_text} !important;
+}}
+html body.gdrs-light-preview [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked) > input + div:not(:has(p)) {{
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  max-width: 16px !important;
+  background-color: #2563eb !important;
+  border: 2px solid #2563eb !important;
+  border-radius: 4px !important;
+}}
+html body.gdrs-light-preview [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked) > input + div:has(p) {{
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  width: auto !important;
+  height: auto !important;
+  max-width: none !important;
+}}
+html body.gdrs-light-preview [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked) > input + div:has(p) > div:first-child:not(:has(p)) {{
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  max-width: 16px !important;
+  background-color: #2563eb !important;
+  border: 2px solid #2563eb !important;
+  border-radius: 4px !important;
+}}
 html body [data-testid="stAppViewContainer"] [data-testid="stMainBlockContainer"] [data-testid="stWidgetLabel"],
 html body [data-testid="stAppViewContainer"] [data-testid="stMainBlockContainer"] [data-testid="stWidgetLabel"] * {{
   font-weight: 700 !important;
@@ -386,6 +420,18 @@ html body [data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-
 html body .main [data-testid="stExpander"] [data-testid="stVerticalBlock"],
 html body section.main [data-testid="stExpander"] [data-testid="stVerticalBlock"] {{
   background-color: {g_white} !important;
+}}
+html body.gdrs-light-preview [data-testid="stExpanderDetails"] [data-testid="stMarkdownContainer"],
+html body.gdrs-light-preview [data-testid="stExpanderDetails"] [data-testid="stMarkdownContainer"] *,
+html body.gdrs-light-preview section.main [data-testid="stExpander"] [data-testid="stExpanderDetails"] p,
+html body.gdrs-light-preview section.main [data-testid="stExpander"] [data-testid="stExpanderDetails"] li,
+html body.gdrs-light-preview section.main [data-testid="stExpander"] [data-testid="stExpanderDetails"] strong,
+html body.gdrs-light-preview section.main [data-testid="stExpander"] [data-testid="stExpanderDetails"] em,
+html body.gdrs-light-preview section.main [data-testid="stExpander"] [data-testid="stExpanderDetails"] ol,
+html body.gdrs-light-preview section.main [data-testid="stExpander"] [data-testid="stExpanderDetails"] ul {{
+  color: {g_text} !important;
+  -webkit-text-fill-color: {g_text} !important;
+  opacity: 1 !important;
 }}
 html body [data-testid="stSelectbox"] [data-baseweb="select"] > div,
 html body [data-baseweb="select"] > div,
@@ -616,7 +662,10 @@ html body.gdrs-light-preview [data-testid="stPlotlyChart"] .xtick text,
 html body.gdrs-light-preview [data-testid="stPlotlyChart"] .ytick text,
 html body.gdrs-light-preview [data-testid="stPlotlyChart"] .legend text,
 html body.gdrs-light-preview [data-testid="stPlotlyChart"] g.xtitle text,
-html body.gdrs-light-preview [data-testid="stPlotlyChart"] g.ytitle text {{
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] g.ytitle text,
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] .barlayer text,
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] g.textpoint text,
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] .bartext text {{
   fill: #111827 !important;
   color: #111827 !important;
   -webkit-text-fill-color: #111827 !important;
