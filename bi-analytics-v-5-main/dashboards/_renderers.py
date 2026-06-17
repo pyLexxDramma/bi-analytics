@@ -30356,11 +30356,11 @@ def dashboard_documentation(
                         render_chart(fig_dynamics, caption_below="Динамика выдачи ПД")
 
                     render_table_subheader(st, "Таблица по проектной документации")
-                    _tbl_row_mask = _pd_table_row_mask(df, pd_metrics_mask, pd_section_mask)
-                    idx_sec = df.index[_tbl_row_mask.fillna(False)]
+                    _tbl_mask = (plan_line_mask | fcst_line_mask).fillna(False)
+                    idx_sec = df.index[_tbl_mask]
                     if len(idx_sec) == 0:
                         st.info(
-                            "Нет строк для таблицы (разделы ПД с заполненным шифром в ветке «Проектная документация»)."
+                            "Нет строк для таблицы (те же задачи, что на графике «Динамика выдачи ПД»)."
                         )
                     else:
                         _tn_tbl = df[name_col].astype(str) if name_col in df.columns else pd.Series("", index=df.index)
@@ -30385,8 +30385,8 @@ def dashboard_documentation(
                             )
                         else:
                             tbl_raw["Проект"] = ""
-                        tbl_raw["_bf"] = bf.reindex(idx_sec).dt.normalize()
-                        tbl_raw["_sf"] = sf.reindex(idx_sec).dt.normalize()
+                        tbl_raw["_bf"] = _chart_bf_bp.reindex(idx_sec).dt.normalize()
+                        tbl_raw["_sf"] = _chart_sf.reindex(idx_sec).dt.normalize()
                         tbl_raw["_dev"] = (tbl_raw["_bf"] - tbl_raw["_sf"]).dt.days
                         if "snapshot_date" in df.columns:
                             tbl_raw["_snap"] = pd.to_datetime(
@@ -30409,119 +30409,68 @@ def dashboard_documentation(
                                 .drop_duplicates(subset=_tbl_keys, keep="last")
                                 .drop(columns=["_snap", "_ord_snap", "_ord_dt"], errors="ignore")
                             )
-                        secs_sorted = sorted(
+                        _sort_cols = ["Проект", "_dev", "Раздел"]
+                        tbl_f = tbl_raw.sort_values(
+                            _sort_cols,
+                            ascending=[True, False, True],
+                            kind="mergesort",
+                        )
+                        _dev_round = pd.to_numeric(tbl_f["_dev"], errors="coerce").round()
+                        tbl_show = pd.DataFrame(
                             {
-                                str(x).strip()
-                                for x in tbl_raw["Раздел"].dropna().unique()
-                                if str(x).strip()
+                                "№": range(1, len(tbl_f) + 1),
+                                "Проект": tbl_f["Проект"].map(sanitize_display_label),
+                                "Раздел": tbl_f["Раздел"].map(sanitize_display_label),
+                                "Базовое окончание": tbl_f["_bf"].dt.strftime("%d.%m.%Y"),
+                                "Окончание": tbl_f["_sf"].dt.strftime("%d.%m.%Y"),
+                                "Отклонение окончания": _dev_round.map(_pd_fmt_deviation_days),
                             }
                         )
-                        sel_sec = st.multiselect(
-                            "Раздел (шифр)",
-                            options=secs_sorted,
-                            default=secs_sorted,
-                            key=_doc_fk + "pd_tbl_sections",
+                        tbl_numeric = tbl_show.copy()
+                        tbl_numeric["Базовое окончание"] = tbl_f["_bf"].values
+                        tbl_numeric["Окончание"] = tbl_f["_sf"].values
+                        tbl_numeric["Отклонение окончания"] = _dev_round.values
+                        st.markdown(
+                            "<style>"
+                            "div[class*='st-key-bitblwrap_pd_dyn_tbl'],"
+                            "div[class*='st-key-bitblwrap_pd_dyn_tbl'] div[data-testid='stVerticalBlock'],"
+                            "div[class*='st-key-bitblwrap_pd_dyn_tbl'] div[data-testid='stElementContainer'],"
+                            "[data-testid='stMainBlockContainer'] div[class*='st-key-bitblwrap_pd_dyn_tbl'],"
+                            "div[class*='st-key-bitblwrap_pd_dyn_tbl'] div[data-testid='stElementContainer']:has(iframe),"
+                            "div[class*='st-key-bitblwrap_pd_dyn_tbl'] iframe"
+                            "{width:100%!important;max-width:100%!important;min-width:0!important;display:block!important;}"
+                            ".pd-dynamics-table-wrap,.pd-dynamics-table-wrap table,"
+                            ".pd-dynamics-scroll-wrap,.pd-dynamics-scroll-wrap table,"
+                            ".pd-dynamics-scroll-wrap .pf-dates-table"
+                            "{width:100%!important;min-width:100%!important;max-width:100%!important;"
+                            "table-layout:fixed!important;}"
+                            ".pd-dynamics-table-wrap,.pd-dynamics-scroll-wrap"
+                            "{margin:0.35em 0 0.85em 0!important;box-sizing:border-box!important;}"
+                            ".pd-dynamics-scroll-wrap{min-height:520px!important;height:100%!important;"
+                            "max-height:100%!important;overflow-y:auto!important;overflow-x:auto!important;"
+                            "-webkit-overflow-scrolling:touch!important;scrollbar-gutter:stable!important;"
+                            "border:1px solid rgba(255,255,255,0.25)!important;border-radius:10px!important;"
+                            "box-sizing:border-box!important;}"
+                            ".pd-dynamics-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;}"
+                            "div[class*='st-key-bitblwrap_pd_dyn_tbl'] [data-testid='stPopover']"
+                            "{margin-top:12px!important;}"
+                            "</style>",
+                            unsafe_allow_html=True,
                         )
-                        _date_parts = [tbl_raw["_bf"].dropna(), tbl_raw["_sf"].dropna()]
-                        _date_union = pd.concat(_date_parts) if _date_parts else pd.Series(dtype="datetime64[ns]")
-                        if _date_union.empty:
-                            d_lo = d_hi = pd_report_date if is_pd else today
-                        else:
-                            d_lo = _date_union.min().date()
-                            d_hi = _date_union.max().date()
-                        if is_pd:
-                            _def_p_lo, _def_p_hi = d_lo, pd_report_date
-                        else:
-                            _def_p_lo, _def_p_hi = d_lo, d_hi
-                        _period_key = _doc_fk + "pd_tbl_period"
-                        _period_sig_key = _doc_fk + "pd_tbl_period_sig"
-                        _tbl_sig = f"{len(tbl_raw)}|{d_lo}|{d_hi}|{pd_report_date if is_pd else ''}"
-                        if st.session_state.get(_period_sig_key) != _tbl_sig:
-                            st.session_state[_period_key] = (_def_p_lo, _def_p_hi)
-                            st.session_state[_period_sig_key] = _tbl_sig
-                        dr = st.date_input(
-                            "Период (по базовому или текущему окончанию)",
-                            key=_period_key,
+                        _export_tbl = tbl_show.copy()
+                        _render_plan_fact_dates_main_table(
+                            tbl_show,
+                            tbl_numeric,
+                            wrap_class="pd-dynamics-scroll-wrap pd-dynamics-table-wrap",
+                            file_stem="pd_dynamics_table",
+                            key_prefix="pd_dyn_tbl",
+                            export_df=_export_tbl,
                         )
-                        if isinstance(dr, tuple) and len(dr) == 2:
-                            p_lo, p_hi = dr[0], dr[1]
-                        else:
-                            p_lo = p_hi = dr
-                        m_tbl = (
-                            tbl_raw["Раздел"].astype(str).isin(sel_sec)
-                            if sel_sec
-                            else pd.Series(True, index=tbl_raw.index)
+                        suppress_caption(
+                            "Строки совпадают с задачами графика «Динамика выдачи ПД»; "
+                            "сортировка по клику на заголовок; отклонение окончания (дни) — "
+                            "красный при просрочке, зелёный при опережении."
                         )
-                        _bdn = tbl_raw["_bf"].dt.normalize()
-                        _sdn = tbl_raw["_sf"].dt.normalize()
-                        m_bf = _bdn.notna() & (_bdn.dt.date >= p_lo) & (_bdn.dt.date <= p_hi)
-                        m_sf = _sdn.notna() & (_sdn.dt.date >= p_lo) & (_sdn.dt.date <= p_hi)
-                        m_dt = m_bf | m_sf
-                        tbl_f = tbl_raw.loc[m_tbl & m_dt].copy()
-                        if tbl_f.empty:
-                            st.info("Нет строк по выбранным фильтрам таблицы ПД.")
-                        else:
-                            _sort_cols = ["Проект", "_dev", "Раздел"]
-                            tbl_f = tbl_f.sort_values(
-                                _sort_cols,
-                                ascending=[True, False, True],
-                                kind="mergesort",
-                            )
-                            _dev_round = pd.to_numeric(tbl_f["_dev"], errors="coerce").round()
-                            tbl_show = pd.DataFrame(
-                                {
-                                    "№": range(1, len(tbl_f) + 1),
-                                    "Проект": tbl_f["Проект"].map(sanitize_display_label),
-                                    "Раздел": tbl_f["Раздел"].map(sanitize_display_label),
-                                    "Базовое окончание": tbl_f["_bf"].dt.strftime("%d.%m.%Y"),
-                                    "Окончание": tbl_f["_sf"].dt.strftime("%d.%m.%Y"),
-                                    "Отклонение окончания": _dev_round.map(_pd_fmt_deviation_days),
-                                }
-                            )
-                            tbl_numeric = tbl_show.copy()
-                            tbl_numeric["Базовое окончание"] = tbl_f["_bf"].values
-                            tbl_numeric["Окончание"] = tbl_f["_sf"].values
-                            tbl_numeric["Отклонение окончания"] = _dev_round.values
-                            st.markdown(
-                                "<style>"
-                                "div[class*='st-key-bitblwrap_pd_dyn_tbl'],"
-                                "div[class*='st-key-bitblwrap_pd_dyn_tbl'] div[data-testid='stVerticalBlock'],"
-                                "div[class*='st-key-bitblwrap_pd_dyn_tbl'] div[data-testid='stElementContainer'],"
-                                "[data-testid='stMainBlockContainer'] div[class*='st-key-bitblwrap_pd_dyn_tbl'],"
-                                "div[class*='st-key-bitblwrap_pd_dyn_tbl'] div[data-testid='stElementContainer']:has(iframe),"
-                                "div[class*='st-key-bitblwrap_pd_dyn_tbl'] iframe"
-                                "{width:100%!important;max-width:100%!important;min-width:0!important;display:block!important;}"
-                                ".pd-dynamics-table-wrap,.pd-dynamics-table-wrap table,"
-                                ".pd-dynamics-scroll-wrap,.pd-dynamics-scroll-wrap table,"
-                                ".pd-dynamics-scroll-wrap .pf-dates-table"
-                                "{width:100%!important;min-width:100%!important;max-width:100%!important;"
-                                "table-layout:fixed!important;}"
-                                ".pd-dynamics-table-wrap,.pd-dynamics-scroll-wrap"
-                                "{margin:0.35em 0 0.85em 0!important;box-sizing:border-box!important;}"
-                                ".pd-dynamics-scroll-wrap{min-height:520px!important;height:100%!important;"
-                                "max-height:100%!important;overflow-y:auto!important;overflow-x:auto!important;"
-                                "-webkit-overflow-scrolling:touch!important;scrollbar-gutter:stable!important;"
-                                "border:1px solid rgba(255,255,255,0.25)!important;border-radius:10px!important;"
-                                "box-sizing:border-box!important;}"
-                                ".pd-dynamics-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;}"
-                                "div[class*='st-key-bitblwrap_pd_dyn_tbl'] [data-testid='stPopover']"
-                                "{margin-top:12px!important;}"
-                                "</style>",
-                                unsafe_allow_html=True,
-                            )
-                            _export_tbl = tbl_show.copy()
-                            _render_plan_fact_dates_main_table(
-                                tbl_show,
-                                tbl_numeric,
-                                wrap_class="pd-dynamics-scroll-wrap pd-dynamics-table-wrap",
-                                file_stem="pd_dynamics_table",
-                                key_prefix="pd_dyn_tbl",
-                                export_df=_export_tbl,
-                            )
-                            suppress_caption(
-                                "Сортировка по клику на заголовок столбца; "
-                                "отклонение окончания (дни) — красный при просрочке, зелёный при опережении."
-                            )
         except Exception as e:
             st.error(f"Ошибка при построении графика 'Динамика ПД': {str(e)}")
 
