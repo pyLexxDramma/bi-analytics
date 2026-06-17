@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Общая инфраструктура светлых превью-вкладок (main/release)."""
+"""Общая инфраструктура светлых превью-вкладок (только dev, не клиентский release)."""
 from __future__ import annotations
 
 LIGHT_PREVIEW_SUFFIX = " (превью — светлая)"
@@ -19,6 +19,22 @@ def is_light_preview_report(report_name: str) -> bool:
     """True для любой вкладки «… (превью — светлая)» (в т.ч. ГДРС)."""
     n = str(report_name or "").strip().casefold()
     return "превью" in n and "светл" in n
+
+
+def light_preview_reports_enabled() -> bool:
+    """Показывать ли светлые превью в меню (False на ai.conall.ru / release)."""
+    try:
+        from config import show_light_preview_reports
+
+        return bool(show_light_preview_reports())
+    except Exception:
+        return False
+
+
+def filter_reports_hide_light_preview(report_names: list[str]) -> list[str]:
+    if light_preview_reports_enabled():
+        return list(report_names)
+    return [n for n in report_names if not is_light_preview_report(n)]
 
 
 def apply_light_table_constants() -> None:

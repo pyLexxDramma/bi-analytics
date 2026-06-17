@@ -106,6 +106,13 @@ def _normalize_role(role: str | None) -> str:
 
 def user_can_open_report(role: str, report_name: str) -> bool:
     """Проверка доступа к одному отчёту по роли."""
+    try:
+        from dashboards.light_theme import is_light_preview_report, light_preview_reports_enabled
+
+        if is_light_preview_report(report_name) and not light_preview_reports_enabled():
+            return False
+    except Exception:
+        pass
     r = _normalize_role(role)
     if r in ("superadmin", "admin"):
         return True
@@ -899,12 +906,12 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
             st.markdown("---")
 
         if has_report_access(user["role"]) and current_page == "reports":
-            from dashboards import REPORT_CATEGORIES
+            from dashboards import get_report_categories
 
             st.markdown('<p class="sidebar-section-title">Отчёты</p>', unsafe_allow_html=True)
             st.markdown("---")
             current_dashboard = st.session_state.get("current_dashboard", "")
-            for cat_name, reports in REPORT_CATEGORIES:
+            for cat_name, reports in get_report_categories():
                 visible = filter_reports_for_role(user["role"], list(reports))
                 if not visible:
                     continue
