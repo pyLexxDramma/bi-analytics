@@ -3316,7 +3316,11 @@ def _apply_finance_light_preview_chart_colors(fig) -> None:
     try:
         fig.update_layout(
             font=dict(color=_ax),
-            legend=dict(font=dict(color=_leg)),
+            legend=dict(
+                font=dict(color=_leg),
+                bgcolor="rgba(255, 255, 255, 0.96)",
+                bordercolor="rgba(148, 163, 184, 0.55)",
+            ),
         )
         fig.update_xaxes(
             tickfont=dict(color=_ax),
@@ -14130,7 +14134,7 @@ def dashboard_bdr(df):
                     marker_color="#2E86AB",
                     text=_plan_txt_b,
                     textposition=_txt_pos_b,
-                    textfont=dict(size=_tfs_b, color="#f0f4f8"),
+                    textfont=dict(size=_tfs_b, color=_fin_chart_label_color()),
                     customdata=chart_df["План расходов"].apply(lambda v: format_million_rub(v, decimals=1)),
                     hovertemplate="<b>%{x}</b><br>План расходов: %{customdata}<br><extra></extra>",
                 )
@@ -14143,7 +14147,7 @@ def dashboard_bdr(df):
                     marker_color="#A23B72",
                     text=_fact_txt_b,
                     textposition=_txt_pos_b,
-                    textfont=dict(size=_tfs_b, color="#f0f4f8"),
+                    textfont=dict(size=_tfs_b, color=_fin_chart_label_color()),
                     customdata=chart_df["Факт расходов"].apply(lambda v: format_million_rub(v, decimals=1)),
                     hovertemplate="<b>%{x}</b><br>Факт расходов: %{customdata}<br><extra></extra>",
                 )
@@ -14413,7 +14417,7 @@ def dashboard_bdr(df):
                     finance_deviation_column=_bdr_tz_dev_col,
                     deviation_color_fact_vs_plan=True,
                     emphasize_row_kinds=("project", "total"),
-                    **_BDR_TABLE_HTML_KW,
+                    **_finance_table_html_kwargs(),
                 )
             return
 
@@ -14495,7 +14499,7 @@ def dashboard_bdr(df):
                 marker_color="#2E86AB",
                 text=_plan_txt_b,
                 textposition=_txt_pos_b,
-                textfont=dict(size=_tfs_b, color="#f0f4f8"),
+                textfont=dict(size=_tfs_b, color=_fin_chart_label_color()),
                 customdata=chart_df["Доходы"].apply(format_million_rub),
                 hovertemplate="<b>%{x}</b><br>Доходы: %{customdata}<br><extra></extra>",
             )
@@ -14508,7 +14512,7 @@ def dashboard_bdr(df):
                 marker_color="#A23B72",
                 text=_fact_txt_b,
                 textposition=_txt_pos_b,
-                textfont=dict(size=_tfs_b, color="#f0f4f8"),
+                textfont=dict(size=_tfs_b, color=_fin_chart_label_color()),
                 customdata=chart_df["Расходы"].apply(format_million_rub),
                 hovertemplate="<b>%{x}</b><br>Расходы: %{customdata}<br><extra></extra>",
             )
@@ -14524,7 +14528,7 @@ def dashboard_bdr(df):
                 marker_color=dev_colors,
                 text=_dev_txt_b,
                 textposition=_txt_pos_b,
-                textfont=dict(size=_tfs_b, color="#f0f4f8"),
+                textfont=dict(size=_tfs_b, color=_fin_chart_label_color()),
                 customdata=chart_df["Сальдо"].apply(format_million_rub),
                 hovertemplate="<b>%{x}</b><br>Сальдо: %{customdata}<br><extra></extra>",
             )
@@ -14595,6 +14599,7 @@ def dashboard_bdr(df):
             )
         except Exception:
             pass
+        _apply_finance_light_preview_chart_colors(fig)
         render_chart(
             fig,
             caption_below=f"БДР{title_suffix}",
@@ -14619,7 +14624,7 @@ def dashboard_bdr(df):
                 display_df,
                 finance_deviation_column="Сальдо, млн. руб.",
                 deviation_red_if_negative=True,
-                **_BDR_TABLE_HTML_KW,
+                **_finance_table_html_kwargs(),
             )
 
     _bdr_chart()
@@ -14675,7 +14680,7 @@ def dashboard_bdr(df):
                     deviation_color_fact_vs_plan=True,
                     row_kind_column="_row_kind",
                     emphasize_row_kinds=("total",),
-                    **_BDR_TABLE_HTML_KW,
+                    **_finance_table_html_kwargs(),
                 )
         else:
             by_p = (
@@ -14724,7 +14729,7 @@ def dashboard_bdr(df):
                     deviation_red_if_negative=True,
                     row_kind_column="_row_kind",
                     emphasize_row_kinds=("total",),
-                    **_BDR_TABLE_HTML_KW,
+                    **_finance_table_html_kwargs(),
                 )
 
     render_quality_hints(_bdr_q_hints)
