@@ -305,7 +305,7 @@ _TABLE_SORT_JS = r"""
       });
       tbl.style.setProperty("table-layout", "auto", "important");
       tbl.style.setProperty("width", "max-content", "important");
-      tbl.style.setProperty("min-width", "max-content", "important");
+      tbl.style.setProperty("min-width", "100%", "important");
     });
   }
 
@@ -786,8 +786,14 @@ html, body {
   scrollbar-gutter:stable;scrollbar-width:thin;
 }
 .gantt-schedule-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:4!important;}
-.pf-dates-table-wrap,.gantt-schedule-table-wrap{
+.pf-dates-table-wrap{
   display:block;width:100%;max-width:100%;margin:0;padding:0;
+  overflow-x:visible!important;overflow-y:visible;
+  -webkit-overflow-scrolling:touch;scrollbar-gutter:stable;
+}
+.gantt-schedule-table-wrap{
+  display:block;width:max-content!important;min-width:100%!important;max-width:none!important;
+  margin:0;padding:0;box-sizing:border-box;
   overflow-x:visible!important;overflow-y:visible;
   -webkit-overflow-scrolling:touch;scrollbar-gutter:stable;
 }
@@ -1384,6 +1390,7 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
             'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;}'
             'html body .gantt-schedule-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;'
             'background:hsl(209,72%,6%)!important;}'
+            'html body .gantt-schedule-table-wrap{width:max-content!important;min-width:100%!important;max-width:none!important;}'
             'html body .gantt-schedule-table-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important;}'
             'html body .gantt-schedule-table-wrap th.col-gantt-task,'
             'html body .gantt-schedule-table-wrap td.col-gantt-task{'

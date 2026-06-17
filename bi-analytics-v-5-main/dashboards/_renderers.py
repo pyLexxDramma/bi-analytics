@@ -996,7 +996,7 @@ def _gantt_task_col_width_css(ch: int) -> str:
     cell = f"{tbl} th.col-gantt-task,{tbl} td.col-gantt-task"
     col = f"{tbl} col.col-gantt-task"
     return (
-        f"{tbl}{{width:max-content!important;min-width:max-content!important;"
+        f"{tbl}{{width:max-content!important;min-width:100%!important;"
         f"table-layout:auto!important;}}"
         f"{col}{{width:{ch}ch!important;min-width:{ch}ch!important;max-width:{ch}ch!important;}}"
         f"{cell}{{width:{ch}ch!important;min-width:{ch}ch!important;max-width:{ch}ch!important;"
@@ -1055,7 +1055,7 @@ def _render_gantt_schedule_html_table(
 
     parts = [
         f'<div class="gantt-schedule-scroll-wrap" data-bi-rows="{len(show_disp)}">',
-        '<div class="rendered-table-wrap gantt-schedule-table-wrap pf-dates-table-wrap">',
+        '<div class="rendered-table-wrap gantt-schedule-table-wrap">',
     ]
     parts.append(f"<style>{_gantt_task_col_width_css(_task_col_w_ch)}</style>")
     _task_tbl_attr = f' data-gantt-task-ch="{_task_col_w_ch}"'
@@ -29155,10 +29155,9 @@ def dashboard_documentation(
                     filtered_df[section_col].astype(str).str.strip().isin(_sset)
                 ]
 
-    # Apply date filter (РД — срез по plan end; ПД — только дата отчёта для KPI, строки не отсекаем)
+    # Apply date filter (РД и ПД — срез по plan end / plan start)
     if (
-        not is_pd
-        and selected_date_start
+        selected_date_start
         and selected_date_end
         and period_source_col
         and period_source_col in df.columns
