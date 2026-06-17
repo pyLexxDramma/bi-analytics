@@ -115,6 +115,33 @@ _TABLE_SORT_JS = r"""
     }
   }
 
+  function getThLabelText(th, tbl) {
+    if (!th) return "";
+    var lt = (th.getAttribute("data-sort-label") || th._biSortLabelText || "").trim();
+    if (!lt && tbl && tbl._biSortLabelsByIdx && tbl._biSortLabelsByIdx[th.cellIndex]) {
+      lt = String(tbl._biSortLabelsByIdx[th.cellIndex] || "").trim();
+    }
+    lt = lt.replace(/\s[\u21C5\u25B2\u25BC\u2191\u2193]+$/, "").trim();
+    if (!lt) {
+      var seedLbl = th.querySelector(".bi-sort-label");
+      if (seedLbl) {
+        lt = (seedLbl.textContent || "").replace(/\s[\u21C5\u25B2\u25BC\u2191\u2193]+$/, "").trim();
+      }
+    }
+    if (!lt) {
+      lt = (th.textContent || "").replace(/\s[\u21C5\u25B2\u25BC\u2191\u2193]+$/, "").trim();
+    }
+    if (lt) {
+      th._biSortLabelText = lt;
+      th.setAttribute("data-sort-label", lt);
+      if (tbl) {
+        if (!tbl._biSortLabelsByIdx) tbl._biSortLabelsByIdx = {};
+        tbl._biSortLabelsByIdx[th.cellIndex] = lt;
+      }
+    }
+    return lt;
+  }
+
   function bindSortableThs(tbl, theadRow) {
     var ths = theadRow.querySelectorAll("th");
     ths.forEach(function (th, colIdx) {
@@ -123,12 +150,12 @@ _TABLE_SORT_JS = r"""
       if (tbl.classList.contains("gdrs-matrix-table") && th.getAttribute("data-gdrs-sort") !== "1") return;
       colIdx = th.cellIndex;
       th.setAttribute("data-bi-sort-th", "1");
-      var labelText = th.getAttribute("data-sort-label") || (th.textContent || "").trim();
-      labelText = labelText.replace(/\s[\u21C5\u25B2\u25BC\u2191\u2193]+$/, "").trim();
+      var labelText = getThLabelText(th, tbl);
       th.innerHTML = "";
       th.style.verticalAlign = "middle";
       th.style.cursor = "pointer";
       var isGanttTask = th.classList && th.classList.contains("col-gantt-task");
+      var isPfDates = tbl.classList && tbl.classList.contains("pf-dates-table");
       var wrap = document.createElement("div");
       wrap.style.cssText = isGanttTask
         ? "display:flex;align-items:center;gap:4px;justify-content:flex-start;width:auto;"
@@ -137,7 +164,9 @@ _TABLE_SORT_JS = r"""
       label.className = "bi-sort-label";
       label.style.cssText = isGanttTask
         ? "flex:0 0 auto;min-width:0;white-space:nowrap;overflow:visible;text-overflow:clip;cursor:pointer;user-select:none;"
-        : "flex:1;min-width:0;white-space:normal;word-wrap:break-word;overflow-wrap:anywhere;overflow:visible;text-overflow:clip;cursor:pointer;user-select:none;";
+        : (isPfDates
+          ? "flex:0 0 auto;min-width:0;white-space:nowrap;overflow:visible;text-overflow:clip;cursor:pointer;user-select:none;"
+          : "flex:1;min-width:0;white-space:normal;word-wrap:break-word;overflow-wrap:anywhere;overflow:visible;text-overflow:clip;cursor:pointer;user-select:none;");
       label.title = "Клик — сортировка по убыванию, повторный клик — по возрастанию";
       wrap.appendChild(label);
       th.appendChild(wrap);
@@ -149,14 +178,14 @@ _TABLE_SORT_JS = r"""
           oth._biSortDir = 0;
           var lbl = oth.querySelector(".bi-sort-label");
           if (!lbl) return;
-          var lt = (oth.getAttribute("data-sort-label") || "").trim();
-          lt = lt.replace(/\s[\u21C5\u25B2\u25BC\u2191\u2193]+$/, "").trim();
+          var lt = getThLabelText(oth, tbl);
           lbl.textContent = lt + sortArrow(0);
         });
       }
 
       function paintLabel() {
-        label.textContent = labelText + sortArrow(th._biSortDir || 0);
+        var lt = labelText || getThLabelText(th, tbl);
+        label.textContent = lt + sortArrow(th._biSortDir || 0);
       }
 
       function apply() {
@@ -363,7 +392,8 @@ _TABLE_SORT_JS = r"""
         var pdTbl0 = pdScrollBox.querySelector("table");
         var pdContent = pdTbl0 ? Math.ceil(pdTbl0.getBoundingClientRect().height)
                                : Math.ceil(pdScrollBox.scrollHeight || 0);
-        var pdAttr = pdScrollBox.getAttribute("data-pd-box-h");
+        var pdAttr = pdScrollBox.getAttribute("data-scroll-box-h")
+          || pdScrollBox.getAttribute("data-pd-box-h");
         var pdBoxH = pdAttr ? parseInt(pdAttr, 10) : 520;
         if (!pdBoxH || pdBoxH < 120) pdBoxH = 520;
         window.parent.postMessage({ type: "streamlit:setFrameHeight", height: pdBoxH }, "*");
@@ -655,7 +685,8 @@ _COMPACT_FRAME_FIT_JS = r"""
         }
         var pdContent = pdTbl ? Math.ceil(pdTbl.getBoundingClientRect().height)
                               : Math.ceil(pdScroll.scrollHeight || 0);
-        var pdAttr2 = pdScroll.getAttribute("data-pd-box-h");
+        var pdAttr2 = pdScroll.getAttribute("data-scroll-box-h")
+          || pdScroll.getAttribute("data-pd-box-h");
         var pdBoxH2 = pdAttr2 ? parseInt(pdAttr2, 10) : 520;
         if (!pdBoxH2 || pdBoxH2 < 120) pdBoxH2 = 520;
         window.parent.postMessage({ type: "streamlit:setFrameHeight", height: pdBoxH2 }, "*");
@@ -904,7 +935,8 @@ html:has(.fc-table-scroll-wrap),body:has(.fc-table-scroll-wrap){
   scrollbar-gutter:stable;scrollbar-width:thin;box-sizing:border-box;
 }
 .pd-dynamics-scroll-wrap{display:block!important;width:100%!important;max-width:100%!important;min-height:520px!important;height:100%!important;max-height:100%!important;overflow-y:auto!important;overflow-x:auto!important;-webkit-overflow-scrolling:touch!important;scrollbar-gutter:stable!important;scrollbar-width:thin!important;scrollbar-color:#4a5568 #1a1c23!important;border:1px solid rgba(255,255,255,0.25)!important;border-radius:10px!important;margin:0.35em 0 0 0!important;box-sizing:border-box!important;}
-.pd-dynamics-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;vertical-align:middle!important;background:hsl(209,72%,6%)!important;}
+.pd-dynamics-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;vertical-align:middle!important;background:hsl(209,72%,6%)!important;overflow:visible!important;text-overflow:clip!important;white-space:nowrap!important;}
+.pd-dynamics-scroll-wrap thead th .bi-sort-label{white-space:nowrap!important;overflow:visible!important;flex:0 0 auto!important;display:inline-block!important;}
 .pd-dynamics-scroll-wrap .pf-dates-table,
 .pd-dynamics-table-wrap .pf-dates-table,
 .bi-sortable-html-root:has(.pd-dynamics-scroll-wrap) table.pf-dates-table,
@@ -1422,6 +1454,73 @@ html:has(.pf-dates-table-wrap),body:has(.pf-dates-table-wrap){
 </style>
 """
 
+_PD_DYNAMICS_IFRAME_SHELL_CSS_LIGHT = """
+<style>
+html:has(.pd-dynamics-scroll-wrap),body:has(.pd-dynamics-scroll-wrap),
+html:has(.pd-dynamics-table-wrap),body:has(.pd-dynamics-table-wrap){
+  overflow:hidden!important;margin:0;padding:0;height:100%!important;min-height:0!important;
+  background:#ffffff!important;color:#111827!important;
+}
+.bi-sortable-html-root:has(.pd-dynamics-scroll-wrap),
+.bi-sortable-html-root:has(.pd-dynamics-table-wrap){
+  overflow:hidden!important;height:100%!important;max-height:100%!important;min-height:0!important;
+}
+.pd-dynamics-scroll-wrap{
+  display:block!important;width:100%!important;max-width:100%!important;min-height:520px!important;
+  height:100%!important;max-height:100%!important;
+  overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;
+  scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:#94a3b8 #e5e7eb!important;
+  border:1px solid #cbd5e1!important;border-radius:10px!important;
+  box-sizing:border-box!important;margin:0.35em 0 0 0!important;
+}
+.pd-dynamics-scroll-wrap[data-scroll-box-h],
+.pd-dynamics-scroll-wrap[data-pd-box-h]{
+  height:100%!important;max-height:100%!important;min-height:0!important;
+  overflow-y:auto!important;overflow-x:auto!important;
+}
+.pd-dynamics-scroll-wrap thead th,
+.pd-dynamics-table-wrap thead th{
+  position:sticky!important;top:0!important;z-index:5!important;
+  background-color:#f3f4f6!important;color:#111827!important;
+  overflow:visible!important;text-overflow:clip!important;white-space:nowrap!important;
+}
+.pd-dynamics-scroll-wrap thead th .bi-sort-label,
+.pd-dynamics-table-wrap thead th .bi-sort-label{
+  white-space:nowrap!important;overflow:visible!important;text-overflow:clip!important;
+  flex:0 0 auto!important;display:inline-block!important;color:#111827!important;
+}
+.pd-dynamics-scroll-wrap tbody td:not(.pf-dev-red):not(.pf-dev-green),
+.pd-dynamics-table-wrap tbody td:not(.pf-dev-red):not(.pf-dev-green){
+  color:#111827!important;-webkit-text-fill-color:#111827!important;
+  border-color:#cbd5e1!important;
+}
+.pd-dynamics-scroll-wrap tr:hover td,
+.pd-dynamics-table-wrap tr:hover td{background-color:#f9fafb!important;}
+.pd-dynamics-scroll-wrap tr:nth-child(even) td,
+.pd-dynamics-table-wrap tr:nth-child(even) td{background-color:#fcfcfd!important;}
+.pd-dynamics-scroll-wrap .pf-dev-red,.pd-dynamics-scroll-wrap .pf-dev-red *,
+.pd-dynamics-table-wrap .pf-dev-red,.pd-dynamics-table-wrap .pf-dev-red *{
+  color:hsl(348,100%,63%)!important;-webkit-text-fill-color:hsl(348,100%,63%)!important;
+}
+.pd-dynamics-scroll-wrap .pf-dev-green,.pd-dynamics-scroll-wrap .pf-dev-green *,
+.pd-dynamics-table-wrap .pf-dev-green,.pd-dynamics-table-wrap .pf-dev-green *{
+  color:#15803d!important;-webkit-text-fill-color:#15803d!important;
+}
+.pd-dynamics-scroll-wrap .rendered-table th,
+.pd-dynamics-table-wrap .rendered-table th{
+  background:#f3f4f6!important;color:#111827!important;border-bottom:2px solid #cbd5e1!important;
+}
+.pd-dynamics-scroll-wrap .rendered-table td,
+.pd-dynamics-table-wrap .rendered-table td{
+  color:#111827!important;border-bottom:1px solid #cbd5e1!important;
+}
+.bi-sortable-html-root:has(.pd-dynamics-scroll-wrap) table.pf-dates-table,
+.bi-sortable-html-root:has(.pd-dynamics-table-wrap) table.pf-dates-table{
+  width:100%!important;min-width:100%!important;max-width:100%!important;table-layout:fixed!important;
+}
+</style>
+"""
+
 
 def _iframe_shell_css(html: str) -> str:
     html_l = html or ""
@@ -1444,6 +1543,10 @@ def _iframe_shell_css(html: str) -> str:
         or "pf-dates-table-wrap" in html_l
     ):
         return base + _PF_DATES_IFRAME_SHELL_CSS_LIGHT
+    if _light and (
+        "pd-dynamics-scroll-wrap" in html_l or "pd-dynamics-table-wrap" in html_l
+    ):
+        return base + _PD_DYNAMICS_IFRAME_SHELL_CSS_LIGHT
     return base
 
 
@@ -1803,22 +1906,30 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
         return
     if "pd-dynamics-scroll-wrap" in _b:
         _m_pd = re.search(r'data-pd-box-h="(\d+)"', html or "")
+        if not _m_pd:
+            _m_pd = re.search(r'data-scroll-box-h="(\d+)"', html or "")
         _h_pd = int(_m_pd.group(1)) if _m_pd else min(720, max(520, _estimate_html_block_height(html)))
-        doc_sc = doc.replace(
-            "</head>",
-            '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
-            '.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}'
-            'html body .pd-dynamics-scroll-wrap{height:100%!important;max-height:100%!important;min-height:100%!important;'
-            'width:100%!important;max-width:100%!important;'
-            'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;'
-            'scrollbar-gutter:stable!important;box-sizing:border-box!important;}'
-            'html body .pd-dynamics-scroll-wrap .pf-dates-table,'
-            'html body .pd-dynamics-table-wrap .pf-dates-table{'
-            'width:100%!important;min-width:100%!important;max-width:100%!important;table-layout:fixed!important;}'
-            'html body .pd-dynamics-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;'
-            'background:hsl(209,72%,6%)!important;}</style></head>',
-            1,
+        _light_pd = "bi-light-table" in (html or "") or "gdrs-light-table" in (html or "")
+        _th_bg = (
+            "background:#f3f4f6!important;color:#111827!important;"
+            if _light_pd
+            else "background:hsl(209,72%,6%)!important;"
         )
+        _pd_head_css = (
+            "<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;"
+            + ("background:#ffffff!important;color:#111827!important;" if _light_pd else "")
+            + ".bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}"
+            + "html body .pd-dynamics-scroll-wrap{height:100%!important;max-height:100%!important;min-height:100%!important;"
+            + "width:100%!important;max-width:100%!important;"
+            + "overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;"
+            + "scrollbar-gutter:stable!important;box-sizing:border-box!important;}"
+            + "html body .pd-dynamics-scroll-wrap .pf-dates-table,"
+            + "html body .pd-dynamics-table-wrap .pf-dates-table{"
+            + "width:100%!important;min-width:100%!important;max-width:100%!important;table-layout:fixed!important;}"
+            + f"html body .pd-dynamics-scroll-wrap thead th{{position:sticky!important;top:0!important;z-index:5!important;{_th_bg}}}"
+            + "</style></head>"
+        )
+        doc_sc = doc.replace("</head>", _pd_head_css, 1)
         components.html(doc_sc, height=_h_pd, scrolling=False)
         return
     if "fc-table-scroll-wrap" in _b:

@@ -233,11 +233,18 @@ _TABLE_CSS = """
 .pd-dynamics-table-wrap .pf-dates-table{
   width:100%!important;min-width:100%!important;max-width:100%!important;table-layout:fixed!important;
 }
-.pd-dynamics-scroll-wrap .pf-dates-table th,
-.pd-dynamics-scroll-wrap .pf-dates-table td,
-.pd-dynamics-table-wrap .pf-dates-table th,
-.pd-dynamics-table-wrap .pf-dates-table td{
+.pd-dynamics-scroll-wrap .pf-dates-table tbody td,
+.pd-dynamics-table-wrap .pf-dates-table tbody td{
   overflow:hidden;text-overflow:ellipsis;
+}
+.pd-dynamics-scroll-wrap .pf-dates-table thead th,
+.pd-dynamics-table-wrap .pf-dates-table thead th{
+  overflow:visible!important;text-overflow:clip!important;white-space:nowrap!important;
+}
+.pd-dynamics-scroll-wrap .pf-dates-table thead th .bi-sort-label,
+.pd-dynamics-table-wrap .pf-dates-table thead th .bi-sort-label{
+  white-space:nowrap!important;overflow:visible!important;text-overflow:clip!important;
+  flex:0 0 auto!important;display:inline-block!important;
 }
 .pf-dates-scroll-wrap{
   overflow-x:auto!important;overflow-y:auto!important;
@@ -484,6 +491,47 @@ def _gantt_table_css_for_theme() -> str:
     ):
         css = css.replace(old, new)
     return css
+
+
+def _pd_dynamics_table_shell_css_for_theme() -> str:
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        _light = is_light_preview_active()
+    except Exception:
+        _light = False
+    _border = "1px solid #cbd5e1" if _light else "1px solid rgba(255,255,255,0.25)"
+    _scroll = "scrollbar-color:#94a3b8 #e5e7eb!important;" if _light else ""
+    _pd_vh = 52.0
+    _pd_box_h = int(min(640, max(280, _pd_vh * 10 + 56)))
+    return (
+        "<style>"
+        "div[class*='st-key-bitblwrap_pd_dyn_tbl'],"
+        "div[class*='st-key-bitblwrap_pd_dyn_tbl'] div[data-testid='stVerticalBlock'],"
+        "div[class*='st-key-bitblwrap_pd_dyn_tbl'] div[data-testid='stElementContainer'],"
+        "[data-testid='stMainBlockContainer'] div[class*='st-key-bitblwrap_pd_dyn_tbl'],"
+        "div[class*='st-key-bitblwrap_pd_dyn_tbl'] div[data-testid='stElementContainer']:has(iframe),"
+        "div[class*='st-key-bitblwrap_pd_dyn_tbl'] iframe"
+        "{width:100%!important;max-width:100%!important;min-width:0!important;display:block!important;}"
+        ".pd-dynamics-table-wrap.budget-deviation-table-wrap,"
+        ".pd-dynamics-table-wrap.budget-deviation-table-wrap .budget-table-scroll"
+        "{width:100%!important;max-width:100%!important;box-sizing:border-box!important;}"
+        f".pd-dynamics-table-wrap.budget-deviation-table-wrap .budget-table-scroll.pd-dynamics-scroll-wrap{{"
+        f"height:{_pd_box_h}px!important;max-height:{_pd_box_h}px!important;min-height:0!important;"
+        f"overflow-y:auto!important;overflow-x:auto!important;"
+        f"-webkit-overflow-scrolling:touch!important;scrollbar-gutter:stable!important;"
+        f"border:{_border}!important;border-radius:10px!important;"
+        f"box-sizing:border-box!important;{_scroll}}}"
+        ".pd-dynamics-table-wrap .pf-dates-table,"
+        ".pd-dynamics-table-wrap .budget-table-scroll table"
+        "{width:100%!important;min-width:100%!important;max-width:100%!important;"
+        "table-layout:fixed!important;}"
+        ".pd-dynamics-table-wrap .budget-table-scroll thead th"
+        "{position:sticky!important;top:0!important;z-index:5!important;}"
+        "div[class*='st-key-bitblwrap_pd_dyn_tbl'] [data-testid='stPopover']"
+        "{margin-top:12px!important;}"
+        "</style>"
+    )
 
 
 def _render_html_table(
@@ -866,20 +914,58 @@ def _render_plan_fact_dates_main_table(
     _date_cols = {"Базовое начало", "Базовое окончание", "Начало", "Окончание"}
     _reason_cols = {"Причины отклонений", "Заметки"}
     _wrap_extra = (wrap_class or "").strip()
+    _is_pd_dyn = file_stem == "pd_dynamics_table" or "pd-dynamics-scroll-wrap" in _wrap_extra
     _wrap_cls = "rendered-table-wrap pf-dates-table-wrap"
-    if _wrap_extra:
+    _scroll_attr = ""
+    _pd_wrap_id = ""
+    _pd_box_h = 0
+    if _is_pd_dyn:
+        _pd_vh = 52.0
+        _pd_box_h = int(min(640, max(280, _pd_vh * 10 + 56)))
+        _pd_wrap_id = f"pd_dyn_{abs(id(display_df))}"
+        _wrap_cls = (
+            "budget-deviation-table-wrap pd-dynamics-table-wrap "
+            "rendered-table-wrap pf-dates-table-wrap"
+        )
+        _scroll_attr = (
+            f' data-scroll-vh="{_pd_vh:.1f}" data-scroll-box-h="{_pd_box_h}"'
+        )
+    elif _wrap_extra:
         _wrap_cls = f"{_wrap_cls} {_wrap_extra}"
     elif file_stem == "plan_fact_dates":
         _wrap_cls = f"{_wrap_cls} pf-dates-scroll-wrap"
-    _scroll_attr = ""
-    if "pf-dates-scroll-wrap" in _wrap_cls:
+    if not _is_pd_dyn and "pf-dates-scroll-wrap" in _wrap_cls:
         _pf_box_h = int(min(640, max(180, 44 + len(display_df) * 28 + 12)))
         _scroll_attr = f' data-scroll-box-h="{_pf_box_h}"'
-    parts = [
-        f'<div class="{_wrap_cls}" data-bi-rows="{len(display_df)}"{_scroll_attr}>',
+    parts: list[str] = []
+    if _is_pd_dyn:
+        parts.extend(
+            [
+                "<style>",
+                f"#{_pd_wrap_id} .budget-table-scroll {{ height: {_pd_box_h}px !important; "
+                f"max-height: {_pd_box_h}px !important; min-height: 0; "
+                "overflow: auto; -webkit-overflow-scrolling: touch; scrollbar-gutter: stable; "
+                "box-sizing: border-box; }",
+                f"#{_pd_wrap_id}.budget-deviation-table-wrap {{ display: block; overflow: hidden; "
+                "width: 100%; margin: 0.35em 0 0 0; }}",
+                f"#{_pd_wrap_id} thead th {{ position: sticky; top: 0; z-index: 5; }}",
+                f"#{_pd_wrap_id} .budget-table-scroll table {{ width: 100%; min-width: 100%; "
+                "table-layout: fixed; }}",
+                "</style>",
+                f'<div id="{_pd_wrap_id}" class="{_wrap_cls}" data-bi-rows="{len(display_df)}">',
+                f'<div class="budget-table-scroll pd-dynamics-scroll-wrap"{_scroll_attr}>',
+            ]
+        )
+    else:
+        parts.append(
+            f'<div class="{_wrap_cls}" data-bi-rows="{len(display_df)}"{_scroll_attr}>'
+        )
+    parts.extend(
+        [
         '<table class="rendered-table bi-sortable-table pf-dates-table bi-sort-click-only">',
         "<thead><tr>",
-    ]
+        ]
+    )
     for c in display_df.columns:
         cls = _plan_fact_dates_col_css_class(c)
         c_esc = html_module.escape(str(c))
@@ -950,7 +1036,11 @@ def _render_plan_fact_dates_main_table(
             align = f' style="{"".join(style_parts)}"' if style_parts else ""
             parts.append(f'<td class="{cls}"{sort_attr}{align}>{cell}</td>')
         parts.append("</tr>")
-    parts.append("</tbody></table></div>")
+    parts.append("</tbody></table>")
+    if _is_pd_dyn:
+        parts.append("</div></div>")
+    else:
+        parts.append("</div>")
     _kp = key_prefix or f"pf_dates_{abs(id(display_df))}"
     render_report_html_table(
         _gantt_table_css_for_theme() + mark_html_table_sortable("".join(parts)),
@@ -28208,6 +28298,13 @@ def _pd_build_project_indicator_chart_data(
 
 def _pd_delay_indicator_color(val: float, dev_max: float) -> str:
     if dev_max <= 0 or val <= 0:
+        try:
+            from dashboards.light_theme import is_light_preview_active
+
+            if is_light_preview_active():
+                return "#15803d"
+        except Exception:
+            pass
         return "#1E8449"
     r = min(max(val / dev_max, 0.0), 1.0)
     if r < 0.5:
@@ -28234,9 +28331,17 @@ def _pd_delay_project_indicator_card_html(
         if int(ovd_i) <= 0
         else f"Просрочка: {int(ovd_i)} док."
     )
+    _border = ""
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if is_light_preview_active():
+            _border = "border:1px solid rgba(15,23,42,0.08);"
+    except Exception:
+        pass
     return (
         f"<div style='background:{bg};color:white;padding:10px 14px;border-radius:8px;"
-        f"margin-bottom:8px;min-height:68px;box-sizing:border-box;'>"
+        f"margin-bottom:8px;min-height:68px;box-sizing:border-box;{_border}'>"
         f"<div style='font-size:13px;opacity:0.9;'>{_proj}</div>"
         f"<div style='font-size:18px;font-weight:600;'>{_label}</div>"
         f"</div>"
@@ -28292,6 +28397,18 @@ def _render_pd_delay_project_indicators(
 def _pd_delay_chart_compact_css(key: str, height: int) -> str:
     """Фиксированная высота блока Plotly — без «раздувания» после загрузки iframe."""
     h = max(280, int(height))
+    _chart_shell = ""
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if is_light_preview_active():
+            _chart_shell = (
+                f"div[class*=\"st-key-{key}\"] [data-testid=\"stPlotlyChart\"]{{"
+                f"background:#ffffff!important;border:1px solid #cbd5e1!important;"
+                f"border-radius:8px!important;}}"
+            )
+    except Exception:
+        pass
     return (
         f"<style>"
         f"div[class*=\"st-key-{key}\"] [data-testid=\"stPlotlyChart\"]{{"
@@ -28302,6 +28419,7 @@ def _pd_delay_chart_compact_css(key: str, height: int) -> str:
         f"min-height:{h}px!important;height:{h}px!important;max-height:{h}px!important;"
         f"display:block!important;"
         f"}}"
+        f"{_chart_shell}"
         f"</style>"
     )
 
@@ -28514,6 +28632,15 @@ def _pd_delay_section_duration_figure(
     else:
         fig.update_xaxes(type="date", tickformat="%d.%m.%Y", automargin=True)
     fig = apply_chart_background(fig)
+    _ax_clr = _fin_chart_axis_color()
+    fig.update_xaxes(
+        tickfont=dict(color=_ax_clr, size=11),
+        title_font=dict(color=_ax_clr),
+    )
+    fig.update_yaxes(
+        tickfont=dict(color=_ax_clr, size=11),
+        title_font=dict(color=_ax_clr),
+    )
     return fig
 
 
@@ -28666,6 +28793,15 @@ def _pd_delay_plan_fact_figure(
     )
     fig.update_xaxes(range=[0, x_max * 1.12], automargin=True)
     fig = apply_chart_background(fig)
+    _ax_clr = _fin_chart_axis_color()
+    fig.update_xaxes(
+        tickfont=dict(color=_ax_clr, size=11),
+        title_font=dict(color=_ax_clr),
+    )
+    fig.update_yaxes(
+        tickfont=dict(color=_ax_clr, size=11),
+        title_font=dict(color=_ax_clr),
+    )
     return fig
 
 
@@ -29808,11 +29944,12 @@ def dashboard_documentation(
                         _pie_vals = list(pie_data.values())
                         _pie_h = 560
                         _leg_col, _chart_col = st.columns([0.15, 0.85], gap="small")
+                        _pd_pie_leg_clr = _fin_chart_label_color()
                         with _leg_col:
                             _leg_items = "".join(
                                 f"<div style='display:flex;align-items:center;gap:8px;margin:6px 0;'>"
                                 f"<span style='color:{_pie_color_map.get(lbl, '#2E86AB')};font-size:16px;line-height:1;'>■</span>"
-                                f"<span style='color:#f0f4f8;font-size:13px;'>{lbl}</span></div>"
+                                f"<span style='color:{_pd_pie_leg_clr};font-size:13px;'>{lbl}</span></div>"
                                 for lbl in _pie_names
                             )
                             st.markdown(
@@ -30614,17 +30751,23 @@ def dashboard_documentation(
                             hovermode="x unified",
                             height=550,
                             xaxis=dict(
-                                title=dict(text="Период", standoff=56),
+                                title=dict(
+                                    text="Период",
+                                    standoff=56,
+                                    font=dict(color=_fin_chart_axis_color()),
+                                ),
                                 tickmode="array",
                                 tickvals=_pd_tickvals,
                                 ticktext=_pd_ticktext,
                                 tickangle=-45,
-                                tickfont=dict(size=10),
+                                tickfont=dict(size=10, color=_fin_chart_axis_color()),
                                 automargin=False,
                             ),
                             yaxis=dict(
                                 range=[_pd_y_lo, _pd_y_max + _pd_head],
                                 autorange=False,
+                                tickfont=dict(size=10, color=_fin_chart_axis_color()),
+                                title_font=dict(color=_fin_chart_axis_color()),
                             ),
                             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, title_text=""),
                         )
@@ -30728,33 +30871,7 @@ def dashboard_documentation(
                         tbl_numeric["Базовое окончание"] = tbl_f["_bf"].values
                         tbl_numeric["Окончание"] = tbl_f["_sf"].values
                         tbl_numeric["Отклонение окончания"] = _dev_round.values
-                        st.markdown(
-                            "<style>"
-                            "div[class*='st-key-bitblwrap_pd_dyn_tbl'],"
-                            "div[class*='st-key-bitblwrap_pd_dyn_tbl'] div[data-testid='stVerticalBlock'],"
-                            "div[class*='st-key-bitblwrap_pd_dyn_tbl'] div[data-testid='stElementContainer'],"
-                            "[data-testid='stMainBlockContainer'] div[class*='st-key-bitblwrap_pd_dyn_tbl'],"
-                            "div[class*='st-key-bitblwrap_pd_dyn_tbl'] div[data-testid='stElementContainer']:has(iframe),"
-                            "div[class*='st-key-bitblwrap_pd_dyn_tbl'] iframe"
-                            "{width:100%!important;max-width:100%!important;min-width:0!important;display:block!important;}"
-                            ".pd-dynamics-table-wrap,.pd-dynamics-table-wrap table,"
-                            ".pd-dynamics-scroll-wrap,.pd-dynamics-scroll-wrap table,"
-                            ".pd-dynamics-scroll-wrap .pf-dates-table"
-                            "{width:100%!important;min-width:100%!important;max-width:100%!important;"
-                            "table-layout:fixed!important;}"
-                            ".pd-dynamics-table-wrap,.pd-dynamics-scroll-wrap"
-                            "{margin:0.35em 0 0.85em 0!important;box-sizing:border-box!important;}"
-                            ".pd-dynamics-scroll-wrap{min-height:520px!important;height:100%!important;"
-                            "max-height:100%!important;overflow-y:auto!important;overflow-x:auto!important;"
-                            "-webkit-overflow-scrolling:touch!important;scrollbar-gutter:stable!important;"
-                            "border:1px solid rgba(255,255,255,0.25)!important;border-radius:10px!important;"
-                            "box-sizing:border-box!important;}"
-                            ".pd-dynamics-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;}"
-                            "div[class*='st-key-bitblwrap_pd_dyn_tbl'] [data-testid='stPopover']"
-                            "{margin-top:12px!important;}"
-                            "</style>",
-                            unsafe_allow_html=True,
-                        )
+                        st.markdown(_pd_dynamics_table_shell_css_for_theme(), unsafe_allow_html=True)
                         _export_tbl = tbl_show.copy()
                         _render_plan_fact_dates_main_table(
                             tbl_show,

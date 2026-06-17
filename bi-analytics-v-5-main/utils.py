@@ -367,6 +367,20 @@ def mark_html_table_sortable(html: str) -> str:
         return tag[:-1] + ' class="bi-sortable-table bi-sort-click-only"' + tag[-1]
 
     out = re.sub(r"<table\b[^>]*>", _patch_table_tag, html, flags=re.I)
+
+    def _inject_th_sort_label(m: re.Match) -> str:
+        attrs, inner = m.group(1) or "", m.group(2) or ""
+        if re.search(r"\bdata-sort-label\s*=", attrs, flags=re.I):
+            return m.group(0)
+        label = re.sub(r"<[^>]+>", "", inner)
+        label = html_module.unescape(label).strip()
+        label = re.sub(r"\s*[\u21C5\u25B2\u25BC\u2191\u2193]+\s*$", "", label).strip()
+        if not label:
+            return m.group(0)
+        esc = html_module.escape(label, quote=True)
+        return f"<th{attrs} data-sort-label=\"{esc}\">{inner}</th>"
+
+    out = re.sub(r"<th(\b[^>]*)>(.*?)</th>", _inject_th_sort_label, out, flags=re.I | re.S)
     try:
         from dashboards.light_theme import is_light_preview_report
 
@@ -2477,6 +2491,7 @@ def _scroll_box_table_html(html: str) -> bool:
     return (
         "fc-table-scroll-wrap" in b
         or "pd-dynamics-scroll-wrap" in b
+        or ("pd-dynamics-table-wrap" in b and "budget-table-scroll" in b)
         or "pred-detail-wrap" in b
         or ("budget-deviation-table-wrap" in b and "budget-table-scroll" in b)
         or ("gantt-schedule-scroll-wrap" in b and 'data-scroll-box-h="' in b)
@@ -2498,11 +2513,19 @@ def _scroll_box_height_px(html: str, *, cap: int = 640) -> int:
         if _m_vh:
             _vh = float(_m_vh.group(1))
             return int(min(cap, max(280, _vh * 10 + 56)))
-    if "pd-dynamics-scroll-wrap" in _body:
-        _rows_m = re.search(r'data-bi-rows="(\d+)"', html or "")
-        _rows_n = int(_rows_m.group(1)) if _rows_m else 0
-        _est = 84 + _rows_n * 34
-        return int(min(720, max(520, _est)))
+    if "pd-dynamics-scroll-wrap" in _body or (
+        "pd-dynamics-table-wrap" in _body and "budget-table-scroll" in _body
+    ):
+        _m_box = re.search(r'data-scroll-box-h="(\d+)"', _body) or re.search(
+            r'data-pd-box-h="(\d+)"', _body
+        )
+        if _m_box:
+            return int(_m_box.group(1))
+        _m_vh = re.search(r'data-scroll-vh="([\d.]+)"', _body)
+        if _m_vh:
+            _vh = float(_m_vh.group(1))
+            return int(min(640, max(280, _vh * 10 + 56)))
+        return 576
     _rows_m = re.search(r'data-bi-rows="(\d+)"', html or "")
     _rows_n = int(_rows_m.group(1)) if _rows_m else 0
     _est = 84 + _rows_n * 34
@@ -2524,10 +2547,10 @@ def _render_pd_dynamics_html_table(
 
     _pd_h = int(_scroll_box_height_px(html))
     _wrap_key = "bitblwrap_" + str(key_prefix).replace(" ", "_")
-    if "data-pd-box-h=" not in (html or ""):
+    if "data-pd-box-h=" not in (html or "") and 'data-scroll-box-h="' not in (html or ""):
         html = (html or "").replace(
-            "pd-dynamics-scroll-wrap",
-            f'pd-dynamics-scroll-wrap" data-pd-box-h="{_pd_h}',
+            'class="budget-table-scroll pd-dynamics-scroll-wrap"',
+            f'class="budget-table-scroll pd-dynamics-scroll-wrap" data-scroll-box-h="{_pd_h}"',
             1,
         )
     st.markdown(
