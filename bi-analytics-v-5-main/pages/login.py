@@ -229,6 +229,9 @@ else:
                     st.session_state.authenticated = True
                     st.session_state.user = user
                     st.session_state.current_dashboard = "Девелоперские проекты"
+                    from auth import mark_sidebar_categories_collapsed_on_login
+
+                    mark_sidebar_categories_collapsed_on_login()
                     schedule_ftp_reload_after_login(st.session_state)
                     st.success(f"Добро пожаловать, {user['username']}!")
                     st.balloons()

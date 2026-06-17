@@ -702,6 +702,10 @@ def main():
 
                                 st.session_state.user = user
 
+                                from auth import mark_sidebar_categories_collapsed_on_login
+
+                                mark_sidebar_categories_collapsed_on_login()
+
                                 # Persistent-сессия: токен в URL ?sid=...
                                 # позволит восстановить логин при разрыве
                                 # websocket Streamlit Cloud (длинная обработка

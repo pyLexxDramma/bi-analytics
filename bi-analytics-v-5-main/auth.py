@@ -826,6 +826,18 @@ def require_auth():
         st.stop()
 
 
+SIDEBAR_COLLAPSE_CATEGORIES_KEY = "_sidebar_collapse_categories_on_login"
+
+
+def mark_sidebar_categories_collapsed_on_login() -> None:
+    """Свернуть группы отчётов в сайдбаре сразу после входа."""
+    if is_streamlit_context():
+        st.session_state[SIDEBAR_COLLAPSE_CATEGORIES_KEY] = True
+        for key in list(st.session_state.keys()):
+            if str(key).startswith("sidebar_cat_"):
+                del st.session_state[key]
+
+
 def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool = True):
     """
     Отображение боковой панели с меню навигации
@@ -911,6 +923,7 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
             st.markdown('<p class="sidebar-section-title">Отчёты</p>', unsafe_allow_html=True)
             st.markdown("---")
             current_dashboard = st.session_state.get("current_dashboard", "")
+            _collapse_cats = st.session_state.get(SIDEBAR_COLLAPSE_CATEGORIES_KEY, False)
             for cat_name, reports in get_report_categories():
                 visible = filter_reports_for_role(user["role"], list(reports))
                 if not visible:
@@ -927,10 +940,20 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
                         key=f"menu_report_{report}",
                         type=button_type,
                     ):
+                        st.session_state.pop(SIDEBAR_COLLAPSE_CATEGORIES_KEY, None)
                         st.session_state.current_dashboard = report
                         st.rerun()
                 else:
-                    with st.expander(cat_name, expanded=_expand_here):
+                    _exp_key = f"sidebar_cat_{cat_name}"
+                    if _exp_key not in st.session_state:
+                        st.session_state[_exp_key] = False if _collapse_cats else _expand_here
+                    elif not _collapse_cats and _expand_here:
+                        st.session_state[_exp_key] = True
+                    with st.expander(
+                        cat_name,
+                        expanded=st.session_state[_exp_key],
+                        key=_exp_key,
+                    ):
                         for report in visible:
                             button_type = (
                                 "primary" if current_dashboard == report else "secondary"
@@ -941,6 +964,8 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
                                 key=f"menu_report_{report}",
                                 type=button_type,
                             ):
+                                st.session_state.pop(SIDEBAR_COLLAPSE_CATEGORIES_KEY, None)
+                                st.session_state[_exp_key] = True
                                 st.session_state.current_dashboard = report
                                 st.rerun()
             st.markdown("---")
