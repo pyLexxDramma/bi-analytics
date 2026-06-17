@@ -273,6 +273,27 @@ def is_release_client_mode() -> bool:
     return False
 
 
+def show_light_preview_reports() -> bool:
+    """
+    Вкладки «(превью — светлая)» — только dev/локальная разработка, не клиентский prod.
+
+    Скрыты на release, ai.conall.ru и при ``BI_ANALYTICS_HIDE_LIGHT_PREVIEW=1``.
+    Принудительно включить: ``BI_ANALYTICS_LIGHT_PREVIEW=1``.
+    """
+    if _env_truthy("BI_ANALYTICS_LIGHT_PREVIEW"):
+        return True
+    if _env_truthy("BI_ANALYTICS_HIDE_LIGHT_PREVIEW"):
+        return False
+    if is_release_client_mode():
+        return False
+    host = _streamlit_request_host()
+    if host and "ai.conall.ru" in host and "bi-analytics-dev" not in host:
+        return False
+    if _git_current_branch() == "release":
+        return False
+    return True
+
+
 def show_data_ops_ui_for_role(role: Optional[str]) -> bool:
     """
     Показывать панель «Источник данных», FTP, «Загрузить из web/», «Версия данных».

@@ -11,6 +11,18 @@ MAIN_PANEL_TIMELINE_CATEGORY = "Сроки"
 MAIN_PANEL_FINANCE_CATEGORY = "Финансы"
 
 
+def get_report_categories() -> List[Tuple[str, List[str]]]:
+    """Категории отчётов для меню; светлые превью — только в dev."""
+    from dashboards.light_theme import filter_reports_hide_light_preview
+
+    out: List[Tuple[str, List[str]]] = []
+    for title, reports in REPORT_CATEGORIES:
+        filtered = filter_reports_hide_light_preview(list(reports))
+        if filtered:
+            out.append((title, filtered))
+    return out
+
+
 def get_main_panel_report_lists(role: str) -> Tuple[List[str], List[str], List[str]]:
     """
     Возвращает (отчёты «Сроки», отчёты «Финансы», все остальные отчёты) с учётом RBAC.
@@ -20,13 +32,13 @@ def get_main_panel_report_lists(role: str) -> Tuple[List[str], List[str], List[s
 
     timeline: List[str] = []
     finance: List[str] = []
-    for title, reps in REPORT_CATEGORIES:
+    for title, reps in get_report_categories():
         if title == MAIN_PANEL_TIMELINE_CATEGORY:
             timeline = list(reps)
         elif title == MAIN_PANEL_FINANCE_CATEGORY:
             finance = list(reps)
     all_flat: List[str] = []
-    for _, reps in REPORT_CATEGORIES:
+    for _, reps in get_report_categories():
         all_flat.extend(list(reps))
     other = [r for r in all_flat if r not in timeline and r not in finance]
     return (
@@ -290,7 +302,7 @@ def _get_dashboards() -> Dict[str, Callable]:
 # Ленивая загрузка, чтобы при импорте dashboards не тянуть project_visualization_app
 # Увеличьте версию при изменении реестра отчётов — иначе долгоживущий процесс Streamlit
 # может держать устаревший словарь в памяти.
-_DASHBOARDS_REGISTRY_VERSION = 102
+_DASHBOARDS_REGISTRY_VERSION = 103
 _dashboards_cache: Dict[str, Callable] = {}
 _dashboards_cache_version: int = 0
 _renderers_mtime: float = 0.0
@@ -336,7 +348,7 @@ def get_dashboard_renderer(name: str) -> Callable:
 
 def get_all_report_names() -> List[str]:
     """Возвращает плоский список всех имён отчётов (для report_params, filters и т.д.)."""
-    return [r for _, reports in REPORT_CATEGORIES for r in reports]
+    return [r for _, reports in get_report_categories() for r in reports]
 
 
 
