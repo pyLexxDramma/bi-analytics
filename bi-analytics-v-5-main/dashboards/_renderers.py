@@ -25668,7 +25668,7 @@ _EXEC_DOC_DETAIL_CSS = """
 /* Компактные «технические» колонки, чтобы даты/сроки/дни визуально «привязались» к цифрам, а широкие поля — не съедали весь макет */
 .exec-col-num { width:10ch; min-width:10ch; max-width:12ch; text-align:center; }
 .exec-col-dly { width:12ch; min-width:12ch; max-width:14ch; text-align:center; }
-.exec-col-st { width:14ch; min-width:14ch; max-width:18ch; text-align:center; }
+.exec-col-st { width:11.5em; min-width:11.5em; max-width:none; text-align:center; }
 .exec-col-date { width:13ch; min-width:13ch; max-width:14ch; text-align:center; }
 .exec-col-text { width:auto; min-width:16ch; max-width:none; }
 .exec-doc-table tr:nth-child(even) td { background:rgba(255,255,255,0.025); }
@@ -25700,25 +25700,43 @@ _EXEC_DOC_DETAIL_CSS = """
 .exec-kpi-subtitle { color:#97a9bc; font-size:12px; margin-top:8px; line-height:1.4; }
 .exec-kpi-delta-pos { color:#4ade80; font-size:12px; font-weight:700; margin-top:8px; }
 .exec-kpi-delta-neg { color:#f87171; font-size:12px; font-weight:700; margin-top:8px; }
-/* Прокрутка детальной таблицы (scroll-box pred-detail-wrap), но сохраняем исходный
-   вид шапки/ячеек ИД — перебиваем общие правила .pred-detail-wrap большей специфичностью. */
-.exec-doc-table-wrap.pred-detail-wrap { border-radius:14px; border:1px solid rgba(82,104,130,0.45); margin:0.75rem 0 0.5rem; }
-.exec-doc-table-wrap.pred-detail-wrap table { border:none !important; border-collapse:collapse !important; }
-.exec-doc-table-wrap.pred-detail-wrap thead th {
+/* Прокрутка детальной таблицы ИД — отдельный scroll-box (не pred-detail-wrap:
+   иначе JS iframe принудительно ставит table-layout:fixed и съезжает «Статус»). */
+.exec-doc-table-wrap.exec-doc-scroll-wrap {
+  display:block; width:100%; max-width:100%;
+  height:min(70vh, 520px); max-height:min(70vh, 520px);
+  overflow-x:auto; overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
+  scrollbar-gutter:stable; scrollbar-width:thin;
+  border-radius:14px; border:1px solid rgba(82,104,130,0.45); margin:0.75rem 0 0.5rem;
+}
+.exec-doc-table-wrap.exec-doc-scroll-wrap table {
+  width:max-content !important; min-width:100% !important;
+  table-layout:auto !important; border:none !important; border-collapse:collapse !important;
+}
+.exec-doc-table-wrap.exec-doc-scroll-wrap thead th {
+  position:sticky; top:0; z-index:4;
   background:#16283a !important; color:#f8fbff !important; font-size:11px !important;
   font-weight:700 !important; padding:6px 8px !important; text-transform:uppercase !important;
   border:none !important; border-bottom:1px solid rgba(138,160,184,0.28) !important;
+  vertical-align:bottom !important; text-align:center !important;
 }
-.exec-doc-table-wrap.pred-detail-wrap tbody td {
+.exec-doc-table-wrap.exec-doc-scroll-wrap tbody td {
   font-size:13px !important; padding:5px 8px !important; color:#e8eef5 !important;
-  vertical-align:top !important; border:none !important;
+  vertical-align:middle !important; border:none !important;
   border-bottom:1px solid rgba(82,104,130,0.28) !important;
   white-space:normal !important; overflow:visible !important; text-overflow:clip !important;
 }
-.exec-doc-table-wrap.pred-detail-wrap tbody td.exec-col-num,
-.exec-doc-table-wrap.pred-detail-wrap tbody td.exec-col-dly,
-.exec-doc-table-wrap.pred-detail-wrap tbody td.exec-col-date,
-.exec-doc-table-wrap.pred-detail-wrap tbody td.exec-col-st { white-space:nowrap !important; text-align:center !important; }
+.exec-doc-table-wrap.exec-doc-scroll-wrap tbody td.exec-col-num,
+.exec-doc-table-wrap.exec-doc-scroll-wrap tbody td.exec-col-dly,
+.exec-doc-table-wrap.exec-doc-scroll-wrap tbody td.exec-col-date,
+.exec-doc-table-wrap.exec-doc-scroll-wrap tbody td.exec-col-st {
+  white-space:nowrap !important; text-align:center !important; overflow:visible !important;
+}
+.exec-doc-table-wrap.exec-doc-scroll-wrap tbody td.exec-col-st .exec-pill,
+.exec-doc-table-wrap.exec-doc-scroll-wrap tbody td.exec-col-st .exec-pill-muted {
+  display:inline-block; max-width:none; vertical-align:middle;
+}
 </style>
 """
 
@@ -25964,9 +25982,9 @@ def _exec_detail_table_html(
         body_parts.append("</tr>")
     body_parts.append("</tbody>")
     # ТЗ (скриншот, п.5): вертикальная прокрутка детальной таблицы (липкая шапка,
-    # ограниченная высота) — класс pred-detail-wrap подключает единый scroll-box.
+    # ограниченная высота) — класс exec-doc-scroll-wrap (не pred-detail-wrap).
     return (
-        f'<div class="exec-doc-table-wrap pred-detail-wrap" data-bi-rows="{len(show)}">'
+        f'<div class="exec-doc-table-wrap exec-doc-scroll-wrap" data-bi-rows="{len(show)}">'
         '<table class="exec-doc-table bi-sortable-table bi-sort-click-only">'
         + thead
         + "".join(body_parts)
@@ -38709,6 +38727,7 @@ def dashboard_predpisania(df):
         return 0
 
     pred["_overdue_days"] = pred.apply(_overdue_days_row, axis=1)
+    pred["_overdue_open"] = (~pred["_resolved"].astype(bool)) & (pred["_overdue_days"] > 0)
     # Критичность: тег «КРИТИЧНЫЙ» в Tessa_Teg (+ синонимы). KindID вида «Предписания»
     # проверяем только если в строке есть непустое значение KindID; иначе допускаем
     # (набор уже отфильтрован по KindName «Предписания»).
@@ -38988,13 +39007,18 @@ def dashboard_predpisania(df):
     if "_overdue_days" not in filtered.columns:
         filtered = filtered.copy()
         filtered["_overdue_days"] = 0
+    if "_overdue_open" not in filtered.columns:
+        filtered = filtered.copy()
+        filtered["_overdue_open"] = (~filtered["_resolved"].astype(bool)) & (
+            filtered["_overdue_days"] > 0
+        )
 
     unres_mask = ~filtered["_resolved"].astype(bool)
     resolved_mask = filtered["_resolved"].astype(bool)
     n_total = int(len(filtered))
     n_unresolved = int(unres_mask.sum())
     n_resolved = int(resolved_mask.sum())
-    n_overdue = int((unres_mask & (filtered["_overdue_days"] > 0)).sum())
+    n_overdue = int(filtered["_overdue_open"].sum())
     n_non_overdue = int((filtered["_overdue_days"] <= 0).sum())
     n_critical = int((unres_mask & filtered["_critical"]).sum())
 
@@ -39048,7 +39072,7 @@ def dashboard_predpisania(df):
                 .agg(
                     **{
                         _cnt_col: (chart_group_col, "size"),
-                        "Просрочено": ("_overdue_days", lambda x: int((x > 0).sum())),
+                        "Просрочено": ("_overdue_open", "sum"),
                         "Мин_дата": ("_issue_date", "min"),
                         "Макс_дата": ("_issue_date", "max"),
                     }
@@ -39311,7 +39335,7 @@ def dashboard_predpisania(df):
     )
     table_df = _pred_sort_table_df(table_df, "Дней просрочки", "desc")
 
-    overdue_cnt = int((show["_overdue_days"] > 0).sum())
+    overdue_cnt = n_overdue
     suppress_caption(
         f"Записей: {len(table_df)} · просроченных: {overdue_cnt} · "
         f"непросроченных: {n_non_overdue} · устраненных: {int(show['_resolved'].sum())}"

@@ -369,6 +369,24 @@ _TABLE_SORT_JS = r"""
         window.parent.postMessage({ type: "streamlit:setFrameHeight", height: pdBoxH }, "*");
         return;
       }
+      var execBox = document.querySelector(".exec-doc-scroll-wrap");
+      if (execBox) {
+        try {
+          var feEx = window.frameElement;
+          if (feEx) {
+            feEx.style.setProperty("width", "100%", "important");
+            feEx.style.setProperty("max-width", "100%", "important");
+            feEx.style.setProperty("display", "block", "important");
+          }
+        } catch (e) {}
+        execBox.style.setProperty("width", "100%", "important");
+        execBox.style.setProperty("max-width", "100%", "important");
+        var exH = Math.ceil(execBox.getBoundingClientRect().height) + 24;
+        if (exH > 0) {
+          window.parent.postMessage({ type: "streamlit:setFrameHeight", height: exH }, "*");
+          return;
+        }
+      }
       var fcBox = document.querySelector(".fc-table-scroll-wrap")
         || document.querySelector(".pred-detail-wrap");
       if (fcBox) {
@@ -661,6 +679,24 @@ _COMPACT_FRAME_FIT_JS = r"""
           return;
         }
       }
+      var execDoc = document.querySelector(".exec-doc-scroll-wrap");
+      if (execDoc) {
+        try {
+          var feEx2 = window.frameElement;
+          if (feEx2) {
+            feEx2.style.setProperty("width", "100%", "important");
+            feEx2.style.setProperty("max-width", "100%", "important");
+            feEx2.style.setProperty("display", "block", "important");
+          }
+        } catch (e) {}
+        execDoc.style.setProperty("width", "100%", "important");
+        execDoc.style.setProperty("max-width", "100%", "important");
+        var exH2 = Math.ceil(execDoc.getBoundingClientRect().height) + 24;
+        if (exH2 > 0) {
+          window.parent.postMessage({ type: "streamlit:setFrameHeight", height: exH2 }, "*");
+          return;
+        }
+      }
       var fc = document.querySelector(".fc-table-scroll-wrap")
         || document.querySelector(".pred-detail-wrap");
       if (fc) {
@@ -767,6 +803,16 @@ html:has(.pf-dates-scroll-wrap),body:has(.pf-dates-scroll-wrap){
 .bi-sortable-html-root:has(.pf-dates-scroll-wrap){
   overflow:visible!important;height:100%!important;max-height:100vh!important;
 }
+.bi-sortable-html-root:has(.exec-doc-scroll-wrap){overflow:visible!important;overflow-x:hidden!important}
+html:has(.exec-doc-scroll-wrap),body:has(.exec-doc-scroll-wrap){overflow:hidden!important;margin:0;padding:0}
+.exec-doc-scroll-wrap{
+  display:block;width:100%!important;margin:0;padding:0;
+  height:min(70vh,520px)!important;max-height:min(70vh,520px)!important;
+  overflow-x:auto!important;overflow-y:scroll!important;
+  scrollbar-gutter:stable;scrollbar-width:thin;
+}
+.exec-doc-scroll-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important}
+.exec-doc-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;vertical-align:middle!important;text-align:center!important}
 .bi-sortable-html-root:has(.pred-detail-wrap){overflow:visible!important;overflow-x:hidden!important}
 html:has(.pred-detail-wrap),body:has(.pred-detail-wrap){overflow:hidden!important;margin:0;padding:0}
 .pred-detail-wrap{
@@ -1154,7 +1200,7 @@ def _estimate_html_block_height(html: str) -> int:
         thead_h = 56
         row_h = 34
         extra = 48
-    elif "pred-detail-wrap" in html_l:
+    elif "exec-doc-scroll-wrap" in html_l or "pred-detail-wrap" in html_l:
         thead_h = 56
         row_h = 50
         extra = 48
@@ -1192,7 +1238,7 @@ def _estimate_html_block_height(html: str) -> int:
         return int(max(68, est))
     if "pf-dates-table-wrap" in html_l or "pf-dates-table" in html_l:
         return int(max(72, est))
-    if "pred-detail-wrap" in html_l:
+    if "exec-doc-scroll-wrap" in html_l or "pred-detail-wrap" in html_l:
         return int(max(420, min(820, est + 24)))
     if "fc-table-scroll-wrap" in html_l:
         return int(max(840, min(1640, est + 24)))
@@ -1279,6 +1325,7 @@ def _html_block_compact(html: str) -> bool:
         or "pf-dates-scroll-wrap" in html_l
         or "pf-dates-table" in html_l
         or "pred-detail-wrap" in html_l
+        or "exec-doc-scroll-wrap" in html_l
         or "fc-table-scroll-wrap" in html_l
         or "gantt-schedule-table-wrap" in html_l
         or "gantt-schedule-scroll-wrap" in html_l
@@ -1302,6 +1349,20 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
     # Маршрутизация по реальным классам-обёрткам (без <style>): иначе CSS-селекторы
     # в _TABLE_CSS ложно матчатся подстрокой и все таблицы уходят в одну ветку.
     _b = re.sub(r"<style[^>]*>.*?</style>", "", html or "", flags=re.I | re.S)
+    if "exec-doc-scroll-wrap" in _b:
+        doc_sc = doc.replace(
+            "</head>",
+            '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
+            '.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}'
+            'html body .exec-doc-scroll-wrap{height:min(70vh,520px)!important;max-height:min(70vh,520px)!important;'
+            'min-height:0!important;overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;}'
+            'html body .exec-doc-scroll-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important;}'
+            'html body .exec-doc-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;}'
+            '</style></head>',
+            1,
+        )
+        components.html(doc_sc, height=584, scrolling=False)
+        return
     if "pred-detail-wrap" in _b:
         doc_sc = doc.replace("</head>", '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}html body .fc-table-scroll-wrap,html body .pred-detail-wrap,html body .budget-table-scroll{height:100%!important;max-height:100%!important;min-height:0!important;overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;}html body .fc-table-scroll-wrap thead th,html body .pred-detail-wrap thead th,html body .budget-table-scroll thead th{position:sticky!important;top:0!important;z-index:5!important;background:hsl(209,72%,6%)!important;}</style>' + "</head>", 1)
         components.html(doc_sc, height=584, scrolling=False)
@@ -1412,13 +1473,14 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
         )
         return
     _h = _estimate_html_block_height(html)
-    if "pred-detail-wrap" not in (html or "") and "fc-table-scroll-wrap" not in (html or "") and "gdrs-matrix-table" not in (html or ""):
+    if "pred-detail-wrap" not in (html or "") and "exec-doc-scroll-wrap" not in (html or "") and "fc-table-scroll-wrap" not in (html or "") and "gdrs-matrix-table" not in (html or ""):
         _h = min(900, max(320, int(_h)))
     _no_iframe_scroll = (
         "gdrs-summary-table-wrap",
         "budget-deviation-table-wrap",
         "pf-dates-table-wrap",
         "pred-detail-wrap",
+        "exec-doc-scroll-wrap",
         "fc-table-scroll-wrap",
         "gantt-schedule-table-wrap",
         "exec-doc-table-wrap",
