@@ -477,9 +477,13 @@ html body [data-baseweb="tag"] span {{
   font-weight: 600 !important;
 }}
 
-/* Кнопки в контенте: «Скачать таблицу» и др. */
+/* Кнопки в контенте: «Скачать таблицу», «Сбросить» в фильтрах и др. */
 html body .main .stButton > button,
 html body .main [data-testid="stButton"] button,
+html body section.main [data-testid="stButton"] button,
+html body [data-testid="stMainBlockContainer"] [data-testid="stButton"] button,
+html body [data-testid="stExpander"] [data-testid="stButton"] button,
+html body [data-testid="stExpanderDetails"] [data-testid="stButton"] button,
 html body [data-testid="stPopover"] > button,
 html body [data-testid="stPopover"] button,
 html body [data-testid="stPopoverBody"] .stButton > button,
@@ -492,6 +496,10 @@ html body [data-testid="stPopoverBody"] [data-testid="stButton"] button {{
 }}
 html body .main .stButton > button:hover,
 html body .main [data-testid="stButton"] button:hover,
+html body section.main [data-testid="stButton"] button:hover,
+html body [data-testid="stMainBlockContainer"] [data-testid="stButton"] button:hover,
+html body [data-testid="stExpander"] [data-testid="stButton"] button:hover,
+html body [data-testid="stExpanderDetails"] [data-testid="stButton"] button:hover,
 html body [data-testid="stPopover"] > button:hover,
 html body [data-testid="stPopover"] button:hover,
 html body [data-testid="stPopoverBody"] .stButton > button:hover,

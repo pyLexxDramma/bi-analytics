@@ -1169,6 +1169,20 @@ html body.gdrs-light-preview div[data-testid="stVerticalBlockBorderWrapper"] [da
   border: 1px solid #cbd5e1 !important;
   -webkit-text-fill-color: #111827 !important;
 }
+html body.gdrs-light-preview [data-testid="stExpander"] [data-testid="stButton"] button,
+html body.gdrs-light-preview [data-testid="stExpanderDetails"] [data-testid="stButton"] button {
+  background-color: #f3f4f6 !important;
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+  border: 1px solid #cbd5e1 !important;
+  font-weight: 600 !important;
+}
+html body.gdrs-light-preview [data-testid="stExpander"] [data-testid="stButton"] button:hover,
+html body.gdrs-light-preview [data-testid="stExpanderDetails"] [data-testid="stButton"] button:hover {
+  background-color: #e5e7eb !important;
+  color: #111827 !important;
+  border-color: #94a3b8 !important;
+}
 </style>
 """,
         unsafe_allow_html=True,
