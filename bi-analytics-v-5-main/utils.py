@@ -2361,6 +2361,25 @@ html body.gdrs-light-preview [data-testid="stMain"],
 html body.gdrs-light-preview [data-testid="stMainBlockContainer"] {
   overflow-y: auto !important;
 }
+html body.gdrs-light-preview .bi-light-table .rendered-table th,
+html body.gdrs-light-preview .bi-sortable-html-root .bi-light-table .rendered-table th {
+  background: #e5e7eb !important;
+  color: #111827 !important;
+  border-bottom: 2px solid #cbd5e1 !important;
+}
+html body.gdrs-light-preview .bi-light-table .rendered-table td,
+html body.gdrs-light-preview .bi-sortable-html-root .bi-light-table .rendered-table td {
+  color: #111827 !important;
+  border-bottom: 1px solid #cbd5e1 !important;
+}
+html body.gdrs-light-preview .bi-light-table .rendered-table tr.bd-total-row td {
+  background: #e5e7eb !important;
+  color: #111827 !important;
+  border-top: 2px solid #94a3b8 !important;
+}
+html body.gdrs-light-preview .bi-light-table .rendered-table tr:hover td {
+  background: #f3f4f6 !important;
+}
 </style>
 """,
             unsafe_allow_html=True,
@@ -2461,6 +2480,8 @@ def _scroll_box_table_html(html: str) -> bool:
         or "pred-detail-wrap" in b
         or ("budget-deviation-table-wrap" in b and "budget-table-scroll" in b)
         or ("gantt-schedule-scroll-wrap" in b and 'data-scroll-box-h="' in b)
+        or ("dev-reasons-wrap" in b and 'data-scroll-box-h="' in b)
+        or ("dev-maket-table-wrap" in b and 'data-scroll-box-h="' in b)
     )
 
 
@@ -2689,6 +2710,14 @@ def render_report_html_table(
                 or "fc-table-scroll-wrap" in _body_no_style
                 or (
                     "gantt-schedule-scroll-wrap" in _body_no_style
+                    and 'data-scroll-box-h="' in _body_no_style
+                )
+                or (
+                    "dev-reasons-wrap" in _body_no_style
+                    and 'data-scroll-box-h="' in _body_no_style
+                )
+                or (
+                    "dev-maket-table-wrap" in _body_no_style
                     and 'data-scroll-box-h="' in _body_no_style
                 )
             ):

@@ -504,26 +504,16 @@ def _render_html_table(
         show[col] = [str(v) if pd.notna(v) else "" for v in show[col]]
     _role = column_role or {}
     _colored_dev = set(colored_dev_columns or [])
-    _light_open = '<div class="gdrs-light-table">' if iframe_light else ""
-    _light_close = "</div>" if iframe_light else ""
-    _table_css = _TABLE_CSS
-    if iframe_light:
-        _table_css = _TABLE_CSS.replace(
-            "background:hsl(209, 72%, 6%); color:#fafafa;",
-            "background:#e5e7eb; color:#111827;",
-        ).replace(
-            "padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0;",
-            "padding:7px 10px; border-bottom:1px solid #cbd5e1; color:#111827; font-weight:700;",
-        ).replace(
-            "background:hsl(209, 70%, 7%) !important;",
-            "background:#f3f4f6 !important; color:#111827 !important;",
-        ).replace(
-            "tr:hover td {background:#262833}",
-            "tr:hover td {background:#f3f4f6}",
-        ).replace(
-            "tr:nth-child(even) td {background:rgba(255,255,255,0.02)}",
-            "tr:nth-child(even) td {background:#fcfcfd}",
-        )
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        _light_preview = is_light_preview_active()
+    except Exception:
+        _light_preview = False
+    _light = iframe_light or _light_preview
+    _light_open = '<div class="bi-light-table">' if _light else ""
+    _light_close = "</div>" if _light else ""
+    _table_css = _gantt_table_css_for_theme() if _light else _TABLE_CSS
 
     def _th_class(c):
         r = _role.get(c) or _role.get(str(c))
@@ -1987,6 +1977,92 @@ _DEV_REASONS_FULL_TABLE_CSS = """
 """
 
 
+def _dev_reasons_table_css_for_theme() -> str:
+    css = _DEV_REASONS_FULL_TABLE_CSS
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if not is_light_preview_active():
+            return css
+    except Exception:
+        return css
+    for old, new in (
+        ("background:#1a1c23; color:#fafafa;", "background:#f3f4f6; color:#111827;"),
+        ("border-bottom:2px solid #444;", "border-bottom:2px solid #cbd5e1;"),
+        (
+            "padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0;",
+            "padding:5px 8px; border-bottom:1px solid #cbd5e1; color:#111827;",
+        ),
+        (".dev-reasons-table tr:hover td { background:#262833; }", ".dev-reasons-table tr:hover td { background:#f3f4f6; }"),
+        (".dev-txt-ok { color:#46d68a !important; font-weight:600; }", ".dev-txt-ok { color:#15803d !important; font-weight:600; }"),
+        (".dev-txt-bad { color:#ff5454 !important; font-weight:600; }", ".dev-txt-bad { color:hsl(348,100%,63%) !important; font-weight:600; }"),
+        (".dev-txt-zero { color:#8899aa !important; font-weight:600; }", ".dev-txt-zero { color:#6b7280 !important; font-weight:600; }"),
+        (
+            ".dev-reasons-table td.dev-reason-cell,\n.dev-reasons-table td.dev-reason-cell * { color:#e8eaed !important; font-weight:600; }",
+            ".dev-reasons-table td.dev-reason-cell,\n.dev-reasons-table td.dev-reason-cell * { color:#111827 !important; font-weight:600; }",
+        ),
+        ("background:rgba(214,234,248,0.14) !important;", "background:rgba(156,194,229,0.28) !important;"),
+    ):
+        css = css.replace(old, new)
+    return css
+
+
+def _dev_reasons_dev_colors() -> tuple[str, str, str]:
+    try:
+        from dashboards.light_theme import finance_dev_negative_color, is_light_preview_active
+
+        if is_light_preview_active():
+            return "hsl(348,100%,63%)", "#6b7280", finance_dev_negative_color()
+    except Exception:
+        pass
+    return "#ff5454", "#8899aa", "#46d68a"
+
+
+def _dev_reasons_text_color() -> str:
+    try:
+        from dashboards.light_theme import finance_chart_label_color
+
+        return finance_chart_label_color(dark="#e8eaed", light="#111827")
+    except Exception:
+        return "#e8eaed"
+
+
+def _deviations_maket_iframe_css(wrap_id: str, date_bg: str) -> str:
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        _light = is_light_preview_active()
+    except Exception:
+        _light = False
+    if _light:
+        return (
+            "<style>"
+            "html,body{margin:0;padding:6px 8px;background:#ffffff;color:#111827;"
+            "font-family:Inter,system-ui,sans-serif;font-size:13px;}"
+            f"#{wrap_id} .dev-mak-col-proj,"
+            f"#{wrap_id} th.dev-mak-col-proj"
+            "{white-space:nowrap!important;min-width:9em;max-width:none!important;word-break:keep-all;}"
+            f"#{wrap_id} thead th{{position:sticky;top:0;z-index:5;background:#f3f4f6;color:#111827;}}"
+            f"#{wrap_id} th.dev-mak-col-date{{color:#111827!important;background:{date_bg}!important;}}"
+            f"#{wrap_id} td[style*='{date_bg}']"
+            "{{color:#0b1f33!important;}}"
+            f"#{wrap_id} .rendered-table td{{color:#111827;border-bottom:1px solid #cbd5e1;}}"
+            "</style>"
+        )
+    return (
+        "<style>"
+        "html,body{margin:0;padding:6px 8px;background:#0e1117;color:#e0e0e0;"
+        "font-family:Inter,system-ui,sans-serif;font-size:13px;}"
+        f"#{wrap_id} .dev-mak-col-proj,"
+        f"#{wrap_id} th.dev-mak-col-proj"
+        "{white-space:nowrap!important;min-width:9em;max-width:none!important;word-break:keep-all;}"
+        f"#{wrap_id} thead th{{position:sticky;top:0;z-index:5;background:#0e1117;}}"
+        f"#{wrap_id} th.dev-mak-col-date{{color:#f5f5f5!important;}}"
+        f"#{wrap_id} td[style*='{date_bg}']"
+        "{{color:#0b1f33!important;}}"
+        "</style>"
+    )
+
 
 _DEV_MAKET_COL_BG = "#9cc2e5"
 
@@ -2211,7 +2287,7 @@ def _deviations_stacked_bar_add_totals(
             xanchor="center",
             yanchor="bottom",
             yshift=10,
-            font=dict(color="#f5f5f5", size=14),
+            font=dict(color=_fin_chart_label_color(dark="#f5f5f5", light="#111827"), size=14),
         )
 
 
@@ -2221,7 +2297,12 @@ def _deviations_plotly_project_chart_title(fig, project_name: str) -> None:
         return
     try:
         fig.update_layout(
-            title=dict(text=name, x=0.5, xanchor="center", font=dict(size=18, color="#e8eef5")),
+            title=dict(
+                text=name,
+                x=0.5,
+                xanchor="center",
+                font=dict(size=18, color=_fin_chart_label_color(dark="#e8eef5", light="#111827")),
+            ),
             margin=dict(t=72),
         )
         _pn_prefixes = ("project name=", "Проект=", "project=")
@@ -2496,6 +2577,9 @@ def _render_deviations_maket_table(
     _date_bg_m = _DEV_MAKET_COL_BG
     _date_cell_st = f' style="background:{_date_bg_m};color:#0b1f33;"'
     _maket_wrap_id = f"dev_reason_maket_{abs(id(maket_df))}"
+    _maket_box_h = int(min(620, max(280, 56 + len(maket_df) * 50 + 48)))
+    _dev_bad, _dev_zero, _dev_ok = _dev_reasons_dev_colors()
+    _reason_txt = _dev_reasons_text_color()
     _hdrs = [
         "ID задачи",
         "Проект",
@@ -2509,7 +2593,7 @@ def _render_deviations_maket_table(
     ]
     _bg_hdrs = {"Базовое окончание", "Окончание", "Отклонение"}
     _tbl_m = [
-        f'<div id="{_maket_wrap_id}" class="pred-detail-wrap rendered-table-wrap dev-maket-table-wrap" data-bi-rows="{len(maket_df)}">',
+        f'<div id="{_maket_wrap_id}" class="pred-detail-wrap rendered-table-wrap dev-maket-table-wrap" data-bi-rows="{len(maket_df)}" data-scroll-box-h="{_maket_box_h}">',
         '<table class="rendered-table bi-sortable-table bi-sort-click-only dev-maket-table" style="border-collapse:collapse;width:100%">',
         "<thead><tr>",
     ]
@@ -2549,7 +2633,7 @@ def _render_deviations_maket_table(
                 tid = str(_raw_id).strip()
         if pd.notna(ed):
             ev = float(pd.to_numeric(ed, errors="coerce"))
-            _c_sp = "#ff5454" if ev < 0 else "#46d68a"
+            _c_sp = _dev_bad if ev < 0 else _dev_ok
         else:
             _c_sp = "#e0e0e0"
 
@@ -2572,7 +2656,7 @@ def _render_deviations_maket_table(
         _rs_esc = html_module.escape(rs)
         if _clr_tbl:
             _tbl_m.append(
-                f'<td style="border-left:4px solid {_clr_tbl};padding-left:6px;color:#e8eaed;font-weight:600">{_rs_esc}</td>'
+                f'<td style="border-left:4px solid {_clr_tbl};padding-left:6px;color:{_reason_txt};font-weight:600">{_rs_esc}</td>'
             )
         else:
             _tbl_m.append(f"<td>{_rs_esc}</td>")
@@ -2580,23 +2664,11 @@ def _render_deviations_maket_table(
         _tbl_m.append("</tr>")
 
     _tbl_m.append("</tbody></table></div>")
-    _maket_iframe_css = (
-        "<style>"
-        "html,body{margin:0;padding:6px 8px;background:#0e1117;color:#e0e0e0;"
-        "font-family:Inter,system-ui,sans-serif;font-size:13px;}"
-        f"#{_maket_wrap_id} .dev-mak-col-proj,"
-        f"#{_maket_wrap_id} th.dev-mak-col-proj"
-        "{white-space:nowrap!important;min-width:9em;max-width:none!important;word-break:keep-all;}"
-        f"#{_maket_wrap_id} thead th{{position:sticky;top:0;z-index:5;background:#0e1117;}}"
-        f"#{_maket_wrap_id} th.dev-mak-col-date{{color:#f5f5f5!important;}}"
-        f"#{_maket_wrap_id} td[style*='{_date_bg_m}']"
-        "{{color:#0b1f33!important;}}"
-        "</style>"
-    )
+    _maket_iframe_css = _deviations_maket_iframe_css(_maket_wrap_id, _date_bg_m)
     st.markdown(f"**Записей (по макету):** {len(maket_df)}")
     maket_csv_df = build_deviations_maket_export_df(table_reason_df, building_col, notes_col_m)
     render_report_html_table(
-        _maket_iframe_css + _TABLE_CSS + "".join(_tbl_m),
+        _maket_iframe_css + _gantt_table_css_for_theme() + mark_html_table_sortable("".join(_tbl_m)),
         export_df=maket_csv_df,
         file_stem=file_stem,
         key_prefix=key_prefix,
@@ -2615,8 +2687,12 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
         st.info("Нет строк для полной таблицы.")
         return
 
+    _dev_bad, _dev_zero, _dev_ok = _dev_reasons_dev_colors()
+    _reason_txt = _dev_reasons_text_color()
+    _dev_box_h = int(min(620, max(220, 56 + len(rows_out) * 34 + 24)))
+
     parts = [
-        '<div class="dev-reasons-wrap">',
+        f'<div class="dev-reasons-wrap" data-bi-rows="{len(rows_out)}" data-scroll-box-h="{_dev_box_h}">',
         '<table class="dev-reasons-table rendered-table bi-sortable-table bi-sort-click-only">',
         "<thead><tr>",
     ]
@@ -2646,7 +2722,7 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
                                 if fv > 0
                                 else (" dev-txt-zero" if fv == 0 else " dev-txt-ok")
                             )
-                            c_txt = "#ff5454" if fv > 0 else ("#8899aa" if fv == 0 else "#46d68a")
+                            c_txt = _dev_bad if fv > 0 else (_dev_zero if fv == 0 else _dev_ok)
                             extra_style = f"color:{c_txt} !important;font-weight:600;"
                 elif _kind == "end_dev":
                     # end_dev = base_end − plan_end (как _end_diff): <0 — план позже базы (хуже), >0 — раньше (лучше).
@@ -2661,7 +2737,7 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
                                 if fv < 0
                                 else (" dev-txt-zero" if fv == 0 else " dev-txt-ok")
                             )
-                            c_txt = "#ff5454" if fv < 0 else ("#8899aa" if fv == 0 else "#46d68a")
+                            c_txt = _dev_bad if fv < 0 else (_dev_zero if fv == 0 else _dev_ok)
                             extra_style = f"color:{c_txt} !important;font-weight:600;"
                 elif _kind == "reason_label":
                     bucket_key = str(raw or "").strip()
@@ -2669,7 +2745,7 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
                     if bx:
                         extra_style = (
                             f"border-left:4px solid {bx};padding-left:6px;"
-                            f"font-weight:600;color:#e8eaed !important;"
+                            f"font-weight:600;color:{_reason_txt} !important;"
                         )
                 esc = html_module.escape(txt) if str(txt).strip() != "" else ""
                 _st = f' style="{extra_style}"' if extra_style else ""
@@ -2684,7 +2760,7 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
     st.markdown(f"**Записей:** {len(rows_out)}")
     out_df = pd.DataFrame(rows_out, columns=headers)
     render_report_html_table(
-        _DEV_REASONS_FULL_TABLE_CSS + "".join(parts),
+        _dev_reasons_table_css_for_theme() + mark_html_table_sortable("".join(parts)),
         export_df=out_df,
         file_stem="deviations_detail",
         key_prefix="devtable_detail",
@@ -5712,6 +5788,9 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             lambda r: f"{int(r['Количество'])} ({r['pct']}%)", axis=1
         )
 
+        _ax_clr = _fin_chart_axis_color()
+        _lbl_clr = _fin_chart_label_color()
+
         fig = px.bar(
             reason_counts,
             x="Причина",
@@ -5724,7 +5803,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             text="label_bar",
         )
         fig.update_traces(
-            textposition="outside", textfont=dict(size=14, color="white")
+            textposition="outside", textfont=dict(size=14, color=_lbl_clr)
         )
         fig = _apply_finance_bar_label_layout(fig)
         fig = _apply_vertical_category_bar_width(fig)
@@ -5741,16 +5820,16 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                 text="Причины отклонений (за отчетный период)",
                 x=0.5,
                 xanchor="center",
-                font=dict(size=18, color="#e8eef5"),
+                font=dict(size=18, color=_ax_clr),
             ),
             yaxis=dict(
                 range=[0, _y_top],
-                title=dict(text="Количество", standoff=10, font=dict(size=14, color="#e8eef5")),
+                title=dict(text="Количество", standoff=10, font=dict(size=14, color=_ax_clr)),
                 automargin=True,
-                tickfont=dict(size=13, color="#e8eef5"),
+                tickfont=dict(size=13, color=_ax_clr),
             ),
             xaxis=dict(
-                title=dict(text="Причина отклонений", standoff=44, font=dict(size=14, color="#e8eef5")),
+                title=dict(text="Причина отклонений", standoff=44, font=dict(size=14, color=_ax_clr)),
                 automargin=True,
             ),
         )
@@ -5817,7 +5896,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             ),
             outsidetextfont=dict(
                 size=13,
-                color="#e8eef5",
+                color=_lbl_clr,
                 family="Inter, system-ui, Arial, sans-serif",
             ),
         )
@@ -5835,13 +5914,20 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             else ""
         )
     if proj_lbl:
+        _proj_clr = _fin_chart_label_color(dark="#d8dee9", light="#111827")
         st.markdown(
-            f"<div style='text-align:right;font-size:2.35rem;font-weight:700;color:#d8dee9;margin:1rem 0 0 0'>{html_module.escape(proj_lbl)}</div>",
+            f"<div style='text-align:right;font-size:2.35rem;font-weight:700;color:{_proj_clr};margin:1rem 0 0 0'>{html_module.escape(proj_lbl)}</div>",
             unsafe_allow_html=True,
         )
 
-    # Детальная таблица по макету (п. 11): уровень 5, причина заполнена, отклонение окончания < 0
-    st.subheader("Детальные данные")
+    from dashboards.gdrs_theme import gdrs_render_subheader
+    from dashboards.light_theme import is_light_preview_active
+
+    gdrs_render_subheader(
+        st,
+        "Детальные данные",
+        theme="light" if is_light_preview_active() else "dark",
+    )
     _render_deviations_maket_table(filtered_df, building_col)
 
 
@@ -6227,6 +6313,9 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         pass
 
     # Visualizations
+    _ax_clr = _fin_chart_axis_color()
+    _bar_lbl_clr = _fin_chart_label_color()
+
     if len(group_cols) == 1:  # Only period
         col1, col2 = st.columns(2, gap="small")
 
@@ -6241,7 +6330,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             )
             fig.update_xaxes(tickangle=-45)
             fig.update_traces(
-                textposition="outside", textfont=dict(size=14, color="white")
+                textposition="outside", textfont=dict(size=14, color=_bar_lbl_clr)
             )
             fig = _apply_finance_bar_label_layout(fig)
             fig = apply_chart_background(fig)
@@ -6267,7 +6356,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     text="_дни_текст",
                 )
                 fig.update_xaxes(tickangle=-45)
-                fig.update_traces(textposition="top center", textfont=dict(color="white"))
+                fig.update_traces(textposition="top center", textfont=dict(color=_bar_lbl_clr))
                 fig = apply_chart_background(fig)
                 render_chart(
                     fig,
@@ -6461,20 +6550,20 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                             title=dict(
                                 text=_period_x_title,
                                 standoff=40,
-                                font=dict(size=13, color="#e8eef5"),
+                                font=dict(size=13, color=_ax_clr),
                             ),
                             tickangle=-45,
-                            tickfont=dict(size=12, color="#e8eef5"),
+                            tickfont=dict(size=12, color=_ax_clr),
                             automargin=True,
                         ),
                         yaxis=dict(
                             title=dict(
                                 text="Количество отклонений",
                                 standoff=8,
-                                font=dict(size=13, color="#e8eef5"),
+                                font=dict(size=13, color=_ax_clr),
                             ),
                             automargin=True,
-                            tickfont=dict(size=12, color="#e8eef5"),
+                            tickfont=dict(size=12, color=_ax_clr),
                         ),
                     )
                     _g_f = _plotly_bargaps_sparse_x_like_gdrs(_n_per_facet)
@@ -6572,15 +6661,15 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     ),
                     margin=dict(l=56, r=260, t=48, b=280),
                     xaxis=dict(
-                        title=dict(text=_period_x_title, standoff=40, font=dict(size=13, color="#e8eef5")),
+                        title=dict(text=_period_x_title, standoff=40, font=dict(size=13, color=_ax_clr)),
                         tickangle=-45,
-                        tickfont=dict(size=12, color="#e8eef5"),
+                        tickfont=dict(size=12, color=_ax_clr),
                         automargin=True,
                     ),
                     yaxis=dict(
-                        title=dict(text="Количество отклонений", standoff=8, font=dict(size=13, color="#e8eef5")),
+                        title=dict(text="Количество отклонений", standoff=8, font=dict(size=13, color=_ax_clr)),
                         automargin=True,
-                        tickfont=dict(size=12, color="#e8eef5"),
+                        tickfont=dict(size=12, color=_ax_clr),
                     ),
                     height=_single_h,
                 )
@@ -6729,15 +6818,15 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             margin=dict(l=48, r=200, t=48, b=260),
             height=_h_tz,
             xaxis=dict(
-                title=dict(text=str(period_label), standoff=48, font=dict(size=13, color="#e8eef5")),
+                title=dict(text=str(period_label), standoff=48, font=dict(size=13, color=_ax_clr)),
                 tickangle=-45,
                 automargin=True,
-                tickfont=dict(size=12, color="#e8eef5"),
+                tickfont=dict(size=12, color=_ax_clr),
             ),
             yaxis=dict(
-                title=dict(text="Количество", standoff=8, font=dict(size=13, color="#e8eef5")),
+                title=dict(text="Количество", standoff=8, font=dict(size=13, color=_ax_clr)),
                 automargin=True,
-                tickfont=dict(size=12, color="#e8eef5"),
+                tickfont=dict(size=12, color=_ax_clr),
             ),
         )
         if _n_per_tz > 18:
@@ -6898,15 +6987,15 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 ),
                 margin=dict(l=56, r=240, t=36, b=240),
                 xaxis=dict(
-                    title=dict(text="Период", standoff=48, font=dict(size=13, color="#e8eef5")),
+                    title=dict(text="Период", standoff=48, font=dict(size=13, color=_ax_clr)),
                     tickangle=-45,
-                    tickfont=dict(size=12, color="#e8eef5"),
+                    tickfont=dict(size=12, color=_ax_clr),
                     automargin=True,
                 ),
                 yaxis=dict(
-                    title=dict(text="Дни отклонения", standoff=8, font=dict(size=13, color="#e8eef5")),
+                    title=dict(text="Дни отклонения", standoff=8, font=dict(size=13, color=_ax_clr)),
                     automargin=True,
-                    tickfont=dict(size=12, color="#e8eef5"),
+                    tickfont=dict(size=12, color=_ax_clr),
                 ),
                 height=_top_h,
             )
@@ -6927,7 +7016,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             fig.update_traces(
                 texttemplate="%{text}",
                 textposition="outside",
-                outsidetextfont=dict(size=14, color="white"),
+                outsidetextfont=dict(size=14, color=_bar_lbl_clr),
             )
             _plotly_bar_hide_legacy_textfont(fig)
             fig = apply_chart_background(fig, skip_uniformtext=True)

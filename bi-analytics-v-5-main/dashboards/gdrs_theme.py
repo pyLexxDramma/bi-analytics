@@ -759,6 +759,35 @@ html body .gdrs-loading-icon {{
   from {{ transform: rotate(0deg); }}
   to {{ transform: rotate(360deg); }}
 }}
+/* st.tabs — на светлом превью без style.css подписи иначе белые на белом */
+html body section.main [data-testid="stTabs"] button[data-baseweb="tab"],
+html body .stTabs button[data-baseweb="tab"] {{
+  color: #4b5563 !important;
+  -webkit-text-fill-color: #4b5563 !important;
+}}
+html body section.main [data-testid="stTabs"] button[data-baseweb="tab"]:hover,
+html body .stTabs button[data-baseweb="tab"]:hover {{
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+}}
+html body section.main [data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"],
+html body .stTabs button[data-baseweb="tab"][aria-selected="true"] {{
+  color: #ff4b4b !important;
+  -webkit-text-fill-color: #ff4b4b !important;
+}}
+html body section.main [data-testid="stTabs"] button[data-baseweb="tab"] p,
+html body .stTabs button[data-baseweb="tab"] p {{
+  color: inherit !important;
+  -webkit-text-fill-color: inherit !important;
+}}
+html body section.main [data-testid="stTabs"] div[data-baseweb="tab-border"],
+html body .stTabs div[data-baseweb="tab-border"] {{
+  background-color: #cbd5e1 !important;
+}}
+html body section.main [data-testid="stTabs"] [data-baseweb="tab-panel"],
+html body .stTabs [data-baseweb="tab-panel"] {{
+  margin-top: 1rem !important;
+}}
 </style>
 <script>
 (function(){{
