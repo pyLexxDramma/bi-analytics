@@ -26141,6 +26141,137 @@ _EXEC_DOC_DETAIL_CSS = """
 """
 
 
+def _exec_css_for_theme(css: str) -> str:
+    out = css or ""
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if not is_light_preview_active():
+            return out
+    except Exception:
+        return out
+    for old, new in (
+        (
+            ".exec-kpi-card {\n  background:rgba(20,35,52,0.92); border:1px solid rgba(104,128,157,0.24);",
+            ".exec-kpi-card {\n  background:#f1f5f9; border:1px solid #cbd5e1;\n  box-shadow:0 1px 3px rgba(15,23,42,0.07);",
+        ),
+        (
+            ".exec-kpi-card.exec-kpi-alert { border-color:rgba(239,68,68,0.35); }",
+            ".exec-kpi-card.exec-kpi-alert { background:#fef2f2; border-color:#fca5a5; }",
+        ),
+        (
+            ".exec-kpi-card.exec-kpi-warn { border-color:rgba(245,158,11,0.35); }",
+            ".exec-kpi-card.exec-kpi-warn { background:#fffbeb; border-color:#fcd34d; }",
+        ),
+        (
+            ".exec-kpi-card.exec-kpi-ok { border-color:rgba(34,197,94,0.35); }",
+            ".exec-kpi-card.exec-kpi-ok { background:#f0fdf4; border-color:#86efac; }",
+        ),
+        (".exec-kpi-title { color:#8fa7bf;", ".exec-kpi-title { color:#64748b;"),
+        (".exec-kpi-value { color:#f8fbff;", ".exec-kpi-value { color:#111827;"),
+        (".exec-kpi-subtitle { color:#97a9bc;", ".exec-kpi-subtitle { color:#64748b;"),
+        (".exec-kpi-delta-pos { color:#4ade80;", ".exec-kpi-delta-pos { color:#15803d;"),
+        (".exec-kpi-delta-neg { color:#f87171;", ".exec-kpi-delta-neg { color:#b91c1c;"),
+        (
+            ".exec-doc-panel {\n  background:linear-gradient(180deg, rgba(12,24,38,0.96), rgba(16,37,58,0.94));\n  border:1px solid rgba(101,163,255,0.16);\n  border-radius:16px;\n  padding:16px 18px;\n  margin:0.75rem 0 0;\n  box-shadow:0 10px 24px rgba(0,0,0,0.18);\n}",
+            ".exec-doc-panel {\n  background:#ffffff;\n  border:1px solid #cbd5e1;\n  border-radius:16px;\n  padding:16px 18px;\n  margin:0.75rem 0 0;\n  box-shadow:0 4px 14px rgba(15,23,42,0.06);\n}",
+        ),
+        (".exec-doc-caption {\n  color:#9fb3c8;", ".exec-doc-caption {\n  color:#64748b;"),
+        (
+            ".exec-doc-table-wrap {\n  overflow-x:auto; min-width:0; margin:0.75rem 0 0.5rem;\n  border-radius:14px; border:1px solid rgba(82,104,130,0.45);\n  background:rgba(22,40,58,0.9);\n}",
+            ".exec-doc-table-wrap {\n  overflow-x:auto; min-width:0; margin:0.75rem 0 0.5rem;\n  border-radius:14px; border:1px solid #cbd5e1;\n  background:#ffffff;\n}",
+        ),
+        (
+            ".exec-doc-table th {\n  text-align:center; padding:6px 8px; background:#16283a; color:#f8fbff;",
+            ".exec-doc-table th {\n  text-align:center; padding:6px 8px; background:#f3f4f6; color:#111827;",
+        ),
+        (
+            ".exec-doc-table td {\n  padding:5px 8px; border-bottom:1px solid rgba(82,104,130,0.28); color:#e8eef5;\n  vertical-align:top;\n  white-space:normal; word-wrap:break-word; overflow-wrap:anywhere; max-width:28em; overflow:visible; text-overflow:clip;\n  background:rgba(19,35,52,0.9);\n}",
+            ".exec-doc-table td {\n  padding:5px 8px; border-bottom:1px solid #e2e8f0; color:#111827;\n  vertical-align:top;\n  white-space:normal; word-wrap:break-word; overflow-wrap:anywhere; max-width:28em; overflow:visible; text-overflow:clip;\n  background:#ffffff;\n}",
+        ),
+        (
+            ".exec-doc-table tr:nth-child(even) td { background:rgba(255,255,255,0.025); }",
+            ".exec-doc-table tr:nth-child(even) td { background:#f9fafb; }",
+        ),
+        (
+            ".exec-doc-table tr:hover td { background:rgba(48,72,99,0.72); }",
+            ".exec-doc-table tr:hover td { background:#f3f4f6; }",
+        ),
+        (".exec-doc-th-sort { color:#8fb4da;", ".exec-doc-th-sort { color:#64748b;"),
+        (".exec-delay-val { color:#5eead4;", ".exec-delay-val { color:#0d9488;"),
+        (".exec-dash { color:#8892a0;", ".exec-dash { color:#94a3b8;"),
+        (
+            ".exec-pill-signed { background:rgba(34,197,94,0.20); color:#bbf7d0; border:1px solid rgba(34,197,94,0.52); }",
+            ".exec-pill-signed { background:#dcfce7; color:#166534; border:1px solid #86efac; }",
+        ),
+        (
+            ".exec-pill-customer { background:rgba(251,191,36,0.17); color:#fde68a; border:1px solid rgba(251,191,36,0.42); }",
+            ".exec-pill-customer { background:#fef3c7; color:#92400e; border:1px solid #fbbf24; }",
+        ),
+        (
+            ".exec-pill-contractor { background:rgba(56,189,248,0.18); color:#bae6fd; border:1px solid rgba(56,189,248,0.46); }",
+            ".exec-pill-contractor { background:#dbeafe; color:#1e40af; border:1px solid #93c5fd; }",
+        ),
+        (
+            ".exec-pill-declined { background:rgba(239,68,68,0.16); color:#fecaca; border:1px solid rgba(239,68,68,0.48); }",
+            ".exec-pill-declined { background:#fee2e2; color:#b91c1c; border:1px solid #fca5a5; }",
+        ),
+        (
+            ".exec-pill-default { background:#262833; color:#e0e0e0; border:1px solid #444; }",
+            ".exec-pill-default { background:#f3f4f6; color:#374151; border:1px solid #cbd5e1; }",
+        ),
+        (
+            ".exec-pill-muted { color:#64748b; border:1px dashed #444; padding:3px 10px; border-radius:8px; font-size:12px; }",
+            ".exec-pill-muted { color:#64748b; border:1px dashed #cbd5e1; padding:3px 10px; border-radius:8px; font-size:12px; }",
+        ),
+        (
+            ".exec-doc-table-wrap.exec-doc-scroll-wrap {\n  display:block; width:100%; max-width:100%;\n  height:min(70vh, 520px); max-height:min(70vh, 520px);\n  overflow-x:auto; overflow-y:auto;\n  -webkit-overflow-scrolling:touch;\n  scrollbar-gutter:stable; scrollbar-width:thin;\n  border-radius:14px; border:1px solid rgba(82,104,130,0.45); margin:0.75rem 0 0.5rem;\n}",
+            ".exec-doc-table-wrap.exec-doc-scroll-wrap {\n  display:block; width:100%; max-width:100%;\n  height:min(70vh, 520px); max-height:min(70vh, 520px);\n  overflow-x:auto; overflow-y:auto;\n  -webkit-overflow-scrolling:touch;\n  scrollbar-gutter:stable; scrollbar-width:thin;\n  border-radius:14px; border:1px solid #cbd5e1; margin:0.75rem 0 0.5rem;\n  padding-bottom:14px; scroll-padding-bottom:14px; box-sizing:border-box;\n}",
+        ),
+        (
+            ".exec-doc-table-wrap.exec-doc-scroll-wrap thead th {\n  position:sticky; top:0; z-index:4;\n  background:#16283a !important; color:#f8fbff !important; font-size:11px !important;",
+            ".exec-doc-table-wrap.exec-doc-scroll-wrap thead th {\n  position:sticky; top:0; z-index:4;\n  background:#f3f4f6 !important; color:#111827 !important; font-size:11px !important;",
+        ),
+        (
+            ".exec-doc-table-wrap.exec-doc-scroll-wrap tbody td {\n  font-size:13px !important; padding:5px 8px !important; color:#e8eef5 !important;",
+            ".exec-doc-table-wrap.exec-doc-scroll-wrap tbody td {\n  font-size:13px !important; padding:5px 8px !important; color:#111827 !important;",
+        ),
+        (
+            "border-bottom:1px solid rgba(138,160,184,0.28) !important;",
+            "border-bottom:1px solid #e2e8f0 !important;",
+        ),
+        (
+            "border-bottom:1px solid rgba(82,104,130,0.28) !important;",
+            "border-bottom:1px solid #e2e8f0 !important;",
+        ),
+    ):
+        out = out.replace(old, new)
+    return out
+
+
+def _exec_html_block_for_theme(body_html: str) -> str:
+    block = _exec_css_for_theme(_EXEC_DOC_DETAIL_CSS) + (body_html or "")
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if is_light_preview_active():
+            return f'<div class="bi-light-table">{block}</div>'
+    except Exception:
+        pass
+    return block
+
+
+def _exec_muted_text_color() -> str:
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if is_light_preview_active():
+            return "#64748b"
+    except Exception:
+        pass
+    return "#8892a0"
+
+
 def _exec_status_pill_html(status: str) -> str:
     """Бейджи статуса как на макете: Принят / У Заказчика / У Подрядчика / Отказ."""
     esc = html_module.escape
@@ -26295,7 +26426,7 @@ def _exec_metric_cards_html(cards: list[dict], *, caption: str | None = None) ->
     parts.append("</div>")
     if caption:
         parts.append(f'<div class="exec-doc-caption">{esc(caption)}</div>')
-    return _EXEC_DOC_KPI_CSS + "".join(parts)
+    return _exec_css_for_theme(_EXEC_DOC_KPI_CSS) + "".join(parts)
 
 
 def _exec_cell_sort_attr(col: str, row: pd.Series) -> str:
@@ -26346,7 +26477,7 @@ def _exec_detail_table_html(
         "Дата создания": "Создан",
     }
     if df is None or df.empty:
-        return f'<p style="color:#8892a0;padding:12px;">{esc("Нет строк для отображения.")}</p>'
+        return f'<p style="color:{_exec_muted_text_color()};padding:12px;">{esc("Нет строк для отображения.")}</p>'
     show = df.head(max_rows)
     cols = list(show.columns)
     head_parts = ["<thead><tr>"]
@@ -26384,7 +26515,7 @@ def _exec_detail_table_html(
     # ТЗ (скриншот, п.5): вертикальная прокрутка детальной таблицы (липкая шапка,
     # ограниченная высота) — класс exec-doc-scroll-wrap (не pred-detail-wrap).
     return (
-        f'<div class="exec-doc-table-wrap exec-doc-scroll-wrap" data-bi-rows="{len(show)}">'
+        f'<div class="exec-doc-table-wrap exec-doc-scroll-wrap" data-bi-rows="{len(show)}" data-scroll-box-h="576">'
         '<table class="exec-doc-table bi-sortable-table bi-sort-click-only">'
         + thead
         + "".join(body_parts)
@@ -27084,10 +27215,11 @@ def dashboard_executive_documentation(df):
         table_df = _exec_sort_table_df(table_df, "Дата создания", "desc")
         st.markdown(f"**Записей:** {len(table_df)}")
         render_report_html_table(
-            _EXEC_DOC_DETAIL_CSS
-            + '<div class="exec-doc-panel">'
-            + _exec_detail_table_html(table_df)
-            + "</div>",
+            _exec_html_block_for_theme(
+                '<div class="exec-doc-panel">'
+                + _exec_detail_table_html(table_df)
+                + "</div>"
+            ),
             export_df=table_df,
             file_stem="executive_docs",
             key_prefix="exec_doc",

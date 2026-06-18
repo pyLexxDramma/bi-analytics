@@ -1438,6 +1438,48 @@ html:has(.pred-detail-wrap:not(.dev-maket-table-wrap)),body:has(.pred-detail-wra
 </style>
 """
 
+_EXEC_DOC_IFRAME_SHELL_CSS_LIGHT = """
+<style>
+html:has(.exec-doc-scroll-wrap),body:has(.exec-doc-scroll-wrap){
+  overflow:hidden!important;margin:0;padding:0;height:100%!important;min-height:0!important;
+  background:#ffffff!important;color:#111827!important;
+}
+.bi-sortable-html-root:has(.exec-doc-scroll-wrap){
+  overflow:hidden!important;height:100%!important;max-height:100%!important;min-height:0!important;
+}
+.exec-doc-scroll-wrap{
+  display:block!important;width:100%!important;max-width:100%!important;min-height:0!important;
+  overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;
+  scrollbar-gutter:stable!important;scrollbar-width:thin!important;
+  scrollbar-color:#94a3b8 #e5e7eb!important;border:1px solid #cbd5e1!important;
+  border-radius:14px!important;box-sizing:border-box!important;
+  padding-bottom:14px!important;scroll-padding-bottom:14px!important;
+}
+.exec-doc-scroll-wrap[data-scroll-box-h]{
+  height:auto!important;max-height:none!important;
+}
+.exec-doc-scroll-wrap thead th{
+  position:sticky!important;top:0!important;z-index:5!important;
+  background-color:#f3f4f6!important;color:#111827!important;
+}
+.exec-doc-scroll-wrap tbody td{
+  color:#111827!important;-webkit-text-fill-color:#111827!important;
+  border-color:#e2e8f0!important;background:#ffffff!important;
+}
+.exec-doc-scroll-wrap tbody tr:nth-child(even) td{background:#f9fafb!important;}
+.exec-doc-scroll-wrap tbody tr:hover td{background:#f3f4f6!important;}
+.exec-doc-scroll-wrap table{
+  width:max-content!important;min-width:100%!important;table-layout:auto!important;
+}
+.exec-doc-scroll-wrap .exec-pill-signed{background:#dcfce7!important;color:#166534!important;border-color:#86efac!important;}
+.exec-doc-scroll-wrap .exec-pill-customer{background:#fef3c7!important;color:#92400e!important;border-color:#fbbf24!important;}
+.exec-doc-scroll-wrap .exec-pill-contractor{background:#dbeafe!important;color:#1e40af!important;border-color:#93c5fd!important;}
+.exec-doc-scroll-wrap .exec-pill-declined{background:#fee2e2!important;color:#b91c1c!important;border-color:#fca5a5!important;}
+.exec-doc-scroll-wrap .exec-pill-default{background:#f3f4f6!important;color:#374151!important;border-color:#cbd5e1!important;}
+.exec-doc-scroll-wrap .exec-delay-val{color:#0d9488!important;}
+</style>
+"""
+
 _PF_DATES_IFRAME_SHELL_CSS_LIGHT = """
 <style>
 html:has(.pf-dates-scroll-wrap),body:has(.pf-dates-scroll-wrap),
@@ -1602,6 +1644,8 @@ def _iframe_shell_css(html: str) -> str:
         return base + _DEV_REASONS_IFRAME_SHELL_CSS_LIGHT
     if _light and "pred-detail-wrap" in html_l:
         return base + _PRED_DETAIL_IFRAME_SHELL_CSS_LIGHT
+    if _light and "exec-doc-scroll-wrap" in html_l:
+        return base + _EXEC_DOC_IFRAME_SHELL_CSS_LIGHT
     if _light and (
         "pf-dates-scroll-wrap" in html_l
         or "pf-covenant-table-wrap" in html_l
@@ -1851,18 +1895,33 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
     # в _TABLE_CSS ложно матчатся подстрокой и все таблицы уходят в одну ветку.
     _b = re.sub(r"<style[^>]*>.*?</style>", "", html or "", flags=re.I | re.S)
     if "exec-doc-scroll-wrap" in _b:
+        _light_exec = "bi-light-table" in _b or "gdrs-light-table" in _b
+        _th_bg = "#f3f4f6" if _light_exec else "#16283a"
+        _th_fg = "#111827" if _light_exec else "#f8fbff"
+        _body_bg = "background:#ffffff!important;color:#111827!important;" if _light_exec else ""
+        _m_exec_box = re.search(r'data-scroll-box-h="(\d+)"', html or "")
+        _h_exec = int(_m_exec_box.group(1)) if _m_exec_box else 520
+        _pad_exec = (
+            "padding-bottom:14px!important;scroll-padding-bottom:14px!important;box-sizing:border-box!important;"
+            if _light_exec
+            else ""
+        )
+        _iframe_h = _h_exec + 8
         doc_sc = doc.replace(
             "</head>",
-            '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
-            '.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}'
-            'html body .exec-doc-scroll-wrap{height:min(70vh,520px)!important;max-height:min(70vh,520px)!important;'
-            'min-height:0!important;overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;}'
+            '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;'
+            + _body_bg
+            + '}.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}'
+            f'html body .exec-doc-scroll-wrap{{height:{_h_exec}px!important;max-height:{_h_exec}px!important;'
+            f'min-height:0!important;overflow-x:auto!important;overflow-y:auto!important;'
+            f'-webkit-overflow-scrolling:touch!important;{_pad_exec}}}'
             'html body .exec-doc-scroll-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important;}'
-            'html body .exec-doc-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;}'
+            f'html body .exec-doc-scroll-wrap thead th{{position:sticky!important;top:0!important;z-index:5!important;'
+            f'background:{_th_bg}!important;color:{_th_fg}!important;}}'
             '</style></head>',
             1,
         )
-        components.html(doc_sc, height=584, scrolling=False)
+        components.html(doc_sc, height=_iframe_h, scrolling=False)
         return
     if "pred-detail-wrap" in _b:
         _dev_maket = "dev-maket-table-wrap" in _b

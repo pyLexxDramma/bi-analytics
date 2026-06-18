@@ -2520,6 +2520,7 @@ def _scroll_box_table_html(html: str) -> bool:
         or ("gantt-schedule-scroll-wrap" in b and 'data-scroll-box-h="' in b)
         or ("dev-reasons-wrap" in b and 'data-scroll-box-h="' in b)
         or ("dev-maket-table-wrap" in b and 'data-scroll-box-h="' in b)
+        or ("exec-doc-scroll-wrap" in b and 'data-scroll-box-h="' in b)
     )
 
 
@@ -2555,6 +2556,50 @@ def _scroll_box_height_px(html: str, *, cap: int = 640) -> int:
     return min(cap, max(220, _est))
 
 
+
+
+def _render_exec_detail_html_table(
+    html: str,
+    export_df: pd.DataFrame | None,
+    *,
+    file_stem: str,
+    key_prefix: str,
+    popover_key: str,
+) -> None:
+    from dashboards.table_sort_inject import render_sortable_html_block
+
+    _exec_h = int(_scroll_box_height_px(html))
+    _iframe_h = _exec_h + 8
+    _wrap_key = "bitblwrap_" + str(key_prefix).replace(" ", "_")
+    st.markdown(
+        "<style>"
+        f"div[class*='st-key-{_wrap_key}'] div[data-testid='stVerticalBlock']{{gap:0!important;}}"
+        f"div[class*='st-key-{_wrap_key}'] div[data-testid='stElementContainer']:has(iframe){{"
+        f"height:{_iframe_h}px!important;min-height:{_iframe_h}px!important;max-height:{_iframe_h}px!important;"
+        "margin:0!important;padding:0!important;overflow:hidden!important;width:100%!important;}}"
+        f"div[class*='st-key-{_wrap_key}'] iframe{{"
+        f"height:{_iframe_h}px!important;min-height:{_iframe_h}px!important;width:100%!important;"
+        "max-width:100%!important;display:block!important;border:0!important;}}"
+        f"div[class*='st-key-{_wrap_key}'] [data-testid='stPopover']{{margin-top:8px!important;}}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+    try:
+        _outer = st.container(border=False, gap=None, key=_wrap_key)
+    except TypeError:
+        _outer = st.container(border=False)
+    with _outer:
+        try:
+            render_sortable_html_block(html, compact_iframe=True)
+        except Exception:
+            st.markdown(html, unsafe_allow_html=True)
+        if export_df is not None:
+            render_dataframe_excel_csv_downloads(
+                export_df,
+                file_stem=file_stem,
+                key_prefix=key_prefix,
+                popover_key=popover_key,
+            )
 
 
 def _render_pred_detail_html_table(
@@ -2686,6 +2731,15 @@ def render_report_html_table(
         return
     if file_stem == "predpisania" and "pred-detail-scroll" in _html_body_without_style(html):
         _render_pred_detail_html_table(
+            html,
+            export_df,
+            file_stem=file_stem,
+            key_prefix=_kp,
+            popover_key=_pop_key,
+        )
+        return
+    if file_stem == "executive_docs" and "exec-doc-scroll-wrap" in _html_body_without_style(html):
+        _render_exec_detail_html_table(
             html,
             export_df,
             file_stem=file_stem,
