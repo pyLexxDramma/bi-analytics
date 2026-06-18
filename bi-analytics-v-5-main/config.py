@@ -284,10 +284,11 @@ def show_light_preview_reports() -> bool:
         return True
     if _env_truthy("BI_ANALYTICS_HIDE_LIGHT_PREVIEW"):
         return False
-    if is_release_client_mode():
-        return False
+    # Показ заказчику на prod: тёмные + светлые превью (до cutover PR-7).
     host = _streamlit_request_host()
     if host and "ai.conall.ru" in host and "bi-analytics-dev" not in host:
+        return True
+    if is_release_client_mode():
         return False
     if _git_current_branch() == "release":
         return False
