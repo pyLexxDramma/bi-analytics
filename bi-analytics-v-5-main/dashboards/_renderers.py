@@ -11698,7 +11698,7 @@ def _dk_make_side_by_side_bar_figure(
         textposition="outside",
         textangle=0,
         cliponaxis=False,
-        textfont=dict(size=16, color="#f0f4f8"),
+        textfont=dict(size=16, color=_fin_chart_label_color()),
     )
 
     if len(chart_df) == 1:
@@ -11824,7 +11824,7 @@ def _dk_make_stack_bar_figure(
         textposition="outside",
         textangle=0,
         cliponaxis=False,
-        textfont=dict(size=11, color="#e8eef5"),
+        textfont=dict(size=11, color=_fin_chart_label_color(dark="#e8eef5", light="#111827")),
         width=0.82,
     )
     _series: list[tuple[str, np.ndarray, str, str]] = []
@@ -11998,6 +11998,9 @@ def _render_debit_credit_bar_chart(
     _apply_plotly_spec_411_labels(fig)
     if stack:
         _dk_plotly_finalize_stack_bars(fig, n_cats=n)
+
+    _resync_plotly_chart_theme(fig)
+    _apply_finance_light_preview_chart_colors(fig)
 
     if not need_hscroll:
         render_chart(
@@ -25623,7 +25626,7 @@ def dashboard_debit_credit(df):
             textposition="outside",
             textangle=0,
             cliponaxis=False,
-            textfont=dict(size=11, color="#e8eef5"),
+            textfont=dict(size=11, color=_fin_chart_label_color(dark="#e8eef5", light="#111827")),
         )
         _dk_single_partner = None
         if _dk_is_stack:
@@ -25868,7 +25871,7 @@ def dashboard_debit_credit(df):
             deviation_abs_min_mln=0.01,
             file_stem="debit_credit",
             key_prefix="debit_credit",
-            table_scroll_max_height_vh=52,
+            **_finance_table_html_kwargs(table_scroll_max_height_vh=52),
         )
 
 
