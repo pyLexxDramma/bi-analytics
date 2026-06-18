@@ -924,9 +924,13 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
         if has_report_access(user["role"]) and current_page != "reports":
             if st.button("К дашбордам", width="stretch", key="menu_go_reports"):
                 try:
-                    from dashboards.light_theme import PROFILE_LIGHT_PREVIEW_SESSION_KEY
+                    from dashboards.light_theme import (
+                        ADMIN_LIGHT_PREVIEW_SESSION_KEY,
+                        PROFILE_LIGHT_PREVIEW_SESSION_KEY,
+                    )
 
                     st.session_state.pop(PROFILE_LIGHT_PREVIEW_SESSION_KEY, None)
+                    st.session_state.pop(ADMIN_LIGHT_PREVIEW_SESSION_KEY, None)
                 except Exception:
                     pass
                 switch_page_app("project_visualization_app.py")
@@ -988,6 +992,8 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
         st.markdown('<p class="sidebar-section-title">Настройки</p>', unsafe_allow_html=True)
 
         from dashboards.light_theme import (
+            ADMIN_LIGHT_PREVIEW_SESSION_KEY,
+            ADMIN_PANEL_LABEL,
             PROFILE_LIGHT_PREVIEW_SESSION_KEY,
             PROFILE_SETTINGS_LABEL,
             light_preview_reports_enabled,
@@ -1012,6 +1018,7 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
                 key="menu_go_profile_dark",
             ):
                 st.session_state[PROFILE_LIGHT_PREVIEW_SESSION_KEY] = False
+                st.session_state.pop(ADMIN_LIGHT_PREVIEW_SESSION_KEY, None)
                 switch_page_app("pages/profile.py")
                 st.rerun()
             if _show_profile_light:
@@ -1028,6 +1035,7 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
                     key="menu_go_profile_light",
                 ):
                     st.session_state[PROFILE_LIGHT_PREVIEW_SESSION_KEY] = True
+                    st.session_state.pop(ADMIN_LIGHT_PREVIEW_SESSION_KEY, None)
                     switch_page_app("pages/profile.py")
                     st.rerun()
         else:
@@ -1037,6 +1045,7 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
                 key="menu_go_profile",
             ):
                 st.session_state[PROFILE_LIGHT_PREVIEW_SESSION_KEY] = False
+                st.session_state.pop(ADMIN_LIGHT_PREVIEW_SESSION_KEY, None)
                 switch_page_app("pages/profile.py")
             if _show_profile_light and st.button(
                 _profile_light_label,
@@ -1044,19 +1053,65 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
                 key="menu_go_profile_light",
             ):
                 st.session_state[PROFILE_LIGHT_PREVIEW_SESSION_KEY] = True
+                st.session_state.pop(ADMIN_LIGHT_PREVIEW_SESSION_KEY, None)
                 switch_page_app("pages/profile.py")
 
         if has_admin_access(user["role"]):
+            _admin_light_label = preview_light_name(ADMIN_PANEL_LABEL)
+            _show_admin_light = light_preview_reports_enabled()
+            _on_admin_light = bool(st.session_state.get(ADMIN_LIGHT_PREVIEW_SESSION_KEY))
+
             if current_page == "admin":
-                st.button(
-                    "Административная панель",
+                if not _on_admin_light:
+                    st.button(
+                        ADMIN_PANEL_LABEL,
+                        width="stretch",
+                        type="primary",
+                        disabled=True,
+                    )
+                elif st.button(
+                    ADMIN_PANEL_LABEL,
                     width="stretch",
-                    type="primary",
-                    disabled=True,
-                )
-            elif st.button("Административная панель", width="stretch", key="menu_go_admin"):
-                st.session_state.pop(PROFILE_LIGHT_PREVIEW_SESSION_KEY, None)
-                switch_page_app("pages/_analyst_params.py")
+                    key="menu_go_admin_dark",
+                ):
+                    st.session_state[ADMIN_LIGHT_PREVIEW_SESSION_KEY] = False
+                    st.session_state.pop(PROFILE_LIGHT_PREVIEW_SESSION_KEY, None)
+                    switch_page_app("pages/_analyst_params.py")
+                    st.rerun()
+                if _show_admin_light:
+                    if _on_admin_light:
+                        st.button(
+                            _admin_light_label,
+                            width="stretch",
+                            type="primary",
+                            disabled=True,
+                        )
+                    elif st.button(
+                        _admin_light_label,
+                        width="stretch",
+                        key="menu_go_admin_light",
+                    ):
+                        st.session_state[ADMIN_LIGHT_PREVIEW_SESSION_KEY] = True
+                        st.session_state.pop(PROFILE_LIGHT_PREVIEW_SESSION_KEY, None)
+                        switch_page_app("pages/_analyst_params.py")
+                        st.rerun()
+            else:
+                if st.button(
+                    ADMIN_PANEL_LABEL,
+                    width="stretch",
+                    key="menu_go_admin",
+                ):
+                    st.session_state[ADMIN_LIGHT_PREVIEW_SESSION_KEY] = False
+                    st.session_state.pop(PROFILE_LIGHT_PREVIEW_SESSION_KEY, None)
+                    switch_page_app("pages/_analyst_params.py")
+                if _show_admin_light and st.button(
+                    _admin_light_label,
+                    width="stretch",
+                    key="menu_go_admin_light",
+                ):
+                    st.session_state[ADMIN_LIGHT_PREVIEW_SESSION_KEY] = True
+                    st.session_state.pop(PROFILE_LIGHT_PREVIEW_SESSION_KEY, None)
+                    switch_page_app("pages/_analyst_params.py")
 
         if include_footer:
             render_sidebar_footer(user)

@@ -763,9 +763,13 @@ def main():
         st.stop()
 
     try:
-        from dashboards.light_theme import PROFILE_LIGHT_PREVIEW_SESSION_KEY
+        from dashboards.light_theme import (
+            ADMIN_LIGHT_PREVIEW_SESSION_KEY,
+            PROFILE_LIGHT_PREVIEW_SESSION_KEY,
+        )
 
         st.session_state.pop(PROFILE_LIGHT_PREVIEW_SESSION_KEY, None)
+        st.session_state.pop(ADMIN_LIGHT_PREVIEW_SESSION_KEY, None)
     except Exception:
         pass
 

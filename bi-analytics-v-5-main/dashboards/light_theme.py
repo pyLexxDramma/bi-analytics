@@ -7,6 +7,9 @@ LIGHT_PREVIEW_SUFFIX = " (превью — светлая)"
 PROFILE_SETTINGS_LABEL = "Настройки профиля"
 PROFILE_LIGHT_PREVIEW_SESSION_KEY = "_profile_light_preview"
 
+ADMIN_PANEL_LABEL = "Административная панель"
+ADMIN_LIGHT_PREVIEW_SESSION_KEY = "_admin_light_preview"
+
 # style#id — отключаются на тёмной вкладке (media=not all), чтобы не «течь» между темами
 LIGHT_PREVIEW_STYLE_TAG_IDS = (
     "gdrs-light-preview-css",
@@ -126,11 +129,22 @@ def is_profile_light_preview_active() -> bool:
         return False
 
 
+def is_admin_light_preview_active() -> bool:
+    try:
+        import streamlit as st
+
+        return bool(st.session_state.get(ADMIN_LIGHT_PREVIEW_SESSION_KEY))
+    except Exception:
+        return False
+
+
 def is_light_preview_active() -> bool:
     """True, если текущая вкладка — светлое превью или включена глобальная светлая тема."""
     if use_light_theme():
         return True
     if is_profile_light_preview_active():
+        return True
+    if is_admin_light_preview_active():
         return True
     try:
         import streamlit as st
@@ -1237,6 +1251,35 @@ html body.gdrs-light-preview [data-testid="stFormSubmitButton"] button[kind="pri
 html body.gdrs-light-preview [data-testid="stForm"] [data-testid="stFormSubmitButton"] button:hover {
   background-color: #1d4ed8 !important;
   border-color: #1e40af !important;
+}
+html body.gdrs-light-preview section.main [data-testid="stTabs"] button[data-baseweb="tab"],
+html body.gdrs-light-preview .stTabs button[data-baseweb="tab"] {
+  color: #4b5563 !important;
+  -webkit-text-fill-color: #4b5563 !important;
+}
+html body.gdrs-light-preview section.main [data-testid="stTabs"] button[data-baseweb="tab"]:hover,
+html body.gdrs-light-preview .stTabs button[data-baseweb="tab"]:hover {
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+}
+html body.gdrs-light-preview section.main [data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"],
+html body.gdrs-light-preview .stTabs button[data-baseweb="tab"][aria-selected="true"] {
+  color: #2563eb !important;
+  -webkit-text-fill-color: #2563eb !important;
+}
+html body.gdrs-light-preview section.main [data-testid="stTabs"] div[data-baseweb="tab-border"],
+html body.gdrs-light-preview .stTabs div[data-baseweb="tab-border"] {
+  background-color: #cbd5e1 !important;
+}
+html body.gdrs-light-preview [data-testid="stAlert"] {
+  background-color: #eff6ff !important;
+  border: 1px solid #bfdbfe !important;
+}
+html body.gdrs-light-preview [data-testid="stAlert"] [data-testid="stMarkdownContainer"],
+html body.gdrs-light-preview [data-testid="stAlert"] [data-testid="stMarkdownContainer"] p,
+html body.gdrs-light-preview [data-testid="stAlert"] [data-testid="stMarkdownContainer"] * {
+  color: #1e40af !important;
+  -webkit-text-fill-color: #1e40af !important;
 }
 </style>
 """,
