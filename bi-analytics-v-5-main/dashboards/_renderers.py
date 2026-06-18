@@ -1724,11 +1724,11 @@ def _format_gdrs_month_year_title_ru(d_from, d_to, pdf: pd.DataFrame | None, per
     return ""
 
 
-def _gdrs_delta_pct_cell_bg_style(raw) -> str:
+def _gdrs_delta_pct_cell_bg_style(raw, *, theme: str = "dark") -> str:
     """Фон «Отклонение %» (факт − план в %): >0 зелёный, <0 красный."""
     from dashboards.gdrs_resursi import gdrs_delta_pct_cell_bg_style
 
-    return gdrs_delta_pct_cell_bg_style(raw)
+    return gdrs_delta_pct_cell_bg_style(raw, theme=theme)
 
 
 def _gdrs_period_series_to_year(series: pd.Series) -> pd.Series:
@@ -3241,7 +3241,9 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
             fig.update_traces(domain=dict(x=[0.0, 0.70], y=[0.02, 0.98]))
         except Exception:
             pass
-    return fig
+    from dashboards.gdrs_theme import apply_gdrs_chart_background
+
+    return apply_gdrs_chart_background(fig, _th, skip_uniformtext=True)
 
 
 def _apply_pie_layout(fig: go.Figure, *, height: int = 460) -> go.Figure:
@@ -23173,11 +23175,10 @@ def _gdrs_pct_display_cls(v) -> tuple[str, str]:
     return text_v, "gdrs-z"
 
 
-def _gdrs_deviation_cell_bg_style(raw) -> str:
-    """Фон «Отклонение» (План − Факт): >0 красный, <0 зелёный."""
+def _gdrs_deviation_cell_bg_style(raw, *, theme: str = "dark") -> str:
     from dashboards.gdrs_resursi import gdrs_deviation_cell_bg_style
 
-    return gdrs_deviation_cell_bg_style(raw)
+    return gdrs_deviation_cell_bg_style(raw, theme=theme)
 
 
 def _gdrs_summary_table_to_html(df: pd.DataFrame, *, theme: str = "dark") -> str:
@@ -23227,10 +23228,10 @@ def _gdrs_summary_table_to_html(df: pd.DataFrame, *, theme: str = "dark") -> str
             extra_style = ""
             if cl == "Отклонение":
                 inner, extra_cls = _gdrs_deviation_display_cls(val)
-                extra_style = _gdrs_deviation_cell_bg_style(val)
+                extra_style = _gdrs_deviation_cell_bg_style(val, theme=theme)
             elif cl == "Отклонение %":
                 inner, extra_cls = _gdrs_pct_display_cls(val)
-                extra_style = _gdrs_delta_pct_cell_bg_style(val)
+                extra_style = _gdrs_delta_pct_cell_bg_style(val, theme=theme)
             elif cl in _int_cols:
                 num = pd.to_numeric(val, errors="coerce")
                 inner = "0" if pd.isna(num) else str(int(round(float(num))))
@@ -23806,7 +23807,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             kind_col="__kind__",
             title_line=_tbl_title,
             period_line=_tbl_period,
-            delta_bg_style=_gdrs_delta_pct_cell_bg_style,
+            delta_bg_style=lambda raw: _gdrs_delta_pct_cell_bg_style(raw, theme=theme),
             show_week_columns=_show_week_cols,
             week_labels=_week_hdr_labels,
             theme=theme,

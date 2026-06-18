@@ -1191,6 +1191,9 @@ html, body {{
   color: inherit !important;
 }}
 #{w} .gdrs-matrix-table thead th {{
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 5 !important;
   background: #e5e7eb !important;
   color: #111827 !important;
   font-size: 14px !important;

@@ -3143,7 +3143,7 @@ GDRS_WEEK_PLAN_KEYS: tuple[str, ...] = ("p1", "p2", "p3", "p4", "p5", "p6")
 GDRS_WEEK_SKUD_KEYS: tuple[str, ...] = ("w1", "w2", "w3", "w4", "w5", "w6")
 
 
-def gdrs_delta_pct_cell_bg_style(raw) -> str:
+def gdrs_delta_pct_cell_bg_style(raw, *, theme: str = "dark") -> str:
     """Фон ячейки «Отклонение %» (факт − план в %): >0 зелёный, <0 красный, 0 нейтральный."""
     if raw is None or (isinstance(raw, float) and pd.isna(raw)):
         return ""
@@ -3151,30 +3151,29 @@ def gdrs_delta_pct_cell_bg_style(raw) -> str:
         v = float(raw)
     except Exception:
         return ""
+    _light = str(theme or "").strip().lower() == "light"
     if v > 0:
-        return "background-color:rgba(70,214,138,0.32) !important;"
+        return (
+            "background-color:rgba(21,128,61,0.22) !important;"
+            if _light
+            else "background-color:rgba(70,214,138,0.32) !important;"
+        )
     if v < 0:
         t = min(max(-v, 0.0), 100.0) / 100.0
-        alpha = 0.24 + 0.36 * t
+        alpha = 0.20 + 0.30 * t if _light else 0.24 + 0.36 * t
+        if _light:
+            return f"background-color:rgba(185,28,28,{alpha:.3f}) !important;"
         return f"background-color:rgba(255,84,84,{alpha:.3f}) !important;"
-    return "background-color:rgba(136,153,170,0.18) !important;"
+    return (
+        "background-color:rgba(107,114,128,0.14) !important;"
+        if _light
+        else "background-color:rgba(136,153,170,0.18) !important;"
+    )
 
 
-def gdrs_deviation_cell_bg_style(raw) -> str:
+def gdrs_deviation_cell_bg_style(raw, *, theme: str = "dark") -> str:
     """Фон ячейки «Отклонение» (факт − план): >0 зелёный, <0 красный, 0 нейтральный."""
-    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
-        return ""
-    try:
-        v = float(raw)
-    except Exception:
-        return ""
-    if v > 0:
-        return "background-color:rgba(70,214,138,0.32) !important;"
-    if v < 0:
-        t = min(max(-v, 0.0), 100.0) / 100.0
-        alpha = 0.24 + 0.36 * t
-        return f"background-color:rgba(255,84,84,{alpha:.3f}) !important;"
-    return "background-color:rgba(136,153,170,0.18) !important;"
+    return gdrs_delta_pct_cell_bg_style(raw, theme=theme)
 
 
 def _gdrs_matrix_table_css(wrap_id: str) -> str:
@@ -3431,7 +3430,7 @@ def render_gdrs_matrix_table_html(
         return ""
 
     if delta_bg_style is None:
-        delta_bg_style = gdrs_delta_pct_cell_bg_style
+        delta_bg_style = lambda raw: gdrs_delta_pct_cell_bg_style(raw, theme=theme)
 
     wk_labels = list(week_labels or GDRS_WEEK_LABELS)
     if len(wk_labels) < 6:
@@ -3563,7 +3562,7 @@ def render_gdrs_matrix_table_html(
                     fv = None
                 if fv is not None and fv == fv:
                     dev_cls = "gdrs-o" if fv > 0 else ("gdrs-u" if fv < 0 else "gdrs-z")
-                    dev_bg = gdrs_deviation_cell_bg_style(fv)
+                    dev_bg = gdrs_deviation_cell_bg_style(fv, theme=theme)
                     inner = "0" if int(round(fv)) == 0 else f"{int(round(fv)):+d}"
                     cells.append(
                         _td_html(
