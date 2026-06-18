@@ -35958,6 +35958,7 @@ _PRED_DASH_MOCK_CSS = """
 }
 .pred-chip-overdue { background:#8b5a2b; color:#fff4e6; border-color:#a66b35; }
 .pred-chip-ok { background:#2d6a4f; color:#e8fff0; border-color:#40916c; }
+.pred-chip-warn { background:#7c5a1a; color:#fff8e6; border-color:#9a7018; }
 .pred-chip-neutral { background:#2c5282; color:#e8f4ff; border-color:#3d6fa8; }
 .pred-days-neg {
   display:inline-flex;
@@ -35989,6 +35990,91 @@ _PRED_DASH_MOCK_CSS = """
 }
 </style>
 """
+
+
+def _pred_muted_text_color() -> str:
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if is_light_preview_active():
+            return "#64748b"
+    except Exception:
+        pass
+    return "#a0a0a0"
+
+
+def _pred_expand_detail_table_css(css: str) -> str:
+    """Стили таблицы: и legacy .pred-detail-wrap, и scroll-box .pred-detail-scroll."""
+    return re.sub(
+        r"\.pred-detail-wrap(?=\s|[,{.#\[:>+~])",
+        ".pred-detail-wrap, .pred-detail-scroll",
+        css or "",
+    )
+
+
+def _pred_dash_mock_css_for_theme() -> str:
+    css = _PRED_DASH_MOCK_CSS
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if not is_light_preview_active():
+            return _pred_expand_detail_table_css(css)
+    except Exception:
+        return _pred_expand_detail_table_css(css)
+    for old, new in (
+        (".pred-chip-overdue { background:#8b5a2b; color:#fff4e6; border-color:#a66b35; }", ".pred-chip-overdue { background:#ffedd5; color:#9a3412; border-color:#fdba74; }"),
+        (".pred-chip-ok { background:#2d6a4f; color:#e8fff0; border-color:#40916c; }", ".pred-chip-ok { background:#dcfce7; color:#166534; border-color:#86efac; }"),
+        (".pred-chip-warn { background:#7c5a1a; color:#fff8e6; border-color:#9a7018; }", ".pred-chip-warn { background:#fef3c7; color:#92400e; border-color:#fbbf24; }"),
+        (".pred-chip-neutral { background:#2c5282; color:#e8f4ff; border-color:#3d6fa8; }", ".pred-chip-neutral { background:#dbeafe; color:#1e40af; border-color:#93c5fd; }"),
+        (".pred-days-neg {\n  display:inline-flex;\n  align-items:center;\n  justify-content:center;\n  min-width:2.4em;\n  height:2.4em;\n  padding:0 6px;\n  border-radius:999px;\n  background:rgba(185, 28, 28, 0.45);\n  color:#fecaca;", ".pred-days-neg {\n  display:inline-flex;\n  align-items:center;\n  justify-content:center;\n  min-width:2.4em;\n  height:2.4em;\n  padding:0 6px;\n  border-radius:999px;\n  background:#fee2e2;\n  color:#b91c1c;"),
+        (".pred-days-ok {\n  display:inline-flex;\n  align-items:center;\n  justify-content:center;\n  min-width:2.4em;\n  height:2.4em;\n  padding:0 6px;\n  border-radius:999px;\n  background:rgba(45, 106, 79, 0.55);\n  color:#e8fff0;", ".pred-days-ok {\n  display:inline-flex;\n  align-items:center;\n  justify-content:center;\n  min-width:2.4em;\n  height:2.4em;\n  padding:0 6px;\n  border-radius:999px;\n  background:#dcfce7;\n  color:#166534;"),
+        (".pred-detail-wrap thead th {\n  text-align:center;\n  vertical-align:middle;\n  padding:8px 6px;\n  background:#1a1c23;\n  color:#fafafa;\n  border-bottom:2px solid #444;\n  font-size:9px;", ".pred-detail-wrap thead th {\n  text-align:center;\n  vertical-align:middle;\n  padding:8px 6px;\n  background:#f3f4f6;\n  color:#111827;\n  border-bottom:2px solid #cbd5e1;\n  font-size:10px;"),
+        (".pred-kpi-wrap { background:#13151c; border:1px solid #333;", ".pred-kpi-wrap { background:#f8fafc; border:1px solid #cbd5e1;"),
+        (".pred-kpi-title { font-size:1rem; font-weight:600; color:#fafafa; margin:0 0 12px 0; border-bottom:1px solid #444;", ".pred-kpi-title { font-size:1rem; font-weight:600; color:#111827; margin:0 0 12px 0; border-bottom:1px solid #e2e8f0;"),
+        (".pred-kpi-info h4 { margin:0 0 4px 0; font-size:14px; font-weight:600; color:#fafafa; }", ".pred-kpi-info h4 { margin:0 0 4px 0; font-size:14px; font-weight:600; color:#111827; }"),
+        (".pred-kpi-info p { margin:0; font-size:12px; color:#a0a0a0; }", ".pred-kpi-info p { margin:0; font-size:12px; color:#64748b; }"),
+        (".pred-leg { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:8px; padding:8px 12px; background:#1a1c23; border-radius:12px; border:1px solid #444; font-size:13px; color:#e0e0e0; }", ".pred-leg { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:8px; padding:8px 12px; background:#f3f4f6; border-radius:12px; border:1px solid #cbd5e1; font-size:13px; color:#374151; }"),
+        (".pred-mock-table-wrap { margin-top:4px; overflow-x:auto; min-width:0; border-radius:8px; border:1px solid #444; }", ".pred-mock-table-wrap { margin-top:4px; overflow-x:auto; min-width:0; border-radius:8px; border:1px solid #cbd5e1; }"),
+        (".pred-mock-table-wrap th { text-align:center; padding:6px 8px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:11px; letter-spacing:0.02em; }", ".pred-mock-table-wrap th { text-align:center; padding:6px 8px; background:#f3f4f6; color:#111827; border-bottom:2px solid #cbd5e1; font-size:11px; letter-spacing:0.02em; }"),
+        (".pred-mock-table-wrap td { padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0; vertical-align:top; }", ".pred-mock-table-wrap td { padding:5px 8px; border-bottom:1px solid #e2e8f0; color:#111827; vertical-align:top; }"),
+        (".pred-mock-table-wrap tr.pred-crit td { background:rgba(231,76,60,0.07); }", ".pred-mock-table-wrap tr.pred-crit td { background:rgba(254,226,226,0.55); }"),
+        (".pred-td-contr { font-weight:600; color:#fafafa; background:#1a1c23; }", ".pred-td-contr { font-weight:600; color:#111827; background:#f3f4f6; }"),
+        (".pred-td-sub { font-size:11px; color:#8892a0; margin-top:4px; }", ".pred-td-sub { font-size:11px; color:#64748b; margin-top:4px; }"),
+        (".pred-tag { background:#262833; border:1px solid #444; padding:3px 8px; border-radius:20px; font-size:12px; color:#e0e0e0; display:inline-block; }", ".pred-tag { background:#f3f4f6; border:1px solid #cbd5e1; padding:3px 8px; border-radius:20px; font-size:12px; color:#374151; display:inline-block; }"),
+        (".pred-crit-dash { color:#888; font-size:14px; }", ".pred-crit-dash { color:#94a3b8; font-size:14px; }"),
+        (".pred-mock-title { font-size:1.05rem; font-weight:600; color:#fafafa; }", ".pred-mock-title { font-size:1.05rem; font-weight:600; color:#111827; }"),
+        (".pred-mock-sort { font-size:12px; color:#a0a0a0; }", ".pred-mock-sort { font-size:12px; color:#64748b; }"),
+        (".pred-detail-wrap {\n  display:block;\n  width:100%;\n  max-width:100%;\n  height:min(70vh, 520px);\n  max-height:min(70vh, 520px);\n  overflow-x:auto;\n  overflow-y:scroll;\n  -webkit-overflow-scrolling:touch;\n  border:1px solid #444;\n  border-radius:10px;\n  margin-top:8px;\n  margin-bottom:12px;\n  scrollbar-gutter:stable;\n  scrollbar-width:thin;\n  scrollbar-color:#4a5568 #1a1c23;\n}", ".pred-detail-wrap {\n  display:block;\n  width:100%;\n  max-width:100%;\n  height:min(70vh, 520px);\n  max-height:min(70vh, 520px);\n  overflow-x:auto;\n  overflow-y:scroll;\n  -webkit-overflow-scrolling:touch;\n  border:1px solid #cbd5e1;\n  border-radius:10px;\n  margin-top:8px;\n  margin-bottom:12px;\n  scrollbar-gutter:stable;\n  scrollbar-width:thin;\n  scrollbar-color:#94a3b8 #e5e7eb;\n}"),
+        (".pred-detail-wrap::-webkit-scrollbar-thumb { background:#4a5568; border-radius:6px; }", ".pred-detail-wrap::-webkit-scrollbar-thumb { background:#94a3b8; border-radius:6px; }"),
+        (".pred-detail-wrap::-webkit-scrollbar-track { background:#1a1c23; }", ".pred-detail-wrap::-webkit-scrollbar-track { background:#e5e7eb; }"),
+        (".pred-detail-wrap table {\n  width:max-content;\n  min-width:100%;\n  table-layout:auto;\n  border-collapse:separate !important;\n  border-spacing:0 !important;\n  border:1px solid #5a7a9a !important;\n}", ".pred-detail-wrap table {\n  width:max-content;\n  min-width:100%;\n  table-layout:auto;\n  border-collapse:separate !important;\n  border-spacing:0 !important;\n  border:1px solid #94a3b8 !important;\n}"),
+        (".pred-detail-wrap thead th {\n  text-align:center;\n  vertical-align:middle;\n  padding:8px 6px;\n  background:#1a1c23;\n  color:#fafafa;\n  border-bottom:2px solid #444;", ".pred-detail-wrap thead th {\n  text-align:center;\n  vertical-align:middle;\n  padding:8px 6px;\n  background:#f3f4f6;\n  color:#111827;\n  border-bottom:2px solid #cbd5e1;"),
+        (".pred-detail-wrap th, .pred-detail-wrap td {\n  border-right:1px solid #5a7a9a !important;\n  border-bottom:1px solid #5a7a9a !important;\n}", ".pred-detail-wrap th, .pred-detail-wrap td {\n  border-right:1px solid #cbd5e1 !important;\n  border-bottom:1px solid #cbd5e1 !important;\n}"),
+        (".pred-detail-wrap thead tr:first-child th { border-top:1px solid #5a7a9a !important; }", ".pred-detail-wrap thead tr:first-child th { border-top:1px solid #cbd5e1 !important; }"),
+        (".pred-detail-wrap tr th:first-child, .pred-detail-wrap tr td:first-child {\n  border-left:1px solid #5a7a9a !important;\n}", ".pred-detail-wrap tr th:first-child, .pred-detail-wrap tr td:first-child {\n  border-left:1px solid #cbd5e1 !important;\n}"),
+        (".pred-detail-wrap td {\n  padding:6px 8px;\n  color:#e0e0e0;", ".pred-detail-wrap td {\n  padding:6px 8px;\n  color:#111827;"),
+        (".pred-detail-wrap tbody tr.pred-row-overdue td {\n  background:rgba(88, 28, 72, 0.55) !important;\n  border-bottom:1px solid rgba(120, 50, 90, 0.45);\n}", ".pred-detail-wrap tbody tr.pred-row-overdue td {\n  background:rgba(254, 226, 226, 0.78) !important;\n  border-bottom:1px solid rgba(248, 113, 113, 0.35);\n}"),
+        (".pred-detail-wrap tbody tr.pred-row-resolved td {\n  background:rgba(28, 72, 62, 0.55) !important;\n  border-bottom:1px solid rgba(50, 110, 90, 0.45);\n}", ".pred-detail-wrap tbody tr.pred-row-resolved td {\n  background:rgba(220, 252, 231, 0.85) !important;\n  border-bottom:1px solid rgba(74, 222, 128, 0.35);\n}"),
+        (".pred-detail-wrap tbody tr:not(.pred-row-overdue):not(.pred-row-resolved) td {\n  background:rgba(26, 28, 35, 0.95) !important;\n}", ".pred-detail-wrap tbody tr:not(.pred-row-overdue):not(.pred-row-resolved) td {\n  background:#ffffff !important;\n}"),
+        (".pred-detail-wrap tbody tr.pred-row-overdue:hover td { background:rgba(100, 35, 80, 0.65) !important; }", ".pred-detail-wrap tbody tr.pred-row-overdue:hover td { background:rgba(254, 202, 202, 0.92) !important; }"),
+        (".pred-detail-wrap tbody tr.pred-row-resolved:hover td { background:rgba(35, 85, 72, 0.65) !important; }", ".pred-detail-wrap tbody tr.pred-row-resolved:hover td { background:rgba(187, 247, 208, 0.92) !important; }"),
+        (".pred-detail-wrap tbody tr:not(.pred-row-overdue):not(.pred-row-resolved):hover td { background:rgba(40, 44, 54, 0.95) !important; }", ".pred-detail-wrap tbody tr:not(.pred-row-overdue):not(.pred-row-resolved):hover td { background:#f3f4f6 !important; }"),
+    ):
+        css = css.replace(old, new)
+    return _pred_expand_detail_table_css(css)
+
+
+def _pred_html_block_for_theme(body_html: str) -> str:
+    block = _pred_dash_mock_css_for_theme() + (body_html or "")
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if is_light_preview_active():
+            return f'<div class="bi-light-table">{block}</div>'
+    except Exception:
+        pass
+    return block
+
 
 _PRED_DETAIL_TABLE_COLUMNS = (
     "Статус предписания",
@@ -36657,14 +36743,14 @@ def _pred_overdue_mock_table_html(rows: list, overdue_total: int) -> str:
         f'<span class="pred-mock-badge">{esc(str(overdue_total))} просроченных</span></div>'
     )
     if not rows:
-        return _PRED_DASH_MOCK_CSS + head + f'<p style="color:#a0a0a0;padding:16px;">{esc("Нет просроченных предписаний")}</p>'
+        return _pred_dash_mock_css_for_theme() + head + f'<p style="color:{_pred_muted_text_color()};padding:16px;">{esc("Нет просроченных предписаний")}</p>'
 
     thead = (
         "<thead><tr>"
         + "".join(f"<th>{esc(h)}</th>" for h in _PRED_MOCK_TABLE_COLUMNS)
         + "</tr></thead>"
     )
-    parts = [_PRED_DASH_MOCK_CSS, head, '<div class="pred-mock-table-wrap"><table>', thead, "<tbody>"]
+    parts = [_pred_dash_mock_css_for_theme(), head, '<div class="pred-mock-table-wrap"><table>', thead, "<tbody>"]
     for block in rows:
         contr = esc(str(block["contractor"]))
         rowspan = int(block["rowspan"])
@@ -36710,7 +36796,7 @@ def _pred_kpi_circles_html(
     )
     wrap_cls = "pred-kpi-wrap" + (" pred-kpi-wrap--body" if not with_heading else "")
     return (
-        _PRED_DASH_MOCK_CSS
+        _pred_dash_mock_css_for_theme()
         + f'<div class="{wrap_cls}">'
         + title_html
         + '<div class="pred-kpi-circles">'
@@ -36798,10 +36884,10 @@ def _pred_status_chip_html(status: str, overdue_days, resolved: bool) -> str:
         od = int(round(float(overdue_days))) if overdue_days is not None and not pd.isna(overdue_days) else 0
     except (TypeError, ValueError):
         od = 0
-    if resolved and od <= 0:
-        return f'<span class="pred-chip pred-chip-ok">{esc("Сдано в срок")}</span>'
     if resolved:
-        return f'<span class="pred-chip pred-chip-overdue">{esc(s)}</span>'
+        if od > 0:
+            return f'<span class="pred-chip pred-chip-warn">{esc(s)}</span>'
+        return f'<span class="pred-chip pred-chip-ok">{esc(s or "Сдано в срок")}</span>'
     return f'<span class="pred-chip pred-chip-overdue">{esc(s)}</span>'
 
 
@@ -36879,12 +36965,42 @@ def _pred_detail_table_html(
         "Критические предписания": "Критические предписания",
     }
     if df is None or df.empty:
-        return f'<p style="color:#a0a0a0;padding:16px;">{esc("Нет строк для отображения.")}</p>'
+        return f'<p style="color:{_pred_muted_text_color()};padding:16px;">{esc("Нет строк для отображения.")}</p>'
     show = df.head(max_rows)
     render_cols = [c for c in show.columns if c not in ("_resolved_flag", "_overdue_num")]
     n_rows = len(show)
+    _wrap_id = f"pred_det_{abs(id(show))}"
+    _st_vh = 52.0
+    _st_box_h = int(min(640, max(280, _st_vh * 10 + 56)))
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        _light_tbl = is_light_preview_active()
+    except Exception:
+        _light_tbl = False
+    _border = "#cbd5e1" if _light_tbl else "#444"
+    _sb = "#94a3b8 #e5e7eb" if _light_tbl else "#4a5568 #1a1c23"
     parts = [
-        f'<div class="pred-detail-wrap" data-bi-rows="{n_rows}">',
+        "<style>",
+        f"#{_wrap_id}.budget-deviation-table-wrap {{ display: block; overflow: hidden; width: 100%; "
+        "margin-top: 8px; margin-bottom: 12px; "
+        f"border: 1px solid {_border}; border-radius: 10px; box-sizing: border-box; }}",
+        f"#{_wrap_id} .budget-table-scroll.pred-detail-scroll {{ height: {_st_box_h}px !important; "
+        f"max-height: {_st_box_h}px !important; min-height: 0; overflow: auto; "
+        "-webkit-overflow-scrolling: touch; scrollbar-gutter: stable; box-sizing: border-box; "
+        "padding-bottom: 14px; scroll-padding-bottom: 14px; "
+        "border: none; border-radius: 0; scrollbar-width: thin; "
+        f"scrollbar-color: {_sb}; }}",
+        f"#{_wrap_id} .pred-detail-scroll thead th {{ position: sticky; top: 0; z-index: 5; }}",
+        f"#{_wrap_id} .pred-detail-scroll tbody tr.pred-scroll-tail td {{ "
+        "height: 14px; padding: 0; border: none !important; background: transparent !important; "
+        "line-height: 0; font-size: 0; pointer-events: none; }}",
+        f"#{_wrap_id} .pred-detail-scroll table {{ width: max-content; min-width: 100%; }}",
+        "</style>",
+        f'<div id="{_wrap_id}" class="budget-deviation-table-wrap pred-detail-table-wrap bi-styled-table-wrap" '
+        f'data-bi-rows="{n_rows}">',
+        f'<div class="budget-table-scroll pred-detail-scroll" data-scroll-vh="{_st_vh:.1f}" '
+        f'data-scroll-box-h="{_st_box_h}">',
         '<table class="rendered-table bi-sortable-table bi-sort-click-only">',
         "<thead><tr>",
     ]
@@ -36920,7 +37036,12 @@ def _pred_detail_table_html(
             sort_attr = _pred_cell_sort_attr(col, row)
             parts.append(f'<td class="{esc(c_cls, quote=True)}"{sort_attr}>{inner}</td>')
         parts.append("</tr>")
-    parts.append("</tbody></table></div>")
+    parts.append(
+        f'<tr class="pred-scroll-tail" aria-hidden="true"><td colspan="{len(render_cols)}" '
+        'style="height:14px;padding:0;border:none!important;background:transparent!important;'
+        'line-height:0;font-size:0;">&nbsp;</td></tr>'
+    )
+    parts.append("</tbody></table></div></div>")
     return mark_html_table_sortable("".join(parts))
 
 
@@ -39544,7 +39665,7 @@ def dashboard_predpisania(df):
         # Легенда визуала по макету заказчика 07.05.2026 (скрин 5):
         # «Внутри столбца — просроченные» (оранжевые), «Синие цифры — все неустранённые».
         st.markdown(
-            _PRED_DASH_MOCK_CSS
+            _pred_dash_mock_css_for_theme()
             + '<div class="pred-leg">'
             '<span style="display:inline-flex;align-items:center;gap:6px;">'
             '<span style="display:inline-block;width:14px;height:14px;background:#E67E22;border-radius:3px;"></span>'
@@ -39800,7 +39921,7 @@ def dashboard_predpisania(df):
                 categoryorder="array",
                 categoryarray=by_obj[obj_col].tolist(),
                 tickangle=0,
-                tickfont=dict(size=16, color="#ffffff"),
+                tickfont=dict(size=16, color=_fin_chart_label_color()),
             ),
             yaxis=dict(fixedrange=True),
             margin=dict(l=56, r=36, t=72, b=72),
@@ -39834,7 +39955,7 @@ def dashboard_predpisania(df):
         f"непросроченных: {n_non_overdue} · устраненных: {int(show['_resolved'].sum())}"
     )
     render_report_html_table(
-        _PRED_DASH_MOCK_CSS + _pred_detail_table_html(table_df),
+        _pred_html_block_for_theme(_pred_detail_table_html(table_df)),
         export_df=table_df.drop(columns=["_resolved_flag", "_overdue_num"], errors="ignore"),
         file_stem="predpisania",
         key_prefix="predpisania_detail",
