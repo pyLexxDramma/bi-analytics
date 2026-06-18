@@ -273,6 +273,26 @@ def is_release_client_mode() -> bool:
     return False
 
 
+def _is_client_light_compare_host() -> bool:
+    """Prod-хосты для временного сравнения тёмной/светлой темы заказчиком (до cutover)."""
+    candidates: list[str] = []
+    host = _streamlit_request_host()
+    if host:
+        candidates.append(host)
+    pub = _read_env_or_secret("BI_STREAMLIT_PUBLIC_URL").strip()
+    if pub:
+        candidates.append(pub)
+    for raw in candidates:
+        hl = raw.lower()
+        if not hl or "bi-analytics-dev" in hl:
+            continue
+        if "ai.conall.ru" in hl:
+            return True
+        if "bi-analytics-client" in hl:
+            return True
+    return False
+
+
 def show_light_preview_reports() -> bool:
     """
     Вкладки «(превью — светлая)» — только dev/локальная разработка, не клиентский prod.
@@ -284,9 +304,7 @@ def show_light_preview_reports() -> bool:
         return True
     if _env_truthy("BI_ANALYTICS_HIDE_LIGHT_PREVIEW"):
         return False
-    # Показ заказчику на prod: тёмные + светлые превью (до cutover PR-7).
-    host = _streamlit_request_host()
-    if host and "ai.conall.ru" in host and "bi-analytics-dev" not in host:
+    if _is_client_light_compare_host():
         return True
     if is_release_client_mode():
         return False
