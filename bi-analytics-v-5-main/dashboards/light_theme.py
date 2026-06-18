@@ -10,6 +10,9 @@ PROFILE_LIGHT_PREVIEW_SESSION_KEY = "_profile_light_preview"
 ADMIN_PANEL_LABEL = "Административная панель"
 ADMIN_LIGHT_PREVIEW_SESSION_KEY = "_admin_light_preview"
 
+LOGIN_PAGE_LABEL = "Страница входа"
+LOGIN_LIGHT_PREVIEW_SESSION_KEY = "_login_light_preview"
+
 # style#id — отключаются на тёмной вкладке (media=not all), чтобы не «течь» между темами
 LIGHT_PREVIEW_STYLE_TAG_IDS = (
     "gdrs-light-preview-css",
@@ -138,6 +141,49 @@ def is_admin_light_preview_active() -> bool:
         return False
 
 
+def _query_param_str(st, name: str) -> str:
+    try:
+        v = st.query_params.get(name, "")
+    except Exception:
+        return ""
+    if isinstance(v, list):
+        return str(v[0]).strip() if v else ""
+    return str(v or "").strip()
+
+
+def sync_login_light_preview_from_query(st) -> None:
+    if not light_preview_reports_enabled():
+        return
+    login_light = _query_param_str(st, "login_light").casefold()
+    login_preview = _query_param_str(st, "login_preview").casefold()
+    if login_light in ("1", "true", "yes", "on") or login_preview == "light":
+        st.session_state[LOGIN_LIGHT_PREVIEW_SESSION_KEY] = True
+        st.session_state.pop(PROFILE_LIGHT_PREVIEW_SESSION_KEY, None)
+        st.session_state.pop(ADMIN_LIGHT_PREVIEW_SESSION_KEY, None)
+    elif login_light in ("0", "false", "no", "off"):
+        st.session_state[LOGIN_LIGHT_PREVIEW_SESSION_KEY] = False
+
+
+def is_login_light_preview_active() -> bool:
+    try:
+        import streamlit as st
+
+        return bool(st.session_state.get(LOGIN_LIGHT_PREVIEW_SESSION_KEY))
+    except Exception:
+        return False
+
+
+def clear_foreign_light_preview_keys(st, *, keep: str | None = None) -> None:
+    for key in (
+        PROFILE_LIGHT_PREVIEW_SESSION_KEY,
+        ADMIN_LIGHT_PREVIEW_SESSION_KEY,
+        LOGIN_LIGHT_PREVIEW_SESSION_KEY,
+    ):
+        if keep and key == keep:
+            continue
+        st.session_state.pop(key, None)
+
+
 def is_light_preview_active() -> bool:
     """True, если текущая вкладка — светлое превью или включена глобальная светлая тема."""
     if use_light_theme():
@@ -145,6 +191,8 @@ def is_light_preview_active() -> bool:
     if is_profile_light_preview_active():
         return True
     if is_admin_light_preview_active():
+        return True
+    if is_login_light_preview_active():
         return True
     try:
         import streamlit as st
@@ -1281,6 +1329,30 @@ html body.gdrs-light-preview [data-testid="stAlert"] [data-testid="stMarkdownCon
   color: #1e40af !important;
   -webkit-text-fill-color: #1e40af !important;
 }
+html body.gdrs-light-preview section.main [data-testid="stSubheader"],
+html body.gdrs-light-preview section.main [data-testid="stSubheader"] p,
+html body.gdrs-light-preview section.main h3 {
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+}
+html body.gdrs-light-preview section.main [data-testid="stExpander"] summary,
+html body.gdrs-light-preview section.main [data-testid="stExpander"] summary p,
+html body.gdrs-light-preview section.main [data-testid="stExpanderDetails"] [data-testid="stMarkdownContainer"],
+html body.gdrs-light-preview section.main [data-testid="stExpanderDetails"] [data-testid="stMarkdownContainer"] p {
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+}
+html body.gdrs-light-preview section.main [data-testid="stForm"] {
+  background-color: #ffffff !important;
+  border: 1px solid #e5e7eb !important;
+  border-radius: 0.5rem !important;
+  padding: 1rem 1.25rem !important;
+}
+html body.gdrs-light-preview section.main [data-testid="stForm"] h3,
+html body.gdrs-light-preview section.main [data-testid="stForm"] [data-testid="stMarkdownContainer"] p {
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+}
 </style>
 """,
         unsafe_allow_html=True,
@@ -1305,6 +1377,70 @@ def light_preview_heading_html(title: str) -> str:
         f'style="color:#000000!important;-webkit-text-fill-color:#000000!important;'
         f'font-weight:800!important;opacity:1!important;">{safe}</h1>'
     )
+
+
+def login_page_heading_html(
+    *,
+    subtitle: str = "Войдите в систему для доступа к панели аналитики",
+    show_emoji: bool = True,
+    compact: bool = False,
+) -> str:
+    import html as _html
+
+    light = is_light_preview_active()
+    if light:
+        title = preview_light_name(LOGIN_PAGE_LABEL)
+        title_color = "#111827"
+        subtitle_color = "#374151"
+    else:
+        title = "BI Analytics"
+        title_color = "#ffffff"
+        subtitle_color = "#c8d8ec"
+    safe_title = _html.escape(title)
+    safe_sub = _html.escape(str(subtitle or "").strip())
+    emoji_block = (
+        f'<h1 style="color: {title_color}; font-size: 3rem; margin-bottom: 0.5rem;">🔐</h1>'
+        if show_emoji
+        else ""
+    )
+    title_size = "1.75rem" if compact else "2rem"
+    sub_block = (
+        f'<p style="color: {subtitle_color}; font-size: 1.1rem;">{safe_sub}</p>'
+        if safe_sub
+        else ""
+    )
+    return (
+        f'<div style="text-align: center; margin-bottom: 2rem;">'
+        f"{emoji_block}"
+        f'<h1 style="color: {title_color}; font-size: {title_size}; margin-bottom: 0.5rem;">'
+        f"{safe_title}</h1>"
+        f"{sub_block}"
+        f"</div>"
+    )
+
+
+def render_login_light_preview_dev_toggle(st, *, key_prefix: str = "login") -> None:
+    if not light_preview_reports_enabled():
+        return
+    st.markdown("---")
+    _light_label = preview_light_name(LOGIN_PAGE_LABEL)
+    _on = is_login_light_preview_active()
+    c1, c2 = st.columns(2)
+    with c1:
+        if _on:
+            if st.button("Тёмная версия", key=f"{key_prefix}_toggle_dark", width="stretch"):
+                st.session_state[LOGIN_LIGHT_PREVIEW_SESSION_KEY] = False
+                st.rerun()
+        else:
+            st.button(LOGIN_PAGE_LABEL, key=f"{key_prefix}_dark_active", disabled=True, width="stretch")
+    with c2:
+        if _on:
+            st.button(_light_label, key=f"{key_prefix}_light_active", disabled=True, width="stretch")
+        elif st.button(_light_label, key=f"{key_prefix}_toggle_light", width="stretch"):
+            st.session_state[LOGIN_LIGHT_PREVIEW_SESSION_KEY] = True
+            st.session_state.pop(PROFILE_LIGHT_PREVIEW_SESSION_KEY, None)
+            st.session_state.pop(ADMIN_LIGHT_PREVIEW_SESSION_KEY, None)
+            st.rerun()
 
 
 def resolve_light_preview_title(report_name: str) -> str:

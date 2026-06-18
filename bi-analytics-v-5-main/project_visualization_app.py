@@ -426,18 +426,54 @@ def main():
     except Exception:
         pass
 
+    try:
+        from dashboards.light_theme import sync_login_light_preview_from_query
+
+        sync_login_light_preview_from_query(st)
+    except Exception:
+        pass
+
     # Проверка авторизации - если не авторизован, показываем форму входа
     if not check_authentication():
 
-        # Заголовок страницы входа
-        st.markdown(
-            """
-            <div style="text-align: center; margin-bottom: 2rem;">
-                <h1 style="color: #ffffff; font-size: 2rem; margin-bottom: 0.5rem;">BI Analytics</h1>
-            </div>
-        """,
-            unsafe_allow_html=True,
-        )
+        load_custom_css()
+        try:
+            from dashboards.light_theme import (
+                LOGIN_LIGHT_PREVIEW_SESSION_KEY,
+                clear_foreign_light_preview_keys,
+                login_page_heading_html,
+                render_login_light_preview_dev_toggle,
+                sync_light_preview_theme,
+            )
+
+            clear_foreign_light_preview_keys(st, keep=LOGIN_LIGHT_PREVIEW_SESSION_KEY)
+            sync_light_preview_theme(st)
+        except Exception:
+            pass
+
+        try:
+            from dashboards.light_theme import login_page_heading_html
+
+            st.markdown(
+                login_page_heading_html(show_emoji=False, compact=True, subtitle=""),
+                unsafe_allow_html=True,
+            )
+        except Exception:
+            st.markdown(
+                """
+                <div style="text-align: center; margin-bottom: 2rem;">
+                    <h1 style="color: #ffffff; font-size: 2rem; margin-bottom: 0.5rem;">BI Analytics</h1>
+                </div>
+            """,
+                unsafe_allow_html=True,
+            )
+
+        try:
+            from dashboards.light_theme import render_login_light_preview_dev_toggle
+
+            render_login_light_preview_dev_toggle(st, key_prefix="main_login")
+        except Exception:
+            pass
 
         # Инициализация переменных для восстановления пароля
         if "reset_mode" not in st.session_state:
@@ -765,11 +801,13 @@ def main():
     try:
         from dashboards.light_theme import (
             ADMIN_LIGHT_PREVIEW_SESSION_KEY,
+            LOGIN_LIGHT_PREVIEW_SESSION_KEY,
             PROFILE_LIGHT_PREVIEW_SESSION_KEY,
         )
 
         st.session_state.pop(PROFILE_LIGHT_PREVIEW_SESSION_KEY, None)
         st.session_state.pop(ADMIN_LIGHT_PREVIEW_SESSION_KEY, None)
+        st.session_state.pop(LOGIN_LIGHT_PREVIEW_SESSION_KEY, None)
     except Exception:
         pass
 
