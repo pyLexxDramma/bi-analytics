@@ -923,6 +923,12 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
         # 1. Отчёты (отдельный визуальный блок от настроек)
         if has_report_access(user["role"]) and current_page != "reports":
             if st.button("К дашбордам", width="stretch", key="menu_go_reports"):
+                try:
+                    from dashboards.light_theme import PROFILE_LIGHT_PREVIEW_SESSION_KEY
+
+                    st.session_state.pop(PROFILE_LIGHT_PREVIEW_SESSION_KEY, None)
+                except Exception:
+                    pass
                 switch_page_app("project_visualization_app.py")
             st.markdown("---")
 
@@ -981,16 +987,63 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
 
         st.markdown('<p class="sidebar-section-title">Настройки</p>', unsafe_allow_html=True)
 
-        # Настройки профиля (для всех ролей)
+        from dashboards.light_theme import (
+            PROFILE_LIGHT_PREVIEW_SESSION_KEY,
+            PROFILE_SETTINGS_LABEL,
+            light_preview_reports_enabled,
+            preview_light_name,
+        )
+
+        _profile_light_label = preview_light_name(PROFILE_SETTINGS_LABEL)
+        _show_profile_light = light_preview_reports_enabled()
+        _on_profile_light = bool(st.session_state.get(PROFILE_LIGHT_PREVIEW_SESSION_KEY))
+
         if current_page == "profile":
-            st.button(
-                "Настройки профиля",
+            if not _on_profile_light:
+                st.button(
+                    PROFILE_SETTINGS_LABEL,
+                    width="stretch",
+                    type="primary",
+                    disabled=True,
+                )
+            elif st.button(
+                PROFILE_SETTINGS_LABEL,
                 width="stretch",
-                type="primary",
-                disabled=True,
-            )
+                key="menu_go_profile_dark",
+            ):
+                st.session_state[PROFILE_LIGHT_PREVIEW_SESSION_KEY] = False
+                switch_page_app("pages/profile.py")
+                st.rerun()
+            if _show_profile_light:
+                if _on_profile_light:
+                    st.button(
+                        _profile_light_label,
+                        width="stretch",
+                        type="primary",
+                        disabled=True,
+                    )
+                elif st.button(
+                    _profile_light_label,
+                    width="stretch",
+                    key="menu_go_profile_light",
+                ):
+                    st.session_state[PROFILE_LIGHT_PREVIEW_SESSION_KEY] = True
+                    switch_page_app("pages/profile.py")
+                    st.rerun()
         else:
-            if st.button("Настройки профиля", width="stretch"):
+            if st.button(
+                PROFILE_SETTINGS_LABEL,
+                width="stretch",
+                key="menu_go_profile",
+            ):
+                st.session_state[PROFILE_LIGHT_PREVIEW_SESSION_KEY] = False
+                switch_page_app("pages/profile.py")
+            if _show_profile_light and st.button(
+                _profile_light_label,
+                width="stretch",
+                key="menu_go_profile_light",
+            ):
+                st.session_state[PROFILE_LIGHT_PREVIEW_SESSION_KEY] = True
                 switch_page_app("pages/profile.py")
 
         if has_admin_access(user["role"]):
@@ -1002,6 +1055,7 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
                     disabled=True,
                 )
             elif st.button("Административная панель", width="stretch", key="menu_go_admin"):
+                st.session_state.pop(PROFILE_LIGHT_PREVIEW_SESSION_KEY, None)
                 switch_page_app("pages/_analyst_params.py")
 
         if include_footer:

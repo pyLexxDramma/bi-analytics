@@ -4,6 +4,9 @@ from __future__ import annotations
 
 LIGHT_PREVIEW_SUFFIX = " (превью — светлая)"
 
+PROFILE_SETTINGS_LABEL = "Настройки профиля"
+PROFILE_LIGHT_PREVIEW_SESSION_KEY = "_profile_light_preview"
+
 # style#id — отключаются на тёмной вкладке (media=not all), чтобы не «течь» между темами
 LIGHT_PREVIEW_STYLE_TAG_IDS = (
     "gdrs-light-preview-css",
@@ -114,9 +117,20 @@ def use_light_theme() -> bool:
     return False
 
 
+def is_profile_light_preview_active() -> bool:
+    try:
+        import streamlit as st
+
+        return bool(st.session_state.get(PROFILE_LIGHT_PREVIEW_SESSION_KEY))
+    except Exception:
+        return False
+
+
 def is_light_preview_active() -> bool:
     """True, если текущая вкладка — светлое превью или включена глобальная светлая тема."""
     if use_light_theme():
+        return True
+    if is_profile_light_preview_active():
         return True
     try:
         import streamlit as st
@@ -1194,6 +1208,35 @@ html body.gdrs-light-preview [data-testid="stExpanderDetails"] [data-testid="stB
   background-color: #e5e7eb !important;
   color: #111827 !important;
   border-color: #94a3b8 !important;
+}
+html body.gdrs-light-preview [data-testid="stMetricLabel"],
+html body.gdrs-light-preview [data-testid="metric-container"] [data-testid="stMetricLabel"],
+html body.gdrs-light-preview [data-testid="stMetric"] label {
+  color: #374151 !important;
+  -webkit-text-fill-color: #374151 !important;
+}
+html body.gdrs-light-preview [data-testid="stMetricValue"],
+html body.gdrs-light-preview [data-testid="metric-container"] [data-testid="stMetricValue"] {
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+}
+html body.gdrs-light-preview [data-testid="stForm"] [data-testid="stWidgetLabel"],
+html body.gdrs-light-preview [data-testid="stForm"] [data-testid="stWidgetLabel"] p,
+html body.gdrs-light-preview [data-testid="stForm"] label[data-testid="stWidgetLabel"] {
+  color: #374151 !important;
+  -webkit-text-fill-color: #374151 !important;
+}
+html body.gdrs-light-preview [data-testid="stFormSubmitButton"] button[kind="primary"],
+html body.gdrs-light-preview [data-testid="stForm"] [data-testid="stFormSubmitButton"] button {
+  background-color: #2563eb !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+  border: 1px solid #1d4ed8 !important;
+}
+html body.gdrs-light-preview [data-testid="stFormSubmitButton"] button[kind="primary"]:hover,
+html body.gdrs-light-preview [data-testid="stForm"] [data-testid="stFormSubmitButton"] button:hover {
+  background-color: #1d4ed8 !important;
+  border-color: #1e40af !important;
 }
 </style>
 """,

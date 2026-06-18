@@ -762,6 +762,13 @@ def main():
             st.rerun()
         st.stop()
 
+    try:
+        from dashboards.light_theme import PROFILE_LIGHT_PREVIEW_SESSION_KEY
+
+        st.session_state.pop(PROFILE_LIGHT_PREVIEW_SESSION_KEY, None)
+    except Exception:
+        pass
+
     _ftp_notice = st.session_state.pop("_ftp_sync_notice", None)
     if _ftp_notice:
         try:

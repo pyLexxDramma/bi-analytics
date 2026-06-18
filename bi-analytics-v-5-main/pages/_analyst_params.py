@@ -199,6 +199,13 @@ if is_streamlit_context():
 
         st.stop()
 
+    try:
+        from dashboards.light_theme import PROFILE_LIGHT_PREVIEW_SESSION_KEY
+
+        st.session_state.pop(PROFILE_LIGHT_PREVIEW_SESSION_KEY, None)
+    except Exception:
+        pass
+
     # Боковая панель с меню навигации
     render_sidebar_menu(current_page="admin")
 
