@@ -926,7 +926,7 @@ html:has(.exec-doc-scroll-wrap),body:has(.exec-doc-scroll-wrap){overflow:hidden!
   overflow-x:auto!important;overflow-y:scroll!important;
   scrollbar-gutter:stable;scrollbar-width:thin;
 }
-.exec-doc-scroll-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important}
+.exec-doc-scroll-wrap table{width:100%!important;min-width:100%!important;table-layout:fixed!important}
 .exec-doc-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;vertical-align:middle!important;text-align:center!important}
 .bi-sortable-html-root:has(.pred-detail-wrap){overflow:visible!important;overflow-x:hidden!important}
 html:has(.pred-detail-wrap),body:has(.pred-detail-wrap){overflow:hidden!important;margin:0;padding:0}
@@ -1469,7 +1469,7 @@ html:has(.exec-doc-scroll-wrap),body:has(.exec-doc-scroll-wrap){
 .exec-doc-scroll-wrap tbody tr:nth-child(even) td{background:#f9fafb!important;}
 .exec-doc-scroll-wrap tbody tr:hover td{background:#f3f4f6!important;}
 .exec-doc-scroll-wrap table{
-  width:max-content!important;min-width:100%!important;table-layout:auto!important;
+  width:100%!important;min-width:100%!important;table-layout:fixed!important;
 }
 .exec-doc-scroll-wrap .exec-pill-signed{background:#dcfce7!important;color:#166534!important;border-color:#86efac!important;}
 .exec-doc-scroll-wrap .exec-pill-customer{background:#fef3c7!important;color:#92400e!important;border-color:#fbbf24!important;}
@@ -1915,7 +1915,7 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
             f'html body .exec-doc-scroll-wrap{{height:{_h_exec}px!important;max-height:{_h_exec}px!important;'
             f'min-height:0!important;overflow-x:auto!important;overflow-y:auto!important;'
             f'-webkit-overflow-scrolling:touch!important;{_pad_exec}}}'
-            'html body .exec-doc-scroll-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important;}'
+            'html body .exec-doc-scroll-wrap table{width:100%!important;min-width:100%!important;table-layout:fixed!important;}'
             f'html body .exec-doc-scroll-wrap thead th{{position:sticky!important;top:0!important;z-index:5!important;'
             f'background:{_th_bg}!important;color:{_th_fg}!important;}}'
             '</style></head>',

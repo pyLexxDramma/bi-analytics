@@ -3318,7 +3318,7 @@ def _gdrs_add_plan_fact_deviation_traces(
     dev_abs: list,
     dev_colors: list,
     theme: Any,
-) -> tuple[list[str], str]:
+) -> tuple[list[str], str, dict[str, Any] | None]:
     """Три столбца План/Факт/Отклонение; при одной сущности — равные промежутки по оси X."""
     _metric_x = ("План", "Факт", "Отклонение")
     if len(labels) == 1:
@@ -3331,16 +3331,37 @@ def _gdrs_add_plan_fact_deviation_traces(
             y=[dev_abs[0]],
             marker_color=_dc,
         )
-        return list(_metric_x), f" — {labels[0]}"
-    fig.add_bar(name="План", x=labels, y=plan_vals, marker_color=theme.bar_plan)
-    fig.add_bar(name="Факт", x=labels, y=fact_vals, marker_color=theme.bar_fact)
+        return list(_metric_x), f" — {labels[0]}", None
+    # Фиксированные слоты: при y=0 grouped bar схлопывает «Факт», и «Отклонение» визуально съезжает.
+    _slot_span = 4.0
+    x_plan: list[float] = []
+    x_fact: list[float] = []
+    x_dev: list[float] = []
+    tick_vals: list[float] = []
+    tick_text: list[str] = []
+    for i, lbl in enumerate(labels):
+        base = float(i) * _slot_span
+        x_plan.append(base)
+        x_fact.append(base + 1.0)
+        x_dev.append(base + 2.0)
+        tick_vals.append(base + 1.0)
+        tick_text.append(str(lbl))
+    fig.add_bar(name="План", x=x_plan, y=plan_vals, marker_color=theme.bar_plan)
+    fig.add_bar(name="Факт", x=x_fact, y=fact_vals, marker_color=theme.bar_fact)
     fig.add_bar(
         name="Отклонение (факт − план)",
-        x=labels,
+        x=x_dev,
         y=dev_abs,
         marker_color=dev_colors,
     )
-    return list(labels), ""
+    _x_end = (len(labels) - 1) * _slot_span + 2.0
+    x_cfg = dict(
+        tickmode="array",
+        tickvals=tick_vals,
+        ticktext=tick_text,
+        range=[-0.6, _x_end + 0.6],
+    )
+    return list(labels), "", x_cfg
 
 
 def _gdrs_apply_plan_fact_grouped_bar_spacing(
@@ -3348,8 +3369,15 @@ def _gdrs_apply_plan_fact_grouped_bar_spacing(
     n_x_categories: int,
     *,
     metrics_axis: bool = False,
+    fixed_slots: bool = False,
 ) -> go.Figure:
     """План / Факт / Отклонение: узкие столбцы с равными промежутками."""
+    if fixed_slots:
+        nx = max(1, int(n_x_categories))
+        bar_width = 0.55 if nx <= 2 else (0.48 if nx <= 4 else 0.42)
+        fig.update_layout(barmode="overlay", bargap=0.0, bargroupgap=0.0)
+        fig.update_traces(width=bar_width, selector=dict(type="bar"))
+        return fig
     if metrics_axis:
         fig.update_layout(bargap=0.42, bargroupgap=0.0, barmode="group")
         fig.update_traces(width=0.40, selector=dict(type="bar"))
@@ -23659,7 +23687,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             _bar_title_sz = 22 if theme == "light" else 16
             _bar_margin_b = 120 if theme == "light" else 100
             fig_pf = _go.Figure()
-            _bar_x_labels, _bar_title_suffix = _gdrs_add_plan_fact_deviation_traces(
+            _bar_x_labels, _bar_title_suffix, _bar_x_cfg = _gdrs_add_plan_fact_deviation_traces(
                 fig_pf,
                 _proj_labels,
                 _plan_vals,
@@ -23669,6 +23697,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 _th,
             )
             _metrics_axis = len(_proj_labels) == 1
+            _fixed_bar_slots = _bar_x_cfg is not None
             fig_pf.update_layout(
                 title=dict(
                     text=f"План / Факт / Отклонение по проектам{_bar_title_suffix}",
@@ -23702,12 +23731,15 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             )
             fig_pf = apply_gdrs_chart_background(fig_pf, _th, skip_uniformtext=True)
             # apply_gdrs_chart_background сбрасывает tickfont оси X — восстанавливаем крупные горизонтальные подписи проектов.
-            fig_pf.update_xaxes(
+            _proj_xaxis_kw: dict[str, Any] = dict(
                 tickfont=dict(size=_proj_x_tick_sz, color=_th.text, family="Inter, sans-serif"),
                 tickangle=0,
                 ticklabelstandoff=14,
                 automargin=True,
             )
+            if _bar_x_cfg:
+                _proj_xaxis_kw.update(_bar_x_cfg)
+            fig_pf.update_xaxes(**_proj_xaxis_kw)
             fig_pf.update_layout(margin=dict(l=56, r=24, t=88, b=_bar_margin_b))
             fig_pf = gdrs_apply_grouped_bar_labels(
                 fig_pf,
@@ -23720,7 +23752,10 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 ],
             )
             fig_pf = _gdrs_apply_plan_fact_grouped_bar_spacing(
-                fig_pf, len(_proj_labels), metrics_axis=_metrics_axis
+                fig_pf,
+                len(_proj_labels),
+                metrics_axis=_metrics_axis,
+                fixed_slots=_fixed_bar_slots,
             )
             st.plotly_chart(
                 fig_pf,
@@ -23891,7 +23926,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 _ctr_dev_colors.append(_col)
                 _ctr_dev_abs.append(abs(int(round(float(_fv) - float(_pv)))))
             fig2 = _go.Figure()
-            _ctr_bar_x, _ctr_title_suffix = _gdrs_add_plan_fact_deviation_traces(
+            _ctr_bar_x, _ctr_title_suffix, _ctr_x_cfg = _gdrs_add_plan_fact_deviation_traces(
                 fig2,
                 _ctr_labels,
                 _ctr_plan,
@@ -23901,16 +23936,20 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 _th,
             )
             _ctr_metrics_axis = len(_ctr_labels) == 1
+            _ctr_fixed_slots = _ctr_x_cfg is not None
+            _ctr_xaxis_kw: dict[str, Any] = dict(
+                tickangle=0 if (_ctr_metrics_axis or _ctr_fixed_slots) else -45,
+                tickfont=dict(size=_bar_axis_sz, color=_th.text, family="Inter, system-ui, sans-serif"),
+            )
+            if _ctr_x_cfg:
+                _ctr_xaxis_kw.update(_ctr_x_cfg)
             fig2.update_layout(
                 title=dict(text=f"План / Факт / Отклонение{_ctr_title_suffix}") if _ctr_title_suffix else {},
                 barmode="group",
                 plot_bgcolor=_th.chart_bg,
                 paper_bgcolor=_th.chart_bg,
                 font_color=_th.text,
-                xaxis=dict(
-                    tickangle=0 if _ctr_metrics_axis else -45,
-                    tickfont=dict(size=_bar_axis_sz, color=_th.text, family="Inter, system-ui, sans-serif"),
-                ),
+                xaxis=_ctr_xaxis_kw,
                 yaxis=dict(
                     tickfont=dict(size=_bar_axis_sz if theme == "light" else 12, color=_th.text),
                 ),
@@ -23919,6 +23958,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
             )
             fig2 = apply_gdrs_chart_background(fig2, _th, skip_uniformtext=True)
+            fig2.update_xaxes(**_ctr_xaxis_kw)
             fig2 = gdrs_apply_grouped_bar_labels(
                 fig2,
                 _th,
@@ -23930,7 +23970,10 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 ],
             )
             fig2 = _gdrs_apply_plan_fact_grouped_bar_spacing(
-                fig2, len(_ctr_labels), metrics_axis=_ctr_metrics_axis
+                fig2,
+                len(_ctr_labels),
+                metrics_axis=_ctr_metrics_axis,
+                fixed_slots=_ctr_fixed_slots,
             )
             st.plotly_chart(
                 fig2,
@@ -26114,8 +26157,8 @@ _EXEC_DOC_DETAIL_CSS = """
   border-radius:14px; border:1px solid rgba(82,104,130,0.45); margin:0.75rem 0 0.5rem;
 }
 .exec-doc-table-wrap.exec-doc-scroll-wrap table {
-  width:max-content !important; min-width:100% !important;
-  table-layout:auto !important; border:none !important; border-collapse:collapse !important;
+  width:100% !important; min-width:100% !important;
+  table-layout:fixed !important; border:none !important; border-collapse:collapse !important;
 }
 .exec-doc-table-wrap.exec-doc-scroll-wrap thead th {
   position:sticky; top:0; z-index:4;
@@ -26406,6 +26449,25 @@ def _exec_detail_col_class(col_name: str) -> str:
     return "exec-col-text"
 
 
+def _exec_detail_col_width(col_name: str) -> str:
+    """Ширина колонки для colgroup — шапка и тело совпадают при прокрутке."""
+    c = str(col_name or "").strip()
+    cl = c.casefold()
+    if c == "Контрагент":
+        return "22ch"
+    if c == "Объект":
+        return "14ch"
+    if c in {"№ документа", "Тип"} or c.startswith("№"):
+        return "11ch"
+    if "дата" in cl or c in {"Плановая дата сдачи", "Факт сдачи", "Дата создания"}:
+        return "13ch"
+    if "просроч" in cl:
+        return "12ch"
+    if c == "Статус":
+        return "12em"
+    return "16ch"
+
+
 def _exec_metric_cards_html(cards: list[dict], *, caption: str | None = None) -> str:
     esc = html_module.escape
     parts = ['<div class="exec-kpi-grid">']
@@ -26483,6 +26545,11 @@ def _exec_detail_table_html(
         return f'<p style="color:{_exec_muted_text_color()};padding:12px;">{esc("Нет строк для отображения.")}</p>'
     show = df.head(max_rows)
     cols = list(show.columns)
+    colgroup = ["<colgroup>"]
+    for c in cols:
+        w = _exec_detail_col_width(c)
+        colgroup.append(f'<col style="width:{html_module.escape(w, quote=True)};">')
+    colgroup.append("</colgroup>")
     head_parts = ["<thead><tr>"]
     for c in cols:
         c_cls = _exec_detail_col_class(c)
@@ -26520,6 +26587,7 @@ def _exec_detail_table_html(
     return (
         f'<div class="exec-doc-table-wrap exec-doc-scroll-wrap" data-bi-rows="{len(show)}" data-scroll-box-h="576">'
         '<table class="exec-doc-table bi-sortable-table bi-sort-click-only">'
+        + "".join(colgroup)
         + thead
         + "".join(body_parts)
         + "</table></div>"
@@ -26662,6 +26730,151 @@ def _exec_enrich_task_and_contract_dates(work: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+_EXEC_DOC_KINDS_DEFAULT = pd.DataFrame(
+    [
+        {
+            "KindName": "Комплект ИД",
+            "Группа": "Комплект ИД",
+            "Описание": "Комплект исполнительной документации",
+            "В отчёте ИД": "да",
+        },
+        {
+            "KindName": "КС",
+            "Группа": "КС",
+            "Описание": "Календарный сет (акт приёмки выполненных работ)",
+            "В отчёте ИД": "да",
+        },
+        {
+            "KindName": "Отказ",
+            "Группа": "Отказы",
+            "Описание": "Отказ заказчика по документу",
+            "В отчёте ИД": "да",
+        },
+        {
+            "KindName": "Отказы",
+            "Группа": "Отказы",
+            "Описание": "Отказ заказчика (альтернативное написание в TESSA)",
+            "В отчёте ИД": "да",
+        },
+        {
+            "KindName": "Предписания",
+            "Группа": "Предписания",
+            "Описание": "Предписания подрядчику — отдельный отчёт «Предписания»",
+            "В отчёте ИД": "нет",
+        },
+    ]
+)
+
+
+def _exec_doc_kinds_catalog_df() -> pd.DataFrame:
+    """Справочник видов документов ИД (`web/ExecDocKinds.csv`)."""
+    ref = None
+    try:
+        ref = st.session_state.get("reference_execdockinds")
+    except Exception:
+        ref = None
+    if ref is not None and isinstance(ref, pd.DataFrame) and not ref.empty:
+        out = ref.copy()
+    else:
+        from pathlib import Path as _Path
+
+        _p = _Path(__file__).resolve().parent.parent / "web" / "ExecDocKinds.csv"
+        if _p.is_file():
+            try:
+                from web_loader import _load_reference_csv
+
+                loaded = _load_reference_csv(_p)
+                if loaded is not None and not loaded.empty:
+                    out = loaded.copy()
+                else:
+                    out = _EXEC_DOC_KINDS_DEFAULT.copy()
+            except Exception:
+                out = _EXEC_DOC_KINDS_DEFAULT.copy()
+        else:
+            out = _EXEC_DOC_KINDS_DEFAULT.copy()
+    out.columns = [str(c).replace("\ufeff", "").strip() for c in out.columns]
+    if "KindName" not in out.columns:
+        return _EXEC_DOC_KINDS_DEFAULT.copy()
+    out["KindName"] = out["KindName"].astype(str).str.strip()
+    return out.drop_duplicates(subset=["KindName"], keep="first").reset_index(drop=True)
+
+
+def _exec_doc_kind_in_report_flag(row: pd.Series) -> bool:
+    flag_col = next(
+        (c for c in row.index if "отч" in str(c).lower() and "ид" in str(c).lower()),
+        "В отчёте ИД",
+    )
+    val = str(row.get(flag_col, "да")).strip().lower()
+    return val not in ("нет", "no", "0", "false", "-", "")
+
+
+def _exec_doc_kind_filter_options(
+    work: pd.DataFrame,
+    kind_col: str | None,
+    catalog_df: pd.DataFrame,
+) -> list[str]:
+    """Варианты фильтра «Вид документа» — из справочника (даже если в данных пока 0 строк)."""
+    opts: list[str] = []
+    seen: set[str] = set()
+    if catalog_df is not None and not catalog_df.empty and "KindName" in catalog_df.columns:
+        for _, r in catalog_df.iterrows():
+            if not _exec_doc_kind_in_report_flag(r):
+                continue
+            kn = str(r.get("KindName", "")).strip()
+            if not kn or kn in seen:
+                continue
+            opts.append(kn)
+            seen.add(kn)
+    if opts:
+        return opts
+    if not kind_col or kind_col not in work.columns:
+        return []
+    return sorted(
+        {
+            str(v).strip()
+            for v in work[kind_col].dropna().astype(str)
+            if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
+        },
+        key=lambda x: x.casefold(),
+    )
+
+
+def _exec_doc_kinds_catalog_display(
+    work: pd.DataFrame,
+    kind_col: str | None,
+    catalog_df: pd.DataFrame,
+) -> pd.DataFrame:
+    disp = catalog_df.copy()
+    counts: dict[str, int] = {}
+    if kind_col and kind_col in work.columns:
+        counts = {
+            str(k).strip(): int(v)
+            for k, v in work[kind_col].astype(str).str.strip().value_counts().items()
+        }
+    disp["Строк в данных"] = disp["KindName"].astype(str).str.strip().map(
+        lambda k: counts.get(k, 0)
+    )
+    known = set(disp["KindName"].astype(str).str.strip())
+    extra_rows = []
+    for k, n in sorted(counts.items(), key=lambda x: (-x[1], x[0].casefold())):
+        if not k or k in known:
+            continue
+        if "предписан" in k.casefold():
+            continue
+        extra_rows.append(
+            {
+                "KindName": k,
+                "Группа": k,
+                "Описание": "Не описан в справочнике — добавьте строку в ExecDocKinds.csv",
+                "В отчёте ИД": "да",
+                "Строк в данных": int(n),
+            }
+        )
+    if extra_rows:
+        disp = pd.concat([disp, pd.DataFrame(extra_rows)], ignore_index=True)
+    return disp
+
+
 # ==================== DASHBOARD: Исполнительная документация (отдельный отчёт в группе «Прочее») ====================
 def dashboard_executive_documentation(df):
     """
@@ -26799,12 +27012,13 @@ def dashboard_executive_documentation(df):
     today = date.today()
 
     with filters_panel(st, reset_keys=[
-        "exec_doc_object", "exec_doc_contr",
+        "exec_doc_object", "exec_doc_contr", "exec_doc_kind",
         "exec_doc_period", "exec_doc_granularity", "exec_doc_hide_overdue_signed",
     ]):
         # ТЗ (скриншот): блок фильтров как в «Отклонение от базового плана» —
         # все селекторы одной шириной в одну линию, чекбоксы отдельным блоком.
-        fc1, fc2, fc3, fc4 = st.columns(4, gap="small")
+        _exec_kinds_catalog = _exec_doc_kinds_catalog_df()
+        fc1, fc2, fc3, fc4, fc5 = st.columns(5, gap="small")
         with fc1:
             if obj_col:
                 _exec_proj_opts = sorted(
@@ -26824,6 +27038,17 @@ def dashboard_executive_documentation(df):
             else:
                 sel_contr = "Все"
         with fc3:
+            if kind_col:
+                kinds = ["Все"] + _exec_doc_kind_filter_options(work, kind_col, _exec_kinds_catalog)
+                sel_kind = st.selectbox(
+                    "Вид документа",
+                    kinds,
+                    key="exec_doc_kind",
+                    help="Значения KindName из tessa_*-id.csv; см. справочник ExecDocKinds.csv",
+                )
+            else:
+                sel_kind = "Все"
+        with fc4:
             if pd.notna(dmin) and pd.notna(dmax):
                 min_date = dmin.date() if hasattr(dmin, "date") else dmin
                 max_date = dmax.date() if hasattr(dmax, "date") else dmax
@@ -26843,7 +27068,7 @@ def dashboard_executive_documentation(df):
                 p_start = p_end = None
                 with st.expander("Период по дате создания", expanded=False):
                     suppress_caption("В данных нет распознанной колонки даты создания — период не применяется.")
-        with fc4:
+        with fc5:
             _gran_opts = list(_exec_granularity_freq_map().keys())
             try:
                 _gi = _gran_opts.index("Месяц")
@@ -26864,17 +27089,33 @@ def dashboard_executive_documentation(df):
             )
 
     suppress_caption(
-        "Маппинг ИД: тип и статус — из `tessa_*-id.csv` (`KindName`, `KrState`); крайний срок подписания — `id_Deadline`; "
+        "Маппинг ИД: тип (`KindName`) и статус — из `tessa_*-id.csv`; справочник видов — `web/ExecDocKinds.csv`; "
+        "крайний срок подписания — `id_Deadline`; "
         "передача заказчику — задача «На согласование» в `tessa_*-task.csv` (`Completed`); приёмка комплекта — "
         "«Печатная форма создана» (`Completed`); просрочка сдачи по договору — `Дата_Окончания_Договора` vs "
         "`Дата_Получения_ИД` в `1с_*_Dogovor.json` (поле связи `1C_ID_DOG`). Просрочка заказчика — уточняется (TBD)."
     )
+
+    with st.expander("Справочник видов документов ИД", expanded=False):
+        _exec_cat_disp = _exec_doc_kinds_catalog_display(work, kind_col, _exec_kinds_catalog)
+        st.caption(
+            "Файл `web/ExecDocKinds.csv`: соответствие KindName из TESSA группам отчёта "
+            "(Комплект ИД, КС, Отказы). Колонка «Строк в данных» — по текущей выгрузке до фильтров."
+        )
+        render_report_html_table(
+            format_dataframe_as_html(_exec_cat_disp),
+            export_df=_exec_cat_disp,
+            file_stem="exec_doc_kinds",
+            key_prefix="exec_doc_kinds_ref",
+        )
 
     filtered_base = work.copy()
     if sel_obj != "Все" and obj_col:
         filtered_base = _filter_df_by_norm_key_col(filtered_base, obj_col, sel_obj)
     if sel_contr != "Все" and contr_col:
         filtered_base = filtered_base[filtered_base[contr_col].astype(str).str.strip() == sel_contr]
+    if sel_kind != "Все" and kind_col:
+        filtered_base = filtered_base[filtered_base[kind_col].astype(str).str.strip() == sel_kind]
 
     # tessa_data объединяет все snapshot-файлы → один документ может иметь несколько
     # записей (по дате snapshot). Для «текущего состояния» (карточки, бар-чарт
@@ -26924,6 +27165,8 @@ def dashboard_executive_documentation(df):
                 _empty_reasons.append(f"для объекта «{sel_obj}»")
             if sel_contr != "Все":
                 _empty_reasons.append(f"для контрагента «{sel_contr}»")
+            if sel_kind != "Все":
+                _empty_reasons.append(f"для вида документа «{sel_kind}»")
         else:
             _date_str = (
                 f"{p_start.strftime('%d.%m.%Y') if hasattr(p_start, 'strftime') else p_start}"

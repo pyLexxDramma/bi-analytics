@@ -2720,6 +2720,23 @@ def render_report_html_table(
     _kp = key_prefix or f"tbl_{_export_file_stem(file_stem)}"
     _pop_key = f"{_kp}_dl"
     _wrap_key = "bitblwrap_" + str(_kp).replace(' ', '_')
+    if file_stem == "exec_doc_kinds":
+        st.markdown(
+            "<style>"
+            "div[data-testid='stExpander'] .bd-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}"
+            "div[data-testid='stExpander'] .bi-sortable-table{width:100%;min-width:max-content;}"
+            "</style>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(html, unsafe_allow_html=True)
+        if export_df is not None:
+            render_dataframe_excel_csv_downloads(
+                export_df,
+                file_stem=file_stem,
+                key_prefix=_kp,
+                popover_key=_pop_key,
+            )
+        return
     if file_stem == "pd_dynamics_table":
         _render_pd_dynamics_html_table(
             html,
