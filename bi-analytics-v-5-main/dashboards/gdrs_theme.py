@@ -275,6 +275,40 @@ html body [data-testid="stAppViewContainer"] [data-testid="stMainBlockContainer"
   -webkit-text-fill-color: {g_text} !important;
   opacity: 1 !important;
 }}
+html body.gdrs-light-preview [data-testid="stCheckbox"] label[data-baseweb="checkbox"] p,
+html body.gdrs-light-preview [data-testid="stCheckbox"] label[data-baseweb="checkbox"] [data-testid="stMarkdownContainer"],
+html body.gdrs-light-preview [data-testid="stCheckbox"] label[data-baseweb="checkbox"] [data-testid="stMarkdownContainer"] * {{
+  background: transparent !important;
+  background-color: transparent !important;
+  color: {g_text} !important;
+  -webkit-text-fill-color: {g_text} !important;
+}}
+html body.gdrs-light-preview [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked) > input + div:not(:has(p)) {{
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  max-width: 16px !important;
+  background-color: #2563eb !important;
+  border: 2px solid #2563eb !important;
+  border-radius: 4px !important;
+}}
+html body.gdrs-light-preview [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked) > input + div:has(p) {{
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  width: auto !important;
+  height: auto !important;
+  max-width: none !important;
+}}
+html body.gdrs-light-preview [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked) > input + div:has(p) > div:first-child:not(:has(p)) {{
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  max-width: 16px !important;
+  background-color: #2563eb !important;
+  border: 2px solid #2563eb !important;
+  border-radius: 4px !important;
+}}
 html body [data-testid="stAppViewContainer"] [data-testid="stMainBlockContainer"] [data-testid="stWidgetLabel"],
 html body [data-testid="stAppViewContainer"] [data-testid="stMainBlockContainer"] [data-testid="stWidgetLabel"] * {{
   font-weight: 700 !important;
@@ -387,6 +421,18 @@ html body .main [data-testid="stExpander"] [data-testid="stVerticalBlock"],
 html body section.main [data-testid="stExpander"] [data-testid="stVerticalBlock"] {{
   background-color: {g_white} !important;
 }}
+html body.gdrs-light-preview [data-testid="stExpanderDetails"] [data-testid="stMarkdownContainer"],
+html body.gdrs-light-preview [data-testid="stExpanderDetails"] [data-testid="stMarkdownContainer"] *,
+html body.gdrs-light-preview section.main [data-testid="stExpander"] [data-testid="stExpanderDetails"] p,
+html body.gdrs-light-preview section.main [data-testid="stExpander"] [data-testid="stExpanderDetails"] li,
+html body.gdrs-light-preview section.main [data-testid="stExpander"] [data-testid="stExpanderDetails"] strong,
+html body.gdrs-light-preview section.main [data-testid="stExpander"] [data-testid="stExpanderDetails"] em,
+html body.gdrs-light-preview section.main [data-testid="stExpander"] [data-testid="stExpanderDetails"] ol,
+html body.gdrs-light-preview section.main [data-testid="stExpander"] [data-testid="stExpanderDetails"] ul {{
+  color: {g_text} !important;
+  -webkit-text-fill-color: {g_text} !important;
+  opacity: 1 !important;
+}}
 html body [data-testid="stSelectbox"] [data-baseweb="select"] > div,
 html body [data-baseweb="select"] > div,
 html body [data-testid="stMultiSelect"] [data-baseweb="select"] > div,
@@ -431,9 +477,13 @@ html body [data-baseweb="tag"] span {{
   font-weight: 600 !important;
 }}
 
-/* Кнопки в контенте: «Скачать таблицу» и др. */
+/* Кнопки в контенте: «Скачать таблицу», «Сбросить» в фильтрах и др. */
 html body .main .stButton > button,
 html body .main [data-testid="stButton"] button,
+html body section.main [data-testid="stButton"] button,
+html body [data-testid="stMainBlockContainer"] [data-testid="stButton"] button,
+html body [data-testid="stExpander"] [data-testid="stButton"] button,
+html body [data-testid="stExpanderDetails"] [data-testid="stButton"] button,
 html body [data-testid="stPopover"] > button,
 html body [data-testid="stPopover"] button,
 html body [data-testid="stPopoverBody"] .stButton > button,
@@ -446,6 +496,10 @@ html body [data-testid="stPopoverBody"] [data-testid="stButton"] button {{
 }}
 html body .main .stButton > button:hover,
 html body .main [data-testid="stButton"] button:hover,
+html body section.main [data-testid="stButton"] button:hover,
+html body [data-testid="stMainBlockContainer"] [data-testid="stButton"] button:hover,
+html body [data-testid="stExpander"] [data-testid="stButton"] button:hover,
+html body [data-testid="stExpanderDetails"] [data-testid="stButton"] button:hover,
 html body [data-testid="stPopover"] > button:hover,
 html body [data-testid="stPopover"] button:hover,
 html body [data-testid="stPopoverBody"] .stButton > button:hover,
@@ -616,7 +670,10 @@ html body.gdrs-light-preview [data-testid="stPlotlyChart"] .xtick text,
 html body.gdrs-light-preview [data-testid="stPlotlyChart"] .ytick text,
 html body.gdrs-light-preview [data-testid="stPlotlyChart"] .legend text,
 html body.gdrs-light-preview [data-testid="stPlotlyChart"] g.xtitle text,
-html body.gdrs-light-preview [data-testid="stPlotlyChart"] g.ytitle text {{
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] g.ytitle text,
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] .barlayer text,
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] g.textpoint text,
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] .bartext text {{
   fill: #111827 !important;
   color: #111827 !important;
   -webkit-text-fill-color: #111827 !important;
@@ -701,6 +758,35 @@ html body .gdrs-loading-icon {{
 @keyframes gdrs-loading-spin {{
   from {{ transform: rotate(0deg); }}
   to {{ transform: rotate(360deg); }}
+}}
+/* st.tabs — на светлом превью без style.css подписи иначе белые на белом */
+html body section.main [data-testid="stTabs"] button[data-baseweb="tab"],
+html body .stTabs button[data-baseweb="tab"] {{
+  color: #4b5563 !important;
+  -webkit-text-fill-color: #4b5563 !important;
+}}
+html body section.main [data-testid="stTabs"] button[data-baseweb="tab"]:hover,
+html body .stTabs button[data-baseweb="tab"]:hover {{
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+}}
+html body section.main [data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"],
+html body .stTabs button[data-baseweb="tab"][aria-selected="true"] {{
+  color: #ff4b4b !important;
+  -webkit-text-fill-color: #ff4b4b !important;
+}}
+html body section.main [data-testid="stTabs"] button[data-baseweb="tab"] p,
+html body .stTabs button[data-baseweb="tab"] p {{
+  color: inherit !important;
+  -webkit-text-fill-color: inherit !important;
+}}
+html body section.main [data-testid="stTabs"] div[data-baseweb="tab-border"],
+html body .stTabs div[data-baseweb="tab-border"] {{
+  background-color: #cbd5e1 !important;
+}}
+html body section.main [data-testid="stTabs"] [data-baseweb="tab-panel"],
+html body .stTabs [data-baseweb="tab-panel"] {{
+  margin-top: 1rem !important;
 }}
 </style>
 <script>
@@ -1105,6 +1191,9 @@ html, body {{
   color: inherit !important;
 }}
 #{w} .gdrs-matrix-table thead th {{
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 5 !important;
   background: #e5e7eb !important;
   color: #111827 !important;
   font-size: 14px !important;

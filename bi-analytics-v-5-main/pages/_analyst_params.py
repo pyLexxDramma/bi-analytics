@@ -22,53 +22,10 @@ while _p != _p.parent:
 
 sys.path.insert(0, str(_app_root))
 
-# ┌──────────────────────────────────────────────────────────────────────────┐ #
-# │ ⊗ CSS CONNECT ¤ Start                                                    │ #
-# └──────────────────────────────────────────────────────────────────────────┘ #
-
-def load_custom_css():
-
-    css_path = _app_root / "static" / "css" / "style.css"
-
-    if css_path.exists():
-
-        with open(css_path, encoding="utf-8") as f:
-
-            css_content = f.read()
-
-        st.markdown(f"<style>{css_content}</style>", unsafe_allow_html=True)
-
-    else:
-
-        st.warning(f"CSS файл не найден: {css_path}")
-
-# ┌──────────────────────────────────────────────────────────────────────────┐ #
-# │ ⊗ CSS CONNECT ¤ End                                                      │ #
-# └──────────────────────────────────────────────────────────────────────────┘ #
-
 import streamlit as st
 import pandas as pd
 
-_TABLE_CSS = (
-    "<style>"
-    ".ht-wrap{overflow-x:auto;min-width:0;margin:.5rem 0 1rem}"
-    ".ht{width:100%;border-collapse:collapse;font-size:13px;font-family:Inter,system-ui,sans-serif}"
-    ".ht th{text-align:center!important;vertical-align:bottom;position:sticky;top:0;background:#1a1c23;color:#fafafa;padding:6px 8px;"
-    "border-bottom:2px solid #444;font-weight:600;white-space:normal;word-wrap:break-word;overflow-wrap:anywhere;line-height:1.25;max-width:11em;overflow:visible;text-overflow:clip;vertical-align:bottom}"
-    ".ht td{text-align:center;vertical-align:middle;padding:5px 8px;border-bottom:1px solid #333;color:#e0e0e0;white-space:normal;"
-    "word-wrap:break-word;overflow-wrap:anywhere;max-width:28em;overflow:visible;text-overflow:clip;vertical-align:top}"
-    ".ht th.col-text,.ht td.col-text{text-align:left;vertical-align:top}"
-    ".ht th{text-align:center!important}"
-    ".ht tr:hover td{background:#262833}"
-    "</style>"
-)
-
-def _html_table(df, max_rows=300):
-    show = df.head(max_rows).copy()
-    for col in show.columns:
-        show[col] = [str(v) if pd.notna(v) else "" for v in show[col]]
-    html = show.to_html(index=False, classes="ht", escape=True, border=0)
-    st.markdown(_TABLE_CSS + '<div class="ht-wrap">' + html + '</div>', unsafe_allow_html=True)
+from admin_panel_content import _html_table
 
 from auth import (
     check_authentication,
@@ -168,7 +125,16 @@ if is_streamlit_context():
     # │ ⊗ CSS CONNECT ¤ Start                                                │ #
     # └──────────────────────────────────────────────────────────────────────┘ #
 
+    from utils import load_custom_css
+
     load_custom_css()
+
+    try:
+        from dashboards.light_theme import sync_light_preview_theme
+
+        sync_light_preview_theme(st)
+    except Exception:
+        pass
 
     # ┌──────────────────────────────────────────────────────────────────────┐ #
     # │ ⊗ CSS CONNECT ¤ End                                                  │ #
@@ -199,10 +165,32 @@ if is_streamlit_context():
 
         st.stop()
 
+    try:
+        from dashboards.light_theme import PROFILE_LIGHT_PREVIEW_SESSION_KEY
+
+        st.session_state.pop(PROFILE_LIGHT_PREVIEW_SESSION_KEY, None)
+    except Exception:
+        pass
+
     # Боковая панель с меню навигации
     render_sidebar_menu(current_page="admin")
 
-    st.title("Административная панель")
+    try:
+        from dashboards.light_theme import (
+            ADMIN_PANEL_LABEL,
+            is_light_preview_active,
+            light_preview_heading_html,
+        )
+
+        if is_light_preview_active():
+            st.markdown(
+                light_preview_heading_html(ADMIN_PANEL_LABEL),
+                unsafe_allow_html=True,
+            )
+        else:
+            st.title(ADMIN_PANEL_LABEL)
+    except Exception:
+        st.title("Административная панель")
 
     st.markdown("---")
 

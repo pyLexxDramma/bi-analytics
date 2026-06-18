@@ -40,8 +40,26 @@ st.set_page_config(
     menu_items={"Get Help": None, "Report a bug": None, "About": None},
 )
 
-# Те же стили, что и на основной панели (контраст текста, алерты, поля ввода)
+try:
+    from dashboards.light_theme import (
+        LOGIN_LIGHT_PREVIEW_SESSION_KEY,
+        clear_foreign_light_preview_keys,
+        sync_login_light_preview_from_query,
+    )
+
+    sync_login_light_preview_from_query(st)
+    clear_foreign_light_preview_keys(st, keep=LOGIN_LIGHT_PREVIEW_SESSION_KEY)
+except Exception:
+    pass
+
 load_custom_css()
+
+try:
+    from dashboards.light_theme import sync_light_preview_theme
+
+    sync_light_preview_theme(st)
+except Exception:
+    pass
 
 # Если уже авторизован, перенаправляем
 if st.session_state.get("authenticated", False):
@@ -57,18 +75,28 @@ if "reset_token" not in st.session_state:
     st.session_state.reset_token = None
 
 # Заголовок страницы (всегда показывается)
-st.markdown(
-    """
-    <div style="text-align: center; margin-bottom: 2rem;">
-        <h1 style="color: #ffffff; font-size: 3rem; margin-bottom: 0.5rem;">🔐</h1>
-        <h1 style="color: #ffffff; font-size: 2rem; margin-bottom: 0.5rem;">BI Analytics</h1>
-        <p style="color: #c8d8ec; font-size: 1.1rem;">Войдите в систему для доступа к панели аналитики</p>
-    </div>
-""",
-    unsafe_allow_html=True,
-)
+try:
+    from dashboards.light_theme import login_page_heading_html
 
-# Форма без контейнера
+    st.markdown(login_page_heading_html(), unsafe_allow_html=True)
+except Exception:
+    st.markdown(
+        """
+        <div style="text-align: center; margin-bottom: 2rem;">
+            <h1 style="color: #ffffff; font-size: 3rem; margin-bottom: 0.5rem;">🔐</h1>
+            <h1 style="color: #ffffff; font-size: 2rem; margin-bottom: 0.5rem;">BI Analytics</h1>
+            <p style="color: #c8d8ec; font-size: 1.1rem;">Войдите в систему для доступа к панели аналитики</p>
+        </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+try:
+    from dashboards.light_theme import render_login_light_preview_dev_toggle
+
+    render_login_light_preview_dev_toggle(st, key_prefix="pages_login")
+except Exception:
+    pass
 
 # Режим восстановления пароля по токену
 if st.session_state.reset_mode and st.session_state.reset_token:
@@ -229,6 +257,9 @@ else:
                     st.session_state.authenticated = True
                     st.session_state.user = user
                     st.session_state.current_dashboard = "Девелоперские проекты"
+                    from auth import mark_sidebar_categories_collapsed_on_login
+
+                    mark_sidebar_categories_collapsed_on_login()
                     schedule_ftp_reload_after_login(st.session_state)
                     st.success(f"Добро пожаловать, {user['username']}!")
                     st.balloons()

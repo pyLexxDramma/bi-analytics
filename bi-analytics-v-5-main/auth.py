@@ -68,12 +68,19 @@ _REPORT_ROLE_ALLOWLIST: Dict[str, frozenset] = {
     "Прогнозный бюджет": frozenset({"manager", "analyst", "rp", "financier", "admin", "superadmin"}),
     "Дебиторская и кредиторская задолженность": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "Дебиторская и кредиторская задолженность подрядчиков": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
+    "Дебиторская и кредиторская задолженность подрядчиков (превью — светлая)": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "Причины отклонений": frozenset({"manager", "analyst", "rp", "gip", "financier", "admin", "superadmin"}),
     "Отклонение от базового плана": frozenset({"manager", "analyst", "rp", "gip", "financier", "admin", "superadmin"}),
     "Контрольные точки": frozenset({"manager", "analyst", "rp", "gip", "financier", "admin", "superadmin"}),
+    "Контрольные точки (превью — светлая)": frozenset({"manager", "analyst", "rp", "gip", "financier", "admin", "superadmin"}),
     "График проекта": frozenset({"manager", "analyst", "rp", "gip", "financier", "admin", "superadmin"}),
+    "График проекта (превью — светлая)": frozenset({"manager", "analyst", "rp", "gip", "financier", "admin", "superadmin"}),
+    "Причины отклонений (превью — светлая)": frozenset({"manager", "analyst", "rp", "gip", "financier", "admin", "superadmin"}),
+    "Отклонение от базового плана (превью — светлая)": frozenset({"manager", "analyst", "rp", "gip", "financier", "admin", "superadmin"}),
     "Рабочая документация": frozenset({"manager", "analyst", "rp", "gip", "admin", "superadmin"}),
+    "Рабочая документация (превью — светлая)": frozenset({"manager", "analyst", "rp", "gip", "admin", "superadmin"}),
     "Проектная документация": frozenset({"manager", "analyst", "rp", "gip", "admin", "superadmin"}),
+    "Проектная документация (превью — светлая)": frozenset({"manager", "analyst", "rp", "gip", "admin", "superadmin"}),
     "ГДРС": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "График движения рабочей силы": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "ГДРС Техника": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
@@ -87,7 +94,9 @@ _REPORT_ROLE_ALLOWLIST: Dict[str, frozenset] = {
     "Утверждённый бюджет план/факт (превью — светлая)": frozenset({"manager", "analyst", "rp", "financier", "admin", "superadmin"}),
     "Прогнозный бюджет (превью — светлая)": frozenset({"manager", "analyst", "rp", "financier", "admin", "superadmin"}),
     "Исполнительная документация": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
+    "Исполнительная документация (превью — светлая)": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "Предписания по подрядчикам": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
+    "Предписания по подрядчикам (превью — светлая)": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "Неустраненные предписания": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "Просрочка выдачи РД": frozenset({"manager", "analyst", "rp", "gip", "financier", "admin", "superadmin"}),
     "Просрочка выдачи ПД": frozenset({"manager", "analyst", "rp", "gip", "financier", "admin", "superadmin"}),
@@ -826,6 +835,18 @@ def require_auth():
         st.stop()
 
 
+SIDEBAR_COLLAPSE_CATEGORIES_KEY = "_sidebar_collapse_categories_on_login"
+
+
+def mark_sidebar_categories_collapsed_on_login() -> None:
+    """Свернуть группы отчётов в сайдбаре сразу после входа."""
+    if is_streamlit_context():
+        st.session_state[SIDEBAR_COLLAPSE_CATEGORIES_KEY] = True
+        for key in list(st.session_state.keys()):
+            if str(key).startswith("sidebar_cat_"):
+                del st.session_state[key]
+
+
 def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool = True):
     """
     Отображение боковой панели с меню навигации
@@ -902,6 +923,16 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
         # 1. Отчёты (отдельный визуальный блок от настроек)
         if has_report_access(user["role"]) and current_page != "reports":
             if st.button("К дашбордам", width="stretch", key="menu_go_reports"):
+                try:
+                    from dashboards.light_theme import (
+                        ADMIN_LIGHT_PREVIEW_SESSION_KEY,
+                        PROFILE_LIGHT_PREVIEW_SESSION_KEY,
+                    )
+
+                    st.session_state.pop(PROFILE_LIGHT_PREVIEW_SESSION_KEY, None)
+                    st.session_state.pop(ADMIN_LIGHT_PREVIEW_SESSION_KEY, None)
+                except Exception:
+                    pass
                 switch_page_app("project_visualization_app.py")
             st.markdown("---")
 
@@ -911,6 +942,7 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
             st.markdown('<p class="sidebar-section-title">Отчёты</p>', unsafe_allow_html=True)
             st.markdown("---")
             current_dashboard = st.session_state.get("current_dashboard", "")
+            _collapse_cats = st.session_state.get(SIDEBAR_COLLAPSE_CATEGORIES_KEY, False)
             for cat_name, reports in get_report_categories():
                 visible = filter_reports_for_role(user["role"], list(reports))
                 if not visible:
@@ -927,10 +959,20 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
                         key=f"menu_report_{report}",
                         type=button_type,
                     ):
+                        st.session_state.pop(SIDEBAR_COLLAPSE_CATEGORIES_KEY, None)
                         st.session_state.current_dashboard = report
                         st.rerun()
                 else:
-                    with st.expander(cat_name, expanded=_expand_here):
+                    _exp_key = f"sidebar_cat_{cat_name}"
+                    if _exp_key not in st.session_state:
+                        st.session_state[_exp_key] = False if _collapse_cats else _expand_here
+                    elif not _collapse_cats and _expand_here:
+                        st.session_state[_exp_key] = True
+                    with st.expander(
+                        cat_name,
+                        expanded=st.session_state[_exp_key],
+                        key=_exp_key,
+                    ):
                         for report in visible:
                             button_type = (
                                 "primary" if current_dashboard == report else "secondary"
@@ -941,34 +983,135 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
                                 key=f"menu_report_{report}",
                                 type=button_type,
                             ):
+                                st.session_state.pop(SIDEBAR_COLLAPSE_CATEGORIES_KEY, None)
+                                st.session_state[_exp_key] = True
                                 st.session_state.current_dashboard = report
                                 st.rerun()
             st.markdown("---")
 
         st.markdown('<p class="sidebar-section-title">Настройки</p>', unsafe_allow_html=True)
 
-        # Настройки профиля (для всех ролей)
-        if current_page == "profile":
-            st.button(
-                "Настройки профиля",
-                width="stretch",
-                type="primary",
-                disabled=True,
-            )
-        else:
-            if st.button("Настройки профиля", width="stretch"):
-                switch_page_app("pages/profile.py")
+        from dashboards.light_theme import (
+            ADMIN_LIGHT_PREVIEW_SESSION_KEY,
+            ADMIN_PANEL_LABEL,
+            PROFILE_LIGHT_PREVIEW_SESSION_KEY,
+            PROFILE_SETTINGS_LABEL,
+            light_preview_reports_enabled,
+            preview_light_name,
+        )
 
-        if has_admin_access(user["role"]):
-            if current_page == "admin":
+        _profile_light_label = preview_light_name(PROFILE_SETTINGS_LABEL)
+        _show_profile_light = light_preview_reports_enabled()
+        _on_profile_light = bool(st.session_state.get(PROFILE_LIGHT_PREVIEW_SESSION_KEY))
+
+        if current_page == "profile":
+            if not _on_profile_light:
                 st.button(
-                    "Административная панель",
+                    PROFILE_SETTINGS_LABEL,
                     width="stretch",
                     type="primary",
                     disabled=True,
                 )
-            elif st.button("Административная панель", width="stretch", key="menu_go_admin"):
-                switch_page_app("pages/_analyst_params.py")
+            elif st.button(
+                PROFILE_SETTINGS_LABEL,
+                width="stretch",
+                key="menu_go_profile_dark",
+            ):
+                st.session_state[PROFILE_LIGHT_PREVIEW_SESSION_KEY] = False
+                st.session_state.pop(ADMIN_LIGHT_PREVIEW_SESSION_KEY, None)
+                switch_page_app("pages/profile.py")
+                st.rerun()
+            if _show_profile_light:
+                if _on_profile_light:
+                    st.button(
+                        _profile_light_label,
+                        width="stretch",
+                        type="primary",
+                        disabled=True,
+                    )
+                elif st.button(
+                    _profile_light_label,
+                    width="stretch",
+                    key="menu_go_profile_light",
+                ):
+                    st.session_state[PROFILE_LIGHT_PREVIEW_SESSION_KEY] = True
+                    st.session_state.pop(ADMIN_LIGHT_PREVIEW_SESSION_KEY, None)
+                    switch_page_app("pages/profile.py")
+                    st.rerun()
+        else:
+            if st.button(
+                PROFILE_SETTINGS_LABEL,
+                width="stretch",
+                key="menu_go_profile",
+            ):
+                st.session_state[PROFILE_LIGHT_PREVIEW_SESSION_KEY] = False
+                st.session_state.pop(ADMIN_LIGHT_PREVIEW_SESSION_KEY, None)
+                switch_page_app("pages/profile.py")
+            if _show_profile_light and st.button(
+                _profile_light_label,
+                width="stretch",
+                key="menu_go_profile_light",
+            ):
+                st.session_state[PROFILE_LIGHT_PREVIEW_SESSION_KEY] = True
+                st.session_state.pop(ADMIN_LIGHT_PREVIEW_SESSION_KEY, None)
+                switch_page_app("pages/profile.py")
+
+        if has_admin_access(user["role"]):
+            _admin_light_label = preview_light_name(ADMIN_PANEL_LABEL)
+            _show_admin_light = light_preview_reports_enabled()
+            _on_admin_light = bool(st.session_state.get(ADMIN_LIGHT_PREVIEW_SESSION_KEY))
+
+            if current_page == "admin":
+                if not _on_admin_light:
+                    st.button(
+                        ADMIN_PANEL_LABEL,
+                        width="stretch",
+                        type="primary",
+                        disabled=True,
+                    )
+                elif st.button(
+                    ADMIN_PANEL_LABEL,
+                    width="stretch",
+                    key="menu_go_admin_dark",
+                ):
+                    st.session_state[ADMIN_LIGHT_PREVIEW_SESSION_KEY] = False
+                    st.session_state.pop(PROFILE_LIGHT_PREVIEW_SESSION_KEY, None)
+                    switch_page_app("pages/_analyst_params.py")
+                    st.rerun()
+                if _show_admin_light:
+                    if _on_admin_light:
+                        st.button(
+                            _admin_light_label,
+                            width="stretch",
+                            type="primary",
+                            disabled=True,
+                        )
+                    elif st.button(
+                        _admin_light_label,
+                        width="stretch",
+                        key="menu_go_admin_light",
+                    ):
+                        st.session_state[ADMIN_LIGHT_PREVIEW_SESSION_KEY] = True
+                        st.session_state.pop(PROFILE_LIGHT_PREVIEW_SESSION_KEY, None)
+                        switch_page_app("pages/_analyst_params.py")
+                        st.rerun()
+            else:
+                if st.button(
+                    ADMIN_PANEL_LABEL,
+                    width="stretch",
+                    key="menu_go_admin",
+                ):
+                    st.session_state[ADMIN_LIGHT_PREVIEW_SESSION_KEY] = False
+                    st.session_state.pop(PROFILE_LIGHT_PREVIEW_SESSION_KEY, None)
+                    switch_page_app("pages/_analyst_params.py")
+                if _show_admin_light and st.button(
+                    _admin_light_label,
+                    width="stretch",
+                    key="menu_go_admin_light",
+                ):
+                    st.session_state[ADMIN_LIGHT_PREVIEW_SESSION_KEY] = True
+                    st.session_state.pop(PROFILE_LIGHT_PREVIEW_SESSION_KEY, None)
+                    switch_page_app("pages/_analyst_params.py")
 
         if include_footer:
             render_sidebar_footer(user)

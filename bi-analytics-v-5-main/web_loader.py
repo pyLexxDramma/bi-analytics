@@ -1723,6 +1723,7 @@ def load_all_from_web() -> Dict:
     st.session_state["reference_contractors"] = None
     st.session_state["reference_krstates"] = None
     st.session_state["reference_docstates"] = None
+    st.session_state["reference_execdockinds"] = None
     st.session_state["reference_1c_dannye"] = None
     st.session_state["reference_partner_to_project"] = None
 
@@ -1911,7 +1912,13 @@ def load_all_from_web() -> Dict:
                 if file_type_by_name == "reference_csv":
                     ref_df = _load_reference_csv(filepath)
                     if ref_df is not None and not ref_df.empty:
-                        ref_key = "krstates" if "krstate" in name.lower() else "docstates"
+                        nl_ref = name.lower()
+                        if "krstate" in nl_ref:
+                            ref_key = "krstates"
+                        elif "execdockind" in nl_ref:
+                            ref_key = "execdockinds"
+                        else:
+                            ref_key = "docstates"
                         st.session_state[f"reference_{ref_key}"] = ref_df
                         result["loaded"] += 1
                     else:
@@ -2279,7 +2286,7 @@ def _infer_file_type_by_name(file_name: str) -> str:
         return "tessa"
 
     # ── Справочники KrStates / DocStates ─────────────────────────────────────
-    if stem in ("docstates", "krstates"):
+    if stem in ("docstates", "krstates", "execdockinds"):
         return "reference_csv"
 
     # ── Статические файлы — пропускаем ───────────────────────────────────────
@@ -2543,3 +2550,7 @@ def read_version_to_session(version_id: int):
         kr_path = Path(__file__).resolve().parent / "web" / "KrStates.csv"
         if kr_path.exists():
             st.session_state["reference_krstates"] = _load_reference_csv(kr_path)
+    if st.session_state.get("reference_execdockinds") is None:
+        _edk_path = Path(__file__).resolve().parent / "web" / "ExecDocKinds.csv"
+        if _edk_path.exists():
+            st.session_state["reference_execdockinds"] = _load_reference_csv(_edk_path)

@@ -233,11 +233,18 @@ _TABLE_CSS = """
 .pd-dynamics-table-wrap .pf-dates-table{
   width:100%!important;min-width:100%!important;max-width:100%!important;table-layout:fixed!important;
 }
-.pd-dynamics-scroll-wrap .pf-dates-table th,
-.pd-dynamics-scroll-wrap .pf-dates-table td,
-.pd-dynamics-table-wrap .pf-dates-table th,
-.pd-dynamics-table-wrap .pf-dates-table td{
+.pd-dynamics-scroll-wrap .pf-dates-table tbody td,
+.pd-dynamics-table-wrap .pf-dates-table tbody td{
   overflow:hidden;text-overflow:ellipsis;
+}
+.pd-dynamics-scroll-wrap .pf-dates-table thead th,
+.pd-dynamics-table-wrap .pf-dates-table thead th{
+  overflow:visible!important;text-overflow:clip!important;white-space:nowrap!important;
+}
+.pd-dynamics-scroll-wrap .pf-dates-table thead th .bi-sort-label,
+.pd-dynamics-table-wrap .pf-dates-table thead th .bi-sort-label{
+  white-space:nowrap!important;overflow:visible!important;text-overflow:clip!important;
+  flex:0 0 auto!important;display:inline-block!important;
 }
 .pf-dates-scroll-wrap{
   overflow-x:auto!important;overflow-y:auto!important;
@@ -433,6 +440,100 @@ _TABLE_CSS = """
 </style>
 """
 
+
+def _gantt_table_css_for_theme() -> str:
+    """CSS таблицы задач ганта: светлая палитра на превью."""
+    css = _TABLE_CSS
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if not is_light_preview_active():
+            return css
+    except Exception:
+        return css
+    for old, new in (
+        ("background:hsl(209, 72%, 6%); color:#fafafa;", "background:#e5e7eb; color:#111827;"),
+        (
+            "padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0;",
+            "padding:7px 10px; border-bottom:1px solid #cbd5e1; color:#111827;",
+        ),
+        (
+            "background:hsl(209, 70%, 7%) !important;",
+            "background:#f3f4f6 !important; color:#111827 !important;",
+        ),
+        (
+            "background:hsl(209, 65%, 10%) !important;",
+            "background:#e5e7eb !important; color:#111827 !important;",
+        ),
+        ("tr:hover td {background:#262833}", "tr:hover td {background:#f3f4f6}"),
+        (
+            "tr:nth-child(even) td {background:rgba(255,255,255,0.02)}",
+            "tr:nth-child(even) td {background:#fcfcfd}",
+        ),
+        (
+            ".pf-dev-red { color:#ff6b6b !important; font-weight:700; }",
+            ".pf-dev-red { color:hsl(348,100%,63%) !important; font-weight:700; }",
+        ),
+        (
+            ".pf-dev-green { color:#00e676 !important; font-weight:600; }",
+            ".pf-dev-green { color:#15803d !important; font-weight:600; }",
+        ),
+        (".pf-dev-neu { color:#e8eef5 !important; }", ".pf-dev-neu { color:#6b7280 !important; }"),
+        ("border-top:2px solid rgba(255,255,255,0.45);", "border-top:2px solid #94a3b8;"),
+        (
+            ".rendered-table th .bi-sort-label:hover { color:#93c5fd; }",
+            ".rendered-table th .bi-sort-label:hover { color:#2563eb; }",
+        ),
+        (
+            ".pf-dates-scroll-wrap .pf-dates-table thead th{position:sticky;top:0;z-index:4;background:hsl(209,72%,6%)!important;}",
+            ".pf-dates-scroll-wrap .pf-dates-table thead th{position:sticky;top:0;z-index:4;background:#f3f4f6!important;color:#111827!important;}",
+        ),
+    ):
+        css = css.replace(old, new)
+    return css
+
+
+def _pd_dynamics_table_shell_css_for_theme() -> str:
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        _light = is_light_preview_active()
+    except Exception:
+        _light = False
+    _border = "1px solid #cbd5e1" if _light else "1px solid rgba(255,255,255,0.25)"
+    _scroll = "scrollbar-color:#94a3b8 #e5e7eb!important;" if _light else ""
+    _pd_vh = 52.0
+    _pd_box_h = int(min(640, max(280, _pd_vh * 10 + 56)))
+    return (
+        "<style>"
+        "div[class*='st-key-bitblwrap_pd_dyn_tbl'],"
+        "div[class*='st-key-bitblwrap_pd_dyn_tbl'] div[data-testid='stVerticalBlock'],"
+        "div[class*='st-key-bitblwrap_pd_dyn_tbl'] div[data-testid='stElementContainer'],"
+        "[data-testid='stMainBlockContainer'] div[class*='st-key-bitblwrap_pd_dyn_tbl'],"
+        "div[class*='st-key-bitblwrap_pd_dyn_tbl'] div[data-testid='stElementContainer']:has(iframe),"
+        "div[class*='st-key-bitblwrap_pd_dyn_tbl'] iframe"
+        "{width:100%!important;max-width:100%!important;min-width:0!important;display:block!important;}"
+        ".pd-dynamics-table-wrap.budget-deviation-table-wrap,"
+        ".pd-dynamics-table-wrap.budget-deviation-table-wrap .budget-table-scroll"
+        "{width:100%!important;max-width:100%!important;box-sizing:border-box!important;}"
+        f".pd-dynamics-table-wrap.budget-deviation-table-wrap .budget-table-scroll.pd-dynamics-scroll-wrap{{"
+        f"height:{_pd_box_h}px!important;max-height:{_pd_box_h}px!important;min-height:0!important;"
+        f"overflow-y:auto!important;overflow-x:auto!important;"
+        f"-webkit-overflow-scrolling:touch!important;scrollbar-gutter:stable!important;"
+        f"border:{_border}!important;border-radius:10px!important;"
+        f"box-sizing:border-box!important;{_scroll}}}"
+        ".pd-dynamics-table-wrap .pf-dates-table,"
+        ".pd-dynamics-table-wrap .budget-table-scroll table"
+        "{width:100%!important;min-width:100%!important;max-width:100%!important;"
+        "table-layout:fixed!important;}"
+        ".pd-dynamics-table-wrap .budget-table-scroll thead th"
+        "{position:sticky!important;top:0!important;z-index:5!important;}"
+        "div[class*='st-key-bitblwrap_pd_dyn_tbl'] [data-testid='stPopover']"
+        "{margin-top:12px!important;}"
+        "</style>"
+    )
+
+
 def _render_html_table(
     df,
     max_rows=500,
@@ -455,26 +556,16 @@ def _render_html_table(
         show[col] = [str(v) if pd.notna(v) else "" for v in show[col]]
     _role = column_role or {}
     _colored_dev = set(colored_dev_columns or [])
-    _light_open = '<div class="gdrs-light-table">' if iframe_light else ""
-    _light_close = "</div>" if iframe_light else ""
-    _table_css = _TABLE_CSS
-    if iframe_light:
-        _table_css = _TABLE_CSS.replace(
-            "background:hsl(209, 72%, 6%); color:#fafafa;",
-            "background:#e5e7eb; color:#111827;",
-        ).replace(
-            "padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0;",
-            "padding:7px 10px; border-bottom:1px solid #cbd5e1; color:#111827; font-weight:700;",
-        ).replace(
-            "background:hsl(209, 70%, 7%) !important;",
-            "background:#f3f4f6 !important; color:#111827 !important;",
-        ).replace(
-            "tr:hover td {background:#262833}",
-            "tr:hover td {background:#f3f4f6}",
-        ).replace(
-            "tr:nth-child(even) td {background:rgba(255,255,255,0.02)}",
-            "tr:nth-child(even) td {background:#fcfcfd}",
-        )
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        _light_preview = is_light_preview_active()
+    except Exception:
+        _light_preview = False
+    _light = iframe_light or _light_preview
+    _light_open = '<div class="bi-light-table">' if _light else ""
+    _light_close = "</div>" if _light else ""
+    _table_css = _gantt_table_css_for_theme() if _light else _TABLE_CSS
 
     def _th_class(c):
         r = _role.get(c) or _role.get(str(c))
@@ -701,13 +792,27 @@ def _plan_fact_deviation_bg_style(nval) -> str:
         n = float(nval)
     except (TypeError, ValueError):
         return ""
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        _light = is_light_preview_active()
+    except Exception:
+        _light = False
     if n < 0:
         t = min(max(-n, 0.0), 365.0) / 365.0
+        if _light:
+            alpha = 0.16 + 0.24 * t
+            return f"background-color:rgba(248,113,113,{alpha:.3f}) !important;"
         alpha = 0.24 + 0.36 * t
         return f"background-color:rgba(255,84,84,{alpha:.3f}) !important;"
     if n == 0:
+        if _light:
+            return "background-color:rgba(34,197,94,0.14) !important;"
         return "background-color:rgba(70,214,138,0.22) !important;"
     t = min(max(n, 0.0), 365.0) / 365.0
+    if _light:
+        alpha = 0.12 + 0.2 * t
+        return f"background-color:rgba(34,197,94,{alpha:.3f}) !important;"
     alpha = 0.18 + 0.28 * t
     return f"background-color:rgba(70,214,138,{alpha:.3f}) !important;"
 
@@ -809,16 +914,58 @@ def _render_plan_fact_dates_main_table(
     _date_cols = {"Базовое начало", "Базовое окончание", "Начало", "Окончание"}
     _reason_cols = {"Причины отклонений", "Заметки"}
     _wrap_extra = (wrap_class or "").strip()
+    _is_pd_dyn = file_stem == "pd_dynamics_table" or "pd-dynamics-scroll-wrap" in _wrap_extra
     _wrap_cls = "rendered-table-wrap pf-dates-table-wrap"
-    if _wrap_extra:
+    _scroll_attr = ""
+    _pd_wrap_id = ""
+    _pd_box_h = 0
+    if _is_pd_dyn:
+        _pd_vh = 52.0
+        _pd_box_h = int(min(640, max(280, _pd_vh * 10 + 56)))
+        _pd_wrap_id = f"pd_dyn_{abs(id(display_df))}"
+        _wrap_cls = (
+            "budget-deviation-table-wrap pd-dynamics-table-wrap "
+            "rendered-table-wrap pf-dates-table-wrap"
+        )
+        _scroll_attr = (
+            f' data-scroll-vh="{_pd_vh:.1f}" data-scroll-box-h="{_pd_box_h}"'
+        )
+    elif _wrap_extra:
         _wrap_cls = f"{_wrap_cls} {_wrap_extra}"
     elif file_stem == "plan_fact_dates":
         _wrap_cls = f"{_wrap_cls} pf-dates-scroll-wrap"
-    parts = [
-        f'<div class="{_wrap_cls}" data-bi-rows="{len(display_df)}">',
+    if not _is_pd_dyn and "pf-dates-scroll-wrap" in _wrap_cls:
+        _pf_box_h = int(min(640, max(180, 44 + len(display_df) * 28 + 12)))
+        _scroll_attr = f' data-scroll-box-h="{_pf_box_h}"'
+    parts: list[str] = []
+    if _is_pd_dyn:
+        parts.extend(
+            [
+                "<style>",
+                f"#{_pd_wrap_id} .budget-table-scroll {{ height: {_pd_box_h}px !important; "
+                f"max-height: {_pd_box_h}px !important; min-height: 0; "
+                "overflow: auto; -webkit-overflow-scrolling: touch; scrollbar-gutter: stable; "
+                "box-sizing: border-box; }",
+                f"#{_pd_wrap_id}.budget-deviation-table-wrap {{ display: block; overflow: hidden; "
+                "width: 100%; margin: 0.35em 0 0 0; }}",
+                f"#{_pd_wrap_id} thead th {{ position: sticky; top: 0; z-index: 5; }}",
+                f"#{_pd_wrap_id} .budget-table-scroll table {{ width: 100%; min-width: 100%; "
+                "table-layout: fixed; }}",
+                "</style>",
+                f'<div id="{_pd_wrap_id}" class="{_wrap_cls}" data-bi-rows="{len(display_df)}">',
+                f'<div class="budget-table-scroll pd-dynamics-scroll-wrap"{_scroll_attr}>',
+            ]
+        )
+    else:
+        parts.append(
+            f'<div class="{_wrap_cls}" data-bi-rows="{len(display_df)}"{_scroll_attr}>'
+        )
+    parts.extend(
+        [
         '<table class="rendered-table bi-sortable-table pf-dates-table bi-sort-click-only">',
         "<thead><tr>",
-    ]
+        ]
+    )
     for c in display_df.columns:
         cls = _plan_fact_dates_col_css_class(c)
         c_esc = html_module.escape(str(c))
@@ -889,10 +1036,14 @@ def _render_plan_fact_dates_main_table(
             align = f' style="{"".join(style_parts)}"' if style_parts else ""
             parts.append(f'<td class="{cls}"{sort_attr}{align}>{cell}</td>')
         parts.append("</tr>")
-    parts.append("</tbody></table></div>")
+    parts.append("</tbody></table>")
+    if _is_pd_dyn:
+        parts.append("</div></div>")
+    else:
+        parts.append("</div>")
     _kp = key_prefix or f"pf_dates_{abs(id(display_df))}"
     render_report_html_table(
-        _TABLE_CSS + mark_html_table_sortable("".join(parts)),
+        _gantt_table_css_for_theme() + mark_html_table_sortable("".join(parts)),
         export_df=export_df if export_df is not None else display_df,
         file_stem=file_stem,
         key_prefix=_kp,
@@ -1053,8 +1204,11 @@ def _render_gantt_schedule_html_table(
         and project_col_name in show_disp.columns
     )
 
+    _gantt_box_h = int(min(624, max(180, 44 + len(show_disp) * 28 + 16)))
+
     parts = [
-        f'<div class="gantt-schedule-scroll-wrap" data-bi-rows="{len(show_disp)}">',
+        f'<div class="gantt-schedule-scroll-wrap" data-bi-rows="{len(show_disp)}" '
+        f'data-scroll-box-h="{_gantt_box_h}">',
         '<div class="rendered-table-wrap gantt-schedule-table-wrap">',
     ]
     parts.append(f"<style>{_gantt_task_col_width_css(_task_col_w_ch)}</style>")
@@ -1182,7 +1336,7 @@ def _render_gantt_schedule_html_table(
 
     parts.append("</tbody></table></div></div>")
     render_report_html_table(
-        _TABLE_CSS + mark_html_table_sortable("".join(parts)),
+        _gantt_table_css_for_theme() + mark_html_table_sortable("".join(parts)),
         export_df=display_df,
         file_stem="gantt_schedule",
         key_prefix=f"gantt_tbl_{abs(id(display_df))}",
@@ -1570,11 +1724,11 @@ def _format_gdrs_month_year_title_ru(d_from, d_to, pdf: pd.DataFrame | None, per
     return ""
 
 
-def _gdrs_delta_pct_cell_bg_style(raw) -> str:
+def _gdrs_delta_pct_cell_bg_style(raw, *, theme: str = "dark") -> str:
     """Фон «Отклонение %» (факт − план в %): >0 зелёный, <0 красный."""
     from dashboards.gdrs_resursi import gdrs_delta_pct_cell_bg_style
 
-    return gdrs_delta_pct_cell_bg_style(raw)
+    return gdrs_delta_pct_cell_bg_style(raw, theme=theme)
 
 
 def _gdrs_period_series_to_year(series: pd.Series) -> pd.Series:
@@ -1935,6 +2089,92 @@ _DEV_REASONS_FULL_TABLE_CSS = """
 """
 
 
+def _dev_reasons_table_css_for_theme() -> str:
+    css = _DEV_REASONS_FULL_TABLE_CSS
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if not is_light_preview_active():
+            return css
+    except Exception:
+        return css
+    for old, new in (
+        ("background:#1a1c23; color:#fafafa;", "background:#f3f4f6; color:#111827;"),
+        ("border-bottom:2px solid #444;", "border-bottom:2px solid #cbd5e1;"),
+        (
+            "padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0;",
+            "padding:5px 8px; border-bottom:1px solid #cbd5e1; color:#111827;",
+        ),
+        (".dev-reasons-table tr:hover td { background:#262833; }", ".dev-reasons-table tr:hover td { background:#f3f4f6; }"),
+        (".dev-txt-ok { color:#46d68a !important; font-weight:600; }", ".dev-txt-ok { color:#15803d !important; font-weight:600; }"),
+        (".dev-txt-bad { color:#ff5454 !important; font-weight:600; }", ".dev-txt-bad { color:hsl(348,100%,63%) !important; font-weight:600; }"),
+        (".dev-txt-zero { color:#8899aa !important; font-weight:600; }", ".dev-txt-zero { color:#6b7280 !important; font-weight:600; }"),
+        (
+            ".dev-reasons-table td.dev-reason-cell,\n.dev-reasons-table td.dev-reason-cell * { color:#e8eaed !important; font-weight:600; }",
+            ".dev-reasons-table td.dev-reason-cell,\n.dev-reasons-table td.dev-reason-cell * { color:#111827 !important; font-weight:600; }",
+        ),
+        ("background:rgba(214,234,248,0.14) !important;", "background:rgba(156,194,229,0.28) !important;"),
+    ):
+        css = css.replace(old, new)
+    return css
+
+
+def _dev_reasons_dev_colors() -> tuple[str, str, str]:
+    try:
+        from dashboards.light_theme import finance_dev_negative_color, is_light_preview_active
+
+        if is_light_preview_active():
+            return "hsl(348,100%,63%)", "#6b7280", finance_dev_negative_color()
+    except Exception:
+        pass
+    return "#ff5454", "#8899aa", "#46d68a"
+
+
+def _dev_reasons_text_color() -> str:
+    try:
+        from dashboards.light_theme import finance_chart_label_color
+
+        return finance_chart_label_color(dark="#e8eaed", light="#111827")
+    except Exception:
+        return "#e8eaed"
+
+
+def _deviations_maket_iframe_css(wrap_id: str, date_bg: str) -> str:
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        _light = is_light_preview_active()
+    except Exception:
+        _light = False
+    if _light:
+        return (
+            "<style>"
+            "html,body{margin:0;padding:6px 8px;background:#ffffff;color:#111827;"
+            "font-family:Inter,system-ui,sans-serif;font-size:13px;}"
+            f"#{wrap_id} .dev-mak-col-proj,"
+            f"#{wrap_id} th.dev-mak-col-proj"
+            "{white-space:nowrap!important;min-width:9em;max-width:none!important;word-break:keep-all;}"
+            f"#{wrap_id} thead th{{position:sticky;top:0;z-index:5;background:#f3f4f6;color:#111827;}}"
+            f"#{wrap_id} th.dev-mak-col-date{{color:#111827!important;background:{date_bg}!important;}}"
+            f"#{wrap_id} td[style*='{date_bg}']"
+            "{{color:#0b1f33!important;}}"
+            f"#{wrap_id} .rendered-table td{{color:#111827;border-bottom:1px solid #cbd5e1;}}"
+            "</style>"
+        )
+    return (
+        "<style>"
+        "html,body{margin:0;padding:6px 8px;background:#0e1117;color:#e0e0e0;"
+        "font-family:Inter,system-ui,sans-serif;font-size:13px;}"
+        f"#{wrap_id} .dev-mak-col-proj,"
+        f"#{wrap_id} th.dev-mak-col-proj"
+        "{white-space:nowrap!important;min-width:9em;max-width:none!important;word-break:keep-all;}"
+        f"#{wrap_id} thead th{{position:sticky;top:0;z-index:5;background:#0e1117;}}"
+        f"#{wrap_id} th.dev-mak-col-date{{color:#f5f5f5!important;}}"
+        f"#{wrap_id} td[style*='{date_bg}']"
+        "{{color:#0b1f33!important;}}"
+        "</style>"
+    )
+
 
 _DEV_MAKET_COL_BG = "#9cc2e5"
 
@@ -2159,7 +2399,7 @@ def _deviations_stacked_bar_add_totals(
             xanchor="center",
             yanchor="bottom",
             yshift=10,
-            font=dict(color="#f5f5f5", size=14),
+            font=dict(color=_fin_chart_label_color(dark="#f5f5f5", light="#111827"), size=14),
         )
 
 
@@ -2169,7 +2409,12 @@ def _deviations_plotly_project_chart_title(fig, project_name: str) -> None:
         return
     try:
         fig.update_layout(
-            title=dict(text=name, x=0.5, xanchor="center", font=dict(size=18, color="#e8eef5")),
+            title=dict(
+                text=name,
+                x=0.5,
+                xanchor="center",
+                font=dict(size=18, color=_fin_chart_label_color(dark="#e8eef5", light="#111827")),
+            ),
             margin=dict(t=72),
         )
         _pn_prefixes = ("project name=", "Проект=", "project=")
@@ -2444,6 +2689,9 @@ def _render_deviations_maket_table(
     _date_bg_m = _DEV_MAKET_COL_BG
     _date_cell_st = f' style="background:{_date_bg_m};color:#0b1f33;"'
     _maket_wrap_id = f"dev_reason_maket_{abs(id(maket_df))}"
+    _maket_box_h = int(min(620, max(280, 56 + len(maket_df) * 50 + 48)))
+    _dev_bad, _dev_zero, _dev_ok = _dev_reasons_dev_colors()
+    _reason_txt = _dev_reasons_text_color()
     _hdrs = [
         "ID задачи",
         "Проект",
@@ -2457,7 +2705,7 @@ def _render_deviations_maket_table(
     ]
     _bg_hdrs = {"Базовое окончание", "Окончание", "Отклонение"}
     _tbl_m = [
-        f'<div id="{_maket_wrap_id}" class="pred-detail-wrap rendered-table-wrap dev-maket-table-wrap" data-bi-rows="{len(maket_df)}">',
+        f'<div id="{_maket_wrap_id}" class="pred-detail-wrap rendered-table-wrap dev-maket-table-wrap" data-bi-rows="{len(maket_df)}" data-scroll-box-h="{_maket_box_h}">',
         '<table class="rendered-table bi-sortable-table bi-sort-click-only dev-maket-table" style="border-collapse:collapse;width:100%">',
         "<thead><tr>",
     ]
@@ -2497,7 +2745,7 @@ def _render_deviations_maket_table(
                 tid = str(_raw_id).strip()
         if pd.notna(ed):
             ev = float(pd.to_numeric(ed, errors="coerce"))
-            _c_sp = "#ff5454" if ev < 0 else "#46d68a"
+            _c_sp = _dev_bad if ev < 0 else _dev_ok
         else:
             _c_sp = "#e0e0e0"
 
@@ -2520,7 +2768,7 @@ def _render_deviations_maket_table(
         _rs_esc = html_module.escape(rs)
         if _clr_tbl:
             _tbl_m.append(
-                f'<td style="border-left:4px solid {_clr_tbl};padding-left:6px;color:#e8eaed;font-weight:600">{_rs_esc}</td>'
+                f'<td style="border-left:4px solid {_clr_tbl};padding-left:6px;color:{_reason_txt};font-weight:600">{_rs_esc}</td>'
             )
         else:
             _tbl_m.append(f"<td>{_rs_esc}</td>")
@@ -2528,23 +2776,11 @@ def _render_deviations_maket_table(
         _tbl_m.append("</tr>")
 
     _tbl_m.append("</tbody></table></div>")
-    _maket_iframe_css = (
-        "<style>"
-        "html,body{margin:0;padding:6px 8px;background:#0e1117;color:#e0e0e0;"
-        "font-family:Inter,system-ui,sans-serif;font-size:13px;}"
-        f"#{_maket_wrap_id} .dev-mak-col-proj,"
-        f"#{_maket_wrap_id} th.dev-mak-col-proj"
-        "{white-space:nowrap!important;min-width:9em;max-width:none!important;word-break:keep-all;}"
-        f"#{_maket_wrap_id} thead th{{position:sticky;top:0;z-index:5;background:#0e1117;}}"
-        f"#{_maket_wrap_id} th.dev-mak-col-date{{color:#f5f5f5!important;}}"
-        f"#{_maket_wrap_id} td[style*='{_date_bg_m}']"
-        "{{color:#0b1f33!important;}}"
-        "</style>"
-    )
+    _maket_iframe_css = _deviations_maket_iframe_css(_maket_wrap_id, _date_bg_m)
     st.markdown(f"**Записей (по макету):** {len(maket_df)}")
     maket_csv_df = build_deviations_maket_export_df(table_reason_df, building_col, notes_col_m)
     render_report_html_table(
-        _maket_iframe_css + _TABLE_CSS + "".join(_tbl_m),
+        _maket_iframe_css + _gantt_table_css_for_theme() + mark_html_table_sortable("".join(_tbl_m)),
         export_df=maket_csv_df,
         file_stem=file_stem,
         key_prefix=key_prefix,
@@ -2563,8 +2799,12 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
         st.info("Нет строк для полной таблицы.")
         return
 
+    _dev_bad, _dev_zero, _dev_ok = _dev_reasons_dev_colors()
+    _reason_txt = _dev_reasons_text_color()
+    _dev_box_h = int(min(620, max(220, 56 + len(rows_out) * 34 + 24)))
+
     parts = [
-        '<div class="dev-reasons-wrap">',
+        f'<div class="dev-reasons-wrap" data-bi-rows="{len(rows_out)}" data-scroll-box-h="{_dev_box_h}">',
         '<table class="dev-reasons-table rendered-table bi-sortable-table bi-sort-click-only">',
         "<thead><tr>",
     ]
@@ -2594,7 +2834,7 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
                                 if fv > 0
                                 else (" dev-txt-zero" if fv == 0 else " dev-txt-ok")
                             )
-                            c_txt = "#ff5454" if fv > 0 else ("#8899aa" if fv == 0 else "#46d68a")
+                            c_txt = _dev_bad if fv > 0 else (_dev_zero if fv == 0 else _dev_ok)
                             extra_style = f"color:{c_txt} !important;font-weight:600;"
                 elif _kind == "end_dev":
                     # end_dev = base_end − plan_end (как _end_diff): <0 — план позже базы (хуже), >0 — раньше (лучше).
@@ -2609,7 +2849,7 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
                                 if fv < 0
                                 else (" dev-txt-zero" if fv == 0 else " dev-txt-ok")
                             )
-                            c_txt = "#ff5454" if fv < 0 else ("#8899aa" if fv == 0 else "#46d68a")
+                            c_txt = _dev_bad if fv < 0 else (_dev_zero if fv == 0 else _dev_ok)
                             extra_style = f"color:{c_txt} !important;font-weight:600;"
                 elif _kind == "reason_label":
                     bucket_key = str(raw or "").strip()
@@ -2617,7 +2857,7 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
                     if bx:
                         extra_style = (
                             f"border-left:4px solid {bx};padding-left:6px;"
-                            f"font-weight:600;color:#e8eaed !important;"
+                            f"font-weight:600;color:{_reason_txt} !important;"
                         )
                 esc = html_module.escape(txt) if str(txt).strip() != "" else ""
                 _st = f' style="{extra_style}"' if extra_style else ""
@@ -2632,7 +2872,7 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
     st.markdown(f"**Записей:** {len(rows_out)}")
     out_df = pd.DataFrame(rows_out, columns=headers)
     render_report_html_table(
-        _DEV_REASONS_FULL_TABLE_CSS + "".join(parts),
+        _dev_reasons_table_css_for_theme() + mark_html_table_sortable("".join(parts)),
         export_df=out_df,
         file_stem="deviations_detail",
         key_prefix="devtable_detail",
@@ -3001,7 +3241,9 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
             fig.update_traces(domain=dict(x=[0.0, 0.70], y=[0.02, 0.98]))
         except Exception:
             pass
-    return fig
+    from dashboards.gdrs_theme import apply_gdrs_chart_background
+
+    return apply_gdrs_chart_background(fig, _th, skip_uniformtext=True)
 
 
 def _apply_pie_layout(fig: go.Figure, *, height: int = 460) -> go.Figure:
@@ -3076,7 +3318,7 @@ def _gdrs_add_plan_fact_deviation_traces(
     dev_abs: list,
     dev_colors: list,
     theme: Any,
-) -> tuple[list[str], str]:
+) -> tuple[list[str], str, dict[str, Any] | None]:
     """Три столбца План/Факт/Отклонение; при одной сущности — равные промежутки по оси X."""
     _metric_x = ("План", "Факт", "Отклонение")
     if len(labels) == 1:
@@ -3089,16 +3331,37 @@ def _gdrs_add_plan_fact_deviation_traces(
             y=[dev_abs[0]],
             marker_color=_dc,
         )
-        return list(_metric_x), f" — {labels[0]}"
-    fig.add_bar(name="План", x=labels, y=plan_vals, marker_color=theme.bar_plan)
-    fig.add_bar(name="Факт", x=labels, y=fact_vals, marker_color=theme.bar_fact)
+        return list(_metric_x), f" — {labels[0]}", None
+    # Фиксированные слоты: при y=0 grouped bar схлопывает «Факт», и «Отклонение» визуально съезжает.
+    _slot_span = 4.0
+    x_plan: list[float] = []
+    x_fact: list[float] = []
+    x_dev: list[float] = []
+    tick_vals: list[float] = []
+    tick_text: list[str] = []
+    for i, lbl in enumerate(labels):
+        base = float(i) * _slot_span
+        x_plan.append(base)
+        x_fact.append(base + 1.0)
+        x_dev.append(base + 2.0)
+        tick_vals.append(base + 1.0)
+        tick_text.append(str(lbl))
+    fig.add_bar(name="План", x=x_plan, y=plan_vals, marker_color=theme.bar_plan)
+    fig.add_bar(name="Факт", x=x_fact, y=fact_vals, marker_color=theme.bar_fact)
     fig.add_bar(
         name="Отклонение (факт − план)",
-        x=labels,
+        x=x_dev,
         y=dev_abs,
         marker_color=dev_colors,
     )
-    return list(labels), ""
+    _x_end = (len(labels) - 1) * _slot_span + 2.0
+    x_cfg = dict(
+        tickmode="array",
+        tickvals=tick_vals,
+        ticktext=tick_text,
+        range=[-0.6, _x_end + 0.6],
+    )
+    return list(labels), "", x_cfg
 
 
 def _gdrs_apply_plan_fact_grouped_bar_spacing(
@@ -3106,8 +3369,15 @@ def _gdrs_apply_plan_fact_grouped_bar_spacing(
     n_x_categories: int,
     *,
     metrics_axis: bool = False,
+    fixed_slots: bool = False,
 ) -> go.Figure:
     """План / Факт / Отклонение: узкие столбцы с равными промежутками."""
+    if fixed_slots:
+        nx = max(1, int(n_x_categories))
+        bar_width = 0.55 if nx <= 2 else (0.48 if nx <= 4 else 0.42)
+        fig.update_layout(barmode="overlay", bargap=0.0, bargroupgap=0.0)
+        fig.update_traces(width=bar_width, selector=dict(type="bar"))
+        return fig
     if metrics_axis:
         fig.update_layout(bargap=0.42, bargroupgap=0.0, barmode="group")
         fig.update_traces(width=0.40, selector=dict(type="bar"))
@@ -3287,6 +3557,33 @@ def _fin_chart_axis_color() -> str:
     return _fin_chart_label_color(dark="#f0f4f8", light="#111827")
 
 
+def _resync_plotly_chart_theme(fig) -> None:
+    """Перед выводом: bgcolor и оси из runtime ``utils`` (кэш ганта не сменяет тему)."""
+    import utils as u
+
+    try:
+        ax_kw = dict(
+            gridcolor=u.CHART_GRID_COLOR,
+            linecolor=u.CHART_AXIS_LINE_COLOR,
+            tickfont=dict(color=u.TABLE_TEXT_COLOR, size=11),
+            title=dict(font=dict(color=u.TABLE_TEXT_COLOR, size=12)),
+            zerolinecolor=u.CHART_ZEROLINE_COLOR,
+        )
+        fig.update_layout(
+            plot_bgcolor=u.CHART_BG_COLOR,
+            paper_bgcolor=u.CHART_BG_COLOR,
+            font=dict(
+                family="Inter, system-ui, sans-serif",
+                color=u.TABLE_TEXT_COLOR,
+                size=13,
+            ),
+        )
+        fig.update_xaxes(**ax_kw)
+        fig.update_yaxes(**ax_kw)
+    except Exception:
+        pass
+
+
 def _apply_finance_light_preview_chart_colors(fig) -> None:
     """Iframe Plotly изолирован от CSS страницы — цвета осей/подписей в JSON фигуры."""
     try:
@@ -3305,7 +3602,11 @@ def _apply_finance_light_preview_chart_colors(fig) -> None:
         "#f8fbff",
         "#e8eef5",
         "#e2e8f0",
+        "#ffffff",
+        "#FFFFFF",
+        "white",
         "rgb(240, 244, 248)",
+        "rgb(255, 255, 255)",
     }
     _keep_bar_label_colors = {
         _FINANCE_DEV_LABEL_RED,
@@ -3316,7 +3617,11 @@ def _apply_finance_light_preview_chart_colors(fig) -> None:
     try:
         fig.update_layout(
             font=dict(color=_ax),
-            legend=dict(font=dict(color=_leg)),
+            legend=dict(
+                font=dict(color=_leg),
+                bgcolor="rgba(255, 255, 255, 0.96)",
+                bordercolor="rgba(148, 163, 184, 0.55)",
+            ),
         )
         fig.update_xaxes(
             tickfont=dict(color=_ax),
@@ -3345,6 +3650,27 @@ def _apply_finance_light_preview_chart_colors(fig) -> None:
                 if cur in _light_bar_label_colors:
                     sz = getattr(tf, "size", None) if hasattr(tf, "size") else None
                     tr.update(textfont=dict(color=_lbl, size=sz))
+                continue
+            if tname == "Scatter" or getattr(tr, "type", None) == "scatter":
+                tf = getattr(tr, "textfont", None)
+                if tf is None:
+                    continue
+                try:
+                    cur = (
+                        tf.color
+                        if hasattr(tf, "color")
+                        else (tf.get("color") if isinstance(tf, dict) else None)
+                    )
+                except Exception:
+                    cur = None
+                if cur in _light_bar_label_colors or str(cur or "").lower() == "white":
+                    sz = getattr(tf, "size", None) if hasattr(tf, "size") else None
+                    line_c = None
+                    try:
+                        line_c = tr.line.color if getattr(tr, "line", None) else None
+                    except Exception:
+                        line_c = None
+                    tr.update(textfont=dict(color=line_c or _lbl, size=sz))
                 continue
             if tname != "Indicator":
                 continue
@@ -3801,8 +4127,18 @@ def _pie_apply_percent_inside_legend_left(
         lm = 230
     dx = domain_x if domain_x is not None else (0.32, 0.97)
     dy = domain_y if domain_y is not None else (0.06, 0.93)
+    _leg_clr = _fin_chart_legend_text_color()
+    _out_txt_clr = _fin_chart_label_color()
     try:
         if text_show_value_and_percent:
+            _pie_line = "rgba(148,163,184,0.75)"
+            try:
+                from dashboards.light_theme import is_light_preview_active
+
+                if not is_light_preview_active():
+                    _pie_line = "rgba(15,23,42,0.85)"
+            except Exception:
+                pass
             fig.update_traces(
                 selector=dict(type="pie"),
                 textinfo="text",
@@ -3810,11 +4146,11 @@ def _pie_apply_percent_inside_legend_left(
                 textposition="outside",
                 textfont=dict(
                     size=max(11, int(pct_fontsize) - 4),
-                    color="#f0f4f8",
+                    color=_out_txt_clr,
                     family="Inter, system-ui, Arial, sans-serif",
                 ),
                 marker_line_width=1,
-                marker_line_color="rgba(15,23,42,0.85)",
+                marker_line_color=_pie_line,
                 domain=dict(x=[float(dx[0]), float(dx[1])], y=[float(dy[0]), float(dy[1])]),
             )
         else:
@@ -3843,7 +4179,7 @@ def _pie_apply_percent_inside_legend_left(
             xanchor="left",
             x=-0.01,
             xref="paper",
-            font=dict(size=int(legend_fontsize), color="#f0f4f8"),
+            font=dict(size=int(legend_fontsize), color=_leg_clr),
             bgcolor="rgba(0,0,0,0)",
             borderwidth=0,
             itemwidth=max(30, int(legend_fontsize) + 16),
@@ -4000,6 +4336,7 @@ def render_chart(
     if not skip_clamp_zoom:
         _clamp_plotly_scroll_zoom_padding(fig)
     _apply_plotly_spec_411_labels(fig)
+    _resync_plotly_chart_theme(fig)
     _apply_finance_light_preview_chart_colors(fig)
     if compact and _layout_h is not None:
         try:
@@ -4029,6 +4366,25 @@ def render_chart(
     )
     if _use_scroll:
         _vh = int(scroll_viewport_height)
+        try:
+            from dashboards.light_theme import is_light_preview_active
+
+            if is_light_preview_active() and key:
+                _gk = str(key).replace("-", "_")
+                st.markdown(
+                    f"<style>"
+                    f"html body.gdrs-light-preview div[class*='st-key-{_gk}'] "
+                    f"div[data-testid='stVerticalBlockBorderWrapper']{{"
+                    f"overflow-y:auto!important;overflow-x:hidden!important;"
+                    f"-webkit-overflow-scrolling:touch!important;}}"
+                    f"html body.gdrs-light-preview div[class*='st-key-{_gk}'] "
+                    f"[data-testid='stPlotlyChart']{{overflow:visible!important;"
+                    f"background:#ffffff!important;border:1px solid #cbd5e1!important;}}"
+                    f"</style>",
+                    unsafe_allow_html=True,
+                )
+        except Exception:
+            pass
         # Длинный Gantt: рендерим график на ПОЛНУЮ высоту (_layout_h) в нативном
         # прокручиваемом контейнере Streamlit (st.container(height=...)). Это
         # надёжнее iframe + to_html(CDN): Plotly рендерится штатно на всю ширину,
@@ -5609,6 +5965,9 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             lambda r: f"{int(r['Количество'])} ({r['pct']}%)", axis=1
         )
 
+        _ax_clr = _fin_chart_axis_color()
+        _lbl_clr = _fin_chart_label_color()
+
         fig = px.bar(
             reason_counts,
             x="Причина",
@@ -5621,7 +5980,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             text="label_bar",
         )
         fig.update_traces(
-            textposition="outside", textfont=dict(size=14, color="white")
+            textposition="outside", textfont=dict(size=14, color=_lbl_clr)
         )
         fig = _apply_finance_bar_label_layout(fig)
         fig = _apply_vertical_category_bar_width(fig)
@@ -5638,16 +5997,16 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                 text="Причины отклонений (за отчетный период)",
                 x=0.5,
                 xanchor="center",
-                font=dict(size=18, color="#e8eef5"),
+                font=dict(size=18, color=_ax_clr),
             ),
             yaxis=dict(
                 range=[0, _y_top],
-                title=dict(text="Количество", standoff=10, font=dict(size=14, color="#e8eef5")),
+                title=dict(text="Количество", standoff=10, font=dict(size=14, color=_ax_clr)),
                 automargin=True,
-                tickfont=dict(size=13, color="#e8eef5"),
+                tickfont=dict(size=13, color=_ax_clr),
             ),
             xaxis=dict(
-                title=dict(text="Причина отклонений", standoff=44, font=dict(size=14, color="#e8eef5")),
+                title=dict(text="Причина отклонений", standoff=44, font=dict(size=14, color=_ax_clr)),
                 automargin=True,
             ),
         )
@@ -5714,7 +6073,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             ),
             outsidetextfont=dict(
                 size=13,
-                color="#e8eef5",
+                color=_lbl_clr,
                 family="Inter, system-ui, Arial, sans-serif",
             ),
         )
@@ -5732,13 +6091,20 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             else ""
         )
     if proj_lbl:
+        _proj_clr = _fin_chart_label_color(dark="#d8dee9", light="#111827")
         st.markdown(
-            f"<div style='text-align:right;font-size:2.35rem;font-weight:700;color:#d8dee9;margin:1rem 0 0 0'>{html_module.escape(proj_lbl)}</div>",
+            f"<div style='text-align:right;font-size:2.35rem;font-weight:700;color:{_proj_clr};margin:1rem 0 0 0'>{html_module.escape(proj_lbl)}</div>",
             unsafe_allow_html=True,
         )
 
-    # Детальная таблица по макету (п. 11): уровень 5, причина заполнена, отклонение окончания < 0
-    st.subheader("Детальные данные")
+    from dashboards.gdrs_theme import gdrs_render_subheader
+    from dashboards.light_theme import is_light_preview_active
+
+    gdrs_render_subheader(
+        st,
+        "Детальные данные",
+        theme="light" if is_light_preview_active() else "dark",
+    )
     _render_deviations_maket_table(filtered_df, building_col)
 
 
@@ -6124,6 +6490,9 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         pass
 
     # Visualizations
+    _ax_clr = _fin_chart_axis_color()
+    _bar_lbl_clr = _fin_chart_label_color()
+
     if len(group_cols) == 1:  # Only period
         col1, col2 = st.columns(2, gap="small")
 
@@ -6138,7 +6507,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             )
             fig.update_xaxes(tickangle=-45)
             fig.update_traces(
-                textposition="outside", textfont=dict(size=14, color="white")
+                textposition="outside", textfont=dict(size=14, color=_bar_lbl_clr)
             )
             fig = _apply_finance_bar_label_layout(fig)
             fig = apply_chart_background(fig)
@@ -6164,7 +6533,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     text="_дни_текст",
                 )
                 fig.update_xaxes(tickangle=-45)
-                fig.update_traces(textposition="top center", textfont=dict(color="white"))
+                fig.update_traces(textposition="top center", textfont=dict(color=_bar_lbl_clr))
                 fig = apply_chart_background(fig)
                 render_chart(
                     fig,
@@ -6358,20 +6727,20 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                             title=dict(
                                 text=_period_x_title,
                                 standoff=40,
-                                font=dict(size=13, color="#e8eef5"),
+                                font=dict(size=13, color=_ax_clr),
                             ),
                             tickangle=-45,
-                            tickfont=dict(size=12, color="#e8eef5"),
+                            tickfont=dict(size=12, color=_ax_clr),
                             automargin=True,
                         ),
                         yaxis=dict(
                             title=dict(
                                 text="Количество отклонений",
                                 standoff=8,
-                                font=dict(size=13, color="#e8eef5"),
+                                font=dict(size=13, color=_ax_clr),
                             ),
                             automargin=True,
-                            tickfont=dict(size=12, color="#e8eef5"),
+                            tickfont=dict(size=12, color=_ax_clr),
                         ),
                     )
                     _g_f = _plotly_bargaps_sparse_x_like_gdrs(_n_per_facet)
@@ -6469,15 +6838,15 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     ),
                     margin=dict(l=56, r=260, t=48, b=280),
                     xaxis=dict(
-                        title=dict(text=_period_x_title, standoff=40, font=dict(size=13, color="#e8eef5")),
+                        title=dict(text=_period_x_title, standoff=40, font=dict(size=13, color=_ax_clr)),
                         tickangle=-45,
-                        tickfont=dict(size=12, color="#e8eef5"),
+                        tickfont=dict(size=12, color=_ax_clr),
                         automargin=True,
                     ),
                     yaxis=dict(
-                        title=dict(text="Количество отклонений", standoff=8, font=dict(size=13, color="#e8eef5")),
+                        title=dict(text="Количество отклонений", standoff=8, font=dict(size=13, color=_ax_clr)),
                         automargin=True,
-                        tickfont=dict(size=12, color="#e8eef5"),
+                        tickfont=dict(size=12, color=_ax_clr),
                     ),
                     height=_single_h,
                 )
@@ -6626,15 +6995,15 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             margin=dict(l=48, r=200, t=48, b=260),
             height=_h_tz,
             xaxis=dict(
-                title=dict(text=str(period_label), standoff=48, font=dict(size=13, color="#e8eef5")),
+                title=dict(text=str(period_label), standoff=48, font=dict(size=13, color=_ax_clr)),
                 tickangle=-45,
                 automargin=True,
-                tickfont=dict(size=12, color="#e8eef5"),
+                tickfont=dict(size=12, color=_ax_clr),
             ),
             yaxis=dict(
-                title=dict(text="Количество", standoff=8, font=dict(size=13, color="#e8eef5")),
+                title=dict(text="Количество", standoff=8, font=dict(size=13, color=_ax_clr)),
                 automargin=True,
-                tickfont=dict(size=12, color="#e8eef5"),
+                tickfont=dict(size=12, color=_ax_clr),
             ),
         )
         if _n_per_tz > 18:
@@ -6795,15 +7164,15 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 ),
                 margin=dict(l=56, r=240, t=36, b=240),
                 xaxis=dict(
-                    title=dict(text="Период", standoff=48, font=dict(size=13, color="#e8eef5")),
+                    title=dict(text="Период", standoff=48, font=dict(size=13, color=_ax_clr)),
                     tickangle=-45,
-                    tickfont=dict(size=12, color="#e8eef5"),
+                    tickfont=dict(size=12, color=_ax_clr),
                     automargin=True,
                 ),
                 yaxis=dict(
-                    title=dict(text="Дни отклонения", standoff=8, font=dict(size=13, color="#e8eef5")),
+                    title=dict(text="Дни отклонения", standoff=8, font=dict(size=13, color=_ax_clr)),
                     automargin=True,
-                    tickfont=dict(size=12, color="#e8eef5"),
+                    tickfont=dict(size=12, color=_ax_clr),
                 ),
                 height=_top_h,
             )
@@ -6824,7 +7193,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             fig.update_traces(
                 texttemplate="%{text}",
                 textposition="outside",
-                outsidetextfont=dict(size=14, color="white"),
+                outsidetextfont=dict(size=14, color=_bar_lbl_clr),
             )
             _plotly_bar_hide_legacy_textfont(fig)
             fig = apply_chart_background(fig, skip_uniformtext=True)
@@ -7263,7 +7632,7 @@ def render_plan_fact_zos_covenant_table(
     parts.append("</tbody></table></div>")
     _zos_export = pd.DataFrame(export_rows)
     render_report_html_table(
-        _TABLE_CSS + mark_html_table_sortable("".join(parts)),
+        _gantt_table_css_for_theme() + mark_html_table_sortable("".join(parts)),
         export_df=_zos_export,
         file_stem=f"metric_task_{_export_file_stem(task_label)}_plan_fact",
         key_prefix="metric_task_covenant_table",
@@ -7283,6 +7652,47 @@ _PLAN_FACT_KPI_PLATES_CSS = """
 .pf-kpi-val-proj{font-size:22px;line-height:1.15;}
 </style>
 """
+
+
+def _plan_fact_kpi_plates_css_for_theme() -> str:
+    css = _PLAN_FACT_KPI_PLATES_CSS
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if not is_light_preview_active():
+            return css
+    except Exception:
+        return css
+    for old, new in (
+        (".pf-kpi-wrap{background:#152238;", ".pf-kpi-wrap{background:#f8fafc;"),
+        ("border:1px solid rgba(148,163,184,.22);", "border:1px solid #cbd5e1;"),
+        ("border-bottom:1px solid rgba(148,163,184,.16);", "border-bottom:1px solid #e2e8f0;"),
+        (".pf-kpi-lbl{font-size:12px;color:#c7d2fe;", ".pf-kpi-lbl{font-size:12px;color:#64748b;"),
+        (
+            ".pf-kpi-val{font-size:30px;font-weight:700;color:#fafafa;",
+            ".pf-kpi-val{font-size:30px;font-weight:700;color:#111827;",
+        ),
+        (".pf-kpi-val-late{color:#ef4444!important;}", ".pf-kpi-val-late{color:hsl(348,100%,63%)!important;}"),
+        (".pf-kpi-val-early{color:#22c55e!important;}", ".pf-kpi-val-early{color:#15803d!important;}"),
+    ):
+        css = css.replace(old, new)
+    return css
+
+
+def _plan_fact_display_opts_css_for_theme() -> str:
+    css = _PLAN_FACT_DISPLAY_OPTS_CSS
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if not is_light_preview_active():
+            return css
+    except Exception:
+        return css
+    return css.replace(
+        "border-top:1px solid rgba(148,163,184,.18);",
+        "border-top:1px solid #e2e8f0;",
+    )
+
 
 _PLAN_FACT_SECTION_COMPACT_CSS = """
 <style>
@@ -7401,7 +7811,7 @@ def render_plan_fact_dates_metric_plates(
         )
         return f'<div class="pf-kpi-row">{"".join(cells)}</div>'
 
-    parts: list[str] = [_PLAN_FACT_KPI_PLATES_CSS, '<div class="pf-kpi-wrap">']
+    parts: list[str] = [_plan_fact_kpi_plates_css_for_theme(), '<div class="pf-kpi-wrap">']
 
     def _row_for_scope(scope: pd.DataFrame) -> tuple[str, str, str, str]:
         if scope is None or getattr(scope, "empty", True):
@@ -8077,7 +8487,7 @@ def dashboard_plan_fact_dates(df):
                         disabled=True,
                     )
 
-        st.markdown(_PLAN_FACT_DISPLAY_OPTS_CSS, unsafe_allow_html=True)
+        st.markdown(_plan_fact_display_opts_css_for_theme(), unsafe_allow_html=True)
         with filters_toggles(st):
 
             _cb1, _cb2, _cb3, _cb4, _cb5 = st.columns(5, gap="small")
@@ -8941,6 +9351,8 @@ def dashboard_plan_fact_dates(df):
         y_order = local["_y"].tolist()
         n_rows = len(y_order)
         _chart_h, _max_lines = _pf_gantt_chart_height(y_order)
+        if is_covenant:
+            _chart_h = int(_chart_h * 3)
 
         fig = go.Figure()
         _pf_bar_chart_h: Optional[int] = None
@@ -8994,7 +9406,7 @@ def dashboard_plan_fact_dates(df):
             )
             _pf_apply_gantt_y_labels(fig, y_order)
             _pf_bar_chart_h = _chart_h
-            _pf_bar_chart_viewport = _PF_GANTT_VIEWPORT
+            _pf_bar_chart_viewport = int(_PF_GANTT_VIEWPORT * 3)
         else:
             def _epoch_ms(ts) -> Optional[float]:
                 if ts is None or (isinstance(ts, float) and pd.isna(ts)):
@@ -9128,7 +9540,11 @@ def dashboard_plan_fact_dates(df):
                     tickformat="%d.%m.%Y",
                     automargin=True,
                     range=[_origin_ms, _x_max_ms + _x_pad_ms],
-                    title=dict(text="Дата (от начала шкалы до окончания)", standoff=22, font=dict(size=13, color="#e8eef5")),
+                    title=dict(
+                        text="Дата (от начала шкалы до окончания)",
+                        standoff=22,
+                        font=dict(size=13, color=_fin_chart_axis_color()),
+                    ),
                 ),
                 margin=dict(l=4, r=56, t=8, b=48),
                 legend=_PF_GANTT_LEGEND,
@@ -10783,6 +11199,20 @@ _BDDS_TABLE_HTML_KW = {
 _BDR_TABLE_HTML_KW = dict(_BDDS_TABLE_HTML_KW)
 
 
+def _finance_table_html_kwargs(base: dict | None = None, **overrides) -> dict:
+    kw = dict(base or _BDDS_TABLE_HTML_KW)
+    kw.update(overrides)
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if is_light_preview_active():
+            kw.pop("total_row_bg_color", None)
+            kw.pop("total_row_font_css", None)
+    except Exception:
+        pass
+    return kw
+
+
 # Минимум оборотов (руб.) для месяца на графике БДДС/БДР — иначе ось забивается «пустыми» месяцами.
 _FINANCE_CHART_MIN_MONTH_RUB = 500_000.0
 _BDDS_CHART_MIN_MONTH_RUB = _FINANCE_CHART_MIN_MONTH_RUB
@@ -11050,6 +11480,11 @@ def _render_finance_bar_chart(
             if _light_plotly_css
             else "background:rgba(15,23,42,0.35);"
         )
+        _bar_border = (
+            "1px solid #cbd5e1"
+            if _light_plotly_css
+            else "1px solid rgba(148,163,184,0.22)"
+        )
         shell = (
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
             f"<style>"
@@ -11057,7 +11492,7 @@ def _render_finance_bar_chart(
             f".pf-fbar-{uid}-wrap{{width:100%;max-width:100%;overflow-x:auto;overflow-y:visible;"
             f"-webkit-overflow-scrolling:touch;box-sizing:border-box;line-height:normal;"
             f"padding:0 0 {_scroll_px}px 0;scrollbar-gutter:stable both-edges;"
-            f"border:1px solid rgba(148,163,184,0.22);border-radius:8px;"
+            f"border:{_bar_border};border-radius:8px;"
             f"min-height:{h + _scroll_px}px;}}"
             f".pf-fbar-{uid}-inner{{width:{w}px;min-width:{w}px;max-width:{w}px;display:block;"
             f"line-height:normal;}}"
@@ -11291,7 +11726,7 @@ def _dk_make_side_by_side_bar_figure(
         textposition="outside",
         textangle=0,
         cliponaxis=False,
-        textfont=dict(size=16, color="#f0f4f8"),
+        textfont=dict(size=16, color=_fin_chart_label_color()),
     )
 
     if len(chart_df) == 1:
@@ -11417,7 +11852,7 @@ def _dk_make_stack_bar_figure(
         textposition="outside",
         textangle=0,
         cliponaxis=False,
-        textfont=dict(size=11, color="#e8eef5"),
+        textfont=dict(size=11, color=_fin_chart_label_color(dark="#e8eef5", light="#111827")),
         width=0.82,
     )
     _series: list[tuple[str, np.ndarray, str, str]] = []
@@ -11591,6 +12026,9 @@ def _render_debit_credit_bar_chart(
     _apply_plotly_spec_411_labels(fig)
     if stack:
         _dk_plotly_finalize_stack_bars(fig, n_cats=n)
+
+    _resync_plotly_chart_theme(fig)
+    _apply_finance_light_preview_chart_colors(fig)
 
     if not need_hscroll:
         render_chart(
@@ -12701,14 +13139,14 @@ def dashboard_budget_by_period(df):
                     deviation_color_fact_vs_plan=True,
                     row_kind_column="_row_kind",
                     emphasize_row_kinds=("project", "total"),
-                    **_BDDS_TABLE_HTML_KW,
+                    **_finance_table_html_kwargs(),
                 )
 
     _budget_period_chart()
 
     if not _bdds_all_projects and len(selected_projects or []) == 1:
         _pf_proj = str(selected_projects[0])
-        _pf_kw = {**_BDDS_TABLE_HTML_KW, "table_font_size_px": 14}
+        _pf_kw = _finance_table_html_kwargs(table_font_size_px=14)
         try:
             _pf_tbl = build_bdds_plan_fact_analysis_table(
                 project_name=_pf_proj,
@@ -12805,7 +13243,7 @@ def dashboard_budget_by_period(df):
                 deviation_color_fact_vs_plan=True,
                 row_kind_column="_row_kind",
                 emphasize_row_kinds=("total",),
-                **_BDDS_TABLE_HTML_KW,
+                **_finance_table_html_kwargs(),
             )
 
     from dashboards.finance_from_1c import bddds_project_norm_keys_without_plan_scenario
@@ -14111,7 +14549,7 @@ def dashboard_bdr(df):
                     marker_color="#2E86AB",
                     text=_plan_txt_b,
                     textposition=_txt_pos_b,
-                    textfont=dict(size=_tfs_b, color="#f0f4f8"),
+                    textfont=dict(size=_tfs_b, color=_fin_chart_label_color()),
                     customdata=chart_df["План расходов"].apply(lambda v: format_million_rub(v, decimals=1)),
                     hovertemplate="<b>%{x}</b><br>План расходов: %{customdata}<br><extra></extra>",
                 )
@@ -14124,7 +14562,7 @@ def dashboard_bdr(df):
                     marker_color="#A23B72",
                     text=_fact_txt_b,
                     textposition=_txt_pos_b,
-                    textfont=dict(size=_tfs_b, color="#f0f4f8"),
+                    textfont=dict(size=_tfs_b, color=_fin_chart_label_color()),
                     customdata=chart_df["Факт расходов"].apply(lambda v: format_million_rub(v, decimals=1)),
                     hovertemplate="<b>%{x}</b><br>Факт расходов: %{customdata}<br><extra></extra>",
                 )
@@ -14394,7 +14832,7 @@ def dashboard_bdr(df):
                     finance_deviation_column=_bdr_tz_dev_col,
                     deviation_color_fact_vs_plan=True,
                     emphasize_row_kinds=("project", "total"),
-                    **_BDR_TABLE_HTML_KW,
+                    **_finance_table_html_kwargs(),
                 )
             return
 
@@ -14476,7 +14914,7 @@ def dashboard_bdr(df):
                 marker_color="#2E86AB",
                 text=_plan_txt_b,
                 textposition=_txt_pos_b,
-                textfont=dict(size=_tfs_b, color="#f0f4f8"),
+                textfont=dict(size=_tfs_b, color=_fin_chart_label_color()),
                 customdata=chart_df["Доходы"].apply(format_million_rub),
                 hovertemplate="<b>%{x}</b><br>Доходы: %{customdata}<br><extra></extra>",
             )
@@ -14489,7 +14927,7 @@ def dashboard_bdr(df):
                 marker_color="#A23B72",
                 text=_fact_txt_b,
                 textposition=_txt_pos_b,
-                textfont=dict(size=_tfs_b, color="#f0f4f8"),
+                textfont=dict(size=_tfs_b, color=_fin_chart_label_color()),
                 customdata=chart_df["Расходы"].apply(format_million_rub),
                 hovertemplate="<b>%{x}</b><br>Расходы: %{customdata}<br><extra></extra>",
             )
@@ -14505,7 +14943,7 @@ def dashboard_bdr(df):
                 marker_color=dev_colors,
                 text=_dev_txt_b,
                 textposition=_txt_pos_b,
-                textfont=dict(size=_tfs_b, color="#f0f4f8"),
+                textfont=dict(size=_tfs_b, color=_fin_chart_label_color()),
                 customdata=chart_df["Сальдо"].apply(format_million_rub),
                 hovertemplate="<b>%{x}</b><br>Сальдо: %{customdata}<br><extra></extra>",
             )
@@ -14576,6 +15014,7 @@ def dashboard_bdr(df):
             )
         except Exception:
             pass
+        _apply_finance_light_preview_chart_colors(fig)
         render_chart(
             fig,
             caption_below=f"БДР{title_suffix}",
@@ -14600,7 +15039,7 @@ def dashboard_bdr(df):
                 display_df,
                 finance_deviation_column="Сальдо, млн. руб.",
                 deviation_red_if_negative=True,
-                **_BDR_TABLE_HTML_KW,
+                **_finance_table_html_kwargs(),
             )
 
     _bdr_chart()
@@ -14656,7 +15095,7 @@ def dashboard_bdr(df):
                     deviation_color_fact_vs_plan=True,
                     row_kind_column="_row_kind",
                     emphasize_row_kinds=("total",),
-                    **_BDR_TABLE_HTML_KW,
+                    **_finance_table_html_kwargs(),
                 )
         else:
             by_p = (
@@ -14705,7 +15144,7 @@ def dashboard_bdr(df):
                     deviation_red_if_negative=True,
                     row_kind_column="_row_kind",
                     emphasize_row_kinds=("total",),
-                    **_BDR_TABLE_HTML_KW,
+                    **_finance_table_html_kwargs(),
                 )
 
     render_quality_hints(_bdr_q_hints)
@@ -14939,10 +15378,13 @@ def _render_rd_working_doc_monthly_and_detail(
                         "Просрочено": "#C0392B",
                     },
                 )
+                _y_kw = dict(_y_range) if _y_range else {}
+                _y_kw["tickfont"] = dict(color=_fin_chart_axis_color())
+                _y_kw["title_font"] = dict(color=_fin_chart_axis_color())
                 fig_months.update_layout(
                     xaxis_title="Месяц",
                     yaxis_title=_y_title,
-                    yaxis=_y_range if _y_range else {},
+                    yaxis=_y_kw,
                     legend=dict(
                         orientation="h",
                         yanchor="bottom",
@@ -14952,6 +15394,10 @@ def _render_rd_working_doc_monthly_and_detail(
                         title_text="",
                     ),
                     height=520,
+                    xaxis=dict(
+                        tickfont=dict(color=_fin_chart_axis_color()),
+                        title_font=dict(color=_fin_chart_axis_color()),
+                    ),
                 )
                 fig_months.update_traces(textposition="inside", textfont=dict(size=10))
                 fig_months = apply_chart_background(fig_months)
@@ -16036,6 +16482,7 @@ def _rd_plan_fallback_view(
                     textposition="top center",
                     textfont=dict(size=10, color="white"),
                 )
+                _apply_rd_dynamics_line_chart_theme(fig_fb)
                 fig_fb.for_each_trace(
                     lambda t: t.update(
                         name=(
@@ -17141,24 +17588,6 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     )
                     _dev_series = pd.to_numeric(_ind_df["_dev"], errors="coerce").fillna(0.0)
                     _dev_max = float(_dev_series.max()) if not _dev_series.empty else 0.0
-
-                    def _proj_indicator_color(val: float) -> str:
-                        if _dev_max <= 0 or val <= 0:
-                            return "#1E8449"
-                        r = min(max(val / _dev_max, 0.0), 1.0)
-                        if r < 0.5:
-                            t = r / 0.5
-                            r1, g1, b1 = 0x27, 0xAE, 0x60
-                            r2, g2, b2 = 0xF1, 0xC4, 0x0F
-                        else:
-                            t = (r - 0.5) / 0.5
-                            r1, g1, b1 = 0xF1, 0xC4, 0x0F
-                            r2, g2, b2 = 0xC0, 0x39, 0x2B
-                        rr = int(r1 + (r2 - r1) * t)
-                        gg = int(g1 + (g2 - g1) * t)
-                        bb = int(b1 + (b2 - b1) * t)
-                        return f"#{rr:02X}{gg:02X}{bb:02X}"
-
                     _ind_df = _ind_df.sort_values("_dev", ascending=False).reset_index(drop=True)
                     _n = len(_ind_df)
                     _cols_n = min(4, max(1, _n))
@@ -17166,20 +17595,14 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     for _i, (_idx, _row) in enumerate(_ind_df.iterrows()):
                         _proj = str(_row["Проект"])
                         _dev = float(_row["_dev"]) if pd.notna(_row["_dev"]) else 0.0
-                        _bg = _proj_indicator_color(_dev)
-                        _label = (
-                            "Без просрочки"
-                            if _dev <= 0
-                            else f"Просрочка: {int(round(_dev))} разд."
-                        )
+                        _bg = _pd_delay_indicator_color(_dev, _dev_max)
                         with _cols_row[_i % _cols_n]:
                             st.markdown(
-                                (
-                                    f"<div style='background:{_bg}; color:white; padding:10px 14px; "
-                                    f"border-radius:8px; margin-bottom:8px;'>"
-                                    f"<div style='font-size:13px; opacity:0.9;'>{_proj}</div>"
-                                    f"<div style='font-size:18px; font-weight:600;'>{_label}</div>"
-                                    f"</div>"
+                                _pd_delay_project_indicator_card_html(
+                                    _proj,
+                                    int(round(_dev)),
+                                    bg=_bg,
+                                    unit="разд.",
                                 ),
                                 unsafe_allow_html=True,
                             )
@@ -17259,7 +17682,16 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     fig_months.update_layout(
                         xaxis_title="Месяц",
                         yaxis_title="% РД",
-                        yaxis=dict(range=[0, 100], ticksuffix="%"),
+                        yaxis=dict(
+                            range=[0, 100],
+                            ticksuffix="%",
+                            tickfont=dict(color=_fin_chart_axis_color()),
+                            title_font=dict(color=_fin_chart_axis_color()),
+                        ),
+                        xaxis=dict(
+                            tickfont=dict(color=_fin_chart_axis_color()),
+                            title_font=dict(color=_fin_chart_axis_color()),
+                        ),
                         legend=dict(
                             orientation="h",
                             yanchor="bottom",
@@ -22774,11 +23206,10 @@ def _gdrs_pct_display_cls(v) -> tuple[str, str]:
     return text_v, "gdrs-z"
 
 
-def _gdrs_deviation_cell_bg_style(raw) -> str:
-    """Фон «Отклонение» (План − Факт): >0 красный, <0 зелёный."""
+def _gdrs_deviation_cell_bg_style(raw, *, theme: str = "dark") -> str:
     from dashboards.gdrs_resursi import gdrs_deviation_cell_bg_style
 
-    return gdrs_deviation_cell_bg_style(raw)
+    return gdrs_deviation_cell_bg_style(raw, theme=theme)
 
 
 def _gdrs_summary_table_to_html(df: pd.DataFrame, *, theme: str = "dark") -> str:
@@ -22828,10 +23259,10 @@ def _gdrs_summary_table_to_html(df: pd.DataFrame, *, theme: str = "dark") -> str
             extra_style = ""
             if cl == "Отклонение":
                 inner, extra_cls = _gdrs_deviation_display_cls(val)
-                extra_style = _gdrs_deviation_cell_bg_style(val)
+                extra_style = _gdrs_deviation_cell_bg_style(val, theme=theme)
             elif cl == "Отклонение %":
                 inner, extra_cls = _gdrs_pct_display_cls(val)
-                extra_style = _gdrs_delta_pct_cell_bg_style(val)
+                extra_style = _gdrs_delta_pct_cell_bg_style(val, theme=theme)
             elif cl in _int_cols:
                 num = pd.to_numeric(val, errors="coerce")
                 inner = "0" if pd.isna(num) else str(int(round(float(num))))
@@ -23256,7 +23687,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             _bar_title_sz = 22 if theme == "light" else 16
             _bar_margin_b = 120 if theme == "light" else 100
             fig_pf = _go.Figure()
-            _bar_x_labels, _bar_title_suffix = _gdrs_add_plan_fact_deviation_traces(
+            _bar_x_labels, _bar_title_suffix, _bar_x_cfg = _gdrs_add_plan_fact_deviation_traces(
                 fig_pf,
                 _proj_labels,
                 _plan_vals,
@@ -23266,6 +23697,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 _th,
             )
             _metrics_axis = len(_proj_labels) == 1
+            _fixed_bar_slots = _bar_x_cfg is not None
             fig_pf.update_layout(
                 title=dict(
                     text=f"План / Факт / Отклонение по проектам{_bar_title_suffix}",
@@ -23299,12 +23731,15 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             )
             fig_pf = apply_gdrs_chart_background(fig_pf, _th, skip_uniformtext=True)
             # apply_gdrs_chart_background сбрасывает tickfont оси X — восстанавливаем крупные горизонтальные подписи проектов.
-            fig_pf.update_xaxes(
+            _proj_xaxis_kw: dict[str, Any] = dict(
                 tickfont=dict(size=_proj_x_tick_sz, color=_th.text, family="Inter, sans-serif"),
                 tickangle=0,
                 ticklabelstandoff=14,
                 automargin=True,
             )
+            if _bar_x_cfg:
+                _proj_xaxis_kw.update(_bar_x_cfg)
+            fig_pf.update_xaxes(**_proj_xaxis_kw)
             fig_pf.update_layout(margin=dict(l=56, r=24, t=88, b=_bar_margin_b))
             fig_pf = gdrs_apply_grouped_bar_labels(
                 fig_pf,
@@ -23317,7 +23752,10 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 ],
             )
             fig_pf = _gdrs_apply_plan_fact_grouped_bar_spacing(
-                fig_pf, len(_proj_labels), metrics_axis=_metrics_axis
+                fig_pf,
+                len(_proj_labels),
+                metrics_axis=_metrics_axis,
+                fixed_slots=_fixed_bar_slots,
             )
             st.plotly_chart(
                 fig_pf,
@@ -23407,7 +23845,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             kind_col="__kind__",
             title_line=_tbl_title,
             period_line=_tbl_period,
-            delta_bg_style=_gdrs_delta_pct_cell_bg_style,
+            delta_bg_style=lambda raw: _gdrs_delta_pct_cell_bg_style(raw, theme=theme),
             show_week_columns=_show_week_cols,
             week_labels=_week_hdr_labels,
             theme=theme,
@@ -23488,7 +23926,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 _ctr_dev_colors.append(_col)
                 _ctr_dev_abs.append(abs(int(round(float(_fv) - float(_pv)))))
             fig2 = _go.Figure()
-            _ctr_bar_x, _ctr_title_suffix = _gdrs_add_plan_fact_deviation_traces(
+            _ctr_bar_x, _ctr_title_suffix, _ctr_x_cfg = _gdrs_add_plan_fact_deviation_traces(
                 fig2,
                 _ctr_labels,
                 _ctr_plan,
@@ -23498,16 +23936,20 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 _th,
             )
             _ctr_metrics_axis = len(_ctr_labels) == 1
+            _ctr_fixed_slots = _ctr_x_cfg is not None
+            _ctr_xaxis_kw: dict[str, Any] = dict(
+                tickangle=0 if (_ctr_metrics_axis or _ctr_fixed_slots) else -45,
+                tickfont=dict(size=_bar_axis_sz, color=_th.text, family="Inter, system-ui, sans-serif"),
+            )
+            if _ctr_x_cfg:
+                _ctr_xaxis_kw.update(_ctr_x_cfg)
             fig2.update_layout(
                 title=dict(text=f"План / Факт / Отклонение{_ctr_title_suffix}") if _ctr_title_suffix else {},
                 barmode="group",
                 plot_bgcolor=_th.chart_bg,
                 paper_bgcolor=_th.chart_bg,
                 font_color=_th.text,
-                xaxis=dict(
-                    tickangle=0 if _ctr_metrics_axis else -45,
-                    tickfont=dict(size=_bar_axis_sz, color=_th.text, family="Inter, system-ui, sans-serif"),
-                ),
+                xaxis=_ctr_xaxis_kw,
                 yaxis=dict(
                     tickfont=dict(size=_bar_axis_sz if theme == "light" else 12, color=_th.text),
                 ),
@@ -23516,6 +23958,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
             )
             fig2 = apply_gdrs_chart_background(fig2, _th, skip_uniformtext=True)
+            fig2.update_xaxes(**_ctr_xaxis_kw)
             fig2 = gdrs_apply_grouped_bar_labels(
                 fig2,
                 _th,
@@ -23527,7 +23970,10 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 ],
             )
             fig2 = _gdrs_apply_plan_fact_grouped_bar_spacing(
-                fig2, len(_ctr_labels), metrics_axis=_ctr_metrics_axis
+                fig2,
+                len(_ctr_labels),
+                metrics_axis=_ctr_metrics_axis,
+                fixed_slots=_ctr_fixed_slots,
             )
             st.plotly_chart(
                 fig2,
@@ -25223,7 +25669,7 @@ def dashboard_debit_credit(df):
             textposition="outside",
             textangle=0,
             cliponaxis=False,
-            textfont=dict(size=11, color="#e8eef5"),
+            textfont=dict(size=11, color=_fin_chart_label_color(dark="#e8eef5", light="#111827")),
         )
         _dk_single_partner = None
         if _dk_is_stack:
@@ -25468,7 +25914,7 @@ def dashboard_debit_credit(df):
             deviation_abs_min_mln=0.01,
             file_stem="debit_credit",
             key_prefix="debit_credit",
-            table_scroll_max_height_vh=52,
+            **_finance_table_html_kwargs(table_scroll_max_height_vh=52),
         )
 
 
@@ -25711,8 +26157,8 @@ _EXEC_DOC_DETAIL_CSS = """
   border-radius:14px; border:1px solid rgba(82,104,130,0.45); margin:0.75rem 0 0.5rem;
 }
 .exec-doc-table-wrap.exec-doc-scroll-wrap table {
-  width:max-content !important; min-width:100% !important;
-  table-layout:auto !important; border:none !important; border-collapse:collapse !important;
+  width:100% !important; min-width:100% !important;
+  table-layout:fixed !important; border:none !important; border-collapse:collapse !important;
 }
 .exec-doc-table-wrap.exec-doc-scroll-wrap thead th {
   position:sticky; top:0; z-index:4;
@@ -25739,6 +26185,137 @@ _EXEC_DOC_DETAIL_CSS = """
 }
 </style>
 """
+
+
+def _exec_css_for_theme(css: str) -> str:
+    out = css or ""
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if not is_light_preview_active():
+            return out
+    except Exception:
+        return out
+    for old, new in (
+        (
+            ".exec-kpi-card {\n  background:rgba(20,35,52,0.92); border:1px solid rgba(104,128,157,0.24);",
+            ".exec-kpi-card {\n  background:#f1f5f9; border:1px solid #cbd5e1;\n  box-shadow:0 1px 3px rgba(15,23,42,0.07);",
+        ),
+        (
+            ".exec-kpi-card.exec-kpi-alert { border-color:rgba(239,68,68,0.35); }",
+            ".exec-kpi-card.exec-kpi-alert { background:#fef2f2; border-color:#fca5a5; }",
+        ),
+        (
+            ".exec-kpi-card.exec-kpi-warn { border-color:rgba(245,158,11,0.35); }",
+            ".exec-kpi-card.exec-kpi-warn { background:#fffbeb; border-color:#fcd34d; }",
+        ),
+        (
+            ".exec-kpi-card.exec-kpi-ok { border-color:rgba(34,197,94,0.35); }",
+            ".exec-kpi-card.exec-kpi-ok { background:#f0fdf4; border-color:#86efac; }",
+        ),
+        (".exec-kpi-title { color:#8fa7bf;", ".exec-kpi-title { color:#64748b;"),
+        (".exec-kpi-value { color:#f8fbff;", ".exec-kpi-value { color:#111827;"),
+        (".exec-kpi-subtitle { color:#97a9bc;", ".exec-kpi-subtitle { color:#64748b;"),
+        (".exec-kpi-delta-pos { color:#4ade80;", ".exec-kpi-delta-pos { color:#15803d;"),
+        (".exec-kpi-delta-neg { color:#f87171;", ".exec-kpi-delta-neg { color:#b91c1c;"),
+        (
+            ".exec-doc-panel {\n  background:linear-gradient(180deg, rgba(12,24,38,0.96), rgba(16,37,58,0.94));\n  border:1px solid rgba(101,163,255,0.16);\n  border-radius:16px;\n  padding:16px 18px;\n  margin:0.75rem 0 0;\n  box-shadow:0 10px 24px rgba(0,0,0,0.18);\n}",
+            ".exec-doc-panel {\n  background:#ffffff;\n  border:1px solid #cbd5e1;\n  border-radius:16px;\n  padding:16px 18px;\n  margin:0.75rem 0 0;\n  box-shadow:0 4px 14px rgba(15,23,42,0.06);\n}",
+        ),
+        (".exec-doc-caption {\n  color:#9fb3c8;", ".exec-doc-caption {\n  color:#64748b;"),
+        (
+            ".exec-doc-table-wrap {\n  overflow-x:auto; min-width:0; margin:0.75rem 0 0.5rem;\n  border-radius:14px; border:1px solid rgba(82,104,130,0.45);\n  background:rgba(22,40,58,0.9);\n}",
+            ".exec-doc-table-wrap {\n  overflow-x:auto; min-width:0; margin:0.75rem 0 0.5rem;\n  border-radius:14px; border:1px solid #cbd5e1;\n  background:#ffffff;\n}",
+        ),
+        (
+            ".exec-doc-table th {\n  text-align:center; padding:6px 8px; background:#16283a; color:#f8fbff;",
+            ".exec-doc-table th {\n  text-align:center; padding:6px 8px; background:#f3f4f6; color:#111827;",
+        ),
+        (
+            ".exec-doc-table td {\n  padding:5px 8px; border-bottom:1px solid rgba(82,104,130,0.28); color:#e8eef5;\n  vertical-align:top;\n  white-space:normal; word-wrap:break-word; overflow-wrap:anywhere; max-width:28em; overflow:visible; text-overflow:clip;\n  background:rgba(19,35,52,0.9);\n}",
+            ".exec-doc-table td {\n  padding:5px 8px; border-bottom:1px solid #e2e8f0; color:#111827;\n  vertical-align:top;\n  white-space:normal; word-wrap:break-word; overflow-wrap:anywhere; max-width:28em; overflow:visible; text-overflow:clip;\n  background:#ffffff;\n}",
+        ),
+        (
+            ".exec-doc-table tr:nth-child(even) td { background:rgba(255,255,255,0.025); }",
+            ".exec-doc-table tr:nth-child(even) td { background:#f9fafb; }",
+        ),
+        (
+            ".exec-doc-table tr:hover td { background:rgba(48,72,99,0.72); }",
+            ".exec-doc-table tr:hover td { background:#f3f4f6; }",
+        ),
+        (".exec-doc-th-sort { color:#8fb4da;", ".exec-doc-th-sort { color:#64748b;"),
+        (".exec-delay-val { color:#5eead4;", ".exec-delay-val { color:#0d9488;"),
+        (".exec-dash { color:#8892a0;", ".exec-dash { color:#94a3b8;"),
+        (
+            ".exec-pill-signed { background:rgba(34,197,94,0.20); color:#bbf7d0; border:1px solid rgba(34,197,94,0.52); }",
+            ".exec-pill-signed { background:#dcfce7; color:#166534; border:1px solid #86efac; }",
+        ),
+        (
+            ".exec-pill-customer { background:rgba(251,191,36,0.17); color:#fde68a; border:1px solid rgba(251,191,36,0.42); }",
+            ".exec-pill-customer { background:#fef3c7; color:#92400e; border:1px solid #fbbf24; }",
+        ),
+        (
+            ".exec-pill-contractor { background:rgba(56,189,248,0.18); color:#bae6fd; border:1px solid rgba(56,189,248,0.46); }",
+            ".exec-pill-contractor { background:#dbeafe; color:#1e40af; border:1px solid #93c5fd; }",
+        ),
+        (
+            ".exec-pill-declined { background:rgba(239,68,68,0.16); color:#fecaca; border:1px solid rgba(239,68,68,0.48); }",
+            ".exec-pill-declined { background:#fee2e2; color:#b91c1c; border:1px solid #fca5a5; }",
+        ),
+        (
+            ".exec-pill-default { background:#262833; color:#e0e0e0; border:1px solid #444; }",
+            ".exec-pill-default { background:#f3f4f6; color:#374151; border:1px solid #cbd5e1; }",
+        ),
+        (
+            ".exec-pill-muted { color:#64748b; border:1px dashed #444; padding:3px 10px; border-radius:8px; font-size:12px; }",
+            ".exec-pill-muted { color:#64748b; border:1px dashed #cbd5e1; padding:3px 10px; border-radius:8px; font-size:12px; }",
+        ),
+        (
+            ".exec-doc-table-wrap.exec-doc-scroll-wrap {\n  display:block; width:100%; max-width:100%;\n  height:min(70vh, 520px); max-height:min(70vh, 520px);\n  overflow-x:auto; overflow-y:auto;\n  -webkit-overflow-scrolling:touch;\n  scrollbar-gutter:stable; scrollbar-width:thin;\n  border-radius:14px; border:1px solid rgba(82,104,130,0.45); margin:0.75rem 0 0.5rem;\n}",
+            ".exec-doc-table-wrap.exec-doc-scroll-wrap {\n  display:block; width:100%; max-width:100%;\n  height:min(70vh, 520px); max-height:min(70vh, 520px);\n  overflow-x:auto; overflow-y:auto;\n  -webkit-overflow-scrolling:touch;\n  scrollbar-gutter:stable; scrollbar-width:thin;\n  border-radius:14px; border:1px solid #cbd5e1; margin:0.75rem 0 0.5rem;\n  padding-bottom:14px; scroll-padding-bottom:14px; box-sizing:border-box;\n}",
+        ),
+        (
+            ".exec-doc-table-wrap.exec-doc-scroll-wrap thead th {\n  position:sticky; top:0; z-index:4;\n  background:#16283a !important; color:#f8fbff !important; font-size:11px !important;",
+            ".exec-doc-table-wrap.exec-doc-scroll-wrap thead th {\n  position:sticky; top:0; z-index:4;\n  background:#f3f4f6 !important; color:#111827 !important; font-size:11px !important;",
+        ),
+        (
+            ".exec-doc-table-wrap.exec-doc-scroll-wrap tbody td {\n  font-size:13px !important; padding:5px 8px !important; color:#e8eef5 !important;",
+            ".exec-doc-table-wrap.exec-doc-scroll-wrap tbody td {\n  font-size:13px !important; padding:5px 8px !important; color:#111827 !important;",
+        ),
+        (
+            "border-bottom:1px solid rgba(138,160,184,0.28) !important;",
+            "border-bottom:1px solid #e2e8f0 !important;",
+        ),
+        (
+            "border-bottom:1px solid rgba(82,104,130,0.28) !important;",
+            "border-bottom:1px solid #e2e8f0 !important;",
+        ),
+    ):
+        out = out.replace(old, new)
+    return out
+
+
+def _exec_html_block_for_theme(body_html: str) -> str:
+    block = _exec_css_for_theme(_EXEC_DOC_DETAIL_CSS) + (body_html or "")
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if is_light_preview_active():
+            return f'<div class="bi-light-table">{block}</div>'
+    except Exception:
+        pass
+    return block
+
+
+def _exec_muted_text_color() -> str:
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if is_light_preview_active():
+            return "#64748b"
+    except Exception:
+        pass
+    return "#8892a0"
 
 
 def _exec_status_pill_html(status: str) -> str:
@@ -25872,6 +26449,25 @@ def _exec_detail_col_class(col_name: str) -> str:
     return "exec-col-text"
 
 
+def _exec_detail_col_width(col_name: str) -> str:
+    """Ширина колонки для colgroup — шапка и тело совпадают при прокрутке."""
+    c = str(col_name or "").strip()
+    cl = c.casefold()
+    if c == "Контрагент":
+        return "22ch"
+    if c == "Объект":
+        return "14ch"
+    if c in {"№ документа", "Тип"} or c.startswith("№"):
+        return "11ch"
+    if "дата" in cl or c in {"Плановая дата сдачи", "Факт сдачи", "Дата создания"}:
+        return "13ch"
+    if "просроч" in cl:
+        return "12ch"
+    if c == "Статус":
+        return "12em"
+    return "16ch"
+
+
 def _exec_metric_cards_html(cards: list[dict], *, caption: str | None = None) -> str:
     esc = html_module.escape
     parts = ['<div class="exec-kpi-grid">']
@@ -25895,7 +26491,7 @@ def _exec_metric_cards_html(cards: list[dict], *, caption: str | None = None) ->
     parts.append("</div>")
     if caption:
         parts.append(f'<div class="exec-doc-caption">{esc(caption)}</div>')
-    return _EXEC_DOC_KPI_CSS + "".join(parts)
+    return _exec_css_for_theme(_EXEC_DOC_KPI_CSS) + "".join(parts)
 
 
 def _exec_cell_sort_attr(col: str, row: pd.Series) -> str:
@@ -25946,9 +26542,14 @@ def _exec_detail_table_html(
         "Дата создания": "Создан",
     }
     if df is None or df.empty:
-        return f'<p style="color:#8892a0;padding:12px;">{esc("Нет строк для отображения.")}</p>'
+        return f'<p style="color:{_exec_muted_text_color()};padding:12px;">{esc("Нет строк для отображения.")}</p>'
     show = df.head(max_rows)
     cols = list(show.columns)
+    colgroup = ["<colgroup>"]
+    for c in cols:
+        w = _exec_detail_col_width(c)
+        colgroup.append(f'<col style="width:{html_module.escape(w, quote=True)};">')
+    colgroup.append("</colgroup>")
     head_parts = ["<thead><tr>"]
     for c in cols:
         c_cls = _exec_detail_col_class(c)
@@ -25984,8 +26585,9 @@ def _exec_detail_table_html(
     # ТЗ (скриншот, п.5): вертикальная прокрутка детальной таблицы (липкая шапка,
     # ограниченная высота) — класс exec-doc-scroll-wrap (не pred-detail-wrap).
     return (
-        f'<div class="exec-doc-table-wrap exec-doc-scroll-wrap" data-bi-rows="{len(show)}">'
+        f'<div class="exec-doc-table-wrap exec-doc-scroll-wrap" data-bi-rows="{len(show)}" data-scroll-box-h="576">'
         '<table class="exec-doc-table bi-sortable-table bi-sort-click-only">'
+        + "".join(colgroup)
         + thead
         + "".join(body_parts)
         + "</table></div>"
@@ -26128,6 +26730,151 @@ def _exec_enrich_task_and_contract_dates(work: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+_EXEC_DOC_KINDS_DEFAULT = pd.DataFrame(
+    [
+        {
+            "KindName": "Комплект ИД",
+            "Группа": "Комплект ИД",
+            "Описание": "Комплект исполнительной документации",
+            "В отчёте ИД": "да",
+        },
+        {
+            "KindName": "КС",
+            "Группа": "КС",
+            "Описание": "Календарный сет (акт приёмки выполненных работ)",
+            "В отчёте ИД": "да",
+        },
+        {
+            "KindName": "Отказ",
+            "Группа": "Отказы",
+            "Описание": "Отказ заказчика по документу",
+            "В отчёте ИД": "да",
+        },
+        {
+            "KindName": "Отказы",
+            "Группа": "Отказы",
+            "Описание": "Отказ заказчика (альтернативное написание в TESSA)",
+            "В отчёте ИД": "да",
+        },
+        {
+            "KindName": "Предписания",
+            "Группа": "Предписания",
+            "Описание": "Предписания подрядчику — отдельный отчёт «Предписания»",
+            "В отчёте ИД": "нет",
+        },
+    ]
+)
+
+
+def _exec_doc_kinds_catalog_df() -> pd.DataFrame:
+    """Справочник видов документов ИД (`web/ExecDocKinds.csv`)."""
+    ref = None
+    try:
+        ref = st.session_state.get("reference_execdockinds")
+    except Exception:
+        ref = None
+    if ref is not None and isinstance(ref, pd.DataFrame) and not ref.empty:
+        out = ref.copy()
+    else:
+        from pathlib import Path as _Path
+
+        _p = _Path(__file__).resolve().parent.parent / "web" / "ExecDocKinds.csv"
+        if _p.is_file():
+            try:
+                from web_loader import _load_reference_csv
+
+                loaded = _load_reference_csv(_p)
+                if loaded is not None and not loaded.empty:
+                    out = loaded.copy()
+                else:
+                    out = _EXEC_DOC_KINDS_DEFAULT.copy()
+            except Exception:
+                out = _EXEC_DOC_KINDS_DEFAULT.copy()
+        else:
+            out = _EXEC_DOC_KINDS_DEFAULT.copy()
+    out.columns = [str(c).replace("\ufeff", "").strip() for c in out.columns]
+    if "KindName" not in out.columns:
+        return _EXEC_DOC_KINDS_DEFAULT.copy()
+    out["KindName"] = out["KindName"].astype(str).str.strip()
+    return out.drop_duplicates(subset=["KindName"], keep="first").reset_index(drop=True)
+
+
+def _exec_doc_kind_in_report_flag(row: pd.Series) -> bool:
+    flag_col = next(
+        (c for c in row.index if "отч" in str(c).lower() and "ид" in str(c).lower()),
+        "В отчёте ИД",
+    )
+    val = str(row.get(flag_col, "да")).strip().lower()
+    return val not in ("нет", "no", "0", "false", "-", "")
+
+
+def _exec_doc_kind_filter_options(
+    work: pd.DataFrame,
+    kind_col: str | None,
+    catalog_df: pd.DataFrame,
+) -> list[str]:
+    """Варианты фильтра «Вид документа» — из справочника (даже если в данных пока 0 строк)."""
+    opts: list[str] = []
+    seen: set[str] = set()
+    if catalog_df is not None and not catalog_df.empty and "KindName" in catalog_df.columns:
+        for _, r in catalog_df.iterrows():
+            if not _exec_doc_kind_in_report_flag(r):
+                continue
+            kn = str(r.get("KindName", "")).strip()
+            if not kn or kn in seen:
+                continue
+            opts.append(kn)
+            seen.add(kn)
+    if opts:
+        return opts
+    if not kind_col or kind_col not in work.columns:
+        return []
+    return sorted(
+        {
+            str(v).strip()
+            for v in work[kind_col].dropna().astype(str)
+            if str(v).strip() and str(v).strip().lower() not in ("nan", "none")
+        },
+        key=lambda x: x.casefold(),
+    )
+
+
+def _exec_doc_kinds_catalog_display(
+    work: pd.DataFrame,
+    kind_col: str | None,
+    catalog_df: pd.DataFrame,
+) -> pd.DataFrame:
+    disp = catalog_df.copy()
+    counts: dict[str, int] = {}
+    if kind_col and kind_col in work.columns:
+        counts = {
+            str(k).strip(): int(v)
+            for k, v in work[kind_col].astype(str).str.strip().value_counts().items()
+        }
+    disp["Строк в данных"] = disp["KindName"].astype(str).str.strip().map(
+        lambda k: counts.get(k, 0)
+    )
+    known = set(disp["KindName"].astype(str).str.strip())
+    extra_rows = []
+    for k, n in sorted(counts.items(), key=lambda x: (-x[1], x[0].casefold())):
+        if not k or k in known:
+            continue
+        if "предписан" in k.casefold():
+            continue
+        extra_rows.append(
+            {
+                "KindName": k,
+                "Группа": k,
+                "Описание": "Не описан в справочнике — добавьте строку в ExecDocKinds.csv",
+                "В отчёте ИД": "да",
+                "Строк в данных": int(n),
+            }
+        )
+    if extra_rows:
+        disp = pd.concat([disp, pd.DataFrame(extra_rows)], ignore_index=True)
+    return disp
+
+
 # ==================== DASHBOARD: Исполнительная документация (отдельный отчёт в группе «Прочее») ====================
 def dashboard_executive_documentation(df):
     """
@@ -26265,12 +27012,13 @@ def dashboard_executive_documentation(df):
     today = date.today()
 
     with filters_panel(st, reset_keys=[
-        "exec_doc_object", "exec_doc_contr",
+        "exec_doc_object", "exec_doc_contr", "exec_doc_kind",
         "exec_doc_period", "exec_doc_granularity", "exec_doc_hide_overdue_signed",
     ]):
         # ТЗ (скриншот): блок фильтров как в «Отклонение от базового плана» —
         # все селекторы одной шириной в одну линию, чекбоксы отдельным блоком.
-        fc1, fc2, fc3, fc4 = st.columns(4, gap="small")
+        _exec_kinds_catalog = _exec_doc_kinds_catalog_df()
+        fc1, fc2, fc3, fc4, fc5 = st.columns(5, gap="small")
         with fc1:
             if obj_col:
                 _exec_proj_opts = sorted(
@@ -26290,6 +27038,17 @@ def dashboard_executive_documentation(df):
             else:
                 sel_contr = "Все"
         with fc3:
+            if kind_col:
+                kinds = ["Все"] + _exec_doc_kind_filter_options(work, kind_col, _exec_kinds_catalog)
+                sel_kind = st.selectbox(
+                    "Вид документа",
+                    kinds,
+                    key="exec_doc_kind",
+                    help="Значения KindName из tessa_*-id.csv; см. справочник ExecDocKinds.csv",
+                )
+            else:
+                sel_kind = "Все"
+        with fc4:
             if pd.notna(dmin) and pd.notna(dmax):
                 min_date = dmin.date() if hasattr(dmin, "date") else dmin
                 max_date = dmax.date() if hasattr(dmax, "date") else dmax
@@ -26309,7 +27068,7 @@ def dashboard_executive_documentation(df):
                 p_start = p_end = None
                 with st.expander("Период по дате создания", expanded=False):
                     suppress_caption("В данных нет распознанной колонки даты создания — период не применяется.")
-        with fc4:
+        with fc5:
             _gran_opts = list(_exec_granularity_freq_map().keys())
             try:
                 _gi = _gran_opts.index("Месяц")
@@ -26330,17 +27089,33 @@ def dashboard_executive_documentation(df):
             )
 
     suppress_caption(
-        "Маппинг ИД: тип и статус — из `tessa_*-id.csv` (`KindName`, `KrState`); крайний срок подписания — `id_Deadline`; "
+        "Маппинг ИД: тип (`KindName`) и статус — из `tessa_*-id.csv`; справочник видов — `web/ExecDocKinds.csv`; "
+        "крайний срок подписания — `id_Deadline`; "
         "передача заказчику — задача «На согласование» в `tessa_*-task.csv` (`Completed`); приёмка комплекта — "
         "«Печатная форма создана» (`Completed`); просрочка сдачи по договору — `Дата_Окончания_Договора` vs "
         "`Дата_Получения_ИД` в `1с_*_Dogovor.json` (поле связи `1C_ID_DOG`). Просрочка заказчика — уточняется (TBD)."
     )
+
+    with st.expander("Справочник видов документов ИД", expanded=False):
+        _exec_cat_disp = _exec_doc_kinds_catalog_display(work, kind_col, _exec_kinds_catalog)
+        st.caption(
+            "Файл `web/ExecDocKinds.csv`: соответствие KindName из TESSA группам отчёта "
+            "(Комплект ИД, КС, Отказы). Колонка «Строк в данных» — по текущей выгрузке до фильтров."
+        )
+        render_report_html_table(
+            format_dataframe_as_html(_exec_cat_disp),
+            export_df=_exec_cat_disp,
+            file_stem="exec_doc_kinds",
+            key_prefix="exec_doc_kinds_ref",
+        )
 
     filtered_base = work.copy()
     if sel_obj != "Все" and obj_col:
         filtered_base = _filter_df_by_norm_key_col(filtered_base, obj_col, sel_obj)
     if sel_contr != "Все" and contr_col:
         filtered_base = filtered_base[filtered_base[contr_col].astype(str).str.strip() == sel_contr]
+    if sel_kind != "Все" and kind_col:
+        filtered_base = filtered_base[filtered_base[kind_col].astype(str).str.strip() == sel_kind]
 
     # tessa_data объединяет все snapshot-файлы → один документ может иметь несколько
     # записей (по дате snapshot). Для «текущего состояния» (карточки, бар-чарт
@@ -26390,6 +27165,8 @@ def dashboard_executive_documentation(df):
                 _empty_reasons.append(f"для объекта «{sel_obj}»")
             if sel_contr != "Все":
                 _empty_reasons.append(f"для контрагента «{sel_contr}»")
+            if sel_kind != "Все":
+                _empty_reasons.append(f"для вида документа «{sel_kind}»")
         else:
             _date_str = (
                 f"{p_start.strftime('%d.%m.%Y') if hasattr(p_start, 'strftime') else p_start}"
@@ -26684,10 +27461,11 @@ def dashboard_executive_documentation(df):
         table_df = _exec_sort_table_df(table_df, "Дата создания", "desc")
         st.markdown(f"**Записей:** {len(table_df)}")
         render_report_html_table(
-            _EXEC_DOC_DETAIL_CSS
-            + '<div class="exec-doc-panel">'
-            + _exec_detail_table_html(table_df)
-            + "</div>",
+            _exec_html_block_for_theme(
+                '<div class="exec-doc-panel">'
+                + _exec_detail_table_html(table_df)
+                + "</div>"
+            ),
             export_df=table_df,
             file_stem="executive_docs",
             key_prefix="exec_doc",
@@ -27628,6 +28406,15 @@ def _rd_delay_duration_figure(
         automargin=True,
     )
     fig.update_xaxes(range=[0, x_max * 1.12])
+    _ax_clr = _fin_chart_axis_color()
+    fig.update_xaxes(
+        tickfont=dict(color=_ax_clr, size=11),
+        title_font=dict(color=_ax_clr),
+    )
+    fig.update_yaxes(
+        tickfont=dict(color=_ax_clr, size=11),
+        title_font=dict(color=_ax_clr),
+    )
     fig = _apply_bar_uniformtext(fig)
     fig = apply_chart_background(fig)
     return fig
@@ -27927,6 +28714,13 @@ def _pd_build_project_indicator_chart_data(
 
 def _pd_delay_indicator_color(val: float, dev_max: float) -> str:
     if dev_max <= 0 or val <= 0:
+        try:
+            from dashboards.light_theme import is_light_preview_active
+
+            if is_light_preview_active():
+                return "#15803d"
+        except Exception:
+            pass
         return "#1E8449"
     r = min(max(val / dev_max, 0.0), 1.0)
     if r < 0.5:
@@ -27944,18 +28738,26 @@ def _pd_delay_indicator_color(val: float, dev_max: float) -> str:
 
 
 def _pd_delay_project_indicator_card_html(
-    proj: str, ovd_i: int, *, bg: str
+    proj: str, ovd_i: int, *, bg: str, unit: str = "док."
 ) -> str:
-    """Карточка проекта: цвет по уровню просрочки + «Просрочка: N док.»."""
+    """Карточка проекта: цвет по уровню просрочки + «Просрочка: N …»."""
     _proj = html_module.escape(str(proj))
     _label = (
         "Без просрочки"
         if int(ovd_i) <= 0
-        else f"Просрочка: {int(ovd_i)} док."
+        else f"Просрочка: {int(ovd_i)} {unit}"
     )
+    _border = ""
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if is_light_preview_active():
+            _border = "border:1px solid rgba(15,23,42,0.08);"
+    except Exception:
+        pass
     return (
         f"<div style='background:{bg};color:white;padding:10px 14px;border-radius:8px;"
-        f"margin-bottom:8px;min-height:68px;box-sizing:border-box;'>"
+        f"margin-bottom:8px;min-height:68px;box-sizing:border-box;{_border}'>"
         f"<div style='font-size:13px;opacity:0.9;'>{_proj}</div>"
         f"<div style='font-size:18px;font-weight:600;'>{_label}</div>"
         f"</div>"
@@ -28011,6 +28813,18 @@ def _render_pd_delay_project_indicators(
 def _pd_delay_chart_compact_css(key: str, height: int) -> str:
     """Фиксированная высота блока Plotly — без «раздувания» после загрузки iframe."""
     h = max(280, int(height))
+    _chart_shell = ""
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if is_light_preview_active():
+            _chart_shell = (
+                f"div[class*=\"st-key-{key}\"] [data-testid=\"stPlotlyChart\"]{{"
+                f"background:#ffffff!important;border:1px solid #cbd5e1!important;"
+                f"border-radius:8px!important;}}"
+            )
+    except Exception:
+        pass
     return (
         f"<style>"
         f"div[class*=\"st-key-{key}\"] [data-testid=\"stPlotlyChart\"]{{"
@@ -28021,6 +28835,7 @@ def _pd_delay_chart_compact_css(key: str, height: int) -> str:
         f"min-height:{h}px!important;height:{h}px!important;max-height:{h}px!important;"
         f"display:block!important;"
         f"}}"
+        f"{_chart_shell}"
         f"</style>"
     )
 
@@ -28233,6 +29048,15 @@ def _pd_delay_section_duration_figure(
     else:
         fig.update_xaxes(type="date", tickformat="%d.%m.%Y", automargin=True)
     fig = apply_chart_background(fig)
+    _ax_clr = _fin_chart_axis_color()
+    fig.update_xaxes(
+        tickfont=dict(color=_ax_clr, size=11),
+        title_font=dict(color=_ax_clr),
+    )
+    fig.update_yaxes(
+        tickfont=dict(color=_ax_clr, size=11),
+        title_font=dict(color=_ax_clr),
+    )
     return fig
 
 
@@ -28385,6 +29209,15 @@ def _pd_delay_plan_fact_figure(
     )
     fig.update_xaxes(range=[0, x_max * 1.12], automargin=True)
     fig = apply_chart_background(fig)
+    _ax_clr = _fin_chart_axis_color()
+    fig.update_xaxes(
+        tickfont=dict(color=_ax_clr, size=11),
+        title_font=dict(color=_ax_clr),
+    )
+    fig.update_yaxes(
+        tickfont=dict(color=_ax_clr, size=11),
+        title_font=dict(color=_ax_clr),
+    )
     return fig
 
 
@@ -28713,6 +29546,32 @@ def _rd_dynamics_chart_month_ticks_ru(dates) -> tuple[list, list]:
         tickvals = tickvals[::step]
         ticktext = ticktext[::step]
     return tickvals, ticktext
+
+
+def _apply_rd_dynamics_line_chart_theme(
+    fig,
+    *,
+    plan_color: str = "#2E86AB",
+    fact_color: str = "#F39C12",
+) -> None:
+    _ax = _fin_chart_axis_color()
+    fig.update_layout(
+        xaxis=dict(
+            tickfont=dict(size=10, color=_ax),
+            title_font=dict(color=_ax),
+        ),
+        yaxis=dict(
+            tickfont=dict(size=10, color=_ax),
+            title_font=dict(color=_ax),
+        ),
+    )
+    for _tr in fig.data or []:
+        _tn = str(getattr(_tr, "name", "") or "")
+        if "План" in _tn:
+            _tr.textfont = dict(color=plan_color, size=10)
+        elif "Факт" in _tn:
+            _tr.textfont = dict(color=fact_color, size=10)
+
 
 # ==================== DASHBOARD 8.7: Documentation ====================
 def dashboard_documentation(
@@ -29527,11 +30386,12 @@ def dashboard_documentation(
                         _pie_vals = list(pie_data.values())
                         _pie_h = 560
                         _leg_col, _chart_col = st.columns([0.15, 0.85], gap="small")
+                        _pd_pie_leg_clr = _fin_chart_label_color()
                         with _leg_col:
                             _leg_items = "".join(
                                 f"<div style='display:flex;align-items:center;gap:8px;margin:6px 0;'>"
                                 f"<span style='color:{_pie_color_map.get(lbl, '#2E86AB')};font-size:16px;line-height:1;'>■</span>"
-                                f"<span style='color:#f0f4f8;font-size:13px;'>{lbl}</span></div>"
+                                f"<span style='color:{_pd_pie_leg_clr};font-size:13px;'>{lbl}</span></div>"
                                 for lbl in _pie_names
                             )
                             st.markdown(
@@ -29997,6 +30857,7 @@ def dashboard_documentation(
                     textposition="top center",
                     textfont=dict(size=10, color="white"),
                 )
+                _apply_rd_dynamics_line_chart_theme(fig_dynamics)
                 fig_dynamics = apply_chart_background(fig_dynamics)
                 render_chart(fig_dynamics, caption_below="Динамика выдачи РД")
             else:
@@ -30333,17 +31194,23 @@ def dashboard_documentation(
                             hovermode="x unified",
                             height=550,
                             xaxis=dict(
-                                title=dict(text="Период", standoff=56),
+                                title=dict(
+                                    text="Период",
+                                    standoff=56,
+                                    font=dict(color=_fin_chart_axis_color()),
+                                ),
                                 tickmode="array",
                                 tickvals=_pd_tickvals,
                                 ticktext=_pd_ticktext,
                                 tickangle=-45,
-                                tickfont=dict(size=10),
+                                tickfont=dict(size=10, color=_fin_chart_axis_color()),
                                 automargin=False,
                             ),
                             yaxis=dict(
                                 range=[_pd_y_lo, _pd_y_max + _pd_head],
                                 autorange=False,
+                                tickfont=dict(size=10, color=_fin_chart_axis_color()),
+                                title_font=dict(color=_fin_chart_axis_color()),
                             ),
                             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, title_text=""),
                         )
@@ -30447,33 +31314,7 @@ def dashboard_documentation(
                         tbl_numeric["Базовое окончание"] = tbl_f["_bf"].values
                         tbl_numeric["Окончание"] = tbl_f["_sf"].values
                         tbl_numeric["Отклонение окончания"] = _dev_round.values
-                        st.markdown(
-                            "<style>"
-                            "div[class*='st-key-bitblwrap_pd_dyn_tbl'],"
-                            "div[class*='st-key-bitblwrap_pd_dyn_tbl'] div[data-testid='stVerticalBlock'],"
-                            "div[class*='st-key-bitblwrap_pd_dyn_tbl'] div[data-testid='stElementContainer'],"
-                            "[data-testid='stMainBlockContainer'] div[class*='st-key-bitblwrap_pd_dyn_tbl'],"
-                            "div[class*='st-key-bitblwrap_pd_dyn_tbl'] div[data-testid='stElementContainer']:has(iframe),"
-                            "div[class*='st-key-bitblwrap_pd_dyn_tbl'] iframe"
-                            "{width:100%!important;max-width:100%!important;min-width:0!important;display:block!important;}"
-                            ".pd-dynamics-table-wrap,.pd-dynamics-table-wrap table,"
-                            ".pd-dynamics-scroll-wrap,.pd-dynamics-scroll-wrap table,"
-                            ".pd-dynamics-scroll-wrap .pf-dates-table"
-                            "{width:100%!important;min-width:100%!important;max-width:100%!important;"
-                            "table-layout:fixed!important;}"
-                            ".pd-dynamics-table-wrap,.pd-dynamics-scroll-wrap"
-                            "{margin:0.35em 0 0.85em 0!important;box-sizing:border-box!important;}"
-                            ".pd-dynamics-scroll-wrap{min-height:520px!important;height:100%!important;"
-                            "max-height:100%!important;overflow-y:auto!important;overflow-x:auto!important;"
-                            "-webkit-overflow-scrolling:touch!important;scrollbar-gutter:stable!important;"
-                            "border:1px solid rgba(255,255,255,0.25)!important;border-radius:10px!important;"
-                            "box-sizing:border-box!important;}"
-                            ".pd-dynamics-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;}"
-                            "div[class*='st-key-bitblwrap_pd_dyn_tbl'] [data-testid='stPopover']"
-                            "{margin-top:12px!important;}"
-                            "</style>",
-                            unsafe_allow_html=True,
-                        )
+                        st.markdown(_pd_dynamics_table_shell_css_for_theme(), unsafe_allow_html=True)
                         _export_tbl = tbl_show.copy()
                         _render_plan_fact_dates_main_table(
                             tbl_show,
@@ -30707,13 +31548,10 @@ def _render_plan_fact_detail_table(
         display,
         finance_deviation_column="Отклонение, млн руб.",
         deviation_color_fact_vs_plan=True,
-        color_fact_column=False,
         expense_overrun_style=False,
-        header_font_css="font-weight:700;font-size:1.15em;",
-        label_columns_font_css="font-weight:700;font-size:1.08em;",
-        table_font_size_px=16,
         file_stem="approved_budget_plan_fact_detail",
         key_prefix=f"appr_budget_detail_{key_suffix}",
+        **_appr_budget_table_html_kwargs(),
     )
 
 
@@ -30784,6 +31622,15 @@ def _render_appr_pf_gauge_chart(fig: go.Figure, *, height: int, chart_key: str) 
             omit_default_width=True,
             max_height=h + 8,
         )
+
+
+def _appr_budget_table_html_kwargs(**overrides) -> dict:
+    return _finance_table_html_kwargs(
+        header_font_css="font-weight:700;font-size:1.15em;",
+        label_columns_font_css="font-weight:700;font-size:1.08em;",
+        table_font_size_px=16,
+        **overrides,
+    )
 
 
 _APPR_PF_SUMMARY_GAUGE_CSS = """
@@ -31189,13 +32036,10 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
         pd.DataFrame(_sum_rows),
         finance_deviation_column="Отклонение, млн руб.",
         deviation_color_fact_vs_plan=True,
-        color_fact_column=False,
         expense_overrun_style=False,
-        header_font_css="font-weight:700;font-size:1.15em;",
-        label_columns_font_css="font-weight:700;font-size:1.08em;",
-        table_font_size_px=16,
         file_stem="budget_summary",
         key_prefix="budget_summary",
+        **_appr_budget_table_html_kwargs(),
     )
 
 def _approved_budget_get_monthly_slice(
@@ -31660,11 +32504,9 @@ def _render_approved_budget_monthly_block(
         summary_table,
         finance_deviation_column="Отклонение, млн руб.",
         deviation_color_fact_vs_plan=True,
-        header_font_css="font-weight:700;font-size:1.15em;",
-        label_columns_font_css="font-weight:700;font-size:1.08em;",
-        table_font_size_px=16,
         file_stem="approved_budget_by_month",
         key_prefix="appr_budget_planfact_summary",
+        **_appr_budget_table_html_kwargs(),
     )
 
 
@@ -34211,28 +35053,45 @@ def _forecast_financier_status_table_html(df: pd.DataFrame) -> str:
     """«Статус»: ● зелёный при экономии (прогноз < план), красный при перерасходе."""
     if df is None or getattr(df, "empty", True):
         return "<p>Нет данных для статуса.</p>"
+    import utils as u
+    from dashboards.light_theme import finance_dev_negative_color
+
     _col_dev = "Отклонение по сумме, млн"
     _col_stat = "Статус для финансиста"
-    green = "hsl(148,100%,63%)"
+    green = finance_dev_negative_color()
     red = "hsl(348,100%,63%)"
     neutral_bullet = "#94a3b8"
+    _th_border = u.FINANCE_TABLE_CELL_BORDER
+    _td_border = u.TABLE_CELL_BORDER
+    _hdr_bg = u.TABLE_HEADER_BG_COLOR
+    _txt = u.TABLE_TEXT_COLOR
+    _bg = u.TABLE_BG_COLOR
+    _hdr_css = u.TABLE_HEADER_FONT_CSS
+    _wrap_id = "fcst_" + str(abs(id(df)))
+    _st_vh = 52.0
+    _st_box_h = int(min(640, max(280, _st_vh * 10 + 56)))
     parts = [
         "<style>"
         ".fc-st-cell-red, .fc-st-cell-red * { color: hsl(348,100%,63%) !important; }"
-        ".fc-st-cell-green, .fc-st-cell-green * { color: hsl(148,100%,63%) !important; }"
-        f".fc-table-scroll-wrap thead th {{ position: sticky; top: 0; z-index: 5; "
-        f"background-color: {TABLE_HEADER_BG_COLOR} !important; color: {TABLE_TEXT_COLOR}; "
-        f"{TABLE_HEADER_FONT_CSS} }}"
+        ".fc-st-cell-green, .fc-st-cell-green * { color: " + green + " !important; }"
+        f"#{_wrap_id} .budget-table-scroll {{ height: {_st_box_h}px !important; max-height: {_st_box_h}px !important; min-height: 0; "
+        f"overflow: auto; -webkit-overflow-scrolling: touch; scrollbar-gutter: stable; "
+        f"box-sizing: border-box; }}"
+        f"#{_wrap_id}.budget-deviation-table-wrap {{ display: block; overflow: hidden; width: 100%; }}"
+        f"#{_wrap_id} thead th {{ position: sticky; top: 0; z-index: 5; "
+        f"background-color: {_hdr_bg} !important; color: {_txt}; {_hdr_css} }}"
+        f"#{_wrap_id} .budget-table-scroll table {{ width: max-content; min-width: 100%; }}"
         "</style>",
-        f'<div class="fc-table-scroll-wrap bi-styled-table-wrap" data-bi-rows="{len(df)}">',
-        f'<table class="rendered-table bi-sortable-table bi-sort-click-only" style="width:100%;border-collapse:collapse;background-color:{TABLE_BG_COLOR};color:{TABLE_TEXT_COLOR};font-size:14px;">',
+        f'<div id="{_wrap_id}" class="budget-deviation-table-wrap bi-styled-table-wrap" data-bi-rows="{len(df)}">',
+        f'<div class="budget-table-scroll" data-scroll-vh="{_st_vh:.1f}" data-scroll-box-h="{_st_box_h}">',
+        f'<table class="rendered-table bi-sortable-table bi-sort-click-only" style="width:max-content;min-width:100%;border-collapse:collapse;background-color:{_bg};color:{_txt};font-size:14px;">',
         "<thead><tr>",
     ]
     for c in df.columns:
         _cn = str(c).strip()
         parts.append(
-            f'<th style="border:1px solid rgba(255,255,255,0.25);padding:8px 6px;text-align:center;vertical-align:middle;'
-            f'background-color:{TABLE_HEADER_BG_COLOR};color:{TABLE_TEXT_COLOR};{TABLE_HEADER_FONT_CSS};" '
+            f'<th style="border:{_th_border};padding:8px 6px;text-align:center;vertical-align:middle;'
+            f'background-color:{_hdr_bg};color:{_txt};{_hdr_css};" '
             f'data-sort-label="{html_module.escape(_cn, quote=True)}">{html_module.escape(_cn)}</th>'
         )
     parts.append("</tr></thead><tbody>")
@@ -34248,11 +35107,11 @@ def _forecast_financier_status_table_html(df: pd.DataFrame) -> str:
                     num = None
                 if num is None or pd.isna(num):
                     parts.append(
-                        f'<td style="border:1px solid rgba(255,255,255,0.15); padding:5px 8px;">{val_esc}</td>'
+                        f'<td style="border:{_td_border}; padding:5px 8px;">{val_esc}</td>'
                     )
                 elif abs(float(num)) < 1e-9:
                     parts.append(
-                        f'<td style="border:1px solid rgba(255,255,255,0.15); padding:5px 8px;">'
+                        f'<td style="border:{_td_border}; padding:5px 8px;">'
                         f'<span style="font-weight:700">{html_module.escape(f"{float(num):.2f}")}</span></td>'
                     )
                 else:
@@ -34260,7 +35119,7 @@ def _forecast_financier_status_table_html(df: pd.DataFrame) -> str:
                     txt_esc = html_module.escape(txt)
                     _cls = "fc-st-cell-green" if float(num) < 0 else "fc-st-cell-red"
                     parts.append(
-                        f'<td class="{_cls}" style="border:1px solid rgba(255,255,255,0.15); padding:5px 8px; '
+                        f'<td class="{_cls}" style="border:{_td_border}; padding:5px 8px; '
                         f'font-weight:700;"><span>{txt_esc}</span></td>'
                     )
             elif col == _col_stat:
@@ -34275,17 +35134,17 @@ def _forecast_financier_status_table_html(df: pd.DataFrame) -> str:
                 else:
                     bullet = red
                 parts.append(
-                    f'<td style="border:1px solid rgba(255,255,255,0.15); padding:5px 8px;">'
+                    f'<td style="border:{_td_border}; padding:5px 8px;">'
                     f'<span style="color:{bullet};font-weight:700;font-size:1.12em;margin-right:6px">●</span>'
-                    f'<span style="color:{TABLE_TEXT_COLOR};font-weight:600">{val_esc}</span>'
+                    f'<span style="color:{_txt};font-weight:600">{val_esc}</span>'
                     "</td>"
                 )
             else:
                 parts.append(
-                    f'<td style="border:1px solid rgba(255,255,255,0.15); padding:5px 8px;">{val_esc}</td>'
+                    f'<td style="border:{_td_border}; padding:5px 8px;">{val_esc}</td>'
                 )
         parts.append("</tr>")
-    parts.append("</tbody></table></div>")
+    parts.append("</tbody></table></div></div>")
     return "".join(parts)
 
 
@@ -34626,6 +35485,13 @@ def dashboard_forecast_budget(df):
                     value=False,
                     key=f"forecast_bddcs_hide_dev_{_npk_fc_filters}",
                 )
+            with _fc_cb3:
+                if period_type_en == "Month":
+                    st.checkbox(
+                        "Скрывать месяцы, где план, факт и прогноз равны 0",
+                        value=True,
+                        key=f"forecast_bddcs_hide_zero_{_npk_fc_filters}_Month",
+                    )
     if getattr(filtered_scope, "empty", True):
         st.info("Нет строк для выбранных фильтров.")
         return
@@ -35011,13 +35877,11 @@ def dashboard_forecast_budget(df):
     x_label_fc = period_label
     _chart_df = mf_fc.copy()
     _hide_zero_chk = period_type_en == "Month"
-    _fc_hide_zero = False
-    if _hide_zero_chk:
-        _fc_hide_zero = st.checkbox(
-            "Скрывать месяцы, где план, факт и прогноз равны 0",
-            value=True,
-            key=f"forecast_bddcs_hide_zero_{_npk_fc}_{period_type_en}",
-        )
+    _fc_hide_zero = (
+        bool(st.session_state.get(f"forecast_bddcs_hide_zero_{_npk_fc}_Month", True))
+        if _hide_zero_chk
+        else False
+    )
     if not _chart_df.empty:
         _chart_df = _forecast_filter_chart_months(
             _chart_df,
@@ -35045,6 +35909,7 @@ def dashboard_forecast_budget(df):
         _plan_txt_fc = _finance_bar_text_mln_rub(_chart_df["bdds_plan_msp"], min_abs_mln=0.0)
         _fact_txt_fc = _finance_bar_text_mln_rub(_chart_df["bdds_fact"], min_abs_mln=0.0)
         _frc_txt_fc = _finance_bar_text_mln_rub(_chart_df["bdds_forecast"], min_abs_mln=0.0)
+        _bar_lbl_fc = _fin_chart_label_color()
         fig_fc = go.Figure()
         x_fc = _chart_df["Период"].astype(str)
         fig_fc.add_trace(
@@ -35057,7 +35922,7 @@ def dashboard_forecast_budget(df):
                 textposition="outside",
                 textangle=0,
                 cliponaxis=False,
-                textfont=dict(size=_tfs_out_fc, color="#e8eef5"),
+                textfont=dict(size=_tfs_out_fc, color=_bar_lbl_fc),
                 customdata=_chart_df["bdds_plan_msp"].apply(_fmt_hover1),
                 hovertemplate="<b>%{x}</b><br>БДДС план: %{customdata}<extra></extra>",
             )
@@ -35072,7 +35937,7 @@ def dashboard_forecast_budget(df):
                 textposition="outside",
                 textangle=0,
                 cliponaxis=False,
-                textfont=dict(size=_tfs_out_fc, color="#e8eef5"),
+                textfont=dict(size=_tfs_out_fc, color=_bar_lbl_fc),
                 customdata=_chart_df["bdds_fact"].apply(_fmt_hover1),
                 hovertemplate="<b>%{x}</b><br>БДДС факт: %{customdata}<extra></extra>",
             )
@@ -35087,7 +35952,7 @@ def dashboard_forecast_budget(df):
                 textposition="outside",
                 textangle=0,
                 cliponaxis=False,
-                textfont=dict(size=_tfs_out_fc, color="#e8eef5"),
+                textfont=dict(size=_tfs_out_fc, color=_bar_lbl_fc),
                 customdata=_chart_df["bdds_forecast"].apply(_fmt_hover1),
                 hovertemplate="<b>%{x}</b><br>БДДС прогноз: %{customdata}<extra></extra>",
             )
@@ -35229,7 +36094,14 @@ def dashboard_forecast_budget(df):
 
     _cond_fc = None
     if not _hide_dev_fc:
-        _cond_fc = {_dev_col_fc: {"positive_color": "#6ee7b7", "negative_color": "#f87171"}}
+        from dashboards.light_theme import finance_dev_negative_color
+
+        _cond_fc = {
+            _dev_col_fc: {
+                "positive_color": "hsl(348,100%,63%)",
+                "negative_color": finance_dev_negative_color(),
+            }
+        }
     _render_format_dataframe_html(
         summary_display_fc,
         file_stem="forecast_bddcs_summary",
@@ -35464,6 +36336,7 @@ _PRED_DASH_MOCK_CSS = """
 }
 .pred-chip-overdue { background:#8b5a2b; color:#fff4e6; border-color:#a66b35; }
 .pred-chip-ok { background:#2d6a4f; color:#e8fff0; border-color:#40916c; }
+.pred-chip-warn { background:#7c5a1a; color:#fff8e6; border-color:#9a7018; }
 .pred-chip-neutral { background:#2c5282; color:#e8f4ff; border-color:#3d6fa8; }
 .pred-days-neg {
   display:inline-flex;
@@ -35495,6 +36368,91 @@ _PRED_DASH_MOCK_CSS = """
 }
 </style>
 """
+
+
+def _pred_muted_text_color() -> str:
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if is_light_preview_active():
+            return "#64748b"
+    except Exception:
+        pass
+    return "#a0a0a0"
+
+
+def _pred_expand_detail_table_css(css: str) -> str:
+    """Стили таблицы: и legacy .pred-detail-wrap, и scroll-box .pred-detail-scroll."""
+    return re.sub(
+        r"\.pred-detail-wrap(?=\s|[,{.#\[:>+~])",
+        ".pred-detail-wrap, .pred-detail-scroll",
+        css or "",
+    )
+
+
+def _pred_dash_mock_css_for_theme() -> str:
+    css = _PRED_DASH_MOCK_CSS
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if not is_light_preview_active():
+            return _pred_expand_detail_table_css(css)
+    except Exception:
+        return _pred_expand_detail_table_css(css)
+    for old, new in (
+        (".pred-chip-overdue { background:#8b5a2b; color:#fff4e6; border-color:#a66b35; }", ".pred-chip-overdue { background:#ffedd5; color:#9a3412; border-color:#fdba74; }"),
+        (".pred-chip-ok { background:#2d6a4f; color:#e8fff0; border-color:#40916c; }", ".pred-chip-ok { background:#dcfce7; color:#166534; border-color:#86efac; }"),
+        (".pred-chip-warn { background:#7c5a1a; color:#fff8e6; border-color:#9a7018; }", ".pred-chip-warn { background:#fef3c7; color:#92400e; border-color:#fbbf24; }"),
+        (".pred-chip-neutral { background:#2c5282; color:#e8f4ff; border-color:#3d6fa8; }", ".pred-chip-neutral { background:#dbeafe; color:#1e40af; border-color:#93c5fd; }"),
+        (".pred-days-neg {\n  display:inline-flex;\n  align-items:center;\n  justify-content:center;\n  min-width:2.4em;\n  height:2.4em;\n  padding:0 6px;\n  border-radius:999px;\n  background:rgba(185, 28, 28, 0.45);\n  color:#fecaca;", ".pred-days-neg {\n  display:inline-flex;\n  align-items:center;\n  justify-content:center;\n  min-width:2.4em;\n  height:2.4em;\n  padding:0 6px;\n  border-radius:999px;\n  background:#fee2e2;\n  color:#b91c1c;"),
+        (".pred-days-ok {\n  display:inline-flex;\n  align-items:center;\n  justify-content:center;\n  min-width:2.4em;\n  height:2.4em;\n  padding:0 6px;\n  border-radius:999px;\n  background:rgba(45, 106, 79, 0.55);\n  color:#e8fff0;", ".pred-days-ok {\n  display:inline-flex;\n  align-items:center;\n  justify-content:center;\n  min-width:2.4em;\n  height:2.4em;\n  padding:0 6px;\n  border-radius:999px;\n  background:#dcfce7;\n  color:#166534;"),
+        (".pred-detail-wrap thead th {\n  text-align:center;\n  vertical-align:middle;\n  padding:8px 6px;\n  background:#1a1c23;\n  color:#fafafa;\n  border-bottom:2px solid #444;\n  font-size:9px;", ".pred-detail-wrap thead th {\n  text-align:center;\n  vertical-align:middle;\n  padding:8px 6px;\n  background:#f3f4f6;\n  color:#111827;\n  border-bottom:2px solid #cbd5e1;\n  font-size:10px;"),
+        (".pred-kpi-wrap { background:#13151c; border:1px solid #333;", ".pred-kpi-wrap { background:#f8fafc; border:1px solid #cbd5e1;"),
+        (".pred-kpi-title { font-size:1rem; font-weight:600; color:#fafafa; margin:0 0 12px 0; border-bottom:1px solid #444;", ".pred-kpi-title { font-size:1rem; font-weight:600; color:#111827; margin:0 0 12px 0; border-bottom:1px solid #e2e8f0;"),
+        (".pred-kpi-info h4 { margin:0 0 4px 0; font-size:14px; font-weight:600; color:#fafafa; }", ".pred-kpi-info h4 { margin:0 0 4px 0; font-size:14px; font-weight:600; color:#111827; }"),
+        (".pred-kpi-info p { margin:0; font-size:12px; color:#a0a0a0; }", ".pred-kpi-info p { margin:0; font-size:12px; color:#64748b; }"),
+        (".pred-leg { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:8px; padding:8px 12px; background:#1a1c23; border-radius:12px; border:1px solid #444; font-size:13px; color:#e0e0e0; }", ".pred-leg { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:8px; padding:8px 12px; background:#f3f4f6; border-radius:12px; border:1px solid #cbd5e1; font-size:13px; color:#374151; }"),
+        (".pred-mock-table-wrap { margin-top:4px; overflow-x:auto; min-width:0; border-radius:8px; border:1px solid #444; }", ".pred-mock-table-wrap { margin-top:4px; overflow-x:auto; min-width:0; border-radius:8px; border:1px solid #cbd5e1; }"),
+        (".pred-mock-table-wrap th { text-align:center; padding:6px 8px; background:#1a1c23; color:#fafafa; border-bottom:2px solid #444; font-size:11px; letter-spacing:0.02em; }", ".pred-mock-table-wrap th { text-align:center; padding:6px 8px; background:#f3f4f6; color:#111827; border-bottom:2px solid #cbd5e1; font-size:11px; letter-spacing:0.02em; }"),
+        (".pred-mock-table-wrap td { padding:5px 8px; border-bottom:1px solid #333; color:#e0e0e0; vertical-align:top; }", ".pred-mock-table-wrap td { padding:5px 8px; border-bottom:1px solid #e2e8f0; color:#111827; vertical-align:top; }"),
+        (".pred-mock-table-wrap tr.pred-crit td { background:rgba(231,76,60,0.07); }", ".pred-mock-table-wrap tr.pred-crit td { background:rgba(254,226,226,0.55); }"),
+        (".pred-td-contr { font-weight:600; color:#fafafa; background:#1a1c23; }", ".pred-td-contr { font-weight:600; color:#111827; background:#f3f4f6; }"),
+        (".pred-td-sub { font-size:11px; color:#8892a0; margin-top:4px; }", ".pred-td-sub { font-size:11px; color:#64748b; margin-top:4px; }"),
+        (".pred-tag { background:#262833; border:1px solid #444; padding:3px 8px; border-radius:20px; font-size:12px; color:#e0e0e0; display:inline-block; }", ".pred-tag { background:#f3f4f6; border:1px solid #cbd5e1; padding:3px 8px; border-radius:20px; font-size:12px; color:#374151; display:inline-block; }"),
+        (".pred-crit-dash { color:#888; font-size:14px; }", ".pred-crit-dash { color:#94a3b8; font-size:14px; }"),
+        (".pred-mock-title { font-size:1.05rem; font-weight:600; color:#fafafa; }", ".pred-mock-title { font-size:1.05rem; font-weight:600; color:#111827; }"),
+        (".pred-mock-sort { font-size:12px; color:#a0a0a0; }", ".pred-mock-sort { font-size:12px; color:#64748b; }"),
+        (".pred-detail-wrap {\n  display:block;\n  width:100%;\n  max-width:100%;\n  height:min(70vh, 520px);\n  max-height:min(70vh, 520px);\n  overflow-x:auto;\n  overflow-y:scroll;\n  -webkit-overflow-scrolling:touch;\n  border:1px solid #444;\n  border-radius:10px;\n  margin-top:8px;\n  margin-bottom:12px;\n  scrollbar-gutter:stable;\n  scrollbar-width:thin;\n  scrollbar-color:#4a5568 #1a1c23;\n}", ".pred-detail-wrap {\n  display:block;\n  width:100%;\n  max-width:100%;\n  height:min(70vh, 520px);\n  max-height:min(70vh, 520px);\n  overflow-x:auto;\n  overflow-y:scroll;\n  -webkit-overflow-scrolling:touch;\n  border:1px solid #cbd5e1;\n  border-radius:10px;\n  margin-top:8px;\n  margin-bottom:12px;\n  scrollbar-gutter:stable;\n  scrollbar-width:thin;\n  scrollbar-color:#94a3b8 #e5e7eb;\n}"),
+        (".pred-detail-wrap::-webkit-scrollbar-thumb { background:#4a5568; border-radius:6px; }", ".pred-detail-wrap::-webkit-scrollbar-thumb { background:#94a3b8; border-radius:6px; }"),
+        (".pred-detail-wrap::-webkit-scrollbar-track { background:#1a1c23; }", ".pred-detail-wrap::-webkit-scrollbar-track { background:#e5e7eb; }"),
+        (".pred-detail-wrap table {\n  width:max-content;\n  min-width:100%;\n  table-layout:auto;\n  border-collapse:separate !important;\n  border-spacing:0 !important;\n  border:1px solid #5a7a9a !important;\n}", ".pred-detail-wrap table {\n  width:max-content;\n  min-width:100%;\n  table-layout:auto;\n  border-collapse:separate !important;\n  border-spacing:0 !important;\n  border:1px solid #94a3b8 !important;\n}"),
+        (".pred-detail-wrap thead th {\n  text-align:center;\n  vertical-align:middle;\n  padding:8px 6px;\n  background:#1a1c23;\n  color:#fafafa;\n  border-bottom:2px solid #444;", ".pred-detail-wrap thead th {\n  text-align:center;\n  vertical-align:middle;\n  padding:8px 6px;\n  background:#f3f4f6;\n  color:#111827;\n  border-bottom:2px solid #cbd5e1;"),
+        (".pred-detail-wrap th, .pred-detail-wrap td {\n  border-right:1px solid #5a7a9a !important;\n  border-bottom:1px solid #5a7a9a !important;\n}", ".pred-detail-wrap th, .pred-detail-wrap td {\n  border-right:1px solid #cbd5e1 !important;\n  border-bottom:1px solid #cbd5e1 !important;\n}"),
+        (".pred-detail-wrap thead tr:first-child th { border-top:1px solid #5a7a9a !important; }", ".pred-detail-wrap thead tr:first-child th { border-top:1px solid #cbd5e1 !important; }"),
+        (".pred-detail-wrap tr th:first-child, .pred-detail-wrap tr td:first-child {\n  border-left:1px solid #5a7a9a !important;\n}", ".pred-detail-wrap tr th:first-child, .pred-detail-wrap tr td:first-child {\n  border-left:1px solid #cbd5e1 !important;\n}"),
+        (".pred-detail-wrap td {\n  padding:6px 8px;\n  color:#e0e0e0;", ".pred-detail-wrap td {\n  padding:6px 8px;\n  color:#111827;"),
+        (".pred-detail-wrap tbody tr.pred-row-overdue td {\n  background:rgba(88, 28, 72, 0.55) !important;\n  border-bottom:1px solid rgba(120, 50, 90, 0.45);\n}", ".pred-detail-wrap tbody tr.pred-row-overdue td {\n  background:rgba(254, 226, 226, 0.78) !important;\n  border-bottom:1px solid rgba(248, 113, 113, 0.35);\n}"),
+        (".pred-detail-wrap tbody tr.pred-row-resolved td {\n  background:rgba(28, 72, 62, 0.55) !important;\n  border-bottom:1px solid rgba(50, 110, 90, 0.45);\n}", ".pred-detail-wrap tbody tr.pred-row-resolved td {\n  background:rgba(220, 252, 231, 0.85) !important;\n  border-bottom:1px solid rgba(74, 222, 128, 0.35);\n}"),
+        (".pred-detail-wrap tbody tr:not(.pred-row-overdue):not(.pred-row-resolved) td {\n  background:rgba(26, 28, 35, 0.95) !important;\n}", ".pred-detail-wrap tbody tr:not(.pred-row-overdue):not(.pred-row-resolved) td {\n  background:#ffffff !important;\n}"),
+        (".pred-detail-wrap tbody tr.pred-row-overdue:hover td { background:rgba(100, 35, 80, 0.65) !important; }", ".pred-detail-wrap tbody tr.pred-row-overdue:hover td { background:rgba(254, 202, 202, 0.92) !important; }"),
+        (".pred-detail-wrap tbody tr.pred-row-resolved:hover td { background:rgba(35, 85, 72, 0.65) !important; }", ".pred-detail-wrap tbody tr.pred-row-resolved:hover td { background:rgba(187, 247, 208, 0.92) !important; }"),
+        (".pred-detail-wrap tbody tr:not(.pred-row-overdue):not(.pred-row-resolved):hover td { background:rgba(40, 44, 54, 0.95) !important; }", ".pred-detail-wrap tbody tr:not(.pred-row-overdue):not(.pred-row-resolved):hover td { background:#f3f4f6 !important; }"),
+    ):
+        css = css.replace(old, new)
+    return _pred_expand_detail_table_css(css)
+
+
+def _pred_html_block_for_theme(body_html: str) -> str:
+    block = _pred_dash_mock_css_for_theme() + (body_html or "")
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if is_light_preview_active():
+            return f'<div class="bi-light-table">{block}</div>'
+    except Exception:
+        pass
+    return block
+
 
 _PRED_DETAIL_TABLE_COLUMNS = (
     "Статус предписания",
@@ -36163,14 +37121,14 @@ def _pred_overdue_mock_table_html(rows: list, overdue_total: int) -> str:
         f'<span class="pred-mock-badge">{esc(str(overdue_total))} просроченных</span></div>'
     )
     if not rows:
-        return _PRED_DASH_MOCK_CSS + head + f'<p style="color:#a0a0a0;padding:16px;">{esc("Нет просроченных предписаний")}</p>'
+        return _pred_dash_mock_css_for_theme() + head + f'<p style="color:{_pred_muted_text_color()};padding:16px;">{esc("Нет просроченных предписаний")}</p>'
 
     thead = (
         "<thead><tr>"
         + "".join(f"<th>{esc(h)}</th>" for h in _PRED_MOCK_TABLE_COLUMNS)
         + "</tr></thead>"
     )
-    parts = [_PRED_DASH_MOCK_CSS, head, '<div class="pred-mock-table-wrap"><table>', thead, "<tbody>"]
+    parts = [_pred_dash_mock_css_for_theme(), head, '<div class="pred-mock-table-wrap"><table>', thead, "<tbody>"]
     for block in rows:
         contr = esc(str(block["contractor"]))
         rowspan = int(block["rowspan"])
@@ -36216,7 +37174,7 @@ def _pred_kpi_circles_html(
     )
     wrap_cls = "pred-kpi-wrap" + (" pred-kpi-wrap--body" if not with_heading else "")
     return (
-        _PRED_DASH_MOCK_CSS
+        _pred_dash_mock_css_for_theme()
         + f'<div class="{wrap_cls}">'
         + title_html
         + '<div class="pred-kpi-circles">'
@@ -36304,10 +37262,10 @@ def _pred_status_chip_html(status: str, overdue_days, resolved: bool) -> str:
         od = int(round(float(overdue_days))) if overdue_days is not None and not pd.isna(overdue_days) else 0
     except (TypeError, ValueError):
         od = 0
-    if resolved and od <= 0:
-        return f'<span class="pred-chip pred-chip-ok">{esc("Сдано в срок")}</span>'
     if resolved:
-        return f'<span class="pred-chip pred-chip-overdue">{esc(s)}</span>'
+        if od > 0:
+            return f'<span class="pred-chip pred-chip-warn">{esc(s)}</span>'
+        return f'<span class="pred-chip pred-chip-ok">{esc(s or "Сдано в срок")}</span>'
     return f'<span class="pred-chip pred-chip-overdue">{esc(s)}</span>'
 
 
@@ -36385,12 +37343,42 @@ def _pred_detail_table_html(
         "Критические предписания": "Критические предписания",
     }
     if df is None or df.empty:
-        return f'<p style="color:#a0a0a0;padding:16px;">{esc("Нет строк для отображения.")}</p>'
+        return f'<p style="color:{_pred_muted_text_color()};padding:16px;">{esc("Нет строк для отображения.")}</p>'
     show = df.head(max_rows)
     render_cols = [c for c in show.columns if c not in ("_resolved_flag", "_overdue_num")]
     n_rows = len(show)
+    _wrap_id = f"pred_det_{abs(id(show))}"
+    _st_vh = 52.0
+    _st_box_h = int(min(640, max(280, _st_vh * 10 + 56)))
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        _light_tbl = is_light_preview_active()
+    except Exception:
+        _light_tbl = False
+    _border = "#cbd5e1" if _light_tbl else "#444"
+    _sb = "#94a3b8 #e5e7eb" if _light_tbl else "#4a5568 #1a1c23"
     parts = [
-        f'<div class="pred-detail-wrap" data-bi-rows="{n_rows}">',
+        "<style>",
+        f"#{_wrap_id}.budget-deviation-table-wrap {{ display: block; overflow: hidden; width: 100%; "
+        "margin-top: 8px; margin-bottom: 12px; "
+        f"border: 1px solid {_border}; border-radius: 10px; box-sizing: border-box; }}",
+        f"#{_wrap_id} .budget-table-scroll.pred-detail-scroll {{ height: {_st_box_h}px !important; "
+        f"max-height: {_st_box_h}px !important; min-height: 0; overflow: auto; "
+        "-webkit-overflow-scrolling: touch; scrollbar-gutter: stable; box-sizing: border-box; "
+        "padding-bottom: 14px; scroll-padding-bottom: 14px; "
+        "border: none; border-radius: 0; scrollbar-width: thin; "
+        f"scrollbar-color: {_sb}; }}",
+        f"#{_wrap_id} .pred-detail-scroll thead th {{ position: sticky; top: 0; z-index: 5; }}",
+        f"#{_wrap_id} .pred-detail-scroll tbody tr.pred-scroll-tail td {{ "
+        "height: 14px; padding: 0; border: none !important; background: transparent !important; "
+        "line-height: 0; font-size: 0; pointer-events: none; }}",
+        f"#{_wrap_id} .pred-detail-scroll table {{ width: max-content; min-width: 100%; }}",
+        "</style>",
+        f'<div id="{_wrap_id}" class="budget-deviation-table-wrap pred-detail-table-wrap bi-styled-table-wrap" '
+        f'data-bi-rows="{n_rows}">',
+        f'<div class="budget-table-scroll pred-detail-scroll" data-scroll-vh="{_st_vh:.1f}" '
+        f'data-scroll-box-h="{_st_box_h}">',
         '<table class="rendered-table bi-sortable-table bi-sort-click-only">',
         "<thead><tr>",
     ]
@@ -36426,7 +37414,12 @@ def _pred_detail_table_html(
             sort_attr = _pred_cell_sort_attr(col, row)
             parts.append(f'<td class="{esc(c_cls, quote=True)}"{sort_attr}>{inner}</td>')
         parts.append("</tr>")
-    parts.append("</tbody></table></div>")
+    parts.append(
+        f'<tr class="pred-scroll-tail" aria-hidden="true"><td colspan="{len(render_cols)}" '
+        'style="height:14px;padding:0;border:none!important;background:transparent!important;'
+        'line-height:0;font-size:0;">&nbsp;</td></tr>'
+    )
+    parts.append("</tbody></table></div></div>")
     return mark_html_table_sortable("".join(parts))
 
 
@@ -39050,7 +40043,7 @@ def dashboard_predpisania(df):
         # Легенда визуала по макету заказчика 07.05.2026 (скрин 5):
         # «Внутри столбца — просроченные» (оранжевые), «Синие цифры — все неустранённые».
         st.markdown(
-            _PRED_DASH_MOCK_CSS
+            _pred_dash_mock_css_for_theme()
             + '<div class="pred-leg">'
             '<span style="display:inline-flex;align-items:center;gap:6px;">'
             '<span style="display:inline-block;width:14px;height:14px;background:#E67E22;border-radius:3px;"></span>'
@@ -39306,7 +40299,7 @@ def dashboard_predpisania(df):
                 categoryorder="array",
                 categoryarray=by_obj[obj_col].tolist(),
                 tickangle=0,
-                tickfont=dict(size=16, color="#ffffff"),
+                tickfont=dict(size=16, color=_fin_chart_label_color()),
             ),
             yaxis=dict(fixedrange=True),
             margin=dict(l=56, r=36, t=72, b=72),
@@ -39340,7 +40333,7 @@ def dashboard_predpisania(df):
         f"непросроченных: {n_non_overdue} · устраненных: {int(show['_resolved'].sum())}"
     )
     render_report_html_table(
-        _PRED_DASH_MOCK_CSS + _pred_detail_table_html(table_df),
+        _pred_html_block_for_theme(_pred_detail_table_html(table_df)),
         export_df=table_df.drop(columns=["_resolved_flag", "_overdue_num"], errors="ignore"),
         file_stem="predpisania",
         key_prefix="predpisania_detail",
@@ -41297,10 +42290,11 @@ def _render_project_schedule_gantt_legend(
     for color, symbol, label in items:
         esc = html_module.escape(label)
         sym = _gantt_legend_symbol_html(color, symbol)
+        _leg_txt = _fin_chart_label_color(dark="#e8eef5", light="#374151")
         parts.append(
             '<span style="display:inline-flex;align-items:center;margin-right:1.35rem;">'
             f"{sym}"
-            f'<span style="color:#e8eef5;font-size:0.92rem;">{esc}</span></span>'
+            f'<span style="color:{_leg_txt};font-size:0.92rem;">{esc}</span></span>'
         )
     st.markdown(
         '<div style="margin:0.15rem 0 0.5rem;">' + "".join(parts) + "</div>",
@@ -42917,7 +43911,17 @@ def dashboard_project_schedule_chart(df):
         for (lane, side), data in _cov_text.items():
             if not data["x"]:
                 continue
-            _color = "#5eead4" if lane == "plan" else "#fdba74"
+            try:
+                from dashboards.light_theme import is_light_preview_active as _cov_light
+
+                _cov_light_on = _cov_light()
+            except Exception:
+                _cov_light_on = False
+            _color = (
+                ("#0d9488" if lane == "plan" else "#c2410c")
+                if _cov_light_on
+                else ("#5eead4" if lane == "plan" else "#fdba74")
+            )
             if side == "right":
                 _txt = [_cov_gap + str(t) for t in data["text"]]
             else:
@@ -43060,6 +44064,7 @@ def dashboard_project_schedule_chart(df):
             )
         else:
             from dashboards.gantt_grouped_figure import cached_grouped_gantt_figure
+            from dashboards.light_theme import is_light_preview_active
 
             fig_gantt = cached_grouped_gantt_figure(
                 plot_df,
@@ -43069,6 +44074,7 @@ def dashboard_project_schedule_chart(df):
                 _dfmt_lbl,
                 False,
                 float(_GANTT_ROW_BLOCK_SCALE),
+                _theme_light=is_light_preview_active(),
             )
     chart_h = int(getattr(fig_gantt.layout, "height", None) or 520)
 
@@ -43386,8 +44392,14 @@ def dashboard_project_schedule_chart(df):
         st.info("Нет колонок для таблицы.")
     else:
         from dashboards.gdrs_theme import gdrs_render_subheader
+        from dashboards.light_theme import is_light_preview_active
 
-        gdrs_render_subheader(st, "Таблица задач", theme="dark", level=4)
+        gdrs_render_subheader(
+            st,
+            "Таблица задач",
+            theme="light" if is_light_preview_active() else "dark",
+            level=4,
+        )
         suppress_caption("Сортировка: клик по заголовку колонки.")
         # Таблица отдаётся полностью (по просьбе заказчика — «подгружать абсолютно все»).
         # Потолок остаётся только на ДИАГРАММЕ (_GANTT_DIAGRAM_PERF_CAP) как защита

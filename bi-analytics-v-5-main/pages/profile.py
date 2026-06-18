@@ -4,7 +4,6 @@
 import sys
 from pathlib import Path
 
-# App root: walk up until we find auth.py + config.py (works when __file__ or CWD is wrong)
 _here = Path(__file__).resolve().parent
 
 _app_root = _here.parent
@@ -22,30 +21,6 @@ while _p != _p.parent:
     _p = _p.parent
     
 sys.path.insert(0, str(_app_root))
-
-# ┌──────────────────────────────────────────────────────────────────────────┐ #
-# │ ⊗ CSS CONNECT ¤ Start                                                    │ #
-# └──────────────────────────────────────────────────────────────────────────┘ #
-
-def load_custom_css():
-
-    css_path = _app_root / "static" / "css" / "style.css"
-
-    if css_path.exists():
-
-        with open(css_path, encoding="utf-8") as f:
-
-            css_content = f.read()
-
-        st.markdown(f"<style>{css_content}</style>", unsafe_allow_html=True)
-
-    else:
-
-        st.warning(f"CSS файл не найден: {css_path}")
-
-# ┌──────────────────────────────────────────────────────────────────────────┐ #
-# │ ⊗ CSS CONNECT ¤ End                                                      │ #
-# └──────────────────────────────────────────────────────────────────────────┘ #
 
 import streamlit as st
 
@@ -186,10 +161,8 @@ def _profile_settings_ui(user) -> None:
     )
 
 
-# Проверка, что мы в контексте Streamlit
 if is_streamlit_context():
 
-    # Настройка страницы
     st.set_page_config(
         page_title="Настройки профиля - BI Analytics",
         page_icon="",
@@ -201,29 +174,55 @@ if is_streamlit_context():
         }
     )
 
-    # ┌──────────────────────────────────────────────────────────────────────┐ #
-    # │ ⊗ CSS CONNECT ¤ Start                                                │ #
-    # └──────────────────────────────────────────────────────────────────────┘ #
+    from utils import load_custom_css
 
     load_custom_css()
 
-    # ┌──────────────────────────────────────────────────────────────────────┐ #
-    # │ ⊗ CSS CONNECT ¤ End                                                  │ #
-    # └──────────────────────────────────────────────────────────────────────┘ #
+    try:
+        from dashboards.light_theme import sync_light_preview_theme
 
-    # Проверка авторизации
+        sync_light_preview_theme(st)
+    except Exception:
+        pass
+
     require_auth()
 
     user = get_current_user()
 
-    # Проверка, что пользователь получен
     if not user:
         st.error("Ошибка получения данных пользователя")
         st.stop()
 
-    # Боковая панель с меню навигации
+    try:
+        from dashboards.light_theme import (
+            ADMIN_LIGHT_PREVIEW_SESSION_KEY,
+            PROFILE_LIGHT_PREVIEW_SESSION_KEY,
+        )
+
+        st.session_state.pop(PROFILE_LIGHT_PREVIEW_SESSION_KEY, None)
+        st.session_state.pop(ADMIN_LIGHT_PREVIEW_SESSION_KEY, None)
+    except Exception:
+        pass
+
     render_sidebar_menu(current_page="profile")
 
-    st.title("Настройки профиля")
+    _profile_light = False
+    try:
+        from dashboards.light_theme import (
+            PROFILE_SETTINGS_LABEL,
+            is_light_preview_active,
+            light_preview_heading_html,
+        )
+
+        _profile_light = is_light_preview_active()
+        if _profile_light:
+            st.markdown(
+                light_preview_heading_html(PROFILE_SETTINGS_LABEL),
+                unsafe_allow_html=True,
+            )
+        else:
+            st.title(PROFILE_SETTINGS_LABEL)
+    except Exception:
+        st.title("Настройки профиля")
 
     _profile_settings_ui(user)

@@ -2554,6 +2554,22 @@ div[data-testid="stElementContainer"]:has(iframe.dev-tz-matrix-iframe) {
 </style>
 """
 
+_DEV_MATRIX_STREAMLIT_HOST_CSS_LIGHT = """
+<style>
+html body.gdrs-light-preview div[data-testid="stElementContainer"]:has(iframe[title="streamlit_components_v1"]) {
+  background: transparent !important;
+  opacity: 1 !important;
+  filter: none !important;
+}
+html body.gdrs-light-preview iframe[title="streamlit_components_v1"] {
+  opacity: 1 !important;
+  filter: none !important;
+  mix-blend-mode: normal !important;
+  background: transparent !important;
+}
+</style>
+"""
+
 _DEV_TZ_MATRIX_CSS = """
 <style>
 /* Одна таблица: горизонтальный скролл целиком; колонка «Проект» не закреплена. */
@@ -2994,6 +3010,37 @@ _DEV_TZ_MATRIX_CSS_LIGHT = """
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-directives-warn {
   background: rgba(234, 88, 12, 0.12) !important;
 }
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-sortable {
+  cursor: pointer;
+  user-select: none;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-sortable:hover {
+  filter: brightness(0.97);
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody tr:hover td {
+  background: inherit;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody tr:nth-child(even) td {
+  background: inherit;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-date-vert {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  max-height: 7.5em;
+  white-space: nowrap;
+  vertical-align: middle;
+  text-align: center;
+  padding: 8px 4px !important;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead {
+  box-shadow: inset 0 3px 0 #94a3b8, inset 0 -3px 0 #94a3b8;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-inv {
+  box-shadow: inset -3px 0 0 #94a3b8, inset 0 3px 0 #94a3b8, inset 0 -3px 0 #94a3b8;
+}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-life {
+  box-shadow: inset 3px 0 0 #94a3b8, inset -3px 0 0 #94a3b8, inset 0 3px 0 #94a3b8, inset 0 -3px 0 #94a3b8;
+}
 </style>
 """
 
@@ -3025,6 +3072,32 @@ html,body{margin:0;padding:0;background:#ffffff;color:#111827;overflow:hidden;
 .dev-tz-matrix-wrap table.rendered-table.dev-tz-wide tbody td.dev-tz-td-project{
   position:sticky!important;left:0!important;
   border-right:3px solid #94a3b8!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide{
+  border-collapse:separate!important;border-spacing:0!important;
+  width:max-content!important;min-width:100%!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead th.dev-tz-th-project{
+  border-top:3px solid #94a3b8!important;border-left:3px solid #94a3b8!important;
+  border-bottom:3px solid #94a3b8!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-ghead-life{
+  font-size:18px!important;padding:12px 14px!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone{
+  font-size:17px!important;padding:12px 10px!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub{
+  font-size:16px!important;padding:10px 8px!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-milestone.dev-tz-ms-block,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-first,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-first{
+  border-left:3px solid #94a3b8!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide th.dev-tz-sub.dev-tz-ms-last,
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide td.dev-tz-ms-last{
+  border-right:3px solid #94a3b8!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead{
+  border-top:3px solid #94a3b8!important;border-bottom:3px solid #94a3b8!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-inv{
+  border-right:3px solid #94a3b8!important}
+.dev-tz-matrix-wrap table.rendered-table.dev-tz-wide thead tr:first-child th.dev-tz-ghead-life{
+  border-left:3px solid #94a3b8!important;border-right:3px solid #94a3b8!important}
 """
     return """
 *{box-sizing:border-box}
@@ -3333,12 +3406,65 @@ _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS = """
   box-sizing:border-box!important}
 """
 
+_MATRIX_IFRAME_FULLSCREEN_SHELL_CSS_LIGHT = """
+body[data-bi-color-scheme="light"] .matrix-fs-btn{
+  border:1px solid #cbd5e1!important;
+  background:#ffffff!important;
+  color:#111827!important;
+  box-shadow:0 1px 2px rgba(0,0,0,0.06);
+}
+body[data-bi-color-scheme="light"] .matrix-fs-btn:hover{
+  background:#f3f4f6!important;
+  color:#111827!important;
+  border-color:#94a3b8!important;
+}
+body[data-bi-color-scheme="light"] .matrix-fs-btn:focus-visible{
+  outline:2px solid #3b82f6!important;
+  outline-offset:1px;
+}
+body[data-bi-color-scheme="light"] #matrix-fs-root:fullscreen,
+body[data-bi-color-scheme="light"] #matrix-fs-root:-webkit-full-screen,
+body[data-bi-color-scheme="light"] #matrix-fs-root:-moz-full-screen{
+  background:#f3f4f6!important;
+}
+body[data-bi-color-scheme="light"] #matrix-fs-root.matrix-fs-pseudo-on{
+  background:#f3f4f6!important;
+}
+"""
+
+
+def _matrix_iframe_fullscreen_shell_css(theme: str = "dark") -> str:
+    css = _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS
+    if str(theme or "").strip().lower() == "light":
+        css += _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS_LIGHT
+    return css
+
+
 _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
 <script>
 (function(){
   var root=document.getElementById("matrix-fs-root");
   var btn=document.getElementById("matrix-fs-btn");
   if(!root||!btn) return;
+
+  function matrixFsScheme(){
+    var b=document.body;
+    return (b&&b.getAttribute("data-bi-color-scheme")==="light")?"light":"dark";
+  }
+  function matrixFsShellBg(){
+    return matrixFsScheme()==="light"?"#f3f4f6":"#0e1520";
+  }
+  function matrixFsCloseBtnStyle(){
+    if(matrixFsScheme()==="light"){
+      return "width:40px;height:40px;font-size:18px;border-radius:4px;"
+        +"border:1px solid #cbd5e1;background:#ffffff;color:#111827;"
+        +"box-shadow:0 1px 2px rgba(0,0,0,0.06);"
+        +"touch-action:manipulation;-webkit-tap-highlight-color:transparent;";
+    }
+    return "width:40px;height:40px;font-size:18px;border-radius:4px;"
+      +"border:1px solid rgba(121,154,192,0.55);background:rgba(35,43,56,0.96);color:#e8eef5;"
+      +"touch-action:manipulation;-webkit-tap-highlight-color:transparent;";
+  }
 
   var parentDoc=null;
   try{
@@ -3657,7 +3783,7 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
     pseudoShell.setAttribute("style",
       "position:fixed!important;z-index:2147483646!important;left:0!important;top:0!important;right:0!important;bottom:0!important;"
       +"width:100%!important;height:100%!important;max-height:-webkit-fill-available!important;"
-      +"background:#0e1520!important;display:flex!important;flex-direction:column!important;"
+      +"background:"+matrixFsShellBg()+"!important;display:flex!important;flex-direction:column!important;"
       +"padding:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right))"
       +" max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left))!important;"
       +"box-sizing:border-box!important;overflow:hidden!important;");
@@ -3667,9 +3793,7 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
     var xb=doc.createElement("button");
     xb.type="button";
     xb.textContent="\\u2715";
-    xb.setAttribute("style","width:40px;height:40px;font-size:18px;border-radius:4px;"
-      +"border:1px solid rgba(121,154,192,0.55);background:rgba(35,43,56,0.96);color:#e8eef5;"
-      +"touch-action:manipulation;-webkit-tap-highlight-color:transparent;");
+    xb.setAttribute("style",matrixFsCloseBtnStyle());
     xb.addEventListener("click",function(ev){ev.preventDefault();exitPseudo();sync();});
     tb.appendChild(xb);
     var scroll=doc.createElement("div");
@@ -3941,8 +4065,9 @@ def _matrix_iframe_html_document(
         '<meta name="viewport" content="width=device-width,initial-scale=5,viewport-fit=cover">'
         "<style>"
         + head_styles
-        + _MATRIX_IFRAME_FULLSCREEN_SHELL_CSS
-        + "</style></head><body>"
+        + _matrix_iframe_fullscreen_shell_css(color_scheme)
+        + "</style></head><body"
+        + f' data-bi-color-scheme="{_scheme}">'
         + '<div id="matrix-fs-root" class="matrix-fs-root">'
         + '<div class="matrix-fs-topbar" role="toolbar" aria-label="Таблица">'
         + '<button type="button" class="matrix-fs-btn" id="matrix-fs-btn" title="На весь экран">\u26F6</button>'
@@ -4106,7 +4231,12 @@ def render_dev_tz_matrix(
         extra_body_suffix=_DEV_TZ_MATRIX_SORT_SCRIPT,
         color_scheme=theme,
     )
-    st.markdown(_DEV_MATRIX_STREAMLIT_HOST_CSS, unsafe_allow_html=True)
+    st.markdown(
+        _DEV_MATRIX_STREAMLIT_HOST_CSS_LIGHT
+        if str(theme or "").strip().lower() == "light"
+        else _DEV_MATRIX_STREAMLIT_HOST_CSS,
+        unsafe_allow_html=True,
+    )
     _components.html(_iframe_html, height=_iframe_h, scrolling=False)
 
 
@@ -4803,6 +4933,348 @@ _CONTROL_POINTS_CSS = """
 </style>
 """
 
+_CONTROL_POINTS_CSS_LIGHT = """
+<style>
+.cp-tables-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 40px;
+  width: 100%;
+  padding: 8px 8px 18px;
+  box-sizing: border-box;
+}
+.cp-table-wrap {
+  overflow-x: auto;
+  min-width: 0;
+  max-width: 100%;
+  scrollbar-width: thin;
+  scrollbar-color: #64748b #e5e7eb;
+}
+.cp-table-wrap.cp-table-block {
+  background: #ffffff;
+  border: 2px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 12px 14px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+  isolation: isolate;
+}
+.cp-table-wrap::-webkit-scrollbar { height: 10px; }
+.cp-table-wrap::-webkit-scrollbar-track { background: #e5e7eb; border-radius: 5px; }
+.cp-table-wrap::-webkit-scrollbar-thumb {
+  background: #94a3b8; border-radius: 5px; border: 2px solid #e5e7eb;
+}
+.cp-table-wrap::-webkit-scrollbar-thumb:hover { background: #64748b; }
+.cp-table-wrap .rendered-table {
+  border: 3px solid #94a3b8;
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+  font-size: 13px;
+  font-weight: 700;
+}
+.cp-table-wrap .rendered-table th,
+.cp-table-wrap .rendered-table td {
+  border-width: 1px !important;
+  border-style: solid !important;
+  border-color: #cbd5e1 !important;
+  background-clip: padding-box;
+}
+.cp-table-wrap .rendered-table tbody td {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+}
+.cp-table-wrap .rendered-table th {
+  font-size: 17px !important;
+  font-weight: 700 !important;
+  color: #111827 !important;
+  background: #e8f0fe !important;
+  padding: 10px 10px !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+.cp-table-wrap .rendered-table td {
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  color: #111827 !important;
+  line-height: 1.35 !important;
+  padding: 6px 8px !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+.cp-table-wrap .rendered-table th.cp-ghead {
+  text-align: center !important;
+  vertical-align: middle !important;
+  background: #dcfce7 !important;
+  font-size: 17px !important;
+  font-weight: 700 !important;
+  padding: 10px 10px !important;
+  color: #14532d !important;
+}
+.cp-table-wrap .rendered-table th.cp-sub {
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-size: 16px !important;
+  color: #111827 !important;
+  font-weight: 700 !important;
+  padding: 8px 8px !important;
+  background: #f9fafb !important;
+}
+.cp-table-wrap .rendered-table th.cp-col-project {
+  text-align: center !important;
+  vertical-align: middle !important;
+  position: sticky !important;
+  left: 0 !important;
+  z-index: 3 !important;
+  background: #e8f0fe !important;
+  color: #111827 !important;
+  font-size: 17px !important;
+}
+.cp-col-project {
+  position: sticky !important;
+  left: 0 !important;
+  z-index: 2 !important;
+  background: #f9fafb !important;
+  border-right: 3px solid #94a3b8 !important;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  color: #111827 !important;
+  text-align: left !important;
+  padding: 6px 10px !important;
+}
+.cp-table-wrap .rendered-table tbody td.cp-col-project { font-size: 15px !important; }
+.cp-table-wrap .rendered-table thead th.cp-col-project {
+  border-top: 3px solid #94a3b8 !important;
+  border-left: 3px solid #94a3b8 !important;
+  border-bottom: 3px solid #94a3b8 !important;
+}
+.cp-table-wrap .rendered-table th.cp-ghead.cp-ms-block {
+  border-left: 3px solid #94a3b8 !important;
+  border-right: 3px solid #94a3b8 !important;
+}
+.cp-table-wrap .rendered-table th.cp-ms-first,
+.cp-table-wrap .rendered-table td.cp-ms-first { border-left: 3px solid #94a3b8 !important; }
+.cp-table-wrap .rendered-table th.cp-ms-last,
+.cp-table-wrap .rendered-table td.cp-ms-last { border-right: 3px solid #94a3b8 !important; }
+.cp-table-wrap .rendered-table th.cp-ghead.cp-ms-block {
+  box-shadow: inset 3px 0 0 #94a3b8, inset -3px 0 0 #94a3b8;
+}
+.cp-table-wrap .rendered-table th.cp-ms-first,
+.cp-table-wrap .rendered-table td.cp-ms-first { box-shadow: inset 3px 0 0 #94a3b8; }
+.cp-table-wrap .rendered-table th.cp-ms-last,
+.cp-table-wrap .rendered-table td.cp-ms-last { box-shadow: inset -3px 0 0 #94a3b8; }
+.cp-table-wrap .rendered-table thead th.cp-col-project,
+.cp-table-wrap .rendered-table tbody td.cp-col-project { box-shadow: inset -3px 0 0 #94a3b8; }
+.cp-table-wrap .rendered-table th.cp-ms-sep,
+.cp-table-wrap .rendered-table td.cp-ms-sep { border-left: 16px solid #ffffff !important; }
+.cp-table-wrap .rendered-table th.cp-ghead.cp-ms-block.cp-ms-sep {
+  box-shadow: inset 3px 0 0 #94a3b8, inset -3px 0 0 #94a3b8;
+}
+.cp-table-wrap .rendered-table th.cp-ms-first.cp-ms-sep,
+.cp-table-wrap .rendered-table td.cp-ms-first.cp-ms-sep { box-shadow: inset 3px 0 0 #94a3b8; }
+.cp-table-wrap .rendered-table td.cp-td-pct-done {
+  background: transparent !important;
+  color: #ea580c !important;
+  font-weight: 700 !important;
+}
+.cp-table-wrap .rendered-table td.cp-otkl-ok {
+  color: #15803d !important;
+  font-weight: 700 !important;
+}
+.cp-table-wrap .rendered-table td.cp-otkl-late {
+  color: #b91c1c !important;
+  font-weight: 700 !important;
+}
+.cp-table-wrap .rendered-table td.cp-otkl-ok.cp-td-pct-done { color: #15803d !important; }
+.cp-table-wrap .rendered-table td.cp-otkl-late.cp-td-pct-done { color: #b91c1c !important; }
+.cp-table-wrap .rendered-table thead th.cp-sortable { cursor: pointer; user-select: none; }
+.cp-table-wrap .rendered-table thead th.cp-sortable:hover { filter: brightness(0.97); }
+.cp-status-cell { text-align: center; vertical-align: middle; }
+.cp-status-dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; vertical-align: middle; }
+.cp-status-ok { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,0.35); }
+.cp-status-bad { background: #ef4444; box-shadow: 0 0 6px rgba(239,68,68,0.35); }
+.cp-status-warn { background: #f59e0b; box-shadow: 0 0 7px rgba(245,158,11,0.5); }
+</style>
+"""
+
+
+def _control_points_css_raw(theme: str = "dark") -> str:
+    css = _CONTROL_POINTS_CSS_LIGHT if str(theme or "").strip().lower() == "light" else _CONTROL_POINTS_CSS
+    return css.replace("<style>", "").replace("</style>", "")
+
+
+def _control_points_iframe_sticky_css(theme: str = "dark") -> str:
+    if str(theme or "").strip().lower() == "light":
+        return """
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:#ffffff;color:#111827;overflow-x:hidden;overflow-y:auto;
+  font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  opacity:1!important;filter:none!important;isolation:isolate}
+.matrix-fs-root,.matrix-fs-body{min-width:0!important;max-width:100%!important;width:100%!important}
+.cp-tables-stack{display:flex!important;flex-direction:column!important;align-items:stretch!important;
+  gap:40px!important;width:100%!important;padding:8px 8px 18px!important;box-sizing:border-box!important}
+.cp-table-wrap.cp-table-block{background:#ffffff!important;border:2px solid #cbd5e1!important;
+  border-radius:10px!important;padding:12px 14px!important;box-shadow:0 4px 14px rgba(15,23,42,0.08)!important;
+  isolation:isolate!important}
+.cp-table-wrap{width:100%!important;max-width:100%!important;min-width:0!important;
+  overflow-x:auto!important;overflow-y:hidden!important;
+  -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;
+  scrollbar-width:thin;scrollbar-color:#64748b #e5e7eb}
+.cp-table-wrap::-webkit-scrollbar{height:10px}
+.cp-table-wrap::-webkit-scrollbar-track{background:#e5e7eb;border-radius:5px}
+.cp-table-wrap::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:5px;border:2px solid #e5e7eb}
+.cp-table-wrap::-webkit-scrollbar-thumb:hover{background:#64748b}
+.cp-table-wrap .rendered-table{
+  border-collapse:separate!important;border-spacing:0!important;
+  width:max-content!important;min-width:100%!important;
+  font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif!important;
+  font-size:13px!important;font-weight:700!important;border:3px solid #94a3b8!important}
+.cp-table-wrap .rendered-table tbody td{
+  font-size:13px!important;font-weight:700!important;line-height:1.35!important;
+  color:#111827!important;padding:6px 8px!important;text-align:center!important;
+  background-color:#ffffff!important}
+.cp-table-wrap .rendered-table th{
+  font-size:17px!important;font-weight:700!important;color:#111827!important;padding:10px 10px!important}
+.cp-table-wrap .rendered-table th.cp-sub{color:#111827!important;font-size:16px!important;background:#f9fafb!important}
+.cp-table-wrap .rendered-table th.cp-ghead{font-size:17px!important;color:#14532d!important;background:#dcfce7!important}
+.cp-table-wrap .rendered-table thead th.cp-col-project{font-size:17px!important;color:#111827!important;background:#e8f0fe!important}
+.cp-table-wrap .rendered-table th,
+.cp-table-wrap .rendered-table td{
+  border-width:1px!important;border-style:solid!important;
+  border-color:#cbd5e1!important;background-clip:padding-box!important}
+.cp-table-wrap .rendered-table th.cp-col-project,
+.cp-table-wrap .rendered-table td.cp-col-project{
+  position:sticky!important;left:0!important;
+  width:200px!important;min-width:200px!important;max-width:200px!important;
+  white-space:normal!important;word-break:break-word!important;
+  border-right:3px solid #94a3b8!important}
+.cp-table-wrap .rendered-table thead th.cp-col-project{
+  border-top:3px solid #94a3b8!important;border-left:3px solid #94a3b8!important;
+  border-bottom:3px solid #94a3b8!important}
+.cp-table-wrap .rendered-table th.cp-col-project{z-index:5!important;background:#e8f0fe!important}
+.cp-table-wrap .rendered-table td.cp-col-project{
+  z-index:4!important;background:#f9fafb!important;
+  text-align:left!important;color:#111827!important;padding:6px 10px!important;
+  font-size:15px!important}
+.cp-table-wrap .rendered-table td.cp-td-pct-done{color:#ea580c!important}
+.cp-table-wrap .rendered-table td.cp-otkl-ok{color:#15803d!important}
+.cp-table-wrap .rendered-table td.cp-otkl-late{color:#b91c1c!important}
+.cp-table-wrap .rendered-table th.cp-sub-status,
+.cp-table-wrap .rendered-table td.cp-col-cell-status{
+  width:34px!important;min-width:34px!important;
+  text-align:center!important;padding:4px 4px!important}
+.cp-table-wrap .rendered-table th.cp-sub,
+.cp-table-wrap .rendered-table td{min-width:96px;white-space:nowrap}
+.cp-table-wrap .rendered-table th.cp-sub-status,
+.cp-table-wrap .rendered-table td.cp-col-cell-status{min-width:34px!important}
+.cp-table-wrap .rendered-table th.cp-col-project,
+.cp-table-wrap .rendered-table td.cp-col-project{min-width:200px!important;white-space:normal!important}
+.cp-table-wrap .rendered-table th.cp-ghead.cp-ms-block{
+  border-left:3px solid #94a3b8!important;border-right:3px solid #94a3b8!important;
+  box-shadow:inset 3px 0 0 #94a3b8,inset -3px 0 0 #94a3b8}
+.cp-table-wrap .rendered-table th.cp-ms-first,
+.cp-table-wrap .rendered-table td.cp-ms-first{
+  border-left:3px solid #94a3b8!important;box-shadow:inset 3px 0 0 #94a3b8}
+.cp-table-wrap .rendered-table th.cp-ms-last,
+.cp-table-wrap .rendered-table td.cp-ms-last{
+  border-right:3px solid #94a3b8!important;box-shadow:inset -3px 0 0 #94a3b8}
+.cp-table-wrap .rendered-table thead th.cp-col-project,
+.cp-table-wrap .rendered-table tbody td.cp-col-project{box-shadow:inset -3px 0 0 #94a3b8}
+.cp-table-wrap .rendered-table th.cp-ms-sep,
+.cp-table-wrap .rendered-table td.cp-ms-sep{border-left:16px solid #ffffff!important}
+.cp-table-wrap .rendered-table th.cp-ghead.cp-ms-block.cp-ms-sep{
+  box-shadow:inset 3px 0 0 #94a3b8,inset -3px 0 0 #94a3b8}
+.cp-table-wrap .rendered-table th.cp-ms-first.cp-ms-sep,
+.cp-table-wrap .rendered-table td.cp-ms-first.cp-ms-sep{box-shadow:inset 3px 0 0 #94a3b8}
+"""
+    return """
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:#0e1520;overflow-x:hidden;overflow-y:auto;
+  font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  opacity:1!important;filter:none!important;isolation:isolate}
+.matrix-fs-root,.matrix-fs-body{min-width:0!important;max-width:100%!important;width:100%!important}
+.cp-tables-stack{display:flex!important;flex-direction:column!important;align-items:stretch!important;
+  gap:40px!important;width:100%!important;padding:8px 8px 18px!important;box-sizing:border-box!important}
+.cp-table-wrap.cp-table-block{background:#121a24!important;border:2px solid rgba(255,255,255,0.42)!important;
+  border-radius:10px!important;padding:12px 14px!important;box-shadow:0 6px 18px rgba(0,0,0,0.42)!important;
+  isolation:isolate!important}
+.cp-table-wrap{width:100%!important;max-width:100%!important;min-width:0!important;
+  overflow-x:auto!important;overflow-y:hidden!important;
+  -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;
+  scrollbar-width:thin;scrollbar-color:rgba(121,154,192,0.5) #141820}
+.cp-table-wrap::-webkit-scrollbar{height:10px}
+.cp-table-wrap::-webkit-scrollbar-track{background:#141820;border-radius:5px}
+.cp-table-wrap::-webkit-scrollbar-thumb{background:rgba(121,154,192,0.42);border-radius:5px;border:2px solid #141820}
+.cp-table-wrap::-webkit-scrollbar-thumb:hover{background:rgba(121,154,192,0.65)}
+.cp-table-wrap .rendered-table{
+  border-collapse:separate!important;border-spacing:0!important;
+  width:max-content!important;min-width:100%!important;
+  font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif!important;
+  font-size:13px!important;font-weight:700!important}
+.cp-table-wrap .rendered-table tbody td{
+  font-size:13px!important;font-weight:700!important;line-height:1.35!important;
+  color:#fafafa!important;padding:6px 8px!important;text-align:center!important}
+.cp-table-wrap .rendered-table th{
+  font-size:17px!important;font-weight:700!important;color:#f0f4f8!important;padding:10px 10px!important}
+.cp-table-wrap .rendered-table th.cp-sub{color:#f0f4f8!important;font-size:16px!important}
+.cp-table-wrap .rendered-table th.cp-ghead{font-size:17px!important;color:#f0f4f8!important}
+.cp-table-wrap .rendered-table thead th.cp-col-project{font-size:17px!important;color:#f0f4f8!important}
+.cp-table-wrap .rendered-table{border:3px solid #ffffff!important}
+.cp-table-wrap .rendered-table th,
+.cp-table-wrap .rendered-table td{
+  border-width:1px!important;border-style:solid!important;
+  border-color:#5a6f82!important;background-clip:padding-box!important}
+.cp-table-wrap .rendered-table tbody td{background-color:#0c1219!important}
+.cp-table-wrap .rendered-table th.cp-col-project,
+.cp-table-wrap .rendered-table td.cp-col-project{
+  position:sticky!important;left:0!important;
+  width:200px!important;min-width:200px!important;max-width:200px!important;
+  white-space:normal!important;word-break:break-word!important;
+  border-right:3px solid #ffffff!important}
+.cp-table-wrap .rendered-table thead th.cp-col-project{
+  border-top:3px solid #ffffff!important;border-left:3px solid #ffffff!important;
+  border-bottom:3px solid #ffffff!important}
+.cp-table-wrap .rendered-table th.cp-col-project{
+  z-index:5!important;background:#161f2b!important}
+.cp-table-wrap .rendered-table td.cp-col-project{
+  z-index:4!important;background:#161f2b!important;
+  text-align:left!important;color:#ffffff!important;padding:6px 10px!important;
+  font-size:15px!important}
+.cp-table-wrap .rendered-table td.cp-td-pct-done{color:#f09355!important}
+.cp-table-wrap .rendered-table td.cp-otkl-ok{color:#28a745!important}
+.cp-table-wrap .rendered-table td.cp-otkl-late{color:#d9534f!important}
+.cp-table-wrap .rendered-table th.cp-sub-status,
+.cp-table-wrap .rendered-table td.cp-col-cell-status{
+  width:34px!important;min-width:34px!important;
+  text-align:center!important;padding:4px 4px!important}
+.cp-table-wrap .rendered-table th.cp-sub,
+.cp-table-wrap .rendered-table td{
+  min-width:96px;white-space:nowrap}
+.cp-table-wrap .rendered-table th.cp-sub-status,
+.cp-table-wrap .rendered-table td.cp-col-cell-status{
+  min-width:34px!important}
+.cp-table-wrap .rendered-table th.cp-col-project,
+.cp-table-wrap .rendered-table td.cp-col-project{
+  min-width:200px!important;white-space:normal!important}
+.cp-table-wrap .rendered-table th.cp-ghead.cp-ms-block{
+  border-left:3px solid #ffffff!important;border-right:3px solid #ffffff!important;
+  box-shadow:inset 3px 0 0 #fff,inset -3px 0 0 #fff}
+.cp-table-wrap .rendered-table th.cp-ms-first,
+.cp-table-wrap .rendered-table td.cp-ms-first{
+  border-left:3px solid #ffffff!important;box-shadow:inset 3px 0 0 #fff}
+.cp-table-wrap .rendered-table th.cp-ms-last,
+.cp-table-wrap .rendered-table td.cp-ms-last{
+  border-right:3px solid #ffffff!important;box-shadow:inset -3px 0 0 #fff}
+.cp-table-wrap .rendered-table thead th.cp-col-project,
+.cp-table-wrap .rendered-table tbody td.cp-col-project{box-shadow:inset -3px 0 0 #fff}
+.cp-table-wrap .rendered-table th.cp-ms-sep,
+.cp-table-wrap .rendered-table td.cp-ms-sep{border-left:16px solid #121a24!important}
+.cp-table-wrap .rendered-table th.cp-ghead.cp-ms-block.cp-ms-sep{
+  box-shadow:inset 3px 0 0 #fff,inset -3px 0 0 #fff}
+.cp-table-wrap .rendered-table th.cp-ms-first.cp-ms-sep,
+.cp-table-wrap .rendered-table td.cp-ms-first.cp-ms-sep{box-shadow:inset 3px 0 0 #fff}
+"""
+
 
 def _apply_control_points_msp_filters(
     st, mdf: pd.DataFrame
@@ -5095,6 +5567,113 @@ _CONTROL_POINTS_POPOVER_FRAGMENT = (
 )
 
 
+_CONTROL_POINTS_POPOVER_FRAGMENT_LIGHT = (
+    """
+<style>
+.cp-tip-overlay{position:fixed;inset:0;background:rgba(15,23,42,0.35);z-index:2147483000;
+  display:none;align-items:center;justify-content:center;padding:max(10px,2vw);
+  box-sizing:border-box;-webkit-overflow-scrolling:touch}
+.cp-tip-overlay.is-open{display:flex!important}
+.cp-tip-panel{position:relative;width:min(1120px,96vw);max-height:min(92vh,900px);
+  display:flex;flex-direction:column;background:#ffffff;border:1px solid #cbd5e1;
+  border-radius:12px;box-shadow:0 18px 48px rgba(15,23,42,0.18);overflow:hidden}
+.cp-tip-toolbar{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;
+  gap:10px;padding:10px 12px;border-bottom:1px solid #e5e7eb;background:#f9fafb}
+.cp-tip-title{font:600 14px/1.2 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#111827}
+.cp-tip-close{box-sizing:border-box;width:34px;height:34px;margin:0;padding:0;border-radius:8px;
+  border:1px solid #cbd5e1;background:#ffffff;color:#111827;cursor:pointer;font-size:18px;line-height:1}
+.cp-tip-close:hover{background:#f3f4f6}
+.cp-tip-content{flex:1 1 auto;min-height:0;overflow:auto;padding:12px 14px;color:#111827;font-size:12px;
+  font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.cp-tip-hdr{font:700 13px/1.35 Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#111827;margin:0 0 10px 0}
+.cp-tip-tbl{width:100%;border-collapse:separate;border-spacing:0;
+  font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.cp-tip-tbl th,.cp-tip-tbl td{border:1px solid #cbd5e1;padding:6px 8px;text-align:left;vertical-align:top;color:#111827}
+.cp-tip-tbl th{background:#f3f4f6;color:#111827;font-weight:700}
+.cp-tip-tbl tr:nth-child(even) td{background:#f9fafb}
+.cp-tip-empty{opacity:0.92;margin:0;color:#374151}
+.cp-status-hit{display:inline-flex;align-items:center;justify-content:center;min-width:28px;min-height:28px;
+  cursor:pointer;border-radius:6px;padding:2px}
+.cp-status-hit:hover,.cp-status-hit:focus-visible{outline:2px solid #94a3b8;outline-offset:1px;background:rgba(148,163,184,0.12)}
+</style>
+<div id="cp-tip-overlay" class="cp-tip-overlay" aria-hidden="true">
+  <div class="cp-tip-panel" role="dialog" aria-modal="true">
+    <div class="cp-tip-toolbar">
+      <span class="cp-tip-title">Детализация по вехе</span>
+      <button type="button" class="cp-tip-close" id="cp-tip-close" title="Закрыть">×</button>
+    </div>
+    <div id="cp-tip-content" class="cp-tip-content"></div>
+  </div>
+</div>
+<script>
+(function(){
+  function padB64(s){ var p=s.length%4; if(!p) return s; return s+'===='.slice(p); }
+  function utf8FromB64(b64){
+    try{
+      b64=padB64(String(b64).replace(/-/g,'+').replace(/_/g,'/'));
+      var bin=atob(b64);
+      var bytes=new Uint8Array(bin.length);
+      for(var i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+      return new TextDecoder('utf-8').decode(bytes);
+    }catch(e){
+      return '<p class="cp-tip-empty">Не удалось открыть детализацию.</p>';
+    }
+  }
+  function openTip(html){
+    var ov=document.getElementById('cp-tip-overlay');
+    var bd=document.getElementById('cp-tip-content');
+    if(!ov||!bd) return;
+    bd.innerHTML=html;
+    ov.classList.add('is-open');
+    ov.setAttribute('aria-hidden','false');
+  }
+  function closeTip(){
+    var ov=document.getElementById('cp-tip-overlay');
+    if(!ov) return;
+    ov.classList.remove('is-open');
+    ov.setAttribute('aria-hidden','true');
+  }
+  function openFromEl(el){
+    var b64=el.getAttribute('data-cp-b64');
+    if(!b64) return;
+    openTip(utf8FromB64(b64));
+  }
+  document.addEventListener('click',function(e){
+    var t=e.target;
+    if(t&&t.id==='cp-tip-overlay'){ closeTip(); }
+  },true);
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape') closeTip();
+  },true);
+  document.addEventListener('click',function(e){
+    var x=e.target&&e.target.closest&&e.target.closest('#cp-tip-close');
+    if(x) closeTip();
+  },true);
+  document.addEventListener('click',function(e){
+    var el=e.target&&e.target.closest&&e.target.closest('.cp-status-hit');
+    if(!el) return;
+    e.preventDefault(); e.stopPropagation();
+    openFromEl(el);
+  },true);
+  document.addEventListener('keydown',function(e){
+    if(e.key!=='Enter'&&e.key!==' ') return;
+    var el=e.target&&e.target.closest&&e.target.closest('.cp-status-hit');
+    if(!el) return;
+    e.preventDefault();
+    openFromEl(el);
+  },true);
+})();
+</script>
+"""
+)
+
+
+def _control_points_popover_fragment(theme: str = "dark") -> str:
+    if str(theme or "").strip().lower() == "light":
+        return _CONTROL_POINTS_POPOVER_FRAGMENT_LIGHT
+    return _CONTROL_POINTS_POPOVER_FRAGMENT
+
+
 _CONTROL_POINTS_SORT_SCRIPT = """
 <script>
 (function(){
@@ -5209,99 +5788,17 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
 
     import streamlit.components.v1 as _components
 
-    _cp_css_raw = _CONTROL_POINTS_CSS.replace("<style>", "").replace("</style>", "")
-    _sticky_css = """
-*{box-sizing:border-box}
-html,body{margin:0;padding:0;background:#0e1520;overflow-x:hidden;overflow-y:auto;
-  font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  opacity:1!important;filter:none!important;isolation:isolate}
-/* Чтобы overflow-x:auto во внутреннем .cp-table-wrap реально срабатывал,
-   все flex-родители должны иметь min-width:0 (иначе flex-item с width:max-content
-   раздвигает родителя, и горизонтальный скролл не появляется). */
-.matrix-fs-root,.matrix-fs-body{min-width:0!important;max-width:100%!important;width:100%!important}
-.cp-tables-stack{display:flex!important;flex-direction:column!important;align-items:stretch!important;
-  gap:40px!important;width:100%!important;padding:8px 8px 18px!important;box-sizing:border-box!important}
-.cp-table-wrap.cp-table-block{background:#121a24!important;border:2px solid rgba(255,255,255,0.42)!important;
-  border-radius:10px!important;padding:12px 14px!important;box-shadow:0 6px 18px rgba(0,0,0,0.42)!important;
-  isolation:isolate!important}
-.cp-table-wrap{width:100%!important;max-width:100%!important;min-width:0!important;
-  overflow-x:auto!important;overflow-y:hidden!important;
-  -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;
-  scrollbar-width:thin;scrollbar-color:rgba(121,154,192,0.5) #141820}
-.cp-table-wrap::-webkit-scrollbar{height:10px}
-.cp-table-wrap::-webkit-scrollbar-track{background:#141820;border-radius:5px}
-.cp-table-wrap::-webkit-scrollbar-thumb{background:rgba(121,154,192,0.42);border-radius:5px;border:2px solid #141820}
-.cp-table-wrap::-webkit-scrollbar-thumb:hover{background:rgba(121,154,192,0.65)}
-.cp-table-wrap .rendered-table{
-  border-collapse:separate!important;border-spacing:0!important;
-  width:max-content!important;min-width:100%!important;
-  font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif!important;
-  font-size:13px!important;font-weight:700!important}
-.cp-table-wrap .rendered-table tbody td{
-  font-size:13px!important;font-weight:700!important;line-height:1.35!important;
-  color:#fafafa!important;padding:6px 8px!important;text-align:center!important}
-.cp-table-wrap .rendered-table th{
-  font-size:17px!important;font-weight:700!important;color:#f0f4f8!important;padding:10px 10px!important}
-.cp-table-wrap .rendered-table th.cp-sub{color:#f0f4f8!important;font-size:16px!important}
-.cp-table-wrap .rendered-table th.cp-ghead{font-size:17px!important;color:#f0f4f8!important}
-.cp-table-wrap .rendered-table thead th.cp-col-project{font-size:17px!important;color:#f0f4f8!important}
-.cp-table-wrap .rendered-table{border:3px solid #ffffff!important}
-.cp-table-wrap .rendered-table th,
-.cp-table-wrap .rendered-table td{
-  border-width:1px!important;border-style:solid!important;
-  border-color:#5a6f82!important;background-clip:padding-box!important}
-.cp-table-wrap .rendered-table tbody td{background-color:#0c1219!important}
-.cp-table-wrap .rendered-table th.cp-col-project,
-.cp-table-wrap .rendered-table td.cp-col-project{
-  position:sticky!important;left:0!important;
-  width:200px!important;min-width:200px!important;max-width:200px!important;
-  white-space:normal!important;word-break:break-word!important;
-  border-right:3px solid #ffffff!important}
-.cp-table-wrap .rendered-table thead th.cp-col-project{
-  border-top:3px solid #ffffff!important;border-left:3px solid #ffffff!important;
-  border-bottom:3px solid #ffffff!important}
-.cp-table-wrap .rendered-table th.cp-col-project{
-  z-index:5!important;background:#161f2b!important}
-.cp-table-wrap .rendered-table td.cp-col-project{
-  z-index:4!important;background:#161f2b!important;
-  text-align:left!important;color:#ffffff!important;padding:6px 10px!important;
-  font-size:15px!important}
-.cp-table-wrap .rendered-table td.cp-td-pct-done{color:#f09355!important}
-.cp-table-wrap .rendered-table td.cp-otkl-ok{color:#28a745!important}
-.cp-table-wrap .rendered-table td.cp-otkl-late{color:#d9534f!important}
-.cp-table-wrap .rendered-table th.cp-sub-status,
-.cp-table-wrap .rendered-table td.cp-col-cell-status{
-  width:34px!important;min-width:34px!important;
-  text-align:center!important;padding:4px 4px!important}
-/* Минимальные ширины подколонок План/Факт/Откл — гарантируют появление
-   горизонтального скролла на узких экранах (даты не сжимаются в "01.…"). */
-.cp-table-wrap .rendered-table th.cp-sub,
-.cp-table-wrap .rendered-table td{
-  min-width:96px;white-space:nowrap}
-.cp-table-wrap .rendered-table th.cp-sub-status,
-.cp-table-wrap .rendered-table td.cp-col-cell-status{
-  min-width:34px!important}
-.cp-table-wrap .rendered-table th.cp-col-project,
-.cp-table-wrap .rendered-table td.cp-col-project{
-  min-width:200px!important;white-space:normal!important}
-.cp-table-wrap .rendered-table th.cp-ghead.cp-ms-block{
-  border-left:3px solid #ffffff!important;border-right:3px solid #ffffff!important;
-  box-shadow:inset 3px 0 0 #fff,inset -3px 0 0 #fff}
-.cp-table-wrap .rendered-table th.cp-ms-first,
-.cp-table-wrap .rendered-table td.cp-ms-first{
-  border-left:3px solid #ffffff!important;box-shadow:inset 3px 0 0 #fff}
-.cp-table-wrap .rendered-table th.cp-ms-last,
-.cp-table-wrap .rendered-table td.cp-ms-last{
-  border-right:3px solid #ffffff!important;box-shadow:inset -3px 0 0 #fff}
-.cp-table-wrap .rendered-table thead th.cp-col-project,
-.cp-table-wrap .rendered-table tbody td.cp-col-project{box-shadow:inset -3px 0 0 #fff}
-.cp-table-wrap .rendered-table th.cp-ms-sep,
-.cp-table-wrap .rendered-table td.cp-ms-sep{border-left:16px solid #121a24!important}
-.cp-table-wrap .rendered-table th.cp-ghead.cp-ms-block.cp-ms-sep{
-  box-shadow:inset 3px 0 0 #fff,inset -3px 0 0 #fff}
-.cp-table-wrap .rendered-table th.cp-ms-first.cp-ms-sep,
-.cp-table-wrap .rendered-table td.cp-ms-first.cp-ms-sep{box-shadow:inset 3px 0 0 #fff}
-"""
+    _cp_theme = "dark"
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if is_light_preview_active():
+            _cp_theme = "light"
+    except Exception:
+        pass
+
+    _cp_css_raw = _control_points_css_raw(_cp_theme)
+    _sticky_css = _control_points_iframe_sticky_css(_cp_theme)
     _head_styles = _cp_css_raw + _sticky_css
 
     project_w = "width:200px;min-width:200px;max-width:200px"
@@ -5435,12 +5932,15 @@ html,body{margin:0;padding:0;background:#0e1520;overflow-x:hidden;overflow-y:aut
     _iframe_html = _matrix_iframe_html_document(
         _head_styles,
         _scroll_block,
-        extra_body_suffix=_CONTROL_POINTS_POPOVER_FRAGMENT + _CONTROL_POINTS_SORT_SCRIPT,
+        extra_body_suffix=_control_points_popover_fragment(_cp_theme) + _CONTROL_POINTS_SORT_SCRIPT,
         body_class="cp-body-stack",
+        color_scheme=_cp_theme,
     )
     _gap = 40 * max(0, len(table_blocks) - 1)
     _card_pad = 24 * len(table_blocks)
     _iframe_h = min(3200, 52 + len(table_blocks) * _table_h_each + _gap + _card_pad)
+    if _cp_theme == "light":
+        st.markdown(_DEV_MATRIX_STREAMLIT_HOST_CSS_LIGHT, unsafe_allow_html=True)
     _components.html(_iframe_html, height=_iframe_h, scrolling=False)
 
     drop_ok = [

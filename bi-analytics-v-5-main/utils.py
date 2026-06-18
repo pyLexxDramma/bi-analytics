@@ -367,6 +367,20 @@ def mark_html_table_sortable(html: str) -> str:
         return tag[:-1] + ' class="bi-sortable-table bi-sort-click-only"' + tag[-1]
 
     out = re.sub(r"<table\b[^>]*>", _patch_table_tag, html, flags=re.I)
+
+    def _inject_th_sort_label(m: re.Match) -> str:
+        attrs, inner = m.group(1) or "", m.group(2) or ""
+        if re.search(r"\bdata-sort-label\s*=", attrs, flags=re.I):
+            return m.group(0)
+        label = re.sub(r"<[^>]+>", "", inner)
+        label = html_module.unescape(label).strip()
+        label = re.sub(r"\s*[\u21C5\u25B2\u25BC\u2191\u2193]+\s*$", "", label).strip()
+        if not label:
+            return m.group(0)
+        esc = html_module.escape(label, quote=True)
+        return f"<th{attrs} data-sort-label=\"{esc}\">{inner}</th>"
+
+    out = re.sub(r"<th(\b[^>]*)>(.*?)</th>", _inject_th_sort_label, out, flags=re.I | re.S)
     try:
         from dashboards.light_theme import is_light_preview_report
 
@@ -1132,22 +1146,44 @@ def style_dataframe_for_dark_theme(
         num = _parse_signed_days_display(v)
         if num is None or (isinstance(num, float) and pd.isna(num)):
             return _table_cell_style(TABLE_BG_COLOR, TABLE_TEXT_COLOR)
+        try:
+            from dashboards.light_theme import is_light_preview_active
+
+            _light = is_light_preview_active()
+        except Exception:
+            _light = False
         if float(num) == 0.0:
+            if _light:
+                return _table_cell_style(
+                    "rgba(34,197,94,0.18)", "#15803d", extra="font-weight: 600"
+                )
             return _table_cell_style(
                 "rgba(70,214,138,0.35)", "#b8f5c8", extra="font-weight: 600"
             )
         t = min(abs(float(num)) / vmax, 1.0)
         if days_positive_is_ahead and float(num) > 0:
             alpha = 0.18 + 0.28 * t
-            bg = f"rgba(70,214,138,{alpha:.3f})"
-            fg = "#00e676"
+            if _light:
+                bg = f"rgba(34,197,94,{alpha:.3f})"
+                fg = "#15803d"
+            else:
+                bg = f"rgba(70,214,138,{alpha:.3f})"
+                fg = "#00e676"
         elif float(num) < 0 or not days_positive_is_ahead:
             alpha = 0.24 + 0.36 * t
-            bg = f"rgba(255,84,84,{alpha:.3f})"
-            fg = "#ff6b6b"
+            if _light:
+                bg = f"rgba(248,113,113,{0.16 + 0.24 * t:.3f})"
+                fg = "#b91c1c"
+            else:
+                bg = f"rgba(255,84,84,{alpha:.3f})"
+                fg = "#ff6b6b"
         else:
-            bg = "rgba(70,214,138,0.22)"
-            fg = "#00e676"
+            if _light:
+                bg = "rgba(34,197,94,0.16)"
+                fg = "#15803d"
+            else:
+                bg = "rgba(70,214,138,0.22)"
+                fg = "#00e676"
         return _table_cell_style(bg, fg, extra="font-weight: 700")
 
     def _days_gradient_style(series):
@@ -1979,19 +2015,34 @@ def format_dataframe_as_html(
         f"<table class='bi-sortable-table bi-sort-click-only' style='width:100%;min-width:max-content;border-collapse:collapse;background-color:{TABLE_BG_COLOR};"
         f"color:{TABLE_TEXT_COLOR};font-size:13px;'>"
     )
+    _fmt_wrap_id = "fmt_" + str(abs(id(df)))
     if _scroll_vh:
+        _dev_green = "hsl(148,100%,63%)"
+        try:
+            from dashboards.light_theme import finance_dev_negative_color
+
+            _dev_green = finance_dev_negative_color()
+        except Exception:
+            pass
+        _box_h = int(min(640, max(280, _scroll_vh * 10 + 56)))
+        _scroll_css = (
+            f"#{_fmt_wrap_id} table {{ width: max-content; min-width: 100%; }}"
+            f"#{_fmt_wrap_id} .budget-table-scroll {{ height: {_box_h}px !important; max-height: {_box_h}px !important; min-height: 0; "
+            f"overflow: auto; -webkit-overflow-scrolling: touch; scrollbar-gutter: stable; "
+            f"box-sizing: border-box; }}"
+            f"#{_fmt_wrap_id}.budget-deviation-table-wrap {{ display: block; "
+            f"overflow: hidden; width: 100%; margin: 0.35em 0 0 0; }}"
+            f"#{_fmt_wrap_id} thead th {{ position: sticky; top: 0; z-index: 5; "
+            f"background-color: {TABLE_HEADER_BG_COLOR} !important; }}"
+            f"#{_fmt_wrap_id} td.bd-cell-red, #{_fmt_wrap_id} td.bd-cell-red * "
+            f"{{ color: hsl(348,100%,63%) !important; }}"
+            f"#{_fmt_wrap_id} td.bd-cell-green, #{_fmt_wrap_id} td.bd-cell-green * "
+            f"{{ color: {_dev_green} !important; }}"
+        )
         html_table = (
-            f'<div class="fc-table-scroll-wrap" data-bi-rows="{len(df)}">'
-            f"<style>"
-            f".fc-table-scroll-wrap{{display:block;width:100%;max-width:100%;margin:0.35em 0 0 0;"
-            f"height:100%;max-height:100%;min-height:0;"
-            f"overflow-x:auto;overflow-y:auto;-webkit-overflow-scrolling:touch;"
-            f"scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:#4a5568 #1a1c23;"
-            f"border:1px solid rgba(255,255,255,0.25);border-radius:10px;}}"
-            f".fc-table-scroll-wrap thead th{{position:sticky;top:0;z-index:5;"
-            f"background-color:{TABLE_HEADER_BG_COLOR}!important;}}"
-            f"</style>"
-            f"<div class='fc-table-scroll-inner' style='min-width:0;'>"
+            f'<div id="{_fmt_wrap_id}" class="budget-deviation-table-wrap" data-bi-rows="{len(df)}">'
+            f"<style>{_scroll_css}</style>"
+            f'<div class="budget-table-scroll" data-scroll-vh="{_scroll_vh:.1f}" data-scroll-box-h="{_box_h}">'
             + _tbl_open
         )
     else:
@@ -2073,6 +2124,21 @@ def format_dataframe_as_html(
                     except Exception:
                         pass
                 _cc_td = table_column_css_class(col)
+                _dev_cls = ""
+                if isinstance(value, (int, float)) and is_scalar and not pd.isna(value):
+                    if float(value) > 0:
+                        _dev_cls = f" {DEVIATION_CLASS_RED}"
+                    elif float(value) < 0:
+                        _dev_cls = f" {DEVIATION_CLASS_GREEN}"
+                elif is_scalar and not (isinstance(value, (int, float)) and pd.isna(value)):
+                    try:
+                        _fv = float(str(value).replace(",", ".").replace(" ", ""))
+                        if _fv > 0:
+                            _dev_cls = f" {DEVIATION_CLASS_RED}"
+                        elif _fv < 0:
+                            _dev_cls = f" {DEVIATION_CLASS_GREEN}"
+                    except (TypeError, ValueError):
+                        pass
                 if _is_tot:
                     # Итоговая строка: фон и шрифт как у соседних итоговых ячеек,
                     # но цвет значения оставляем красным/зелёным.
@@ -2089,7 +2155,7 @@ def format_dataframe_as_html(
                     _td_st = _td_st.replace(HTML_TABLE_TD_TEXT_CSS, HTML_TABLE_TD_COMPACT_CSS) + "text-align:center;vertical-align:middle;"
                 else:
                     _td_st += "text-align:left;vertical-align:top;"
-                html_table += f"<td class='{_cc_td}' style='{_td_st}'>{formatted_value}</td>"
+                html_table += f"<td class='{_cc_td}{_dev_cls}' style='{_td_st}'>{formatted_value}</td>"
             else:
                 if isinstance(value, (int, float)) and is_scalar and not pd.isna(value):
                     col_lower = str(col).lower()
@@ -2161,7 +2227,7 @@ def load_custom_css() -> None:
 
     _light_preview = False
     try:
-        from dashboards.light_theme import apply_light_table_constants, inject_light_preview_css, is_light_preview_report
+        from dashboards.light_theme import apply_light_table_constants, inject_light_preview_css, is_light_preview_active
 
         _dash = str(st.session_state.get("current_dashboard") or "").strip()
         if not _dash:
@@ -2170,7 +2236,7 @@ def load_custom_css() -> None:
                 _dash = str(_qp[0] if isinstance(_qp, list) and _qp else _qp or "").strip()
             except Exception:
                 pass
-        _light_preview = is_light_preview_report(_dash)
+        _light_preview = is_light_preview_active()
         if _light_preview:
             apply_light_table_constants()
             inject_light_preview_css(st)
@@ -2193,49 +2259,49 @@ def load_custom_css() -> None:
         st.markdown(
             """
 <style id="bi-light-style-overrides">
-html body section.main div[data-testid="column"]:has([data-testid="stCheckbox"]) {
+html body.gdrs-light-preview section.main div[data-testid="column"]:has([data-testid="stCheckbox"]) {
   flex: 1 1 14rem !important;
   min-width: 11rem !important;
   width: auto !important;
   max-width: none !important;
 }
-html body .stCheckbox > label,
-html body [data-testid="stCheckbox"] label[data-baseweb="checkbox"],
-html body [data-testid="stCheckbox"] label[data-baseweb="checkbox"] p {
+html body.gdrs-light-preview .stCheckbox > label,
+html body.gdrs-light-preview [data-testid="stCheckbox"] label[data-baseweb="checkbox"],
+html body.gdrs-light-preview [data-testid="stCheckbox"] label[data-baseweb="checkbox"] p {
   color: #111827 !important;
   -webkit-text-fill-color: #111827 !important;
 }
-html body div[data-baseweb="popover"] li[data-highlighted="true"],
-html body div[data-baseweb="popover"] li[aria-selected="true"],
-html body div[data-baseweb="menu"] li[data-highlighted="true"],
-html body div[data-baseweb="popover"] [role="option"][aria-selected="true"] {
+html body.gdrs-light-preview div[data-baseweb="popover"] li[data-highlighted="true"],
+html body.gdrs-light-preview div[data-baseweb="popover"] li[aria-selected="true"],
+html body.gdrs-light-preview div[data-baseweb="menu"] li[data-highlighted="true"],
+html body.gdrs-light-preview div[data-baseweb="popover"] [role="option"][aria-selected="true"] {
   background-color: #e5e7eb !important;
   color: #111827 !important;
 }
-html body div[data-baseweb="popover"] li[data-highlighted="true"] *,
-html body div[data-baseweb="popover"] li[aria-selected="true"] * {
+html body.gdrs-light-preview div[data-baseweb="popover"] li[data-highlighted="true"] *,
+html body.gdrs-light-preview div[data-baseweb="popover"] li[aria-selected="true"] * {
   background-color: transparent !important;
   color: #111827 !important;
   -webkit-text-fill-color: #111827 !important;
 }
-html body div[data-baseweb="popover"] [role="listbox"] [role="option"][data-highlighted="true"],
-html body div[data-baseweb="popover"] [role="listbox"] [role="option"][aria-selected="true"] {
+html body.gdrs-light-preview div[data-baseweb="popover"] [role="listbox"] [role="option"][data-highlighted="true"],
+html body.gdrs-light-preview div[data-baseweb="popover"] [role="listbox"] [role="option"][aria-selected="true"] {
   background-color: #e5e7eb !important;
   color: #111827 !important;
 }
-html body div[data-baseweb="popover"] [data-baseweb="calendar"],
-html body div[data-baseweb="popover"] [data-baseweb="datepicker"],
-html body div[data-baseweb="popover"] [role="grid"] {
+html body.gdrs-light-preview div[data-baseweb="popover"] [data-baseweb="calendar"],
+html body.gdrs-light-preview div[data-baseweb="popover"] [data-baseweb="datepicker"],
+html body.gdrs-light-preview div[data-baseweb="popover"] [role="grid"] {
   background-color: #ffffff !important;
   color-scheme: light !important;
 }
-html body div[data-baseweb="popover"] [data-baseweb="calendar"] [role="grid"] [role="gridcell"]::before,
-html body div[data-baseweb="popover"] [data-baseweb="calendar"] [role="grid"] [role="gridcell"]::after {
+html body.gdrs-light-preview div[data-baseweb="popover"] [data-baseweb="calendar"] [role="grid"] [role="gridcell"]::before,
+html body.gdrs-light-preview div[data-baseweb="popover"] [data-baseweb="calendar"] [role="grid"] [role="gridcell"]::after {
   content: none !important;
   display: none !important;
   background: transparent !important;
 }
-html body div[data-baseweb="popover"] [data-baseweb="calendar"] [role="gridcell"] > div:first-child {
+html body.gdrs-light-preview div[data-baseweb="popover"] [data-baseweb="calendar"] [role="gridcell"] > div:first-child {
   width: 2.25rem !important;
   height: 2.25rem !important;
   margin: 0 auto !important;
@@ -2246,44 +2312,121 @@ html body div[data-baseweb="popover"] [data-baseweb="calendar"] [role="gridcell"
   color: #111827 !important;
   background: transparent !important;
 }
-html body div[data-baseweb="popover"] [data-baseweb="calendar"] [role="gridcell"]:hover > div:first-child,
-html body div[data-baseweb="popover"] [data-baseweb="calendar"] [role="gridcell"][tabindex="0"] > div:first-child {
+html body.gdrs-light-preview div[data-baseweb="popover"] [data-baseweb="calendar"] [role="gridcell"]:hover > div:first-child,
+html body.gdrs-light-preview div[data-baseweb="popover"] [data-baseweb="calendar"] [role="gridcell"][tabindex="0"] > div:first-child {
   background-color: #f3f4f6 !important;
 }
-html body div[data-baseweb="popover"] [data-baseweb="calendar"] [role="gridcell"][data-bi-selected="1"] > div:first-child {
+html body.gdrs-light-preview div[data-baseweb="popover"] [data-baseweb="calendar"] [role="gridcell"][data-bi-selected="1"] > div:first-child {
   background-color: #2563eb !important;
   color: #ffffff !important;
 }
-html body section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"] > input + div {
+html body.gdrs-light-preview section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"] > input + div {
   width: 16px !important;
   height: 16px !important;
   min-width: 16px !important;
+  max-width: 16px !important;
   border: 2px solid #64748b !important;
   border-radius: 4px !important;
   background-color: #ffffff !important;
   flex-shrink: 0 !important;
 }
-html body section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked) > input + div {
+html body.gdrs-light-preview [data-testid="stCheckbox"] label[data-baseweb="checkbox"] p,
+html body.gdrs-light-preview [data-testid="stCheckbox"] label[data-baseweb="checkbox"] [data-testid="stMarkdownContainer"],
+html body.gdrs-light-preview [data-testid="stCheckbox"] label[data-baseweb="checkbox"] [data-testid="stMarkdownContainer"] * {
+  background: transparent !important;
+  background-color: transparent !important;
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+}
+html body.gdrs-light-preview section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked) > input + div:not(:has(p)) {
   background-color: #2563eb !important;
   border-color: #2563eb !important;
 }
-html body section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked),
-html body section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked) > div:has(p),
-html body section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked) p {
+html body.gdrs-light-preview section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked) > input + div:has(p) {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  width: auto !important;
+  height: auto !important;
+  max-width: none !important;
+  display: inline-flex !important;
+  align-items: flex-start !important;
+  gap: 0.5rem !important;
+}
+html body.gdrs-light-preview section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked) > input + div:has(p) > div:first-child:not(:has(p)) {
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  max-width: 16px !important;
+  border: 2px solid #2563eb !important;
+  border-radius: 4px !important;
+  background-color: #2563eb !important;
+  flex-shrink: 0 !important;
+}
+html body.gdrs-light-preview section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked),
+html body.gdrs-light-preview section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked) > div:has(p),
+html body.gdrs-light-preview section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked) p {
   background: transparent !important;
   background-color: transparent !important;
   color: #111827 !important;
 }
-html body section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"] > div:has(p) {
+html body.gdrs-light-preview section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"] > div:has(p) {
   background: transparent !important;
   border: none !important;
   width: auto !important;
   flex: 1 1 auto !important;
 }
+html body.gdrs-light-preview [data-testid="stAlert"] [data-testid="stMarkdownContainer"],
+html body.gdrs-light-preview [data-testid="stAlert"] [data-testid="stMarkdownContainer"] p,
+html body.gdrs-light-preview [data-testid="stAlert"] [data-testid="stMarkdownContainer"] * {
+  color: #92400e !important;
+  -webkit-text-fill-color: #92400e !important;
+}
+html body.gdrs-light-preview [data-testid="stPlotlyChart"] {
+  background-color: #ffffff !important;
+  border: 1px solid #cbd5e1 !important;
+  overflow-x: auto !important;
+  overflow-y: visible !important;
+}
+html body.gdrs-light-preview div[data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stPlotlyChart"]) {
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch !important;
+}
+html body.gdrs-light-preview section.main,
+html body.gdrs-light-preview [data-testid="stMain"],
+html body.gdrs-light-preview [data-testid="stMainBlockContainer"] {
+  overflow-y: auto !important;
+}
+html body.gdrs-light-preview .bi-light-table .rendered-table th,
+html body.gdrs-light-preview .bi-sortable-html-root .bi-light-table .rendered-table th {
+  background: #e5e7eb !important;
+  color: #111827 !important;
+  border-bottom: 2px solid #cbd5e1 !important;
+}
+html body.gdrs-light-preview .bi-light-table .rendered-table td,
+html body.gdrs-light-preview .bi-sortable-html-root .bi-light-table .rendered-table td {
+  color: #111827 !important;
+  border-bottom: 1px solid #cbd5e1 !important;
+}
+html body.gdrs-light-preview .bi-light-table .rendered-table tr.bd-total-row td {
+  background: #e5e7eb !important;
+  color: #111827 !important;
+  border-top: 2px solid #94a3b8 !important;
+}
+html body.gdrs-light-preview .bi-light-table .rendered-table tr:hover td {
+  background: #f3f4f6 !important;
+}
 </style>
 """,
             unsafe_allow_html=True,
         )
+
+    try:
+        from dashboards.light_theme import sync_light_preview_theme
+
+        sync_light_preview_theme(st)
+    except Exception:
+        pass
 
 
 def dataframe_to_csv_bytes_for_excel(
@@ -2370,32 +2513,137 @@ def _scroll_box_table_html(html: str) -> bool:
     return (
         "fc-table-scroll-wrap" in b
         or "pd-dynamics-scroll-wrap" in b
+        or ("pd-dynamics-table-wrap" in b and "budget-table-scroll" in b)
         or "pred-detail-wrap" in b
+        or "pred-detail-scroll" in b
         or ("budget-deviation-table-wrap" in b and "budget-table-scroll" in b)
+        or ("gantt-schedule-scroll-wrap" in b and 'data-scroll-box-h="' in b)
+        or ("dev-reasons-wrap" in b and 'data-scroll-box-h="' in b)
+        or ("dev-maket-table-wrap" in b and 'data-scroll-box-h="' in b)
+        or ("exec-doc-scroll-wrap" in b and 'data-scroll-box-h="' in b)
     )
 
 
 def _scroll_box_height_px(html: str, *, cap: int = 640) -> int:
     """Высота scroll-box под iframe: для budget-table-scroll — по vh из разметки таблицы."""
     _body = html or ""
-    if "budget-table-scroll" in _body:
+    _m_box = re.search(r'data-scroll-box-h="(\d+)"', _body)
+    if _m_box:
+        return int(_m_box.group(1))
+    if "budget-table-scroll" in _body or "fc-table-scroll-wrap" in _body:
         _m_vh = re.search(r'data-scroll-vh="([\d.]+)"', _body) or re.search(
             r"max-height:\s*([\d.]+)vh", _body
         )
         if _m_vh:
             _vh = float(_m_vh.group(1))
             return int(min(cap, max(280, _vh * 10 + 56)))
-    if "pd-dynamics-scroll-wrap" in _body:
-        _rows_m = re.search(r'data-bi-rows="(\d+)"', html or "")
-        _rows_n = int(_rows_m.group(1)) if _rows_m else 0
-        _est = 84 + _rows_n * 34
-        return int(min(720, max(520, _est)))
+    if "pd-dynamics-scroll-wrap" in _body or (
+        "pd-dynamics-table-wrap" in _body and "budget-table-scroll" in _body
+    ):
+        _m_box = re.search(r'data-scroll-box-h="(\d+)"', _body) or re.search(
+            r'data-pd-box-h="(\d+)"', _body
+        )
+        if _m_box:
+            return int(_m_box.group(1))
+        _m_vh = re.search(r'data-scroll-vh="([\d.]+)"', _body)
+        if _m_vh:
+            _vh = float(_m_vh.group(1))
+            return int(min(640, max(280, _vh * 10 + 56)))
+        return 576
     _rows_m = re.search(r'data-bi-rows="(\d+)"', html or "")
     _rows_n = int(_rows_m.group(1)) if _rows_m else 0
     _est = 84 + _rows_n * 34
     return min(cap, max(220, _est))
 
 
+
+
+def _render_exec_detail_html_table(
+    html: str,
+    export_df: pd.DataFrame | None,
+    *,
+    file_stem: str,
+    key_prefix: str,
+    popover_key: str,
+) -> None:
+    from dashboards.table_sort_inject import render_sortable_html_block
+
+    _exec_h = int(_scroll_box_height_px(html))
+    _iframe_h = _exec_h + 8
+    _wrap_key = "bitblwrap_" + str(key_prefix).replace(" ", "_")
+    st.markdown(
+        "<style>"
+        f"div[class*='st-key-{_wrap_key}'] div[data-testid='stVerticalBlock']{{gap:0!important;}}"
+        f"div[class*='st-key-{_wrap_key}'] div[data-testid='stElementContainer']:has(iframe){{"
+        f"height:{_iframe_h}px!important;min-height:{_iframe_h}px!important;max-height:{_iframe_h}px!important;"
+        "margin:0!important;padding:0!important;overflow:hidden!important;width:100%!important;}}"
+        f"div[class*='st-key-{_wrap_key}'] iframe{{"
+        f"height:{_iframe_h}px!important;min-height:{_iframe_h}px!important;width:100%!important;"
+        "max-width:100%!important;display:block!important;border:0!important;}}"
+        f"div[class*='st-key-{_wrap_key}'] [data-testid='stPopover']{{margin-top:8px!important;}}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+    try:
+        _outer = st.container(border=False, gap=None, key=_wrap_key)
+    except TypeError:
+        _outer = st.container(border=False)
+    with _outer:
+        try:
+            render_sortable_html_block(html, compact_iframe=True)
+        except Exception:
+            st.markdown(html, unsafe_allow_html=True)
+        if export_df is not None:
+            render_dataframe_excel_csv_downloads(
+                export_df,
+                file_stem=file_stem,
+                key_prefix=key_prefix,
+                popover_key=popover_key,
+            )
+
+
+def _render_pred_detail_html_table(
+    html: str,
+    export_df: pd.DataFrame | None,
+    *,
+    file_stem: str,
+    key_prefix: str,
+    popover_key: str,
+) -> None:
+    """Детальная таблица предписаний: фиксированная высота iframe + внутренний scroll-box."""
+    from dashboards.table_sort_inject import render_sortable_html_block
+
+    _pred_h = int(_scroll_box_height_px(html))
+    _wrap_key = "bitblwrap_" + str(key_prefix).replace(" ", "_")
+    st.markdown(
+        "<style>"
+        f"div[class*='st-key-{_wrap_key}'] div[data-testid='stVerticalBlock']{{gap:0!important;}}"
+        f"div[class*='st-key-{_wrap_key}'] div[data-testid='stElementContainer']:has(iframe){{"
+        f"height:{_pred_h}px!important;min-height:{_pred_h}px!important;max-height:{_pred_h}px!important;"
+        "margin:0!important;padding:0!important;overflow:hidden!important;width:100%!important;}}"
+        f"div[class*='st-key-{_wrap_key}'] iframe{{"
+        f"height:{_pred_h}px!important;min-height:{_pred_h}px!important;width:100%!important;"
+        "max-width:100%!important;display:block!important;border:0!important;}}"
+        f"div[class*='st-key-{_wrap_key}'] [data-testid='stPopover']{{margin-top:8px!important;}}"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+    try:
+        _outer = st.container(border=False, gap=None, key=_wrap_key)
+    except TypeError:
+        _outer = st.container(border=False)
+    with _outer:
+        try:
+            render_sortable_html_block(html, compact_iframe=True)
+        except Exception:
+            st.markdown(html, unsafe_allow_html=True)
+        if export_df is not None:
+            render_dataframe_excel_csv_downloads(
+                export_df,
+                file_stem=file_stem,
+                key_prefix=key_prefix,
+                popover_key=popover_key,
+            )
 
 
 def _render_pd_dynamics_html_table(
@@ -2411,10 +2659,10 @@ def _render_pd_dynamics_html_table(
 
     _pd_h = int(_scroll_box_height_px(html))
     _wrap_key = "bitblwrap_" + str(key_prefix).replace(" ", "_")
-    if "data-pd-box-h=" not in (html or ""):
+    if "data-pd-box-h=" not in (html or "") and 'data-scroll-box-h="' not in (html or ""):
         html = (html or "").replace(
-            "pd-dynamics-scroll-wrap",
-            f'pd-dynamics-scroll-wrap" data-pd-box-h="{_pd_h}',
+            'class="budget-table-scroll pd-dynamics-scroll-wrap"',
+            f'class="budget-table-scroll pd-dynamics-scroll-wrap" data-scroll-box-h="{_pd_h}"',
             1,
         )
     st.markdown(
@@ -2472,8 +2720,43 @@ def render_report_html_table(
     _kp = key_prefix or f"tbl_{_export_file_stem(file_stem)}"
     _pop_key = f"{_kp}_dl"
     _wrap_key = "bitblwrap_" + str(_kp).replace(' ', '_')
+    if file_stem == "exec_doc_kinds":
+        st.markdown(
+            "<style>"
+            "div[data-testid='stExpander'] .bd-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}"
+            "div[data-testid='stExpander'] .bi-sortable-table{width:100%;min-width:max-content;}"
+            "</style>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(html, unsafe_allow_html=True)
+        if export_df is not None:
+            render_dataframe_excel_csv_downloads(
+                export_df,
+                file_stem=file_stem,
+                key_prefix=_kp,
+                popover_key=_pop_key,
+            )
+        return
     if file_stem == "pd_dynamics_table":
         _render_pd_dynamics_html_table(
+            html,
+            export_df,
+            file_stem=file_stem,
+            key_prefix=_kp,
+            popover_key=_pop_key,
+        )
+        return
+    if file_stem == "predpisania" and "pred-detail-scroll" in _html_body_without_style(html):
+        _render_pred_detail_html_table(
+            html,
+            export_df,
+            file_stem=file_stem,
+            key_prefix=_kp,
+            popover_key=_pop_key,
+        )
+        return
+    if file_stem == "executive_docs" and "exec-doc-scroll-wrap" in _html_body_without_style(html):
+        _render_exec_detail_html_table(
             html,
             export_df,
             file_stem=file_stem,
@@ -2591,6 +2874,36 @@ def render_report_html_table(
         if _scroll_box and "pd-dynamics-scroll-wrap" not in _html_body_without_style(html):
             # a29a014: scroll-box + кнопка сразу под нim (fc / pred / budget scroll).
             _fc_box_h = _scroll_box_height_px(html)
+            _body_no_style = _html_body_without_style(html)
+            if (
+                "budget-table-scroll" in _body_no_style
+                or "fc-table-scroll-wrap" in _body_no_style
+                or (
+                    "gantt-schedule-scroll-wrap" in _body_no_style
+                    and 'data-scroll-box-h="' in _body_no_style
+                )
+                or (
+                    "dev-reasons-wrap" in _body_no_style
+                    and 'data-scroll-box-h="' in _body_no_style
+                )
+                or (
+                    "dev-maket-table-wrap" in _body_no_style
+                    and 'data-scroll-box-h="' in _body_no_style
+                )
+            ):
+                st.markdown(
+                    "<style>"
+                    f"div[class*='st-key-{_wrap_key}'] div[data-testid='stVerticalBlock']{{gap:0!important;}}"
+                    f"div[class*='st-key-{_wrap_key}'] div[data-testid='stElementContainer']:has(iframe){{"
+                    f"height:{_fc_box_h}px!important;min-height:{_fc_box_h}px!important;max-height:{_fc_box_h}px!important;"
+                    "margin:0!important;padding:0!important;overflow:hidden!important;width:100%!important;}}"
+                    f"div[class*='st-key-{_wrap_key}'] iframe{{"
+                    f"height:{_fc_box_h}px!important;min-height:{_fc_box_h}px!important;width:100%!important;"
+                    "max-width:100%!important;display:block!important;border:0!important;}}"
+                    f"div[class*='st-key-{_wrap_key}'] [data-testid='stPopover']{{margin-top:8px!important;}}"
+                    "</style>",
+                    unsafe_allow_html=True,
+                )
             try:
                 _tbl_outer = st.container(border=False, gap=None, key=_wrap_key)
             except TypeError:

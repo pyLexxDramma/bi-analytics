@@ -115,6 +115,33 @@ _TABLE_SORT_JS = r"""
     }
   }
 
+  function getThLabelText(th, tbl) {
+    if (!th) return "";
+    var lt = (th.getAttribute("data-sort-label") || th._biSortLabelText || "").trim();
+    if (!lt && tbl && tbl._biSortLabelsByIdx && tbl._biSortLabelsByIdx[th.cellIndex]) {
+      lt = String(tbl._biSortLabelsByIdx[th.cellIndex] || "").trim();
+    }
+    lt = lt.replace(/\s[\u21C5\u25B2\u25BC\u2191\u2193]+$/, "").trim();
+    if (!lt) {
+      var seedLbl = th.querySelector(".bi-sort-label");
+      if (seedLbl) {
+        lt = (seedLbl.textContent || "").replace(/\s[\u21C5\u25B2\u25BC\u2191\u2193]+$/, "").trim();
+      }
+    }
+    if (!lt) {
+      lt = (th.textContent || "").replace(/\s[\u21C5\u25B2\u25BC\u2191\u2193]+$/, "").trim();
+    }
+    if (lt) {
+      th._biSortLabelText = lt;
+      th.setAttribute("data-sort-label", lt);
+      if (tbl) {
+        if (!tbl._biSortLabelsByIdx) tbl._biSortLabelsByIdx = {};
+        tbl._biSortLabelsByIdx[th.cellIndex] = lt;
+      }
+    }
+    return lt;
+  }
+
   function bindSortableThs(tbl, theadRow) {
     var ths = theadRow.querySelectorAll("th");
     ths.forEach(function (th, colIdx) {
@@ -123,12 +150,12 @@ _TABLE_SORT_JS = r"""
       if (tbl.classList.contains("gdrs-matrix-table") && th.getAttribute("data-gdrs-sort") !== "1") return;
       colIdx = th.cellIndex;
       th.setAttribute("data-bi-sort-th", "1");
-      var labelText = th.getAttribute("data-sort-label") || (th.textContent || "").trim();
-      labelText = labelText.replace(/\s[\u21C5\u25B2\u25BC\u2191\u2193]+$/, "").trim();
+      var labelText = getThLabelText(th, tbl);
       th.innerHTML = "";
       th.style.verticalAlign = "middle";
       th.style.cursor = "pointer";
       var isGanttTask = th.classList && th.classList.contains("col-gantt-task");
+      var isPfDates = tbl.classList && tbl.classList.contains("pf-dates-table");
       var wrap = document.createElement("div");
       wrap.style.cssText = isGanttTask
         ? "display:flex;align-items:center;gap:4px;justify-content:flex-start;width:auto;"
@@ -137,7 +164,9 @@ _TABLE_SORT_JS = r"""
       label.className = "bi-sort-label";
       label.style.cssText = isGanttTask
         ? "flex:0 0 auto;min-width:0;white-space:nowrap;overflow:visible;text-overflow:clip;cursor:pointer;user-select:none;"
-        : "flex:1;min-width:0;white-space:normal;word-wrap:break-word;overflow-wrap:anywhere;overflow:visible;text-overflow:clip;cursor:pointer;user-select:none;";
+        : (isPfDates
+          ? "flex:0 0 auto;min-width:0;white-space:nowrap;overflow:visible;text-overflow:clip;cursor:pointer;user-select:none;"
+          : "flex:1;min-width:0;white-space:normal;word-wrap:break-word;overflow-wrap:anywhere;overflow:visible;text-overflow:clip;cursor:pointer;user-select:none;");
       label.title = "Клик — сортировка по убыванию, повторный клик — по возрастанию";
       wrap.appendChild(label);
       th.appendChild(wrap);
@@ -149,14 +178,14 @@ _TABLE_SORT_JS = r"""
           oth._biSortDir = 0;
           var lbl = oth.querySelector(".bi-sort-label");
           if (!lbl) return;
-          var lt = (oth.getAttribute("data-sort-label") || "").trim();
-          lt = lt.replace(/\s[\u21C5\u25B2\u25BC\u2191\u2193]+$/, "").trim();
+          var lt = getThLabelText(oth, tbl);
           lbl.textContent = lt + sortArrow(0);
         });
       }
 
       function paintLabel() {
-        label.textContent = labelText + sortArrow(th._biSortDir || 0);
+        var lt = labelText || getThLabelText(th, tbl);
+        label.textContent = lt + sortArrow(th._biSortDir || 0);
       }
 
       function apply() {
@@ -363,7 +392,8 @@ _TABLE_SORT_JS = r"""
         var pdTbl0 = pdScrollBox.querySelector("table");
         var pdContent = pdTbl0 ? Math.ceil(pdTbl0.getBoundingClientRect().height)
                                : Math.ceil(pdScrollBox.scrollHeight || 0);
-        var pdAttr = pdScrollBox.getAttribute("data-pd-box-h");
+        var pdAttr = pdScrollBox.getAttribute("data-scroll-box-h")
+          || pdScrollBox.getAttribute("data-pd-box-h");
         var pdBoxH = pdAttr ? parseInt(pdAttr, 10) : 520;
         if (!pdBoxH || pdBoxH < 120) pdBoxH = 520;
         window.parent.postMessage({ type: "streamlit:setFrameHeight", height: pdBoxH }, "*");
@@ -402,21 +432,35 @@ _TABLE_SORT_JS = r"""
         fcBox.style.setProperty("max-width", "100%", "important");
         var fcTbl0 = fcBox.querySelector("table");
         if (fcTbl0) {
-          fcTbl0.style.setProperty("width", "100%", "important");
-          fcTbl0.style.setProperty("min-width", "100%", "important");
-          fcTbl0.style.setProperty("max-width", "100%", "important");
-          fcTbl0.style.setProperty("table-layout", "fixed", "important");
+          var fcLight = !!(document.querySelector(".gdrs-light-table, .bi-light-table")
+            || (document.body && document.body.classList.contains("gdrs-light-preview")));
+          if (fcLight) {
+            fcTbl0.style.setProperty("width", "max-content", "important");
+            fcTbl0.style.setProperty("min-width", "100%", "important");
+            fcTbl0.style.setProperty("table-layout", "auto", "important");
+          } else {
+            fcTbl0.style.setProperty("width", "100%", "important");
+            fcTbl0.style.setProperty("min-width", "100%", "important");
+            fcTbl0.style.setProperty("max-width", "100%", "important");
+            fcTbl0.style.setProperty("table-layout", "fixed", "important");
+          }
         }
         var fcRoot0 = document.querySelector(".bi-sortable-html-root");
         if (fcRoot0) {
           fcRoot0.style.setProperty("width", "100%", "important");
           fcRoot0.style.setProperty("max-width", "100%", "important");
         }
-        var fcContent = fcTbl0 ? Math.ceil(fcTbl0.getBoundingClientRect().height)
-                               : Math.ceil(fcBox.scrollHeight || 0);
-        var fcCap = 560;
-        var fcPad = 24;
-        var fcH = fcContent > fcCap ? (fcCap + fcPad) : Math.max(160, fcContent + fcPad);
+        var parentH = 0;
+        try {
+          if (window.frameElement && window.frameElement.clientHeight) {
+            parentH = window.frameElement.clientHeight;
+          }
+        } catch (e) {}
+        var vhFc = parseFloat(fcBox.getAttribute("data-scroll-vh") || "0");
+        if (parentH <= 120 && vhFc > 0 && window.innerHeight) {
+          parentH = Math.min(window.innerHeight * vhFc / 100, window.innerHeight * 0.92);
+        }
+        var fcH = parentH > 120 ? parentH : (vhFc > 0 ? Math.ceil(Math.max(280, vhFc * window.innerHeight / 100 + 12)) : 584);
         if (fcH > 0) {
           window.parent.postMessage({ type: "streamlit:setFrameHeight", height: fcH }, "*");
           return;
@@ -424,7 +468,31 @@ _TABLE_SORT_JS = r"""
       }
       var btsBox = document.querySelector(".budget-table-scroll");
       if (btsBox) {
-        var btsH = Math.ceil(btsBox.getBoundingClientRect().height) + 8;
+        var boxAttr = parseInt(btsBox.getAttribute("data-scroll-box-h") || "0", 10);
+        if (boxAttr > 0) {
+          btsBox.style.setProperty("height", boxAttr + "px", "important");
+          btsBox.style.setProperty("max-height", boxAttr + "px", "important");
+          btsBox.style.setProperty("min-height", "0", "important");
+          btsBox.style.setProperty("overflow-x", "auto", "important");
+          btsBox.style.setProperty("overflow-y", "auto", "important");
+          if (btsBox.classList.contains("pred-detail-scroll")) {
+            btsBox.style.setProperty("padding-bottom", "14px", "important");
+            btsBox.style.setProperty("scroll-padding-bottom", "14px", "important");
+          }
+        }
+        var parentH0 = 0;
+        try {
+          if (window.frameElement && window.frameElement.clientHeight) {
+            parentH0 = window.frameElement.clientHeight;
+          }
+        } catch (e) {}
+        var vhAttr = parseFloat(btsBox.getAttribute("data-scroll-vh") || "0");
+        var capPx = 0;
+        if (vhAttr > 0 && window.innerHeight) {
+          capPx = Math.min(window.innerHeight * vhAttr / 100, window.innerHeight * 0.92);
+        }
+        var btsH = boxAttr > 0 ? boxAttr : (parentH0 > 120 ? parentH0
+          : (capPx > 0 ? Math.ceil(Math.max(280, capPx + 12)) : 320));
         if (btsH > 0) {
           window.parent.postMessage({ type: "streamlit:setFrameHeight", height: btsH }, "*");
           return;
@@ -628,7 +696,8 @@ _COMPACT_FRAME_FIT_JS = r"""
         }
         var pdContent = pdTbl ? Math.ceil(pdTbl.getBoundingClientRect().height)
                               : Math.ceil(pdScroll.scrollHeight || 0);
-        var pdAttr2 = pdScroll.getAttribute("data-pd-box-h");
+        var pdAttr2 = pdScroll.getAttribute("data-scroll-box-h")
+          || pdScroll.getAttribute("data-pd-box-h");
         var pdBoxH2 = pdAttr2 ? parseInt(pdAttr2, 10) : 520;
         if (!pdBoxH2 || pdBoxH2 < 120) pdBoxH2 = 520;
         window.parent.postMessage({ type: "streamlit:setFrameHeight", height: pdBoxH2 }, "*");
@@ -711,22 +780,33 @@ _COMPACT_FRAME_FIT_JS = r"""
         fc.style.setProperty("width", "100%", "important");
         fc.style.setProperty("max-width", "100%", "important");
         var fcTbl = fc.querySelector("table");
+        var fcLight = !!(document.querySelector(".gdrs-light-table, .bi-light-table"));
         if (fcTbl) {
-          fcTbl.style.setProperty("width", "100%", "important");
-          fcTbl.style.setProperty("min-width", "100%", "important");
-          fcTbl.style.setProperty("max-width", "100%", "important");
-          fcTbl.style.setProperty("table-layout", "fixed", "important");
+          if (fcLight) {
+            fcTbl.style.setProperty("width", "max-content", "important");
+            fcTbl.style.setProperty("min-width", "100%", "important");
+            fcTbl.style.setProperty("table-layout", "auto", "important");
+          } else {
+            fcTbl.style.setProperty("width", "100%", "important");
+            fcTbl.style.setProperty("min-width", "100%", "important");
+            fcTbl.style.setProperty("max-width", "100%", "important");
+            fcTbl.style.setProperty("table-layout", "fixed", "important");
+          }
         }
         var fcRoot = document.querySelector(".bi-sortable-html-root");
         if (fcRoot) {
           fcRoot.style.setProperty("width", "100%", "important");
           fcRoot.style.setProperty("max-width", "100%", "important");
         }
-        var fcContent = fcTbl ? Math.ceil(fcTbl.getBoundingClientRect().height)
-                              : Math.ceil(fc.scrollHeight || 0);
-        var fcCap = 560;
-        var fcPad = 24;
-        var fh = fcContent > fcCap ? (fcCap + fcPad) : Math.max(160, fcContent + fcPad);
+        var parentH = 0;
+        try {
+          if (window.frameElement && window.frameElement.clientHeight) parentH = window.frameElement.clientHeight;
+        } catch (e) {}
+        var vhFc2 = parseFloat(fc.getAttribute("data-scroll-vh") || "0");
+        if (parentH <= 120 && vhFc2 > 0 && window.innerHeight) {
+          parentH = Math.min(window.innerHeight * vhFc2 / 100, window.innerHeight * 0.92);
+        }
+        var fh = parentH > 120 ? parentH : (vhFc2 > 0 ? Math.ceil(Math.max(280, vhFc2 * window.innerHeight / 100 + 12)) : 584);
         if (fh > 0) {
           window.parent.postMessage({ type: "streamlit:setFrameHeight", height: fh }, "*");
           return;
@@ -734,7 +814,29 @@ _COMPACT_FRAME_FIT_JS = r"""
       }
       var bts = document.querySelector(".budget-table-scroll");
       if (bts) {
-        var bsh = Math.ceil(bts.getBoundingClientRect().height) + 8;
+        var boxAttr2 = parseInt(bts.getAttribute("data-scroll-box-h") || "0", 10);
+        if (boxAttr2 > 0) {
+          bts.style.setProperty("height", boxAttr2 + "px", "important");
+          bts.style.setProperty("max-height", boxAttr2 + "px", "important");
+          bts.style.setProperty("min-height", "0", "important");
+          bts.style.setProperty("overflow-x", "auto", "important");
+          bts.style.setProperty("overflow-y", "auto", "important");
+          if (bts.classList.contains("pred-detail-scroll")) {
+            bts.style.setProperty("padding-bottom", "14px", "important");
+            bts.style.setProperty("scroll-padding-bottom", "14px", "important");
+          }
+        }
+        var parentH2 = 0;
+        try {
+          if (window.frameElement && window.frameElement.clientHeight) parentH2 = window.frameElement.clientHeight;
+        } catch (e) {}
+        var vhAttr = parseFloat(bts.getAttribute("data-scroll-vh") || "0");
+        var capPx = 0;
+        if (vhAttr > 0 && window.innerHeight) {
+          capPx = Math.min(window.innerHeight * vhAttr / 100, window.innerHeight * 0.92);
+        }
+        var bsh = boxAttr2 > 0 ? boxAttr2 : (parentH2 > 120 ? parentH2
+          : (capPx > 0 ? Math.ceil(Math.max(280, capPx + 12)) : 320));
         if (bsh > 0) {
           window.parent.postMessage({ type: "streamlit:setFrameHeight", height: bsh }, "*");
           return;
@@ -750,7 +852,14 @@ _COMPACT_FRAME_FIT_JS = r"""
       var pad = (root && root.classList && (root.classList.contains("pred-detail-wrap") || root.classList.contains("fc-table-scroll-wrap"))) ? 20 : 4;
       var h = 0;
       var cap = root.querySelector && root.querySelector(".budget-table-scroll");
-      if (cap) {
+      if (cap && root.classList.contains("budget-deviation-table-wrap")) {
+        var boxAttr3 = parseInt(cap.getAttribute("data-scroll-box-h") || "0", 10);
+        var parentH3 = 0;
+        try {
+          if (window.frameElement && window.frameElement.clientHeight) parentH3 = window.frameElement.clientHeight;
+        } catch (e) {}
+        h = boxAttr3 > 0 ? boxAttr3 : (parentH3 > 120 ? parentH3 : 320);
+      } else if (cap) {
         // бюджетная таблица с внутренним скроллом — по нижней границе скролл-области
         var cb = cap.getBoundingClientRect();
         h = Math.ceil(cb.bottom + (window.scrollY || 0)) + pad;
@@ -817,7 +926,7 @@ html:has(.exec-doc-scroll-wrap),body:has(.exec-doc-scroll-wrap){overflow:hidden!
   overflow-x:auto!important;overflow-y:scroll!important;
   scrollbar-gutter:stable;scrollbar-width:thin;
 }
-.exec-doc-scroll-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important}
+.exec-doc-scroll-wrap table{width:100%!important;min-width:100%!important;table-layout:fixed!important}
 .exec-doc-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;vertical-align:middle!important;text-align:center!important}
 .bi-sortable-html-root:has(.pred-detail-wrap){overflow:visible!important;overflow-x:hidden!important}
 html:has(.pred-detail-wrap),body:has(.pred-detail-wrap){overflow:hidden!important;margin:0;padding:0}
@@ -848,7 +957,8 @@ html:has(.fc-table-scroll-wrap),body:has(.fc-table-scroll-wrap){
   scrollbar-gutter:stable;scrollbar-width:thin;box-sizing:border-box;
 }
 .pd-dynamics-scroll-wrap{display:block!important;width:100%!important;max-width:100%!important;min-height:520px!important;height:100%!important;max-height:100%!important;overflow-y:auto!important;overflow-x:auto!important;-webkit-overflow-scrolling:touch!important;scrollbar-gutter:stable!important;scrollbar-width:thin!important;scrollbar-color:#4a5568 #1a1c23!important;border:1px solid rgba(255,255,255,0.25)!important;border-radius:10px!important;margin:0.35em 0 0 0!important;box-sizing:border-box!important;}
-.pd-dynamics-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;vertical-align:middle!important;background:hsl(209,72%,6%)!important;}
+.pd-dynamics-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;vertical-align:middle!important;background:hsl(209,72%,6%)!important;overflow:visible!important;text-overflow:clip!important;white-space:nowrap!important;}
+.pd-dynamics-scroll-wrap thead th .bi-sort-label{white-space:nowrap!important;overflow:visible!important;flex:0 0 auto!important;display:inline-block!important;}
 .pd-dynamics-scroll-wrap .pf-dates-table,
 .pd-dynamics-table-wrap .pf-dates-table,
 .bi-sortable-html-root:has(.pd-dynamics-scroll-wrap) table.pf-dates-table,
@@ -864,6 +974,12 @@ html:has(.fc-table-scroll-wrap),body:has(.fc-table-scroll-wrap){
   width:100%!important;max-width:100%!important;display:block!important;
 }
 .fc-table-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;vertical-align:middle!important;text-align:center!important;background:hsl(209,72%,6%)!important}
+.bi-sortable-html-root > .bi-light-table:has(.budget-deviation-table-wrap),
+.bi-sortable-html-root > .bi-light-table:has(.budget-table-scroll),
+.bi-sortable-html-root > .gdrs-light-table:has(.budget-deviation-table-wrap){
+  display:block!important;width:100%!important;max-width:100%!important;
+  height:auto!important;min-height:0!important;overflow:visible!important;
+}
 .bi-sortable-html-root:has(.budget-table-scroll){
   overflow:hidden!important;height:100%!important;max-height:100%!important;min-height:0!important;
 }
@@ -875,8 +991,8 @@ html:has(.budget-table-scroll),body:has(.budget-table-scroll){
   overflow:hidden!important;width:100%!important;max-width:100%!important;box-sizing:border-box;
 }
 .budget-table-scroll{
-  display:block!important;width:100%!important;height:100%!important;max-height:100%!important;
-  min-height:0!important;overflow:auto!important;-webkit-overflow-scrolling:touch!important;
+  display:block!important;width:100%!important;min-height:0!important;
+  overflow:auto!important;-webkit-overflow-scrolling:touch!important;
   scrollbar-gutter:stable;scrollbar-width:thin;box-sizing:border-box;
 }
 .budget-table-scroll table{width:max-content!important;min-width:100%!important;table-layout:auto!important}
@@ -887,7 +1003,7 @@ html:has(.budget-table-scroll),body:has(.budget-table-scroll){
 .fc-table-scroll-wrap table,
 .fc-table-scroll-wrap.bi-styled-table-wrap table,
 .bi-sortable-html-root:has(.fc-table-scroll-wrap) table{
-  width:100%!important;min-width:100%!important;max-width:100%!important;table-layout:fixed!important;
+  width:max-content!important;min-width:100%!important;table-layout:auto!important;
 }
 html,body{
   height:auto!important;min-height:0!important;
@@ -1087,6 +1203,12 @@ html, body {
 
 _FINANCE_BUDGET_IFRAME_SHELL_CSS_LIGHT = """
 <style>
+.bi-sortable-html-root > .bi-light-table:has(.budget-deviation-table-wrap),
+.bi-sortable-html-root > .bi-light-table:has(.budget-table-scroll),
+.bi-sortable-html-root > .gdrs-light-table:has(.budget-deviation-table-wrap){
+  display:block!important;width:100%!important;max-width:100%!important;
+  height:auto!important;min-height:0!important;overflow:visible!important;
+}
 .bi-sortable-html-root:has(.budget-table-scroll){
   overflow:hidden!important;height:100%!important;max-height:100%!important;min-height:0!important;
 }
@@ -1099,8 +1221,8 @@ html:has(.budget-table-scroll),body:has(.budget-table-scroll){
   overflow:hidden!important;width:100%!important;max-width:100%!important;box-sizing:border-box;
 }
 .budget-table-scroll{
-  display:block!important;width:100%!important;height:100%!important;max-height:100%!important;
-  min-height:0!important;overflow:auto!important;-webkit-overflow-scrolling:touch!important;
+  display:block!important;width:100%!important;min-height:0!important;
+  overflow:auto!important;-webkit-overflow-scrolling:touch!important;
   scrollbar-gutter:stable;scrollbar-width:thin;box-sizing:border-box;
   scrollbar-color:#94a3b8 #e5e7eb!important;
 }
@@ -1113,7 +1235,395 @@ html:has(.budget-table-scroll),body:has(.budget-table-scroll){
   color:#111827!important;-webkit-text-fill-color:#111827!important}
 .budget-table-scroll tr.bd-group-row td{background-color:#f3f4f6!important;color:#111827!important}
 .budget-table-scroll thead th{background-color:#f3f4f6!important;color:#111827!important}
-.budget-table-scroll tbody td{color:#111827!important}
+.budget-table-scroll tbody td:not(.fc-st-cell-red):not(.fc-st-cell-green):not(.bd-cell-red):not(.bd-cell-green){color:#111827!important}
+.budget-table-scroll td.bd-cell-red,.budget-table-scroll td.bd-cell-red *{color:hsl(348,100%,63%)!important;-webkit-text-fill-color:hsl(348,100%,63%)!important;}
+.budget-table-scroll td.bd-cell-green,.budget-table-scroll td.bd-cell-green *{color:#15803d!important;-webkit-text-fill-color:#15803d!important;}
+.budget-table-scroll tr.bd-total-row td.bd-cell-red,.budget-table-scroll tr.bd-total-row td.bd-cell-red *{
+  color:hsl(348,100%,63%)!important;-webkit-text-fill-color:hsl(348,100%,63%)!important;}
+.budget-table-scroll tr.bd-total-row td.bd-cell-green,.budget-table-scroll tr.bd-total-row td.bd-cell-green *{
+  color:#15803d!important;-webkit-text-fill-color:#15803d!important;}
+.fc-st-cell-red,.fc-st-cell-red *{color:hsl(348,100%,63%)!important;-webkit-text-fill-color:hsl(348,100%,63%)!important;}
+.fc-st-cell-green,.fc-st-cell-green *{color:#15803d!important;-webkit-text-fill-color:#15803d!important;}
+.pred-detail-scroll tbody tr.pred-row-overdue td{background:rgba(254,226,226,0.78)!important;}
+.pred-detail-scroll tbody tr.pred-row-resolved td{background:rgba(220,252,231,0.85)!important;}
+.pred-detail-scroll tbody tr:not(.pred-row-overdue):not(.pred-row-resolved) td{background:#ffffff!important;}
+.pred-detail-scroll .pred-chip-overdue{background:#ffedd5!important;color:#9a3412!important;border-color:#fdba74!important;}
+.pred-detail-scroll .pred-chip-ok{background:#dcfce7!important;color:#166534!important;border-color:#86efac!important;}
+.pred-detail-scroll .pred-chip-warn{background:#fef3c7!important;color:#92400e!important;border-color:#fbbf24!important;}
+.pred-detail-scroll .pred-days-neg{background:#fee2e2!important;color:#b91c1c!important;}
+.pred-detail-scroll .pred-days-ok{background:#dcfce7!important;color:#166534!important;}
+.budget-table-scroll.pred-detail-scroll{padding-bottom:14px!important;scroll-padding-bottom:14px!important;box-sizing:border-box!important;}
+</style>
+"""
+
+_FINANCE_FC_TABLE_IFRAME_SHELL_CSS_LIGHT = """
+<style>
+.bi-sortable-html-root:has(.fc-table-scroll-wrap){
+  overflow:hidden!important;height:100%!important;max-height:100%!important;min-height:0!important;
+}
+html:has(.fc-table-scroll-wrap),body:has(.fc-table-scroll-wrap){
+  overflow:hidden!important;margin:0;padding:0;height:100%!important;min-height:0!important;
+  background:#ffffff!important;color:#111827!important;
+}
+.fc-table-scroll-wrap{
+  display:block!important;width:100%!important;height:100%!important;max-height:100%!important;
+  min-height:0!important;overflow-x:auto!important;overflow-y:auto!important;
+  -webkit-overflow-scrolling:touch!important;scrollbar-gutter:stable;scrollbar-width:thin;
+  scrollbar-color:#94a3b8 #f3f4f6!important;
+  border:1px solid #cbd5e1!important;border-radius:10px!important;box-sizing:border-box;
+}
+.fc-table-scroll-wrap thead th{
+  position:sticky!important;top:0!important;z-index:5!important;
+  background-color:#f3f4f6!important;color:#111827!important;
+}
+.fc-table-scroll-wrap tbody td:not(.fc-st-cell-red):not(.fc-st-cell-green){
+  color:#111827!important;-webkit-text-fill-color:#111827!important;border-color:#cbd5e1!important;
+}
+.fc-table-scroll-wrap tbody td.fc-st-cell-red,
+.fc-table-scroll-wrap tbody td.fc-st-cell-green{
+  border-color:#cbd5e1!important;
+}
+.fc-table-scroll-wrap tr.bd-total-row td{
+  background-color:#e5e7eb!important;color:#111827!important;
+  border-top:3px solid #94a3b8!important;
+  box-shadow:0 -3px 10px rgba(15,23,42,0.08)!important;
+}
+.fc-table-scroll-wrap tr.bd-total-row td,.fc-table-scroll-wrap tr.bd-total-row td *{
+  color:#111827!important;-webkit-text-fill-color:#111827!important;
+}
+.fc-table-scroll-wrap table,
+.fc-table-scroll-wrap.bi-styled-table-wrap table{
+  width:max-content!important;min-width:100%!important;table-layout:auto!important;
+}
+.fc-st-cell-red,.fc-st-cell-red *{color:hsl(348,100%,63%)!important;-webkit-text-fill-color:hsl(348,100%,63%)!important;}
+.fc-st-cell-green,.fc-st-cell-green *{color:#15803d!important;-webkit-text-fill-color:#15803d!important;}
+</style>
+"""
+
+_GANTT_SCHEDULE_IFRAME_SHELL_CSS_LIGHT = """
+<style>
+html:has(.gantt-schedule-scroll-wrap),body:has(.gantt-schedule-scroll-wrap){
+  overflow:hidden!important;margin:0;padding:0;height:auto!important;min-height:0!important;
+  background:#ffffff!important;color:#111827!important;
+}
+.bi-sortable-html-root:has(.gantt-schedule-scroll-wrap){
+  overflow:hidden!important;height:auto!important;max-height:none!important;min-height:0!important;
+}
+.gantt-schedule-scroll-wrap{
+  display:block!important;width:100%!important;max-width:100%!important;min-height:0!important;
+  overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;
+  scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:#94a3b8 #e5e7eb!important;
+  box-sizing:border-box!important;
+}
+.gantt-schedule-scroll-wrap[data-scroll-box-h]{
+  height:auto!important;max-height:none!important;
+}
+.gantt-schedule-scroll-wrap thead th{
+  position:sticky!important;top:0!important;z-index:5!important;
+  background-color:#f3f4f6!important;color:#111827!important;
+}
+.gantt-schedule-scroll-wrap tbody td:not(.pf-dev-red):not(.pf-dev-green){
+  color:#111827!important;-webkit-text-fill-color:#111827!important;
+  border-color:#cbd5e1!important;
+}
+.gantt-schedule-scroll-wrap tr.bd-group-row td{
+  background-color:#f3f4f6!important;color:#111827!important;
+}
+.gantt-schedule-scroll-wrap tr:hover td{background-color:#f9fafb!important;}
+.gantt-schedule-scroll-wrap tr:nth-child(even) td{background-color:#fcfcfd!important;}
+.gantt-schedule-scroll-wrap .rendered-table th{
+  background:#f3f4f6!important;color:#111827!important;border-bottom:2px solid #cbd5e1!important;
+}
+.gantt-schedule-scroll-wrap .rendered-table td{
+  color:#111827!important;border-bottom:1px solid #cbd5e1!important;
+}
+.gantt-schedule-scroll-wrap .pf-dev-red,.gantt-schedule-scroll-wrap .pf-dev-red *{
+  color:hsl(348,100%,63%)!important;-webkit-text-fill-color:hsl(348,100%,63%)!important;
+}
+.gantt-schedule-scroll-wrap .pf-dev-green,.gantt-schedule-scroll-wrap .pf-dev-green *{
+  color:#15803d!important;-webkit-text-fill-color:#15803d!important;
+}
+.gantt-schedule-table-wrap{width:max-content!important;min-width:100%!important;max-width:none!important;}
+.gantt-schedule-table-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important;}
+</style>
+"""
+
+_DEV_REASONS_IFRAME_SHELL_CSS_LIGHT = """
+<style>
+html:has(.dev-reasons-wrap),body:has(.dev-reasons-wrap),
+html:has(.dev-maket-table-wrap),body:has(.dev-maket-table-wrap){
+  overflow:hidden!important;margin:0;padding:0;height:auto!important;min-height:0!important;
+  background:#ffffff!important;color:#111827!important;
+}
+.bi-sortable-html-root:has(.dev-reasons-wrap),
+.bi-sortable-html-root:has(.dev-maket-table-wrap){
+  overflow:hidden!important;height:auto!important;max-height:none!important;min-height:0!important;
+}
+.dev-reasons-wrap,.pred-detail-wrap.dev-maket-table-wrap{
+  display:block!important;width:100%!important;max-width:100%!important;min-height:0!important;
+  overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;
+  scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:#94a3b8 #e5e7eb!important;
+  box-sizing:border-box!important;
+}
+.dev-reasons-wrap[data-scroll-box-h],
+.pred-detail-wrap.dev-maket-table-wrap[data-scroll-box-h]{
+  height:auto!important;max-height:none!important;
+}
+.dev-reasons-wrap thead th,.pred-detail-wrap.dev-maket-table-wrap thead th,
+.dev-reasons-table th{
+  position:sticky!important;top:0!important;z-index:5!important;
+  background-color:#f3f4f6!important;color:#111827!important;
+}
+.dev-reasons-wrap tbody td,.pred-detail-wrap.dev-maket-table-wrap tbody td,
+.dev-reasons-table td:not(.dev-txt-bad):not(.dev-txt-ok):not(.dev-txt-zero){
+  color:#111827!important;border-bottom:1px solid #cbd5e1!important;
+}
+.dev-reasons-wrap .dev-txt-bad,.dev-reasons-table .dev-txt-bad,
+.dev-reasons-wrap .dev-txt-bad *{
+  color:hsl(348,100%,63%)!important;-webkit-text-fill-color:hsl(348,100%,63%)!important;
+}
+.dev-reasons-wrap .dev-txt-ok,.dev-reasons-table .dev-txt-ok,
+.dev-reasons-wrap .dev-txt-ok *{
+  color:#15803d!important;-webkit-text-fill-color:#15803d!important;
+}
+.dev-reasons-wrap .dev-txt-zero,.dev-reasons-table .dev-txt-zero{
+  color:#6b7280!important;
+}
+.pred-detail-wrap.dev-maket-table-wrap .rendered-table th{
+  background:#f3f4f6!important;color:#111827!important;border-bottom:2px solid #cbd5e1!important;
+}
+.pred-detail-wrap.dev-maket-table-wrap .rendered-table td{
+  color:#111827!important;border-bottom:1px solid #cbd5e1!important;
+}
+.pred-detail-wrap.dev-maket-table-wrap .rendered-table tr:hover td{background:#f9fafb!important;}
+</style>
+"""
+
+_PRED_DETAIL_IFRAME_SHELL_CSS_LIGHT = """
+<style>
+html:has(.pred-detail-wrap:not(.dev-maket-table-wrap)),body:has(.pred-detail-wrap:not(.dev-maket-table-wrap)){
+  overflow:hidden!important;margin:0;padding:0;height:100%!important;min-height:0!important;
+  background:#ffffff!important;color:#111827!important;
+}
+.bi-sortable-html-root:has(.pred-detail-wrap:not(.dev-maket-table-wrap)){
+  overflow:hidden!important;height:100%!important;max-height:100%!important;min-height:0!important;
+}
+.pred-detail-wrap:not(.dev-maket-table-wrap){
+  display:block!important;width:100%!important;height:100%!important;max-height:100%!important;
+  min-height:0!important;overflow-x:auto!important;overflow-y:auto!important;
+  -webkit-overflow-scrolling:touch!important;scrollbar-gutter:stable;scrollbar-width:thin;
+  scrollbar-color:#94a3b8 #e5e7eb!important;border:1px solid #cbd5e1!important;
+  border-radius:10px!important;box-sizing:border-box!important;
+}
+.pred-detail-wrap:not(.dev-maket-table-wrap) thead th{
+  position:sticky!important;top:0!important;z-index:5!important;
+  background-color:#f3f4f6!important;color:#111827!important;
+}
+.pred-detail-wrap:not(.dev-maket-table-wrap) tbody td{
+  color:#111827!important;-webkit-text-fill-color:#111827!important;
+  border-color:#cbd5e1!important;
+}
+.pred-detail-wrap:not(.dev-maket-table-wrap) tbody tr.pred-row-overdue td{
+  background:rgba(254,226,226,0.78)!important;
+}
+.pred-detail-wrap:not(.dev-maket-table-wrap) tbody tr.pred-row-resolved td{
+  background:rgba(220,252,231,0.85)!important;
+}
+.pred-detail-wrap:not(.dev-maket-table-wrap) tbody tr:not(.pred-row-overdue):not(.pred-row-resolved) td{
+  background:#ffffff!important;
+}
+.pred-detail-wrap:not(.dev-maket-table-wrap) table{
+  width:max-content!important;min-width:100%!important;table-layout:auto!important;
+}
+</style>
+"""
+
+_EXEC_DOC_IFRAME_SHELL_CSS_LIGHT = """
+<style>
+html:has(.exec-doc-scroll-wrap),body:has(.exec-doc-scroll-wrap){
+  overflow:hidden!important;margin:0;padding:0;height:100%!important;min-height:0!important;
+  background:#ffffff!important;color:#111827!important;
+}
+.bi-sortable-html-root:has(.exec-doc-scroll-wrap){
+  overflow:hidden!important;height:100%!important;max-height:100%!important;min-height:0!important;
+}
+.exec-doc-scroll-wrap{
+  display:block!important;width:100%!important;max-width:100%!important;min-height:0!important;
+  overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;
+  scrollbar-gutter:stable!important;scrollbar-width:thin!important;
+  scrollbar-color:#94a3b8 #e5e7eb!important;border:1px solid #cbd5e1!important;
+  border-radius:14px!important;box-sizing:border-box!important;
+  padding-bottom:14px!important;scroll-padding-bottom:14px!important;
+}
+.exec-doc-scroll-wrap[data-scroll-box-h]{
+  height:auto!important;max-height:none!important;
+}
+.exec-doc-scroll-wrap thead th{
+  position:sticky!important;top:0!important;z-index:5!important;
+  background-color:#f3f4f6!important;color:#111827!important;
+}
+.exec-doc-scroll-wrap tbody td{
+  color:#111827!important;-webkit-text-fill-color:#111827!important;
+  border-color:#e2e8f0!important;background:#ffffff!important;
+}
+.exec-doc-scroll-wrap tbody tr:nth-child(even) td{background:#f9fafb!important;}
+.exec-doc-scroll-wrap tbody tr:hover td{background:#f3f4f6!important;}
+.exec-doc-scroll-wrap table{
+  width:100%!important;min-width:100%!important;table-layout:fixed!important;
+}
+.exec-doc-scroll-wrap .exec-pill-signed{background:#dcfce7!important;color:#166534!important;border-color:#86efac!important;}
+.exec-doc-scroll-wrap .exec-pill-customer{background:#fef3c7!important;color:#92400e!important;border-color:#fbbf24!important;}
+.exec-doc-scroll-wrap .exec-pill-contractor{background:#dbeafe!important;color:#1e40af!important;border-color:#93c5fd!important;}
+.exec-doc-scroll-wrap .exec-pill-declined{background:#fee2e2!important;color:#b91c1c!important;border-color:#fca5a5!important;}
+.exec-doc-scroll-wrap .exec-pill-default{background:#f3f4f6!important;color:#374151!important;border-color:#cbd5e1!important;}
+.exec-doc-scroll-wrap .exec-delay-val{color:#0d9488!important;}
+</style>
+"""
+
+_PF_DATES_IFRAME_SHELL_CSS_LIGHT = """
+<style>
+html:has(.pf-dates-scroll-wrap),body:has(.pf-dates-scroll-wrap),
+html:has(.pf-covenant-table-wrap),body:has(.pf-covenant-table-wrap),
+html:has(.pf-zos-table-wrap),body:has(.pf-zos-table-wrap),
+html:has(.pf-dates-table-wrap),body:has(.pf-dates-table-wrap){
+  overflow:hidden!important;margin:0;padding:0;height:auto!important;min-height:0!important;
+  background:#ffffff!important;color:#111827!important;
+}
+.bi-sortable-html-root:has(.pf-dates-scroll-wrap),
+.bi-sortable-html-root:has(.pf-covenant-table-wrap),
+.bi-sortable-html-root:has(.pf-zos-table-wrap),
+.bi-sortable-html-root:has(.pf-dates-table-wrap){
+  overflow:hidden!important;height:auto!important;max-height:none!important;min-height:0!important;
+}
+.pf-dates-scroll-wrap{
+  display:block!important;width:100%!important;max-width:100%!important;min-height:0!important;
+  overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;
+  scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:#94a3b8 #e5e7eb!important;
+  box-sizing:border-box!important;
+}
+.pf-dates-scroll-wrap[data-scroll-box-h]{
+  height:auto!important;max-height:none!important;
+}
+.pf-dates-scroll-wrap thead th,
+.pf-covenant-table-wrap thead th,
+.pf-zos-table-wrap thead th,
+.pf-dates-table-wrap thead th{
+  position:sticky!important;top:0!important;z-index:5!important;
+  background-color:#f3f4f6!important;color:#111827!important;
+}
+.pf-dates-scroll-wrap tbody td:not(.pf-dev-red):not(.pf-dev-green),
+.pf-covenant-table-wrap tbody td:not(.pf-dev-red):not(.pf-dev-green),
+.pf-zos-table-wrap tbody td:not(.pf-dev-red):not(.pf-dev-green),
+.pf-dates-table-wrap tbody td:not(.pf-dev-red):not(.pf-dev-green){
+  color:#111827!important;-webkit-text-fill-color:#111827!important;
+  border-color:#cbd5e1!important;
+}
+.pf-dates-scroll-wrap tr:hover td,
+.pf-covenant-table-wrap tr:hover td,
+.pf-zos-table-wrap tr:hover td,
+.pf-dates-table-wrap tr:hover td{background-color:#f9fafb!important;}
+.pf-dates-scroll-wrap tr:nth-child(even) td,
+.pf-covenant-table-wrap tr:nth-child(even) td,
+.pf-zos-table-wrap tr:nth-child(even) td,
+.pf-dates-table-wrap tr:nth-child(even) td{background-color:#fcfcfd!important;}
+.pf-dates-scroll-wrap .pf-dev-red,.pf-dates-scroll-wrap .pf-dev-red *,
+.pf-covenant-table-wrap .pf-dev-red,.pf-covenant-table-wrap .pf-dev-red *,
+.pf-zos-table-wrap .pf-dev-red,.pf-zos-table-wrap .pf-dev-red *,
+.pf-dates-table-wrap .pf-dev-red,.pf-dates-table-wrap .pf-dev-red *{
+  color:hsl(348,100%,63%)!important;-webkit-text-fill-color:hsl(348,100%,63%)!important;
+}
+.pf-dates-scroll-wrap .pf-dev-green,.pf-dates-scroll-wrap .pf-dev-green *,
+.pf-covenant-table-wrap .pf-dev-green,.pf-covenant-table-wrap .pf-dev-green *,
+.pf-zos-table-wrap .pf-dev-green,.pf-zos-table-wrap .pf-dev-green *,
+.pf-dates-table-wrap .pf-dev-green,.pf-dates-table-wrap .pf-dev-green *{
+  color:#15803d!important;-webkit-text-fill-color:#15803d!important;
+}
+.pf-dates-scroll-wrap .rendered-table th,
+.pf-covenant-table-wrap .rendered-table th,
+.pf-zos-table-wrap .rendered-table th,
+.pf-dates-table-wrap .rendered-table th{
+  background:#f3f4f6!important;color:#111827!important;border-bottom:2px solid #cbd5e1!important;
+}
+.pf-dates-scroll-wrap .rendered-table td,
+.pf-covenant-table-wrap .rendered-table td,
+.pf-zos-table-wrap .rendered-table td,
+.pf-dates-table-wrap .rendered-table td{
+  color:#111827!important;border-bottom:1px solid #cbd5e1!important;
+}
+.bi-sortable-html-root:has(.pf-dates-scroll-wrap) table.pf-dates-table,
+.bi-sortable-html-root:has(.pf-covenant-table-wrap) table.pf-dates-table{
+  width:max-content!important;min-width:100%!important;max-width:none!important;
+}
+.bi-sortable-html-root:has(.pf-covenant-table-wrap) table.pf-dates-table{
+  width:100%!important;min-width:100%!important;max-width:100%!important;
+}
+</style>
+"""
+
+_PD_DYNAMICS_IFRAME_SHELL_CSS_LIGHT = """
+<style>
+html:has(.pd-dynamics-scroll-wrap),body:has(.pd-dynamics-scroll-wrap),
+html:has(.pd-dynamics-table-wrap),body:has(.pd-dynamics-table-wrap){
+  overflow:hidden!important;margin:0;padding:0;height:100%!important;min-height:0!important;
+  background:#ffffff!important;color:#111827!important;
+}
+.bi-sortable-html-root:has(.pd-dynamics-scroll-wrap),
+.bi-sortable-html-root:has(.pd-dynamics-table-wrap){
+  overflow:hidden!important;height:100%!important;max-height:100%!important;min-height:0!important;
+}
+.pd-dynamics-scroll-wrap{
+  display:block!important;width:100%!important;max-width:100%!important;min-height:520px!important;
+  height:100%!important;max-height:100%!important;
+  overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;
+  scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:#94a3b8 #e5e7eb!important;
+  border:1px solid #cbd5e1!important;border-radius:10px!important;
+  box-sizing:border-box!important;margin:0.35em 0 0 0!important;
+}
+.pd-dynamics-scroll-wrap[data-scroll-box-h],
+.pd-dynamics-scroll-wrap[data-pd-box-h]{
+  height:100%!important;max-height:100%!important;min-height:0!important;
+  overflow-y:auto!important;overflow-x:auto!important;
+}
+.pd-dynamics-scroll-wrap thead th,
+.pd-dynamics-table-wrap thead th{
+  position:sticky!important;top:0!important;z-index:5!important;
+  background-color:#f3f4f6!important;color:#111827!important;
+  overflow:visible!important;text-overflow:clip!important;white-space:nowrap!important;
+}
+.pd-dynamics-scroll-wrap thead th .bi-sort-label,
+.pd-dynamics-table-wrap thead th .bi-sort-label{
+  white-space:nowrap!important;overflow:visible!important;text-overflow:clip!important;
+  flex:0 0 auto!important;display:inline-block!important;color:#111827!important;
+}
+.pd-dynamics-scroll-wrap tbody td:not(.pf-dev-red):not(.pf-dev-green),
+.pd-dynamics-table-wrap tbody td:not(.pf-dev-red):not(.pf-dev-green){
+  color:#111827!important;-webkit-text-fill-color:#111827!important;
+  border-color:#cbd5e1!important;
+}
+.pd-dynamics-scroll-wrap tr:hover td,
+.pd-dynamics-table-wrap tr:hover td{background-color:#f9fafb!important;}
+.pd-dynamics-scroll-wrap tr:nth-child(even) td,
+.pd-dynamics-table-wrap tr:nth-child(even) td{background-color:#fcfcfd!important;}
+.pd-dynamics-scroll-wrap .pf-dev-red,.pd-dynamics-scroll-wrap .pf-dev-red *,
+.pd-dynamics-table-wrap .pf-dev-red,.pd-dynamics-table-wrap .pf-dev-red *{
+  color:hsl(348,100%,63%)!important;-webkit-text-fill-color:hsl(348,100%,63%)!important;
+}
+.pd-dynamics-scroll-wrap .pf-dev-green,.pd-dynamics-scroll-wrap .pf-dev-green *,
+.pd-dynamics-table-wrap .pf-dev-green,.pd-dynamics-table-wrap .pf-dev-green *{
+  color:#15803d!important;-webkit-text-fill-color:#15803d!important;
+}
+.pd-dynamics-scroll-wrap .rendered-table th,
+.pd-dynamics-table-wrap .rendered-table th{
+  background:#f3f4f6!important;color:#111827!important;border-bottom:2px solid #cbd5e1!important;
+}
+.pd-dynamics-scroll-wrap .rendered-table td,
+.pd-dynamics-table-wrap .rendered-table td{
+  color:#111827!important;border-bottom:1px solid #cbd5e1!important;
+}
+.bi-sortable-html-root:has(.pd-dynamics-scroll-wrap) table.pf-dates-table,
+.bi-sortable-html-root:has(.pd-dynamics-table-wrap) table.pf-dates-table{
+  width:100%!important;min-width:100%!important;max-width:100%!important;table-layout:fixed!important;
+}
 </style>
 """
 
@@ -1126,6 +1636,27 @@ def _iframe_shell_css(html: str) -> str:
         return base + _GDRS_TABLE_WRAP_IFRAME_CSS
     if _light and "budget-deviation-table-wrap" in html_l:
         return base + _FINANCE_BUDGET_IFRAME_SHELL_CSS_LIGHT
+    if _light and "fc-table-scroll-wrap" in html_l:
+        return base + _FINANCE_FC_TABLE_IFRAME_SHELL_CSS_LIGHT
+    if _light and "gantt-schedule-scroll-wrap" in html_l:
+        return base + _GANTT_SCHEDULE_IFRAME_SHELL_CSS_LIGHT
+    if _light and ("dev-reasons-wrap" in html_l or "dev-maket-table-wrap" in html_l):
+        return base + _DEV_REASONS_IFRAME_SHELL_CSS_LIGHT
+    if _light and "pred-detail-wrap" in html_l:
+        return base + _PRED_DETAIL_IFRAME_SHELL_CSS_LIGHT
+    if _light and "exec-doc-scroll-wrap" in html_l:
+        return base + _EXEC_DOC_IFRAME_SHELL_CSS_LIGHT
+    if _light and (
+        "pf-dates-scroll-wrap" in html_l
+        or "pf-covenant-table-wrap" in html_l
+        or "pf-zos-table-wrap" in html_l
+        or "pf-dates-table-wrap" in html_l
+    ):
+        return base + _PF_DATES_IFRAME_SHELL_CSS_LIGHT
+    if _light and (
+        "pd-dynamics-scroll-wrap" in html_l or "pd-dynamics-table-wrap" in html_l
+    ):
+        return base + _PD_DYNAMICS_IFRAME_SHELL_CSS_LIGHT
     return base
 
 
@@ -1234,6 +1765,10 @@ def _estimate_html_block_height(html: str) -> int:
         return int(max(120, est))
     if "gantt-schedule-scroll-wrap" in html_l:
         return int(max(96, est))
+    if "dev-reasons-wrap" in html_l:
+        return int(max(220, min(620, est + 24)))
+    if "dev-maket-table-wrap" in html_l:
+        return int(max(280, min(620, est + 24)))
     if "pf-dates-scroll-wrap" in html_l:
         return int(min(cap, max(200, est)))
     if "pd-dynamics-scroll-wrap" in html_l:
@@ -1247,7 +1782,11 @@ def _estimate_html_block_height(html: str) -> int:
     if "exec-doc-scroll-wrap" in html_l or "pred-detail-wrap" in html_l:
         return int(max(420, min(820, est + 24)))
     if "fc-table-scroll-wrap" in html_l:
-        return int(max(840, min(1640, est + 24)))
+        m_fc_vh = re.search(r'data-scroll-vh="([\d.]+)"', html_l)
+        if m_fc_vh:
+            vh_fc = float(m_fc_vh.group(1))
+            return int(min(cap, max(280, vh_fc * 10 + 56)))
+        return int(min(cap, max(280, est)))
     return int(min(cap, max(120, est)))
 
 
@@ -1356,40 +1895,122 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
     # в _TABLE_CSS ложно матчатся подстрокой и все таблицы уходят в одну ветку.
     _b = re.sub(r"<style[^>]*>.*?</style>", "", html or "", flags=re.I | re.S)
     if "exec-doc-scroll-wrap" in _b:
+        _light_exec = "bi-light-table" in _b or "gdrs-light-table" in _b
+        _th_bg = "#f3f4f6" if _light_exec else "#16283a"
+        _th_fg = "#111827" if _light_exec else "#f8fbff"
+        _body_bg = "background:#ffffff!important;color:#111827!important;" if _light_exec else ""
+        _m_exec_box = re.search(r'data-scroll-box-h="(\d+)"', html or "")
+        _h_exec = int(_m_exec_box.group(1)) if _m_exec_box else 520
+        _pad_exec = (
+            "padding-bottom:14px!important;scroll-padding-bottom:14px!important;box-sizing:border-box!important;"
+            if _light_exec
+            else ""
+        )
+        _iframe_h = _h_exec + 8
         doc_sc = doc.replace(
             "</head>",
-            '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
-            '.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}'
-            'html body .exec-doc-scroll-wrap{height:min(70vh,520px)!important;max-height:min(70vh,520px)!important;'
-            'min-height:0!important;overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;}'
-            'html body .exec-doc-scroll-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important;}'
-            'html body .exec-doc-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;}'
+            '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;'
+            + _body_bg
+            + '}.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}'
+            f'html body .exec-doc-scroll-wrap{{height:{_h_exec}px!important;max-height:{_h_exec}px!important;'
+            f'min-height:0!important;overflow-x:auto!important;overflow-y:auto!important;'
+            f'-webkit-overflow-scrolling:touch!important;{_pad_exec}}}'
+            'html body .exec-doc-scroll-wrap table{width:100%!important;min-width:100%!important;table-layout:fixed!important;}'
+            f'html body .exec-doc-scroll-wrap thead th{{position:sticky!important;top:0!important;z-index:5!important;'
+            f'background:{_th_bg}!important;color:{_th_fg}!important;}}'
+            '</style></head>',
+            1,
+        )
+        components.html(doc_sc, height=_iframe_h, scrolling=False)
+        return
+    if "pred-detail-wrap" in _b:
+        _dev_maket = "dev-maket-table-wrap" in _b
+        _m_box = re.search(r'data-scroll-box-h="(\d+)"', html or "")
+        if _dev_maket and _m_box:
+            _h_maket = int(_m_box.group(1))
+            _light_m = "bi-light-table" in _b or "gdrs-light-table" in _b
+            _th_bg = "#f3f4f6" if _light_m else "hsl(209,72%,6%)"
+            _th_fg = "#111827" if _light_m else "#fafafa"
+            doc_sc = doc.replace(
+                "</head>",
+                '<style>html,body{height:auto!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
+                '.bi-sortable-html-root{height:auto!important;min-height:0!important;overflow:hidden!important;}'
+                f'html body .pred-detail-wrap.dev-maket-table-wrap{{height:{_h_maket}px!important;max-height:{_h_maket}px!important;min-height:0!important;'
+                'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;'
+                'scrollbar-gutter:stable!important;box-sizing:border-box!important;}}'
+                f'html body .pred-detail-wrap.dev-maket-table-wrap thead th{{position:sticky!important;top:0!important;z-index:5!important;'
+                f'background:{_th_bg}!important;color:{_th_fg}!important;}}'
+                'html body .pred-detail-wrap.dev-maket-table-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important;}'
+                '</style></head>',
+                1,
+            )
+            components.html(doc_sc, height=_h_maket, scrolling=False)
+            return
+        _light_pred = "bi-light-table" in _b or "gdrs-light-table" in _b
+        _th_bg_p = "#f3f4f6" if _light_pred else "hsl(209,72%,6%)"
+        _th_fg_p = "#111827" if _light_pred else "#fafafa"
+        _body_bg_p = "background:#ffffff!important;color:#111827!important;" if _light_pred else ""
+        doc_sc = doc.replace(
+            "</head>",
+            '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;'
+            + _body_bg_p
+            + '}.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}'
+            'html body .fc-table-scroll-wrap,html body .pred-detail-wrap,html body .budget-table-scroll{'
+            'height:100%!important;max-height:100%!important;min-height:0!important;'
+            'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;}'
+            'html body .fc-table-scroll-wrap thead th,html body .pred-detail-wrap thead th,'
+            'html body .budget-table-scroll thead th{position:sticky!important;top:0!important;z-index:5!important;'
+            'background:' + _th_bg_p + '!important;color:' + _th_fg_p + '!important;}'
+            'html body .pred-detail-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important;}'
             '</style></head>',
             1,
         )
         components.html(doc_sc, height=584, scrolling=False)
         return
-    if "pred-detail-wrap" in _b:
-        doc_sc = doc.replace("</head>", '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}html body .fc-table-scroll-wrap,html body .pred-detail-wrap,html body .budget-table-scroll{height:100%!important;max-height:100%!important;min-height:0!important;overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;}html body .fc-table-scroll-wrap thead th,html body .pred-detail-wrap thead th,html body .budget-table-scroll thead th{position:sticky!important;top:0!important;z-index:5!important;background:hsl(209,72%,6%)!important;}</style>' + "</head>", 1)
-        components.html(doc_sc, height=584, scrolling=False)
+    if "dev-reasons-wrap" in _b and 'data-scroll-box-h="' in (html or ""):
+        _m_dev_box = re.search(r'data-scroll-box-h="(\d+)"', html or "")
+        _h_dev = int(_m_dev_box.group(1)) if _m_dev_box else int(min(620, max(220, _estimate_html_block_height(html))))
+        _light_dev = "bi-light-table" in _b or "gdrs-light-table" in _b
+        _th_bg_d = "#f3f4f6" if _light_dev else "#1a1c23"
+        _th_fg_d = "#111827" if _light_dev else "#fafafa"
+        doc_sc = doc.replace(
+            "</head>",
+            '<style>html,body{height:auto!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
+            '.bi-sortable-html-root{height:auto!important;min-height:0!important;overflow:hidden!important;}'
+            f'html body .dev-reasons-wrap{{height:{_h_dev}px!important;max-height:{_h_dev}px!important;min-height:0!important;'
+            'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;'
+            'scrollbar-gutter:stable!important;box-sizing:border-box!important;}}'
+            f'html body .dev-reasons-wrap thead th{{position:sticky!important;top:0!important;z-index:5!important;'
+            f'background:{_th_bg_d}!important;color:{_th_fg_d}!important;}}'
+            'html body .dev-reasons-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important;}'
+            '</style></head>',
+            1,
+        )
+        components.html(doc_sc, height=_h_dev, scrolling=False)
         return
     if "pf-dates-scroll-wrap" in _b:
         _h_scroll = min(640, max(280, _estimate_html_block_height(html)))
         components.html(doc, height=_h_scroll, scrolling=False)
         return
     if "gantt-schedule-scroll-wrap" in _b:
-        # Таблица задач «График проекта»: фиксированная высота окна с внутренней
-        # вертикальной прокруткой (как «Причины отклонений»/«Прогноз БДДС»).
-        # Кнопка «Скачать таблицу» — сразу под таблицей, без пустого пространства.
-        # Горизонтальный скролл — внутри обёртки (overflow-x:auto), шапка sticky.
+        _gantt_light = "bi-light-table" in _b or "gdrs-light-table" in _b
+        _gantt_th_bg = "#f3f4f6" if _gantt_light else "hsl(209,72%,6%)"
+        _gantt_th_fg = "#111827" if _gantt_light else "#fafafa"
+        _m_gantt_box = re.search(r'data-scroll-box-h="(\d+)"', html or "")
+        _h_gantt = (
+            int(_m_gantt_box.group(1))
+            if _m_gantt_box
+            else int(min(624, max(180, _estimate_html_block_height(html) + 24)))
+        )
         doc_sc = doc.replace(
             "</head>",
-            '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
-            '.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}'
-            'html body .gantt-schedule-scroll-wrap{height:100%!important;max-height:100%!important;min-height:0!important;'
-            'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;}'
-            'html body .gantt-schedule-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;'
-            'background:hsl(209,72%,6%)!important;}'
+            '<style>html,body{height:auto!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
+            '.bi-sortable-html-root{height:auto!important;min-height:0!important;overflow:hidden!important;}'
+            f'html body .gantt-schedule-scroll-wrap{{height:{_h_gantt}px!important;max-height:{_h_gantt}px!important;min-height:0!important;'
+            'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;'
+            'scrollbar-gutter:stable!important;box-sizing:border-box!important;}}'
+            f'html body .gantt-schedule-scroll-wrap thead th{{position:sticky!important;top:0!important;z-index:5!important;'
+            f'background:{_gantt_th_bg}!important;color:{_gantt_th_fg}!important;}}'
             'html body .gantt-schedule-table-wrap{width:max-content!important;min-width:100%!important;max-width:none!important;}'
             'html body .gantt-schedule-table-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important;}'
             'html body .gantt-schedule-table-wrap th.col-gantt-task,'
@@ -1401,23 +2022,30 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
             '</style></head>',
             1,
         )
-        _h_gantt = min(624, max(180, _estimate_html_block_height(html) + 24))
         components.html(doc_sc, height=_h_gantt, scrolling=False)
         return
     if "budget-deviation-table-wrap" in _b and "budget-table-scroll" in _b:
+        _m_box = re.search(r'data-scroll-box-h="(\d+)"', html or "")
         _m_vh = re.search(r'data-scroll-vh="([\d.]+)"', html or "") or re.search(
             r"max-height:\s*([\d.]+)vh", html or ""
         )
         _vh = float(_m_vh.group(1)) if _m_vh else 52.0
-        _h_b = int(min(640, max(280, _vh * 10 + 56)))
+        _h_b = int(_m_box.group(1)) if _m_box else int(min(640, max(280, _vh * 10 + 56)))
         doc_sc = doc.replace(
             "</head>",
-            '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
-            '.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}'
-            'html body .budget-table-scroll{height:100%!important;max-height:100%!important;min-height:0!important;'
-            'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;}'
+            '<style>html,body{height:auto!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
+            '.bi-sortable-html-root{height:auto!important;min-height:0!important;overflow:hidden!important;}'
+            'html body .budget-deviation-table-wrap{overflow:hidden!important;width:100%!important;}'
+            f'html body .budget-table-scroll[data-scroll-box-h]{{height:{_h_b}px!important;max-height:{_h_b}px!important;min-height:0!important;'
+            'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;'
+            'scrollbar-gutter:stable!important;box-sizing:border-box!important;padding-bottom:14px!important;scroll-padding-bottom:14px!important;}'
+            f'html body .budget-table-scroll.pred-detail-scroll[data-scroll-box-h]{{padding-bottom:14px!important;scroll-padding-bottom:14px!important;}}'
+            f'html body .budget-table-scroll:not([data-scroll-box-h]){{height:{_h_b}px!important;max-height:{_h_b}px!important;min-height:0!important;'
+            'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;'
+            'scrollbar-gutter:stable!important;box-sizing:border-box!important;}'
             'html body .budget-table-scroll thead th{position:sticky!important;top:0!important;z-index:5!important;}'
             'html body .budget-table-scroll tr.bd-total-row td{position:sticky!important;bottom:0!important;z-index:4!important;}'
+            'html body .budget-table-scroll table{width:max-content!important;min-width:100%!important;table-layout:auto!important;}'
             '</style></head>',
             1,
         )
@@ -1425,27 +2053,51 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
         return
     if "pd-dynamics-scroll-wrap" in _b:
         _m_pd = re.search(r'data-pd-box-h="(\d+)"', html or "")
+        if not _m_pd:
+            _m_pd = re.search(r'data-scroll-box-h="(\d+)"', html or "")
         _h_pd = int(_m_pd.group(1)) if _m_pd else min(720, max(520, _estimate_html_block_height(html)))
+        _light_pd = "bi-light-table" in (html or "") or "gdrs-light-table" in (html or "")
+        _th_bg = (
+            "background:#f3f4f6!important;color:#111827!important;"
+            if _light_pd
+            else "background:hsl(209,72%,6%)!important;"
+        )
+        _pd_head_css = (
+            "<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;"
+            + ("background:#ffffff!important;color:#111827!important;" if _light_pd else "")
+            + ".bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}"
+            + "html body .pd-dynamics-scroll-wrap{height:100%!important;max-height:100%!important;min-height:100%!important;"
+            + "width:100%!important;max-width:100%!important;"
+            + "overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;"
+            + "scrollbar-gutter:stable!important;box-sizing:border-box!important;}"
+            + "html body .pd-dynamics-scroll-wrap .pf-dates-table,"
+            + "html body .pd-dynamics-table-wrap .pf-dates-table{"
+            + "width:100%!important;min-width:100%!important;max-width:100%!important;table-layout:fixed!important;}"
+            + f"html body .pd-dynamics-scroll-wrap thead th{{position:sticky!important;top:0!important;z-index:5!important;{_th_bg}}}"
+            + "</style></head>"
+        )
+        doc_sc = doc.replace("</head>", _pd_head_css, 1)
+        components.html(doc_sc, height=_h_pd, scrolling=False)
+        return
+    if "fc-table-scroll-wrap" in _b:
+        _m_fc_vh = re.search(r'data-scroll-vh="([\d.]+)"', html or "")
+        _fc_vh = float(_m_fc_vh.group(1)) if _m_fc_vh else 58.0
+        _h_fc = int(min(640, max(280, _fc_vh * 10 + 56)))
         doc_sc = doc.replace(
             "</head>",
             '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
             '.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}'
-            'html body .pd-dynamics-scroll-wrap{height:100%!important;max-height:100%!important;min-height:100%!important;'
-            'width:100%!important;max-width:100%!important;'
+            'html body .fc-table-scroll-wrap,html body .pred-detail-wrap,html body .budget-table-scroll{'
+            'height:100%!important;max-height:100%!important;min-height:0!important;'
             'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;'
-            'scrollbar-gutter:stable!important;box-sizing:border-box!important;}'
-            'html body .pd-dynamics-scroll-wrap .pf-dates-table,'
-            'html body .pd-dynamics-table-wrap .pf-dates-table{'
-            'width:100%!important;min-width:100%!important;max-width:100%!important;table-layout:fixed!important;}'
-            'html body .pd-dynamics-scroll-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;'
-            'background:hsl(209,72%,6%)!important;}</style></head>',
+            'scrollbar-gutter:stable!important;}'
+            'html body .fc-table-scroll-wrap thead th,html body .pred-detail-wrap thead th,'
+            'html body .budget-table-scroll thead th{position:sticky!important;top:0!important;z-index:5!important;}'
+            'html body .fc-table-scroll-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important;}'
+            '</style></head>',
             1,
         )
-        components.html(doc_sc, height=_h_pd, scrolling=False)
-        return
-    if "fc-table-scroll-wrap" in _b:
-        doc_sc = doc.replace("</head>", '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}html body .fc-table-scroll-wrap,html body .pred-detail-wrap,html body .budget-table-scroll{height:100%!important;max-height:100%!important;min-height:0!important;overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;}html body .fc-table-scroll-wrap thead th,html body .pred-detail-wrap thead th,html body .budget-table-scroll thead th{position:sticky!important;top:0!important;z-index:5!important;}</style>' + "</head>", 1)
-        components.html(doc_sc, height=584, scrolling=False)
+        components.html(doc_sc, height=_h_fc, scrolling=False)
         return
     # Не st.html: <script> сортировки в основной DOM часто не выполняется (↕ видны, клик мёртвый).
     _compact = (
