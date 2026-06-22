@@ -3144,7 +3144,7 @@ def _apply_finance_bar_label_layout(
 
 
 def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -> go.Figure:
-    """Круговая «распределение по контрагентам»: абсолют и % на секторе, названия в легенде."""
+    """Круговая «распределение по контрагентам»: абсолют и % на секторе или выноска."""
     from dashboards.gdrs_theme import get_gdrs_theme
 
     _th = get_gdrs_theme(theme)
@@ -3156,8 +3156,9 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
     _txt_out = max(13, _txt_in - 1)
     _leg_sz = max(13, min(16, 18 - n // 3))
     _use_bottom_legend = n >= 8
-    # Квадратный холст — на широком экране круг не сжимается по высоте (диаметр ≈ сторона).
-    _side = int(min(1180, max(820, 760 + n * 14)))
+    _callout_frac = 0.085
+    # Фиксированный холст — выноски не раздувают блок более чем на ~8%.
+    _side = 900
     slice_text: list[str] = []
     slice_pos: list[str] = []
     slice_pull: list[float] = []
@@ -3170,16 +3171,13 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
         frac = float(val) / total_v
         abs_txt = f"{int(round(val))}"
         pct_txt = f"{frac * 100:.1f}%" if 0 < frac < 0.03 else f"{frac * 100:.0f}%"
-        if frac < 0.05:
-            slice_text.append("")
-            slice_pos.append("inside")
-            slice_pull.append(0.0)
-        elif frac < 0.08 and not _use_bottom_legend:
-            slice_text.append(f"{abs_txt}<br>{pct_txt}")
+        label_txt = f"{abs_txt}<br>{pct_txt}"
+        if frac < _callout_frac:
+            slice_text.append(label_txt)
             slice_pos.append("outside")
-            slice_pull.append(0.03)
+            slice_pull.append(0.05 if frac < 0.03 else 0.03)
         else:
-            slice_text.append(f"{abs_txt}<br>{pct_txt}")
+            slice_text.append(label_txt)
             slice_pos.append("inside")
             slice_pull.append(0.0)
     _labels = df["Контрагент"].astype(str).tolist()
@@ -3201,6 +3199,7 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
                     "<b>%{label}</b><br>Факт: %{value}<br>%{percent}<extra></extra>"
                 ),
                 marker=dict(line=dict(color=_th.pie_line, width=1)),
+                automargin=True,
             )
         ]
     )
@@ -3210,7 +3209,7 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
         fig.update_layout(
             width=_side,
             height=_side,
-            uniformtext=dict(minsize=12, mode="show"),
+            uniformtext=dict(minsize=11, mode="hide"),
             legend=dict(
                 orientation="h",
                 yanchor="top",
@@ -3235,7 +3234,7 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
         fig.update_layout(
             width=_side,
             height=_side,
-            uniformtext=dict(minsize=12, mode="show"),
+            uniformtext=dict(minsize=11, mode="hide"),
             legend=dict(
                 orientation="v",
                 yanchor="middle",
@@ -23155,7 +23154,9 @@ def _gdrs_projects_summary_display(proj_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _gdrs_build_contractors_chart_df(main_t: pd.DataFrame) -> pd.DataFrame:
-    """Свод по контрагентам: одна строка на контрагента (без дублей по проектам)."""
+    """Свод по контрагентам: одна строка на контрагента (нормализованное имя)."""
+    from dashboards.gdrs_resursi import normalize_name
+
     cols = ["project_name", "contractor_name", "plan", "skud"]
     raw = main_t.loc[main_t["row_kind"] == "row", [c for c in cols if c in main_t.columns]].copy()
     if raw.empty or "contractor_name" not in raw.columns:
@@ -23168,10 +23169,18 @@ def _gdrs_build_contractors_chart_df(main_t: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=["Контрагент", "План", "Факт", "Отклонение"])
     raw["plan"] = pd.to_numeric(raw["plan"], errors="coerce").fillna(0.0)
     raw["skud"] = pd.to_numeric(raw["skud"], errors="coerce").fillna(0.0)
-    agg = raw.groupby("contractor_name", as_index=False).agg(
+    raw["__cn__"] = raw["contractor_name"].map(normalize_name)
+
+    def _pick_name(s: pd.Series) -> str:
+        cnt = s.astype(str).str.strip().value_counts()
+        return str(cnt.idxmax()) if not cnt.empty else ""
+
+    agg = raw.groupby("__cn__", as_index=False).agg(
+        contractor_name=("contractor_name", _pick_name),
         plan=("plan", "sum"),
         skud=("skud", "sum"),
     )
+    agg = agg.drop(columns=["__cn__"], errors="ignore")
     agg.rename(
         columns={"contractor_name": "Контрагент", "plan": "План", "skud": "Факт"},
         inplace=True,
