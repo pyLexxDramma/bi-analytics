@@ -5894,16 +5894,27 @@ def _render_deviations_combined_shared_filters(df):
     
             _devcombo_pmin = None
             _devcombo_pmax = None
-            if "plan end" in df.columns:
-                _pe_dev = _deviations_coerce_datetime(df["plan end"])
+            _df_period_src = df
+            _snap_period = st.session_state.get("project_data_all_snapshots")
+            if _snap_period is not None and not getattr(_snap_period, "empty", True):
+                try:
+                    from web_loader import _deduplicate_project_snapshots_last_per_month
+
+                    _df_period_src = _deduplicate_project_snapshots_last_per_month(
+                        _snap_period.copy()
+                    )
+                except Exception:
+                    _df_period_src = _snap_period.copy()
+            if "plan end" in _df_period_src.columns:
+                _pe_dev = _deviations_coerce_datetime(_df_period_src["plan end"])
                 if _pe_dev.notna().any():
                     _devcombo_pmin = _pe_dev.min().date()
-                    _devcombo_pmax = min(_pe_dev.max().date(), date.today())
-            elif "plan_month" in df.columns:
-                _pm_dev = df["plan_month"].dropna()
+                    _devcombo_pmax = _pe_dev.max().date()
+            elif "plan_month" in _df_period_src.columns:
+                _pm_dev = _df_period_src["plan_month"].dropna()
                 if len(_pm_dev):
                     _devcombo_pmin = _pm_dev.min().start_time.date()
-                    _devcombo_pmax = min(_pm_dev.max().end_time.date(), date.today())
+                    _devcombo_pmax = _pm_dev.max().end_time.date()
 
             with col4:
                 if _devcombo_pmin and _devcombo_pmax:
@@ -6737,6 +6748,8 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
 
     # ТЗ (макет): те же строки, что в таблице «Детальные данные» на вкладке «Доли причин».
     filtered_df = _deviations_maket_scope_df(filtered_df)
+    if hide_shared_filters and "snapshot_date" in getattr(filtered_df, "columns", []):
+        filtered_df = _deviations_dedupe_maket_tasks_latest_snapshot(filtered_df)
     _will_snap_period = (
         _time_axis.startswith("По дате снимка")
         and "snapshot_date" in getattr(filtered_df, "columns", [])
@@ -7534,29 +7547,29 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             "Число отклонений по проекту и месяцу",
             theme="light" if is_light_preview_active() else "dark",
         )
+        _pm_agg: dict = {"_maket_cnt": "sum"}
+        if "snapshot_date" in filtered_df.columns:
+            _pm_agg["snapshot_date"] = "max"
+        elif "snapshot_upload_month" in filtered_df.columns:
+            _pm_agg["snapshot_upload_month"] = lambda s: ", ".join(
+                sorted({format_period_ru(v) for v in s.dropna()})
+            )
         _pm_tbl = (
             filtered_df.groupby(["project name", "period"], observed=False)
-            .agg({"_maket_cnt": "sum"})
+            .agg(_pm_agg)
             .reset_index()
         )
+        if "snapshot_date" in _pm_tbl.columns:
+            _sd_pm = pd.to_datetime(_pm_tbl["snapshot_date"], errors="coerce")
+            _pm_tbl["Месяц выгрузки файла"] = _sd_pm.dt.to_period("M").map(
+                lambda p: format_period_ru(p) if pd.notna(p) else ""
+            )
+            _pm_tbl = _pm_tbl.drop(columns=["snapshot_date"])
         _pm_tbl["_sort_key"] = _pm_tbl["period"].map(_dynamics_period_sort_key)
         _pm_tbl = _pm_tbl.sort_values(["project name", "_sort_key"]).drop(
             columns=["_sort_key"]
         )
         _pm_tbl["period"] = _pm_tbl["period"].map(format_period_ru)
-        if "snapshot_upload_month" in filtered_df.columns:
-            _snap_lbl = (
-                filtered_df.groupby(
-                    ["project name", "period"], observed=False
-                )["snapshot_upload_month"]
-                .agg(lambda x: ", ".join(sorted({format_period_ru(v) for v in x.dropna()})))
-                .reset_index(name="Месяц выгрузки файла")
-            )
-            _pm_tbl = _pm_tbl.merge(
-                _snap_lbl,
-                on=["project name", "period"],
-                how="left",
-            )
         _pm_tbl = _pm_tbl.rename(
             columns={
                 "project name": "Проект",
@@ -7642,6 +7655,21 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             project_data["_дни_текст"] = project_data["Всего дней отклонений"].apply(
                 lambda x: f"{int(round(x, 0))}" if pd.notna(x) and float(x) != 0 else ""
             )
+            _proj_y_col = (
+                "Количество задач"
+                if hide_shared_filters and "Количество задач" in project_data.columns
+                else "Всего дней отклонений"
+            )
+            _proj_y_lbl = (
+                "Количество отклонений"
+                if _proj_y_col == "Количество задач"
+                else "Дни отклонений"
+            )
+            project_data["_proj_bar_txt"] = project_data[_proj_y_col].apply(
+                lambda x: f"{int(round(float(x), 0))}"
+                if pd.notna(x) and float(x) != 0
+                else ""
+            )
             _bar_top_kw = (
                 {"category_orders": {"period": _pd_top_periods}}
                 if _pd_top_periods
@@ -7650,15 +7678,15 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             fig = px.bar(
                 project_data,
                 x="period",
-                y="Всего дней отклонений",
+                y=_proj_y_col,
                 color="project name",
                 title=None,
                 labels={
                     "period": "Период",
-                    "Всего дней отклонений": "Дни отклонений",
+                    _proj_y_col: _proj_y_lbl,
                     "project name": "Проект",
                 },
-                text="_дни_текст",
+                text="_proj_bar_txt",
                 **_bar_top_kw,
             )
             # Группировка столбцов: легенда справа, как у «По причинам», чтобы не наезжать на ось X
@@ -7687,7 +7715,11 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     automargin=True,
                 ),
                 yaxis=dict(
-                    title=dict(text="Дни отклонения", standoff=8, font=dict(size=13, color=_ax_clr)),
+                    title=dict(
+                        text=_proj_y_lbl,
+                        standoff=8,
+                        font=dict(size=13, color=_ax_clr),
+                    ),
                     automargin=True,
                     tickfont=dict(size=12, color=_ax_clr),
                 ),
@@ -7699,7 +7731,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             if _n_per_top > 18:
                 fig.update_xaxes(ticklabelstep=2)
             # Один выброс по сумме дней растягивает Y — остальные столбцы сливаются с нулём.
-            _vy = pd.to_numeric(project_data["Всего дней отклонений"], errors="coerce").dropna()
+            _vy = pd.to_numeric(project_data[_proj_y_col], errors="coerce").dropna()
             if len(_vy) > 0:
                 _lo, _hi = float(_vy.min()), float(_vy.max())
                 _p95 = float(_vy.quantile(0.95))
@@ -7716,7 +7748,11 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             fig = apply_chart_background(fig, skip_uniformtext=True)
             render_chart(
                 fig,
-                caption_below=_dynamics_caption("Дни отклонений по периоду"),
+                caption_below=_dynamics_caption(
+                    "Количество отклонений по периоду и проекту"
+                    if hide_shared_filters
+                    else "Дни отклонений по периоду"
+                ),
             )
 
     # Summary table
@@ -28626,6 +28662,35 @@ def _pd_fmt_deviation_days(v) -> str:
     return f"{n:+d}"
 
 
+def _pd_kpi_deviation_text_and_color(plan_v, fact_v) -> tuple[str, str]:
+    """KPI «Отклонение на текущую дату»: факт − план; «+» зелёный, «−» красный."""
+    p = int(round(float(pd.to_numeric(plan_v, errors="coerce") or 0)))
+    f = int(round(float(pd.to_numeric(fact_v, errors="coerce") or 0)))
+    d = f - p
+    if d > 0:
+        return f"{d:+d}", "#46d68a"
+    if d < 0:
+        return f"{d:d}", "#ff5454"
+    return "0", "#8899aa"
+
+
+def _render_pd_deviation_metric(label: str, plan_v, fact_v) -> None:
+    """Метрика отклонения ПД с цветом значения (как st.metric, но с красным/зелёным)."""
+    from html import escape as html_esc
+
+    disp, color = _pd_kpi_deviation_text_and_color(plan_v, fact_v)
+    tone = "pd-doc-dev-metric-pos" if color == "#46d68a" else (
+        "pd-doc-dev-metric-neg" if color == "#ff5454" else "pd-doc-dev-metric-zero"
+    )
+    st.markdown(
+        f'<div class="pd-doc-dev-metric">'
+        f'<div class="pd-doc-dev-metric-label">{html_esc(label)}</div>'
+        f'<div class="pd-doc-dev-metric-value {tone}">{html_esc(disp)}</div>'
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def _pd_detail_table_labels(
     df: pd.DataFrame,
     *,
@@ -29289,38 +29354,39 @@ def _pd_delay_date_annotation(
     *,
     inside_color: str,
     outside_color: str = "#E8E8E8",
-    min_days: int = 26,
+    min_days: int = 18,
     anchor_end: bool = True,
 ) -> dict | None:
     text = str(text or "").strip()
     if not text:
         return None
-    end = pd.to_datetime(x_end, errors="coerce")
-    start = pd.to_datetime(x_start, errors="coerce")
+    end = pd.Timestamp(pd.to_datetime(x_end, errors="coerce")).normalize()
+    start = pd.Timestamp(pd.to_datetime(x_start, errors="coerce")).normalize()
     if pd.isna(end) or pd.isna(start):
         return None
-    days = int((pd.Timestamp(end).normalize() - pd.Timestamp(start).normalize()).days)
+    days = int((end - start).days)
     if days <= 0:
         return None
     if days >= min_days:
-        if anchor_end:
+        if not anchor_end:
+            x_plot = (start + pd.Timedelta(days=days / 2)).to_pydatetime()
             return {
-                "x": end,
+                "x": x_plot,
                 "text": text,
-                "xanchor": "right",
+                "xanchor": "center",
                 "font": {"size": 10, "color": inside_color},
             }
         return {
-            "x": end,
+            "x": end.to_pydatetime(),
             "text": text,
-            "xanchor": "center",
+            "xanchor": "right",
             "font": {"size": 10, "color": inside_color},
         }
     return {
-        "x": end,
+        "x": end.to_pydatetime(),
         "text": text,
         "xanchor": "left",
-        "xshift": 6,
+        "xshift": 10,
         "font": {"size": 9, "color": outside_color},
     }
 
@@ -29565,7 +29631,6 @@ def _pd_delay_section_duration_figure(
         return "<br>".join(lines)
 
     ticktext = [_wrap_label(lbl) for lbl in y_labels]
-    fin_plot = fin_ends.fillna(starts)
 
     def _pd_plotly_dt_list(series: pd.Series) -> list:
         out: list = []
@@ -29579,22 +29644,9 @@ def _pd_delay_section_duration_figure(
 
     starts_py = _pd_plotly_dt_list(starts)
     bf_py = _pd_plotly_dt_list(bf_ends)
-    fin_py = _pd_plotly_dt_list(fin_plot)
 
     fig = go.Figure()
-    # Сначала зелёное окончание, затем жёлтый БП поверх — БП виден до базового срока,
-    # зелёный остаётся только после базового окончания (просрочка без красной полосы).
-    fig.add_trace(
-        go.Bar(
-            name="Окончание",
-            orientation="h",
-            y=y_labels,
-            x=fin_py,
-            base=starts_py,
-            marker=dict(color="#27AE60"),
-            hovertemplate="%{y}<br>Окончание: %{x|%d.%m.%Y}<extra></extra>",
-        )
-    )
+    # Жёлтый БП (низ), зелёное окончание поверх (100%), красная просрочка отдельно.
     fig.add_trace(
         go.Bar(
             name="Базовый план",
@@ -29603,9 +29655,34 @@ def _pd_delay_section_duration_figure(
             x=bf_py,
             base=starts_py,
             marker=dict(color="#F1C40F"),
-            hovertemplate="%{y}<br>Базовый план: %{x|%d.%m.%Y}<extra></extra>",
+            hovertemplate="%{y}<br>Базовое окончание: %{x|%d.%m.%Y}<extra></extra>",
         )
     )
+    green_y: list[str] = []
+    green_x: list = []
+    green_base: list = []
+    for y_lbl, st, fin_e in zip(y_labels, starts.tolist(), fin_ends.tolist()):
+        if pd.isna(fin_e) or pd.isna(st):
+            continue
+        st_n = pd.Timestamp(st).normalize()
+        fin_n = pd.Timestamp(fin_e).normalize()
+        if fin_n <= st_n:
+            continue
+        green_y.append(y_lbl)
+        green_x.append(fin_n.to_pydatetime())
+        green_base.append(st_n.to_pydatetime())
+    if green_y:
+        fig.add_trace(
+            go.Bar(
+                name="Окончание",
+                orientation="h",
+                y=green_y,
+                x=green_x,
+                base=green_base,
+                marker=dict(color="#27AE60"),
+                hovertemplate="%{y}<br>Окончание: %{x|%d.%m.%Y}<extra></extra>",
+            )
+        )
     red_y: list[str] = []
     red_x: list = []
     red_base: list = []
@@ -29640,14 +29717,18 @@ def _pd_delay_section_duration_figure(
         work["_lbl_red"].fillna("").astype(str).tolist(),
     ):
         _ann_kw = dict(y=y_lbl, showarrow=False, yanchor="middle")
-        _y_ann = _pd_delay_date_annotation(
-            bf_e, st, ly, inside_color="#1a1a1a", min_days=30, anchor_end=True
-        )
-        if _y_ann:
-            fig.add_annotation(**_ann_kw, **_y_ann)
-        if pd.notna(fin_e):
+        bf_n = pd.Timestamp(bf_e).normalize() if pd.notna(bf_e) else pd.NaT
+        fin_n = pd.Timestamp(fin_e).normalize() if pd.notna(fin_e) else pd.NaT
+        # Жёлтая подпись — когда виден жёлтый хвост (не 100% или досрочное завершение).
+        if str(ly).strip() and pd.notna(bf_n) and (pd.isna(fin_n) or fin_n <= bf_n):
+            _y_ann = _pd_delay_date_annotation(
+                bf_e, st, ly, inside_color="#1a1a1a", min_days=10, anchor_end=True
+            )
+            if _y_ann:
+                fig.add_annotation(**_ann_kw, **_y_ann)
+        if pd.notna(fin_e) and str(lg).strip():
             _g_ann = _pd_delay_date_annotation(
-                fin_e, st, lg, inside_color="#FFFFFF", min_days=24, anchor_end=True
+                fin_e, st, lg, inside_color="#FFFFFF", min_days=8, anchor_end=True
             )
             if _g_ann:
                 fig.add_annotation(**_ann_kw, **_g_ann)
@@ -29658,7 +29739,7 @@ def _pd_delay_section_duration_figure(
                 lr,
                 inside_color="#FFFFFF",
                 outside_color="#E8E8E8",
-                min_days=36,
+                min_days=8,
                 anchor_end=False,
             )
             if _r_ann:
@@ -29687,7 +29768,7 @@ def _pd_delay_section_duration_figure(
         tickfont=dict(size=11),
         automargin=True,
     )
-    _x_pts = [t for t in starts_py + bf_py + fin_py + red_x if t is not None]
+    _x_pts = [t for t in starts_py + bf_py + green_x + red_x if t is not None]
     if _x_pts:
         d0 = min(_x_pts)
         d1 = max(_x_pts)
@@ -31759,7 +31840,11 @@ def dashboard_documentation(
                     with c3:
                         st.metric("Факт на текущую дату", f"{fact_to_date:,.0f}".replace(",", " "))
                     with c4:
-                        st.metric("Отклонение на текущую дату", f"{deviation_to_date:+,.0f}".replace(",", " "))
+                        _render_pd_deviation_metric(
+                            "Отклонение на текущую дату",
+                            plan_to_date,
+                            fact_to_date,
+                        )
                     # П.7: |отклонение| / (дней до max БО по задачам плана) × ×1/×7/×30; max БО — только base end
                     nec = _pd_necessary_productivity(
                         deviation_to_date,
