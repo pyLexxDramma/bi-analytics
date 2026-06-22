@@ -15832,6 +15832,106 @@ def _rd_plan_csv_pick_columns(df: pd.DataFrame) -> dict[str, str | None]:
     }
 
 
+def _rd_plan_section_key_series(df: pd.DataFrame, pc: dict[str, str | None]) -> pd.Series:
+    """Ключ раздела: (проект, полный шифр) или (проект, шифр, наименование)."""
+    proj_c = pc.get("proj")
+    fc_c = pc.get("full_cipher")
+    code_c = pc.get("code")
+    name_c = pc.get("name")
+    keys: list[tuple] = []
+    for _i, row in df.iterrows():
+        pk = (
+            _project_filter_norm_key(row.get(proj_c, ""))
+            if proj_c and proj_c in row.index
+            else ""
+        )
+        if fc_c and fc_c in row.index:
+            fc = _rd_csv_cell_str(row.get(fc_c))
+            if fc:
+                keys.append(("fc", pk, fc.casefold()))
+                continue
+        cc = _rd_csv_cell_str(row.get(code_c, "")) if code_c and code_c in row.index else ""
+        nm = _rd_csv_cell_str(row.get(name_c, "")) if name_c and name_c in row.index else ""
+        keys.append(("pn", pk, cc.casefold(), nm.casefold()))
+    return pd.Series(keys, index=df.index)
+
+
+def _rd_plan_dedupe_sections_df(
+    df: pd.DataFrame,
+    pc: dict[str, str | None],
+) -> pd.DataFrame:
+    """1 строка = 1 раздел: дубликаты из нескольких other_*_rd.csv схлопываются."""
+    if df is None or getattr(df, "empty", True):
+        return df
+    out = df.copy()
+    if "_plan_dt" not in out.columns and pc.get("plan") and pc["plan"] in out.columns:
+        out["_plan_dt"] = pd.to_datetime(
+            out[pc["plan"]], errors="coerce", dayfirst=True, format="mixed"
+        )
+    out["_sec_key"] = _rd_plan_section_key_series(out, pc)
+    out["_sort_tessa"] = 0
+    if "_tessa_production_dt" in out.columns:
+        out["_sort_tessa"] = out["_tessa_production_dt"].notna().astype(int)
+    if "_plan_dt" not in out.columns:
+        out["_plan_dt"] = pd.NaT
+    out = out.sort_values(
+        ["_plan_dt", "_sort_tessa"],
+        ascending=[False, False],
+        na_position="last",
+    )
+    out = out.drop_duplicates("_sec_key", keep="first")
+    return out.drop(columns=["_sec_key", "_sort_tessa"], errors="ignore")
+
+
+def _rd_plan_section_total(selected_projects: list[str] | None = None) -> int:
+    secs = _rd_plan_csv_sections_df(selected_projects)
+    return int(len(secs)) if not secs.empty else 0
+
+
+def _rd_plan_df_align_to_detail(
+    df: pd.DataFrame,
+    detail_tbl: pd.DataFrame,
+    proj_col: str | None,
+    code_col: str | None,
+    name_col: str | None,
+    full_cipher_col: str | None,
+) -> pd.DataFrame:
+    if detail_tbl.empty or df.empty:
+        return df.iloc[0:0].copy()
+    keys_pn: set[tuple[str, str, str]] = set()
+    keys_fc: set[tuple[str, str]] = set()
+    for _, r in detail_tbl.iterrows():
+        pk = _project_filter_norm_key(r.get("Проект", ""))
+        cc = str(r.get("Шифр", "") or "").strip().casefold()
+        nm = str(r.get("Наименование разделов работ", "") or "").strip().casefold()
+        keys_pn.add((pk, cc, nm))
+        fc = str(r.get("Шифр полный", "") or "").strip().casefold()
+        if fc:
+            keys_fc.add((pk, fc))
+    _rp = (
+        df[proj_col].map(_project_filter_norm_key)
+        if proj_col and proj_col in df.columns
+        else pd.Series("", index=df.index)
+    )
+    _rc = (
+        df[code_col].astype(str).str.strip().str.casefold()
+        if code_col and code_col in df.columns
+        else pd.Series("", index=df.index)
+    )
+    _rn = (
+        df[name_col].astype(str).str.strip().str.casefold()
+        if name_col and name_col in df.columns
+        else pd.Series("", index=df.index)
+    )
+    _mk = pd.Series(list(zip(_rp.tolist(), _rc.tolist(), _rn.tolist())), index=df.index)
+    _m = _mk.isin(keys_pn)
+    if full_cipher_col and full_cipher_col in df.columns and keys_fc:
+        _fk = df[full_cipher_col].map(_rd_csv_cell_str).str.casefold()
+        _mk_fc = pd.Series(list(zip(_rp.tolist(), _fk.tolist())), index=df.index)
+        _m = _m | _mk_fc.isin(keys_fc)
+    return df[_m.fillna(False)].copy()
+
+
 def _rd_plan_csv_sections_df(
     selected_projects: list[str] | None = None,
 ) -> pd.DataFrame:
@@ -15864,6 +15964,14 @@ def _rd_plan_csv_sections_df(
     )
     if df.empty:
         return df
+    if pc.get("code") and pc["code"] in df.columns:
+        _cd = df[pc["code"]].fillna("").astype(str).str.strip()
+        df = df[
+            _cd.ne("")
+            & ~_cd.str.lower().isin({"nan", "none", "-", "—", "блок"})
+        ].copy()
+    if df.empty:
+        return df
     df["_plan_dt"] = pd.to_datetime(
         df[pc["plan"]], errors="coerce", dayfirst=True, format="mixed"
     )
@@ -15874,8 +15982,7 @@ def _rd_plan_csv_sections_df(
         )
     else:
         df["_fact_dt"] = pd.NaT
-    df["_pc"] = pc
-    return df
+    return _rd_plan_dedupe_sections_df(df, pc)
 
 
 def _rd_plan_tessa_internal_ids(selected_projects: list[str] | None = None) -> set[str]:
@@ -15905,8 +16012,22 @@ def _rd_plan_tessa_internal_ids(selected_projects: list[str] | None = None) -> s
     return ids
 
 
+def _rd_csv_cell_str(val: Any) -> str:
+    if val is None:
+        return ""
+    try:
+        if pd.isna(val):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    s = str(val).strip()
+    if s.lower() in ("nan", "none", "<na>", "nat"):
+        return ""
+    return s
+
+
 def _rd_plan_row_is_not_issued_csv_status(raw: Any) -> bool:
-    s = str(raw or "").strip().casefold()
+    s = _rd_csv_cell_str(raw).casefold()
     return s in ("не выдан", "не выдано") or s.startswith("не выдан")
 
 
@@ -16009,15 +16130,14 @@ def _render_rd_monthly_overlay_chart(
         st.subheader(subheader)
 
     is_h = orientation == "h"
-    cat = monthly["Месяц"].tolist()
-    if is_h:
-        cat = monthly.sort_values("_month", ascending=False)["Месяц"].tolist()
+    plot_df = monthly.sort_values("_month", ascending=not is_h)
+    cat = plot_df["Месяц"].tolist()
 
     fig = go.Figure()
     _plan_kw = dict(
         name="План",
         marker_color="#F39C12",
-        text=[_lbl(v, use_pct) for v in monthly["plan_v"]],
+        text=[_lbl(v, use_pct) for v in plot_df["plan_v"]],
         textposition="inside",
         textfont=dict(size=10, color="#1a1a1a"),
         hovertemplate="<b>%{y}</b><br>План: %{x}<extra></extra>"
@@ -16027,7 +16147,7 @@ def _render_rd_monthly_overlay_chart(
     _done_kw = dict(
         name="Выполнено",
         marker_color="#27AE60",
-        text=[_lbl(v, use_pct) for v in monthly["done_v"]],
+        text=[_lbl(v, use_pct) for v in plot_df["done_v"]],
         textposition="inside",
         textfont=dict(size=10, color="white"),
         hovertemplate="<b>%{y}</b><br>Выполнено: %{x}<extra></extra>"
@@ -16037,7 +16157,7 @@ def _render_rd_monthly_overlay_chart(
     _ovd_kw = dict(
         name="Просрочено",
         marker_color="#C0392B",
-        text=[_lbl(v, use_pct) for v in monthly["overdue_v"]],
+        text=[_lbl(v, use_pct) for v in plot_df["overdue_v"]],
         textposition="inside",
         textfont=dict(size=10, color="white"),
         hovertemplate="<b>%{y}</b><br>Просрочено: %{x}<extra></extra>"
@@ -16046,17 +16166,17 @@ def _render_rd_monthly_overlay_chart(
     )
     if is_h:
         fig.add_trace(
-            go.Bar(y=cat, x=monthly["plan_v"], orientation="h", **_plan_kw)
+            go.Bar(y=cat, x=plot_df["plan_v"], orientation="h", **_plan_kw)
         )
         fig.add_trace(
-            go.Bar(y=cat, x=monthly["done_v"], orientation="h", **_done_kw)
+            go.Bar(y=cat, x=plot_df["done_v"], orientation="h", **_done_kw)
         )
         fig.add_trace(
             go.Bar(
                 y=cat,
-                x=monthly["overdue_v"],
+                x=plot_df["overdue_v"],
                 orientation="h",
-                base=monthly["done_v"],
+                base=plot_df["done_v"],
                 **_ovd_kw,
             )
         )
@@ -16066,10 +16186,10 @@ def _render_rd_monthly_overlay_chart(
             yaxis=dict(categoryorder="array", categoryarray=cat),
         )
     else:
-        fig.add_trace(go.Bar(x=cat, y=monthly["plan_v"], **_plan_kw))
-        fig.add_trace(go.Bar(x=cat, y=monthly["done_v"], **_done_kw))
+        fig.add_trace(go.Bar(x=cat, y=plot_df["plan_v"], **_plan_kw))
+        fig.add_trace(go.Bar(x=cat, y=plot_df["done_v"], **_done_kw))
         fig.add_trace(
-            go.Bar(x=cat, y=monthly["overdue_v"], base=monthly["done_v"], **_ovd_kw)
+            go.Bar(x=cat, y=plot_df["overdue_v"], base=plot_df["done_v"], **_ovd_kw)
         )
         fig.update_layout(xaxis_title="Месяц", yaxis_title=x_title)
 
@@ -16117,9 +16237,9 @@ def _build_rd_work_doc_detail_table(
     csv_df = _rd_plan_csv_sections_df(selected_projects)
     if csv_df.empty:
         return tessa_tbl
-    pc = csv_df["_pc"].iloc[0] if "_pc" in csv_df.columns else _rd_plan_csv_pick_columns(csv_df)
-    if isinstance(pc, pd.Series):
-        pc = pc.to_dict()
+    pc = _rd_plan_csv_pick_columns(csv_df)
+    if not isinstance(pc, dict):
+        pc = {}
     internal_ids = _rd_plan_tessa_internal_ids(selected_projects)
 
     matched: set[tuple[str, str, str]] = set()
@@ -16135,11 +16255,11 @@ def _build_rd_work_doc_detail_table(
 
     extra_rows: list[dict[str, Any]] = []
     for _i, row in csv_df.iterrows():
-        proj = str(row.get(pc["proj"], "") or "").strip() if pc.get("proj") else ""
-        cipher = str(row.get(pc["code"], "") or "").strip() if pc.get("code") else ""
-        sect = str(row.get(pc["name"], "") or "").strip() if pc.get("name") else ""
+        proj = _rd_csv_cell_str(row.get(pc["proj"], "")) if pc.get("proj") else ""
+        cipher = _rd_csv_cell_str(row.get(pc["code"], "")) if pc.get("code") else ""
+        sect = _rd_csv_cell_str(row.get(pc["name"], "")) if pc.get("name") else ""
         full_c = (
-            str(row.get(pc["full_cipher"], "") or "").strip()
+            _rd_csv_cell_str(row.get(pc["full_cipher"], ""))
             if pc.get("full_cipher") and pc["full_cipher"] in row.index
             else ""
         )
@@ -16153,18 +16273,16 @@ def _build_rd_work_doc_detail_table(
         if mk in matched:
             continue
         has_tessa = bool(full_c and full_c.casefold() in internal_ids)
-        csv_st = (
-            _rd_plan_status_display_series(pd.Series([row.get(pc["status"], "")]))
-            .astype(str)
-            .str.strip()
-            .iloc[0]
-            if pc.get("status") and pc["status"] in row.index
+        _raw_st = row.get(pc["status"], "") if pc.get("status") and pc["status"] in row.index else ""
+        csv_st = _rd_csv_cell_str(
+            _rd_plan_status_display_series(pd.Series([_raw_st])).iloc[0]
+            if pc.get("status")
             else ""
         )
         if has_tessa or (
             csv_st
             and csv_st.casefold() not in ("не выдан", "не выдано")
-            and not _rd_plan_row_is_not_issued_csv_status(row.get(pc["status"], ""))
+            and not _rd_plan_row_is_not_issued_csv_status(_raw_st)
         ):
             continue
         plan_s = (
@@ -16182,7 +16300,7 @@ def _build_rd_work_doc_detail_table(
                 "Проект": proj,
                 "Наименование разделов работ": sect,
                 "Номер договора": (
-                    str(row.get(pc["contract"], "") or "").strip()
+                    _rd_csv_cell_str(row.get(pc["contract"], ""))
                     if pc.get("contract") and pc["contract"] in row.index
                     else ""
                 ),
@@ -16298,13 +16416,9 @@ def _render_rd_working_doc_monthly_and_detail(
     if not csv_secs.empty:
         month_source = csv_secs.copy()
         month_source["_plan_end_dt"] = month_source["_plan_dt"]
-        pc0 = (
-            csv_secs["_pc"].iloc[0]
-            if "_pc" in csv_secs.columns
-            else _rd_plan_csv_pick_columns(csv_secs)
-        )
-        if isinstance(pc0, pd.Series):
-            pc0 = pc0.to_dict()
+        pc0 = _rd_plan_csv_pick_columns(csv_secs)
+        if not isinstance(pc0, dict):
+            pc0 = {}
         if pc0.get("proj") and pc0.get("code"):
             try:
                 month_source = _augment_df_with_tessa_rd(
@@ -16339,13 +16453,9 @@ def _render_rd_working_doc_monthly_and_detail(
     ):
         month_df = month_source[month_source["_plan_end_dt"].notna()].copy()
         if _sec_allow:
-            pc_m = (
-                month_df["_pc"].iloc[0]
-                if "_pc" in month_df.columns
-                else _rd_plan_csv_pick_columns(month_df)
-            )
-            if isinstance(pc_m, pd.Series):
-                pc_m = pc_m.to_dict()
+            pc_m = _rd_plan_csv_pick_columns(month_df)
+            if not isinstance(pc_m, dict):
+                pc_m = {}
             if pc_m.get("code") and pc_m.get("name"):
                 _lbl_m = (
                     month_df[pc_m["code"]].fillna("").astype(str).str.strip()
@@ -16689,6 +16799,20 @@ def _rd_plan_fallback_view(
         st.info("Нет строк после фильтра.")
         return True
 
+    _pc_fb = {
+        "proj": proj_col,
+        "code": code_col,
+        "name": name_col,
+        "plan": plan_col,
+        "forecast": forecast_col,
+        "status": status_col,
+        "full_cipher": _pick(["Шифр полный", "InternalID", "Internal Id", "internalid"]),
+    }
+    df = _rd_plan_dedupe_sections_df(df, _pc_fb)
+    if df.empty:
+        st.info("Нет строк после фильтра.")
+        return True
+
     fb_k = f"{source_key}_{doc_code}_{page_title or 'doc'}"
 
     _detail_tbl_rd = pd.DataFrame()
@@ -16747,6 +16871,8 @@ def _rd_plan_fallback_view(
             },
             key=lambda x: x.casefold(),
         )
+    if source_key == "rd_plan_data" and "Не выдан" not in stat_vals:
+        stat_vals = sorted(stat_vals + ["Не выдан"], key=lambda x: x.casefold())
 
     f2a, f2b, f2c = st.columns(3, gap="small")
     with f2a:
@@ -16853,9 +16979,33 @@ def _rd_plan_fallback_view(
             _detail_tbl_rd = _detail_tbl_rd[
                 _detail_tbl_rd["Статус"].astype(str).str.strip().isin(sel_st)
             ].copy()
+            df = _rd_plan_df_align_to_detail(
+                df,
+                _detail_tbl_rd,
+                proj_col,
+                code_col,
+                name_col,
+                _pc_fb.get("full_cipher"),
+            )
         elif status_col and status_col in df.columns:
             _st_lbl = _rd_plan_status_display_series(df[status_col]).astype(str).str.strip()
-            df = df[_st_lbl.isin(sel_st)].copy()
+            _mask = _st_lbl.isin(sel_st)
+            if "Не выдан" in sel_st:
+                _sel_proj = list(sel) if proj_col and sel else None
+                _internal_ids = _rd_plan_tessa_internal_ids(_sel_proj)
+                _fc_col = _pc_fb.get("full_cipher")
+                if _fc_col and _fc_col in df.columns:
+                    _fc_s = df[_fc_col].map(_rd_csv_cell_str).str.casefold()
+                    _nv = _fc_s.eq("") | ~_fc_s.isin({x.casefold() for x in _internal_ids})
+                elif "_tessa_production_dt" in df.columns:
+                    _nv = df["_tessa_production_dt"].isna()
+                else:
+                    _nv = df["_fact_dt"].isna()
+                if set(sel_st) == {"Не выдан"}:
+                    _mask = _nv.fillna(False)
+                else:
+                    _mask = _mask | _nv.fillna(False)
+            df = df[_mask].copy()
 
     if df.empty and (_detail_tbl_rd.empty if _use_tessa_status_filter else True):
         st.info("Нет строк после фильтра.")
@@ -16906,9 +17056,10 @@ def _rd_plan_fallback_view(
         _detail_tbl_rd = _detail_tbl_rd.loc[_lbl_d.isin(_sec_allow)].reset_index(drop=True)
 
     use_tessa_detail = source_key == "rd_plan_data" and not _detail_tbl_rd.empty
+    _plan_sec_n = int(len(df))
 
     if use_tessa_detail:
-        total_sections = int(len(_detail_tbl_rd))
+        total_sections = _plan_sec_n
         delta_num = pd.to_numeric(_detail_tbl_rd["Отклонение, дн"], errors="coerce")
         overdue = int((delta_num > 0).sum())
         avg_delay = float(delta_num[delta_num > 0].mean()) if overdue > 0 else 0.0
@@ -17042,9 +17193,12 @@ def _rd_plan_fallback_view(
 
     if source_key == "rd_plan_data" and _tessa_loaded and not _is_delay_fb:
         try:
-            _total_units = int(total_sections)
-            if _total_units <= 0:
-                _total_units = max(int(len(df)), 1)
+            _total_units = _plan_sec_n if _plan_sec_n > 0 else max(int(len(df)), 1)
+            _not_issued_csv = 0
+            if not _detail_tbl_rd.empty and "Статус" in _detail_tbl_rd.columns:
+                _not_issued_csv = int(
+                    (_detail_tbl_rd["Статус"].astype(str).str.strip() == "Не выдан").sum()
+                )
             # ТЗ: приоритет — стадии по задачам TESSA (Передано заказчику / Выдано в
             # производство / Выдано подрядчику / Отклонённая). Фолбэк — KrState.
             _stage_fb = _count_tessa_rd_stages(
@@ -17054,7 +17208,19 @@ def _rd_plan_fallback_view(
             _stage_fb_any = any(int(v) > 0 for v in _stage_fb.values())
             if _stage_fb_any:
                 _active_fb = sum(int(v) for v in _stage_fb.values())
-                _not_issued_fb = max(_total_units - _active_fb, 0)
+                _tessa_target = max(_total_units - _not_issued_csv, 0)
+                if _active_fb > _tessa_target > 0:
+                    _sc = float(_tessa_target) / float(_active_fb)
+                    _stage_fb = {
+                        k: max(int(round(float(v) * _sc)), 0) for k, v in _stage_fb.items()
+                    }
+                    _dr = _tessa_target - sum(_stage_fb.values())
+                    if _dr != 0:
+                        _bk = max(_stage_fb, key=lambda kk: _stage_fb.get(kk, 0))
+                        _stage_fb[_bk] = max(int(_stage_fb.get(_bk, 0) + _dr), 0)
+                _not_issued_fb = _not_issued_csv if _not_issued_csv > 0 else max(
+                    _total_units - sum(int(v) for v in _stage_fb.values()), 0
+                )
                 _pie_fb = {
                     "Передано заказчику": int(_stage_fb.get("Передано заказчику", 0)),
                     "Выдано в производство работ": int(
@@ -17083,7 +17249,18 @@ def _rd_plan_fallback_view(
                     section_labels_allowlist=_sec_allow,
                 )
                 _sum_parts = sum(int(v) for v in _counts_fb.values())
-                if _sum_parts > _total_units > 0:
+                _tessa_target = max(_total_units - _not_issued_csv, 0)
+                if _sum_parts > _tessa_target > 0:
+                    _scale = float(_tessa_target) / float(_sum_parts)
+                    _counts_fb = {
+                        k: max(int(round(float(v) * _scale)), 0)
+                        for k, v in _counts_fb.items()
+                    }
+                    _drift = _tessa_target - sum(_counts_fb.values())
+                    if _drift != 0:
+                        _big_k = max(_counts_fb, key=lambda kk: _counts_fb.get(kk, 0))
+                        _counts_fb[_big_k] = max(int(_counts_fb.get(_big_k, 0) + _drift), 0)
+                elif _sum_parts > _total_units > 0:
                     _scale = float(_total_units) / float(_sum_parts)
                     _counts_fb = {
                         k: max(int(round(float(v) * _scale)), 0)
@@ -17093,8 +17270,9 @@ def _rd_plan_fallback_view(
                     if _drift != 0:
                         _big_k = max(_counts_fb, key=lambda kk: _counts_fb.get(kk, 0))
                         _counts_fb[_big_k] = max(int(_counts_fb.get(_big_k, 0) + _drift), 0)
-                _active_fb = sum(int(v) for v in _counts_fb.values())
-                _not_issued_fb = max(_total_units - _active_fb, 0)
+                _not_issued_fb = _not_issued_csv if _not_issued_csv > 0 else max(
+                    _total_units - sum(int(v) for v in _counts_fb.values()), 0
+                )
                 _pie_fb = {
                     "Принято": int(_counts_fb.get("Принято", 0)),
                     "На рассм.": int(_counts_fb.get("На рассм.", 0)),
@@ -17176,6 +17354,10 @@ def _rd_plan_fallback_view(
     # Накопительная динамика по строкам CSV (аналог основного отчёта РД), если нет MSP-колонок.
     if source_key == "rd_plan_data" and not _is_delay_fb:
         try:
+            if "_tessa_production_dt" in df.columns and df["_tessa_production_dt"].notna().any():
+                df["_fact_dyn_dt"] = pd.to_datetime(df["_tessa_production_dt"], errors="coerce")
+            else:
+                df["_fact_dyn_dt"] = df["_fact_dt"]
             _dyn_parts: list[pd.DataFrame] = []
             _pm = df["_plan_dt"].notna()
             if _pm.any():
@@ -17187,10 +17369,10 @@ def _rd_plan_fallback_view(
                 _pg.columns = ["Дата", "Количество"]
                 _pg["Тип"] = "План"
                 _dyn_parts.append(_pg)
-            _fm = df["_fact_dt"].notna()
+            _fm = df["_fact_dyn_dt"].notna()
             if _fm.any():
                 _gf = df.loc[_fm].copy()
-                _gf["_dn"] = _gf["_fact_dt"].dt.to_period("M").dt.to_timestamp()
+                _gf["_dn"] = _gf["_fact_dyn_dt"].dt.to_period("M").dt.to_timestamp()
                 _fg = _gf.groupby("_dn").size().reset_index(name="Количество")
                 _fg.columns = ["Дата", "Количество"]
                 _fg["Тип"] = "Факт"
@@ -17214,11 +17396,17 @@ def _rd_plan_fallback_view(
                         ignore_index=True,
                     )
                 dynamics_df = dynamics_df.sort_values(["Тип", "Дата"])
+                _pt_cap = float(len(df)) if len(df) > 0 else 0.0
                 for _typ in dynamics_df["Тип"].unique():
                     _mk = dynamics_df["Тип"] == _typ
                     dynamics_df.loc[_mk, "Количество"] = dynamics_df.loc[
                         _mk, "Количество"
                     ].cumsum()
+                if _pt_cap > 0:
+                    _pl_m = dynamics_df["Тип"] == "План"
+                    dynamics_df.loc[_pl_m, "Количество"] = dynamics_df.loc[
+                        _pl_m, "Количество"
+                    ].clip(upper=_pt_cap)
                 dynamics_df["Текст"] = dynamics_df["Количество"].apply(
                     lambda x: f"{float(x):.0f}" if pd.notna(x) and float(x) != 0.0 else ""
                 )
@@ -17229,7 +17417,11 @@ def _rd_plan_fallback_view(
                         _today_fb = date.today()
                         _pl_fb = dynamics_df[dynamics_df["Тип"] == "План"].sort_values("Дата")
                         _fc_fb = dynamics_df[dynamics_df["Тип"] == "Факт"].sort_values("Дата")
-                        _pt_fb = float(_pl_fb["Количество"].max()) if not _pl_fb.empty else 0.0
+                        _sel_proj_dyn = list(sel) if proj_col and sel else None
+                        _rd_summ_fb = _compute_rd_exec_summary_from_csv_tessa(_sel_proj_dyn)
+                        _pt_fb = _pt_cap if _pt_cap > 0 else (
+                            float(_rd_summ_fb["plan_total"]) if _rd_summ_fb else 0.0
+                        )
                         _pd_fb = 0.0
                         if not _pl_fb.empty:
                             _dtp_fb = pd.to_datetime(_pl_fb["Дата"])
@@ -17851,6 +18043,8 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             rd_status_options_rd.append("Передано подрядчику")
         if rework_col_rd and rework_col_rd in df.columns:
             rd_status_options_rd.append("На доработке")
+        if not is_pd and "Не выдан" not in rd_status_options_rd:
+            rd_status_options_rd.append("Не выдан")
         # R23-06 (стр.17): добавить статус «Просрочено подрядчиком» и в «Просрочке выдачи РД/ПД».
         if "Просрочено подрядчиком" not in rd_status_options_rd:
             rd_status_options_rd.append("Просрочено подрядчиком")
@@ -17991,6 +18185,37 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             _done_on_time = _fe.notna() & _pe.notna() & (_fe.dt.normalize() <= _pe.dt.normalize())
             _overdue_plan = _pe.notna() & (_pe.dt.date < _today_d)
             status_mask = status_mask | (_issued & _overdue_plan & (~_done_on_time))
+        if not is_pd and "Не выдан" in selected_statuses_rd:
+            _nv_mask = ~_rd_in_production_mask(filtered_df, in_production_col_rd)
+            if on_approval_col_rd and on_approval_col_rd in filtered_df.columns:
+                _oa = pd.to_numeric(
+                    filtered_df[on_approval_col_rd]
+                    .astype(str)
+                    .str.replace(",", ".", regex=False),
+                    errors="coerce",
+                ).fillna(0)
+                _nv_mask &= _oa <= 0
+            if contractor_transfer_col_rd and contractor_transfer_col_rd in filtered_df.columns:
+                _ct = pd.to_numeric(
+                    filtered_df[contractor_transfer_col_rd]
+                    .astype(str)
+                    .str.replace(",", ".", regex=False),
+                    errors="coerce",
+                ).fillna(0)
+                _nv_mask &= _ct <= 0
+            if rework_col_rd and rework_col_rd in filtered_df.columns:
+                _rw = pd.to_numeric(
+                    filtered_df[rework_col_rd].astype(str).str.replace(",", ".", regex=False),
+                    errors="coerce",
+                ).fillna(0)
+                _nv_mask &= _rw <= 0
+            if "_tessa_card_count" in filtered_df.columns:
+                _nv_mask &= pd.to_numeric(
+                    filtered_df["_tessa_card_count"], errors="coerce"
+                ).fillna(0) <= 0
+            elif "_tessa_production_dt" in filtered_df.columns:
+                _nv_mask &= filtered_df["_tessa_production_dt"].isna()
+            status_mask = status_mask | _nv_mask.fillna(False)
         filtered_df = filtered_df[status_mask].copy()
 
     if selected_projects:
@@ -18587,7 +18812,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 _t_section_selected = (
                     selected_section if selected_section and selected_section != "Все" else None
                 )
-                _tessa_detail_table = _build_tessa_rd_detail_table(
+                _tessa_detail_table = _build_rd_work_doc_detail_table(
                     selected_projects=selected_projects or None,
                     selected_section=_t_section_selected,
                 )
@@ -18780,7 +19005,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
             if rework_col_rd and rework_col_rd in row.index:
                 if float(_to_numeric_series(pd.Series([row[rework_col_rd]])).iloc[0]) > 0:
                     return "На доработке"
-            return "Не выдано"
+            return "Не выдан"
 
         detail_df["_detail_status"] = detail_df.apply(_resolve_rd_status_label, axis=1)
         detail_df["_detail_actual_issue_date"] = detail_df["_detail_production_issue_date"].where(
@@ -23715,8 +23940,8 @@ def _gdrs_dynamics_chart_panel(
     fact_dyn,
     dyn_from_iso: str,
     dyn_to_iso: str,
-    dog_sig: tuple,
-    spr_sig: tuple,
+    version_id: int,
+    db_mtime: float,
     plan_col: str,
     sel_vid: str,
     dyn_title: str,
@@ -23767,7 +23992,7 @@ def _gdrs_dynamics_chart_panel(
         dyn = gdrs_dynamics_build_series(
             fact_dyn, dyn_from, dyn_to, agg_kind,
             [], [], uniq_pairs, plan_col,
-            plan_aggregate_loader=_gdrs_plan_loader(dog_sig, spr_sig),
+            plan_aggregate_loader=_gdrs_plan_loader(version_id, db_mtime),
             month_periods=month_periods,
             term_index=term_index,
         )
@@ -24278,52 +24503,49 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         gdrs_contractor_filter_options,
     )
 
-    web_dir = _Path(_root) / "web"
-    ai_dir = web_dir / "AI"
+    from web_db_read import json_records_by_source, resolve_version_id, web_db_mtime
 
-    resursi_files = sorted(ai_dir.glob("*resursi*.csv"))
-    if not resursi_files:
-        resursi_files = sorted(web_dir.glob("*resursi*.csv"))
-    dogovor_files = sorted(web_dir.glob("*_Dogovor.json"))
-    sprav_files = sorted(web_dir.glob("*_spravochniki.json"))
-    kontr_files = sorted(web_dir.glob("*_Kontr.json"))
-
-    if not resursi_files:
+    _version_id = resolve_version_id(st.session_state.get("web_version_id"))
+    if not _version_id:
         st.warning(
-            "Не найдены файлы ресурсов «other_*_resursi.csv» в папке web/AI. "
-            "Загрузите ресурсный CSV через ETL или поместите в web/AI."
+            "Нет активной версии данных в БД. Выполните загрузку «FTP → web/ → БД» в админке."
         )
         return
 
-    _res_sig = _gdrs_paths_mtime_sig(resursi_files)
-    _dog_sig = _gdrs_paths_mtime_sig(dogovor_files)
-    _spr_sig = _gdrs_paths_mtime_sig(sprav_files)
+    _db_mtime = web_db_mtime()
+    _dog_records = json_records_by_source(_version_id, "dogovor_json")
+    _spr_records = json_records_by_source(_version_id, "spravochniki_json")
+    _kontr_records = json_records_by_source(_version_id, "kontr_json")
+    _kontr_flat = [r for recs in _kontr_records.values() for r in recs]
+    _extra_source_names = sorted(set(_dog_records.keys()) | set(_spr_records.keys()))
 
     with st.spinner("Загрузка ресурсов…"):
-        long_fact = _gdrs_cached_load_resursi(_res_sig)
+        long_fact = _gdrs_cached_load_resursi(_version_id, _db_mtime)
     if long_fact is None or long_fact.empty:
-        st.error("Файлы ресурсов не распознаны (формат?). Проверьте структуру CSV.")
+        st.error(
+            "Нет данных ресурсов в БД (gdrs_fact). Выполните загрузку FTP → web/ → БД."
+        )
         return
     long_fact = apply_unified_project_column(long_fact, "project_name")
-    _kontr_index = load_1c_kontr_index(kontr_files) if kontr_files else None
+    _kontr_index = load_1c_kontr_index(records=_kontr_flat) if _kontr_flat else None
     long_fact = enrich_gdrs_fact_contractor_ids(
         long_fact,
-        dogovor_paths=dogovor_files,
+        dogovor_records=_dog_records,
         kontr=_kontr_index,
     )
     long_fact = enrich_gdrs_fact_project_ids(
         long_fact,
-        dogovor_paths=dogovor_files,
+        dogovor_records=_dog_records,
     )
 
     long_fact = gdrs_filter_fact_kontr_intersection(long_fact, _kontr_index)
     long_fact = gdrs_apply_kontr_contractor_names(long_fact, _kontr_index)
-    _term_index = load_gdrs_termination_index(dogovor_files)
+    _term_index = load_gdrs_termination_index(dogovor_records=_dog_records)
     long_fact = gdrs_filter_fact_by_termination(long_fact, _term_index)
 
     _month_options = gdrs_month_select_options(
         long_fact,
-        extra_paths=list(resursi_files) + list(dogovor_files),
+        extra_paths=_extra_source_names,
     )
     _month_labels = [lbl for lbl, _ in _month_options]
     _month_label_to_period = {lbl: per for lbl, per in _month_options}
@@ -24365,8 +24587,8 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             )
             contractor_options = gdrs_contractor_filter_options(
                 long_fact,
-                dogovor_files,
-                sprav_files,
+                dogovor_records=_dog_records,
+                sprav_records=_spr_records,
                 projects=sel_projects or None,
                 snapshot_date=_filter_plan_snap,
                 kontr=_kontr_index,
@@ -24482,7 +24704,9 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         contractors=sel_contractors or None,
     )
     plan = _gdrs_cached_plan_aggregate(
-        _dog_sig, _spr_sig, pd.Timestamp(_plan_snap).normalize().isoformat(),
+        _version_id,
+        _db_mtime,
+        pd.Timestamp(_plan_snap).normalize().isoformat(),
     )
 
     _weekly_plan_by_week: dict[int, _pd.DataFrame] = {}
@@ -24502,20 +24726,14 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 continue
             _weekly_plan_as_of[_wn] = _pd.Timestamp(_w_end).normalize()
             _weekly_plan_by_week[_wn] = _gdrs_cached_plan_aggregate(
-                _dog_sig,
-                _spr_sig,
+                _version_id,
+                _db_mtime,
                 _weekly_plan_as_of[_wn].isoformat(),
             )
 
-    _dannye_paths: list[_Path] = []
-    for _base in (web_dir, ai_dir):
-        if _base.is_dir():
-            for _pat in ("*dannye*.json", "*Dannye*.json"):
-                _dannye_paths.extend(_base.glob(_pat))
-    _dannye_sig = _gdrs_paths_mtime_sig(
-        sorted({_p.resolve() for _p in _dannye_paths if _p.is_file()})
+    _by_dog, _by_pc, _by_sig_pc, _by_sig, _by_pc_sets = _gdrs_cached_dannye_maps(
+        _version_id, _db_mtime
     )
-    _by_dog, _by_pc, _by_sig_pc, _by_sig, _by_pc_sets = _gdrs_cached_dannye_maps(_dannye_sig)
 
     main_t = build_main_table(
         long_fact_period, plan,
@@ -24536,7 +24754,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         kontr_index=_kontr_index,
         term_index=_term_index,
         plan_as_of=_pd.Timestamp(_plan_snap).normalize(),
-        plan_aggregate_loader=_gdrs_plan_loader(_dog_sig, _spr_sig),
+        plan_aggregate_loader=_gdrs_plan_loader(_version_id, _db_mtime),
     )
     if main_t is None or main_t.empty:
         st.info("Нет данных для выбранных фильтров.")
@@ -24899,8 +25117,8 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             fact_dyn,
             _dyn_from.isoformat(),
             _dyn_to.isoformat(),
-            _dog_sig,
-            _spr_sig,
+            _version_id,
+            _db_mtime,
             plan_col,
             sel_vid,
             _dyn_title,
@@ -24953,43 +25171,13 @@ def _is_uuid_like(val) -> bool:
 
 
 def _load_project_id_to_name_lookup() -> dict[str, str]:
-    """ID_Проекта → Наименование_Проекта из свежих web/1с_*_Projekts.json."""
-    import json as _json
-    from pathlib import Path as _Path
-
-    out: dict[str, str] = {}
+    """ID_Проекта → Наименование_Проекта из projekts_json в БД."""
     try:
-        web_dir = _Path(__file__).resolve().parent.parent / "web"
-        files = sorted(web_dir.glob("1[сc]_*_Projekts.json"), key=lambda x: x.stat().st_mtime)
+        from web_db_read import load_project_id_to_name_lookup
+
+        return load_project_id_to_name_lookup()
     except Exception:
-        return out
-    for fp in files:
-        try:
-            data = _json.loads(fp.read_text(encoding="utf-8-sig"))
-        except Exception:
-            try:
-                data = _json.loads(fp.read_text(encoding="utf-8", errors="ignore"))
-            except Exception:
-                continue
-        rows = data if isinstance(data, list) else []
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            pid = str(
-                row.get("ID_Проекта")
-                or row.get("id_проекта")
-                or row.get("ID_Project")
-                or ""
-            ).strip().lower()
-            pname = str(
-                row.get("Наименование_Проекта")
-                or row.get("Наименование проекта")
-                or row.get("Проект")
-                or ""
-            ).strip()
-            if pid and pname:
-                out[pid] = pname
-    return out
+        return {}
 
 
 def _find_project_display_col(df: pd.DataFrame) -> str | None:
@@ -30940,6 +31128,8 @@ def dashboard_documentation(
             )
         if rework_col and rework_col in df.columns:
             rd_status_options.append("На доработке")
+        if not is_pd:
+            rd_status_options.append("Не выдан")
         # R23-06 (стр.17): статус «Просрочено подрядчиком» — и для РД, и для ПД.
         if "Просрочено подрядчиком" not in rd_status_options:
             rd_status_options.append("Просрочено подрядчиком")
@@ -31147,6 +31337,34 @@ def dashboard_documentation(
                 _fin_oc = _pe_oc.where(_pe_oc.notna(), _be_oc)
                 _pd_oc = _fin_oc.notna() & (_fin_oc.dt.date < today_d) & (_pc_oc < 99.99)
                 status_mask = status_mask | _pd_oc
+
+        if not is_pd and "Не выдан" in selected_statuses:
+            _nv_mask = ~_rd_in_production_mask(filtered_df, in_production_col)
+            if on_approval_col and on_approval_col in filtered_df.columns:
+                _oa = pd.to_numeric(
+                    filtered_df[on_approval_col].astype(str).str.replace(",", ".", regex=False),
+                    errors="coerce",
+                ).fillna(0)
+                _nv_mask &= _oa <= 0
+            if contractor_col and contractor_col in filtered_df.columns:
+                _ct = pd.to_numeric(
+                    filtered_df[contractor_col].astype(str).str.replace(",", ".", regex=False),
+                    errors="coerce",
+                ).fillna(0)
+                _nv_mask &= _ct <= 0
+            if rework_col and rework_col in filtered_df.columns:
+                _rw = pd.to_numeric(
+                    filtered_df[rework_col].astype(str).str.replace(",", ".", regex=False),
+                    errors="coerce",
+                ).fillna(0)
+                _nv_mask &= _rw <= 0
+            if "_tessa_card_count" in filtered_df.columns:
+                _nv_mask &= pd.to_numeric(filtered_df["_tessa_card_count"], errors="coerce").fillna(
+                    0
+                ) <= 0
+            elif "_tessa_production_dt" in filtered_df.columns:
+                _nv_mask &= filtered_df["_tessa_production_dt"].isna()
+            status_mask = status_mask | _nv_mask.fillna(False)
 
         filtered_df = filtered_df[status_mask].copy()
 
@@ -31552,10 +31770,14 @@ def dashboard_documentation(
                     if float(cnt_num.sum()) > 0.0:
                         df["rd_plan_numeric"] = cnt_num
 
+            df["_rd_plan_inc"] = _rd_dynamics_plan_increment_series(
+                df, "rd_plan_numeric", plan_date_col
+            )
+
             _prod_mask = _rd_in_production_mask(df, in_production_col)
             df["in_production_numeric"] = np.where(
                 _prod_mask,
-                df["rd_plan_numeric"].where(df["rd_plan_numeric"] > 0, 1.0),
+                df["_rd_plan_inc"].where(df["_rd_plan_inc"] > 0, 1.0),
                 0.0,
             )
             df["_doc_plan_date"] = _to_datetime_series(df[plan_date_col])
@@ -31569,22 +31791,33 @@ def dashboard_documentation(
 
             # Prepare data
             dynamics_data = []
+            _csv_secs_dyn = _rd_plan_csv_sections_df(selected_projects_doc or None)
 
-            # Plan data: group by planned issue date
-            plan_mask = df["_doc_plan_date"].notna()
-            if plan_mask.any():
-                plan_grouped = (
-                    df[plan_mask]
-                    .groupby(df[plan_mask]["_doc_plan_date"].dt.normalize())
-                    .agg({"rd_plan_numeric": "sum"})
-                    .reset_index()
-                )
-                plan_grouped.columns = ["Дата", "Количество"]
-                plan_grouped["Тип"] = "План"
-                # Fill NaN with 0 and ensure all values are numeric
-                plan_grouped["Количество"] = plan_grouped["Количество"].fillna(0)
-                # Always add plan data, even if all values are 0
-                dynamics_data.append(plan_grouped)
+            # Plan data: приоритет — other_*_rd.csv (1 раздел = 1 строка); иначе MSP с корректным приростом
+            if not _csv_secs_dyn.empty:
+                _cp = _csv_secs_dyn[_csv_secs_dyn["_plan_dt"].notna()].copy()
+                if not _cp.empty:
+                    plan_grouped = (
+                        _cp.groupby(_cp["_plan_dt"].dt.normalize())
+                        .size()
+                        .reset_index(name="Количество")
+                    )
+                    plan_grouped.columns = ["Дата", "Количество"]
+                    plan_grouped["Тип"] = "План"
+                    dynamics_data.append(plan_grouped)
+            else:
+                plan_mask = df["_doc_plan_date"].notna()
+                if plan_mask.any():
+                    plan_grouped = (
+                        df[plan_mask]
+                        .groupby(df[plan_mask]["_doc_plan_date"].dt.normalize())
+                        .agg({"_rd_plan_inc": "sum"})
+                        .reset_index()
+                    )
+                    plan_grouped.columns = ["Дата", "Количество"]
+                    plan_grouped["Тип"] = "План"
+                    plan_grouped["Количество"] = plan_grouped["Количество"].fillna(0)
+                    dynamics_data.append(plan_grouped)
 
             # Fact data: group by actual issue date
             fact_mask = df["_doc_fact_date"].notna() & (df["in_production_numeric"] > 0)
@@ -31635,7 +31868,15 @@ def dashboard_documentation(
                 fact_df = dynamics_df[dynamics_df["Тип"] == "Факт"].sort_values("Дата")
                 today = date.today()
 
-                plan_total_msp = float(plan_df["Количество"].max()) if not plan_df.empty else 0.0
+                plan_total_msp = (
+                    float(len(_csv_secs_dyn))
+                    if not _csv_secs_dyn.empty
+                    else float(df["_rd_plan_inc"].sum())
+                    if "_rd_plan_inc" in df.columns
+                    else 0.0
+                )
+                if plan_total_msp <= 0.0 and not plan_df.empty:
+                    plan_total_msp = float(plan_df["Количество"].max())
                 plan_to_date_msp = 0.0
                 if not plan_df.empty:
                     dt_plan_msp = pd.to_datetime(plan_df["Дата"])
@@ -37609,115 +37850,13 @@ def _pred_fmt_doc_full(val) -> str:
 
 @st.cache_data(show_spinner=False, ttl=600)
 def _load_dogovor_lookup() -> dict[str, dict]:
-    """Q15 + Q30 (08.05.2026): lookup `1C_ID_DOG → текстовый № договора + сумма + контрагент`
-    из всех `web/1с_*_Dogovor.json`.
-
-    Берём максимально свежий снимок: для каждого `ID_Договора` оставляем запись
-    из самого нового файла (по дате модификации). Поля:
-      - "Номер_Договора" — текстовый номер (заказчик подтвердил Q30).
-      - "Сумма_Договора" — сумма договора (заказчик подтвердил Q15).
-      - "Наименование_Договора" — полное название.
-      - "Наименование_Контрагента" — для перекрёстной проверки.
-    Возвращает dict[guid_lower → dict].
-    """
-    import json as _json
-    from pathlib import Path as _Path
-    out: dict[str, dict] = {}
+    """Q15/Q30: lookup ID_Договора из dogovor_json в активной версии БД."""
     try:
-        web_dir = _Path(__file__).resolve().parent.parent / "web"
-        files = sorted(web_dir.glob("1[сc]_*_Dogovor.json"), key=lambda p: p.stat().st_mtime)
+        from web_db_read import load_dogovor_lookup_from_db
+
+        return load_dogovor_lookup_from_db()
     except Exception:
-        return out
-    for fp in files:
-        try:
-            data = _json.loads(_Path(fp).read_text(encoding="utf-8-sig"))
-        except Exception:
-            try:
-                data = _json.loads(_Path(fp).read_text(encoding="utf-8", errors="ignore"))
-            except Exception:
-                continue
-        if not isinstance(data, list):
-            continue
-        for r in data:
-            if not isinstance(r, dict):
-                continue
-            guid = str(r.get("ID_Договора") or "").strip().lower()
-            if not guid:
-                continue
-            num = str(
-                r.get("Номер_Договора")
-                or r.get("Номер_договора")
-                or r.get("Номер")
-                or ""
-            ).strip()
-            name = str(
-                r.get("Наименование_Договора") or r.get("Наименование") or ""
-            ).strip()
-            contractor = str(
-                r.get("Наименование_Контрагента") or r.get("Контрагент") or ""
-            ).strip()
-            summa = None
-            for _sk in ("Сумма_Договора", "СуммаДоговора"):
-                try:
-                    summa_raw = r.get(_sk)
-                    if summa_raw not in (None, "", "null"):
-                        summa = float(summa_raw)
-                        break
-                except (TypeError, ValueError):
-                    continue
-            # Q21 (08.05.2026): «Дата выдачи ИД» — заказчик подтвердил, что есть
-            # в выгрузке (поле `Дата_Получения_ИД` в Dogovor.json).
-            issue_id = str(
-                r.get("Дата_Получения_ИД") or r.get("ДатаПолученияИД") or ""
-            ).strip()
-            date_start = str(
-                r.get("Дата_Начала_Договора") or r.get("ДатаНачала") or ""
-            ).strip()
-            date_end = str(
-                r.get("Дата_Окончания_Договора")
-                or r.get("ДатаОкончанияДатаОкончания")
-                or r.get("ДатаОкончания")
-                or ""
-            ).strip()
-            project_name = str(
-                r.get("Наименование_Проекта") or r.get("Проект") or ""
-            ).strip()
-            project_id = str(r.get("ID_Проекта") or "").strip()
-            _new = {
-                "Номер_Договора": num,
-                "Сумма_Договора": summa,
-                "Наименование_Договора": name,
-                "Наименование_Контрагента": contractor,
-                "Дата_Получения_ИД": issue_id,
-                "Дата_Начала_Договора": date_start,
-                "Дата_Окончания_Договора": date_end,
-                "Наименование_Проекта": project_name,
-                "ID_Проекта": project_id,
-            }
-            if guid in out:
-                _prev = out[guid]
-                try:
-                    _prev_sum = float(_prev.get("Сумма_Договора") or 0)
-                except (TypeError, ValueError):
-                    _prev_sum = 0.0
-                try:
-                    _new_sum = float(_new.get("Сумма_Договора") or 0)
-                except (TypeError, ValueError):
-                    _new_sum = 0.0
-                if _new_sum <= 0 and _prev_sum > 0:
-                    _new["Сумма_Договора"] = _prev_sum
-                for _fk in (
-                    "Номер_Договора",
-                    "Наименование_Договора",
-                    "Наименование_Контрагента",
-                    "Наименование_Проекта",
-                ):
-                    if not str(_new.get(_fk) or "").strip() and str(_prev.get(_fk) or "").strip():
-                        _new[_fk] = _prev[_fk]
-            out[guid] = _new
-    return out
-
-
+        return {}
 
 _CONTRACT_NO_HOMO_MAP = {
 
@@ -39831,96 +39970,27 @@ def _compute_rd_exec_summary_from_csv_tessa(selected_projects: list[str] | None)
         rd_csv = None
     if rd_csv is None or getattr(rd_csv, "empty", True):
         return None
-    try:
-        rd = rd_csv.copy()
-    except Exception:
+
+    secs = _rd_plan_csv_sections_df(selected_projects)
+    if secs.empty:
         return None
-    rd.columns = [str(c).replace("\r", " ").replace("\n", " ").strip() for c in rd.columns]
+    pc = _rd_plan_csv_pick_columns(secs)
+    fcst_col = pc.get("forecast")
+    full_cipher_col = pc.get("full_cipher")
 
-    def _pick_col(predicate):
-        best = None
-        best_len = 10**9
-        for c in rd.columns:
-            lc = str(c).strip().casefold()
-            if predicate(lc):
-                ln = len(lc)
-                if ln < best_len:
-                    best_len = ln
-                    best = c
-        return best
-
-    plan_dt_col = _pick_col(
-        lambda lc: ("дата" in lc and "выдач" in lc and "договор" in lc)
-    )
-    qty_plan_col = _pick_col(lambda lc: ("количество" in lc and "план" in lc))
-    qty_total_col = None
-    for c in rd.columns:
-        if str(c).strip().casefold() == "количество":
-            qty_total_col = c
-            break
-    if qty_total_col is None:
-        for c in rd.columns:
-            lc = c.casefold()
-            if qty_plan_col and c == qty_plan_col:
-                continue
-            if "количество" not in lc:
-                continue
-            if "план" in lc or "прогноз" in lc:
-                continue
-            qty_total_col = c
-            break
-    fcst_col = _pick_col(lambda lc: ("прогноз" in lc and "дата" in lc))
-    full_cipher_col = _pick_col(lambda lc: ("шифр" in lc and "полный" in lc))
-
-    if not plan_dt_col or plan_dt_col not in rd.columns:
-        return None
-
-    proj_csv = (
-        "project name"
-        if "project name" in rd.columns
-        else _pick_col(lambda lc: lc in ("проект",) or ("проект" in lc and "name" in lc))
-    )
-    if selected_projects:
-        _pk_set = {_project_filter_norm_key(p) for p in selected_projects}
-        if proj_csv and proj_csv in rd.columns:
-            rd = rd[rd[proj_csv].map(_project_filter_norm_key).isin(_pk_set)].copy()
-        elif proj_csv:
-            pass
-        else:
-            pass
-    if rd.empty:
-        return None
-
-    def _num_series(col_name: str | None) -> pd.Series:
-        if not col_name or col_name not in rd.columns:
-            return pd.Series(1.0, index=rd.index)
-        return pd.to_numeric(
-            rd[col_name]
-            .astype(str)
-            .str.replace(" ", "", regex=False)
-            .str.replace(",", ".", regex=False),
-            errors="coerce",
-        ).fillna(0.0)
-
-    qty_tot = _num_series(qty_total_col)
-    if float(qty_tot.sum()) <= 0.0:
-        qty_tot = pd.Series(1.0, index=rd.index)
-    qty_plan = _num_series(qty_plan_col)
-    plan_dt = _rd_naive_datetime_series(rd[plan_dt_col])
+    plan_dt = _rd_naive_datetime_series(secs["_plan_dt"])
     fcst_dt = (
-        _rd_naive_datetime_series(rd[fcst_col])
-        if fcst_col and fcst_col in rd.columns
-        else pd.Series(pd.NaT, index=rd.index)
+        _rd_naive_datetime_series(secs["_fact_dt"])
+        if "_fact_dt" in secs.columns
+        else pd.Series(pd.NaT, index=secs.index)
     )
 
     today_d = date.today()
     ts_today = pd.Timestamp(today_d)
 
-    plan_total = float(qty_tot.sum())
+    plan_total = float(len(secs))
     m_plan_to = plan_dt.notna() & (plan_dt.dt.normalize() <= ts_today)
-    plan_to_date = float(qty_plan[m_plan_to].sum())
-    if plan_to_date <= 0.0 and m_plan_to.any():
-        plan_to_date = float(qty_tot[m_plan_to].sum())
+    plan_to_date = float(m_plan_to.sum())
 
     max_plan_date = None
     if plan_dt.notna().any():
@@ -39965,14 +40035,13 @@ def _compute_rd_exec_summary_from_csv_tessa(selected_projects: list[str] | None)
                     doc_ids.append(s)
 
     not_issued = 0.0
-    if full_cipher_col and full_cipher_col in rd.columns:
-        for _i, row in rd.iterrows():
-            cf = str(row.get(full_cipher_col, "") or "").strip()
-            q = float(qty_tot.loc[_i]) if _i in qty_tot.index else 1.0
-            if not cf or cf.lower() in ("nan", "none"):
+    if full_cipher_col and full_cipher_col in secs.columns:
+        for _i, row in secs.iterrows():
+            cf = _rd_csv_cell_str(row.get(full_cipher_col))
+            if not cf:
                 continue
             if cf.casefold() not in internal_ids:
-                not_issued += max(q, 0.0)
+                not_issued += 1.0
     else:
         not_issued = max(plan_total - float(len(internal_ids)), 0.0)
 

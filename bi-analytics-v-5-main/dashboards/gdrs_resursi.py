@@ -662,26 +662,37 @@ class GdrsTerminationIndex:
 
 
 def load_gdrs_termination_index(
-    dogovor_paths: Iterable[Path | str],
+    dogovor_paths: Iterable[Path | str] = (),
+    *,
+    dogovor_records: dict[str, list[dict]] | None = None,
 ) -> GdrsTerminationIndex:
     """Минимальная дата расторжения по (project_id, contractor_id) из последнего Dogovor.json."""
-    dated: list[tuple[pd.Timestamp, Path]] = []
-    undated: list[Path] = []
-    for raw in dogovor_paths:
-        p = Path(raw)
-        fd = _dogovor_file_date(p)
+    dated: list[tuple[pd.Timestamp, str | Path]] = []
+    undated: list[str | Path] = []
+    if dogovor_records is not None:
+        items = list(dogovor_records.keys())
+    else:
+        items = list(dogovor_paths)
+    for raw in items:
+        fd = _dogovor_file_date(raw)
         if fd is None:
-            undated.append(p)
+            undated.append(raw)
             continue
-        dated.append((fd, p))
+        dated.append((fd, raw))
     if not dated:
-        path = undated[0] if undated else None
+        chosen = undated[0] if undated else None
     else:
         dated.sort(key=lambda t: t[0])
-        path = dated[-1][1]
-    if path is None:
+        chosen = dated[-1][1]
+    if chosen is None:
         return GdrsTerminationIndex.empty()
-    raw = load_plan_from_dogovor(path, snapshot_date=None)
+    if dogovor_records is not None:
+        raw = load_plan_from_dogovor(
+            records=dogovor_records.get(str(chosen), []),
+            snapshot_date=None,
+        )
+    else:
+        raw = load_plan_from_dogovor(Path(chosen), snapshot_date=None)
     if raw is None or raw.empty or "date_termination" not in raw.columns:
         return GdrsTerminationIndex.empty()
     sentinel = pd.Timestamp("0001-01-01")
@@ -772,16 +783,20 @@ def gdrs_filter_fact_by_termination(
     return work.loc[mask].copy()
 
 
-def load_1c_kontr_index(paths: Iterable[Path | str]) -> GdrsKontrIndex:
+def load_1c_kontr_index(
+    paths: Iterable[Path | str] = (),
+    *,
+    records: Iterable[dict] | None = None,
+) -> GdrsKontrIndex:
     ids: set[str] = set()
     norm_names: set[str] = set()
     id_by_norm: dict[str, str] = {}
     name_by_norm: dict[str, str] = {}
     name_by_id: dict[str, str] = {}
-    for p in paths:
-        data = _safe_json(Path(p))
+
+    def _consume(data):
         if not isinstance(data, list):
-            continue
+            return
         for r in data:
             if not isinstance(r, dict):
                 continue
@@ -800,6 +815,12 @@ def load_1c_kontr_index(paths: Iterable[Path | str]) -> GdrsKontrIndex:
                     name_by_norm.setdefault(nn, cname)
                 if cid and nn not in id_by_norm:
                     id_by_norm[nn] = cid
+
+    if records is not None:
+        _consume(list(records))
+    else:
+        for p in paths:
+            _consume(_safe_json(Path(p)))
     return GdrsKontrIndex(
         frozenset(ids),
         frozenset(norm_names),
@@ -810,14 +831,16 @@ def load_1c_kontr_index(paths: Iterable[Path | str]) -> GdrsKontrIndex:
 
 
 def build_dogovor_contractor_id_lookup(
-    dogovor_paths: Iterable[Path | str],
+    dogovor_paths: Iterable[Path | str] = (),
+    *,
+    dogovor_records: dict[str, list[dict]] | None = None,
 ) -> tuple[dict[tuple[str, str], str], dict[str, str]]:
     by_proj: dict[tuple[str, str], str] = {}
     by_name: dict[str, str] = {}
-    for p in dogovor_paths:
-        df = load_plan_from_dogovor(Path(p), snapshot_date=None)
+
+    def _consume(df: pd.DataFrame) -> None:
         if df is None or df.empty:
-            continue
+            return
         for _, r in df.iterrows():
             pid = str(r.get("project_id", "")).strip()
             cid = str(r.get("contractor_id", "")).strip()
@@ -829,19 +852,28 @@ def build_dogovor_contractor_id_lookup(
                 by_name.setdefault(nn, cid)
                 if pid:
                     by_proj.setdefault((pid, nn), cid)
+
+    if dogovor_records is not None:
+        for recs in dogovor_records.values():
+            _consume(load_plan_from_dogovor(records=recs, snapshot_date=None))
+    else:
+        for p in dogovor_paths:
+            _consume(load_plan_from_dogovor(Path(p), snapshot_date=None))
     return by_proj, by_name
 
 
 def build_dogovor_project_id_lookup(
-    dogovor_paths: Iterable[Path | str],
+    dogovor_paths: Iterable[Path | str] = (),
+    *,
+    dogovor_records: dict[str, list[dict]] | None = None,
 ) -> tuple[dict[str, str], dict[tuple[str, str], str]]:
     """norm(project_name) → project_id; (norm(project), norm(contractor)) → project_id."""
     by_name: dict[str, str] = {}
     by_pair: dict[tuple[str, str], str] = {}
-    for p in dogovor_paths:
-        df = load_plan_from_dogovor(Path(p), snapshot_date=None)
+
+    def _consume(df: pd.DataFrame) -> None:
         if df is None or df.empty:
-            continue
+            return
         for _, r in df.iterrows():
             pid = str(r.get("project_id", "")).strip()
             pname = str(r.get("project_name", "")).strip()
@@ -854,6 +886,13 @@ def build_dogovor_project_id_lookup(
                 by_name.setdefault(pn, pid)
             if pn and cn:
                 by_pair.setdefault((pn, cn), pid)
+
+    if dogovor_records is not None:
+        for recs in dogovor_records.values():
+            _consume(load_plan_from_dogovor(records=recs, snapshot_date=None))
+    else:
+        for p in dogovor_paths:
+            _consume(load_plan_from_dogovor(Path(p), snapshot_date=None))
     return by_name, by_pair
 
 
@@ -861,11 +900,15 @@ def enrich_gdrs_fact_project_ids(
     df: pd.DataFrame,
     *,
     dogovor_paths: Optional[Iterable[Path | str]] = None,
+    dogovor_records: dict[str, list[dict]] | None = None,
 ) -> pd.DataFrame:
     if df is None or df.empty:
         return df
     work = df.copy()
-    by_name, by_pair = build_dogovor_project_id_lookup(dogovor_paths or [])
+    by_name, by_pair = build_dogovor_project_id_lookup(
+        dogovor_paths or [],
+        dogovor_records=dogovor_records,
+    )
 
     def _resolve_pid(row: pd.Series) -> str:
         cur = str(row.get("project_id", "")).strip()
@@ -887,12 +930,16 @@ def enrich_gdrs_fact_contractor_ids(
     df: pd.DataFrame,
     *,
     dogovor_paths: Optional[Iterable[Path | str]] = None,
+    dogovor_records: dict[str, list[dict]] | None = None,
     kontr: Optional[GdrsKontrIndex] = None,
 ) -> pd.DataFrame:
     if df is None or df.empty:
         return df
     work = df.copy()
-    by_proj, by_name = build_dogovor_contractor_id_lookup(dogovor_paths or [])
+    by_proj, by_name = build_dogovor_contractor_id_lookup(
+        dogovor_paths or [],
+        dogovor_records=dogovor_records,
+    )
 
     def _resolve_id(row: pd.Series) -> str:
         cur = _sanitize_contractor_id(row.get("contractor_id", ""))
@@ -1200,18 +1247,22 @@ def _snapshot_history(history: object, target_date: Optional[pd.Timestamp]) -> O
     return None
 
 
+def _dogovor_file_date(path) -> Optional[pd.Timestamp]:
+    """Дата снапшота из имени файла «1с_DD-MM-YYYY_…» → Timestamp (или None)."""
+    return _source_file_date(path)
+
+
 def load_plan_from_dogovor(
-    path: Path,
+    path: Path | str | None = None,
     *,
+    records: list[dict] | None = None,
     snapshot_date: Optional[pd.Timestamp] = None,
 ) -> pd.DataFrame:
-    """Из 1с_*_Dogovor.json (по состоянию на `snapshot_date`) → DataFrame.
-
-    Поля «Количество_Людей» и «Количество_Техники» — массивы вида
-    `[{Дата: ..., Количество: ...}, ...]`. snapshot берётся «не позднее snapshot_date».
-    Если snapshot_date is None — берётся последнее значение.
-    """
-    data = _safe_json(Path(path))
+    """Из 1с_*_Dogovor.json (по состоянию на `snapshot_date`) → DataFrame."""
+    if records is not None:
+        data = records
+    else:
+        data = _safe_json(Path(path))
     if not isinstance(data, list):
         return pd.DataFrame(
             columns=[
@@ -1265,16 +1316,16 @@ def load_plan_from_dogovor(
 
 
 def load_plan_from_spravochniki(
-    path: Path,
+    path: Path | str | None = None,
     *,
+    records: list[dict] | None = None,
     snapshot_date: Optional[pd.Timestamp] = None,
 ) -> pd.DataFrame:
-    """Из 1с_*_spravochniki.json (snapshot на дату) → DataFrame с агрегированным планом.
-
-    «КоличествоРаботников» и «КоличествоСпецТехники» — массивы вида
-    `[{Дата, Количество}, ...]`.
-    """
-    data = _safe_json(Path(path))
+    """Из 1с_*_spravochniki.json (snapshot на дату) → DataFrame с агрегированным планом."""
+    if records is not None:
+        data = records
+    else:
+        data = _safe_json(Path(path))
     if not isinstance(data, list):
         return pd.DataFrame(columns=["project_id", "contractor_id", "plan_workers", "plan_equipment"])
     rows = []
@@ -1303,9 +1354,17 @@ def _first_nonempty(series) -> str:
     return ""
 
 
-def _source_file_date(path: Path) -> Optional[pd.Timestamp]:
+def _source_file_name(path) -> str:
+    if isinstance(path, str):
+        return Path(path).name
+    if hasattr(path, "name"):
+        return str(getattr(path, "name"))
+    return Path(path).name
+
+
+def _source_file_date(path) -> Optional[pd.Timestamp]:
     """Дата снапшота из имени файла «…_DD-MM-YYYY_…» (Dogovor, resursi) → Timestamp."""
-    m = _FILE_DATE_RE.search(Path(path).name)
+    m = _FILE_DATE_RE.search(_source_file_name(path))
     if not m:
         return None
     dd, mm, yyyy = m.groups()
@@ -1313,11 +1372,6 @@ def _source_file_date(path: Path) -> Optional[pd.Timestamp]:
         return pd.Timestamp(year=int(yyyy), month=int(mm), day=int(dd))
     except ValueError:
         return None
-
-
-def _dogovor_file_date(path: Path) -> Optional[pd.Timestamp]:
-    """Дата снапшота из имени файла «1с_DD-MM-YYYY_…» → Timestamp (или None)."""
-    return _source_file_date(path)
 
 
 def _pick_dogovor_path_for_snapshot(
@@ -1350,9 +1404,11 @@ def _pick_dogovor_path_for_snapshot(
 
 
 def load_plan_aggregate(
-    dogovor_paths: Iterable[Path | str],
-    sprav_paths: Iterable[Path | str],
+    dogovor_paths: Iterable[Path | str] = (),
+    sprav_paths: Iterable[Path | str] = (),
     *,
+    dogovor_records: dict[str, list[dict]] | None = None,
+    sprav_records: dict[str, list[dict]] | None = None,
     snapshot_date: Optional[pd.Timestamp] = None,
 ) -> pd.DataFrame:
     """Загрузить план из ВСЕХ файлов Dogovor.json + spravochniki.json
@@ -1373,8 +1429,11 @@ def load_plan_aggregate(
         """Ключ схлопывания: сигнатура договора «NN-СА/YY» или «name::<норм. имя>»."""
         return _gdrs_dogovor_contract_key(cn)
 
-    def _per_file_dog(p: Path) -> pd.DataFrame:
-        df = load_plan_from_dogovor(Path(p), snapshot_date=snapshot_date)
+    def _per_file_dog(p: Path | str, *, records: list[dict] | None = None) -> pd.DataFrame:
+        if records is not None:
+            df = load_plan_from_dogovor(records=records, snapshot_date=snapshot_date)
+        else:
+            df = load_plan_from_dogovor(Path(p), snapshot_date=snapshot_date)
         if df is None or df.empty:
             return pd.DataFrame()
         df = df[
@@ -1418,8 +1477,11 @@ def load_plan_aggregate(
             ]
         ]
 
-    def _per_file_sprav(p: Path) -> pd.DataFrame:
-        df = load_plan_from_spravochniki(Path(p), snapshot_date=snapshot_date)
+    def _per_file_sprav(p: Path | str, *, records: list[dict] | None = None) -> pd.DataFrame:
+        if records is not None:
+            df = load_plan_from_spravochniki(records=records, snapshot_date=snapshot_date)
+        else:
+            df = load_plan_from_spravochniki(Path(p), snapshot_date=snapshot_date)
         if df is None or df.empty:
             return pd.DataFrame()
         df = df[(df["project_id"].astype(str).str.strip() != "") & (df["contractor_id"].astype(str).str.strip() != "")]
@@ -1432,18 +1494,21 @@ def load_plan_aggregate(
             .sum(min_count=1)
         )
 
-    def _ordered_with_index(paths, fn) -> pd.DataFrame:
-        """Собрать кадры по файлам, упорядочив по дате снапшота из имени (asc).
-        Файлы со снапшотом > snapshot_date отбрасываются (берём «последний ≤ даты»).
-        Если таких нет — берём самый поздний доступный файл: в актуальной выгрузке
-        история «Количество_Людей» полнее, чем в ранних снапшотах (февраль при выгрузке в мае).
-        Файлы без даты в имени — fallback. `__order__` растёт с датой."""
+    def _ordered_with_index(paths, fn, *, records_map: dict[str, list[dict]] | None = None) -> pd.DataFrame:
+        """Собрать кадры по файлам, упорядочив по дате снапшота из имени (asc)."""
         snap = pd.Timestamp(snapshot_date).normalize() if snapshot_date is not None else None
         items_le: list[tuple[Optional[pd.Timestamp], pd.DataFrame]] = []
         items_future: list[tuple[Optional[pd.Timestamp], pd.DataFrame]] = []
-        for p in paths:
-            fdate = _dogovor_file_date(Path(p))
-            fr = fn(Path(p))
+        if records_map is not None:
+            path_iter = sorted(records_map.keys())
+        else:
+            path_iter = list(paths)
+        for p in path_iter:
+            fdate = _dogovor_file_date(p)
+            if records_map is not None:
+                fr = fn(p, records=records_map.get(str(p), []))
+            else:
+                fr = fn(Path(p))
             if fr is None or fr.empty:
                 continue
             if snap is not None and fdate is not None and fdate > snap:
@@ -1459,8 +1524,14 @@ def load_plan_aggregate(
             fr["__order__"] = i
         return pd.concat([fr for _, fr in items], ignore_index=True) if items else pd.DataFrame()
 
-    dog_all = _ordered_with_index(dogovor_paths, _per_file_dog)
-    sprav_all = _ordered_with_index(sprav_paths, _per_file_sprav)
+    if dogovor_records is not None:
+        dog_all = _ordered_with_index([], _per_file_dog, records_map=dogovor_records)
+    else:
+        dog_all = _ordered_with_index(dogovor_paths, _per_file_dog)
+    if sprav_records is not None:
+        sprav_all = _ordered_with_index([], _per_file_sprav, records_map=sprav_records)
+    else:
+        sprav_all = _ordered_with_index(sprav_paths, _per_file_sprav)
 
     if not dog_all.empty:
         dog_all = dog_all.sort_values("__order__")
@@ -1586,6 +1657,74 @@ def load_1c_dannye_article_maps(
                         acc_sig_pc[(sig, pn, cn)].add(art_s)
             if proj and contr:
                 acc_pc[(pn, cn)].add(art_s)
+    out_dog = {k: " · ".join(sorted(v)) for k, v in acc_dog.items() if k}
+    out_pc = {k: " · ".join(sorted(v)) for k, v in acc_pc.items() if k[0] and k[1]}
+    out_sig_pc_sets = {k: set(v) for k, v in acc_sig_pc.items()}
+    out_sig_sets = {k: set(v) for k, v in acc_sig.items()}
+    pc_sets = {k: set(v) for k, v in acc_pc.items() if k[0] and k[1]}
+    return out_dog, out_pc, out_sig_pc_sets, out_sig_sets, pc_sets
+
+
+def load_1c_dannye_article_maps_from_df(
+    df: pd.DataFrame,
+) -> tuple[
+    dict[str, str],
+    dict[tuple[str, str], str],
+    dict[tuple[str, str, str], set[str]],
+    dict[str, set[str]],
+    dict[tuple[str, str], set[str]],
+]:
+    """Как load_1c_dannye_article_maps, но из строк reference_dannye в БД."""
+    if df is None or df.empty:
+        return {}, {}, {}, {}, {}
+    rows = df.to_dict(orient="records")
+    return load_1c_dannye_article_maps_from_records(rows)
+
+
+def load_1c_dannye_article_maps_from_records(
+    records: Iterable[dict],
+) -> tuple[
+    dict[str, str],
+    dict[tuple[str, str], str],
+    dict[tuple[str, str, str], set[str]],
+    dict[str, set[str]],
+    dict[tuple[str, str], set[str]],
+]:
+    from collections import defaultdict
+
+    acc_dog: dict[str, set[str]] = defaultdict(set)
+    acc_pc: dict[tuple[str, str], set[str]] = defaultdict(set)
+    acc_sig: dict[str, set[str]] = defaultdict(set)
+    acc_sig_pc: dict[tuple[str, str, str], set[str]] = defaultdict(set)
+    for r in records:
+        if not isinstance(r, dict):
+            continue
+        art = _pick_row_field_ci(
+            r,
+            "СтатьяОборотов",
+            "Статья оборотов",
+            "Article",
+        )
+        if not art:
+            continue
+        art_s = str(art).strip()
+        dog = _pick_row_field_ci(
+            r,
+            "ДоговорКонтрагента",
+            "Договор контрагента",
+        )
+        proj = _pick_row_field_ci(r, "Проект", "Project")
+        contr = _pick_row_field_ci(r, "Контрагент", "Контрагенты", "Counterparty")
+        pn = normalize_name(proj) if proj else ""
+        cn = normalize_name(contr) if contr else ""
+        if dog:
+            acc_dog[normalize_name(dog)].add(art_s)
+            for sig in contract_signatures(dog):
+                acc_sig[sig].add(art_s)
+                if pn and cn:
+                    acc_sig_pc[(sig, pn, cn)].add(art_s)
+        if proj and contr:
+            acc_pc[(pn, cn)].add(art_s)
     out_dog = {k: " · ".join(sorted(v)) for k, v in acc_dog.items() if k}
     out_pc = {k: " · ".join(sorted(v)) for k, v in acc_pc.items() if k[0] and k[1]}
     out_sig_pc_sets = {k: set(v) for k, v in acc_sig_pc.items()}
@@ -2502,9 +2641,11 @@ def gdrs_filter_fact_by_months(
 
 def gdrs_contractor_filter_options(
     long_fact: pd.DataFrame,
-    dogovor_paths: Iterable[Path | str],
-    sprav_paths: Iterable[Path | str],
+    dogovor_paths: Iterable[Path | str] = (),
+    sprav_paths: Iterable[Path | str] = (),
     *,
+    dogovor_records: dict[str, list[dict]] | None = None,
+    sprav_records: dict[str, list[dict]] | None = None,
     projects: Optional[list[str]] = None,
     snapshot_date: Optional[pd.Timestamp] = None,
     kontr: Optional[GdrsKontrIndex] = None,
@@ -2529,7 +2670,13 @@ def gdrs_contractor_filter_options(
                 _, canon = gdrs_kontr_contractor_display("", s, kontr)
                 names.add(canon or s)
     try:
-        plan = load_plan_aggregate(dogovor_paths, sprav_paths, snapshot_date=snapshot_date)
+        plan = load_plan_aggregate(
+            dogovor_paths,
+            sprav_paths,
+            dogovor_records=dogovor_records,
+            sprav_records=sprav_records,
+            snapshot_date=snapshot_date,
+        )
         plan = _filter_plan_slice(plan, projects, None)
         if plan is not None and not plan.empty:
             if kontr is not None:
@@ -3883,56 +4030,56 @@ def _gdrs_paths_mtime_sig(paths) -> tuple:
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def _gdrs_cached_load_resursi(paths_sig: tuple) -> pd.DataFrame:
-    from pathlib import Path as _P
+def _gdrs_cached_load_resursi(version_id: int, db_mtime: float) -> pd.DataFrame:
+    from web_db_read import load_gdrs_fact_long
 
-    return load_resursi_files([_P(p[0]) for p in paths_sig])
+    return load_gdrs_fact_long(int(version_id))
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def _gdrs_cached_plan_aggregate(
-    dog_sig: tuple,
-    spr_sig: tuple,
+    version_id: int,
+    db_mtime: float,
     snapshot_iso: str,
 ) -> pd.DataFrame:
-    from pathlib import Path as _P
+    from web_db_read import json_records_by_source
 
     snap = pd.Timestamp(snapshot_iso) if snapshot_iso else None
+    dog = json_records_by_source(int(version_id), "dogovor_json")
+    spr = json_records_by_source(int(version_id), "spravochniki_json")
     return load_plan_aggregate(
-        [_P(p[0]) for p in dog_sig],
-        [_P(p[0]) for p in spr_sig],
+        dogovor_records=dog,
+        sprav_records=spr,
         snapshot_date=snap,
     )
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def _gdrs_cached_dannye_maps(dannye_sig: tuple):
-    from pathlib import Path as _P
+def _gdrs_cached_dannye_maps(version_id: int, db_mtime: float):
+    from web_db_read import load_version_dataframe
 
-    return load_1c_dannye_article_maps([_P(p[0]) for p in dannye_sig])
+    df = load_version_dataframe(int(version_id), "reference_dannye")
+    return load_1c_dannye_article_maps_from_df(df)
 
 
-def _gdrs_plan_loader(dog_sig: tuple, spr_sig: tuple):
+def _gdrs_plan_loader(version_id: int, db_mtime: float):
     def _load(snap: pd.Timestamp) -> pd.DataFrame:
         iso = pd.Timestamp(snap).normalize().isoformat()
-        return _gdrs_cached_plan_aggregate(dog_sig, spr_sig, iso)
+        return _gdrs_cached_plan_aggregate(version_id, db_mtime, iso)
 
     return _load
 
 
 def warm_gdrs_disk_caches() -> None:
-    """Прогрев CSV/JSON-кэша ГДРС до отрисовки отчёта."""
+    """Прогрев кэша ГДРС из БД до отрисовки отчёта."""
     try:
-        root = Path(__file__).resolve().parent.parent
-        web_dir = root / "web"
-        ai_dir = web_dir / "AI"
-        resursi_files = sorted(ai_dir.glob("*resursi*.csv"))
-        if not resursi_files:
-            resursi_files = sorted(web_dir.glob("*resursi*.csv"))
-        if resursi_files:
-            _gdrs_cached_load_resursi(_gdrs_paths_mtime_sig(resursi_files))
-        dannye_paths = sorted(web_dir.glob("*dannye*.json"))
-        if dannye_paths:
-            _gdrs_cached_dannye_maps(_gdrs_paths_mtime_sig(dannye_paths))
+        from web_db_read import resolve_version_id, web_db_mtime
+
+        vid = resolve_version_id()
+        if not vid:
+            return
+        mtime = web_db_mtime()
+        _gdrs_cached_load_resursi(vid, mtime)
+        _gdrs_cached_dannye_maps(vid, mtime)
     except Exception:
         pass
