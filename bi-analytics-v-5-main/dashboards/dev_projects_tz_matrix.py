@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Матрица «Девелоперские проекты» по ТЗ (правки): строки-показатели; у вех — План / Факт / Откл.,
-у блока «ПРЕДПИСАНИЯ» — Всего / Критические / Неустраненные предписания.
+у блока «ПРЕДПИСАНИЯ» — Всего / Критические / Критические просроченные предписания.
 Источники: MSP (canonical колонки после web_loader), project_data (БДДС), tessa_tasks_data.
 """
 from __future__ import annotations
@@ -55,7 +55,7 @@ def _dearrow_object_columns(df: "pd.DataFrame") -> "pd.DataFrame":
 _DEV_MATRIX_PREDS_SUBCOLS: Dict[str, str] = {
     "plan": "Всего предписаний",
     "fact": "Критические предписания",
-    "otkl": "Неустраненные предписания",
+    "otkl": "Критические просроченные предписания",
 }
 
 # Стабильные ключи строк матрицы (порядок = порядок колонок отчёта), для titles/matches в JSON.
@@ -608,11 +608,11 @@ def _fmt_delta_days(d: Optional[int]) -> str:
         return "Н/Д"
     if di == 0:
         return "0 дн."
-    sign = "+" if di > 0 else ""
-    return f"{sign}{di} дн."
+    sign = "+" if di > 0 else "-" if di < 0 else ""
+    return f"{sign}{abs(di)} дн."
 
 
-_OTKL_DAYS_DISPLAY_RE = re.compile(r"([+-]?\d+)\s*дн", re.IGNORECASE)
+_OTKL_DAYS_DISPLAY_RE = re.compile(r"([+\-−]?\d+)\s*дн", re.IGNORECASE)
 
 
 def _parse_otkl_mln_display(s: Any) -> Optional[float]:
@@ -624,7 +624,7 @@ def _parse_otkl_mln_display(s: Any) -> Optional[float]:
         return None
     if _OTKL_DAYS_DISPLAY_RE.search(t):
         return None
-    t = t.replace("\xa0", "").replace("\u202f", "").replace(" ", "").replace(",", ".")
+    t = t.replace("\xa0", "").replace("\u202f", "").replace(" ", "").replace(",", ".").replace("−", "-")
     try:
         return float(t)
     except ValueError:
@@ -641,7 +641,7 @@ def _parse_otkl_days_display(s: Any) -> Optional[int]:
     if not m:
         return None
     try:
-        v = int(m.group(1))
+        v = int(m.group(1).replace("−", "-"))
         return v
     except ValueError:
         return None
@@ -1353,12 +1353,14 @@ def _tessa_pred_critical_series(pred: pd.DataFrame) -> pd.Series:
             .str.strip()
             .str.casefold()
         )
-        crit = _tag_norm.isin({"критичный", "критическое", "критичное", "critical"})
+        crit = _tag_norm.isin(
+            {"критичный", "критический", "критическое", "критичное", "critical"}
+        )
     return crit
 
 
 def _tessa_counts(ss: Any, project_name_hint: str = "") -> Tuple[str, str, str, str]:
-    """Метрики вехи «ПРЕДПИСАНИЯ»: всего / критические / неустранённые (по уникальным карточкам)."""
+    """Метрики вехи «ПРЕДПИСАНИЯ»: всего / критические / критические просроченные (по карточкам)."""
     pred, kk, src_key = _resolve_tessa_pred_source(ss)
     if pred.empty:
         # Если хоть один из источников загружен, но без «Предписания» в KindName —
@@ -1421,52 +1423,51 @@ def _tessa_counts(ss: Any, project_name_hint: str = "") -> Tuple[str, str, str, 
     card_resolved = pred.groupby("_card", group_keys=False)["_resolved"].agg(lambda s: bool(s.any()))
     card_critical = pred.groupby("_card", group_keys=False)["_critical"].agg(lambda s: bool(s.any()))
     n_total = int(len(card_resolved))
-    n_unresolved = int((~card_resolved).sum())
     n_critical = int((~card_resolved & card_critical).sum())
 
-    tail_hint = ""
-    overdue_n = 0
+    card_overdue = pd.Series(False, index=card_resolved.index)
     if due_c and due_c in pred.columns:
         now = pd.Timestamp.now().normalize()
-        open_rows = pred.loc[~pred["_resolved"].astype(bool)]
+        open_rows = pred.loc[~pred["_resolved"].astype(bool)].copy()
         if not open_rows.empty:
             dts = _tessa_to_dt(open_rows[due_c])
-            overdue_n = int(((dts.dt.normalize() < now) & dts.notna()).sum())
-            if overdue_n:
-                tail_hint = f"Просрочено (не устранено, срок прошёл): {overdue_n}"
+            open_rows["_overdue"] = (dts.dt.normalize() < now) & dts.notna()
+            card_overdue = open_rows.groupby("_card", group_keys=False)["_overdue"].agg(
+                lambda s: bool(s.any())
+            ).reindex(card_resolved.index, fill_value=False)
 
-    return str(n_total), str(n_critical), str(n_unresolved), tail_hint
+    n_critical_overdue = int(
+        (~card_resolved & card_critical & card_overdue.fillna(False)).sum()
+    )
+
+    tail_hint = ""
+    if n_critical_overdue:
+        tail_hint = f"Критические просроченные (срок сдачи прошёл): {n_critical_overdue}"
+
+    return str(n_total), str(n_critical), str(n_critical_overdue), tail_hint
 
 
 def _predpisaniya_combined(mdf: pd.DataFrame, ss: Any, project_name: str = "") -> Tuple[str, str, str, bool, str]:
     """
     Строка «ПРЕДПИСАНИЯ»: только TESSA (как смежные отчёты по tessa_*), с фильтром по проекту MSP.
-    Колонки: всего / критические / неустранённые предписания (ТЗ 04.05).
+    Колонки: всего / критические / критические просроченные предписания (ТЗ 04.05).
     """
-    n_total, n_critical, n_unresolved, hint = _tessa_counts(ss, project_name)
-    if not (n_total == "Н/Д" and n_critical == "Н/Д" and n_unresolved == "Н/Д"):
+    n_total, n_critical, n_critical_overdue, hint = _tessa_counts(ss, project_name)
+    if not (n_total == "Н/Д" and n_critical == "Н/Д" and n_critical_overdue == "Н/Д"):
         try:
-            nu = int(str(n_unresolved).strip())
+            nco = int(str(n_critical_overdue).strip())
         except (TypeError, ValueError):
-            nu = 0
+            nco = 0
         try:
             nc = int(str(n_critical).strip())
         except (TypeError, ValueError):
             nc = 0
-        _oh = 0
-        if hint and "Просрочено" in str(hint):
-            try:
-                _m = re.search(r"(\d+)\s*$", str(hint))
-                if _m:
-                    _oh = int(_m.group(1))
-            except Exception:
-                _oh = 0
-        warn_t = nu > 0 or nc > 0 or _oh > 0
-        return n_total, n_critical, n_unresolved, warn_t, hint
+        warn_t = nco > 0 or nc > 0
+        return n_total, n_critical, n_critical_overdue, warn_t, hint
     return (
         n_total,
         n_critical,
-        n_unresolved,
+        n_critical_overdue,
         False,
         (hint or "Нет данных Tessa по предписаниям (tessa_tasks_data / tessa_data не загружены или без KindName)."),
     )
@@ -2194,6 +2195,14 @@ def build_dev_tz_matrix_rows(
         # десятых (1 знак после запятой), а не до сотых.
         return f"{v:.1f}".replace(".", ",")
 
+    def _fmtml_otkl(v: float) -> str:
+        """Отклонение «Выборка ДС»: явный +/− по знаку (План − Факт)."""
+        if v > 0:
+            return f"+{_fmtml(v)}"
+        if v < 0:
+            return f"-{_fmtml(abs(v))}"
+        return _fmtml(v)
+
     rk_ds = str(next(_rk))
     pm, fm, om = _dev_matrix_bddds_totals_mln(ss, scope_label, project_data, mdf)
     if pm is None:
@@ -2212,20 +2221,22 @@ def build_dev_tz_matrix_rows(
             effective_title(rk_ds, "Выборка ДС, млн руб."),
             _fmtml(pm),
             _fmtml(fm),
-            _fmtml(om),
+            _fmtml_otkl(om),
             otkl_fact_lt_plan=bool(fm < pm),
             phase="life",
             row_key=rk_ds,
         )
 
     rk_tp = str(next(_rk))
-    n_total, n_critical, n_unresolved, warn_t, _tessa_hint = _predpisaniya_combined(mdf, ss, scope_label)
+    n_total, n_critical, n_critical_overdue, warn_t, _tessa_hint = _predpisaniya_combined(
+        mdf, ss, scope_label
+    )
     add_row(
         "ТЕССА",
         effective_title(rk_tp, "ПРЕДПИСАНИЯ"),
         n_total,
         n_critical,
-        n_unresolved,
+        n_critical_overdue,
         warn_directives=warn_t,
         subcolumn_labels=dict(_DEV_MATRIX_PREDS_SUBCOLS),
         phase="life",
