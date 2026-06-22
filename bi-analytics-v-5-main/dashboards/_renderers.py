@@ -1373,6 +1373,13 @@ from utils import (
     budget_table_to_html,
     mark_html_table_sortable,
     format_table_title,
+    format_chart_title,
+    _title_has_chart_keyword,
+    format_report_granularity_label,
+    format_date_range_title_suffix,
+    report_title_name,
+    report_title_parts,
+    report_chart_caption_body,
     render_table_subheader,
     format_million_rub,
     to_million_rub,
@@ -3019,7 +3026,14 @@ def _chart_caption_below(title: str, *, tight: bool = False) -> None:
     """Заголовок под графиком (после подписей значений на столбцах/точках)."""
     if not title:
         return
-    esc = html_module.escape(sanitize_display_label(str(title)))
+    t = str(title).strip()
+    if _title_has_chart_keyword(t):
+        cap = sanitize_display_label(t)
+    elif len(t) <= 96 and t.count(".") <= 1:
+        cap = format_chart_title(t)
+    else:
+        cap = sanitize_display_label(t)
+    esc = html_module.escape(cap)
     _mb = "1.35rem" if tight else "1.15rem"
     _mt = "0.05rem" if tight else "0.12rem"
     st.markdown(
@@ -7059,7 +7073,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         # Show by project if project is in group
         if "project name" in group_cols:
             if not hide_shared_filters:
-                render_table_subheader(st, "По проектам")
+                render_table_subheader(st, "Динамика отклонений по проектам")
             # If reason is also in group_cols, aggregate by period and project only (sum across reasons)
             if "reason of deviation" in group_cols:
                 project_data = (
@@ -10433,10 +10447,9 @@ def dashboard_deviation_by_tasks_current_month(df):
             xaxis=dict(range=_xaxis_range_positive(deviations["Суммарно дней отклонений"])),
         )
         fig = _apply_bar_uniformtext(fig)
-        render_chart(fig, caption_below="Отклонения от базового плана")
+        render_chart(fig, caption_below=report_chart_caption_body("Отклонение от базового плана"))
 
-        # Детализация: те же фильтры, что у основного графика (проект / блок / строение / уровень 4–5)
-        render_table_subheader(st, "Детализация отклонений по задачам")
+        render_table_subheader(st, "Отклонение от базового плана по задачам")
 
         detail_df = filtered_df.copy()
 
@@ -10564,7 +10577,9 @@ def dashboard_deviation_by_tasks_current_month(df):
                     )
                     render_chart(
                         fig_detail,
-                        caption_below="Детализация отклонений по задачам",
+                        caption_below=report_chart_caption_body(
+                            "Отклонение от базового плана", granularity="по задачам"
+                        ),
                     )
             else:
                 st.warning("Поле 'task name' не найдено для детализации.")
@@ -11168,7 +11183,10 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
             "Суммарное количество", ascending=False
         )
 
-        render_table_subheader(st, f"Сводная таблица по {period_label.lower()}")
+        render_table_subheader(
+            st,
+            report_title_name("Динамика отклонений", format_report_granularity_label(period_label)),
+        )
         st.markdown(f"**Записей:** {len(summary_by_reason)}")
         _render_html_table(
             summary_by_reason,
@@ -12606,9 +12624,10 @@ def dashboard_budget_by_period(df):
             project_data["reserve budget"] = project_data["reserve budget"].cumsum()
             if adjusted_budget_col and adjusted_budget_col in project_data.columns:
                 project_data[adjusted_budget_col] = project_data[adjusted_budget_col].cumsum()
-            title_suffix = " (накопительно)"
-        else:
-            title_suffix = ""
+        _bdds_gran = format_report_granularity_label(
+            period_label, cumulative=view_type == "Накопительно"
+        )
+        _bdds_date_suffix = format_date_range_title_suffix(_bdds_cal_start, _bdds_cal_end)
 
         if (
             _hide_zero_months
@@ -12839,11 +12858,14 @@ def dashboard_budget_by_period(df):
             and not hide_adjusted
         ):
             _bdds_bar_slots += 1
+        _bdds_chart_caption = f"БДДС {_bdds_gran}"
+        if _bdds_date_suffix:
+            _bdds_chart_caption = f"{_bdds_chart_caption} ({_bdds_date_suffix})"
         _render_finance_bar_chart(
             fig,
             n_periods=_n,
             height=_ch,
-            caption_below=f"БДДС{title_suffix}",
+            caption_below=_bdds_chart_caption,
             categories=project_data[period_col].astype(str).tolist(),
             px_per_month=400,
             force_hscroll=True,
@@ -12852,27 +12874,11 @@ def dashboard_budget_by_period(df):
 
         # Сводная таблица синхронизирована с «Вид отображения» (по месяцам / накопительно).
         _bdds_dev_tbl = "Отклонение, млн. руб."
-        _bdds_sel = (
-            ", ".join(selected_projects) if selected_projects else "Все"
-        )
-        _bdds_title_filters: list[str] = [
-            "накопительно" if view_type == "Накопительно" else "по периодам",
-            period_label.lower(),
-            _bdds_sel,
-        ]
-        if _bdds_cal_start is not None and _bdds_cal_end is not None:
-            try:
-                _ts = pd.Timestamp(_bdds_cal_start).date()
-                _te = pd.Timestamp(_bdds_cal_end).date()
-                _bdds_title_filters.append(
-                    f"{_ts.strftime('%d.%m.%Y')} — {_te.strftime('%d.%m.%Y')}"
-                )
-            except Exception:
-                pass
+        _bdds_sel = ", ".join(selected_projects) if selected_projects else "Все"
         render_table_subheader(
             st,
-            "БДДС по периодам",
-            filters_suffix=", ".join(x for x in _bdds_title_filters if x),
+            f"БДДС {_bdds_gran}",
+            filters_suffix=_bdds_date_suffix,
         )
 
         def _bdds_fmt_cell_rub(val) -> str:
@@ -13155,15 +13161,13 @@ def dashboard_budget_by_period(df):
                 reference_1c_dannye=resolve_budget_turnover_dannye(_bdds_ref_1c),
             )
             if _pf_tbl is not None and not _pf_tbl.empty:
-                _pf_title = f"План-фактный анализ по проекту {_pf_proj}"
-                if _bdds_cal_start is not None and _bdds_cal_end is not None:
-                    try:
-                        _ts = pd.Timestamp(_bdds_cal_start).date()
-                        _te = pd.Timestamp(_bdds_cal_end).date()
-                        _pf_title += f" ({_ts.strftime('%d.%m.%Y')} — {_te.strftime('%d.%m.%Y')})"
-                    except Exception:
-                        pass
-                render_table_subheader(st, _pf_title)
+                _pf_name, _pf_dates = report_title_parts(
+                    "БДДС план-фактный анализ",
+                    granularity=f"по проекту {_pf_proj}",
+                    date_start=_bdds_cal_start,
+                    date_end=_bdds_cal_end,
+                )
+                render_table_subheader(st, _pf_name, filters_suffix=_pf_dates)
                 _render_budget_table_html(
                         _pf_tbl,
                         finance_deviation_column=None,
@@ -13179,13 +13183,16 @@ def dashboard_budget_by_period(df):
     # R23-13.2 (стр.35): в БДДС дополнительно вывести таблицу
     # «Сводка бюджета по проекту» (как в БДР) с итоговой строкой «Итого».
     if "project name" in filtered_df.columns:
-        _bdds_proj_filters = (
-            ", ".join(selected_projects) if selected_projects else "Все"
+        _bdds_proj_name, _bdds_proj_dates = report_title_parts(
+            "БДДС",
+            granularity="по проектам",
+            date_start=_bdds_cal_start,
+            date_end=_bdds_cal_end,
         )
         render_table_subheader(
             st,
-            "БДДС по проекту",
-            filters_suffix=_bdds_proj_filters if _bdds_proj_filters != "Все" else None,
+            _bdds_proj_name,
+            filters_suffix=_bdds_proj_dates,
         )
         _bs_proj_tbl = budget_summary.copy()
         if (
@@ -13461,8 +13468,7 @@ def dashboard_budget_cumulative(df):
     # --- Таблица «по периоду» (не накопительно)
     render_table_subheader(
         st,
-        "БДДС по периодам",
-        filters_suffix=f"по {period_label.lower()}",
+        f"БДДС {format_report_granularity_label(period_label, cumulative=False)}",
     )
     tbl_period = _sort_period_df(budget_summary.copy())
     tbl_period_disp = tbl_period.drop(columns=["period_original"], errors="ignore").copy()
@@ -13612,14 +13618,17 @@ def dashboard_budget_cumulative(df):
         if np.isfinite(_ymax) and _ymax > 0:
             fig_cum.update_layout(yaxis=dict(range=[0, _ymax * 1.22]))
         fig_cum = apply_chart_background(fig_cum)
-        render_chart(fig_cum, caption_below="БДДС накопительно (подписи — млн. руб.)", height=600)
+        render_chart(
+            fig_cum,
+            caption_below=report_chart_caption_body("БДДС", cumulative=True),
+            height=600,
+        )
         render_quality_hints(_bcc_q_hints)
 
     # --- Таблица «накопительно»: по каждому проекту — нарастающий итог по периодам
     render_table_subheader(
         st,
-        "БДДС по периодам",
-        filters_suffix=f"накопительно, {period_label.lower()}",
+        f"БДДС {format_report_granularity_label(period_label, cumulative=True)}",
     )
     bs2 = _sort_period_df(budget_summary.copy())
     if selected_project != "Все":
@@ -13822,9 +13831,9 @@ def dashboard_budget_by_section(df):
                 section_data["budget plan"] = section_data["budget plan"].cumsum()
                 section_data["budget fact"] = section_data["budget fact"].cumsum()
                 section_data["reserve budget"] = section_data["reserve budget"].cumsum()
-                title_suffix = " (накопительно)"
-            else:
-                title_suffix = ""
+            _bss_gran = format_report_granularity_label(
+                period_label, cumulative=view_type == "Накопительно"
+            )
             fig = go.Figure()
             fig.add_trace(
                 go.Bar(
@@ -13871,7 +13880,10 @@ def dashboard_budget_by_section(df):
                 legend=dict(font=dict(size=18)),
                 height=600,
             )
-            _lot_budget_caption = f"План/факт/отклонение по лотам{title_suffix}"
+            _lot_budget_caption = report_chart_caption_body(
+                f"Бюджет по этапу «{selected_section}»",
+                granularity=_bss_gran,
+            )
         else:
             # Все этапы: ось Y = этапы, ось X = млн руб.
             section_chart_data = (
@@ -13929,7 +13941,9 @@ def dashboard_budget_by_section(df):
                 legend=dict(font=dict(size=18)),
                 height=max(400, len(section_chart_data) * 44),
             )
-            _lot_budget_caption = "План/факт/отклонение по лотам"
+            _lot_budget_caption = report_chart_caption_body(
+                "Бюджет по этапам", granularity="по этапам"
+            )
         fig = _apply_finance_bar_label_layout(fig)
         fig = apply_chart_background(fig)
         render_chart(fig, caption_below=_lot_budget_caption)
@@ -13938,7 +13952,8 @@ def dashboard_budget_by_section(df):
     _budget_section_chart()
 
     # Summary table — в млн руб., два знака после запятой
-    render_table_subheader(st, "Сводка бюджета по периоду")
+    _bss_tbl_name, _ = report_title_parts("Бюджет по этапам", period_label)
+    render_table_subheader(st, _bss_tbl_name)
     table_section = budget_summary.drop(columns=["period_original"], errors="ignore").copy()
     for col in ["budget plan", "budget fact", "reserve budget"]:
         if col in table_section.columns:
@@ -14431,17 +14446,15 @@ def dashboard_bdr(df):
 
     _bdr_q_hints = collect_bdr_hints(dict(getattr(df_work, "attrs", {}) or {}))
 
-    _bdr_tz_table_title = {
-        "Month": "Сводка БДР по месяцам",
-        "Quarter": "Сводка БДР по кварталам",
-        "Year": "Сводка БДР по годам",
-    }.get(period_type_en, "Сводка БДР по периоду")
-
     @st.fragment
     def _bdr_chart():
         view_type = str(st.session_state.get("bdr_period_view", "По месяцам"))
         chart_df = bdr_summary.copy()
-        title_suffix = ""
+        _bdr_cumulative = view_type == "Накопительно"
+        _bdr_gran = format_report_granularity_label(
+            period_label, cumulative=_bdr_cumulative
+        )
+        _bdr_date_suffix = format_date_range_title_suffix(_bdr_cal_start, _bdr_cal_end)
 
         if bdr_tz_mode:
             hide_deviation = bool(st.session_state.get("bdr_hide_deviation_tz", False))
@@ -14449,7 +14462,6 @@ def dashboard_bdr(df):
                 chart_df["План расходов"] = chart_df["План расходов"].cumsum()
                 chart_df["Факт расходов"] = chart_df["Факт расходов"].cumsum()
                 chart_df["Отклонение"] = chart_df["Факт расходов"] - chart_df["План расходов"]
-                title_suffix = " (накопительно)"
             else:
                 chart_df["Отклонение"] = chart_df["Факт расходов"] - chart_df["План расходов"]
 
@@ -14667,14 +14679,26 @@ def dashboard_bdr(df):
                 fig,
                 n_periods=_nb,
                 height=_bdr_h,
-                caption_below=f"БДР. План/факт расходов{title_suffix}",
+                caption_below=report_chart_caption_body(
+                    "БДР план/факт расходов",
+                    granularity=_bdr_gran,
+                    date_start=_bdr_cal_start,
+                    date_end=_bdr_cal_end,
+                ),
                 categories=chart_df["Период"].astype(str).tolist(),
                 px_per_month=400,
                 force_hscroll=True,
                 n_bar_slots=_bdr_bar_slots,
             )
 
-            st.subheader(_bdr_tz_table_title)
+            _bdr_tbl_name, _bdr_tbl_dates = report_title_parts(
+                "БДР",
+                period_label,
+                cumulative=_bdr_cumulative,
+                date_start=_bdr_cal_start,
+                date_end=_bdr_cal_end,
+            )
+            render_table_subheader(st, _bdr_tbl_name, filters_suffix=_bdr_tbl_dates)
 
             _proj_sel = st.session_state.get("bdr_project", selected_project)
             _bdr_show_all_split = (
@@ -14840,7 +14864,6 @@ def dashboard_bdr(df):
             chart_df["Доходы"] = chart_df["Доходы"].cumsum()
             chart_df["Расходы"] = chart_df["Расходы"].cumsum()
             chart_df["Сальдо"] = chart_df["Доходы"] - chart_df["Расходы"]
-            title_suffix = " (накопительно)"
 
         _bdr_hide_zero = bool(
             period_type_en == "Month"
@@ -15017,12 +15040,25 @@ def dashboard_bdr(df):
         _apply_finance_light_preview_chart_colors(fig)
         render_chart(
             fig,
-            caption_below=f"БДР{title_suffix}",
+            caption_below=report_chart_caption_body(
+                "БДР",
+                period_label,
+                cumulative=_bdr_cumulative,
+                date_start=_bdr_cal_start,
+                date_end=_bdr_cal_end,
+            ),
             height=_bdr_h,
             max_height=None,
         )
 
-        render_table_subheader(st, "Сводка БДР по периоду")
+        _bdr_tbl_name, _bdr_tbl_dates = report_title_parts(
+            "БДР",
+            period_label,
+            cumulative=_bdr_cumulative,
+            date_start=_bdr_cal_start,
+            date_end=_bdr_cal_end,
+        )
+        render_table_subheader(st, _bdr_tbl_name, filters_suffix=_bdr_tbl_dates)
         display_df = chart_df[
             [c for c in ["Период", "Доходы", "Расходы", "Сальдо"] if c in chart_df.columns]
         ].copy()
@@ -15045,7 +15081,7 @@ def dashboard_bdr(df):
     _bdr_chart()
 
     if "project name" in filtered_df.columns:
-        render_table_subheader(st, "Сводка БДР по проекту")
+        render_table_subheader(st, "БДР по проектам")
         if bdr_tz_mode:
             by_p = (
                 filtered_df.groupby("project name", dropna=False)
@@ -15401,7 +15437,7 @@ def _render_rd_working_doc_monthly_and_detail(
                 )
                 fig_months.update_traces(textposition="inside", textfont=dict(size=10))
                 fig_months = apply_chart_background(fig_months)
-                render_chart(fig_months, caption_below="Динамика по месяцам")
+                render_chart(fig_months, caption_below=report_chart_caption_body("Выдача рабочей документации", "Месяц"))
 
     try:
         _tessa_tbl = _build_tessa_rd_detail_table(
@@ -15605,7 +15641,7 @@ def _render_rd_delay_fallback_chart(
     )
     fig = _apply_bar_uniformtext(fig)
     fig = apply_chart_background(fig)
-    render_chart(fig, caption_below=f"Просрочка выдачи {doc_code}")
+    render_chart(fig, caption_below=report_chart_caption_body(f"Просрочка выдачи {doc_code}"))
 
 
 def _rd_plan_fallback_view(
@@ -16173,7 +16209,7 @@ def _rd_plan_fallback_view(
                 render_chart(
                     fig_pie_fb,
                     key=f"rdfb_pie_{fb_k}",
-                    caption_below="Исполнение РД",
+                    caption_below=report_chart_caption_body("Исполнение РД"),
                 )
         except Exception:
             pass
@@ -16303,7 +16339,9 @@ def _rd_plan_fallback_view(
                     render_chart(
                         fig_m_fb,
                         key=f"rdfb_months_{fb_k}",
-                        caption_below="Структура план/факт по месяцам",
+                        caption_below=report_chart_caption_body(
+                            "Выдача рабочей документации", "по месяцам"
+                        ),
                     )
         except Exception:
             pass
@@ -16502,7 +16540,7 @@ def _rd_plan_fallback_view(
                 render_chart(
                     fig_fb,
                     key=f"rdfb_dyn_{fb_k}",
-                    caption_below="Динамика выдачи РД",
+                    caption_below=report_chart_caption_body("Динамика выдачи РД"),
                 )
         except Exception:
             pass
@@ -17665,7 +17703,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                         lambda v: f"{v:.0f}%" if pd.notna(v) and float(v) > 0 else ""
                     )
 
-                    render_table_subheader(st, "Динамика по месяцам")
+                    render_table_subheader(st, "Выдача рабочей документации по месяцам")
                     fig_months = px.bar(
                         monthly_plot_df,
                         x="Месяц",
@@ -17704,7 +17742,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                     )
                     fig_months.update_traces(textposition="inside", textfont=dict(size=10))
                     fig_months = apply_chart_background(fig_months)
-                    render_chart(fig_months, caption_below="Динамика по месяцам")
+                    render_chart(fig_months, caption_below=report_chart_caption_body("Выдача рабочей документации", "Месяц"))
 
         st.subheader("Детальная таблица")
 
@@ -18216,7 +18254,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                 )
 
         # Summary table
-        render_table_subheader(st, "Сводка по просрочке")
+        render_table_subheader(st, "Сводка по просрочке выдачи документации")
         if is_pd and {"_pd_plan_cnt", "_pd_fact_cnt"}.issubset(chart_data.columns):
             _pd_sum_y = y_column if y_column in chart_data.columns else chart_data.columns[0]
             _pd_sum_src = chart_data.copy()
@@ -19561,7 +19599,7 @@ def dashboard_technique(df):
                     fact_i = int(np.ceil(_fs)) if _fs >= 0 else -int(np.ceil(abs(_fs)))
                     dev_i = int(np.ceil(_dv)) if _dv >= 0 else -int(np.ceil(abs(_dv)))
                     fact_color = _gdrs_fact_bar_color(_ps, _fs)
-                    render_table_subheader(st, "План и факт (люди) по проекту")
+                    render_table_subheader(st, report_title_name("ГДРС план/факт", "по проекту"))
                     fig_pf_pf = go.Figure(
                         data=[
                             go.Bar(
@@ -19772,7 +19810,9 @@ def dashboard_technique(df):
                 fig_pie = apply_chart_background(fig_pie)
                 render_chart(
                     fig_pie,
-                    caption_below="Распределение дельты (%) по контрагентам",
+                    caption_below=report_chart_caption_body(
+                        "ГДРС", granularity="распределение дельты по контрагентам"
+                    ),
                 )
 
         # ========== Таблица по подрядчикам: план, факт, % (факт/план), отклонение ==========
@@ -19835,7 +19875,10 @@ def dashboard_technique(df):
                 display_df["Факт"] = display_df["Факт"].apply(
                     lambda x: int(round(x, 0)) if pd.notna(x) else 0
                 )
-                render_table_subheader(st, f"Доля факта ({type_label}) по контрагентам")
+                render_table_subheader(
+                    st,
+                    report_title_name("ГДРС", f"доля факта ({type_label}) по контрагентам"),
+                )
                 display_df["%"] = display_df["%"].apply(
                     lambda v: f"{v:.1f}%" if v is not None and pd.notna(v) else "—"
                 )
@@ -20096,7 +20139,7 @@ def dashboard_technique(df):
             contractor_plan_avg.sort_values("Сумма", ascending=False, inplace=True)
             # Круговая «план + среднее по контрагентам» скрыта по макету — используйте сводную таблицу ниже.
 
-        render_table_subheader(st, "Сводная таблица по контрагентам")
+        render_table_subheader(st, report_title_name("ГДРС", "по контрагентам"))
 
         # Format numbers for display
         summary_table = contractor_data.copy()
@@ -22436,7 +22479,10 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 display_df["Факт"] = display_df["Факт"].apply(
                     lambda x: int(round(x, 0)) if pd.notna(x) else 0
                 )
-                render_table_subheader(st, f"Доля факта ({type_label}) по контрагентам")
+                render_table_subheader(
+                    st,
+                    report_title_name("ГДРС", f"доля факта ({type_label}) по контрагентам"),
+                )
                 display_df["%"] = display_df["%"].apply(
                     lambda v: f"{v:.1f}%" if v is not None and pd.notna(v) else "—"
                 )
@@ -22697,7 +22743,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             # Круговая «план + среднее по контрагентам» скрыта по макету — используйте сводную таблицу ниже.
 
             # ========== Summary Table ==========
-            render_table_subheader(st, "Сводная таблица по контрагентам")
+            render_table_subheader(st, report_title_name("ГДРС", "по контрагентам"))
 
             # Format numbers for display
             summary_table = contractor_data.copy()
@@ -23386,6 +23432,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         load_1c_kontr_index,
         enrich_gdrs_fact_contractor_ids,
         enrich_gdrs_fact_project_ids,
+        gdrs_apply_kontr_contractor_names,
         gdrs_filter_fact_kontr_intersection,
         load_gdrs_termination_index,
         gdrs_filter_fact_by_termination,
@@ -23433,6 +23480,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
     )
 
     long_fact = gdrs_filter_fact_kontr_intersection(long_fact, _kontr_index)
+    long_fact = gdrs_apply_kontr_contractor_names(long_fact, _kontr_index)
     _term_index = load_gdrs_termination_index(dogovor_files)
     long_fact = gdrs_filter_fact_by_termination(long_fact, _term_index)
 
@@ -23484,6 +23532,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 sprav_files,
                 projects=sel_projects or None,
                 snapshot_date=_filter_plan_snap,
+                kontr=_kontr_index,
             )
             with _fc2:
                 sel_contractors = st.multiselect(
@@ -23773,7 +23822,13 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
     else:
         st.info("Нет данных по проектам.")
 
-    gdrs_render_table_subheader(st, f"График движения рабочей силы ({unit}), {period_label}", theme=theme)
+    _gdrs_tbl_name, _gdrs_tbl_dates = report_title_parts(
+        f"ГДРС ({unit})",
+        period_label,
+        date_start=date_from,
+        date_end=date_to,
+    )
+    gdrs_render_table_subheader(st, _gdrs_tbl_name, filters_suffix=_gdrs_tbl_dates, theme=theme)
     period_days = max(1, (date_to - date_from).days + 1)
     if period_days > 45:
         st.warning(
@@ -23816,7 +23871,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
     for _wk in ("w1", "w2", "w3", "w4", "w5", "w6"):
         view[_wk] = view[_wk].fillna(0).astype(int)
     from dashboards.gdrs_resursi import render_gdrs_matrix_table_html
-    _tbl_title = f"График движения рабочей силы ({unit})"
+    _tbl_title = _gdrs_tbl_name
     _tbl_period = (
         _format_gdrs_month_year_title_ru(date_from, date_to, long_fact_period, None) or period_label
     )
@@ -27218,7 +27273,7 @@ def dashboard_executive_documentation(df):
     else:
         total_docs = len(filtered)
 
-    render_table_subheader(st, "Накопительным итогом")
+    render_table_subheader(st, "Исполнительная документация накопительно")
     summary_cards = [
         {"title": "Всего документов", "value": int(total_docs), "subtitle": "Уникальные документы в текущей выборке"},
         {"title": "Отказы", "value": int(is_declined.sum()), "subtitle": "Документы со статусом отказа", "tone": "alert"},
@@ -27309,7 +27364,14 @@ def dashboard_executive_documentation(df):
             fig_c = _apply_bar_uniformtext(fig_c)
             fig_c = apply_chart_background(fig_c)
             fig_c.update_layout(height=max(280, len(by_c) * 32 + 80), yaxis_title="", xaxis_title="")
-            render_chart(fig_c, caption_below="Просрочка по подрядчикам (дней)", key="exec_overdue_contractor")
+            render_chart(
+                fig_c,
+                caption_below=report_chart_caption_body(
+                    "Исполнительная документация",
+                    granularity="просрочка по подрядчикам",
+                ),
+                key="exec_overdue_contractor",
+            )
         suppress_caption("Блок показывает просрочку сдачи исполнительной документации со стороны подрядчика.")
     with oc2:
         st.subheader("Просрочка заказчика (согласование)")
@@ -27331,7 +27393,10 @@ def dashboard_executive_documentation(df):
             fig_u.update_layout(height=max(280, len(by_u) * 32 + 80), yaxis_title="", xaxis_title="")
             render_chart(
                 fig_u,
-                caption_below="Просрочка согласования заказчиком — количество документов на согласовании по контрагентам",
+                caption_below=report_chart_caption_body(
+                    "Исполнительная документация",
+                    granularity="просрочка согласования заказчиком",
+                ),
                 key="exec_overdue_customer",
             )
         suppress_caption("Блок показывает документы, зависшие на согласовании у заказчика.")
@@ -27376,7 +27441,13 @@ def dashboard_executive_documentation(df):
         fig = _apply_vertical_category_bar_width(fig)
         fig = apply_chart_background(fig)
         fig.update_layout(height=450, xaxis_title="Статус", yaxis_title="Количество")
-        render_chart(fig, caption_below="Документы по статусам", key="exec_status_bar")
+        render_chart(
+            fig,
+            caption_below=report_chart_caption_body(
+                "Исполнительная документация", granularity="по статусам"
+            ),
+            key="exec_status_bar",
+        )
 
         if obj_col and obj_col in filtered.columns:
             st.subheader("Документы по объектам")
@@ -28273,7 +28344,7 @@ def _rd_delay_apply_overdue_metric_chart(
     )
     fig = _apply_bar_uniformtext(fig)
     fig = apply_chart_background(fig)
-    render_chart(fig, caption_below=f"Просрочка выдачи {doc_code}")
+    render_chart(fig, caption_below=report_chart_caption_body(f"Просрочка выдачи {doc_code}"))
 
 
 def _rd_delay_synthetic_deviation_days(
@@ -30307,7 +30378,7 @@ def dashboard_documentation(
                         hovertemplate="<b>%{label}</b><br>Значение: %{value}<br>Доля: %{percent}<br><extra></extra>",
                     )
                     fig_pie = apply_chart_background(fig_pie)
-                    render_chart(fig_pie, caption_below="Исполнение РД")
+                    render_chart(fig_pie, caption_below=report_chart_caption_body("Исполнение РД"))
                 else:
                     st.info("Нет данных для построения графика 'Исполнение РД'.")
             else:
@@ -30437,7 +30508,7 @@ def dashboard_documentation(
                             with _pc_c:
                                 render_chart(
                                     fig_pie,
-                                    caption_below="Исполнение ПД",
+                                    caption_below=report_chart_caption_body("Исполнение ПД"),
                                     omit_default_width=True,
                                 )
                 else:
@@ -30859,7 +30930,7 @@ def dashboard_documentation(
                 )
                 _apply_rd_dynamics_line_chart_theme(fig_dynamics)
                 fig_dynamics = apply_chart_background(fig_dynamics)
-                render_chart(fig_dynamics, caption_below="Динамика выдачи РД")
+                render_chart(fig_dynamics, caption_below=report_chart_caption_body("Динамика выдачи РД"))
             else:
                 st.warning("Нет данных для построения графика 'Динамика выдачи РД'.")
                 st.info(_rd_dyn_hint)
@@ -31237,9 +31308,9 @@ def dashboard_documentation(
                             range=[_pd_y_lo, _pd_y_max + _pd_head],
                             autorange=False,
                         )
-                        render_chart(fig_dynamics, caption_below="Динамика выдачи ПД")
+                        render_chart(fig_dynamics, caption_below=report_chart_caption_body("Динамика выдачи ПД"))
 
-                    render_table_subheader(st, "Таблица по проектной документации")
+                    render_table_subheader(st, "Выдача проектной документации по проектам")
                     _tbl_mask = (plan_line_mask | fcst_line_mask).fillna(False)
                     idx_sec = df.index[_tbl_mask]
                     if len(idx_sec) == 0:
@@ -31542,7 +31613,7 @@ def _render_plan_fact_detail_table(
 
     render_table_subheader(
         st,
-        "План / Факт / Остаток / Отклонение / % выполнения / % покрытия контрактами",
+        report_title_name("Утверждённый бюджет план/факт", "по проектам"),
     )
     _render_budget_table_html(
         display,
@@ -31784,7 +31855,7 @@ def _render_plan_fact_summary_dashboard(
     )
     fig = apply_chart_background(fig)
 
-    render_table_subheader(st, "Сводный дашборд план/факт")
+    render_table_subheader(st, "Бюджет план/факт")
     if reporting_label:
         st.caption(f"Накопительный БДДС на дату: {reporting_label}")
     st.markdown(_APPR_PF_SUMMARY_GAUGE_CSS, unsafe_allow_html=True)
@@ -32004,9 +32075,14 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
         fig_hist.update_layout(yaxis=dict(tickformat=".1f"))
     fig_hist = _apply_finance_bar_label_layout(fig_hist)
     fig_hist = apply_chart_background(fig_hist)
-    render_chart(fig_hist, caption_below="Бюджет план/факт/корректировка/отклонение по проектам")
+    render_chart(
+        fig_hist,
+        caption_below=report_chart_caption_body(
+            "Бюджет план/факт/корректировка/отклонение", granularity="по проектам"
+        ),
+    )
 
-    render_table_subheader(st, "Сводная таблица по проектам")
+    render_table_subheader(st, "Бюджет план/факт по проектам")
     _sum_rows: list[dict] = []
     for _, row in budget_by_project.iterrows():
         plan = float(row["budget plan"])
@@ -32359,7 +32435,10 @@ def _render_approved_budget_monthly_block(
     if "plan_month" not in src.columns:
         return
 
-    render_table_subheader(st, "Утверждённый бюджет (план/факт) по месяцам")
+    render_table_subheader(
+        st,
+        report_title_name("утверждённого бюджета план/факт", "по месяцам"),
+    )
     if reporting_label:
         st.caption(f"Помесячные обороты до {reporting_label} (тот же срез, что спидометр).")
     _appr_hide_zero = st.checkbox(
@@ -32477,14 +32556,19 @@ def _render_approved_budget_monthly_block(
         fig,
         n_periods=_n_m,
         height=_chart_h,
-        caption_below="План/факт по месяцам.",
+        caption_below=report_chart_caption_body(
+            "утверждённого бюджета план/факт", "Месяц"
+        ),
         categories=monthly_rows["Месяц"].astype(str).tolist(),
         px_per_month=400,
         force_hscroll=True,
         n_bar_slots=2,
     )
 
-    render_table_subheader(st, "Сводная таблица по месяцам")
+    render_table_subheader(
+        st,
+        report_title_name("утверждённого бюджета", "по месяцам"),
+    )
     summary_table = monthly_rows[
         ["Месяц", "budget plan", "budget fact", "reserve budget"]
     ].copy()
@@ -32632,7 +32716,7 @@ def dashboard_budget_by_type(df):
     fact_metric_value = fact_total_mln if metric_unit == "млн" else fact_total_mld
     metric_decimals = 2 if metric_unit == "млн" else 2
 
-    render_table_subheader(st, "Сводный дашборд план/факт")
+    render_table_subheader(st, "Бюджет план/факт")
     kpi_gauge_col, kpi_plan_col, kpi_fact_col = st.columns([1.3, 1, 1], gap="small")
     with kpi_gauge_col:
         fig_kpi = go.Figure(
@@ -32660,7 +32744,7 @@ def dashboard_budget_by_type(df):
         )
         fig_kpi.update_layout(height=220, margin=dict(l=16, r=16, t=48, b=16))
         fig_kpi = apply_chart_background(fig_kpi)
-        render_chart(fig_kpi, caption_below="План/факт по бюджету")
+        render_chart(fig_kpi, caption_below=report_chart_caption_body("Бюджет план/факт"))
         render_quality_hints(_budget_type_q_hints)
     with kpi_plan_col:
         st.metric(
@@ -32676,7 +32760,7 @@ def dashboard_budget_by_type(df):
 
     # R23-13.3/4: в таблице оставлены «План / Факт / Отклонение»
     # (столбцы «Остаток», «% выполнения», «% покрытия контрактами» убраны по ТЗ).
-    render_table_subheader(st, "Таблица")
+    render_table_subheader(st, "Бюджет план/факт по проектам")
     if "project name" in filtered_df.columns:
         agg_dict = {
             "budget plan": "sum",
@@ -32919,12 +33003,14 @@ def dashboard_budget_by_type(df):
                 fig_hist = apply_chart_background(fig_hist)
                 render_chart(
                     fig_hist,
-                    caption_below="Бюджет план/факт/корректировка/отклонение по проектам",
+                    caption_below=report_chart_caption_body(
+                        "Бюджет план/факт/корректировка/отклонение", granularity="по проектам"
+                    ),
                 )
                 render_quality_hints(_budget_type_q_hints)
 
                 # Summary table (суммы в млн руб., два знака, подпись в названии колонки)
-                render_table_subheader(st, "Сводная таблица по проектам")
+                render_table_subheader(st, "Бюджет план/факт по проектам")
                 summary_hist = hist_by_type_df.pivot_table(
                     index="project name",
                     columns="Тип бюджета",
@@ -33117,7 +33203,7 @@ def dashboard_budget_old_charts(df):
         fig.update_xaxes(tickangle=-45)
         fig.update_traces(textposition="top center")
         fig = apply_chart_background(fig)
-        render_chart(fig, caption_below="Бюджет по типам по периоду (накопительно)")
+        render_chart(fig, caption_below=report_chart_caption_body("Бюджет по типам", cumulative=True))
 
     with col2:
         # Grouped bar chart
@@ -33141,7 +33227,7 @@ def dashboard_budget_old_charts(df):
         fig.update_traces(textposition="outside", textfont=dict(size=14, color="white"))
         fig = _apply_finance_bar_label_layout(fig)
         fig = apply_chart_background(fig)
-        render_chart(fig, caption_below="Бюджет по типам по периоду")
+        render_chart(fig, caption_below=report_chart_caption_body("Бюджет по типам", "Месяц"))
 
     # Line chart comparing all types
     fig = px.line(
@@ -33163,7 +33249,7 @@ def dashboard_budget_old_charts(df):
     fig.update_xaxes(tickangle=-45)
     fig.update_traces(textposition="top center")
     fig = apply_chart_background(fig)
-    render_chart(fig, caption_below="Сравнение типов бюджета по периоду")
+    render_chart(fig, caption_below=report_chart_caption_body("Сравнение типов бюджета", "Месяц"))
 
     # Summary metrics (суммы уже в млн руб.)
     col1, col2, col3, col4 = st.columns(4, gap="small")
@@ -33214,7 +33300,7 @@ def dashboard_budget_old_charts(df):
     ).fillna(0)
 
     # Detailed table — суммы в млн руб., два знака, подпись "млн руб." в названии колонки
-    render_table_subheader(st, "Детальная таблица")
+    render_table_subheader(st, "Детальная таблица прогнозного бюджета")
     detailed_table = pivot_table.copy()
 
     # Названия колонок с подписью "млн руб."
@@ -33929,7 +34015,7 @@ def dashboard_approved_budget(df):
         and "budget plan" in filtered_df.columns
         and "budget fact" in filtered_df.columns
     ):
-        render_table_subheader(st, "Детальные данные (таблица)")
+        render_table_subheader(st, "Детальные данные утверждённого бюджета")
         suppress_caption(
             "По ТЗ: утверждённый бюджет и факт из оборотов; отклонение = план − факт "
             "(красный шрифт при отклонении < 0, зелёный при ≥ 0)."
@@ -33964,7 +34050,7 @@ def dashboard_approved_budget(df):
     if "budget plan" in filtered_df.columns and "budget fact" in filtered_df.columns:
         _plan_tot = float(pd.to_numeric(filtered_df["budget plan"], errors="coerce").fillna(0.0).sum())
         _fact_tot = float(pd.to_numeric(filtered_df["budget fact"], errors="coerce").fillna(0.0).sum())
-        render_table_subheader(st, "Сводка: бюджет план / факт")
+        render_table_subheader(st, "Сводка утверждённого бюджета план/факт")
         _pb = _plan_tot / 1e9
         _fb = _fact_tot / 1e9
         _hi = max(_pb, _fb, 1e-9) * 1.08
@@ -34039,7 +34125,10 @@ def dashboard_approved_budget(df):
         )
         return
 
-    render_table_subheader(st, "Утверждённый бюджет (план/факт) по месяцам")
+    render_table_subheader(
+        st,
+        report_title_name("утверждённого бюджета план/факт", "по месяцам"),
+    )
     _appr_hide_zero = st.checkbox(
         "Скрывать месяцы, где план и факт равны 0",
         value=True,
@@ -34163,7 +34252,10 @@ def dashboard_approved_budget(df):
         n_bar_slots=2,
     )
 
-    render_table_subheader(st, "Сводная таблица по месяцам")
+    render_table_subheader(
+        st,
+        report_title_name("утверждённого бюджета", "по месяцам"),
+    )
     summary_table = monthly_rows[
         ["Месяц", "budget plan", "budget fact", "reserve budget"]
     ].copy()
@@ -35868,12 +35960,14 @@ def dashboard_forecast_budget(df):
     else:
         mf_fc["_dev"] = mf_fc["bdds_plan_msp"] - mf_fc["bdds_forecast"]
 
-    chart_title_fc = (
-        "БДДС план / факт / прогноз"
-        + (" (накопительно)" if _view_type_fc == "Накопительно" else "")
-        + f" — {period_label.lower()}"
+    _fc_name, _fc_dates = report_title_parts(
+        "Прогнозный бюджет",
+        period_label,
+        cumulative=(_view_type_fc == "Накопительно"),
+        date_start=_cal_from_eff,
+        date_end=_cal_to_eff,
     )
-    st.subheader(chart_title_fc)
+    st.subheader(format_chart_title(_fc_name, _fc_dates))
     x_label_fc = period_label
     _chart_df = mf_fc.copy()
     _hide_zero_chk = period_type_en == "Month"
@@ -36020,12 +36114,18 @@ def dashboard_forecast_budget(df):
             n_periods=_nfc,
             categories=x_fc.astype(str).tolist(),
             height=_ch_fc,
-            caption_below="БДДС (утверждённый/прогнозный)",
+            caption_below=report_chart_caption_body(
+                "Прогнозный бюджет",
+                period_label,
+                cumulative=(_view_type_fc == "Накопительно"),
+                date_start=_cal_from_eff,
+                date_end=_cal_to_eff,
+            ),
             px_per_month=_px_fc,
             force_hscroll=True,
         )
 
-    render_table_subheader(st, "Таблица")
+    render_table_subheader(st, _fc_name, filters_suffix=_fc_dates)
     _period_hdr = period_label
     _dev_col_fc = "Отклонение (план − прогноз), млн руб."
     try:
@@ -40255,7 +40355,7 @@ def dashboard_predpisania(df):
         hovertemplate="<b>%{label}</b><br>Количество: %{value}<br>Доля: %{percent:.1%}<extra></extra>",
     )
     fig2 = apply_chart_background(fig2)
-    render_chart(fig2, key="pred_status_pie", caption_below="Распределение предписаний по статусам")
+    render_chart(fig2, key="pred_status_pie", caption_below=report_chart_caption_body("Предписания", granularity="по статусам"))
 
     if obj_col and obj_col in _viz_df.columns:
         st.subheader("Предписания по объектам")
@@ -40305,7 +40405,7 @@ def dashboard_predpisania(df):
             margin=dict(l=56, r=36, t=72, b=72),
             **_obj_gaps,
         )
-        render_chart(fig3, key="pred_by_obj", caption_below="Количество предписаний по объектам")
+        render_chart(fig3, key="pred_by_obj", caption_below=report_chart_caption_body("Предписания", granularity="по объектам"))
 
     st.subheader("Детальная таблица по предписаниям")
     show = filtered.copy()

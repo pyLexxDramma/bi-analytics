@@ -298,18 +298,131 @@ TABLE_CAPTION_STYLE_LIGHT = (
 )
 
 
-def format_table_title(name: str, filters_suffix: str | None = None) -> str:
-    """«Таблица …» + опционально фильтры в скобках."""
-    s = str(name or "").strip()
-    if not s:
-        s = "данные"
-    if not s.casefold().startswith("таблица"):
-        s = f"Таблица {s}"
+def _title_has_table_keyword(name: str) -> bool:
+    """True, если в названии уже есть «Таблица» или «Гистограмма» — префикс не нужен."""
+    low = str(name or "").casefold()
+    return "таблица" in low or "гистограмма" in low
+
+
+def _title_has_chart_keyword(name: str) -> bool:
+    """True, если в названии уже есть «График» или «Гистограмма» — префикс «График» не нужен."""
+    low = str(name or "").casefold()
+    return low.startswith("график") or "гистограмма" in low
+
+
+def format_report_granularity_label(period_label: str, *, cumulative: bool = False) -> str:
+    """Гранулярность для шаблона «… {отчёт} {гранулярность}»."""
+    if cumulative:
+        return "накопительно"
+    pl = str(period_label or "").strip().casefold()
+    _map = {
+        "месяц": "по месяцам",
+        "квартал": "по кварталам",
+        "год": "по годам",
+        "день": "по дням",
+    }
+    if pl in _map:
+        return _map[pl]
+    if pl.startswith("по "):
+        return pl
+    return f"по {pl}" if pl else ""
+
+
+def format_date_range_title_suffix(start: Any, end: Any) -> str | None:
+    """Диапазон дат для скобок в заголовке: «23.03.2024 – 31.01.2028»."""
+    if start is None or end is None:
+        return None
+    try:
+        ts = pd.Timestamp(start).date()
+        te = pd.Timestamp(end).date()
+        return f"{ts.strftime('%d.%m.%Y')} – {te.strftime('%d.%m.%Y')}"
+    except Exception:
+        return None
+
+
+def report_title_name(report_name: str, granularity: str | None = None) -> str:
+    """«{отчёт} {гранулярность}» без префикса Таблица/График."""
+    r = str(report_name or "").strip()
+    g = str(granularity or "").strip()
+    if not r:
+        return "данные"
+    if g and g.casefold() not in r.casefold():
+        return f"{r} {g}".strip()
+    return r
+
+
+def report_title_parts(
+    report_name: str,
+    period_label: str | None = None,
+    *,
+    cumulative: bool = False,
+    granularity: str | None = None,
+    date_start: Any = None,
+    date_end: Any = None,
+) -> tuple[str, str | None]:
+    """Имя блока и суффикс дат для render_table_subheader."""
+    gran = (
+        granularity
+        if granularity is not None
+        else (
+            format_report_granularity_label(period_label or "", cumulative=cumulative)
+            if period_label
+            else ""
+        )
+    )
+    return report_title_name(report_name, gran or None), format_date_range_title_suffix(
+        date_start, date_end
+    )
+
+
+def report_chart_caption_body(
+    report_name: str,
+    period_label: str | None = None,
+    *,
+    cumulative: bool = False,
+    granularity: str | None = None,
+    date_start: Any = None,
+    date_end: Any = None,
+) -> str:
+    """Тело caption_below (префикс «График» добавит _chart_caption_below)."""
+    name, date_suffix = report_title_parts(
+        report_name,
+        period_label,
+        cumulative=cumulative,
+        granularity=granularity,
+        date_start=date_start,
+        date_end=date_end,
+    )
+    return _append_title_suffix(name, date_suffix)
+
+
+def _append_title_suffix(title: str, filters_suffix: str | None) -> str:
+    s = str(title or "").strip()
     if filters_suffix:
         fs = str(filters_suffix).strip().strip("()")
         if fs and f"({fs})" not in s:
             s = f"{s} ({fs})"
-    return sanitize_display_label(s)
+    return s
+
+
+def format_table_title(name: str, filters_suffix: str | None = None) -> str:
+    """«Таблица {отчёт} {гранулярность}» + опционально диапазон дат в скобках."""
+    s = str(name or "").strip()
+    if not s:
+        s = "данные"
+    if not _title_has_table_keyword(s):
+        s = f"Таблица {s}"
+    return sanitize_display_label(_append_title_suffix(s, filters_suffix))
+
+
+def format_chart_title(name: str, filters_suffix: str | None = None) -> str:
+    """«График {отчёт} {гранулярность}» + опционально диапазон дат в скобках."""
+    s = str(name or "").strip()
+    if not s:
+        s = "данные"
+    if not _title_has_chart_keyword(s):
+        s = f"График {s}"
+    return sanitize_display_label(_append_title_suffix(s, filters_suffix))
 
 
 def render_table_subheader(st: Any, name: str, filters_suffix: str | None = None) -> None:
