@@ -25098,6 +25098,28 @@ def dashboard_debit_credit(df):
         if work["_summa_dogovora_lookup"].notna().any():
             total_col = "_summa_dogovora_lookup"
 
+    _dog_num_to_summa: dict[str, float] = {}
+    if _dog_lookup_dc:
+        for _rec in (_dog_lookup_dc or {}).values():
+            _nk = _contract_no_search_key(_rec.get("Номер_Договора"))
+            try:
+                _fv = float(_rec.get("Сумма_Договора") or 0)
+            except (TypeError, ValueError):
+                _fv = 0.0
+            if _nk and _fv > 0:
+                _dog_num_to_summa[_nk] = max(_dog_num_to_summa.get(_nk, 0.0), _fv)
+        if total_col and total_col != "_summa_dogovora_lookup":
+
+            def _resolve_summa_guid(v):
+                if v is None or (isinstance(v, float) and pd.isna(v)):
+                    return None
+                rec = _dog_lookup_dc.get(str(v).strip().lower())
+                if not rec:
+                    return None
+                return rec.get("Сумма_Договора")
+
+            work["_summa_dogovora_lookup"] = work["_id_dogovor_norm"].map(_resolve_summa_guid)
+
     # «Проект» подтягиваем каскадом:
     #   1) Dogovor.json по guid договора → Наименование_Проекта
     #   2) reference_partner_to_project по ID_Контрагента / имени контрагента
@@ -25393,6 +25415,20 @@ def dashboard_debit_credit(df):
     for c in [total_col, paid_col, advance_col, balance_col]:
         if c:
             work[f"_num_{c}"] = _to_num(work[c])
+    if total_col and f"_num_{total_col}" in work.columns:
+        if "_summa_dogovora_lookup" in work.columns:
+            _lk = _to_num(work["_summa_dogovora_lookup"])
+            _mask_zero = work[f"_num_{total_col}"].abs() <= 1e-6
+            work.loc[_mask_zero, f"_num_{total_col}"] = _lk[_mask_zero]
+        if contract_col and contract_col in work.columns and _dog_num_to_summa:
+            _mask_zero = work[f"_num_{total_col}"].abs() <= 1e-6
+            if _mask_zero.any():
+                _by_num = work.loc[_mask_zero, contract_col].map(
+                    lambda v: _dog_num_to_summa.get(_contract_no_search_key(v), 0.0)
+                )
+                work.loc[_mask_zero, f"_num_{total_col}"] = pd.to_numeric(
+                    _by_num, errors="coerce"
+                ).fillna(0.0)
 
     # В выгрузке DK колонка «Аванс» часто пустая (все нули) — фактический
     # остаток по авансам лежит в «ОстатокНаКонецПериодаПоАвансам». Если прямой
@@ -25718,7 +25754,7 @@ def dashboard_debit_credit(df):
     # Делим суммы на 1e6 уже на этапе агрегации, чтобы и подписи, и таблица работали в одних единицах.
     _SCALE_MLN = 1e6
     if total_col and f"_num_{total_col}" in filtered.columns:
-        built["Договор стоимость"] = filtered.groupby(chart_group_col)[f"_num_{total_col}"].sum() / _SCALE_MLN
+        built["Договор стоимость"] = filtered.groupby(chart_group_col)[f"_num_{total_col}"].max() / _SCALE_MLN
     if advance_col and f"_num_{advance_col}" in filtered.columns:
         built["Аванс"] = filtered.groupby(chart_group_col)[f"_num_{advance_col}"].sum() / _SCALE_MLN
     if "_num_ks2" in filtered.columns:
@@ -25890,7 +25926,7 @@ def dashboard_debit_credit(df):
     #   Договор стоимость | Всего выполненных обязательств по платежам | Аванс |
     #   Выполнено (КС-2) | Остаток | КС-2 − Аванс
     if total_col and f"_num_{total_col}" in filtered.columns:
-        tbl_built["Договор стоимость"] = filtered.groupby(table_group_cols)[f"_num_{total_col}"].sum() / _SCALE_MLN
+        tbl_built["Договор стоимость"] = filtered.groupby(table_group_cols)[f"_num_{total_col}"].max() / _SCALE_MLN
     if "_num_fulfilled" in filtered.columns:
         tbl_built["Всего выполненных обязательств по платежам"] = (
             filtered.groupby(table_group_cols)["_num_fulfilled"].sum() / _SCALE_MLN
@@ -25951,46 +25987,60 @@ def dashboard_debit_credit(df):
         ).fillna(0.0) - pd.to_numeric(table_df["Аванс"], errors="coerce").fillna(0.0)
         value_cols_t.append("КС-2 − Аванс")
 
-    # Индикатор «Аванс ≥60% от Договора».
-    if "Аванс" in value_cols_t and "Договор стоимость" in value_cols_t:
-        # Индикатор подаётся текстом (без HTML), т.к. таблица рендерится через _render_html_table
-        # с escape=True. Цветовое восприятие даёт круг (🔴/🟢) + слово.
-        def _adv_indicator(plan_v: float, adv_v: float) -> str:
+    # «Допущения по авансированию» = (Аванс − КС-2) / Стоимость договора × 100%.
+    _ADV_ASSUMP_COL = "Допущения по авансированию"
+    if (
+        "Аванс" in value_cols_t
+        and "Договор стоимость" in value_cols_t
+        and "Выполнено (КС-2)" in value_cols_t
+    ):
+
+        def _adv_assumption(plan_v: float, adv_v: float, ks2_v: float) -> str:
             try:
                 p = float(plan_v) if pd.notna(plan_v) else 0.0
                 a = float(adv_v) if pd.notna(adv_v) else 0.0
+                k = float(ks2_v) if pd.notna(ks2_v) else 0.0
                 if p <= 0:
                     return ""
-                pct = a / p * 100.0
-                if pct >= 60.0:
-                    return f"🔴 ≥60% ({pct:.0f}%)"
-                return f"🟢 <60% ({pct:.0f}%)"
+                pct = (a - k) / p * 100.0
+                if pct < 10.0:
+                    return f"🟢 {pct:.1f}%"
+                if pct <= 20.0:
+                    return f"🟡 {pct:.1f}%"
+                return f"🔴 {pct:.1f}%"
             except Exception:
                 return ""
-        table_df["Аванс ≥60%"] = [
-            _adv_indicator(p, a)
-            for p, a in zip(table_df["Договор стоимость"], table_df["Аванс"])
+
+        table_df[_ADV_ASSUMP_COL] = [
+            _adv_assumption(p, a, k)
+            for p, a, k in zip(
+                table_df["Договор стоимость"],
+                table_df["Аванс"],
+                table_df["Выполнено (КС-2)"],
+            )
         ]
-        # Колонку «Аванс ≥60%» вставим в порядке после «Аванс» при выводе.
     total_row = {c: "" for c in group_dim_cols}
     if group_dim_cols:
         total_row[group_dim_cols[0]] = "ИТОГО"
     for col in value_cols_t:
         total_row[col] = table_df[col].sum()
-    if "Аванс ≥60%" in table_df.columns:
-        # Итог: общий процент по сумме всех договоров и авансов.
+    if _ADV_ASSUMP_COL in table_df.columns:
         try:
             _tp = float(pd.to_numeric(table_df["Договор стоимость"], errors="coerce").sum())
             _ta = float(pd.to_numeric(table_df["Аванс"], errors="coerce").sum())
+            _tk = float(pd.to_numeric(table_df["Выполнено (КС-2)"], errors="coerce").sum())
             if _tp > 0:
-                _pct = _ta / _tp * 100.0
-                total_row["Аванс ≥60%"] = (
-                    f"🔴 ≥60% ({_pct:.0f}%)" if _pct >= 60.0 else f"🟢 <60% ({_pct:.0f}%)"
-                )
+                _pct = (_ta - _tk) / _tp * 100.0
+                if _pct < 10.0:
+                    total_row[_ADV_ASSUMP_COL] = f"🟢 {_pct:.1f}%"
+                elif _pct <= 20.0:
+                    total_row[_ADV_ASSUMP_COL] = f"🟡 {_pct:.1f}%"
+                else:
+                    total_row[_ADV_ASSUMP_COL] = f"🔴 {_pct:.1f}%"
             else:
-                total_row["Аванс ≥60%"] = ""
+                total_row[_ADV_ASSUMP_COL] = ""
         except Exception:
-            total_row["Аванс ≥60%"] = ""
+            total_row[_ADV_ASSUMP_COL] = ""
     table_df = pd.concat([table_df, pd.DataFrame([total_row])], ignore_index=True)
     display_df = table_df.copy()
     if "Проект" in display_df.columns:
@@ -26004,7 +26054,7 @@ def dashboard_debit_credit(df):
         "Договор стоимость",
         "Всего выполненных обязательств по платежам",
         "Аванс",
-        "Аванс ≥60%",
+        _ADV_ASSUMP_COL,
         "Выполнено (КС-2)",
         "Остаток",
         "КС-2 − Аванс",
@@ -26020,12 +26070,15 @@ def dashboard_debit_credit(df):
     suppress_caption(
         f"Строк данных: {_n_data_rows} • Финансы — млн руб., до десятых • "
         "Строка «ИТОГО» закреплена внизу при прокрутке; "
-        "колонки «Остаток», «КС-2 − Аванс» — прокрутите таблицу вправо →"
+        "колонки «Остаток», «КС-2 − Аванс» — прокрутите таблицу вправо → • "
+        f"«{_ADV_ASSUMP_COL}»: (Аванс − КС-2) / Стоимость договора × 100% — "
+        "🟢 < 10%, 🟡 10–20%, 🔴 > 20%"
     )
     _render_budget_table_html(
             display_df,
-            finance_deviation_column=None,
-            deviation_abs_min_mln=0.01,
+            finance_deviation_column="Остаток",
+            deviation_red_if_negative=True,
+            deviation_abs_min_mln=0.0,
             file_stem="debit_credit",
             key_prefix="debit_credit",
             **_finance_table_html_kwargs(table_scroll_max_height_vh=52),
@@ -36765,23 +36818,45 @@ def _load_dogovor_lookup() -> dict[str, dict]:
             if not guid:
                 continue
             num = str(
-                r.get("Номер_Договора") or r.get("Номер_договора") or ""
+                r.get("Номер_Договора")
+                or r.get("Номер_договора")
+                or r.get("Номер")
+                or ""
             ).strip()
-            name = str(r.get("Наименование_Договора") or "").strip()
-            contractor = str(r.get("Наименование_Контрагента") or "").strip()
-            try:
-                summa_raw = r.get("Сумма_Договора")
-                summa = float(summa_raw) if summa_raw not in (None, "", "null") else None
-            except (TypeError, ValueError):
-                summa = None
+            name = str(
+                r.get("Наименование_Договора") or r.get("Наименование") or ""
+            ).strip()
+            contractor = str(
+                r.get("Наименование_Контрагента") or r.get("Контрагент") or ""
+            ).strip()
+            summa = None
+            for _sk in ("Сумма_Договора", "СуммаДоговора"):
+                try:
+                    summa_raw = r.get(_sk)
+                    if summa_raw not in (None, "", "null"):
+                        summa = float(summa_raw)
+                        break
+                except (TypeError, ValueError):
+                    continue
             # Q21 (08.05.2026): «Дата выдачи ИД» — заказчик подтвердил, что есть
             # в выгрузке (поле `Дата_Получения_ИД` в Dogovor.json).
-            issue_id = str(r.get("Дата_Получения_ИД") or "").strip()
-            date_start = str(r.get("Дата_Начала_Договора") or "").strip()
-            date_end = str(r.get("Дата_Окончания_Договора") or "").strip()
-            project_name = str(r.get("Наименование_Проекта") or "").strip()
+            issue_id = str(
+                r.get("Дата_Получения_ИД") or r.get("ДатаПолученияИД") or ""
+            ).strip()
+            date_start = str(
+                r.get("Дата_Начала_Договора") or r.get("ДатаНачала") or ""
+            ).strip()
+            date_end = str(
+                r.get("Дата_Окончания_Договора")
+                or r.get("ДатаОкончанияДатаОкончания")
+                or r.get("ДатаОкончания")
+                or ""
+            ).strip()
+            project_name = str(
+                r.get("Наименование_Проекта") or r.get("Проект") or ""
+            ).strip()
             project_id = str(r.get("ID_Проекта") or "").strip()
-            out[guid] = {
+            _new = {
                 "Номер_Договора": num,
                 "Сумма_Договора": summa,
                 "Наименование_Договора": name,
@@ -36792,6 +36867,27 @@ def _load_dogovor_lookup() -> dict[str, dict]:
                 "Наименование_Проекта": project_name,
                 "ID_Проекта": project_id,
             }
+            if guid in out:
+                _prev = out[guid]
+                try:
+                    _prev_sum = float(_prev.get("Сумма_Договора") or 0)
+                except (TypeError, ValueError):
+                    _prev_sum = 0.0
+                try:
+                    _new_sum = float(_new.get("Сумма_Договора") or 0)
+                except (TypeError, ValueError):
+                    _new_sum = 0.0
+                if _new_sum <= 0 and _prev_sum > 0:
+                    _new["Сумма_Договора"] = _prev_sum
+                for _fk in (
+                    "Номер_Договора",
+                    "Наименование_Договора",
+                    "Наименование_Контрагента",
+                    "Наименование_Проекта",
+                ):
+                    if not str(_new.get(_fk) or "").strip() and str(_prev.get(_fk) or "").strip():
+                        _new[_fk] = _prev[_fk]
+            out[guid] = _new
     return out
 
 
