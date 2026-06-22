@@ -1033,7 +1033,9 @@ html,body{
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table th.col-pf-start,
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table td.col-pf-start,
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table th.col-pf-end,
-.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table td.col-pf-end{
+.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table td.col-pf-end,
+.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table th.col-pf-dur,
+.bi-sortable-html-root:has(.gantt-schedule-table-wrap) table td.col-pf-dur{
   max-width:none!important; white-space:nowrap!important;
 }
 .bi-sortable-html-root:has(.gantt-schedule-table-wrap) table th.col-gantt-task,
@@ -1341,7 +1343,7 @@ html:has(.gantt-schedule-scroll-wrap),body:has(.gantt-schedule-scroll-wrap){
   color:hsl(348,100%,63%)!important;-webkit-text-fill-color:hsl(348,100%,63%)!important;
 }
 .gantt-schedule-scroll-wrap .pf-dev-green,.gantt-schedule-scroll-wrap .pf-dev-green *{
-  color:#15803d!important;-webkit-text-fill-color:#15803d!important;
+  color:#166534!important;-webkit-text-fill-color:#166534!important;font-weight:700!important;
 }
 .gantt-schedule-table-wrap{width:max-content!important;min-width:100%!important;max-width:none!important;}
 .gantt-schedule-table-wrap table{width:max-content!important;min-width:100%!important;table-layout:auto!important;}
@@ -1536,7 +1538,7 @@ html:has(.pf-dates-table-wrap),body:has(.pf-dates-table-wrap){
 .pf-covenant-table-wrap .pf-dev-green,.pf-covenant-table-wrap .pf-dev-green *,
 .pf-zos-table-wrap .pf-dev-green,.pf-zos-table-wrap .pf-dev-green *,
 .pf-dates-table-wrap .pf-dev-green,.pf-dates-table-wrap .pf-dev-green *{
-  color:#15803d!important;-webkit-text-fill-color:#15803d!important;
+  color:#166534!important;-webkit-text-fill-color:#166534!important;font-weight:700!important;
 }
 .pf-dates-scroll-wrap .rendered-table th,
 .pf-covenant-table-wrap .rendered-table th,
@@ -1610,7 +1612,7 @@ html:has(.pd-dynamics-table-wrap),body:has(.pd-dynamics-table-wrap){
 }
 .pd-dynamics-scroll-wrap .pf-dev-green,.pd-dynamics-scroll-wrap .pf-dev-green *,
 .pd-dynamics-table-wrap .pf-dev-green,.pd-dynamics-table-wrap .pf-dev-green *{
-  color:#15803d!important;-webkit-text-fill-color:#15803d!important;
+  color:#166534!important;-webkit-text-fill-color:#166534!important;font-weight:700!important;
 }
 .pd-dynamics-scroll-wrap .rendered-table th,
 .pd-dynamics-table-wrap .rendered-table th{

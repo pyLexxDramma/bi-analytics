@@ -207,7 +207,7 @@ def finance_chart_label_color(*, dark: str = "#f0f4f8", light: str = "#111827") 
 
 
 FINANCE_DEV_GREEN_DARK = "hsl(148,100%,63%)"
-FINANCE_DEV_GREEN_LIGHT = "#15803d"
+FINANCE_DEV_GREEN_LIGHT = "#166534"
 
 
 def finance_dev_negative_color() -> str:
