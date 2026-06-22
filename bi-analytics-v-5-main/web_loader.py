@@ -186,6 +186,41 @@ def _deduplicate_project_snapshots(df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def _deduplicate_project_snapshots_last_per_month(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Для MSP: последний снимок каждого проекта в каждом календарном месяце
+    выгрузки (по snapshot_date). Нужен для динамики отклонений по plan end.
+    Колонка snapshot_upload_month — месяц выгрузки файла на FTP.
+    """
+    if df is None or df.empty:
+        return df
+    if "snapshot_date" not in df.columns:
+        return df
+
+    df = df.copy()
+    df["snapshot_date"] = pd.to_datetime(df["snapshot_date"], errors="coerce")
+
+    has_snap = df["snapshot_date"].notna()
+    if "project name" in df.columns:
+        has_snap = has_snap & df["project name"].notna()
+
+    if not has_snap.any():
+        return df
+
+    snap_part = df[has_snap].copy()
+    no_snap_part = df[~has_snap].copy()
+
+    snap_part["_upload_month"] = snap_part["snapshot_date"].dt.to_period("M")
+    latest = snap_part.groupby(
+        ["project name", "_upload_month"], observed=False
+    )["snapshot_date"].transform("max")
+    snap_part = snap_part[snap_part["snapshot_date"] == latest].copy()
+    snap_part["snapshot_upload_month"] = snap_part["_upload_month"]
+    snap_part = snap_part.drop(columns=["_upload_month"], errors="ignore")
+
+    return pd.concat([no_snap_part, snap_part], ignore_index=True)
+
+
 def _fill_section_from_task_tree(df: pd.DataFrame) -> pd.DataFrame:
     """
     Заполняет колонку section именем родительской задачи уровня 2 (для маппинга «Ковенанты»).
@@ -1496,13 +1531,25 @@ def pick_latest_snapshot_files(files: List[Dict]) -> Tuple[List[Dict], List[str]
         bk = _msp_project_bucket(stem) or stem.lower()
         buckets_m.setdefault(str(bk), []).append(f)
     for lst in buckets_m.values():
-        rated = []
+        by_month: Dict[tuple[int, int], List[Dict]] = {}
+        undated: List[Dict] = []
         for f in lst:
             stem = Path(f["name"]).stem
             md = _max_date_in_stem(stem)
-            rated.append(((md or dt_date.min, _file_mtime(f["path"])), f))
-        best_f = max(rated, key=lambda x: x[0])[1]
-        _add(best_f)
+            if md is None:
+                undated.append(f)
+                continue
+            by_month.setdefault((md.year, md.month), []).append(f)
+        for month_lst in by_month.values():
+            rated = []
+            for f in month_lst:
+                stem = Path(f["name"]).stem
+                md = _max_date_in_stem(stem)
+                rated.append(((md or dt_date.min, _file_mtime(f["path"])), f))
+            best_f = max(rated, key=lambda x: x[0])[1]
+            _add(best_f)
+        for f in undated:
+            _add(f)
 
     buckets_o: Dict[str, List[Dict]] = {}
     for f in dated_other:
