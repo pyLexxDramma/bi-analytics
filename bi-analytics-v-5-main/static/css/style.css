@@ -1282,7 +1282,44 @@ div[data-baseweb="menu"] li span {
     overflow: hidden !important;
 }
 .appr-pf-summary-kpi { display: flex; gap: 1.25rem; flex-wrap: wrap; align-items: flex-start; }
-.appr-pf-summary-kpi-col { flex: 1 1 140px; min-width: 120px; }
+.appr-pf-summary-kpi-col { flex: 1 1 200px; min-width: 180px; }
+.appr-pf-summary-anchor ~ div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:last-child {
+    flex: 1.4 1 320px !important;
+    min-width: 280px !important;
+    overflow: visible !important;
+}
+.appr-pf-summary-anchor ~ div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:last-child div[data-testid="stHtml"],
+.appr-pf-summary-anchor ~ div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:last-child [data-testid="stHtml"] iframe {
+    min-height: var(--appr-pf-gauge-h) !important;
+    max-height: var(--appr-pf-gauge-h) !important;
+    height: var(--appr-pf-gauge-h) !important;
+    overflow: visible !important;
+}
+.main .appr-pf-summary-kpi p.appr-pf-kpi-label,
+    font-size: 4.6rem !important;
+    font-weight: 800 !important;
+    margin: 0 0 0.45rem 0 !important;
+    letter-spacing: 0.02em !important;
+    line-height: 1.1 !important;
+}
+.main .appr-pf-summary-kpi p.appr-pf-kpi-value {
+    font-size: 6.6rem !important;
+    font-weight: 700 !important;
+    margin: 0 0 0.25rem 0 !important;
+    line-height: 1.1 !important;
+}
+.main .appr-pf-summary-kpi p.appr-pf-kpi-muted {
+    font-size: 4.2rem !important;
+    font-weight: 600 !important;
+    margin: 0 !important;
+    line-height: 1.1 !important;
+}
+.main .appr-pf-summary-kpi p.appr-pf-kpi-pct {
+    font-size: 4.8rem !important;
+    font-weight: 700 !important;
+    margin: 0.75rem 0 0 !important;
+    line-height: 1.1 !important;
+}
 
 .appr-pf-summary-anchor ~ div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:first-child, div[data-testid="stColumn"]:first-child div[data-testid="stHtml"] {
     min-height: var(--appr-pf-gauge-h) !important;

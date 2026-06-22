@@ -1174,8 +1174,28 @@ html body.gdrs-light-preview .appr-pf-summary-kpi {
   align-items: flex-start;
 }
 html body.gdrs-light-preview .appr-pf-summary-kpi-col {
-  flex: 1 1 140px;
-  min-width: 120px;
+  flex: 1 1 200px !important;
+  min-width: 180px !important;
+}
+html body.gdrs-light-preview .appr-pf-summary-kpi .appr-pf-kpi-label {
+  font-size: 4.6rem !important;
+  font-weight: 800 !important;
+  line-height: 1.1 !important;
+}
+html body.gdrs-light-preview .appr-pf-summary-kpi .appr-pf-kpi-value {
+  font-size: 6.6rem !important;
+  font-weight: 700 !important;
+  line-height: 1.1 !important;
+}
+html body.gdrs-light-preview .appr-pf-summary-kpi .appr-pf-kpi-muted {
+  font-size: 4.2rem !important;
+  font-weight: 600 !important;
+  line-height: 1.1 !important;
+}
+html body.gdrs-light-preview .appr-pf-summary-kpi .appr-pf-kpi-pct {
+  font-size: 4.8rem !important;
+  font-weight: 700 !important;
+  line-height: 1.1 !important;
 }
 html body.gdrs-light-preview .appr-pf-summary-anchor ~ div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:first-child div[data-testid="stHtml"],
 html body.gdrs-light-preview .appr-pf-summary-anchor ~ div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:first-child [data-testid="stHtml"] iframe {

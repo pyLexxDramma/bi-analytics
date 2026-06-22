@@ -31754,6 +31754,73 @@ def _render_appr_pf_gauge_chart(fig: go.Figure, *, height: int, chart_key: str) 
         )
 
 
+def _render_appr_pf_summary_kpi(
+    *,
+    plan_v: float,
+    fact_v: float,
+    plan_mln: float,
+    fact_mln: float,
+    pct_of_plan: float,
+    plan_rub: float,
+    fact_rub: float,
+    vf: str,
+    unit: str,
+    height: int,
+    plan_red: str,
+    fact_green: str,
+    value_color: str,
+    muted_color: str,
+) -> None:
+    """KPI план/факт в iframe — Streamlit перебивает font-size в st.markdown."""
+    from html import escape as html_esc
+
+    h = max(200, int(height))
+    pct_html = ""
+    if plan_rub > 0 and np.isfinite(pct_of_plan):
+        pct_color = fact_green if fact_rub >= plan_rub else plan_red
+        pct_html = (
+            f'<p class="appr-pf-kpi-pct" style="color:{html_esc(pct_color)};">'
+            f"{pct_of_plan:.1f}% от плана</p>"
+        )
+    plan_val = html_esc(f"{plan_v:{vf}} {unit}")
+    fact_val = html_esc(f"{fact_v:{vf}} {unit}")
+    shell = (
+        "<!DOCTYPE html><html lang='ru'><head><meta charset='utf-8'>"
+        "<style>"
+        "html,body{margin:0;padding:0;background:transparent!important;"
+        "font-family:Inter,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;}"
+        ".appr-pf-summary-kpi{display:flex;gap:1.25rem;flex-wrap:wrap;align-items:flex-start;"
+        "padding:8px 4px;box-sizing:border-box;}"
+        ".appr-pf-summary-kpi-col{flex:1 1 200px;min-width:180px;}"
+        ".appr-pf-kpi-label{font-size:4.6rem!important;font-weight:800!important;"
+        "margin:0 0 0.45rem 0!important;letter-spacing:0.02em!important;line-height:1.1!important;}"
+        ".appr-pf-kpi-value{font-size:6.6rem!important;font-weight:700!important;"
+        "margin:0 0 0.25rem 0!important;line-height:1.1!important;}"
+        ".appr-pf-kpi-muted{font-size:4.2rem!important;font-weight:600!important;"
+        "margin:0!important;line-height:1.1!important;}"
+        ".appr-pf-kpi-pct{font-size:4.8rem!important;font-weight:700!important;"
+        "margin:0.75rem 0 0!important;line-height:1.1!important;}"
+        "</style></head><body>"
+        '<div class="appr-pf-summary-kpi">'
+        '<div class="appr-pf-summary-kpi-col">'
+        f'<p class="appr-pf-kpi-label" style="color:{html_esc(plan_red)};">План</p>'
+        f'<p class="appr-pf-kpi-value" style="color:{html_esc(value_color)};">{plan_val}</p>'
+        f'<p class="appr-pf-kpi-muted" style="color:{html_esc(muted_color)};">'
+        f"{plan_mln:.1f} млн рублей</p>"
+        f'<p class="appr-pf-kpi-pct" style="color:{html_esc(value_color)};">100%</p>'
+        "</div>"
+        '<div class="appr-pf-summary-kpi-col">'
+        f'<p class="appr-pf-kpi-label" style="color:{html_esc(fact_green)};">Факт</p>'
+        f'<p class="appr-pf-kpi-value" style="color:{html_esc(value_color)};">{fact_val}</p>'
+        f'<p class="appr-pf-kpi-muted" style="color:{html_esc(muted_color)};">'
+        f"{fact_mln:.1f} млн рублей</p>"
+        f"{pct_html}"
+        "</div></div>"
+        "</body></html>"
+    )
+    components.html(shell, height=h, scrolling=False)
+
+
 def _appr_budget_table_html_kwargs(**overrides) -> dict:
     return _finance_table_html_kwargs(
         header_font_css="font-weight:700;font-size:1.15em;",
@@ -31777,6 +31844,37 @@ _APPR_PF_SUMMARY_GAUGE_CSS = """
 .appr-pf-summary-anchor ~ div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:first-child [data-testid="stHtml"] iframe {
   overflow: hidden !important;
   max-width: 100% !important;
+}
+.appr-pf-summary-anchor ~ div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:last-child {
+  flex: 1.4 1 320px !important;
+  min-width: 280px !important;
+  overflow: visible !important;
+}
+.appr-pf-summary-kpi-col { flex: 1 1 200px !important; min-width: 180px !important; }
+.appr-pf-summary-kpi .appr-pf-kpi-label {
+  font-size: 4.6rem !important;
+  font-weight: 800 !important;
+  margin: 0 0 0.45rem 0 !important;
+  letter-spacing: 0.02em !important;
+  line-height: 1.1 !important;
+}
+.appr-pf-summary-kpi .appr-pf-kpi-value {
+  font-size: 6.6rem !important;
+  font-weight: 700 !important;
+  margin: 0 0 0.25rem 0 !important;
+  line-height: 1.1 !important;
+}
+.appr-pf-summary-kpi .appr-pf-kpi-muted {
+  font-size: 4.2rem !important;
+  font-weight: 600 !important;
+  margin: 0 !important;
+  line-height: 1.1 !important;
+}
+.appr-pf-summary-kpi .appr-pf-kpi-pct {
+  font-size: 4.8rem !important;
+  font-weight: 700 !important;
+  margin: 0.75rem 0 0 !important;
+  line-height: 1.1 !important;
 }
 </style>
 """
@@ -31914,9 +32012,7 @@ def _render_plan_fact_summary_dashboard(
     )
     fig = apply_chart_background(fig)
 
-    render_table_subheader(st, "Бюджет план/факт")
-    if reporting_label:
-        st.caption(f"Накопительный БДДС на дату: {reporting_label}")
+    render_table_subheader(st, "Сводный дашборд план/факт")
     st.markdown(_APPR_PF_SUMMARY_GAUGE_CSS, unsafe_allow_html=True)
     st.markdown('<div class="appr-pf-summary-anchor"></div>', unsafe_allow_html=True)
     g_col, val_col = st.columns([1.2, 1], gap="medium", vertical_alignment="center")
@@ -31926,45 +32022,32 @@ def _render_plan_fact_summary_dashboard(
             height=_gauge_h,
             chart_key=f"appr_budget_summary_gauge_{key_suffix}",
         )
-    _pct_color = _gauge_fact_green if fact_rub >= plan_rub else _gauge_plan_red
-    _pct_html = (
-        f'<p style="font-size:1.2rem;font-weight:700;margin:0.75rem 0 0;color:{_pct_color};">'
-        f"{pct_of_plan:.1f}% от плана</p>"
-        if plan_rub > 0 and np.isfinite(pct_of_plan)
-        else ""
-    )
     _kpi_value_color = _gauge_value_color
     _kpi_muted_color = _gauge_tick_color
     with val_col:
-        st.markdown(
-            f'<div class="appr-pf-summary-kpi">'
-            f'<div class="appr-pf-summary-kpi-col">'
-            f'<p style="font-size:1.15rem;font-weight:800;margin:0 0 0.45rem 0;color:{_gauge_plan_red};'
-            f'letter-spacing:0.02em;">План</p>'
-            f'<p style="font-size:1.65rem;font-weight:700;margin:0 0 0.25rem 0;color:{_kpi_value_color};">'
-            f"{plan_v:{vf}} {unit}</p>"
-            f'<p style="font-size:1.05rem;font-weight:600;margin:0;color:{_kpi_muted_color};">'
-            f"{plan_mln:.1f} млн рублей</p>"
-            f'<p style="font-size:1.2rem;font-weight:700;margin:0.75rem 0 0;color:{_kpi_value_color};">100%</p>'
-            f"</div>"
-            f'<div class="appr-pf-summary-kpi-col">'
-            f'<p style="font-size:1.15rem;font-weight:800;margin:0 0 0.45rem 0;color:{_gauge_fact_green};'
-            f'letter-spacing:0.02em;">Факт</p>'
-            f'<p style="font-size:1.65rem;font-weight:700;margin:0 0 0.25rem 0;color:{_kpi_value_color};">'
-            f"{fact_v:{vf}} {unit}</p>"
-            f'<p style="font-size:1.05rem;font-weight:600;margin:0;color:{_kpi_muted_color};">'
-            f"{fact_mln:.1f} млн рублей</p>"
-            f"{_pct_html}"
-            f"</div></div>",
-            unsafe_allow_html=True,
+        _render_appr_pf_summary_kpi(
+            plan_v=plan_v,
+            fact_v=fact_v,
+            plan_mln=plan_mln,
+            fact_mln=fact_mln,
+            pct_of_plan=pct_of_plan,
+            plan_rub=plan_rub,
+            fact_rub=fact_rub,
+            vf=vf,
+            unit=unit,
+            height=_gauge_h,
+            plan_red=_gauge_plan_red,
+            fact_green=_gauge_fact_green,
+            value_color=_kpi_value_color,
+            muted_color=_kpi_muted_color,
         )
 
 
 
 
 def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) -> None:
-    """Гистограмма: Бюджет план/факт/корректировка/отклонение по проектам."""
-    render_table_subheader(st, "Гистограмма: Бюджет план/факт/корректировка/отклонение по проектам")
+    """Гистограмма: Бюджет план/факт/отклонение по проектам."""
+    render_table_subheader(st, "Гистограмма: Бюджет план/факт/отклонение по проектам")
 
     adjusted_budget_col = None
     if "budget adjusted" in filtered_df.columns:
@@ -32137,7 +32220,7 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
     render_chart(
         fig_hist,
         caption_below=report_chart_caption_body(
-            "Бюджет план/факт/корректировка/отклонение", granularity="по проектам"
+            "Бюджет план/факт/отклонение", granularity="по проектам"
         ),
     )
 
@@ -32411,9 +32494,6 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
         st.caption(
             "Накопительный БДДС недоступен (нет помесячных данных) — показаны полные суммы."
         )
-
-    if used_cumulative and reporting_label:
-        st.caption(f"План/факт на дату: {reporting_label} (накопительный БДДС, как на вкладке БДДС).")
 
     _render_plan_fact_summary_dashboard(
         st,
@@ -32885,7 +32965,7 @@ def dashboard_budget_by_type(df):
     render_quality_hints(_budget_type_q_hints)
 
     # ========== Histogram: Budget by Project and Type ==========
-    render_table_subheader(st, "Гистограмма: Бюджет план/факт/корректировка/отклонение по проектам")
+    render_table_subheader(st, "Гистограмма: Бюджет план/факт/отклонение по проектам")
 
     adjusted_budget_col = None
     if "budget adjusted" in df.columns:
@@ -33063,7 +33143,7 @@ def dashboard_budget_by_type(df):
                 render_chart(
                     fig_hist,
                     caption_below=report_chart_caption_body(
-                        "Бюджет план/факт/корректировка/отклонение", granularity="по проектам"
+                        "Бюджет план/факт/отклонение", granularity="по проектам"
                     ),
                 )
                 render_quality_hints(_budget_type_q_hints)
