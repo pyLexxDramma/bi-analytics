@@ -3703,6 +3703,37 @@ def _apply_finance_light_preview_chart_colors(fig) -> None:
         pass
 
 
+def _finance_plotly_hscroll_modebar_pin_css(*, wrap_class: str) -> str:
+    """Modebar Plotly не уезжает за край при гориз. скролле широкого графика."""
+    return (
+        f".{wrap_class}{{position:relative!important;}}"
+        f".{wrap_class} .modebar{{z-index:1001!important;pointer-events:all!important;}}"
+    )
+
+
+def _finance_plotly_hscroll_modebar_pin_script(*, wrap_class: str, inner_class: str) -> str:
+    """JS: сдвигает modebar вместе с viewport, чтобы панель всегда была справа сверху."""
+    return (
+        "<script>(function(){"
+        f"var wrap=document.querySelector('.{wrap_class}');"
+        "if(!wrap)return;"
+        f"var inner=wrap.querySelector('.{inner_class}');"
+        "function pin(){"
+        "var mb=wrap.querySelector('.modebar');"
+        "if(!mb||!inner)return;"
+        "var tx=wrap.scrollLeft+wrap.clientWidth-inner.offsetWidth;"
+        "mb.style.setProperty('transform','translateX('+tx+'px)','important');"
+        "mb.style.setProperty('z-index','1001','important');"
+        "}"
+        "wrap.addEventListener('scroll',pin,{passive:true});"
+        "window.addEventListener('resize',pin);"
+        "var gd=wrap.querySelector('.js-plotly-plot,.plotly-graph-div');"
+        "if(gd&&window.Plotly&&gd.on)gd.on('plotly_afterplot',pin);"
+        "setTimeout(pin,120);setTimeout(pin,600);setTimeout(pin,1500);"
+        "})();</script>"
+    )
+
+
 def _fin_iframe_plotly_light_css(uid: str) -> str:
     try:
         from dashboards.light_theme import is_light_preview_active
@@ -11502,26 +11533,35 @@ def _render_finance_bar_chart(
             if _light_plotly_css
             else "1px solid rgba(148,163,184,0.22)"
         )
+        _fbar_wrap_cls = f"pf-fbar-{uid}-wrap"
+        _fbar_inner_cls = f"pf-fbar-{uid}-inner"
+        _modebar_pin_css = _finance_plotly_hscroll_modebar_pin_css(wrap_class=_fbar_wrap_cls)
+        _modebar_pin_js = _finance_plotly_hscroll_modebar_pin_script(
+            wrap_class=_fbar_wrap_cls,
+            inner_class=_fbar_inner_cls,
+        )
         shell = (
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
             f"<style>"
             f"html,body{{margin:0;padding:0;background:transparent;overflow:visible;min-height:{h + _scroll_px}px;}}"
-            f".pf-fbar-{uid}-wrap{{width:100%;max-width:100%;overflow-x:auto;overflow-y:visible;"
+            f".{_fbar_wrap_cls}{{width:100%;max-width:100%;overflow-x:auto;overflow-y:visible;"
             f"-webkit-overflow-scrolling:touch;box-sizing:border-box;line-height:normal;"
             f"padding:0 0 {_scroll_px}px 0;scrollbar-gutter:stable both-edges;"
             f"border:{_bar_border};border-radius:8px;"
             f"min-height:{h + _scroll_px}px;}}"
-            f".pf-fbar-{uid}-inner{{width:{w}px;min-width:{w}px;max-width:{w}px;display:block;"
+            f".{_fbar_inner_cls}{{width:{w}px;min-width:{w}px;max-width:{w}px;display:block;"
             f"line-height:normal;}}"
-            f".pf-fbar-{uid}-inner .plotly-graph-div,.pf-fbar-{uid}-inner .js-plotly-plot{{"
+            f".{_fbar_inner_cls} .plotly-graph-div,.{_fbar_inner_cls} .js-plotly-plot{{"
             f"width:{w}px!important;min-width:{w}px!important;max-width:{w}px!important;"
             f"height:{h}px!important;}}"
-            f".pf-fbar-{uid}-wrap::-webkit-scrollbar{{height:12px;}}"
-            f".pf-fbar-{uid}-wrap::-webkit-scrollbar-thumb{{background:rgba(148,163,184,0.55);border-radius:6px;}}"
-            f".pf-fbar-{uid}-wrap::-webkit-scrollbar-track{{{_scroll_track}border-radius:6px;}}"
+            f".{_fbar_wrap_cls}::-webkit-scrollbar{{height:12px;}}"
+            f".{_fbar_wrap_cls}::-webkit-scrollbar-thumb{{background:rgba(148,163,184,0.55);border-radius:6px;}}"
+            f".{_fbar_wrap_cls}::-webkit-scrollbar-track{{{_scroll_track}border-radius:6px;}}"
+            f"{_modebar_pin_css}"
             f"{_light_plotly_css}"
             f"</style></head><body>"
-            f'<div class="pf-fbar-{uid}-wrap"><div class="pf-fbar-{uid}-inner">{plot_div}</div></div>'
+            f'<div class="{_fbar_wrap_cls}"><div class="{_fbar_inner_cls}">{plot_div}</div></div>'
+            f"{_modebar_pin_js}"
             "</body></html>"
         )
         components.html(shell, height=h + _scroll_px + 12, scrolling=False)
@@ -12090,22 +12130,32 @@ def _render_debit_credit_bar_chart(
             default_width=f"{w}px",
             default_height=f"{h}px",
         )
+        _dk_wrap_cls = f"pf-dkbar-{uid}-wrap"
+        _dk_inner_cls = f"pf-dkbar-{uid}-inner"
+        _dk_modebar_pin_css = _finance_plotly_hscroll_modebar_pin_css(wrap_class=_dk_wrap_cls)
+        _dk_modebar_pin_js = _finance_plotly_hscroll_modebar_pin_script(
+            wrap_class=_dk_wrap_cls,
+            inner_class=_dk_inner_cls,
+        )
         shell = (
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
             f"<style>"
             f"html,body{{margin:0;padding:0;background:transparent;overflow:hidden;}}"
-            f".pf-dkbar-{uid}-wrap{{width:100%;max-width:100%;overflow-x:auto;overflow-y:hidden;"
+            f".{_dk_wrap_cls}{{width:100%;max-width:100%;overflow-x:auto;overflow-y:hidden;"
             f"-webkit-overflow-scrolling:touch;box-sizing:border-box;}}"
-            f".pf-dkbar-{uid}-inner{{width:{w}px;min-width:{w}px;display:block;}}"
-            f".pf-dkbar-{uid}-inner .plotly-graph-div,.pf-dkbar-{uid}-inner .js-plotly-plot{{"
+            f".{_dk_inner_cls}{{width:{w}px;min-width:{w}px;display:block;}}"
+            f".{_dk_inner_cls} .plotly-graph-div,.{_dk_inner_cls} .js-plotly-plot{{"
             f"width:{w}px!important;min-width:{w}px!important;height:{h}px!important;}}"
+            f"{_dk_modebar_pin_css}"
             f"</style></head><body>"
-            f'<div class="pf-dkbar-{uid}-wrap"><div class="pf-dkbar-{uid}-inner">{plot_div}</div></div>'
+            f'<div class="{_dk_wrap_cls}"><div class="{_dk_inner_cls}">{plot_div}</div></div>'
             "<script>"
             "function _dkRsz(){try{var gd=document.querySelector('.plotly-graph-div');"
             "if(gd&&window.Plotly)Plotly.Plots.resize(gd);}catch(e){}}"
             "window.addEventListener('load',_dkRsz);setTimeout(_dkRsz,120);setTimeout(_dkRsz,600);"
-            "</script></body></html>"
+            "</script>"
+            f"{_dk_modebar_pin_js}"
+            "</body></html>"
         )
         components.html(shell, height=int(h + 8), scrolling=False)
         if need_hscroll:
