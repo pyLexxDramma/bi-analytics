@@ -15786,6 +15786,431 @@ def _drop_rd_detail_empty_rows(tbl: pd.DataFrame) -> pd.DataFrame:
     return tbl.loc[~tbl.apply(_row_empty, axis=1)].reset_index(drop=True)
 
 
+def _rd_plan_csv_pick_columns(df: pd.DataFrame) -> dict[str, str | None]:
+    """Колонки other_*_rd.csv после нормализации заголовков."""
+    cols = {
+        str(c).replace("\r", " ").replace("\n", " ").strip(): c for c in df.columns
+    }
+
+    def _pick(names: tuple[str, ...]) -> str | None:
+        for n in names:
+            if n in cols:
+                return cols[n]
+        return None
+
+    def _pick_fuzzy(must: tuple[str, ...]) -> str | None:
+        lows = tuple(w.casefold() for w in must)
+        best, best_len = None, 10**9
+        for cl in cols:
+            lc = cl.casefold()
+            if all(w in lc for w in lows) and len(lc) < best_len:
+                best, best_len = cols[cl], len(lc)
+        return best
+
+    return {
+        "proj": _pick(("project name", "Проект", "ID_проекта")),
+        "code": _pick(("Шифр",)) or _pick_fuzzy(("шифр",)),
+        "name": _pick(
+            (
+                "Наименование  работ (разделов работ).",
+                "Наименование работ (разделов работ).",
+                "Наименование раздела",
+                "Наименование",
+            )
+        )
+        or _pick_fuzzy(("наименование", "раздел"))
+        or _pick_fuzzy(("наименование",)),
+        "plan": _pick(("Дата выдачи разделов по Договору", "Дата выдачи", "plan end"))
+        or _pick_fuzzy(("дата", "выдачи", "договор"))
+        or _pick_fuzzy(("дата", "выдачи")),
+        "forecast": _pick(
+            ("Прогнозная дата выдачи разделов", "Прогнозная дата", "actual finish")
+        ),
+        "status": _pick(("Статус РД", "Статус ПД", "Статус")),
+        "full_cipher": _pick(("Шифр полный", "InternalID", "Internal Id")),
+        "contract": _pick(("№ Договора", "Договор")),
+    }
+
+
+def _rd_plan_csv_sections_df(
+    selected_projects: list[str] | None = None,
+) -> pd.DataFrame:
+    """Строки плана РД из rd_plan_data: 1 строка = 1 раздел, без итогов CSV."""
+    try:
+        rd = st.session_state.get("rd_plan_data")
+    except Exception:
+        rd = None
+    if rd is None or getattr(rd, "empty", True):
+        return pd.DataFrame()
+    df = rd.copy()
+    df.columns = [
+        re.sub(r"\s+", " ", str(c).replace("\r", " ").replace("\n", " ").replace("\u00a0", " "))
+        .strip()
+        for c in df.columns
+    ]
+    if df.columns.duplicated().any():
+        df = df.loc[:, ~df.columns.duplicated(keep="first")].copy()
+    pc = _rd_plan_csv_pick_columns(df)
+    if not pc.get("plan"):
+        return pd.DataFrame()
+    if selected_projects and pc.get("proj") and pc["proj"] in df.columns:
+        _pk = {_project_filter_norm_key(p) for p in selected_projects}
+        df = df[df[pc["proj"]].map(_project_filter_norm_key).isin(_pk)].copy()
+    df = _rd_plan_drop_footer_rows(
+        df,
+        code_col=pc.get("code"),
+        name_col=pc.get("name"),
+        status_col=pc.get("status"),
+    )
+    if df.empty:
+        return df
+    df["_plan_dt"] = pd.to_datetime(
+        df[pc["plan"]], errors="coerce", dayfirst=True, format="mixed"
+    )
+    df["_rd_plan_n"] = 1.0
+    if pc.get("forecast") and pc["forecast"] in df.columns:
+        df["_fact_dt"] = pd.to_datetime(
+            df[pc["forecast"]], errors="coerce", dayfirst=True, format="mixed"
+        )
+    else:
+        df["_fact_dt"] = pd.NaT
+    df["_pc"] = pc
+    return df
+
+
+def _rd_plan_tessa_internal_ids(selected_projects: list[str] | None = None) -> set[str]:
+    """InternalID карточек TESSA с заполненным шифром (для «Не выдан»)."""
+    ids: set[str] = set()
+    try:
+        trd = st.session_state.get("tessa_data")
+    except Exception:
+        return ids
+    if trd is None or getattr(trd, "empty", True):
+        return ids
+    t = trd.copy()
+    t.columns = [str(c).strip() for c in t.columns]
+    tp = _tessa_find_column(t, ["ObjectProjectName", "ProjectName", "ObjectName"])
+    ti = _tessa_find_column(t, ["InternalID", "InternalId", "Internal Id"])
+    tk = _tessa_find_column(t, ["DivisionCipher", "Cipher"])
+    if not ti or not tk:
+        return ids
+    if selected_projects and tp and tp in t.columns:
+        _pk = {_project_filter_norm_key(p) for p in selected_projects}
+        t = t[t[tp].map(_project_filter_norm_key).isin(_pk)]
+    t = t[t[tk].map(_tessa_cell_has_value).fillna(False)]
+    for _v in t[ti].tolist():
+        s = str(_v or "").strip()
+        if s and s.lower() not in ("nan", "none", "<na>", "nat"):
+            ids.add(s.casefold())
+    return ids
+
+
+def _rd_plan_row_is_not_issued_csv_status(raw: Any) -> bool:
+    s = str(raw or "").strip().casefold()
+    return s in ("не выдан", "не выдано") or s.startswith("не выдан")
+
+
+def _rd_dynamics_plan_increment_series(
+    sub: pd.DataFrame,
+    value_col: str,
+    date_col: str,
+) -> pd.Series:
+    """Прирост плана по строкам: 1 раздел/строка, если колонка не накопительная."""
+    vals = pd.to_numeric(
+        sub[value_col]
+        .astype(str)
+        .str.replace(" ", "", regex=False)
+        .str.replace(",", ".", regex=False),
+        errors="coerce",
+    ).fillna(0.0)
+    n = len(sub)
+    if n == 0:
+        return vals
+    ordered = sub.assign(_v=vals).sort_values(date_col)
+    v_ord = ordered["_v"]
+    vmax = float(v_ord.max()) if v_ord.notna().any() else 0.0
+    if vmax > max(n * 1.15, 3.0):
+        prev = 0.0
+        inc: list[float] = []
+        for x in v_ord.tolist():
+            xf = float(x) if pd.notna(x) else 0.0
+            inc.append(max(xf - prev, 0.0))
+            prev = max(prev, xf)
+        return pd.Series(inc, index=ordered.index).reindex(sub.index).fillna(0.0)
+    out = vals.where(vals > 0, 1.0)
+    return out
+
+
+def _rd_monthly_sections_aggregate(month_df: pd.DataFrame) -> pd.DataFrame:
+    """Агрегат по месяцам плановой даты: plan / done / overdue."""
+    if month_df is None or getattr(month_df, "empty", True):
+        return pd.DataFrame()
+    today_ts = pd.Timestamp(date.today())
+    mdf = month_df.copy()
+    mdf["_month"] = mdf["_plan_end_dt"].dt.to_period("M")
+    mdf["_done_n"] = np.where(
+        mdf["_rd_fact_n"] > 0,
+        np.minimum(mdf["_rd_plan_n"], mdf["_rd_fact_n"]),
+        0.0,
+    )
+    mdf["_overdue_n"] = np.where(
+        (mdf["_rd_plan_n"] > mdf["_done_n"]) & (mdf["_plan_end_dt"] < today_ts),
+        mdf["_rd_plan_n"] - mdf["_done_n"],
+        0.0,
+    )
+    monthly = (
+        mdf.groupby("_month", as_index=False)
+        .agg(
+            plan=("_rd_plan_n", "sum"),
+            done=("_done_n", "sum"),
+            overdue=("_overdue_n", "sum"),
+        )
+        .sort_values("_month")
+    )
+    return monthly[monthly["plan"] > 0].copy()
+
+
+def _render_rd_monthly_overlay_chart(
+    monthly: pd.DataFrame,
+    *,
+    metric_mode: str,
+    orientation: str = "v",
+    subheader: str | None = None,
+    chart_key: str | None = None,
+    caption_parts: tuple[str, str] | None = None,
+) -> None:
+    """
+    «Динамика по месяцам»: жёлтый — план, зелёный — факт (наложение), красный — просрочено.
+    """
+    if monthly is None or getattr(monthly, "empty", True):
+        return
+    monthly = monthly.copy()
+    monthly["Месяц"] = monthly["_month"].apply(
+        lambda p: f"{RUSSIAN_MONTHS.get(p.month, str(p.month))} {p.year}"
+    )
+    use_pct = str(metric_mode).strip().startswith("%")
+    if use_pct:
+        monthly["plan_v"] = 100.0
+        monthly["done_v"] = (monthly["done"] / monthly["plan"] * 100).round(1)
+        monthly["overdue_v"] = (monthly["overdue"] / monthly["plan"] * 100).round(1)
+        x_title = "% РД (по месяцу плановой даты)"
+    else:
+        monthly["plan_v"] = monthly["plan"].round(1)
+        monthly["done_v"] = monthly["done"].round(1)
+        monthly["overdue_v"] = monthly["overdue"].round(1)
+        x_title = "Количество разделов"
+
+    def _lbl(v: float, pct: bool) -> str:
+        if pd.isna(v) or float(v) <= 0:
+            return ""
+        return f"{float(v):.0f}%" if pct else f"{int(round(float(v)))}"
+
+    if subheader:
+        st.subheader(subheader)
+
+    is_h = orientation == "h"
+    cat = monthly["Месяц"].tolist()
+    if is_h:
+        cat = monthly.sort_values("_month", ascending=False)["Месяц"].tolist()
+
+    fig = go.Figure()
+    _plan_kw = dict(
+        name="План",
+        marker_color="#F39C12",
+        text=[_lbl(v, use_pct) for v in monthly["plan_v"]],
+        textposition="inside",
+        textfont=dict(size=10, color="#1a1a1a"),
+        hovertemplate="<b>%{y}</b><br>План: %{x}<extra></extra>"
+        if is_h
+        else "<b>%{x}</b><br>План: %{y}<extra></extra>",
+    )
+    _done_kw = dict(
+        name="Выполнено",
+        marker_color="#27AE60",
+        text=[_lbl(v, use_pct) for v in monthly["done_v"]],
+        textposition="inside",
+        textfont=dict(size=10, color="white"),
+        hovertemplate="<b>%{y}</b><br>Выполнено: %{x}<extra></extra>"
+        if is_h
+        else "<b>%{x}</b><br>Выполнено: %{y}<extra></extra>",
+    )
+    _ovd_kw = dict(
+        name="Просрочено",
+        marker_color="#C0392B",
+        text=[_lbl(v, use_pct) for v in monthly["overdue_v"]],
+        textposition="inside",
+        textfont=dict(size=10, color="white"),
+        hovertemplate="<b>%{y}</b><br>Просрочено: %{x}<extra></extra>"
+        if is_h
+        else "<b>%{x}</b><br>Просрочено: %{y}<extra></extra>",
+    )
+    if is_h:
+        fig.add_trace(
+            go.Bar(y=cat, x=monthly["plan_v"], orientation="h", **_plan_kw)
+        )
+        fig.add_trace(
+            go.Bar(y=cat, x=monthly["done_v"], orientation="h", **_done_kw)
+        )
+        fig.add_trace(
+            go.Bar(
+                y=cat,
+                x=monthly["overdue_v"],
+                orientation="h",
+                base=monthly["done_v"],
+                **_ovd_kw,
+            )
+        )
+        fig.update_layout(
+            xaxis_title=x_title,
+            yaxis_title="Месяц",
+            yaxis=dict(categoryorder="array", categoryarray=cat),
+        )
+    else:
+        fig.add_trace(go.Bar(x=cat, y=monthly["plan_v"], **_plan_kw))
+        fig.add_trace(go.Bar(x=cat, y=monthly["done_v"], **_done_kw))
+        fig.add_trace(
+            go.Bar(x=cat, y=monthly["overdue_v"], base=monthly["done_v"], **_ovd_kw)
+        )
+        fig.update_layout(xaxis_title="Месяц", yaxis_title=x_title)
+
+    _ax = _fin_chart_axis_color()
+    fig.update_layout(
+        barmode="overlay",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="left",
+            x=0,
+            title_text="",
+        ),
+        height=max(520, min(900, len(cat) * 36)) if is_h else 520,
+        xaxis=dict(tickfont=dict(color=_ax), title_font=dict(color=_ax)),
+        yaxis=dict(
+            tickfont=dict(color=_ax),
+            title_font=dict(color=_ax),
+            **({"range": [0, 100], "ticksuffix": "%"} if use_pct and not is_h else {}),
+        ),
+    )
+    if use_pct and is_h:
+        fig.update_layout(xaxis=dict(range=[0, 100], ticksuffix="%"))
+    fig = apply_chart_background(fig)
+    _cap = (
+        report_chart_caption_body(caption_parts[0], caption_parts[1])
+        if caption_parts
+        else report_chart_caption_body("Выдача рабочей документации", "по месяцам")
+    )
+    render_chart(fig, key=chart_key, caption_below=_cap)
+
+
+def _build_rd_work_doc_detail_table(
+    selected_projects: list[str] | None = None,
+    selected_section: str | None = None,
+) -> pd.DataFrame:
+    """
+    Детальная таблица РД: карточки TESSA + разделы из other_*_rd.csv без карточки («Не выдан»).
+    """
+    tessa_tbl = _build_tessa_rd_detail_table(
+        selected_projects=selected_projects,
+        selected_section=selected_section,
+    )
+    csv_df = _rd_plan_csv_sections_df(selected_projects)
+    if csv_df.empty:
+        return tessa_tbl
+    pc = csv_df["_pc"].iloc[0] if "_pc" in csv_df.columns else _rd_plan_csv_pick_columns(csv_df)
+    if isinstance(pc, pd.Series):
+        pc = pc.to_dict()
+    internal_ids = _rd_plan_tessa_internal_ids(selected_projects)
+
+    matched: set[tuple[str, str, str]] = set()
+    if not tessa_tbl.empty:
+        for _, r in tessa_tbl.iterrows():
+            matched.add(
+                (
+                    _project_filter_norm_key(r.get("Проект", "")),
+                    str(r.get("Шифр", "") or "").strip().casefold(),
+                    str(r.get("Наименование разделов работ", "") or "").strip().casefold(),
+                )
+            )
+
+    extra_rows: list[dict[str, Any]] = []
+    for _i, row in csv_df.iterrows():
+        proj = str(row.get(pc["proj"], "") or "").strip() if pc.get("proj") else ""
+        cipher = str(row.get(pc["code"], "") or "").strip() if pc.get("code") else ""
+        sect = str(row.get(pc["name"], "") or "").strip() if pc.get("name") else ""
+        full_c = (
+            str(row.get(pc["full_cipher"], "") or "").strip()
+            if pc.get("full_cipher") and pc["full_cipher"] in row.index
+            else ""
+        )
+        if not cipher and not sect:
+            continue
+        mk = (
+            _project_filter_norm_key(proj),
+            cipher.casefold(),
+            sect.casefold(),
+        )
+        if mk in matched:
+            continue
+        has_tessa = bool(full_c and full_c.casefold() in internal_ids)
+        csv_st = (
+            _rd_plan_status_display_series(pd.Series([row.get(pc["status"], "")]))
+            .astype(str)
+            .str.strip()
+            .iloc[0]
+            if pc.get("status") and pc["status"] in row.index
+            else ""
+        )
+        if has_tessa or (
+            csv_st
+            and csv_st.casefold() not in ("не выдан", "не выдано")
+            and not _rd_plan_row_is_not_issued_csv_status(row.get(pc["status"], ""))
+        ):
+            continue
+        plan_s = (
+            row["_plan_dt"].strftime("%d.%m.%Y")
+            if pd.notna(row.get("_plan_dt"))
+            else "—"
+        )
+        fc_s = (
+            row["_fact_dt"].strftime("%d.%m.%Y")
+            if pd.notna(row.get("_fact_dt"))
+            else "—"
+        )
+        extra_rows.append(
+            {
+                "Проект": proj,
+                "Наименование разделов работ": sect,
+                "Номер договора": (
+                    str(row.get(pc["contract"], "") or "").strip()
+                    if pc.get("contract") and pc["contract"] in row.index
+                    else ""
+                ),
+                "Шифр": cipher,
+                "Номер шифра": "",
+                "Блок": "РД",
+                "Шифр полный": full_c,
+                "Дата выдачи разделов по Договору": plan_s,
+                "Прогнозная дата выдачи разделов": fc_s if fc_s != "—" else "",
+                "Дата загрузки раздела генпроектировщиком": "",
+                "Дата выдачи в производство работ": "",
+                "Задача": "",
+                "Статус": "Не выдан",
+                "Отклонение от даты по договору, дн": pd.NA,
+                "Отклонение от прогнозной даты, дн": pd.NA,
+                "Отклонение, дн": pd.NA,
+            }
+        )
+
+    if not extra_rows:
+        return tessa_tbl
+    extra = pd.DataFrame(extra_rows)
+    if tessa_tbl.empty:
+        return _drop_rd_detail_empty_rows(extra)
+    out = pd.concat([tessa_tbl, extra], ignore_index=True)
+    return _drop_rd_detail_empty_rows(out)
+
+
 def _count_rd_fact_to_date_tessa(
     selected_projects: list[str] | None = None,
     *,
@@ -15796,7 +16221,7 @@ def _count_rd_fact_to_date_tessa(
     или «На рассмотрении» (KrState / дата выдачи в производство).
     """
     try:
-        detail = _build_tessa_rd_detail_table(
+        detail = _build_rd_work_doc_detail_table(
             selected_projects=selected_projects,
             selected_section=None,
         )
@@ -15868,137 +16293,84 @@ def _render_rd_working_doc_monthly_and_detail(
     if selected_sections:
         _sec_allow = {str(x).strip() for x in selected_sections if str(x).strip()}
 
-    if plan_end_col and plan_end_col in work_df.columns and rd_count_col and rd_count_col in work_df.columns:
-        month_df = work_df.copy()
-        month_df["_plan_end_dt"] = pd.to_datetime(
-            month_df[plan_end_col].astype(str),
+    month_source = work_df.copy()
+    csv_secs = _rd_plan_csv_sections_df(selected_projects)
+    if not csv_secs.empty:
+        month_source = csv_secs.copy()
+        month_source["_plan_end_dt"] = month_source["_plan_dt"]
+        pc0 = (
+            csv_secs["_pc"].iloc[0]
+            if "_pc" in csv_secs.columns
+            else _rd_plan_csv_pick_columns(csv_secs)
+        )
+        if isinstance(pc0, pd.Series):
+            pc0 = pc0.to_dict()
+        if pc0.get("proj") and pc0.get("code"):
+            try:
+                month_source = _augment_df_with_tessa_rd(
+                    month_source, pc0["proj"], pc0["code"]
+                )
+            except Exception:
+                pass
+        _prod_m = _rd_in_production_mask(month_source, in_production_col)
+        month_source["_rd_fact_n"] = np.where(_prod_m, month_source["_rd_plan_n"], 0.0)
+    elif plan_end_col and plan_end_col in work_df.columns and rd_count_col and rd_count_col in work_df.columns:
+        month_source = work_df.copy()
+        month_source["_plan_end_dt"] = pd.to_datetime(
+            month_source[plan_end_col].astype(str),
             errors="coerce",
             dayfirst=True,
             format="mixed",
         )
-        month_df["_rd_plan_n"] = _to_numeric_series(month_df[rd_count_col])
+        month_source["_rd_plan_n"] = _rd_dynamics_plan_increment_series(
+            month_source, rd_count_col, "_plan_end_dt"
+        )
         _prod_m = _rd_in_production_mask(work_df, in_production_col)
-        month_df["_rd_fact_n"] = np.where(
-            _prod_m.reindex(month_df.index, fill_value=False),
-            month_df["_rd_plan_n"].where(month_df["_rd_plan_n"] > 0, 1.0),
+        month_source["_rd_fact_n"] = np.where(
+            _prod_m.reindex(month_source.index, fill_value=False),
+            month_source["_rd_plan_n"],
             0.0,
         )
-        month_df = month_df[month_df["_plan_end_dt"].notna()].copy()
+
+    if (
+        month_source is not None
+        and not getattr(month_source, "empty", True)
+        and "_plan_end_dt" in month_source.columns
+    ):
+        month_df = month_source[month_source["_plan_end_dt"].notna()].copy()
+        if _sec_allow:
+            pc_m = (
+                month_df["_pc"].iloc[0]
+                if "_pc" in month_df.columns
+                else _rd_plan_csv_pick_columns(month_df)
+            )
+            if isinstance(pc_m, pd.Series):
+                pc_m = pc_m.to_dict()
+            if pc_m.get("code") and pc_m.get("name"):
+                _lbl_m = (
+                    month_df[pc_m["code"]].fillna("").astype(str).str.strip()
+                    + " "
+                    + month_df[pc_m["name"]].fillna("").astype(str).str.strip()
+                ).str.replace(r"\s+", " ", regex=True).str.strip()
+                month_df = month_df.loc[_lbl_m.isin(_sec_allow)].copy()
         if not month_df.empty:
-            today_ts = pd.Timestamp(date.today())
-            month_df["_month"] = month_df["_plan_end_dt"].dt.to_period("M")
-            month_df["_done_n"] = np.where(
-                month_df["_rd_fact_n"] > 0,
-                np.minimum(month_df["_rd_plan_n"], month_df["_rd_fact_n"]),
-                0.0,
-            )
-            month_df["_remaining_n"] = (
-                month_df["_rd_plan_n"] - month_df["_done_n"]
-            ).clip(lower=0.0)
-            month_df["_overdue_n"] = np.where(
-                (month_df["_remaining_n"] > 0)
-                & (month_df["_plan_end_dt"] < today_ts),
-                month_df["_remaining_n"],
-                0.0,
-            )
-            month_df["_delta_n"] = (
-                month_df["_remaining_n"] - month_df["_overdue_n"]
-            ).clip(lower=0.0)
-            monthly = (
-                month_df.groupby("_month", as_index=False)
-                .agg(
-                    plan=("_rd_plan_n", "sum"),
-                    done=("_done_n", "sum"),
-                    delta=("_delta_n", "sum"),
-                    overdue=("_overdue_n", "sum"),
-                )
-                .sort_values("_month")
-            )
-            monthly = monthly[monthly["plan"] > 0].copy()
+            monthly = _rd_monthly_sections_aggregate(month_df)
             if not monthly.empty:
-                monthly["Месяц"] = monthly["_month"].apply(
-                    lambda p: f"{RUSSIAN_MONTHS.get(p.month, str(p.month))} {p.year}"
-                )
-                use_pct = str(metric_mode).strip().startswith("%")
-                if use_pct:
-                    monthly["Выполнено"] = (monthly["done"] / monthly["plan"] * 100).round(1)
-                    monthly["Разница план/факт"] = (
-                        monthly["delta"] / monthly["plan"] * 100
-                    ).round(1)
-                    monthly["Просрочено"] = (
-                        monthly["overdue"] / monthly["plan"] * 100
-                    ).round(1)
-                    _y_title = "% РД"
-                    _y_range = dict(range=[0, 100], ticksuffix="%")
-                else:
-                    monthly["Выполнено"] = monthly["done"].round(1)
-                    monthly["Разница план/факт"] = monthly["delta"].round(1)
-                    monthly["Просрочено"] = monthly["overdue"].round(1)
-                    _y_title = "Количество разделов"
-                    _y_range = {}
-                monthly_plot_df = monthly.melt(
-                    id_vars=["Месяц"],
-                    value_vars=["Выполнено", "Разница план/факт", "Просрочено"],
-                    var_name="Статус",
-                    value_name="Значение",
-                )
-                monthly_plot_df["Подпись"] = monthly_plot_df.apply(
-                    lambda r: (
-                        f"{float(r['Значение']):.0f}%"
-                        if use_pct and pd.notna(r["Значение"]) and float(r["Значение"]) > 0
-                        else (
-                            f"{int(round(float(r['Значение'])))}"
-                            if pd.notna(r["Значение"]) and float(r["Значение"]) > 0
-                            else ""
-                        )
+                _render_rd_monthly_overlay_chart(
+                    monthly,
+                    metric_mode=metric_mode,
+                    orientation="v",
+                    subheader=(
+                        "Динамика по месяцам (% по плану)"
+                        if str(metric_mode).strip().startswith("%")
+                        else "Динамика по месяцам"
                     ),
-                    axis=1,
+                    chart_key=f"{doc_fk}rd_months",
+                    caption_parts=("Выдача рабочей документации", "Месяц"),
                 )
-                st.subheader(
-                    "Динамика по месяцам (% по плану)"
-                    if use_pct
-                    else "Динамика по месяцам"
-                )
-                fig_months = px.bar(
-                    monthly_plot_df,
-                    x="Месяц",
-                    y="Значение",
-                    color="Статус",
-                    barmode="stack",
-                    text="Подпись",
-                    color_discrete_map={
-                        "Выполнено": "#27AE60",
-                        "Разница план/факт": "#F39C12",
-                        "Просрочено": "#C0392B",
-                    },
-                )
-                _y_kw = dict(_y_range) if _y_range else {}
-                _y_kw["tickfont"] = dict(color=_fin_chart_axis_color())
-                _y_kw["title_font"] = dict(color=_fin_chart_axis_color())
-                fig_months.update_layout(
-                    xaxis_title="Месяц",
-                    yaxis_title=_y_title,
-                    yaxis=_y_kw,
-                    legend=dict(
-                        orientation="h",
-                        yanchor="bottom",
-                        y=1.02,
-                        xanchor="left",
-                        x=0,
-                        title_text="",
-                    ),
-                    height=520,
-                    xaxis=dict(
-                        tickfont=dict(color=_fin_chart_axis_color()),
-                        title_font=dict(color=_fin_chart_axis_color()),
-                    ),
-                )
-                fig_months.update_traces(textposition="inside", textfont=dict(size=10))
-                fig_months = apply_chart_background(fig_months)
-                render_chart(fig_months, caption_below=report_chart_caption_body("Выдача рабочей документации", "Месяц"))
 
     try:
-        _tessa_tbl = _build_tessa_rd_detail_table(
+        _tessa_tbl = _build_rd_work_doc_detail_table(
             selected_projects=selected_projects or None,
             selected_section=None,
         )
@@ -16329,7 +16701,7 @@ def _rd_plan_fallback_view(
         _tessa_loaded = _td0 is not None and not getattr(_td0, "empty", True)
         if _tessa_loaded:
             _sel_projects_fb = list(sel) if proj_col and sel else None
-            _detail_tbl_rd = _build_tessa_rd_detail_table(
+            _detail_tbl_rd = _build_rd_work_doc_detail_table(
                 selected_projects=_sel_projects_fb,
                 selected_section=None,
             )
@@ -16362,6 +16734,10 @@ def _rd_plan_fallback_view(
             },
             key=lambda x: x.casefold(),
         )
+        if "Не выдан" not in stat_vals:
+            _has_nv = (_detail_tbl_rd["Статус"].astype(str).str.strip() == "Не выдан").any()
+            if _has_nv:
+                stat_vals = sorted(stat_vals + ["Не выдан"], key=lambda x: x.casefold())
     elif status_col and status_col in df.columns:
         stat_vals = sorted(
             {
@@ -16779,127 +17155,20 @@ def _rd_plan_fallback_view(
                 and "_rd_plan_n" in month_df_fb.columns
                 and "_rd_fact_n" in month_df_fb.columns
             ):
-                today_ts_fb = pd.Timestamp(date.today())
                 month_df_fb["_plan_end_dt"] = month_df_fb["_plan_dt"]
-                month_df_fb["_month"] = month_df_fb["_plan_end_dt"].dt.to_period("M")
-                month_df_fb["_done_n"] = np.where(
-                    month_df_fb["_rd_fact_n"] > 0,
-                    np.minimum(month_df_fb["_rd_plan_n"], month_df_fb["_rd_fact_n"]),
-                    0.0,
-                )
-                month_df_fb["_remaining_n"] = (
-                    month_df_fb["_rd_plan_n"] - month_df_fb["_done_n"]
-                ).clip(lower=0.0)
-                month_df_fb["_overdue_n"] = np.where(
-                    (month_df_fb["_remaining_n"] > 0)
-                    & (month_df_fb["_plan_end_dt"] < today_ts_fb),
-                    month_df_fb["_remaining_n"],
-                    0.0,
-                )
-                month_df_fb["_delta_n"] = (
-                    month_df_fb["_remaining_n"] - month_df_fb["_overdue_n"]
-                ).clip(lower=0.0)
-
-                monthly_fb = (
-                    month_df_fb.groupby("_month", as_index=False)
-                    .agg(
-                        plan=("_rd_plan_n", "sum"),
-                        done=("_done_n", "sum"),
-                        delta=("_delta_n", "sum"),
-                        overdue=("_overdue_n", "sum"),
-                    )
-                    .sort_values("_month")
-                )
-                monthly_fb = monthly_fb[monthly_fb["plan"] > 0].copy()
+                monthly_fb = _rd_monthly_sections_aggregate(month_df_fb)
                 if not monthly_fb.empty:
-                    monthly_fb["Месяц"] = monthly_fb["_month"].apply(
-                        lambda p: f"{RUSSIAN_MONTHS.get(p.month, str(p.month))} {p.year}"
-                    )
-                    _fb_use_pct = str(fb_metric_mode).strip().startswith("%")
-                    if _fb_use_pct:
-                        monthly_fb["Выполнено"] = (
-                            monthly_fb["done"] / monthly_fb["plan"] * 100
-                        ).round(2)
-                        monthly_fb["Разница план/факт"] = (
-                            monthly_fb["delta"] / monthly_fb["plan"] * 100
-                        ).round(2)
-                        monthly_fb["Просрочено"] = (
-                            monthly_fb["overdue"] / monthly_fb["plan"] * 100
-                        ).round(2)
-                        _fb_x_col = "Процент"
-                        _fb_x_title = "% РД (по месяцу плановой даты)"
-                        _fb_sub = "Динамика по месяцам (% по плану)"
-                    else:
-                        monthly_fb["Выполнено"] = monthly_fb["done"].round(1)
-                        monthly_fb["Разница план/факт"] = monthly_fb["delta"].round(1)
-                        monthly_fb["Просрочено"] = monthly_fb["overdue"].round(1)
-                        _fb_x_col = "Количество"
-                        _fb_x_title = "Количество разделов"
-                        _fb_sub = "Динамика по месяцам"
-
-                    monthly_plot_fb = monthly_fb.melt(
-                        id_vars=["Месяц", "_month"],
-                        value_vars=["Выполнено", "Разница план/факт", "Просрочено"],
-                        var_name="Статус",
-                        value_name=_fb_x_col,
-                    )
-                    monthly_plot_fb["Подпись"] = monthly_plot_fb[_fb_x_col].apply(
-                        lambda v: (
-                            f"{v:.2f}%"
-                            if _fb_use_pct and pd.notna(v) and float(v) > 0
-                            else (
-                                f"{int(round(float(v)))}"
-                                if pd.notna(v) and float(v) > 0
-                                else ""
-                            )
-                        )
-                    )
-                    _month_cat_desc = monthly_fb.sort_values("_month", ascending=False)[
-                        "Месяц"
-                    ].tolist()
-                    st.subheader(_fb_sub)
-                    fig_m_fb = px.bar(
-                        monthly_plot_fb,
-                        y="Месяц",
-                        x=_fb_x_col,
-                        color="Статус",
+                    _render_rd_monthly_overlay_chart(
+                        monthly_fb,
+                        metric_mode=fb_metric_mode,
                         orientation="h",
-                        barmode="stack",
-                        text="Подпись",
-                        category_orders={"Месяц": _month_cat_desc},
-                        color_discrete_map={
-                            "Выполнено": "#27AE60",
-                            "Разница план/факт": "#F39C12",
-                            "Просрочено": "#C0392B",
-                        },
-                    )
-                    fig_m_fb.update_layout(
-                        xaxis_title=_fb_x_title,
-                        yaxis_title="Месяц",
-                        xaxis=dict(
-                            range=[0, 100], ticksuffix="%"
-                        )
-                        if _fb_use_pct
-                        else {},
-                        legend=dict(
-                            orientation="h",
-                            yanchor="bottom",
-                            y=1.02,
-                            xanchor="left",
-                            x=0,
-                            title_text="",
+                        subheader=(
+                            "Динамика по месяцам (% по плану)"
+                            if str(fb_metric_mode).strip().startswith("%")
+                            else "Динамика по месяцам"
                         ),
-                        height=max(520, min(900, len(_month_cat_desc) * 36)),
-                    )
-                    fig_m_fb.update_traces(textposition="inside", textfont=dict(size=10))
-                    fig_m_fb = _apply_bar_uniformtext(fig_m_fb)
-                    fig_m_fb = apply_chart_background(fig_m_fb)
-                    render_chart(
-                        fig_m_fb,
-                        key=f"rdfb_months_{fb_k}",
-                        caption_below=report_chart_caption_body(
-                            "Выдача рабочей документации", "по месяцам"
-                        ),
+                        chart_key=f"rdfb_months_{fb_k}",
+                        caption_parts=("Выдача рабочей документации", "по месяцам"),
                     )
         except Exception:
             pass
