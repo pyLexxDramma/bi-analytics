@@ -645,6 +645,8 @@ class GdrsKontrIndex:
     ids: frozenset[str]
     norm_names: frozenset[str]
     id_by_norm: dict[str, str]
+    name_by_norm: dict[str, str]
+    name_by_id: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -772,6 +774,8 @@ def load_1c_kontr_index(paths: Iterable[Path | str]) -> GdrsKontrIndex:
     ids: set[str] = set()
     norm_names: set[str] = set()
     id_by_norm: dict[str, str] = {}
+    name_by_norm: dict[str, str] = {}
+    name_by_id: dict[str, str] = {}
     for p in paths:
         data = _safe_json(Path(p))
         if not isinstance(data, list):
@@ -786,11 +790,21 @@ def load_1c_kontr_index(paths: Iterable[Path | str]) -> GdrsKontrIndex:
             nn = normalize_name(cname) if cname else ""
             if cid:
                 ids.add(cid)
+                if cname:
+                    name_by_id.setdefault(cid, cname)
             if nn:
                 norm_names.add(nn)
+                if cname:
+                    name_by_norm.setdefault(nn, cname)
                 if cid and nn not in id_by_norm:
                     id_by_norm[nn] = cid
-    return GdrsKontrIndex(frozenset(ids), frozenset(norm_names), id_by_norm)
+    return GdrsKontrIndex(
+        frozenset(ids),
+        frozenset(norm_names),
+        id_by_norm,
+        name_by_norm,
+        name_by_id,
+    )
 
 
 def build_dogovor_contractor_id_lookup(
@@ -893,6 +907,56 @@ def enrich_gdrs_fact_contractor_ids(
         return ""
 
     work["contractor_id"] = work.apply(_resolve_id, axis=1)
+    return work
+
+
+def gdrs_kontr_contractor_display(
+    contractor_id: str,
+    contractor_name: str,
+    kontr: Optional[GdrsKontrIndex],
+) -> tuple[str, str]:
+    """Каноническое имя и ID контрагента — только из справочника 1С Kontr."""
+    cid = _sanitize_contractor_id(contractor_id)
+    raw_name = str(contractor_name or "").strip()
+    if kontr is None or (not kontr.ids and not kontr.norm_names):
+        return cid, raw_name
+    if cid and cid in kontr.name_by_id:
+        return cid, kontr.name_by_id[cid]
+    nn = normalize_name(raw_name)
+    if nn and nn in kontr.name_by_norm:
+        canon_id = kontr.id_by_norm.get(nn, cid)
+        return canon_id or cid, kontr.name_by_norm[nn]
+    return cid, raw_name
+
+
+def gdrs_apply_kontr_contractor_names(
+    df: pd.DataFrame,
+    kontr: Optional[GdrsKontrIndex],
+    *,
+    dedupe_fact: bool = True,
+) -> pd.DataFrame:
+    """Подменяет `contractor_name` на написание из 1С Kontr; схлопывает дубли факта."""
+    if df is None or df.empty or kontr is None:
+        return df
+    if not kontr.ids and not kontr.norm_names:
+        return df
+    work = df.copy()
+    resolved = work.apply(
+        lambda r: gdrs_kontr_contractor_display(
+            str(r.get("contractor_id", "")),
+            str(r.get("contractor_name", "")),
+            kontr,
+        ),
+        axis=1,
+        result_type="expand",
+    )
+    work["contractor_id"] = resolved[0]
+    work["contractor_name"] = resolved[1]
+    if dedupe_fact and {"vid_resursa", "date"}.issubset(work.columns):
+        work = work.drop_duplicates(
+            subset=["project_name", "contractor_name", "vid_resursa", "date"],
+            keep="last",
+        )
     return work
 
 
@@ -2407,6 +2471,7 @@ def gdrs_contractor_filter_options(
     *,
     projects: Optional[list[str]] = None,
     snapshot_date: Optional[pd.Timestamp] = None,
+    kontr: Optional[GdrsKontrIndex] = None,
 ) -> list[str]:
     """Список контрагентов для фильтра: факт (СКУД) + план (1С), т.к. в CSV факта может не быть."""
     names: set[str] = set()
@@ -2425,11 +2490,14 @@ def gdrs_contractor_filter_options(
         for raw in fact["contractor_name"].dropna().unique():
             s = str(raw).strip()
             if s:
-                names.add(s)
+                _, canon = gdrs_kontr_contractor_display("", s, kontr)
+                names.add(canon or s)
     try:
         plan = load_plan_aggregate(dogovor_paths, sprav_paths, snapshot_date=snapshot_date)
         plan = _filter_plan_slice(plan, projects, None)
         if plan is not None and not plan.empty:
+            if kontr is not None:
+                plan = gdrs_apply_kontr_contractor_names(plan, kontr, dedupe_fact=False)
             for raw in plan["contractor_name"].dropna().unique():
                 s = str(raw).strip()
                 if s:
@@ -2768,6 +2836,8 @@ def build_main_table(
         contractors=contractors,
     )
     fact = gdrs_filter_fact_by_termination(fact, term_index)
+    if kontr_index is not None:
+        fact = gdrs_apply_kontr_contractor_names(fact, kontr_index)
 
     plan_col = "plan_workers" if vid.casefold() == "рабочие" else "plan_equipment"
     by_id, by_id_name, by_norm = _build_plan_lookup(plan, plan_col)
@@ -2823,6 +2893,10 @@ def build_main_table(
     plan_pairs_df = _filter_plan_slice(plan, projects, contractors)
     if plan_pairs_df is not None and not plan_pairs_df.empty:
         plan_pairs_df = plan_pairs_df.copy()
+        if kontr_index is not None:
+            plan_pairs_df = gdrs_apply_kontr_contractor_names(
+                plan_pairs_df, kontr_index, dedupe_fact=False
+            )
         try:
             from dashboards.project_labels import apply_unified_project_column
 
