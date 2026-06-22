@@ -1501,7 +1501,12 @@ def pick_latest_snapshot_files(files: List[Dict]) -> Tuple[List[Dict], List[str]
             one_c_fallback.append(f)
         else:
             buckets_1c.setdefault(fam, []).append(f)
+    _keep_all_one_c_families = frozenset({"dogovor", "kontr", "spravochniki"})
     for _fam, lst in buckets_1c.items():
+        if _fam in _keep_all_one_c_families:
+            for f in lst:
+                _add(f)
+            continue
         rated: List[Tuple[tuple, Dict]] = []
         for f in lst:
             sk = _one_c_snapshot_sort_key(Path(f["name"]).stem)
@@ -1557,7 +1562,11 @@ def pick_latest_snapshot_files(files: List[Dict]) -> Tuple[List[Dict], List[str]
         ext = Path(f["name"]).suffix.lower()
         fam = _generic_stem_family(stem) + "|" + ext
         buckets_o.setdefault(fam, []).append(f)
-    for lst in buckets_o.values():
+    for fam, lst in buckets_o.items():
+        if "resursi" in fam or "resursy" in fam:
+            for f in lst:
+                _add(f)
+            continue
         rated = []
         for f in lst:
             stem = Path(f["name"]).stem
@@ -1683,6 +1692,52 @@ def _create_version(cur, files_count: int) -> int:
         (files_count,)
     )
     return cur.lastrowid
+
+
+def _load_json_array_file(filepath: Path) -> List[dict]:
+    """JSON-массив объектов (Dogovor, Kontr, spravochniki, Projekts)."""
+    encodings = ("utf-8-sig", "utf-8", "cp1251")
+    for enc in encodings:
+        try:
+            raw = filepath.read_text(encoding=enc)
+            data = json.loads(raw)
+            if isinstance(data, list):
+                return [r for r in data if isinstance(r, dict)]
+            return []
+        except Exception:
+            continue
+    return []
+
+
+def _ingest_json_array(
+    cur,
+    version_id: int,
+    file_info: Dict,
+    file_type: str,
+    filepath: Path,
+    rel_path: str,
+) -> tuple[bool, int]:
+    records = _load_json_array_file(filepath)
+    if not records:
+        return False, 0
+    file_id = _register_file(cur, version_id, file_info, file_type, len(records))
+    cur.executemany(
+        """
+        INSERT INTO web_data (version_id, file_id, file_type, source_file, row_data)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                version_id,
+                file_id,
+                file_type,
+                rel_path,
+                json.dumps(r, ensure_ascii=False, default=str),
+            )
+            for r in records
+        ],
+    )
+    return True, len(records)
 
 
 def _register_file(cur, version_id: int, file_info: Dict, file_type: str, rows_count: int) -> int:
@@ -1825,6 +1880,20 @@ def load_all_from_web() -> Dict:
                     result["loaded"] += 1
                     df.attrs["data_type"] = "resources"
                     update_session_with_loaded_file(df, rel_path)
+                    try:
+                        from dashboards.gdrs_resursi import load_resursi_file
+
+                        gdrs_df = load_resursi_file(filepath)
+                        if gdrs_df is not None and not gdrs_df.empty:
+                            gdrs_file_id = _register_file(
+                                cur, version_id, file_info, "gdrs_fact", len(gdrs_df)
+                            )
+                            _save_rows(
+                                cur, version_id, gdrs_file_id, "gdrs_fact", name, gdrs_df
+                            )
+                            total_rows += len(gdrs_df)
+                    except Exception:
+                        pass
                     result["diagnostics"].append({
                         "file": rel_path,
                         "type": "resources",
@@ -1860,14 +1929,59 @@ def load_all_from_web() -> Dict:
                         )
                     continue
 
+                if file_type_by_name in (
+                    "dogovor_json",
+                    "kontr_json",
+                    "projekts_json",
+                    "spravochniki_json",
+                ):
+                    ok, nrows = _ingest_json_array(
+                        cur,
+                        version_id,
+                        file_info,
+                        file_type_by_name,
+                        filepath,
+                        rel_path,
+                    )
+                    if ok:
+                        total_rows += nrows
+                        result["loaded"] += 1
+                        result["diagnostics"].append({
+                            "file": rel_path,
+                            "type": file_type_by_name,
+                            "rows": int(nrows),
+                        })
+                    else:
+                        result["skipped"] += 1
+                        result["warnings"].append(
+                            _format_skip_reason(rel_path, f"{file_type_by_name} пуст или не JSON-массив")
+                        )
+                    continue
+
                 if file_type_by_name == "reference_json":
+                    ok, nrows = _ingest_json_array(
+                        cur,
+                        version_id,
+                        file_info,
+                        "spravochniki_json",
+                        filepath,
+                        rel_path,
+                    )
                     ref_df = _load_1c_json_spravochniki(filepath)
                     if ref_df is not None and not ref_df.empty:
                         st.session_state["reference_contractors"] = ref_df
+                    if ok:
+                        total_rows += nrows
                         result["loaded"] += 1
                         result["diagnostics"].append({
-                            "file": rel_path, "type": "reference", "rows": int(len(ref_df)),
-                            "columns": [str(c) for c in ref_df.columns[:25]],
+                            "file": rel_path,
+                            "type": "spravochniki_json",
+                            "rows": int(nrows),
+                            "columns": (
+                                [str(c) for c in ref_df.columns[:25]]
+                                if ref_df is not None and not ref_df.empty
+                                else []
+                            ),
                         })
                     else:
                         result["skipped"] += 1
@@ -2384,6 +2498,12 @@ def _infer_file_type_by_name(file_name: str) -> str:
             or (_ref_prefix and ("sprav" in sl or "справ" in sl))
         ):
             return "reference_json"
+        if "dogovor" in sl:
+            return "dogovor_json"
+        if "kontr" in sl and "spravochnik" not in sl and "справочник" not in sl:
+            return "kontr_json"
+        if "projekts" in sl or "projects" in sl or "projekt" in sl:
+            return "projekts_json"
         if "dannye" in sl or "данные" in sl:
             return "budget_json"
         if _ref_prefix or sl.startswith("1c") or sl.startswith("1с"):
