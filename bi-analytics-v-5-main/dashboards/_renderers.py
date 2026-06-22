@@ -35408,9 +35408,6 @@ def _forecast_edit_disabled_mask(edit_df: pd.DataFrame) -> pd.DataFrame:
 
 
 
-_FORECAST_LOT_EDITOR_PAGE_SIZE = 15
-
-
 def _render_forecast_lot_editor_sticky_header() -> None:
     """Шапка колонок: sticky при прокрутке."""
     st.markdown(
@@ -35587,9 +35584,8 @@ _FORECAST_EDITOR_HELP_MD = (
     "**Кто может редактировать:** Администратор, Суперадминистратор, РП, Финансист.\n\n"
     "1. В фильтре **Проект** выберите **один** проект (не «Все»).\n"
     "2. Меняйте **даты** (ГГГГ-ММ-ДД), **БДДС план/факт** (млн), **условие**, при «% Распределения» — **A+B+C = 100%**.\n"
-    "3. **«Применить правки»** — только текущая страница (15 строк).\n"
-    "4. Страницы: **← / →** или список «Стр. N / M».\n"
-    "5. График и «Таблица» обновятся после применения.\n\n"
+    "3. **«Применить правки»** — сохранить изменения в таблице.\n"
+    "4. График и «Таблица» обновятся после применения.\n\n"
     "**Служебные строки** (узлы MSP без сумм, уровень ≤2) скрыты по умолчанию — "
     "на расчёт **не влияют**. Чекбокс ниже — показать их в списке."
 )
@@ -35887,62 +35883,23 @@ def dashboard_forecast_budget(df):
                 key=_show_struct_key,
                 help="Корень проекта и блоки иерархии. Расчёт всегда по полному набору строк MSP.",
             )
-            _page_key = f"forecast_edit_page_{_npk_fc}"
-            _n_pages_fc = max(
-                1,
-                int((_n_lots_fc + _FORECAST_LOT_EDITOR_PAGE_SIZE - 1) // _FORECAST_LOT_EDITOR_PAGE_SIZE),
-            )
-            if _page_key not in st.session_state:
-                st.session_state[_page_key] = 1
-            if _n_pages_fc > 1:
-                st.caption(
-                    f"Лотов **{_n_lots_fc}** — редактирование по **{_FORECAST_LOT_EDITOR_PAGE_SIZE}** строк на страницу "
-                    f"(иначе страница долго грузится)."
-                )
-                _pg_cols = st.columns([1, 2, 1], gap="small")
-                with _pg_cols[0]:
-                    if st.button("←", key=f"forecast_pg_prev_{_npk_fc}", disabled=int(st.session_state[_page_key]) <= 1):
-                        st.session_state[_page_key] = max(1, int(st.session_state[_page_key]) - 1)
-                        st.rerun()
-                with _pg_cols[1]:
-                    _cur_pg = st.selectbox(
-                        "Страница",
-                        list(range(1, _n_pages_fc + 1)),
-                        index=max(0, int(st.session_state[_page_key]) - 1),
-                        format_func=lambda p: f"Стр. {p} / {_n_pages_fc}",
-                        key=f"forecast_pg_sel_{_npk_fc}",
-                        label_visibility="collapsed",
-                    )
-                    st.session_state[_page_key] = int(_cur_pg)
-                with _pg_cols[2]:
-                    if st.button(
-                        "→",
-                        key=f"forecast_pg_next_{_npk_fc}",
-                        disabled=int(st.session_state[_page_key]) >= _n_pages_fc,
-                    ):
-                        st.session_state[_page_key] = min(_n_pages_fc, int(st.session_state[_page_key]) + 1)
-                        st.rerun()
-            _pg = max(1, min(int(st.session_state.get(_page_key, 1) or 1), _n_pages_fc))
-            _i0 = (_pg - 1) * _FORECAST_LOT_EDITOR_PAGE_SIZE
-            _i1 = min(_i0 + _FORECAST_LOT_EDITOR_PAGE_SIZE, _n_lots_fc)
-            _page_orig_idx = _visible_idx_fc[_i0:_i1]
+            _page_orig_idx = _visible_idx_fc
             _slice_df = _edit_df_live.iloc[_page_orig_idx].copy().reset_index(drop=True)
             st.caption(
-                f"Строки **{_i0 + 1}–{_i1}** из {_n_lots_fc} в редакторе "
-                f"(всего в проекте {_n_lots_all_fc}). **«Применить правки»** — только эта страница."
+                f"Лотов **{_n_lots_fc}** в редакторе (всего в проекте {_n_lots_all_fc})."
             )
             _render_forecast_lot_editor_sticky_header()
-            _body_h = int(min(540, max(200, 56 + len(_slice_df) * 44)))
+            _body_h = int(min(720, max(220, 56 + len(_slice_df) * 44)))
             with st.container(height=_body_h, border=True):
                 _form_slice = _render_forecast_lot_editor_widgets(
                     _slice_df,
-                    key_prefix=f"fcw_{_npk_fc}_p{_pg}",
+                    key_prefix=f"fcw_{_npk_fc}",
                     dist_options=_dist_options,
                 )
             _fc_apply = st.button(
                 "Применить правки",
                 type="primary",
-                key=f"forecast_apply_{_npk_fc}_p{_pg}",
+                key=f"forecast_apply_{_npk_fc}",
             )
             if _fc_apply:
                 _full = st.session_state[_data_key].copy()
