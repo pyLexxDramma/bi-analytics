@@ -15888,7 +15888,7 @@ def _rd_plan_section_total(selected_projects: list[str] | None = None) -> int:
     return int(len(secs)) if not secs.empty else 0
 
 
-def _rd_plan_df_align_to_detail(
+def _rd_plan_detail_filter_by_plan(
     df: pd.DataFrame,
     detail_tbl: pd.DataFrame,
     proj_col: str | None,
@@ -15896,6 +15896,54 @@ def _rd_plan_df_align_to_detail(
     name_col: str | None,
     full_cipher_col: str | None,
 ) -> pd.DataFrame:
+    """Строки detail (TESSA), соответствующие разделам из df плана."""
+    if detail_tbl.empty or df.empty:
+        return detail_tbl.iloc[0:0].copy()
+    keys_pn: set[tuple[str, str, str]] = set()
+    keys_fc: set[tuple[str, str]] = set()
+    _rp = (
+        df[proj_col].map(_project_filter_norm_key)
+        if proj_col and proj_col in df.columns
+        else pd.Series("", index=df.index)
+    )
+    _rc = (
+        df[code_col].astype(str).str.strip().str.casefold()
+        if code_col and code_col in df.columns
+        else pd.Series("", index=df.index)
+    )
+    _rn = (
+        df[name_col].astype(str).str.strip().str.casefold()
+        if name_col and name_col in df.columns
+        else pd.Series("", index=df.index)
+    )
+    for pk, cc, nm in zip(_rp.tolist(), _rc.tolist(), _rn.tolist()):
+        keys_pn.add((pk, cc, nm))
+    if full_cipher_col and full_cipher_col in df.columns:
+        _fk = df[full_cipher_col].map(_rd_csv_cell_str).str.casefold()
+        for pk, fc in zip(_rp.tolist(), _fk.tolist()):
+            if fc:
+                keys_fc.add((pk, fc))
+    _dpk = detail_tbl["Проект"].map(_project_filter_norm_key)
+    _dcc = detail_tbl["Шифр"].astype(str).str.strip().str.casefold()
+    _dnm = detail_tbl["Наименование разделов работ"].astype(str).str.strip().str.casefold()
+    _mk = pd.Series(list(zip(_dpk.tolist(), _dcc.tolist(), _dnm.tolist())), index=detail_tbl.index)
+    _m = _mk.isin(keys_pn)
+    if "Шифр полный" in detail_tbl.columns and keys_fc:
+        _dfc = detail_tbl["Шифр полный"].map(_rd_csv_cell_str).str.casefold()
+        _mk_fc = pd.Series(list(zip(_dpk.tolist(), _dfc.tolist())), index=detail_tbl.index)
+        _m = _m | _mk_fc.isin(keys_fc)
+    return detail_tbl[_m.fillna(False)].copy()
+
+
+def _rd_plan_df_filter_by_detail(
+    df: pd.DataFrame,
+    detail_tbl: pd.DataFrame,
+    proj_col: str | None,
+    code_col: str | None,
+    name_col: str | None,
+    full_cipher_col: str | None,
+) -> pd.DataFrame:
+    """Строки плана df, для которых есть строка в detail (после фильтра статуса)."""
     if detail_tbl.empty or df.empty:
         return df.iloc[0:0].copy()
     keys_pn: set[tuple[str, str, str]] = set()
@@ -15906,7 +15954,7 @@ def _rd_plan_df_align_to_detail(
         nm = str(r.get("Наименование разделов работ", "") or "").strip().casefold()
         keys_pn.add((pk, cc, nm))
         fc = str(r.get("Шифр полный", "") or "").strip().casefold()
-        if fc:
+        if fc and fc not in ("nan", "none"):
             keys_fc.add((pk, fc))
     _rp = (
         df[proj_col].map(_project_filter_norm_key)
@@ -15930,6 +15978,20 @@ def _rd_plan_df_align_to_detail(
         _mk_fc = pd.Series(list(zip(_rp.tolist(), _fk.tolist())), index=df.index)
         _m = _m | _mk_fc.isin(keys_fc)
     return df[_m.fillna(False)].copy()
+
+
+def _rd_plan_df_align_to_detail(
+    df: pd.DataFrame,
+    detail_tbl: pd.DataFrame,
+    proj_col: str | None,
+    code_col: str | None,
+    name_col: str | None,
+    full_cipher_col: str | None,
+) -> pd.DataFrame:
+    """Обратная совместимость: фильтр detail по плану."""
+    return _rd_plan_detail_filter_by_plan(
+        df, detail_tbl, proj_col, code_col, name_col, full_cipher_col
+    )
 
 
 def _rd_plan_csv_sections_df(
@@ -16563,12 +16625,88 @@ def _rd_plan_status_display_series(series: pd.Series) -> pd.Series:
     return series.map(_krstate_raw_to_label).replace("", pd.NA)
 
 
+def _rd_plan_map_buckets_from_detail(
+    df: pd.DataFrame,
+    detail_tbl: pd.DataFrame,
+    *,
+    proj_col: str | None,
+    code_col: str | None,
+    name_col: str | None,
+    full_cipher_col: str | None,
+) -> pd.Series:
+    """Статус TESSA → bucket пирога для каждой строки плана (1 раздел)."""
+    out = pd.Series(pd.NA, index=df.index, dtype="object")
+    if df.empty or detail_tbl.empty:
+        return out
+    ordered = detail_tbl.copy()
+    if "Статус" in ordered.columns:
+        ordered["_nv"] = ordered["Статус"].astype(str).str.strip().eq("Не выдан")
+        ordered = ordered.sort_values("_nv", kind="stable")
+    status_by_fc: dict[str, str] = {}
+    status_by_pcn: dict[tuple[str, str, str], str] = {}
+    status_by_pc: dict[tuple[str, str], str] = {}
+    for _, r in ordered.iterrows():
+        st_raw = r.get("Статус", "")
+        if str(st_raw).strip() == "Не выдан":
+            bucket = "Не выдано"
+        else:
+            bucket = _tessa_krstate_to_pie_bucket(st_raw)
+        if not bucket:
+            continue
+        fc = str(r.get("Шифр полный", "") or "").strip().casefold()
+        if fc and fc not in ("nan", "none"):
+            status_by_fc[fc] = bucket
+        pk = (
+            _project_filter_norm_key(r.get("Проект", "")),
+            str(r.get("Шифр", "") or "").strip().casefold(),
+            str(r.get("Наименование разделов работ", "") or "").strip().casefold(),
+        )
+        status_by_pcn[pk] = bucket
+        status_by_pc.setdefault((pk[0], pk[1]), bucket)
+
+    for idx, row in df.iterrows():
+        bucket = None
+        if full_cipher_col and full_cipher_col in row.index:
+            fc = _rd_csv_cell_str(row.get(full_cipher_col)).casefold()
+            if fc:
+                bucket = status_by_fc.get(fc)
+        if not bucket and code_col and code_col in row.index:
+            pk = (
+                _project_filter_norm_key(row.get(proj_col, "")) if proj_col else "",
+                _rd_csv_cell_str(row.get(code_col)).casefold(),
+                _rd_csv_cell_str(row.get(name_col, "")).casefold()
+                if name_col and name_col in row.index
+                else "",
+            )
+            bucket = status_by_pcn.get(pk) or status_by_pc.get((pk[0], pk[1]))
+        if bucket:
+            out.at[idx] = bucket
+    return out
+
+
+def _rd_plan_proj_section_counts(
+    plan_df: pd.DataFrame,
+    proj_col: str | None,
+) -> dict[str, int]:
+    if plan_df is None or getattr(plan_df, "empty", True) or not proj_col or proj_col not in plan_df.columns:
+        return {}
+    return (
+        plan_df.assign(_pk=plan_df[proj_col].map(_project_filter_norm_key))
+        .groupby("_pk")
+        .size()
+        .astype(int)
+        .to_dict()
+    )
+
+
 def _render_rd_delay_fallback_chart(
     detail_tbl: pd.DataFrame,
     *,
     view_mode: str,
     doc_code: str,
     metric_mode: str = "Количество разделов",
+    plan_sec_df: pd.DataFrame | None = None,
+    plan_proj_col: str | None = None,
 ) -> None:
     """График «Просрочка выдачи РД» из TESSA (fallback без MSP-колонки отклонений)."""
     if detail_tbl is None or getattr(detail_tbl, "empty", True):
@@ -16581,6 +16719,7 @@ def _render_rd_delay_fallback_chart(
         return
     dev_num = pd.to_numeric(tbl[dev_c], errors="coerce").fillna(0.0)
     tbl["_dev_n"] = dev_num.clip(lower=0.0)
+    tbl["_sec_key"] = _rd_delay_detail_section_keys(tbl)
     by_section = str(view_mode or "").strip().casefold() == "по разделу"
     if by_section:
         tbl["_y"] = (
@@ -16595,14 +16734,53 @@ def _render_rd_delay_fallback_chart(
         y_col = "Проект"
         y_title = ""
     tbl["_y"] = tbl["_y"].replace({"": "—", "nan": "—"})
+    _sec_tbl = (
+        tbl.groupby(["_y", "_sec_key"], as_index=False)
+        .agg(_dev_max=("_dev_n", "max"))
+    )
+    _sec_tbl["_overdue"] = _sec_tbl["_dev_max"] > 0
     use_pct = str(metric_mode or "").strip().startswith("%")
-    chart_data = (
-        tbl.groupby("_y", as_index=False)
-        .agg(
-            _overdue_cnt=("_dev_n", lambda s: int((s > 0).sum())),
-            _total_cnt=("_dev_n", "count"),
+    _proj_totals_norm = _rd_plan_proj_section_counts(plan_sec_df, plan_proj_col)
+    if by_section:
+        chart_data = (
+            _sec_tbl.groupby("_y", as_index=False)
+            .agg(
+                _overdue_cnt=("_overdue", lambda s: int(s.sum())),
+                _total_cnt=("_sec_key", "nunique"),
+            )
+            .rename(columns={"_y": y_col})
         )
-        .rename(columns={"_y": y_col})
+    else:
+        chart_data = (
+            _sec_tbl.groupby("_y", as_index=False)
+            .agg(_overdue_cnt=("_overdue", lambda s: int(s.sum())))
+            .rename(columns={"_y": y_col})
+        )
+        chart_data["_pk"] = chart_data[y_col].map(_project_filter_norm_key)
+        chart_data["_total_cnt"] = chart_data["_pk"].map(
+            lambda k: int(_proj_totals_norm.get(k, 0))
+        )
+        _miss = chart_data["_total_cnt"] <= 0
+        if _miss.any():
+            _fb_tot = (
+                _sec_tbl.groupby("_y")["_sec_key"]
+                .nunique()
+                .rename("_total_cnt")
+                .reset_index()
+                .rename(columns={"_y": y_col})
+            )
+            chart_data = chart_data.drop(columns=["_total_cnt"], errors="ignore").merge(
+                _fb_tot, on=y_col, how="left"
+            )
+            chart_data["_total_cnt"] = chart_data["_total_cnt"].fillna(0).astype(int)
+        chart_data = chart_data.drop(columns=["_pk"], errors="ignore")
+    chart_data["_overdue_cnt"] = np.where(
+        chart_data["_total_cnt"] > 0,
+        np.minimum(
+            chart_data["_overdue_cnt"].astype(int),
+            chart_data["_total_cnt"].astype(int),
+        ),
+        chart_data["_overdue_cnt"].astype(int),
     )
     chart_data["_overdue_pct"] = np.where(
         chart_data["_total_cnt"] > 0,
@@ -16759,6 +16937,8 @@ def _rd_plan_fallback_view(
     if not (code_col and plan_col):
         return False
 
+    fb_k_shared = f"{source_key}_{doc_code}"
+
     if source_key == "rd_plan_data" and proj_col and code_col:
         try:
             df = _augment_df_with_tessa_rd(df, proj_col, code_col)
@@ -16786,7 +16966,7 @@ def _rd_plan_fallback_view(
             sel, _ = project_filter_multiselect(
                 st,
                 projects,
-                key=f"rd_fb_proj_{page_title or doc_code}",
+                key=f"rd_fb_proj_{fb_k_shared}",
                 label="Проекты",
             )
             if sel:
@@ -16813,7 +16993,7 @@ def _rd_plan_fallback_view(
         st.info("Нет строк после фильтра.")
         return True
 
-    fb_k = f"{source_key}_{doc_code}_{page_title or 'doc'}"
+    fb_k = f"{fb_k_shared}_{page_title or 'doc'}"
 
     _detail_tbl_rd = pd.DataFrame()
     _tessa_loaded = False
@@ -16880,7 +17060,7 @@ def _rd_plan_fallback_view(
             "Раздел",
             options=sec_opts,
             default=sec_opts,
-            key=f"rd_fb_sec_{fb_k}",
+            key=f"rd_fb_sec_{fb_k_shared}",
             placeholder="Все разделы",
             help="Подпись: шифр раздела и наименование через пробел.",
         )
@@ -16891,7 +17071,7 @@ def _rd_plan_fallback_view(
             "Период",
             ["Весь период (за всё время)", "Выбор диапазона дат"],
             index=0,
-            key=f"rd_fb_per_mode_{fb_k}",
+            key=f"rd_fb_per_mode_{fb_k_shared}",
         )
         _pv = df["_plan_dt"].dropna()
         if dm != "Весь период (за всё время)" and not _pv.empty:
@@ -16902,7 +17082,7 @@ def _rd_plan_fallback_view(
                 value=(mn_d, mx_d),
                 min_value=mn_d,
                 max_value=mx_d,
-                key=f"rd_fb_dr_{fb_k}",
+                key=f"rd_fb_dr_{fb_k_shared}",
                 format="DD.MM.YYYY",
                 label_visibility="collapsed",
             )
@@ -16919,7 +17099,7 @@ def _rd_plan_fallback_view(
                 "Статус",
                 options=stat_vals,
                 default=stat_vals,
-                key=f"rd_fb_st_{fb_k}",
+                key=f"rd_fb_st_{fb_k_shared}",
                 placeholder="Все статусы",
             )
         else:
@@ -16979,7 +17159,7 @@ def _rd_plan_fallback_view(
             _detail_tbl_rd = _detail_tbl_rd[
                 _detail_tbl_rd["Статус"].astype(str).str.strip().isin(sel_st)
             ].copy()
-            df = _rd_plan_df_align_to_detail(
+            df = _rd_plan_df_filter_by_detail(
                 df,
                 _detail_tbl_rd,
                 proj_col,
@@ -17055,14 +17235,22 @@ def _rd_plan_fallback_view(
         ).str.replace(r"\s+", " ", regex=True).str.strip()
         _detail_tbl_rd = _detail_tbl_rd.loc[_lbl_d.isin(_sec_allow)].reset_index(drop=True)
 
+    if source_key == "rd_plan_data" and not _detail_tbl_rd.empty:
+        _detail_tbl_rd = _rd_plan_detail_filter_by_plan(
+            df,
+            _detail_tbl_rd,
+            proj_col,
+            code_col,
+            name_col,
+            _pc_fb.get("full_cipher"),
+        )
+
     use_tessa_detail = source_key == "rd_plan_data" and not _detail_tbl_rd.empty
     _plan_sec_n = int(len(df))
 
     if use_tessa_detail:
         total_sections = _plan_sec_n
-        delta_num = pd.to_numeric(_detail_tbl_rd["Отклонение, дн"], errors="coerce")
-        overdue = int((delta_num > 0).sum())
-        avg_delay = float(delta_num[delta_num > 0].mean()) if overdue > 0 else 0.0
+        overdue, avg_delay = _rd_delay_section_overdue_kpis(_detail_tbl_rd)
         detail_rows = _detail_tbl_rd.copy()
     else:
         detail_rows = pd.DataFrame(
@@ -17102,7 +17290,7 @@ def _rd_plan_fallback_view(
         avg_delay = float(delta_num[delta_num > 0].mean()) if overdue > 0 else 0.0
 
     try:
-        df["_bucket"] = pd.Series(pd.NA, index=df.index, dtype="object")
+        full_cipher_fb = _pick(["Шифр полный", "InternalID", "Internal Id", "internalid"])
         if (
             source_key == "rd_plan_data"
             and _tessa_loaded
@@ -17111,61 +17299,29 @@ def _rd_plan_fallback_view(
             and code_col
             and not _detail_tbl_rd.empty
         ):
-            _dt_b = _detail_tbl_rd.copy()
-            _dt_b["_bucket"] = _dt_b["Статус"].map(_tessa_krstate_to_pie_bucket)
-            _mk_proj = _dt_b["Проект"].map(_project_filter_norm_key)
-            _mk_cipher = _dt_b["Шифр"].astype(str).str.strip().str.casefold()
-            _mk_sec = _dt_b["Наименование разделов работ"].astype(str).str.strip().str.casefold()
-            _dt_b["_mk"] = list(zip(_mk_proj.tolist(), _mk_cipher.tolist(), _mk_sec.tolist()))
-            _buck_map = _dt_b.drop_duplicates("_mk").set_index("_mk")["_bucket"]
-            _rp = df[proj_col].map(_project_filter_norm_key)
-            _rc = df[code_col].astype(str).str.strip().str.casefold()
-            _rn = (
-                df[name_col].astype(str).str.strip().str.casefold()
-                if name_col and name_col in df.columns
-                else pd.Series("", index=df.index)
+            df["_bucket"] = _rd_plan_map_buckets_from_detail(
+                df,
+                _detail_tbl_rd,
+                proj_col=proj_col,
+                code_col=code_col,
+                name_col=name_col,
+                full_cipher_col=full_cipher_fb,
             )
-            df["_mk"] = list(zip(_rp.tolist(), _rc.tolist(), _rn.tolist()))
-            df["_bucket"] = df["_mk"].map(_buck_map)
-            # Фолбэк по «Шифр полный» / InternalID (имена разделов в CSV и TESSA часто расходятся).
-            full_cipher_fb = _pick(["Шифр полный", "InternalID", "Internal Id", "internalid"])
-            if (
-                full_cipher_fb
-                and full_cipher_fb in df.columns
-                and "Шифр полный" in _detail_tbl_rd.columns
-            ):
-                _fc_src = _detail_tbl_rd.copy()
-                _fc_src["_bucket_fc"] = _fc_src["Статус"].map(_tessa_krstate_to_pie_bucket)
-                _fc_src["_fk"] = (
-                    _fc_src["Шифр полный"].astype(str).str.strip().str.casefold()
-                )
-                _fc_src = _fc_src[_fc_src["_fk"].ne("")].drop_duplicates("_fk", keep="first")
-                _buck_fc = _fc_src.set_index("_fk")["_bucket_fc"]
-                _fk_df = df[full_cipher_fb].astype(str).str.strip().str.casefold()
-                df["_bucket"] = df["_bucket"].fillna(_fk_df.map(_buck_fc))
-            # Фолбэк (проект + шифр) — если на шифр одна строка в TESSA после фильтров.
-            _miss = df["_bucket"].isna()
-            if _miss.any():
-                _pc_src = _detail_tbl_rd.copy()
-                _pc_src["_bucket_pc"] = _pc_src["Статус"].map(_tessa_krstate_to_pie_bucket)
-                _pc_src["_pk"] = list(
-                    zip(
-                        _pc_src["Проект"].map(_project_filter_norm_key).tolist(),
-                        _pc_src["Шифр"].astype(str).str.strip().str.casefold().tolist(),
-                    )
-                )
-                _pc_first = _pc_src.drop_duplicates("_pk", keep="first")
-                _buck_pc = _pc_first.set_index("_pk")["_bucket_pc"]
-                _pk_df = pd.Series(
-                    list(zip(_rp.tolist(), _rc.tolist())), index=df.index
-                ).map(_buck_pc)
-                df["_bucket"] = df["_bucket"].fillna(_pk_df)
+        else:
+            df["_bucket"] = pd.Series(pd.NA, index=df.index, dtype="object")
         df["_rd_fact_n"] = np.where(
             (
                 df["_bucket"].notna()
                 & df["_bucket"].isin(["Принято", "Передано подрядчику"])
             )
-            | (df["_bucket"].isna() & df["_fact_dt"].notna()),
+            | (
+                df["_bucket"].isna()
+                & (
+                    df["_tessa_production_dt"].notna()
+                    if "_tessa_production_dt" in df.columns
+                    else df["_fact_dt"].notna()
+                )
+            ),
             df["_rd_plan_n"],
             0.0,
         )
@@ -17184,6 +17340,8 @@ def _rd_plan_fallback_view(
                 view_mode=fb_delay_view_mode,
                 doc_code=doc_code,
                 metric_mode=fb_metric_mode,
+                plan_sec_df=df,
+                plan_proj_col=proj_col,
             )
         else:
             st.info(
@@ -17193,97 +17351,105 @@ def _rd_plan_fallback_view(
 
     if source_key == "rd_plan_data" and _tessa_loaded and not _is_delay_fb:
         try:
-            _total_units = _plan_sec_n if _plan_sec_n > 0 else max(int(len(df)), 1)
-            _not_issued_csv = 0
-            if not _detail_tbl_rd.empty and "Статус" in _detail_tbl_rd.columns:
-                _not_issued_csv = int(
-                    (_detail_tbl_rd["Статус"].astype(str).str.strip() == "Не выдан").sum()
-                )
-            # ТЗ: приоритет — стадии по задачам TESSA (Передано заказчику / Выдано в
-            # производство / Выдано подрядчику / Отклонённая). Фолбэк — KrState.
-            _stage_fb = _count_tessa_rd_stages(
-                list(sel) if proj_col and sel else None,
-                section_labels_allowlist=_sec_allow,
+            _pie_fb = _rd_plan_pie_from_section_df(df)
+            _mapped = (
+                int(df["_bucket"].notna().sum())
+                if "_bucket" in df.columns
+                else 0
             )
-            _stage_fb_any = any(int(v) > 0 for v in _stage_fb.values())
-            if _stage_fb_any:
-                _active_fb = sum(int(v) for v in _stage_fb.values())
-                _tessa_target = max(_total_units - _not_issued_csv, 0)
-                if _active_fb > _tessa_target > 0:
-                    _sc = float(_tessa_target) / float(_active_fb)
-                    _stage_fb = {
-                        k: max(int(round(float(v) * _sc)), 0) for k, v in _stage_fb.items()
-                    }
-                    _dr = _tessa_target - sum(_stage_fb.values())
-                    if _dr != 0:
-                        _bk = max(_stage_fb, key=lambda kk: _stage_fb.get(kk, 0))
-                        _stage_fb[_bk] = max(int(_stage_fb.get(_bk, 0) + _dr), 0)
-                _not_issued_fb = _not_issued_csv if _not_issued_csv > 0 else max(
-                    _total_units - sum(int(v) for v in _stage_fb.values()), 0
-                )
-                _pie_fb = {
-                    "Передано заказчику": int(_stage_fb.get("Передано заказчику", 0)),
-                    "Выдано в производство работ": int(
-                        _stage_fb.get("Выдано в производство работ", 0)
-                    ),
-                    "Выдано подрядчику": int(_stage_fb.get("Выдано подрядчику", 0)),
-                    "Отклонённая (на доработке)": int(
-                        _stage_fb.get("Отклонённая (на доработке)", 0)
-                    ),
-                    "Не выдано": int(_not_issued_fb),
-                }
-                _pie_caption_fb = (
-                    "Стадии — по задачам TESSA (подписание проектировщиком/ГИП, "
-                    "назначение подрядчика, отказ ГИП); «Не выдано» — остаток к «Всего разделов»."
-                )
-                _pie_color_map_fb = {
-                    "Передано заказчику": "#27AE60",
-                    "Выдано в производство работ": "#2980B9",
-                    "Выдано подрядчику": "#8E44AD",
-                    "Отклонённая (на доработке)": "#C0392B",
-                    "Не выдано": "#7F8C8D",
-                }
-            else:
-                _counts_fb = _count_tessa_rd_krstates(
+            if _mapped < max(int(len(df) * 0.05), 1) and len(df) > 0:
+                _pie_fb = {}
+                _total_units = _plan_sec_n if _plan_sec_n > 0 else max(int(len(df)), 1)
+                _not_issued_csv = 0
+                if "_bucket" in df.columns:
+                    _not_issued_csv = int(
+                        (df["_bucket"].astype(str).str.strip() == "Не выдано").sum()
+                    )
+                elif not _detail_tbl_rd.empty and "Статус" in _detail_tbl_rd.columns:
+                    _not_issued_csv = int(
+                        (_detail_tbl_rd["Статус"].astype(str).str.strip() == "Не выдан").sum()
+                    )
+                _stage_fb = _count_tessa_rd_stages(
                     list(sel) if proj_col and sel else None,
                     section_labels_allowlist=_sec_allow,
                 )
-                _sum_parts = sum(int(v) for v in _counts_fb.values())
-                _tessa_target = max(_total_units - _not_issued_csv, 0)
-                if _sum_parts > _tessa_target > 0:
-                    _scale = float(_tessa_target) / float(_sum_parts)
-                    _counts_fb = {
-                        k: max(int(round(float(v) * _scale)), 0)
-                        for k, v in _counts_fb.items()
+                _stage_fb_any = any(int(v) > 0 for v in _stage_fb.values())
+                if _stage_fb_any:
+                    _tessa_target = max(_total_units - _not_issued_csv, 0)
+                    _active_fb = sum(int(v) for v in _stage_fb.values())
+                    if _active_fb > _tessa_target > 0:
+                        _sc = float(_tessa_target) / float(_active_fb)
+                        _stage_fb = {
+                            k: max(int(round(float(v) * _sc)), 0)
+                            for k, v in _stage_fb.items()
+                        }
+                    _not_issued_fb = max(
+                        _total_units - sum(int(v) for v in _stage_fb.values()), 0
+                    )
+                    _pie_fb = {k: int(v) for k, v in _stage_fb.items() if int(v) > 0}
+                    if _not_issued_fb > 0:
+                        _pie_fb["Не выдано"] = _not_issued_fb
+                    _pie_caption_fb = (
+                        "Стадии — по задачам TESSA (подписание проектировщиком/ГИП, "
+                        "назначение подрядчика, отказ ГИП); «Не выдано» — разделы плана без карточки TESSA."
+                    )
+                    _pie_color_map_fb = {
+                        "Передано заказчику": "#27AE60",
+                        "Выдано в производство работ": "#2980B9",
+                        "Выдано подрядчику": "#8E44AD",
+                        "Отклонённая (на доработке)": "#C0392B",
+                        "Не выдано": "#7F8C8D",
                     }
-                    _drift = _tessa_target - sum(_counts_fb.values())
-                    if _drift != 0:
-                        _big_k = max(_counts_fb, key=lambda kk: _counts_fb.get(kk, 0))
-                        _counts_fb[_big_k] = max(int(_counts_fb.get(_big_k, 0) + _drift), 0)
-                elif _sum_parts > _total_units > 0:
-                    _scale = float(_total_units) / float(_sum_parts)
-                    _counts_fb = {
-                        k: max(int(round(float(v) * _scale)), 0)
-                        for k, v in _counts_fb.items()
+                else:
+                    _counts_fb = _count_tessa_rd_krstates(
+                        list(sel) if proj_col and sel else None,
+                        section_labels_allowlist=_sec_allow,
+                    )
+                    _sum_parts = sum(int(v) for v in _counts_fb.values())
+                    _tessa_target = max(_total_units - _not_issued_csv, 0)
+                    if _sum_parts > _tessa_target > 0:
+                        _scale = float(_tessa_target) / float(_sum_parts)
+                        _counts_fb = {
+                            k: max(int(round(float(v) * _scale)), 0)
+                            for k, v in _counts_fb.items()
+                        }
+                    elif _sum_parts > _total_units > 0:
+                        _scale = float(_total_units) / float(_sum_parts)
+                        _counts_fb = {
+                            k: max(int(round(float(v) * _scale)), 0)
+                            for k, v in _counts_fb.items()
+                        }
+                    _not_issued_fb = max(
+                        _total_units - sum(int(v) for v in _counts_fb.values()), 0
+                    )
+                    _pie_fb = {
+                        k: int(v)
+                        for k, v in {
+                            "Принято": _counts_fb.get("Принято", 0),
+                            "На рассм.": _counts_fb.get("На рассм.", 0),
+                            "Возвр.": _counts_fb.get("Возвр.", 0),
+                            "Не принято": _counts_fb.get("Не принято", 0),
+                            "Передано подрядчику": _counts_fb.get("Передано подрядчику", 0),
+                            "Не выдано": _not_issued_fb,
+                        }.items()
+                        if int(v) > 0
                     }
-                    _drift = _total_units - sum(_counts_fb.values())
-                    if _drift != 0:
-                        _big_k = max(_counts_fb, key=lambda kk: _counts_fb.get(kk, 0))
-                        _counts_fb[_big_k] = max(int(_counts_fb.get(_big_k, 0) + _drift), 0)
-                _not_issued_fb = _not_issued_csv if _not_issued_csv > 0 else max(
-                    _total_units - sum(int(v) for v in _counts_fb.values()), 0
-                )
-                _pie_fb = {
-                    "Принято": int(_counts_fb.get("Принято", 0)),
-                    "На рассм.": int(_counts_fb.get("На рассм.", 0)),
-                    "Возвр.": int(_counts_fb.get("Возвр.", 0)),
-                    "Не принято": int(_counts_fb.get("Не принято", 0)),
-                    "Передано подрядчику": int(_counts_fb.get("Передано подрядчику", 0)),
-                    "Не выдано": int(_not_issued_fb),
-                }
+                    _pie_caption_fb = (
+                        "Статусы Принято/На рассм./Возвр./Не принято — из TESSA (KrState); "
+                        "«Не выдано» — разделы плана без карточки TESSA."
+                    )
+                    _pie_color_map_fb = {
+                        "Принято": "#27AE60",
+                        "На рассм.": "#F1C40F",
+                        "Возвр.": "#E67E22",
+                        "Не принято": "#C0392B",
+                        "Передано подрядчику": "#8E44AD",
+                        "Не выдано": "#7F8C8D",
+                    }
+            else:
                 _pie_caption_fb = (
-                    "Статусы Принято/На рассм./Возвр./Не принято — из TESSA (KrState); "
-                    "«Не выдано» — остаток к показателю «Всего разделов» (строки плана после фильтров)."
+                    "По строкам плана (1 раздел = 1 строка): статус из TESSA; "
+                    "«Не выдано» — разделы other_*_rd.csv без карточки."
                 )
                 _pie_color_map_fb = {
                     "Принято": "#27AE60",
@@ -17292,6 +17458,10 @@ def _rd_plan_fallback_view(
                     "Не принято": "#C0392B",
                     "Передано подрядчику": "#8E44AD",
                     "Не выдано": "#7F8C8D",
+                    "Передано заказчику": "#27AE60",
+                    "Выдано в производство работ": "#2980B9",
+                    "Выдано подрядчику": "#8E44AD",
+                    "Отклонённая (на доработке)": "#C0392B",
                 }
             _pie_fb = {k: v for k, v in _pie_fb.items() if v > 0}
             if _pie_fb:
@@ -17354,10 +17524,12 @@ def _rd_plan_fallback_view(
     # Накопительная динамика по строкам CSV (аналог основного отчёта РД), если нет MSP-колонок.
     if source_key == "rd_plan_data" and not _is_delay_fb:
         try:
-            if "_tessa_production_dt" in df.columns and df["_tessa_production_dt"].notna().any():
-                df["_fact_dyn_dt"] = pd.to_datetime(df["_tessa_production_dt"], errors="coerce")
+            if "_tessa_production_dt" in df.columns:
+                df["_fact_dyn_dt"] = pd.to_datetime(
+                    df["_tessa_production_dt"], errors="coerce"
+                )
             else:
-                df["_fact_dyn_dt"] = df["_fact_dt"]
+                df["_fact_dyn_dt"] = pd.NaT
             _dyn_parts: list[pd.DataFrame] = []
             _pm = df["_plan_dt"].notna()
             if _pm.any():
@@ -17635,9 +17807,23 @@ def _rd_plan_fallback_view(
 
     detail_show = _drop_rd_detail_empty_rows(detail_show)
 
+    def _rd_detail_cell_display(val) -> str:
+        if val is None:
+            return "—"
+        try:
+            if pd.isna(val):
+                return "—"
+        except (TypeError, ValueError):
+            pass
+        if isinstance(val, (pd.Timestamp,)):
+            return val.strftime("%d.%m.%Y")
+        s = str(val).strip()
+        if not s or s.lower() in ("nan", "none", "<na>", "nat"):
+            return "—"
+        return s
+
     for c in detail_show.columns:
-        if detail_show[c].dtype == object:
-            detail_show[c] = detail_show[c].replace({"": "—"})
+        detail_show[c] = detail_show[c].map(_rd_detail_cell_display)
 
     st.subheader("Детальная таблица")
     if use_tessa_detail:
@@ -32615,9 +32801,10 @@ def dashboard_working_documentation(df):
         on_change="rerun",
     )
     with tab_main:
-        dashboard_documentation(
-            df, page_title="Рабочая документация", embed_delay_at_end=False
-        )
+        if tab_main.open:
+            dashboard_documentation(
+                df, page_title="Рабочая документация", embed_delay_at_end=False
+            )
     with tab_delay:
         if tab_delay.open:
             dashboard_rd_delay(df)
@@ -32631,9 +32818,10 @@ def dashboard_project_documentation(df):
         on_change="rerun",
     )
     with tab_main:
-        dashboard_documentation(
-            df, page_title="Проектная документация", embed_delay_at_end=False
-        )
+        if tab_main.open:
+            dashboard_documentation(
+                df, page_title="Проектная документация", embed_delay_at_end=False
+            )
     with tab_delay:
         if tab_delay.open:
             dashboard_pd_delay(df)
@@ -32913,13 +33101,13 @@ def _render_appr_pf_summary_kpi(
         ".appr-pf-summary-kpi{display:flex;gap:1.25rem;flex-wrap:wrap;align-items:flex-start;"
         "padding:8px 4px;box-sizing:border-box;}"
         ".appr-pf-summary-kpi-col{flex:1 1 200px;min-width:180px;}"
-        ".appr-pf-kpi-label{font-size:4.6rem!important;font-weight:800!important;"
+        ".appr-pf-kpi-label{font-size:2.3rem!important;font-weight:800!important;"
         "margin:0 0 0.45rem 0!important;letter-spacing:0.02em!important;line-height:1.1!important;}"
-        ".appr-pf-kpi-value{font-size:6.6rem!important;font-weight:700!important;"
+        ".appr-pf-kpi-value{font-size:3.3rem!important;font-weight:700!important;"
         "margin:0 0 0.25rem 0!important;line-height:1.1!important;}"
-        ".appr-pf-kpi-muted{font-size:4.2rem!important;font-weight:600!important;"
+        ".appr-pf-kpi-muted{font-size:2.1rem!important;font-weight:600!important;"
         "margin:0!important;line-height:1.1!important;}"
-        ".appr-pf-kpi-pct{font-size:4.8rem!important;font-weight:700!important;"
+        ".appr-pf-kpi-pct{font-size:2.4rem!important;font-weight:700!important;"
         "margin:0.75rem 0 0!important;line-height:1.1!important;}"
         "</style></head><body>"
         '<div class="appr-pf-summary-kpi">'
@@ -32973,26 +33161,26 @@ _APPR_PF_SUMMARY_GAUGE_CSS = """
 }
 .appr-pf-summary-kpi-col { flex: 1 1 200px !important; min-width: 180px !important; }
 .appr-pf-summary-kpi .appr-pf-kpi-label {
-  font-size: 4.6rem !important;
+  font-size: 2.3rem !important;
   font-weight: 800 !important;
   margin: 0 0 0.45rem 0 !important;
   letter-spacing: 0.02em !important;
   line-height: 1.1 !important;
 }
 .appr-pf-summary-kpi .appr-pf-kpi-value {
-  font-size: 6.6rem !important;
+  font-size: 3.3rem !important;
   font-weight: 700 !important;
   margin: 0 0 0.25rem 0 !important;
   line-height: 1.1 !important;
 }
 .appr-pf-summary-kpi .appr-pf-kpi-muted {
-  font-size: 4.2rem !important;
+  font-size: 2.1rem !important;
   font-weight: 600 !important;
   margin: 0 !important;
   line-height: 1.1 !important;
 }
 .appr-pf-summary-kpi .appr-pf-kpi-pct {
-  font-size: 4.8rem !important;
+  font-size: 2.4rem !important;
   font-weight: 700 !important;
   margin: 0.75rem 0 0 !important;
   line-height: 1.1 !important;
@@ -39338,6 +39526,13 @@ _TESSA_KRSTATE_TO_PIE = {
     "signing": "На рассм.",
     "на регистрации": "На рассм.",
     "registration": "На рассм.",
+    "на ознакомлении": "На рассм.",
+    "ознакомлен": "На рассм.",
+    "ознакомление": "На рассм.",
+    "reviewing": "На рассм.",
+    "проект": "На рассм.",
+    "draft": "На рассм.",
+    "в разработке": "На рассм.",
     # Возвр. — на доработке.
     "на доработке": "Возвр.",
     "amending": "Возвр.",
@@ -39373,6 +39568,58 @@ def _tessa_krstate_to_pie_bucket(raw: object) -> str | None:
         if needle and needle in key:
             return bucket
     return None
+
+
+def _rd_plan_pie_from_section_df(df: pd.DataFrame) -> dict[str, int]:
+    """Круговая «Исполнение РД» по dedupe-строкам плана (1 строка = 1 раздел)."""
+    out: dict[str, int] = {}
+    if df is None or getattr(df, "empty", True):
+        return out
+    _bc = (
+        df["_bucket"]
+        if "_bucket" in df.columns
+        else pd.Series(pd.NA, index=df.index, dtype="object")
+    )
+    for _v in _bc.tolist():
+        if _v is None or (isinstance(_v, float) and pd.isna(_v)):
+            b = ""
+        else:
+            b = str(_v).strip()
+        if not b:
+            out["Не выдано"] = out.get("Не выдано", 0) + 1
+        else:
+            out[b] = out.get(b, 0) + 1
+    return out
+
+
+def _rd_delay_detail_section_keys(tbl: pd.DataFrame) -> pd.Series:
+    _pk = tbl["Проект"].map(_project_filter_norm_key)
+    _cc = tbl["Шифр"].astype(str).str.strip().str.casefold()
+    _nm = tbl["Наименование разделов работ"].astype(str).str.strip().str.casefold()
+    return pd.Series(list(zip(_pk.tolist(), _cc.tolist(), _nm.tolist())), index=tbl.index)
+
+
+def _rd_delay_section_overdue_kpis(detail_tbl: pd.DataFrame) -> tuple[int, float]:
+    """Просрочка по разделам плана: max(отклонение) по карточкам TESSA на раздел."""
+    if detail_tbl is None or getattr(detail_tbl, "empty", True):
+        return 0, 0.0
+    dev_c = "Отклонение от даты по договору, дн"
+    if dev_c not in detail_tbl.columns:
+        dev_c = "Отклонение, дн" if "Отклонение, дн" in detail_tbl.columns else None
+    if not dev_c:
+        return 0, 0.0
+    tbl = _drop_rd_detail_empty_rows(detail_tbl.copy())
+    if tbl.empty:
+        return 0, 0.0
+    tbl["_sec_key"] = _rd_delay_detail_section_keys(tbl)
+    dev = pd.to_numeric(tbl[dev_c], errors="coerce").fillna(0.0).clip(lower=0.0)
+    sec = tbl.assign(_dev_pos=dev).groupby("_sec_key", as_index=False).agg(
+        _dev_max=("_dev_pos", "max")
+    )
+    ovd = sec[sec["_dev_max"] > 0]
+    overdue = int(len(ovd))
+    avg_delay = float(ovd["_dev_max"].mean()) if overdue > 0 else 0.0
+    return overdue, avg_delay
 
 
 def _tessa_rd_dedupe_cards_latest(t: pd.DataFrame) -> pd.DataFrame:
