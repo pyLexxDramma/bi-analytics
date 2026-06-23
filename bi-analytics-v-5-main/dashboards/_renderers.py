@@ -43555,6 +43555,20 @@ def _gantt_wrap_task_label(name: str, width: int | None = None, max_lines: int =
     return "<br>".join(parts) if len(parts) > 1 else (parts[0] if parts else s)
 
 
+def _gantt_merge_pct_suffix(wrapped_label: str, pct_suffix: str | None) -> str:
+    """Дописать « N%» к последней строке переноса — суффикс не теряется при max_lines."""
+    sfx = str(pct_suffix or "").strip()
+    if not sfx:
+        return wrapped_label
+    if not sfx.startswith(" "):
+        sfx = " " + sfx
+    if not wrapped_label:
+        return sfx.strip()
+    lines = str(wrapped_label).split("<br>")
+    lines[-1] = f"{lines[-1]}{sfx}"
+    return "<br>".join(lines)
+
+
 def _gantt_label_with_project(task: str, project: str | None = None) -> str:
     task_s = str(task or "").strip()
     proj_s = str(project or "").strip()
@@ -43593,6 +43607,7 @@ def _gantt_resolve_y_labels(
     task_font: int,
     dense: bool,
     row_block_scale: float,
+    pct_suffixes: list[str | None] | None = None,
 ) -> tuple[list[str], int]:
     """Подписи Y + высота figure: число строк переноса не превышает доступную высоту категории."""
     max_lines = 8
@@ -43600,7 +43615,16 @@ def _gantt_resolve_y_labels(
     chart_h = 320
     for _ in range(4):
         _wrap_w = _gantt_label_wrap_width_chars(task_font=task_font)
-        labels = [_gantt_wrap_task_label(n, width=_wrap_w, max_lines=max_lines) for n in raw_names]
+        labels = []
+        for i, n in enumerate(raw_names):
+            sfx = None
+            if pct_suffixes and i < len(pct_suffixes):
+                sfx = pct_suffixes[i]
+            wrap_w = _wrap_w
+            if sfx:
+                wrap_w = max(20, _wrap_w - len(str(sfx)))
+            wrapped = _gantt_wrap_task_label(n, width=wrap_w, max_lines=max_lines)
+            labels.append(_gantt_merge_pct_suffix(wrapped, sfx))
         chart_h = _project_schedule_gantt_chart_height(
             n_rows,
             dense=dense,
@@ -44972,6 +44996,7 @@ def dashboard_project_schedule_chart(df):
         indents.append(d)
     names = plot_df[task_col].fillna("").astype(str).map(_gantt_clean_task_label)
     _gantt_raw_y_names: list[str] = []
+    _gantt_pct_suffixes: list[str | None] = []
     _show_proj_in_gantt_label = sel_proj == "Все" and bool(proj_col)
     for ix, (name, d) in zip(plot_df.index, zip(names.tolist(), indents)):
         prefix = ("  " * d) + ("— " if d > 0 else "")
@@ -44981,18 +45006,16 @@ def dashboard_project_schedule_chart(df):
             if pn and pn.lower() not in ("", "nan", "none"):
                 core = _gantt_label_with_project(name, pn)
         label = prefix + core
+        pct_sfx = None
         if label_pct and _covenant_mode_gantt:
             _pct_lbl = plot_df.at[ix, "pct complete"] if "pct complete" in plot_df.columns else np.nan
             if pd.notna(_pct_lbl):
                 try:
-                    label = f"{label} {int(round(float(_pct_lbl)))}%"
+                    pct_sfx = f" {int(round(float(_pct_lbl)))}%"
                 except (TypeError, ValueError):
-                    pass
+                    pct_sfx = None
         _gantt_raw_y_names.append(label)
-
-    def _gantt_trunc_label(s, n=86):
-        s = str(s)
-        return s if len(s) <= n else s[: max(1, n - 1)] + "…"
+        _gantt_pct_suffixes.append(pct_sfx)
 
     def _gantt_readability_policy(d: pd.DataFrame) -> dict:
         """Авто-политика читаемости по плотности данных."""
@@ -45430,6 +45453,7 @@ def dashboard_project_schedule_chart(df):
         task_font=int(_readability.get("task_font", _GANTT_MIN_TASK_FONT)),
         dense=bool(_readability.get("is_dense")),
         row_block_scale=_GANTT_ROW_BLOCK_SCALE,
+        pct_suffixes=_gantt_pct_suffixes if label_pct and _covenant_mode_gantt else None,
     )
     plot_df["_gantt_y_label"] = y_labels
     _effective_force_all = bool(
