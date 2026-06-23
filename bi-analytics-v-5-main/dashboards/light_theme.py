@@ -1178,22 +1178,22 @@ html body.gdrs-light-preview .appr-pf-summary-kpi-col {
   min-width: 180px !important;
 }
 html body.gdrs-light-preview .appr-pf-summary-kpi .appr-pf-kpi-label {
-  font-size: 4.6rem !important;
+  font-size: 2.3rem !important;
   font-weight: 800 !important;
   line-height: 1.1 !important;
 }
 html body.gdrs-light-preview .appr-pf-summary-kpi .appr-pf-kpi-value {
-  font-size: 6.6rem !important;
+  font-size: 3.3rem !important;
   font-weight: 700 !important;
   line-height: 1.1 !important;
 }
 html body.gdrs-light-preview .appr-pf-summary-kpi .appr-pf-kpi-muted {
-  font-size: 4.2rem !important;
+  font-size: 2.1rem !important;
   font-weight: 600 !important;
   line-height: 1.1 !important;
 }
 html body.gdrs-light-preview .appr-pf-summary-kpi .appr-pf-kpi-pct {
-  font-size: 4.8rem !important;
+  font-size: 2.4rem !important;
   font-weight: 700 !important;
   line-height: 1.1 !important;
 }
