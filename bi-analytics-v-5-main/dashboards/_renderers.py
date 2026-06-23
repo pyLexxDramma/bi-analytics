@@ -4791,58 +4791,20 @@ def _deviations_msp_gantt_style_block_meta(
     if not block_res or block_res not in d.columns:
         return None, []
 
-    level_col = _deviations_gantt_best_level_column(d) or _deviations_msp_sched_col(
-        d, ["level", "outline level", "уровень"]
-    )
-    task_col = _deviations_msp_sched_col(
-        d, ["task name", "Task Name", "Название", "название"]
-    )
-    filter_tier = _gantt_resolve_block_filter_tier(d, level_col, task_col)
-    src = _gantt_block_tier_frame(d, level_col, tier_level=filter_tier)
-
     def _is_gen_blk(v) -> bool:
         s = str(v).strip().lower()
         if not s:
             return True
         return bool(re.match(r"^(блок|block)\s*[-_a-zа-я]*\d+$", s))
 
-    _tier_names: list[str] = []
-    if task_col and task_col in src.columns:
-        _tier_names = [
-            _deviations_gantt_like_task_label(x)
-            for x in src[task_col].dropna().astype(str).tolist()
-        ]
-        _tier_names = [x for x in _tier_names if x and not _is_gen_blk(x)]
-
-    if block_msp and level_col and task_col:
-        _phys = _gantt_collect_physical_block_filter_values(d, level_col, task_col)
-        if _phys:
-            return block_res, _phys
-
-    if block_msp and _tier_names:
-        return block_res, _gantt_dedupe_block_filter_values(_tier_names)
-
-    if block_msp and not _tier_names and level_col and task_col:
-        _wk = _dev_tasks_build_ancestor_keys(d.copy(), level_col, task_col)
-        _key_col = _gantt_block_ancestor_key_col(d, level_col, task_col)
-        _k2 = [
-            _gantt_norm_block_label(x)
-            for x in _wk[_key_col].dropna().astype(str).tolist()
-        ]
-        _k2 = [x for x in _k2 if x and x.lower() not in ("nan", "none") and not _is_gen_blk(x)]
-        if _k2:
-            return block_res, _gantt_dedupe_block_filter_values(_k2)
-
     _raw_b = sorted(
-        src[block_res].dropna().astype(str).map(str.strip).unique().tolist()
+        d[block_res].dropna().astype(str).map(str.strip).unique().tolist()
     )
     _raw_b = [b for b in _raw_b if b and b.lower() != "nan"]
-    if _tier_names:
-        _raw_b = _tier_names + _raw_b
     _non_gen = [b for b in _raw_b if not _is_gen_blk(b)]
     _block_vals = _non_gen if _non_gen else _raw_b
     if block_msp:
-        _block_vals = _gantt_dedupe_block_filter_values(_raw_b)
+        _block_vals = _raw_b
     else:
         if (
             (not _non_gen)
@@ -4858,7 +4820,7 @@ def _deviations_msp_gantt_style_block_meta(
                 block_res = section_res
     if not _block_vals:
         return None, []
-    return block_res, _gantt_dedupe_block_filter_values(_block_vals)
+    return block_res, _block_vals
 
 
 def _deviations_msp_gantt_style_building_col(d: pd.DataFrame) -> Optional[str]:
@@ -5464,13 +5426,8 @@ def _gantt_block_ancestor_key_col(
     level_col: str | None,
     task_col: str | None,
 ) -> str:
-    """Колонка ancestor-keys для фильтра по функциональному блоку."""
-    if d is None or getattr(d, "empty", True) or not level_col or level_col not in d.columns:
-        return "_dt_lvl2_key"
-    ln = pd.to_numeric(d[level_col], errors="coerce")
-    blk_tier, bld_tier = _deviations_msp_tier_levels(ln)
-    filter_tier = _gantt_resolve_block_filter_tier(d, level_col, task_col)
-    return "_dt_lvl3_key" if filter_tier == bld_tier else "_dt_lvl2_key"
+    """Колонка ancestor-keys для фильтра по функциональному блоку (уровень фазы, не строения)."""
+    return "_dt_lvl2_key"
 
 
 def _gantt_block_filter_values_for_df(
@@ -5479,15 +5436,35 @@ def _gantt_block_filter_values_for_df(
     level_col: str | None = None,
     task_col: str | None = None,
 ) -> list[str]:
-    """Значения селекта «Функциональный блок» для уже отфильтрованного plot_df."""
-    vals = _gantt_collect_physical_block_filter_values(d, level_col, task_col)
-    if vals:
-        return vals
+    """Значения селекта «Функциональный блок» — MSP Block / section, не L3 «Строение»."""
     _col, vals = _deviations_msp_gantt_style_block_meta(d)
     if vals:
-        return _gantt_dedupe_block_filter_values(
-            [x for x in vals if _gantt_is_physical_block_label(x)]
-        ) or _gantt_dedupe_block_filter_values(vals)
+        return vals
+    if (
+        d is None
+        or getattr(d, "empty", True)
+        or not level_col
+        or level_col not in d.columns
+        or not task_col
+        or task_col not in d.columns
+    ):
+        return []
+    ln = pd.to_numeric(d[level_col], errors="coerce")
+    blk_tier, _ = _deviations_msp_tier_levels(ln)
+    names = [
+        _deviations_gantt_like_task_label(x)
+        for x in d.loc[ln == float(blk_tier), task_col].dropna().astype(str).tolist()
+    ]
+    names = [x for x in names if x and not _is_generic_block_name(x)]
+    if names:
+        return sorted(names)
+    _wk = _dev_tasks_build_ancestor_keys(d.copy(), level_col, task_col)
+    if "_dt_lvl2_key" in _wk.columns:
+        _k2 = _wk["_dt_lvl2_key"].astype(str).str.strip()
+        _k2 = _k2[_k2.ne("") & _k2.str.lower().ne("nan")]
+        _k2_list = sorted({x for x in _k2.tolist() if not _is_generic_block_name(x)})
+        if _k2_list:
+            return _k2_list
     return []
 
 
