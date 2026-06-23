@@ -369,12 +369,10 @@ def _opencode_workspace_url(public_base: str) -> str:
     return f"{base}/L3dvcmtzcGFjZQ/"
 
 
-# OpenCode Web UI: slug /workspace — первый сегмент пути.
-# Поддомен opencode.ai.conall.ru — нужен отдельный TLS-сертификат (certbot -d opencode.ai.conall.ru).
-# Пока cert mismatch (NET::ERR_CERT_COMMON_NAME_INVALID) — рабочий URL через ai.conall.ru/opencode/.
-AI_ASSISTANT_URL_SUBDOMAIN_DEFAULT = "https://opencode.ai.conall.ru/L3dvcmtzcGFjZQ/"
+# OpenCode Web UI: slug /workspace — первый сегмент пути, поддомен в корне.
+AI_ASSISTANT_URL_SUBDOMAIN_DEFAULT = "https://opencode.conall.ru/L3dvcmtzcGFjZQ/"
 AI_ASSISTANT_URL_PATH_FALLBACK = "https://ai.conall.ru/opencode/L3dvcmtzcGFjZQ/"
-AI_ASSISTANT_WEB_UI_DEFAULT = AI_ASSISTANT_URL_PATH_FALLBACK
+AI_ASSISTANT_WEB_UI_DEFAULT = AI_ASSISTANT_URL_SUBDOMAIN_DEFAULT
 AI_ASSISTANT_URL_DEV_DEFAULT = AI_ASSISTANT_WEB_UI_DEFAULT
 AI_ASSISTANT_URL_PROD_DEFAULT = AI_ASSISTANT_WEB_UI_DEFAULT
 AI_ASSISTANT_URL_EMBEDDED_DEFAULT = "https://bi-analytics-dev.streamlit.app/_opencode_ai"
