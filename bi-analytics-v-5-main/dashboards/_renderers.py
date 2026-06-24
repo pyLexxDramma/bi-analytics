@@ -37683,6 +37683,7 @@ _PRED_DASH_MOCK_CSS = """
 .pred-kpi-circle.green { background:linear-gradient(135deg,#2ecc71,#27ae60); }
 .pred-kpi-circle.orange { background:linear-gradient(135deg,#e67e22,#d35400); }
 .pred-kpi-circle.red { background:linear-gradient(135deg,#e74c3c,#c0392b); }
+.pred-kpi-circle.burgundy { background:linear-gradient(135deg,#922b3e,#722f37); }
 .pred-kpi-info h4 { margin:0 0 4px 0; font-size:14px; font-weight:600; color:#fafafa; }
 .pred-kpi-info p { margin:0; font-size:12px; color:#a0a0a0; }
 .pred-leg { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:8px; padding:8px 12px; background:#1a1c23; border-radius:12px; border:1px solid #444; font-size:13px; color:#e0e0e0; }
@@ -37980,12 +37981,14 @@ _PRED_DETAIL_TABLE_COLUMNS = (
     "№ договора",
     "№ документа",
     "№ предписания",
+    "Наименование",
     "Дата выдачи предписания",
     "Блок выдачи предписания",
     "Срок устранения",
     "Фактическая дата устранения предписания",
     "Дней просрочки",
     "Критические предписания",
+    "Остановка работ",
 )
 
 # Заголовки таблицы «Неустраненные предписания» (единые для HTML и полной таблицы)
@@ -37998,6 +38001,144 @@ _PRED_MOCK_TABLE_COLUMNS = (
     "Дней просрочки",
     "Критические предписания",
 )
+
+# Горизонтальный bar-chart «Предписания по подрядчикам»: эталонная высота строки
+# (при фильтре по подрядчику — yaxis domain, чтобы бар не растягивался).
+_PRED_CHART_ROW_H = 64
+_PRED_CHART_LAYOUT_PAD = 200
+_PRED_CHART_MIN_HEIGHT = 280
+
+
+def _pred_chart_group_row_count(
+    df: pd.DataFrame, group_col: str | None, *, hide_resolved: bool
+) -> int:
+    if df is None or getattr(df, "empty", True) or not group_col or group_col not in df.columns:
+        return 1
+    work = df
+    if hide_resolved and "_resolved" in work.columns:
+        work = work.loc[~work["_resolved"].astype(bool)]
+    if work.empty:
+        return 1
+    names = work[group_col].astype(str).str.strip()
+    names = names[names.ne("") & ~names.str.casefold().isin({"nan", "none"})]
+    return max(1, int(names.nunique()))
+
+
+def _pred_chart_layout_height(n_ref_rows: int) -> int:
+    n = max(1, int(n_ref_rows))
+    return max(_PRED_CHART_MIN_HEIGHT, n * _PRED_CHART_ROW_H + _PRED_CHART_LAYOUT_PAD)
+
+
+def _pred_chart_yaxis_domain(n_visible: int, n_ref: int) -> tuple[float, float]:
+    n_v = max(1, int(n_visible))
+    n_r = max(1, int(n_ref))
+    if n_v >= n_r:
+        return (0.0, 1.0)
+    span = min(1.0, n_v / n_r)
+    return (1.0 - span, 1.0)
+
+
+_PRED_COLOR_STOP_WORK = "#722F37"
+_PRED_COLOR_CRITICAL = "#e74c3c"
+_PRED_COLOR_UNRESOLVED = "#e67e22"
+_PRED_COLOR_ON_TIME = "#2ecc71"
+_PRED_COLOR_OVERDUE_RESOLVED = "#f1c40f"
+_PRED_PIE_STATUS_ORDER = (
+    "Остановка работ",
+    "Критические",
+    "Не устранено",
+    "Сдано в срок",
+    "Устранено с просрочкой",
+)
+
+
+def _pred_tessa_tag_series(df: pd.DataFrame, tag_col: str | None) -> pd.Series:
+    if df is None or getattr(df, "empty", True) or not tag_col or tag_col not in df.columns:
+        return pd.Series("", index=df.index if df is not None else None)
+    return (
+        df[tag_col]
+        .astype(str)
+        .str.replace("\ufeff", "", regex=False)
+        .str.replace("\xa0", " ", regex=False)
+        .str.strip()
+        .str.casefold()
+    )
+
+
+def _pred_tag_contains_any(tags: pd.Series, needles: tuple[str, ...]) -> pd.Series:
+    out = pd.Series(False, index=tags.index)
+    for needle in needles:
+        n = str(needle or "").strip().casefold()
+        if n:
+            out = out | tags.str.contains(n, regex=False, na=False)
+    return out
+
+
+def _pred_pct_round(n: int, total: int) -> float:
+    if total <= 0:
+        return 0.0
+    return round(100.0 * int(n) / int(total), 1)
+
+
+def _pred_pct_ends_half(p: float) -> bool:
+    tenths = int(round(float(p) * 10))
+    return abs(float(p) * 10 - tenths) < 1e-9 and tenths % 10 == 5
+
+
+def _pred_build_status_pie_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Круговая диаграмма: взаимоисключающие доли + правила округления % (ТЗ п.7)."""
+    if df is None or getattr(df, "empty", True):
+        return pd.DataFrame(columns=["Статус", "Количество", "Доля"])
+    unres = ~df["_resolved"].astype(bool)
+    stop = unres & df.get("_stop_work", False).astype(bool)
+    crit_only = unres & df.get("_critical", False).astype(bool) & ~df.get("_stop_work", False).astype(bool)
+    unres_other = unres & ~stop & ~crit_only
+    od = pd.to_numeric(df.get("_overdue_days", 0), errors="coerce").fillna(0)
+    on_time = df["_resolved"].astype(bool) & (od <= 0)
+    overdue_res = df["_resolved"].astype(bool) & (od > 0)
+    counts = {
+        "Остановка работ": int(stop.sum()),
+        "Критические": int(crit_only.sum()),
+        "Не устранено": int(unres_other.sum()),
+        "Сдано в срок": int(on_time.sum()),
+        "Устранено с просрочкой": int(overdue_res.sum()),
+    }
+    total = sum(counts.values())
+    if total <= 0:
+        return pd.DataFrame(columns=["Статус", "Количество", "Доля"])
+
+    nu = counts["Остановка работ"] + counts["Критические"] + counts["Не устранено"]
+    pct_u = _pred_pct_round(nu, total)
+    pct_r = round(100.0 - pct_u, 1)
+
+    p_stop = _pred_pct_round(counts["Остановка работ"], total)
+    p_crit = _pred_pct_round(counts["Критические"], total)
+    p_other_u = _pred_pct_round(counts["Не устранено"], total)
+    if _pred_pct_ends_half(p_stop) and _pred_pct_ends_half(p_crit):
+        p_crit = round(pct_u - p_stop - p_other_u, 1)
+    else:
+        p_other_u = round(pct_u - p_stop - p_crit, 1)
+
+    p_on_time = _pred_pct_round(counts["Сдано в срок"], total)
+    p_od = _pred_pct_round(counts["Устранено с просрочкой"], total)
+    if _pred_pct_ends_half(p_on_time) and _pred_pct_ends_half(p_od):
+        p_od = round(pct_r - p_on_time, 1)
+    else:
+        p_od = round(pct_r - p_on_time, 1)
+
+    pct_map = {
+        "Остановка работ": p_stop,
+        "Критические": p_crit,
+        "Не устранено": p_other_u,
+        "Сдано в срок": p_on_time,
+        "Устранено с просрочкой": p_od,
+    }
+    rows = [
+        {"Статус": label, "Количество": counts[label], "Доля": pct_map[label]}
+        for label in _PRED_PIE_STATUS_ORDER
+        if counts.get(label, 0) > 0
+    ]
+    return pd.DataFrame(rows)
 
 
 def _pred_fmt_days_display(val) -> str:
@@ -38445,6 +38586,46 @@ def _tessa_drop_project_state_rows(df: pd.DataFrame) -> pd.DataFrame:
     return out.reset_index(drop=True)
 
 
+def _pred_filter_by_selected_projects(
+    df: pd.DataFrame,
+    selected: list[str],
+    obj_col: str | None,
+    proj_id_col: str | None,
+    lookup: dict[str, str],
+) -> pd.DataFrame:
+    """Фильтр проектов: 1C_ID_OBJECT (если есть), иначе нормализованное имя объекта."""
+    if not selected or df is None or getattr(df, "empty", True):
+        return df
+    pk_set = {
+        _project_filter_norm_key(x)
+        for x in selected
+        if str(x).strip() and _project_filter_norm_key(x)
+    }
+    if not pk_set:
+        return df.iloc[0:0].copy()
+
+    if proj_id_col and proj_id_col in df.columns and lookup:
+        selected_ids: set[str] = set()
+        for proj_id, name in lookup.items():
+            nk = _project_filter_norm_key(name)
+            if nk in pk_set or _project_norm_key_matches_msp_keys(nk, pk_set):
+                selected_ids.add(str(proj_id).strip().lower())
+        if selected_ids:
+            sid = df[proj_id_col].astype(str).str.strip().str.lower()
+            sid = sid.replace({"": pd.NA, "nan": pd.NA, "none": pd.NA})
+            return df[sid.isin(selected_ids).fillna(False)].copy()
+
+    if obj_col and obj_col in df.columns:
+        mask = (
+            df[obj_col]
+            .map(_project_filter_norm_key)
+            .map(lambda rk: _project_norm_key_matches_msp_keys(rk, pk_set))
+            .fillna(False)
+        )
+        return df[mask].copy()
+    return df.iloc[0:0].copy()
+
+
 def _pred_filter_by_projekts_registry(df: pd.DataFrame, obj_col: str | None) -> pd.DataFrame:
     """Только проекты с ID в 1с_*_Projekts.json (остальные отбрасываем)."""
     if df is None or getattr(df, "empty", True):
@@ -38489,13 +38670,44 @@ def _pred_status_display_label(
 
 def _pred_status_pie_color(status_label: str) -> str:
     sl = str(status_label).strip().casefold()
+    if "остановка" in sl:
+        return _PRED_COLOR_STOP_WORK
+    if sl == "критические" or sl.startswith("критич"):
+        return _PRED_COLOR_CRITICAL
+    if "не устранено" in sl:
+        return _PRED_COLOR_UNRESOLVED
     if "сдано в срок" in sl or "снято" in sl:
-        return "#2ecc71"
-    if "на ознакомлени" in sl or "не устранено" in sl:
-        return "#e67e22"
+        return _PRED_COLOR_ON_TIME
+    if "устранено с просрочкой" in sl:
+        return _PRED_COLOR_OVERDUE_RESOLVED
     if "просрочк" in sl:
-        return "#c0392b"
+        return _PRED_COLOR_OVERDUE_RESOLVED
     return "#94a3b8"
+
+
+def _pred_crit_overdue_unresolved_mask(df: pd.DataFrame) -> pd.Series:
+    """Критические + просроченные + неустранённые (для сортировки таблицы и графика)."""
+    if df is None or getattr(df, "empty", True):
+        return pd.Series(dtype=bool)
+    idx = df.index
+    critical = (
+        df["_critical"].astype(bool)
+        if "_critical" in df.columns
+        else pd.Series(False, index=idx)
+    )
+    if "_overdue_open" in df.columns:
+        overdue_open = df["_overdue_open"].astype(bool)
+    else:
+        resolved = (
+            df["_resolved"].astype(bool)
+            if "_resolved" in df.columns
+            else pd.Series(False, index=idx)
+        )
+        overdue_days = pd.to_numeric(
+            df.get("_overdue_days", 0), errors="coerce"
+        ).fillna(0)
+        overdue_open = (~resolved) & (overdue_days > 0)
+    return critical & overdue_open
 
 
 def _pred_build_detail_table_df(
@@ -38509,6 +38721,7 @@ def _pred_build_detail_table_df(
     block_col,
     due_col,
     completion_col,
+    name_col=None,
 ) -> pd.DataFrame:
     if show is None or show.empty:
         return pd.DataFrame(columns=_PRED_DETAIL_TABLE_COLUMNS)
@@ -38532,11 +38745,19 @@ def _pred_build_detail_table_df(
             except Exception:
                 is_crit = False
         critical_text = "Да" if is_crit else "—"
+        stop_raw = row.get("_stop_work")
+        is_stop = bool(stop_raw) if isinstance(stop_raw, (bool, np.bool_)) else False
+        stop_text = "Да" if is_stop else "Нет"
         try:
             overdue_num = int(round(float(overdue_raw)))
         except (TypeError, ValueError):
             overdue_num = 0
+        crit_overdue_unresolved = is_crit and (not resolved_raw) and overdue_num > 0
         overdue_display = _pred_fmt_days_display(overdue_raw)
+        name_raw = row.get(name_col) if name_col and name_col in show.columns else None
+        name_s = _clean_display_str(name_raw, empty="—") if name_raw is not None else "—"
+        if not name_s:
+            name_s = "—"
         if full_doc_col and full_doc_col in show.columns:
             doc_full_s = _pred_fmt_doc_full(row.get(full_doc_col))
         else:
@@ -38552,18 +38773,25 @@ def _pred_build_detail_table_df(
                 "№ договора": _pred_fmt_num(row.get(contract_col)) if contract_col and contract_col in show.columns else "Без номера",
                 "№ документа": doc_full_s,
                 "№ предписания": _pred_fmt_doc_full(pred_num_raw) if pred_num_raw is not None and not (isinstance(pred_num_raw, float) and pd.isna(pred_num_raw)) and str(pred_num_raw).strip() not in ("", "nan", "None") else "Без номера",
+                "Наименование": name_s,
                 "Дата выдачи предписания": _pred_fmt_due(issue_raw),
                 "Блок выдачи предписания": _clean_display_str(block_raw, empty="—"),
                 "Срок устранения": _pred_fmt_due(due_raw),
                 "Фактическая дата устранения предписания": _pred_fmt_due(comp_raw),
                 "Дней просрочки": overdue_display,
                 "Критические предписания": critical_text,
+                "Остановка работ": stop_text,
+                "_crit_overdue_flag": 1 if crit_overdue_unresolved else 0,
                 "_resolved_flag": "1" if resolved_raw else "",
                 "_overdue_num": overdue_num,
             }
         )
     df_out = pd.DataFrame(rows)
-    ordered = list(_PRED_DETAIL_TABLE_COLUMNS) + ["_resolved_flag", "_overdue_num"]
+    ordered = list(_PRED_DETAIL_TABLE_COLUMNS) + [
+        "_crit_overdue_flag",
+        "_resolved_flag",
+        "_overdue_num",
+    ]
     for c in ordered:
         if c not in df_out.columns:
             df_out[c] = ""
@@ -38622,6 +38850,7 @@ def _pred_kpi_circles_html(
     n_resolved: int,
     n_overdue: int,
     n_critical: int,
+    n_stop_work: int,
     *,
     with_heading: bool = True,
 ) -> str:
@@ -38649,10 +38878,13 @@ def _pred_kpi_circles_html(
         + '</span><span class="s">всего</span></div><div class="pred-kpi-info"><h4>Устраненные предписания</h4><p>Закрыты или устранены</p></div></div>'
         + '<div class="pred-kpi-item"><div class="pred-kpi-circle orange"><span class="n">'
         + e(str(n_overdue))
-        + '</span><span class="s">всего</span></div><div class="pred-kpi-info"><h4>Просроченные предписания</h4><p>Требуют немедленного внимания</p></div></div>'
+        + '</span><span class="s">всего</span></div><div class="pred-kpi-info"><h4>Просроченные неустраненные предписания</h4><p>Неустранённые с истёкшим сроком</p></div></div>'
         + '<div class="pred-kpi-item"><div class="pred-kpi-circle red"><span class="n">'
         + e(str(n_critical))
-        + '</span><span class="s">всего</span></div><div class="pred-kpi-info"><h4>Критические предписания</h4><p>TESSA: тег «КРИТИЧНЫЙ» и вид «Предписания»</p></div></div>'
+        + '</span><span class="s">всего</span></div><div class="pred-kpi-info"><h4>Критические предписания</h4><p>TESSA: вхождение «КРИТИЧНЫЙ» в Tessa_Teg</p></div></div>'
+        + '<div class="pred-kpi-item"><div class="pred-kpi-circle burgundy"><span class="n">'
+        + e(str(n_stop_work))
+        + '</span><span class="s">всего</span></div><div class="pred-kpi-info"><h4>Остановка работ</h4><p>TESSA: вхождение «Приостановка работ» в Tessa_Teg</p></div></div>'
         + "</div></div>"
     )
 
@@ -38751,6 +38983,10 @@ def _pred_detail_col_class(col_name: str) -> str:
         return "pred-col-dly"
     if c == "Критические предписания" or c.startswith("критич"):
         return "pred-col-crit"
+    if c == "Остановка работ":
+        return "pred-col-crit"
+    if c == "Наименование":
+        return "pred-col-text"
     if c == "Проект":
         return "pred-col-text"
     return "pred-col-text"
@@ -38795,17 +39031,19 @@ def _pred_detail_table_html(
         "№ договора": "№ дог.",
         "№ документа": "№ док.",
         "№ предписания": "№ предп.",
+        "Наименование": "Наименование",
         "Дата выдачи предписания": "Выдано",
         "Блок выдачи предписания": "Блок",
         "Срок устранения": "Срок",
         "Фактическая дата устранения предписания": "Факт устран.",
         "Дней просрочки": "Просрочка, дн",
         "Критические предписания": "Критические предписания",
+        "Остановка работ": "Остановка",
     }
     if df is None or df.empty:
         return f'<p style="color:{_pred_muted_text_color()};padding:16px;">{esc("Нет строк для отображения.")}</p>'
     show = df.head(max_rows)
-    render_cols = [c for c in show.columns if c not in ("_resolved_flag", "_overdue_num")]
+    render_cols = [c for c in show.columns if c not in ("_resolved_flag", "_overdue_num", "_crit_overdue_flag")]
     n_rows = len(show)
     _wrap_id = f"pred_det_{abs(id(show))}"
     _st_vh = 52.0
@@ -40895,12 +41133,8 @@ def dashboard_predpisania(df):
         st.info("Нет предписаний по проектам из справочника 1с_*_Projekts.json.")
         return
 
-    pred_project_options = sorted(
-        set(_proj_lookup_pred.values()) if _proj_lookup_pred else set(),
-        key=lambda x: str(x).casefold(),
-    )
-    if not pred_project_options and obj_col and obj_col in pred.columns:
-        pred_project_options = _unique_project_labels_for_select(pred[obj_col])
+    if obj_col and obj_col in pred.columns:
+        pred = _project_column_apply_canonical(pred, obj_col)
 
     # Повторно объединяем по ключу уже внутри выборки «предписания» (договор/срок могли быть только в других строках)
     pred = _tessa_fill_card_from_doc_lookup(pred)
@@ -40922,6 +41156,9 @@ def dashboard_predpisania(df):
     pred = _tessa_drop_project_state_rows(pred)
 
     contr_col = _tessa_find_column(pred, ["CONTR", "Контрагент", "contr"])
+    name_col_pred = _tessa_find_column(
+        pred, ["Name", "name", "Наименование", "Title", "Заголовок"]
+    )
     curator_col = _tessa_find_column(
         pred,
         [
@@ -41106,6 +41343,16 @@ def dashboard_predpisania(df):
     pred = _pred_dedupe_by_docid(pred, pred_doc_col, creation_col_pred, pred_card_col=pred_card_col)
     pred = _pred_merge_completion_from_tasks(pred, pred_card_col, pred_doc_col)
 
+    pred_proj_id_col = _tessa_find_column(
+        pred,
+        ["1C_ID_OBJECT", "1C_ID_PROJ", "ID_Проекта", "ProjectID", "1c_id_object"],
+    )
+    pred_project_options = (
+        _unique_project_labels_for_select(pred[obj_col])
+        if obj_col and obj_col in pred.columns
+        else []
+    )
+
     _excl_guess = [kind_col, contr_col, obj_col, doc_num_col, creation_col_pred, completion_col]
     if not contract_col:
         contract_col = _pred_guess_contract_column(pred, exclude=_excl_guess)
@@ -41200,18 +41447,15 @@ def dashboard_predpisania(df):
         has_kind = raw_k.notna() & sk.ne("") & ~sk.str.casefold().isin({"nan", "none", "<na>", "nat"})
         kid_norm = raw_k.map(_pred_norm_uuid_str)
         _kind_ok = (~has_kind) | kid_norm.eq(_kind_target)
-    _crit_tag = pd.Series(False, index=pred.index)
-    if _tag_col and _tag_col in pred.columns:
-        _tag_norm = (
-            pred[_tag_col]
-            .astype(str)
-            .str.replace("\ufeff", "", regex=False)
-            .str.replace("\xa0", " ", regex=False)
-            .str.strip()
-            .str.casefold()
-        )
-        _crit_tag = _tag_norm.isin({"критичный", "критическое", "критичное", "critical"})
-    pred["_critical"] = _crit_tag & _kind_ok
+    _tag_norm = _pred_tessa_tag_series(pred, _tag_col)
+    pred["_critical"] = _pred_tag_contains_any(
+        _tag_norm,
+        ("критичный", "критическое", "критичное", "critical"),
+    ) & _kind_ok
+    pred["_stop_work"] = _pred_tag_contains_any(
+        _tag_norm,
+        ("приостановка работ",),
+    ) & _kind_ok
 
     def _pred_axis_upper_bound(xmax: float) -> float:
         try:
@@ -41392,9 +41636,14 @@ def dashboard_predpisania(df):
 
     filtered = pred.copy()
     if obj_col and sel_obj:
-        _proj_set = {str(x).strip() for x in sel_obj if str(x).strip()}
-        if _proj_set and len(_proj_set) != len(projects):
-            filtered = filtered[filtered[obj_col].astype(str).str.strip().isin(_proj_set)]
+        filtered = _pred_filter_by_selected_projects(
+            filtered,
+            sel_obj,
+            obj_col,
+            pred_proj_id_col,
+            _proj_lookup_pred,
+        )
+    filtered_before_contr = filtered.copy()
     if contr_col and sel_contr:
         _cs = {str(x).strip() for x in sel_contr if str(x).strip()}
         if _cs:
@@ -41445,6 +41694,9 @@ def dashboard_predpisania(df):
     if "_critical" not in filtered.columns:
         filtered = filtered.copy()
         filtered["_critical"] = False
+    if "_stop_work" not in filtered.columns:
+        filtered = filtered.copy()
+        filtered["_stop_work"] = False
     if "_overdue_days" not in filtered.columns:
         filtered = filtered.copy()
         filtered["_overdue_days"] = 0
@@ -41453,15 +41705,17 @@ def dashboard_predpisania(df):
         filtered["_overdue_open"] = (~filtered["_resolved"].astype(bool)) & (
             filtered["_overdue_days"] > 0
         )
+    filtered["_crit_overdue_open"] = _pred_crit_overdue_unresolved_mask(filtered)
 
     unres_mask = ~filtered["_resolved"].astype(bool)
     resolved_mask = filtered["_resolved"].astype(bool)
     n_total = int(len(filtered))
     n_unresolved = int(unres_mask.sum())
     n_resolved = int(resolved_mask.sum())
-    n_overdue = int(filtered["_overdue_open"].sum())
+    n_overdue = int((unres_mask & (filtered["_overdue_days"] > 0)).sum())
     n_non_overdue = int((filtered["_overdue_days"] <= 0).sum())
     n_critical = int((unres_mask & filtered["_critical"]).sum())
+    n_stop_work = int((unres_mask & filtered["_stop_work"]).sum())
 
     chart_df = filtered.loc[unres_mask].copy() if hide_resolved else filtered.copy()
     chart_group_col = None
@@ -41514,6 +41768,7 @@ def dashboard_predpisania(df):
                     **{
                         _cnt_col: (chart_group_col, "size"),
                         "Просрочено": ("_overdue_open", "sum"),
+                        "КритПросроч": ("_crit_overdue_open", "sum"),
                         "Мин_дата": ("_issue_date", "min"),
                         "Макс_дата": ("_issue_date", "max"),
                     }
@@ -41521,8 +41776,8 @@ def dashboard_predpisania(df):
             )
             grp["_sort_name"] = grp[chart_group_col].astype(str).str.casefold()
             grp = grp.sort_values(
-                [_cnt_col, "_sort_name"],
-                ascending=[False, True],
+                ["КритПросроч", "Просрочено", _cnt_col, "_sort_name"],
+                ascending=[False, False, False, True],
                 kind="mergesort",
             ).drop(columns=["_sort_name"]).reset_index(drop=True)
             _total_overdue_all = int(grp["Просрочено"].sum())
@@ -41612,9 +41867,14 @@ def dashboard_predpisania(df):
             )
             # Расширяем ось X, чтобы синий пузырёк не «вылезал» за границу.
             axis_upper_with_bubble = axis_upper + _bub_shift * 2
-            _row_h = 64
+            _n_ref_rows = _pred_chart_group_row_count(
+                filtered_before_contr, chart_group_col, hide_resolved=hide_resolved
+            )
+            _n_vis_rows = max(1, len(grp))
+            _chart_height = _pred_chart_layout_height(_n_ref_rows)
+            _y_domain = _pred_chart_yaxis_domain(_n_vis_rows, _n_ref_rows)
             fig1.update_layout(
-                height=max(520, len(grp) * _row_h + 200),
+                height=_chart_height,
                 yaxis_title="",
                 xaxis_title="Количество (столбец — всего, оранжевый сегмент — просроченные)",
                 margin=dict(l=12, r=80, t=64, b=72),
@@ -41624,8 +41884,13 @@ def dashboard_predpisania(df):
                     automargin=True,
                     fixedrange=True,
                 ),
-                yaxis=dict(automargin=True, tickfont=dict(size=14), fixedrange=True),
-                uirevision="pred_main_chart",
+                yaxis=dict(
+                    domain=list(_y_domain),
+                    automargin=True,
+                    tickfont=dict(size=14),
+                    fixedrange=True,
+                ),
+                uirevision="pred_main_chart_v3",
                 title=dict(
                     text=(
                         "Неустранённые предписания по подрядчикам"
@@ -41655,61 +41920,67 @@ def dashboard_predpisania(df):
 
     with col_kpi:
         st.markdown(
-            _pred_kpi_circles_html(n_total, n_unresolved, n_resolved, n_overdue, n_critical, with_heading=True),
+            _pred_kpi_circles_html(
+                n_total, n_unresolved, n_resolved, n_overdue, n_critical, n_stop_work, with_heading=True
+            ),
             unsafe_allow_html=True,
         )
         suppress_caption(
             "Маппинг KPI: «Всего» и «Устраненные» — id.csv (KindName «Предписания», KrStateID=13); "
             "«Неустраненные» = всего − устранённые; «Непросроченные» — id_Deadline не нарушен "
             "(счётчик над графиком и в подписи таблицы); «Просроченные» — открытые с истёкшим сроком; "
-            "«Критические» — тег «КРИТИЧНЫЙ». Факт устранения — «Проверка»/«Принято» в task.csv."
+            "«Критические» — вхождение «КРИТИЧНЫЙ» в Tessa_Teg; «Остановка работ» — «Приостановка работ». "
         )
 
-    _viz_df = chart_df
-    _status_display = _viz_df.apply(
-        lambda r: _pred_status_display_label(
-            r.get("Статус"),
-            resolved=bool(r.get("_resolved", False)),
-            overdue_days=r.get("_overdue_days"),
-        ),
-        axis=1,
-    )
-    status_counts = _status_display.value_counts()
+    status_df = _pred_build_status_pie_df(filtered)
     st.subheader("Предписания по статусам")
-    status_df = status_counts.reset_index()
-    status_df.columns = ["Статус", "Количество"]
-    _pie_status_labels = status_df["Статус"].astype(str).tolist()
-    _pie_status_colors = [_pred_status_pie_color(s) for s in _pie_status_labels]
-    fig2 = px.pie(
-        status_df,
-        names="Статус",
-        values="Количество",
-        color="Статус",
-        color_discrete_map={
-            s: c for s, c in zip(_pie_status_labels, _pie_status_colors)
-        },
-    )
-    _nst = len(status_df.index)
-    fig2 = _pie_apply_percent_inside_legend_left(
-        fig2,
-        height=840,
-        pct_fontsize=36 if _nst <= 6 else 32,
-        legend_fontsize=44,
-        left_margin=min(560, max(360, int(360 + _nst * 36))),
-        domain_x=(0.36, 0.88),
-        domain_y=(0.08, 0.92),
-        extra_layout=dict(uirevision="pred_status_pie"),
-    )
-    fig2.update_traces(
-        hovertemplate="<b>%{label}</b><br>Количество: %{value}<br>Доля: %{percent:.1%}<extra></extra>",
-    )
-    fig2 = apply_chart_background(fig2)
-    render_chart(fig2, key="pred_status_pie", caption_below=report_chart_caption_body("Предписания", granularity="по статусам"))
+    if status_df.empty:
+        st.info("Нет данных для круговой диаграммы по статусам.")
+    else:
+        _pie_status_labels = status_df["Статус"].astype(str).tolist()
+        _pie_status_colors = [_pred_status_pie_color(s) for s in _pie_status_labels]
+        status_df = status_df.copy()
+        status_df["Подпись"] = status_df.apply(
+            lambda r: f"{r['Статус']} ({float(r['Доля']):.1f}%)",
+            axis=1,
+        )
+        fig2 = px.pie(
+            status_df,
+            names="Подпись",
+            values="Количество",
+            color="Статус",
+            color_discrete_map={
+                s: c for s, c in zip(_pie_status_labels, _pie_status_colors)
+            },
+        )
+        _nst = len(status_df.index)
+        fig2 = _pie_apply_percent_inside_legend_left(
+            fig2,
+            height=840,
+            pct_fontsize=36 if _nst <= 6 else 32,
+            legend_fontsize=44,
+            left_margin=min(560, max(360, int(360 + _nst * 36))),
+            domain_x=(0.36, 0.88),
+            domain_y=(0.08, 0.92),
+            extra_layout=dict(uirevision="pred_status_pie_v2"),
+        )
+        fig2.update_traces(
+            hovertemplate=(
+                "<b>%{customdata[0]}</b><br>Количество: %{value}<br>Доля: %{customdata[1]:.1f}%<extra></extra>"
+            ),
+            customdata=status_df[["Статус", "Доля"]].to_numpy(),
+        )
+        fig2 = apply_chart_background(fig2)
+        render_chart(
+            fig2,
+            key="pred_status_pie",
+            caption_below=report_chart_caption_body("Предписания", granularity="по статусам"),
+        )
 
-    if obj_col and obj_col in _viz_df.columns:
+    if obj_col and obj_col in chart_df.columns:
         st.subheader("Предписания по объектам")
         by_obj = (
-            _viz_df.groupby(obj_col)
+            chart_df.groupby(obj_col)
             .size()
             .reset_index(name="Количество")
         )
@@ -41758,7 +42029,11 @@ def dashboard_predpisania(df):
 
     st.subheader("Детальная таблица по предписаниям")
     show = filtered.copy()
-    show = show.sort_values(["_critical", "_overdue_days"], ascending=[False, False])
+    show = show.sort_values(
+        ["_crit_overdue_open", "_overdue_days"],
+        ascending=[False, False],
+        kind="mergesort",
+    )
 
     show_tbl = show.copy()
     show_tbl["__completion_eff__"] = show_tbl["_completion_dt"]
@@ -41773,8 +42048,13 @@ def dashboard_predpisania(df):
         issue_block_col,
         due_col,
         "__completion_eff__",
+        name_col_pred,
     )
-    table_df = _pred_sort_table_df(table_df, "Дней просрочки", "desc")
+    table_df = table_df.sort_values(
+        ["_crit_overdue_flag", "_overdue_num"],
+        ascending=[False, False],
+        kind="mergesort",
+    )
 
     overdue_cnt = n_overdue
     suppress_caption(
@@ -41783,7 +42063,10 @@ def dashboard_predpisania(df):
     )
     render_report_html_table(
         _pred_html_block_for_theme(_pred_detail_table_html(table_df)),
-        export_df=table_df.drop(columns=["_resolved_flag", "_overdue_num"], errors="ignore"),
+        export_df=table_df.drop(
+            columns=["_resolved_flag", "_overdue_num", "_crit_overdue_flag"],
+            errors="ignore",
+        ),
         file_stem="predpisania",
         key_prefix="predpisania_detail",
     )
