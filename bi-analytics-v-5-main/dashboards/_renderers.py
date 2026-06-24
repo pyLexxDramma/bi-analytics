@@ -38571,19 +38571,32 @@ def _pred_projekts_1c_lookup() -> tuple[dict[str, str], frozenset[str], frozense
     return raw, ids, names
 
 
+def _pred_project_state_mask(df: pd.DataFrame) -> pd.Series:
+    """KrStateID=0, KrState/Статус «Проект» (в т.ч. Draft в KrState при любом KrStateID)."""
+    if df is None or getattr(df, "empty", True):
+        return pd.Series(dtype=bool)
+    mask = pd.Series(False, index=df.index)
+    if "KrStateID" in df.columns:
+        mask = mask | pd.to_numeric(df["KrStateID"], errors="coerce").eq(0)
+    kr_col = _tessa_find_column(df, ["KrState", "krstate"])
+    if kr_col and kr_col in df.columns:
+        try:
+            from tessa_status_utils import krstate_raw_to_label
+
+            kr_lbl = df[kr_col].map(lambda x: krstate_raw_to_label(x))
+        except Exception:
+            kr_lbl = df[kr_col].astype(str).str.strip()
+        mask = mask | kr_lbl.astype(str).str.strip().str.casefold().eq("проект")
+    if "Статус" in df.columns:
+        mask = mask | df["Статус"].astype(str).str.strip().str.casefold().eq("проект")
+    return mask.fillna(False)
+
+
 def _tessa_drop_project_state_rows(df: pd.DataFrame) -> pd.DataFrame:
-    """Исключить документы TESSA в статусе «Проект» (KrStateID=0 / текст)."""
+    """Исключить документы TESSA в статусе «Проект» (KrStateID=0 / текст / Draft)."""
     if df is None or getattr(df, "empty", True):
         return df
-    out = df
-    if "KrStateID" in out.columns:
-        _krs = pd.to_numeric(out["KrStateID"], errors="coerce")
-        out = out[~_krs.eq(0)].copy()
-    st_col = _tessa_find_column(out, ["Статус", "KrState", "krstate"])
-    if st_col and st_col in out.columns:
-        _st = out[st_col].astype(str).str.strip().str.casefold()
-        out = out[~_st.eq("проект")].copy()
-    return out.reset_index(drop=True)
+    return df[~_pred_project_state_mask(df)].copy().reset_index(drop=True)
 
 
 def _pred_filter_by_selected_projects(
@@ -38604,6 +38617,7 @@ def _pred_filter_by_selected_projects(
     if not pk_set:
         return df.iloc[0:0].copy()
 
+    by_id = pd.Series(False, index=df.index)
     if proj_id_col and proj_id_col in df.columns and lookup:
         selected_ids: set[str] = set()
         for proj_id, name in lookup.items():
@@ -38613,17 +38627,21 @@ def _pred_filter_by_selected_projects(
         if selected_ids:
             sid = df[proj_id_col].astype(str).str.strip().str.lower()
             sid = sid.replace({"": pd.NA, "nan": pd.NA, "none": pd.NA})
-            return df[sid.isin(selected_ids).fillna(False)].copy()
+            by_id = sid.isin(selected_ids).fillna(False)
 
+    by_name = pd.Series(False, index=df.index)
     if obj_col and obj_col in df.columns:
-        mask = (
+        by_name = (
             df[obj_col]
             .map(_project_filter_norm_key)
             .map(lambda rk: _project_norm_key_matches_msp_keys(rk, pk_set))
             .fillna(False)
         )
-        return df[mask].copy()
-    return df.iloc[0:0].copy()
+
+    mask = by_id | by_name
+    if not mask.any():
+        return df.iloc[0:0].copy()
+    return df[mask].copy()
 
 
 def _pred_filter_by_projekts_registry(df: pd.DataFrame, obj_col: str | None) -> pd.DataFrame:
@@ -39224,6 +39242,8 @@ def _pred_dedupe_by_docid(
     p_ok = p.loc[m]
     p_bad = p.loc[~m]
     if not p_ok.empty:
+        p_ok = p_ok.copy()
+        p_ok["_is_proj"] = _pred_project_state_mask(p_ok)
         _meta_dt = pd.Series(pd.NaT, index=p_ok.index)
         # ВАЖНО: «Import_data» / «Import_date» — поле даты snapshot-файла TESSA
         # (имя файла tessa_DD-MM-YYYY-HH-MM-id.csv). Без этого ключа dedup
@@ -39256,8 +39276,20 @@ def _pred_dedupe_by_docid(
                 na_position="last",
                 kind="stable",
             )
-            p_ok = p_ok.drop_duplicates(subset=["_dedupe_key"], keep="last").drop(
-                columns=["_meta_dt", "_created_dt", "_tiebreak", "_dedupe_key"], errors="ignore"
+            _deduped_parts: list[pd.DataFrame] = []
+            for _, _grp in p_ok.groupby("_dedupe_key", sort=False):
+                _non_proj = _grp[~_grp["_is_proj"].astype(bool)]
+                _pick = _non_proj if not _non_proj.empty else _grp.iloc[0:0]
+                if not _pick.empty:
+                    _deduped_parts.append(_pick.tail(1))
+            p_ok = (
+                pd.concat(_deduped_parts, ignore_index=True)
+                if _deduped_parts
+                else p_ok.iloc[0:0]
+            )
+            p_ok = p_ok.drop(
+                columns=["_meta_dt", "_created_dt", "_tiebreak", "_dedupe_key", "_is_proj"],
+                errors="ignore",
             )
         else:
             if _meta_dt.notna().any():
@@ -39266,14 +39298,23 @@ def _pred_dedupe_by_docid(
                     na_position="last",
                     kind="stable",
                 )
-                p_ok = p_ok.drop_duplicates(subset=["_dedupe_key"], keep="last").drop(
-                    columns=["_meta_dt", "_tiebreak", "_dedupe_key"], errors="ignore"
-                )
             else:
                 p_ok = p_ok.assign(_tiebreak=_tiebreak).sort_values(["_tiebreak"], kind="stable")
-                p_ok = p_ok.drop_duplicates(subset=["_dedupe_key"], keep="last").drop(
-                    columns=["_tiebreak", "_dedupe_key"], errors="ignore"
-                )
+            _deduped_parts = []
+            for _, _grp in p_ok.groupby("_dedupe_key", sort=False):
+                _non_proj = _grp[~_grp["_is_proj"].astype(bool)]
+                _pick = _non_proj if not _non_proj.empty else _grp.iloc[0:0]
+                if not _pick.empty:
+                    _deduped_parts.append(_pick.tail(1))
+            p_ok = (
+                pd.concat(_deduped_parts, ignore_index=True)
+                if _deduped_parts
+                else p_ok.iloc[0:0]
+            )
+            p_ok = p_ok.drop(
+                columns=["_meta_dt", "_tiebreak", "_dedupe_key", "_is_proj"],
+                errors="ignore",
+            )
     if "_dedupe_key" in p_bad.columns:
         p_bad = p_bad.drop(columns=["_dedupe_key"], errors="ignore")
     out = pd.concat([p_ok, p_bad], ignore_index=True)
@@ -41342,6 +41383,11 @@ def dashboard_predpisania(df):
 
     pred = _pred_dedupe_by_docid(pred, pred_doc_col, creation_col_pred, pred_card_col=pred_card_col)
     pred = _pred_merge_completion_from_tasks(pred, pred_card_col, pred_doc_col)
+    pred["Статус"] = _tessa_resolve_status_series(pred)
+    pred = _tessa_drop_project_state_rows(pred)
+    if pred.empty:
+        st.info("Нет предписаний после исключения документов в статусе «Проект».")
+        return
 
     pred_proj_id_col = _tessa_find_column(
         pred,
@@ -41371,7 +41417,8 @@ def dashboard_predpisania(df):
     pred["_resolved"] = False
     if "KrStateID" in pred.columns:
         _krstate_num = pd.to_numeric(pred["KrStateID"], errors="coerce")
-        pred["_resolved"] = _krstate_num == 13
+        _proj_state = _pred_project_state_mask(pred)
+        pred["_resolved"] = (_krstate_num == 13) & (~_proj_state)
     pred["_signed"] = st_l.str.contains("Подписан", case=False, na=False) | st_l.str.contains("Согласован", case=False, na=False)
     pred["_completion_dt"] = pd.Series(pd.NaT, index=pred.index)
     _rm = pred["_resolved"].astype(bool)
@@ -41690,7 +41737,8 @@ def dashboard_predpisania(df):
         filtered["_resolved"] = False
         if "KrStateID" in filtered.columns:
             _kr_fb = pd.to_numeric(filtered["KrStateID"], errors="coerce")
-            filtered["_resolved"] = _kr_fb == 13
+            _proj_fb = _pred_project_state_mask(filtered)
+            filtered["_resolved"] = (_kr_fb == 13) & (~_proj_fb)
     if "_critical" not in filtered.columns:
         filtered = filtered.copy()
         filtered["_critical"] = False
@@ -41780,6 +41828,9 @@ def dashboard_predpisania(df):
                 ascending=[False, False, False, True],
                 kind="mergesort",
             ).drop(columns=["_sort_name"]).reset_index(drop=True)
+            # Plotly h-bar: первая строка — внизу; крупнейшие значения — сверху.
+            grp = grp.iloc[::-1].reset_index(drop=True)
+            _y_cat_order = grp[chart_group_col].astype(str).tolist()
             _total_overdue_all = int(grp["Просрочено"].sum())
             _txt_inner = [
                 (f"{int(o)}" if int(o) > 0 else "")
@@ -41886,11 +41937,13 @@ def dashboard_predpisania(df):
                 ),
                 yaxis=dict(
                     domain=list(_y_domain),
+                    categoryorder="array",
+                    categoryarray=_y_cat_order,
                     automargin=True,
                     tickfont=dict(size=14),
                     fixedrange=True,
                 ),
-                uirevision="pred_main_chart_v3",
+                uirevision="pred_main_chart_v4",
                 title=dict(
                     text=(
                         "Неустранённые предписания по подрядчикам"
