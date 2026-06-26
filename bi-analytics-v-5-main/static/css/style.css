@@ -1415,6 +1415,28 @@ div[class*="st-key-pd_delay_project_chart"] [data-testid="stPlotlyChart"] {
     -webkit-text-fill-color: #8899aa !important;
 }
 
+/* KPI отклонения РД (план − факт) */
+.rd-doc-dev-metric-label {
+    font-size: 0.875rem;
+    color: #c8d8ec !important;
+    -webkit-text-fill-color: #c8d8ec !important;
+    margin-bottom: 0.25rem;
+    line-height: 1.4;
+}
+.rd-doc-dev-metric-value {
+    font-size: 1.75rem;
+    font-weight: 600;
+    line-height: 1.2;
+}
+.rd-doc-dev-metric-pos {
+    color: #46d68a !important;
+    -webkit-text-fill-color: #46d68a !important;
+}
+.rd-doc-dev-metric-neg {
+    color: #ff5454 !important;
+    -webkit-text-fill-color: #ff5454 !important;
+}
+
 /* Ряд колонок: markdown и подписи внутри колонок (плашки над графиком и т.п.) */
 .main [data-testid="column"] [data-testid="stMarkdownContainer"] p,
 .main [data-testid="column"] [data-testid="stMarkdownContainer"] span,
