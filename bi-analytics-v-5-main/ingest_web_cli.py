@@ -55,6 +55,8 @@ _mock_st.warning = lambda *a, **kw: print("WARN:", *a, file=sys.stderr)
 _mock_st.cache_data = lambda *a, **kw: (lambda f: f)
 sys.modules["streamlit"] = _mock_st
 
+import config  # noqa: F401,E402 — .env до FTP-sync вне Streamlit
+
 from web_schema import init_web_schema  # noqa: E402
 from auto_ingest import maybe_ftp_sync_before_web_load  # noqa: E402
 from web_loader import load_all_from_web, web_dir_exists  # noqa: E402

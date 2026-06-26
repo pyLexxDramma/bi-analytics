@@ -38,6 +38,7 @@ jobs:
             export BI_DEPLOY_FAIL_ON_INGEST=0
             if [[ -f bi-analytics-v-5-main/scripts/server_deploy.sh ]]; then
               bash bi-analytics-v-5-main/scripts/server_deploy.sh
+              exit 0
             else
               PY=".venv/bin/python"
               [[ -x "$PY" ]] || { python3 -m venv .venv; PY=".venv/bin/python"; }

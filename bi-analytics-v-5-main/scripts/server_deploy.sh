@@ -64,13 +64,20 @@ echo "Restarting $UNIT ..."
 systemctl --user stop "$UNIT" 2>/dev/null || true
 sleep 2
 
-if command -v ss >/dev/null 2>&1 && ss -tlnp 2>/dev/null | grep -q ':8501 '; then
-  echo "WARN: port 8501 still busy, stopping stray streamlit"
-  pkill -f 'streamlit.*8501' 2>/dev/null || true
-  sleep 1
+if command -v ss >/dev/null 2>&1; then
+  stale_pids="$(ss -tlnp 2>/dev/null | grep ':8501 ' | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u || true)"
+  if [[ -n "$stale_pids" ]]; then
+    echo "WARN: port 8501 still busy, stopping listener pid(s): $stale_pids"
+    while read -r pid; do
+      [[ -n "$pid" ]] || continue
+      kill "$pid" 2>/dev/null || true
+    done <<< "$stale_pids"
+    sleep 1
+  fi
 fi
 
 systemctl --user start "$UNIT"
 systemctl --user is-active --quiet "$UNIT"
 echo "OK: $UNIT is active"
 echo "Deploy finished."
+exit 0
