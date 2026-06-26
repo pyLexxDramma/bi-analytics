@@ -16204,6 +16204,24 @@ def _rd_plan_df_align_to_detail(
     )
 
 
+def _rd_plan_keep_most_filled_dupe_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Из одноимённых колонок (после нормализации пробелов) оставляет самую заполненную.
+
+    Иначе «Дата выдачи … по  Договору» (двойной пробел, мало строк) затирает
+    одноимённую полную колонку, и «План на текущую дату» сильно занижается.
+    """
+    if not df.columns.duplicated().any():
+        return df
+    _seen_best: dict[str, tuple[int, int]] = {}
+    for _pos, _name in enumerate(df.columns):
+        _nn = int(df.iloc[:, _pos].notna().sum())
+        _prev = _seen_best.get(_name)
+        if _prev is None or _nn > _prev[1]:
+            _seen_best[_name] = (_pos, _nn)
+    _keep = sorted(p for p, _ in _seen_best.values())
+    return df.iloc[:, _keep].copy()
+
+
 def _rd_plan_csv_sections_df(
     selected_projects: list[str] | None = None,
 ) -> pd.DataFrame:
@@ -16220,8 +16238,7 @@ def _rd_plan_csv_sections_df(
         .strip()
         for c in df.columns
     ]
-    if df.columns.duplicated().any():
-        df = df.loc[:, ~df.columns.duplicated(keep="first")].copy()
+    df = _rd_plan_keep_most_filled_dupe_columns(df)
     pc = _rd_plan_csv_pick_columns(df)
     if not pc.get("plan"):
         return pd.DataFrame()
@@ -17092,9 +17109,10 @@ def _rd_plan_fallback_view(
     # Двухстрочные заголовки CSV (например «Дата выдачи разделов по\nДоговору»)
     # после нормализации могут давать дублирующиеся имена колонок — иначе
     # df[col] вернёт DataFrame и pd.to_datetime упадёт «cannot assemble with
-    # duplicate keys». Оставляем первую колонку каждого имени.
-    if df.columns.duplicated().any():
-        df = df.loc[:, ~df.columns.duplicated(keep="first")].copy()
+    # duplicate keys». Из одноимённых оставляем САМУЮ ЗАПОЛНЕННУЮ колонку
+    # (а не первую): иначе «План на текущую дату» берётся из разрежённого
+    # дубля «Дата выдачи … по  Договору» (двойной пробел) и сильно занижается.
+    df = _rd_plan_keep_most_filled_dupe_columns(df)
 
     def _pick(cols):
         for c in cols:
@@ -17822,7 +17840,13 @@ def _rd_plan_fallback_view(
                                 if not _past_fc.empty
                                 else 0.0
                             )
-                        _dev_fb = float(_pd_fb - _fd_fb)
+                        _pd_fb, _fd_fb, _dev_fb = _rd_kpi_plan_fact_deviation_today(
+                            today=_today_fb,
+                            csv_df=df,
+                            plan_curve=_pd_fb,
+                            fact_curve=_fd_fb,
+                            rd_summ=_rd_summ_fb,
+                        )
                         _max_plan_fb = (
                             df["_plan_dt"].max().date()
                             if df["_plan_dt"].notna().any()
@@ -17863,12 +17887,10 @@ def _rd_plan_fallback_view(
                         with _kc3:
                             st.metric("Факт на текущую дату", _fmt_rd_whole_metric(_fd_fb))
                         with _kc4:
-                            try:
-                                _dev_i_fb = int(round(float(_dev_fb)))
-                                _dev_disp_fb = f"{_dev_i_fb:+d}"
-                            except Exception:
-                                _dev_disp_fb = "—"
-                            st.metric("Отклонение на текущую дату", _dev_disp_fb)
+                            _render_rd_deviation_metric(
+                                "Отклонение на текущую дату",
+                                _dev_fb,
+                            )
                     except Exception:
                         _fb_msp_prod = None
                     try:
@@ -29544,6 +29566,89 @@ def _render_pd_deviation_metric(label: str, plan_v, fact_v) -> None:
     )
 
 
+def _rd_kpi_plan_fact_deviation_today(
+    *,
+    today: date | None = None,
+    msp_df: pd.DataFrame | None = None,
+    csv_df: pd.DataFrame | None = None,
+    plan_curve: float = 0.0,
+    fact_curve: float = 0.0,
+    rd_summ: dict | None = None,
+) -> tuple[float, float, float]:
+    """KPI «План/Факт/Отклонение на текущую дату»: план − факт (шт.)."""
+    today = today or date.today()
+    plan_to_date = 0.0
+    fact_to_date = 0.0
+
+    if msp_df is not None and not getattr(msp_df, "empty", True):
+        if "_doc_plan_date" in msp_df.columns and "_rd_plan_inc" in msp_df.columns:
+            pl_dt = pd.to_datetime(msp_df["_doc_plan_date"], errors="coerce")
+            m_pl = pl_dt.notna() & (pl_dt.dt.date <= today)
+            plan_to_date = float(
+                pd.to_numeric(msp_df.loc[m_pl, "_rd_plan_inc"], errors="coerce")
+                .fillna(0.0)
+                .sum()
+            )
+        if "_doc_fact_date" in msp_df.columns:
+            fc_dt = pd.to_datetime(msp_df["_doc_fact_date"], errors="coerce")
+            m_fc = fc_dt.notna() & (fc_dt.dt.date <= today)
+            if "in_production_numeric" in msp_df.columns:
+                m_fc = m_fc & (
+                    pd.to_numeric(msp_df["in_production_numeric"], errors="coerce").fillna(0.0)
+                    > 0.0
+                )
+            fact_to_date = float(m_fc.sum())
+
+    if csv_df is not None and not getattr(csv_df, "empty", True):
+        if plan_to_date <= 0.0 and "_plan_dt" in csv_df.columns:
+            pl_dt = pd.to_datetime(csv_df["_plan_dt"], errors="coerce")
+            plan_to_date = float((pl_dt.notna() & (pl_dt.dt.date <= today)).sum())
+        fc_col = (
+            "_fact_dyn_dt"
+            if "_fact_dyn_dt" in csv_df.columns
+            else ("_fact_dt" if "_fact_dt" in csv_df.columns else None)
+        )
+        if fact_to_date <= 0.0 and fc_col:
+            fc_dt = pd.to_datetime(csv_df[fc_col], errors="coerce")
+            fact_to_date = float((fc_dt.notna() & (fc_dt.dt.date <= today)).sum())
+
+    if plan_to_date <= 0.0 and plan_curve > 0.0:
+        plan_to_date = float(plan_curve)
+    if fact_to_date <= 0.0 and fact_curve > 0.0:
+        fact_to_date = float(fact_curve)
+
+    if rd_summ:
+        if plan_to_date <= 0.0:
+            plan_to_date = float(rd_summ.get("plan_to_date", 0) or 0)
+        if fact_to_date <= 0.0:
+            fact_to_date = float(rd_summ.get("fact_to_date", 0) or 0)
+
+    return plan_to_date, fact_to_date, float(plan_to_date - fact_to_date)
+
+
+def _render_rd_deviation_metric(label: str, deviation: float) -> None:
+    """Метрика отклонения РД: план − факт, цветное значение."""
+    from html import escape as html_esc
+
+    try:
+        d = int(round(float(deviation)))
+    except (TypeError, ValueError):
+        d = 0
+    if d > 0:
+        disp, tone = f"{d:+d}", "rd-doc-dev-metric-pos"
+    elif d < 0:
+        disp, tone = f"{d:d}", "rd-doc-dev-metric-neg"
+    else:
+        disp, tone = "0", "rd-doc-dev-metric-pos"
+    st.markdown(
+        f'<div class="rd-doc-dev-metric">'
+        f'<div class="rd-doc-dev-metric-label">{html_esc(label)}</div>'
+        f'<div class="rd-doc-dev-metric-value {tone}">{html_esc(disp)}</div>'
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def _pd_detail_table_labels(
     df: pd.DataFrame,
     *,
@@ -32189,8 +32294,25 @@ def dashboard_documentation(
             dynamics_data = []
             _csv_secs_dyn = _rd_plan_csv_sections_df(selected_projects_doc or None)
 
-            # Plan data: приоритет — other_*_rd.csv (1 раздел = 1 строка); иначе MSP с корректным приростом
-            if not _csv_secs_dyn.empty:
+            # Plan data: MSP-прирост (_rd_plan_inc); иначе CSV (1 раздел = 1 строка)
+            if (
+                "_rd_plan_inc" in df.columns
+                and "_doc_plan_date" in df.columns
+                and df["_doc_plan_date"].notna().any()
+            ):
+                plan_mask = df["_doc_plan_date"].notna()
+                if plan_mask.any():
+                    plan_grouped = (
+                        df[plan_mask]
+                        .groupby(df[plan_mask]["_doc_plan_date"].dt.normalize())
+                        .agg({"_rd_plan_inc": "sum"})
+                        .reset_index()
+                    )
+                    plan_grouped.columns = ["Дата", "Количество"]
+                    plan_grouped["Тип"] = "План"
+                    plan_grouped["Количество"] = plan_grouped["Количество"].fillna(0)
+                    dynamics_data.append(plan_grouped)
+            elif not _csv_secs_dyn.empty:
                 _cp = _csv_secs_dyn[_csv_secs_dyn["_plan_dt"].notna()].copy()
                 if not _cp.empty:
                     plan_grouped = (
@@ -32215,20 +32337,17 @@ def dashboard_documentation(
                     plan_grouped["Количество"] = plan_grouped["Количество"].fillna(0)
                     dynamics_data.append(plan_grouped)
 
-            # Fact data: group by actual issue date
+            # Fact data: количество выданных разделов (шт.) по дате факта
             fact_mask = df["_doc_fact_date"].notna() & (df["in_production_numeric"] > 0)
             if fact_mask.any():
                 fact_grouped = (
                     df[fact_mask]
                     .groupby(df[fact_mask]["_doc_fact_date"].dt.normalize())
-                    .agg({"in_production_numeric": "sum"})
-                    .reset_index()
+                    .size()
+                    .reset_index(name="Количество")
                 )
                 fact_grouped.columns = ["Дата", "Количество"]
                 fact_grouped["Тип"] = "Факт"
-                # Fill NaN with 0 and ensure all values are numeric
-                fact_grouped["Количество"] = fact_grouped["Количество"].fillna(0)
-                # Filter out rows where sum is 0 for fact (only show actual production)
                 fact_grouped = fact_grouped[fact_grouped["Количество"] > 0]
                 if not fact_grouped.empty:
                     dynamics_data.append(fact_grouped)
@@ -32303,11 +32422,6 @@ def dashboard_documentation(
 
                 if _rd_summ:
                     plan_total = float(_rd_summ["plan_total"])
-                    plan_to_date = float(_rd_summ["plan_to_date"])
-                    fact_to_date = float(_rd_summ["fact_to_date"])
-                    if fact_to_date <= 0.0 and fact_to_date_msp > 0.0:
-                        fact_to_date = fact_to_date_msp
-                    deviation_to_date = float(plan_to_date - fact_to_date)
                     _mpp = _rd_summ.get("max_plan_date")
                     _mff = _rd_summ.get("max_fact_date")
                     if _mpp is not None:
@@ -32316,9 +32430,15 @@ def dashboard_documentation(
                         max_fact_end_date = _mff
                 else:
                     plan_total = plan_total_msp
-                    plan_to_date = plan_to_date_msp
-                    fact_to_date = fact_to_date_msp
-                    deviation_to_date = float(plan_to_date - fact_to_date)
+
+                plan_to_date, fact_to_date, deviation_to_date = _rd_kpi_plan_fact_deviation_today(
+                    today=today,
+                    msp_df=df,
+                    csv_df=_csv_secs_dyn if not _csv_secs_dyn.empty else None,
+                    plan_curve=plan_to_date_msp,
+                    fact_curve=fact_to_date_msp,
+                    rd_summ=_rd_summ,
+                )
 
                 first_plan_date = plan_df["Дата"].min() if not plan_df.empty else None
                 last_plan_date = plan_df["Дата"].max() if not plan_df.empty else None
@@ -32345,12 +32465,10 @@ def dashboard_documentation(
                 with c3:
                     st.metric("Факт на текущую дату", _fmt_rd_whole_metric(fact_to_date))
                 with c4:
-                    try:
-                        _dev_i = int(round(float(deviation_to_date)))
-                        _dev_disp = f"{_dev_i:+d}"
-                    except Exception:
-                        _dev_disp = "—"
-                    st.metric("Отклонение на текущую дату", _dev_disp)
+                    _render_rd_deviation_metric(
+                        "Отклонение на текущую дату",
+                        deviation_to_date,
+                    )
 
                 _rd_msp_prod_fb = {
                     "plan_to_date": plan_to_date,
