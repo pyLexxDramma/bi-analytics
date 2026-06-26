@@ -38765,7 +38765,7 @@ def _pred_build_detail_table_df(
         critical_text = "Да" if is_crit else "—"
         stop_raw = row.get("_stop_work")
         is_stop = bool(stop_raw) if isinstance(stop_raw, (bool, np.bool_)) else False
-        stop_text = "Да" if is_stop else "Нет"
+        stop_text = "Да" if is_stop else "—"
         try:
             overdue_num = int(round(float(overdue_raw)))
         except (TypeError, ValueError):
@@ -38899,10 +38899,10 @@ def _pred_kpi_circles_html(
         + '</span><span class="s">всего</span></div><div class="pred-kpi-info"><h4>Просроченные неустраненные предписания</h4><p>Неустранённые с истёкшим сроком</p></div></div>'
         + '<div class="pred-kpi-item"><div class="pred-kpi-circle red"><span class="n">'
         + e(str(n_critical))
-        + '</span><span class="s">всего</span></div><div class="pred-kpi-info"><h4>Критические предписания</h4><p>TESSA: вхождение «КРИТИЧНЫЙ» в Tessa_Teg</p></div></div>'
+        + '</span><span class="s">всего</span></div><div class="pred-kpi-info"><h4>Критические предписания</h4><p>Неустраненные предписания с тегом «КРИТИЧНЫЙ» в Tessa_Teg (TESSA)</p></div></div>'
         + '<div class="pred-kpi-item"><div class="pred-kpi-circle burgundy"><span class="n">'
         + e(str(n_stop_work))
-        + '</span><span class="s">всего</span></div><div class="pred-kpi-info"><h4>Остановка работ</h4><p>TESSA: вхождение «Приостановка работ» в Tessa_Teg</p></div></div>'
+        + '</span><span class="s">всего</span></div><div class="pred-kpi-info"><h4>Остановка работ</h4><p>Неустраненные предписания с тегом «Приостановка работ» в Tessa_Teg (TESSA)</p></div></div>'
         + "</div></div>"
     )
 
@@ -41982,7 +41982,7 @@ def dashboard_predpisania(df):
             "Маппинг KPI: «Всего» и «Устраненные» — id.csv (KindName «Предписания», KrStateID=13); "
             "«Неустраненные» = всего − устранённые; «Непросроченные» — id_Deadline не нарушен "
             "(счётчик над графиком и в подписи таблицы); «Просроченные» — открытые с истёкшим сроком; "
-            "«Критические» — вхождение «КРИТИЧНЫЙ» в Tessa_Teg; «Остановка работ» — «Приостановка работ». "
+            "«Критические» и «Остановка работ» — неустранённые с тегом в Tessa_Teg (TESSA): «КРИТИЧНЫЙ» / «Приостановка работ». "
         )
 
     status_df = _pred_build_status_pie_df(filtered)
