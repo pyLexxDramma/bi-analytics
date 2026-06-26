@@ -1401,6 +1401,12 @@ from utils import (
     get_russian_month_name,
     format_period_ru,
     apply_chart_background,
+    standard_chart_legend,
+    standard_pie_chart_legend,
+    pie_layout_for_bottom_legend,
+    finance_axis_tick_font_size,
+    CHART_AXIS_TICK_FONT_SIZE,
+    CHART_AXIS_TITLE_FONT_SIZE,
     get_report_param_value,
     apply_default_filters,
     ensure_budget_columns,
@@ -3327,7 +3333,6 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
     _txt_in = max(14, min(20, 22 - n // 2))
     _txt_out = max(13, _txt_in - 1)
     _leg_sz = max(13, min(16, 18 - n // 3))
-    _use_bottom_legend = n >= 8
     _callout_frac = 0.085
     _canvas = 1100 if theme == "light" else 1000
     slice_text: list[str] = []
@@ -3374,58 +3379,29 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
             )
         ]
     )
-    if _use_bottom_legend:
-        _b_leg = int(88 + n * 15)
-        _leg_y = -0.02 - min(0.18, 0.022 * n)
-        _fig_h = _canvas + _b_leg
-        fig.update_layout(
-            width=_canvas,
-            height=_fig_h,
-            uniformtext=dict(minsize=11, mode="hide"),
-            legend=dict(
-                orientation="h",
-                yanchor="top",
-                y=_leg_y,
-                x=0.5,
-                xanchor="center",
-                font=dict(size=_leg_sz, color=_th.pie_legend),
-                tracegroupgap=6,
-                itemsizing="constant",
-            ),
-            margin=dict(l=40, r=40, t=40, b=_b_leg),
-            showlegend=True,
-            plot_bgcolor=_th.chart_bg,
-            paper_bgcolor=_th.chart_bg,
-        )
-        try:
-            fig.update_traces(domain=dict(x=[0.04, 0.96], y=[0.02, 0.98]))
-        except Exception:
-            pass
-    else:
-        r_margin = int(min(420, max(260, 220 + n * 9)))
-        fig.update_layout(
-            width=_canvas,
-            height=_canvas,
-            uniformtext=dict(minsize=11, mode="hide"),
-            legend=dict(
-                orientation="v",
-                yanchor="middle",
-                y=0.5,
-                xanchor="left",
-                x=1.01,
-                font=dict(size=_leg_sz, color=_th.pie_legend),
-                tracegroupgap=4,
-                itemsizing="constant",
-            ),
-            margin=dict(l=48, r=r_margin, t=44, b=48),
-            showlegend=True,
-            plot_bgcolor=_th.chart_bg,
-            paper_bgcolor=_th.chart_bg,
-        )
-        try:
-            fig.update_traces(domain=dict(x=[0.0, 0.76], y=[0.0, 1.0]))
-        except Exception:
-            pass
+    _pie_layout = pie_layout_for_bottom_legend(n, font_size=_leg_sz, items_per_row=3)
+    _b_margin = int(_pie_layout["margin_bottom"])
+    _fig_h = _canvas + int(_pie_layout["fig_extra_h"])
+    _dx = _pie_layout["domain_x"]
+    _dy = _pie_layout["domain_y"]
+    fig.update_layout(
+        width=_canvas,
+        height=_fig_h,
+        uniformtext=dict(minsize=11, mode="hide"),
+        legend=standard_pie_chart_legend(
+            font=dict(size=_leg_sz, color=_th.pie_legend),
+            y=_pie_layout["legend_y"],
+            itemsizing="constant",
+        ),
+        margin=dict(l=40, r=40, t=int(_pie_layout["margin_top"]), b=_b_margin),
+        showlegend=True,
+        plot_bgcolor=_th.chart_bg,
+        paper_bgcolor=_th.chart_bg,
+    )
+    try:
+        fig.update_traces(domain=dict(x=list(_dx), y=list(_dy)))
+    except Exception:
+        pass
     from dashboards.gdrs_theme import apply_gdrs_chart_background
 
     return apply_gdrs_chart_background(fig, _th, skip_uniformtext=True)
@@ -3441,17 +3417,8 @@ def _apply_pie_layout(fig: go.Figure, *, height: int = 460) -> go.Figure:
     try:
         fig.update_layout(
             height=height,
-            legend=dict(
-                orientation="v",
-                yanchor="middle",
-                y=0.5,
-                xanchor="left",
-                x=1.02,
-                font=dict(size=11, color="#e8eef5"),
-                itemsizing="constant",
-                itemwidth=30,
-            ),
-            margin=dict(l=24, r=220, t=48, b=32),
+            legend=standard_pie_chart_legend(font=dict(size=11, color="#e8eef5")),
+            margin=dict(l=24, r=36, t=44, b=120),
             showlegend=True,
         )
         # Подписи внутри сектора, без выноса наружу — это устраняет
@@ -3765,8 +3732,8 @@ def _resync_plotly_chart_theme(fig) -> None:
         ax_kw = dict(
             gridcolor=u.CHART_GRID_COLOR,
             linecolor=u.CHART_AXIS_LINE_COLOR,
-            tickfont=dict(color=u.TABLE_TEXT_COLOR, size=11),
-            title=dict(font=dict(color=u.TABLE_TEXT_COLOR, size=12)),
+            tickfont=dict(color=u.TABLE_TEXT_COLOR, size=u.CHART_AXIS_TICK_FONT_SIZE),
+            title=dict(font=dict(color=u.TABLE_TEXT_COLOR, size=u.CHART_AXIS_TITLE_FONT_SIZE)),
             zerolinecolor=u.CHART_ZEROLINE_COLOR,
         )
         fig.update_layout(
@@ -3775,7 +3742,7 @@ def _resync_plotly_chart_theme(fig) -> None:
             font=dict(
                 family="Inter, system-ui, sans-serif",
                 color=u.TABLE_TEXT_COLOR,
-                size=13,
+                size=u.CHART_LAYOUT_FONT_SIZE,
             ),
         )
         fig.update_xaxes(**ax_kw)
@@ -4347,19 +4314,33 @@ def _pie_apply_percent_inside_legend_left(
     extra_layout=None,
     text_show_value_and_percent: bool = False,
 ) -> go.Figure:
-    """В секторе — проценты (крупный шрифт) или значение+процент; названия секторов — вертикальная легенда слева."""
+    """В секторе — проценты (крупный шрифт) или значение+процент; легенда — под диаграммой."""
     if fig is None:
         return fig
+    _n_slices = 0
     try:
-        lm = (
-            int(left_margin)
-            if left_margin is not None
-            else max(230, int(legend_fontsize) * 17)
-        )
+        for tr in fig.data:
+            if getattr(tr, "type", None) == "pie":
+                _labs = getattr(tr, "labels", None)
+                if _labs is not None:
+                    _n_slices = max(_n_slices, len(_labs))
     except Exception:
-        lm = 230
-    dx = domain_x if domain_x is not None else (0.32, 0.97)
-    dy = domain_y if domain_y is not None else (0.06, 0.93)
+        pass
+    _auto = None
+    if domain_x is None or domain_y is None:
+        _auto = pie_layout_for_bottom_legend(
+            max(_n_slices, 1),
+            font_size=int(legend_fontsize),
+            items_per_row=4 if text_show_value_and_percent else 3,
+        )
+    dx = domain_x if domain_x is not None else _auto["domain_x"]
+    dy = domain_y if domain_y is not None else _auto["domain_y"]
+    _b_margin = (
+        int(_auto["margin_bottom"])
+        if _auto is not None
+        else max(96, int(legend_fontsize) * 8)
+    )
+    _leg_y = _auto["legend_y"] if _auto is not None else -0.02
     _leg_clr = _fin_chart_legend_text_color()
     _out_txt_clr = _fin_chart_label_color()
     try:
@@ -4405,25 +4386,16 @@ def _pie_apply_percent_inside_legend_left(
         pass
     layout = dict(
         showlegend=bool(showlegend),
-        legend=dict(
-            orientation="v",
-            yanchor="middle",
-            y=0.5,
-            xanchor="left",
-            x=-0.01,
-            xref="paper",
+        legend=standard_pie_chart_legend(
             font=dict(size=int(legend_fontsize), color=_leg_clr),
-            bgcolor="rgba(0,0,0,0)",
-            borderwidth=0,
-            itemwidth=max(30, int(legend_fontsize) + 16),
-            tracegroupgap=4,
+            y=_leg_y,
         ),
         uniformtext=dict(minsize=max(10, int(pct_fontsize) - 5), mode="show"),
         margin=dict(
-            l=lm,
-            r=int(180 if text_show_value_and_percent else 36),
+            l=44,
+            r=int(180 if text_show_value_and_percent else 44),
             t=44,
-            b=44,
+            b=_b_margin,
         ),
     )
     if height is not None:
@@ -7389,17 +7361,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         bargap=0.34,
                         bargroupgap=0.06,
                         showlegend=True,
-                        legend=dict(
-                            title=dict(text="Причина отклонения"),
-                            orientation="v",
-                            yanchor="top",
-                            y=1,
-                            x=1.02,
-                            xanchor="left",
-                            font=dict(size=12),
-                            traceorder="normal",
-                            itemsizing="constant",
-                        ),
+                        legend=standard_chart_legend(title=dict(text="Причина отклонения"), font=dict(size=12)),
                         margin=dict(l=56, r=260, t=72, b=280),
                         height=_panel_h,
                         xaxis=dict(
@@ -7458,17 +7420,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     fig = apply_chart_background(fig, skip_uniformtext=True)
                     fig.update_layout(
                         showlegend=True,
-                        legend=dict(
-                            title=dict(text="Причины отклонений"),
-                            orientation="v",
-                            yanchor="top",
-                            y=1,
-                            x=1.02,
-                            xanchor="left",
-                            font=dict(size=12),
-                            traceorder="normal",
-                            itemsizing="constant",
-                        ),
+                        legend=standard_chart_legend(title=dict(text="Причины отклонений"), font=dict(size=12)),
                     )
                     # apply_chart_background обнуляет title.text — заголовок с
                     # названием проекта ставим ПОСЛЕ него.
@@ -7504,17 +7456,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     bargap=0.34,
                     bargroupgap=0.06,
                     showlegend=True,
-                    legend=dict(
-                        title=dict(text="Причина отклонения"),
-                        orientation="v",
-                        yanchor="top",
-                        y=1,
-                        x=1.02,
-                        xanchor="left",
-                        font=dict(size=12),
-                        traceorder="normal",
-                        itemsizing="constant",
-                    ),
+                    legend=standard_chart_legend(title=dict(text="Причина отклонения"), font=dict(size=12)),
                     margin=dict(l=56, r=260, t=48, b=280),
                     xaxis=dict(
                         title=dict(text=_period_x_title, standoff=40, font=dict(size=13, color=_ax_clr)),
@@ -7662,15 +7604,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
             barmode="stack",
             bargap=0.22,
             showlegend=True,
-            legend=dict(
-                title=dict(text="Типовая причина"),
-                orientation="v",
-                yanchor="top",
-                y=1,
-                x=1.02,
-                xanchor="left",
-                font=dict(size=12),
-            ),
+            legend=standard_chart_legend(title=dict(text="Типовая причина"), font=dict(size=12)),
             margin=dict(l=48, r=200, t=48, b=260),
             height=_h_tz,
             xaxis=dict(
@@ -7893,17 +7827,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 barmode="group",
                 bargap=0.16,
                 bargroupgap=0.06,
-                legend=dict(
-                    title=dict(text="Проект"),
-                    orientation="v",
-                    yanchor="top",
-                    y=1,
-                    x=1.02,
-                    xanchor="left",
-                    font=dict(size=12),
-                    traceorder="normal",
-                    itemsizing="constant",
-                ),
+                legend=standard_chart_legend(title=dict(text="Проект"), font=dict(size=12)),
                 margin=dict(l=56, r=240, t=36, b=240),
                 xaxis=dict(
                     title=dict(text="Период", standoff=48, font=dict(size=13, color=_ax_clr)),
@@ -11688,16 +11612,7 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
                 ),
                 xaxis=dict(automargin=True, title_standoff=16),
                 showlegend=True,
-                legend=dict(
-                    title=dict(text="Причины отклонений"),
-                    orientation="v",
-                    yanchor="top",
-                    y=1,
-                    x=1.02,
-                    xanchor="left",
-                    font=dict(size=11, color="#e8eef5"),
-                    bgcolor="rgba(0,0,0,0)",
-                ),
+                legend=standard_chart_legend(title=dict(text="Причины отклонений"), font=dict(size=11, color="#e8eef5")),
             )
             if _gdrs_gap_rs:
                 _ly_rs.update(_gdrs_gap_rs)
@@ -11782,15 +11697,9 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
                 fig.update_layout(
                     showlegend=True,
                     margin=dict(l=56, r=36, t=72, b=208),
-                    legend=dict(
+                    legend=standard_chart_legend(
                         title=dict(text="Причины отклонений"),
-                        orientation="h",
-                        x=0.5,
-                        xanchor="center",
-                        y=-0.45,
-                        yanchor="top",
                         font=dict(size=11, color="#e8eef5"),
-                        bgcolor="rgba(0,0,0,0)",
                     ),
                 )
             except Exception:
@@ -11916,16 +11825,7 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
             fig.update_layout(
                 showlegend=True,
                 margin=dict(l=28, r=220, t=110, b=246),
-                legend=dict(
-                    title=dict(text="Причины отклонений"),
-                    orientation="v",
-                    yanchor="top",
-                    y=1,
-                    x=1.02,
-                    xanchor="left",
-                    font=dict(size=11, color="#e8eef5"),
-                    bgcolor="rgba(0,0,0,0)",
-                ),
+                legend=standard_chart_legend(title=dict(text="Причины отклонений"), font=dict(size=11, color="#e8eef5")),
             )
             if chart_project_scope != "Все":
                 # Подпись графика — чистое название проекта (без префикса «Проект=…»).
@@ -12127,7 +12027,7 @@ def _finance_plotly_apply_bar_width(
             ticktext=_cats,
             tickangle=0,
             ticklabelstandoff=14,
-            tickfont=dict(size=11),
+            tickfont=dict(size=CHART_AXIS_TICK_FONT_SIZE),
             automargin=True,
         )
     else:
@@ -12417,8 +12317,8 @@ def _dk_chart_yaxis_layout(
     else:
         _y_rng = [0, _y_top_fc]
     return dict(
-        title=dict(text="млн руб.", font=dict(size=15, color=_fin_chart_axis_color())),
-        tickfont=dict(size=13, color=_fin_chart_axis_color()),
+        title=dict(text="млн руб.", font=dict(size=CHART_AXIS_TITLE_FONT_SIZE + 6, color=_fin_chart_axis_color())),
+        tickfont=dict(size=CHART_AXIS_TICK_FONT_SIZE + 4, color=_fin_chart_axis_color()),
         range=_y_rng,
         dtick=_dtick_fc,
         tick0=0,
@@ -13603,7 +13503,7 @@ def dashboard_budget_by_period(df):
             xaxis=dict(
                 title=dict(text=period_label, standoff=_x_standoff),
                 tickangle=_xangle,
-                tickfont=dict(size=8 if _n > 28 else 9 if _n > 18 else 10),
+                tickfont=dict(size=finance_axis_tick_font_size(_n)),
                 nticks=min(64, max(12, _n)),
             ),
         )
@@ -15446,7 +15346,7 @@ def dashboard_bdr(df):
                 xaxis=dict(
                     title=dict(text=period_label, standoff=_x_standoff),
                     tickangle=_xb,
-                    tickfont=dict(size=8 if _nb > 28 else 9 if _nb > 18 else 10),
+                    tickfont=dict(size=finance_axis_tick_font_size(_nb)),
                     nticks=min(64, max(12, _nb)),
                 ),
             )
@@ -15785,7 +15685,7 @@ def dashboard_bdr(df):
             xaxis=dict(
                 title=dict(text=period_label, standoff=_x_standoff),
                 tickangle=_xb,
-                tickfont=dict(size=8 if _nb > 28 else 9 if _nb > 18 else 10),
+                tickfont=dict(size=finance_axis_tick_font_size(_nb)),
                 nticks=min(64, max(12, _nb)),
             ),
         )
@@ -16521,14 +16421,7 @@ def _render_rd_monthly_overlay_chart(
     _ax = _fin_chart_axis_color()
     fig.update_layout(
         barmode="overlay",
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="left",
-            x=0,
-            title_text="",
-        ),
+        legend=standard_chart_legend(),
         height=max(520, min(900, len(cat) * 36)) if is_h else 520,
         xaxis=dict(tickfont=dict(color=_ax), title_font=dict(color=_ax)),
         yaxis=dict(
@@ -18546,14 +18439,7 @@ def _rd_plan_fallback_view(
                         tickfont=dict(size=10),
                     ),
                     yaxis=dict(rangemode="tozero"),
-                    legend=dict(
-                        orientation="h",
-                        yanchor="bottom",
-                        y=1.02,
-                        xanchor="right",
-                        x=1,
-                        title_text="",
-                    ),
+                    legend=standard_chart_legend(),
                 )
                 fig_fb.update_traces(
                     line=dict(width=2),
@@ -20509,7 +20395,7 @@ def dashboard_rd_delay(df, is_pd: bool = False):
                         title="Динамика окончания ПД/РД (накопительно по месяцам)",
                         xaxis_title="Месяц", yaxis_title="Количество разделов",
                         hovermode="x unified",
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                        legend=standard_chart_legend(),
                         height=420, margin=dict(l=10, r=10, t=60, b=40),
                     )
                     _fig_dyn.update_xaxes(tickformat="%m.%Y")
@@ -21167,14 +21053,7 @@ def dashboard_technique(df):
                     fig_pct.update_layout(
                         height=460,
                         showlegend=True,
-                        legend=dict(
-                            orientation="v",
-                            yanchor="top",
-                            y=1,
-                            xanchor="left",
-                            x=1.02,
-                            font=dict(size=11, color="#e8eef5"),
-                        ),
+                        legend=standard_chart_legend(),
                         xaxis_title="Период",
                         yaxis_title="Факт к плану, %",
                         margin=dict(l=56, r=140, t=72, b=120),
@@ -21573,14 +21452,7 @@ def dashboard_technique(df):
                 barmode="group",
                 bargap=0.18,
                 showlegend=show_plan,
-                legend=dict(
-                    orientation="h",
-                    yanchor="bottom",
-                    y=1.02,
-                    xanchor="right",
-                    x=1,
-                    font=dict(size=11, color="#e8eef5"),
-                ),
+                legend=standard_chart_legend(font=dict(size=11, color="#e8eef5")),
                 yaxis=dict(autorange="reversed", automargin=True),
                 xaxis=dict(automargin=True),
                 margin=dict(l=12, r=28, t=72 if show_plan else 56, b=96),
@@ -22144,14 +22016,7 @@ def dashboard_technique(df):
             bargap=0.22,
             bargroupgap=0.09,
             height=620,
-            legend=dict(
-                orientation="v",
-                yanchor="top",
-                y=1,
-                xanchor="left",
-                x=1.01,
-                font=dict(size=11, color="#e8eef5"),
-            ),
+            legend=standard_chart_legend(),
             xaxis=dict(tickangle=-45, automargin=True),
             yaxis=dict(automargin=True, rangemode="tozero"),
         )
@@ -24757,14 +24622,7 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
             bargap=0.22,
             bargroupgap=0.09,
             height=620,
-            legend=dict(
-                orientation="v",
-                yanchor="top",
-                y=1,
-                xanchor="left",
-                x=1.01,
-                font=dict(size=11, color="#e8eef5"),
-            ),
+            legend=standard_chart_legend(),
             xaxis=dict(tickangle=-45, automargin=True),
             yaxis=dict(automargin=True, rangemode="tozero"),
         )
@@ -30783,7 +30641,7 @@ def _rd_delay_duration_figure(
         # П.8: больше места под бары, выше каждая строка (перенос названий на 2-3 строки).
         height=max(480, len(y_labels) * 54),
         showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        legend=standard_chart_legend(),
         margin=dict(l=12, r=48, t=56, b=48),
         bargap=0.18,
     )
@@ -31433,7 +31291,7 @@ def _pd_delay_section_duration_figure(
         yaxis_title="",
         height=_chart_h,
         showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        legend=standard_chart_legend(),
         margin=dict(l=16, r=120, t=56, b=48),
         bargap=0.34,
     )
@@ -31609,7 +31467,7 @@ def _pd_delay_plan_fact_figure(
         yaxis_title="",
         height=max(280, _n_pf * _PD_DELAY_CHART_ROW_PX + 120),
         showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        legend=standard_chart_legend(),
         margin=dict(l=12, r=48, t=56, b=48),
         bargap=0.34,
     )
@@ -33309,14 +33167,7 @@ def dashboard_documentation(
                         tickfont=dict(size=10),
                     ),
                     yaxis=dict(rangemode="tozero"),
-                    legend=dict(
-                        orientation="h",
-                        yanchor="bottom",
-                        y=1.02,
-                        xanchor="right",
-                        x=1,
-                        title_text="",
-                    ),
+                    legend=standard_chart_legend(),
                 )
                 # Update legend labels to be more descriptive
                 fig_dynamics.for_each_trace(
@@ -33728,7 +33579,7 @@ def dashboard_documentation(
                                 tickfont=dict(size=10, color=_fin_chart_axis_color()),
                                 title_font=dict(color=_fin_chart_axis_color()),
                             ),
-                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, title_text=""),
+                            legend=standard_chart_legend(title_text=""),
                         )
                         fig_dynamics.update_traces(
                             mode="lines+markers+text",
@@ -34573,7 +34424,7 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
         height=600,
         barmode="group",
         xaxis=dict(tickangle=-45, tickfont=dict(size=12)),
-        legend=dict(title="Тип бюджета", orientation="v", yanchor="top", y=1, xanchor="left", x=1.02),
+        legend=standard_chart_legend(title=dict(text="Тип бюджета")),
         margin=dict(l=56, r=220, t=72, b=120),
     )
     _ymax = float(
@@ -35518,13 +35369,7 @@ def dashboard_budget_by_type(df):
 
                 fig_hist = _apply_finance_bar_label_layout(fig_hist)
                 fig_hist.update_layout(
-                    legend=dict(
-                        orientation="v",
-                        yanchor="top",
-                        y=1,
-                        xanchor="left",
-                        x=1.02,
-                    ),
+                    legend=standard_chart_legend(),
                     margin=dict(l=56, r=220, t=72, b=120),
                 )
                 fig_hist = apply_chart_background(fig_hist)
@@ -38545,7 +38390,7 @@ def dashboard_forecast_budget(df):
             xaxis=dict(
                 title=dict(text=x_label_fc, standoff=_xs_fc),
                 tickangle=_xa_fc,
-                tickfont=dict(size=11),
+                tickfont=dict(size=CHART_AXIS_TICK_FONT_SIZE),
             ),
         )
         fig_fc = _apply_finance_bar_label_layout(fig_fc)
