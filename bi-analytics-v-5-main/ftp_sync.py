@@ -15,6 +15,11 @@
   BI_FTP_FORCE_REDOWNLOAD — 1/true — игнорировать проверку размера и качать всё заново.
                             По умолчанию 0 (инкремент по SIZE).
 
+Расписание выгрузки файлов **на** FTP (1С/MSP/TESSA): **07:00 МСК** ежедневно
+(``config.ftp_export_schedule_label()``, переопределение: ``BI_FTP_EXPORT_HOUR_MSK`` /
+``BI_FTP_EXPORT_MINUTE_MSK``). Автоподтягивание на VPS — workflow ``ftp-daily-ingest.yml``
+(07:15 МСК) или ``scripts/ftp_daily_ingest.sh``.
+
 В Streamlit можно передать секции из st.secrets (ключи host, user, password, remote_dir, port, use_tls).
 """
 from __future__ import annotations

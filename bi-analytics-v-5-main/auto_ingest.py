@@ -471,9 +471,20 @@ def render_ftp_sync_download_notice(st, ftp_res: dict | None) -> None:
             f"(без изменений по размеру: {same}).\n\n{body}"
         )
     else:
+        _schedule_hint = ""
+        try:
+            from config import ftp_export_schedule_label, is_before_today_ftp_export_window
+
+            if is_before_today_ftp_export_window():
+                _schedule_hint = (
+                    f" Сегодняшняя выгрузка на FTP ожидается {ftp_export_schedule_label()}."
+                )
+        except Exception:
+            pass
         st.info(
             f"**FTP:** новых файлов нет — на сервере те же версии по размеру ({same}). "
             "База пересобрана из `web/`."
+            + _schedule_hint
         )
 
 

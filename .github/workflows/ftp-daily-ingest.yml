@@ -1,0 +1,45 @@
+# Ежедневная синхронизация FTP → web/ → БД на VPS (после выгрузки файлов в 07:00 МСК).
+# Secrets: те же, что для deploy-vps (VPS_HOST, VPS_USER, VPS_SSH_KEY или VPS_PASSWORD, VPS_PORT, VPS_DEPLOY_PATH).
+name: FTP daily ingest
+
+on:
+  schedule:
+    # 07:15 Europe/Moscow (UTC+3, без DST) = 04:15 UTC
+    - cron: "15 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ftp-daily-ingest-vps
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: FTP sync and ingest on VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          port: ${{ secrets.VPS_PORT }}
+          command_timeout: 30m
+          script_stop: true
+          script: |
+            set -euo pipefail
+            APP_DIR="${{ secrets.VPS_DEPLOY_PATH }}"
+            if [[ ! -d "$APP_DIR" ]]; then
+              echo "ERROR: VPS_DEPLOY_PATH not found: $APP_DIR"
+              exit 1
+            fi
+            cd "$APP_DIR"
+            if [[ -f bi-analytics-v-5-main/scripts/ftp_daily_ingest.sh ]]; then
+              bash bi-analytics-v-5-main/scripts/ftp_daily_ingest.sh
+            elif [[ -x .venv/bin/python ]]; then
+              cd bi-analytics-v-5-main
+              ../.venv/bin/python ingest_web_cli.py
+            else
+              echo "ERROR: neither ftp_daily_ingest.sh nor .venv/bin/python found"
+              exit 1
+            fi

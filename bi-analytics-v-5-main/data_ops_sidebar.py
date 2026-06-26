@@ -27,13 +27,34 @@ def trigger_ftp_and_force_reload_db(st: Any, *, quiet: bool = False) -> None:
         st.session_state.pop(_k, None)
 
 
+def _render_ftp_export_schedule_caption(st: Any) -> None:
+    try:
+        from config import ftp_export_schedule_label
+
+        st.caption(f"Выгрузка файлов на FTP: **{ftp_export_schedule_label()}**.")
+    except Exception:
+        pass
+
+
 def _render_force_reload_button(st: Any, *, key: str) -> None:
+    try:
+        from config import ftp_export_schedule_label
+
+        _ftp_help = (
+            f"Синхронизация с FTP, затем полная пересборка активной версии в SQLite. "
+            f"Свежие файлы на сервере появляются {ftp_export_schedule_label()}."
+        )
+    except Exception:
+        _ftp_help = (
+            "Синхронизация с FTP, затем полная пересборка активной версии в SQLite "
+            "и обновление дашборда."
+        )
     if st.button(
         "FTP + перезагрузить БД",
         width="stretch",
         key=key,
         type="primary",
-        help="Синхронизация с FTP, затем полная пересборка активной версии в SQLite и обновление дашборда.",
+        help=_ftp_help,
     ):
         trigger_ftp_and_force_reload_db(st, quiet=False)
 
@@ -51,6 +72,7 @@ def render_release_data_version_sidebar(st: Any, *, show_ftp_reload: bool = Fals
         pass
     if show_ftp_reload:
         _render_force_reload_button(st, key="release_sidebar_ftp_force_reload")
+        _render_ftp_export_schedule_caption(st)
     _render_version_sidebar_compact(st)
 
 
@@ -105,6 +127,7 @@ def render_admin_data_ops_sidebar(st: Any) -> None:
             st.session_state["_pending_web_force_rescan"] = False
 
     _render_force_reload_button(st, key="sidebar_ftp_force_reload")
+    _render_ftp_export_schedule_caption(st)
 
     if mode == "FTP → web/":
         with st.expander("FTP", expanded=False):
