@@ -129,6 +129,9 @@ TABLE_TOTAL_ROW_FONT_CSS = (
 )
 # Фон области графиков Plotly — как карточка контента (.main .block-container: rgba(18,56,92,0.8))
 CHART_BG_COLOR = "rgba(18, 56, 92, 0.88)"
+CHART_GRID_COLOR = "rgba(148, 163, 184, 0.45)"
+CHART_AXIS_LINE_COLOR = "rgba(100, 116, 139, 0.65)"
+CHART_ZEROLINE_COLOR = "rgba(100, 116, 139, 0.55)"
 TABLE_TEXT_COLOR = "#ffffff"
 TABLE_CELL_BORDER = "1px solid #5a7a9a"
 FINANCE_TABLE_CELL_BORDER = "1px solid #7a9ec4"

@@ -237,25 +237,30 @@ def build_grouped_plan_fact_gantt_figure(
         if pd.isna(cs) or pd.isna(ce):
             continue
 
-        if _use_baseline_as_plan:
+        if label_pct:
+            # Режим «%»: одна оранжевая полоса «Факт» (plan start/end), как без baseline.
+            fs, fe = cs, ce
+            f0, f1, fact_ok = _interval_ms_for_bar(fs, fe)
+            plan_ok = False
+            p0, p1 = None, None
+        elif _use_baseline_as_plan:
             plan_s = row.get("base start")
             plan_e = row.get("base end")
+            p0, p1, plan_ok = _interval_ms_for_bar(plan_s, plan_e)
+            fs, fe = (cs, ce)
+            f0, f1, fact_ok = _interval_ms_for_bar(fs, fe)
         else:
             plan_s, plan_e = cs, ce
-        p0, p1, plan_ok = _interval_ms_for_bar(plan_s, plan_e)
-
-        if _use_baseline_as_plan:
-            fs, fe = (cs, ce)
-        else:
+            p0, p1, plan_ok = _interval_ms_for_bar(plan_s, plan_e)
             fs, fe = _resolve_fact_interval(row)
-        f0, f1, fact_ok = _interval_ms_for_bar(fs, fe)
+            f0, f1, fact_ok = _interval_ms_for_bar(fs, fe)
 
         # Строка без единой видимой полосы (нет дат / нулевая длительность) только
         # занимает место по оси Y (пустота сверху графика) и показывает дубль
         # одинаковых дат — пропускаем её целиком. В режиме «Показать %» рисуется
-        # только полоса плана, поэтому там нужна видимая плановая полоса.
+        # только полоса факта, поэтому там нужна видимая фактическая полоса.
         if label_pct:
-            if not plan_ok:
+            if not fact_ok:
                 continue
         elif not plan_ok and not fact_ok:
             continue
@@ -286,7 +291,12 @@ def build_grouped_plan_fact_gantt_figure(
             fact_base_ms.append(0.0)
             fact_len_ms.append(0.0)
             cust_fact.append(("—", "—"))
-        ps, pe = plan_s, plan_e
+        if label_pct:
+            ps, pe = fs, fe
+        elif _use_baseline_as_plan:
+            ps, pe = row.get("base start"), row.get("base end")
+        else:
+            ps, pe = cs, ce
 
         if show_covenant_markers:
             be = row.get("base end")
@@ -322,7 +332,7 @@ def build_grouped_plan_fact_gantt_figure(
     }
     _GANTT_PLAN_COLOR = "#14b8a6"
     _GANTT_FACT_COLOR = "#fb923c"
-    _chart_has_fact_trace = not label_pct and _n_fact_ok > 0
+    _chart_has_fact_trace = label_pct or ((not label_pct) and _n_fact_ok > 0)
 
     def _lane_y_pos(y_idx: int, lane: str) -> float:
         return float(y_idx) + _gantt_grouped_bar_lane_offset(
@@ -378,7 +388,7 @@ def build_grouped_plan_fact_gantt_figure(
             )
 
     if label_pct:
-        _plan_trace_text: list[str] = []
+        _fact_trace_text: list[str] = []
         for meta in _row_meta:
             txt = "н/д"
             if pd.notna(meta.get("pct")):
@@ -386,31 +396,32 @@ def build_grouped_plan_fact_gantt_figure(
                     txt = f"{int(round(float(meta['pct'])))}%"
                 except (TypeError, ValueError):
                     pass
-            _plan_trace_text.append(txt)
+            _fact_trace_text.append(txt)
     else:
-        _plan_trace_text = [""] * len(y_labels)
+        _fact_trace_text = [""] * len(y_labels)
 
     _plan_y = [_lane_y_pos(i, "plan") for i in range(len(y_labels))]
     _fact_y = [_lane_y_pos(i, "fact") for i in range(len(y_labels))]
-    fig.add_trace(
-        go.Bar(
-            name="План",
-            orientation="h",
-            x=plan_len_ms,
-            y=_plan_y,
-            base=plan_base_ms,
-            width=_GANTT_SCHEDULE_BAR_WIDTH,
-            marker=dict(color=_GANTT_PLAN_COLOR),
-            text=_plan_trace_text,
-            textposition="none",
-            textfont=dict(size=_lbl_font, color=_GANTT_PLAN_COLOR),
-            showlegend=False,
-            cliponaxis=False,
-            hovertemplate="%{customdata[2]}<br>План: %{customdata[0]} — %{customdata[1]}<extra></extra>",
-            customdata=[(*row, y_labels[i]) for i, row in enumerate(cust_plan)],
+    if not label_pct:
+        fig.add_trace(
+            go.Bar(
+                name="План",
+                orientation="h",
+                x=plan_len_ms,
+                y=_plan_y,
+                base=plan_base_ms,
+                width=_GANTT_SCHEDULE_BAR_WIDTH,
+                marker=dict(color=_GANTT_PLAN_COLOR),
+                text=[""] * len(y_labels),
+                textposition="none",
+                textfont=dict(size=_lbl_font, color=_GANTT_PLAN_COLOR),
+                showlegend=False,
+                cliponaxis=False,
+                hovertemplate="%{customdata[2]}<br>План: %{customdata[0]} — %{customdata[1]}<extra></extra>",
+                customdata=[(*row, y_labels[i]) for i, row in enumerate(cust_plan)],
+            )
         )
-    )
-    if not label_pct and _n_fact_ok > 0:
+    if label_pct or _n_fact_ok > 0:
         fig.add_trace(
             go.Bar(
                 name="Факт",
@@ -420,7 +431,7 @@ def build_grouped_plan_fact_gantt_figure(
                 base=fact_base_ms,
                 width=_GANTT_SCHEDULE_BAR_WIDTH,
                 marker=dict(color=_GANTT_FACT_COLOR),
-                text=[""] * len(y_labels),
+                text=_fact_trace_text if label_pct else [""] * len(y_labels),
                 textposition="none",
                 textfont=dict(size=_lbl_font, color=_GANTT_FACT_COLOR),
                 showlegend=False,
@@ -438,8 +449,8 @@ def build_grouped_plan_fact_gantt_figure(
 
     if label_pct:
         for meta in _row_meta:
-            pe = meta.get("pe")
-            if pe is None or not meta.get("plan_ok"):
+            fe = meta.get("fe")
+            if fe is None or not meta.get("fact_ok"):
                 continue
             pv = meta.get("pct")
             _ptxt = "н/д"
@@ -449,10 +460,10 @@ def build_grouped_plan_fact_gantt_figure(
                 except (TypeError, ValueError):
                     _ptxt = "н/д"
             _add_bar_edge_date_label(
-                pe,
+                fe,
                 int(meta["y_idx"]),
                 _ptxt,
-                lane="plan",
+                lane="fact",
                 edge="end",
             )
 
