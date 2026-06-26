@@ -32659,9 +32659,30 @@ def dashboard_documentation(
                         pd_chart_mask = _pd_table_row_mask(
                             df, pd_metrics_mask, pd_section_mask
                         ).fillna(False)
-                    _chart_b_fin_col = _b_base_raw or _pd_msp_find_baseline_finish_col(df)
+                    # b_fin_col/s_fin_col уже выбраны через _pd_pick_finish_col (plan end,
+                    # если base end пуст на разделах ПД — напр. Есипово V).
+                    _chart_b_fin_col = (
+                        _pd_pick_finish_col(
+                            df,
+                            pd_chart_mask,
+                            baseline_col=b_fin_col or _b_base_raw,
+                            schedule_col=_plan_end_ref,
+                        )
+                        or b_fin_col
+                        or _b_base_raw
+                        or _pd_msp_find_baseline_finish_col(df)
+                    )
                     _chart_b_start_col = _pd_msp_find_baseline_start_col(df)
-                    _chart_s_fin_col = _pd_msp_find_schedule_finish_col(df)
+                    _chart_s_fin_col = (
+                        _pd_pick_finish_col(
+                            df,
+                            pd_chart_mask,
+                            baseline_col=s_fin_col,
+                            schedule_col=_plan_end_ref,
+                        )
+                        or s_fin_col
+                        or _pd_msp_find_schedule_finish_col(df)
+                    )
                     _chart_s_start_col = _pd_msp_find_schedule_start_col(df)
                     plan_line_mask = _pd_mask_with_start_finish(
                         df, pd_chart_mask, _chart_b_start_col, _chart_b_fin_col
@@ -32686,6 +32707,14 @@ def dashboard_documentation(
                         else pd.Series(pd.NaT, index=df.index)
                     )
                     _chart_bf_bp = _pd_baseline_finish_series(df, _b_base_raw)
+                    if _chart_b_fin_col and _chart_b_fin_col in df.columns:
+                        _pick_bp = pd.to_datetime(
+                            df[_chart_b_fin_col],
+                            errors="coerce",
+                            dayfirst=True,
+                            format="mixed",
+                        )
+                        _chart_bf_bp = _chart_bf_bp.where(_chart_bf_bp.notna(), _pick_bp)
                     _chart_sf = (
                         pd.to_datetime(
                             df[_chart_s_fin_col], errors="coerce", dayfirst=True, format="mixed"
