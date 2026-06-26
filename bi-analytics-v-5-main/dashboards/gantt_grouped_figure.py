@@ -133,6 +133,7 @@ def build_grouped_plan_fact_gantt_figure(
     date_fmt: str,
     show_covenant_markers: bool = False,
     row_block_scale: float = 2.0,
+    allow_zero_duration_milestones: bool = False,
 ) -> go.Figure:
     from dashboards._renderers import (
         _CHART_PLOT_DATE_FMT,
@@ -182,6 +183,21 @@ def build_grouped_plan_fact_gantt_figure(
         except Exception:
             return ""
 
+    _MS_PER_DAY = 86400000.0
+
+    def _interval_ms_for_bar(start, end) -> tuple[Optional[float], Optional[float], bool]:
+        p0 = _epoch_ms(start)
+        p1 = _epoch_ms(end)
+        if p0 is None or p1 is None:
+            return None, None, False
+        if p1 < p0:
+            return None, None, False
+        if p1 == p0:
+            if allow_zero_duration_milestones:
+                return p0, p0 + _MS_PER_DAY, True
+            return None, None, False
+        return p0, p1, True
+
     def _resolve_fact_interval(row):
         bs = row.get("base start")
         be = row.get("base end")
@@ -226,20 +242,13 @@ def build_grouped_plan_fact_gantt_figure(
             plan_e = row.get("base end")
         else:
             plan_s, plan_e = cs, ce
-        p0 = _epoch_ms(plan_s)
-        p1 = _epoch_ms(plan_e)
-        # «Видимая» полоса — только с положительной длительностью. Нулевая длина
-        # (старт = окончание) рисуется невидимой полосой и даёт две наложенные
-        # одинаковые подписи дат — такие интервалы не считаем видимыми.
-        plan_ok = p0 is not None and p1 is not None and p1 > p0
+        p0, p1, plan_ok = _interval_ms_for_bar(plan_s, plan_e)
 
         if _use_baseline_as_plan:
             fs, fe = (cs, ce)
         else:
             fs, fe = _resolve_fact_interval(row)
-        f0 = _epoch_ms(fs)
-        f1 = _epoch_ms(fe)
-        fact_ok = f0 is not None and f1 is not None and f1 > f0
+        f0, f1, fact_ok = _interval_ms_for_bar(fs, fe)
 
         # Строка без единой видимой полосы (нет дат / нулевая длительность) только
         # занимает место по оси Y (пустота сверху графика) и показывает дубль
@@ -654,7 +663,8 @@ def cached_grouped_gantt_figure(
     date_fmt: str,
     show_covenant_markers: bool,
     row_block_scale: float,
-    _fig_cache_version: int = 20,
+    allow_zero_duration_milestones: bool = False,
+    _fig_cache_version: int = 22,
     _theme_light: bool = False,
 ) -> go.Figure:
     """Кэш построения fig — ускоряет rerun при тех же фильтрах."""
@@ -667,4 +677,5 @@ def cached_grouped_gantt_figure(
         date_fmt=date_fmt,
         show_covenant_markers=show_covenant_markers,
         row_block_scale=row_block_scale,
+        allow_zero_duration_milestones=allow_zero_duration_milestones,
     )

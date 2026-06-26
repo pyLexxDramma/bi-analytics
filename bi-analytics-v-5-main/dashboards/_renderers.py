@@ -1101,6 +1101,31 @@ def _gantt_deviation_cell_style(v) -> str:
     return "background-color: #27ae60; color: #ffffff"
 
 
+def _gantt_resolve_level_display_target(ln: pd.Series, level_sel: str) -> int | None:
+    """Целевой уровень MSP для «Верхний/Детальный» с fallback по фактическим уровням в срезе."""
+    lvl_map = {"Верхний уровень": 4, "Детальный уровень": 5}
+    target = lvl_map.get(level_sel)
+    if target is None:
+        return None
+    nums = pd.to_numeric(ln, errors="coerce").dropna()
+    if nums.empty:
+        return target
+    levels = sorted({int(round(float(x))) for x in nums})
+    if target in levels:
+        return target
+    if level_sel == "Верхний уровень":
+        mid = [lv for lv in levels if 3 <= lv <= 4]
+        if mid:
+            return max(mid)
+        deeper = [lv for lv in levels if lv > 2]
+        return max(deeper) if deeper else target
+    if level_sel == "Детальный уровень":
+        for lv in (5, 4, 3):
+            if lv in levels:
+                return lv
+    return target
+
+
 def _gantt_apply_level_display_filter(
     df: pd.DataFrame,
     *,
@@ -1119,11 +1144,10 @@ def _gantt_apply_level_display_filter(
         return df
     if not level_col or level_col not in df.columns or level_sel == "Все уровни":
         return df
-    lvl_map = {"Верхний уровень": 4, "Детальный уровень": 5}
-    target = lvl_map.get(level_sel)
+    ln = pd.to_numeric(df[level_col], errors="coerce")
+    target = _gantt_resolve_level_display_target(ln, level_sel)
     if target is None:
         return df
-    ln = pd.to_numeric(df[level_col], errors="coerce")
     if ln.notna().any():
         return df.loc[ln == float(target)].copy()
     wbs_dep = df[level_col].map(_msp_wbs_tuple).map(lambda t: int(len(t)) if t else np.nan)
@@ -5504,6 +5528,50 @@ def _gantt_block_ancestor_key_col(
     return "_dt_lvl2_key"
 
 
+def _gantt_supplement_block_filter_l2_branches(
+    d: pd.DataFrame,
+    block_vals: list[str],
+    *,
+    level_col: str | None = None,
+    task_col: str | None = None,
+) -> list[str]:
+    """Дополняет «БЛОК» задачами ур.2 с другим именем (напр. «Вехи СМР» при block=«СМР»)."""
+    out = list(block_vals or [])
+    if (
+        d is None
+        or getattr(d, "empty", True)
+        or not level_col
+        or level_col not in d.columns
+        or not task_col
+        or task_col not in d.columns
+    ):
+        return _gantt_dedupe_block_filter_values(out)
+    seen = {_gantt_block_cmp_key(v) for v in out}
+    ln = pd.to_numeric(d[level_col], errors="coerce")
+    blk_tier, _ = _deviations_msp_tier_levels(ln)
+    block_col = _deviations_msp_sched_col(d, ["block", "БЛОК", "Блок"])
+    tier = d.loc[ln == float(blk_tier)]
+    extra: list[str] = []
+    for _, row in tier.iterrows():
+        name = _deviations_gantt_like_task_label(row[task_col])
+        if not name or _is_generic_block_name(name):
+            continue
+        name_key = _gantt_block_cmp_key(name)
+        if name_key in seen:
+            continue
+        blk_raw = row[block_col] if block_col and block_col in row.index else None
+        blk = (
+            _deviations_gantt_like_task_label(blk_raw)
+            if blk_raw is not None and str(blk_raw).strip()
+            else ""
+        )
+        if blk and _gantt_block_cmp_key(blk) == name_key:
+            continue
+        extra.append(name)
+        seen.add(name_key)
+    return _gantt_dedupe_block_filter_values(out + extra)
+
+
 def _gantt_block_filter_values_for_df(
     d: pd.DataFrame,
     *,
@@ -5513,7 +5581,9 @@ def _gantt_block_filter_values_for_df(
     """Значения селекта «Функциональный блок» — MSP Block / section, не L3 «Строение»."""
     _col, vals = _deviations_msp_gantt_style_block_meta(d)
     if vals:
-        return vals
+        return _gantt_supplement_block_filter_l2_branches(
+            d, vals, level_col=level_col, task_col=task_col
+        )
     if (
         d is None
         or getattr(d, "empty", True)
@@ -45244,20 +45314,13 @@ def dashboard_project_schedule_chart(df):
         # фильтр уровня пропускаем — показываем все задачи блока.
         pass
     elif level_col and level_sel != "Все уровни":
-        lvl_map = {
-            "Верхний уровень": 4,
-            "Детальный уровень": 5,
-        }
-        target = int(lvl_map[level_sel])
-        ln = pd.to_numeric(plot_df[level_col], errors="coerce")
-        if ln.notna().any():
-            plot_df = plot_df[ln == float(target)]
-        else:
-            wbs_dep = plot_df[level_col].map(_sched_wbs_tuple).map(
-                lambda t: int(len(t)) if t else np.nan
-            )
-            if wbs_dep.notna().any():
-                plot_df = plot_df[wbs_dep == target]
+        plot_df = _gantt_apply_level_display_filter(
+            plot_df,
+            level_col=level_col,
+            level_sel=level_sel,
+            wbs_col=wbs_col,
+            sel_block=sel_block,
+        )
 
     if show_lots and lot_col and lot_col in plot_df.columns:
         # Вытягиваем Series, даже если в df случайно оказались две одноимённые колонки.
@@ -45962,6 +46025,10 @@ def dashboard_project_schedule_chart(df):
             from dashboards.gantt_grouped_figure import cached_grouped_gantt_figure
             from dashboards.light_theme import is_light_preview_active
 
+            _gantt_zero_dur_milestones = (
+                sel_block != "Все"
+                and _gantt_block_cmp_key(sel_block) == _gantt_block_cmp_key("Вехи СМР")
+            )
             fig_gantt = cached_grouped_gantt_figure(
                 plot_df,
                 json.dumps(_readability, sort_keys=True, default=str),
@@ -45970,6 +46037,7 @@ def dashboard_project_schedule_chart(df):
                 _dfmt_lbl,
                 False,
                 float(_GANTT_ROW_BLOCK_SCALE),
+                allow_zero_duration_milestones=_gantt_zero_dur_milestones,
                 _theme_light=is_light_preview_active(),
             )
     chart_h = int(getattr(fig_gantt.layout, "height", None) or 520)
