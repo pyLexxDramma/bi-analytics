@@ -32995,7 +32995,7 @@ def _render_plan_fact_detail_table(
 
     render_table_subheader(
         st,
-        report_title_name("Утверждённый бюджет план/факт", "по проектам"),
+        "утверждённого бюджет план/факт по проектам",
     )
     _render_budget_table_html(
         display,
@@ -33335,7 +33335,7 @@ def _render_plan_fact_summary_dashboard(
     )
     fig = apply_chart_background(fig)
 
-    render_table_subheader(st, "Сводный дашборд план/факт")
+    st.subheader("Сводный БДДС по проектам")
     st.markdown(_APPR_PF_SUMMARY_GAUGE_CSS, unsafe_allow_html=True)
     st.markdown('<div class="appr-pf-summary-anchor"></div>', unsafe_allow_html=True)
     g_col, val_col = st.columns([1.2, 1], gap="medium", vertical_alignment="center")
@@ -33369,8 +33369,8 @@ def _render_plan_fact_summary_dashboard(
 
 
 def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) -> None:
-    """Гистограмма: Бюджет план/факт/отклонение по проектам."""
-    render_table_subheader(st, "Гистограмма: Бюджет план/факт/отклонение по проектам")
+    """Сводная гистограмма БДДС по проектам."""
+    render_table_subheader(st, "Сводная гистограмма БДДС по проектам")
 
     adjusted_budget_col = None
     if "budget adjusted" in filtered_df.columns:
@@ -33543,11 +33543,11 @@ def _render_budget_histogram_plan_fact_by_projects(filtered_df: pd.DataFrame) ->
     render_chart(
         fig_hist,
         caption_below=report_chart_caption_body(
-            "Бюджет план/факт/отклонение", granularity="по проектам"
+            "Сводная гистограмма БДДС", granularity="по проектам"
         ),
     )
 
-    render_table_subheader(st, "Бюджет план/факт по проектам")
+    render_table_subheader(st, "Сводная таблица БДДС по проектам")
     _sum_rows: list[dict] = []
     for _, row in budget_by_project.iterrows():
         plan = float(row["budget plan"])

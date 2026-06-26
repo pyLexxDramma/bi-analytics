@@ -43,7 +43,9 @@ REPORT_ROLES = ["manager", "analyst", "rp", "financier", "gip", "admin", "supera
 _ROLE_REPORT_DENYLIST: Dict[str, frozenset] = {
     "manager": frozenset(
         {
+            "БДДС (расходы)",
             "БДДС",
+            "БДР (расходы)",
             "БДР",
             "Бюджет план/факт",
             "Утвержденный бюджет",
@@ -59,12 +61,15 @@ _ROLE_REPORT_DENYLIST: Dict[str, frozenset] = {
 # Если для отчёта задан allowlist — отчёт виден только перечисленным ролям (плюс admin/superadmin).
 _REPORT_ROLE_ALLOWLIST: Dict[str, frozenset] = {
     "Девелоперские проекты": frozenset({"manager", "analyst", "rp", "financier", "admin", "superadmin"}),
+    "БДДС (расходы)": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "БДДС": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
+    "БДР (расходы)": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "БДР": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "Бюджет план/факт": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "Утвержденный бюджет": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "БДДС (утверждённый/прогнозный)": frozenset({"manager", "analyst", "rp", "financier", "admin", "superadmin"}),
     "Прогнозный БДДС": frozenset({"manager", "analyst", "rp", "financier", "admin", "superadmin"}),
+    "БДДС расходы (план, факт, уточненный план)": frozenset({"manager", "analyst", "rp", "financier", "admin", "superadmin"}),
     "Прогнозный бюджет": frozenset({"manager", "analyst", "rp", "financier", "admin", "superadmin"}),
     "Дебиторская и кредиторская задолженность": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
     "Дебиторская и кредиторская задолженность подрядчиков": frozenset({"analyst", "rp", "financier", "admin", "superadmin"}),
@@ -89,9 +94,12 @@ _REPORT_ROLE_ALLOWLIST: Dict[str, frozenset] = {
     "ГДРС (превью — светлая, люди)": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "ГДРС (превью — светлая, техника)": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "Девелоперские проекты (превью — светлая)": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
+    "БДДС (расходы) (превью — светлая)": frozenset({"manager", "analyst", "rp", "financier", "admin", "superadmin"}),
     "БДДС (превью — светлая)": frozenset({"manager", "analyst", "rp", "financier", "admin", "superadmin"}),
+    "БДР (расходы) (превью — светлая)": frozenset({"manager", "analyst", "rp", "financier", "admin", "superadmin"}),
     "БДР (превью — светлая)": frozenset({"manager", "analyst", "rp", "financier", "admin", "superadmin"}),
     "Утверждённый бюджет план/факт (превью — светлая)": frozenset({"manager", "analyst", "rp", "financier", "admin", "superadmin"}),
+    "БДДС расходы (план, факт, уточненный план) (превью — светлая)": frozenset({"manager", "analyst", "rp", "financier", "admin", "superadmin"}),
     "Прогнозный бюджет (превью — светлая)": frozenset({"manager", "analyst", "rp", "financier", "admin", "superadmin"}),
     "Исполнительная документация": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),
     "Исполнительная документация (превью — светлая)": frozenset({"manager", "analyst", "rp", "admin", "superadmin"}),

@@ -56,14 +56,14 @@ REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
     (
         "Финансы",
         [
-            "БДДС",
-            "БДДС (превью — светлая)",
-            "БДР",
-            "БДР (превью — светлая)",
+            "БДДС (расходы)",
+            "БДДС (расходы) (превью — светлая)",
+            "БДР (расходы)",
+            "БДР (расходы) (превью — светлая)",
             "Утверждённый бюджет план/факт",
             "Утверждённый бюджет план/факт (превью — светлая)",
-            "Прогнозный бюджет",
-            "Прогнозный бюджет (превью — светлая)",
+            "БДДС расходы (план, факт, уточненный план)",
+            "БДДС расходы (план, факт, уточненный план) (превью — светлая)",
         ],
     ),
     (
@@ -268,9 +268,13 @@ def _get_dashboards() -> Dict[str, Callable]:
         "Контрольные точки (превью — светлая)": dashboard_control_points,
         "График проекта": dashboard_project_schedule_chart,
         "График проекта (превью — светлая)": dashboard_project_schedule_chart,
+        "БДДС (расходы)": dashboard_budget_by_period,
+        "БДДС (расходы) (превью — светлая)": dashboard_budget_by_period,
         "БДДС": dashboard_budget_by_period,
         "БДДС (превью — светлая)": dashboard_budget_by_period,
         "БДДС по месяцам": dashboard_budget_by_period,
+        "БДР (расходы)": dashboard_bdr,
+        "БДР (расходы) (превью — светлая)": dashboard_bdr,
         "БДР": dashboard_bdr,
         "БДР (превью — светлая)": dashboard_bdr,
         "Бюджет по лотам": dashboard_budget_by_period,
@@ -289,6 +293,8 @@ def _get_dashboards() -> Dict[str, Callable]:
         "Бюджет по проекту": dashboard_budget_by_type,
         "БДДС (утверждённый/прогнозный)": dashboard_forecast_budget,
         "Прогнозный БДДС": dashboard_forecast_budget,
+        "БДДС расходы (план, факт, уточненный план)": dashboard_forecast_budget,
+        "БДДС расходы (план, факт, уточненный план) (превью — светлая)": dashboard_forecast_budget,
         "Прогнозный бюджет": dashboard_forecast_budget,
         "Прогнозный бюджет (превью — светлая)": dashboard_forecast_budget,
         "Отклонение от базового плана": dashboard_plan_fact_dates,
@@ -332,7 +338,7 @@ def _get_dashboards() -> Dict[str, Callable]:
 # Ленивая загрузка, чтобы при импорте dashboards не тянуть project_visualization_app
 # Увеличьте версию при изменении реестра отчётов — иначе долгоживущий процесс Streamlit
 # может держать устаревший словарь в памяти.
-_DASHBOARDS_REGISTRY_VERSION = 104
+_DASHBOARDS_REGISTRY_VERSION = 105
 _dashboards_cache: Dict[str, Callable] = {}
 _dashboards_cache_version: int = 0
 _renderers_mtime: float = 0.0

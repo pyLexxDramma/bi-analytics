@@ -239,7 +239,7 @@ def build_schema_health_report(load_result: dict[str, Any] | None = None) -> dic
     has_1c_budget = d1c is not None and _has_any(c1cols, ("сценар", "scenario")) and _has_any(c1cols, ("сумм", "amount"))
     lvl = "ok" if (has_msp_budget or has_1c_budget) else "err"
     msg = "Нет budget plan/fact в MSP и нет Сценарий+Сумма в *_dannye.json." if lvl == "err" else "Источник сумм найден."
-    for n in ("БДДС", "Бюджет по лотам", "БДР", "Бюджет план/факт", "Утвержденный бюджет", "Прогнозный бюджет"):
+    for n in ("БДДС (расходы)", "БДДС", "Бюджет по лотам", "БДР (расходы)", "БДР", "Бюджет план/факт", "Утвержденный бюджет", "БДДС расходы (план, факт, уточненный план)", "Прогнозный бюджет"):
         _row(rows, n, lvl, "MSP budget_* или 1C dannye", msg)
 
     # DK
