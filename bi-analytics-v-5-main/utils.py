@@ -132,6 +132,11 @@ CHART_BG_COLOR = "rgba(18, 56, 92, 0.88)"
 CHART_GRID_COLOR = "rgba(148, 163, 184, 0.45)"
 CHART_AXIS_LINE_COLOR = "rgba(100, 116, 139, 0.65)"
 CHART_ZEROLINE_COLOR = "rgba(100, 116, 139, 0.55)"
+CHART_AXIS_TICK_FONT_SIZE = 22
+CHART_AXIS_TITLE_FONT_SIZE = 24
+CHART_LAYOUT_FONT_SIZE = 26
+CHART_LEGEND_FONT_SIZE = 24
+CHART_UNIFORMTEXT_MINSIZE = 8
 TABLE_TEXT_COLOR = "#ffffff"
 TABLE_CELL_BORDER = "1px solid #5a7a9a"
 FINANCE_TABLE_CELL_BORDER = "1px solid #7a9ec4"
@@ -914,6 +919,99 @@ def format_period_ru(period_val) -> str:
     return out
 
 
+def finance_axis_tick_font_size(n_periods: int) -> int:
+    """Размер подписей оси (×2 от прежних 8–10 px)."""
+    n = int(n_periods)
+    if n > 28:
+        return 16
+    if n > 18:
+        return 18
+    return 20
+
+
+def _fig_has_pie_trace(fig) -> bool:
+    try:
+        for tr in fig.data:
+            if getattr(tr, "type", None) == "pie":
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def pie_layout_for_bottom_legend(
+    n_slices: int,
+    *,
+    font_size: int = 12,
+    items_per_row: int = 3,
+) -> dict:
+    """Отступы и domain pie под горизонтальную легенду снизу."""
+    n = max(1, int(n_slices))
+    rows = max(1, (n + items_per_row - 1) // items_per_row)
+    margin_bottom = int(48 + rows * (font_size + 14))
+    legend_y = -0.02 - min(0.22, 0.024 * rows)
+    return {
+        "margin_bottom": margin_bottom,
+        "margin_top": 44,
+        "domain_x": (0.04, 0.96),
+        "domain_y": (0.02, 0.98),
+        "legend_y": legend_y,
+        "fig_extra_h": max(0, margin_bottom - 72),
+    }
+
+
+def standard_pie_chart_legend(**overrides) -> dict:
+    """Легенда под круговой диаграммой (горизонтально, слева)."""
+    leg = dict(
+        orientation="h",
+        yanchor="top",
+        y=-0.02,
+        xanchor="left",
+        x=0,
+        bgcolor="rgba(0,0,0,0)",
+        borderwidth=0,
+        tracegroupgap=6,
+        itemwidth=30,
+    )
+    leg.update(overrides)
+    if "title" not in leg and "title_text" not in leg:
+        leg["title_text"] = ""
+    return leg
+
+
+def standard_chart_legend(**overrides) -> dict:
+    """Единое размещение легенды Plotly: горизонтально над областью графика, слева."""
+    leg = dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="left",
+        x=0,
+        bgcolor="rgba(0,0,0,0)",
+        borderwidth=0,
+        tracegroupgap=6,
+        itemwidth=30,
+    )
+    leg.update(overrides)
+    if "title" not in leg and "title_text" not in leg:
+        leg["title_text"] = ""
+    return leg
+
+
+def _merge_prev_legend_title(prev_leg, legend_kwargs: dict) -> None:
+    if prev_leg is None:
+        return
+    prev_title = getattr(prev_leg, "title", None)
+    if prev_title is None:
+        return
+    if hasattr(prev_title, "to_plotly_json"):
+        legend_kwargs["title"] = prev_title.to_plotly_json()
+    else:
+        txt = getattr(prev_title, "text", None)
+        if txt is not None and str(txt).strip():
+            legend_kwargs["title"] = dict(text=str(txt))
+
+
 def apply_chart_background(fig, *, skip_uniformtext: bool = False):
     """
     Применяет единый стиль (тёмная тема) ко всем графикам Plotly.
@@ -923,18 +1021,13 @@ def apply_chart_background(fig, *, skip_uniformtext: bool = False):
     Нужно для Ганта с подписями textposition='outside' у концов полос, если
     внешние настройки не подходят.
     """
-    # Если дашборд уже задал вертикальную легенду и/или увеличенные поля — не затираем
-    # (иначе глобальная горизонтальная легенда и margin b=100/r=30 ломают вёрстку).
     layout = fig.layout
     prev_leg = getattr(layout, "legend", None) if layout is not None else None
     prev_m = getattr(layout, "margin", None) if layout is not None else None
-    keep_vertical_legend = (
-        prev_leg is not None and getattr(prev_leg, "orientation", None) == "v"
-    )
     margin_l = 60
     margin_r = 30
-    margin_t = 62
-    margin_b = 118
+    margin_t = 72
+    margin_b = 72
     if prev_m is not None:
         for attr, default in (("l", margin_l), ("r", margin_r), ("t", margin_t), ("b", margin_b)):
             v = getattr(prev_m, attr, None)
@@ -948,7 +1041,33 @@ def apply_chart_background(fig, *, skip_uniformtext: bool = False):
                 elif attr == "b":
                     margin_b = float(v)
 
-    # Базовый стиль
+    legend_kwargs = dict(font=dict(color=TABLE_TEXT_COLOR, size=CHART_LEGEND_FONT_SIZE))
+    if prev_leg is not None:
+        prev_font = getattr(prev_leg, "font", None)
+        if prev_font is not None:
+            for fk in ("size", "color", "family"):
+                fv = getattr(prev_font, fk, None)
+                if fv is not None:
+                    legend_kwargs.setdefault("font", {})[fk] = fv
+        _merge_prev_legend_title(prev_leg, legend_kwargs)
+
+    showlegend = getattr(layout, "showlegend", True) if layout is not None else True
+
+    is_pie = _fig_has_pie_trace(fig)
+    if is_pie:
+        leg_out = standard_pie_chart_legend(**legend_kwargs)
+        if prev_leg is not None:
+            py = getattr(prev_leg, "y", None)
+            try:
+                if py is not None and float(py) < 0.2:
+                    leg_out["y"] = float(py)
+            except (TypeError, ValueError):
+                pass
+        if is_pie and margin_t > 60:
+            margin_t = max(44.0, min(margin_t, 56.0))
+    else:
+        leg_out = standard_chart_legend(**legend_kwargs)
+
     layout_kwargs = dict(
         template=None,
         plot_bgcolor=CHART_BG_COLOR,
@@ -957,101 +1076,19 @@ def apply_chart_background(fig, *, skip_uniformtext: bool = False):
         font=dict(
             family="Inter, system-ui, sans-serif",
             color=TABLE_TEXT_COLOR,
-            size=13,
+            size=CHART_LAYOUT_FONT_SIZE,
         ),
-        # text обязателен: иначе во фронтенде Plotly иногда показывает строку «undefined»
         title=dict(
             text="",
-            font=dict(color=TABLE_TEXT_COLOR, size=15),
+            font=dict(color=TABLE_TEXT_COLOR, size=CHART_AXIS_TITLE_FONT_SIZE + 6),
             pad=dict(t=4),
         ),
         margin=dict(l=margin_l, r=margin_r, t=margin_t, b=margin_b),
+        legend=leg_out,
+        showlegend=bool(showlegend),
     )
     if not skip_uniformtext:
-        layout_kwargs["uniformtext"] = dict(minsize=8, mode="show")
-    if keep_vertical_legend:
-        legend_merged = dict(
-            font=dict(color=TABLE_TEXT_COLOR, size=12),
-            bgcolor="rgba(0,0,0,0)",
-            orientation="v",
-        )
-        if prev_leg is not None:
-            for key in (
-                "x", "y", "xanchor", "yanchor", "xref", "yref",
-                "orientation", "title", "traceorder", "itemsizing",
-            ):
-                val = getattr(prev_leg, key, None)
-                if val is None:
-                    continue
-                if key == "title" and hasattr(val, "to_plotly_json"):
-                    legend_merged[key] = val.to_plotly_json()
-                else:
-                    legend_merged[key] = val
-        layout_kwargs["legend"] = legend_merged
-        prev_showlegend = getattr(layout, "showlegend", None) if layout is not None else None
-        if prev_showlegend is not None:
-            layout_kwargs["showlegend"] = bool(prev_showlegend)
-    else:
-        # Дефолт — полоска легенды под графиком. Если дашборд уже задал y/yanchor (напр. y<0, yanchor=top),
-        # не затирать — иначе легенда снова уезжает «вверх»/в центр после этого вызова.
-        legend_base = dict(
-            font=dict(color=TABLE_TEXT_COLOR, size=12),
-            bgcolor="rgba(0,0,0,0)",
-            orientation="h",
-            yanchor="bottom",
-            y=-0.25,
-            xanchor="center",
-            x=0.5,
-        )
-        if prev_leg is not None:
-            py = getattr(prev_leg, "y", None)
-            ya = getattr(prev_leg, "yanchor", None)
-            try:
-                py_f = float(py) if py is not None else None
-            except (TypeError, ValueError):
-                py_f = None
-            # Легенда под графиком (y<0) или спец. якорь — не затираем.
-            custom_below = (py_f is not None and py_f < 0) or ya == "top"
-            # Легенда НАД графиком (типично y≈1…1.15, yanchor=bottom) — тоже сохраняем,
-            # иначе глобальный y=-0.25 наезжает на наклонные подписи оси X (ГДРС и т.п.).
-            legend_above_plot = (
-                py_f is not None
-                and py_f >= 0.85
-                and str(ya or "").lower() == "bottom"
-                and getattr(prev_leg, "orientation", None) == "h"
-            )
-            if custom_below or legend_above_plot:
-                for key in ("x", "y", "xanchor", "yanchor", "xref", "yref", "orientation"):
-                    val = getattr(prev_leg, key, None)
-                    if val is not None:
-                        legend_base[key] = val
-            if legend_above_plot:
-                margin_t = max(margin_t, 90.0)
-                tick_angle = 0.0
-                try:
-                    xa = fig.layout.xaxis
-                    ta = getattr(xa, "tickangle", None) if xa is not None else None
-                    if ta is not None:
-                        tick_angle = float(ta)
-                except (TypeError, ValueError):
-                    tick_angle = 0.0
-                need_x_pad = abs(tick_angle) >= 25
-                user_b = None
-                if prev_m is not None and getattr(prev_m, "b", None) is not None:
-                    try:
-                        user_b = float(prev_m.b)
-                    except (TypeError, ValueError):
-                        user_b = None
-                if need_x_pad:
-                    margin_b = max(margin_b, 188.0)
-                else:
-                    floor_b = 52.0
-                    if user_b is not None:
-                        margin_b = max(floor_b, user_b)
-                    else:
-                        margin_b = min(margin_b, 72.0)
-        layout_kwargs["margin"] = dict(l=margin_l, r=margin_r, t=margin_t, b=margin_b)
-        layout_kwargs["legend"] = legend_base
+        layout_kwargs["uniformtext"] = dict(minsize=CHART_UNIFORMTEXT_MINSIZE, mode="show")
     fig.update_layout(**layout_kwargs)
     # Подписи на графике — без всплывающих подсказок (требование UX).
     fig.update_layout(hovermode=False)
@@ -1067,8 +1104,8 @@ def apply_chart_background(fig, *, skip_uniformtext: bool = False):
     fig.update_xaxes(
         gridcolor=CHART_GRID_COLOR,
         linecolor=CHART_AXIS_LINE_COLOR,
-        tickfont=dict(color=TABLE_TEXT_COLOR, size=11),
-        title=dict(font=dict(color=TABLE_TEXT_COLOR, size=12)),
+        tickfont=dict(color=TABLE_TEXT_COLOR, size=CHART_AXIS_TICK_FONT_SIZE),
+        title=dict(font=dict(color=TABLE_TEXT_COLOR, size=CHART_AXIS_TITLE_FONT_SIZE)),
         zerolinecolor=CHART_ZEROLINE_COLOR,
         automargin=True,
         ticklabelstandoff=8,
@@ -1078,8 +1115,8 @@ def apply_chart_background(fig, *, skip_uniformtext: bool = False):
     fig.update_yaxes(
         gridcolor=CHART_GRID_COLOR,
         linecolor=CHART_AXIS_LINE_COLOR,
-        tickfont=dict(color=TABLE_TEXT_COLOR, size=11),
-        title=dict(font=dict(color=TABLE_TEXT_COLOR, size=12)),
+        tickfont=dict(color=TABLE_TEXT_COLOR, size=CHART_AXIS_TICK_FONT_SIZE),
+        title=dict(font=dict(color=TABLE_TEXT_COLOR, size=CHART_AXIS_TITLE_FONT_SIZE)),
         zerolinecolor=CHART_ZEROLINE_COLOR,
         automargin=True,
     )

@@ -1047,13 +1047,22 @@ def gdrs_sanitize_bar_text_labels(fig: Any, theme: GdrsTheme) -> Any:
 
 def apply_gdrs_chart_background(fig: Any, theme: GdrsTheme, *, skip_uniformtext: bool = False) -> Any:
     """Локальный аналог apply_chart_background с палитрой ГДРС."""
+    from utils import (
+        CHART_AXIS_TICK_FONT_SIZE,
+        CHART_AXIS_TITLE_FONT_SIZE,
+        CHART_LAYOUT_FONT_SIZE,
+        CHART_LEGEND_FONT_SIZE,
+        CHART_UNIFORMTEXT_MINSIZE,
+        _fig_has_pie_trace,
+        _merge_prev_legend_title,
+        standard_chart_legend,
+        standard_pie_chart_legend,
+    )
+
     layout = fig.layout
     prev_leg = getattr(layout, "legend", None) if layout is not None else None
     prev_m = getattr(layout, "margin", None) if layout is not None else None
-    keep_vertical_legend = (
-        prev_leg is not None and getattr(prev_leg, "orientation", None) == "v"
-    )
-    margin_l, margin_r, margin_t, margin_b = 60, 30, 62, 118
+    margin_l, margin_r, margin_t, margin_b = 60, 30, 72, 72
     if prev_m is not None:
         for attr, default in (("l", margin_l), ("r", margin_r), ("t", margin_t), ("b", margin_b)):
             v = getattr(prev_m, attr, None)
@@ -1080,6 +1089,34 @@ def apply_gdrs_chart_background(fig: Any, theme: GdrsTheme, *, skip_uniformtext:
                 prev_title_size = int(float(_ps))
             except (TypeError, ValueError):
                 pass
+
+    legend_kwargs = dict(font=dict(color=theme.text, size=CHART_LEGEND_FONT_SIZE))
+    if prev_leg is not None:
+        prev_font = getattr(prev_leg, "font", None)
+        if prev_font is not None:
+            for fk in ("size", "color", "family"):
+                fv = getattr(prev_font, fk, None)
+                if fv is not None:
+                    legend_kwargs.setdefault("font", {})[fk] = fv
+        _merge_prev_legend_title(prev_leg, legend_kwargs)
+
+    showlegend = getattr(layout, "showlegend", True) if layout is not None else True
+
+    is_pie = _fig_has_pie_trace(fig)
+    if is_pie:
+        leg_out = standard_pie_chart_legend(**legend_kwargs)
+        if prev_leg is not None:
+            py = getattr(prev_leg, "y", None)
+            try:
+                if py is not None and float(py) < 0.2:
+                    leg_out["y"] = float(py)
+            except (TypeError, ValueError):
+                pass
+        if margin_t > 60:
+            margin_t = max(44.0, min(margin_t, 56.0))
+    else:
+        leg_out = standard_chart_legend(**legend_kwargs)
+
     layout_kwargs = dict(
         template=None,
         plot_bgcolor=theme.chart_bg,
@@ -1088,7 +1125,7 @@ def apply_gdrs_chart_background(fig: Any, theme: GdrsTheme, *, skip_uniformtext:
         font=dict(
             family="Inter, system-ui, sans-serif",
             color=theme.text,
-            size=13,
+            size=CHART_LAYOUT_FONT_SIZE,
         ),
         title=dict(
             text=prev_title_text,
@@ -1096,47 +1133,11 @@ def apply_gdrs_chart_background(fig: Any, theme: GdrsTheme, *, skip_uniformtext:
             pad=dict(t=4),
         ),
         margin=dict(l=margin_l, r=margin_r, t=margin_t, b=margin_b),
+        legend=leg_out,
+        showlegend=bool(showlegend),
     )
     if not skip_uniformtext:
-        layout_kwargs["uniformtext"] = dict(minsize=8, mode="show")
-    if keep_vertical_legend:
-        layout_kwargs["legend"] = dict(
-            font=dict(color=theme.text, size=12),
-            bgcolor="rgba(0,0,0,0)",
-        )
-    else:
-        legend_base = dict(
-            font=dict(color=theme.text, size=12),
-            bgcolor="rgba(0,0,0,0)",
-            orientation="h",
-            yanchor="bottom",
-            y=-0.25,
-            xanchor="center",
-            x=0.5,
-        )
-        if prev_leg is not None:
-            py = getattr(prev_leg, "y", None)
-            ya = getattr(prev_leg, "yanchor", None)
-            try:
-                py_f = float(py) if py is not None else None
-            except (TypeError, ValueError):
-                py_f = None
-            custom_below = (py_f is not None and py_f < 0) or ya == "top"
-            legend_above_plot = (
-                py_f is not None
-                and py_f >= 0.85
-                and str(ya or "").lower() == "bottom"
-                and getattr(prev_leg, "orientation", None) == "h"
-            )
-            if custom_below or legend_above_plot:
-                for key in ("x", "y", "xanchor", "yanchor", "xref", "yref", "orientation"):
-                    val = getattr(prev_leg, key, None)
-                    if val is not None:
-                        legend_base[key] = val
-            if legend_above_plot:
-                margin_t = max(margin_t, 90.0)
-        layout_kwargs["margin"] = dict(l=margin_l, r=margin_r, t=margin_t, b=margin_b)
-        layout_kwargs["legend"] = legend_base
+        layout_kwargs["uniformtext"] = dict(minsize=CHART_UNIFORMTEXT_MINSIZE, mode="show")
     fig.update_layout(**layout_kwargs)
     fig.update_layout(hovermode=False)
     try:
@@ -1149,8 +1150,8 @@ def apply_gdrs_chart_background(fig: Any, theme: GdrsTheme, *, skip_uniformtext:
     fig.update_xaxes(
         gridcolor=theme.chart_grid,
         linecolor=theme.chart_axis,
-        tickfont=dict(color=theme.text, size=11),
-        title=dict(font=dict(color=theme.text, size=12)),
+        tickfont=dict(color=theme.text, size=CHART_AXIS_TICK_FONT_SIZE),
+        title=dict(font=dict(color=theme.text, size=CHART_AXIS_TITLE_FONT_SIZE)),
         zerolinecolor=theme.chart_axis,
         automargin=True,
         ticklabelstandoff=8,
@@ -1158,8 +1159,8 @@ def apply_gdrs_chart_background(fig: Any, theme: GdrsTheme, *, skip_uniformtext:
     fig.update_yaxes(
         gridcolor=theme.chart_grid,
         linecolor=theme.chart_axis,
-        tickfont=dict(color=theme.text, size=11),
-        title=dict(font=dict(color=theme.text, size=12)),
+        tickfont=dict(color=theme.text, size=CHART_AXIS_TICK_FONT_SIZE),
+        title=dict(font=dict(color=theme.text, size=CHART_AXIS_TITLE_FONT_SIZE)),
         zerolinecolor=theme.chart_axis,
         automargin=True,
     )
