@@ -555,6 +555,39 @@ MSP_PROJECT_NAME_MAP: Dict[str, str] = {
     "l1": "Ленинский",
 }
 
+# Выгрузка файлов на FTP (1С / MSP / TESSA) — согласованное расписание заказчика.
+FTP_EXPORT_HOUR_MSK: int = int(os.environ.get("BI_FTP_EXPORT_HOUR_MSK", "7") or 7)
+FTP_EXPORT_MINUTE_MSK: int = int(os.environ.get("BI_FTP_EXPORT_MINUTE_MSK", "0") or 0)
+FTP_EXPORT_GRACE_MINUTES: int = int(os.environ.get("BI_FTP_EXPORT_GRACE_MIN", "15") or 15)
+
+
+def ftp_export_schedule_label() -> str:
+    """Человекочитаемое расписание выгрузки на FTP."""
+    return f"ежедневно в {FTP_EXPORT_HOUR_MSK:02d}:{FTP_EXPORT_MINUTE_MSK:02d} (МСК)"
+
+
+def _moscow_now():
+    from datetime import datetime
+
+    try:
+        import pytz
+
+        return datetime.now(pytz.timezone("Europe/Moscow"))
+    except Exception:
+        from datetime import timedelta, timezone
+
+        return datetime.now(timezone(timedelta(hours=3)))
+
+
+def is_before_today_ftp_export_window(*, grace_minutes: Optional[int] = None) -> bool:
+    """True, если по МСК ещё рано ждать сегодняшнюю выгрузку на FTP."""
+    grace = FTP_EXPORT_GRACE_MINUTES if grace_minutes is None else int(grace_minutes)
+    now = _moscow_now()
+    export_min = FTP_EXPORT_HOUR_MSK * 60 + FTP_EXPORT_MINUTE_MSK + max(0, grace)
+    cur_min = now.hour * 60 + now.minute
+    return cur_min < export_min
+
+
 # Русские названия месяцев (для графиков и отчётов)
 RUSSIAN_MONTHS: Dict[int, str] = {
     1: "Январь",
