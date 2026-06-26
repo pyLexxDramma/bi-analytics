@@ -3934,7 +3934,9 @@ def _fin_iframe_plotly_light_css(uid: str) -> str:
         f".pf-fbar-{uid}-inner svg text,.pf-fbar-{uid}-inner .xtick text,.pf-fbar-{uid}-inner .ytick text,"
         f".pf-fbar-{uid}-inner g.xtitle text,.pf-fbar-{uid}-inner g.ytitle text,"
         f".pf-fbar-{uid}-inner .yaxislayer-above text,.pf-fbar-{uid}-inner .yaxislayer-below text,"
-        f".pf-fbar-{uid}-inner .xaxislayer-above text,.pf-fbar-{uid}-inner .xaxislayer-below text{{"
+        f".pf-fbar-{uid}-inner .xaxislayer-above text,.pf-fbar-{uid}-inner .xaxislayer-below text,"
+        f".pf-fbar-{uid}-inner .barlayer text,.pf-fbar-{uid}-inner g.bartext text,"
+        f".pf-fbar-{uid}-inner .hovertext text{{"
         f"fill:#111827!important;color:#111827!important;"
         f"-webkit-text-fill-color:#111827!important;stroke:none!important;}}"
     )
@@ -12215,6 +12217,15 @@ def _render_finance_bar_chart(
         except Exception:
             pass
     _apply_finance_light_preview_chart_colors(fig)
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        if is_light_preview_active():
+            from dashboards.gdrs_theme import get_gdrs_theme, gdrs_sanitize_bar_text_labels
+
+            fig = gdrs_sanitize_bar_text_labels(fig, get_gdrs_theme("light"))
+    except Exception:
+        pass
     _apply_plotly_spec_411_labels(fig)
     _finance_plotly_xaxis_category_pad(fig, n)
 
@@ -13428,10 +13439,11 @@ def dashboard_budget_by_period(df):
 
         _n = len(project_data)
         _is_cumulative = view_type == "Накопительно"
-        # Накопительно + длинная шкала: подписи на столбцах дают «кашу»; легенда внизу наезжает на подписи оси X.
-        _hide_bar_value_labels = _is_cumulative and _n > 10
+        # Подписи значений на столбцах — по ТЗ/UX всегда (раньше скрывались при накопительно >10).
+        _hide_bar_value_labels = False
         _tlbl = 0.005
-        _tfs = 8 if _n > 32 else 9 if _n > 20 else 10 if _n > 12 else 11
+        _tlbl_dev = 0.01 if not _hide_bar_value_labels else _tlbl
+        _tfs = 10 if _n > 32 else 11 if _n > 20 else 12 if _n > 12 else 13
         _bg, _bgg, _bar_w = _bdds_plotly_bar_layout(_n)
         # Нижнее поле под наклонные подписи месяцев + легенда (см. _plotly_legend_horizontal_below_plot).
         # Высота фигуры должна быть >= margin.t + margin.b + минимум для самих столбцов, иначе область графика ~0 px.
@@ -13440,7 +13452,9 @@ def dashboard_budget_by_period(df):
             _leg_b_pre = max(340, min(520, 300 + int(_n * 4.8)))
         elif _n > 24:
             _leg_b_pre = max(300, min(460, 280 + int(_n * 3.5)))
-        _top_px_pre = 72 if (_hide_bar_value_labels and _n > 20) else 140
+        _top_px_pre = (
+            168 if _n <= 12 else (188 if _n <= 20 else 208)
+        ) if not _hide_bar_value_labels else (72 if _n > 20 else 88)
         _min_plot_core_px = 400
         _ch_base = 600 if _n <= 20 else int(min(1100, 520 + int(_n * 1.4)))
         _ch = max(_ch_base, _top_px_pre + _leg_b_pre + _min_plot_core_px)
@@ -13501,13 +13515,13 @@ def dashboard_budget_by_period(df):
             _y_fact_gt_plan = _dev_mln.where(_dev_mln > _dev_thr_mln)
             _bdds_dev_txt_lt = _finance_deviation_bar_text_signed_mln(
                 _y_fact_lt_plan,
-                min_abs_mln=_tlbl,
+                min_abs_mln=_tlbl_dev,
                 decimals=1,
                 unit_suffix=" млн. руб.",
             )
             _bdds_dev_txt_gt = _finance_deviation_bar_text_signed_mln(
                 _y_fact_gt_plan,
-                min_abs_mln=_tlbl,
+                min_abs_mln=_tlbl_dev,
                 decimals=1,
                 unit_suffix=" млн. руб.",
             )
@@ -13602,6 +13616,9 @@ def dashboard_budget_by_period(df):
         _leg_b = _leg_b_pre
         _leg_y = -0.34 if _n <= 20 else (-0.38 if _n <= 36 else -0.44)
         _top_px = _top_px_pre
+        fig = _plotly_legend_horizontal_below_plot(
+            fig, bottom_px=_leg_b, legend_y=_leg_y, top_px=_top_px
+        )
         try:
             fig.update_xaxes(
                 title=dict(text=period_label, standoff=_x_standoff),
@@ -13632,7 +13649,11 @@ def dashboard_budget_by_period(df):
                     _ymin = _ymin_dev * 1.15
             if np.isfinite(_ymax):
                 if _ymax > 0 or _ymin < 0:
-                    fig.update_layout(yaxis=dict(range=[_ymin, max(_ymax * 1.22, 0.01)]))
+                    pad = max(abs(_ymax), abs(_ymin), 1e-6) * 0.28
+                    span = float(max(_ymax - _ymin, 1e-6))
+                    head = max(span * 0.32, abs(_ymax) * 0.2, 0.75)
+                    foot = pad if _ymin >= 0 else max(pad, abs(_ymin) * 0.24)
+                    fig.update_layout(yaxis=dict(range=[_ymin - foot, _ymax + pad + head]))
         fig = apply_chart_background(fig)
         _bdds_bar_slots = 2 + (0 if hide_reserve else 2)
         if (

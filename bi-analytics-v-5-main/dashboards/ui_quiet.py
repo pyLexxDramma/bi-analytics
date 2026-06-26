@@ -22,13 +22,13 @@ def suppress_caption(*_args, **_kwargs) -> None:
 
 # --- Единый блок фильтров ---------------------------------------------------------
 
-_SESSION_CSS_FLAG_KEY = "_bi_unified_filters_css_v9"
+_SESSION_CSS_FLAG_KEY = "_bi_unified_filters_css_v10"
 _DEFAULT_FIELD_MIN_PX = 260
 
 UNIFIED_FILTERS_CSS = """
 <style>
 [data-testid="stMain"] .bi-filters-scope {
-    --bi-filter-rhythm: 16px;
+    --bi-filter-rhythm: 8px;
 }
 /* Popover: равные колонки с ограничением ширины поля */
 [data-testid="stMain"] [data-testid="stPopoverBody"] div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
@@ -137,7 +137,7 @@ html body section.main [data-testid="stCheckbox"] label[data-baseweb="checkbox"]
     color: #86efac;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    margin: 8px 0 6px 0;
+    margin: 4px 0 3px 0;
 }
 
 .bi-filters-selectors {
