@@ -2164,6 +2164,14 @@ def _dev_reasons_text_color() -> str:
 
 
 def _deviations_maket_iframe_css(wrap_id: str, date_bg: str) -> str:
+    _col_css = (
+        f"#{wrap_id} .dev-mak-col-narrow{{max-width:6.5em!important;padding:4px 5px!important;"
+        "white-space:nowrap!important;font-size:12px!important;}}"
+        f"#{wrap_id} .dev-mak-col-wide{{min-width:12em!important;max-width:28em!important;"
+        "white-space:normal!important;word-break:break-word!important;padding:4px 8px!important;}}"
+        f"#{wrap_id} .dev-mak-col-date{{max-width:7.5em!important;padding:4px 5px!important;"
+        "white-space:nowrap!important;font-size:12px!important;}}"
+    )
     try:
         from dashboards.light_theme import is_light_preview_active
 
@@ -2177,13 +2185,14 @@ def _deviations_maket_iframe_css(wrap_id: str, date_bg: str) -> str:
             "font-family:Inter,system-ui,sans-serif;font-size:13px;}"
             f"#{wrap_id} .dev-mak-col-proj,"
             f"#{wrap_id} th.dev-mak-col-proj"
-            "{white-space:nowrap!important;min-width:9em;max-width:none!important;word-break:keep-all;}"
+            "{white-space:nowrap!important;min-width:7em!important;max-width:9em!important;word-break:keep-all;}"
             f"#{wrap_id} thead th{{position:sticky;top:0;z-index:5;background:#f3f4f6;color:#111827;}}"
             f"#{wrap_id} th.dev-mak-col-date{{color:#111827!important;background:{date_bg}!important;}}"
             f"#{wrap_id} td[style*='{date_bg}']"
             "{{color:#0b1f33!important;}}"
             f"#{wrap_id} .rendered-table td{{color:#111827;border-bottom:1px solid #cbd5e1;}}"
-            "</style>"
+            + _col_css
+            + "</style>"
         )
     return (
         "<style>"
@@ -2191,12 +2200,13 @@ def _deviations_maket_iframe_css(wrap_id: str, date_bg: str) -> str:
         "font-family:Inter,system-ui,sans-serif;font-size:13px;}"
         f"#{wrap_id} .dev-mak-col-proj,"
         f"#{wrap_id} th.dev-mak-col-proj"
-        "{white-space:nowrap!important;min-width:9em;max-width:none!important;word-break:keep-all;}"
+        "{white-space:nowrap!important;min-width:7em!important;max-width:9em!important;word-break:keep-all;}"
         f"#{wrap_id} thead th{{position:sticky;top:0;z-index:5;background:#0e1117;}}"
         f"#{wrap_id} th.dev-mak-col-date{{color:#f5f5f5!important;}}"
         f"#{wrap_id} td[style*='{date_bg}']"
         "{{color:#0b1f33!important;}}"
-        "</style>"
+        + _col_css
+        + "</style>"
     )
 
 
@@ -2216,6 +2226,81 @@ def _deviations_maket_task_id_col(frame: pd.DataFrame) -> str | None:
     return None
 
 
+def _deviations_maket_resolve_task_col(frame: pd.DataFrame) -> str | None:
+    if frame is None or getattr(frame, "empty", True):
+        return None
+    if "task name" in frame.columns:
+        return "task name"
+    return find_column(frame, ["Название", "Задача", "task", "Task Name"])
+
+
+def _deviations_maket_enrich_ancestor_keys(work_m: pd.DataFrame) -> pd.DataFrame:
+    """L2 — outline; «Строение» — предок с «Уровень»=3, иначе outline tier 3."""
+    _tc_m = _deviations_maket_resolve_task_col(work_m)
+    if not _tc_m:
+        return work_m
+    outline3 = pd.Series("", index=work_m.index, dtype=object)
+    _lc_m = _dev_tasks_resolve_level_column(work_m)
+    if _lc_m:
+        wo = _dev_tasks_build_ancestor_keys(work_m, _lc_m, _tc_m)
+        work_m["_dt_lvl2_key"] = wo["_dt_lvl2_key"]
+        work_m["_dt_lvl_num"] = wo["_dt_lvl_num"]
+        outline3 = wo["_dt_lvl3_key"].astype(str).str.strip()
+    level3 = pd.Series("", index=work_m.index, dtype=object)
+    if "level" in work_m.columns:
+        wl = _dev_tasks_build_ancestor_keys(
+            work_m,
+            "level",
+            _tc_m,
+            block_outline_level=2,
+            building_outline_level=3,
+        )
+        level3 = wl["_dt_lvl3_key"].astype(str).str.strip()
+    _empty = lambda s: s.eq("") | s.str.lower().isin(["nan", "none", "nat"])
+    work_m["_dt_lvl3_key"] = level3.where(~_empty(level3), outline3)
+    return work_m
+
+
+def _deviations_maket_attach_ancestor_keys(df: pd.DataFrame) -> pd.DataFrame:
+    """Ключи L2/L3 на полном дереве до среза фильтрами — иначе «Строение» пустое."""
+    if df is None or getattr(df, "empty", True):
+        return df
+    enriched = _deviations_maket_enrich_ancestor_keys(df.copy())
+    out = df.copy()
+    for _c in ("_dt_lvl2_key", "_dt_lvl3_key", "_dt_lvl_num"):
+        if _c in enriched.columns:
+            out[_c] = enriched[_c].to_numpy()
+    return out
+
+
+def _deviations_maket_task_name_label(row, frame: pd.DataFrame) -> str:
+    tc = _deviations_maket_resolve_task_col(frame)
+    if tc and tc in frame.columns:
+        return _clean_display_str(row.get(tc))
+    return ""
+
+
+def _deviations_maket_building_label(row, frame: pd.DataFrame, building_col=None) -> str:
+    if "_dt_lvl3_key" in frame.columns:
+        stv = _clean_display_str(row.get("_dt_lvl3_key"))
+        if stv:
+            return stv
+    if building_col and building_col in frame.columns:
+        return _clean_display_str(row.get(building_col))
+    return ""
+
+
+def _deviations_maket_col_class(col_name: str) -> str:
+    c = str(col_name or "").strip()
+    if c in {"Название", "Причина отклонения", "Заметки"}:
+        return "dev-mak-col-wide"
+    if c in {"Базовое окончание", "Окончание", "Отклонение"}:
+        return "dev-mak-col-date"
+    if c == "Проект":
+        return "dev-mak-col-proj"
+    return "dev-mak-col-narrow"
+
+
 def _deviations_maket_prepare_df(table_reason_df: pd.DataFrame) -> pd.DataFrame:
     """MSP level 5, filled reason, finish deviation < 0; sort by deviation descending (max at top)."""
     if table_reason_df is None or getattr(table_reason_df, "empty", True):
@@ -2224,14 +2309,8 @@ def _deviations_maket_prepare_df(table_reason_df: pd.DataFrame) -> pd.DataFrame:
     _reason_col_m = _gantt_resolve_reason_column(work_m)
     if _reason_col_m and _reason_col_m != "reason of deviation":
         work_m = work_m.rename(columns={_reason_col_m: "reason of deviation"})
-    if "_dt_lvl3_key" not in work_m.columns or "_dt_lvl2_key" not in work_m.columns:
-        _lc_m = _dev_tasks_resolve_level_column(work_m)
-        _tc_m = (
-            "task name" if "task name" in work_m.columns
-            else find_column(work_m, ["Задача", "task", "Task Name", "Название"])
-        )
-        if _lc_m and _tc_m:
-            work_m = _dev_tasks_build_ancestor_keys(work_m, _lc_m, _tc_m)
+    if "_dt_lvl2_key" not in work_m.columns or "_dt_lvl3_key" not in work_m.columns:
+        work_m = _deviations_maket_enrich_ancestor_keys(work_m)
     try:
         ensure_date_columns(work_m)
     except Exception:
@@ -2705,9 +2784,8 @@ def build_deviations_maket_export_df(
         fb = _clean_display_str(rr.get("block")) if "block" in maket_df.columns else ""
         if not fb and "_dt_lvl2_key" in maket_df.columns:
             fb = _clean_display_str(rr.get("_dt_lvl2_key"))
-        stv = _clean_display_str(rr.get("_dt_lvl3_key")) if "_dt_lvl3_key" in maket_df.columns else ""
-        if not stv and building_col and building_col in maket_df.columns:
-            stv = _clean_display_str(rr.get(building_col))
+        stv = _deviations_maket_building_label(rr, maket_df, building_col)
+        tn = _deviations_maket_task_name_label(rr, maket_df)
         pe = rr.get("plan end")
         be = rr.get("base end")
         ed = rr.get("_end_diff")
@@ -2721,6 +2799,7 @@ def build_deviations_maket_export_df(
                 "ID задачи": tid,
                 "Проект": _clean_display_str(rr.get("project name")),
                 "Функциональный блок": fb,
+                "Название": tn,
                 "Строение": stv,
                 "Базовое окончание": be.strftime("%d.%m.%Y") if pd.notna(be) else "",
                 "Окончание": pe.strftime("%d.%m.%Y") if pd.notna(pe) else "",
@@ -2775,6 +2854,7 @@ def _render_deviations_maket_table(
         "ID задачи",
         "Проект",
         "Функциональный блок",
+        "Название",
         "Строение",
         "Базовое окончание",
         "Окончание",
@@ -2785,20 +2865,16 @@ def _render_deviations_maket_table(
     _bg_hdrs = {"Базовое окончание", "Окончание", "Отклонение"}
     _tbl_m = [
         f'<div id="{_maket_wrap_id}" class="pred-detail-wrap rendered-table-wrap dev-maket-table-wrap" data-bi-rows="{len(maket_df)}" data-scroll-box-h="{_maket_box_h}">',
-        '<table class="rendered-table bi-sortable-table bi-sort-click-only dev-maket-table" style="border-collapse:collapse;width:100%">',
+        '<table class="rendered-table bi-sortable-table bi-sort-click-only dev-maket-table" style="border-collapse:collapse;width:100%;table-layout:auto">',
         "<thead><tr>",
     ]
     for h in _hdrs:
+        _hcls = _deviations_maket_col_class(h)
         if h in _bg_hdrs:
             _hst = f' style="background:{_date_bg_m};color:#f5f5f5;"'
-            _hcls = ' class="dev-mak-col-date"'
-        elif h == "Проект":
-            _hst = ""
-            _hcls = ' class="dev-mak-col-proj"'
         else:
             _hst = ""
-            _hcls = ""
-        _tbl_m.append(f"<th{_hcls}{_hst}>{html_module.escape(h)}</th>")
+        _tbl_m.append(f'<th class="{_hcls}"{_hst}>{html_module.escape(h)}</th>')
     _tbl_m.append("</tr></thead><tbody>")
 
     for _, rr in maket_df.iterrows():
@@ -2806,9 +2882,8 @@ def _render_deviations_maket_table(
         fb = _clean_display_str(rr.get("block")) if "block" in maket_df.columns else ""
         if not fb and "_dt_lvl2_key" in maket_df.columns:
             fb = _clean_display_str(rr.get("_dt_lvl2_key"))
-        stv = _clean_display_str(rr.get("_dt_lvl3_key")) if "_dt_lvl3_key" in maket_df.columns else ""
-        if not stv and building_col and building_col in maket_df.columns:
-            stv = _clean_display_str(rr.get(building_col))
+        stv = _deviations_maket_building_label(rr, maket_df, building_col)
+        tn = _deviations_maket_task_name_label(rr, maket_df)
         pe = rr.get("plan end")
         be = rr.get("base end")
         ed = rr.get("_end_diff")
@@ -2829,17 +2904,18 @@ def _render_deviations_maket_table(
             _c_sp = "#e0e0e0"
 
         _tbl_m.append("<tr>")
-        _tbl_m.append(f"<td>{html_module.escape(tid)}</td>")
+        _tbl_m.append(f'<td class="dev-mak-col-narrow">{html_module.escape(tid)}</td>')
         _tbl_m.append(f'<td class="dev-mak-col-proj">{html_module.escape(pr)}</td>')
-        _tbl_m.append(f"<td>{html_module.escape(fb)}</td>")
-        _tbl_m.append(f"<td>{html_module.escape(stv)}</td>")
-        _tbl_m.append(f"<td{_date_cell_st}>{html_module.escape(be_s)}</td>")
-        _tbl_m.append(f"<td{_date_cell_st}>{html_module.escape(pe_s)}</td>")
+        _tbl_m.append(f'<td class="dev-mak-col-narrow">{html_module.escape(fb)}</td>')
+        _tbl_m.append(f'<td class="dev-mak-col-wide">{html_module.escape(tn)}</td>')
+        _tbl_m.append(f'<td class="dev-mak-col-narrow">{html_module.escape(stv)}</td>')
+        _tbl_m.append(f'<td class="dev-mak-col-date"{_date_cell_st}>{html_module.escape(be_s)}</td>')
+        _tbl_m.append(f'<td class="dev-mak-col-date"{_date_cell_st}>{html_module.escape(pe_s)}</td>')
         if pd.isna(ed):
-            _tbl_m.append(f"<td{_date_cell_st}>—</td>")
+            _tbl_m.append(f'<td class="dev-mak-col-date"{_date_cell_st}>—</td>')
         else:
             _tbl_m.append(
-                f'<td style="background:{_date_bg_m};color:#0b1f33;text-align:right">'
+                f'<td class="dev-mak-col-date" style="background:{_date_bg_m};color:#0b1f33;text-align:right">'
                 f'<span style="color:{_c_sp}!important;font-weight:600">{html_module.escape(ed_s)}</span></td>'
             )
         _bk_tbl = _deviations_reason_bucket_label(rr.get("reason of deviation")) if "reason of deviation" in maket_df.columns else "Прочее"
@@ -2847,11 +2923,11 @@ def _render_deviations_maket_table(
         _rs_esc = html_module.escape(rs)
         if _clr_tbl:
             _tbl_m.append(
-                f'<td style="border-left:4px solid {_clr_tbl};padding-left:6px;color:{_reason_txt};font-weight:600">{_rs_esc}</td>'
+                f'<td class="dev-mak-col-wide" style="border-left:4px solid {_clr_tbl};padding-left:6px;color:{_reason_txt};font-weight:600">{_rs_esc}</td>'
             )
         else:
-            _tbl_m.append(f"<td>{_rs_esc}</td>")
-        _tbl_m.append(f"<td>{html_module.escape(nt)}</td>")
+            _tbl_m.append(f'<td class="dev-mak-col-wide">{_rs_esc}</td>')
+        _tbl_m.append(f'<td class="dev-mak-col-wide">{html_module.escape(nt)}</td>')
         _tbl_m.append("</tr>")
 
     _tbl_m.append("</tbody></table></div>")
@@ -4792,20 +4868,15 @@ def _deviations_msp_gantt_style_block_meta(
         return None, []
 
     def _is_gen_blk(v) -> bool:
-        s = str(v).strip().lower()
-        if not s:
-            return True
-        return bool(re.match(r"^(блок|block)\s*[-_a-zа-я]*\d+$", s))
+        return _is_generic_block_name(v)
 
     _raw_b = sorted(
         d[block_res].dropna().astype(str).map(str.strip).unique().tolist()
     )
     _raw_b = [b for b in _raw_b if b and b.lower() != "nan"]
     _non_gen = [b for b in _raw_b if not _is_gen_blk(b)]
-    _block_vals = _non_gen if _non_gen else _raw_b
-    if block_msp:
-        _block_vals = _raw_b
-    else:
+    _block_vals = _non_gen if _non_gen else []
+    if not block_msp:
         if (
             (not _non_gen)
             and section_res
@@ -5246,10 +5317,13 @@ def _filter_df_by_norm_key_col(df: pd.DataFrame, col: str, selected_label) -> pd
 
 
 def _is_generic_block_name(v) -> bool:
-    """Шаблонные имена вроде «Блок 1», «Блок 2», «Block 3» — удаляются из селектов
-    «Функциональный блок», чтобы не мешать задачам уровня 2 из MSP (R23-03/R23-04)."""
+    """Шаблонные имена вроде «Блок 1», «Block 3», «Суммарная задача» — не ур.2 MSP."""
     s = str(v).strip().lower()
     if not s:
+        return True
+    if "суммар" in s and "задач" in s:
+        return True
+    if s in ("summary task", "summary"):
         return True
     return bool(re.match(r"^(блок|block)\s*[-_a-zа-я]*\d+$", s))
 
@@ -5596,6 +5670,7 @@ def _apply_deviations_combined_filters(
     filtered_df = df.copy()
     if "project name" in filtered_df.columns:
         filtered_df = _project_column_apply_canonical(filtered_df, "project name")
+    filtered_df = _deviations_maket_attach_ancestor_keys(filtered_df)
     selected_project = (
         st.session_state.get("devcombo_project", "Все")
         if "project name" in filtered_df.columns
@@ -5620,9 +5695,6 @@ def _apply_deviations_combined_filters(
         st.session_state.get("dynamics_period", "Месяц")
     )
     filtered_df = _deviations_apply_report_period_filter(
-        filtered_df, period_type_en=_pt_en
-    )
-    filtered_df = _deviations_exclude_future_plan_rows(
         filtered_df, period_type_en=_pt_en
     )
 
@@ -6030,6 +6102,8 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
     ensure_msp_hierarchy_columns(df)
     if "project name" in df.columns:
         df = _project_column_apply_canonical(df.copy(), "project name")
+    if not hide_shared_filters:
+        df = _deviations_maket_attach_ancestor_keys(df)
 
     # При hide_shared_filters фильтры задаются в общем блоке; локальные selectbox не рисуются — задаём значения по умолчанию.
     selected_project = "Все"
@@ -6054,6 +6128,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                 building_col not in getattr(_snap_df, "columns", [])
             ):
                 building_col = _find_deviations_building_column(_snap_df)
+            _snap_df = _deviations_maket_attach_ancestor_keys(_snap_df)
             df = _apply_deviations_combined_filters(_snap_df, building_col=building_col)
 
     if not hide_shared_filters:
@@ -6303,8 +6378,6 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
 
     # ТЗ (макет): диаграммы и таблица — один набор строк (ур. 5, причина, отклонение < 0).
     maket_df = _deviations_maket_scope_df(filtered_df)
-    if not hide_shared_filters:
-        maket_df = _deviations_exclude_future_plan_rows(maket_df)
     if maket_df.empty:
         st.info(
             "По макету нет строк: уровень 5, непустая причина, отклонение окончания < 0."
@@ -8612,10 +8685,7 @@ def dashboard_plan_fact_dates(df):
                 return None
 
             def _pf_dates_is_generic_block_value(v) -> bool:
-                s = str(v).strip().lower()
-                if not s:
-                    return True
-                return bool(re.match(r"^(блок|block)\s*[-_a-zа-я]*\d+$", s))
+                return _is_generic_block_name(v)
 
             _pfd_fb = pf_dates_proj_df
             pf_dates_block_col_msp = _pf_dates_sched_col(_pfd_fb, ["block", "БЛОК", "Блок"])
@@ -8659,10 +8729,8 @@ def dashboard_plan_fact_dates(df):
                 )
                 _raw_b = [b for b in _raw_b if b and b.lower() != "nan"]
                 _non_gen = [b for b in _raw_b if not _pf_dates_is_generic_block_value(b)]
-                _block_vals = _non_gen if _non_gen else _raw_b
-                if pf_dates_block_col_msp:
-                    _block_vals = _raw_b
-                else:
+                _block_vals = _non_gen if _non_gen else []
+                if not pf_dates_block_col_msp:
                     if (
                         (not _non_gen)
                         and pf_dates_section_col_res
@@ -8711,10 +8779,7 @@ def dashboard_plan_fact_dates(df):
             pf_dates_building_filter_mode = "none"  # column | l3_key
             pf_dates_building_filter_col: str | None = None
             def _pf_is_generic_block_name(v) -> bool:
-                s = str(v).strip().lower()
-                if not s:
-                    return True
-                return bool(re.match(r"^(блок|block)\s*[-_a-zа-я]*\d+$", s))
+                return _is_generic_block_name(v)
 
             with fl_main2:
                 if pf_dates_msp_block_values and pf_dates_msp_block_filter_col:
@@ -9104,9 +9169,10 @@ def dashboard_plan_fact_dates(df):
             ["Задача", "task", "Task Name", "Название"],
         )
     )
-    _pf_work = _dev_tasks_build_ancestor_keys(filtered_df, _pf_lvl_col, _pf_task_col)
+    _pf_work = _deviations_maket_enrich_ancestor_keys(filtered_df.copy())
     for _c in ("_dt_lvl2_key", "_dt_lvl3_key", "_dt_lvl_num"):
-        filtered_df[_c] = _pf_work[_c].to_numpy()
+        if _c in _pf_work.columns:
+            filtered_df[_c] = _pf_work[_c].to_numpy()
 
     _covenant_block_ctx = bool(
         force_covenant_ui
@@ -10334,7 +10400,7 @@ def dashboard_plan_fact_dates(df):
                 fdur = np.nan
         if not pd.isna(pdur) and not pd.isna(fdur):
             try:
-                dur_diff = fdur - pdur
+                dur_diff = pdur - fdur
             except Exception:
                 dur_diff = np.nan
 
@@ -10430,8 +10496,8 @@ def dashboard_plan_fact_dates(df):
     out_cols.append("Окончание")
     if tbl_show_end:
         out_cols.append("Отклонение окончания")
-    out_cols.append("Базовая длительность")
     out_cols.append("Длительность")
+    out_cols.append("Базовая длительность")
     if tbl_show_dur:
         out_cols.append("Отклонение длительности")
     if dates_show_reason_notes:
@@ -44489,10 +44555,7 @@ def dashboard_project_schedule_chart(df):
         return None
 
     def _is_generic_block_value(v) -> bool:
-        s = str(v).strip().lower()
-        if not s:
-            return True
-        return bool(re.match(r"^(блок|block)\s*[-_a-zа-я]*\d+$", s))
+        return _is_generic_block_name(v)
 
     def _sched_wbs_tuple(val):
         try:
@@ -46130,7 +46193,7 @@ def dashboard_project_schedule_chart(df):
         _be_d = pd.to_datetime(_tbl_df["base end"], errors="coerce")
         _fdur_num = (_be_d - _bs_d).dt.total_seconds() / 86400.0
     if _pdur_num is not None and _fdur_num is not None:
-        _dur_diff_num = _fdur_num - _pdur_num
+        _dur_diff_num = _pdur_num - _fdur_num
 
     def _fmt_gantt_dur_int(x):
         if x is None or (isinstance(x, float) and pd.isna(x)):
@@ -46181,8 +46244,8 @@ def dashboard_project_schedule_chart(df):
         "Окончание",
         "Базовое окончание",
         "Отклонение окончания",
-        "Базовая длительность",
         "Длительность",
+        "Базовая длительность",
         "Отклонение длительности",
     ])
     if show_reasons:
