@@ -3329,8 +3329,7 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
     _leg_sz = max(13, min(16, 18 - n // 3))
     _use_bottom_legend = n >= 8
     _callout_frac = 0.085
-    # Фиксированный холст — выноски не раздувают блок более чем на ~8%.
-    _side = 900
+    _canvas = 1100 if theme == "light" else 1000
     slice_text: list[str] = []
     slice_pos: list[str] = []
     slice_pull: list[float] = []
@@ -3378,9 +3377,10 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
     if _use_bottom_legend:
         _b_leg = int(88 + n * 15)
         _leg_y = -0.02 - min(0.18, 0.022 * n)
+        _fig_h = _canvas + _b_leg
         fig.update_layout(
-            width=_side,
-            height=_side,
+            width=_canvas,
+            height=_fig_h,
             uniformtext=dict(minsize=11, mode="hide"),
             legend=dict(
                 orientation="h",
@@ -3398,14 +3398,14 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
             paper_bgcolor=_th.chart_bg,
         )
         try:
-            fig.update_traces(domain=dict(x=[0.04, 0.96], y=[0.10, 0.96]))
+            fig.update_traces(domain=dict(x=[0.04, 0.96], y=[0.02, 0.98]))
         except Exception:
             pass
     else:
         r_margin = int(min(420, max(260, 220 + n * 9)))
         fig.update_layout(
-            width=_side,
-            height=_side,
+            width=_canvas,
+            height=_canvas,
             uniformtext=dict(minsize=11, mode="hide"),
             legend=dict(
                 orientation="v",
@@ -3423,7 +3423,7 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
             paper_bgcolor=_th.chart_bg,
         )
         try:
-            fig.update_traces(domain=dict(x=[0.0, 0.70], y=[0.02, 0.98]))
+            fig.update_traces(domain=dict(x=[0.0, 0.76], y=[0.0, 1.0]))
         except Exception:
             pass
     from dashboards.gdrs_theme import apply_gdrs_chart_background
@@ -3547,6 +3547,21 @@ def _gdrs_add_plan_fact_deviation_traces(
         range=[-0.6, _x_end + 0.6],
     )
     return list(labels), "", x_cfg
+
+
+def _gdrs_grouped_bar_x_tick_settings(
+    n_labels: int,
+    *,
+    metrics_axis: bool = False,
+    light: bool = False,
+) -> tuple[int, int]:
+    """Угол подписей оси X и нижний margin для grouped bar План/Факт/Отклонение."""
+    base_margin = 150 if light else 140
+    if metrics_axis or n_labels <= 2:
+        return 0, base_margin
+    if n_labels >= 5:
+        return -90, min(340, base_margin + 60 + n_labels * 8)
+    return -45, min(280, base_margin + 24 + n_labels * 6)
 
 
 def _gdrs_apply_plan_fact_grouped_bar_spacing(
@@ -25038,8 +25053,12 @@ def _gdrs_dynamics_chart_panel(
             for f, p in zip(_fact_s, _plan_s)
         ]
         _n_pts = len(dyn)
-        _lbl_sz = 12 if _n_pts <= 12 else (11 if _n_pts <= 20 else (10 if _n_pts <= 32 else 9))
-        _ann_sz = 11 if _n_pts <= 16 else 9
+        _dyn_fs = 1.5
+        _dyn_sz = lambda base: max(8, int(round(float(base) * _dyn_fs)))
+        _lbl_sz = _dyn_sz(12 if _n_pts <= 12 else (11 if _n_pts <= 20 else (10 if _n_pts <= 32 else 9)))
+        _ann_sz = _dyn_sz(11 if _n_pts <= 16 else 9)
+        _axis_tick_sz = _dyn_sz(11)
+        _axis_title_sz = _dyn_sz(12)
 
         _plan_for_range = _plan_plot.dropna()
         if _plan_for_range.empty:
@@ -25121,7 +25140,10 @@ def _gdrs_dynamics_chart_panel(
             _x_dtick = "D7"
 
         fig.update_layout(
-            title=f"Среднее за день — {sel_vid.lower()} (ресурсы)",
+            title=dict(
+                text=f"Среднее за день — {sel_vid.lower()} (ресурсы)",
+                font=dict(size=_dyn_sz(15), color=_th.text),
+            ),
             plot_bgcolor=_th.chart_bg,
             paper_bgcolor=_th.chart_bg,
             font_color=_th.text,
@@ -25145,9 +25167,24 @@ def _gdrs_dynamics_chart_panel(
             tickangle=-35 if _n_pts > 6 else 0,
             showgrid=True,
             gridcolor=_th.chart_grid,
+            tickfont=dict(size=_axis_tick_sz, color=_th.text),
+            title_font=dict(size=_axis_title_sz, color=_th.text),
+        )
+        fig.update_yaxes(
+            tickfont=dict(size=_axis_tick_sz, color=_th.text),
+            title_font=dict(size=_axis_title_sz, color=_th.text),
         )
         fig = apply_gdrs_chart_background(fig, _th)
-        st.plotly_chart(fig, use_container_width=True)
+        fig.update_xaxes(
+            tickfont=dict(size=_axis_tick_sz, color=_th.text),
+            title_font=dict(size=_axis_title_sz, color=_th.text),
+        )
+        fig.update_yaxes(
+            tickfont=dict(size=_axis_tick_sz, color=_th.text),
+            title_font=dict(size=_axis_title_sz, color=_th.text),
+        )
+        fig.update_layout(legend=dict(font=dict(size=_dyn_sz(12))))
+        _gdrs_st_plotly_chart(st, fig)
         st.caption(
             "План и факт на одной шкале (среднее за день в периоде группировки); "
             "подписи у факта — значение и % от плана."
@@ -25324,7 +25361,59 @@ def _gdrs_deviation_cell_bg_style(raw, *, theme: str = "dark") -> str:
     return gdrs_deviation_cell_bg_style(raw, theme=theme)
 
 
-def _gdrs_summary_table_to_html(df: pd.DataFrame, *, theme: str = "dark") -> str:
+def _gdrs_append_summary_total_row(df: pd.DataFrame) -> pd.DataFrame:
+    """Итоговая строка для сводных таблиц ГДРС (проекты / контрагенты)."""
+    if df is None or df.empty:
+        return df
+    label_cols = {"Контрагент", "Проект"}
+    int_cols = {"План", "Факт", "СКУД", "Отклонение"}
+    row: dict = {}
+    sum_plan: int | None = None
+    sum_fact: int | None = None
+    for col in df.columns:
+        cl = str(col).strip()
+        if cl in label_cols:
+            row[col] = "Итого"
+        elif cl in int_cols:
+            val = int(round(pd.to_numeric(df[col], errors="coerce").fillna(0).sum()))
+            row[col] = val
+            if cl == "План":
+                sum_plan = val
+            elif cl in ("Факт", "СКУД") and sum_fact is None:
+                sum_fact = val
+        elif cl == "Доля, %":
+            row[col] = "100.0%"
+        else:
+            row[col] = ""
+    if "Отклонение %" in df.columns:
+        sp = sum_plan if sum_plan is not None else int(
+            round(pd.to_numeric(df["План"], errors="coerce").fillna(0).sum())
+        )
+        sf = sum_fact if sum_fact is not None else int(
+            round(pd.to_numeric(df.get("Факт", df.get("СКУД", 0)), errors="coerce").fillna(0).sum())
+        )
+        row["Отклонение %"] = ((sf - sp) / sp * 100.0) if sp > 0 else float("nan")
+    return pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+
+
+def _gdrs_st_plotly_chart(st, fig, *, key: str | None = None, **kwargs) -> None:
+    """Plotly в ГДРС: единый config с постоянной панелью инструментов."""
+    cfg = dict(_PLOTLY_CONFIG)
+    extra = kwargs.pop("config", None)
+    if extra:
+        cfg.update(extra)
+    kw = {"use_container_width": True, "config": cfg, **kwargs}
+    if key is not None:
+        kw["key"] = key
+    st.plotly_chart(fig, **kw)
+
+
+def _gdrs_summary_table_to_html(
+    df: pd.DataFrame,
+    *,
+    theme: str = "dark",
+    total_row_index: int | None = None,
+) -> str:
     from dashboards.gdrs_theme import get_gdrs_theme
 
     _th = get_gdrs_theme(theme)
@@ -25350,6 +25439,8 @@ def _gdrs_summary_table_to_html(df: pd.DataFrame, *, theme: str = "dark") -> str
         f"#{wrap_id} td.gdrs-u, #{wrap_id} td.gdrs-u span {{ color:{_th.bad} !important; font-weight:800; }}"
         f"#{wrap_id} td.gdrs-o, #{wrap_id} td.gdrs-o span {{ color:{_th.good} !important; font-weight:800; }}"
         f"#{wrap_id} td.gdrs-z, #{wrap_id} td.gdrs-z span {{ color:{_th.neutral} !important; }}"
+        f"#{wrap_id} tr.gdrs-total-row td {{ background-color:{_th.table_header_bg}; "
+        f"border-top:2px solid {_th.border}; font-weight:800; }}"
         f"</style>",
         '<table class="bi-sortable-table"><thead><tr>',
     ]
@@ -25362,8 +25453,11 @@ def _gdrs_summary_table_to_html(df: pd.DataFrame, *, theme: str = "dark") -> str
         )
     parts.append("</tr></thead><tbody>")
     _int_cols = {"План", "Факт", "СКУД"}
-    for _, row in df.iterrows():
-        parts.append("<tr>")
+    for ri, (_, row) in enumerate(df.iterrows()):
+        _tr_cls = ""
+        if total_row_index is not None and ri == total_row_index:
+            _tr_cls = ' class="gdrs-total-row bd-total-row"'
+        parts.append(f"<tr{_tr_cls}>")
         for col in df.columns:
             val = row[col]
             cl = str(col).strip()
@@ -25402,9 +25496,15 @@ def _gdrs_render_plan_fact_summary_table(
         st.info("Нет данных для таблицы.")
         return
     gdrs_render_table_subheader(st, table_title, theme=theme)
+    display_with_total = _gdrs_append_summary_total_row(display_df)
+    total_ix = len(display_with_total) - 1
     render_report_html_table(
-        _gdrs_summary_table_to_html(display_df, theme=theme),
-        export_df=display_df,
+        _gdrs_summary_table_to_html(
+            display_with_total,
+            theme=theme,
+            total_row_index=total_ix,
+        ),
+        export_df=display_with_total,
         file_stem=_export_file_stem(table_title),
         key_prefix=f"gdrs_sum_{abs(id(display_df))}",
     )
@@ -25865,9 +25965,9 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 metrics_axis=_metrics_axis,
                 fixed_slots=_fixed_bar_slots,
             )
-            st.plotly_chart(
+            _gdrs_st_plotly_chart(
+                st,
                 fig_pf,
-                use_container_width=True,
                 key=f"gdrs_proj_bar_{_gdrs_key_suffix}_{_plan_agg}_{_skud_agg}",
             )
         except Exception as _e:
@@ -26029,7 +26129,6 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         try:
             import plotly.graph_objects as _go
             _bar_axis_sz = 22 if theme == "light" else 14
-            _bar_margin_b = 150 if theme == "light" else 140
             _ctr_labels = chart_df["Контрагент"].astype(str).tolist()
             _ctr_plan = chart_df["План"].fillna(0).astype(int).tolist()
             _ctr_fact = chart_df["Факт"].fillna(0).astype(int).tolist()
@@ -26051,9 +26150,16 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             )
             _ctr_metrics_axis = len(_ctr_labels) == 1
             _ctr_fixed_slots = _ctr_x_cfg is not None
+            _ctr_tickangle, _bar_margin_b = _gdrs_grouped_bar_x_tick_settings(
+                len(_ctr_labels),
+                metrics_axis=_ctr_metrics_axis,
+                light=(theme == "light"),
+            )
             _ctr_xaxis_kw: dict[str, Any] = dict(
-                tickangle=0 if (_ctr_metrics_axis or _ctr_fixed_slots) else -45,
+                tickangle=_ctr_tickangle,
                 tickfont=dict(size=_bar_axis_sz, color=_th.text, family="Inter, system-ui, sans-serif"),
+                automargin=True,
+                ticklabelstandoff=10 if _ctr_tickangle == 0 else 6,
             )
             if _ctr_x_cfg:
                 _ctr_xaxis_kw.update(_ctr_x_cfg)
@@ -26073,6 +26179,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             )
             fig2 = apply_gdrs_chart_background(fig2, _th, skip_uniformtext=True)
             fig2.update_xaxes(**_ctr_xaxis_kw)
+            fig2.update_layout(margin=dict(l=56, r=24, t=72, b=_bar_margin_b))
             fig2 = gdrs_apply_grouped_bar_labels(
                 fig2,
                 _th,
@@ -26089,9 +26196,9 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
                 metrics_axis=_ctr_metrics_axis,
                 fixed_slots=_ctr_fixed_slots,
             )
-            st.plotly_chart(
+            _gdrs_st_plotly_chart(
+                st,
                 fig2,
-                use_container_width=True,
                 key=f"gdrs_ctr_bar_{_gdrs_key_suffix}_{_plan_agg}_{_skud_agg}",
             )
         except Exception as _e:
@@ -26141,7 +26248,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
     else:
         try:
             fig3 = _gdrs_pie_contractors_figure(pie_df, theme=theme)
-            st.plotly_chart(fig3, use_container_width=True)
+            _gdrs_st_plotly_chart(st, fig3)
         except Exception as _e:
             st.warning(f"Plotly недоступен: {_e}")
         _gdrs_render_plan_fact_summary_table(
