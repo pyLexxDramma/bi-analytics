@@ -34,10 +34,20 @@ _DASHBOARD_REQUIRED_COLUMNS: Dict[str, Dict[str, List[str]]] = {
         "date": ["plan start", "plan end", "base start", "base end"],
         "numeric": [],
     },
+    "БДДС (расходы)": {
+        "required": ["project name", "plan end"],
+        "date": ["plan start", "plan end"],
+        "numeric": ["budget plan", "budget fact"],
+    },
     "БДДС": {
         "required": ["project name", "plan end"],
         "date": ["plan start", "plan end"],
         "numeric": ["budget plan", "budget fact"],
+    },
+    "БДР (расходы)": {
+        "required": ["Период", "Проект", "Сумма"],
+        "date": ["Период"],
+        "numeric": ["Сумма"],
     },
     "БДР": {
         "required": ["Период", "Проект", "Сумма"],
@@ -50,6 +60,11 @@ _DASHBOARD_REQUIRED_COLUMNS: Dict[str, Dict[str, List[str]]] = {
         "numeric": ["budget plan", "budget fact"],
     },
     "Утвержденный бюджет": {
+        "required": ["Период", "Проект", "Сумма"],
+        "date": ["Период"],
+        "numeric": ["Сумма"],
+    },
+    "БДДС расходы (план, факт, уточненный план)": {
         "required": ["Период", "Проект", "Сумма"],
         "date": ["Период"],
         "numeric": ["Сумма"],
