@@ -260,7 +260,7 @@ def sync_light_preview_theme(st) -> None:
 (function(){
   var IS_LIGHT = __IS_LIGHT__;
   var LIGHT_STYLE_IDS = [__STYLE_IDS__];
-  var HANDLE = "__BI_LIGHT_WIDGETS_FIX_V18__";
+  var HANDLE = "__BI_LIGHT_WIDGETS_FIX_V19__";
   function resolveDoc() {
     try {
       if (window.parent && window.parent.document && window.parent.document.body)
@@ -333,8 +333,8 @@ def sync_light_preview_theme(st) -> None:
   setLightStyleTags(true);
   doc.documentElement.classList.add("gdrs-light-preview");
   doc.body.classList.add("gdrs-light-preview");
-  var cssId = "bi-light-filters-live-css-v14";
-  ["bi-light-filters-live-css", "bi-light-filters-live-css-v2", "bi-light-filters-live-css-v3", "bi-light-filters-live-css-v4", "bi-light-filters-live-css-v5", "bi-light-filters-live-css-v6", "bi-light-filters-live-css-v7", "bi-light-filters-live-css-v8", "bi-light-filters-live-css-v9", "bi-light-filters-live-css-v10", "bi-light-filters-live-css-v11", "bi-light-filters-live-css-v12", "bi-light-filters-live-css-v13"].forEach(function(id) {
+  var cssId = "bi-light-filters-live-css-v15";
+  ["bi-light-filters-live-css", "bi-light-filters-live-css-v2", "bi-light-filters-live-css-v3", "bi-light-filters-live-css-v4", "bi-light-filters-live-css-v5", "bi-light-filters-live-css-v6", "bi-light-filters-live-css-v7", "bi-light-filters-live-css-v8", "bi-light-filters-live-css-v9", "bi-light-filters-live-css-v10", "bi-light-filters-live-css-v11", "bi-light-filters-live-css-v12", "bi-light-filters-live-css-v13", "bi-light-filters-live-css-v14"].forEach(function(id) {
     var node = doc.getElementById(id);
     if (node) node.remove();
   });
@@ -437,6 +437,15 @@ def sync_light_preview_theme(st) -> None:
       "background:#f3f4f6!important;color:#111827!important;}",
       "html body.gdrs-light-preview div[data-baseweb=\\"popover\\"] [data-baseweb=\\"calendar\\"] [role=\\"gridcell\\"][data-bi-selected=\\"1\\"]>div:first-child {",
       "background:#2563eb!important;color:#fff!important;-webkit-text-fill-color:#fff!important;}",
+      "html body.gdrs-light-preview [data-testid=\\"stSidebar\\"] button[data-testid=\\"stBaseButton-primary\\"],",
+      "html body.gdrs-light-preview [data-testid=\\"stSidebar\\"] [data-testid=\\"stButton\\"] button[data-testid=\\"stBaseButton-primary\\"] {",
+      "background:#1d4ed8!important;background-color:#1d4ed8!important;",
+      "color:#ffffff!important;-webkit-text-fill-color:#ffffff!important;",
+      "border:2px solid #1e40af!important;border-left:6px solid #1e3a8a!important;",
+      "font-weight:700!important;box-shadow:0 2px 8px rgba(29,78,216,0.45)!important;}",
+      "html body.gdrs-light-preview [data-testid=\\"stSidebar\\"] button[data-testid=\\"stBaseButton-primary\\"] *,",
+      "html body.gdrs-light-preview [data-testid=\\"stSidebar\\"] [data-testid=\\"stButton\\"] button[data-testid=\\"stBaseButton-primary\\"] * {",
+      "color:#ffffff!important;-webkit-text-fill-color:#ffffff!important;}",
     ].join("\\n");
     (doc.head || doc.body).appendChild(stEl);
   }

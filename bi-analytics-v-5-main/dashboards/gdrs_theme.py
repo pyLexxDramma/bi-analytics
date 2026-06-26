@@ -230,6 +230,44 @@ html body .main [data-testid="stMarkdownContainer"] h1 * {{
   font-size: 1.85rem !important;
   opacity: 1 !important;
 }}
+/* Отступы заголовков и фильтров — style.css на превью не грузится */
+html body.gdrs-light-preview [data-testid="stMain"],
+html body.gdrs-light-preview [data-testid="stMainBlockContainer"] {{
+  --bi-filter-rhythm: 8px;
+  --bi-page-top-gap: 8px;
+}}
+html body.gdrs-light-preview [data-testid="stMainBlockContainer"] {{
+  padding-top: var(--bi-page-top-gap) !important;
+}}
+html body.gdrs-light-preview [data-testid="stMainBlockContainer"] > div[data-testid="stVerticalBlock"] {{
+  gap: var(--bi-filter-rhythm) !important;
+  row-gap: var(--bi-filter-rhythm) !important;
+}}
+html body.gdrs-light-preview [data-testid="stMainBlockContainer"] [data-testid="stHeadingWithActionElements"] {{
+  margin-bottom: var(--bi-filter-rhythm) !important;
+  padding-bottom: 0 !important;
+}}
+html body.gdrs-light-preview h1.main-header,
+html body.gdrs-light-preview h1.bi-light-preview-heading,
+html body.gdrs-light-preview [data-testid="stMainBlockContainer"] h1.main-header {{
+  margin-top: 0 !important;
+  margin-bottom: var(--bi-filter-rhythm) !important;
+}}
+html body.gdrs-light-preview [data-testid="stMainBlockContainer"] [data-testid="stExpander"] {{
+  margin-top: 0 !important;
+  margin-bottom: var(--bi-filter-rhythm) !important;
+}}
+html body.gdrs-light-preview [data-testid="stMainBlockContainer"] [data-testid="stExpander"] summary {{
+  padding: 5px 14px !important;
+}}
+html body.gdrs-light-preview [data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] {{
+  padding: var(--bi-filter-rhythm) 16px var(--bi-filter-rhythm) !important;
+}}
+html body.gdrs-light-preview [data-testid="stMainBlockContainer"] [data-testid="stExpander"] details [data-testid="stVerticalBlock"],
+html body.gdrs-light-preview [data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] [data-testid="stVerticalBlock"] {{
+  gap: var(--bi-filter-rhythm) !important;
+  row-gap: var(--bi-filter-rhythm) !important;
+}}
 html body .main h2,
 html body .main h3,
 html body section.main h2,
@@ -596,19 +634,65 @@ html body [data-testid="stSidebar"] [data-testid="stLinkButton"] button:hover {{
   color: {g_text} !important;
   border-color: #94a3b8 !important;
 }}
-html body [data-testid="stSidebar"] .stButton > button[kind="primary"],
-html body [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"] {{
-  background-color: {g_hover} !important;
+html body.gdrs-light-preview [data-testid="stSidebar"] .stButton > button[kind="primary"],
+html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"],
+html body.gdrs-light-preview [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"],
+html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stBaseButton-primary"],
+html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stButton"] button[data-testid="stBaseButton-primary"] {{
+  background: #1d4ed8 !important;
+  background-color: #1d4ed8 !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+  border: 2px solid #1e40af !important;
+  border-left: 6px solid #1e3a8a !important;
+  font-weight: 700 !important;
+  box-shadow: 0 2px 8px rgba(29, 78, 216, 0.45) !important;
+}}
+html body.gdrs-light-preview [data-testid="stSidebar"] .stButton > button[kind="primary"] *,
+html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"] *,
+html body.gdrs-light-preview [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] *,
+html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stBaseButton-primary"] *,
+html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stButton"] button[data-testid="stBaseButton-primary"] * {{
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}}
+html body.gdrs-light-preview [data-testid="stSidebar"] .stButton > button[kind="primary"]:hover,
+html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"]:hover,
+html body.gdrs-light-preview [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"]:hover,
+html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stBaseButton-primary"]:hover,
+html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stButton"] button[data-testid="stBaseButton-primary"]:hover {{
+  background: #1e40af !important;
+  background-color: #1e40af !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+  border-color: #1e3a8a !important;
+}}
+html body.gdrs-light-preview [data-testid="stSidebar"] .stButton > button[kind="primary"]:disabled,
+html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"]:disabled,
+html body.gdrs-light-preview [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"]:disabled,
+html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stBaseButton-primary"]:disabled,
+html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stButton"] button[data-testid="stBaseButton-primary"]:disabled {{
+  background: #1d4ed8 !important;
+  background-color: #1d4ed8 !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+  border: 2px solid #1e40af !important;
+  border-left: 6px solid #1e3a8a !important;
+  opacity: 1 !important;
+  cursor: default !important;
+  box-shadow: 0 2px 8px rgba(29, 78, 216, 0.45) !important;
+}}
+html body.gdrs-light-preview [data-testid="stSidebar"] button[data-testid="stBaseButton-secondary"],
+html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stBaseButton-secondary"],
+html body.gdrs-light-preview [data-testid="stSidebar"] .stButton > button[kind="secondary"],
+html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stButton"] button[kind="secondary"],
+html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stButton"] button[data-testid="stBaseButton-secondary"] {{
+  background-color: {g_white} !important;
   color: {g_text} !important;
   -webkit-text-fill-color: {g_text} !important;
-  border: 1px solid #94a3b8 !important;
-  font-weight: 700 !important;
-}}
-html body [data-testid="stSidebar"] .stButton > button[kind="primary"]:hover,
-html body [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"]:hover {{
-  background-color: #d1d5db !important;
-  color: {g_text} !important;
-  border-color: #64748b !important;
+  border: 1px solid {g_border} !important;
+  font-weight: 600 !important;
+  box-shadow: none !important;
 }}
 
 /* Заголовки графиков/таблиц (st.subheader, emotion-классы Streamlit) */
@@ -751,7 +835,7 @@ html body .gdrs-loading-banner {{
   display: flex;
   align-items: center;
   gap: 0.65rem;
-  margin: 0 0 1rem 0;
+  margin: 0 0 var(--bi-filter-rhythm, 8px) 0;
   padding: 0.65rem 1rem;
   background: #eff6ff;
   border: 1px solid #93c5fd;

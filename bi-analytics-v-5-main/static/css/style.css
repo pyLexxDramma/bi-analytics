@@ -37,7 +37,7 @@ div[data-testid="collapsedControl"] {
     font-size: 2.5rem;
     font-weight: bold;
     color: #1f77b4;
-    margin-bottom: 16px;
+    margin-bottom: 8px;
 }
 .metric-card {
     background-color: #262730;
@@ -1098,7 +1098,15 @@ div[data-testid="stHtml"]:has(.gantt-schedule-scroll-wrap) {
 
 [data-testid="stMain"],
 [data-testid="stMainBlockContainer"] {
-    --bi-filter-rhythm: 16px;
+    --bi-filter-rhythm: 8px;
+    --bi-page-top-gap: 8px;
+}
+[data-testid="stMainBlockContainer"] {
+    padding-top: var(--bi-page-top-gap) !important;
+}
+[data-testid="stMainBlockContainer"] > div[data-testid="stVerticalBlock"] {
+    gap: var(--bi-filter-rhythm) !important;
+    row-gap: var(--bi-filter-rhythm) !important;
 }
 [data-testid="stMain"] [data-testid="stHeadingWithActionElements"],
 [data-testid="stMainBlockContainer"] [data-testid="stHeadingWithActionElements"] {
@@ -1117,7 +1125,7 @@ div[data-testid="stHtml"]:has(.gantt-schedule-scroll-wrap) {
 }
 [data-testid="stMain"] [data-testid="stExpander"] summary,
 [data-testid="stMainBlockContainer"] [data-testid="stExpander"] summary {
-    padding: 10px 14px !important;
+    padding: 5px 14px !important;
 }
 [data-testid="stMain"] [data-testid="stExpander"] [data-testid="stExpanderDetails"],
 [data-testid="stMainBlockContainer"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] {
@@ -1479,6 +1487,47 @@ p.sidebar-section-title {
 }
 section[data-testid="stSidebar"] div[data-testid="stMarkdownContainer"] p.sidebar-section-title {
     color: rgba(232, 238, 245, 0.72) !important;
+}
+
+/* Sidebar: выделение активного пункта меню — только тёмная тема */
+html body:not(.gdrs-light-preview) section[data-testid="stSidebar"] .stButton > button[kind="primary"],
+html body:not(.gdrs-light-preview) section[data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"],
+html body:not(.gdrs-light-preview) section[data-testid="stSidebar"] button[data-testid="stBaseButton-primary"],
+html body:not(.gdrs-light-preview) section[data-testid="stSidebar"] [data-testid="stBaseButton-primary"] {
+    background-color: rgba(41, 182, 246, 0.38) !important;
+    color: #ffffff !important;
+    border: 1px solid #29b6f6 !important;
+    border-left: 5px solid #29b6f6 !important;
+    font-weight: 700 !important;
+    box-shadow: 0 1px 4px rgba(41, 182, 246, 0.35), inset 0 0 0 1px rgba(41, 182, 246, 0.2) !important;
+}
+html body:not(.gdrs-light-preview) section[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover,
+html body:not(.gdrs-light-preview) section[data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"]:hover,
+html body:not(.gdrs-light-preview) section[data-testid="stSidebar"] button[data-testid="stBaseButton-primary"]:hover,
+html body:not(.gdrs-light-preview) section[data-testid="stSidebar"] [data-testid="stBaseButton-primary"]:hover {
+    background-color: rgba(41, 182, 246, 0.48) !important;
+    border-color: #4fc3f7 !important;
+    color: #ffffff !important;
+}
+html body:not(.gdrs-light-preview) section[data-testid="stSidebar"] .stButton > button[kind="primary"]:disabled,
+html body:not(.gdrs-light-preview) section[data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"]:disabled,
+html body:not(.gdrs-light-preview) section[data-testid="stSidebar"] button[data-testid="stBaseButton-primary"]:disabled,
+html body:not(.gdrs-light-preview) section[data-testid="stSidebar"] [data-testid="stBaseButton-primary"]:disabled {
+    background-color: rgba(41, 182, 246, 0.38) !important;
+    color: #ffffff !important;
+    border: 1px solid #29b6f6 !important;
+    border-left: 5px solid #29b6f6 !important;
+    opacity: 1 !important;
+    cursor: default !important;
+}
+html body:not(.gdrs-light-preview) section[data-testid="stSidebar"] .stButton > button[kind="secondary"],
+html body:not(.gdrs-light-preview) section[data-testid="stSidebar"] [data-testid="stButton"] button[kind="secondary"],
+html body:not(.gdrs-light-preview) section[data-testid="stSidebar"] button[data-testid="stBaseButton-secondary"],
+html body:not(.gdrs-light-preview) section[data-testid="stSidebar"] [data-testid="stBaseButton-secondary"] {
+    background-color: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid rgba(255, 255, 255, 0.16) !important;
+    font-weight: 500 !important;
+    box-shadow: none !important;
 }
 
 /* Горизонтальная прокрутка при масштабировании страницы/узком окне (все отчёты) */

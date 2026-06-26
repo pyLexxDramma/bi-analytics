@@ -855,6 +855,45 @@ def mark_sidebar_categories_collapsed_on_login() -> None:
                 del st.session_state[key]
 
 
+def _inject_sidebar_active_menu_css(st, current_dashboard: str) -> None:
+    """Светлое превью: явное выделение активного пункта меню (st-key + primary)."""
+    dash = str(current_dashboard or "").strip()
+    if not dash:
+        return
+    try:
+        from dashboards.light_theme import is_light_preview_report
+
+        if not is_light_preview_report(dash):
+            return
+    except Exception:
+        return
+    key = f"menu_report_{dash}"
+    esc = key.replace("\\", "\\\\").replace('"', '\\"')
+    st.markdown(
+        f"""
+        <style id="bi-sidebar-active-menu">
+        html body.gdrs-light-preview [data-testid="stSidebar"] div[class*="{esc}"] button,
+        html body.gdrs-light-preview [data-testid="stSidebar"] div[class*="{esc}"] [data-testid="stBaseButton-primary"] {{
+            background: #1d4ed8 !important;
+            background-color: #1d4ed8 !important;
+            color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+            border: 2px solid #1e40af !important;
+            border-left: 6px solid #1e3a8a !important;
+            font-weight: 700 !important;
+            box-shadow: 0 2px 8px rgba(29, 78, 216, 0.45) !important;
+        }}
+        html body.gdrs-light-preview [data-testid="stSidebar"] div[class*="{esc}"] button *,
+        html body.gdrs-light-preview [data-testid="stSidebar"] div[class*="{esc}"] [data-testid="stBaseButton-primary"] * {{
+            color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool = True):
     """
     Отображение боковой панели с меню навигации
@@ -950,6 +989,7 @@ def render_sidebar_menu(current_page: str = "reports", *, include_footer: bool =
             st.markdown('<p class="sidebar-section-title">Отчёты</p>', unsafe_allow_html=True)
             st.markdown("---")
             current_dashboard = st.session_state.get("current_dashboard", "")
+            _inject_sidebar_active_menu_css(st, current_dashboard)
             _collapse_cats = st.session_state.get(SIDEBAR_COLLAPSE_CATEGORIES_KEY, False)
             for cat_name, reports in get_report_categories():
                 visible = filter_reports_for_role(user["role"], list(reports))
