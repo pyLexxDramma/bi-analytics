@@ -271,20 +271,12 @@ def run_ftp_sync_to_web(*, log_prefix: str = "[auto_ingest]") -> dict | None:
         safe_stderr_log(f"{log_prefix} FTP host/user not set → пропуск FTP-sync")
         return None
     try:
-        from ftp_sync import sync_ftp_to_web
+        from ftp_sync import log_ftp_sync_errors, sync_ftp_to_web
         from web_loader import get_web_dir
 
         web_dir = get_web_dir()
         result = sync_ftp_to_web(web_dir, use_interprocess_lock=False)
-        downloaded = len(result.get("downloaded", []))
-        same = result.get("skipped_same_size", 0)
-        errs = result.get("errors", [])
-        safe_stderr_log(
-            f"{log_prefix} ftp_sync: downloaded={downloaded}, "
-            f"skipped_same_size={same}, errors={len(errs)}"
-        )
-        for e in errs[:5]:
-            safe_stderr_log(f"{log_prefix} ftp err: {e}")
+        log_ftp_sync_errors(result, log_fn=safe_stderr_log, log_prefix=log_prefix)
         return result
     except Exception as e:
         safe_stderr_log(f"{log_prefix} ftp_sync exception: {e}")
