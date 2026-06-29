@@ -37354,6 +37354,7 @@ def _forecast_financier_status_dataset(
     abc_source,
     row_modes,
     monthly_snapshot: Optional[pd.DataFrame] = None,
+    dev_base: str = "БДДС план",
 ) -> pd.DataFrame:
     """Строки для таблицы «Статус»: план/факт из оборотов 1С, прогноз после правок лотов."""
     rows: List[dict] = []
@@ -37496,7 +37497,12 @@ def _forecast_financier_status_dataset(
     out["БДДС (план), млн"] = out["plan_rub"] / 1e6
     out["БДДС (факт), млн"] = out["fact_rub"] / 1e6
     out["БДДС (прогноз), млн"] = out["forecast_rub"] / 1e6
-    out["Отклонение по сумме, млн"] = out["БДДС (прогноз), млн"] - out["БДДС (план), млн"]
+    _base_mln = (
+        out["БДДС (факт), млн"]
+        if str(dev_base).strip() == "БДДС факт"
+        else out["БДДС (план), млн"]
+    )
+    out["Отклонение по сумме, млн"] = out["БДДС (прогноз), млн"] - _base_mln
     out["Статус для финансиста"] = out["Отклонение по сумме, млн"].map(_stat_txt)
     # Сортировка хронологическая по периоду (а не по строке «Месяц»).
     out["_period_sort"] = out["_period"].map(_forecast_norm_month_period)
@@ -38463,7 +38469,11 @@ def dashboard_forecast_budget(df):
 
     render_table_subheader(st, _fc_name, filters_suffix=_fc_dates)
     _period_hdr = period_label
-    _dev_col_fc = "Отклонение (план − прогноз), млн руб."
+    _dev_col_fc = (
+        "Отклонение (факт − прогноз), млн руб."
+        if _dev_base_fc == "БДДС факт"
+        else "Отклонение (план − прогноз), млн руб."
+    )
     try:
         _tot_fact_mln = float(pd.to_numeric(mf_tot_snapshot["bdds_fact"], errors="coerce").fillna(0.0).sum() / 1e6)
     except Exception:
@@ -38574,6 +38584,7 @@ def dashboard_forecast_budget(df):
         abc_source=_fc_abc_src,
         row_modes=_fc_row_modes,
         monthly_snapshot=mf_tot_snapshot if not _many_projects_fc else None,
+        dev_base=_dev_base_fc,
     )
     st.subheader("Статус")
     render_report_html_table(
