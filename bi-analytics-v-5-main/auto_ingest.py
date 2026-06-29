@@ -444,12 +444,40 @@ def schedule_ftp_reload_after_login(session_state) -> None:
         session_state.pop(_k, None)
 
 
+def ftp_sync_file_error_lines(ftp_res: dict | None) -> tuple[list[str], list[str]]:
+    """(критичные errors, временные transient_errors) из результата sync_ftp_to_web."""
+    if not isinstance(ftp_res, dict):
+        return [], []
+    critical = [str(x) for x in (ftp_res.get("errors") or []) if str(x).strip()]
+    transient = [str(x) for x in (ftp_res.get("transient_errors") or []) if str(x).strip()]
+    return critical, transient
+
+
+def _render_ftp_error_list(st, messages: list[str], *, kind: str = "error") -> None:
+    """Вывод списка ошибок FTP в UI (до 10 inline, остальное — expander)."""
+    if not messages:
+        return
+    show = st.error if kind == "error" else st.warning
+    for msg in messages[:10]:
+        show(msg)
+    if len(messages) > 10:
+        with st.expander(f"Ещё {len(messages) - 10} ошибок FTP", expanded=False):
+            for msg in messages[10:]:
+                st.text(msg)
+
+
 def render_ftp_sync_download_notice(st, ftp_res: dict | None) -> None:
-    """Предупреждение/инфо после FTP-sync: сколько и какие файлы скачаны."""
+    """Предупреждение/инфо после FTP-sync: ошибки по файлам и список скачанных."""
     if not isinstance(ftp_res, dict):
         return
-    for err in (ftp_res.get("errors") or [])[:5]:
-        st.warning(f"FTP: {err}")
+    critical, transient = ftp_sync_file_error_lines(ftp_res)
+    _render_ftp_error_list(st, critical, kind="error")
+    if transient:
+        st.caption(
+            "Временные ошибки: файл занят на FTP (1С/MSP перезаписывает). "
+            "Локальная копия сохранена — повторите sync позже."
+        )
+        _render_ftp_error_list(st, transient, kind="warning")
     downloaded = [str(x) for x in (ftp_res.get("downloaded") or [])]
     same = int(ftp_res.get("skipped_same_size") or 0)
     if downloaded:
