@@ -346,6 +346,16 @@ def _render_data_pull_banner() -> None:
                 "Не удалось подтянуть данные с сервера (FTP)."
                 + (f" {reason}" if reason else "")
             )
+            _ftp_res = st.session_state.get("last_ftp_sync_result")
+            if isinstance(_ftp_res, dict):
+                try:
+                    from auto_ingest import ftp_sync_file_error_lines
+
+                    _crit, _ = ftp_sync_file_error_lines(_ftp_res)
+                    for _line in _crit[:5]:
+                        problems.append(_line)
+                except Exception:
+                    pass
         # (б) данные после загрузки: пусто или контракт данных не выполнен
         def _has_loaded_data() -> bool:
             for _k in (
@@ -1289,11 +1299,18 @@ def main():
                 if isinstance(_ftp_res, dict):
                     st.session_state["last_ftp_sync_result"] = _ftp_res
                     _errs = _ftp_res.get("errors") or []
+                    _trans = _ftp_res.get("transient_errors") or []
                     if _errs:
                         _ftp_ok = False
                         _ftp_reason = (
                             f"FTP вернул ошибки ({len(_errs)}): "
                             + "; ".join(str(e) for e in _errs[:3])
+                        )
+                    elif _trans:
+                        _ftp_ok = True
+                        _ftp_reason = (
+                            f"FTP: временные ошибки ({len(_trans)}): "
+                            + "; ".join(str(e) for e in _trans[:3])
                         )
                     else:
                         _ftp_ok = True

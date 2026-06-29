@@ -175,14 +175,19 @@ def _render_ftp_sidebar_controls(st: Any) -> None:
         if ftp_res.get("errors"):
             for e in ftp_res["errors"]:
                 st.error(str(e))
-        else:
-            with st.spinner("web/ → БД…"):
-                result = load_all_from_web()
-            st.session_state["last_load_result"] = result
-            st.cache_data.clear()
-            st.session_state.pop("web_version_id", None)
-            st.session_state["_pending_web_folder_load"] = False
-            st.rerun()
+        if ftp_res.get("transient_errors"):
+            st.caption("Временные ошибки FTP (файл занят на сервере):")
+            for e in ftp_res["transient_errors"]:
+                st.warning(str(e))
+        if ftp_res.get("errors") or ftp_res.get("transient_errors"):
+            return
+        with st.spinner("web/ → БД…"):
+            result = load_all_from_web()
+        st.session_state["last_load_result"] = result
+        st.cache_data.clear()
+        st.session_state.pop("web_version_id", None)
+        st.session_state["_pending_web_folder_load"] = False
+        st.rerun()
 
 
 def _render_version_sidebar_compact(st: Any) -> None:
