@@ -38260,11 +38260,8 @@ def dashboard_forecast_budget(df):
         )
         mf_fc = mf_fc.loc[_keep_m].reset_index(drop=True)
 
-    mf_fc = _forecast_resample_monthly_dataframe(mf_fc, period_type_en)
-    if mf_fc is None or mf_fc.empty:
-        st.info("Нет данных после агрегирования по выбранному периоду.")
-        return
-
+    # Обороты 1С (план/факт) накладываем на ПОМЕСЯЧНЫЙ ряд до агрегации по периоду,
+    # иначе при группировке «Квартал»/«Год» помесячный overlay заново дробит периоды на месяцы.
     if _many_projects_fc:
         _labs_turn_main = sorted(
             {_clean_display_str(x) for x in filtered_scope[project_col].dropna().unique() if str(x).strip()},
@@ -38278,6 +38275,11 @@ def dashboard_forecast_budget(df):
         date_to=_cal_to_eff,
     )
     mf_fc = _forecast_overlay_turnover_on_monthly(mf_fc, _turn_main)
+
+    mf_fc = _forecast_resample_monthly_dataframe(mf_fc, period_type_en)
+    if mf_fc is None or mf_fc.empty:
+        st.info("Нет данных после агрегирования по выбранному периоду.")
+        return
 
     mf_tot_snapshot = mf_fc.copy()
     if _view_type_fc == "Накопительно":
