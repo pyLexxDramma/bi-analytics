@@ -5683,10 +5683,13 @@ def _deviations_filter_df_by_period_range(
         _mask = _pe.notna()
         if not _mask.any():
             return filtered_df
-        _start_m = _start_dt.to_period("M")
-        _end_m = _end_dt.to_period("M")
-        _pe_m = _pe.loc[_mask].dt.to_period("M")
-        _keep = (_pe_m >= _start_m) & (_pe_m <= _end_m)
+        # Срез по фактической дате (день), а не по месяцу: иначе выбор 05.05/19.05
+        # внутри мая давал бы тот же результат, что и весь месяц — число отклонений
+        # не пересчитывалось бы.
+        _start_day = _start_dt.normalize()
+        _end_day = _end_dt.normalize() + pd.Timedelta(days=1) - pd.Timedelta(nanoseconds=1)
+        _pe_day = _pe.loc[_mask]
+        _keep = (_pe_day >= _start_day) & (_pe_day <= _end_day)
         out_mask = pd.Series(False, index=filtered_df.index)
         out_mask.loc[_mask] = _keep
         return filtered_df[out_mask].copy()
