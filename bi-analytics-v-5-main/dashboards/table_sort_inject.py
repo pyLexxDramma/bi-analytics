@@ -726,6 +726,17 @@ _COMPACT_FRAME_FIT_JS = r"""
         }
       }
 
+      var gdrsSum = document.querySelector(".gdrs-summary-table-wrap");
+      if (gdrsSum) {
+        var gTbl = gdrsSum.querySelector("table");
+        var gContent = gTbl ? Math.ceil(gTbl.getBoundingClientRect().height)
+                            : Math.ceil(gdrsSum.scrollHeight || 0);
+        var ghSum = Math.max(120, gContent + 24);
+        if (ghSum > 0) {
+          window.parent.postMessage({ type: "streamlit:setFrameHeight", height: ghSum }, "*");
+          return;
+        }
+      }
       var ganttScroll = document.querySelector(".gantt-schedule-scroll-wrap");
       if (ganttScroll) {
         if (typeof window.__fitGanttTaskColumns === "function") {
@@ -1695,8 +1706,8 @@ def _estimate_html_block_height(html: str) -> int:
             data_rows = max(0, html.count("<tr") - 1)
     if "gdrs-summary-table-wrap" in html_l:
         thead_h = 76
-        row_h = 44
-        extra = 40
+        row_h = 54
+        extra = 64
         cap = 1400
     elif "gdrs-matrix-table" in html_l or "gdrs-table-wrap" in html_l:
         thead_h = 132
@@ -1855,6 +1866,7 @@ def _build_sortable_html_document(html: str) -> str:
                 or "dev-reasons-wrap" in html_l
                 or "fc-table-scroll-wrap" in html_l
                 or "pf-dates-scroll-wrap" in html_l
+                or "gdrs-summary-table-wrap" in html_l
                 )
             )
             else ""
@@ -2125,6 +2137,8 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
             _pad_h = 4
         elif _wide_tbl:
             _pad_h = 18
+        elif "gdrs-summary-table-wrap" in (html or ""):
+            _pad_h = 28
         else:
             _pad_h = 10
         components.html(

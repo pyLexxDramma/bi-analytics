@@ -3760,18 +3760,18 @@ def render_gdrs_matrix_table_html(
     plan_keys = list(GDRS_WEEK_PLAN_KEYS)
     skud_keys = list(GDRS_WEEK_SKUD_KEYS)
     if show_week_columns:
-        show_cols = list(fixed_cols) + plan_keys + skud_keys + [delta_col]
+        show_cols = list(fixed_cols) + [delta_col] + plan_keys + skud_keys
     else:
         show_cols = list(fixed_cols) + [delta_col]
     ncols = len(show_cols)
     wid = wrap_id or ("gdrs_mtx_" + str(abs(id(view))))
     n_fixed = len(fixed_cols)
     if show_week_columns:
-        i_plan0 = n_fixed
-        i_plan1 = n_fixed + wk_n - 1
-        i_skud0 = n_fixed + wk_n
-        i_skud1 = n_fixed + 2 * wk_n - 1
-        i_delta = n_fixed + 2 * wk_n
+        i_delta = n_fixed
+        i_plan0 = n_fixed + 1
+        i_plan1 = n_fixed + wk_n
+        i_skud0 = n_fixed + wk_n + 1
+        i_skud1 = n_fixed + 2 * wk_n
     else:
         i_plan0 = i_plan1 = i_skud0 = i_skud1 = -1
         i_delta = n_fixed
@@ -3813,6 +3813,8 @@ def render_gdrs_matrix_table_html(
             return "gdrs-col-skud"
         if col == "Отклонение":
             return "gdrs-col-dev"
+        if col == delta_col:
+            return "gdrs-col-dev"
         return ""
 
     def _th_metric_cls(col: str) -> str:
@@ -3821,6 +3823,8 @@ def render_gdrs_matrix_table_html(
         if col == "СКУД":
             return "gdrs-col-skud"
         if col == "Отклонение":
+            return "gdrs-col-dev"
+        if col == delta_col:
             return "gdrs-col-dev"
         return ""
 
@@ -3947,24 +3951,25 @@ def render_gdrs_matrix_table_html(
         )
     thead_parts.append("<tr class=\"gdrs-h-metrics\">")
     if show_week_columns:
+        delta_title = "Отклонение %" if delta_col in ("Дельта (%)", "Дельта %", "Δ %", "Δ%") else delta_col
         for ci, col in enumerate(fixed_cols):
             hmc = _th_metric_cls(col)
             hcls = _border_cls(ci) + (f" {hmc}" if hmc else "")
             if col not in text_cols:
                 hcls += " gdrs-col-equal"
-            _sort = ' data-gdrs-sort="1" data-sort-label="' + html_module.escape(col) + '"' if col in ("Контрагент", "Вид работ", "План", "СКУД", "Отклонение") else ""
+            _sort = ' data-gdrs-sort="1" data-sort-label="' + html_module.escape(col) + '"' if col in ("Контрагент", "Вид работ", "План", "СКУД", "Отклонение") or col == delta_col else ""
             thead_parts.append(
                 f'<th rowspan="2" class="{hcls.strip()}"{_sort}>{html_module.escape(col)}</th>'
             )
+        thead_parts.append(
+            f'<th rowspan="2" class="{_border_cls(i_delta)} gdrs-col-equal gdrs-col-dev gdrs-sep-r-strong">'
+            f'{html_module.escape(delta_title)}</th>'
+        )
         thead_parts.append(
             f'<th colspan="{wk_n}" class="gdrs-h-plan-group gdrs-sep-l-strong gdrs-sep-r-strong">План</th>'
         )
         thead_parts.append(
             f'<th colspan="{wk_n}" class="gdrs-h-skud-group gdrs-sep-l-strong gdrs-sep-r-strong">СКУД</th>'
-        )
-        delta_title = "Отклонение %" if delta_col in ("Дельта (%)", "Дельта %", "Δ %", "Δ%") else delta_col
-        thead_parts.append(
-            f'<th rowspan="2" class="{_border_cls(i_delta)} gdrs-col-equal">{html_module.escape(delta_title)}</th>'
         )
         thead_parts.append("</tr><tr>")
         for wi, lbl in enumerate(wk_labels):
@@ -3990,7 +3995,7 @@ def render_gdrs_matrix_table_html(
             hcls = _border_cls(ci) + (f" {hmc}" if hmc else "")
             if col not in text_cols:
                 hcls += " gdrs-col-equal"
-            _sort = ' data-gdrs-sort="1" data-sort-label="' + html_module.escape(col) + '"' if col in ("Контрагент", "Вид работ", "План", "СКУД", "Отклонение") else ""
+            _sort = ' data-gdrs-sort="1" data-sort-label="' + html_module.escape(col) + '"' if col in ("Контрагент", "Вид работ", "План", "СКУД", "Отклонение") or col == delta_col else ""
             thead_parts.append(
                 f'<th class="{hcls.strip()}"{_sort}>{html_module.escape(col)}</th>'
             )
