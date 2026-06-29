@@ -2831,8 +2831,8 @@ def build_deviations_maket_export_df(
                 "Функциональный блок": fb,
                 "Название": tn,
                 "Строение": stv,
-                "Базовое окончание": be.strftime("%d.%m.%Y") if pd.notna(be) else "",
                 "Окончание": pe.strftime("%d.%m.%Y") if pd.notna(pe) else "",
+                "Базовое окончание": be.strftime("%d.%m.%Y") if pd.notna(be) else "",
                 "Отклонение": int(round(float(ed), 0)) if pd.notna(ed) else "",
                 "Причина отклонения": _clean_display_str(rr.get("reason of deviation")),
                 "Заметки": (
@@ -2886,8 +2886,8 @@ def _render_deviations_maket_table(
         "Функциональный блок",
         "Название",
         "Строение",
-        "Базовое окончание",
         "Окончание",
+        "Базовое окончание",
         "Отклонение",
         "Причина отклонения",
         "Заметки",
@@ -2939,8 +2939,8 @@ def _render_deviations_maket_table(
         _tbl_m.append(f'<td class="dev-mak-col-narrow">{html_module.escape(fb)}</td>')
         _tbl_m.append(f'<td class="dev-mak-col-wide">{html_module.escape(tn)}</td>')
         _tbl_m.append(f'<td class="dev-mak-col-narrow">{html_module.escape(stv)}</td>')
-        _tbl_m.append(f'<td class="dev-mak-col-date"{_date_cell_st}>{html_module.escape(be_s)}</td>')
         _tbl_m.append(f'<td class="dev-mak-col-date"{_date_cell_st}>{html_module.escape(pe_s)}</td>')
+        _tbl_m.append(f'<td class="dev-mak-col-date"{_date_cell_st}>{html_module.escape(be_s)}</td>')
         if pd.isna(ed):
             _tbl_m.append(f'<td class="dev-mak-col-date"{_date_cell_st}>—</td>')
         else:
@@ -7704,7 +7704,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
         _pm_tbl = _pm_tbl.rename(
             columns={
                 "project name": "Проект",
-                "period": "Период (месяц plan end)",
+                "period": "Период (месяц)",
                 "_maket_cnt": "Количество отклонений",
             }
         )
