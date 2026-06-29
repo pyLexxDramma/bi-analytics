@@ -25066,7 +25066,11 @@ def _gdrs_dynamics_chart_panel(
             title_font=dict(size=_axis_title_sz, color=_th.text),
         )
         fig.update_layout(legend=dict(font=dict(size=_dyn_sz(12))))
-        _gdrs_st_plotly_chart(st, fig)
+        _gdrs_st_plotly_chart(
+            st,
+            fig,
+            key=f"gdrs_dyn_plot_{vid_locked or 'any'}_{theme}_{agg_kind}",
+        )
         st.caption(
             "План и факт на одной шкале (среднее за день в периоде группировки); "
             "подписи у факта — значение и % от плана."
@@ -25113,6 +25117,10 @@ def _gdrs_dynamics_chart_panel(
             file_stem=_export_file_stem("Детализация по периодам"),
             key_prefix=f"gdrs_dyn_detail_fb_{abs(id(_fb_tbl))}",
         )
+
+
+if _gdrs_fragment is not None:
+    _gdrs_dynamics_chart_panel = _gdrs_fragment(_gdrs_dynamics_chart_panel)
 
 
 # ==================== DASHBOARD: ГДРС (новая реализация по ТЗ 2026-05-07) ====================
