@@ -942,36 +942,74 @@ def _fig_has_pie_trace(fig) -> bool:
 def pie_layout_for_bottom_legend(
     n_slices: int,
     *,
-    font_size: int = 12,
+    font_size: int | None = None,
     items_per_row: int = 3,
+    outside_labels: bool = False,
 ) -> dict:
-    """Отступы и domain pie под горизонтальную легенду снизу."""
+    """Отступы и domain pie под горизонтальную легенду снизу по центру."""
+    fs = int(font_size if font_size is not None else CHART_LEGEND_FONT_SIZE)
     n = max(1, int(n_slices))
     rows = max(1, (n + items_per_row - 1) // items_per_row)
-    margin_bottom = int(48 + rows * (font_size + 14))
-    legend_y = -0.02 - min(0.22, 0.024 * rows)
+    margin_bottom = int(64 + rows * (fs + 18))
+    legend_y = -0.08 - min(0.28, 0.028 * rows)
+    domain_y_top = 0.64 if outside_labels and n > 4 else 0.72
     return {
         "margin_bottom": margin_bottom,
         "margin_top": 44,
-        "domain_x": (0.04, 0.96),
-        "domain_y": (0.02, 0.98),
+        "domain_x": (0.08, 0.92),
+        "domain_y": (0.08, domain_y_top),
         "legend_y": legend_y,
         "fig_extra_h": max(0, margin_bottom - 72),
     }
 
 
+def chart_layout_for_bottom_legend(
+    n_traces: int,
+    *,
+    font_size: int | None = None,
+    items_per_row: int = 4,
+) -> dict:
+    """Нижняя легенда и margin.b для bar/line/stacked графиков."""
+    fs = int(font_size if font_size is not None else CHART_LEGEND_FONT_SIZE)
+    n = max(1, int(n_traces))
+    rows = max(1, (n + items_per_row - 1) // items_per_row)
+    margin_bottom = int(64 + rows * (fs + 18))
+    legend_y = -0.08 - min(0.28, 0.028 * rows)
+    return {
+        "margin_bottom": margin_bottom,
+        "legend_y": legend_y,
+    }
+
+
+def _fig_legend_trace_count(fig) -> int:
+    try:
+        n = 0
+        for tr in fig.data or []:
+            if getattr(tr, "showlegend", True) is False:
+                continue
+            name = getattr(tr, "name", None)
+            if name is not None and str(name).strip():
+                n += 1
+            else:
+                n += 1
+        return max(1, n) if n else 0
+    except Exception:
+        return 1
+
+
 def standard_pie_chart_legend(**overrides) -> dict:
-    """Легенда под круговой диаграммой (горизонтально, слева)."""
+    """Легенда под круговой диаграммой (горизонтально, по центру)."""
     leg = dict(
         orientation="h",
         yanchor="top",
-        y=-0.02,
-        xanchor="left",
-        x=0,
+        y=-0.08,
+        xanchor="center",
+        x=0.5,
         bgcolor="rgba(0,0,0,0)",
         borderwidth=0,
         tracegroupgap=6,
         itemwidth=30,
+        font=dict(size=CHART_LEGEND_FONT_SIZE),
     )
     leg.update(overrides)
     if "title" not in leg and "title_text" not in leg:
@@ -980,17 +1018,18 @@ def standard_pie_chart_legend(**overrides) -> dict:
 
 
 def standard_chart_legend(**overrides) -> dict:
-    """Единое размещение легенды Plotly: горизонтально над областью графика, слева."""
+    """Единое размещение легенды Plotly: горизонтально под областью графика, по центру."""
     leg = dict(
         orientation="h",
-        yanchor="bottom",
-        y=1.02,
-        xanchor="left",
-        x=0,
+        yanchor="top",
+        y=-0.08,
+        xanchor="center",
+        x=0.5,
         bgcolor="rgba(0,0,0,0)",
         borderwidth=0,
         tracegroupgap=6,
         itemwidth=30,
+        font=dict(size=CHART_LEGEND_FONT_SIZE),
     )
     leg.update(overrides)
     if "title" not in leg and "title_text" not in leg:
@@ -1045,7 +1084,7 @@ def apply_chart_background(fig, *, skip_uniformtext: bool = False):
     if prev_leg is not None:
         prev_font = getattr(prev_leg, "font", None)
         if prev_font is not None:
-            for fk in ("size", "color", "family"):
+            for fk in ("color", "family"):
                 fv = getattr(prev_font, fk, None)
                 if fv is not None:
                     legend_kwargs.setdefault("font", {})[fk] = fv
@@ -1065,6 +1104,19 @@ def apply_chart_background(fig, *, skip_uniformtext: bool = False):
                 pass
         if is_pie and margin_t > 60:
             margin_t = max(44.0, min(margin_t, 56.0))
+    elif showlegend:
+        n_leg = _fig_legend_trace_count(fig)
+        chart_lo = chart_layout_for_bottom_legend(n_leg)
+        leg_out = standard_chart_legend(**legend_kwargs, y=chart_lo["legend_y"])
+        if prev_leg is not None:
+            py = getattr(prev_leg, "y", None)
+            try:
+                if py is not None and float(py) < 0.2:
+                    leg_out["y"] = float(py)
+            except (TypeError, ValueError):
+                pass
+        if float(margin_b) < float(chart_lo["margin_bottom"]):
+            margin_b = float(chart_lo["margin_bottom"])
     else:
         leg_out = standard_chart_legend(**legend_kwargs)
 

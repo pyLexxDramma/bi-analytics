@@ -1407,6 +1407,7 @@ from utils import (
     finance_axis_tick_font_size,
     CHART_AXIS_TICK_FONT_SIZE,
     CHART_AXIS_TITLE_FONT_SIZE,
+    CHART_LEGEND_FONT_SIZE,
     get_report_param_value,
     apply_default_filters,
     ensure_budget_columns,
@@ -3332,7 +3333,6 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
     total_v = float(sum(values)) if values else 0.0
     _txt_in = max(14, min(20, 22 - n // 2))
     _txt_out = max(13, _txt_in - 1)
-    _leg_sz = max(13, min(16, 18 - n // 3))
     _callout_frac = 0.085
     _canvas = 1100 if theme == "light" else 1000
     slice_text: list[str] = []
@@ -3379,7 +3379,9 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
             )
         ]
     )
-    _pie_layout = pie_layout_for_bottom_legend(n, font_size=_leg_sz, items_per_row=3)
+    _pie_layout = pie_layout_for_bottom_legend(
+        n, font_size=CHART_LEGEND_FONT_SIZE, items_per_row=3, outside_labels=True
+    )
     _b_margin = int(_pie_layout["margin_bottom"])
     _fig_h = _canvas + int(_pie_layout["fig_extra_h"])
     _dx = _pie_layout["domain_x"]
@@ -3389,7 +3391,7 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
         height=_fig_h,
         uniformtext=dict(minsize=11, mode="hide"),
         legend=standard_pie_chart_legend(
-            font=dict(size=_leg_sz, color=_th.pie_legend),
+            font=dict(size=CHART_LEGEND_FONT_SIZE, color=_th.pie_legend),
             y=_pie_layout["legend_y"],
             itemsizing="constant",
         ),
@@ -4300,21 +4302,17 @@ def _format_plotly_bar_scalar(v) -> str:
     return s
 
 
-def _pie_apply_percent_inside_legend_left(
+def apply_standard_pie_layout(
     fig: go.Figure,
     *,
     height=None,
     pct_fontsize=22,
-    legend_fontsize=12,
-    left_margin=None,
-    domain_x=None,
-    domain_y=None,
-    clear_annotations=False,
     showlegend=True,
+    clear_annotations=False,
     extra_layout=None,
     text_show_value_and_percent: bool = False,
 ) -> go.Figure:
-    """В секторе — проценты (крупный шрифт) или значение+процент; легенда — под диаграммой."""
+    """В секторе — проценты или значение+процент; легенда — под диаграммой по центру."""
     if fig is None:
         return fig
     _n_slices = 0
@@ -4326,21 +4324,16 @@ def _pie_apply_percent_inside_legend_left(
                     _n_slices = max(_n_slices, len(_labs))
     except Exception:
         pass
-    _auto = None
-    if domain_x is None or domain_y is None:
-        _auto = pie_layout_for_bottom_legend(
-            max(_n_slices, 1),
-            font_size=int(legend_fontsize),
-            items_per_row=4 if text_show_value_and_percent else 3,
-        )
-    dx = domain_x if domain_x is not None else _auto["domain_x"]
-    dy = domain_y if domain_y is not None else _auto["domain_y"]
-    _b_margin = (
-        int(_auto["margin_bottom"])
-        if _auto is not None
-        else max(96, int(legend_fontsize) * 8)
+    _auto = pie_layout_for_bottom_legend(
+        max(_n_slices, 1),
+        font_size=CHART_LEGEND_FONT_SIZE,
+        items_per_row=4 if text_show_value_and_percent else 3,
+        outside_labels=text_show_value_and_percent,
     )
-    _leg_y = _auto["legend_y"] if _auto is not None else -0.02
+    dx = _auto["domain_x"]
+    dy = _auto["domain_y"]
+    _b_margin = int(_auto["margin_bottom"])
+    _leg_y = _auto["legend_y"]
     _leg_clr = _fin_chart_legend_text_color()
     _out_txt_clr = _fin_chart_label_color()
     try:
@@ -4387,7 +4380,7 @@ def _pie_apply_percent_inside_legend_left(
     layout = dict(
         showlegend=bool(showlegend),
         legend=standard_pie_chart_legend(
-            font=dict(size=int(legend_fontsize), color=_leg_clr),
+            font=dict(size=CHART_LEGEND_FONT_SIZE, color=_leg_clr),
             y=_leg_y,
         ),
         uniformtext=dict(minsize=max(10, int(pct_fontsize) - 5), mode="show"),
@@ -4409,6 +4402,33 @@ def _pie_apply_percent_inside_legend_left(
         except Exception:
             pass
     return fig
+
+
+def _pie_apply_percent_inside_legend_left(
+    fig: go.Figure,
+    *,
+    height=None,
+    pct_fontsize=22,
+    legend_fontsize=12,
+    left_margin=None,
+    domain_x=None,
+    domain_y=None,
+    clear_annotations=False,
+    showlegend=True,
+    extra_layout=None,
+    text_show_value_and_percent: bool = False,
+) -> go.Figure:
+    """Обратная совместимость: делегирует в apply_standard_pie_layout."""
+    del legend_fontsize, left_margin, domain_x, domain_y
+    return apply_standard_pie_layout(
+        fig,
+        height=height,
+        pct_fontsize=pct_fontsize,
+        showlegend=showlegend,
+        clear_annotations=clear_annotations,
+        extra_layout=extra_layout,
+        text_show_value_and_percent=text_show_value_and_percent,
+    )
 
 
 def _apply_plotly_spec_411_labels(fig: go.Figure) -> go.Figure:
@@ -6638,7 +6658,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         if "pct" not in reason_counts.columns:
             reason_counts["pct"] = (reason_counts["Количество"] / (float(total) or 1.0) * 100).round(1)
 
-        # Круг «Доли причин»: в секторах только %; причины — легенда столбиком слева.
+        # Круг «Доли причин»: значение+% в секторе; легенда под диаграммой по центру.
         n_reasons = len(reason_counts)
         _pie_h = int(max(640, 540 + min(n_reasons, 28) * 22))
         fig = px.pie(
@@ -6649,15 +6669,11 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         )
         fig.update_traces(sort=False, direction="clockwise")
         _pie_font = 22 if n_reasons <= 8 else 20 if n_reasons <= 12 else 18
-        _lm_reason = min(280, max(180, int(160 + n_reasons * 4)))
-        fig = _pie_apply_percent_inside_legend_left(
+        fig = apply_standard_pie_layout(
             fig,
             height=_pie_h,
             pct_fontsize=_pie_font,
-            legend_fontsize=16,
-            left_margin=_lm_reason,
-            domain_x=(0.20, 0.98),
-            domain_y=(0.04, 0.96),
+            text_show_value_and_percent=True,
             extra_layout=dict(font=dict(family="Inter, system-ui, sans-serif")),
         )
         fig.update_traces(
@@ -18217,12 +18233,10 @@ def _rd_plan_fallback_view(
                     title=None,
                     color_discrete_map=_pie_color_map_fb,
                 )
-                fig_pie_fb = _pie_apply_percent_inside_legend_left(
+                fig_pie_fb = apply_standard_pie_layout(
                     fig_pie_fb,
                     height=960,
                     pct_fontsize=26 if _nk_fb <= 5 else 22,
-                    legend_fontsize=16,
-                    left_margin=min(420, max(260, int(240 + _nk_fb * 28))),
                     text_show_value_and_percent=True,
                 )
                 fig_pie_fb.update_traces(
@@ -21526,14 +21540,10 @@ def dashboard_technique(df):
                         _bar_avg, values="Среднее за месяц", names="Контрагент",
                         title=None, color_discrete_sequence=px.colors.qualitative.Set3,
                     )
-                    _n_con = len(_bar_avg.index)
-                    _lm_avg = min(380, max(236, int(206 + _n_con * 7)))
-                    fig_pie_avg = _pie_apply_percent_inside_legend_left(
+                    fig_pie_avg = apply_standard_pie_layout(
                         fig_pie_avg,
                         height=500,
                         pct_fontsize=18,
-                        legend_fontsize=11,
-                        left_margin=_lm_avg,
                     )
                     fig_pie_avg.update_traces(
                         hovertemplate="<b>%{label}</b><br>Среднее: %{value:,.1f}<br>%{percent:.0%}<extra></extra>",
@@ -21741,9 +21751,6 @@ def dashboard_technique(df):
                 # Store original values for display
                 original_values = contractor_delta_pct_abs["Отклонение %"].tolist()
 
-                _n_d = len(contractor_delta_pct_abs.index)
-                _lm_d = min(400, max(240, int(210 + _n_d * 8)))
-
                 # Create pie chart using absolute values
                 fig_pie = px.pie(
                     contractor_delta_pct_abs,
@@ -21752,12 +21759,10 @@ def dashboard_technique(df):
                     title=None,
                     color_discrete_sequence=px.colors.qualitative.Set3,
                 )
-                fig_pie = _pie_apply_percent_inside_legend_left(
+                fig_pie = apply_standard_pie_layout(
                     fig_pie,
                     height=600,
                     pct_fontsize=17,
-                    legend_fontsize=11,
-                    left_margin=_lm_d,
                     extra_layout=dict(title_font_size=16),
                 )
                 fig_pie.update_traces(
@@ -23179,9 +23184,6 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 )
             )
 
-        _n_cf = len(labels)
-        _lm_cf = min(420, max(244, int(214 + _n_cf * 7)))
-
         fig_cf = go.Figure(
             data=[
                 go.Pie(
@@ -23202,12 +23204,10 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 )
             ]
         )
-        fig_cf = _pie_apply_percent_inside_legend_left(
+        fig_cf = apply_standard_pie_layout(
             fig_cf,
             height=440,
             pct_fontsize=17,
-            legend_fontsize=11,
-            left_margin=_lm_cf,
         )
         fig_cf = apply_chart_background(fig_cf, skip_uniformtext=True)
 
@@ -24329,14 +24329,10 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                         _bar_avg, values="Среднее за месяц", names="Контрагент",
                         title=None, color_discrete_sequence=px.colors.qualitative.Set3,
                     )
-                    _n_con = len(_bar_avg.index)
-                    _lm_avg = min(380, max(236, int(206 + _n_con * 7)))
-                    fig_pie_avg = _pie_apply_percent_inside_legend_left(
+                    fig_pie_avg = apply_standard_pie_layout(
                         fig_pie_avg,
                         height=500,
                         pct_fontsize=18,
-                        legend_fontsize=11,
-                        left_margin=_lm_avg,
                     )
                     fig_pie_avg.update_traces(
                         hovertemplate="<b>%{label}</b><br>Среднее: %{value:,.1f}<br>%{percent:.0%}<extra></extra>",
@@ -32611,12 +32607,10 @@ def dashboard_documentation(
                         title=None,
                         color_discrete_map=_pie_color_map,
                     )
-                    fig_pie = _pie_apply_percent_inside_legend_left(
+                    fig_pie = apply_standard_pie_layout(
                         fig_pie,
                         height=500,
                         pct_fontsize=17 if _nk <= 5 else 15,
-                        legend_fontsize=11,
-                        left_margin=min(380, max(236, int(218 + _nk * 26))),
                         text_show_value_and_percent=True,
                     )
                     fig_pie.update_traces(
@@ -42938,14 +42932,11 @@ def dashboard_predpisania(df):
             },
         )
         _nst = len(status_df.index)
-        fig2 = _pie_apply_percent_inside_legend_left(
+        _pie_h = int(max(560, 480 + _nst * 28))
+        fig2 = apply_standard_pie_layout(
             fig2,
-            height=840,
-            pct_fontsize=36 if _nst <= 6 else 32,
-            legend_fontsize=44,
-            left_margin=min(560, max(360, int(360 + _nst * 36))),
-            domain_x=(0.36, 0.88),
-            domain_y=(0.08, 0.92),
+            height=_pie_h,
+            pct_fontsize=26 if _nst <= 6 else 22,
             extra_layout=dict(uirevision="pred_status_pie_v2"),
         )
         fig2.update_traces(

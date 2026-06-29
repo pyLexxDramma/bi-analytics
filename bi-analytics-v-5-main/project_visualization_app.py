@@ -291,24 +291,32 @@ def _inject_table_sort_once() -> None:
         logging.getLogger(__name__).warning("table sort inject failed: %s", _e)
 
 
-def _inject_loading_overlay_once() -> None:
+def _inject_loading_overlay() -> None:
     """Полноэкранный лоадер с блокировкой экрана на время рендера отчётов."""
     try:
-        from dashboards.loading_overlay import inject_loading_overlay, loading_overlay_enabled
+        from dashboards.loading_overlay import (
+            inject_loading_overlay,
+            loading_overlay_enabled,
+            pulse_loading_overlay,
+        )
 
         if not loading_overlay_enabled():
             return
-    except Exception:
-        return
-    if st.session_state.get("_bi_loading_overlay_injected"):
-        return
-    try:
         inject_loading_overlay()
-        st.session_state["_bi_loading_overlay_injected"] = True
+        pulse_loading_overlay()
     except Exception as _e:
         import logging
 
         logging.getLogger(__name__).warning("loading overlay inject failed: %s", _e)
+
+
+def _release_loading_overlay() -> None:
+    try:
+        from dashboards.loading_overlay import release_loading_overlay
+
+        release_loading_overlay()
+    except Exception:
+        pass
 
 
 def _render_data_pull_banner() -> None:
@@ -824,7 +832,7 @@ def main():
 
     _inject_ru_labels_once()
     _inject_table_sort_once()
-    _inject_loading_overlay_once()
+    _inject_loading_overlay()
 
     if not str(st.session_state.get("current_dashboard") or "").strip():
         st.session_state["current_dashboard"] = "Девелоперские проекты"
@@ -1757,6 +1765,8 @@ def main():
         3. Используйте фильтры для фокусировки на конкретных данных
         """
         )
+
+    _release_loading_overlay()
 
 
 if __name__ == "__main__":
