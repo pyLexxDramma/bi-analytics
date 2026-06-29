@@ -1215,7 +1215,7 @@ def _dev_matrix_bddds_totals_mln(
         plan_sum = float(g["budget plan"].sum())
         fact_sum = float(g["budget fact"].sum())
 
-    diff = plan_sum - fact_sum
+    diff = fact_sum - plan_sum
     return plan_sum / 1e6, fact_sum / 1e6, diff / 1e6
 
 
@@ -1267,7 +1267,7 @@ def _ds_plan_fact_otkl_mln(project_data: Optional[pd.DataFrame]) -> Tuple[Option
     # Корректная формула: `× 1000 (тыс.руб → руб) / 1e6 (руб → млн.руб) = / 1000`.
     plan_mln = float(plan_sum) / 1000.0
     fact_mln = float(fact_sum) / 1000.0
-    return plan_mln, fact_mln, plan_mln - fact_mln
+    return plan_mln, fact_mln, fact_mln - plan_mln
 
 
 def _tessa_to_dt(series: pd.Series) -> pd.Series:
@@ -2196,7 +2196,7 @@ def build_dev_tz_matrix_rows(
         return f"{v:.1f}".replace(".", ",")
 
     def _fmtml_otkl(v: float) -> str:
-        """Отклонение «Выборка ДС»: явный +/− по знаку (План − Факт)."""
+        """Отклонение «Выборка ДС»: явный +/− по знаку (Факт − План)."""
         if v > 0:
             return f"+{_fmtml(v)}"
         if v < 0:
