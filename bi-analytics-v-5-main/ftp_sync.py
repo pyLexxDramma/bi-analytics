@@ -25,11 +25,14 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import time
 from ftplib import FTP, FTP_TLS, error_perm
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+
+_FTP_CODE_RE = re.compile(r"(?<!\d)(\d{3})(?!\d)")
 
 
 def _ftp_sync_lock_path() -> Path:
@@ -216,6 +219,62 @@ def _list_dir(ftp) -> List[Tuple[str, str, Optional[int]]]:
             continue
         items.append((name, "unknown", None))
     return items
+
+
+def _extract_ftp_code(message: str) -> str:
+    """Извлекает трёхзначный код ответа FTP/HTTP из текста исключения."""
+    m = _FTP_CODE_RE.search(str(message or ""))
+    return m.group(1) if m else "неизвестен"
+
+
+def format_ftp_file_error(rel_path: str, exc: Exception | str) -> str:
+    """Читаемое сообщение для логов: «Ошибка экспорта файла <имя>. Код <код>»."""
+    stem = Path(str(rel_path).replace("\\", "/")).stem
+    msg = str(exc) if not isinstance(exc, Exception) else str(exc)
+    code = _extract_ftp_code(msg)
+    return f"Ошибка экспорта файла {stem}. Код {code}"
+
+
+def _stderr_log(message: str) -> None:
+    """Пишет в stderr (без зависимости от auto_ingest)."""
+    line = message if message.endswith("\n") else message + "\n"
+    try:
+        buf = getattr(sys.stderr, "buffer", None)
+        if buf is not None:
+            buf.write(line.encode("utf-8", errors="replace"))
+            buf.flush()
+            return
+    except Exception:
+        pass
+    try:
+        sys.stderr.write(line)
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
+def log_ftp_sync_errors(
+    result: Optional[Dict[str, Any]],
+    *,
+    log_fn: Optional[Callable[[str], None]] = None,
+    log_prefix: str = "[ftp_sync]",
+) -> None:
+    """Логирует все per-file и системные ошибки результата sync_ftp_to_web."""
+    if not result:
+        return
+    log = log_fn or _stderr_log
+    downloaded = len(result.get("downloaded") or [])
+    same = int(result.get("skipped_same_size") or 0)
+    transient = result.get("transient_errors") or []
+    errors = result.get("errors") or []
+    log(
+        f"{log_prefix} ftp_sync: downloaded={downloaded}, "
+        f"skipped_same_size={same}, transient_errors={len(transient)}, errors={len(errors)}"
+    )
+    for msg in transient:
+        log(f"{log_prefix} {msg}")
+    for msg in errors:
+        log(f"{log_prefix} {msg}")
 
 
 def _safe_size(ftp, name: str) -> Optional[int]:
@@ -443,6 +502,7 @@ def sync_ftp_to_web(
                         out["downloaded"].append(rel_for_report)
                     except Exception as e:
                         msg = str(e)
+                        err_line = format_ftp_file_error(rel_for_report, e)
                         # «550 Failed to open file», «file busy», «temporarily
                         # unavailable» — файл сейчас открыт пишущим процессом
                         # (в нашем случае 1С каждые ~15 мин перезаписывает MSP).
@@ -457,9 +517,9 @@ def sync_ftp_to_web(
                             or "busy" in low
                         )
                         if is_transient:
-                            out["transient_errors"].append(f"{rel_for_report}: {msg}")
+                            out["transient_errors"].append(err_line)
                         else:
-                            out["errors"].append(f"{rel_for_report}: {msg}")
+                            out["errors"].append(err_line)
                             out["ok"] = False
         finally:
             try:
@@ -520,8 +580,7 @@ def main_cli() -> int:
     )
     for x in r["downloaded"]:
         print(x)
-    for e in r["errors"]:
-        print(e, file=sys.stderr)
+    log_ftp_sync_errors(r, log_prefix="[ftp_sync]")
     return 0 if r["ok"] and not r["errors"] else 1
 
 
