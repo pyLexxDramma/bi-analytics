@@ -424,6 +424,20 @@ def _apply_msp_column_mapping(df: pd.DataFrame, project_name: str) -> pd.DataFra
                 df.loc[calc_mask, "plan end"] - df.loc[calc_mask, "base end"]
             ).dt.days
 
+    # ── deviation start days: "5 дн" → 5.0 ─────────────────────────────────
+    if "deviation start days" in df.columns:
+        df["deviation start days"] = df["deviation start days"].apply(_parse_days_str)
+    else:
+        df["deviation start days"] = None
+
+    if "plan start" in df.columns and "base start" in df.columns:
+        mask_empty = df["deviation start days"].isna()
+        calc_mask = mask_empty & df["plan start"].notna() & df["base start"].notna()
+        if calc_mask.any():
+            df.loc[calc_mask, "deviation start days"] = (
+                df.loc[calc_mask, "plan start"] - df.loc[calc_mask, "base start"]
+            ).dt.days
+
     # ── Флаг deviation: True если задача запаздывает ─────────────────────────
     # Дашборды фильтруют по: deviation == True или deviation == 1
     df["deviation"] = df["deviation in days"].apply(

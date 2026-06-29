@@ -46924,10 +46924,16 @@ def dashboard_project_schedule_chart(df):
     d_end_num = None
     if dev_end_src and dev_end_src in _tbl_df.columns:
         d_end_num = pd.to_numeric(_tbl_df[dev_end_src], errors="coerce")
-    elif "base end" in _tbl_df.columns:
-        d_end_num = (
-            _tbl_df["plan end"] - pd.to_datetime(_tbl_df["base end"], errors="coerce")
+    if "base end" in _tbl_df.columns and "plan end" in _tbl_df.columns:
+        _d_end_calc = (
+            pd.to_datetime(_tbl_df["plan end"], errors="coerce")
+            - pd.to_datetime(_tbl_df["base end"], errors="coerce")
         ).dt.days
+        if d_end_num is None:
+            d_end_num = _d_end_calc
+        else:
+            _mask = d_end_num.isna()
+            d_end_num = d_end_num.where(~_mask, _d_end_calc)
 
     # ИД задачи MSP («Ид» в исходнике → canonical "task id seq" после web_loader._MSP_RENAME).
     # Fallback на любые «id-подобные» поля (ID, Ид, task id, ID_задачи, Уникальный_идентификатор).
@@ -47011,11 +47017,16 @@ def dashboard_project_schedule_chart(df):
     d_start_num = None
     if dev_start_src and dev_start_src in _tbl_df.columns:
         d_start_num = pd.to_numeric(_tbl_df[dev_start_src], errors="coerce")
-    elif "base start" in _tbl_df.columns and "plan start" in _tbl_df.columns:
-        d_start_num = (
+    if "base start" in _tbl_df.columns and "plan start" in _tbl_df.columns:
+        _d_start_calc = (
             pd.to_datetime(_tbl_df["plan start"], errors="coerce")
             - pd.to_datetime(_tbl_df["base start"], errors="coerce")
         ).dt.days
+        if d_start_num is None:
+            d_start_num = _d_start_calc
+        else:
+            _mask = d_start_num.isna()
+            d_start_num = d_start_num.where(~_mask, _d_start_calc)
 
     if d_start_num is not None:
         tbl_view["Отклонение начала"] = d_start_num.reindex(tbl_view.index).map(_fmt_dev_days)
