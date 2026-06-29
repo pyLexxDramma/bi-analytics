@@ -1054,7 +1054,9 @@ def apply_gdrs_chart_background(fig: Any, theme: GdrsTheme, *, skip_uniformtext:
         CHART_LEGEND_FONT_SIZE,
         CHART_UNIFORMTEXT_MINSIZE,
         _fig_has_pie_trace,
+        _fig_legend_trace_count,
         _merge_prev_legend_title,
+        chart_layout_for_bottom_legend,
         standard_chart_legend,
         standard_pie_chart_legend,
     )
@@ -1094,7 +1096,7 @@ def apply_gdrs_chart_background(fig: Any, theme: GdrsTheme, *, skip_uniformtext:
     if prev_leg is not None:
         prev_font = getattr(prev_leg, "font", None)
         if prev_font is not None:
-            for fk in ("size", "color", "family"):
+            for fk in ("color", "family"):
                 fv = getattr(prev_font, fk, None)
                 if fv is not None:
                     legend_kwargs.setdefault("font", {})[fk] = fv
@@ -1114,6 +1116,19 @@ def apply_gdrs_chart_background(fig: Any, theme: GdrsTheme, *, skip_uniformtext:
                 pass
         if margin_t > 60:
             margin_t = max(44.0, min(margin_t, 56.0))
+    elif showlegend:
+        n_leg = _fig_legend_trace_count(fig)
+        chart_lo = chart_layout_for_bottom_legend(n_leg)
+        leg_out = standard_chart_legend(**legend_kwargs, y=chart_lo["legend_y"])
+        if prev_leg is not None:
+            py = getattr(prev_leg, "y", None)
+            try:
+                if py is not None and float(py) < 0.2:
+                    leg_out["y"] = float(py)
+            except (TypeError, ValueError):
+                pass
+        if float(margin_b) < float(chart_lo["margin_bottom"]):
+            margin_b = float(chart_lo["margin_bottom"])
     else:
         leg_out = standard_chart_legend(**legend_kwargs)
 
