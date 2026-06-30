@@ -775,10 +775,12 @@ html body.gdrs-light-preview [data-testid="stPlotlyChart"] .modebar-group {{
   visibility: visible !important;
   pointer-events: auto !important;
 }}
-html body.gdrs-light-preview .gdrs-summary-table-wrap tr.gdrs-total-row td {{
+html body.gdrs-light-preview .gdrs-summary-table-wrap tr.gdrs-total-row td,
+html body.gdrs-light-preview .gdrs-summary-table-wrap tr.bd-total-row td {{
   background-color: {g_hover} !important;
   border-top: 2px solid {g_border} !important;
   font-weight: 800 !important;
+  text-transform: uppercase !important;
 }}
 
 /* Шапка Streamlit — inject только на светлом превью ГДРС */
@@ -948,7 +950,7 @@ def gdrs_clear_loading_banner(holder) -> None:
 
 def gdrs_bar_label_size(theme: GdrsTheme) -> int:
     """Размер подписей над столбцами (светлое превью ~16px)."""
-    return 16 if theme.name == "light" else 10
+    return 16 if theme.name == "light" else 12
 
 
 def gdrs_bar_label_yshift(theme: GdrsTheme) -> int:

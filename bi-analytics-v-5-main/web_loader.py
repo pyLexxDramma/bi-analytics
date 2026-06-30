@@ -259,9 +259,17 @@ def _fill_section_from_task_tree(df: pd.DataFrame) -> pd.DataFrame:
         if "project name" in g.columns and len(g) > 0:
             v0 = g["project name"].iloc[0]
             proj_name = str(v0).strip() if pd.notna(v0) else ""
-        for idx in g.index:
-            lvl = pd.to_numeric(g.at[idx, ocol], errors="coerce")
-            task = str(g.at[idx, "task name"]).strip() if pd.notna(g.at[idx, "task name"]) else ""
+        # Поэлементный g.at[idx, ...] по Arrow-backed столбцам (pandas 3.0)
+        # боксит pyarrow-скаляр и переписывает chunked-массив на каждой ячейке
+        # (~O(n) на запись). Снимаем оверхед: читаем колонки в numpy/списки,
+        # считаем section в чистом Python, пишем столбец одной операцией.
+        lvl_arr = pd.to_numeric(g[ocol], errors="coerce").to_numpy()
+        task_vals = g["task name"].tolist()
+        section_vals = g["section"].astype(object).tolist()
+        for i in range(len(g)):
+            lvl = lvl_arr[i]
+            tv = task_vals[i]
+            task = str(tv).strip() if pd.notna(tv) else ""
             if pd.notna(lvl):
                 lvl_int = int(lvl)
                 if lvl_int == 1:
@@ -272,9 +280,10 @@ def _fill_section_from_task_tree(df: pd.DataFrame) -> pd.DataFrame:
                     if k > lvl_int:
                         del current_sections[k]
                 if lvl_int >= 3 and 2 in current_sections:
-                    g.at[idx, "section"] = current_sections[2]
+                    section_vals[i] = current_sections[2]
                 elif lvl_int >= 2 and 1 in current_sections:
-                    g.at[idx, "section"] = current_sections[1]
+                    section_vals[i] = current_sections[1]
+        g["section"] = section_vals
         return g
 
     if "project name" in df.columns:
@@ -2604,23 +2613,30 @@ def _restore_date_columns(df: pd.DataFrame) -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce")
 
-    # Period-колонки
+    # Period-колонки. Парсим по уникальным значениям (месяцы/кварталы/годы имеют
+    # низкую кардинальность относительно строк) — это эквивалент построчного
+    # apply, но pd.Period вызывается один раз на уникальное значение.
+    def _periods_from_series(s: pd.Series, freq: str) -> pd.Series:
+        def _conv(x):
+            return (
+                pd.Period(x, freq)
+                if pd.notna(x) and x not in ("NaT", "None", "nan", "")
+                else pd.NaT
+            )
+
+        mapping = {v: _conv(v) for v in pd.unique(s)}
+        return s.map(mapping)
+
     month_cols = [c for c in df.columns if c.endswith("_month") or c.endswith("_quarter") or c.endswith("_year")]
     for col in month_cols:
         if df[col].dtype == object:
             try:
                 if col.endswith("_month"):
-                    df[col] = df[col].apply(
-                        lambda x: pd.Period(x, "M") if pd.notna(x) and x not in ("NaT", "None", "nan", "") else pd.NaT
-                    )
+                    df[col] = _periods_from_series(df[col], "M")
                 elif col.endswith("_quarter"):
-                    df[col] = df[col].apply(
-                        lambda x: pd.Period(x, "Q") if pd.notna(x) and x not in ("NaT", "None", "nan", "") else pd.NaT
-                    )
+                    df[col] = _periods_from_series(df[col], "Q")
                 elif col.endswith("_year"):
-                    df[col] = df[col].apply(
-                        lambda x: pd.Period(x, "Y") if pd.notna(x) and x not in ("NaT", "None", "nan", "") else pd.NaT
-                    )
+                    df[col] = _periods_from_series(df[col], "Y")
             except Exception:
                 pass
 
@@ -2636,19 +2652,18 @@ def _restore_date_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def read_version_to_session(version_id: int):
-    """
-    Загружает данные выбранной версии из SQLite в session_state.
-    project_data  — объединение project + budget + debit_credit типов
-    resources_data — данные ресурсов (для ГДРС)
-    technique_data — данные техники (для ГДРС)
-    """
-    from data_loader import ensure_data_session_state
+@st.cache_data(ttl=600, show_spinner=False)
+def _build_project_frames(
+    version_id: int, _db_mtime: float = 0.0
+) -> tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
+    """Готовые кадры проектов из БД: (все снимки, дедуплицированные).
 
-    ensure_data_session_state()
-    _db_mtime = _web_db_mtime()
-
-    # ── Данные проектов (без дебиторки — она в отдельном session_state) ─────
+    Тяжёлая цепочка преобразований (восстановление дат/периодов, иерархия MSP,
+    section по дереву задач, дедупликация снимков) кешируется на (version_id, mtime),
+    чтобы не пересчитывать на каждый rerun/клик по фильтру. Все вызываемые
+    функции чистые (не читают session_state), а st.cache_data возвращает копию,
+    поэтому мутации у вызывающих не отравляют кэш.
+    """
     dfs = []
     for ftype in ("project", "budget"):
         df = _load_version_data(version_id, ftype, _db_mtime)
@@ -2662,11 +2677,29 @@ def read_version_to_session(version_id: int):
             dfs.append(df)
 
     combined = pd.concat(dfs, ignore_index=True) if dfs else None
-    if combined is not None:
-        st.session_state["project_data_all_snapshots"] = combined.copy()
-    else:
-        st.session_state["project_data_all_snapshots"] = None
-    st.session_state.project_data = _deduplicate_project_snapshots(combined) if combined is not None else None
+    if combined is None:
+        return None, None
+    return combined, _deduplicate_project_snapshots(combined)
+
+
+def read_version_to_session(version_id: int):
+    """
+    Загружает данные выбранной версии из SQLite в session_state.
+    project_data  — объединение project + budget + debit_credit типов
+    resources_data — данные ресурсов (для ГДРС)
+    technique_data — данные техники (для ГДРС)
+    """
+    from data_loader import ensure_data_session_state
+
+    ensure_data_session_state()
+    _db_mtime = _web_db_mtime()
+
+    # ── Данные проектов (без дебиторки — она в отдельном session_state) ─────
+    combined, project_data = _build_project_frames(version_id, _db_mtime)
+    st.session_state["project_data_all_snapshots"] = (
+        combined.copy() if combined is not None else None
+    )
+    st.session_state.project_data = project_data
 
     deb = _load_version_data(version_id, "debit_credit", _db_mtime)
     if deb is not None and not deb.empty:

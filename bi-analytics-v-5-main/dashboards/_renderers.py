@@ -3464,6 +3464,23 @@ def _plotly_bargaps_sparse_x_like_gdrs(n_x_categories: int) -> dict[str, float]:
     return {}
 
 
+# План / Факт / Отклонение: шаг между столбцами внутри группы и между группами (контрагент / проект).
+_GDRS_PF_BAR_INNER_STEP = 0.5
+_GDRS_PF_BAR_GROUP_SPAN = 2.0
+
+
+def _gdrs_pf_fixed_slot_bar_width(n_labels: int) -> float:
+    """Ширина столбца при numeric overlay — зазор между соседними столбцами ≈ в 2 раза меньше прежнего."""
+    step = _GDRS_PF_BAR_INNER_STEP
+    base = step * 0.88
+    nx = max(1, int(n_labels))
+    if nx <= 2:
+        return min(0.46, base * 1.05)
+    if nx <= 4:
+        return min(0.44, base)
+    return min(0.40, base * 0.92)
+
+
 def _gdrs_add_plan_fact_deviation_traces(
     fig: go.Figure,
     labels: list[str],
@@ -3487,7 +3504,8 @@ def _gdrs_add_plan_fact_deviation_traces(
         )
         return list(_metric_x), f" — {labels[0]}", None
     # Фиксированные слоты: при y=0 grouped bar схлопывает «Факт», и «Отклонение» визуально съезжает.
-    _slot_span = 4.0
+    _step = _GDRS_PF_BAR_INNER_STEP
+    _slot_span = _GDRS_PF_BAR_GROUP_SPAN
     x_plan: list[float] = []
     x_fact: list[float] = []
     x_dev: list[float] = []
@@ -3496,9 +3514,9 @@ def _gdrs_add_plan_fact_deviation_traces(
     for i, lbl in enumerate(labels):
         base = float(i) * _slot_span
         x_plan.append(base)
-        x_fact.append(base + 1.0)
-        x_dev.append(base + 2.0)
-        tick_vals.append(base + 1.0)
+        x_fact.append(base + _step)
+        x_dev.append(base + 2.0 * _step)
+        tick_vals.append(base + _step)
         tick_text.append(str(lbl))
     fig.add_bar(name="План", x=x_plan, y=plan_vals, marker_color=theme.bar_plan)
     fig.add_bar(name="Факт", x=x_fact, y=fact_vals, marker_color=theme.bar_fact)
@@ -3508,12 +3526,13 @@ def _gdrs_add_plan_fact_deviation_traces(
         y=dev_abs,
         marker_color=dev_colors,
     )
-    _x_end = (len(labels) - 1) * _slot_span + 2.0
+    _x_end = (len(labels) - 1) * _slot_span + 2.0 * _step
+    _pad = max(0.25, _step * 0.5)
     x_cfg = dict(
         tickmode="array",
         tickvals=tick_vals,
         ticktext=tick_text,
-        range=[-0.6, _x_end + 0.6],
+        range=[-_pad, _x_end + _pad],
     )
     return list(labels), "", x_cfg
 
@@ -3543,17 +3562,19 @@ def _gdrs_apply_plan_fact_grouped_bar_spacing(
     """План / Факт / Отклонение: узкие столбцы с равными промежутками."""
     if fixed_slots:
         nx = max(1, int(n_x_categories))
-        bar_width = 0.55 if nx <= 2 else (0.48 if nx <= 4 else 0.42)
         fig.update_layout(barmode="overlay", bargap=0.0, bargroupgap=0.0)
-        fig.update_traces(width=bar_width, selector=dict(type="bar"))
+        fig.update_traces(
+            width=_gdrs_pf_fixed_slot_bar_width(nx),
+            selector=dict(type="bar"),
+        )
         return fig
     if metrics_axis:
-        fig.update_layout(bargap=0.42, bargroupgap=0.0, barmode="group")
-        fig.update_traces(width=0.40, selector=dict(type="bar"))
+        fig.update_layout(bargap=0.21, bargroupgap=0.0, barmode="group")
+        fig.update_traces(width=0.52, selector=dict(type="bar"))
         return fig
     nx = max(1, int(n_x_categories))
     n_slots = 3
-    group_span = 0.52 if nx <= 2 else 0.68
+    group_span = 0.26 if nx <= 2 else 0.34
     bar_width = group_span / (2 * n_slots - 1)
     if nx <= 1:
         bargap = 0.90
@@ -3563,7 +3584,7 @@ def _gdrs_apply_plan_fact_grouped_bar_spacing(
         bargap = 0.58
     else:
         bargap = 0.34
-    fig.update_layout(bargap=bargap, bargroupgap=1.0, barmode="group")
+    fig.update_layout(bargap=bargap, bargroupgap=0.5, barmode="group")
     fig.update_traces(width=bar_width, selector=dict(type="bar"))
     return fig
 
@@ -5723,6 +5744,87 @@ def _deviations_filter_df_by_period_range(
     return filtered_df
 
 
+def _deviations_snapshot_month_sort_key(label: str) -> tuple:
+    if str(label or "").strip() == "Все месяцы":
+        return (0, 0)
+    p = _deviations_filter_month_string_to_period(label)
+    if p is not None:
+        return (1, int(p.ordinal))
+    return (2, str(label))
+
+
+def _deviations_snapshot_month_options(df: pd.DataFrame) -> list[str]:
+    """Месяцы выгрузки MSP (snapshot_date) для селекта «Период»."""
+    if df is None or getattr(df, "empty", True) or "snapshot_date" not in df.columns:
+        return []
+    sd = pd.to_datetime(df["snapshot_date"], errors="coerce")
+    periods = sd.dropna().dt.to_period("M").unique()
+    labels = sorted(
+        {format_period_ru(p) for p in periods if pd.notna(p)},
+        key=_deviations_snapshot_month_sort_key,
+    )
+    return ["Все месяцы"] + labels
+
+
+def _deviations_apply_snapshot_month_filter(
+    df: pd.DataFrame,
+    *,
+    session_key: str = "devcombo_period_month",
+    dynamics: bool = False,
+) -> pd.DataFrame:
+    """
+    Срез по месяцу выгрузки MSP (snapshot_date).
+    «Все месяцы»: последний снимок на проект (dynamics — последний за каждый месяц выгрузки).
+    Конкретный месяц: данные файла с максимальной snapshot_date в этом месяце.
+    """
+    if df is None or getattr(df, "empty", True):
+        return df
+    sel = str(st.session_state.get(session_key, "Все месяцы") or "Все месяцы").strip()
+    if "snapshot_date" not in df.columns:
+        legacy_key = "devcombo_period_range" if session_key == "devcombo_period_month" else "reason_period_range"
+        return _deviations_filter_df_by_period_range(df, legacy_key)
+
+    from web_loader import (
+        _deduplicate_project_snapshots,
+        _deduplicate_project_snapshots_last_per_month,
+    )
+
+    if sel in ("", "Все месяцы"):
+        if dynamics:
+            return _deduplicate_project_snapshots_last_per_month(df)
+        return _deduplicate_project_snapshots(df)
+
+    period = _deviations_filter_month_string_to_period(sel)
+    if period is None:
+        if dynamics:
+            return _deduplicate_project_snapshots_last_per_month(df)
+        return _deduplicate_project_snapshots(df)
+
+    out = df.copy()
+    out["snapshot_date"] = pd.to_datetime(out["snapshot_date"], errors="coerce")
+    has_snap = out["snapshot_date"].notna()
+    if "project name" in out.columns:
+        has_snap = has_snap & out["project name"].notna()
+    if not has_snap.any():
+        return out
+
+    snap_part = out[has_snap].copy()
+    no_snap_part = out[~has_snap].copy()
+    snap_part["_dev_upload_month"] = snap_part["snapshot_date"].dt.to_period("M")
+    snap_part = snap_part[snap_part["_dev_upload_month"] == period].copy()
+    if snap_part.empty:
+        return out.iloc[0:0].copy()
+
+    if "project name" in snap_part.columns:
+        latest = snap_part.groupby("project name")["snapshot_date"].transform("max")
+        snap_part = snap_part[snap_part["snapshot_date"] == latest]
+    else:
+        max_d = snap_part["snapshot_date"].max()
+        snap_part = snap_part[snap_part["snapshot_date"] == max_d]
+
+    snap_part = snap_part.drop(columns=["_dev_upload_month"], errors="ignore")
+    return pd.concat([no_snap_part, snap_part], ignore_index=True)
+
 
 _DEV_TIME_AXIS_PLAN = "По дате окончания плана"
 _DEV_TIME_AXIS_SNAPSHOT = "По дате снимка выгрузки"
@@ -5829,9 +5931,7 @@ def _apply_deviations_combined_filters(
         filtered_df, selected_block, selected_building, building_col
     )
 
-    filtered_df = _deviations_filter_df_by_period_range(
-        filtered_df, "devcombo_period_range"
-    )
+    filtered_df = _deviations_apply_snapshot_month_filter(filtered_df, dynamics=False)
     filtered_df = _deviations_apply_reason_filter(filtered_df)
     _pt_en = _deviations_period_type_en_from_ru(
         st.session_state.get("dynamics_period", "Месяц")
@@ -5870,23 +5970,16 @@ def _apply_deviations_dynamics_filters(
         filtered_df, selected_block, selected_building, building_col
     )
     filtered_df = _deviations_apply_reason_filter(filtered_df)
-    filtered_df = _deviations_filter_df_by_period_range(
-        filtered_df, "devcombo_period_range"
-    )
+    filtered_df = _deviations_apply_snapshot_month_filter(filtered_df, dynamics=True)
     return filtered_df
 
 
 def _deviations_dynamics_source_df() -> pd.DataFrame:
-    """Все MSP-снимки: последний файл за календарный месяц выгрузки на FTP."""
+    """Все MSP-снимки (до среза по месяцу выгрузки в фильтре «Период»)."""
     snap = st.session_state.get("project_data_all_snapshots")
     if snap is None or getattr(snap, "empty", True):
         return pd.DataFrame()
-    try:
-        from web_loader import _deduplicate_project_snapshots_last_per_month
-
-        out = _deduplicate_project_snapshots_last_per_month(snap.copy())
-    except Exception:
-        out = snap.copy()
+    out = snap.copy()
     ensure_msp_hierarchy_columns(out)
     if "project name" in out.columns:
         out = _project_column_apply_canonical(out, "project name")
@@ -6083,41 +6176,20 @@ def _render_deviations_combined_shared_filters(df):
                 else:
                     suppress_caption("Нет строения")
     
-            _devcombo_pmin = None
-            _devcombo_pmax = None
-            _df_period_src = df
             _snap_period = st.session_state.get("project_data_all_snapshots")
-            if _snap_period is not None and not getattr(_snap_period, "empty", True):
-                try:
-                    from web_loader import _deduplicate_project_snapshots_last_per_month
-
-                    _df_period_src = _deduplicate_project_snapshots_last_per_month(
-                        _snap_period.copy()
-                    )
-                except Exception:
-                    _df_period_src = _snap_period.copy()
-            if "plan end" in _df_period_src.columns:
-                _pe_dev = _deviations_coerce_datetime(_df_period_src["plan end"])
-                if _pe_dev.notna().any():
-                    _devcombo_pmin = _pe_dev.min().date()
-                    _devcombo_pmax = _pe_dev.max().date()
-            elif "plan_month" in _df_period_src.columns:
-                _pm_dev = _df_period_src["plan_month"].dropna()
-                if len(_pm_dev):
-                    _devcombo_pmin = _pm_dev.min().start_time.date()
-                    _devcombo_pmax = _pm_dev.max().end_time.date()
+            _df_period_src = _snap_period if (
+                _snap_period is not None and not getattr(_snap_period, "empty", True)
+            ) else df
 
             with col4:
-                if _devcombo_pmin and _devcombo_pmax:
-                    period_date_range_input(
-                        st,
-                        "devcombo_period_range",
-                        min_value=_devcombo_pmin,
-                        max_value=_devcombo_pmax,
-                        default=(_devcombo_pmin, _devcombo_pmax),
+                _month_opts = _deviations_snapshot_month_options(_df_period_src)
+                if _month_opts:
+                    st.selectbox("Период", _month_opts, key="devcombo_period_month")
+                    suppress_caption(
+                        "Месяц выгрузки MSP на FTP: данные — из файла с крайней датой в выбранном месяце."
                     )
                 else:
-                    suppress_caption("Нет данных для фильтра периода")
+                    suppress_caption("Нет snapshot_date для фильтра периода")
 
             with col5:
                 if "reason of deviation" in df.columns:
@@ -6149,7 +6221,18 @@ def _render_deviations_combined_shared_filters(df):
             )
         # Линия тренда убрана по ТЗ (скриншот) — фиксируем выключенной.
         st.session_state["reasons_dynamics_show_trend_line"] = False
-    filtered_df = _apply_deviations_combined_filters(df, building_col=building_col)
+    _snap_for_filter = st.session_state.get("project_data_all_snapshots")
+    if _snap_for_filter is not None and not getattr(_snap_for_filter, "empty", True):
+        _sf = _snap_for_filter.copy()
+        ensure_msp_hierarchy_columns(_sf)
+        if "project name" in _sf.columns:
+            _sf = _project_column_apply_canonical(_sf, "project name")
+        if building_col is None:
+            building_col = _find_deviations_building_column(_sf)
+        _sf = _deviations_maket_attach_ancestor_keys(_sf)
+        filtered_df = _apply_deviations_combined_filters(_sf, building_col=building_col)
+    else:
+        filtered_df = _apply_deviations_combined_filters(df, building_col=building_col)
 
     return filtered_df, building_col
 
@@ -6256,13 +6339,6 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         snap = st.session_state.get("project_data_all_snapshots")
         if snap is not None and not getattr(snap, "empty", True):
             _snap_df = snap.copy()
-            # ТЗ (скриншот, п.3): отклонения берём по последнему, самому свежему
-            # снимку MSP каждого проекта, а не накопительно за все выгрузки.
-            try:
-                from web_loader import _deduplicate_project_snapshots
-                _snap_df = _deduplicate_project_snapshots(_snap_df)
-            except Exception:
-                pass
             ensure_msp_hierarchy_columns(_snap_df)
             if "project name" in _snap_df.columns:
                 _snap_df = _project_column_apply_canonical(_snap_df, "project name")
@@ -6289,9 +6365,9 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
 
         with filters_panel(st, reset_keys=[
             "reason_project", "reason_block", "reason_building",
-            "reason_period_range",
+            "reason_period_month",
         ]):
-            col1, col2, col3 = st.columns(3, gap="small")
+            col1, col2, col3, col4 = st.columns(4, gap="small")
 
             with col1:
                 try:
@@ -6462,28 +6538,19 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                 else:
                     suppress_caption("Нет строения")
 
-            _reason_pmin = None
-            _reason_pmax = None
-            if "plan end" in df.columns:
-                _pe_rs = pd.to_datetime(df["plan end"], errors="coerce", dayfirst=True)
-                if _pe_rs.notna().any():
-                    _reason_pmin = _pe_rs.min().date()
-                    _reason_pmax = _pe_rs.max().date()
-            elif "plan_month" in df.columns:
-                _pm_rs = df["plan_month"].dropna()
-                if len(_pm_rs):
-                    _reason_pmin = _pm_rs.min().start_time.date()
-                    _reason_pmax = _pm_rs.max().end_time.date()
-            if _reason_pmin and _reason_pmax:
-                period_date_range_input(
-                    st,
-                    "reason_period_range",
-                    min_value=_reason_pmin,
-                    max_value=_reason_pmax,
-                    default=(_reason_pmin, _reason_pmax),
-                )
-            else:
-                suppress_caption("Нет данных для фильтра периода")
+            with col4:
+                _snap_reason = st.session_state.get("project_data_all_snapshots")
+                _df_reason_period = _snap_reason if (
+                    _snap_reason is not None and not getattr(_snap_reason, "empty", True)
+                ) else df
+                _month_opts_r = _deviations_snapshot_month_options(_df_reason_period)
+                if _month_opts_r:
+                    st.selectbox("Период", _month_opts_r, key="reason_period_month")
+                    suppress_caption(
+                        "Месяц выгрузки MSP на FTP: данные — из файла с крайней датой в выбранном месяце."
+                    )
+                else:
+                    suppress_caption("Нет snapshot_date для фильтра периода")
     else:
         pass
 
@@ -6495,6 +6562,13 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         has_project_col = False
 
     if not hide_shared_filters:
+        _snap_standalone = st.session_state.get("project_data_all_snapshots")
+        if _snap_standalone is not None and not getattr(_snap_standalone, "empty", True):
+            filtered_df = _snap_standalone.copy()
+            ensure_msp_hierarchy_columns(filtered_df)
+            if "project name" in filtered_df.columns:
+                filtered_df = _project_column_apply_canonical(filtered_df, "project name")
+            filtered_df = _deviations_maket_attach_ancestor_keys(filtered_df)
         if selected_project != "Все" and has_project_col:
             _sel_k = _project_filter_norm_key(selected_project)
             if _sel_k:
@@ -6507,15 +6581,8 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             st.session_state.get("reason_building", "Все"),
             building_col,
         )
-
-    try:
-        has_reason_col = "reason of deviation" in filtered_df.columns
-    except (AttributeError, TypeError):
-        has_reason_col = False
-
-    if not hide_shared_filters:
-        filtered_df = _deviations_filter_df_by_period_range(
-            filtered_df, "reason_period_range"
+        filtered_df = _deviations_apply_snapshot_month_filter(
+            filtered_df, session_key="reason_period_month", dynamics=False
         )
 
     # ТЗ (макет): диаграммы и таблица — один набор строк (ур. 5, причина, отклонение < 0).
@@ -7727,6 +7794,20 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                 "_maket_cnt": "Количество отклонений",
             }
         )
+        _cnt_col = "Количество отклонений"
+        _label_cols = {"Проект", "Период (месяц)", "Месяц выгрузки файла"}
+        _total_row: dict = {}
+        for col in _pm_tbl.columns:
+            cl = str(col).strip()
+            if cl in _label_cols:
+                _total_row[col] = "Итого" if cl == "Проект" else ""
+            elif cl == _cnt_col:
+                _total_row[col] = int(
+                    round(pd.to_numeric(_pm_tbl[col], errors="coerce").fillna(0).sum())
+                )
+            else:
+                _total_row[col] = ""
+        _pm_tbl = pd.concat([_pm_tbl, pd.DataFrame([_total_row])], ignore_index=True)
         suppress_caption(
             "По последнему MSP-файлу за каждый месяц выгрузки на FTP; "
             "период — месяц планового окончания задачи."
@@ -25265,12 +25346,14 @@ def _gdrs_append_summary_total_row(df: pd.DataFrame) -> pd.DataFrame:
             row[col] = val
             if cl == "План":
                 sum_plan = val
-            elif cl in ("Факт", "СКУД") and sum_fact is None:
+            elif cl in ("Факт", "СКУД"):
                 sum_fact = val
         elif cl == "Доля, %":
             row[col] = "100.0%"
         else:
             row[col] = ""
+    if "Отклонение" in df.columns and sum_plan is not None and sum_fact is not None:
+        row["Отклонение"] = int(sum_fact - sum_plan)
     if "Отклонение %" in df.columns:
         sp = sum_plan if sum_plan is not None else int(
             round(pd.to_numeric(df["План"], errors="coerce").fillna(0).sum())
@@ -25325,8 +25408,9 @@ def _gdrs_summary_table_to_html(
         f"#{wrap_id} td.gdrs-u, #{wrap_id} td.gdrs-u span {{ color:{_th.bad} !important; font-weight:800; }}"
         f"#{wrap_id} td.gdrs-o, #{wrap_id} td.gdrs-o span {{ color:{_th.good} !important; font-weight:800; }}"
         f"#{wrap_id} td.gdrs-z, #{wrap_id} td.gdrs-z span {{ color:{_th.neutral} !important; }}"
-        f"#{wrap_id} tr.gdrs-total-row td {{ background-color:{_th.table_header_bg}; "
-        f"border-top:2px solid {_th.border}; font-weight:800; }}"
+        f"#{wrap_id} tr.gdrs-total-row td, #{wrap_id} tr.bd-total-row td {{ background-color:{_th.table_header_bg}; "
+        f"border-top:2px solid {_th.border}; font-weight:800; text-transform:uppercase; }}"
+        f"#{wrap_id} tbody {{ padding-bottom:4px; }}"
         f"</style>",
         '<table class="bi-sortable-table"><thead><tr>',
     ]
@@ -26860,6 +26944,77 @@ def _dc_read_orphan_advance_mln(work: pd.DataFrame, *, advance_num_col: str | No
     return _rub / 1e6
 
 
+def _dc_advance_semaphore_level(delta, contract_mln) -> str:
+    """Уровень индикатора авансирования: green | yellow | red | пусто."""
+    try:
+        p = float(contract_mln) if pd.notna(contract_mln) else 0.0
+        d = float(delta) if pd.notna(delta) else 0.0
+    except (TypeError, ValueError):
+        return ""
+    if p <= 0:
+        return ""
+    if d <= 0:
+        return "green"
+    ratio = d / p
+    if ratio <= 0.30:
+        return "green"
+    if ratio < 0.80:
+        return "yellow"
+    return "red"
+
+
+def _dc_advance_semaphore_ball(level: str) -> str:
+    return {"green": "🟢", "yellow": "🟡", "red": "🔴"}.get(str(level or "").strip(), "")
+
+
+def _dc_advance_assumption_label(delta, contract_mln, level: str) -> str:
+    """Индикатор + доля (Аванс − КС-2) от стоимости договора."""
+    ball = _dc_advance_semaphore_ball(level)
+    if not ball:
+        return ""
+    try:
+        p = float(contract_mln) if pd.notna(contract_mln) else 0.0
+        d = float(delta) if pd.notna(delta) else 0.0
+    except (TypeError, ValueError):
+        return ball
+    if p <= 0:
+        return ball
+    pct = d / p * 100.0
+    return f"{ball} {pct:.1f}%"
+
+
+def _dc_advance_semaphore_bg(level: str, *, light: bool = False) -> str:
+    if level == "green":
+        return "rgba(34,197,94,0.28)" if light else "rgba(70,214,138,0.35)"
+    if level == "yellow":
+        return "rgba(234,179,8,0.35)" if light else "rgba(241,196,15,0.32)"
+    if level == "red":
+        return "rgba(248,113,113,0.35)" if light else "rgba(255,84,84,0.32)"
+    return ""
+
+
+def _render_dc_advance_semaphore_legend(st) -> None:
+    """Легенда цветовых индикаторов «Допущения по авансированию %»."""
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        _light = is_light_preview_active()
+    except Exception:
+        _light = False
+    _fg = "#334155" if _light else "rgba(232,238,245,0.92)"
+    _sub = "#64748b" if _light else "rgba(232,238,245,0.72)"
+    st.markdown(
+        f'<div class="dc-adv-legend" style="margin:0.65em 0 0;font-size:13px;color:{_fg};">'
+        f'<strong>Цветовые индикаторы (Аванс − КС-2):</strong> '
+        f'🟢 ≤ 0 или &gt; 0, но ≤ 30% стоимости договора • '
+        f'🟡 &gt; 30% и &lt; 80% стоимости договора • '
+        f'🔴 ≥ 80% стоимости договора'
+        f'<div style="margin-top:0.35em;color:{_sub};font-size:12px;">'
+        f'Колонка «Аванс − КС-2»: заливка ячейки по тем же порогам.</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
 def dashboard_debit_credit(df):
     """Дебиторская и кредиторская задолженность подрядчиков: график и таблица по данным из файла."""
 
@@ -27887,7 +28042,7 @@ def dashboard_debit_credit(df):
     # Правки куратора 08.05.2026: всё в млн руб., до десятых.
     # Структура столбцов по ТЗ:
     #   Договор стоимость | Всего выполненных обязательств по платежам | Аванс |
-    #   Выполнено (КС-2) | Остаток | КС-2 − Аванс
+    #   Допущения по авансированию % | Выполнено (КС-2) | Остаток | Аванс − КС-2
     if total_col and f"_num_{total_col}" in filtered.columns:
         tbl_built["Договор стоимость"] = filtered.groupby(table_group_cols)[f"_num_{total_col}"].max() / _SCALE_MLN
     if "_num_fulfilled" in filtered.columns:
@@ -27942,45 +28097,31 @@ def dashboard_debit_credit(df):
     group_dim_cols = [c for c in ("Проект", "Подрядчик", "Договор") if c in table_df.columns]
     value_cols_t = [c for c in table_df.columns if c not in group_dim_cols]
 
-    # Правки куратора 08.05.2026: расчётная колонка «КС-2 − Аванс».
-    # «КС-2 − Аванс» = «Выполнено (КС-2)» − «Аванс».
+    # Правки куратора 08.05.2026: расчётная колонка «Аванс − КС-2».
+    _ADV_DELTA_COL = "Аванс − КС-2"
+    _ADV_ASSUMP_COL = "Допущения по авансированию %"
     if "Выполнено (КС-2)" in value_cols_t and "Аванс" in value_cols_t:
-        table_df["КС-2 − Аванс"] = pd.to_numeric(
-            table_df["Выполнено (КС-2)"], errors="coerce"
-        ).fillna(0.0) - pd.to_numeric(table_df["Аванс"], errors="coerce").fillna(0.0)
-        value_cols_t.append("КС-2 − Аванс")
+        _adv_num = pd.to_numeric(table_df["Аванс"], errors="coerce").fillna(0.0)
+        _ks2_num = pd.to_numeric(table_df["Выполнено (КС-2)"], errors="coerce").fillna(0.0)
+        table_df[_ADV_DELTA_COL] = _adv_num - _ks2_num
+        value_cols_t.append(_ADV_DELTA_COL)
 
-    # «Допущения по авансированию» = (Аванс − КС-2) / Стоимость договора × 100%.
-    _ADV_ASSUMP_COL = "Допущения по авансированию"
     if (
         "Аванс" in value_cols_t
         and "Договор стоимость" in value_cols_t
         and "Выполнено (КС-2)" in value_cols_t
     ):
-
-        def _adv_assumption(plan_v: float, adv_v: float, ks2_v: float) -> str:
-            try:
-                p = float(plan_v) if pd.notna(plan_v) else 0.0
-                a = float(adv_v) if pd.notna(adv_v) else 0.0
-                k = float(ks2_v) if pd.notna(ks2_v) else 0.0
-                if p <= 0:
-                    return ""
-                pct = (a - k) / p * 100.0
-                if pct < 10.0:
-                    return f"🟢 {pct:.1f}%"
-                if pct <= 20.0:
-                    return f"🟡 {pct:.1f}%"
-                return f"🔴 {pct:.1f}%"
-            except Exception:
-                return ""
-
+        _plan_tbl = pd.to_numeric(table_df["Договор стоимость"], errors="coerce").fillna(0.0)
+        _delta_tbl = pd.to_numeric(
+            table_df.get(_ADV_DELTA_COL, table_df["Аванс"] - table_df["Выполнено (КС-2)"]),
+            errors="coerce",
+        ).fillna(0.0)
+        table_df["_adv_sem"] = [
+            _dc_advance_semaphore_level(d, p) for d, p in zip(_delta_tbl, _plan_tbl)
+        ]
         table_df[_ADV_ASSUMP_COL] = [
-            _adv_assumption(p, a, k)
-            for p, a, k in zip(
-                table_df["Договор стоимость"],
-                table_df["Аванс"],
-                table_df["Выполнено (КС-2)"],
-            )
+            _dc_advance_assumption_label(d, p, lv)
+            for d, p, lv in zip(_delta_tbl, _plan_tbl, table_df["_adv_sem"])
         ]
     total_row = {c: "" for c in group_dim_cols}
     if group_dim_cols:
@@ -27992,26 +28133,32 @@ def dashboard_debit_credit(df):
             _tp = float(pd.to_numeric(table_df["Договор стоимость"], errors="coerce").sum())
             _ta = float(pd.to_numeric(table_df["Аванс"], errors="coerce").sum())
             _tk = float(pd.to_numeric(table_df["Выполнено (КС-2)"], errors="coerce").sum())
-            if _tp > 0:
-                _pct = (_ta - _tk) / _tp * 100.0
-                if _pct < 10.0:
-                    total_row[_ADV_ASSUMP_COL] = f"🟢 {_pct:.1f}%"
-                elif _pct <= 20.0:
-                    total_row[_ADV_ASSUMP_COL] = f"🟡 {_pct:.1f}%"
-                else:
-                    total_row[_ADV_ASSUMP_COL] = f"🔴 {_pct:.1f}%"
-            else:
-                total_row[_ADV_ASSUMP_COL] = ""
+            _tot_delta = _ta - _tk
+            if _ADV_DELTA_COL in value_cols_t:
+                total_row[_ADV_DELTA_COL] = _tot_delta
+            _tot_lvl = _dc_advance_semaphore_level(_tot_delta, _tp)
+            total_row[_ADV_ASSUMP_COL] = _dc_advance_assumption_label(_tot_delta, _tp, _tot_lvl)
+            total_row["_adv_sem"] = _tot_lvl
         except Exception:
             total_row[_ADV_ASSUMP_COL] = ""
+            total_row["_adv_sem"] = ""
     table_df = pd.concat([table_df, pd.DataFrame([total_row])], ignore_index=True)
-    display_df = table_df.copy()
+    _sem_levels = table_df.get("_adv_sem", pd.Series("", index=table_df.index))
+    display_df = table_df.drop(columns=["_adv_sem"], errors="ignore").copy()
     if "Проект" in display_df.columns:
         display_df["Проект"] = display_df["Проект"].map(_dc_clean_project_val)
-    for col in value_cols_t:
-        display_df[col] = display_df[col].apply(
-            lambda x: f"{float(x):.1f}" if pd.notna(x) and not isinstance(x, str) else x
-        )
+    try:
+        from dashboards.light_theme import is_light_preview_active
+
+        _dc_light = is_light_preview_active()
+    except Exception:
+        _dc_light = False
+    _cell_bg = pd.DataFrame("", index=display_df.index, columns=display_df.columns)
+    if _ADV_DELTA_COL in _cell_bg.columns:
+        for _ix, _lv in _sem_levels.items():
+            _bg = _dc_advance_semaphore_bg(str(_lv or ""), light=_dc_light)
+            if _bg:
+                _cell_bg.at[_ix, _ADV_DELTA_COL] = _bg
     # Правки куратора 08.05.2026: финальный порядок колонок по ТЗ.
     desired_order_value = [
         "Договор стоимость",
@@ -28020,32 +28167,31 @@ def dashboard_debit_credit(df):
         _ADV_ASSUMP_COL,
         "Выполнено (КС-2)",
         "Остаток",
-        "КС-2 − Аванс",
+        _ADV_DELTA_COL,
     ]
     final_order = [c for c in group_dim_cols if c in display_df.columns]
     final_order += [c for c in desired_order_value if c in display_df.columns]
-    # Добавим хвостом любые прочие непустые колонки, чтобы ничего не потерять.
     for c in display_df.columns:
         if c not in final_order:
             final_order.append(c)
     display_df = display_df[final_order]
+    _cell_bg = _cell_bg[final_order]
     _n_data_rows = max(0, len(display_df) - 1)
     suppress_caption(
         f"Строк данных: {_n_data_rows} • Финансы — млн руб., до десятых • "
         "Строка «ИТОГО» закреплена внизу при прокрутке; "
-        "колонки «Остаток», «КС-2 − Аванс» — прокрутите таблицу вправо → • "
-        f"«{_ADV_ASSUMP_COL}»: (Аванс − КС-2) / Стоимость договора × 100% — "
-        "🟢 < 10%, 🟡 10–20%, 🔴 > 20%"
+        f"колонки «Остаток», «{_ADV_DELTA_COL}» — прокрутите таблицу вправо →"
     )
-    _render_budget_table_html(
-            display_df,
-            finance_deviation_column="Остаток",
-            deviation_red_if_negative=True,
-            deviation_abs_min_mln=0.0,
-            file_stem="debit_credit",
-            key_prefix="debit_credit",
-            **_finance_table_html_kwargs(table_scroll_max_height_vh=52),
-        )
+    _render_format_dataframe_html(
+        display_df,
+        file_stem="debit_credit",
+        key_prefix="debit_credit",
+        cell_background=_cell_bg,
+        finance_decimal_places=1,
+        bold_row_indices={len(display_df) - 1},
+        table_scroll_max_height_vh=52,
+    )
+    _render_dc_advance_semaphore_legend(st)
 
 
 # ── TESSA: поиск колонок и дат (Исполнительная документация / Предписания) ──
@@ -34026,6 +34172,24 @@ def _render_appr_pf_summary_kpi(
             f'<p class="appr-pf-kpi-pct" style="color:{html_esc(pct_color)};">'
             f"{pct_of_plan:.1f}% от плана</p>"
         )
+    dev_rub = float(fact_rub or 0.0) - float(plan_rub or 0.0)
+    dev_v = dev_rub / (1e9 if unit == "млрд" else 1e6)
+    dev_mln = dev_rub / 1e6
+    dev_pct = (100.0 * dev_rub / plan_rub) if plan_rub > 0 else float("nan")
+    dev_color = fact_green if dev_rub >= 0 else plan_red
+    _dev_sign = "−" if dev_v < 0 else "+"
+    dev_val = html_esc(f"{_dev_sign}{abs(dev_v):{vf}} {unit}")
+    if dev_mln < 0:
+        dev_mln_html = html_esc(f"−{abs(dev_mln):.1f} млн рублей")
+    else:
+        dev_mln_html = html_esc(f"{dev_mln:.1f} млн рублей")
+    dev_pct_html = ""
+    if plan_rub > 0 and np.isfinite(dev_pct):
+        _dp_sign = "−" if dev_pct < 0 else "+"
+        dev_pct_html = (
+            f'<p class="appr-pf-kpi-pct" style="color:{html_esc(dev_color)};">'
+            f"{_dp_sign}{abs(dev_pct):.1f}% от плана</p>"
+        )
     plan_val = html_esc(f"{plan_v:{vf}} {unit}")
     fact_val = html_esc(f"{fact_v:{vf}} {unit}")
     shell = (
@@ -34033,9 +34197,9 @@ def _render_appr_pf_summary_kpi(
         "<style>"
         "html,body{margin:0;padding:0;background:transparent!important;"
         "font-family:Inter,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;}"
-        ".appr-pf-summary-kpi{display:flex;gap:1.25rem;flex-wrap:wrap;align-items:flex-start;"
+        ".appr-pf-summary-kpi{display:flex;gap:1rem;flex-wrap:wrap;align-items:flex-start;"
         "padding:8px 4px;box-sizing:border-box;}"
-        ".appr-pf-summary-kpi-col{flex:1 1 200px;min-width:180px;}"
+        ".appr-pf-summary-kpi-col{flex:1 1 150px;min-width:140px;}"
         ".appr-pf-kpi-label{font-size:2.3rem!important;font-weight:800!important;"
         "margin:0 0 0.45rem 0!important;letter-spacing:0.02em!important;line-height:1.1!important;}"
         ".appr-pf-kpi-value{font-size:3.3rem!important;font-weight:700!important;"
@@ -34059,6 +34223,12 @@ def _render_appr_pf_summary_kpi(
         f'<p class="appr-pf-kpi-muted" style="color:{html_esc(muted_color)};">'
         f"{fact_mln:.1f} млн рублей</p>"
         f"{pct_html}"
+        "</div>"
+        '<div class="appr-pf-summary-kpi-col">'
+        f'<p class="appr-pf-kpi-label" style="color:{html_esc(dev_color)};">Отклонение</p>'
+        f'<p class="appr-pf-kpi-value" style="color:{html_esc(dev_color)};">{dev_val}</p>'
+        f'<p class="appr-pf-kpi-muted" style="color:{html_esc(muted_color)};">{dev_mln_html}</p>'
+        f"{dev_pct_html}"
         "</div></div>"
         "</body></html>"
     )
@@ -34090,11 +34260,11 @@ _APPR_PF_SUMMARY_GAUGE_CSS = """
   max-width: 100% !important;
 }
 .appr-pf-summary-anchor ~ div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:last-child {
-  flex: 1.4 1 320px !important;
-  min-width: 280px !important;
+  flex: 1.85 1 420px !important;
+  min-width: 360px !important;
   overflow: visible !important;
 }
-.appr-pf-summary-kpi-col { flex: 1 1 200px !important; min-width: 180px !important; }
+.appr-pf-summary-kpi-col { flex: 1 1 150px !important; min-width: 140px !important; }
 .appr-pf-summary-kpi .appr-pf-kpi-label {
   font-size: 2.3rem !important;
   font-weight: 800 !important;
@@ -34259,7 +34429,7 @@ def _render_plan_fact_summary_dashboard(
     st.subheader("Сводный БДДС по проектам")
     st.markdown(_APPR_PF_SUMMARY_GAUGE_CSS, unsafe_allow_html=True)
     st.markdown('<div class="appr-pf-summary-anchor"></div>', unsafe_allow_html=True)
-    g_col, val_col = st.columns([1.2, 1], gap="medium", vertical_alignment="center")
+    g_col, val_col = st.columns([1.15, 1.35], gap="medium", vertical_alignment="center")
     with g_col:
         _render_appr_pf_gauge_chart(
             fig,
@@ -34747,24 +34917,29 @@ def _render_approved_budget_plan_fact(df: pd.DataFrame) -> None:
         key_suffix=_project_filter_norm_key(str(selected_project)),
     )
 
-    _render_budget_histogram_plan_fact_by_projects(display_df)
+    _all_projects = str(selected_project or "Все").strip() == "Все"
+    if _all_projects and used_cumulative:
+        _render_approved_budget_monthly_block(
+            monthly_slice,
+            selected_project,
+            reporting_label=reporting_label,
+            skip_msp_fallback=True,
+            primary_histogram=True,
+        )
+    else:
+        _render_budget_histogram_plan_fact_by_projects(display_df)
+        _render_approved_budget_monthly_block(
+            monthly_slice if used_cumulative else filtered_df,
+            selected_project,
+            reporting_label=reporting_label if used_cumulative else "",
+            skip_msp_fallback=used_cumulative,
+        )
 
     _render_plan_fact_detail_table(
         st,
         display_df,
         msp_df=df if used_1c_approved else None,
         key_suffix=_project_filter_norm_key(str(selected_project)),
-    )
-
-    # Правки куратора 08.05.2026: перенесены графики из старого таба «Утверждённый бюджет»
-    # в текущий «Утверждённый бюджет план/факт» (план/факт по месяцам + сводная таблица).
-    # Месячный график/таблица — из того же среза, что и верхняя диаграмма (1С или MSP),
-    # иначе при синтетике из dannye остаётся сырой MSP «все проекты».
-    _render_approved_budget_monthly_block(
-        monthly_slice if used_cumulative else filtered_df,
-        selected_project,
-        reporting_label=reporting_label if used_cumulative else "",
-        skip_msp_fallback=used_cumulative,
     )
 
 
@@ -34774,6 +34949,7 @@ def _render_approved_budget_monthly_block(
     *,
     reporting_label: str = "",
     skip_msp_fallback: bool = False,
+    primary_histogram: bool = False,
 ) -> None:
     """График «Утверждённый бюджет (план/факт) по месяцам» + сводная таблица по месяцам.
 
@@ -34818,17 +34994,32 @@ def _render_approved_budget_monthly_block(
     if "plan_month" not in src.columns:
         return
 
-    render_table_subheader(
-        st,
-        report_title_name("утверждённого бюджета план/факт", "по месяцам"),
-    )
+    if primary_histogram:
+        render_table_subheader(st, "Гистограмма: Бюджет план/факт/отклонение по месяцам")
+    else:
+        render_table_subheader(
+            st,
+            report_title_name("утверждённого бюджета план/факт", "по месяцам"),
+        )
     if reporting_label:
         st.caption(f"Помесячные обороты до {reporting_label} (тот же срез, что спидометр).")
+    _hide_zero_key = (
+        "approved_budget_primary_hide_zero_months"
+        if primary_histogram
+        else "approved_budget_planfact_hide_zero_months"
+    )
     _appr_hide_zero = st.checkbox(
         "Скрывать месяцы, где план и факт равны 0",
         value=True,
-        key="approved_budget_planfact_hide_zero_months",
+        key=_hide_zero_key,
     )
+    _show_reserve = False
+    if primary_histogram:
+        _show_reserve = st.checkbox(
+            "Показать отклонение",
+            value=True,
+            key="approved_budget_primary_show_reserve",
+        )
     monthly_rows = (
         src.groupby("plan_month")
         .agg({"budget plan": "sum", "budget fact": "sum"})
@@ -34898,6 +35089,50 @@ def _render_approved_budget_monthly_block(
             customdata=monthly_rows["budget fact"].apply(format_million_rub),
         )
     )
+    if _show_reserve:
+        _dev_mln = monthly_rows["reserve budget"].div(1e6)
+        _dev_thr_mln = 0.01
+        _y_fact_lt_plan = _dev_mln.where(_dev_mln < -_dev_thr_mln)
+        _y_fact_gt_plan = _dev_mln.where(_dev_mln > _dev_thr_mln)
+        _dev_txt_lt = _finance_deviation_bar_text_signed_mln(
+            _y_fact_lt_plan,
+            min_abs_mln=_text_min_mln,
+            decimals=1,
+            unit_suffix=" млн. руб.",
+        )
+        _dev_txt_gt = _finance_deviation_bar_text_signed_mln(
+            _y_fact_gt_plan,
+            min_abs_mln=_text_min_mln,
+            decimals=1,
+            unit_suffix=" млн. руб.",
+        )
+        _months_x = monthly_rows["Месяц"].astype(str).tolist()
+        if _y_fact_lt_plan.notna().any():
+            fig.add_trace(
+                go.Bar(
+                    x=_months_x,
+                    y=_y_fact_lt_plan,
+                    name="Отклонение (факт < план)",
+                    marker_color=_FINANCE_DEV_BAR_RED,
+                    text=_dev_txt_lt,
+                    textposition="outside",
+                    textfont=dict(size=_tf_size, color=_FINANCE_DEV_LABEL_RED),
+                    cliponaxis=False,
+                )
+            )
+        if _y_fact_gt_plan.notna().any():
+            fig.add_trace(
+                go.Bar(
+                    x=_months_x,
+                    y=_y_fact_gt_plan,
+                    name="Отклонение (факт > план)",
+                    marker_color=_FINANCE_DEV_BAR_GREEN,
+                    text=_dev_txt_gt,
+                    textposition="outside",
+                    textfont=dict(size=_tf_size, color=_FINANCE_DEV_LABEL_GREEN),
+                    cliponaxis=False,
+                )
+            )
     _leg_b_pre = max(300, min(460, 280 + int(_n_m * 3.5)))
     _top_px_pre = 140
     _min_plot_core_px = 400
@@ -34920,18 +35155,20 @@ def _render_approved_budget_monthly_block(
     except Exception:
         pass
     if not monthly_rows.empty:
-        _ymax = float(
-            np.nanmax(
-                np.concatenate(
-                    [
-                        monthly_rows["budget plan"].div(1e6).to_numpy(),
-                        monthly_rows["budget fact"].div(1e6).to_numpy(),
-                    ]
-                )
-            )
-        )
-        if np.isfinite(_ymax) and _ymax > 0:
-            fig.update_layout(yaxis=dict(range=[0, _ymax * 1.28], tickformat=".1f"))
+        _ymax_parts = [
+            monthly_rows["budget plan"].div(1e6).to_numpy(),
+            monthly_rows["budget fact"].div(1e6).to_numpy(),
+        ]
+        if _show_reserve:
+            _ymax_parts.append(monthly_rows["reserve budget"].div(1e6).to_numpy())
+        _ymax = float(np.nanmax(np.concatenate(_ymax_parts)))
+        _ymin = 0.0
+        if _show_reserve:
+            _ymin_dev = float(np.nanmin(monthly_rows["reserve budget"].div(1e6).to_numpy()))
+            if np.isfinite(_ymin_dev) and _ymin_dev < 0:
+                _ymin = _ymin_dev * 1.15
+        if np.isfinite(_ymax) and (_ymax > 0 or _ymin < 0):
+            fig.update_layout(yaxis=dict(range=[_ymin, max(_ymax * 1.28, 0.01)], tickformat=".1f"))
         else:
             fig.update_layout(yaxis=dict(tickformat=".1f"))
     fig = apply_chart_background(fig)
@@ -34945,13 +35182,16 @@ def _render_approved_budget_monthly_block(
         categories=monthly_rows["Месяц"].astype(str).tolist(),
         px_per_month=400,
         force_hscroll=True,
-        n_bar_slots=2,
+        n_bar_slots=3 if _show_reserve else 2,
     )
 
-    render_table_subheader(
-        st,
-        report_title_name("утверждённого бюджета", "по месяцам"),
-    )
+    if not primary_histogram:
+        render_table_subheader(
+            st,
+            report_title_name("утверждённого бюджета", "по месяцам"),
+        )
+    elif primary_histogram:
+        render_table_subheader(st, "Сводная таблица БДДС по месяцам")
     summary_table = monthly_rows[
         ["Месяц", "budget plan", "budget fact", "reserve budget"]
     ].copy()

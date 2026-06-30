@@ -4095,6 +4095,95 @@ def _matrix_iframe_html_document(
     )
 
 
+def _dev_tz_matrix_legend_palette(theme: str) -> dict[str, str]:
+    if str(theme or "").strip().lower() == "light":
+        return {
+            "done": "#ea580c",
+            "ok": "#15803d",
+            "bad": "#b91c1c",
+            "muted": "#6b7280",
+            "text": "#111827",
+            "border": "#d1d5db",
+            "bg": "#f9fafb",
+        }
+    return {
+        "done": "#f09355",
+        "ok": "#28a745",
+        "bad": "#d9534f",
+        "muted": "#8899aa",
+        "text": "#e8eef5",
+        "border": "#3d4f63",
+        "bg": "rgba(23, 49, 75, 0.35)",
+    }
+
+
+def render_dev_tz_matrix_color_legend(st, *, theme: str = "dark") -> None:
+    """Легенда цветов шрифта матрицы «Девелоперские проекты» (под таблицей)."""
+    p = _dev_tz_matrix_legend_palette(theme)
+    st.markdown(
+        f"""
+<div class="dev-tz-color-legend" role="note" aria-label="Легенда цветов таблицы">
+  <span class="dev-tz-color-legend-title">Легенда:</span>
+  <span class="dev-tz-color-legend-item">
+    <span class="dev-tz-color-swatch dev-tz-color-swatch-done">100%</span>
+    <span class="dev-tz-color-legend-text">План / Факт — задача в MSP выполнена на 100%</span>
+  </span>
+  <span class="dev-tz-color-legend-item">
+    <span class="dev-tz-color-swatch dev-tz-color-swatch-ok">+0</span>
+    <span class="dev-tz-color-legend-text">Откл. — нулевое или положительное отклонение</span>
+  </span>
+  <span class="dev-tz-color-legend-item">
+    <span class="dev-tz-color-swatch dev-tz-color-swatch-bad">−0</span>
+    <span class="dev-tz-color-legend-text">Откл. — отрицательное отклонение (просрочка / недовыполнение)</span>
+  </span>
+</div>
+<style>
+.dev-tz-color-legend {{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 1.35rem;
+  margin: 0.45rem 0 0.75rem;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid {p["border"]};
+  border-radius: 8px;
+  background: {p["bg"]};
+  font-size: 0.875rem;
+  line-height: 1.35;
+  color: {p["text"]};
+}}
+.dev-tz-color-legend-title {{
+  font-weight: 700;
+  color: {p["text"]};
+  margin-right: 0.15rem;
+}}
+.dev-tz-color-legend-item {{
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}}
+.dev-tz-color-swatch {{
+  display: inline-block;
+  min-width: 2.1rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  font-weight: 800;
+  text-align: center;
+  line-height: 1.25;
+}}
+.dev-tz-color-swatch-done {{ color: {p["done"]} !important; }}
+.dev-tz-color-swatch-ok {{ color: {p["ok"]} !important; }}
+.dev-tz-color-swatch-bad {{ color: {p["bad"]} !important; }}
+.dev-tz-color-legend-text {{ color: {p["text"]}; }}
+@media (max-width: 720px) {{
+  .dev-tz-color-legend {{ flex-direction: column; align-items: flex-start; gap: 0.45rem; }}
+}}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 def render_dev_tz_matrix(
     rows: Union[List[Dict[str, Any]], List[List[Dict[str, Any]]]],
     table_css: str,
@@ -4249,6 +4338,7 @@ def render_dev_tz_matrix(
         unsafe_allow_html=True,
     )
     _components.html(_iframe_html, height=_iframe_h, scrolling=False)
+    render_dev_tz_matrix_color_legend(st, theme=theme)
 
 
 # ── Контрольные точки (Сроки / макет file-009): проекты × вехи ───────────────
