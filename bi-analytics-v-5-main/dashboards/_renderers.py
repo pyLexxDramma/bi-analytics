@@ -16464,7 +16464,7 @@ def _render_rd_monthly_overlay_chart(
         marker_color="#F39C12",
         text=[_lbl(v, use_pct) for v in plot_df["plan_v"]],
         textposition="inside",
-        textfont=dict(size=10, color="#1a1a1a"),
+        textfont=dict(size=20, color="#1a1a1a"),
         hovertemplate="<b>%{y}</b><br>План: %{x}<extra></extra>"
         if is_h
         else "<b>%{x}</b><br>План: %{y}<extra></extra>",
@@ -16474,7 +16474,7 @@ def _render_rd_monthly_overlay_chart(
         marker_color="#27AE60",
         text=[_lbl(v, use_pct) for v in plot_df["done_v"]],
         textposition="inside",
-        textfont=dict(size=10, color="white"),
+        textfont=dict(size=20, color="white"),
         hovertemplate="<b>%{y}</b><br>Выполнено: %{x}<extra></extra>"
         if is_h
         else "<b>%{x}</b><br>Выполнено: %{y}<extra></extra>",
@@ -16484,7 +16484,7 @@ def _render_rd_monthly_overlay_chart(
         marker_color="#C0392B",
         text=[_lbl(v, use_pct) for v in plot_df["overdue_v"]],
         textposition="inside",
-        textfont=dict(size=10, color="white"),
+        textfont=dict(size=20, color="white"),
         hovertemplate="<b>%{y}</b><br>Просрочено: %{x}<extra></extra>"
         if is_h
         else "<b>%{x}</b><br>Просрочено: %{y}<extra></extra>",
@@ -33694,6 +33694,20 @@ def dashboard_documentation(
                         if len(_pd_tickvals) > 52:
                             _pd_ix = np.linspace(0, len(_pd_tickvals) - 1, num=52, dtype=int)
                             _pd_tickvals = [_pd_tickvals[int(i)] for i in sorted(set(_pd_ix))]
+                        # Прореживаем близкие даты, чтобы повёрнутые подписи не накладывались.
+                        if len(_pd_tickvals) > 2:
+                            _pd_span_days = max((_pd_tickvals[-1] - _pd_tickvals[0]).days, 1)
+                            _pd_min_gap = max(_pd_span_days / 24.0, 7.0)
+                            _pd_kept = [_pd_tickvals[0]]
+                            for _tv in _pd_tickvals[1:-1]:
+                                if (_tv - _pd_kept[-1]).days >= _pd_min_gap:
+                                    _pd_kept.append(_tv)
+                            _pd_last = _pd_tickvals[-1]
+                            if (_pd_last - _pd_kept[-1]).days < _pd_min_gap and len(_pd_kept) > 1:
+                                _pd_kept[-1] = _pd_last
+                            else:
+                                _pd_kept.append(_pd_last)
+                            _pd_tickvals = _pd_kept
                         _pd_ticktext = [_pd_axis_date_tick_label_ru(v) for v in _pd_tickvals]
                         _pd_y = pd.to_numeric(dynamics_df["Количество"], errors="coerce").dropna()
                         _pd_y_max = float(_pd_y.max()) if not _pd_y.empty else 1.0
@@ -34421,7 +34435,7 @@ def _render_plan_fact_summary_dashboard(
     _gauge_h = _APPR_PF_GAUGE_HEIGHT_PX
     fig.update_layout(
         height=_gauge_h,
-        margin=dict(l=16, r=16, t=12, b=40),
+        margin=dict(l=96, r=96, t=56, b=44),
         autosize=False,
     )
     fig = apply_chart_background(fig)
