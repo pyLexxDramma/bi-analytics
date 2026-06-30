@@ -1908,6 +1908,25 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
     # Маршрутизация по реальным классам-обёрткам (без <style>): иначе CSS-селекторы
     # в _TABLE_CSS ложно матчатся подстрокой и все таблицы уходят в одну ветку.
     _b = re.sub(r"<style[^>]*>.*?</style>", "", html or "", flags=re.I | re.S)
+    # ГДРС-матрица рендерится через components.html (matrix-fs-root). Host-CSS даёт
+    # iframe display:block (без baseline-зазора) и убирает margin/padding контейнера;
+    # высоту контейнера по контенту держит _MATRIX_IFRAME_FIT_HEIGHT_SCRIPT внутри iframe.
+    if "gdrs-table-wrap" in _b:
+        try:
+            from dashboards.dev_projects_tz_matrix import (
+                _DEV_MATRIX_STREAMLIT_HOST_CSS,
+                _DEV_MATRIX_STREAMLIT_HOST_CSS_LIGHT,
+            )
+
+            _gdrs_light = "bi-light-table" in _b or "gdrs-light-table" in _b
+            st.markdown(
+                _DEV_MATRIX_STREAMLIT_HOST_CSS_LIGHT
+                if _gdrs_light
+                else _DEV_MATRIX_STREAMLIT_HOST_CSS,
+                unsafe_allow_html=True,
+            )
+        except Exception:
+            pass
     if "exec-doc-scroll-wrap" in _b:
         _light_exec = "bi-light-table" in _b or "gdrs-light-table" in _b
         _th_bg = "#f3f4f6" if _light_exec else "#16283a"
