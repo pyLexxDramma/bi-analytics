@@ -1927,19 +1927,31 @@ def _build_plan_lookup(plan: Optional[pd.DataFrame], plan_col: str) -> tuple[dic
     contract_by_norm: dict = {}
     if plan is None or plan.empty:
         return by_id, by_id_name, by_norm_name
-    for _, p in plan.iterrows():
-        v = p.get(plan_col)
-        if v is None or pd.isna(v):
+    cols = plan.columns
+    # iterrows строит pd.Series на каждую строку (113k Series.__init__ в профиле);
+    # читаем нужные столбцы в numpy и идём zip-ом — логика аккумуляции прежняя.
+    # normalize_name уже кеширован (lru_cache), поэтому повторные имена дешёвые.
+    if plan_col not in cols:
+        by_id_name["__contract_by_norm__"] = contract_by_norm
+        return by_id, by_id_name, by_norm_name
+    n = len(plan)
+    vals = pd.to_numeric(plan[plan_col], errors="coerce").to_numpy()
+    proj_id_arr = plan["project_id"].astype(str).str.strip().to_numpy() if "project_id" in cols else None
+    contr_id_arr = plan["contractor_id"].astype(str).str.strip().to_numpy() if "contractor_id" in cols else None
+    proj_name_arr = plan["project_name"].to_numpy() if "project_name" in cols else None
+    contr_name_arr = plan["contractor_name"].to_numpy() if "contractor_name" in cols else None
+    has_cn = "contract_name" in cols
+    cn_arr = plan["contract_name"].astype(str).str.strip().to_numpy() if has_cn else None
+    for i in range(n):
+        v = vals[i]
+        if pd.isna(v):
             continue
-        try:
-            v = float(v)
-        except Exception:
-            continue
-        proj_id = str(p.get("project_id", "")).strip()
-        contr_id = str(p.get("contractor_id", "")).strip()
-        proj_norm = normalize_name(p.get("project_name", ""))
-        contr_norm = normalize_name(p.get("contractor_name", ""))
-        contract_name = str(p.get("contract_name", "")).strip() if "contract_name" in p else ""
+        v = float(v)
+        proj_id = proj_id_arr[i] if proj_id_arr is not None else ""
+        contr_id = contr_id_arr[i] if contr_id_arr is not None else ""
+        proj_norm = normalize_name(proj_name_arr[i]) if proj_name_arr is not None else ""
+        contr_norm = normalize_name(contr_name_arr[i]) if contr_name_arr is not None else ""
+        contract_name = cn_arr[i] if has_cn else ""
         if proj_id and contr_id:
             by_id[(proj_id, contr_id)] = by_id.get((proj_id, contr_id), 0.0) + v
         if proj_id and contr_norm:

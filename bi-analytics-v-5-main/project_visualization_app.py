@@ -148,6 +148,7 @@ def _invalidate_caches_on_version_drift() -> None:
             # Сбрасываем тяжёлые кэшированные DataFrame'ы (matrix-кэш и т.п.).
             for k in [
                 "_dev_matrix_cache_v1",
+                "_syn_budget_memo_v1",
                 "_pending_web_folder_load",
                 "_deeplink_applied_once",
             ]:

@@ -64,7 +64,11 @@ def _turnover_article_has_lot_and_sublot(raw) -> bool:
 def _filter_1c_frame_by_article_lot_sublot(frame: pd.DataFrame, *, art_col: Optional[str]) -> pd.DataFrame:
     if frame is None or getattr(frame, "empty", True) or not art_col or art_col not in frame.columns:
         return frame
-    m = frame[art_col].map(_turnover_article_has_lot_and_sublot).fillna(False)
+    # «СтатьяОборотов» имеет низкую кардинальность (~60 уникальных) при тысячах строк —
+    # считаем regex-предикат один раз на уникальное значение, затем map по словарю.
+    col = frame[art_col]
+    lut = {v: _turnover_article_has_lot_and_sublot(v) for v in pd.unique(col)}
+    m = col.map(lut).fillna(False).astype(bool)
     if not bool(m.any()):
         return frame.iloc[0:0].copy()
     return frame.loc[m].copy()
@@ -221,12 +225,17 @@ def _parse_1c_period_series(raw: pd.Series) -> pd.Series:
     if raw is None:
         return pd.Series(dtype="datetime64[ns]")
     s = raw.astype(str).str.strip()
-    dt = pd.to_datetime(s, errors="coerce", dayfirst=False)
-    need_fallback = dt.isna()
-    if bool(need_fallback.any()):
-        dt_fb = pd.to_datetime(s[need_fallback], errors="coerce", dayfirst=True)
-        dt.loc[need_fallback] = dt_fb
-    return dt
+    # Даты периодов 1С сильно повторяются (помесячные обороты) — парсим только
+    # уникальные значения dateutil-ом, затем разворачиваем обратно по позициям.
+    uniq, inverse = np.unique(s.to_numpy(), return_inverse=True)
+    parsed = pd.to_datetime(uniq, errors="coerce", dayfirst=False)
+    need_fallback = parsed.isna()
+    if bool(np.asarray(need_fallback).any()):
+        fb = pd.to_datetime(uniq[np.asarray(need_fallback)], errors="coerce", dayfirst=True)
+        parsed_vals = parsed.to_numpy(copy=True)
+        parsed_vals[np.asarray(need_fallback)] = fb.to_numpy()
+        parsed = pd.DatetimeIndex(parsed_vals)
+    return pd.Series(parsed.to_numpy()[inverse], index=s.index)
 
 
 def _pick_col(df: pd.DataFrame, needles: tuple[str, ...]) -> Optional[str]:
@@ -508,7 +517,70 @@ def try_approved_budget_from_1c_dannye(
     return out
 
 
+def _ref_1c_fingerprint(df: Optional[pd.DataFrame]) -> tuple:
+    """Дешёвый отпечаток кадра оборотов 1С для in-session мемоизации (без хэша содержимого)."""
+    if df is None:
+        return ("none",)
+    try:
+        if getattr(df, "empty", True):
+            return ("empty",)
+        c0 = df.columns[0] if len(df.columns) else None
+        return (
+            tuple(df.shape),
+            tuple(map(str, df.columns[:8])),
+            str(df.index[0]),
+            str(df.index[-1]),
+            "" if c0 is None else str(df.iloc[0, 0])[:48],
+            "" if c0 is None else str(df.iloc[-1, 0])[:48],
+        )
+    except Exception:
+        return ("err", id(df))
+
+
 def try_synthetic_budget_from_1c_dannye(
+    *,
+    reference_1c_dannye: Optional[pd.DataFrame] = None,
+    impute_plan: bool = True,
+) -> Optional[pd.DataFrame]:
+    """In-session мемо-обёртка: за один рендер БДДС/Девелоперских функция зовётся
+    5–8 раз с тем же кадром 1С. Кешируем результат по дешёвому отпечатку кадра
+    (+ флаг impute_plan); сама сборка — в _try_synthetic_budget_from_1c_dannye_uncached.
+    """
+    ref = reference_1c_dannye
+    if ref is None:
+        try:
+            import streamlit as st
+
+            ref = st.session_state.get("reference_1c_dannye")
+        except Exception:
+            ref = None
+    if ref is None or not isinstance(ref, pd.DataFrame) or ref.empty:
+        return None
+    _memo = None
+    _key = None
+    try:
+        import streamlit as st
+
+        _memo = st.session_state.setdefault("_syn_budget_memo_v1", {})
+        _key = (_ref_1c_fingerprint(ref), bool(impute_plan))
+        if _key in _memo:
+            _c = _memo[_key]
+            return _c.copy() if isinstance(_c, pd.DataFrame) else _c
+    except Exception:
+        _memo = None
+        _key = None
+    _res = _try_synthetic_budget_from_1c_dannye_uncached(
+        reference_1c_dannye=ref, impute_plan=impute_plan
+    )
+    if _memo is not None and _key is not None:
+        try:
+            _memo[_key] = _res.copy() if isinstance(_res, pd.DataFrame) else _res
+        except Exception:
+            pass
+    return _res
+
+
+def _try_synthetic_budget_from_1c_dannye_uncached(
     *,
     reference_1c_dannye: Optional[pd.DataFrame] = None,
     impute_plan: bool = True,
@@ -563,17 +635,16 @@ def try_synthetic_budget_from_1c_dannye(
     if not per:
         return None
 
-    def _no_bdr(row) -> bool:
-        a = str(row.get(art, "") if art else "").casefold()
-        if "(бдр)" in a or a.strip() == "бдр":
-            return False
-        if typ and typ in row.index:
-            tl = str(row.get(typ, "")).casefold()
-            if "бдр" in tl and "бддс" not in tl:
-                return False
-        return True
-
-    t = t[t.apply(_no_bdr, axis=1)].copy()
+    # Векторный эквивалент построчного _no_bdr (исключаем статьи (БДР)/«бдр» и
+    # тип статьи с «бдр» без «бддс»). Раньше — t.apply(..., axis=1) по всему кадру.
+    keep = pd.Series(True, index=t.index)
+    if art and art in t.columns:
+        a = t[art].astype(str).str.casefold()
+        keep &= ~(a.str.contains("(бдр)", regex=False) | a.str.strip().eq("бдр"))
+    if typ and typ in t.columns:
+        tl = t[typ].astype(str).str.casefold()
+        keep &= ~(tl.str.contains("бдр", regex=False) & ~tl.str.contains("бддс", regex=False))
+    t = t[keep].copy()
     if t.empty:
         return None
     if art:
@@ -1401,17 +1472,15 @@ def _bdds_turnover_g_for_project(
     if t.empty:
         return None
 
-    def _no_bdr(row) -> bool:
-        a = str(row.get(art, "") if art else "").casefold()
-        if "(бдр)" in a or a.strip() == "бдр":
-            return False
-        if typ and typ in row.index:
-            tl = str(row.get(typ, "")).casefold()
-            if "бдр" in tl and "бддс" not in tl:
-                return False
-        return True
-
-    t = t[t.apply(_no_bdr, axis=1)].copy()
+    # Векторный эквивалент построчного _no_bdr (см. try_synthetic_budget_from_1c_dannye).
+    keep = pd.Series(True, index=t.index)
+    if art and art in t.columns:
+        a = t[art].astype(str).str.casefold()
+        keep &= ~(a.str.contains("(бдр)", regex=False) | a.str.strip().eq("бдр"))
+    if typ and typ in t.columns:
+        tl = t[typ].astype(str).str.casefold()
+        keep &= ~(tl.str.contains("бдр", regex=False) & ~tl.str.contains("бддс", regex=False))
+    t = t[keep].copy()
     if art:
         t = _filter_1c_frame_by_article_lot_sublot(t, art_col=art)
     if t.empty:

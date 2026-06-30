@@ -2426,6 +2426,21 @@ def format_dataframe_as_html(
     return mark_html_table_sortable(html_table)
 
 
+@st.cache_data(show_spinner=False)
+def _read_css_file_cached(path_str: str, _mtime: float) -> str:
+    """Содержимое CSS-файла, кешированное по (путь, mtime).
+
+    load_custom_css вызывается несколько раз за rerun; без кеша это даёт лишние
+    чтения с диска каждый прогон. Инъекция <style> через st.markdown остаётся
+    у вызывающего (DOM Streamlit пересоздаётся на каждом rerun).
+    """
+    try:
+        with open(path_str, encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
 def load_custom_css() -> None:
     """Загружает CSS. Для светлых превью — без тёмного style.css."""
     from pathlib import Path
@@ -2456,9 +2471,13 @@ def load_custom_css() -> None:
     css_names = ("bi-responsive.css",) if _light_preview else ("style.css", "bi-responsive.css")
     for name in css_names:
         css_path = base / "static" / "css" / name
-        if css_path.exists():
-            with open(css_path, encoding="utf-8") as f:
-                st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+        try:
+            _mtime = css_path.stat().st_mtime
+        except OSError:
+            continue
+        css_text = _read_css_file_cached(str(css_path), _mtime)
+        if css_text:
+            st.markdown(f"<style>{css_text}</style>", unsafe_allow_html=True)
     st.markdown(BI_TABLE_LAYOUT_CSS + BI_RESPONSIVE_DASHBOARD_CSS, unsafe_allow_html=True)
     if _light_preview:
         st.markdown(
