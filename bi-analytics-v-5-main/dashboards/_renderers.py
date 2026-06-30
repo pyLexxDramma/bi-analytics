@@ -29089,20 +29089,24 @@ def _exec_doc_kind_filter_options(
     kind_col: str | None,
     catalog_df: pd.DataFrame,
 ) -> list[str]:
-    """Варианты фильтра «Вид документа» — из справочника (даже если в данных пока 0 строк)."""
+    """Варианты фильтра «Вид документа» — уникальные группы из справочника."""
     opts: list[str] = []
     seen: set[str] = set()
     if catalog_df is not None and not catalog_df.empty and "KindName" in catalog_df.columns:
+        group_col = "Группа" if "Группа" in catalog_df.columns else None
         for _, r in catalog_df.iterrows():
             if not _exec_doc_kind_in_report_flag(r):
                 continue
-            kn = str(r.get("KindName", "")).strip()
-            if not kn or kn in seen:
+            if group_col:
+                label = str(r.get(group_col, "")).strip()
+            else:
+                label = str(r.get("KindName", "")).strip()
+            if not label or label in seen:
                 continue
-            opts.append(kn)
-            seen.add(kn)
-    if opts:
-        return opts
+            opts.append(label)
+            seen.add(label)
+        if opts:
+            return opts
     if not kind_col or kind_col not in work.columns:
         return []
     return sorted(
@@ -29113,6 +29117,26 @@ def _exec_doc_kind_filter_options(
         },
         key=lambda x: x.casefold(),
     )
+
+
+def _exec_doc_kind_names_for_filter_label(label: str, catalog_df: pd.DataFrame) -> set[str]:
+    """KindName, попадающие под выбранную группу (или точное имя без справочника)."""
+    if not label or label == "Все":
+        return set()
+    if catalog_df is None or catalog_df.empty or "KindName" not in catalog_df.columns:
+        return {label}
+    group_col = "Группа" if "Группа" in catalog_df.columns else None
+    if group_col:
+        names = {
+            str(r.get("KindName", "")).strip()
+            for _, r in catalog_df.iterrows()
+            if _exec_doc_kind_in_report_flag(r)
+            and str(r.get(group_col, "")).strip() == label
+            and str(r.get("KindName", "")).strip()
+        }
+        if names:
+            return names
+    return {label}
 
 
 def _exec_doc_kinds_catalog_display(
@@ -29320,7 +29344,7 @@ def dashboard_executive_documentation(df):
                     "Вид документа",
                     kinds,
                     key="exec_doc_kind",
-                    help="Значения KindName из tessa_*-id.csv; см. справочник ExecDocKinds.csv",
+                    help="Группы из справочника ExecDocKinds.csv (синонимы KindName объединены)",
                 )
             else:
                 sel_kind = "Все"
@@ -29391,7 +29415,10 @@ def dashboard_executive_documentation(df):
     if sel_contr != "Все" and contr_col:
         filtered_base = filtered_base[filtered_base[contr_col].astype(str).str.strip() == sel_contr]
     if sel_kind != "Все" and kind_col:
-        filtered_base = filtered_base[filtered_base[kind_col].astype(str).str.strip() == sel_kind]
+        _kind_names = _exec_doc_kind_names_for_filter_label(sel_kind, _exec_kinds_catalog)
+        filtered_base = filtered_base[
+            filtered_base[kind_col].astype(str).str.strip().isin(_kind_names)
+        ]
 
     # tessa_data объединяет все snapshot-файлы → один документ может иметь несколько
     # записей (по дате snapshot). Для «текущего состояния» (карточки, бар-чарт
