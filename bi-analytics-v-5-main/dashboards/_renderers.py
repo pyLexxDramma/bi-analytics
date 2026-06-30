@@ -16324,12 +16324,21 @@ def _rd_plan_tessa_internal_ids(selected_projects: list[str] | None = None) -> s
     tp = _tessa_find_column(t, ["ObjectProjectName", "ProjectName", "ObjectName"])
     ti = _tessa_find_column(t, ["InternalID", "InternalId", "Internal Id"])
     tk = _tessa_find_column(t, ["DivisionCipher", "Cipher"])
-    if not ti or not tk:
+    if not ti or not tk or ti not in t.columns or tk not in t.columns:
         return ids
     if selected_projects and tp and tp in t.columns:
-        _pk = {_project_filter_norm_key(p) for p in selected_projects}
-        t = t[t[tp].map(_project_filter_norm_key).isin(_pk)]
+        _pk_set = {_project_filter_norm_key(p) for p in selected_projects}
+        _pk_set.discard("")
+        t = t[
+            t[tp]
+            .map(_project_filter_norm_key)
+            .map(lambda rk: _project_norm_key_matches_msp_keys(rk, _pk_set))
+        ]
+    if t.empty or tk not in t.columns:
+        return ids
     t = t[t[tk].map(_tessa_cell_has_value).fillna(False)]
+    if t.empty or ti not in t.columns:
+        return ids
     for _v in t[ti].tolist():
         s = str(_v or "").strip()
         if s and s.lower() not in ("nan", "none", "<na>", "nat"):
