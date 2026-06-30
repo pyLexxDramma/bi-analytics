@@ -3928,16 +3928,61 @@ _MATRIX_IFRAME_FULLSCREEN_SCRIPT = """
 _MATRIX_IFRAME_FIT_HEIGHT_SCRIPT = """
 <script>
 (function(){
+  // Высота, до которой нужно ужать iframe и контейнер (= высота контента таблицы).
+  var H=0;
+  var mo=null, moTarget=null;
   function measure(){
     var root=document.getElementById("matrix-fs-root");
     if(!root) return 0;
-    var wrap=root.querySelector(".dev-tz-matrix-wrap,.cp-tables-stack,.cp-table-wrap");
+    var wrap=root.querySelector(".dev-tz-matrix-wrap,.cp-tables-stack,.cp-table-wrap,.gdrs-table-wrap");
     if(wrap){
       var rr=wrap.getBoundingClientRect();
       var rt=root.getBoundingClientRect();
       return Math.ceil(rr.bottom-rt.top+2);
     }
     return Math.ceil(root.getBoundingClientRect().height);
+  }
+  function container(){
+    var fe=window.frameElement;
+    if(!fe) return null;
+    var p=fe.parentElement;
+    while(p){
+      if(p.getAttribute&&p.getAttribute("data-testid")==="stElementContainer") return p;
+      p=p.parentElement;
+    }
+    return null;
+  }
+  function setContainer(c,h){
+    // Контейнер Streamlit держит высоту = height из components.html (emotion-класс),
+    // и она не зависит от ужатого iframe — под таблицей до кнопки «Скачать таблицу»
+    // остаётся пустота. Явно ужимаем контейнер по высоте контента таблицы.
+    c.style.setProperty("height",h+"px","important");
+    c.style.setProperty("min-height","0","important");
+    c.style.setProperty("max-height",h+"px","important");
+    c.style.setProperty("margin-bottom","0","important");
+    c.style.setProperty("padding-bottom","0","important");
+  }
+  function defend(){
+    // React Streamlit при ререндере сбрасывает inline-height контейнера обратно к
+    // Python-высоте. Следим за style/class контейнера и возвращаем нашу высоту.
+    var c=container();
+    if(!c) return;
+    if(mo && moTarget===c) return;
+    if(mo){ try{mo.disconnect();}catch(e){} }
+    moTarget=c;
+    mo=new MutationObserver(function(){
+      if(!H) return;
+      var cc=container();
+      if(!cc) return;
+      var cur=Math.round(cc.getBoundingClientRect().height);
+      if(Math.abs(cur-H)>2){
+        try{mo.disconnect();}catch(e){}
+        setContainer(cc,H);
+        moTarget=cc;
+        try{mo.observe(moTarget,{attributes:true,attributeFilter:["style","class"]});}catch(e){}
+      }
+    });
+    try{mo.observe(c,{attributes:true,attributeFilter:["style","class"]});}catch(e){}
   }
   function apply(){
     var h=measure();
@@ -3957,23 +4002,19 @@ _MATRIX_IFRAME_FIT_HEIGHT_SCRIPT = """
       fe.style.maxHeight="none";
       fe.style.overflow="hidden";
       fe.classList.add("dev-tz-matrix-iframe");
-      var p=fe.parentElement;
-      while(p){
-        if(p.getAttribute&&p.getAttribute("data-testid")==="stElementContainer"){
-          p.style.marginBottom="0";
-          p.style.paddingBottom="0";
-          break;
-        }
-        p=p.parentElement;
-      }
+      H=h;
+      var c=container();
+      if(c){ setContainer(c,h); defend(); }
     }catch(e){}
   }
   function schedule(){requestAnimationFrame(apply);}
   if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",schedule);
   else schedule();
   window.addEventListener("load",schedule);
+  // Повторные проходы: первые несколько секунд контент таблицы ещё доуточняет высоту.
+  var n=0; var iv=setInterval(function(){ apply(); if(++n>=12) clearInterval(iv); },350);
   try{
-    var w=document.querySelector(".dev-tz-matrix-wrap,.cp-tables-stack");
+    var w=document.querySelector(".dev-tz-matrix-wrap,.cp-tables-stack,.gdrs-table-wrap");
     if(w&&typeof ResizeObserver!=="undefined") new ResizeObserver(schedule).observe(w);
   }catch(e){}
   window.__devTzMatrixRemeasure=apply;
