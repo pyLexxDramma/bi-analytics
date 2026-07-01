@@ -667,18 +667,18 @@ def load_gdrs_termination_index(
     dogovor_records: dict[str, list[dict]] | None = None,
 ) -> GdrsTerminationIndex:
     """Минимальная дата расторжения по (project_id, contractor_id) из последнего Dogovor.json."""
-    dated: list[tuple[pd.Timestamp, str | Path]] = []
+    dated: list[tuple[tuple[pd.Timestamp, str], str | Path]] = []
     undated: list[str | Path] = []
     if dogovor_records is not None:
         items = list(dogovor_records.keys())
     else:
         items = list(dogovor_paths)
     for raw in items:
-        fd = _dogovor_file_date(raw)
-        if fd is None:
+        sk = _dogovor_snapshot_sort_key(raw)
+        if sk[0] is pd.Timestamp.min:
             undated.append(raw)
             continue
-        dated.append((fd, raw))
+        dated.append((sk, raw))
     if not dated:
         chosen = undated[0] if undated else None
     else:
@@ -1344,6 +1344,26 @@ def load_plan_from_spravochniki(
 
 
 _FILE_DATE_RE = re.compile(r"(\d{2})-(\d{2})-(\d{4})")
+_ONE_C_DGOVOR_STEM_RE = re.compile(
+    r"^(?:1с_|1c_|lc_|лк_|lk_)(\d{2}-\d{2}-\d{4})(?:_(\d{2}-\d{2}))?(?:_(.+))?$",
+    re.IGNORECASE,
+)
+
+
+def _dogovor_snapshot_sort_key(path) -> tuple[pd.Timestamp, str]:
+    """Пара (дата, HH-MM) из имени 1с_*_Dogovor.json — для выбора последней выгрузки за день."""
+    name = _source_file_name(path)
+    stem = Path(name).stem
+    m = _ONE_C_DGOVOR_STEM_RE.match(stem.lower())
+    if m:
+        fd = _source_file_date(path)
+        hhmm = str(m.group(2) or "00-00").strip()
+        if fd is not None:
+            return (pd.Timestamp(fd).normalize(), hhmm)
+    fd = _dogovor_file_date(path)
+    if fd is not None:
+        return (pd.Timestamp(fd).normalize(), "00-00")
+    return (pd.Timestamp.min, "00-00")
 
 
 def _first_nonempty(series) -> str:
@@ -1381,21 +1401,21 @@ def _pick_dogovor_path_for_snapshot(
     """Файл Dogovor для среза плана: последний с датой в имени ≤ snapshot_date;
     если таких нет — самый поздний из будущих (в нём полнее история Количество_Людей)."""
     snap = pd.Timestamp(snapshot_date).normalize() if snapshot_date is not None else None
-    dated: list[tuple[pd.Timestamp, Path]] = []
+    dated: list[tuple[tuple[pd.Timestamp, str], Path]] = []
     undated: list[Path] = []
     for raw in paths:
         p = Path(raw)
-        fd = _dogovor_file_date(p)
-        if fd is None:
+        sk = _dogovor_snapshot_sort_key(p)
+        if sk[0] is pd.Timestamp.min:
             undated.append(p)
             continue
-        dated.append((fd, p))
+        dated.append((sk, p))
     if not dated:
         return undated[0] if undated else None
     if snap is None:
         dated.sort(key=lambda t: t[0])
         return dated[-1][1]
-    le = [t for t in dated if t[0] <= snap]
+    le = [t for t in dated if t[0][0] <= snap]
     if le:
         le.sort(key=lambda t: t[0])
         return le[-1][1]
@@ -1497,29 +1517,29 @@ def load_plan_aggregate(
     def _ordered_with_index(paths, fn, *, records_map: dict[str, list[dict]] | None = None) -> pd.DataFrame:
         """Собрать кадры по файлам, упорядочив по дате снапшота из имени (asc)."""
         snap = pd.Timestamp(snapshot_date).normalize() if snapshot_date is not None else None
-        items_le: list[tuple[Optional[pd.Timestamp], pd.DataFrame]] = []
-        items_future: list[tuple[Optional[pd.Timestamp], pd.DataFrame]] = []
+        items_le: list[tuple[tuple[pd.Timestamp, str], pd.DataFrame]] = []
+        items_future: list[tuple[tuple[pd.Timestamp, str], pd.DataFrame]] = []
         if records_map is not None:
             path_iter = sorted(records_map.keys())
         else:
             path_iter = list(paths)
         for p in path_iter:
-            fdate = _dogovor_file_date(p)
+            sk = _dogovor_snapshot_sort_key(p)
             if records_map is not None:
                 fr = fn(p, records=records_map.get(str(p), []))
             else:
                 fr = fn(Path(p))
             if fr is None or fr.empty:
                 continue
-            if snap is not None and fdate is not None and fdate > snap:
-                items_future.append((fdate, fr))
+            if snap is not None and sk[0] is not pd.Timestamp.min and sk[0] > snap:
+                items_future.append((sk, fr))
             else:
-                items_le.append((fdate, fr))
+                items_le.append((sk, fr))
         items = items_le
         if not items and items_future:
-            items_future.sort(key=lambda t: t[0] if t[0] is not None else pd.Timestamp.min)
+            items_future.sort(key=lambda t: t[0])
             items = [items_future[-1]]
-        items.sort(key=lambda t: t[0] if t[0] is not None else pd.Timestamp.min)
+        items.sort(key=lambda t: t[0])
         for i, (_, fr) in enumerate(items):
             fr["__order__"] = i
         return pd.concat([fr for _, fr in items], ignore_index=True) if items else pd.DataFrame()
@@ -4152,6 +4172,7 @@ def _gdrs_cached_plan_aggregate(
     version_id: int,
     db_mtime: float,
     snapshot_iso: str,
+    dogovor_sources_sig: tuple[str, ...],
 ) -> pd.DataFrame:
     from web_db_read import json_records_by_source
 
@@ -4173,10 +4194,21 @@ def _gdrs_cached_dannye_maps(version_id: int, db_mtime: float):
     return load_1c_dannye_article_maps_from_df(df)
 
 
+def _gdrs_dogovor_sources_sig(version_id: int) -> tuple[str, ...]:
+    try:
+        from web_db_read import json_records_by_source
+
+        return tuple(sorted(json_records_by_source(int(version_id), "dogovor_json").keys()))
+    except Exception:
+        return ()
+
+
 def _gdrs_plan_loader(version_id: int, db_mtime: float):
+    dog_sig = _gdrs_dogovor_sources_sig(version_id)
+
     def _load(snap: pd.Timestamp) -> pd.DataFrame:
         iso = pd.Timestamp(snap).normalize().isoformat()
-        return _gdrs_cached_plan_aggregate(version_id, db_mtime, iso)
+        return _gdrs_cached_plan_aggregate(version_id, db_mtime, iso, dog_sig)
 
     return _load
 
