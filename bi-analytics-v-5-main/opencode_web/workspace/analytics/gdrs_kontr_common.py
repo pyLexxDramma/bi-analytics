@@ -17,9 +17,11 @@ _NAME_LEGAL_RE = re.compile(
 
 
 def normalize_name(s: object) -> str:
-    t = str(s or "").strip().casefold()
+    t = str(s or "").strip()
     if not t:
         return ""
+    t = re.sub(r"_+", " ", t)
+    t = t.casefold()
     t = _NAME_LEGAL_RE.sub(" ", t)
     t = _NAME_NOISE_RE.sub(" ", t)
     return " ".join(t.split())

@@ -301,6 +301,8 @@ def normalize_name(s: object) -> str:
 def _normalize_name_cached(txt: str) -> str:
     txt = re.sub(r"\(.*?\)", " ", txt)
     txt = txt.replace("«", " ").replace("»", " ").replace('"', " ").replace("'", " ")
+    # «ООО_» / «ООО.» — подчёркивание/точка слитно с ОПФ ломают \\b у _NAME_LEGAL_RE.
+    txt = re.sub(r"_+", " ", txt)
     txt = _NAME_LEGAL_RE.sub(" ", txt)
     txt = _NAME_NOISE_RE.sub("", txt).casefold()
     return txt
@@ -484,13 +486,32 @@ def _is_uuid_like(s: object) -> bool:
     return bool(_UUID_RE.match(str(s).strip()))
 
 
+def _strip_display_name_artifacts(name: object) -> str:
+    """Убирает хвостовые/начальные «мусорные» символы из имени для UI (напр. «ООО_»)."""
+    s = str(name or "").strip()
+    if not s:
+        return s
+    s = re.sub(r"^[\s_\-/\\.,]+|[\s_\-/\\.,]+$", "", s).strip()
+    return s
+
+
+def _contractor_name_display_rank(name: str) -> tuple:
+    """Меньше — лучше: без хвостового _, короче."""
+    s = str(name).strip()
+    trailing = bool(re.search(r"[_\.,\-\s/\\]+$", s))
+    leading = bool(re.search(r"^[_\.,\-\s/\\]+", s))
+    return (trailing, leading, len(s), s.casefold())
+
+
 def _pick_canonical_name(names: pd.Series) -> Optional[str]:
     """Самое популярное (mode) НЕ-UUID имя в серии. Используется для канонизации."""
-    cnt = names.value_counts()
+    cnt = names.astype(str).str.strip().value_counts()
     cnt = cnt[~cnt.index.to_series().apply(_is_uuid_like)]
     if cnt.empty:
         return None
-    return str(cnt.idxmax())
+    max_cnt = cnt.max()
+    top = [str(n) for n in cnt[cnt == max_cnt].index]
+    return _strip_display_name_artifacts(min(top, key=_contractor_name_display_rank))
 
 
 def _canonicalize_project_names(df: pd.DataFrame) -> pd.DataFrame:
@@ -966,16 +987,45 @@ def gdrs_kontr_contractor_display(
 ) -> tuple[str, str]:
     """Каноническое имя и ID контрагента — только из справочника 1С Kontr."""
     cid = _sanitize_contractor_id(contractor_id)
-    raw_name = str(contractor_name or "").strip()
+    raw_name = _strip_display_name_artifacts(contractor_name)
     if kontr is None or (not kontr.ids and not kontr.norm_names):
         return cid, raw_name
     if cid and cid in kontr.name_by_id:
-        return cid, kontr.name_by_id[cid]
+        return cid, _strip_display_name_artifacts(kontr.name_by_id[cid])
     nn = normalize_name(raw_name)
     if nn and nn in kontr.name_by_norm:
         canon_id = kontr.id_by_norm.get(nn, cid)
-        return canon_id or cid, kontr.name_by_norm[nn]
+        return canon_id or cid, _strip_display_name_artifacts(kontr.name_by_norm[nn])
     return cid, raw_name
+
+
+def _gdrs_resolve_contractor_display(
+    df: pd.DataFrame,
+    kontr: Optional[GdrsKontrIndex],
+) -> pd.DataFrame:
+    """Каноническое имя контрагента для UI: Kontr → без хвостового «_» и пр."""
+    if df is None or df.empty or "contractor_name" not in df.columns:
+        return df
+    work = df.copy()
+    if "row_kind" in work.columns:
+        detail = work["row_kind"].astype(str) == "row"
+    else:
+        detail = pd.Series(True, index=work.index)
+    if not detail.any():
+        return work
+
+    def _resolve(row) -> pd.Series:
+        cid, cname = gdrs_kontr_contractor_display(
+            str(row.get("contractor_id", "")),
+            str(row.get("contractor_name", "")),
+            kontr,
+        )
+        return pd.Series([cid, cname])
+
+    resolved = work.loc[detail].apply(_resolve, axis=1, result_type="expand")
+    work.loc[detail, "contractor_id"] = resolved[0].values
+    work.loc[detail, "contractor_name"] = resolved[1].values
+    return work
 
 
 def gdrs_apply_kontr_contractor_names(
@@ -1578,13 +1628,15 @@ def load_plan_aggregate(
             .agg(plan_workers=("plan_workers", "last"), plan_equipment=("plan_equipment", "last"))
         )
     merged = merge_plan(dog_all, sprav_all)
-    if merged is not None and not merged.empty and "project_name" in merged.columns:
-        try:
-            from dashboards.project_labels import apply_unified_project_column
+    if merged is not None and not merged.empty:
+        merged = _canonicalize_contractor_names(merged)
+        if "project_name" in merged.columns:
+            try:
+                from dashboards.project_labels import apply_unified_project_column
 
-            merged = apply_unified_project_column(merged, "project_name")
-        except Exception:
-            pass
+                merged = apply_unified_project_column(merged, "project_name")
+            except Exception:
+                pass
     return merged
 
 
@@ -3133,7 +3185,6 @@ def _gdrs_collapse_rows_by_contractor_norm(rows: pd.DataFrame) -> pd.DataFrame:
     sum_cols = [
         c
         for c in (
-            "plan",
             "skud",
             "skud_avg",
             "deviation",
@@ -3143,19 +3194,14 @@ def _gdrs_collapse_rows_by_contractor_norm(rows: pd.DataFrame) -> pd.DataFrame:
             "w4",
             "w5",
             "w6",
-            "p1",
-            "p2",
-            "p3",
-            "p4",
-            "p5",
-            "p6",
         )
         if c in work.columns
     ]
+    # План/p* — одно значение на контрагента; при дубле имён суммирование завышает план.
+    max_cols = [c for c in ("plan", "p1", "p2", "p3", "p4", "p5", "p6") if c in work.columns]
 
     def _pick_name(s: pd.Series) -> str:
-        cnt = s.astype(str).str.strip().value_counts()
-        return str(cnt.idxmax()) if not cnt.empty else ""
+        return _pick_canonical_name(s.astype(str).str.strip()) or ""
 
     parts: list[pd.DataFrame] = []
     for proj, chunk in work.groupby("project_name", sort=False):
@@ -3164,6 +3210,7 @@ def _gdrs_collapse_rows_by_contractor_norm(rows: pd.DataFrame) -> pd.DataFrame:
             parts.append(chunk.drop(columns="__cn__"))
             continue
         agg_dict: dict[str, tuple] = {c: (c, "sum") for c in sum_cols}
+        agg_dict.update({c: (c, "max") for c in max_cols})
         agg_dict["contractor_name"] = ("contractor_name", _pick_name)
         if "contractor_id" in chunk.columns:
             agg_dict["contractor_id"] = ("contractor_id", _first_nonempty)
@@ -3240,6 +3287,8 @@ def build_main_table(
     fact = gdrs_filter_fact_by_termination(fact, term_index)
     if kontr_index is not None:
         fact = gdrs_apply_kontr_contractor_names(fact, kontr_index)
+    if fact is not None and not fact.empty:
+        fact = _canonicalize_contractor_names(fact)
 
     plan_col = "plan_workers" if vid.casefold() == "рабочие" else "plan_equipment"
     by_id, by_id_name, by_norm = _build_plan_lookup(plan, plan_col)
@@ -3299,6 +3348,7 @@ def build_main_table(
             plan_pairs_df = gdrs_apply_kontr_contractor_names(
                 plan_pairs_df, kontr_index, dedupe_fact=False
             )
+        plan_pairs_df = _canonicalize_contractor_names(plan_pairs_df)
         try:
             from dashboards.project_labels import apply_unified_project_column
 
@@ -3504,6 +3554,7 @@ def build_main_table(
     rows["row_kind"] = "row"
 
     rows = _gdrs_collapse_rows_by_contractor_norm(rows)
+    rows = _gdrs_resolve_contractor_display(rows, kontr_index)
     rows = gdrs_apply_kontr_plan_gate(
         rows,
         kontr_index,
