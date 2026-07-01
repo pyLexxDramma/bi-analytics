@@ -34,6 +34,7 @@ def _is_informational_contract_warning(msg: str) -> bool:
         "bi_analytics_ignore_demo",
         "демо не подмешивается",
         "пропуск дубликата",
+        "ошибка по файлу (остальные загружены)",
     )
     return any(n in s for n in needles)
 
@@ -71,8 +72,8 @@ def evaluate_data_contract(load_result: Optional[Dict[str, Any]]) -> Dict[str, A
     Возвращает ``{"ok": bool, "blocking": [...], "warnings": [...], "banner_warnings": [...]}``.
     В ``banner_warnings`` только сообщения, из‑за которых нужно показать баннер (без информационных про режим снимков и т.п.).
 
-    Ошибки парсинга из ``load_result["errors"]`` учитываются только если
-    ``version_id`` результата совпадает с активной версией в сессии.
+    Ошибки парсинга из ``load_result["errors"]`` — blocking только если
+    ``loaded=0``; при частичной загрузке уходят в warnings.
     """
     blocking: List[str] = []
     warnings: List[str] = []
@@ -88,14 +89,18 @@ def evaluate_data_contract(load_result: Optional[Dict[str, Any]]) -> Dict[str, A
         except (TypeError, ValueError):
             same_ver = True
 
-    lr_errors = [str(x) for x in (lr.get("errors") or []) if str(x).strip()]
-    if lr_errors and same_ver:
-        blocking.extend(lr_errors)
-
     try:
         loaded_n = int(lr.get("loaded") or 0)
     except (TypeError, ValueError):
         loaded_n = 0
+
+    lr_errors = [str(x) for x in (lr.get("errors") or []) if str(x).strip()]
+    if lr_errors and same_ver:
+        if loaded_n > 0:
+            for err in lr_errors:
+                warnings.append(f"Ошибка по файлу (остальные загружены): {err}")
+        else:
+            blocking.extend(lr_errors)
 
     if (
         same_ver

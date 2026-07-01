@@ -101,12 +101,9 @@ def get_active_version_id() -> int | None:
     """Возвращает id активной версии.
 
     Политика:
-    1) явно помеченная `is_active=1` — но только если её статус `success`
-       (чтобы случайно оставшаяся активной `partial`-версия не блокировала
-        показ последней корректной загрузки);
-       Страховка: если активна последняя по id success, но она строго «беднее»
-       предыдущей success (меньше и files_count, и rows_count), возвращаем
-       предыдущую — исправляет уже записанные в БД случаи до правки web_loader.
+    1) явно помеченная `is_active=1` (success или partial — partial активируется
+       намеренно, когда часть файлов с ошибками, остальные валидны);
+       для success — страховка «беднее предыдущей success» (files_count и rows_count).
     2) иначе — последняя `status='success'`;
     3) в крайнем случае — последняя любая (включая `partial`).
     """
@@ -116,6 +113,8 @@ def get_active_version_id() -> int | None:
             "SELECT id, status, files_count, rows_count FROM web_versions WHERE is_active = 1 "
             "ORDER BY id DESC LIMIT 1"
         ).fetchone()
+        if row and row["status"] == "partial":
+            return int(row["id"])
         if row and row["status"] == "success":
             aid = int(row["id"])
             max_s = cur.execute(

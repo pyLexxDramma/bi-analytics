@@ -1717,6 +1717,15 @@ def _create_version(cur, files_count: int) -> int:
     return cur.lastrowid
 
 
+def _count_version_ingested_files(cur, version_id: int) -> int:
+    """Число файлов, реально записанных в web_files для версии (не «файлов в скане»)."""
+    row = cur.execute(
+        "SELECT COUNT(*) AS n FROM web_files WHERE version_id=?",
+        (int(version_id),),
+    ).fetchone()
+    return int(row["n"] if row else 0)
+
+
 def _load_json_array_file(filepath: Path) -> List[dict]:
     """JSON-массив объектов (Dogovor, Kontr, spravochniki, Projekts)."""
     encodings = ("utf-8-sig", "utf-8", "cp1251")
@@ -2318,43 +2327,61 @@ def load_all_from_web() -> Dict:
                     "UPDATE web_versions SET is_active=1 WHERE id=?", (version_id,)
                 )
         else:
-            prev_success = cur.execute(
-                "SELECT id, files_count, rows_count FROM web_versions "
-                "WHERE status='success' AND id<>? ORDER BY id DESC LIMIT 1",
+            # Сравниваем с текущей активной (или последней success), по числу
+            # реально ingested-файлов в web_files — не со «сканом» files_count.
+            prev_ref = cur.execute(
+                "SELECT id, rows_count FROM web_versions "
+                "WHERE is_active=1 AND id<>? ORDER BY id DESC LIMIT 1",
                 (version_id,),
             ).fetchone()
-            curr_loaded = int(result.get("loaded") or 0)
+            if prev_ref is None:
+                prev_ref = cur.execute(
+                    "SELECT id, rows_count FROM web_versions "
+                    "WHERE status='success' AND id<>? ORDER BY id DESC LIMIT 1",
+                    (version_id,),
+                ).fetchone()
+            curr_ingested = _count_version_ingested_files(cur, version_id)
             curr_rows = int(total_rows or 0)
-            prev_files = int(prev_success["files_count"] or 0) if prev_success else 0
-            prev_rows = int(prev_success["rows_count"] or 0) if prev_success else 0
+            prev_ingested = (
+                _count_version_ingested_files(cur, int(prev_ref["id"])) if prev_ref else 0
+            )
+            prev_rows = int(prev_ref["rows_count"] or 0) if prev_ref else 0
+            err_n = len(result.get("errors") or [])
             promote_partial = (
-                prev_success is None
-                or (curr_loaded >= prev_files and curr_rows >= prev_rows)
+                curr_ingested > 0
+                and (
+                    prev_ref is None
+                    or curr_rows >= prev_rows
+                    or curr_ingested >= prev_ingested
+                    or (
+                        prev_ingested > 0
+                        and curr_ingested >= prev_ingested - err_n
+                    )
+                )
             )
             if promote_partial:
                 cur.execute("UPDATE web_versions SET is_active=0")
                 cur.execute(
                     "UPDATE web_versions SET is_active=1 WHERE id=?", (version_id,)
                 )
-                if prev_success is not None:
+                if prev_ref is not None:
                     result.setdefault("warnings", []).append(
                         f"Версия {version_id} помечена как partial (есть ошибки "
-                        f"по отдельным файлам), но активирована, т.к. содержит "
-                        f"больше или столько же данных, сколько success-версия "
-                        f"id={prev_success['id']} ({curr_loaded}/{prev_files} файлов, "
-                        f"{curr_rows}/{prev_rows} строк)."
+                        f"по отдельным файлам), но активирована — валидные файлы "
+                        f"доступны в отчётах (ingested {curr_ingested}/{prev_ingested} "
+                        f"файлов, {curr_rows}/{prev_rows} строк)."
                     )
             else:
                 cur.execute("UPDATE web_versions SET is_active=0")
                 cur.execute(
                     "UPDATE web_versions SET is_active=1 WHERE id=?",
-                    (prev_success["id"],),
+                    (int(prev_ref["id"]),),
                 )
                 result.setdefault("warnings", []).append(
                     f"Версия {version_id} сохранена как partial и НЕ активирована "
-                    f"(меньше данных: {curr_loaded}/{prev_files} файлов, "
+                    f"(ingested {curr_ingested}/{prev_ingested} файлов, "
                     f"{curr_rows}/{prev_rows} строк) — активной оставлена "
-                    f"последняя success-версия id={prev_success['id']}."
+                    f"предыдущая версия id={prev_ref['id']}."
                 )
 
         # Автоочистка архива снимков: храним только N последних версий
