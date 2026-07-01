@@ -24946,7 +24946,6 @@ def dashboard_gdrs_equipment(df):
 from dashboards.gdrs_resursi import (
     _gdrs_cached_dannye_maps,
     _gdrs_cached_load_resursi,
-    _gdrs_cached_plan_aggregate,
     _gdrs_paths_mtime_sig,
     _gdrs_plan_loader,
 )
@@ -25890,11 +25889,8 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         projects=sel_projects or None,
         contractors=sel_contractors or None,
     )
-    plan = _gdrs_cached_plan_aggregate(
-        _version_id,
-        _db_mtime,
-        pd.Timestamp(_plan_snap).normalize().isoformat(),
-    )
+    _plan_loader = _gdrs_plan_loader(_version_id, _db_mtime)
+    plan = _plan_loader(_pd.Timestamp(_plan_snap).normalize())
 
     _weekly_plan_by_week: dict[int, _pd.DataFrame] = {}
     _weekly_plan_as_of: dict[int, _pd.Timestamp] = {}
@@ -25912,11 +25908,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
             if _w_end is None or not _pd.notna(_w_end):
                 continue
             _weekly_plan_as_of[_wn] = _pd.Timestamp(_w_end).normalize()
-            _weekly_plan_by_week[_wn] = _gdrs_cached_plan_aggregate(
-                _version_id,
-                _db_mtime,
-                _weekly_plan_as_of[_wn].isoformat(),
-            )
+            _weekly_plan_by_week[_wn] = _plan_loader(_weekly_plan_as_of[_wn])
 
     _by_dog, _by_pc, _by_sig_pc, _by_sig, _by_pc_sets = _gdrs_cached_dannye_maps(
         _version_id, _db_mtime
