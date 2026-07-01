@@ -1998,6 +1998,33 @@ def _gdrs_calendar_week_bucket_start(day: pd.Timestamp, month_lo: pd.Timestamp) 
     return pd.Timestamp(lo.year, lo.month, start_day)
 
 
+def gdrs_dynamics_bucket_display_label(
+    bucket_start: pd.Timestamp,
+    agg_kind: str,
+    *,
+    date_from: Optional[pd.Timestamp] = None,
+    date_to: Optional[pd.Timestamp] = None,
+) -> str:
+    """Подпись bucket для оси X (неделя — не dd.mm как «день»)."""
+    b = pd.Timestamp(bucket_start).normalize()
+    kind = str(agg_kind or "").strip().casefold()
+    lo = pd.Timestamp(date_from).normalize() if date_from is not None else None
+    hi = pd.Timestamp(date_to).normalize() if date_to is not None else None
+    if kind == "неделя":
+        if lo is not None and hi is not None and _gdrs_single_calendar_month(lo, hi):
+            wn = _gdrs_calendar_week_num(b, lo)
+            return f"н{wn} · {b.strftime('%m.%Y')}"
+        w_end = b + pd.Timedelta(days=6)
+        if hi is not None:
+            w_end = min(w_end, hi)
+        return f"{b.strftime('%d.%m')}–{w_end.strftime('%d.%m.%y')}"
+    if kind == "месяц":
+        return b.strftime("%m.%Y")
+    if kind == "год":
+        return str(b.year)
+    return b.strftime("%d.%m.%Y")
+
+
 def gdrs_dynamics_assign_buckets(
     dates: pd.Series,
     agg_kind: str,
@@ -2170,11 +2197,13 @@ def gdrs_dynamics_build_series(
     if _load_plan is None:
         def _load_plan(snap: pd.Timestamp) -> pd.DataFrame:
             return load_plan_aggregate(dogovor_paths, sprav_paths, snapshot_date=snap)
+    dyn_from = pd.Timestamp(date_from).normalize()
+    dyn_to = pd.Timestamp(date_to).normalize()
     f2 = gdrs_filter_fact_by_termination(fact_df, term_index)
     f2 = f2.copy()
     f2["date"] = pd.to_datetime(f2["date"])
     f2["bucket"] = gdrs_dynamics_assign_buckets(
-        f2["date"], agg_kind, date_from=date_from, date_to=date_to
+        f2["date"], agg_kind, date_from=dyn_from, date_to=dyn_to
     )
     f2["_day"] = f2["date"].dt.normalize()
 
@@ -2189,18 +2218,20 @@ def gdrs_dynamics_build_series(
     )
     agg["Факт"] = pd.to_numeric(agg["Факт"], errors="coerce").fillna(0).round(0).astype(int)
 
-    grid = pd.DataFrame({"bucket": gdrs_dynamics_bucket_starts(date_from, date_to, agg_kind)})
+    grid = pd.DataFrame({"bucket": gdrs_dynamics_bucket_starts(dyn_from, dyn_to, agg_kind)})
     if month_periods:
         _mset = set(month_periods)
         grid = grid[grid["bucket"].dt.to_period("M").isin(_mset)].reset_index(drop=True)
     dyn = grid.merge(agg[["bucket", "Факт"]], on="bucket", how="left")
     dyn["Факт"] = dyn["Факт"].fillna(0).astype(int)
-    dyn["Период"] = dyn["bucket"].dt.strftime("%d.%m.%Y")
+    dyn["x_label"] = [
+        gdrs_dynamics_bucket_display_label(b, agg_kind, date_from=dyn_from, date_to=dyn_to)
+        for b in dyn["bucket"]
+    ]
+    dyn["Период"] = dyn["x_label"]
 
     # План и факт — среднее за день внутри периода группировки (день/неделя/месяц).
     plan_cache: dict = {}
-    dyn_to = pd.Timestamp(date_to).normalize()
-    dyn_from = pd.Timestamp(date_from).normalize()
     plans: list[int] = []
     for bkt in dyn["bucket"]:
         day_plan_vals: list[float] = []

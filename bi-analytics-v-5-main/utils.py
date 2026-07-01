@@ -1084,7 +1084,7 @@ def apply_chart_background(fig, *, skip_uniformtext: bool = False):
     if prev_leg is not None:
         prev_font = getattr(prev_leg, "font", None)
         if prev_font is not None:
-            for fk in ("color", "family"):
+            for fk in ("color", "family", "size"):
                 fv = getattr(prev_font, fk, None)
                 if fv is not None:
                     legend_kwargs.setdefault("font", {})[fk] = fv
@@ -1110,11 +1110,22 @@ def apply_chart_background(fig, *, skip_uniformtext: bool = False):
         leg_out = standard_chart_legend(**legend_kwargs, y=chart_lo["legend_y"])
         if prev_leg is not None:
             py = getattr(prev_leg, "y", None)
+            pyref = getattr(prev_leg, "yref", None)
+            pyanchor = getattr(prev_leg, "yanchor", None)
             try:
-                if py is not None and float(py) < 0.2:
-                    leg_out["y"] = float(py)
+                if py is not None:
+                    _py = float(py)
+                    _def_y = float(chart_lo["legend_y"])
+                    if _py < 0.2 or _py < _def_y:
+                        leg_out["y"] = _py
             except (TypeError, ValueError):
                 pass
+            if pyref and str(pyref) != "paper":
+                leg_out["yref"] = pyref
+            elif "yref" in leg_out and str(pyref or "") == "paper":
+                leg_out.pop("yref", None)
+            if pyanchor:
+                leg_out["yanchor"] = pyanchor
         if float(margin_b) < float(chart_lo["margin_bottom"]):
             margin_b = float(chart_lo["margin_bottom"])
     else:
