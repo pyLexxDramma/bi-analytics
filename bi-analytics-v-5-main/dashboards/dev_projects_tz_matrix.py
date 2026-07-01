@@ -958,8 +958,59 @@ def _control_points_project_group_key(raw: Any) -> str:
     return nk
 
 
+def _projekts_display_by_norm_key() -> Dict[str, str]:
+    """Наименование_Проекта из 1с_*_Projekts.json (справочник) по norm-key группировки."""
+    by_nk: Dict[str, str] = {}
+    try:
+        from web_db_read import load_project_id_to_name_lookup
+
+        for pname in load_project_id_to_name_lookup().values():
+            s = str(pname).strip()
+            if not s:
+                continue
+            nk = _norm_dev_project_key(s)
+            if nk:
+                by_nk[nk] = s
+    except Exception:
+        pass
+    if by_nk:
+        return by_nk
+    try:
+        import json
+        from pathlib import Path
+
+        paths = sorted(Path("web").glob("*_Projekts.json"))
+        if paths:
+            with open(paths[-1], encoding="utf-8") as f:
+                rows = json.load(f)
+            if isinstance(rows, list):
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    s = str(
+                        row.get("Наименование_Проекта")
+                        or row.get("Наименование проекта")
+                        or row.get("Проект")
+                        or ""
+                    ).strip()
+                    nk = _norm_dev_project_key(s)
+                    if nk:
+                        by_nk[nk] = s
+    except Exception:
+        pass
+    return by_nk
+
+
 def _control_points_project_label(group_key: str, raw_names: List[str]) -> str:
     """Подпись столбца «Проект» после группировки."""
+    proj_ref = _projekts_display_by_norm_key()
+    for r in raw_names:
+        nk = _norm_dev_project_key(r)
+        if nk and nk in proj_ref:
+            return proj_ref[nk]
+    gk_nk = _norm_dev_project_key(group_key)
+    if gk_nk and gk_nk in proj_ref:
+        return proj_ref[gk_nk]
     try:
         from config import MSP_PROJECT_NAME_MAP as M
     except Exception:
@@ -975,7 +1026,11 @@ def _control_points_project_label(group_key: str, raw_names: List[str]) -> str:
         if nk and nk in M:
             return str(M[nk]).strip()
     if group_key == "unified_dmitrovsky1":
-        return "Дмитровский 1"
+        return proj_ref.get("дмитровский1", "Дмитровский-1")
+    for r in raw_names:
+        s = str(r).strip()
+        if s and re.search(r"[а-яё]", s, flags=re.IGNORECASE):
+            return s
     return str(raw_names[0]).strip() if raw_names else ""
 
 
@@ -1689,6 +1744,21 @@ def _task_plot_section(task_name: object) -> Optional[str]:
     return None
 
 
+def _row_plot_section(row: pd.Series, task_col: Optional[str] = None) -> Optional[str]:
+    """Участок №N: из имени задачи или родительского section/block (Есипово 5: «Получение ЗОС…» под «…участок №2»)."""
+    tc = task_col or _task_name_col(row.to_frame().T)
+    if tc and tc in row.index:
+        ps = _task_plot_section(row.get(tc))
+        if ps:
+            return ps
+    for col in ("section", "block", "l2 parent", "l2_parent", "parent l2", "Раздел"):
+        if col in row.index:
+            ps = _task_plot_section(row.get(col))
+            if ps:
+                return ps
+    return None
+
+
 def _task_name_suggests_plot_section(task_name: object) -> bool:
     t = str(task_name or "").casefold()
     if not t:
@@ -1712,16 +1782,23 @@ def _filter_milestone_tasks_by_plot_section(
     if not sec:
         return sub
     has_sectioned = False
-    for tn in sub[tc].astype(str):
-        if _task_plot_section(tn):
+    for _ix, rr in sub.iterrows():
+        if _row_plot_section(rr, tc):
             has_sectioned = True
             break
     if not has_sectioned:
         return sub
     keep = []
     for ix, rr in sub.iterrows():
-        ps = _task_plot_section(rr.get(tc))
-        if ps is None or ps == sec:
+        ps = _row_plot_section(rr, tc)
+        if ps == sec:
+            keep.append(ix)
+    if keep:
+        return sub.loc[keep].copy()
+    # Общие вехи без маркера участка — только если нет задач с явным № участка.
+    keep = []
+    for ix, rr in sub.iterrows():
+        if _row_plot_section(rr, tc) is None:
             keep.append(ix)
     if not keep:
         return sub.iloc[0:0].copy()
@@ -2383,6 +2460,8 @@ def build_dev_tz_matrix_rows(
                     "заключение о соответствии",
                     "ЗОС)",
                     "зос)",
+                    "ЗОС (участок",
+                    "ЗОС  (участок",
                     "ЗОС - 1 этап",
                     "ЗОС - 2 этап",
                     "ЗОС -",
@@ -2394,6 +2473,7 @@ def build_dev_tz_matrix_rows(
                     "Жизнь проекта. ЗОС",
                     "Инвестиционная. ЗОС",
                     "инвестиционная. зос",
+                    "ЗОС (участок",
                 ],
             },
         ),
@@ -4476,6 +4556,8 @@ CONTROL_POINT_MILESTONES: List[Tuple[str, str, dict]] = [
             "names_any": [
                 "Заключение о соответствии",
                 "ЗОС)",
+                "ЗОС (участок",
+                "ЗОС  (участок",
                 "ЗОС - 1 этап",
                 "ЗОС - 2 этап",
             ],
