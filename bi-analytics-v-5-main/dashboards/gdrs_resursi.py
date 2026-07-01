@@ -990,12 +990,13 @@ def gdrs_kontr_contractor_display(
     raw_name = _strip_display_name_artifacts(contractor_name)
     if kontr is None or (not kontr.ids and not kontr.norm_names):
         return cid, raw_name
-    if cid and cid in kontr.name_by_id:
-        return cid, _strip_display_name_artifacts(kontr.name_by_id[cid])
     nn = normalize_name(raw_name)
+    # Имя в Kontr важнее ID из resursi/Dogovor (там бывают чужие UUID).
     if nn and nn in kontr.name_by_norm:
         canon_id = kontr.id_by_norm.get(nn, cid)
         return canon_id or cid, _strip_display_name_artifacts(kontr.name_by_norm[nn])
+    if cid and cid in kontr.name_by_id:
+        return cid, _strip_display_name_artifacts(kontr.name_by_id[cid])
     return cid, raw_name
 
 
@@ -1026,6 +1027,70 @@ def _gdrs_resolve_contractor_display(
     work.loc[detail, "contractor_id"] = resolved[0].values
     work.loc[detail, "contractor_name"] = resolved[1].values
     return work
+
+
+def _gdrs_project_key(project_id: str, project_name: str) -> str:
+    pid = str(project_id or "").strip()
+    if pid and _is_uuid_like(pid):
+        return pid
+    pn = normalize_name(project_name)
+    return f"name:{pn}" if pn else ""
+
+
+def _gdrs_contractor_key(
+    contractor_id: str,
+    contractor_name: str,
+    kontr: Optional[GdrsKontrIndex] = None,
+) -> str:
+    cid, _ = gdrs_kontr_contractor_display(
+        str(contractor_id or "").strip(),
+        str(contractor_name or ""),
+        kontr,
+    )
+    cid = _sanitize_contractor_id(cid)
+    if cid:
+        return cid
+    cn = normalize_name(contractor_name)
+    return f"name:{cn}" if cn else ""
+
+
+def _gdrs_add_pair_keys(
+    df: pd.DataFrame,
+    kontr: Optional[GdrsKontrIndex],
+    *,
+    dedupe_fact: bool = False,
+) -> pd.DataFrame:
+    """Ключи пары проект×контрагент: UUID из Kontr, иначе fallback по normalize_name."""
+    if df is None or df.empty:
+        return df
+    work = gdrs_apply_kontr_contractor_names(df, kontr, dedupe_fact=dedupe_fact) if kontr else df.copy()
+    for col, default in (("project_id", ""), ("contractor_id", ""), ("project_name", ""), ("contractor_name", "")):
+        if col not in work.columns:
+            work[col] = default
+    work["_gk_proj"] = work.apply(
+        lambda r: _gdrs_project_key(str(r.get("project_id", "")), str(r.get("project_name", ""))),
+        axis=1,
+    )
+    work["_gk_ctr"] = work.apply(
+        lambda r: _gdrs_contractor_key(
+            str(r.get("contractor_id", "")),
+            str(r.get("contractor_name", "")),
+            kontr,
+        ),
+        axis=1,
+    )
+    return work
+
+
+def _gdrs_pair_group_cols(df: pd.DataFrame) -> list[str]:
+    if (
+        df is not None
+        and not df.empty
+        and "_gk_proj" in df.columns
+        and "_gk_ctr" in df.columns
+    ):
+        return ["_gk_proj", "_gk_ctr"]
+    return ["project_name", "contractor_name"]
 
 
 def gdrs_apply_kontr_contractor_names(
@@ -1628,15 +1693,13 @@ def load_plan_aggregate(
             .agg(plan_workers=("plan_workers", "last"), plan_equipment=("plan_equipment", "last"))
         )
     merged = merge_plan(dog_all, sprav_all)
-    if merged is not None and not merged.empty:
-        merged = _canonicalize_contractor_names(merged)
-        if "project_name" in merged.columns:
-            try:
-                from dashboards.project_labels import apply_unified_project_column
+    if merged is not None and not merged.empty and "project_name" in merged.columns:
+        try:
+            from dashboards.project_labels import apply_unified_project_column
 
-                merged = apply_unified_project_column(merged, "project_name")
-            except Exception:
-                pass
+            merged = apply_unified_project_column(merged, "project_name")
+        except Exception:
+            pass
     return merged
 
 
@@ -3012,31 +3075,32 @@ def _skud_agg_per_pair(
 ) -> pd.DataFrame:
     """СКУД (среднее за день) по паре проект×контрагент для режима month_avg или week:N."""
     total_days = int(fact["date"].dt.normalize().nunique())
+    pair_cols = _gdrs_pair_group_cols(fact)
     skud_sum = (
-        fact.groupby(["project_name", "contractor_name"], dropna=False)["fact"]
+        fact.groupby(pair_cols, dropna=False)["fact"]
         .sum()
         .reset_index(name="skud_sum")
     )
     wn = gdrs_agg_week_num(skud_agg)
     if wn is None:
         skud_sum["skud_val"] = skud_sum["skud_sum"] / max(1, total_days)
-        return skud_sum[["project_name", "contractor_name", "skud_val"]]
+        return skud_sum[pair_cols + ["skud_val"]]
 
     week_idx, days_per_week = _gdrs_week_groups(
         fact["date"], date_from=date_from, date_to=date_to
     )
     fact = fact.assign(week=week_idx)
     week_sum = (
-        fact.groupby(["project_name", "contractor_name", "week"], dropna=False)["fact"]
+        fact.groupby(pair_cols + ["week"], dropna=False)["fact"]
         .sum()
         .reset_index(name="daily_sum")
     )
     week_sum["skud_val"] = week_sum.apply(
         lambda r: r["daily_sum"] / max(1, days_per_week.get(int(r["week"]), 1)), axis=1
     )
-    week_only = week_sum[week_sum["week"] == wn][["project_name", "contractor_name", "skud_val"]]
-    return skud_sum[["project_name", "contractor_name"]].merge(
-        week_only, on=["project_name", "contractor_name"], how="left"
+    week_only = week_sum[week_sum["week"] == wn][pair_cols + ["skud_val"]]
+    return skud_sum[pair_cols].merge(
+        week_only, on=pair_cols, how="left"
     ).assign(skud_val=lambda d: d["skud_val"].fillna(0.0))
 
 
@@ -3176,12 +3240,17 @@ def build_gdrs_audit_export_frames(
     return fact_export, plan_export, contract_export
 
 
-def _gdrs_collapse_rows_by_contractor_norm(rows: pd.DataFrame) -> pd.DataFrame:
-    """Схлопывает строки с одним контрагентом (normalize_name) внутри проекта."""
-    if rows is None or rows.empty or "contractor_name" not in rows.columns:
+def _gdrs_collapse_rows_by_contractor_key(
+    rows: pd.DataFrame,
+    kontr: Optional[GdrsKontrIndex] = None,
+) -> pd.DataFrame:
+    """Схлопывает строки с одним контрагентом (Kontr ID / pair key) внутри проекта."""
+    if rows is None or rows.empty:
         return rows
     work = rows.copy()
-    work["__cn__"] = work["contractor_name"].astype(str).map(normalize_name)
+    if "_gk_proj" not in work.columns or "_gk_ctr" not in work.columns:
+        work = _gdrs_add_pair_keys(work, kontr, dedupe_fact=False)
+    pair_cols = ["_gk_proj", "_gk_ctr"]
     sum_cols = [
         c
         for c in (
@@ -3197,21 +3266,18 @@ def _gdrs_collapse_rows_by_contractor_norm(rows: pd.DataFrame) -> pd.DataFrame:
         )
         if c in work.columns
     ]
-    # План/p* — одно значение на контрагента; при дубле имён суммирование завышает план.
     max_cols = [c for c in ("plan", "p1", "p2", "p3", "p4", "p5", "p6") if c in work.columns]
-
-    def _pick_name(s: pd.Series) -> str:
-        return _pick_canonical_name(s.astype(str).str.strip()) or ""
 
     parts: list[pd.DataFrame] = []
     for proj, chunk in work.groupby("project_name", sort=False):
         chunk = chunk.copy()
-        if chunk["__cn__"].nunique() == len(chunk):
-            parts.append(chunk.drop(columns="__cn__"))
+        if chunk.groupby(pair_cols).ngroups == len(chunk):
+            parts.append(chunk)
             continue
         agg_dict: dict[str, tuple] = {c: (c, "sum") for c in sum_cols}
         agg_dict.update({c: (c, "max") for c in max_cols})
-        agg_dict["contractor_name"] = ("contractor_name", _pick_name)
+        if "contractor_name" in chunk.columns:
+            agg_dict["contractor_name"] = ("contractor_name", _first_nonempty)
         if "contractor_id" in chunk.columns:
             agg_dict["contractor_id"] = ("contractor_id", _first_nonempty)
         if "project_id" in chunk.columns:
@@ -3222,7 +3288,7 @@ def _gdrs_collapse_rows_by_contractor_norm(rows: pd.DataFrame) -> pd.DataFrame:
             agg_dict["vid_raboty"] = ("vid_raboty", _first_nonempty)
         if "row_kind" in chunk.columns:
             agg_dict["row_kind"] = ("row_kind", "first")
-        collapsed = chunk.groupby("__cn__", as_index=False).agg(**agg_dict)
+        collapsed = chunk.groupby(pair_cols, as_index=False).agg(**agg_dict)
         collapsed["project_name"] = proj
         if "deviation" in collapsed.columns and "plan" in collapsed.columns and "skud" in collapsed.columns:
             collapsed["deviation"] = (collapsed["skud"] - collapsed["plan"]).round(0)
@@ -3233,8 +3299,8 @@ def _gdrs_collapse_rows_by_contractor_norm(rows: pd.DataFrame) -> pd.DataFrame:
                 else np.nan,
                 axis=1,
             )
-        parts.append(collapsed.drop(columns="__cn__", errors="ignore"))
-    return pd.concat(parts, ignore_index=True) if parts else work.drop(columns="__cn__", errors="ignore")
+        parts.append(collapsed)
+    return pd.concat(parts, ignore_index=True) if parts else work
 
 
 def build_main_table(
@@ -3285,18 +3351,22 @@ def build_main_table(
         contractors=contractors,
     )
     fact = gdrs_filter_fact_by_termination(fact, term_index)
-    if kontr_index is not None:
-        fact = gdrs_apply_kontr_contractor_names(fact, kontr_index)
-    if fact is not None and not fact.empty:
-        fact = _canonicalize_contractor_names(fact)
+    fact = _gdrs_add_pair_keys(fact, kontr_index, dedupe_fact=True)
+
+    plan_work = plan.copy() if plan is not None and not plan.empty else pd.DataFrame()
+    if not plan_work.empty:
+        plan_work = _gdrs_add_pair_keys(plan_work, kontr_index, dedupe_fact=False)
 
     plan_col = "plan_workers" if vid.casefold() == "рабочие" else "plan_equipment"
-    by_id, by_id_name, by_norm = _build_plan_lookup(plan, plan_col)
+    by_id, by_id_name, by_norm = _build_plan_lookup(plan_work if not plan_work.empty else plan, plan_col)
     _plan_snap = pd.Timestamp(plan_as_of).normalize() if plan_as_of is not None and pd.notna(plan_as_of) else (
         pd.Timestamp(date_to).normalize() if date_to is not None and pd.notna(date_to) else None
     )
 
-    id_pick = pd.DataFrame(columns=["project_name", "contractor_name", "project_id", "contractor_id"])
+    pair_cols = ["_gk_proj", "_gk_ctr"]
+    id_pick = pd.DataFrame(
+        columns=["_gk_proj", "_gk_ctr", "project_name", "contractor_name", "project_id", "contractor_id"]
+    )
     if fact is not None and not fact.empty:
         fact = fact.copy()
         fact["date"] = pd.to_datetime(fact["date"])
@@ -3306,16 +3376,18 @@ def build_main_table(
         fact["week"] = week_idx
 
         id_pick = (
-            fact.groupby(["project_name", "contractor_name"], dropna=False)
+            fact.groupby(pair_cols, dropna=False)
             .agg(
-                project_id=("project_id", lambda s: next((x for x in s.astype(str) if x.strip()), "")),
-                contractor_id=("contractor_id", lambda s: next((x for x in s.astype(str) if x.strip()), "")),
+                project_name=("project_name", _first_nonempty),
+                contractor_name=("contractor_name", _first_nonempty),
+                project_id=("project_id", _first_nonempty),
+                contractor_id=("contractor_id", _first_nonempty),
             )
             .reset_index()
         )
 
         week_sum = (
-            fact.groupby(["project_name", "contractor_name", "week"], dropna=False)["fact"]
+            fact.groupby(pair_cols + ["week"], dropna=False)["fact"]
             .sum()
             .reset_index(name="daily_sum")
         )
@@ -3324,31 +3396,28 @@ def build_main_table(
         )
 
         pivot = week_sum.pivot_table(
-            index=["project_name", "contractor_name"],
+            index=pair_cols,
             columns="week",
             values="weekly_avg",
             aggfunc="sum",
             fill_value=0.0,
         ).reset_index()
     else:
-        pivot = pd.DataFrame(columns=["project_name", "contractor_name"])
+        pivot = pd.DataFrame(columns=pair_cols)
 
     for w in (1, 2, 3, 4, 5, 6):
         if w not in pivot.columns:
             pivot[w] = 0.0
-    if "project_name" not in pivot.columns:
-        pivot["project_name"] = []
-        pivot["contractor_name"] = []
+    for col in pair_cols:
+        if col not in pivot.columns:
+            pivot[col] = []
     pivot.rename(columns={1: "w1", 2: "w2", 3: "w3", 4: "w4", 5: "w5", 6: "w6"}, inplace=True)
 
-    plan_pairs_df = _filter_plan_slice(plan, projects, contractors)
+    plan_pairs_df = _filter_plan_slice(plan_work if not plan_work.empty else plan, projects, contractors)
     if plan_pairs_df is not None and not plan_pairs_df.empty:
         plan_pairs_df = plan_pairs_df.copy()
-        if kontr_index is not None:
-            plan_pairs_df = gdrs_apply_kontr_contractor_names(
-                plan_pairs_df, kontr_index, dedupe_fact=False
-            )
-        plan_pairs_df = _canonicalize_contractor_names(plan_pairs_df)
+        if "_gk_proj" not in plan_pairs_df.columns:
+            plan_pairs_df = _gdrs_add_pair_keys(plan_pairs_df, kontr_index, dedupe_fact=False)
         try:
             from dashboards.project_labels import apply_unified_project_column
 
@@ -3359,17 +3428,19 @@ def build_main_table(
         plan_pairs_df = plan_pairs_df[plan_pairs_df["_plan_val"] > 0]
         if not plan_pairs_df.empty:
             plan_ids = (
-                plan_pairs_df.groupby(["project_name", "contractor_name"], dropna=False)
+                plan_pairs_df.groupby(pair_cols, dropna=False)
                 .agg(
+                    project_name=("project_name", _first_nonempty),
+                    contractor_name=("contractor_name", _first_nonempty),
                     project_id=("project_id", _first_nonempty),
                     contractor_id=("contractor_id", _first_nonempty),
                 )
                 .reset_index()
             )
             id_pick = pd.concat([id_pick, plan_ids], ignore_index=True).drop_duplicates(
-                subset=["project_name", "contractor_name"], keep="first"
+                subset=pair_cols, keep="first"
             )
-            plan_only = plan_ids[["project_name", "contractor_name"]].copy()
+            plan_only = plan_ids[pair_cols].copy()
             for w in (1, 2, 3, 4, 5, 6):
                 plan_only[f"w{w}"] = 0.0
             if pivot.empty:
@@ -3377,15 +3448,15 @@ def build_main_table(
             else:
                 have = set(
                     zip(
-                        pivot["project_name"].astype(str).str.strip(),
-                        pivot["contractor_name"].astype(str).str.strip(),
+                        pivot["_gk_proj"].astype(str).str.strip(),
+                        pivot["_gk_ctr"].astype(str).str.strip(),
                     )
                 )
                 add = plan_only[
                     ~plan_only.apply(
                         lambda r, _h=have: (
-                            str(r["project_name"]).strip(),
-                            str(r["contractor_name"]).strip(),
+                            str(r["_gk_proj"]).strip(),
+                            str(r["_gk_ctr"]).strip(),
                         )
                         in _h,
                         axis=1,
@@ -3399,18 +3470,20 @@ def build_main_table(
             fact, skud_agg, date_from=date_from, date_to=date_to
         ).rename(columns={"skud_val": "skud_avg"})
     else:
-        skud_per = pivot[["project_name", "contractor_name"]].copy()
+        skud_per = pivot[pair_cols].copy()
         skud_per["skud_val"] = 0.0
 
-    rows = pivot.merge(skud_per, on=["project_name", "contractor_name"], how="left")
+    rows = pivot.merge(skud_per, on=pair_cols, how="left")
     if "skud_avg" not in rows.columns:
         if "skud_val" in rows.columns:
             rows["skud_avg"] = rows["skud_val"]
         else:
             rows["skud_avg"] = 0.0
     if id_pick is not None and not id_pick.empty:
-        rows = rows.merge(id_pick, on=["project_name", "contractor_name"], how="left")
+        rows = rows.merge(id_pick, on=pair_cols, how="left")
     else:
+        rows["project_name"] = ""
+        rows["contractor_name"] = ""
         rows["project_id"] = ""
         rows["contractor_id"] = ""
 
@@ -3553,8 +3626,9 @@ def build_main_table(
         )
     rows["row_kind"] = "row"
 
-    rows = _gdrs_collapse_rows_by_contractor_norm(rows)
+    rows = _gdrs_collapse_rows_by_contractor_key(rows, kontr_index)
     rows = _gdrs_resolve_contractor_display(rows, kontr_index)
+    rows = rows.drop(columns=["_gk_proj", "_gk_ctr"], errors="ignore")
     rows = gdrs_apply_kontr_plan_gate(
         rows,
         kontr_index,
