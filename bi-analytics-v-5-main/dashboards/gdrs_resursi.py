@@ -2642,16 +2642,60 @@ def gdrs_month_periods_from_paths(paths: Iterable[Path | str]) -> set[pd.Period]
     return out
 
 
+def gdrs_month_periods_from_dogovor_records(
+    dogovor_records: dict[str, list[dict]] | None,
+) -> set[pd.Period]:
+    """Месяцы плана из последнего Dogovor: шаги Количество_* и хвост до date_end."""
+    if not dogovor_records:
+        return set()
+    sentinel = pd.Timestamp("0001-01-01")
+    latest_src = max(dogovor_records.keys(), key=lambda s: _dogovor_snapshot_sort_key(s))
+    records = dogovor_records.get(latest_src) or []
+    months: set[pd.Period] = set()
+    for r in records:
+        if not isinstance(r, dict):
+            continue
+        hist_dates: list[pd.Timestamp] = []
+        for key in ("Количество_Людей", "Количество_Техники"):
+            hist = r.get(key)
+            if not isinstance(hist, list):
+                continue
+            for item in hist:
+                if not isinstance(item, dict):
+                    continue
+                d = _fast_parse_date(item.get("Дата") or item.get("дата"))
+                if d is not None:
+                    hist_dates.append(pd.Timestamp(d).normalize())
+        if not hist_dates:
+            continue
+        for d in hist_dates:
+            months.add(d.to_period("M"))
+        last_plan = max(hist_dates)
+        de = pd.NaT
+        for dk in ("Дата_Окончания_Договора", "ДатаОкончания"):
+            de = pd.to_datetime(r.get(dk), errors="coerce", utc=True)
+            if de is not pd.NaT and pd.notna(de):
+                break
+        if de is not pd.NaT and pd.notna(de):
+            de = pd.Timestamp(de).tz_localize(None).normalize()
+            if de > sentinel and de > last_plan:
+                for p in pd.period_range(last_plan.to_period("M"), de.to_period("M"), freq="M"):
+                    months.add(p)
+    return months
+
+
 def gdrs_month_select_options(
     long_fact: pd.DataFrame,
     *,
     extra_paths: Optional[Iterable[Path | str]] = None,
+    dogovor_records: dict[str, list[dict]] | None = None,
 ) -> list[tuple[str, pd.Period]]:
     """Список (подпись «Апрель 2026», Period[M]) по датам факта СКУД.
 
-    Месяцы из имён файлов (Dogovor/resursi) добавляются только если в long_fact
-    нет ни одной даты — иначе в фильтре появлялись периоды с планом 1С, но без
-    строк СКУД (например «Июнь 2026» из снапшота Dogovor при факте до мая).
+    Дополнительно — месяцы из Dogovor/resursi **после** последнего месяца с
+    фактом СКУД: план 1С может прийти раньше resursi (напр. июльский Dogovor при
+    факте до июня). Диапазон шагов плана и дат окончания договоров — из последнего
+    Dogovor в БД (напр. 37-СА/26 до 28.09.2026 → июль–сентябрь).
     """
     period_set: set[pd.Period] = set()
     fact_periods: set[pd.Period] = set()
@@ -2659,8 +2703,17 @@ def gdrs_month_select_options(
         for p in pd.to_datetime(long_fact["date"], errors="coerce").dt.to_period("M").dropna().unique():
             period_set.add(p)
             fact_periods.add(p)
-    if extra_paths and not fact_periods:
-        period_set |= gdrs_month_periods_from_paths(extra_paths)
+    ahead: set[pd.Period] = set()
+    if extra_paths:
+        ahead |= gdrs_month_periods_from_paths(extra_paths)
+    if dogovor_records:
+        ahead |= gdrs_month_periods_from_dogovor_records(dogovor_records)
+    if ahead:
+        if not fact_periods:
+            period_set |= ahead
+        else:
+            last_fact = max(fact_periods)
+            period_set |= {p for p in ahead if p > last_fact}
     if not period_set:
         return []
     out: list[tuple[str, pd.Period]] = []
@@ -3266,6 +3319,30 @@ def build_main_table(
             id_pick = pd.concat([id_pick, plan_ids], ignore_index=True).drop_duplicates(
                 subset=["project_name", "contractor_name"], keep="first"
             )
+            plan_only = plan_ids[["project_name", "contractor_name"]].copy()
+            for w in (1, 2, 3, 4, 5, 6):
+                plan_only[f"w{w}"] = 0.0
+            if pivot.empty:
+                pivot = plan_only
+            else:
+                have = set(
+                    zip(
+                        pivot["project_name"].astype(str).str.strip(),
+                        pivot["contractor_name"].astype(str).str.strip(),
+                    )
+                )
+                add = plan_only[
+                    ~plan_only.apply(
+                        lambda r, _h=have: (
+                            str(r["project_name"]).strip(),
+                            str(r["contractor_name"]).strip(),
+                        )
+                        in _h,
+                        axis=1,
+                    )
+                ]
+                if not add.empty:
+                    pivot = pd.concat([pivot, add], ignore_index=True)
 
     if fact is not None and not fact.empty:
         skud_per = _skud_agg_per_pair(
@@ -3404,7 +3481,7 @@ def build_main_table(
                 axis=1,
             ).astype(float).round(0)
         elif _show_week_cols:
-            rows[pk] = 0.0
+            rows[pk] = rows["plan"].fillna(0.0).round(0)
         else:
             rows[pk] = rows["plan"].fillna(0.0).round(0)
     if (

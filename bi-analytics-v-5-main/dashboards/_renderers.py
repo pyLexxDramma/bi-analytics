@@ -25732,6 +25732,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
     _month_options = gdrs_month_select_options(
         long_fact,
         extra_paths=_extra_source_names,
+        dogovor_records=_dog_records,
     )
     _month_labels = [lbl for lbl, _ in _month_options]
     _month_label_to_period = {lbl: per for lbl, per in _month_options}
@@ -25750,7 +25751,10 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
     if use_radio:
         _gdrs_reset_keys.append(f"gdrs_filter_vid_{_gdrs_key_suffix}")
     with filters_panel(st, reset_keys=_gdrs_reset_keys):
-        project_options = project_labels_for_filter(long_fact["project_name"])
+        project_options = project_labels_for_filter(
+            long_fact["project_name"],
+            apply_exclude_names=False,
+        )
         _agg_opts = gdrs_agg_select_options()
         with filters_selectors(st):
             if use_radio:
