@@ -1941,7 +1941,11 @@ def _build_plan_lookup(plan: Optional[pd.DataFrame], plan_col: str) -> tuple[dic
     proj_name_arr = plan["project_name"].to_numpy() if "project_name" in cols else None
     contr_name_arr = plan["contractor_name"].to_numpy() if "contractor_name" in cols else None
     has_cn = "contract_name" in cols
-    cn_arr = plan["contract_name"].astype(str).str.strip().to_numpy() if has_cn else None
+    cn_arr = (
+        plan["contract_name"].fillna("").astype(str).str.strip().to_numpy()
+        if has_cn
+        else None
+    )
     for i in range(n):
         v = vals[i]
         if pd.isna(v):
@@ -1951,7 +1955,9 @@ def _build_plan_lookup(plan: Optional[pd.DataFrame], plan_col: str) -> tuple[dic
         contr_id = contr_id_arr[i] if contr_id_arr is not None else ""
         proj_norm = normalize_name(proj_name_arr[i]) if proj_name_arr is not None else ""
         contr_norm = normalize_name(contr_name_arr[i]) if contr_name_arr is not None else ""
-        contract_name = cn_arr[i] if has_cn else ""
+        contract_name = str(cn_arr[i]).strip() if has_cn else ""
+        if contract_name.lower() in ("nan", "none", "null", "<na>"):
+            contract_name = ""
         if proj_id and contr_id:
             by_id[(proj_id, contr_id)] = by_id.get((proj_id, contr_id), 0.0) + v
         if proj_id and contr_norm:
@@ -1959,7 +1965,7 @@ def _build_plan_lookup(plan: Optional[pd.DataFrame], plan_col: str) -> tuple[dic
         if proj_norm and contr_norm:
             by_norm_name[(proj_norm, contr_norm)] = by_norm_name.get((proj_norm, contr_norm), 0.0) + v
         if contract_name and proj_norm and contr_norm:
-            existing = contract_by_norm.get((proj_norm, contr_norm), "")
+            existing = str(contract_by_norm.get((proj_norm, contr_norm), "") or "").strip()
             if contract_name not in existing:
                 contract_by_norm[(proj_norm, contr_norm)] = (
                     f"{existing} · {contract_name}".strip(" ·") if existing else contract_name
@@ -2496,6 +2502,35 @@ def gdrs_week_period_end(
     return pd.to_datetime(grid[mask.to_numpy()]).max()
 
 
+def gdrs_week_numbers_in_period(
+    date_from: Optional[pd.Timestamp],
+    date_to: Optional[pd.Timestamp],
+) -> list[int]:
+    """Номера недель 1..N, которые реально есть в выбранном периоде (N ≤ 6).
+
+    Один календарный месяц — недели по дням 1–7, 8–14, … (как в 1С).
+    Иначе — порядковые ISO-недели в диапазоне дат.
+    """
+    if date_from is None or date_to is None:
+        return []
+    lo = pd.Timestamp(date_from).normalize()
+    hi = pd.Timestamp(date_to).normalize()
+    if not pd.notna(lo) or not pd.notna(hi) or hi < lo:
+        return []
+    out: list[int] = []
+    for wn in range(1, 7):
+        if gdrs_week_period_end(lo, hi, wn) is not None:
+            out.append(wn)
+    return out
+
+
+def gdrs_matrix_week_count(
+    date_from: Optional[pd.Timestamp],
+    date_to: Optional[pd.Timestamp],
+) -> int:
+    return len(gdrs_week_numbers_in_period(date_from, date_to))
+
+
 GDRS_AGG_MONTH = "month_avg"
 GDRS_AGG_LABELS: dict[str, str] = {
     GDRS_AGG_MONTH: "Среднее за месяц",
@@ -2870,29 +2905,31 @@ def gdrs_matrix_week_labels(
     date_to: pd.Timestamp,
     dates: pd.Series,
 ) -> list[str]:
-    """Подписи недель 1–6 в порядке периода с диапазоном дат (для шапки таблицы)."""
-    _default = [f"{i} нед" for i in range(1, 7)]
-    dts = pd.to_datetime(dates, errors="coerce").dropna()
-    if dts.empty:
-        return _default
+    """Подписи недель 1–N (N ≤ 6) с диапазоном дат (для шапки таблицы)."""
     lo = pd.Timestamp(date_from).normalize()
     hi = pd.Timestamp(date_to).normalize()
-    dts = dts[(dts >= lo) & (dts <= hi)]
-    if dts.empty:
-        return _default
-    week_idx, _ = _gdrs_week_groups(dts, date_from=lo, date_to=hi)
+    week_nums = gdrs_week_numbers_in_period(lo, hi)
+    if not week_nums:
+        return [f"{i} нед" for i in range(1, 7)]
+    dts = pd.to_datetime(dates, errors="coerce").dropna()
+    if not dts.empty:
+        dts = dts[(dts >= lo) & (dts <= hi)]
+    week_idx, _ = (
+        _gdrs_week_groups(dts, date_from=lo, date_to=hi) if not dts.empty else (None, {})
+    )
     labels: list[str] = []
-    for wi in range(1, 7):
-        mask = week_idx == wi
-        if not mask.any():
-            end = gdrs_week_period_end(lo, hi, wi)
-            if end is not None and pd.notna(end):
-                labels.append(f"{wi} нед ({end.strftime('%d.%m')})")
-            else:
-                labels.append(f"{wi} нед")
-            continue
-        sub = dts[mask]
-        labels.append(f"{wi} нед ({sub.min().strftime('%d.%m')}-{sub.max().strftime('%d.%m')})")
+    for wi in week_nums:
+        if week_idx is not None and not dts.empty:
+            mask = week_idx == wi
+            if mask.any():
+                sub = dts[mask]
+                labels.append(f"{wi} нед ({sub.min().strftime('%d.%m')}-{sub.max().strftime('%d.%m')})")
+                continue
+        end = gdrs_week_period_end(lo, hi, wi)
+        if end is not None and pd.notna(end):
+            labels.append(f"{wi} нед ({end.strftime('%d.%m')})")
+        else:
+            labels.append(f"{wi} нед")
     return labels
 
 
@@ -3279,15 +3316,24 @@ def build_main_table(
     _show_week_cols = gdrs_matrix_show_week_columns(
         plan_agg, skud_agg, date_from=date_from, date_to=date_to
     )
+    _week_nums = (
+        gdrs_week_numbers_in_period(date_from, date_to) if _show_week_cols else []
+    )
     _weekly_plan_lu: dict[int, tuple] = {}
     if _show_week_cols and weekly_plan_by_week:
         for _wn, _wp_df in weekly_plan_by_week.items():
             if _wp_df is not None and not _wp_df.empty:
                 _weekly_plan_lu[int(_wn)] = _build_plan_lookup(_wp_df, plan_col)
     for w in ("w1", "w2", "w3", "w4", "w5", "w6"):
-        rows[w] = rows[w].fillna(0.0).round(0)
+        wi = int(w[1:])
+        if _show_week_cols and wi not in _week_nums:
+            rows[w] = 0.0
+        else:
+            rows[w] = rows[w].fillna(0.0).round(0)
     for wi, pk in enumerate(("p1", "p2", "p3", "p4", "p5", "p6"), start=1):
-        if _show_week_cols and wi in _weekly_plan_lu:
+        if _show_week_cols and wi not in _week_nums:
+            rows[pk] = 0.0
+        elif _show_week_cols and wi in _weekly_plan_lu:
             _lu = _weekly_plan_lu[wi]
             _wasof = None
             if weekly_plan_as_of and wi in weekly_plan_as_of:
@@ -3306,8 +3352,27 @@ def build_main_table(
                 ),
                 axis=1,
             ).astype(float).round(0)
+        elif _show_week_cols:
+            rows[pk] = 0.0
         else:
             rows[pk] = rows["plan"].fillna(0.0).round(0)
+    if (
+        _show_week_cols
+        and _week_nums
+        and gdrs_agg_week_num(plan_agg) is None
+        and gdrs_agg_week_num(skud_agg) is None
+    ):
+        _p_cols = [f"p{wn}" for wn in _week_nums]
+        _w_cols = [f"w{wn}" for wn in _week_nums]
+        rows["plan"] = rows[_p_cols].mean(axis=1).round(0)
+        rows["skud"] = rows[_w_cols].mean(axis=1).round(0)
+        rows["deviation"] = (rows["skud"] - rows["plan"]).round(0)
+        rows["delta_pct"] = rows.apply(
+            lambda r: ((r["skud"] - r["plan"]) / r["plan"] * 100.0)
+            if r["plan"] not in (0.0, None) and float(r["plan"]) != 0.0
+            else np.nan,
+            axis=1,
+        )
     rows["row_kind"] = "row"
 
     rows = _gdrs_collapse_rows_by_contractor_norm(rows)
@@ -3765,12 +3830,10 @@ def render_gdrs_matrix_table_html(
         delta_bg_style = lambda raw: gdrs_delta_pct_cell_bg_style(raw, theme=theme)
 
     wk_labels = list(week_labels or GDRS_WEEK_LABELS)
-    if len(wk_labels) < 6:
-        wk_labels = wk_labels + list(GDRS_WEEK_LABELS[len(wk_labels):])
-    wk_labels = wk_labels[:6]
-    wk_n = len(wk_labels)
-    plan_keys = list(GDRS_WEEK_PLAN_KEYS)
-    skud_keys = list(GDRS_WEEK_SKUD_KEYS)
+    wk_n = min(len(wk_labels), 6)
+    wk_labels = wk_labels[:wk_n]
+    plan_keys = list(GDRS_WEEK_PLAN_KEYS[:wk_n])
+    skud_keys = list(GDRS_WEEK_SKUD_KEYS[:wk_n])
     if show_week_columns:
         show_cols = list(fixed_cols) + [delta_col] + plan_keys + skud_keys
     else:
