@@ -2043,6 +2043,60 @@ def _gdrs_point_pct_of_period_plan(
     return out
 
 
+def _gdrs_hist_collapse_week_grain(
+    by_period_week: pd.DataFrame,
+    period_col_hist: str,
+    df_hist: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Если в колонке «Период» суточные даты — схлопнуть в месяц × номер недели,
+    чтобы ось «Период — неделя» не превращалась в ряд дней.
+    """
+    if (
+        by_period_week is None
+        or by_period_week.empty
+        or period_col_hist not in by_period_week.columns
+        or "Неделя" not in by_period_week.columns
+    ):
+        return by_period_week
+    out = by_period_week.copy()
+    pdt = pd.to_datetime(out[period_col_hist], errors="coerce", dayfirst=True)
+    if int(pdt.notna().sum()) < max(2, len(out) // 4):
+        return out
+    uniq_days = int(pdt.dt.normalize().nunique())
+    uniq_months = int(pdt.dt.to_period("M").nunique())
+    if uniq_days <= max(uniq_months * 2, 8):
+        return out
+    out["_mon"] = pdt.dt.to_period("M")
+    collapsed = (
+        out.groupby(["_mon", "Неделя"], as_index=False, dropna=False)["Факт"]
+        .sum()
+    )
+    collapsed[period_col_hist] = collapsed["_mon"]
+    collapsed["Период_стр"] = collapsed["_mon"].astype(str).str.strip()
+    if df_hist is not None and "План_numeric" in getattr(df_hist, "columns", []):
+        _src = df_hist.copy()
+        _src["_mon"] = pd.to_datetime(
+            _src[period_col_hist], errors="coerce", dayfirst=True
+        ).dt.to_period("M")
+        _plan_m = (
+            _src.groupby("_mon", dropna=False)["План_numeric"]
+            .apply(lambda s: float(pd.to_numeric(s, errors="coerce").fillna(0.0).sum()))
+            .reset_index(name="План_период")
+        )
+        collapsed = collapsed.merge(_plan_m, on="_mon", how="left")
+        fac = pd.to_numeric(collapsed["Факт"], errors="coerce").fillna(0.0)
+        psum = pd.to_numeric(collapsed["План_период"], errors="coerce").fillna(0.0)
+        collapsed["%"] = np.where(
+            psum > 0, (fac / psum * 100.0).clip(lower=0.0), 0.0
+        )
+    else:
+        collapsed = _gdrs_point_pct_of_period_plan(
+            collapsed, df_hist, period_col_hist, "Факт"
+        )
+    return collapsed.drop(columns=["_mon"], errors="ignore")
+
+
 def _sample_for_chart(df: pd.DataFrame, max_rows: int = _MAX_CHART_ROWS) -> pd.DataFrame:
     """
     Если датафрейм превышает max_rows, равномерно сэмплирует его и показывает уведомление.
@@ -2584,8 +2638,80 @@ def _deviations_stacked_bar_add_totals(
             xanchor="center",
             yanchor="bottom",
             yshift=10,
-            font=dict(color=_fin_chart_label_color(dark="#f5f5f5", light="#111827"), size=14),
+            font=dict(color=_fin_chart_label_color(dark="#f5f5f5", light="#111827"), size=11),
         )
+
+
+def _deviations_dynamics_stacked_bar_finalize(fig, layout_kw: dict) -> None:
+    """После apply_chart_background — вернуть высоту, отступы и легенду под осью X."""
+    fig.update_layout(
+        height=layout_kw["height"],
+        margin=layout_kw["margin"],
+        showlegend=True,
+        legend=layout_kw["legend"],
+        xaxis=layout_kw.get("xaxis"),
+        yaxis=layout_kw.get("yaxis"),
+    )
+    _leg = layout_kw.get("legend") or {}
+    if _leg.get("y") is not None:
+        fig.update_layout(legend=dict(_leg))
+
+
+def _deviations_dynamics_stacked_bar_layout(
+    *,
+    n_periods: int,
+    period_x_title: str,
+    ax_clr: str,
+    multi_proj: bool = False,
+) -> dict:
+    """Layout stacked bar «Динамика причин»: легенда строго под подписью «Период …»."""
+    n = max(1, int(n_periods or 1))
+    t_margin = 72 if multi_proj else 56
+    tick_block = 78 + min(n, 14) * 3
+    title_block = 34
+    legend_block = 58
+    b_margin = tick_block + title_block + legend_block + 22
+    plot_h = int(max(420, 360 + min(n, 28) * 14))
+    height = plot_h + t_margin + b_margin
+    # y < 0 — ниже области plot: сначала подписи месяцев, затем «Период (месяц)», затем легенда.
+    leg_y = -0.28 - min(n, 12) * 0.014
+    return dict(
+        barmode="stack",
+        bargap=0.34,
+        bargroupgap=0.06,
+        showlegend=True,
+        legend=standard_chart_legend(
+            title=dict(text="Причина отклонения"),
+            font=dict(size=10),
+            y=leg_y,
+            yanchor="top",
+            x=0.5,
+            xanchor="center",
+        ),
+        margin=dict(
+            l=56,
+            r=240 if multi_proj else 40,
+            t=72 if multi_proj else 56,
+            b=b_margin,
+        ),
+        height=height,
+        xaxis=dict(
+            title=dict(text=period_x_title, standoff=18, font=dict(size=12, color=ax_clr)),
+            tickangle=-38,
+            tickfont=dict(size=10, color=ax_clr),
+            ticklabelstandoff=4,
+            automargin=True,
+        ),
+        yaxis=dict(
+            title=dict(
+                text="Количество отклонений",
+                standoff=8,
+                font=dict(size=12, color=ax_clr),
+            ),
+            automargin=True,
+            tickfont=dict(size=10, color=ax_clr),
+        ),
+    )
 
 
 def _deviations_plotly_project_chart_title(fig, project_name: str) -> None:
@@ -7406,7 +7532,6 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     if _periods_grid
                     else reason_data["period"].nunique(dropna=True) or 0
                 )
-                _panel_h = int(max(520, 420 + min(_n_per_facet, 32) * 22))
                 _cap_dyn_multi = (
                     "Каждый столбец — период; стек по причинам; отдельный график на проект. "
                     "В сегменте — число отклонений по причине; над столбцом — итог за период. "
@@ -7442,33 +7567,11 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         },
                         text="_seg_lbl",
                     )
-                    _panel_ly = dict(
-                        barmode="stack",
-                        bargap=0.34,
-                        bargroupgap=0.06,
-                        showlegend=True,
-                        legend=standard_chart_legend(title=dict(text="Причина отклонения"), font=dict(size=12)),
-                        margin=dict(l=56, r=260, t=72, b=280),
-                        height=_panel_h,
-                        xaxis=dict(
-                            title=dict(
-                                text=_period_x_title,
-                                standoff=40,
-                                font=dict(size=13, color=_ax_clr),
-                            ),
-                            tickangle=-45,
-                            tickfont=dict(size=12, color=_ax_clr),
-                            automargin=True,
-                        ),
-                        yaxis=dict(
-                            title=dict(
-                                text="Количество отклонений",
-                                standoff=8,
-                                font=dict(size=13, color=_ax_clr),
-                            ),
-                            automargin=True,
-                            tickfont=dict(size=12, color=_ax_clr),
-                        ),
+                    _panel_ly = _deviations_dynamics_stacked_bar_layout(
+                        n_periods=_n_per_facet,
+                        period_x_title=_period_x_title,
+                        ax_clr=_ax_clr,
+                        multi_proj=True,
                     )
                     _g_f = _plotly_bargaps_sparse_x_like_gdrs(_n_per_facet)
                     if _g_f:
@@ -7500,14 +7603,11 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                         mc = getattr(tr.marker, "color", None)
                         if isinstance(mc, str):
                             tc = _deviations_contrast_text_on_fill(mc)
-                            tr.update(insidetextfont=dict(color=tc, size=13))
+                            tr.update(insidetextfont=dict(color=tc, size=10))
                         tr.update(hovertemplate=_hov)
                     fig = _plotly_bar_hide_legacy_textfont(fig)
                     fig = apply_chart_background(fig, skip_uniformtext=True)
-                    fig.update_layout(
-                        showlegend=True,
-                        legend=standard_chart_legend(title=dict(text="Причины отклонений"), font=dict(size=12)),
-                    )
+                    _deviations_dynamics_stacked_bar_finalize(fig, _panel_ly)
                     # apply_chart_background обнуляет title.text — заголовок с
                     # названием проекта ставим ПОСЛЕ него.
                     _deviations_plotly_project_chart_title(fig, _pname)
@@ -7536,26 +7636,11 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     text="_seg_lbl",
                 )
                 _n_per_single = int(len(_periods_grid) if _periods_grid else reason_data["period"].nunique(dropna=True) or 0)
-                _single_h = int(max(1120, 880 + min(_n_per_single, 36) * 40))
-                _single_ly = dict(
-                    barmode="stack",
-                    bargap=0.34,
-                    bargroupgap=0.06,
-                    showlegend=True,
-                    legend=standard_chart_legend(title=dict(text="Причина отклонения"), font=dict(size=12)),
-                    margin=dict(l=56, r=260, t=48, b=280),
-                    xaxis=dict(
-                        title=dict(text=_period_x_title, standoff=40, font=dict(size=13, color=_ax_clr)),
-                        tickangle=-45,
-                        tickfont=dict(size=12, color=_ax_clr),
-                        automargin=True,
-                    ),
-                    yaxis=dict(
-                        title=dict(text="Количество отклонений", standoff=8, font=dict(size=13, color=_ax_clr)),
-                        automargin=True,
-                        tickfont=dict(size=12, color=_ax_clr),
-                    ),
-                    height=_single_h,
+                _single_ly = _deviations_dynamics_stacked_bar_layout(
+                    n_periods=_n_per_single,
+                    period_x_title=_period_x_title,
+                    ax_clr=_ax_clr,
+                    multi_proj=False,
                 )
                 _g_s = _plotly_bargaps_sparse_x_like_gdrs(_n_per_single)
                 if _g_s:
@@ -7608,7 +7693,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
                     mc = getattr(tr.marker, "color", None)
                     if isinstance(mc, str):
                         tc = _deviations_contrast_text_on_fill(mc)
-                        tr.update(insidetextfont=dict(color=tc, size=13))
+                        tr.update(insidetextfont=dict(color=tc, size=10))
                     tr.update(hovertemplate=_hover_tpl_single)
 
                 if _single_proj_name:
@@ -7622,6 +7707,7 @@ def dashboard_dynamics_of_deviations(df, hide_shared_filters=False):
 
                 fig = _plotly_bar_hide_legacy_textfont(fig)
                 fig = apply_chart_background(fig, skip_uniformtext=True)
+                _deviations_dynamics_stacked_bar_finalize(fig, _single_ly)
                 # apply_chart_background обнуляет title.text — заголовок с
                 # названием проекта ставим ПОСЛЕ него.
                 if _single_proj_name:
@@ -23827,6 +23913,10 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     by_period_week = _gdrs_point_pct_of_period_plan(
                         by_period_week, df_hist, period_col_hist, "Факт"
                     )
+                    if dyn_grain == "Неделя":
+                        by_period_week = _gdrs_hist_collapse_week_grain(
+                            by_period_week, period_col_hist, df_hist
+                        )
                     if dyn_grain == "Месяц":
                         _m = (
                             by_period_week.groupby(period_col_hist, as_index=False)["Факт"]
@@ -23876,11 +23966,16 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                 _fact_color = "#F39C12"
                 plot_df = by_period_week.copy()
                 if dyn_grain == "Неделя":
-                    plot_df["x_label"] = (
-                        plot_df["Период_стр"].astype(str)
-                        + " — "
-                        + plot_df["Неделя"].astype(str).str.replace(" неделя", "н", regex=False)
+                    _wk_num = (
+                        plot_df["Неделя"]
+                        .astype(str)
+                        .str.extract(r"(\d+)", expand=False)
+                        .fillna("?")
                     )
+                    plot_df["x_tick"] = (
+                        plot_df["Период_стр"].astype(str).str.strip() + " · н" + _wk_num
+                    )
+                    plot_df["x_label"] = plot_df["x_tick"]
                     plot_df = plot_df.sort_values([period_col_hist, "Неделя"])
                     _weeks_per_period = plot_df.groupby("Период_стр")["Неделя"].nunique().to_dict()
 
@@ -23958,12 +24053,13 @@ def dashboard_workforce_movement(df, data_source_filter=None, show_header=True, 
                     title_text="",
                     xaxis_title=_x_title,
                     yaxis_title="Количество",
-                    height=430,
+                    height=max(400, 320 + min(len(x_order), 16) * 12),
                     showlegend=False,
-                    margin=dict(l=56, r=28, t=72, b=155),
-                    uniformtext=dict(minsize=7, mode="show"),
+                    margin=dict(l=56, r=28, t=72, b=max(168, 120 + min(len(x_order), 20) * 6)),
+                    uniformtext=dict(minsize=6, mode="hide"),
                     xaxis=dict(
-                        tickangle=-45,
+                        tickangle=-35 if len(x_order) > 4 else -25,
+                        tickfont=dict(size=9),
                         categoryorder="array",
                         categoryarray=x_order,
                         automargin=True,
@@ -24989,7 +25085,9 @@ def _gdrs_dynamics_chart_panel(
             "Выберите другую гранулярность или загрузите CSV за несколько месяцев."
         )
     try:
-        _x = dyn["bucket"]
+        _agg_cf = str(agg_kind or "").casefold()
+        _use_cat_x = _agg_cf in ("неделя", "месяц")
+        _x = dyn["x_label"] if _use_cat_x and "x_label" in dyn.columns else dyn["bucket"]
         _plan_s = pd.to_numeric(dyn["План"], errors="coerce").fillna(0.0)
         _fact_s = pd.to_numeric(dyn["Факт"], errors="coerce").fillna(0.0)
         _zero_plan_mask = _plan_s <= 0
@@ -25021,12 +25119,13 @@ def _gdrs_dynamics_chart_panel(
             for f, p in zip(_fact_s, _plan_s)
         ]
         _n_pts = len(dyn)
-        _dyn_fs = 1.5
+        _dyn_fs = 1.0 if _agg_cf == "неделя" else 1.5
         _dyn_sz = lambda base: max(8, int(round(float(base) * _dyn_fs)))
-        _lbl_sz = _dyn_sz(12 if _n_pts <= 12 else (11 if _n_pts <= 20 else (10 if _n_pts <= 32 else 9)))
-        _ann_sz = _dyn_sz(11 if _n_pts <= 16 else 9)
-        _axis_tick_sz = _dyn_sz(11)
-        _axis_title_sz = _dyn_sz(12)
+        _lbl_sz = _dyn_sz(10 if _n_pts <= 12 else (9 if _n_pts <= 20 else 8))
+        _ann_sz = _dyn_sz(9 if _n_pts <= 12 else 8)
+        _axis_tick_sz = _dyn_sz(10)
+        _axis_title_sz = _dyn_sz(11)
+        _hover_x = "%{x}" if _use_cat_x else "%{x|%d.%m.%Y}"
 
         _plan_for_range = _plan_plot.dropna()
         if _plan_for_range.empty:
@@ -25054,7 +25153,7 @@ def _gdrs_dynamics_chart_panel(
                 textposition="top center",
                 textfont=dict(color=_th.line_plan, size=_lbl_sz),
                 cliponaxis=False,
-                hovertemplate="План: %{y}<br>%{x|%d.%m.%Y}<extra></extra>",
+                hovertemplate=f"План: %{{y}}<br>{_hover_x}<extra></extra>",
             )
         )
         fig.add_trace(
@@ -25070,43 +25169,45 @@ def _gdrs_dynamics_chart_panel(
                 textfont=dict(color=_th.line_fact, size=_lbl_sz),
                 cliponaxis=False,
                 customdata=_pct_hover,
-                hovertemplate="Факт: %{y}<br>%{customdata}<br>%{x|%d.%m.%Y}<extra></extra>",
+                hovertemplate=f"Факт: %{{y}}<br>%{{customdata}}<br>{_hover_x}<extra></extra>",
             )
         )
-        for _xb, _f, _p in zip(_x, dyn["Факт"], dyn["План"]):
-            _pct_color = _th.good if int(_p) > 0 and float(_f) >= float(_p) else _th.bad
-            if int(_p) <= 0:
-                _ann_text = f"{int(_f)}"
-            else:
-                _pct = int(round(float(_f) / float(_p) * 100.0))
-                _ann_text = f"{int(_f)} ({_pct}%)"
-            fig.add_annotation(
-                x=_xb,
-                y=int(_f),
-                text=_ann_text,
-                showarrow=False,
-                xref="x",
-                yref="y",
-                xanchor="center",
-                yanchor="top",
-                yshift=-14 if _n_pts <= 16 else -10,
-                font=dict(size=_ann_sz, color=_pct_color),
-            )
+        if _n_pts <= 14 or _agg_cf != "неделя":
+            for _xb, _f, _p in zip(_x, dyn["Факт"], dyn["План"]):
+                _pct_color = _th.good if int(_p) > 0 and float(_f) >= float(_p) else _th.bad
+                if int(_p) <= 0:
+                    _ann_text = f"{int(_f)}"
+                else:
+                    _pct = int(round(float(_f) / float(_p) * 100.0))
+                    _ann_text = f"{int(_f)} ({_pct}%)"
+                fig.add_annotation(
+                    x=_xb,
+                    y=int(_f),
+                    text=_ann_text,
+                    showarrow=False,
+                    xref="x",
+                    yref="y",
+                    xanchor="center",
+                    yanchor="top",
+                    yshift=-10,
+                    font=dict(size=_ann_sz, color=_pct_color),
+                )
 
-        _base_h = max(520, min(760, 38 * _n_pts + 120))
-        _chart_h = int(1.5 * _base_h)
+        _base_h = max(460, min(680, 34 * _n_pts + 100))
+        _chart_h = int(_base_h if _agg_cf == "неделя" else 1.5 * _base_h)
 
         _x_dtick = None
-        if str(agg_kind).casefold() == "день":
+        if not _use_cat_x and _agg_cf == "день":
             if _n_pts > 24:
                 _x_dtick = "D5"
             elif _n_pts > 12:
                 _x_dtick = "D3"
             else:
                 _x_dtick = "D2"
-        elif str(agg_kind).casefold() == "неделя":
+        elif not _use_cat_x and _agg_cf == "неделя":
             _x_dtick = "D7"
 
+        _x_margin_b = max(96, 72 + min(_n_pts, 18) * 4) if _use_cat_x else 96
         fig.update_layout(
             title=dict(
                 text=f"Среднее за день — {sel_vid.lower()} (ресурсы)",
@@ -25116,7 +25217,7 @@ def _gdrs_dynamics_chart_panel(
             paper_bgcolor=_th.chart_bg,
             font_color=_th.text,
             height=_chart_h,
-            margin=dict(l=62, r=32, t=104, b=96),
+            margin=dict(l=62, r=32, t=104, b=_x_margin_b),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
             yaxis=dict(
                 title="Среднее за день",
@@ -25129,14 +25230,15 @@ def _gdrs_dynamics_chart_panel(
         )
         fig.update_xaxes(
             title_text=f"Период — {agg_kind.lower()}",
-            type="date",
-            tickformat="%d.%m.%Y",
+            type="category" if _use_cat_x else "date",
+            tickformat=None if _use_cat_x else "%d.%m.%Y",
             dtick=_x_dtick,
-            tickangle=-35 if _n_pts > 6 else 0,
+            tickangle=-35 if _use_cat_x and _n_pts > 5 else (-35 if _n_pts > 6 else 0),
             showgrid=True,
             gridcolor=_th.chart_grid,
             tickfont=dict(size=_axis_tick_sz, color=_th.text),
             title_font=dict(size=_axis_title_sz, color=_th.text),
+            automargin=True,
         )
         fig.update_yaxes(
             tickfont=dict(size=_axis_tick_sz, color=_th.text),
