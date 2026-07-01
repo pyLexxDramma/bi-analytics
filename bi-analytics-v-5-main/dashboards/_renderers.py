@@ -25564,6 +25564,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         gdrs_agg_select_options,
         gdrs_filter_fact_by_months,
         gdrs_matrix_show_week_columns,
+        gdrs_matrix_week_count,
         gdrs_matrix_week_labels,
         build_gdrs_audit_export_frames,
         gdrs_month_select_options,
@@ -25582,6 +25583,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         load_gdrs_termination_index,
         gdrs_filter_fact_by_termination,
         week_end_in_filtered_fact,
+        gdrs_week_numbers_in_period,
         _gdrs_plan_loader,
         gdrs_contractor_filter_options,
     )
@@ -25795,7 +25797,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
     _weekly_plan_by_week: dict[int, _pd.DataFrame] = {}
     _weekly_plan_as_of: dict[int, _pd.Timestamp] = {}
     if gdrs_matrix_show_week_columns(_plan_agg, _skud_agg, date_from=date_from, date_to=date_to):
-        for _wn in range(1, 7):
+        for _wn in gdrs_week_numbers_in_period(date_from, date_to):
             _w_end = week_end_in_filtered_fact(
                 long_fact_period,
                 vid=sel_vid,
@@ -25979,9 +25981,10 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
     )
     if _show_week_cols:
         st.caption(
-            "Колонки «План / СКУД / Отклонение» — **среднее за день за весь выбранный период**. "
-            "Колонки «N нед» — порядковые ISO-недели **с начала периода** (1-я = самая ранняя неделя в фильтре); "
-            "план по неделе — срез 1С на последний день этой недели в периоде (сумма по всем действующим договорам)."
+            "Колонки «План / СКУД / Отклонение» — **среднее по неделям месяца** (только реальные недели: "
+            f"{gdrs_matrix_week_count(date_from, date_to) or '—'} в выбранном периоде). "
+            "Колонки «N нед» — календарные недели месяца (1–7, 8–14, …); "
+            "план по неделе — срез 1С на последний день этой недели."
         )
     view = main_t.copy()
     view["Контрагент"] = view.apply(
