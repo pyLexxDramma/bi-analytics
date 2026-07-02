@@ -636,14 +636,20 @@ def _canonicalize_contractor_names(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def load_resursi_files(paths: Iterable[Path | str]) -> pd.DataFrame:
+    sorted_paths = sorted(
+        (Path(p) for p in paths),
+        key=lambda p: _resursi_snapshot_sort_key(p),
+    )
     frames = []
-    for p in paths:
+    for p in sorted_paths:
         try:
-            df = load_resursi_file(Path(p))
+            df = load_resursi_file(p)
         except Exception:
             df = pd.DataFrame()
         if df is not None and not df.empty:
-            frames.append(df)
+            tagged = df.copy()
+            tagged["__source_file"] = p.name
+            frames.append(tagged)
     if not frames:
         return pd.DataFrame(
             columns=[
@@ -654,10 +660,7 @@ def load_resursi_files(paths: Iterable[Path | str]) -> pd.DataFrame:
     out = pd.concat(frames, ignore_index=True)
     out = _canonicalize_project_names(out)
     out = _canonicalize_contractor_names(out)
-    out = out.drop_duplicates(
-        subset=["project_name", "contractor_name", "vid_resursa", "date"], keep="last"
-    )
-    return out
+    return gdrs_dedupe_fact_prefer_latest_source(out)
 
 @dataclass(frozen=True)
 class GdrsKontrIndex:
@@ -1459,6 +1462,10 @@ def load_plan_from_spravochniki(
 
 
 _FILE_DATE_RE = re.compile(r"(\d{2})-(\d{2})-(\d{4})")
+_RESURSI_STEM_SNAP_RE = re.compile(
+    r"^other_(\d{2})-(\d{2})-(\d{4})(?:_(\d{2})-(\d{2}))?",
+    re.IGNORECASE,
+)
 _ONE_C_DGOVOR_STEM_RE = re.compile(
     r"^(?:1с_|1c_|lc_|лк_|lk_)(\d{2}-\d{2}-\d{4})(?:_(\d{2}-\d{2}))?(?:_(.+))?$",
     re.IGNORECASE,
@@ -1507,6 +1514,52 @@ def _source_file_date(path) -> Optional[pd.Timestamp]:
         return pd.Timestamp(year=int(yyyy), month=int(mm), day=int(dd))
     except ValueError:
         return None
+
+
+def _resursi_snapshot_sort_key(path) -> tuple[pd.Timestamp, int]:
+    """Ключ сортировки resursi: (дата выгрузки, минуты HH:MM из имени other_DD-MM-YYYY_HH-MM_…)."""
+    stem = Path(_source_file_name(path)).stem.replace("__", "_")
+    m = _RESURSI_STEM_SNAP_RE.match(stem)
+    if m:
+        try:
+            ts = pd.Timestamp(
+                year=int(m.group(3)), month=int(m.group(2)), day=int(m.group(1))
+            )
+        except ValueError:
+            ts = pd.Timestamp.min
+        hhmm = 0
+        if m.group(4) is not None and m.group(5) is not None:
+            hhmm = int(m.group(4)) * 60 + int(m.group(5))
+        return ts, hhmm
+    ts = _source_file_date(path) or pd.Timestamp.min
+    return ts, 0
+
+
+def _resursi_source_sort_key_from_name(source_file: str) -> tuple[pd.Timestamp, int]:
+    return _resursi_snapshot_sort_key(source_file)
+
+
+def gdrs_dedupe_fact_prefer_latest_source(df: pd.DataFrame) -> pd.DataFrame:
+    """При нескольких resursi.csv на одну дату — строка из файла с более поздней выгрузкой."""
+    if df is None or df.empty:
+        return df
+    work = df.copy()
+    src_col = "__source_file" if "__source_file" in work.columns else None
+    if src_col is None:
+        return work
+    subset = [
+        c
+        for c in ("project_name", "contractor_name", "vid_resursa", "date")
+        if c in work.columns
+    ]
+    if len(subset) < 4:
+        return work
+    if "date" in work.columns:
+        work["date"] = pd.to_datetime(work["date"], errors="coerce")
+    work["_src_snap"] = work[src_col].astype(str).map(_resursi_source_sort_key_from_name)
+    work = work.sort_values("_src_snap", kind="mergesort")
+    work = work.drop_duplicates(subset=subset, keep="last")
+    return work.drop(columns=["_src_snap"], errors="ignore")
 
 
 def _pick_dogovor_path_for_snapshot(

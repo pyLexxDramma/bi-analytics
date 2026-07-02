@@ -1917,6 +1917,8 @@ def load_all_from_web() -> Dict:
 
                         gdrs_df = load_resursi_file(filepath)
                         if gdrs_df is not None and not gdrs_df.empty:
+                            gdrs_df = gdrs_df.copy()
+                            gdrs_df["__source_file"] = name
                             gdrs_file_id = _register_file(
                                 cur, version_id, file_info, "gdrs_fact", len(gdrs_df)
                             )

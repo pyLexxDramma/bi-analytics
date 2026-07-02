@@ -98,6 +98,8 @@ def load_version_dataframe(
 
 
 def load_gdrs_fact_long(version_id: int) -> pd.DataFrame:
+    from dashboards.gdrs_resursi import gdrs_dedupe_fact_prefer_latest_source
+
     df = load_version_dataframe(version_id, "gdrs_fact")
     if df is None or df.empty:
         return pd.DataFrame(
@@ -114,7 +116,7 @@ def load_gdrs_fact_long(version_id: int) -> pd.DataFrame:
     out = df.copy()
     if "date" in out.columns:
         out["date"] = pd.to_datetime(out["date"], errors="coerce")
-    return out
+    return gdrs_dedupe_fact_prefer_latest_source(out)
 
 
 def iter_json_records(
