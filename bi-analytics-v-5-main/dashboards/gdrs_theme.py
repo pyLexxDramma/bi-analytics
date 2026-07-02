@@ -119,10 +119,10 @@ def gdrs_deviation_vs_plan_text_and_color(plan_v, fact_v, theme: GdrsTheme) -> t
 
 
 def is_gdrs_light_preview_report(report_name: str) -> bool:
-    """Обратная совместимость: любое светлое превью (не только ГДРС)."""
-    from dashboards.light_theme import is_light_preview_report
+    """True на светлой теме (в т.ч. канонические имена без суффикса превью)."""
+    from dashboards.light_theme import is_light_preview_active
 
-    return is_light_preview_report(report_name)
+    return is_light_preview_active()
 
 
 

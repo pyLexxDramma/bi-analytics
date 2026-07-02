@@ -12,7 +12,7 @@ MAIN_PANEL_FINANCE_CATEGORY = "Финансы"
 
 
 def get_report_categories() -> List[Tuple[str, List[str]]]:
-    """Категории отчётов для меню; светлые превью — только в dev."""
+    """Категории отчётов для меню (одна вкладка на экран, светлая тема)."""
     from dashboards.light_theme import filter_reports_hide_light_preview
 
     out: List[Tuple[str, List[str]]] = []
@@ -51,41 +51,30 @@ def get_main_panel_report_lists(role: str) -> Tuple[List[str], List[str], List[s
 REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
     ("Девелоперские проекты", [
         "Девелоперские проекты",
-        "Девелоперские проекты (превью — светлая)",
     ]),
     (
         "Финансы",
         [
             "БДДС (расходы)",
-            "БДДС (расходы) (превью — светлая)",
             "БДР (расходы)",
-            "БДР (расходы) (превью — светлая)",
             "Утверждённый бюджет план/факт",
-            "Утверждённый бюджет план/факт (превью — светлая)",
             "БДДС расходы (план, факт, уточненный план)",
-            "БДДС расходы (план, факт, уточненный план) (превью — светлая)",
         ],
     ),
     (
         "Сроки",
         [
             "Контрольные точки",
-            "Контрольные точки (превью — светлая)",
             "График проекта",
-            "График проекта (превью — светлая)",
             "Причины отклонений",
-            "Причины отклонений (превью — светлая)",
             "Отклонение от базового плана",
-            "Отклонение от базового плана (превью — светлая)",
         ],
     ),
     (
         "Проектные работы",
         [
             "Проектная документация",
-            "Проектная документация (превью — светлая)",
             "Рабочая документация",
-            "Рабочая документация (превью — светлая)",
         ],
     ),
     (
@@ -93,29 +82,24 @@ REPORT_CATEGORIES: List[Tuple[str, List[str]]] = [
         [
             "ГДРС (люди)",
             "ГДРС (техника)",
-            "ГДРС (превью — светлая, люди)",
-            "ГДРС (превью — светлая, техника)",
         ],
     ),
     (
         "Предписания",
         [
             "Предписания по подрядчикам",
-            "Предписания по подрядчикам (превью — светлая)",
         ],
     ),
     (
         "Исполнительная документация",
         [
             "Исполнительная документация",
-            "Исполнительная документация (превью — светлая)",
         ],
     ),
     (
         "Дебиторская и кредиторская задолженность",
         [
             "Дебиторская и кредиторская задолженность подрядчиков",
-            "Дебиторская и кредиторская задолженность подрядчиков (превью — светлая)",
         ],
     ),
 ]
@@ -307,8 +291,8 @@ def _get_dashboards() -> Dict[str, Callable]:
         "Проектная документация (превью — светлая)": dashboard_project_documentation,
         # ГДРС: общий экран (выбор люди/техника) + отдельные пункты «(люди)» / «(техника)».
         "ГДРС": dashboard_gdrs,
-        "ГДРС (люди)": dashboard_gdrs_people,
-        "ГДРС (техника)": dashboard_gdrs_equipment_v2,
+        "ГДРС (люди)": dashboard_gdrs_people_preview_light or dashboard_gdrs_people,
+        "ГДРС (техника)": dashboard_gdrs_equipment_preview_light or dashboard_gdrs_equipment_v2,
         "ГДРС (превью — светлая, люди)": dashboard_gdrs_people_preview_light,
         "ГДРС (превью — светлая, техника)": dashboard_gdrs_equipment_preview_light,
         # Алиасы (старые deep-link/настройки).
@@ -329,7 +313,7 @@ def _get_dashboards() -> Dict[str, Callable]:
         # Обратная совместимость со старым именем отчёта.
         "Предписания по подрядчикам": dashboard_predpisania,
         "Предписания по подрядчикам (превью — светлая)": dashboard_predpisania,
-        "Девелоперские проекты": dashboard_developer_projects,
+        "Девелоперские проекты": dashboard_developer_projects_preview_light or dashboard_developer_projects,
         "Девелоперские проекты (превью — светлая)": dashboard_developer_projects_preview_light,
     }
     return raw
@@ -338,7 +322,7 @@ def _get_dashboards() -> Dict[str, Callable]:
 # Ленивая загрузка, чтобы при импорте dashboards не тянуть project_visualization_app
 # Увеличьте версию при изменении реестра отчётов — иначе долгоживущий процесс Streamlit
 # может держать устаревший словарь в памяти.
-_DASHBOARDS_REGISTRY_VERSION = 109
+_DASHBOARDS_REGISTRY_VERSION = 110
 _dashboards_cache: Dict[str, Callable] = {}
 _dashboards_cache_version: int = 0
 _renderers_mtime: float = 0.0

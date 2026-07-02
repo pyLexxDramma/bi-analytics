@@ -112,7 +112,7 @@ def apply_dark_table_constants() -> None:
 
 
 def use_light_theme() -> bool:
-    """Светлая тема: ``BI_ANALYTICS_LIGHT_THEME=1`` (не на release) — для фазы B миграции."""
+    """Светлая тема по умолчанию (cutover). Откат: ``BI_ANALYTICS_DARK_THEME=1``."""
     try:
         from config import use_light_theme_globally
 
@@ -1418,7 +1418,7 @@ def login_page_heading_html(
 
     light = is_light_preview_active()
     if light:
-        title = preview_light_name(LOGIN_PAGE_LABEL)
+        title = "BI Analytics"
         title_color = "#111827"
         subtitle_color = "#374151"
     else:

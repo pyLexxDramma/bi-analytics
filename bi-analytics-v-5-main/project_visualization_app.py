@@ -853,12 +853,11 @@ def main():
     try:
         from dashboards.light_theme import (
             inject_light_preview_css,
-            is_light_preview_report,
+            is_light_preview_active,
             light_preview_heading_html,
-            resolve_light_preview_title,
         )
 
-        _light_preview = is_light_preview_report(_dash_title)
+        _light_preview = is_light_preview_active()
         if _light_preview:
             from dashboards.light_theme import apply_light_table_constants
 
@@ -870,11 +869,7 @@ def main():
             apply_dark_table_constants()
     except Exception:
         pass
-    _h1_text = (
-        resolve_light_preview_title(_dash_title)
-        if _light_preview
-        else (_html_escape(_dash_title) if _dash_title else "Панель аналитики проектов")
-    )
+    _h1_text = _html_escape(_dash_title) if _dash_title else "Панель аналитики проектов"
     _gdrs_load_slot = None
     if _light_preview:
         st.markdown(light_preview_heading_html(_h1_text), unsafe_allow_html=True)
@@ -1702,9 +1697,9 @@ def main():
 
         try:
             from dashboards.gdrs_theme import gdrs_clear_loading_banner, gdrs_show_loading_banner
-            from dashboards.light_theme import inject_light_preview_css, is_light_preview_report
+            from dashboards.light_theme import inject_light_preview_css, is_light_preview_active
 
-            _light_preview_sel = is_light_preview_report(selected_dashboard)
+            _light_preview_sel = is_light_preview_active()
             if _light_preview_sel:
                 from dashboards.light_theme import apply_light_table_constants
 

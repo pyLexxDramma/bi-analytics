@@ -193,20 +193,8 @@ if is_streamlit_context():
         st.error("Ошибка получения данных пользователя")
         st.stop()
 
-    try:
-        from dashboards.light_theme import (
-            ADMIN_LIGHT_PREVIEW_SESSION_KEY,
-            PROFILE_LIGHT_PREVIEW_SESSION_KEY,
-        )
-
-        st.session_state.pop(PROFILE_LIGHT_PREVIEW_SESSION_KEY, None)
-        st.session_state.pop(ADMIN_LIGHT_PREVIEW_SESSION_KEY, None)
-    except Exception:
-        pass
-
     render_sidebar_menu(current_page="profile")
 
-    _profile_light = False
     try:
         from dashboards.light_theme import (
             PROFILE_SETTINGS_LABEL,
@@ -214,8 +202,7 @@ if is_streamlit_context():
             light_preview_heading_html,
         )
 
-        _profile_light = is_light_preview_active()
-        if _profile_light:
+        if is_light_preview_active():
             st.markdown(
                 light_preview_heading_html(PROFILE_SETTINGS_LABEL),
                 unsafe_allow_html=True,

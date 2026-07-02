@@ -273,44 +273,26 @@ def is_release_client_mode() -> bool:
     return False
 
 
-def _is_client_light_compare_host() -> bool:
-    """Prod-хосты для временного сравнения тёмной/светлой темы заказчиком (до cutover)."""
-    candidates: list[str] = []
-    host = _streamlit_request_host()
-    if host:
-        candidates.append(host)
-    pub = _read_env_or_secret("BI_STREAMLIT_PUBLIC_URL").strip()
-    if pub:
-        candidates.append(pub)
-    for raw in candidates:
-        hl = raw.lower()
-        if not hl or "bi-analytics-dev" in hl:
-            continue
-        if "ai.conall.ru" in hl:
-            return True
-        if "bi-analytics-client" in hl:
-            return True
-    return False
+def use_light_theme_globally() -> bool:
+    """
+    Единственная светлая тема (cutover 2026-06, решение заказчика).
+
+    Откат на тёмную: ``BI_ANALYTICS_DARK_THEME=1``.
+    """
+    if _env_truthy("BI_ANALYTICS_DARK_THEME"):
+        return False
+    return True
 
 
 def show_light_preview_reports() -> bool:
     """
-    Вкладки «(превью — светлая)» — только dev/локальная разработка, не клиентский prod.
+    Дубли вкладок «(превью — светлая)» — отключены после cutover.
 
-    Скрыты на release, ai.conall.ru и при ``BI_ANALYTICS_HIDE_LIGHT_PREVIEW=1``.
-    Принудительно включить: ``BI_ANALYTICS_LIGHT_PREVIEW=1``.
+    Dev-only dual-tab: ``BI_ANALYTICS_LIGHT_PREVIEW=1``.
     """
     if _env_truthy("BI_ANALYTICS_LIGHT_PREVIEW"):
         return True
-    if _env_truthy("BI_ANALYTICS_HIDE_LIGHT_PREVIEW"):
-        return False
-    if _is_client_light_compare_host():
-        return True
-    if is_release_client_mode():
-        return False
-    if _git_current_branch() == "release":
-        return False
-    return True
+    return False
 
 
 def show_data_ops_ui_for_role(role: Optional[str]) -> bool:
