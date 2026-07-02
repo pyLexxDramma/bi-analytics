@@ -124,6 +124,55 @@ def _gantt_ru_date_ticks(lo, hi, max_ticks: int = 26):
     return list(rng), ticktext
 
 
+def _gantt_robust_date_window(
+    dates: list,
+    *,
+    min_points: int = 8,
+    gap_days: float = 366.0,
+    anomaly_days: float = 366 * 4,
+):
+    """Робастное окно [lo, hi] по датам полос: отсекает изолированные выбросы (напр. 2006/2028).
+
+    Выброс определяем по РАЗРЫВУ, а не по перцентилю: одиночная «мусорная» дата
+    (2006) отстоит от массива на годы, тогда как реальные краевые даты
+    (сентябрь-2025) лежат рядом. Перцентиль срезал бы и легитимные хвосты — их
+    полосы затем вылезали за границу графика. Здесь обрезаем с каждого края
+    только точки, отделённые разрывом > ``gap_days`` от соседней внутрь, оставляя
+    непрерывный массив дат. (None, None) — если данных мало или разброс не аномален.
+    """
+    pts = []
+    for x in dates or []:
+        try:
+            t = pd.Timestamp(x)
+        except Exception:
+            continue
+        if pd.isna(t):
+            continue
+        pts.append(t.value)  # int64 ns
+    if len(pts) < min_points:
+        return None, None
+    arr = np.sort(np.array(pts, dtype="int64"))
+    lo_full = pd.Timestamp(int(arr[0]))
+    hi_full = pd.Timestamp(int(arr[-1]))
+    # Аномальным считаем разброс > ~4 лет: типовой график СМР короче.
+    if (hi_full - lo_full).days <= anomaly_days:
+        return None, None
+    _gap_ns = int(gap_days * 86400 * 1e9)
+    lo_i = 0
+    while lo_i < len(arr) - 1 and (arr[lo_i + 1] - arr[lo_i]) > _gap_ns:
+        lo_i += 1
+    hi_i = len(arr) - 1
+    while hi_i > 0 and (arr[hi_i] - arr[hi_i - 1]) > _gap_ns:
+        hi_i -= 1
+    if hi_i <= lo_i:
+        return None, None
+    lo_ns, hi_ns = int(arr[lo_i]), int(arr[hi_i])
+    # Ничего не отсекли — окно бессмысленно (разброс реальный), пусть работает обычный диапазон.
+    if lo_ns == int(arr[0]) and hi_ns == int(arr[-1]):
+        return None, None
+    return pd.Timestamp(lo_ns), pd.Timestamp(hi_ns)
+
+
 def build_grouped_plan_fact_gantt_figure(
     d: pd.DataFrame,
     policy: dict,
@@ -621,14 +670,43 @@ def build_grouped_plan_fact_gantt_figure(
             tx = _gantt_valid_timestamp(x)
             if tx is not None:
                 _bar_dates.append(tx)
+
+        # Робастное окно оси X: в исходных MSP встречаются единичные «мусорные»
+        # даты (напр. 2006 или 2028) — они раздувают диапазон на десятки лет,
+        # и реальные полосы 2025–2026 сжимаются в тонкие штрихи справа.
+        _w_lo, _w_hi = _gantt_robust_date_window(_bar_dates)
+
+        def _in_win(ts) -> bool:
+            if _w_lo is None or _w_hi is None:
+                return True
+            t = _gantt_valid_timestamp(ts)
+            return t is not None and _w_lo <= t <= _w_hi
+
+        if _w_lo is not None and _w_hi is not None:
+            _bar_dates = [x for x in _bar_dates if _in_win(x)]
+            _bar_starts = [x for x in _bar_starts if _in_win(x)]
+            _label_left_x = [x for x in _label_left_x if _in_win(x)]
+            _label_right_x = [x for x in _label_right_x if _in_win(x)]
+
         _all_ms_bases: list = []
         _all_ms_lens: list = []
+        _w_lo_ms = _w_lo.timestamp() * 1000.0 if _w_lo is not None else None
+        _w_hi_ms = _w_hi.timestamp() * 1000.0 if _w_hi is not None else None
+
+        def _ms_in_win(b, ln) -> bool:
+            if _w_lo_ms is None or _w_hi_ms is None:
+                return True
+            try:
+                return _w_lo_ms <= float(b) <= _w_hi_ms
+            except (TypeError, ValueError):
+                return False
+
         for b, ln in zip(plan_base_ms, plan_len_ms):
-            if b is not None and ln is not None:
+            if b is not None and ln is not None and _ms_in_win(b, ln):
                 _all_ms_bases.append(b)
                 _all_ms_lens.append(ln)
         for b, ln in zip(fact_base_ms, fact_len_ms):
-            if b is not None and ln is not None:
+            if b is not None and ln is not None and _ms_in_win(b, ln):
                 _all_ms_bases.append(b)
                 _all_ms_lens.append(ln)
         lo_pad, hi_pad = _project_schedule_gantt_x_range(
@@ -641,9 +719,19 @@ def build_grouped_plan_fact_gantt_figure(
         )
         if lo_pad is not None and hi_pad is not None:
             _span_days = max(1.0, (pd.Timestamp(hi_pad) - pd.Timestamp(lo_pad)).days)
-            _extra = pd.Timedelta(days=min(45.0, max(10.0, _span_days * 0.05)))
-            lo_pad = pd.Timestamp(lo_pad).normalize() - _extra
-            hi_pad = pd.Timestamp(hi_pad).normalize() + _extra
+            # Подписи дат печатаются СНАРУЖИ полос (начало — слева, окончание —
+            # справа). Ширина подписи фиксирована в пикселях, поэтому в днях запас
+            # берём с большим коэффициентом, иначе крайняя левая подпись начала
+            # уходит за границу графика в колонку названий задач. В режиме «full»
+            # слева есть подписи начала → нужен увеличенный левый запас.
+            _has_start_labels = _date_mode == "full"
+            _left_extra = pd.Timedelta(
+                days=max(60.0, _span_days * 0.11) if _has_start_labels
+                else max(10.0, _span_days * 0.05)
+            )
+            _right_extra = pd.Timedelta(days=max(45.0, _span_days * 0.08))
+            lo_pad = pd.Timestamp(lo_pad).normalize() - _left_extra
+            hi_pad = pd.Timestamp(hi_pad).normalize() + _right_extra
             fig.update_xaxes(range=[lo_pad, hi_pad], autorange=False, fixedrange=True)
         try:
             if lo_pad is not None and hi_pad is not None:
@@ -703,7 +791,7 @@ def cached_grouped_gantt_figure(
     show_covenant_markers: bool,
     row_block_scale: float,
     allow_zero_duration_milestones: bool = False,
-    _fig_cache_version: int = 24,
+    _fig_cache_version: int = 28,
     _theme_light: bool = False,
 ) -> go.Figure:
     """Кэш построения fig — ускоряет rerun при тех же фильтрах."""
