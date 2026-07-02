@@ -141,6 +141,7 @@ def build_grouped_plan_fact_gantt_figure(
         _GANTT_SCHEDULE_BAR_WIDTH,
         _GANTT_SCHEDULE_BARGROUPGAP,
         _gantt_grouped_bar_lane_offset,
+        _gantt_valid_timestamp,
         _project_schedule_gantt_apply_y_labels,
         _project_schedule_gantt_chart_height,
         _project_schedule_gantt_x_range,
@@ -171,6 +172,16 @@ def build_grouped_plan_fact_gantt_figure(
         if pd.isna(t):
             return None
         return float(t.timestamp() * 1000.0)
+
+    def _ms_to_bar_base(ms: Optional[float]):
+        """Plotly date axis: base — datetime, не сырой ms (иначе autoscale уезжает к 1970)."""
+        if ms is None:
+            return None
+        try:
+            t = pd.Timestamp(float(ms), unit="ms")
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return None if pd.isna(t) else t
 
     def _fmt_bar_date(ts) -> str:
         if ts is None or (isinstance(ts, float) and pd.isna(ts)):
@@ -278,8 +289,8 @@ def build_grouped_plan_fact_gantt_figure(
             plan_len_ms.append(float(p1 - p0))
             cust_plan.append((_fmt_bar_date(plan_s), _fmt_bar_date(plan_e)))
         else:
-            plan_base_ms.append(0.0)
-            plan_len_ms.append(0.0)
+            plan_base_ms.append(None)
+            plan_len_ms.append(None)
             cust_plan.append(("—", "—"))
 
         if fact_ok:
@@ -288,8 +299,8 @@ def build_grouped_plan_fact_gantt_figure(
             cust_fact.append((_fmt_bar_date(fs), _fmt_bar_date(fe)))
             _n_fact_ok += 1
         else:
-            fact_base_ms.append(0.0)
-            fact_len_ms.append(0.0)
+            fact_base_ms.append(None)
+            fact_len_ms.append(None)
             cust_fact.append(("—", "—"))
         if label_pct:
             ps, pe = fs, fe
@@ -402,6 +413,8 @@ def build_grouped_plan_fact_gantt_figure(
 
     _plan_y = [_lane_y_pos(i, "plan") for i in range(len(y_labels))]
     _fact_y = [_lane_y_pos(i, "fact") for i in range(len(y_labels))]
+    _plan_base_dates = [_ms_to_bar_base(b) for b in plan_base_ms]
+    _fact_base_dates = [_ms_to_bar_base(b) for b in fact_base_ms]
     if not label_pct:
         fig.add_trace(
             go.Bar(
@@ -409,7 +422,7 @@ def build_grouped_plan_fact_gantt_figure(
                 orientation="h",
                 x=plan_len_ms,
                 y=_plan_y,
-                base=plan_base_ms,
+                base=_plan_base_dates,
                 width=_GANTT_SCHEDULE_BAR_WIDTH,
                 marker=dict(color=_GANTT_PLAN_COLOR),
                 text=[""] * len(y_labels),
@@ -428,7 +441,7 @@ def build_grouped_plan_fact_gantt_figure(
                 orientation="h",
                 x=fact_len_ms,
                 y=_fact_y,
-                base=fact_base_ms,
+                base=_fact_base_dates,
                 width=_GANTT_SCHEDULE_BAR_WIDTH,
                 marker=dict(color=_GANTT_FACT_COLOR),
                 text=_fact_trace_text if label_pct else [""] * len(y_labels),
@@ -565,7 +578,7 @@ def build_grouped_plan_fact_gantt_figure(
         showlegend=False,
         bargap=0.78,
         bargroupgap=_GANTT_SCHEDULE_BARGROUPGAP,
-        uirevision="gantt_project_schedule_bars",
+        uirevision="gantt_project_schedule_bars_v24",
         hovermode="closest",
         dragmode=False,
     )
@@ -587,53 +600,68 @@ def build_grouped_plan_fact_gantt_figure(
         _label_right_x: list = []
         for _meta in _row_meta:
             for _dk in ("ps", "pe", "fs", "fe"):
-                _dv = _meta.get(_dk)
+                _dv = _gantt_valid_timestamp(_meta.get(_dk))
                 if _dv is not None:
                     _bar_dates.append(_dv)
             for _sk in ("ps", "fs"):
-                _sv = _meta.get(_sk)
+                _sv = _gantt_valid_timestamp(_meta.get(_sk))
                 if _sv is not None:
                     _bar_starts.append(_sv)
             if _date_mode == "full":
                 for _lk, _side in (("ps", "left"), ("pe", "right"), ("fs", "left"), ("fe", "right")):
-                    _lv = _meta.get(_lk)
+                    _lv = _gantt_valid_timestamp(_meta.get(_lk))
                     if _lv is not None:
                         (_label_left_x if _side == "left" else _label_right_x).append(_lv)
             elif _date_mode == "end_only":
                 for _lk in ("pe", "fe"):
-                    _lv = _meta.get(_lk)
+                    _lv = _gantt_valid_timestamp(_meta.get(_lk))
                     if _lv is not None:
                         _label_right_x.append(_lv)
-        _bar_dates.extend(base_end_x)
+        for x in base_end_x:
+            tx = _gantt_valid_timestamp(x)
+            if tx is not None:
+                _bar_dates.append(tx)
+        _all_ms_bases: list = []
+        _all_ms_lens: list = []
+        for b, ln in zip(plan_base_ms, plan_len_ms):
+            if b is not None and ln is not None:
+                _all_ms_bases.append(b)
+                _all_ms_lens.append(ln)
+        for b, ln in zip(fact_base_ms, fact_len_ms):
+            if b is not None and ln is not None:
+                _all_ms_bases.append(b)
+                _all_ms_lens.append(ln)
         lo_pad, hi_pad = _project_schedule_gantt_x_range(
             _bar_dates,
             bar_starts=_bar_starts,
             label_left_x=_label_left_x or None,
             label_right_x=_label_right_x or None,
+            bar_ms_bases=_all_ms_bases,
+            bar_ms_lengths=_all_ms_lens,
         )
         if lo_pad is not None and hi_pad is not None:
-            # Небольшой запас по краям под подписи дат (начало — слева, окончание —
-            # справа). Раньше брали 12% диапазона: на многолетней выборке это давало
-            # широкую пустую полосу до первых полос. Теперь запас пропорционален
-            # диапазону, но с жёстким верхним ограничением, чтобы пустоты не было.
             _span_days = max(1.0, (pd.Timestamp(hi_pad) - pd.Timestamp(lo_pad)).days)
             _extra = pd.Timedelta(days=min(45.0, max(10.0, _span_days * 0.05)))
-            lo_pad = pd.Timestamp(lo_pad) - _extra
-            hi_pad = pd.Timestamp(hi_pad) + _extra
+            lo_pad = pd.Timestamp(lo_pad).normalize() - _extra
+            hi_pad = pd.Timestamp(hi_pad).normalize() + _extra
             fig.update_xaxes(range=[lo_pad, hi_pad], autorange=False, fixedrange=True)
-            tvals, ttext = _gantt_ru_date_ticks(
-                lo_pad,
-                hi_pad,
-                max_ticks=int(policy.get("max_ticks", 22)),
-            )
-            if tvals and ttext and len(tvals) == len(ttext):
-                fig.update_xaxes(
-                    tickmode="array",
-                    tickvals=[pd.Timestamp(t).strftime("%Y-%m-%d") for t in tvals],
-                    ticktext=ttext,
-                    tickangle=-25,
-                    tickformat="",
+        try:
+            if lo_pad is not None and hi_pad is not None:
+                tvals, ttext = _gantt_ru_date_ticks(
+                    lo_pad,
+                    hi_pad,
+                    max_ticks=int(policy.get("max_ticks", 22)),
                 )
+                if tvals and ttext and len(tvals) == len(ttext):
+                    fig.update_xaxes(
+                        tickmode="array",
+                        tickvals=[pd.Timestamp(t).strftime("%Y-%m-%d") for t in tvals],
+                        ticktext=ttext,
+                        tickangle=-25,
+                        tickformat="",
+                    )
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -675,7 +703,7 @@ def cached_grouped_gantt_figure(
     show_covenant_markers: bool,
     row_block_scale: float,
     allow_zero_duration_milestones: bool = False,
-    _fig_cache_version: int = 22,
+    _fig_cache_version: int = 24,
     _theme_light: bool = False,
 ) -> go.Figure:
     """Кэш построения fig — ускоряет rerun при тех же фильтрах."""

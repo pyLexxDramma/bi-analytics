@@ -503,10 +503,10 @@ def mark_html_table_sortable(html: str) -> str:
 
     out = re.sub(r"<th(\b[^>]*)>(.*?)</th>", _inject_th_sort_label, out, flags=re.I | re.S)
     try:
-        from dashboards.light_theme import is_light_preview_report
+        from dashboards.light_theme import is_light_preview_active
 
         _dash = str(st.session_state.get("current_dashboard") or "").strip()
-        if is_light_preview_report(_dash) and "bi-light-table" not in out and "gdrs-light-table" not in out:
+        if is_light_preview_active() and "bi-light-table" not in out and "gdrs-light-table" not in out:
             out = f'<div class="bi-light-table">{out}</div>'
     except Exception:
         pass

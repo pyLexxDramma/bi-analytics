@@ -328,6 +328,26 @@ _dashboards_cache_version: int = 0
 _renderers_mtime: float = 0.0
 
 
+def _reload_renderer_dependencies() -> None:
+    """Hot-reload модулей, от которых зависит _renderers (иначе правки в них не подхватываются).
+
+    ``importlib.reload(_renderers)`` перечитывает только сам _renderers; функции
+    внутри него делают ленивый ``from dashboards.gantt_grouped_figure import ...``,
+    поэтому без явной перезагрузки этих модулей в памяти остаётся старый код
+    (например, построение полос Ганта), и правки не видны без рестарта процесса.
+    """
+    import importlib
+    import sys
+
+    for _mod_name in ("dashboards.gantt_grouped_figure",):
+        _mod = sys.modules.get(_mod_name)
+        if _mod is not None:
+            try:
+                importlib.reload(_mod)
+            except Exception:
+                pass
+
+
 def get_dashboards() -> Dict[str, Callable]:
     """Возвращает словарь DASHBOARDS (кэшируется)."""
     global _dashboards_cache, _dashboards_cache_version, _renderers_mtime
@@ -344,6 +364,7 @@ def get_dashboards() -> Dict[str, Callable]:
         or _mt != _renderers_mtime
     )
     if _stale:
+        _reload_renderer_dependencies()
         importlib.reload(_renderers)
         _renderers_mtime = _mt
         _dashboards_cache = _get_dashboards()
@@ -355,6 +376,7 @@ def get_dashboards() -> Dict[str, Callable]:
         except OSError:
             _mt_live = _renderers_mtime
         if _mt_live > _renderers_mtime:
+            _reload_renderer_dependencies()
             importlib.reload(_renderers)
             _renderers_mtime = _mt_live
             _dashboards_cache = _get_dashboards()

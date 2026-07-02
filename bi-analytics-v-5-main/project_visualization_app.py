@@ -859,10 +859,11 @@ def main():
 
         _light_preview = is_light_preview_active()
         if _light_preview:
-            from dashboards.light_theme import apply_light_table_constants
+            from dashboards.light_theme import apply_light_table_constants, sync_light_preview_theme
 
             apply_light_table_constants()
             inject_light_preview_css(st)
+            sync_light_preview_theme(st)
         else:
             from dashboards.light_theme import apply_dark_table_constants
 
@@ -970,6 +971,15 @@ def main():
         from web_loader import load_all_from_web, web_dir_exists, read_version_to_session, get_web_dir
 
         init_web_schema()
+
+        # «FTP + перезагрузить БД» — сразу после клика (флаг + rerun), до auto-hydrate.
+        if st.session_state.pop("_run_ftp_force_reload_now", False):
+            from web_reload_pipeline import run_ftp_force_reload_ui
+
+            run_ftp_force_reload_ui(
+                st,
+                quiet=bool(st.session_state.pop("_run_ftp_force_reload_quiet", False)),
+            )
 
         # ── Helper: построить псевдо-`last_load_result` из web_files БД ────
         # evaluate_data_contract проверяет наличие типов файлов через
@@ -1371,56 +1381,11 @@ def main():
                 )
                 with st.spinner(_load_msg):
                     result = load_all_from_web()
-            try:
-                st.session_state["last_load_result"] = result
-                st.session_state["last_data_readiness"] = build_data_readiness_report(result)
-                st.session_state["last_data_schema_health"] = save_schema_health_report(load_result=result)
-                st.session_state["last_env_fingerprint"] = build_environment_fingerprint(result)
-                from data_contract import evaluate_data_contract
-
-                st.session_state["last_data_contract"] = evaluate_data_contract(result)
-            except Exception:
-                st.session_state["last_data_readiness"] = None
-                st.session_state["last_data_schema_health"] = None
-                st.session_state["last_env_fingerprint"] = None
-                st.session_state["last_data_contract"] = None
-
-            st.cache_data.clear()
-            st.session_state.pop("web_version_id", None)
-            try:
-                from web_schema import get_active_version_id
-
-                _na = get_active_version_id()
-                if _na is not None:
-                    st.session_state["web_version_pick_id"] = int(_na)
-            except Exception:
-                pass
 
             _release_quiet = _is_release_client_mode()
             if not _release_quiet:
                 for w in result.get("warnings", []):
                     st.warning(w)
-
-            if result["errors"]:
-                st.warning(f"Загружено: {result['loaded']}, пропущено: {result['skipped']}")
-                for err in result["errors"]:
-                    st.error(err)
-            elif not _release_quiet:
-                try:
-                    st.toast(f"Загружено файлов: {result['loaded']}", icon="✅")
-                except Exception:
-                    pass
-            try:
-                from logger import log_action
-                u = get_current_user()
-                if u:
-                    log_action(
-                        u["username"],
-                        "data_loaded",
-                        f"web/: loaded={result.get('loaded')}, skipped={result.get('skipped')}",
-                    )
-            except Exception:
-                pass
             if not _release_quiet:
                 with st.expander("Справка: колонки загрузки из web/", expanded=False):
                     for row in result.get("diagnostics", [])[:40]:
@@ -1437,6 +1402,13 @@ def main():
             ):
                 st.session_state["_ftp_sync_notice"] = st.session_state["last_ftp_sync_result"]
 
+            try:
+                from web_reload_pipeline import finalize_web_load_session
+
+                finalize_web_load_session(st, result, quiet=_release_quiet or quiet)
+            except Exception as _fin_e:
+                safe_stderr_log(f"[web_load] finalize failed: {_fin_e!r}")
+
             if not quiet:
                 st.rerun()
 
@@ -1451,35 +1423,6 @@ def main():
                 st.session_state["_pending_web_load_quiet"] = False
                 st.session_state["_pending_web_force_rescan"] = True
                 st.session_state["_show_ftp_sync_notice"] = True
-
-        if (
-            data_mode in ("Из папки web/", "FTP → web/")
-            and st.session_state.pop("_pending_web_folder_load", False)
-        ):
-            _load_quiet = bool(st.session_state.pop("_pending_web_load_quiet", True))
-            _force_rescan = bool(st.session_state.pop("_pending_web_force_rescan", False))
-            _smart_after_ftp = bool(st.session_state.pop("_pending_web_smart_after_ftp", False))
-            if _session_has_loaded_data() and not _force_rescan and not _smart_after_ftp:
-                pass
-            else:
-                _perform_load_from_web_folder(
-                    quiet=_load_quiet,
-                    force_rescan=_force_rescan,
-                    smart_after_ftp=_smart_after_ftp,
-                )
-                if _force_rescan and not _load_quiet:
-                    try:
-                        from web_schema import get_active_version_id
-                        from web_loader import read_version_to_session
-
-                        _na = get_active_version_id()
-                        if _na is not None:
-                            read_version_to_session(int(_na))
-                            st.session_state["web_version_id"] = int(_na)
-                            st.session_state["web_version_pick_id"] = int(_na)
-                            st.session_state["_auto_hydrated_from_db"] = True
-                    except Exception as _e:
-                        safe_stderr_log(f"[force_reload] read_version_to_session failed: {_e!r}")
 
         if _admin_data_ops_sidebar or _is_release_client_mode():
             try:
@@ -1498,6 +1441,30 @@ def main():
                             st,
                             show_ftp_reload=bool(user_can_ftp_sync(user.get("role"))),
                         )
+            except Exception:
+                pass
+
+        # Загрузка из web/ / автологин (отложенный флаг).
+        if (
+            data_mode in ("Из папки web/", "FTP → web/")
+            and st.session_state.pop("_pending_web_folder_load", False)
+        ):
+            _load_quiet = bool(st.session_state.pop("_pending_web_load_quiet", True))
+            _force_rescan = bool(st.session_state.pop("_pending_web_force_rescan", False))
+            _smart_after_ftp = bool(st.session_state.pop("_pending_web_smart_after_ftp", False))
+            if _session_has_loaded_data() and not _force_rescan and not _smart_after_ftp:
+                pass
+            else:
+                _perform_load_from_web_folder(
+                    quiet=_load_quiet,
+                    force_rescan=_force_rescan,
+                    smart_after_ftp=_smart_after_ftp,
+                )
+
+        if _admin_data_ops_sidebar or _is_release_client_mode():
+            try:
+                from data_ops_sidebar import apply_web_version_pick
+
                 apply_web_version_pick(st, build_pseudo_lr_from_db=_build_pseudo_lr_from_db)
             except Exception:
                 pass
@@ -1701,10 +1668,11 @@ def main():
 
             _light_preview_sel = is_light_preview_active()
             if _light_preview_sel:
-                from dashboards.light_theme import apply_light_table_constants
+                from dashboards.light_theme import apply_light_table_constants, sync_light_preview_theme
 
                 apply_light_table_constants()
                 inject_light_preview_css(st)
+                sync_light_preview_theme(st)
                 if selected_dashboard.casefold().startswith("гдрс"):
                     try:
                         from dashboards.gdrs_resursi import warm_gdrs_disk_caches

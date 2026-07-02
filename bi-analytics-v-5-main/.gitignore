@@ -98,6 +98,19 @@ _visual_check_*
 _scan_bddcs.py
 dashboards/patch_pd_phase1.py
 
+# One-off agent scratch (keep pages/_*.py and dashboards/_renderers.py tracked)
+/_*.py
+/_*.txt
+/_*.png
+/fix*.py
+/t.py
+/u.py
+/u2.py
+/show.py
+/data_health_report.md
+/data_health_report.json
+/output/
+
 # Local materials (not runtime)
 Доп материалы/
 

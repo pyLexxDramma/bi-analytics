@@ -6,6 +6,21 @@ _visual_check_out/
 PRAVKI_HOD_RABOT.md
 bi-analytics-v-5-main/docs/PRAVKI-ETAP-2.md
 
+# Agent / one-off scratch scripts (not runtime)
+/_*.py
+/_*.html
+/_*.sh
+/bi-analytics-v-5-main/_*.py
+/bi-analytics-v-5-main/_*.txt
+/bi-analytics-v-5-main/_*.png
+/bi-analytics-v-5-main/fix*.py
+/bi-analytics-v-5-main/t.py
+/bi-analytics-v-5-main/u.py
+/bi-analytics-v-5-main/u2.py
+/bi-analytics-v-5-main/show.py
+/bi-analytics-v-5-main/data_health_report.md
+/bi-analytics-v-5-main/data_health_report.json
+
 # Cursor / agent (local only, never on GitHub)
 .cursor/
 **/.cursor/

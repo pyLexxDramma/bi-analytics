@@ -18,13 +18,12 @@ def _safe_int(v: Any) -> Optional[int]:
 
 
 def trigger_ftp_and_force_reload_db(st: Any, *, quiet: bool = False) -> None:
-    """FTP-sync + полный перескан web/ → SQLite (без hydrate из кэша сессии)."""
-    st.session_state["_pending_web_folder_load"] = True
-    st.session_state["_pending_web_load_quiet"] = bool(quiet)
-    st.session_state["_pending_web_force_rescan"] = True
-    st.session_state["_show_ftp_sync_notice"] = True
+    """Запросить синхронный FTP+пересборку (выполняется в начале следующего script run)."""
+    st.session_state["_run_ftp_force_reload_now"] = True
+    st.session_state["_run_ftp_force_reload_quiet"] = bool(quiet)
     for _k in ("_auto_hydrated_from_db", "_auto_hydrated_from_web"):
         st.session_state.pop(_k, None)
+    st.rerun()
 
 
 def _render_ftp_export_schedule_caption(st: Any) -> None:
@@ -182,9 +181,12 @@ def _render_ftp_sidebar_controls(st: Any) -> None:
                 st.warning(str(e))
         with st.spinner("web/ → БД…"):
             result = load_all_from_web()
-        st.session_state["last_load_result"] = result
-        st.cache_data.clear()
-        st.session_state.pop("web_version_id", None)
+        try:
+            from web_reload_pipeline import finalize_web_load_session
+
+            finalize_web_load_session(st, result, quiet=False)
+        except Exception:
+            pass
         st.session_state["_pending_web_folder_load"] = False
         st.rerun()
 

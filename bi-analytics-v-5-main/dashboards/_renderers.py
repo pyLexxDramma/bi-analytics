@@ -3409,9 +3409,19 @@ def _clamp_plotly_scroll_zoom_padding(fig: go.Figure) -> None:
             for arr in (getattr(tr, "x", None), getattr(tr, "base", None)):
                 if arr is None:
                     continue
-                s = pd.to_datetime(pd.Series(list(arr)), errors="coerce").dropna()
-                if not s.empty:
-                    date_points.extend(s.tolist())
+                for raw in list(arr):
+                    try:
+                        v = float(raw)
+                    except (TypeError, ValueError):
+                        continue
+                    if v >= 1e11:
+                        ts = pd.Timestamp(v, unit="ms")
+                    elif v > 0:
+                        ts = pd.to_datetime(v, errors="coerce", unit="ms")
+                    else:
+                        continue
+                    if ts is not None and not pd.isna(ts):
+                        date_points.append(ts)
 
     if len(date_points) < 1:
         return
@@ -4729,6 +4739,14 @@ def render_chart(
                     range=[float(_yr[0]), float(_yr[1])],
                     autorange=False,
                 )
+    except Exception:
+        pass
+    try:
+        _xax = fig.layout.xaxis
+        if _xax is not None and getattr(_xax, "autorange", None) is False:
+            _xr = getattr(_xax, "range", None)
+            if _xr is not None and len(_xr) == 2:
+                fig.update_xaxes(range=[_xr[0], _xr[1]], autorange=False)
     except Exception:
         pass
     _use_scroll = (
@@ -45435,20 +45453,75 @@ def _render_project_schedule_gantt_legend(
     )
 
 
+def _gantt_valid_timestamp(ts) -> Optional[pd.Timestamp]:
+    """Timestamp для диапазона оси X: отбрасываем None и pd.NaT (``is not None`` их не ловит)."""
+    if ts is None:
+        return None
+    try:
+        t = pd.Timestamp(ts)
+    except Exception:
+        return None
+    if pd.isna(t):
+        return None
+    return t
+
+
+def _gantt_x_range_from_bar_ms(
+    bases: list,
+    lengths: list,
+) -> tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]]:
+    """Запасной диапазон X из base/x полос (мс epoch), без «нулевых» base=0 (1970)."""
+    lo: Optional[pd.Timestamp] = None
+    hi: Optional[pd.Timestamp] = None
+    for base, length in zip(bases or [], lengths or []):
+        try:
+            b = float(base)
+            ln = float(length)
+        except (TypeError, ValueError):
+            continue
+        if b < 1e11 or ln <= 0:
+            continue
+        start = pd.Timestamp(b, unit="ms")
+        end = pd.Timestamp(b + ln, unit="ms")
+        if pd.isna(start) or pd.isna(end):
+            continue
+        lo = start if lo is None else min(lo, start)
+        hi = end if hi is None else max(hi, end)
+    return lo, hi
+
+
 def _project_schedule_gantt_x_range(
     bar_dates: list,
     *,
     bar_starts: list | None = None,
     label_right_x: list | None = None,
     label_left_x: list | None = None,
+    bar_ms_bases: list | None = None,
+    bar_ms_lengths: list | None = None,
 ) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
     """Узкий диапазон оси X: слева — от начала полос, справа — запас под подписи окончания."""
-    pts = [pd.Timestamp(x) for x in (bar_dates or []) if x is not None]
+    pts = [_gantt_valid_timestamp(x) for x in (bar_dates or [])]
+    pts = [x for x in pts if x is not None]
     if not pts:
-        return None, None
-    start_pts = [pd.Timestamp(x) for x in (bar_starts or []) if x is not None]
+        lo_ms, hi_ms = _gantt_x_range_from_bar_ms(
+            list(bar_ms_bases or []),
+            list(bar_ms_lengths or []),
+        )
+        if lo_ms is None or hi_ms is None:
+            return None, None
+        pts = [lo_ms, hi_ms]
+    start_pts = [_gantt_valid_timestamp(x) for x in (bar_starts or [])]
+    start_pts = [x for x in start_pts if x is not None]
     lo_bars = min(start_pts) if start_pts else min(pts)
     hi_bars = max(pts)
+    if pd.isna(lo_bars) or pd.isna(hi_bars):
+        lo_ms, hi_ms = _gantt_x_range_from_bar_ms(
+            list(bar_ms_bases or []),
+            list(bar_ms_lengths or []),
+        )
+        if lo_ms is None or hi_ms is None:
+            return None, None
+        lo_bars, hi_bars = lo_ms, hi_ms
     span = max((hi_bars - lo_bars).total_seconds() / 86400.0, 1.0)
     text_pad_l = timedelta(days=max(14.0, span * 0.030))
     text_pad_r = timedelta(days=max(10.0, span * 0.022))
@@ -45456,14 +45529,22 @@ def _project_schedule_gantt_x_range(
     hi_pad = hi_bars + timedelta(days=max(8.0, span * 0.030))
     if label_left_x:
         try:
-            lo_pad = min(lo_pad, min(pd.Timestamp(x) for x in label_left_x) - text_pad_l)
+            _left = [_gantt_valid_timestamp(x) for x in label_left_x]
+            _left = [x for x in _left if x is not None]
+            if _left:
+                lo_pad = min(lo_pad, min(_left) - text_pad_l)
         except Exception:
             pass
     if label_right_x:
         try:
-            hi_pad = max(hi_pad, max(pd.Timestamp(x) for x in label_right_x) + text_pad_r)
+            _right = [_gantt_valid_timestamp(x) for x in label_right_x]
+            _right = [x for x in _right if x is not None]
+            if _right:
+                hi_pad = max(hi_pad, max(_right) + text_pad_r)
         except Exception:
             pass
+    if pd.isna(lo_pad) or pd.isna(hi_pad):
+        return None, None
     return lo_pad, hi_pad
 
 
