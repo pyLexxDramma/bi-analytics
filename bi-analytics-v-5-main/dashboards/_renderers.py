@@ -25628,7 +25628,7 @@ def dashboard_gdrs_equipment_preview_light(df):
     return dashboard_gdrs(df, vid_locked="Техника", theme="light")
 
 
-def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
+def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = None):
     """
     ГДРС — переписанный по ТЗ заказчика 2026-05-07 (см. docs/TZ_GDRS_2026-05-07.md).
 
@@ -25647,7 +25647,12 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
     Фильтры сверху: Проект (multi), Контрагент (multi), [Вид ресурсов — только если не locked],
                     Период (date range), «Только с планом» (checkbox).
 
-    theme: "dark" (основной ГДРС) или "light" (отдельное превью для заказчика).
+    theme: None → авто по cutover (светлая, если ``is_light_preview_active()``); иначе
+    "light"/"dark" явно (превью-обёртки заказчика передают "light").
+    ГДРС-графики выводятся через ``_gdrs_st_plotly_chart`` (прямой ``st.plotly_chart``,
+    минуя ``render_chart``/``_resync_plotly_chart_theme``), поэтому цвет фона фигуры не
+    переустанавливается на выводе — тему обязательно резолвим здесь, иначе под глобальным
+    cutover канонические экраны рисуются с тёмным ``chart_bg`` из GDRS_THEME_DARK.
     """
     import os
     import sys
@@ -25665,6 +25670,14 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str = "dark"):
         gdrs_sanitize_bar_text_labels,
         inject_gdrs_light_preview_css,
     )
+
+    if theme is None:
+        try:
+            from dashboards.light_theme import is_light_preview_active
+
+            theme = "light" if is_light_preview_active() else "dark"
+        except Exception:
+            theme = "dark"
 
     _th = get_gdrs_theme(theme)
     if theme == "light":
