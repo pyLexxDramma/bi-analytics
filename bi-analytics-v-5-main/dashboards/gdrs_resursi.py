@@ -1591,6 +1591,116 @@ def _pick_dogovor_path_for_snapshot(
     return dated[-1][1]
 
 
+def _aggregate_dog_plan_batch(dog_all: pd.DataFrame) -> pd.DataFrame:
+    """Агрегация плана Dogovor по ВСЕМ файлам за один проход (вместо per-file groupby).
+
+    Вход: сырые отфильтрованные строки всех файлов с ``__order__`` (индекс файла по
+    возрастанию даты снапшота), ``__cn__`` (contract_name, stripped), ``__key__``
+    (сигнатура договора/ДС). Логика идентична прежней per-file + cross-file:
+      1) в пределах файла MAX плана по сигнатуре договора (ДС замещает базу);
+      2) в пределах файла SUM по разным договорам пары (pid, cid);
+      3) между файлами — значение из последнего снапшота (last по ``__order__``,
+         пропуская NaN); имена — первое непустое; contract_name — последнее непустое.
+
+    Ключ группировки включает ``__order__``, поэтому шаги 1–2 остаются
+    «поф айловыми», но выполняются одним groupby на весь объём, а не 528 раз.
+    """
+    if dog_all is None or dog_all.empty:
+        return dog_all
+    dog_all = dog_all.copy()
+    # plan_* приходят из _snapshot_history смешанными типами (int/float/None) →
+    # object dtype, из-за чего groupby.max()/.sum() уходят в pure-python
+    # (_agg_py_fallback, ~сотни тысяч numpy.max по группам). Приводим к float —
+    # значения числовые, результат идентичен, но включается cython-путь.
+    for _c in ("plan_workers", "plan_equipment"):
+        dog_all[_c] = pd.to_numeric(dog_all[_c], errors="coerce")
+    grp_pf = ["__order__", "project_id", "contractor_id"]
+    # 1) MAX по сигнатуре договора/ДС внутри файла
+    per_key = dog_all.groupby(grp_pf + ["__key__"], dropna=False, as_index=False)[
+        ["plan_workers", "plan_equipment"]
+    ].max()
+    # 2) SUM по разным договорам пары внутри файла
+    plan_pf = per_key.groupby(grp_pf, dropna=False, as_index=False)[
+        ["plan_workers", "plan_equipment"]
+    ].sum(min_count=1)
+    # 3) cross-file: последнее непустое значение плана (по __order__)
+    plan_pf = plan_pf.sort_values("__order__", kind="stable")
+    plan_final = plan_pf.groupby(
+        ["project_id", "contractor_id"], dropna=False, as_index=False
+    )[["plan_workers", "plan_equipment"]].last()
+
+    # Имена: сначала first в пределах файла (как в прежнем meta), затем cross-file
+    # первое непустое (маска пустых → NaN + cython first, пропускающий NaN).
+    names_pf = dog_all.groupby(grp_pf, dropna=False, as_index=False).agg(
+        project_name=("project_name", "first"),
+        contractor_name=("contractor_name", "first"),
+    )
+    names_pf = names_pf.sort_values("__order__", kind="stable")
+    for _nc in ("project_name", "contractor_name"):
+        _stripped = names_pf[_nc].astype(str).str.strip()
+        _empty = _stripped.eq("") | _stripped.str.casefold().isin(["nan", "none"])
+        names_pf[_nc] = names_pf[_nc].astype("object").where(~_empty, np.nan)
+    names_final = names_pf.groupby(
+        ["project_id", "contractor_id"], dropna=False, as_index=False
+    ).agg(
+        project_name=("project_name", "first"),
+        contractor_name=("contractor_name", "first"),
+    )
+    for _nc in ("project_name", "contractor_name"):
+        names_final[_nc] = names_final[_nc].where(names_final[_nc].notna(), "")
+
+    # contract_name: склейка sorted(unique) имён договоров в пределах файла (по паре)
+    # одним O(n) проходом по numpy, затем cross-file последнее непустое.
+    cn_src = dog_all.loc[
+        dog_all["__cn__"] != "", ["__order__", "project_id", "contractor_id", "__cn__"]
+    ].drop_duplicates()
+    if cn_src.empty:
+        contract_final = pd.DataFrame(
+            columns=["project_id", "contractor_id", "contract_name"]
+        )
+    else:
+        cn_src = cn_src.sort_values(
+            ["__order__", "project_id", "contractor_id", "__cn__"], kind="stable"
+        )
+        _o = cn_src["__order__"].to_numpy()
+        _pid = cn_src["project_id"].to_numpy()
+        _cid = cn_src["contractor_id"].to_numpy()
+        _cnv = cn_src["__cn__"].to_numpy()
+        _ko, _kp, _kc, _vals = [], [], [], []
+        _n = len(_cnv)
+        _i = 0
+        while _i < _n:
+            _j = _i + 1
+            while (
+                _j < _n
+                and _o[_j] == _o[_i]
+                and _pid[_j] == _pid[_i]
+                and _cid[_j] == _cid[_i]
+            ):
+                _j += 1
+            _ko.append(_o[_i])
+            _kp.append(_pid[_i])
+            _kc.append(_cid[_i])
+            _vals.append(" · ".join(_cnv[_i:_j]))
+            _i = _j
+        cn_pf = pd.DataFrame(
+            {"__order__": _ko, "project_id": _kp, "contractor_id": _kc, "contract_name": _vals}
+        ).sort_values("__order__", kind="stable")
+        contract_final = cn_pf.groupby(
+            ["project_id", "contractor_id"], dropna=False, as_index=False
+        )["contract_name"].last()
+
+    out = names_final.merge(plan_final, on=["project_id", "contractor_id"], how="left")
+    out = out.merge(contract_final, on=["project_id", "contractor_id"], how="left")
+    out["contract_name"] = out["contract_name"].where(out["contract_name"].notna(), "")
+    return out[
+        [
+            "project_id", "contractor_id", "project_name", "contractor_name",
+            "contract_name", "plan_workers", "plan_equipment",
+        ]
+    ]
+
+
 def load_plan_aggregate(
     dogovor_paths: Iterable[Path | str] = (),
     sprav_paths: Iterable[Path | str] = (),
@@ -1633,70 +1743,21 @@ def load_plan_aggregate(
         df = _apply_gdrs_dogovor_plan_exclusions(df, snapshot_date=snapshot_date)
         if df.empty:
             return pd.DataFrame()
-        # Векторно вместо построчного _dedup по группам (~22с на 32k групп):
-        # 1) ключ договора по уникальным именам (кэшированные функции),
-        # 2) MAX плана по сигнатуре договора/ДС, 3) сумма по разным договорам.
+        # Возвращаем СЫРОЙ отфильтрованный кадр (+ __cn__/__key__). Агрегацию
+        # (MAX по сигнатуре договора → SUM по паре → cross-file last) делаем один
+        # раз батчем по всем файлам в _aggregate_dog_plan_batch: раньше здесь на
+        # КАЖДЫЙ файл (×528) гонялись 3-4 groupby, накладные которых и давали
+        # основную задержку ГДРС.
         df = df.copy()
         cn = df["contract_name"].fillna("").astype(str).str.strip()
         df["__cn__"] = cn
         uniq = pd.unique(cn.to_numpy())
         key_map = {nm: _contract_key(nm) for nm in uniq}
         df["__key__"] = cn.map(key_map)
-        per_key = (
-            df.groupby(["project_id", "contractor_id", "__key__"], dropna=False, as_index=False)[
-                ["plan_workers", "plan_equipment"]
-            ].max()
-        )
-        plan = (
-            per_key.groupby(["project_id", "contractor_id"], dropna=False, as_index=False)[
-                ["plan_workers", "plan_equipment"]
-            ].sum(min_count=1)
-        )
-        # project_name/contractor_name — быстрым cython-путём (first). Склейку
-        # contract_name считаем отдельно на дедуплицированных парах (pid, cid, имя):
-        # раньше groupby.agg(lambda) по всему кадру шёл pure-python путём (основная
-        # задержка ГДРС — сотни тысяч _chop по группам). Семантика прежняя:
-        # " · ".join(sorted(уникальные непустые имена договоров группы)).
-        meta = df.groupby(["project_id", "contractor_id"], dropna=False, as_index=False).agg(
-            project_name=("project_name", "first"),
-            contractor_name=("contractor_name", "first"),
-        )
-        _cn_src = df.loc[
-            df["__cn__"] != "", ["project_id", "contractor_id", "__cn__"]
-        ].drop_duplicates()
-        if _cn_src.empty:
-            meta["contract_name"] = ""
-        else:
-            # Склейка одним O(n) проходом по отсортированному numpy вместо
-            # groupby.agg(lambda): последний перекладывает работу на pure-python
-            # путь pandas (разбиение на группы, _chop/__iter__ на КАЖДУЮ группу —
-            # сотни тысяч вызовов). Данные уже уникальны и отсортированы по имени,
-            # поэтому " · ".join непрерывного среза = sorted(unique) исходной версии.
-            _cn_src = _cn_src.sort_values(["project_id", "contractor_id", "__cn__"])
-            _pid = _cn_src["project_id"].to_numpy()
-            _cid = _cn_src["contractor_id"].to_numpy()
-            _cnv = _cn_src["__cn__"].to_numpy()
-            _kp, _kc, _vals = [], [], []
-            _n = len(_cnv)
-            _i = 0
-            while _i < _n:
-                _j = _i + 1
-                while _j < _n and _pid[_j] == _pid[_i] and _cid[_j] == _cid[_i]:
-                    _j += 1
-                _kp.append(_pid[_i])
-                _kc.append(_cid[_i])
-                _vals.append(" · ".join(_cnv[_i:_j]))
-                _i = _j
-            _cn_join = pd.DataFrame(
-                {"project_id": _kp, "contractor_id": _kc, "contract_name": _vals}
-            )
-            meta = meta.merge(_cn_join, on=["project_id", "contractor_id"], how="left")
-            meta["contract_name"] = meta["contract_name"].fillna("")
-        out = meta.merge(plan, on=["project_id", "contractor_id"], how="left")
-        return out[
+        return df[
             [
                 "project_id", "contractor_id", "project_name", "contractor_name",
-                "contract_name", "plan_workers", "plan_equipment",
+                "__cn__", "__key__", "plan_workers", "plan_equipment",
             ]
         ]
 
@@ -1757,33 +1818,7 @@ def load_plan_aggregate(
         sprav_all = _ordered_with_index(sprav_paths, _per_file_sprav)
 
     if not dog_all.empty:
-        dog_all = dog_all.sort_values("__order__")
-        # Векторные built-in вместо python-лямбд (_last_valid/_last_nonempty): groupby.last()
-        # пропускает NaN → «последнее непустое значение» в порядке снапшотов. Для contract_name
-        # пустые строки маскируем в NaN, чтобы last() вернул последнее НЕпустое имя.
-        cn = dog_all["contract_name"].astype("object")
-        dog_all["contract_name"] = cn.where(cn.map(lambda v: isinstance(v, str) and v.strip() != ""), np.nan)
-        # project_name/contractor_name: раньше через python-функцию _first_nonempty →
-        # pure-python groupby по всему кросс-файловому кадру (десятки секунд). Маскируем
-        # пустые/nan в NaN и берём cython first() (пропускает NaN) — «первое непустое
-        # в порядке снапшотов» сохраняется, т.к. dog_all отсортирован по __order__.
-        for _nc in ("project_name", "contractor_name"):
-            _stripped = dog_all[_nc].astype(str).str.strip()
-            _empty = _stripped.eq("") | _stripped.str.casefold().isin(["nan", "none"])
-            dog_all[_nc] = dog_all[_nc].astype("object").where(~_empty, np.nan)
-        dog_all = (
-            dog_all.groupby(["project_id", "contractor_id"], dropna=False, as_index=False)
-            .agg(
-                project_name=("project_name", "first"),
-                contractor_name=("contractor_name", "first"),
-                contract_name=("contract_name", "last"),
-                plan_workers=("plan_workers", "last"),
-                plan_equipment=("plan_equipment", "last"),
-            )
-        )
-        dog_all["contract_name"] = dog_all["contract_name"].where(dog_all["contract_name"].notna(), "")
-        for _nc in ("project_name", "contractor_name"):
-            dog_all[_nc] = dog_all[_nc].where(dog_all[_nc].notna(), "")
+        dog_all = _aggregate_dog_plan_batch(dog_all)
     if not sprav_all.empty:
         sprav_all = sprav_all.sort_values("__order__")
         sprav_all = (
