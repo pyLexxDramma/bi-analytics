@@ -97,7 +97,40 @@ def init_web_schema():
         """)
 
 
+_ACTIVE_VERSION_CACHE: dict[float, int | None] = {}
+
+
 def get_active_version_id() -> int | None:
+    """Возвращает id активной версии (кеш по mtime БД).
+
+    Функция вызывается тысячи раз за рендер (через resolve_version_id в разрешении
+    подписей проектов на каждую строку таблиц). Каждый вызов открывал новое
+    соединение SQLite и делал несколько запросов — это давало десятки секунд на
+    тяжёлых дашбордах. Кешируем результат по времени модификации web_data.db:
+    любое обновление данных или переключение активной версии меняет mtime и
+    сбрасывает кеш.
+    """
+    try:
+        _mt = os.path.getmtime(WEB_DB_PATH)
+    except OSError:
+        _mt = 0.0
+    if _mt and _mt in _ACTIVE_VERSION_CACHE:
+        return _ACTIVE_VERSION_CACHE[_mt]
+    result = _get_active_version_id_uncached()
+    if _mt:
+        if len(_ACTIVE_VERSION_CACHE) > 8:
+            _ACTIVE_VERSION_CACHE.clear()
+        # UPDATE в ветке «беднее предыдущей» меняет mtime — перечитаем актуальный,
+        # чтобы кеш лёг под правильный ключ (иначе следующий вызов пересчитает).
+        try:
+            _mt_after = os.path.getmtime(WEB_DB_PATH)
+        except OSError:
+            _mt_after = _mt
+        _ACTIVE_VERSION_CACHE[_mt_after] = result
+    return result
+
+
+def _get_active_version_id_uncached() -> int | None:
     """Возвращает id активной версии.
 
     Политика:

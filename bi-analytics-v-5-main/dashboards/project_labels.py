@@ -199,8 +199,14 @@ def apply_unified_project_column(df: pd.DataFrame, col: str) -> pd.DataFrame:
     if df is None or getattr(df, "empty", True) or col not in df.columns:
         return df
     out = df.copy()
+    # Считаем подпись один раз на уникальное значение: unified_project_display_label
+    # дорогая (нормализация + справочник), а строк в таблицах десятки/сотни тысяч
+    # при ~сотне уникальных проектов. Прямой .map по всем строкам давал десятки
+    # секунд на тяжёлых дашбордах («Причины отклонений» и т.п.).
+    _uniq = out[col].dropna().unique()
+    _label_map = {v: unified_project_display_label(v) for v in _uniq}
     out[col] = out[col].map(
-        lambda z: unified_project_display_label(z)
+        lambda z: _label_map.get(z, z)
         if z is not None and not (isinstance(z, float) and pd.isna(z))
         else z
     )

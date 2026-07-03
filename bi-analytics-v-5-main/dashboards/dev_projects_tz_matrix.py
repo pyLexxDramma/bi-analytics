@@ -958,8 +958,23 @@ def _control_points_project_group_key(raw: Any) -> str:
     return nk
 
 
+_PROJEKTS_DISPLAY_BY_NK_CACHE: Dict[tuple, Dict[str, str]] = {}
+
+
 def _projekts_display_by_norm_key() -> Dict[str, str]:
     """Наименование_Проекта из 1с_*_Projekts.json (справочник) по norm-key группировки."""
+    # Вызывается на каждую строку таблиц через _control_points_project_label; без
+    # кеша norm-key словарь перестраивается тысячи раз за рендер. Ключ — (версия,
+    # mtime БД), инвалидируется при обновлении данных.
+    try:
+        from web_db_read import resolve_version_id, web_db_mtime
+
+        _key = (resolve_version_id(), web_db_mtime())
+        _hit = _PROJEKTS_DISPLAY_BY_NK_CACHE.get(_key)
+        if _hit is not None:
+            return _hit
+    except Exception:
+        _key = None
     by_nk: Dict[str, str] = {}
     try:
         from web_db_read import load_project_id_to_name_lookup
@@ -974,6 +989,10 @@ def _projekts_display_by_norm_key() -> Dict[str, str]:
     except Exception:
         pass
     if by_nk:
+        if _key is not None:
+            if len(_PROJEKTS_DISPLAY_BY_NK_CACHE) > 4:
+                _PROJEKTS_DISPLAY_BY_NK_CACHE.clear()
+            _PROJEKTS_DISPLAY_BY_NK_CACHE[_key] = by_nk
         return by_nk
     try:
         import json
@@ -998,6 +1017,10 @@ def _projekts_display_by_norm_key() -> Dict[str, str]:
                         by_nk[nk] = s
     except Exception:
         pass
+    if _key is not None and by_nk:
+        if len(_PROJEKTS_DISPLAY_BY_NK_CACHE) > 4:
+            _PROJEKTS_DISPLAY_BY_NK_CACHE.clear()
+        _PROJEKTS_DISPLAY_BY_NK_CACHE[_key] = by_nk
     return by_nk
 
 

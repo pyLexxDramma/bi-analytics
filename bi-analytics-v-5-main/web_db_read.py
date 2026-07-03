@@ -195,10 +195,20 @@ def load_dogovor_lookup_from_db(version_id: Optional[int] = None) -> dict[str, d
     return out
 
 
+_PROJECT_ID_NAME_CACHE: dict[tuple[int, float], dict[str, str]] = {}
+
+
 def load_project_id_to_name_lookup(version_id: Optional[int] = None) -> dict[str, str]:
     vid = resolve_version_id(version_id)
     if not vid:
         return {}
+    # Кеш по (версия, mtime БД): справочник дергается на каждую строку таблиц
+    # (unified_project_display_label в .map по 6000+ строк) — без кеша это тысячи
+    # запросов к SQLite за один рендер. Инвалидируется при обновлении web_data.db.
+    _key = (int(vid), web_db_mtime())
+    _hit = _PROJECT_ID_NAME_CACHE.get(_key)
+    if _hit is not None:
+        return _hit
     out: dict[str, str] = {}
     for _src, records in json_records_by_source(vid, "projekts_json").items():
         for row in records:
@@ -216,6 +226,9 @@ def load_project_id_to_name_lookup(version_id: Optional[int] = None) -> dict[str
             ).strip()
             if pid and pname:
                 out[pid] = pname
+    if len(_PROJECT_ID_NAME_CACHE) > 4:
+        _PROJECT_ID_NAME_CACHE.clear()
+    _PROJECT_ID_NAME_CACHE[_key] = out
     return out
 
 

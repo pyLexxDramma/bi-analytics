@@ -1574,10 +1574,16 @@ def _dev_tasks_build_ancestor_keys(
     if building_outline_level is None:
         building_outline_level = _tier_bld
     names = work[task_col].map(lambda x: str(x).strip() if pd.notna(x) else "")
+    # Читаем значения из numpy-массивов, а не через .iloc в цикле: на десятках/сотнях
+    # тысяч строк per-row .iloc даёт основную задержку дашборда «Причины отклонений».
+    _lvl_vals = lvl.to_numpy()
+    _name_vals = names.to_numpy()
+    _n_lvl = len(_lvl_vals)
+    _n_nm = len(_name_vals)
     stack = []
     r2, r3, lvn = [], [], []
     for i in range(len(work)):
-        L_raw = lvl.iloc[i] if i < len(lvl) else np.nan
+        L_raw = _lvl_vals[i] if i < _n_lvl else np.nan
         if pd.isna(L_raw):
             L = None
         else:
@@ -1585,7 +1591,7 @@ def _dev_tasks_build_ancestor_keys(
                 L = int(round(float(L_raw)))
             except (TypeError, ValueError):
                 L = None
-        nm = names.iloc[i] if i < len(names) else ""
+        nm = _name_vals[i] if i < _n_nm else ""
         lvn.append(float(L) if L is not None else np.nan)
         if L is None:
             r2.append("")

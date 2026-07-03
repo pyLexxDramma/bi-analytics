@@ -328,8 +328,26 @@ _dashboards_cache_version: int = 0
 _renderers_mtime: float = 0.0
 
 
+def _dev_hot_reload_enabled() -> bool:
+    """Dev-only: подхватывать правки _renderers/gantt без рестарта процесса.
+
+    В проде выключено — иначе на каждый rerun (при малейшем сдвиге mtime, напр.
+    при деплое/checkout) выполняется ``importlib.reload`` модуля _renderers на
+    ~47k строк, что даёт заметную задержку прогрузки дашбордов. Включается
+    переменной окружения ``BI_ANALYTICS_DEV_RELOAD=1``.
+    """
+    import os
+
+    return str(os.environ.get("BI_ANALYTICS_DEV_RELOAD", "")).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
 def _reload_renderer_dependencies() -> None:
-    """Hot-reload модулей, от которых зависит _renderers (иначе правки в них не подхватываются).
+    """Hot-reload модулей, от которых зависит _renderers (только dev, см. _dev_hot_reload_enabled).
 
     ``importlib.reload(_renderers)`` перечитывает только сам _renderers; функции
     внутри него делают ленивый ``from dashboards.gantt_grouped_figure import ...``,
@@ -361,16 +379,15 @@ def get_dashboards() -> Dict[str, Callable]:
     _stale = (
         not _dashboards_cache
         or _dashboards_cache_version != _DASHBOARDS_REGISTRY_VERSION
-        or _mt != _renderers_mtime
     )
     if _stale:
-        _reload_renderer_dependencies()
-        importlib.reload(_renderers)
+        # Первичное построение: _renderers уже импортирован выше — повторный
+        # importlib.reload здесь только тратит время (перечитывание ~47k строк).
         _renderers_mtime = _mt
         _dashboards_cache = _get_dashboards()
         _dashboards_cache_version = _DASHBOARDS_REGISTRY_VERSION
-    else:
-        # На каждый rerun подхватываем правки _renderers.py без ручного рестарта.
+    elif _dev_hot_reload_enabled():
+        # Dev: подхватываем правки _renderers.py без ручного рестарта.
         try:
             _mt_live = float(os.path.getmtime(_path)) if _path else 0.0
         except OSError:
