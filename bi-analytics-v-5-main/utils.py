@@ -1764,6 +1764,16 @@ def budget_table_to_html(
     _scroll_vh = float(table_scroll_max_height_vh) if table_scroll_max_height_vh else None
     wrap_id = "bdt_" + str(id(df))
     _cell_border = FINANCE_TABLE_CELL_BORDER
+    _dev_red_color = "hsl(348,100%,63%)"
+    _dev_green_color = "hsl(148,100%,63%)"
+    try:
+        from dashboards.light_theme import finance_dev_negative_color, is_light_preview_active
+
+        _dev_green_color = finance_dev_negative_color()
+        if is_light_preview_active():
+            _dev_red_color = "#b91c1c"
+    except Exception:
+        pass
     _style_css = (
         f'#{wrap_id} table {{ table-layout: auto; font-size: {_tbl_px}px; width: max-content; min-width: 100%; '
         f'border-collapse: separate !important; border-spacing: 0 !important; border: {_cell_border} !important; }}'
@@ -1774,8 +1784,8 @@ def budget_table_to_html(
         f'#{wrap_id} tr th:first-child, #{wrap_id} tr td:first-child {{ border-left: {_cell_border} !important; }}'
         f'#{wrap_id} th:first-child, #{wrap_id} td:first-child {{ min-width: 14em; max-width: 32em; }}'
         f'#{wrap_id} th:not(:first-child), #{wrap_id} td:not(:first-child) {{ min-width: 9em; max-width: 16em; }}'
-        f'#{wrap_id} td.bd-cell-red, #{wrap_id} td.bd-cell-red * {{ color: hsl(348,100%,63%) !important; }} '
-        f'#{wrap_id} td.bd-cell-green, #{wrap_id} td.bd-cell-green * {{ color: hsl(148,100%,63%) !important; }}'
+        f'#{wrap_id} td.bd-cell-red, #{wrap_id} td.bd-cell-red * {{ color: {_dev_red_color} !important; }} '
+        f'#{wrap_id} td.bd-cell-green, #{wrap_id} td.bd-cell-green * {{ color: {_dev_green_color} !important; }}'
         f'#{wrap_id} td.bd-cell-yellow, #{wrap_id} td.bd-cell-yellow * {{ color: hsl(48,95%,62%) !important; }}'
         f'#{wrap_id} thead th {{ background-color: {TABLE_HEADER_BG_COLOR} !important; {_hdr_css}; {HTML_TABLE_TH_WRAP_CSS} max-width:11em; }}'
         f'#{wrap_id} tbody td {{ {HTML_TABLE_TD_TEXT_CSS} max-width:28em; }}'
