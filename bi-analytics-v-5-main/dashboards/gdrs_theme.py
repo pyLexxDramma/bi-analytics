@@ -632,6 +632,14 @@ html body [data-testid="stSidebar"] p.sidebar-section-title,
 html body [data-testid="stSidebar"] div[data-testid="stMarkdownContainer"] p.sidebar-section-title {{
   color: #374151 !important;
   -webkit-text-fill-color: #374151 !important;
+  font-weight: 800 !important;
+}}
+html body [data-testid="stSidebar"] div[class*="st-key-web_version_pick_scope"] [data-testid="stSelectbox"] [data-baseweb="select"] > div,
+html body [data-testid="stSidebar"] div[class*="st-key-web_version_pick_scope"] [data-testid="stSelectbox"] div[data-baseweb="select"] > div {{
+  border: 2px solid #92400e !important;
+  border-color: #92400e !important;
+  border-radius: 6px !important;
+  box-shadow: 0 0 0 1px rgba(146, 64, 14, 0.12) !important;
 }}
 html body [data-testid="stSidebar"] hr {{
   border-color: {g_border} !important;

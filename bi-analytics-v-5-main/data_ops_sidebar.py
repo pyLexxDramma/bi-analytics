@@ -270,13 +270,14 @@ def _render_version_sidebar_compact(st: Any) -> None:
     if _cur is None or _cur not in ids_ordered:
         st.session_state["web_version_pick_id"] = _default
 
-    st.selectbox(
-        "Версия",
-        ids_ordered,
-        format_func=_fmt,
-        key="web_version_pick_id",
-        label_visibility="visible",
-    )
+    with st.container(key="web_version_pick_scope"):
+        st.selectbox(
+            "Версия",
+            ids_ordered,
+            format_func=_fmt,
+            key="web_version_pick_id",
+            label_visibility="visible",
+        )
 
 
 def apply_web_version_pick(

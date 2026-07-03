@@ -1480,16 +1480,24 @@ p.sidebar-section-title {
     margin: 0.35rem 0 0.2rem 0;
     padding: 0;
     font-size: 0.78rem;
-    font-weight: 600;
+    font-weight: 800;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: rgba(232, 238, 245, 0.72);
 }
 section[data-testid="stSidebar"] div[data-testid="stMarkdownContainer"] p.sidebar-section-title {
     color: rgba(232, 238, 245, 0.72) !important;
+    font-weight: 800 !important;
 }
 
 /* Sidebar: выделение активного пункта меню — только тёмная тема */
+div[class*="st-key-web_version_pick_scope"] [data-testid="stSelectbox"] [data-baseweb="select"] > div,
+div[class*="st-key-web_version_pick_scope"] [data-testid="stSelectbox"] div[data-baseweb="select"] > div {
+    border: 2px solid #92400e !important;
+    border-radius: 6px !important;
+    box-shadow: 0 0 0 1px rgba(146, 64, 14, 0.12) !important;
+}
+
 html body:not(.gdrs-light-preview) section[data-testid="stSidebar"] .stButton > button[kind="primary"],
 html body:not(.gdrs-light-preview) section[data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"],
 html body:not(.gdrs-light-preview) section[data-testid="stSidebar"] button[data-testid="stBaseButton-primary"],

@@ -446,6 +446,13 @@ def sync_light_preview_theme(st) -> None:
       "html body.gdrs-light-preview [data-testid=\\"stSidebar\\"] button[data-testid=\\"stBaseButton-primary\\"] *,",
       "html body.gdrs-light-preview [data-testid=\\"stSidebar\\"] [data-testid=\\"stButton\\"] button[data-testid=\\"stBaseButton-primary\\"] * {",
       "color:#111827!important;-webkit-text-fill-color:#111827!important;font-weight:700!important;}",
+      "html body.gdrs-light-preview [data-testid=\\"stSidebar\\"] p.sidebar-section-title,",
+      "html body.gdrs-light-preview [data-testid=\\"stSidebar\\"] div[data-testid=\\"stMarkdownContainer\\"] p.sidebar-section-title {",
+      "font-weight:800!important;color:#374151!important;-webkit-text-fill-color:#374151!important;}",
+      "div[class*=\\"st-key-web_version_pick_scope\\"] [data-testid=\\"stSelectbox\\"] [data-baseweb=\\"select\\"] > div,",
+      "div[class*=\\"st-key-web_version_pick_scope\\"] [data-testid=\\"stSelectbox\\"] div[data-baseweb=\\"select\\"] > div {",
+      "border:2px solid #92400e!important;border-color:#92400e!important;border-radius:6px!important;",
+      "box-shadow:0 0 0 1px rgba(146,64,14,0.12)!important;}",
     ].join("\\n");
     (doc.head || doc.body).appendChild(stEl);
   }
