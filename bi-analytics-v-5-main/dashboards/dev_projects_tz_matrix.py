@@ -1667,6 +1667,25 @@ def dedupe_msp_for_developer_projects(df: pd.DataFrame) -> pd.DataFrame:
         return df
     out = df.copy()
 
+    # При нескольких MSP-снимках одного проекта строку на задачу берём из самой
+    # свежей НЕ-будущей выгрузки (snapshot_date), а не случайную по порядку склейки.
+    # Иначе дата (напр. ЗОС) может прийти из старого снимка. Файлы с датой в будущем
+    # (ошибочно датированные) уступают последней валидной выгрузке.
+    if "snapshot_date" in out.columns:
+        try:
+            _sd = pd.to_datetime(out["snapshot_date"], errors="coerce")
+            _today1 = pd.Timestamp.today().normalize() + pd.Timedelta(days=1)
+            _not_future = _sd.isna() | (_sd <= _today1)
+            out = out.assign(_snap_ord=_sd, _snap_nf=_not_future)
+            out = out.sort_values(
+                by=["_snap_nf", "_snap_ord"],
+                ascending=[False, False],
+                kind="mergesort",
+                na_position="last",
+            ).drop(columns=["_snap_ord", "_snap_nf"], errors="ignore")
+        except Exception:
+            pass
+
     def _series_id_valid(ser: pd.Series) -> pd.Series:
         s2 = ser.astype(str).str.strip()
         low = s2.str.lower()
@@ -6216,7 +6235,7 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
 
 _DEV_MATRIX_CACHE_KEY = "_dev_matrix_cache_v1"
 # Инкремент при изменении логики `dedupe_msp_for_developer_projects` (сброс session-кэша dedupe).
-_DEV_DEDUPE_CACHE_VER = 2
+_DEV_DEDUPE_CACHE_VER = 3
 
 
 def _matrix_project_scope_tag(df: pd.DataFrame) -> str:
