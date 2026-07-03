@@ -1668,21 +1668,19 @@ def dedupe_msp_for_developer_projects(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
 
     # При нескольких MSP-снимках одного проекта строку на задачу берём из самой
-    # свежей НЕ-будущей выгрузки (snapshot_date), а не случайную по порядку склейки.
-    # Иначе дата (напр. ЗОС) может прийти из старого снимка. Файлы с датой в будущем
-    # (ошибочно датированные) уступают последней валидной выгрузке.
+    # свежей выгрузки по дате (snapshot_date), а не случайную по порядку склейки.
+    # Иначе дата (напр. ЗОС) могла прийти из старого снимка. Всегда берётся
+    # последняя дата (в т.ч. будущая) — «плохие» файлы убираются удалением с FTP.
     if "snapshot_date" in out.columns:
         try:
             _sd = pd.to_datetime(out["snapshot_date"], errors="coerce")
-            _today1 = pd.Timestamp.today().normalize()
-            _not_future = _sd.isna() | (_sd <= _today1)
-            out = out.assign(_snap_ord=_sd, _snap_nf=_not_future)
+            out = out.assign(_snap_ord=_sd)
             out = out.sort_values(
-                by=["_snap_nf", "_snap_ord"],
-                ascending=[False, False],
+                by="_snap_ord",
+                ascending=False,
                 kind="mergesort",
                 na_position="last",
-            ).drop(columns=["_snap_ord", "_snap_nf"], errors="ignore")
+            ).drop(columns=["_snap_ord"], errors="ignore")
         except Exception:
             pass
 
@@ -6235,7 +6233,7 @@ def render_control_points_dashboard(st, mdf: pd.DataFrame, table_css: str) -> No
 
 _DEV_MATRIX_CACHE_KEY = "_dev_matrix_cache_v1"
 # Инкремент при изменении логики `dedupe_msp_for_developer_projects` (сброс session-кэша dedupe).
-_DEV_DEDUPE_CACHE_VER = 4
+_DEV_DEDUPE_CACHE_VER = 5
 
 
 def _matrix_project_scope_tag(df: pd.DataFrame) -> str:
