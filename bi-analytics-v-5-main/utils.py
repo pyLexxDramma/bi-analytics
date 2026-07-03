@@ -1801,7 +1801,8 @@ def budget_table_to_html(
         )
         + (
             f'#{wrap_id} .budget-table-scroll {{ height: 100%; max-height: 100%; min-height: 0; '
-            f'overflow: auto; -webkit-overflow-scrolling: touch; scrollbar-gutter: stable; }}'
+            f'overflow: auto; -webkit-overflow-scrolling: touch; scrollbar-gutter: stable; '
+            f'box-sizing: border-box; padding-bottom: 14px; scroll-padding-bottom: 14px; }}'
             f'#{wrap_id}.budget-deviation-table-wrap {{ display: flex; flex-direction: column; '
             f'height: 100%; min-height: 0; overflow: hidden; width: 100%; }}'
             f'#{wrap_id} thead th {{ position: sticky; top: 0; z-index: 5; }}'
@@ -1816,9 +1817,14 @@ def budget_table_to_html(
             f'{{ min-width: 10.5em; max-width: 12em; {HTML_TABLE_TD_COMPACT_CSS} isolation: isolate; }}'
         )
     )
+    _wrap_style = (
+        "overflow: hidden; min-width: 0; margin: 0; padding: 0; height: 100%;"
+        if _scroll_vh
+        else "overflow-x: auto; overflow-y: visible; min-width: 0; margin: 0; padding: 0; height: auto;"
+    )
     parts = [
         _html_table_caption(table_caption),
-        f'<div id="{wrap_id}" class="budget-deviation-table-wrap" data-bi-rows="{len(df)}" style="overflow: hidden; min-width: 0; margin: 0; padding: 0; height: 100%;">',
+        f'<div id="{wrap_id}" class="budget-deviation-table-wrap" data-bi-rows="{len(df)}" style="{_wrap_style}">',
         f"<style>{_style_css}</style>",
         (
             f'<div class="budget-table-scroll" data-scroll-vh="{_scroll_vh:.1f}">' if _scroll_vh else ""
@@ -2255,7 +2261,7 @@ def format_dataframe_as_html(
             f"#{_fmt_wrap_id} table {{ width: max-content; min-width: 100%; }}"
             f"#{_fmt_wrap_id} .budget-table-scroll {{ height: {_box_h}px !important; max-height: {_box_h}px !important; min-height: 0; "
             f"overflow: auto; -webkit-overflow-scrolling: touch; scrollbar-gutter: stable; "
-            f"box-sizing: border-box; }}"
+            f"box-sizing: border-box; padding-bottom: 14px; scroll-padding-bottom: 14px; }}"
             f"#{_fmt_wrap_id}.budget-deviation-table-wrap {{ display: block; "
             f"overflow: hidden; width: 100%; margin: 0.35em 0 0 0; }}"
             f"#{_fmt_wrap_id} thead th {{ position: sticky; top: 0; z-index: 5; "
@@ -3194,7 +3200,7 @@ def render_report_html_table(
             "div[data-testid='stElementContainer']:has([data-testid='stHtml']) "
             "{margin-bottom:0!important;padding-bottom:0!important;}"
             "div[data-testid='stVerticalBlock']:has([data-testid='stPopover']) "
-            "{margin-top:0!important;padding-top:0!important;}"
+            "{margin-top:6px!important;padding-top:0!important;}"
             "</style>",
             unsafe_allow_html=True,
         )

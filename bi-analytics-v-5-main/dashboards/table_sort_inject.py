@@ -832,7 +832,7 @@ _COMPACT_FRAME_FIT_JS = r"""
           bts.style.setProperty("min-height", "0", "important");
           bts.style.setProperty("overflow-x", "auto", "important");
           bts.style.setProperty("overflow-y", "auto", "important");
-          if (bts.classList.contains("pred-detail-scroll")) {
+          if (bts.classList.contains("pred-detail-scroll") || bts.classList.contains("budget-table-scroll")) {
             bts.style.setProperty("padding-bottom", "14px", "important");
             bts.style.setProperty("scroll-padding-bottom", "14px", "important");
           }
@@ -860,7 +860,14 @@ _COMPACT_FRAME_FIT_JS = r"""
         || document.querySelector(".gantt-schedule-table-wrap")
         || document.querySelector(".bi-sortable-html-root")
         || document.body;
-      var pad = (root && root.classList && (root.classList.contains("pred-detail-wrap") || root.classList.contains("fc-table-scroll-wrap"))) ? 20 : 4;
+      var pad = 4;
+      if (root && root.classList) {
+        if (root.classList.contains("pred-detail-wrap") || root.classList.contains("fc-table-scroll-wrap")) {
+          pad = 20;
+        } else if (root.classList.contains("budget-deviation-table-wrap") && !document.querySelector(".budget-table-scroll")) {
+          pad = 18;
+        }
+      }
       var h = 0;
       var cap = root.querySelector && root.querySelector(".budget-table-scroll");
       if (cap && root.classList.contains("budget-deviation-table-wrap")) {
@@ -997,7 +1004,11 @@ html:has(.fc-table-scroll-wrap),body:has(.fc-table-scroll-wrap){
 html:has(.budget-table-scroll),body:has(.budget-table-scroll){
   overflow:hidden!important;margin:0;padding:0;height:100%!important;min-height:0!important;
 }
-.budget-deviation-table-wrap{
+.budget-deviation-table-wrap:not(:has(.budget-table-scroll)){
+  display:block!important;height:auto!important;max-height:none!important;min-height:0!important;
+  overflow:visible!important;width:100%!important;max-width:100%!important;box-sizing:border-box;
+}
+.budget-deviation-table-wrap:has(.budget-table-scroll){
   display:flex!important;flex-direction:column!important;height:100%!important;min-height:0!important;
   overflow:hidden!important;width:100%!important;max-width:100%!important;box-sizing:border-box;
 }
@@ -1005,6 +1016,7 @@ html:has(.budget-table-scroll),body:has(.budget-table-scroll){
   display:block!important;width:100%!important;min-height:0!important;
   overflow:auto!important;-webkit-overflow-scrolling:touch!important;
   scrollbar-gutter:stable;scrollbar-width:thin;box-sizing:border-box;
+  padding-bottom:14px!important;scroll-padding-bottom:14px!important;
 }
 .budget-table-scroll table{width:max-content!important;min-width:100%!important;table-layout:auto!important}
 .budget-table-scroll thead th{position:sticky!important;top:0!important;z-index:5!important}
@@ -1229,7 +1241,11 @@ html:has(.budget-table-scroll),body:has(.budget-table-scroll){
   overflow:hidden!important;margin:0;padding:0;height:100%!important;min-height:0!important;
   background:#ffffff!important;color:#111827!important;
 }
-.budget-deviation-table-wrap{
+.budget-deviation-table-wrap:not(:has(.budget-table-scroll)){
+  display:block!important;height:auto!important;max-height:none!important;min-height:0!important;
+  overflow:visible!important;width:100%!important;max-width:100%!important;box-sizing:border-box;
+}
+.budget-deviation-table-wrap:has(.budget-table-scroll){
   display:flex!important;flex-direction:column!important;height:100%!important;min-height:0!important;
   overflow:hidden!important;width:100%!important;max-width:100%!important;box-sizing:border-box;
 }
@@ -1238,6 +1254,7 @@ html:has(.budget-table-scroll),body:has(.budget-table-scroll){
   overflow:auto!important;-webkit-overflow-scrolling:touch!important;
   scrollbar-gutter:stable;scrollbar-width:thin;box-sizing:border-box;
   scrollbar-color:#94a3b8 #e5e7eb!important;
+  padding-bottom:14px!important;scroll-padding-bottom:14px!important;
 }
 .budget-table-scroll table{width:max-content!important;min-width:100%!important;table-layout:auto!important}
 .budget-table-scroll thead th{position:sticky!important;top:0!important;z-index:5!important}
@@ -1715,9 +1732,9 @@ def _estimate_html_block_height(html: str) -> int:
         extra = 56
         cap = 2600
     elif "budget-deviation-table-wrap" in html_l:
-        thead_h = 64
-        row_h = 32
-        extra = 16
+        thead_h = 72
+        row_h = 38
+        extra = 28
         cap = 900
     elif "gantt-schedule-scroll-wrap" in html_l:
         thead_h = 44
@@ -1767,7 +1784,7 @@ def _estimate_html_block_height(html: str) -> int:
     n_group = html_l.count("bd-group-row")
     n_total = html_l.count("bd-total-row")
     n_plain = max(0, data_rows - n_group - n_total)
-    est = thead_h + n_plain * row_h + n_group * (row_h + 8) + n_total * (row_h + 10) + extra
+    est = thead_h + n_plain * row_h + n_group * (row_h + 8) + n_total * (row_h + 18) + extra
     if "budget-deviation-table-wrap" in html_l:
         m_vh = re.search(r"max-height:\s*([\d.]+)vh", html_l)
         if m_vh and "budget-table-scroll" in html_l:
@@ -2075,7 +2092,7 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
             f'html body .budget-table-scroll.pred-detail-scroll[data-scroll-box-h]{{padding-bottom:14px!important;scroll-padding-bottom:14px!important;}}'
             f'html body .budget-table-scroll:not([data-scroll-box-h]){{height:{_h_b}px!important;max-height:{_h_b}px!important;min-height:0!important;'
             'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;'
-            'scrollbar-gutter:stable!important;box-sizing:border-box!important;}'
+            'scrollbar-gutter:stable!important;box-sizing:border-box!important;padding-bottom:14px!important;scroll-padding-bottom:14px!important;}'
             'html body .budget-table-scroll thead th{position:sticky!important;top:0!important;z-index:5!important;}'
             'html body .budget-table-scroll tr.bd-total-row td{position:sticky!important;bottom:0!important;z-index:4!important;}'
             'html body .budget-table-scroll table{width:max-content!important;min-width:100%!important;table-layout:auto!important;}'
@@ -2153,7 +2170,7 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
         if _covenant_tbl or _pd_tbl:
             _pad_h = 2
         elif "budget-deviation-table-wrap" in (html or ""):
-            _pad_h = 4
+            _pad_h = 18
         elif _wide_tbl:
             _pad_h = 18
         elif "gdrs-summary-table-wrap" in (html or ""):
