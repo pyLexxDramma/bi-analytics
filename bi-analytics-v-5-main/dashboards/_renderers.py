@@ -25247,8 +25247,16 @@ def _gdrs_dynamics_chart_panel(
             paper_bgcolor=_th.chart_bg,
             font_color=_th.text,
             height=_chart_h,
-            margin=dict(l=62, r=32, t=104, b=_x_margin_b),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            showlegend=True,
+            margin=dict(l=62, r=32, t=104, b=_x_margin_b + 84),
+            legend=dict(
+                orientation="h",
+                yanchor="top",
+                y=-0.22,
+                xanchor="center",
+                x=0.5,
+                font=dict(color=_th.text),
+            ),
             yaxis=dict(
                 title="Среднее за день",
                 range=_comb_range,
@@ -25516,6 +25524,100 @@ def _gdrs_st_plotly_chart(st, fig, *, key: str | None = None, **kwargs) -> None:
     if key is not None:
         kw["key"] = key
     st.plotly_chart(fig, **kw)
+
+
+def _gdrs_legend_below_html(items: list[tuple[str, str]], theme: Any) -> str:
+    """Статичная легенда под графиком (как в других дашбордах) в палитре ГДРС."""
+    if not items:
+        return ""
+    _txt = getattr(theme, "text", "#111827")
+    _bg = getattr(theme, "chart_bg", "transparent")
+    _bd = getattr(theme, "border", "rgba(148,163,184,0.35)")
+    html = (
+        '<div style="display:flex;flex-wrap:wrap;gap:10px 26px;justify-content:center;'
+        f'padding:12px 8px 6px 8px;margin:4px 0 2px 0;font-size:15px;line-height:1.5;'
+        f'background:{_bg};border-top:1px solid {_bd};">'
+    )
+    for _name, _color in items:
+        html += (
+            '<span style="display:inline-flex;align-items:center;gap:8px;">'
+            f'<span style="display:inline-block;width:18px;height:18px;border-radius:3px;'
+            f'background:{_color};flex-shrink:0;"></span>'
+            f'<span style="color:{_txt};font-weight:600;">{html_module.escape(str(_name))}</span>'
+            '</span>'
+        )
+    html += "</div>"
+    return html
+
+
+def _gdrs_render_bar_hscroll(
+    st,
+    fig,
+    *,
+    width_px: int,
+    height_px: int,
+    theme: Any,
+    key: str,
+    legend_items: list[tuple[str, str]] | None = None,
+) -> None:
+    """Широкий столбчатый график ГДРС с горизонтальным скроллом + статичная легенда снизу."""
+    import uuid as _uuid
+
+    w = int(max(width_px, 320))
+    h = int(max(height_px, 320))
+    cfg = dict(_PLOTLY_CONFIG)
+    cfg["responsive"] = False
+    try:
+        fig.update_layout(width=w, height=h, autosize=False, showlegend=False)
+    except Exception:
+        pass
+
+    _chart_bg = getattr(theme, "chart_bg", "#ffffff")
+    _border = getattr(theme, "border", "rgba(148,163,184,0.35)")
+    uid = _uuid.uuid4().hex[:8]
+    wrap_cls = f"gdrs-bar-hscroll-{uid}-wrap"
+    inner_cls = f"gdrs-bar-hscroll-{uid}-inner"
+    _scroll_px = 24
+    try:
+        plot_div = fig.to_html(
+            full_html=False,
+            include_plotlyjs="cdn",
+            config=cfg,
+            default_width=f"{w}px",
+            default_height=f"{h}px",
+        )
+        _pin_css = _finance_plotly_hscroll_modebar_pin_css(wrap_class=wrap_cls)
+        _pin_js = _finance_plotly_hscroll_modebar_pin_script(
+            wrap_class=wrap_cls, inner_class=inner_cls
+        )
+        shell = (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            "<style>"
+            f"html,body{{margin:0;padding:0;background:transparent;overflow:visible;min-height:{h + _scroll_px}px;}}"
+            f".{wrap_cls}{{width:100%;max-width:100%;overflow-x:auto;overflow-y:visible;"
+            f"-webkit-overflow-scrolling:touch;box-sizing:border-box;line-height:normal;"
+            f"padding:0 0 {_scroll_px}px 0;scrollbar-gutter:stable both-edges;"
+            f"border:1px solid {_border};border-radius:8px;background:{_chart_bg};"
+            f"min-height:{h + _scroll_px}px;}}"
+            f".{inner_cls}{{width:{w}px;min-width:{w}px;max-width:{w}px;display:block;line-height:normal;}}"
+            f".{inner_cls} .plotly-graph-div,.{inner_cls} .js-plotly-plot{{"
+            f"width:{w}px!important;min-width:{w}px!important;max-width:{w}px!important;height:{h}px!important;}}"
+            f".{wrap_cls}::-webkit-scrollbar{{height:13px;}}"
+            f".{wrap_cls}::-webkit-scrollbar-thumb{{background:rgba(148,163,184,0.6);border-radius:6px;}}"
+            f".{wrap_cls}::-webkit-scrollbar-track{{background:rgba(148,163,184,0.18);border-radius:6px;}}"
+            f"{_pin_css}"
+            "</style></head><body>"
+            f'<div class="{wrap_cls}"><div class="{inner_cls}">{plot_div}</div></div>'
+            f"{_pin_js}"
+            "</body></html>"
+        )
+        components.html(shell, height=h + _scroll_px + 14, scrolling=False)
+    except Exception:
+        _gdrs_st_plotly_chart(st, fig, key=key, config={"responsive": False})
+
+    _leg = _gdrs_legend_below_html(legend_items or [], theme)
+    if _leg:
+        st.markdown(_leg, unsafe_allow_html=True)
 
 
 def _gdrs_summary_table_to_html(
@@ -26252,7 +26354,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
     else:
         try:
             import plotly.graph_objects as _go
-            _bar_axis_sz = 22 if theme == "light" else 14
+            _bar_axis_sz = 27 if theme == "light" else 18
             _ctr_labels = chart_df["Контрагент"].astype(str).tolist()
             _ctr_plan = chart_df["План"].fillna(0).astype(int).tolist()
             _ctr_fact = chart_df["Факт"].fillna(0).astype(int).tolist()
@@ -26287,6 +26389,9 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
             )
             if _ctr_x_cfg:
                 _ctr_xaxis_kw.update(_ctr_x_cfg)
+            # Столбцы в 3× выше и шире: высокий холст + фикс. пиксельная ширина под
+            # горизонтальный скролл (иначе use_container_width сжимает всё в экран).
+            _bar_h = 1500 if theme == "light" else 1320
             fig2.update_layout(
                 title=dict(text=f"План / Факт / Отклонение{_ctr_title_suffix}") if _ctr_title_suffix else {},
                 barmode="group",
@@ -26295,15 +26400,15 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
                 font_color=_th.text,
                 xaxis=_ctr_xaxis_kw,
                 yaxis=dict(
-                    tickfont=dict(size=_bar_axis_sz if theme == "light" else 12, color=_th.text),
+                    tickfont=dict(size=_bar_axis_sz if theme == "light" else 16, color=_th.text),
                 ),
-                height=560 if theme == "light" else 480,
-                margin=dict(l=56, r=24, t=72, b=_bar_margin_b),
+                height=_bar_h,
+                margin=dict(l=64, r=28, t=88, b=_bar_margin_b),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
             )
             fig2 = apply_gdrs_chart_background(fig2, _th, skip_uniformtext=True)
             fig2.update_xaxes(**_ctr_xaxis_kw)
-            fig2.update_layout(margin=dict(l=56, r=24, t=72, b=_bar_margin_b))
+            fig2.update_layout(margin=dict(l=64, r=28, t=88, b=_bar_margin_b))
             fig2 = gdrs_apply_grouped_bar_labels(
                 fig2,
                 _th,
@@ -26320,11 +26425,41 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
                 metrics_axis=_ctr_metrics_axis,
                 fixed_slots=_ctr_fixed_slots,
             )
-            _gdrs_st_plotly_chart(
-                st,
-                fig2,
-                key=f"gdrs_ctr_bar_{_gdrs_key_suffix}_{_plan_agg}_{_skud_agg}",
-            )
+            # Крупнее подписи значений над столбцами.
+            _bar_lbl_sz = 21 if theme == "light" else 16
+            try:
+                fig2.update_traces(
+                    selector=dict(type="bar"),
+                    textfont=dict(size=_bar_lbl_sz),
+                    outsidetextfont=dict(size=_bar_lbl_sz),
+                )
+            except Exception:
+                pass
+            _n_ctr = max(1, len(_ctr_labels))
+            if _n_ctr > 1:
+                # ~3× ширины на слот категории → холст шире экрана, включаем скролл.
+                _slot_px = 128 if theme == "light" else 116
+                _canvas_w = max(1180, int(_n_ctr * _slot_px))
+                _leg_items = [
+                    ("План", _th.bar_plan),
+                    ("Факт", _th.bar_fact),
+                    ("Отклонение (факт − план)", getattr(_th, "neutral", _th.text)),
+                ]
+                _gdrs_render_bar_hscroll(
+                    st,
+                    fig2,
+                    width_px=_canvas_w,
+                    height_px=_bar_h,
+                    theme=_th,
+                    key=f"gdrs_ctr_bar_{_gdrs_key_suffix}_{_plan_agg}_{_skud_agg}",
+                    legend_items=_leg_items,
+                )
+            else:
+                _gdrs_st_plotly_chart(
+                    st,
+                    fig2,
+                    key=f"gdrs_ctr_bar_{_gdrs_key_suffix}_{_plan_agg}_{_skud_agg}",
+                )
         except Exception as _e:
             st.warning(f"Plotly недоступен: {_e}")
 
