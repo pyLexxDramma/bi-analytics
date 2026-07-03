@@ -351,7 +351,7 @@ def sync_ftp_to_web(
       происходит ТОЛЬКО в папках, реально прочитанных с сервера, и ТОЛЬКО когда
       обход прошёл без критических ошибок (``ok`` и пустой ``errors``) и на
       сервере найден хотя бы один файл — чтобы сбой листинга не стёр локальные
-      данные. По умолчанию берётся из BI_FTP_PRUNE_ORPHANS (off).
+      данные. По умолчанию ВКЛ (BI_FTP_PRUNE_ORPHANS=0 — отключить).
 
     Returns:
         {
@@ -408,11 +408,14 @@ def sync_ftp_to_web(
                 "on",
             )
         if prune_orphans is None:
-            prune_orphans = str(os.environ.get("BI_FTP_PRUNE_ORPHANS", "0")).strip().lower() in (
-                "1",
-                "true",
-                "yes",
-                "on",
+            # По умолчанию ВКЛ: FTP — источник истины. Если файл удалён с FTP,
+            # локальная копия тоже удаляется, и дашборд показывает последний
+            # оставшийся файл. Отключить: BI_FTP_PRUNE_ORPHANS=0.
+            prune_orphans = str(os.environ.get("BI_FTP_PRUNE_ORPHANS", "1")).strip().lower() not in (
+                "0",
+                "false",
+                "no",
+                "off",
             )
 
         web_dir = Path(web_dir).resolve()

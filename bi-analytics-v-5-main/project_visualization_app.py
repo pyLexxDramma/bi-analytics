@@ -1351,8 +1351,11 @@ def main():
             # «Умный» режим логина: если FTP не принёс новых/изменённых файлов —
             # не запускаем 5–15 мин пересборку, а быстро поднимаем активный снимок.
             if smart_after_ftp:
-                _ftp_changed = bool(
-                    (st.session_state.get("last_ftp_sync_result") or {}).get("downloaded")
+                _ftp_res_now = st.session_state.get("last_ftp_sync_result") or {}
+                # Пересобираем БД, если FTP что-то скачал ЛИБО удалил (файл убрали
+                # с FTP → нужно отобразить последний оставшийся, а не старый снимок).
+                _ftp_changed = bool(_ftp_res_now.get("downloaded")) or bool(
+                    _ftp_res_now.get("deleted")
                 )
                 if not _ftp_changed:
                     try:
