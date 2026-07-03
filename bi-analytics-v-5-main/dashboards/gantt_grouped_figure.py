@@ -791,7 +791,7 @@ def cached_grouped_gantt_figure(
     show_covenant_markers: bool,
     row_block_scale: float,
     allow_zero_duration_milestones: bool = False,
-    _fig_cache_version: int = 28,
+    _fig_cache_version: int = 29,
     _theme_light: bool = False,
 ) -> go.Figure:
     """Кэш построения fig — ускоряет rerun при тех же фильтрах."""

@@ -47341,30 +47341,60 @@ def dashboard_project_schedule_chart(df):
             )
     chart_h = int(getattr(fig_gantt.layout, "height", None) or 520)
 
-    # Названия задач — paper-annotations слева (см. _project_schedule_gantt_apply_y_labels).
-
-    _gantt_render_h = int(max(_gantt_chart_height, 520))
-    try:
-        _h_now = int(getattr(fig_gantt.layout, "height", None) or 0)
-        if _h_now > 0:
-            _gantt_render_h = _h_now
-    except Exception:
-        pass
-
     # Билдер отбрасывает строки без видимых полос (нулевая длительность/без дат),
-    # поэтому реальных строк в фигуре может быть меньше, чем len(plot_df). Берём
-    # фактическое число строк фигуры (тики оси Y) — иначе высота/скролл считаются
-    # по «лишним» строкам и сверху графика появляется пустота.
+    # поэтому реальных строк в фигуре может быть меньше, чем len(plot_df). Высоту
+    # и ось Y синхронизируем с фактическими tickvals/полосами — иначе сверху пустота.
     try:
-        _fig_rows = len(list(getattr(fig_gantt.layout.yaxis, "tickvals", None) or []))
+        _tickvals = list(getattr(fig_gantt.layout.yaxis, "tickvals", None) or [])
     except Exception:
-        _fig_rows = 0
+        _tickvals = []
+    _fig_rows = len(_tickvals) if _tickvals else 0
+    if _fig_rows <= 0:
+        try:
+            for _tr in fig_gantt.data:
+                if getattr(_tr, "type", "") == "bar" and getattr(_tr, "orientation", "") == "h":
+                    _fig_rows = len(_tr.y or [])
+                    break
+        except Exception:
+            _fig_rows = 0
     _n_gantt_rows = _fig_rows if _fig_rows > 0 else len(y_labels)
+    _ticktext = list(getattr(fig_gantt.layout.yaxis, "ticktext", None) or [])
+    _height_labels = (
+        _ticktext
+        if len(_ticktext) == _n_gantt_rows
+        else (y_labels[:_n_gantt_rows] if _n_gantt_rows <= len(y_labels) else y_labels)
+    )
+    _gantt_render_h = _project_schedule_gantt_chart_height(
+        _n_gantt_rows,
+        dense=bool(_readability.get("is_dense")),
+        row_block_scale=_GANTT_ROW_BLOCK_SCALE,
+        y_labels=_height_labels,
+        task_font=int(_readability.get("task_font", _GANTT_MIN_TASK_FONT)),
+    )
+    if _n_gantt_rows > 0 and _n_gantt_rows < len(y_labels):
+        _lane_pad = 0.35
+        try:
+            fig_gantt.update_layout(height=_gantt_render_h, autosize=True)
+            fig_gantt.update_yaxes(
+                autorange=False,
+                range=[_n_gantt_rows - 0.5 + _lane_pad, -0.5 - _lane_pad],
+                fixedrange=True,
+            )
+        except Exception:
+            pass
+    else:
+        try:
+            _h_now = int(getattr(fig_gantt.layout, "height", None) or 0)
+            if _h_now > 0:
+                _gantt_render_h = _h_now
+        except Exception:
+            pass
+
     _gantt_viewport_h = _project_schedule_gantt_chart_height(
         min(_n_gantt_rows, _GANTT_SCROLL_VISIBLE_ROWS),
         dense=bool(_readability.get("is_dense")),
         row_block_scale=_GANTT_ROW_BLOCK_SCALE,
-        y_labels=y_labels[: _GANTT_SCROLL_VISIBLE_ROWS],
+        y_labels=_height_labels[:_GANTT_SCROLL_VISIBLE_ROWS],
         task_font=int(_readability.get("task_font", _GANTT_MIN_TASK_FONT)),
     )
     _scroll_h = _gantt_viewport_h if _n_gantt_rows > _GANTT_SCROLL_VISIBLE_ROWS else None
@@ -47380,11 +47410,6 @@ def dashboard_project_schedule_chart(df):
         scroll_viewport_height=_scroll_h,
     )
 
-    try:
-        _h_g = int(getattr(fig_gantt.layout, "height", None) or 0)
-    except Exception:
-        _h_g = 0
-    _gantt_render_h = _h_g if _h_g > 0 else _gantt_render_h
     # Масштаб по времени отключён во всех режимах графика проекта (оси фиксированы),
     # поэтому убираем панель зума и scrollZoom, чтобы курсор не превращался в
     # стрелки <-> и не появлялась неработающая панель (и в «Все»/«%», и в «Ковенантах»).
