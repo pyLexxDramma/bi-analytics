@@ -866,15 +866,21 @@ def build_dogovor_contractor_id_lookup(
     def _consume(df: pd.DataFrame) -> None:
         if df is None or df.empty:
             return
-        for _, r in df.iterrows():
-            pid = str(r.get("project_id", "")).strip()
-            cid = str(r.get("contractor_id", "")).strip()
-            cname = str(r.get("contractor_name", "")).strip()
+        # Проход по numpy вместо iterrows (последний создаёт Series на КАЖДУЮ строку —
+        # десятки тысяч Series.__init__/sanitize_array). Порядок строк и «first wins»
+        # (setdefault) сохранены. normalize_name считаем один раз на уникальное имя.
+        pids = df["project_id"].astype(str).to_numpy()
+        cids = df["contractor_id"].astype(str).to_numpy()
+        cnames = df["contractor_name"].astype(str).to_numpy()
+        _nmap = {u: normalize_name(u) for u in pd.unique(cnames)}
+        for pid_r, cid_r, cname_r in zip(pids, cids, cnames):
+            cid = cid_r.strip()
             if not cid:
                 continue
-            nn = normalize_name(cname)
+            nn = _nmap[cname_r]
             if nn:
                 by_name.setdefault(nn, cid)
+                pid = pid_r.strip()
                 if pid:
                     by_proj.setdefault((pid, nn), cid)
 
@@ -899,14 +905,19 @@ def build_dogovor_project_id_lookup(
     def _consume(df: pd.DataFrame) -> None:
         if df is None or df.empty:
             return
-        for _, r in df.iterrows():
-            pid = str(r.get("project_id", "")).strip()
-            pname = str(r.get("project_name", "")).strip()
-            cname = str(r.get("contractor_name", "")).strip()
+        # Проход по numpy вместо iterrows (см. build_dogovor_contractor_id_lookup):
+        # порядок и «first wins» сохранены, normalize_name — один раз на уникум.
+        pids = df["project_id"].astype(str).to_numpy()
+        pnames = df["project_name"].astype(str).to_numpy()
+        cnames = df["contractor_name"].astype(str).to_numpy()
+        _pmap = {u: normalize_name(u) for u in pd.unique(pnames)}
+        _cmap = {u: normalize_name(u) for u in pd.unique(cnames)}
+        for pid_r, pname_r, cname_r in zip(pids, pnames, cnames):
+            pid = pid_r.strip()
             if not pid:
                 continue
-            pn = normalize_name(pname)
-            cn = normalize_name(cname)
+            pn = _pmap[pname_r]
+            cn = _cmap[cname_r]
             if pn:
                 by_name.setdefault(pn, pid)
             if pn and cn:
@@ -935,19 +946,26 @@ def enrich_gdrs_fact_project_ids(
         dogovor_records=dogovor_records,
     )
 
-    def _resolve_pid(row: pd.Series) -> str:
-        cur = str(row.get("project_id", "")).strip()
+    # Проход по numpy вместо apply(axis=1) (создаёт Series на строку). Логика и
+    # порядок проверок идентичны; normalize_name — только для нерешённых строк.
+    _cur = work["project_id"].astype(str).to_numpy()
+    _pn_arr = work["project_name"].astype(str).to_numpy()
+    _cn_arr = work["contractor_name"].astype(str).to_numpy()
+    _out = []
+    for cur_r, pname_r, cname_r in zip(_cur, _pn_arr, _cn_arr):
+        cur = cur_r.strip()
         if cur:
-            return cur
-        pn = normalize_name(str(row.get("project_name", "")))
-        cn = normalize_name(str(row.get("contractor_name", "")))
+            _out.append(cur)
+            continue
+        pn = normalize_name(pname_r)
+        cn = normalize_name(cname_r)
         if pn and cn and (pn, cn) in by_pair:
-            return by_pair[(pn, cn)]
-        if pn and pn in by_name:
-            return by_name[pn]
-        return ""
-
-    work["project_id"] = work.apply(_resolve_pid, axis=1)
+            _out.append(by_pair[(pn, cn)])
+        elif pn and pn in by_name:
+            _out.append(by_name[pn])
+        else:
+            _out.append("")
+    work["project_id"] = _out
     return work
 
 
@@ -966,21 +984,28 @@ def enrich_gdrs_fact_contractor_ids(
         dogovor_records=dogovor_records,
     )
 
-    def _resolve_id(row: pd.Series) -> str:
-        cur = _sanitize_contractor_id(row.get("contractor_id", ""))
+    # Проход по numpy вместо apply(axis=1). Логика и порядок проверок идентичны.
+    _cid_arr = work["contractor_id"].to_numpy()
+    _pid_arr = work["project_id"].astype(str).to_numpy()
+    _cname_arr = work["contractor_name"].astype(str).to_numpy()
+    _has_kontr = bool(kontr)
+    _out = []
+    for cid_r, pid_r, cname_r in zip(_cid_arr, _pid_arr, _cname_arr):
+        cur = _sanitize_contractor_id(cid_r)
         if cur:
-            return cur
-        pid = str(row.get("project_id", "")).strip()
-        nn = normalize_name(str(row.get("contractor_name", "")))
+            _out.append(cur)
+            continue
+        pid = pid_r.strip()
+        nn = normalize_name(cname_r)
         if pid and nn and (pid, nn) in by_proj:
-            return by_proj[(pid, nn)]
-        if nn and nn in by_name:
-            return by_name[nn]
-        if kontr and nn and nn in kontr.id_by_norm:
-            return kontr.id_by_norm[nn]
-        return ""
-
-    work["contractor_id"] = work.apply(_resolve_id, axis=1)
+            _out.append(by_proj[(pid, nn)])
+        elif nn and nn in by_name:
+            _out.append(by_name[nn])
+        elif _has_kontr and nn and nn in kontr.id_by_norm:
+            _out.append(kontr.id_by_norm[nn])
+        else:
+            _out.append("")
+    work["contractor_id"] = _out
     return work
 
 
@@ -1109,17 +1134,18 @@ def gdrs_apply_kontr_contractor_names(
     if not kontr.ids and not kontr.norm_names:
         return df
     work = df.copy()
-    resolved = work.apply(
-        lambda r: gdrs_kontr_contractor_display(
-            str(r.get("contractor_id", "")),
-            str(r.get("contractor_name", "")),
-            kontr,
-        ),
-        axis=1,
-        result_type="expand",
-    )
-    work["contractor_id"] = resolved[0]
-    work["contractor_name"] = resolved[1]
+    # Проход по numpy вместо apply(axis=1, expand) (Series на КАЖДУЮ строку).
+    # Логика прежняя; normalize_name внутри display кеширован (lru_cache).
+    _cid_arr = work["contractor_id"].to_numpy()
+    _cname_arr = work["contractor_name"].to_numpy()
+    _ids = []
+    _names = []
+    for cid_r, cname_r in zip(_cid_arr, _cname_arr):
+        _a, _b = gdrs_kontr_contractor_display(str(cid_r), str(cname_r), kontr)
+        _ids.append(_a)
+        _names.append(_b)
+    work["contractor_id"] = _ids
+    work["contractor_name"] = _names
     if dedupe_fact and {"vid_resursa", "date"}.issubset(work.columns):
         work = work.drop_duplicates(
             subset=["project_name", "contractor_name", "vid_resursa", "date"],
@@ -2253,16 +2279,58 @@ def merge_plan(dogovor: pd.DataFrame, sprav: pd.DataFrame) -> pd.DataFrame:
             ]
         )
     else:
-        gd = dogovor.groupby(["project_id", "contractor_id"], dropna=False, as_index=False)
-        # built-in sum(min_count=1) == float(np.nansum(s)) if any(notna) else None, но в разы быстрее.
+        # Прежде project_name/contractor_name считались python-функцией _first_nonempty,
+        # а contract_name — lambda-join: оба гнали groupby по pure-python пути
+        # (_aggregate_series_pure_python, секунды). Векторизуем, сохраняя семантику:
+        #   - имена: первое непустое (stripped) значение в порядке строк группы;
+        #   - contract_name: " · ".join(sorted(уникальных непустых)).
+        keys = ["project_id", "contractor_id"]
+        tmp = dogovor.copy()
+        for _nc in ("project_name", "contractor_name"):
+            _stripped = tmp[_nc].astype(str).str.strip()
+            _empty = _stripped.eq("") | _stripped.str.casefold().isin(["nan", "none"])
+            # Храним именно stripped-значение (как возвращал _first_nonempty).
+            tmp[_nc] = _stripped.where(~_empty, np.nan)
+        gd = tmp.groupby(keys, dropna=False, as_index=False)
         d = gd.agg(
-            project_name=("project_name", _first_nonempty),
-            contractor_name=("contractor_name", _first_nonempty),
-            contract_name=("contract_name", lambda s: " · ".join(sorted({x for x in s if x}))),
+            project_name=("project_name", "first"),
+            contractor_name=("contractor_name", "first"),
         )
-        d_sum = gd[["plan_workers", "plan_equipment"]].sum(min_count=1)
-        d["plan_workers"] = d_sum["plan_workers"].to_numpy()
-        d["plan_equipment"] = d_sum["plan_equipment"].to_numpy()
+        for _nc in ("project_name", "contractor_name"):
+            d[_nc] = d[_nc].where(d[_nc].notna(), "")
+        # contract_name: sorted(unique непустых) одним O(n) проходом по numpy.
+        _cn = dogovor["contract_name"]
+        cn_src = dogovor.loc[
+            _cn.notna() & (_cn.astype(str) != ""), keys + ["contract_name"]
+        ].drop_duplicates()
+        if cn_src.empty:
+            d["contract_name"] = ""
+        else:
+            cn_src = cn_src.sort_values(keys + ["contract_name"], kind="stable")
+            _pid = cn_src["project_id"].to_numpy()
+            _cid = cn_src["contractor_id"].to_numpy()
+            _cnv = cn_src["contract_name"].to_numpy()
+            _kp, _kc, _vals = [], [], []
+            _n = len(_cnv)
+            _i = 0
+            while _i < _n:
+                _j = _i + 1
+                while _j < _n and _pid[_j] == _pid[_i] and _cid[_j] == _cid[_i]:
+                    _j += 1
+                _kp.append(_pid[_i])
+                _kc.append(_cid[_i])
+                _vals.append(" · ".join(_cnv[_i:_j]))
+                _i = _j
+            _cn_join = pd.DataFrame(
+                {"project_id": _kp, "contractor_id": _kc, "contract_name": _vals}
+            )
+            d = d.merge(_cn_join, on=keys, how="left")
+            d["contract_name"] = d["contract_name"].fillna("")
+        # План — cython sum(min_count=1); выравниваем по ключам через merge.
+        d_sum = dogovor.groupby(keys, dropna=False, as_index=False)[
+            ["plan_workers", "plan_equipment"]
+        ].sum(min_count=1)
+        d = d.merge(d_sum, on=keys, how="left")
     if sprav is not None and not sprav.empty:
         s = (
             sprav.groupby(["project_id", "contractor_id"], dropna=False, as_index=False)[
