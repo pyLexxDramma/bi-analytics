@@ -3010,7 +3010,11 @@ def _render_deviations_maket_table(
     _date_bg_m = _DEV_MAKET_COL_BG
     _date_cell_st = f' style="background:{_date_bg_m};color:#0b1f33;"'
     _maket_wrap_id = f"dev_reason_maket_{abs(id(maket_df))}"
-    _maket_box_h = int(min(620, max(280, 56 + len(maket_df) * 50 + 48)))
+    # Высота iframe жёстко равна этому значению (Streamlit не ужимает components.html
+    # по setFrameHeight). Калибровка по факту: thead≈40px, строка≈32px, padding≈13px.
+    # Небольшой буфер (строка*33) страхует от преждевременного скролла; более высокие
+    # (переносимые) строки уходят во внутренний скролл обёртки — без пустоты под таблицей.
+    _maket_box_h = int(min(620, max(120, 45 + len(maket_df) * 33)))
     _dev_bad, _dev_zero, _dev_ok = _dev_reasons_dev_colors()
     _reason_txt = _dev_reasons_text_color()
     _hdrs = [
@@ -3119,7 +3123,10 @@ def _render_deviations_reasons_full_table(table_reason_df, building_col, notes_c
 
     _dev_bad, _dev_zero, _dev_ok = _dev_reasons_dev_colors()
     _reason_txt = _dev_reasons_text_color()
-    _dev_box_h = int(min(620, max(220, 56 + len(rows_out) * 34 + 24)))
+    # Высота iframe = это значение (Streamlit не ужимает components.html). Калибровка
+    # по факту: thead≈40px, строка≈32px; строка*33 даёт небольшой буфер, высокие
+    # строки уходят во внутренний скролл — кнопка «Скачать таблицу» вплотную к таблице.
+    _dev_box_h = int(min(620, max(120, 45 + len(rows_out) * 33)))
 
     parts = [
         f'<div class="dev-reasons-wrap" data-bi-rows="{len(rows_out)}" data-scroll-box-h="{_dev_box_h}">',

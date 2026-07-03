@@ -2775,6 +2775,22 @@ def _scroll_box_table_html(html: str) -> bool:
     )
 
 
+def _scroll_box_fits_content(html: str, *, cap: int = 640) -> bool:
+    """scroll-таблицы (fc/dev-reasons/dev-maket) рендерим по self-size пути.
+
+    Такие таблицы не получают жёстко фиксированный scroll-box: высота iframe
+    подгоняется по фактическому контенту (внутри iframe стоит max-height-кап,
+    поэтому длинные таблицы всё равно скроллятся, а короткие — садятся вплотную,
+    и кнопка «Скачать таблицу» идёт сразу под таблицей без пустоты).
+    """
+    b = _html_body_without_style(html)
+    return (
+        "fc-table-scroll-wrap" in b
+        or ("dev-reasons-wrap" in b and 'data-scroll-box-h="' in b)
+        or ("dev-maket-table-wrap" in b and 'data-scroll-box-h="' in b)
+    )
+
+
 def _scroll_box_height_px(html: str, *, cap: int = 640) -> int:
     """Высота scroll-box под iframe: для budget-table-scroll — по vh из разметки таблицы."""
     _body = html or ""
@@ -3122,7 +3138,12 @@ def render_report_html_table(
             "</style>",
             unsafe_allow_html=True,
         )
-        if _scroll_box and "pd-dynamics-scroll-wrap" not in _html_body_without_style(html):
+        _short_scroll = _scroll_box_fits_content(html)
+        if (
+            _scroll_box
+            and not _short_scroll
+            and "pd-dynamics-scroll-wrap" not in _html_body_without_style(html)
+        ):
             # a29a014: scroll-box + кнопка сразу под нim (fc / pred / budget scroll).
             _fc_box_h = _scroll_box_height_px(html)
             _body_no_style = _html_body_without_style(html)

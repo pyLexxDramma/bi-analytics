@@ -457,10 +457,19 @@ _TABLE_SORT_JS = r"""
           }
         } catch (e) {}
         var vhFc = parseFloat(fcBox.getAttribute("data-scroll-vh") || "0");
-        if (parentH <= 120 && vhFc > 0 && window.innerHeight) {
-          parentH = Math.min(window.innerHeight * vhFc / 100, window.innerHeight * 0.92);
+        var fcH;
+        if (vhFc > 0) {
+          // длинная скролл-таблица (plan/fact): занять высоту вьюпорта
+          if (parentH <= 120 && window.innerHeight) {
+            parentH = Math.min(window.innerHeight * vhFc / 100, window.innerHeight * 0.92);
+          }
+          fcH = parentH > 120 ? parentH : Math.ceil(Math.max(280, vhFc * window.innerHeight / 100 + 12));
+        } else {
+          // self-size (обёртка height:auto + max-height): высота по контенту, а не
+          // echo стартового clientHeight — иначе iframe залипает на завышенной
+          // высоте и остаётся пустота перед кнопкой «Скачать таблицу».
+          fcH = Math.ceil(fcBox.getBoundingClientRect().height) + 10;
         }
-        var fcH = parentH > 120 ? parentH : (vhFc > 0 ? Math.ceil(Math.max(280, vhFc * window.innerHeight / 100 + 12)) : 584);
         if (fcH > 0) {
           window.parent.postMessage({ type: "streamlit:setFrameHeight", height: fcH }, "*");
           return;
@@ -504,18 +513,34 @@ _TABLE_SORT_JS = r"""
         || document.querySelector(".fc-table-scroll-wrap")
         || document.querySelector(".gantt-schedule-table-wrap")
         || document.querySelector(".budget-deviation-table-wrap")
+        || document.querySelector(".gdrs-summary-table-wrap")
         || document.querySelector(".bi-sortable-html-root")
         || document.body;
+      // Сводные таблицы без внутреннего скролла (БДДС/БДР/бюджет по проектам,
+      // ГДРС-сводки, причины отклонений и т.п.): мерить фактическую высоту
+      // контента, а не scrollHeight (иначе iframe не ужимается ниже завышенной
+      // первичной оценки → пустота между таблицей и кнопкой «Скачать таблицу»).
+      var _noInnerScroll = !document.querySelector(".budget-table-scroll");
       var compact = root && (
         root.classList.contains("pf-covenant-table-wrap")
         || root.classList.contains("pf-dates-table-wrap")
         || root.classList.contains("pred-detail-wrap")
         || root.classList.contains("fc-table-scroll-wrap")
         || root.classList.contains("gantt-schedule-table-wrap")
+        || (root.classList.contains("budget-deviation-table-wrap") && _noInnerScroll)
+        || root.classList.contains("gdrs-summary-table-wrap")
+        || root.classList.contains("bi-sortable-html-root")
       );
       var h = 0;
       if (root && root.getBoundingClientRect) {
-        var r = root.getBoundingClientRect();
+        var _measure = root;
+        if (root.classList.contains("bi-sortable-html-root")) {
+          _measure = root.querySelector(
+            ".budget-deviation-table-wrap,.gdrs-summary-table-wrap,.dev-reasons-wrap,"
+            + ".rendered-table-wrap,.bi-styled-table-wrap,table"
+          ) || root;
+        }
+        var r = _measure.getBoundingClientRect();
         var bottom = r.bottom + (window.scrollY || 0);
         if (compact) {
           if (root.classList.contains("pred-detail-wrap") || root.classList.contains("fc-table-scroll-wrap")) {
@@ -814,10 +839,19 @@ _COMPACT_FRAME_FIT_JS = r"""
           if (window.frameElement && window.frameElement.clientHeight) parentH = window.frameElement.clientHeight;
         } catch (e) {}
         var vhFc2 = parseFloat(fc.getAttribute("data-scroll-vh") || "0");
-        if (parentH <= 120 && vhFc2 > 0 && window.innerHeight) {
-          parentH = Math.min(window.innerHeight * vhFc2 / 100, window.innerHeight * 0.92);
+        var fh;
+        if (vhFc2 > 0) {
+          // длинная скролл-таблица (plan/fact): занять высоту вьюпорта
+          if (parentH <= 120 && window.innerHeight) {
+            parentH = Math.min(window.innerHeight * vhFc2 / 100, window.innerHeight * 0.92);
+          }
+          fh = parentH > 120 ? parentH : Math.ceil(Math.max(280, vhFc2 * window.innerHeight / 100 + 12));
+        } else {
+          // self-size (обёртка height:auto + max-height): высота по контенту,
+          // а не echo текущего clientHeight — иначе iframe залипает на завышенной
+          // стартовой высоте и появляется пустота перед кнопкой «Скачать таблицу».
+          fh = Math.ceil(fc.getBoundingClientRect().height) + 12;
         }
-        var fh = parentH > 120 ? parentH : (vhFc2 > 0 ? Math.ceil(Math.max(280, vhFc2 * window.innerHeight / 100 + 12)) : 584);
         if (fh > 0) {
           window.parent.postMessage({ type: "streamlit:setFrameHeight", height: fh }, "*");
           return;
@@ -1722,9 +1756,12 @@ def _estimate_html_block_height(html: str) -> int:
         else:
             data_rows = max(0, html.count("<tr") - 1)
     if "gdrs-summary-table-wrap" in html_l:
-        thead_h = 76
-        row_h = 54
-        extra = 64
+        # Калибровка по факту (Streamlit не ужимает components.html): строка≈37px
+        # (без переносов), thead 1–2 строки. Переполнение уходит во внутренний
+        # скролл обёртки — без обрезки и без пустоты под таблицей.
+        thead_h = 44
+        row_h = 37
+        extra = 6
         cap = 1400
     elif "gdrs-matrix-table" in html_l or "gdrs-table-wrap" in html_l:
         thead_h = 132
@@ -1732,9 +1769,12 @@ def _estimate_html_block_height(html: str) -> int:
         extra = 56
         cap = 2600
     elif "budget-deviation-table-wrap" in html_l:
-        thead_h = 72
-        row_h = 38
-        extra = 28
+        # Калибровка по факту (Streamlit не ужимает components.html): thead≈40px,
+        # строка≈34px; итог/группа получают надбавку ниже (+18/+8). Небольшой запас,
+        # переполнение уходит во внутренний скролл обёртки (без обрезки и пустоты).
+        thead_h = 44
+        row_h = 34
+        extra = 16
         cap = 900
     elif "gantt-schedule-scroll-wrap" in html_l:
         thead_h = 44
@@ -1985,7 +2025,7 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
                 "</head>",
                 '<style>html,body{height:auto!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
                 '.bi-sortable-html-root{height:auto!important;min-height:0!important;overflow:hidden!important;}'
-                f'html body .pred-detail-wrap.dev-maket-table-wrap{{height:{_h_maket}px!important;max-height:{_h_maket}px!important;min-height:0!important;'
+                f'html body .pred-detail-wrap.dev-maket-table-wrap{{height:auto!important;max-height:{_h_maket}px!important;min-height:0!important;'
                 'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;'
                 'scrollbar-gutter:stable!important;box-sizing:border-box!important;}}'
                 f'html body .pred-detail-wrap.dev-maket-table-wrap thead th{{position:sticky!important;top:0!important;z-index:5!important;'
@@ -2027,7 +2067,7 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
             "</head>",
             '<style>html,body{height:auto!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
             '.bi-sortable-html-root{height:auto!important;min-height:0!important;overflow:hidden!important;}'
-            f'html body .dev-reasons-wrap{{height:{_h_dev}px!important;max-height:{_h_dev}px!important;min-height:0!important;'
+            f'html body .dev-reasons-wrap{{height:auto!important;max-height:{_h_dev}px!important;min-height:0!important;'
             'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;'
             'scrollbar-gutter:stable!important;box-sizing:border-box!important;}}'
             f'html body .dev-reasons-wrap thead th{{position:sticky!important;top:0!important;z-index:5!important;'
@@ -2131,14 +2171,31 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
         return
     if "fc-table-scroll-wrap" in _b:
         _m_fc_vh = re.search(r'data-scroll-vh="([\d.]+)"', html or "")
-        _fc_vh = float(_m_fc_vh.group(1)) if _m_fc_vh else 58.0
-        _h_fc = int(min(640, max(280, _fc_vh * 10 + 56)))
+        _fc_cap = int(min(640, max(280, (float(_m_fc_vh.group(1)) if _m_fc_vh else 58.0) * 10 + 56)))
+        if _m_fc_vh:
+            # Явный vh — намеренная скролл-таблица фиксированной высоты.
+            _h_fc = _fc_cap
+            _fc_root_h = "height:100%!important;"
+            _fc_wrap_h = "height:100%!important;max-height:100%!important;"
+        else:
+            # Без vh (стилизованные сводки, напр. «Сводка по просрочке»): высота по
+            # контенту с ограничением-капом, чтобы кнопка «Скачать таблицу» была
+            # сразу под таблицей; скролл включается только при переполнении капа.
+            _m_fc_rows = re.search(r'data-bi-rows="(\d+)"', html or "")
+            _fc_rows = int(_m_fc_rows.group(1)) if _m_fc_rows else 0
+            # Высота iframe = это значение (setFrameHeight не ужимает components.html).
+            # Калибровка по факту: thead≈44px, строка≈33px; выше капа — внутренний скролл.
+            _fc_est = 50 + _fc_rows * 33 if _fc_rows else _fc_cap
+            _h_fc = int(max(120, min(_fc_cap, _fc_est)))
+            _fc_root_h = "height:auto!important;"
+            _fc_wrap_h = f"height:auto!important;max-height:{_fc_cap}px!important;"
         doc_sc = doc.replace(
             "</head>",
-            '<style>html,body{height:100%!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
-            '.bi-sortable-html-root{height:100%!important;min-height:0!important;overflow:hidden!important;}'
+            '<style>html,body{' + _fc_root_h + 'min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
+            '.bi-sortable-html-root{' + _fc_root_h + 'min-height:0!important;overflow:hidden!important;}'
             'html body .fc-table-scroll-wrap,html body .pred-detail-wrap,html body .budget-table-scroll{'
-            'height:100%!important;max-height:100%!important;min-height:0!important;'
+            + _fc_wrap_h
+            + 'min-height:0!important;'
             'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;'
             'scrollbar-gutter:stable!important;}'
             'html body .fc-table-scroll-wrap thead th,html body .pred-detail-wrap thead th,'
@@ -2148,6 +2205,43 @@ def render_sortable_html_block(html: str, *, compact_iframe: bool | None = None)
             1,
         )
         components.html(doc_sc, height=_h_fc, scrolling=False)
+        return
+    if "budget-deviation-table-wrap" in _b and "budget-table-scroll" not in _b:
+        # Высота iframe = оценка (Streamlit не ужимает components.html). Обёртке даём
+        # height:auto + max-height + overflow:auto: короткие таблицы садятся вплотную
+        # (кнопка «Скачать таблицу» без пустоты), а если оценка чуть занижена из-за
+        # переносимых строк — включается внутренний скролл вместо обрезки контента.
+        _h_bd = int(_estimate_html_block_height(html)) + 16
+        doc_sc = doc.replace(
+            "</head>",
+            '<style>html,body{height:auto!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
+            '.bi-sortable-html-root{height:auto!important;min-height:0!important;overflow:hidden!important;}'
+            f'html body .budget-deviation-table-wrap:not(:has(.budget-table-scroll)){{height:auto!important;max-height:{_h_bd}px!important;min-height:0!important;'
+            'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;'
+            'scrollbar-gutter:stable!important;box-sizing:border-box!important;}}'
+            'html body .budget-deviation-table-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;}'
+            '</style></head>',
+            1,
+        )
+        components.html(doc_sc, height=_h_bd, scrolling=False)
+        return
+    if "gdrs-summary-table-wrap" in _b and "gdrs-table-wrap" not in _b:
+        # Высота iframe = оценка (Streamlit не ужимает components.html). Обёртке даём
+        # height:auto + max-height + overflow:auto: сводка садится вплотную (кнопка
+        # «Скачать таблицу» без пустоты), а при нехватке высоты — внутренний скролл.
+        _h_gs = int(_estimate_html_block_height(html)) + 10
+        doc_sc = doc.replace(
+            "</head>",
+            '<style>html,body{height:auto!important;min-height:0!important;overflow:hidden!important;margin:0;padding:0;}'
+            '.bi-sortable-html-root{height:auto!important;min-height:0!important;overflow:hidden!important;}'
+            f'html body .gdrs-summary-table-wrap{{height:auto!important;max-height:{_h_gs}px!important;min-height:0!important;'
+            'overflow-x:auto!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important;'
+            'scrollbar-gutter:stable!important;box-sizing:border-box!important;}}'
+            'html body .gdrs-summary-table-wrap thead th{position:sticky!important;top:0!important;z-index:5!important;}'
+            '</style></head>',
+            1,
+        )
+        components.html(doc_sc, height=_h_gs, scrolling=False)
         return
     # Не st.html: <script> сортировки в основной DOM часто не выполняется (↕ видны, клик мёртвый).
     _compact = (
