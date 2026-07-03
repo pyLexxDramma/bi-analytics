@@ -1286,18 +1286,18 @@ def _max_date_in_stem(stem: str):
 
 
 def _snapshot_date_not_future(d) -> bool:
-    """True, если дата снимка не в будущем (с грейсом +1 день на часовые пояса).
+    """True, если дата снимка не в будущем (строго: не позже сегодняшнего дня).
 
-    Ошибочно датированные будущим файлы (например, msp_..._08-07-2026 при
+    Ошибочно датированные будущим файлы (например, msp_..._04-07 или _08-07 при
     сегодняшнем 03-07) не должны выигрывать выбор «последнего снимка» и подменять
     реальную свежую выгрузку. None-дату считаем «не будущей» (не мешаем fallback).
     """
-    from datetime import date as dt_date, timedelta
+    from datetime import date as dt_date
 
     if d is None:
         return True
     try:
-        return d <= dt_date.today() + timedelta(days=1)
+        return d <= dt_date.today()
     except Exception:
         return True
 

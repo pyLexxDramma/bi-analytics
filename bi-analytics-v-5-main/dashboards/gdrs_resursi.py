@@ -1664,11 +1664,11 @@ def _resursi_source_sort_key_from_name(source_file: str) -> tuple[bool, pd.Times
     """Ключ выбора строки при дублях по неделе: сначала не-будущие снимки, затем позже.
 
     Ошибочно датированный будущим resursi (например, other_08-07-2026_… при сегодняшнем
-    03-07) не должен подменять реальную последнюю выгрузку. Грейс +1 день на часовые пояса.
+    03-07) не должен подменять реальную последнюю выгрузку. Строго: дата > сегодня = будущее.
     """
     ts, hhmm = _resursi_snapshot_sort_key(source_file)
     try:
-        not_future = ts <= (pd.Timestamp.today().normalize() + pd.Timedelta(days=1))
+        not_future = ts <= pd.Timestamp.today().normalize()
     except Exception:
         not_future = True
     return not_future, ts, hhmm
