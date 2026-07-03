@@ -205,7 +205,7 @@ html body.gdrs-light-preview .stApp {{
   --themeBackgroundColor: {g_white} !important;
   --themeDarkBackgroundColor: #f3f4f6 !important;
   --themeSecondaryBackgroundColor: #f3f4f6 !important;
-  --primary-color: #2563eb !important;
+  --primary-color: #16a34a !important;
   --secondary-background-color: #e5e7eb !important;
   --theColor: 220, 13%, 18% !important;
   color-scheme: light !important;
@@ -546,6 +546,61 @@ html body [data-testid="stPopoverBody"] [data-testid="stButton"] button:hover {{
   color: {g_text} !important;
   border-color: #94a3b8 !important;
 }}
+
+/* Primary-кнопки в контенте: админка, профиль, формы (зелёный акцент светлой темы) */
+html body .main .stButton > button[kind="primary"],
+html body .main [data-testid="stButton"] button[kind="primary"],
+html body section.main [data-testid="stButton"] button[kind="primary"],
+html body [data-testid="stMainBlockContainer"] [data-testid="stButton"] button[kind="primary"],
+html body [data-testid="stMainBlockContainer"] button[data-testid^="stBaseButton-primary"],
+html body [data-testid="stMainBlockContainer"] [data-testid^="stBaseButton-primary"],
+html body [data-testid="stMainBlockContainer"] [data-testid="stFormSubmitButton"] button[data-testid^="stBaseButton-primary"],
+html body [data-testid="stExpander"] [data-testid="stButton"] button[kind="primary"],
+html body [data-testid="stExpanderDetails"] [data-testid="stButton"] button[kind="primary"],
+html body [data-testid="stExpander"] button[data-testid^="stBaseButton-primary"],
+html body [data-testid="stExpanderDetails"] button[data-testid^="stBaseButton-primary"] {{
+  background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%) !important;
+  background-color: #ecfdf5 !important;
+  color: {g_text} !important;
+  -webkit-text-fill-color: {g_text} !important;
+  border: 1.5px solid #6ee7b7 !important;
+  border-left: 5px solid #16a34a !important;
+  font-weight: 700 !important;
+  box-shadow: 0 1px 6px rgba(22, 163, 74, 0.18) !important;
+}}
+html body .main .stButton > button[kind="primary"] *,
+html body .main [data-testid="stButton"] button[kind="primary"] *,
+html body section.main [data-testid="stButton"] button[kind="primary"] *,
+html body [data-testid="stMainBlockContainer"] [data-testid="stButton"] button[kind="primary"] *,
+html body [data-testid="stMainBlockContainer"] button[data-testid^="stBaseButton-primary"] *,
+html body [data-testid="stMainBlockContainer"] [data-testid^="stBaseButton-primary"] *,
+html body [data-testid="stMainBlockContainer"] [data-testid="stFormSubmitButton"] button[data-testid^="stBaseButton-primary"] *,
+html body [data-testid="stExpander"] [data-testid="stButton"] button[kind="primary"] *,
+html body [data-testid="stExpanderDetails"] [data-testid="stButton"] button[kind="primary"] *,
+html body [data-testid="stExpander"] button[data-testid^="stBaseButton-primary"] *,
+html body [data-testid="stExpanderDetails"] button[data-testid^="stBaseButton-primary"] * {{
+  color: {g_text} !important;
+  -webkit-text-fill-color: {g_text} !important;
+  font-weight: 700 !important;
+}}
+html body .main .stButton > button[kind="primary"]:hover,
+html body .main [data-testid="stButton"] button[kind="primary"]:hover,
+html body section.main [data-testid="stButton"] button[kind="primary"]:hover,
+html body [data-testid="stMainBlockContainer"] [data-testid="stButton"] button[kind="primary"]:hover,
+html body [data-testid="stMainBlockContainer"] button[data-testid^="stBaseButton-primary"]:hover,
+html body [data-testid="stMainBlockContainer"] [data-testid^="stBaseButton-primary"]:hover,
+html body [data-testid="stMainBlockContainer"] [data-testid="stFormSubmitButton"] button[data-testid^="stBaseButton-primary"]:hover,
+html body [data-testid="stExpander"] [data-testid="stButton"] button[kind="primary"]:hover,
+html body [data-testid="stExpanderDetails"] [data-testid="stButton"] button[kind="primary"]:hover,
+html body [data-testid="stExpander"] button[data-testid^="stBaseButton-primary"]:hover,
+html body [data-testid="stExpanderDetails"] button[data-testid^="stBaseButton-primary"]:hover {{
+  background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%) !important;
+  background-color: #d1fae5 !important;
+  color: {g_text} !important;
+  -webkit-text-fill-color: {g_text} !important;
+  border-color: #34d399 !important;
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.28) !important;
+}}
 html body .main .bi-filter-chip,
 html body section.main .bi-filter-chip {{
   color: {g_text} !important;
@@ -639,48 +694,50 @@ html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stButton"] 
 html body.gdrs-light-preview [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"],
 html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stBaseButton-primary"],
 html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stButton"] button[data-testid="stBaseButton-primary"] {{
-  background: #1d4ed8 !important;
-  background-color: #1d4ed8 !important;
-  color: #ffffff !important;
-  -webkit-text-fill-color: #ffffff !important;
-  border: 2px solid #1e40af !important;
-  border-left: 6px solid #1e3a8a !important;
+  background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%) !important;
+  background-color: #ecfdf5 !important;
+  color: {g_text} !important;
+  -webkit-text-fill-color: {g_text} !important;
+  border: 1.5px solid #6ee7b7 !important;
+  border-left: 5px solid #16a34a !important;
   font-weight: 700 !important;
-  box-shadow: 0 2px 8px rgba(29, 78, 216, 0.45) !important;
+  box-shadow: 0 1px 6px rgba(22, 163, 74, 0.18) !important;
 }}
 html body.gdrs-light-preview [data-testid="stSidebar"] .stButton > button[kind="primary"] *,
 html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"] *,
 html body.gdrs-light-preview [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] *,
 html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stBaseButton-primary"] *,
 html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stButton"] button[data-testid="stBaseButton-primary"] * {{
-  color: #ffffff !important;
-  -webkit-text-fill-color: #ffffff !important;
+  color: {g_text} !important;
+  -webkit-text-fill-color: {g_text} !important;
+  font-weight: 700 !important;
 }}
 html body.gdrs-light-preview [data-testid="stSidebar"] .stButton > button[kind="primary"]:hover,
 html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"]:hover,
 html body.gdrs-light-preview [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"]:hover,
 html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stBaseButton-primary"]:hover,
 html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stButton"] button[data-testid="stBaseButton-primary"]:hover {{
-  background: #1e40af !important;
-  background-color: #1e40af !important;
-  color: #ffffff !important;
-  -webkit-text-fill-color: #ffffff !important;
-  border-color: #1e3a8a !important;
+  background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%) !important;
+  background-color: #d1fae5 !important;
+  color: {g_text} !important;
+  -webkit-text-fill-color: {g_text} !important;
+  border-color: #34d399 !important;
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.28) !important;
 }}
 html body.gdrs-light-preview [data-testid="stSidebar"] .stButton > button[kind="primary"]:disabled,
 html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stButton"] button[kind="primary"]:disabled,
 html body.gdrs-light-preview [data-testid="stSidebar"] button[data-testid="stBaseButton-primary"]:disabled,
 html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stBaseButton-primary"]:disabled,
 html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stButton"] button[data-testid="stBaseButton-primary"]:disabled {{
-  background: #1d4ed8 !important;
-  background-color: #1d4ed8 !important;
-  color: #ffffff !important;
-  -webkit-text-fill-color: #ffffff !important;
-  border: 2px solid #1e40af !important;
-  border-left: 6px solid #1e3a8a !important;
+  background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%) !important;
+  background-color: #ecfdf5 !important;
+  color: {g_text} !important;
+  -webkit-text-fill-color: {g_text} !important;
+  border: 1.5px solid #6ee7b7 !important;
+  border-left: 5px solid #16a34a !important;
   opacity: 1 !important;
   cursor: default !important;
-  box-shadow: 0 2px 8px rgba(29, 78, 216, 0.45) !important;
+  box-shadow: 0 1px 6px rgba(22, 163, 74, 0.18) !important;
 }}
 html body.gdrs-light-preview [data-testid="stSidebar"] button[data-testid="stBaseButton-secondary"],
 html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stBaseButton-secondary"],
@@ -693,6 +750,105 @@ html body.gdrs-light-preview [data-testid="stSidebar"] [data-testid="stButton"] 
   border: 1px solid {g_border} !important;
   font-weight: 600 !important;
   box-shadow: none !important;
+}}
+
+/* Sidebar: «ИИ помощник» — мягкий акцент светлой темы (не путать с active report) */
+html body [data-testid="stSidebar"] div[class*="sidebar_ai_assistant"] button,
+html body [data-testid="stSidebar"] div[class*="sidebar_ai_assistant"] [data-testid="stLinkButton"] a,
+html body [data-testid="stSidebar"] div[class*="sidebar_ai_assistant"] [data-testid="stLinkButton"] button {{
+  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%) !important;
+  background-color: #eff6ff !important;
+  color: #1e40af !important;
+  -webkit-text-fill-color: #1e40af !important;
+  border: 1.5px solid #60a5fa !important;
+  border-left: 5px solid #2563eb !important;
+  font-weight: 700 !important;
+  box-shadow: 0 1px 6px rgba(37, 99, 235, 0.18) !important;
+}}
+html body [data-testid="stSidebar"] div[class*="sidebar_ai_assistant"] button *,
+html body [data-testid="stSidebar"] div[class*="sidebar_ai_assistant"] [data-testid="stLinkButton"] a *,
+html body [data-testid="stSidebar"] div[class*="sidebar_ai_assistant"] [data-testid="stLinkButton"] button * {{
+  color: #1e40af !important;
+  -webkit-text-fill-color: #1e40af !important;
+  font-weight: 700 !important;
+}}
+html body [data-testid="stSidebar"] div[class*="sidebar_ai_assistant"] button:hover,
+html body [data-testid="stSidebar"] div[class*="sidebar_ai_assistant"] [data-testid="stLinkButton"] a:hover,
+html body [data-testid="stSidebar"] div[class*="sidebar_ai_assistant"] [data-testid="stLinkButton"] button:hover {{
+  background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%) !important;
+  background-color: #dbeafe !important;
+  color: #1e3a8a !important;
+  -webkit-text-fill-color: #1e3a8a !important;
+  border-color: #3b82f6 !important;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.28) !important;
+}}
+html body [data-testid="stSidebar"] div[class*="sidebar_ai_assistant"] button:hover *,
+html body [data-testid="stSidebar"] div[class*="sidebar_ai_assistant"] [data-testid="stLinkButton"] a:hover *,
+html body [data-testid="stSidebar"] div[class*="sidebar_ai_assistant"] [data-testid="stLinkButton"] button:hover * {{
+  color: #1e3a8a !important;
+  -webkit-text-fill-color: #1e3a8a !important;
+}}
+
+/* Sidebar: «Выйти» — мягкий красный акцент */
+html body [data-testid="stSidebar"] div[class*="sidebar_logout"] button,
+html body [data-testid="stSidebar"] div[class*="sidebar_logout"] [data-testid="stBaseButton-secondary"],
+html body [data-testid="stSidebar"] div[class*="sidebar_logout"] button[data-testid^="stBaseButton-"] {{
+  background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%) !important;
+  background-color: #fef2f2 !important;
+  color: {g_text} !important;
+  -webkit-text-fill-color: {g_text} !important;
+  border: 1.5px solid #fca5a5 !important;
+  border-left: 5px solid #dc2626 !important;
+  font-weight: 700 !important;
+  box-shadow: 0 1px 6px rgba(220, 38, 38, 0.18) !important;
+}}
+html body [data-testid="stSidebar"] div[class*="sidebar_logout"] button *,
+html body [data-testid="stSidebar"] div[class*="sidebar_logout"] [data-testid="stBaseButton-secondary"] * {{
+  color: {g_text} !important;
+  -webkit-text-fill-color: {g_text} !important;
+  font-weight: 700 !important;
+}}
+html body [data-testid="stSidebar"] div[class*="sidebar_logout"] button:hover,
+html body [data-testid="stSidebar"] div[class*="sidebar_logout"] button[data-testid^="stBaseButton-"]:hover {{
+  background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%) !important;
+  background-color: #fee2e2 !important;
+  color: {g_text} !important;
+  -webkit-text-fill-color: {g_text} !important;
+  border-color: #f87171 !important;
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.28) !important;
+}}
+html body [data-testid="stSidebar"] div[class*="sidebar_logout"] button:hover * {{
+  color: {g_text} !important;
+  -webkit-text-fill-color: {g_text} !important;
+}}
+
+/* Login form: «Войти» / «Забыли пароль?» — зелёный акцент светлой темы */
+html body div[class*="login_form"] [data-testid="stFormSubmitButton"] button {{
+  background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%) !important;
+  background-color: #ecfdf5 !important;
+  color: {g_text} !important;
+  -webkit-text-fill-color: {g_text} !important;
+  border: 1.5px solid #6ee7b7 !important;
+  border-left: 5px solid #16a34a !important;
+  font-weight: 700 !important;
+  box-shadow: 0 1px 6px rgba(22, 163, 74, 0.18) !important;
+}}
+html body div[class*="login_form"] [data-testid="stFormSubmitButton"] button * {{
+  color: {g_text} !important;
+  -webkit-text-fill-color: {g_text} !important;
+  font-weight: 700 !important;
+}}
+html body div[class*="login_form"] [data-testid="stFormSubmitButton"] button:hover {{
+  background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%) !important;
+  background-color: #d1fae5 !important;
+  color: {g_text} !important;
+  -webkit-text-fill-color: {g_text} !important;
+  border-color: #34d399 !important;
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.28) !important;
+}}
+html body div[class*="login_form"] [data-testid="stFormSubmitButton"] button:hover * {{
+  color: {g_text} !important;
+  -webkit-text-fill-color: {g_text} !important;
 }}
 
 /* Заголовки графиков/таблиц (st.subheader, emotion-классы Streamlit) */
@@ -870,13 +1026,17 @@ html body .stTabs button[data-baseweb="tab"]:hover {{
 }}
 html body section.main [data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"],
 html body .stTabs button[data-baseweb="tab"][aria-selected="true"] {{
-  color: #ff4b4b !important;
-  -webkit-text-fill-color: #ff4b4b !important;
+  color: #16a34a !important;
+  -webkit-text-fill-color: #16a34a !important;
 }}
 html body section.main [data-testid="stTabs"] button[data-baseweb="tab"] p,
 html body .stTabs button[data-baseweb="tab"] p {{
   color: inherit !important;
   -webkit-text-fill-color: inherit !important;
+}}
+html body section.main [data-testid="stTabs"] div[data-baseweb="tab-highlight"],
+html body .stTabs div[data-baseweb="tab-highlight"] {{
+  background-color: #16a34a !important;
 }}
 html body section.main [data-testid="stTabs"] div[data-baseweb="tab-border"],
 html body .stTabs div[data-baseweb="tab-border"] {{

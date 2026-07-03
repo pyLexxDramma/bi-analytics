@@ -439,13 +439,13 @@ def sync_light_preview_theme(st) -> None:
       "background:#2563eb!important;color:#fff!important;-webkit-text-fill-color:#fff!important;}",
       "html body.gdrs-light-preview [data-testid=\\"stSidebar\\"] button[data-testid=\\"stBaseButton-primary\\"],",
       "html body.gdrs-light-preview [data-testid=\\"stSidebar\\"] [data-testid=\\"stButton\\"] button[data-testid=\\"stBaseButton-primary\\"] {",
-      "background:#1d4ed8!important;background-color:#1d4ed8!important;",
-      "color:#ffffff!important;-webkit-text-fill-color:#ffffff!important;",
-      "border:2px solid #1e40af!important;border-left:6px solid #1e3a8a!important;",
-      "font-weight:700!important;box-shadow:0 2px 8px rgba(29,78,216,0.45)!important;}",
+      "background:linear-gradient(135deg,#ecfdf5 0%,#d1fae5 100%)!important;background-color:#ecfdf5!important;",
+      "color:#111827!important;-webkit-text-fill-color:#111827!important;",
+      "border:1.5px solid #6ee7b7!important;border-left:5px solid #16a34a!important;",
+      "font-weight:700!important;box-shadow:0 1px 6px rgba(22,163,74,0.18)!important;}",
       "html body.gdrs-light-preview [data-testid=\\"stSidebar\\"] button[data-testid=\\"stBaseButton-primary\\"] *,",
       "html body.gdrs-light-preview [data-testid=\\"stSidebar\\"] [data-testid=\\"stButton\\"] button[data-testid=\\"stBaseButton-primary\\"] * {",
-      "color:#ffffff!important;-webkit-text-fill-color:#ffffff!important;}",
+      "color:#111827!important;-webkit-text-fill-color:#111827!important;font-weight:700!important;}",
     ].join("\\n");
     (doc.head || doc.body).appendChild(stEl);
   }
@@ -1317,17 +1317,55 @@ html body.gdrs-light-preview [data-testid="stForm"] label[data-testid="stWidgetL
   color: #374151 !important;
   -webkit-text-fill-color: #374151 !important;
 }
-html body.gdrs-light-preview [data-testid="stFormSubmitButton"] button[kind="primary"],
-html body.gdrs-light-preview [data-testid="stForm"] [data-testid="stFormSubmitButton"] button {
-  background-color: #2563eb !important;
-  color: #ffffff !important;
-  -webkit-text-fill-color: #ffffff !important;
-  border: 1px solid #1d4ed8 !important;
+html body.gdrs-light-preview [data-testid="stFormSubmitButton"] button[data-testid^="stBaseButton-primary"],
+html body.gdrs-light-preview [data-testid="stForm"] [data-testid="stFormSubmitButton"] button[data-testid^="stBaseButton-primary"],
+html body.gdrs-light-preview section.main [data-testid="stButton"] button[data-testid^="stBaseButton-primary"],
+html body.gdrs-light-preview section.main .stButton > button[kind="primary"],
+html body.gdrs-light-preview [data-testid="stMainBlockContainer"] [data-testid="stButton"] button[data-testid^="stBaseButton-primary"],
+html body.gdrs-light-preview [data-testid="stMainBlockContainer"] [data-testid="stFormSubmitButton"] button[data-testid^="stBaseButton-primary"] {
+  background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%) !important;
+  background-color: #ecfdf5 !important;
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+  border: 1.5px solid #6ee7b7 !important;
+  border-left: 5px solid #16a34a !important;
+  font-weight: 700 !important;
+  box-shadow: 0 1px 6px rgba(22, 163, 74, 0.18) !important;
 }
-html body.gdrs-light-preview [data-testid="stFormSubmitButton"] button[kind="primary"]:hover,
-html body.gdrs-light-preview [data-testid="stForm"] [data-testid="stFormSubmitButton"] button:hover {
-  background-color: #1d4ed8 !important;
-  border-color: #1e40af !important;
+html body.gdrs-light-preview [data-testid="stFormSubmitButton"] button[data-testid^="stBaseButton-primary"] *,
+html body.gdrs-light-preview [data-testid="stForm"] [data-testid="stFormSubmitButton"] button[data-testid^="stBaseButton-primary"] *,
+html body.gdrs-light-preview section.main [data-testid="stButton"] button[data-testid^="stBaseButton-primary"] *,
+html body.gdrs-light-preview [data-testid="stMainBlockContainer"] [data-testid="stButton"] button[data-testid^="stBaseButton-primary"] *,
+html body.gdrs-light-preview [data-testid="stMainBlockContainer"] [data-testid="stFormSubmitButton"] button[data-testid^="stBaseButton-primary"] * {
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+  font-weight: 700 !important;
+}
+html body.gdrs-light-preview [data-testid="stFormSubmitButton"] button[data-testid^="stBaseButton-primary"]:hover,
+html body.gdrs-light-preview [data-testid="stForm"] [data-testid="stFormSubmitButton"] button[data-testid^="stBaseButton-primary"]:hover,
+html body.gdrs-light-preview section.main [data-testid="stButton"] button[data-testid^="stBaseButton-primary"]:hover,
+html body.gdrs-light-preview [data-testid="stMainBlockContainer"] [data-testid="stButton"] button[data-testid^="stBaseButton-primary"]:hover,
+html body.gdrs-light-preview [data-testid="stMainBlockContainer"] [data-testid="stFormSubmitButton"] button[data-testid^="stBaseButton-primary"]:hover {
+  background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%) !important;
+  background-color: #d1fae5 !important;
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+  border-color: #34d399 !important;
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.28) !important;
+}
+html body.gdrs-light-preview [data-testid="stFormSubmitButton"] button[data-testid^="stBaseButton-secondary"],
+html body.gdrs-light-preview [data-testid="stForm"] [data-testid="stFormSubmitButton"] button[data-testid^="stBaseButton-secondary"] {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+  border: 1px solid #cbd5e1 !important;
+  font-weight: 600 !important;
+  box-shadow: none !important;
+}
+html body.gdrs-light-preview [data-testid="stFormSubmitButton"] button[data-testid^="stBaseButton-secondary"]:hover,
+html body.gdrs-light-preview [data-testid="stForm"] [data-testid="stFormSubmitButton"] button[data-testid^="stBaseButton-secondary"]:hover {
+  background-color: #e5e7eb !important;
+  border-color: #94a3b8 !important;
 }
 html body.gdrs-light-preview section.main [data-testid="stTabs"] button[data-baseweb="tab"],
 html body.gdrs-light-preview .stTabs button[data-baseweb="tab"] {
@@ -1341,8 +1379,12 @@ html body.gdrs-light-preview .stTabs button[data-baseweb="tab"]:hover {
 }
 html body.gdrs-light-preview section.main [data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"],
 html body.gdrs-light-preview .stTabs button[data-baseweb="tab"][aria-selected="true"] {
-  color: #2563eb !important;
-  -webkit-text-fill-color: #2563eb !important;
+  color: #16a34a !important;
+  -webkit-text-fill-color: #16a34a !important;
+}
+html body.gdrs-light-preview section.main [data-testid="stTabs"] div[data-baseweb="tab-highlight"],
+html body.gdrs-light-preview .stTabs div[data-baseweb="tab-highlight"] {
+  background-color: #16a34a !important;
 }
 html body.gdrs-light-preview section.main [data-testid="stTabs"] div[data-baseweb="tab-border"],
 html body.gdrs-light-preview .stTabs div[data-baseweb="tab-border"] {

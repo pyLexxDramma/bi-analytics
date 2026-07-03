@@ -874,19 +874,20 @@ def _inject_sidebar_active_menu_css(st, current_dashboard: str) -> None:
         <style id="bi-sidebar-active-menu">
         html body.gdrs-light-preview [data-testid="stSidebar"] div[class*="{esc}"] button,
         html body.gdrs-light-preview [data-testid="stSidebar"] div[class*="{esc}"] [data-testid="stBaseButton-primary"] {{
-            background: #1d4ed8 !important;
-            background-color: #1d4ed8 !important;
-            color: #ffffff !important;
-            -webkit-text-fill-color: #ffffff !important;
-            border: 2px solid #1e40af !important;
-            border-left: 6px solid #1e3a8a !important;
+            background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%) !important;
+            background-color: #ecfdf5 !important;
+            color: #111827 !important;
+            -webkit-text-fill-color: #111827 !important;
+            border: 1.5px solid #6ee7b7 !important;
+            border-left: 5px solid #16a34a !important;
             font-weight: 700 !important;
-            box-shadow: 0 2px 8px rgba(29, 78, 216, 0.45) !important;
+            box-shadow: 0 1px 6px rgba(22, 163, 74, 0.18) !important;
         }}
         html body.gdrs-light-preview [data-testid="stSidebar"] div[class*="{esc}"] button *,
         html body.gdrs-light-preview [data-testid="stSidebar"] div[class*="{esc}"] [data-testid="stBaseButton-primary"] * {{
-            color: #ffffff !important;
-            -webkit-text-fill-color: #ffffff !important;
+            color: #111827 !important;
+            -webkit-text-fill-color: #111827 !important;
+            font-weight: 700 !important;
         }}
         </style>
         """,
@@ -1085,7 +1086,7 @@ def render_sidebar_footer(user: dict) -> None:
         # 3. Выход (для всех ролей)
         st.markdown("---")
 
-        if st.button("Выйти", width="stretch"):
+        if st.button("Выйти", width="stretch", key="sidebar_logout"):
 
             logout()
 
