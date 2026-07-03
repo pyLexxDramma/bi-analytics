@@ -1285,6 +1285,23 @@ def _max_date_in_stem(stem: str):
     return max(ds) if ds else None
 
 
+def _snapshot_date_not_future(d) -> bool:
+    """True, если дата снимка не в будущем (с грейсом +1 день на часовые пояса).
+
+    Ошибочно датированные будущим файлы (например, msp_..._08-07-2026 при
+    сегодняшнем 03-07) не должны выигрывать выбор «последнего снимка» и подменять
+    реальную свежую выгрузку. None-дату считаем «не будущей» (не мешаем fallback).
+    """
+    from datetime import date as dt_date, timedelta
+
+    if d is None:
+        return True
+    try:
+        return d <= dt_date.today() + timedelta(days=1)
+    except Exception:
+        return True
+
+
 def _one_c_snapshot_sort_key(stem: str):
     m = _ONE_C_STEM_RE.match(stem.lower())
     if not m:
@@ -1396,7 +1413,8 @@ def _pick_best_tessa_bucket_file(
     if not rated:
         raise ValueError("empty tessa bucket")
 
-    rated.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    # Файлы с будущей датой снимка не должны подменять реальный последний снимок.
+    rated.sort(key=lambda x: (_snapshot_date_not_future(x[0][0]), x[0], x[1]), reverse=True)
     best_sk, _, best_f = rated[0]
 
     if kind_key != "id" or len(rated) < 2:
@@ -1537,7 +1555,8 @@ def pick_latest_snapshot_files(files: List[Dict]) -> Tuple[List[Dict], List[str]
                 rated.append((sk, f))
         if not rated:
             continue
-        best_sk = max(k for k, _ in rated)
+        # Не даём файлам с будущей датой выиграть выбор последнего снимка.
+        best_sk = max(rated, key=lambda ks: (_snapshot_date_not_future(ks[0][0]), ks[0]))[0]
         for k, f in rated:
             if k == best_sk:
                 _add(f)
@@ -1573,7 +1592,12 @@ def pick_latest_snapshot_files(files: List[Dict]) -> Tuple[List[Dict], List[str]
             for f in month_lst:
                 stem = Path(f["name"]).stem
                 md = _max_date_in_stem(stem)
-                rated.append(((md or dt_date.min, _file_mtime(f["path"])), f))
+                rated.append(
+                    (
+                        (_snapshot_date_not_future(md), md or dt_date.min, _file_mtime(f["path"])),
+                        f,
+                    )
+                )
             best_f = max(rated, key=lambda x: x[0])[1]
             _add(best_f)
         for f in undated:
@@ -1594,7 +1618,12 @@ def pick_latest_snapshot_files(files: List[Dict]) -> Tuple[List[Dict], List[str]
         for f in lst:
             stem = Path(f["name"]).stem
             md = _max_date_in_stem(stem)
-            rated.append(((md or dt_date.min, _file_mtime(f["path"])), f))
+            rated.append(
+                (
+                    (_snapshot_date_not_future(md), md or dt_date.min, _file_mtime(f["path"])),
+                    f,
+                )
+            )
         best_f = max(rated, key=lambda x: x[0])[1]
         _add(best_f)
 

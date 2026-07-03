@@ -91,11 +91,15 @@ def run_ftp_force_reload_ui(st: Any, *, quiet: bool = False) -> None:
     ftp_res: Optional[dict] = None
 
     if quiet:
-        ftp_res = maybe_ftp_sync_before_web_load(log_prefix="[ftp_force_reload]")
+        ftp_res = maybe_ftp_sync_before_web_load(
+            log_prefix="[ftp_force_reload]", prune_orphans=True
+        )
     else:
         with st.status("Обновление данных с FTP…", expanded=True) as status:
             status.write("Шаг 1/2: синхронизация с FTP (1–5 мин)…")
-            ftp_res = maybe_ftp_sync_before_web_load(log_prefix="[ftp_force_reload]")
+            ftp_res = maybe_ftp_sync_before_web_load(
+                log_prefix="[ftp_force_reload]", prune_orphans=True
+            )
             if isinstance(ftp_res, dict):
                 st.session_state["last_ftp_sync_result"] = ftp_res
                 _errs = ftp_res.get("errors") or []
@@ -110,9 +114,11 @@ def run_ftp_force_reload_ui(st: Any, *, quiet: bool = False) -> None:
                     status.write("⚠ " + _ftp_reason)
                 else:
                     _ftp_ok = True
+                    _deleted_n = len(ftp_res.get("deleted") or [])
+                    _del_txt = f", удалено отсутствующих на FTP {_deleted_n}" if _deleted_n else ""
                     status.write(
                         f"FTP: скачано {len(ftp_res.get('downloaded') or [])} файлов, "
-                        f"без изменений {int(ftp_res.get('skipped_same_size') or 0)}"
+                        f"без изменений {int(ftp_res.get('skipped_same_size') or 0)}{_del_txt}"
                     )
             elif not _ftp_credentials_configured():
                 _ftp_reason = "FTP не настроен (BI_FTP_HOST / USER / PASSWORD)"

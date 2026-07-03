@@ -1660,8 +1660,18 @@ def _resursi_snapshot_sort_key(path) -> tuple[pd.Timestamp, int]:
     return ts, 0
 
 
-def _resursi_source_sort_key_from_name(source_file: str) -> tuple[pd.Timestamp, int]:
-    return _resursi_snapshot_sort_key(source_file)
+def _resursi_source_sort_key_from_name(source_file: str) -> tuple[bool, pd.Timestamp, int]:
+    """Ключ выбора строки при дублях по неделе: сначала не-будущие снимки, затем позже.
+
+    Ошибочно датированный будущим resursi (например, other_08-07-2026_… при сегодняшнем
+    03-07) не должен подменять реальную последнюю выгрузку. Грейс +1 день на часовые пояса.
+    """
+    ts, hhmm = _resursi_snapshot_sort_key(source_file)
+    try:
+        not_future = ts <= (pd.Timestamp.today().normalize() + pd.Timedelta(days=1))
+    except Exception:
+        not_future = True
+    return not_future, ts, hhmm
 
 
 def gdrs_dedupe_fact_prefer_latest_source(df: pd.DataFrame) -> pd.DataFrame:

@@ -336,6 +336,7 @@ def sync_ftp_to_web(
     recursive: Optional[bool] = None,
     force_redownload: Optional[bool] = None,
     use_interprocess_lock: bool = True,
+    prune_orphans: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """
     Скачивает файлы из remote_dir в web_dir с инкрементальной проверкой размера.
@@ -345,7 +346,12 @@ def sync_ftp_to_web(
     - По умолчанию обходим подпапки рекурсивно с сохранением структуры
       (например, /web/AI/msp.csv → web_dir/AI/msp.csv). Это нужно потому, что
       MSP-файлы лежат в /web/AI/, а старая плоская реализация их не подтягивала.
-    - Не удаляет локальные файлы.
+    - ``prune_orphans``: если True — после успешного полного листинга удаляет
+      локальные файлы (по ``extensions``), которых больше нет на FTP. Удаление
+      происходит ТОЛЬКО в папках, реально прочитанных с сервера, и ТОЛЬКО когда
+      обход прошёл без критических ошибок (``ok`` и пустой ``errors``) и на
+      сервере найден хотя бы один файл — чтобы сбой листинга не стёр локальные
+      данные. По умолчанию берётся из BI_FTP_PRUNE_ORPHANS (off).
 
     Returns:
         {
@@ -353,6 +359,7 @@ def sync_ftp_to_web(
           "downloaded": [...],         # реально скачанные (новые/изменённые)
           "skipped_same_size": int,    # пропущены, потому что size совпал
           "skipped": int,              # пропущены по фильтру расширений
+          "deleted": [...],            # локальные файлы, удалённые как отсутствующие на FTP
           "errors": [...],
         }
     """
@@ -361,6 +368,7 @@ def sync_ftp_to_web(
         "downloaded": [],
         "skipped_same_size": 0,
         "skipped": 0,
+        "deleted": [],           # удалены локально (нет на FTP) при prune_orphans
         "errors": [],            # критичные (connect / auth / cwd / unexpected)
         "transient_errors": [],  # per-file временные блокировки (550 на занятый файл и т.п.)
     }
@@ -399,6 +407,13 @@ def sync_ftp_to_web(
                 "yes",
                 "on",
             )
+        if prune_orphans is None:
+            prune_orphans = str(os.environ.get("BI_FTP_PRUNE_ORPHANS", "0")).strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
 
         web_dir = Path(web_dir).resolve()
         web_dir.mkdir(parents=True, exist_ok=True)
@@ -430,6 +445,10 @@ def sync_ftp_to_web(
 
             stack: List[str] = [""]
             seen_dirs: set = set()
+            # Для prune_orphans: какие папки реально прочитаны с FTP и какие файлы
+            # (rel-путь от web_dir) существуют на сервере.
+            dirs_listed_ok: set = set()
+            remote_files: set = set()
             while stack:
                 rel = stack.pop()
                 try:
@@ -449,7 +468,14 @@ def sync_ftp_to_web(
                 local_subdir = web_dir / rel if rel else web_dir
                 local_subdir.mkdir(parents=True, exist_ok=True)
 
-                entries = _list_dir(ftp)
+                try:
+                    entries = _list_dir(ftp)
+                except Exception as e:
+                    out["errors"].append(f"list {(remote_dir + '/' + rel).rstrip('/')!r}: {e}")
+                    out["ok"] = False
+                    continue
+
+                dirs_listed_ok.add(rel)
                 for name, kind, size_hint in entries:
                     if not name or name in (".", ".."):
                         continue
@@ -477,6 +503,7 @@ def sync_ftp_to_web(
 
                     local_path = local_subdir / name
                     rel_for_report = str(local_path.relative_to(web_dir)).replace("\\", "/")
+                    remote_files.add(rel_for_report)
 
                     remote_size: Optional[int] = size_hint
                     if remote_size is None:
@@ -521,6 +548,32 @@ def sync_ftp_to_web(
                         else:
                             out["errors"].append(err_line)
                             out["ok"] = False
+
+            # Зеркальная очистка: удаляем локальные файлы, которых нет на FTP.
+            # Условия безопасности: включён prune_orphans, обход без критических
+            # ошибок, на сервере найден хотя бы один файл. Удаляем только в папках,
+            # реально прочитанных с FTP (dirs_listed_ok), и только по extensions.
+            if prune_orphans and out["ok"] and not out["errors"] and remote_files:
+                for local_file in web_dir.rglob("*"):
+                    try:
+                        if not local_file.is_file():
+                            continue
+                        low = local_file.name.lower()
+                        if not any(low.endswith(ext) for ext in extensions):
+                            continue
+                        rel_file = str(local_file.relative_to(web_dir)).replace("\\", "/")
+                        parent_rel = str(local_file.parent.relative_to(web_dir)).replace("\\", "/")
+                        if parent_rel == ".":
+                            parent_rel = ""
+                        if parent_rel not in dirs_listed_ok:
+                            continue
+                        if rel_file in remote_files:
+                            continue
+                        local_file.unlink()
+                        out["deleted"].append(rel_file)
+                        _log(f"Удалён локальный файл (нет на FTP): {rel_file!r}")
+                    except Exception as e:
+                        out["errors"].append(f"prune {local_file!s}: {e}")
         finally:
             try:
                 if ftp:

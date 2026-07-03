@@ -265,8 +265,14 @@ def _ftp_credentials_configured() -> bool:
     return bool(os.environ.get("BI_FTP_HOST") and os.environ.get("BI_FTP_USER"))
 
 
-def run_ftp_sync_to_web(*, log_prefix: str = "[auto_ingest]") -> dict | None:
-    """Скачать свежие CSV/JSON с FTP в локальный ``web/`` (общая функция для всех окружений)."""
+def run_ftp_sync_to_web(
+    *, log_prefix: str = "[auto_ingest]", prune_orphans: bool | None = None
+) -> dict | None:
+    """Скачать свежие CSV/JSON с FTP в локальный ``web/`` (общая функция для всех окружений).
+
+    ``prune_orphans=True`` — зеркальный режим: локальные файлы, которых нет на FTP,
+    удаляются (безопасно, только при полном успешном листинге). См. sync_ftp_to_web.
+    """
     if not _ftp_credentials_configured():
         safe_stderr_log(f"{log_prefix} FTP host/user not set → пропуск FTP-sync")
         return None
@@ -275,8 +281,15 @@ def run_ftp_sync_to_web(*, log_prefix: str = "[auto_ingest]") -> dict | None:
         from web_loader import get_web_dir
 
         web_dir = get_web_dir()
-        result = sync_ftp_to_web(web_dir, use_interprocess_lock=False)
+        result = sync_ftp_to_web(
+            web_dir, use_interprocess_lock=False, prune_orphans=prune_orphans
+        )
         log_ftp_sync_errors(result, log_fn=safe_stderr_log, log_prefix=log_prefix)
+        _deleted = result.get("deleted") if isinstance(result, dict) else None
+        if _deleted:
+            safe_stderr_log(
+                f"{log_prefix} prune: удалено локальных файлов (нет на FTP): {len(_deleted)}"
+            )
         return result
     except Exception as e:
         safe_stderr_log(f"{log_prefix} ftp_sync exception: {e}")
@@ -289,12 +302,18 @@ def _do_ftp_sync() -> dict | None:
     return run_ftp_sync_to_web(log_prefix="[auto_ingest]")
 
 
-def maybe_ftp_sync_before_web_load(*, log_prefix: str = "[web_load]") -> dict | None:
-    """FTP перед ``load_all_from_web()`` — local / dev / release читают один источник."""
+def maybe_ftp_sync_before_web_load(
+    *, log_prefix: str = "[web_load]", prune_orphans: bool | None = None
+) -> dict | None:
+    """FTP перед ``load_all_from_web()`` — local / dev / release читают один источник.
+
+    ``prune_orphans=True`` — зеркальный режим (для явной перезагрузки по кнопке):
+    FTP становится единственным источником истины, локальные «сироты» удаляются.
+    """
     _maybe_secrets_to_env()
     if not _flag("BI_ANALYTICS_AUTO_FTP_ON_START", default="1"):
         return None
-    return run_ftp_sync_to_web(log_prefix=log_prefix)
+    return run_ftp_sync_to_web(log_prefix=log_prefix, prune_orphans=prune_orphans)
 
 
 def _do_load_all() -> dict | None:
