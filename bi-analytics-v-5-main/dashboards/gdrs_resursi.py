@@ -1652,11 +1652,46 @@ def load_plan_aggregate(
                 ["plan_workers", "plan_equipment"]
             ].sum(min_count=1)
         )
+        # project_name/contractor_name — быстрым cython-путём (first). Склейку
+        # contract_name считаем отдельно на дедуплицированных парах (pid, cid, имя):
+        # раньше groupby.agg(lambda) по всему кадру шёл pure-python путём (основная
+        # задержка ГДРС — сотни тысяч _chop по группам). Семантика прежняя:
+        # " · ".join(sorted(уникальные непустые имена договоров группы)).
         meta = df.groupby(["project_id", "contractor_id"], dropna=False, as_index=False).agg(
             project_name=("project_name", "first"),
             contractor_name=("contractor_name", "first"),
-            contract_name=("__cn__", lambda s: " · ".join(sorted({x for x in s if x}))),
         )
+        _cn_src = df.loc[
+            df["__cn__"] != "", ["project_id", "contractor_id", "__cn__"]
+        ].drop_duplicates()
+        if _cn_src.empty:
+            meta["contract_name"] = ""
+        else:
+            # Склейка одним O(n) проходом по отсортированному numpy вместо
+            # groupby.agg(lambda): последний перекладывает работу на pure-python
+            # путь pandas (разбиение на группы, _chop/__iter__ на КАЖДУЮ группу —
+            # сотни тысяч вызовов). Данные уже уникальны и отсортированы по имени,
+            # поэтому " · ".join непрерывного среза = sorted(unique) исходной версии.
+            _cn_src = _cn_src.sort_values(["project_id", "contractor_id", "__cn__"])
+            _pid = _cn_src["project_id"].to_numpy()
+            _cid = _cn_src["contractor_id"].to_numpy()
+            _cnv = _cn_src["__cn__"].to_numpy()
+            _kp, _kc, _vals = [], [], []
+            _n = len(_cnv)
+            _i = 0
+            while _i < _n:
+                _j = _i + 1
+                while _j < _n and _pid[_j] == _pid[_i] and _cid[_j] == _cid[_i]:
+                    _j += 1
+                _kp.append(_pid[_i])
+                _kc.append(_cid[_i])
+                _vals.append(" · ".join(_cnv[_i:_j]))
+                _i = _j
+            _cn_join = pd.DataFrame(
+                {"project_id": _kp, "contractor_id": _kc, "contract_name": _vals}
+            )
+            meta = meta.merge(_cn_join, on=["project_id", "contractor_id"], how="left")
+            meta["contract_name"] = meta["contract_name"].fillna("")
         out = meta.merge(plan, on=["project_id", "contractor_id"], how="left")
         return out[
             [
@@ -1728,17 +1763,27 @@ def load_plan_aggregate(
         # пустые строки маскируем в NaN, чтобы last() вернул последнее НЕпустое имя.
         cn = dog_all["contract_name"].astype("object")
         dog_all["contract_name"] = cn.where(cn.map(lambda v: isinstance(v, str) and v.strip() != ""), np.nan)
+        # project_name/contractor_name: раньше через python-функцию _first_nonempty →
+        # pure-python groupby по всему кросс-файловому кадру (десятки секунд). Маскируем
+        # пустые/nan в NaN и берём cython first() (пропускает NaN) — «первое непустое
+        # в порядке снапшотов» сохраняется, т.к. dog_all отсортирован по __order__.
+        for _nc in ("project_name", "contractor_name"):
+            _stripped = dog_all[_nc].astype(str).str.strip()
+            _empty = _stripped.eq("") | _stripped.str.casefold().isin(["nan", "none"])
+            dog_all[_nc] = dog_all[_nc].astype("object").where(~_empty, np.nan)
         dog_all = (
             dog_all.groupby(["project_id", "contractor_id"], dropna=False, as_index=False)
             .agg(
-                project_name=("project_name", _first_nonempty),
-                contractor_name=("contractor_name", _first_nonempty),
+                project_name=("project_name", "first"),
+                contractor_name=("contractor_name", "first"),
                 contract_name=("contract_name", "last"),
                 plan_workers=("plan_workers", "last"),
                 plan_equipment=("plan_equipment", "last"),
             )
         )
         dog_all["contract_name"] = dog_all["contract_name"].where(dog_all["contract_name"].notna(), "")
+        for _nc in ("project_name", "contractor_name"):
+            dog_all[_nc] = dog_all[_nc].where(dog_all[_nc].notna(), "")
     if not sprav_all.empty:
         sprav_all = sprav_all.sort_values("__order__")
         sprav_all = (

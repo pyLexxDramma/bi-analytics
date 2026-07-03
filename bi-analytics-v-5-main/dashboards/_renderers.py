@@ -16875,7 +16875,14 @@ def _build_rd_work_doc_detail_table(
             )
 
     extra_rows: list[dict[str, Any]] = []
-    for _i, row in csv_df.iterrows():
+    # Статус-дисплей считаем векторно по всей колонке один раз, а не создаём
+    # pd.Series([...]) на каждую строку внутри цикла (десятки тысяч Series =
+    # основная задержка «Рабочей документации»).
+    if pc.get("status") and pc["status"] in csv_df.columns:
+        _status_disp_list = _rd_plan_status_display_series(csv_df[pc["status"]]).tolist()
+    else:
+        _status_disp_list = None
+    for _pos, (_i, row) in enumerate(csv_df.iterrows()):
         proj = _rd_csv_cell_str(row.get(pc["proj"], "")) if pc.get("proj") else ""
         cipher = _rd_csv_cell_str(row.get(pc["code"], "")) if pc.get("code") else ""
         sect = _rd_csv_cell_str(row.get(pc["name"], "")) if pc.get("name") else ""
@@ -16896,8 +16903,8 @@ def _build_rd_work_doc_detail_table(
         has_tessa = bool(full_c and full_c.casefold() in internal_ids)
         _raw_st = row.get(pc["status"], "") if pc.get("status") and pc["status"] in row.index else ""
         csv_st = _rd_csv_cell_str(
-            _rd_plan_status_display_series(pd.Series([_raw_st])).iloc[0]
-            if pc.get("status")
+            _status_disp_list[_pos]
+            if _status_disp_list is not None
             else ""
         )
         if has_tessa or (
@@ -42091,14 +42098,13 @@ def _r23_12_build_forecast_date_lookup() -> dict[str, str]:
     if not card_col or not opt_col or not role_col or not done_col:
         return {}
 
-    def _match_designer(opt: str, role: str) -> bool:
-        o = str(opt or "").strip().casefold()
-        r = str(role or "").strip().casefold()
-        return ("подписан" in o) and ("проектировщ" in r)
-
     ts = pd.to_datetime(t[done_col], errors="coerce", dayfirst=True)
-    ok = t[[card_col, opt_col, role_col]].apply(
-        lambda row: _match_designer(row[opt_col], row[role_col]), axis=1
+    # Векторно вместо apply(axis=1) (построчный проход, десятки тысяч строк):
+    # критерий — «подписан» в OptionCaption И «проектировщ» в RoleName.
+    _opt_cf = t[opt_col].astype(str).str.casefold()
+    _role_cf = t[role_col].astype(str).str.casefold()
+    ok = _opt_cf.str.contains("подписан", na=False, regex=False) & _role_cf.str.contains(
+        "проектировщ", na=False, regex=False
     )
     sub = t.loc[ok, [card_col]].copy()
     sub["_ts"] = ts[ok]
