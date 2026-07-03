@@ -49,6 +49,7 @@ from __future__ import annotations
 import functools
 import json
 import re
+from bisect import bisect_right
 from datetime import datetime as _dt
 from dataclasses import dataclass
 from pathlib import Path
@@ -878,8 +879,8 @@ def build_dogovor_contractor_id_lookup(
                     by_proj.setdefault((pid, nn), cid)
 
     if dogovor_records is not None:
-        for recs in dogovor_records.values():
-            _consume(load_plan_from_dogovor(records=recs, snapshot_date=None))
+        for src, recs in dogovor_records.items():
+            _consume(load_plan_from_dogovor(records=recs, snapshot_date=None, cache_key=str(src)))
     else:
         for p in dogovor_paths:
             _consume(load_plan_from_dogovor(Path(p), snapshot_date=None))
@@ -912,8 +913,8 @@ def build_dogovor_project_id_lookup(
                 by_pair.setdefault((pn, cn), pid)
 
     if dogovor_records is not None:
-        for recs in dogovor_records.values():
-            _consume(load_plan_from_dogovor(records=recs, snapshot_date=None))
+        for src, recs in dogovor_records.items():
+            _consume(load_plan_from_dogovor(records=recs, snapshot_date=None, cache_key=str(src)))
     else:
         for p in dogovor_paths:
             _consume(load_plan_from_dogovor(Path(p), snapshot_date=None))
@@ -1370,26 +1371,84 @@ def _dogovor_file_date(path) -> Optional[pd.Timestamp]:
     return _source_file_date(path)
 
 
-def load_plan_from_dogovor(
-    path: Path | str | None = None,
-    *,
-    records: list[dict] | None = None,
-    snapshot_date: Optional[pd.Timestamp] = None,
-) -> pd.DataFrame:
-    """Из 1с_*_Dogovor.json (по состоянию на `snapshot_date`) → DataFrame."""
-    if records is not None:
-        data = records
-    else:
-        data = _safe_json(Path(path))
-    if not isinstance(data, list):
-        return pd.DataFrame(
-            columns=[
-                "project_id", "contractor_id", "project_name", "contractor_name",
-                "contract_name", "contract_number", "plan_workers", "plan_equipment",
-                "date_start", "date_end", "date_termination",
-            ]
-        )
+def _prep_history(history: object):
+    """Однократный разбор истории плана в вид, пригодный для быстрого snapshot-запроса.
+
+    Возвращает:
+      - None — истории нет;
+      - ("s", value) — скаляр/строка (value может быть None при неразборе строки);
+      - ("h", ts_list, cnt_list) — отсортированные по дате (asc) списки Timestamp и float.
+
+    Логика идентична прежней (внутри ``_snapshot_history``), но выполняется один раз
+    на файл, а не заново для каждой из snapshot-дат.
+    """
+    if history is None:
+        return None
+    if isinstance(history, (int, float)):
+        return ("s", float(history))
+    if isinstance(history, str):
+        return ("s", _coerce_int(history))
+    if not isinstance(history, list) or not history:
+        return None
+    items = []
+    for item in history:
+        if not isinstance(item, dict):
+            continue
+        d_raw = item.get("Дата") or item.get("дата")
+        n_raw = item.get("Количество") or item.get("количество")
+        d = _fast_parse_date(d_raw)
+        n = _coerce_int(n_raw)
+        if d is None or n is None:
+            continue
+        items.append((d, n))
+    if not items:
+        return None
+    items.sort(key=lambda x: x[0])
+    ts_list = [d for d, _ in items]
+    cnt_list = [float(n) for _, n in items]
+    return ("h", ts_list, cnt_list)
+
+
+def _snapshot_from_prepped(prepped, target_date: Optional[pd.Timestamp]) -> Optional[float]:
+    """Значение плана на дату из предразобранной истории (см. ``_prep_history``).
+
+    Точный аналог ``_snapshot_history``: для списка — последнее значение с датой
+    ``<= target_date`` (или последнее при ``target_date is None``).
+    """
+    if prepped is None:
+        return None
+    if prepped[0] == "s":
+        return prepped[1]
+    ts_list = prepped[1]
+    cnt_list = prepped[2]
+    if not ts_list:
+        return None
+    if target_date is None:
+        return cnt_list[-1]
+    idx = bisect_right(ts_list, target_date)
+    if idx > 0:
+        return cnt_list[idx - 1]
+    return None
+
+
+# Кэш «базы» файла Dogovor: статические колонки + разобранные даты + предразобранные
+# истории плана. Ключ — (id(records), len). records приходят из кэшированного
+# json_records_by_source, поэтому ссылки стабильны в пределах версии БД. База не
+# зависит от snapshot_date, поэтому переиспользуется для всех 6 снапшотов + lookup'ов.
+_DOG_BASE_CACHE: dict[tuple, tuple] = {}
+
+_DOGOVOR_EMPTY_COLS = [
+    "project_id", "contractor_id", "project_name", "contractor_name",
+    "contract_name", "contract_number", "plan_workers", "plan_equipment",
+    "date_start", "date_end", "date_termination",
+]
+
+
+def _dog_build_base(data: list) -> tuple:
+    """Snapshot-независимый разбор файла Dogovor → (static_df, hist_workers, hist_equip)."""
     rows = []
+    hist_w = []
+    hist_e = []
     for r in data:
         if not isinstance(r, dict):
             continue
@@ -1401,21 +1460,61 @@ def load_plan_from_dogovor(
                 "contractor_name": str(r.get("Наименование_Контрагента") or "").strip(),
                 "contract_name": str(r.get("Наименование_Договора") or "").strip(),
                 "contract_number": str(r.get("Номер_Договора") or "").strip(),
-                "plan_workers": _snapshot_history(r.get("Количество_Людей"), snapshot_date),
-                "plan_equipment": _snapshot_history(r.get("Количество_Техники"), snapshot_date),
-                # Сырые строки — парсим колонку векторно один раз ниже (без 2× to_datetime на строку).
                 "date_start": r.get("Дата_Начала_Договора"),
                 "date_end": r.get("Дата_Окончания_Договора"),
                 "date_termination": _contract_termination_date_raw(r),
             }
         )
+        hist_w.append(_prep_history(r.get("Количество_Людей")))
+        hist_e.append(_prep_history(r.get("Количество_Техники")))
     df = pd.DataFrame(rows)
     if df.empty:
-        return df
+        return df, [], []
     df = _dearrow_object_columns(df)
     df["date_start"] = pd.to_datetime(df["date_start"], errors="coerce", utc=True).dt.tz_localize(None)
     df["date_end"] = pd.to_datetime(df["date_end"], errors="coerce", utc=True).dt.tz_localize(None)
     df["date_termination"] = pd.to_datetime(df["date_termination"], errors="coerce", utc=True).dt.tz_localize(None)
+    return df, hist_w, hist_e
+
+
+def load_plan_from_dogovor(
+    path: Path | str | None = None,
+    *,
+    records: list[dict] | None = None,
+    snapshot_date: Optional[pd.Timestamp] = None,
+    cache_key: object = None,
+) -> pd.DataFrame:
+    """Из 1с_*_Dogovor.json (по состоянию на `snapshot_date`) → DataFrame.
+
+    ``cache_key`` — стабильный идентификатор источника (имя файла/ключ records_map).
+    st.cache_data отдаёт свежие списки records при каждом обращении, поэтому
+    id(records) как ключ бесполезен между снапшотами; при наличии cache_key базу
+    файла (snapshot-независимую) строим один раз на источник, а не заново под
+    каждую из 6 snapshot-дат.
+    """
+    key = None
+    if records is not None:
+        data = records
+        if cache_key is not None and isinstance(records, list):
+            key = (cache_key, len(records))
+    else:
+        data = _safe_json(Path(path))
+    if not isinstance(data, list):
+        return pd.DataFrame(columns=_DOGOVOR_EMPTY_COLS)
+    base = _DOG_BASE_CACHE.get(key) if key is not None else None
+    if base is None:
+        base = _dog_build_base(data)
+        if key is not None:
+            if len(_DOG_BASE_CACHE) > 200:
+                _DOG_BASE_CACHE.clear()
+            _DOG_BASE_CACHE[key] = base
+    base_df, hist_w, hist_e = base
+    if base_df is None or base_df.empty:
+        return base_df if base_df is not None else pd.DataFrame(columns=_DOGOVOR_EMPTY_COLS)
+    df = base_df.copy()
+    # План на дату — из предразобранных историй (без повторного парсинга дат/сортировки).
+    df["plan_workers"] = [_snapshot_from_prepped(h, snapshot_date) for h in hist_w]
+    df["plan_equipment"] = [_snapshot_from_prepped(h, snapshot_date) for h in hist_e]
     if snapshot_date is not None:
         # Договоры с реальной Дата_Окончания, истёкшей до даты снапшота, не действуют:
         # их «Количество_Людей» нередко обрывается без закрывающего 0, и snapshot тянет
@@ -1729,7 +1828,9 @@ def load_plan_aggregate(
 
     def _per_file_dog(p: Path | str, *, records: list[dict] | None = None) -> pd.DataFrame:
         if records is not None:
-            df = load_plan_from_dogovor(records=records, snapshot_date=snapshot_date)
+            df = load_plan_from_dogovor(
+                records=records, snapshot_date=snapshot_date, cache_key=str(p)
+            )
         else:
             df = load_plan_from_dogovor(Path(p), snapshot_date=snapshot_date)
         if df is None or df.empty:
