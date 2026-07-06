@@ -3471,8 +3471,26 @@ def _apply_finance_bar_label_layout(
     return fig
 
 
+def _gdrs_pie_contractors_chart_df(pie_df: pd.DataFrame, *, top_n: int = 10) -> pd.DataFrame:
+    """Топ-N контрагентов для pie; остальное — один сектор «Прочие (k)»."""
+    if pie_df is None or pie_df.empty:
+        return pie_df
+    df = pie_df.sort_values("Факт", ascending=False).reset_index(drop=True)
+    if len(df) <= top_n:
+        return df.copy()
+    top = df.iloc[:top_n].copy()
+    rest = df.iloc[top_n:]
+    other_val = float(pd.to_numeric(rest["Факт"], errors="coerce").fillna(0).sum())
+    if other_val <= 0:
+        return top
+    other_row = pd.DataFrame(
+        [{"Контрагент": f"Прочие ({len(rest)})", "Факт": other_val}]
+    )
+    return pd.concat([top, other_row], ignore_index=True)
+
+
 def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -> go.Figure:
-    """Круговая «распределение по контрагентам»: абсолют и % на секторе или выноска."""
+    """Круговая «распределение по контрагентам»: топ-N + «Прочие», легенда снизу, % на всех секторах."""
     from dashboards.gdrs_theme import get_gdrs_theme
 
     _th = get_gdrs_theme(theme)
@@ -3480,10 +3498,8 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
     n = int(len(df))
     values = pd.to_numeric(df["Факт"], errors="coerce").fillna(0).astype(float).tolist()
     total_v = float(sum(values)) if values else 0.0
-    _txt_in = max(14, min(20, 22 - n // 2))
-    _txt_out = max(13, _txt_in - 1)
-    _callout_frac = 0.085
-    _canvas = 1100 if theme == "light" else 1000
+    _inside_min_frac = 0.08
+    _has_outside = False
     slice_text: list[str] = []
     slice_pos: list[str] = []
     slice_pull: list[float] = []
@@ -3494,18 +3510,33 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
             slice_pull.append(0.0)
             continue
         frac = float(val) / total_v
-        abs_txt = f"{int(round(val))}"
         pct_txt = f"{frac * 100:.1f}%" if 0 < frac < 0.03 else f"{frac * 100:.0f}%"
-        label_txt = f"{abs_txt}<br>{pct_txt}"
-        if frac < _callout_frac:
-            slice_text.append(label_txt)
-            slice_pos.append("outside")
-            slice_pull.append(0.05 if frac < 0.03 else 0.03)
-        else:
-            slice_text.append(label_txt)
+        if frac >= _inside_min_frac:
+            abs_txt = f"{int(round(val))}"
+            slice_text.append(f"{abs_txt}<br>{pct_txt}")
             slice_pos.append("inside")
             slice_pull.append(0.0)
+        else:
+            slice_text.append(pct_txt)
+            slice_pos.append("outside")
+            slice_pull.append(0.05 if frac < 0.03 else 0.03)
+            _has_outside = True
     _labels = df["Контрагент"].astype(str).tolist()
+    _scale = 2.0
+    _canvas = int((1100 if theme == "light" else 1000) * _scale)
+    _legend_fs = int(CHART_LEGEND_FONT_SIZE * _scale)
+    _txt_in = int(max(15, min(21, 23 - n // 2)) * _scale)
+    _txt_out = int(max(13, min(21, 23 - n // 2) - 1) * _scale)
+    _pie_layout = pie_layout_for_bottom_legend(
+        n,
+        font_size=_legend_fs,
+        items_per_row=4,
+        outside_labels=_has_outside,
+    )
+    _b_margin = int(_pie_layout["margin_bottom"] * _scale)
+    _fig_h = int((520 + int(_pie_layout["fig_extra_h"]) + (40 if _has_outside else 0)) * _scale)
+    _dx = _pie_layout["domain_x"]
+    _dy = _pie_layout["domain_y"]
     fig = go.Figure(
         data=[
             go.Pie(
@@ -3524,27 +3555,21 @@ def _gdrs_pie_contractors_figure(pie_df: pd.DataFrame, *, theme: str = "dark") -
                     "<b>%{label}</b><br>Факт: %{value}<br>%{percent}<extra></extra>"
                 ),
                 marker=dict(line=dict(color=_th.pie_line, width=1)),
+                hole=0.28,
                 automargin=True,
             )
         ]
     )
-    _pie_layout = pie_layout_for_bottom_legend(
-        n, font_size=CHART_LEGEND_FONT_SIZE, items_per_row=3, outside_labels=True
-    )
-    _b_margin = int(_pie_layout["margin_bottom"])
-    _fig_h = _canvas + int(_pie_layout["fig_extra_h"])
-    _dx = _pie_layout["domain_x"]
-    _dy = _pie_layout["domain_y"]
     fig.update_layout(
         width=_canvas,
         height=_fig_h,
-        uniformtext=dict(minsize=11, mode="hide"),
+        uniformtext=dict(minsize=int(10 * _scale), mode="show"),
         legend=standard_pie_chart_legend(
-            font=dict(size=CHART_LEGEND_FONT_SIZE, color=_th.pie_legend),
+            font=dict(size=_legend_fs, color=_th.pie_legend),
             y=_pie_layout["legend_y"],
             itemsizing="constant",
         ),
-        margin=dict(l=40, r=40, t=int(_pie_layout["margin_top"]), b=_b_margin),
+        margin=dict(l=int(56 * _scale), r=int(56 * _scale), t=int(_pie_layout["margin_top"] * _scale), b=_b_margin),
         showlegend=True,
         plot_bgcolor=_th.chart_bg,
         paper_bgcolor=_th.chart_bg,
@@ -25434,6 +25459,41 @@ def _gdrs_pie_distribution_display(pie_df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _gdrs_render_contractors_pie_block(
+    st,
+    chart_df: pd.DataFrame,
+    *,
+    unit_gen: str,
+    theme: str,
+    key_suffix: str = "",
+) -> None:
+    """Круговая «Распределение … по контрагентам» (топ-10 + «Прочие»)."""
+    from dashboards.gdrs_theme import gdrs_render_subheader
+
+    gdrs_render_subheader(st, f"Распределение {unit_gen} по контрагентам", theme=theme)
+    pie_source = chart_df[chart_df["Факт"] > 0].copy()
+    pie_df = pie_source[["Контрагент", "Факт"]].copy()
+    if pie_df.empty:
+        st.info("Нет фактических данных для круговой диаграммы.")
+        return
+    _pie_full_n = int(len(pie_df))
+    _pie_chart_df = _gdrs_pie_contractors_chart_df(pie_df)
+    if _pie_full_n > 10:
+        st.caption(
+            "Диаграмма: топ-10 контрагентов по факту; остальные объединены в «Прочие». "
+            "Полный список — в таблице «Распределение …» ниже на странице."
+        )
+    try:
+        fig3 = _gdrs_pie_contractors_figure(_pie_chart_df, theme=theme)
+        _gdrs_st_plotly_chart(
+            st,
+            fig3,
+            key=f"gdrs_pie_{key_suffix}" if key_suffix else None,
+        )
+    except Exception as _e:
+        st.warning(f"Plotly недоступен: {_e}")
+
+
 def _gdrs_deviation_vs_plan_text_and_color(plan_v, fact_v) -> tuple[str, str]:
     """Подпись отклонения (факт − план): факт < план — красный и «−», иначе зелёный и «+»."""
     p = float(pd.to_numeric(plan_v, errors="coerce") or 0)
@@ -26212,6 +26272,15 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
     else:
         st.info("Нет данных по проектам.")
 
+    st.markdown("---")
+    _gdrs_render_contractors_pie_block(
+        st,
+        chart_df,
+        unit_gen=_unit_gen,
+        theme=theme,
+        key_suffix=_gdrs_key_suffix,
+    )
+
     _gdrs_tbl_name, _gdrs_tbl_dates = report_title_parts(
         f"ГДРС ({unit})",
         period_label,
@@ -26505,17 +26574,10 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
         )
 
     st.markdown("---")
-    gdrs_render_subheader(st, f"Распределение {_unit_gen} по контрагентам", theme=theme)
     pie_source = chart_df[chart_df["Факт"] > 0].copy()
-    pie_df = pie_source[["Контрагент", "Факт"]].copy()
-    if pie_df.empty:
-        st.info("Нет фактических данных для круговой диаграммы.")
+    if pie_source.empty:
+        st.info("Нет фактических данных для таблицы распределения.")
     else:
-        try:
-            fig3 = _gdrs_pie_contractors_figure(pie_df, theme=theme)
-            _gdrs_st_plotly_chart(st, fig3)
-        except Exception as _e:
-            st.warning(f"Plotly недоступен: {_e}")
         _gdrs_render_plan_fact_summary_table(
             st,
             _gdrs_pie_distribution_display(pie_source),
