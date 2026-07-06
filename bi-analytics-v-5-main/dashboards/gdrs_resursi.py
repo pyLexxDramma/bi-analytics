@@ -277,6 +277,11 @@ _NAME_LEGAL_RE = re.compile(
     r"\b(ооо|ао|зао|пао|оао|ип|оу|ук|нко|спк|кфх|апсх|нпф|чоп|снт|тсж)\b",
     re.IGNORECASE,
 )
+# Хвост «ИНН …» / «ОГРН …» в Kontr без скобок: «СТРОЙСЕРВИС ООО ИНН5009105977».
+_NAME_REG_ID_RE = re.compile(
+    r"\b(?:инн|огрн|кпп)\s*[:№#]?\s*\d{9,15}\b",
+    re.IGNORECASE,
+)
 
 
 def normalize_name(s: object) -> str:
@@ -289,6 +294,8 @@ def normalize_name(s: object) -> str:
       «АЛЬФА С ООО»                → «альфас»
       «ООО "СК Сети"»              → «сксети»
       «АО Марафон»                 → «марафон»
+      «СТРОЙСЕРВИС ООО ИНН5009105977» → «стройсервис»
+      «ПЛАСТСЕРВИС ООО (ИНН 3316012350)» → «пластсервис»
     """
     if s is None:
         return ""
@@ -302,6 +309,7 @@ def normalize_name(s: object) -> str:
 def _normalize_name_cached(txt: str) -> str:
     txt = re.sub(r"\(.*?\)", " ", txt)
     txt = txt.replace("«", " ").replace("»", " ").replace('"', " ").replace("'", " ")
+    txt = _NAME_REG_ID_RE.sub(" ", txt)
     # «ООО_» / «ООО.» — подчёркивание/точка слитно с ОПФ ломают \\b у _NAME_LEGAL_RE.
     txt = re.sub(r"_+", " ", txt)
     txt = _NAME_LEGAL_RE.sub(" ", txt)

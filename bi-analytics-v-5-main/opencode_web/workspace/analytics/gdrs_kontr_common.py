@@ -14,13 +14,19 @@ _NAME_LEGAL_RE = re.compile(
     r"\b(ооо|ао|зао|пао|оао|ип|оу|ук|нко|спк|кфх|апсх|нпф|чоп|снт|тсж)\b",
     re.IGNORECASE,
 )
+_NAME_REG_ID_RE = re.compile(
+    r"\b(?:инн|огрн|кпп)\s*[:№#]?\s*\d{9,15}\b",
+    re.IGNORECASE,
+)
 
 
 def normalize_name(s: object) -> str:
     t = str(s or "").strip()
     if not t:
         return ""
+    t = re.sub(r"\(.*?\)", " ", t)
     t = re.sub(r"_+", " ", t)
+    t = _NAME_REG_ID_RE.sub(" ", t)
     t = t.casefold()
     t = _NAME_LEGAL_RE.sub(" ", t)
     t = _NAME_NOISE_RE.sub(" ", t)
