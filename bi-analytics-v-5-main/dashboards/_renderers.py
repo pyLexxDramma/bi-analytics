@@ -25878,6 +25878,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
         gdrs_agg_label_to_key,
         gdrs_agg_select_options,
         gdrs_filter_fact_by_months,
+        gdrs_filter_fact_resursi_source_for_periods,
         gdrs_matrix_show_week_columns,
         gdrs_matrix_week_count,
         gdrs_matrix_week_labels,
@@ -26075,6 +26076,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
     date_from = _pd.to_datetime(date_from)
     date_to = _pd.to_datetime(date_to)
     long_fact_period = gdrs_filter_fact_by_months(long_fact, _sel_periods)
+    long_fact_period = gdrs_filter_fact_resursi_source_for_periods(long_fact_period, _sel_periods)
     if (
         long_fact is not None
         and not long_fact.empty

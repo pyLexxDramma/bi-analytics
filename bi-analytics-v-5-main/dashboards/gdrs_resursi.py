@@ -1850,6 +1850,9 @@ def load_plan_aggregate(
     и агрегировать в единую таблицу.
 
     Алгоритм:
+        - Dogovor: **всегда последний файл выгрузки** (max дата в имени); период фильтра
+          задаёт только snapshot_date для полей «Дата»/«Количество» внутри JSON и сроков
+          договора — не отбор файлов по дате в имени.
         - Для каждого Dogovor.json берём snapshot на дату snapshot_date.
         - Внутри файла план по (project_id, contractor_id) суммируется по РАЗНЫМ
           договорам, но дубли одного договора и его доп.соглашений (ДС) схлопываются
@@ -1947,10 +1950,25 @@ def load_plan_aggregate(
             fr["__order__"] = i
         return pd.concat([fr for _, fr in items], ignore_index=True) if items else pd.DataFrame()
 
+    def _latest_dogovor_records_map(records_map: dict[str, list[dict]]) -> dict[str, list[dict]]:
+        """План Dogovor: всегда последний файл выгрузки (дата в имени max)."""
+        if not records_map:
+            return {}
+        latest = max(records_map.keys(), key=lambda s: _dogovor_snapshot_sort_key(s))
+        return {latest: records_map[latest]}
+
+    def _latest_dogovor_paths(paths: Iterable[Path | str]) -> list:
+        lst = list(paths)
+        if not lst:
+            return []
+        return [max(lst, key=lambda p: _dogovor_snapshot_sort_key(p))]
+
     if dogovor_records is not None:
-        dog_all = _ordered_with_index([], _per_file_dog, records_map=dogovor_records)
+        dog_all = _ordered_with_index(
+            [], _per_file_dog, records_map=_latest_dogovor_records_map(dogovor_records)
+        )
     else:
-        dog_all = _ordered_with_index(dogovor_paths, _per_file_dog)
+        dog_all = _ordered_with_index(_latest_dogovor_paths(dogovor_paths), _per_file_dog)
     if sprav_records is not None:
         sprav_all = _ordered_with_index([], _per_file_sprav, records_map=sprav_records)
     else:
@@ -3296,6 +3314,31 @@ def gdrs_filter_fact_by_months(
     pset = set(plist)
     mask = fact["date"].dt.to_period("M").isin(pset)
     return fact[mask].copy()
+
+
+def gdrs_filter_fact_resursi_source_for_periods(
+    long_fact: pd.DataFrame,
+    periods: Iterable[pd.Period],
+) -> pd.DataFrame:
+    """Факт СКУД: для каждого месяца фильтра — resursi с max датой в имени файла за этот месяц."""
+    if long_fact is None or long_fact.empty or "__source_file" not in long_fact.columns:
+        return long_fact
+    plist = list(periods)
+    if not plist:
+        return long_fact
+    allowed: set[str] = set()
+    for per in plist:
+        candidates: list[tuple[tuple, str]] = []
+        for src in long_fact["__source_file"].astype(str).unique():
+            fd = _source_file_date(src)
+            if fd is not None and pd.notna(fd) and fd.to_period("M") == per:
+                candidates.append((_resursi_snapshot_sort_key(src), src))
+        if candidates:
+            candidates.sort(key=lambda x: x[0])
+            allowed.add(candidates[-1][1])
+    if not allowed:
+        return long_fact
+    return long_fact[long_fact["__source_file"].astype(str).isin(allowed)].copy()
 
 
 def gdrs_contractor_filter_options(
