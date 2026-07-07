@@ -1558,7 +1558,10 @@ def load_plan_from_dogovor(
         de = df["date_end"]
         ds = df["date_start"]
         dt = df["date_termination"]
-        expired = de.notna() & (de > sentinel) & (de.dt.normalize() < snap)
+        # Истёкшие: date_end раньше начала календарной недели снапшота (как в 1С:
+        # план действует до недели окончания договора включительно, не до конца недели).
+        week_start = _gdrs_plan_expiry_week_start(snap)
+        expired = de.notna() & (de > sentinel) & (de.dt.normalize() < week_start)
         not_started = ds.notna() & (ds > sentinel) & (ds.dt.normalize() > snap)
         terminated = dt.notna() & (dt > sentinel) & (dt.dt.normalize() <= snap)
         drop = expired | not_started | terminated
@@ -2438,6 +2441,47 @@ def _gdrs_calendar_week_num(day: pd.Timestamp, month_lo: pd.Timestamp) -> int:
     return min(max((d - 1) // 7 + 1, 1), 6)
 
 
+def _gdrs_plan_expiry_week_start(snap: pd.Timestamp) -> pd.Timestamp:
+    """Первый день календарной недели месяца для проверки date_end (1–7, 8–14, …)."""
+    d = pd.Timestamp(snap).normalize()
+    start_day = ((int(d.day) - 1) // 7) * 7 + 1
+    return pd.Timestamp(d.year, d.month, start_day)
+
+
+def _gdrs_calendar_days_in_week(
+    date_from: pd.Timestamp,
+    date_to: pd.Timestamp,
+    week_num: int,
+) -> int:
+    """Число календарных дней N-й недели в периоде (пересечение с date_from..date_to)."""
+    lo = pd.Timestamp(date_from).normalize()
+    hi = pd.Timestamp(date_to).normalize()
+    wn = int(week_num)
+    if wn < 1 or wn > 6 or hi < lo:
+        return 0
+    if _gdrs_single_calendar_month(lo, hi):
+        month_last = int((lo + pd.offsets.MonthEnd(0)).day)
+        start_day = (wn - 1) * 7 + 1
+        if start_day > month_last:
+            return 0
+        end_day = min(wn * 7, month_last)
+        week_lo = pd.Timestamp(lo.year, lo.month, start_day)
+        week_hi = pd.Timestamp(lo.year, lo.month, end_day)
+        eff_lo = max(week_lo, lo)
+        eff_hi = min(week_hi, hi)
+        if eff_hi < eff_lo:
+            return 0
+        return int((eff_hi - eff_lo).days) + 1
+    grid = pd.date_range(lo, hi, freq="D")
+    if len(grid) == 0:
+        return 0
+    week_idx, _ = _iso_week_groups(pd.Series(grid))
+    mask = week_idx == wn
+    if not mask.any():
+        return 0
+    return int(mask.sum())
+
+
 def _gdrs_calendar_week_bucket_start(day: pd.Timestamp, month_lo: pd.Timestamp) -> pd.Timestamp:
     lo = pd.Timestamp(month_lo).normalize()
     start_day = (_gdrs_calendar_week_num(day, lo) - 1) * 7 + 1
@@ -2937,16 +2981,45 @@ def _gdrs_week_groups(
     """
     dates = pd.to_datetime(dates, errors="coerce")
     if _gdrs_single_calendar_month(date_from, date_to):
+        lo = pd.Timestamp(date_from).normalize()
+        hi = pd.Timestamp(date_to).normalize()
         days = dates.dt.day
         week_idx = ((days - 1) // 7 + 1).clip(lower=1, upper=6).astype(int)
         days_per_week: dict[int, int] = {}
-        for wi in sorted(week_idx.unique()):
-            if int(wi) <= 0:
-                continue
-            mask = week_idx == wi
-            days_per_week[int(wi)] = int(dates[mask].dt.normalize().nunique())
+        for wn in gdrs_week_numbers_in_period(lo, hi):
+            nd = _gdrs_calendar_days_in_week(lo, hi, wn)
+            if nd > 0:
+                days_per_week[int(wn)] = nd
         return week_idx, days_per_week
     return _iso_week_groups(dates)
+
+
+def gdrs_week_period_start(
+    date_from: pd.Timestamp,
+    date_to: pd.Timestamp,
+    week_num: int,
+) -> Optional[pd.Timestamp]:
+    """Первый день N-й недели периода (календарные недели месяца или ISO)."""
+    lo = pd.Timestamp(date_from).normalize()
+    hi = pd.Timestamp(date_to).normalize()
+    wn = int(week_num)
+    if wn < 1 or wn > 6:
+        return None
+    if _gdrs_single_calendar_month(lo, hi):
+        month_last = int((lo + pd.offsets.MonthEnd(0)).day)
+        start_day = (wn - 1) * 7 + 1
+        if start_day > month_last:
+            return None
+        start = pd.Timestamp(lo.year, lo.month, start_day)
+        return max(start, lo)
+    grid = pd.date_range(lo, hi, freq="D")
+    if len(grid) == 0:
+        return None
+    week_idx, _ = _iso_week_groups(pd.Series(grid))
+    mask = week_idx == wn
+    if not mask.any():
+        return None
+    return pd.to_datetime(grid[mask.to_numpy()]).min()
 
 
 def gdrs_week_period_end(
@@ -3107,6 +3180,15 @@ def gdrs_month_periods_from_dogovor_records(
             if de > sentinel and de > last_plan:
                 for p in pd.period_range(last_plan.to_period("M"), de.to_period("M"), freq="M"):
                     months.add(p)
+            elif de <= sentinel:
+                # бессрочный: пролонгация плана от last_plan на год вперёд (без date_end)
+                end_p = (last_plan + pd.DateOffset(months=12)).to_period("M")
+                for p in pd.period_range(last_plan.to_period("M"), end_p, freq="M"):
+                    months.add(p)
+        else:
+            end_p = (last_plan + pd.DateOffset(months=12)).to_period("M")
+            for p in pd.period_range(last_plan.to_period("M"), end_p, freq="M"):
+                months.add(p)
     return months
 
 
