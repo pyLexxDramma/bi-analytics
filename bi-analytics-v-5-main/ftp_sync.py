@@ -293,7 +293,18 @@ def _safe_size(ftp, name: str) -> Optional[int]:
             return None
 
 
-def _retrieve(ftp, name: str, dest: Path) -> None:
+def _is_transient_ftp_retrieve_error(exc: Exception | str) -> bool:
+    """550 / file busy — файл на FTP перезаписывается (1С/MSP ~07:00 и каждые ~15 мин)."""
+    msg = str(exc).lower()
+    return (
+        "550" in str(exc)
+        or "failed to open" in msg
+        or "file unavailable" in msg
+        or "busy" in msg
+    )
+
+
+def _retrieve(ftp, name: str, dest: Path, *, max_attempts: int = 3, retry_delay_s: float = 2.0) -> None:
     """Атомарно скачивает RETR в dest через уникальный *.part.
 
     Зачем .part: если RETR упадёт в середине (на FTP файл занят пишущим
@@ -305,27 +316,37 @@ def _retrieve(ftp, name: str, dest: Path) -> None:
     worker могут одновременно качать один файл — общий ``file.json.tmp`` давал
     ENOENT при os.replace.
     """
-    tmp: Optional[Path] = dest.with_name(f"{dest.name}.{os.getpid()}.{time.time_ns()}.part")
-    try:
-        with tmp.open("wb") as fh:
-            try:
-                ftp.retrbinary(f"RETR {name}", fh.write)
-            except error_perm:
-                fh.seek(0)
-                fh.truncate()
-                safe = name.replace('"', '\\"')
-                ftp.retrbinary(f'RETR "{safe}"', fh.write)
-        if not tmp.exists():
-            raise OSError(f"FTP download incomplete: temp file missing for {name!r}")
-        # os.replace атомарен на одном томе и работает на Windows
-        os.replace(tmp, dest)
-        tmp = None
-    finally:
-        if tmp is not None:
-            try:
-                tmp.unlink(missing_ok=True)
-            except Exception:
-                pass
+    pid_ns = f"{os.getpid()}.{time.time_ns()}"
+    last_exc: Optional[Exception] = None
+    for attempt in range(max(1, int(max_attempts))):
+        tmp: Optional[Path] = dest.with_name(f"{dest.name}.{pid_ns}.{attempt}.part")
+        try:
+            with tmp.open("wb") as fh:
+                try:
+                    ftp.retrbinary(f"RETR {name}", fh.write)
+                except error_perm:
+                    fh.seek(0)
+                    fh.truncate()
+                    safe = name.replace('"', '\\"')
+                    ftp.retrbinary(f'RETR "{safe}"', fh.write)
+            if not tmp.exists():
+                raise OSError(f"FTP download incomplete: temp file missing for {name!r}")
+            os.replace(tmp, dest)
+            tmp = None
+            return
+        except Exception as e:
+            last_exc = e
+            if tmp is not None:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                tmp = None
+            if attempt + 1 >= max_attempts or not _is_transient_ftp_retrieve_error(e):
+                raise
+            time.sleep(retry_delay_s)
+    if last_exc is not None:
+        raise last_exc
 
 
 def sync_ftp_to_web(
@@ -531,22 +552,8 @@ def sync_ftp_to_web(
                         _retrieve(ftp, name, local_path)
                         out["downloaded"].append(rel_for_report)
                     except Exception as e:
-                        msg = str(e)
                         err_line = format_ftp_file_error(rel_for_report, e)
-                        # «550 Failed to open file», «file busy», «temporarily
-                        # unavailable» — файл сейчас открыт пишущим процессом
-                        # (в нашем случае 1С каждые ~15 мин перезаписывает MSP).
-                        # Это НЕ критичная ошибка пайплайна: атомарная запись
-                        # через .part оставила локальный валидный файл нетронутым,
-                        # на следующем sync он скачается. Не помечаем ok=False.
-                        low = msg.lower()
-                        is_transient = (
-                            "550" in msg
-                            or "failed to open" in low
-                            or "file unavailable" in low
-                            or "busy" in low
-                        )
-                        if is_transient:
+                        if _is_transient_ftp_retrieve_error(e):
                             out["transient_errors"].append(err_line)
                         else:
                             out["errors"].append(err_line)

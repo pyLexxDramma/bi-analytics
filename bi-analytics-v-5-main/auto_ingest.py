@@ -485,18 +485,30 @@ def _render_ftp_error_list(st, messages: list[str], *, kind: str = "error") -> N
                 st.text(msg)
 
 
+def render_ftp_transient_errors_notice(st, transient: list[str]) -> None:
+    """Один info вместо десятков жёлтых warning по коду 550."""
+    if not transient:
+        return
+    n = len(transient)
+    st.info(
+        f"**FTP:** {n} файл(ов) временно недоступны на сервере (код **550** — "
+        "1С/MSP перезаписывает файл). Локальные копии сохранены; "
+        "повторите «FTP → БД» через 1–2 мин или дождитесь следующего авто-sync."
+    )
+    with st.expander(f"Подробности ({n})", expanded=False):
+        for msg in transient[:50]:
+            st.text(msg)
+        if n > 50:
+            st.caption(f"… и ещё {n - 50}")
+
+
 def render_ftp_sync_download_notice(st, ftp_res: dict | None) -> None:
     """Предупреждение/инфо после FTP-sync: ошибки по файлам и список скачанных."""
     if not isinstance(ftp_res, dict):
         return
     critical, transient = ftp_sync_file_error_lines(ftp_res)
     _render_ftp_error_list(st, critical, kind="error")
-    if transient:
-        st.caption(
-            "Временные ошибки: файл занят на FTP (1С/MSP перезаписывает). "
-            "Локальная копия сохранена — повторите sync позже."
-        )
-        _render_ftp_error_list(st, transient, kind="warning")
+    render_ftp_transient_errors_notice(st, transient)
     downloaded = [str(x) for x in (ftp_res.get("downloaded") or [])]
     same = int(ftp_res.get("skipped_same_size") or 0)
     if downloaded:

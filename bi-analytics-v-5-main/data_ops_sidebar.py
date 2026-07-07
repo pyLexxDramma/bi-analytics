@@ -176,9 +176,9 @@ def _render_ftp_sidebar_controls(st: Any) -> None:
                 st.error(str(e))
             return
         if ftp_res.get("transient_errors"):
-            st.caption("Временные ошибки FTP (файл занят на сервере):")
-            for e in ftp_res["transient_errors"]:
-                st.warning(str(e))
+            from auto_ingest import render_ftp_transient_errors_notice
+
+            render_ftp_transient_errors_notice(st, ftp_res["transient_errors"])
         with st.spinner("web/ → БД…"):
             result = load_all_from_web()
         try:
