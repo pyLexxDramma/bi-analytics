@@ -408,15 +408,9 @@ def _apply_msp_column_mapping(df: pd.DataFrame, project_name: str) -> pd.DataFra
 
     # ── pct complete: "5%" → 5.0 ────────────────────────────────────────────
     if "pct complete" in df.columns:
-        def _parse_pct(val):
-            if val is None:
-                return None
-            s = str(val).replace("%", "").replace(",", ".").strip()
-            try:
-                return float(s)
-            except (ValueError, TypeError):
-                return None
-        df["pct complete"] = df["pct complete"].apply(_parse_pct)
+        from utils import parse_msp_pct_complete
+
+        df["pct complete"] = df["pct complete"].apply(parse_msp_pct_complete)
 
     # ── deviation in days: "5 дн" → 5.0, "-30 дн" → -30.0 ─────────────────
     if "deviation in days" in df.columns:

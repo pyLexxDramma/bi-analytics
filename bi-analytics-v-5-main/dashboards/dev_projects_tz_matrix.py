@@ -462,14 +462,16 @@ def _pct_scale_max_from_frame(ref: Optional[pd.DataFrame], col: str = "pct compl
     ser = _dev_tz_pct_complete_series(ref, col=col) if ref is not None else None
     if ser is None or ser.empty:
         return None
-    t = ser.astype(str).str.strip()
-    t = t.str.replace("\xa0", "", regex=False).str.replace("\u200b", "", regex=False)
-    t = t.str.replace("%", "", regex=False).str.replace(",", ".", regex=False)
-    num = pd.to_numeric(t, errors="coerce")
-    v = num.dropna()
-    if v.empty:
+    from utils import parse_msp_pct_complete
+
+    vals: list[float] = []
+    for raw in ser.tolist():
+        v = parse_msp_pct_complete(raw)
+        if v is not None:
+            vals.append(v)
+    if not vals:
         return None
-    return float(v.max())
+    return float(max(vals))
 
 
 def _normalized_pct_0_100(pct: Any, *, pct_scale_max: Any = None) -> Optional[float]:
@@ -481,6 +483,29 @@ def _normalized_pct_0_100(pct: Any, *, pct_scale_max: Any = None) -> Optional[fl
             return None
     except (TypeError, ValueError):
         return None
+    from utils import parse_msp_pct_complete
+
+    if not isinstance(pct, (int, float)) or isinstance(pct, bool):
+        parsed = parse_msp_pct_complete(pct)
+        if parsed is not None:
+            pct = parsed
+    if isinstance(pct, (int, float)) and not isinstance(pct, bool):
+        v = float(pct)
+        sm: Optional[float] = None
+        if pct_scale_max is not None:
+            try:
+                if isinstance(pct_scale_max, float) and pd.isna(pct_scale_max):
+                    sm = None
+                else:
+                    sm = float(pct_scale_max)
+            except (TypeError, ValueError):
+                sm = None
+        if sm is not None and sm <= 1.000001:
+            v = v * 100.0
+        elif sm is None:
+            if 0.0 <= v <= 1.0:
+                v = v * 100.0
+        return float(v)
     s = str(pct).strip().replace("%", "").replace(" ", "").replace(",", ".")
     if not s or s.lower() in ("nan", "none", "nat"):
         return None
