@@ -1306,16 +1306,34 @@ def _gdrs_dogovor_contract_key(contract_name: object, contract_number: object = 
     return "name::" + normalize_name(cn or num)
 
 
-def _gdrs_is_primary_dogovor_record(contract_name: object) -> bool:
-    """Первичный договор: «Дог.» или «Договор …» в Наименование_Договора."""
-    cn = str(contract_name or "").strip().casefold().replace("ё", "е")
-    return cn.startswith("дог.") or cn.startswith("договор")
+_GDRS_DS_CONTRACT_RE = re.compile(
+    r"(?:"
+    r"^\s*дс\b"  # «ДС …», «ДС№1 …»
+    r"|^\s*согласование\s*дс"  # «Согласование ДС№3 …»
+    r"|[_\s]дс\s*№"  # «…_ДС №2 …», «ДС №5 …» внутри строки
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _gdrs_norm_dogovor_cn(contract_name: object) -> str:
+    return str(contract_name or "").strip().casefold().replace("ё", "е")
 
 
 def _gdrs_is_ds_dogovor_record(contract_name: object) -> bool:
-    """Доп. соглашение: «ДС …» в Наименование_Договора."""
-    cn = str(contract_name or "").strip().casefold().replace("ё", "е")
-    return cn.startswith("дс")
+    """Доп. соглашение: «ДС …», «…_ДС №…», «Согласование ДС…» и т.п."""
+    cn = _gdrs_norm_dogovor_cn(contract_name)
+    if not cn:
+        return False
+    return bool(_GDRS_DS_CONTRACT_RE.search(cn))
+
+
+def _gdrs_is_primary_dogovor_record(contract_name: object) -> bool:
+    """Первичный договор: «Дог.» / «Договор …», но не строки с признаком ДС."""
+    if _gdrs_is_ds_dogovor_record(contract_name):
+        return False
+    cn = _gdrs_norm_dogovor_cn(contract_name)
+    return cn.startswith("дог.") or cn.startswith("договор") or cn.startswith("дог ")
 
 
 def _gdrs_plan_snapshot_valid(val: object) -> bool:
@@ -1344,9 +1362,11 @@ def _merge_dogovor_primary_ds_plan(group: pd.DataFrame) -> pd.Series:
                 pval = float(pvals.iloc[0])
         dval = np.nan
         if not ds_rows.empty:
-            for v in pd.to_numeric(ds_rows[col], errors="coerce"):
+            vals = pd.to_numeric(ds_rows[col], errors="coerce").tolist()
+            for v in reversed(vals):
                 if _gdrs_plan_snapshot_valid(v):
                     dval = float(v)
+                    break
         if _gdrs_plan_snapshot_valid(dval):
             out[col] = dval
         elif _gdrs_plan_snapshot_valid(pval):
