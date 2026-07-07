@@ -699,58 +699,61 @@ def load_gdrs_termination_index(
     *,
     dogovor_records: dict[str, list[dict]] | None = None,
 ) -> GdrsTerminationIndex:
-    """Минимальная дата расторжения по (project_id, contractor_id) из последнего Dogovor.json."""
-    dated: list[tuple[tuple[pd.Timestamp, str], str | Path]] = []
-    undated: list[str | Path] = []
-    if dogovor_records is not None:
-        items = list(dogovor_records.keys())
-    else:
-        items = list(dogovor_paths)
-    for raw in items:
-        sk = _dogovor_snapshot_sort_key(raw)
-        if sk[0] is pd.Timestamp.min:
-            undated.append(raw)
-            continue
-        dated.append((sk, raw))
-    if not dated:
-        chosen = undated[0] if undated else None
-    else:
-        dated.sort(key=lambda t: t[0])
-        chosen = dated[-1][1]
-    if chosen is None:
-        return GdrsTerminationIndex.empty()
-    if dogovor_records is not None:
-        raw = load_plan_from_dogovor(
-            records=dogovor_records.get(str(chosen), []),
-            snapshot_date=None,
-        )
-    else:
-        raw = load_plan_from_dogovor(Path(chosen), snapshot_date=None)
-    if raw is None or raw.empty or "date_termination" not in raw.columns:
-        return GdrsTerminationIndex.empty()
+    """Минимальная дата заявки/расторжения по (project_id, contractor_id) из Dogovor.json."""
     sentinel = pd.Timestamp("0001-01-01")
     by_id: dict[tuple[str, str], pd.Timestamp] = {}
     by_norm: dict[tuple[str, str], pd.Timestamp] = {}
-    for _, r in raw.iterrows():
-        term = r.get("date_termination")
-        if term is None or (isinstance(term, float) and pd.isna(term)):
-            continue
-        term_ts = pd.to_datetime(term, errors="coerce")
-        if term_ts is None or not pd.notna(term_ts):
-            continue
+
+    def _accum(
+        term_ts: pd.Timestamp,
+        pid: str,
+        cid: str,
+        pn: str,
+        cn: str,
+    ) -> None:
+        if term_ts is None or not pd.notna(term_ts) or term_ts <= sentinel:
+            return
         term_ts = pd.Timestamp(term_ts).normalize()
-        if term_ts <= sentinel:
-            continue
-        pid = str(r.get("project_id", "")).strip()
-        cid = str(r.get("contractor_id", "")).strip()
-        pn = normalize_name(str(r.get("project_name", "")))
-        cn = normalize_name(str(r.get("contractor_name", "")))
         if pid and cid:
             key = (pid, cid)
             by_id[key] = min(by_id[key], term_ts) if key in by_id else term_ts
         if pn and cn:
             nkey = (pn, cn)
             by_norm[nkey] = min(by_norm[nkey], term_ts) if nkey in by_norm else term_ts
+
+    file_items: list[tuple[Optional[pd.Timestamp], list]] = []
+    if dogovor_records is not None:
+        for key, recs in dogovor_records.items():
+            sk = _dogovor_snapshot_sort_key(key)
+            fs = None if sk[0] is pd.Timestamp.min else pd.Timestamp(sk[0]).normalize()
+            if isinstance(recs, list):
+                file_items.append((fs, recs))
+    else:
+        for raw in dogovor_paths:
+            sk = _dogovor_snapshot_sort_key(raw)
+            fs = None if sk[0] is pd.Timestamp.min else pd.Timestamp(sk[0]).normalize()
+            data = _safe_json(Path(raw))
+            if isinstance(data, list):
+                file_items.append((fs, data))
+    file_items.sort(key=lambda t: (t[0] is None, t[0] or pd.Timestamp.min))
+
+    for file_snapshot, data in file_items:
+        for r in data:
+            if not isinstance(r, dict):
+                continue
+            cn_raw = r.get("Наименование_Договора")
+            if _is_gdrs_termination_application_name(cn_raw):
+                term_dt = _gdrs_record_termination_event_date(r, file_snapshot=file_snapshot)
+            else:
+                term_dt = _gdrs_valid_contract_date(_contract_termination_date_raw(r))
+            if term_dt is None:
+                continue
+            pid = str(r.get("ID_Проекта") or "").strip()
+            cid = str(r.get("ID_Контрагента") or "").strip()
+            pn = normalize_name(str(r.get("Наименование_Проекта") or ""))
+            cn = normalize_name(str(r.get("Наименование_Контрагента") or ""))
+            _accum(term_dt, pid, cid, pn, cn)
+
     return GdrsTerminationIndex(by_id=by_id, by_norm=by_norm)
 
 
@@ -781,15 +784,13 @@ def gdrs_contractor_terminated_as_of(
     as_of: pd.Timestamp,
     term_index: Optional[GdrsTerminationIndex],
 ) -> bool:
-    """True если as_of позже календарного месяца расторжения (месяц расторжения ещё учитывается)."""
+    """True если as_of >= даты заявки/расторжения (в этот день подрядчик уже не учитывается)."""
     term = _gdrs_contractor_termination_date(
         project_id, contractor_id, project_name, contractor_name, term_index
     )
     if term is None or not pd.notna(term):
         return False
-    as_of_m = pd.Timestamp(as_of).to_period("M")
-    term_m = pd.Timestamp(term).to_period("M")
-    return as_of_m > term_m
+    return pd.Timestamp(as_of).normalize() >= pd.Timestamp(term).normalize()
 
 
 def gdrs_filter_fact_by_termination(
@@ -1284,14 +1285,81 @@ def _contract_termination_date_raw(record: dict) -> object:
     return None
 
 
-def _is_gdrs_excluded_plan_application(contract_name: object) -> bool:
-    """Заявки, план которых не учитывается в основном «Договоре подряда» (ГДРС)."""
+def _is_gdrs_termination_application_name(contract_name: object) -> bool:
+    """Заявки/соглашения о расторжении — с их даты подрядчик не идёт в план/факт ГДРС."""
     cn = str(contract_name or "").casefold().replace("ё", "е")
     if "заявка на акт" in cn and "строительн" in cn and "площад" in cn:
         return True
-    if "заявка на соглашение о расторжен" in cn:
+    if "заявка" in cn and "расторжен" in cn:
+        return True
+    if "соглашение" in cn and "расторжен" in cn:
+        return True
+    if "уведомление" in cn and "расторжен" in cn:
         return True
     return False
+
+
+def _is_gdrs_excluded_plan_application(contract_name: object) -> bool:
+    """Alias для обратной совместимости."""
+    return _is_gdrs_termination_application_name(contract_name)
+
+
+def _gdrs_valid_contract_date(val: object) -> Optional[pd.Timestamp]:
+    sentinel = pd.Timestamp("0001-01-01")
+    ts = _fast_parse_date(val)
+    if ts is None or not pd.notna(ts):
+        return None
+    ts = pd.Timestamp(ts)
+    if ts.tzinfo is not None:
+        ts = ts.tz_localize(None)
+    ts = ts.normalize()
+    if ts <= sentinel:
+        return None
+    return ts
+
+
+def _gdrs_record_termination_event_date(
+    record: dict,
+    *,
+    file_snapshot: Optional[pd.Timestamp] = None,
+) -> Optional[pd.Timestamp]:
+    """Дата события расторжения из строки Dogovor.json."""
+    if not isinstance(record, dict):
+        return None
+    for key in (
+        "Дата_Окончания_Договора",
+        "Дата_Начала_Договора",
+        "Дата_Получения_ИД",
+    ):
+        ts = _gdrs_valid_contract_date(record.get(key))
+        if ts is not None:
+            return ts
+    ts = _gdrs_valid_contract_date(_contract_termination_date_raw(record))
+    if ts is not None:
+        return ts
+    cn = record.get("Наименование_Договора")
+    if _is_gdrs_termination_application_name(cn) and file_snapshot is not None:
+        return pd.Timestamp(file_snapshot).normalize()
+    return None
+
+
+def _gdrs_row_termination_event_date(
+    row: pd.Series,
+    *,
+    file_snapshot: Optional[pd.Timestamp] = None,
+) -> Optional[pd.Timestamp]:
+    for col in ("date_end", "date_start"):
+        if col in row.index:
+            ts = _gdrs_valid_contract_date(row.get(col))
+            if ts is not None:
+                return ts
+    if "date_termination" in row.index:
+        ts = _gdrs_valid_contract_date(row.get("date_termination"))
+        if ts is not None:
+            return ts
+    if _is_gdrs_termination_application_name(row.get("contract_name")) and file_snapshot is not None:
+        return pd.Timestamp(file_snapshot).normalize()
+    return None
 
 
 def _gdrs_dogovor_contract_key(contract_name: object, contract_number: object = "") -> str:
@@ -1399,52 +1467,42 @@ def _apply_gdrs_dogovor_plan_exclusions(
     df: pd.DataFrame,
     *,
     snapshot_date: Optional[pd.Timestamp] = None,
+    file_snapshot_date: Optional[pd.Timestamp] = None,
 ) -> pd.DataFrame:
-    """Исключить заявки на акт площадки / расторжение и обнулить основной договор с date_end."""
+    """Исключить заявки на расторжение; с даты заявки обнулить план по всем договорам подрядчика."""
     if df is None or df.empty:
         return df
     out = df.copy()
     cn = out["contract_name"].fillna("").astype(str).str.strip()
-    excluded = cn.map(_is_gdrs_excluded_plan_application)
-    sentinel = pd.Timestamp("0001-01-01")
+    excluded = cn.map(_is_gdrs_termination_application_name)
     snap = pd.Timestamp(snapshot_date).normalize() if snapshot_date is not None else None
-    cutoffs: dict[tuple[str, str, str], pd.Timestamp] = {}
+    file_snap = (
+        pd.Timestamp(file_snapshot_date).normalize()
+        if file_snapshot_date is not None
+        else snap
+    )
+    contractor_cutoffs: dict[tuple[str, str], pd.Timestamp] = {}
     if bool(excluded.any()):
         for idx in out.index[excluded]:
             row = out.loc[idx]
-            de = pd.to_datetime(row.get("date_end"), errors="coerce", utc=True)
-            if de is not None and pd.notna(de):
-                de = pd.Timestamp(de).tz_localize(None).normalize()
-            else:
-                de = pd.NaT
-            if pd.isna(de) or de <= sentinel:
+            de = _gdrs_row_termination_event_date(row, file_snapshot=file_snap)
+            if de is None:
                 continue
             pid = str(row.get("project_id", "")).strip()
             cid = str(row.get("contractor_id", "")).strip()
-            cnum = row.get("contract_number", "") if "contract_number" in row.index else ""
-            ck = _gdrs_dogovor_contract_key(row.get("contract_name", ""), cnum)
-            if not pid or not cid or ck.startswith("name::"):
+            if not pid or not cid:
                 continue
-            key = (pid, cid, ck)
-            cutoffs[key] = min(cutoffs[key], de) if key in cutoffs else de
+            key = (pid, cid)
+            contractor_cutoffs[key] = min(contractor_cutoffs[key], de) if key in contractor_cutoffs else de
         out = out.loc[~excluded].copy()
     if out.empty:
         return out
-    if snap is not None and cutoffs:
-        cn2 = out["contract_name"].fillna("").astype(str).str.strip()
-        has_num = "contract_number" in out.columns
-        keys = [
-            _gdrs_dogovor_contract_key(
-                cn2.iat[i],
-                out["contract_number"].iat[i] if has_num else "",
-            )
-            for i in range(len(out))
-        ]
+    if snap is not None and contractor_cutoffs:
         pids = out["project_id"].astype(str).str.strip()
         cids = out["contractor_id"].astype(str).str.strip()
         drop_plan = []
         for i in range(len(out)):
-            cut = cutoffs.get((pids.iat[i], cids.iat[i], keys[i]))
+            cut = contractor_cutoffs.get((pids.iat[i], cids.iat[i]))
             drop_plan.append(cut is not None and snap >= cut)
         if any(drop_plan):
             mask = pd.Series(drop_plan, index=out.index)
@@ -1977,7 +2035,13 @@ def load_plan_aggregate(
         ]
         if df.empty:
             return pd.DataFrame()
-        df = _apply_gdrs_dogovor_plan_exclusions(df, snapshot_date=snapshot_date)
+        _fsk = _dogovor_snapshot_sort_key(p)
+        _file_snap = None if _fsk[0] is pd.Timestamp.min else pd.Timestamp(_fsk[0]).normalize()
+        df = _apply_gdrs_dogovor_plan_exclusions(
+            df,
+            snapshot_date=snapshot_date,
+            file_snapshot_date=_file_snap,
+        )
         if df.empty:
             return pd.DataFrame()
         # Возвращаем СЫРОЙ отфильтрованный кадр (+ __cn__/__key__). Агрегацию
@@ -3734,7 +3798,11 @@ def build_gdrs_audit_export_frames(
         contract_export = pd.DataFrame()
     else:
         raw = load_plan_from_dogovor(latest_path, snapshot_date=snap)
-        raw = _apply_gdrs_dogovor_plan_exclusions(raw, snapshot_date=snap)
+        _fsk = _dogovor_snapshot_sort_key(latest_path)
+        _file_snap = None if _fsk[0] is pd.Timestamp.min else pd.Timestamp(_fsk[0]).normalize()
+        raw = _apply_gdrs_dogovor_plan_exclusions(
+            raw, snapshot_date=snap, file_snapshot_date=_file_snap
+        )
         if projects:
             try:
                 from dashboards.project_labels import filter_dataframe_by_project_labels
