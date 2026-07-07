@@ -1186,9 +1186,7 @@ def gdrs_contractor_plan_eligible(
     project_name: str = "",
     plan_as_of: Optional[pd.Timestamp] = None,
 ) -> bool:
-    """План учитывается только для resursi∩Kontr без расторжения до plan_as_of (по месяцам)."""
-    if not gdrs_contractor_in_kontr(contractor_id, contractor_name, kontr):
-        return False
+    """План из Dogovor: без расторжения до plan_as_of. Kontr/resursi не требуются."""
     if plan_as_of is not None and term_index is not None:
         if gdrs_contractor_terminated_as_of(
             project_id,
