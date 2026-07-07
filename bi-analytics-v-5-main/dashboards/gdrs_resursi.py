@@ -1306,6 +1306,75 @@ def _gdrs_dogovor_contract_key(contract_name: object, contract_number: object = 
     return "name::" + normalize_name(cn or num)
 
 
+def _gdrs_is_primary_dogovor_record(contract_name: object) -> bool:
+    """Первичный договор: «Дог.» или «Договор …» в Наименование_Договора."""
+    cn = str(contract_name or "").strip().casefold().replace("ё", "е")
+    return cn.startswith("дог.") or cn.startswith("договор")
+
+
+def _gdrs_is_ds_dogovor_record(contract_name: object) -> bool:
+    """Доп. соглашение: «ДС …» в Наименование_Договора."""
+    cn = str(contract_name or "").strip().casefold().replace("ё", "е")
+    return cn.startswith("дс")
+
+
+def _gdrs_plan_snapshot_valid(val: object) -> bool:
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return False
+    try:
+        return float(val) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _merge_dogovor_primary_ds_plan(group: pd.DataFrame) -> pd.Series:
+    """План по одной сигнатуре договора: ДС замещает «Дог.»/«Договор», если в ДС есть >0."""
+    primary = group[group["contract_name"].map(_gdrs_is_primary_dogovor_record)]
+    ds_rows = group[group["contract_name"].map(_gdrs_is_ds_dogovor_record)]
+    other = group[
+        ~group["contract_name"].map(_gdrs_is_primary_dogovor_record)
+        & ~group["contract_name"].map(_gdrs_is_ds_dogovor_record)
+    ]
+    out: dict[str, float] = {}
+    for col in ("plan_workers", "plan_equipment"):
+        pval = np.nan
+        if not primary.empty:
+            pvals = pd.to_numeric(primary[col], errors="coerce").dropna()
+            if not pvals.empty:
+                pval = float(pvals.iloc[0])
+        dval = np.nan
+        if not ds_rows.empty:
+            for v in pd.to_numeric(ds_rows[col], errors="coerce"):
+                if _gdrs_plan_snapshot_valid(v):
+                    dval = float(v)
+        if _gdrs_plan_snapshot_valid(dval):
+            out[col] = dval
+        elif _gdrs_plan_snapshot_valid(pval):
+            out[col] = pval
+        elif not other.empty:
+            ovals = pd.to_numeric(other[col], errors="coerce").dropna()
+            out[col] = float(ovals.max()) if not ovals.empty else np.nan
+        else:
+            out[col] = np.nan
+    return pd.Series(out)
+
+
+def _dogovor_row_contract_keys(df: pd.DataFrame) -> pd.Series:
+    """Сигнатура договора для строки: из имени или Номер_Договора (важно для «ДС …»)."""
+    cn = df["contract_name"].fillna("").astype(str).str.strip()
+    has_num = "contract_number" in df.columns
+    if has_num:
+        nums = df["contract_number"].fillna("").astype(str).str.strip()
+        return pd.Series(
+            [
+                _gdrs_dogovor_contract_key(cn.iat[i], nums.iat[i])
+                for i in range(len(df))
+            ],
+            index=df.index,
+        )
+    return cn.map(lambda x: _gdrs_dogovor_contract_key(x, ""))
+
+
 def _apply_gdrs_dogovor_plan_exclusions(
     df: pd.DataFrame,
     *,
@@ -1732,7 +1801,7 @@ def _aggregate_dog_plan_batch(dog_all: pd.DataFrame) -> pd.DataFrame:
     Вход: сырые отфильтрованные строки всех файлов с ``__order__`` (индекс файла по
     возрастанию даты снапшота), ``__cn__`` (contract_name, stripped), ``__key__``
     (сигнатура договора/ДС). Логика идентична прежней per-file + cross-file:
-      1) в пределах файла MAX плана по сигнатуре договора (ДС замещает базу);
+      1) в пределах файла по сигнатуре договора: ДС замещает «Дог.»/«Договор»;
       2) в пределах файла SUM по разным договорам пары (pid, cid);
       3) между файлами — значение из последнего снапшота (last по ``__order__``,
          пропуская NaN); имена — первое непустое; contract_name — последнее непустое.
@@ -1750,10 +1819,22 @@ def _aggregate_dog_plan_batch(dog_all: pd.DataFrame) -> pd.DataFrame:
     for _c in ("plan_workers", "plan_equipment"):
         dog_all[_c] = pd.to_numeric(dog_all[_c], errors="coerce")
     grp_pf = ["__order__", "project_id", "contractor_id"]
-    # 1) MAX по сигнатуре договора/ДС внутри файла
-    per_key = dog_all.groupby(grp_pf + ["__key__"], dropna=False, as_index=False)[
-        ["plan_workers", "plan_equipment"]
-    ].max()
+    # 1) По сигнатуре договора внутри файла: ДС замещает «Дог.»/«Договор» (не SUM/MAX с базой)
+    parts = []
+    for keys, chunk in dog_all.groupby(grp_pf + ["__key__"], dropna=False):
+        order, pid, cid, ckey = keys
+        merged = _merge_dogovor_primary_ds_plan(chunk)
+        parts.append(
+            {
+                "__order__": order,
+                "project_id": pid,
+                "contractor_id": cid,
+                "__key__": ckey,
+                "plan_workers": merged.get("plan_workers", np.nan),
+                "plan_equipment": merged.get("plan_equipment", np.nan),
+            }
+        )
+    per_key = pd.DataFrame(parts)
     # 2) SUM по разным договорам пары внутри файла
     plan_pf = per_key.groupby(grp_pf, dropna=False, as_index=False)[
         ["plan_workers", "plan_equipment"]
@@ -1854,17 +1935,13 @@ def load_plan_aggregate(
         - Для каждого Dogovor.json берём snapshot на дату snapshot_date.
         - Внутри файла план по (project_id, contractor_id) суммируется по РАЗНЫМ
           договорам, но дубли одного договора и его доп.соглашений (ДС) схлопываются
-          по сигнатуре «NN-СА/YY»: ДС замещает базовый договор (берём MAX по сигнатуре),
-          а не суммируется с ним — иначе план задваивается.
+          по сигнатуре «NN-СА/YY» (в т.ч. номер из поля Номер_Договора для «ДС …»):
+          ДС замещает базовый «Дог.»/«Договор», если в ДС на срез есть >0; иначе база.
         - Между файлами берём значение из ПОСЛЕДНЕГО снапшота ≤ snapshot_date
           (по дате в имени файла), а не MAX по дням: max завышал план, цепляясь
           за день с лишними/транзитными строками ДС.
         - spravochniki.json — fallback, если в Dogovor плана нет.
     """
-    def _contract_key(cn: str) -> str:
-        """Ключ схлопывания: сигнатура договора «NN-СА/YY» или «name::<норм. имя>»."""
-        return _gdrs_dogovor_contract_key(cn)
-
     def _per_file_dog(p: Path | str, *, records: list[dict] | None = None) -> pd.DataFrame:
         if records is not None:
             df = load_plan_from_dogovor(
@@ -1891,13 +1968,11 @@ def load_plan_aggregate(
         df = df.copy()
         cn = df["contract_name"].fillna("").astype(str).str.strip()
         df["__cn__"] = cn
-        uniq = pd.unique(cn.to_numpy())
-        key_map = {nm: _contract_key(nm) for nm in uniq}
-        df["__key__"] = cn.map(key_map)
+        df["__key__"] = _dogovor_row_contract_keys(df)
         return df[
             [
                 "project_id", "contractor_id", "project_name", "contractor_name",
-                "__cn__", "__key__", "plan_workers", "plan_equipment",
+                "contract_name", "__cn__", "__key__", "plan_workers", "plan_equipment",
             ]
         ]
 
