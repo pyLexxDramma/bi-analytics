@@ -25850,6 +25850,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
         gdrs_apply_grouped_bar_labels,
         gdrs_apply_bar_outside_labels,
         gdrs_sanitize_bar_text_labels,
+        gdrs_apply_bottom_chart_legend,
         inject_gdrs_light_preview_css,
     )
 
@@ -26219,14 +26220,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
                 ),
                 height=560 if theme == "light" else 520,
                 margin=dict(l=56, r=24, t=88, b=_bar_margin_b),
-                legend=dict(
-                    orientation="h",
-                    yanchor="bottom",
-                    y=1.02,
-                    xanchor="left",
-                    x=0.0,
-                    bgcolor="rgba(0,0,0,0)",
-                ),
+                showlegend=True,
             )
             fig_pf = apply_gdrs_chart_background(fig_pf, _th, skip_uniformtext=True)
             # apply_gdrs_chart_background сбрасывает tickfont оси X — восстанавливаем крупные горизонтальные подписи проектов.
@@ -26255,6 +26249,9 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
                 len(_proj_labels),
                 metrics_axis=_metrics_axis,
                 fixed_slots=_fixed_bar_slots,
+            )
+            fig_pf = gdrs_apply_bottom_chart_legend(
+                fig_pf, _th, min_margin_b=_bar_margin_b
             )
             _gdrs_st_plotly_chart(
                 st,
@@ -26479,7 +26476,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
                 ),
                 height=_bar_h,
                 margin=dict(l=64, r=28, t=88, b=_bar_margin_b),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                showlegend=True,
             )
             fig2 = apply_gdrs_chart_background(fig2, _th, skip_uniformtext=True)
             fig2.update_xaxes(**_ctr_xaxis_kw)
@@ -26499,6 +26496,9 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
                 len(_ctr_labels),
                 metrics_axis=_ctr_metrics_axis,
                 fixed_slots=_ctr_fixed_slots,
+            )
+            fig2 = gdrs_apply_bottom_chart_legend(
+                fig2, _th, min_margin_b=_bar_margin_b
             )
             # Крупнее подписи значений над столбцами.
             _bar_lbl_sz = 21 if theme == "light" else 16

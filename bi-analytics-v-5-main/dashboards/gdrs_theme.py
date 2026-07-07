@@ -1215,6 +1215,48 @@ def gdrs_sanitize_bar_text_labels(fig: Any, theme: GdrsTheme) -> Any:
     return gdrs_apply_bar_outside_labels(fig, theme)
 
 
+def gdrs_apply_bottom_chart_legend(
+    fig: Any,
+    theme: GdrsTheme,
+    *,
+    min_margin_b: float | None = None,
+) -> Any:
+    """Горизонтальная легенда под осью X (после всех правок layout)."""
+    from utils import (
+        CHART_LEGEND_FONT_SIZE,
+        _fig_legend_trace_count,
+        chart_layout_for_bottom_legend,
+        standard_chart_legend,
+    )
+
+    layout = fig.layout
+    prev_m = getattr(layout, "margin", None)
+    margin_l = float(getattr(prev_m, "l", 56) or 56)
+    margin_r = float(getattr(prev_m, "r", 24) or 24)
+    margin_t = float(getattr(prev_m, "t", 88) or 88)
+    margin_b = float(getattr(prev_m, "b", 72) or 72)
+    if min_margin_b is not None:
+        margin_b = max(margin_b, float(min_margin_b))
+    n_leg = _fig_legend_trace_count(fig)
+    chart_lo = chart_layout_for_bottom_legend(n_leg)
+    # ГДРС: крупные подписи проектов на оси X — легенду ниже стандартного отступа.
+    legend_y = float(chart_lo["legend_y"]) - 0.18
+    extra_b = 52
+    if min_margin_b is not None and float(min_margin_b) >= 100:
+        legend_y -= 0.06
+        extra_b += 24
+    margin_b = max(margin_b, float(chart_lo["margin_bottom"])) + extra_b
+    fig.update_layout(
+        showlegend=True,
+        legend=standard_chart_legend(
+            font=dict(color=theme.text, size=CHART_LEGEND_FONT_SIZE),
+            y=legend_y,
+        ),
+        margin=dict(l=margin_l, r=margin_r, t=margin_t, b=margin_b),
+    )
+    return fig
+
+
 def apply_gdrs_chart_background(fig: Any, theme: GdrsTheme, *, skip_uniformtext: bool = False) -> Any:
     """Локальный аналог apply_chart_background с палитрой ГДРС."""
     from utils import (
