@@ -721,23 +721,27 @@ def load_gdrs_termination_index(
             nkey = (pn, cn)
             by_norm[nkey] = min(by_norm[nkey], term_ts) if nkey in by_norm else term_ts
 
-    file_items: list[tuple[Optional[pd.Timestamp], list]] = []
+    file_items: list[tuple[Optional[pd.Timestamp], str, list]] = []
     if dogovor_records is not None:
-        for key, recs in dogovor_records.items():
+        for key in sorted(
+            dogovor_records.keys(),
+            key=lambda s: (_dogovor_snapshot_sort_key(s), str(s)),
+        ):
+            recs = dogovor_records[key]
             sk = _dogovor_snapshot_sort_key(key)
             fs = None if sk[0] is pd.Timestamp.min else pd.Timestamp(sk[0]).normalize()
             if isinstance(recs, list):
-                file_items.append((fs, recs))
+                file_items.append((fs, str(key), recs))
     else:
-        for raw in dogovor_paths:
+        for raw in sorted(dogovor_paths, key=lambda p: (_dogovor_snapshot_sort_key(p), str(p))):
             sk = _dogovor_snapshot_sort_key(raw)
             fs = None if sk[0] is pd.Timestamp.min else pd.Timestamp(sk[0]).normalize()
             data = _safe_json(Path(raw))
             if isinstance(data, list):
-                file_items.append((fs, data))
-    file_items.sort(key=lambda t: (t[0] is None, t[0] or pd.Timestamp.min))
+                file_items.append((fs, str(raw), data))
+    file_items.sort(key=lambda t: (t[0] is None, t[0] or pd.Timestamp.min, t[1]))
 
-    for file_snapshot, data in file_items:
+    for file_snapshot, _src_key, data in file_items:
         for r in data:
             if not isinstance(r, dict):
                 continue
@@ -1156,10 +1160,14 @@ def gdrs_apply_kontr_contractor_names(
     work["contractor_id"] = _ids
     work["contractor_name"] = _names
     if dedupe_fact and {"vid_resursa", "date"}.issubset(work.columns):
+        if "date" in work.columns:
+            work["date"] = pd.to_datetime(work["date"], errors="coerce")
+        work = _gdrs_stable_sort_for_fact_dedupe(work, include_source_snap=True)
         work = work.drop_duplicates(
             subset=["project_name", "contractor_name", "vid_resursa", "date"],
             keep="last",
         )
+        work = _gdrs_cleanup_dedupe_sort_cols(work)
     return work
 
 
@@ -1821,6 +1829,41 @@ def _resursi_source_sort_key_from_name(source_file: str) -> tuple[pd.Timestamp, 
     return _resursi_snapshot_sort_key(source_file)
 
 
+def _gdrs_stable_sort_for_fact_dedupe(
+    df: pd.DataFrame,
+    *,
+    include_source_snap: bool = True,
+) -> pd.DataFrame:
+    """Детерминированный порядок строк перед drop_duplicates(keep='last')."""
+    if df is None or df.empty:
+        return df
+    work = df.copy()
+    sort_cols: list[str] = []
+    if include_source_snap and "__source_file" in work.columns:
+        work["_dedupe_src"] = work["__source_file"].astype(str).map(
+            _resursi_source_sort_key_from_name
+        )
+        sort_cols.extend(["_dedupe_src", "__source_file"])
+    for c in (
+        "date",
+        "project_name",
+        "contractor_name",
+        "contractor_id",
+        "project_id",
+        "vid_resursa",
+        "fact",
+    ):
+        if c in work.columns and c not in sort_cols:
+            sort_cols.append(c)
+    work["_dedupe_ord"] = np.arange(len(work), dtype=np.int64)
+    sort_cols.append("_dedupe_ord")
+    return work.sort_values(sort_cols, kind="mergesort")
+
+
+def _gdrs_cleanup_dedupe_sort_cols(df: pd.DataFrame) -> pd.DataFrame:
+    return df.drop(columns=["_dedupe_src", "_dedupe_ord"], errors="ignore")
+
+
 def gdrs_dedupe_fact_prefer_latest_source(df: pd.DataFrame) -> pd.DataFrame:
     """При нескольких resursi.csv на одну дату — строка из файла с более поздней выгрузкой."""
     if df is None or df.empty:
@@ -1838,10 +1881,9 @@ def gdrs_dedupe_fact_prefer_latest_source(df: pd.DataFrame) -> pd.DataFrame:
         return work
     if "date" in work.columns:
         work["date"] = pd.to_datetime(work["date"], errors="coerce")
-    work["_src_snap"] = work[src_col].astype(str).map(_resursi_source_sort_key_from_name)
-    work = work.sort_values("_src_snap", kind="mergesort")
+    work = _gdrs_stable_sort_for_fact_dedupe(work, include_source_snap=True)
     work = work.drop_duplicates(subset=subset, keep="last")
-    return work.drop(columns=["_src_snap"], errors="ignore")
+    return _gdrs_cleanup_dedupe_sort_cols(work)
 
 
 def _pick_dogovor_path_for_snapshot(
@@ -2111,14 +2153,17 @@ def load_plan_aggregate(
         """План Dogovor: всегда последний файл выгрузки (дата в имени max)."""
         if not records_map:
             return {}
-        latest = max(records_map.keys(), key=lambda s: _dogovor_snapshot_sort_key(s))
+        latest = max(
+            records_map.keys(),
+            key=lambda s: (_dogovor_snapshot_sort_key(s), str(s)),
+        )
         return {latest: records_map[latest]}
 
     def _latest_dogovor_paths(paths: Iterable[Path | str]) -> list:
         lst = list(paths)
         if not lst:
             return []
-        return [max(lst, key=lambda p: _dogovor_snapshot_sort_key(p))]
+        return [max(lst, key=lambda p: (_dogovor_snapshot_sort_key(p), str(p)))]
 
     if dogovor_records is not None:
         dog_all = _ordered_with_index(
@@ -3491,7 +3536,7 @@ def gdrs_filter_fact_resursi_source_for_periods(
             if fd is not None and pd.notna(fd) and fd.to_period("M") == per:
                 candidates.append((_resursi_snapshot_sort_key(src), src))
         if candidates:
-            candidates.sort(key=lambda x: x[0])
+            candidates.sort(key=lambda x: (x[0], x[1]))
             allowed.add(candidates[-1][1])
     if not allowed:
         return long_fact
@@ -3868,6 +3913,9 @@ def _gdrs_collapse_rows_by_contractor_key(
     parts: list[pd.DataFrame] = []
     for proj, chunk in work.groupby("project_name", sort=False):
         chunk = chunk.copy()
+        _sort_by = [c for c in pair_cols + ["contractor_name", "contractor_id"] if c in chunk.columns]
+        if _sort_by:
+            chunk = chunk.sort_values(_sort_by, kind="mergesort")
         if chunk.groupby(pair_cols).ngroups == len(chunk):
             parts.append(chunk)
             continue
@@ -4034,7 +4082,8 @@ def build_main_table(
                 )
                 .reset_index()
             )
-            id_pick = pd.concat([id_pick, plan_ids], ignore_index=True).drop_duplicates(
+            id_pick = pd.concat([id_pick, plan_ids], ignore_index=True)
+            id_pick = id_pick.sort_values(pair_cols, kind="mergesort").drop_duplicates(
                 subset=pair_cols, keep="first"
             )
             plan_only = plan_ids[pair_cols].copy()
@@ -4983,6 +5032,18 @@ def _gdrs_cached_plan_aggregate(
         sprav_records=spr,
         snapshot_date=snap,
     )
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _gdrs_cached_termination_index(
+    version_id: int,
+    db_mtime: float,
+    dogovor_sources_sig: tuple[str, ...],
+) -> GdrsTerminationIndex:
+    from web_db_read import json_records_by_source
+
+    dog = json_records_by_source(int(version_id), "dogovor_json")
+    return load_gdrs_termination_index(dogovor_records=dog)
 
 
 @st.cache_data(show_spinner=False, ttl=3600)

@@ -25895,11 +25895,12 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
         enrich_gdrs_fact_contractor_ids,
         enrich_gdrs_fact_project_ids,
         gdrs_apply_kontr_contractor_names,
-        load_gdrs_termination_index,
+        _gdrs_cached_termination_index,
         gdrs_filter_fact_by_termination,
         week_end_in_filtered_fact,
         gdrs_week_numbers_in_period,
         _gdrs_plan_loader,
+        _gdrs_dogovor_sources_sig,
         gdrs_contractor_filter_options,
     )
 
@@ -25940,7 +25941,8 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
 
     # Kontr — канонизация имён/ID; факт resursi не режем (все подрядчики из CSV).
     long_fact = gdrs_apply_kontr_contractor_names(long_fact, _kontr_index)
-    _term_index = load_gdrs_termination_index(dogovor_records=_dog_records)
+    _dog_sig = _gdrs_dogovor_sources_sig(_version_id)
+    _term_index = _gdrs_cached_termination_index(_version_id, _db_mtime, _dog_sig)
     long_fact = gdrs_filter_fact_by_termination(long_fact, _term_index)
 
     _month_options = gdrs_month_select_options(
