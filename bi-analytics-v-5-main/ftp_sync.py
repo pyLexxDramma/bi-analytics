@@ -473,6 +473,7 @@ def sync_ftp_to_web(
             # (rel-путь от web_dir) существуют на сервере.
             dirs_listed_ok: set = set()
             remote_files: set = set()
+            pending_retries: list[tuple[str, Path, str]] = []
             while stack:
                 rel = stack.pop()
                 try:
@@ -555,9 +556,43 @@ def sync_ftp_to_web(
                         err_line = format_ftp_file_error(rel_for_report, e)
                         if _is_transient_ftp_retrieve_error(e):
                             out["transient_errors"].append(err_line)
+                            pending_retries.append((name, local_path, rel_for_report))
                         else:
                             out["errors"].append(err_line)
                             out["ok"] = False
+
+            if pending_retries:
+                _log(
+                    f"Повторная загрузка {len(pending_retries)} файл(ов) после 550/busy…"
+                )
+                retry_stems = {Path(r[2]).stem for r in pending_retries}
+                final_transient: list[str] = [
+                    x
+                    for x in (out.get("transient_errors") or [])
+                    if not any(stem in str(x) for stem in retry_stems)
+                ]
+                seen_retry_stems: set[str] = set()
+                for name, local_path, rel_for_report in pending_retries:
+                    stem = Path(rel_for_report).stem
+                    try:
+                        _retrieve(
+                            ftp,
+                            name,
+                            local_path,
+                            max_attempts=6,
+                            retry_delay_s=5.0,
+                        )
+                        out["downloaded"].append(rel_for_report)
+                    except Exception as e:
+                        err_line = format_ftp_file_error(rel_for_report, e)
+                        if _is_transient_ftp_retrieve_error(e):
+                            if stem not in seen_retry_stems:
+                                final_transient.append(err_line)
+                                seen_retry_stems.add(stem)
+                        else:
+                            out["errors"].append(err_line)
+                            out["ok"] = False
+                out["transient_errors"] = final_transient
 
             # Зеркальная очистка: удаляем локальные файлы, которых нет на FTP.
             # Условия безопасности: включён prune_orphans, обход без критических

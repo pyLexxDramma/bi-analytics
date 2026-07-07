@@ -123,7 +123,10 @@ def collect_developer_projects_hints(
     if mdf is None or getattr(mdf, "empty", True):
         return _dedupe_preserve(hints)
     try:
-        from dashboards.dev_projects_tz_matrix import _bddds_df_for_dev_matrix
+        from dashboards.dev_projects_tz_matrix import (
+            _bddds_df_for_dev_matrix,
+            developer_projects_msp_snapshot_hints,
+        )
 
         pd_obj = ss.get("project_data") if hasattr(ss, "get") else None
         bd = _bddds_df_for_dev_matrix(mdf, pd_obj, ss)
@@ -132,6 +135,7 @@ def collect_developer_projects_hints(
                 "Строка «Выборка ДС, млн руб.»: не найдены обороты 1С для выбранного проекта "
                 "(`reference_1c_dannye` или `project_data` со столбцом «Сценарий»). По ТЗ источник — отчёт оборотов по бюджетам; без выгрузки отображается Н/Д."
             )
+        hints.extend(developer_projects_msp_snapshot_hints(mdf, ss=ss))
     except Exception:
         pass
     return _dedupe_preserve(hints)

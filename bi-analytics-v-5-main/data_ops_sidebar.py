@@ -178,7 +178,12 @@ def _render_ftp_sidebar_controls(st: Any) -> None:
         if ftp_res.get("transient_errors"):
             from auto_ingest import render_ftp_transient_errors_notice
 
+            st.session_state["_last_ftp_sync_transient"] = list(
+                ftp_res.get("transient_errors") or []
+            )
             render_ftp_transient_errors_notice(st, ftp_res["transient_errors"])
+        else:
+            st.session_state["_last_ftp_sync_transient"] = []
         with st.spinner("web/ → БД…"):
             result = load_all_from_web()
         try:

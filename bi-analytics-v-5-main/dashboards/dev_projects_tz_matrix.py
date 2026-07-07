@@ -1676,6 +1676,41 @@ def render_developer_predpisaniya_expander(
 
 
 
+def developer_projects_msp_snapshot_hints(
+    mdf: pd.DataFrame | None,
+    *,
+    ss: Any = None,
+) -> list[str]:
+    """Подсказки по снимку MSP и сбоям FTP (550 на msp_*_DD-MM-YYYY)."""
+    hints: list[str] = []
+    if ss is not None:
+        try:
+            for raw in ss.get("_last_ftp_sync_transient") or []:
+                line = str(raw).strip()
+                if not line or "msp_" not in line.casefold():
+                    continue
+                m = re.search(r"msp_[\w-]+", line, flags=re.IGNORECASE)
+                stem = m.group(0) if m else line.split(":", 1)[0].strip()
+                hints.append(
+                    f"На FTP есть {stem}, но скачать не удалось (файл занят / 550). "
+                    "Дашборд остаётся на предыдущем msp_* из web/. Повторите «FTP → перезагрузить БД» "
+                    "через 5–10 мин после 07:00 или попросите IT проверить выгрузку MSP на FTP."
+                )
+        except Exception:
+            pass
+    if mdf is not None and not getattr(mdf, "empty", True) and "snapshot_date" in mdf.columns:
+        try:
+            snap = pd.to_datetime(mdf["snapshot_date"], errors="coerce").max()
+            if pd.notna(snap):
+                hints.append(
+                    f"Активный снимок MSP в матрице: {pd.Timestamp(snap).strftime('%d.%m.%Y')} "
+                    "(последний успешно загруженный msp_* в web/)."
+                )
+        except Exception:
+            pass
+    return hints
+
+
 def dedupe_msp_for_developer_projects(df: pd.DataFrame) -> pd.DataFrame:
     """
     ТЗ: нет дублирования проектов и задач в «Девелоперские проекты».
@@ -4907,31 +4942,8 @@ def _one_milestone_cell(
         pct_scale_max = None
     r = _pick_representative_milestone_row(rows, pct_scale_max=pct_scale_max)
     pdt, fdt, pct = _msp_plan_fact_pct(r)
-    # Предупреждение по % — только по строке-представителе вехи (та же, что даёт План/Факт),
-    # иначе при нескольких совпадениях под одну веху «оранжевый» статус липнет ко всем столбцам.
-    def _row_pct_flags(rr: pd.Series) -> Tuple[bool, bool]:
-        if "pct complete" not in rr.index:
-            return False, False
-        v = rr["pct complete"]
-        if isinstance(v, pd.Series):
-            not100 = False
-            is100 = False
-            for _x in v.tolist():
-                if _is_pct_complete_not_100_dev_matrix(_x, pct_scale_max=pct_scale_max):
-                    not100 = True
-                if _is_pct_complete_100_dev_matrix(_x, pct_scale_max=pct_scale_max):
-                    is100 = True
-            return not100, is100
-        return (
-            bool(_is_pct_complete_not_100_dev_matrix(v, pct_scale_max=pct_scale_max)),
-            bool(_is_pct_complete_100_dev_matrix(v, pct_scale_max=pct_scale_max)),
-        )
-
-    try:
-        warn_pct, pct_complete_100 = _row_pct_flags(r)
-    except Exception:
-        warn_pct = bool(_is_pct_complete_not_100_dev_matrix(pct, pct_scale_max=pct_scale_max))
-        pct_complete_100 = bool(_is_pct_complete_100_dev_matrix(pct, pct_scale_max=pct_scale_max))
+    warn_pct = bool(_is_pct_complete_not_100_dev_matrix(pct, pct_scale_max=pct_scale_max))
+    pct_complete_100 = bool(_is_pct_complete_100_dev_matrix(pct, pct_scale_max=pct_scale_max))
     pl = _fmt_date_ru(pdt)
     fl = _fmt_date_ru(fdt)
     if pd.isna(pdt) or pd.isna(fdt):
