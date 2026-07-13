@@ -733,7 +733,7 @@ def _plan_fact_dates_col_css_class(col: str) -> str:
         return "col-gantt-id"
     if c in ("Ур",):
         return "col-gantt-lvl"
-    if c in ("Название задачи",):
+    if c in ("Название задачи", "Лот"):
         return "col-gantt-task"
     if c == "% завершения":
         return "col-gantt-pct"
@@ -1231,7 +1231,7 @@ def _render_gantt_schedule_html_table(
     _num_cols = {"ИД", "Ур", "% завершения", "Базовая длительность", "Длительность"}
     _dev_cols_all = _dev_cols | {"Отклонение длительности"}
     _reason_cols = {"Причины отклонений", "Причина отклонения", "Заметки"}
-    _task_col_name = "Название задачи"
+    _task_col_name = "Лот" if "Лот" in show_disp.columns else "Название задачи"
     _task_col_w_ch = (
         int(task_col_width_ch)
         if task_col_width_ch
@@ -46097,6 +46097,80 @@ def _gantt_plan_fact_end_series(
     return _base, _plan, True
 
 
+_GANTT_LOT_BLANK_TOKENS = frozenset({"", "nan", "none", "null", "<na>", "-", "—"})
+
+
+def _gantt_lot_filled_mask(series: pd.Series) -> pd.Series:
+    if isinstance(series, pd.DataFrame):
+        series = series.iloc[:, 0]
+    lc = series.astype(str).str.strip().str.lower()
+    return (~lc.isin(_GANTT_LOT_BLANK_TOKENS)) & series.notna()
+
+
+def _gantt_aggregate_plot_by_lot(
+    df: pd.DataFrame,
+    lot_col: str,
+    task_col: str,
+    proj_col: str | None = None,
+) -> pd.DataFrame:
+    """Одна строка на лот: подпись = название лота; даты — min(начало), max(окончание)."""
+    if df is None or getattr(df, "empty", True) or lot_col not in df.columns:
+        return df.iloc[0:0].copy() if df is not None and not getattr(df, "empty", True) else df
+
+    work = df.copy()
+    _lot_src = work[lot_col]
+    if isinstance(_lot_src, pd.DataFrame):
+        _lot_src = _lot_src.iloc[:, 0]
+    _mask = _gantt_lot_filled_mask(_lot_src)
+    work = work.loc[_mask].copy()
+    if work.empty:
+        return work
+
+    _lot_labels = _lot_src.loc[_mask].astype(str).str.strip()
+    _grp_proj = (
+        proj_col
+        and proj_col in work.columns
+        and work[proj_col]
+        .astype(str)
+        .str.strip()
+        .replace({"nan": "", "None": "", "none": ""})
+        .nunique()
+        > 1
+    )
+    if _grp_proj:
+        _proj_labels = work[proj_col].astype(str).str.strip()
+        work["_gantt_lot_grp"] = _proj_labels + "\x1f" + _lot_labels
+    else:
+        work["_gantt_lot_grp"] = _lot_labels
+
+    _date_min_cols = [c for c in ("plan start", "base start") if c in work.columns]
+    _date_max_cols = [c for c in ("plan end", "base end") if c in work.columns]
+    for c in _date_min_cols + _date_max_cols:
+        work[c] = pd.to_datetime(work[c], errors="coerce")
+
+    _rows: list[dict] = []
+    for _, g in work.groupby("_gantt_lot_grp", sort=True):
+        rec: dict = {}
+        _lot = str(g[lot_col].iloc[0]).strip()
+        if _grp_proj and proj_col and proj_col in g.columns:
+            _ser = g[proj_col].dropna()
+            rec["project name"] = _ser.iloc[0] if not _ser.empty else None
+        elif "project name" in g.columns:
+            _ser = g["project name"].dropna()
+            rec["project name"] = _ser.iloc[0] if not _ser.empty else None
+        rec[lot_col] = _lot
+        for c in _date_min_cols:
+            rec[c] = g[c].min()
+        for c in _date_max_cols:
+            rec[c] = g[c].max()
+        if "pct complete" in g.columns:
+            rec["pct complete"] = pd.to_numeric(g["pct complete"], errors="coerce").max()
+        rec[task_col] = _lot
+        _rows.append(rec)
+
+    return pd.DataFrame(_rows) if _rows else work.iloc[0:0].copy()
+
+
 def dashboard_project_schedule_chart(df):
     """График проекта: Гант по плану и базе MSP, фильтры, таблица с отклонениями."""
     # Правки куратора 08.05.2026: «убрать пустоту». Масштаб визуализации
@@ -46822,6 +46896,9 @@ def dashboard_project_schedule_chart(df):
         # («Нет строк после фильтров»). При выбранном блоке «Ковенанты»
         # фильтр уровня пропускаем — показываем все задачи блока.
         pass
+    elif show_lots:
+        # Режим «в лотах»: задачи любого уровня с заполненным ЛОТ, затем группировка.
+        pass
     elif level_col and level_sel != "Все уровни":
         plot_df = _gantt_apply_level_display_filter(
             plot_df,
@@ -46830,35 +46907,6 @@ def dashboard_project_schedule_chart(df):
             wbs_col=wbs_col,
             sel_block=sel_block,
         )
-
-    if show_lots and lot_col and lot_col in plot_df.columns:
-        # Вытягиваем Series, даже если в df случайно оказались две одноимённые колонки.
-        _lot_src = plot_df[lot_col]
-        if isinstance(_lot_src, pd.DataFrame):
-            _lot_src = _lot_src.iloc[:, 0]
-        lc = _lot_src.astype(str).str.strip().str.lower()
-        _blank_tokens = {"", "nan", "none", "null", "<na>", "-", "—"}
-        mask = (~lc.isin(_blank_tokens)) & _lot_src.notna()
-        _before = len(plot_df)
-        plot_df = plot_df[mask.values]
-        _after = len(plot_df)
-        if _after == 0:
-            st.warning(
-                f"Фильтр «в лотах» отсеял все строки: в колонке «{lot_col}» нет ни одного "
-                "заполненного значения лота у текущей выборки."
-            )
-        elif _after == _before:
-            suppress_caption(
-                f"Фильтр «в лотах»: в выборке все строки уже с заполненным лотом «{lot_col}» "
-                "(ничего не отсеяно)."
-            )
-        else:
-            suppress_caption(
-                f"Фильтр «в лотах»: оставлено {_after} из {_before} строк "
-                f"(колонка «{lot_col}»)."
-            )
-    elif show_lots and not lot_col:
-        suppress_caption("Колонка лота не найдена — фильтр «в лотах» недоступен.")
     # Подписи слева/в режимах линий: параметры уплотнения (без дубля чекбоксов выше).
     force_all_labels = True
     labels_hover_only = False
@@ -46975,8 +47023,34 @@ def dashboard_project_schedule_chart(df):
             _fin_dev = (be - fe).dt.days
             plot_df = plot_df.loc[_fin_dev.notna() & (_fin_dev < 0)].copy()
 
+    if show_lots:
+        if not lot_col:
+            suppress_caption("Колонка лота не найдена — режим «в лотах» недоступен.")
+        elif lot_col in plot_df.columns:
+            _tasks_before_lot = len(plot_df)
+            plot_df = _gantt_aggregate_plot_by_lot(plot_df, lot_col, task_col, proj_col)
+            if plot_df.empty:
+                st.warning(
+                    "Режим «в лотах»: нет строк с заполненным полем «ЛОТ» после фильтров."
+                )
+            else:
+                suppress_caption(
+                    f"Режим «в лотах»: {_tasks_before_lot} задач → {len(plot_df)} лотов "
+                    "(мин. начало, макс. окончание)."
+                )
+                sort_cols = []
+                sort_asc = []
+                if sel_proj == "Все" and proj_col and proj_col in plot_df.columns:
+                    sort_cols.append(proj_col)
+                    sort_asc.append(True)
+                sort_cols.append(task_col)
+                sort_asc.append(True)
+                if "plan start" in plot_df.columns:
+                    sort_cols.append("plan start")
+                    sort_asc.append(True)
+
     if plot_df.empty:
-        st.info("Нет строк после фильтров «Скрыть 100%» / «Только просрочка по окончанию».")
+        st.info("Нет строк после фильтров.")
         return
 
     _be_pres = "base end" in plot_df.columns
@@ -47006,7 +47080,12 @@ def dashboard_project_schedule_chart(df):
             .drop(columns=["_dd_fin"])
         )
     else:
-        plot_df = plot_df.sort_values(sort_cols, ascending=sort_asc, na_position="last")
+        _sort_pairs = [(c, a) for c, a in zip(sort_cols, sort_asc) if c in plot_df.columns]
+        if not _sort_pairs and "plan start" in plot_df.columns:
+            _sort_pairs = [("plan start", True)]
+        if _sort_pairs:
+            _sc, _sa = zip(*_sort_pairs)
+            plot_df = plot_df.sort_values(list(_sc), ascending=list(_sa), na_position="last")
     _gantt_rows_total = len(plot_df)
     _tbl_source_df = plot_df.copy()
     if _gantt_row_cap is not None and len(plot_df) > _gantt_row_cap:
@@ -47017,15 +47096,24 @@ def dashboard_project_schedule_chart(df):
         )
     _gantt_rows_shown = len(plot_df)
 
-    lvl_for_indent = None
-    if level_col:
-        lvl_for_indent = pd.to_numeric(plot_df[level_col], errors="coerce")
-    if level_col and (lvl_for_indent is None or not lvl_for_indent.notna().any()):
-        wbs_depth = plot_df[level_col].map(_sched_wbs_tuple).map(lambda t: float(len(t)) if t else np.nan)
-        if wbs_depth.notna().any():
-            lvl_for_indent = wbs_depth
-    if lvl_for_indent is None or not lvl_for_indent.notna().any():
+    if show_lots:
         lvl_for_indent = pd.Series(np.nan, index=plot_df.index)
+    else:
+        lvl_for_indent = None
+        if level_col and level_col in plot_df.columns:
+            lvl_for_indent = pd.to_numeric(plot_df[level_col], errors="coerce")
+        if (
+            level_col
+            and level_col in plot_df.columns
+            and (lvl_for_indent is None or not lvl_for_indent.notna().any())
+        ):
+            wbs_depth = plot_df[level_col].map(_sched_wbs_tuple).map(
+                lambda t: float(len(t)) if t else np.nan
+            )
+            if wbs_depth.notna().any():
+                lvl_for_indent = wbs_depth
+        if lvl_for_indent is None or not lvl_for_indent.notna().any():
+            lvl_for_indent = pd.Series(np.nan, index=plot_df.index)
     indents = []
     for ix in plot_df.index:
         v = lvl_for_indent.loc[ix] if ix in lvl_for_indent.index else np.nan
@@ -47037,7 +47125,9 @@ def dashboard_project_schedule_chart(df):
     names = plot_df[task_col].fillna("").astype(str).map(_gantt_clean_task_label)
     _gantt_raw_y_names: list[str] = []
     _gantt_pct_suffixes: list[str | None] = []
-    _show_proj_in_gantt_label = sel_proj == "Все" and bool(proj_col)
+    _show_proj_in_gantt_label = (
+        sel_proj == "Все" and bool(proj_col) and proj_col in plot_df.columns
+    )
     for ix, (name, d) in zip(plot_df.index, zip(names.tolist(), indents)):
         prefix = ("  " * d) + ("— " if d > 0 else "")
         core = name
@@ -47696,37 +47786,37 @@ def dashboard_project_schedule_chart(df):
     ) or _sched_col(_tbl_df, ["unique id", "Уникальный_идентификатор"])
 
     tbl_view = pd.DataFrame(index=_tbl_df.index)
-    if id_col and id_col in _tbl_df.columns:
-        _id_ser = _tbl_df[id_col]
-        if isinstance(_id_ser, pd.DataFrame):
-            _id_ser = _id_ser.iloc[:, 0]
-        # Целые числа без '.0', NaN → ""
-        _id_num = pd.to_numeric(_id_ser, errors="coerce")
-        if _id_num.notna().any():
-            tbl_view["ИД"] = _id_num.map(
-                lambda v: "" if pd.isna(v) else f"{int(v)}"
-            )
-        else:
-            tbl_view["ИД"] = _id_ser.astype(str).where(_id_ser.notna(), "")
-    else:
-        tbl_view["ИД"] = pd.Series("", index=_tbl_df.index, dtype=object)
-
-    # ТЗ заказчика 2026-05-06 (скрин 1): после «Ид» в таблице идёт колонка
-    # «Ур» — уровень иерархии MSP (3/4/5). Берём из level_col, если есть.
-    if level_col and level_col in _tbl_df.columns:
-        _lvl_num = pd.to_numeric(_tbl_df[level_col], errors="coerce")
-        tbl_view["Ур"] = _lvl_num.map(
-            lambda v: "" if pd.isna(v) else f"{int(v)}"
-        )
-    else:
-        tbl_view["Ур"] = pd.Series("", index=_tbl_df.index, dtype=object)
-
-    if task_col and task_col in _tbl_df.columns:
+    if show_lots and lot_col and lot_col in _tbl_df.columns:
+        tbl_view["Лот"] = _tbl_df[lot_col].fillna("").astype(str).str.strip()
+    elif task_col and task_col in _tbl_df.columns:
         tbl_view["Название задачи"] = (
             _tbl_df[task_col].fillna("").astype(str).map(_gantt_clean_task_label)
         )
     else:
         tbl_view["Название задачи"] = ""
+
+    if not show_lots:
+        if id_col and id_col in _tbl_df.columns:
+            _id_ser = _tbl_df[id_col]
+            if isinstance(_id_ser, pd.DataFrame):
+                _id_ser = _id_ser.iloc[:, 0]
+            _id_num = pd.to_numeric(_id_ser, errors="coerce")
+            if _id_num.notna().any():
+                tbl_view["ИД"] = _id_num.map(
+                    lambda v: "" if pd.isna(v) else f"{int(v)}"
+                )
+            else:
+                tbl_view["ИД"] = _id_ser.astype(str).where(_id_ser.notna(), "")
+        else:
+            tbl_view["ИД"] = pd.Series("", index=_tbl_df.index, dtype=object)
+
+        if level_col and level_col in _tbl_df.columns:
+            _lvl_num = pd.to_numeric(_tbl_df[level_col], errors="coerce")
+            tbl_view["Ур"] = _lvl_num.map(
+                lambda v: "" if pd.isna(v) else f"{int(v)}"
+            )
+        else:
+            tbl_view["Ур"] = pd.Series("", index=_tbl_df.index, dtype=object)
 
     if sel_proj == "Все" and proj_col and proj_col in _tbl_df.columns:
         _proj_ser = _tbl_df[proj_col]
@@ -47846,10 +47936,11 @@ def dashboard_project_schedule_chart(df):
     _gantt_tbl_order = []
     if "Проект" in tbl_view.columns and sel_proj == "Все":
         _gantt_tbl_order.append("Проект")
+    if show_lots:
+        _gantt_tbl_order.append("Лот")
+    else:
+        _gantt_tbl_order.extend(["ИД", "Ур", "Название задачи"])
     _gantt_tbl_order.extend([
-        "ИД",
-        "Ур",
-        "Название задачи",
         "% завершения",
         "Начало",
         "Базовое начало",
@@ -47868,7 +47959,13 @@ def dashboard_project_schedule_chart(df):
 
     # Ширина «Название задачи» — как при выключенном «Показать причины отклонений»
     # (уровень из селектора, без разворота предков ур.5).
-    _task_w_df = tbl_view[["Название задачи"]] if "Название задачи" in tbl_view.columns else tbl_show
+    _task_w_df = (
+        tbl_view[["Лот"]]
+        if show_lots and "Лот" in tbl_view.columns
+        else tbl_view[["Название задачи"]]
+        if "Название задачи" in tbl_view.columns
+        else tbl_show
+    )
     if show_reasons and task_col and task_col in _tbl_df.columns:
         _plot_task_w = _gantt_apply_level_display_filter(
             _tbl_df,
@@ -47886,7 +47983,11 @@ def dashboard_project_schedule_chart(df):
             }
         )
     _gantt_tbl_task_col_w_ch = (
-        _gantt_task_name_col_width_ch(_task_w_df, "Название задачи") or 9
+        _gantt_task_name_col_width_ch(
+            _task_w_df,
+            "Лот" if show_lots and "Лот" in _task_w_df.columns else "Название задачи",
+        )
+        or 9
     )
 
     tbl_numeric = tbl_show.copy()

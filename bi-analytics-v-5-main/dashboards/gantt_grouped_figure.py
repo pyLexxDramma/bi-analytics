@@ -287,7 +287,6 @@ def build_grouped_plan_fact_gantt_figure(
     base_end_x: list = []
     base_end_y_idx: list[int] = []
     _row_meta: list[dict] = []
-    _seen_y: dict[str, int] = {}
     _n_fact_ok = 0
     _use_baseline_as_plan = not label_pct
 
@@ -326,11 +325,6 @@ def build_grouped_plan_fact_gantt_figure(
             continue
 
         y = str(row["_gantt_y_label"])
-        if y in _seen_y:
-            _seen_y[y] += 1
-            y = f"{y} #{_seen_y[y]}"
-        else:
-            _seen_y[y] = 1
         y_labels.append(y)
 
         if plan_ok:
