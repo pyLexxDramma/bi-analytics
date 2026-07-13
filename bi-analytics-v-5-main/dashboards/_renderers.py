@@ -437,9 +437,9 @@ _TABLE_CSS = """
 .rendered-table th.col-baseline, .rendered-table td.col-baseline { background:rgba(46,134,171,0.12); }
 .rendered-table th.col-fact, .rendered-table td.col-fact { background:rgba(255,99,71,0.10); }
 .rendered-table th.col-dev, .rendered-table td.col-dev { background:rgba(241,196,15,0.08); }
-.rendered-table th.col-pf-start, .rendered-table td.col-pf-start { background:rgba(56,189,248,0.14); }
-.rendered-table th.col-pf-end, .rendered-table td.col-pf-end { background:rgba(59,130,246,0.20); }
-.rendered-table th.col-pf-dur, .rendered-table td.col-pf-dur { background:rgba(30,58,138,0.32); }
+.rendered-table th.col-pf-start { background:rgba(56,189,248,0.14); }
+.rendered-table th.col-pf-end { background:rgba(59,130,246,0.20); }
+.rendered-table th.col-pf-dur { background:rgba(30,58,138,0.32); }
 .rendered-table th .bi-sort-label { cursor:pointer !important; user-select:none; }
 .rendered-table th .bi-sort-label:hover { color:#93c5fd; }
 .pf-dev-red { color:#ff6b6b !important; font-weight:700; }
@@ -501,6 +501,18 @@ def _gantt_table_css_for_theme() -> str:
         (
             ".pf-dates-scroll-wrap .pf-dates-table thead th{position:sticky;top:0;z-index:4;background:hsl(209,72%,6%)!important;}",
             ".pf-dates-scroll-wrap .pf-dates-table thead th{position:sticky;top:0;z-index:4;background:#f3f4f6!important;color:#111827!important;}",
+        ),
+        (
+            ".rendered-table th.col-pf-start { background:rgba(56,189,248,0.14); }",
+            ".rendered-table th.col-pf-start { background:rgba(56,189,248,0.16); }",
+        ),
+        (
+            ".rendered-table th.col-pf-end { background:rgba(59,130,246,0.20); }",
+            ".rendered-table th.col-pf-end { background:rgba(59,130,246,0.14); }",
+        ),
+        (
+            ".rendered-table th.col-pf-dur { background:rgba(30,58,138,0.32); }",
+            ".rendered-table th.col-pf-dur { background:rgba(30,58,138,0.12); }",
         ),
     ):
         css = css.replace(old, new)
@@ -999,11 +1011,6 @@ def _render_plan_fact_dates_main_table(
             txt = display_df.iloc[i][c]
             sort_attr = ""
             style_parts: list[str] = []
-            tint_n = _plan_fact_dev_nval_for_col(c, dev_start, dev_end, dev_dur)
-            if tint_n is not None:
-                bg = _plan_fact_deviation_bg_style(tint_n)
-                if bg:
-                    style_parts.append(bg)
             if c in _dev_cols and c in numeric_df.columns:
                 nv = numeric_df.iloc[i][c]
                 sort_attr = _plan_fact_sort_attr(nv)
@@ -1039,6 +1046,12 @@ def _render_plan_fact_dates_main_table(
                     if pd.notna(txt) and str(txt).strip() not in ("", "nan", "None")
                     else ""
                 )
+            if cell and c not in _reason_cols:
+                tint_n = _plan_fact_dev_nval_for_col(c, dev_start, dev_end, dev_dur)
+                if tint_n is not None:
+                    bg = _plan_fact_deviation_bg_style(tint_n)
+                    if bg:
+                        style_parts.append(bg)
             style_parts.append(
                 _plan_fact_td_align_style(
                     c,
@@ -1320,12 +1333,6 @@ def _render_gantt_schedule_html_table(
             txt = _disp_arrays[c][i]
             sort_attr = ""
             style_parts: list[str] = []
-            if c not in _reason_cols:
-                tint_n = _plan_fact_dev_nval_for_col(c, dev_start, dev_end, dev_dur)
-                if tint_n is not None:
-                    bg = _plan_fact_deviation_bg_style(tint_n)
-                    if bg:
-                        style_parts.append(bg)
             if c in _dev_cols_all:
                 nv = _num_arrays[c][i] if _num_arrays.get(c) is not None else None
                 sort_attr = _plan_fact_sort_attr(nv)
@@ -1349,6 +1356,12 @@ def _render_gantt_schedule_html_table(
                 cell = html_module.escape(_cell_text(txt)) if _cell_text(txt) else ""
             else:
                 cell = html_module.escape(_cell_text(txt)) if _cell_text(txt) else ""
+            if cell and c not in _reason_cols:
+                tint_n = _plan_fact_dev_nval_for_col(c, dev_start, dev_end, dev_dur)
+                if tint_n is not None:
+                    bg = _plan_fact_deviation_bg_style(tint_n)
+                    if bg:
+                        style_parts.append(bg)
             style_parts.append(
                 _plan_fact_td_align_style(
                     c,
