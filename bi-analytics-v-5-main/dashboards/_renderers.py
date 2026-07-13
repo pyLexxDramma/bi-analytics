@@ -12343,6 +12343,7 @@ def _finance_plotly_canvas_width(
     *,
     px_per_month: int | None = None,
     force_hscroll: bool = False,
+    max_width: int = 12000,
 ) -> tuple[bool, int]:
     """
     (need_hscroll, width_px).
@@ -12353,15 +12354,16 @@ def _finance_plotly_canvas_width(
     vp = int(_FINANCE_BAR_SCROLL_VP_PX)
     pad = int(_FINANCE_BAR_CANVAS_PAD_PX)
     px = int(px_per_month if px_per_month is not None else _FINANCE_BAR_PX_PER_MONTH)
+    _cap = int(max(max_width, vp))
     content_w = n * px + pad
     if force_hscroll:
         if content_w <= vp:
             px = max(px, int((vp + pad + 40) / n) + 1)
             content_w = n * px + pad
-        return True, int(min(12000, content_w))
+        return True, int(min(_cap, content_w))
     if content_w <= vp:
         return False, vp
-    return True, int(min(12000, content_w))
+    return True, int(min(_cap, content_w))
 
 
 def _finance_plotly_bar_trace_width(n_bar_slots: int, *, bargroupgap: float = 0.16) -> float:
@@ -12382,6 +12384,7 @@ def _finance_plotly_apply_bar_width(
     fixed_canvas_width: int | None = None,
     n_bar_slots: int | None = None,
     stack: bool = False,
+    bar_width_scale: float = 1.0,
 ) -> None:
     """Grouped bar: bargap + горизонтальные подписи; fixed_canvas_width — для гориз. скролла."""
     n = max(1, int(n_periods))
@@ -12399,14 +12402,19 @@ def _finance_plotly_apply_bar_width(
     slots = max(1, int(n_bar_slots if n_bar_slots is not None else n_bar))
     if fixed_canvas_width is not None:
         bg = max(0.05, min(0.12, 2.2 / n))
-        bgg = 0.16 if barmode == "group" and slots > 1 else 0.04
+        if float(bar_width_scale or 1.0) >= 2.0:
+            bgg = 0.06 if barmode == "group" and slots > 1 else 0.04
+        else:
+            bgg = 0.16 if barmode == "group" and slots > 1 else 0.04
     else:
         bgg = max(bgg, 0.14) if barmode == "group" and slots > 1 else bgg
     fig.update_layout(bargap=bg, bargroupgap=bgg)
     if stack:
         fig.update_traces(width=0.82, selector=dict(type="bar"))
     elif barmode == "group" and slots > 1:
-        _tw = _finance_plotly_bar_trace_width(slots, bargroupgap=bgg)
+        _tw = _finance_plotly_bar_trace_width(slots, bargroupgap=bgg) * max(
+            1.0, float(bar_width_scale or 1.0)
+        )
         fig.update_traces(width=_tw, selector=dict(type="bar"))
     elif barmode != "group" or n_bar <= 1:
         fig.update_traces(width=bar_w, selector=dict(type="bar"))
@@ -12440,6 +12448,8 @@ def _render_finance_bar_chart(
     px_per_month: int | None = None,
     force_hscroll: bool = False,
     n_bar_slots: int | None = None,
+    bar_width_scale: float = 1.0,
+    max_canvas_width: int = 12000,
 ) -> None:
     """Grouped bar: короткий ряд — на всю ширину; длинный — components.html + гориз. скролл."""
     import uuid
@@ -12470,7 +12480,7 @@ def _render_finance_bar_chart(
     cats = [str(c) for c in (categories or [])]
     fig_h = int(height)
     need_hscroll, canvas_w = _finance_plotly_canvas_width(
-        n, px_per_month=px_per_month, force_hscroll=force_hscroll
+        n, px_per_month=px_per_month, force_hscroll=force_hscroll, max_width=max_canvas_width
     )
     fixed_w = int(canvas_w) if need_hscroll else None
 
@@ -12481,6 +12491,7 @@ def _render_finance_bar_chart(
             cats,
             fixed_canvas_width=fixed_w,
             n_bar_slots=n_bar_slots,
+            bar_width_scale=bar_width_scale,
         )
     except Exception:
         pass
@@ -12522,6 +12533,16 @@ def _render_finance_bar_chart(
         pass
     _apply_plotly_spec_411_labels(fig)
     _finance_plotly_xaxis_category_pad(fig, n)
+    try:
+        _yax = fig.layout.yaxis
+        _yr = getattr(_yax, "range", None) if _yax is not None else None
+        if _yr is not None and len(_yr) == 2:
+            fig.update_yaxes(
+                range=[float(_yr[0]), float(_yr[1])],
+                autorange=False,
+            )
+    except Exception:
+        pass
 
     if not need_hscroll:
         render_chart(
@@ -38080,12 +38101,21 @@ def _forecast_overlay_turnover_on_monthly(
     months_all = sorted(set(fc_by_m.keys()) | set(turn_norm.keys()), key=lambda x: str(x))
     rows = []
     for m in months_all:
-        plan_rub, fact_rub = turn_norm.get(m, (0.0, 0.0))
-        if m not in turn_norm:
-            hit = out.loc[out["month"] == m]
-            if not hit.empty:
-                plan_rub = float(hit.iloc[0].get("bdds_plan_msp", 0.0) or 0.0)
-                fact_rub = float(hit.iloc[0].get("bdds_fact", 0.0) or 0.0)
+        hit = out.loc[out["month"].map(_forecast_norm_month_period) == m]
+        msp_plan = (
+            float(hit.iloc[0].get("bdds_plan_msp", 0.0) or 0.0) if not hit.empty else 0.0
+        )
+        msp_fact = (
+            float(hit.iloc[0].get("bdds_fact", 0.0) or 0.0) if not hit.empty else 0.0
+        )
+        if m in turn_norm:
+            plan_rub, fact_rub = turn_norm[m]
+            if float(plan_rub or 0.0) <= 0.0:
+                plan_rub = msp_plan
+            if float(fact_rub or 0.0) <= 0.0:
+                fact_rub = msp_fact
+        else:
+            plan_rub, fact_rub = msp_plan, msp_fact
         rows.append(
             {
                 "month": m,
@@ -39115,50 +39145,70 @@ def dashboard_forecast_budget(df):
         _nfc = len(_chart_df)
         _tfs_fc = 10 if _nfc > 24 else 11 if _nfc > 14 else 12
         _bg_fc, _bgg_fc, _bar_w_fc = _finance_plotly_bar_layout(_nfc)
-        _bgg_fc = max(float(_bgg_fc), 0.22)
+        _bgg_fc = min(float(_bgg_fc), 0.08)
         _leg_fc_pre = max(300, min(460, 280 + int(_nfc * 3.5))) if _nfc > 24 else 300
         _top_px_fc = 120 if _nfc > 12 else 100
         _ch_fc_base = 920 if _nfc <= 20 else int(min(1600, 800 + int(_nfc * 2.2)))
         _ch_fc = int(min(1500, max(_ch_fc_base, _top_px_fc + _leg_fc_pre + 420)))
         _xa_fc = -35 if _nfc > 14 else 0
         _xs_fc = 14
-        _px_fc = 440 if _nfc > 12 else 380 if _nfc > 8 else 340 if _nfc > 5 else 300
+        _px_fc = 880
         _tfs_out_fc = 9 if _nfc > 20 else 10
+        _fc_bar_scale = 1.0
+        _fc_bar_slots = 2 + (0 if _hide_dev_fc else 1)
         _fmt_hover1 = lambda v: format_million_rub(v, decimals=1)  # noqa: E731
-        _plan_txt_fc = _finance_bar_text_mln_rub(_chart_df["bdds_plan_msp"], min_abs_mln=0.0)
-        _fact_txt_fc = _finance_bar_text_mln_rub(_chart_df["bdds_fact"], min_abs_mln=0.0)
-        _frc_txt_fc = _finance_bar_text_mln_rub(_chart_df["bdds_forecast"], min_abs_mln=0.0)
         _bar_lbl_fc = _fin_chart_label_color()
+        _dev_mln_fc = _chart_df["_dev"].div(1e6)
+        _dev_thr_fc = 0.005
+
+        # По ТЗ (скрин 3): всегда прогноз + выбранная база
+        # (БДДС план → синий, БДДС факт → фиолетовый) + столбец отклонения.
+        if _dev_base_fc == "БДДС факт":
+            _base_col_fc = "bdds_fact"
+            _base_name_fc = "БДДС факт"
+            _base_color_fc = "#A23B72"
+            _dev_label_fc = "Отклонение (факт − прогноз), млн. руб."
+        else:
+            _base_col_fc = "bdds_plan_msp"
+            _base_name_fc = "БДДС план"
+            _base_color_fc = "#2E86AB"
+            _dev_label_fc = "Отклонение (план − прогноз), млн. руб."
+
+        # Порог скрытия мелких/нулевых подписей, чтобы они не накладывались.
+        _lbl_max_fc = float(
+            np.nanmax(
+                np.concatenate(
+                    [
+                        _chart_df[_base_col_fc].abs().to_numpy(),
+                        _chart_df["bdds_forecast"].abs().to_numpy(),
+                    ]
+                )
+            )
+            or 0.0
+        )
+        _lbl_floor_mln = max(_lbl_max_fc / 1e6 * 0.02, 0.05)
+        _base_txt_fc = _finance_bar_text_mln_rub(
+            _chart_df[_base_col_fc], min_abs_mln=_lbl_floor_mln, decimals=1, unit_suffix=" млн. руб."
+        )
+        _frc_txt_fc = _finance_bar_text_mln_rub(
+            _chart_df["bdds_forecast"], min_abs_mln=_lbl_floor_mln, decimals=1, unit_suffix=" млн. руб."
+        )
+
         fig_fc = go.Figure()
         x_fc = _chart_df["Период"].astype(str)
         fig_fc.add_trace(
             go.Bar(
                 x=x_fc,
-                y=_chart_df["bdds_plan_msp"].div(1e6),
-                name="БДДС план",
-                marker_color="#2E86AB",
-                text=_plan_txt_fc,
+                y=_chart_df[_base_col_fc].div(1e6),
+                name=_base_name_fc,
+                marker_color=_base_color_fc,
+                text=_base_txt_fc,
                 textposition="outside",
                 textangle=0,
                 cliponaxis=False,
                 textfont=dict(size=_tfs_out_fc, color=_bar_lbl_fc),
-                customdata=_chart_df["bdds_plan_msp"].apply(_fmt_hover1),
-                hovertemplate="<b>%{x}</b><br>БДДС план: %{customdata}<extra></extra>",
-            )
-        )
-        fig_fc.add_trace(
-            go.Bar(
-                x=x_fc,
-                y=_chart_df["bdds_fact"].div(1e6),
-                name="БДДС факт",
-                marker_color="#A23B72",
-                text=_fact_txt_fc,
-                textposition="outside",
-                textangle=0,
-                cliponaxis=False,
-                textfont=dict(size=_tfs_out_fc, color=_bar_lbl_fc),
-                customdata=_chart_df["bdds_fact"].apply(_fmt_hover1),
-                hovertemplate="<b>%{x}</b><br>БДДС факт: %{customdata}<extra></extra>",
+                customdata=_chart_df[_base_col_fc].apply(_fmt_hover1),
+                hovertemplate="<b>%{x}</b><br>" + _base_name_fc + ": %{customdata}<extra></extra>",
             )
         )
         fig_fc.add_trace(
@@ -39176,6 +39226,41 @@ def dashboard_forecast_budget(df):
                 hovertemplate="<b>%{x}</b><br>БДДС прогноз: %{customdata}<extra></extra>",
             )
         )
+        if not _hide_dev_fc:
+            _dev_signed = pd.to_numeric(_dev_mln_fc, errors="coerce").fillna(0.0)
+            _dev_bar_colors: list[str] = []
+            _dev_txt_colors: list[str] = []
+            for _dv in _dev_signed:
+                _fv = float(_dv) if pd.notna(_dv) else 0.0
+                if _fv > _dev_thr_fc:
+                    _dev_bar_colors.append(_FINANCE_DEV_BAR_GREEN)
+                    _dev_txt_colors.append(_FINANCE_DEV_LABEL_GREEN)
+                elif _fv < -_dev_thr_fc:
+                    _dev_bar_colors.append(_FINANCE_DEV_BAR_RED)
+                    _dev_txt_colors.append(_FINANCE_DEV_LABEL_RED)
+                else:
+                    _dev_bar_colors.append("rgba(0,0,0,0)")
+                    _dev_txt_colors.append(_bar_lbl_fc)
+            _dev_txt_all = _finance_deviation_bar_text_signed_mln(
+                _dev_signed, min_abs_mln=_lbl_floor_mln, decimals=1, unit_suffix=" млн. руб."
+            )
+            fig_fc.add_trace(
+                go.Bar(
+                    x=x_fc,
+                    y=_dev_signed,
+                    name=_dev_label_fc,
+                    marker_color=_dev_bar_colors,
+                    text=_dev_txt_all,
+                    textposition="outside",
+                    textangle=0,
+                    cliponaxis=False,
+                    textfont=dict(size=_tfs_out_fc, color=_dev_txt_colors),
+                    customdata=_dev_signed.map(
+                        lambda v: format_million_rub(float(v) * 1e6) if pd.notna(v) else ""
+                    ),
+                    hovertemplate=f"<b>%{{x}}</b><br>{_dev_label_fc}: %{{customdata}}<extra></extra>",
+                )
+            )
         fig_fc.update_layout(
             title_text="",
             yaxis_title="млн. руб.",
@@ -39190,25 +39275,44 @@ def dashboard_forecast_budget(df):
             ),
         )
         fig_fc = _apply_finance_bar_label_layout(fig_fc)
-        _dtick_fc, _ymax_axis_fc = (10.0, 100.0)
+        _ymax_fc = 0.0
+        _ymin_fc = 0.0
         if not _chart_df.empty:
-            _ymax_fc = float(
-                np.nanmax(
-                    np.concatenate(
-                        [
-                            _chart_df["bdds_plan_msp"].div(1e6).to_numpy(),
-                            _chart_df["bdds_fact"].div(1e6).to_numpy(),
-                            _chart_df["bdds_forecast"].div(1e6).to_numpy(),
-                        ]
-                    )
-                )
+            _y_main = np.concatenate(
+                [
+                    _chart_df[_base_col_fc].div(1e6).to_numpy(),
+                    _chart_df["bdds_forecast"].div(1e6).to_numpy(),
+                ]
             )
-            if np.isfinite(_ymax_fc) and _ymax_fc > 0:
-                _dtick_fc, _ = _finance_bar_yaxis_tight(_ymax_fc, outside_labels=True, tick_stride=4)
-                # Верх оси = высота самого высокого столбца (без запаса сверху).
-                _ymax_axis_fc = float(_ymax_fc)
+            _ymax_fc = float(np.nanmax(_y_main))
+            if not _hide_dev_fc:
+                _dev_vals = pd.to_numeric(_dev_mln_fc, errors="coerce")
+                if _dev_vals.notna().any():
+                    _dev_pos_max = float(_dev_vals.max())
+                    _dev_neg_min = float(_dev_vals.min())
+                    if np.isfinite(_dev_pos_max) and _dev_pos_max > _ymax_fc:
+                        _ymax_fc = _dev_pos_max
+                    if np.isfinite(_dev_neg_min) and _dev_neg_min < 0:
+                        _ymin_fc = _dev_neg_min * 1.15
+            if np.isfinite(_ymax_fc) and (_ymax_fc > 0 or _ymin_fc < 0):
+                pad = max(abs(_ymax_fc), abs(_ymin_fc), 1e-6) * 0.28
+                span = float(max(_ymax_fc - _ymin_fc, 1e-6))
+                head = max(span * 0.32, abs(_ymax_fc) * 0.2, 0.75)
+                foot = pad if _ymin_fc >= 0 else max(pad, abs(_ymin_fc) * 0.24)
+                _dtick_fc, _ = _finance_bar_yaxis_tight(
+                    max(_ymax_fc, abs(_ymin_fc)), outside_labels=True, tick_stride=1
+                )
+                _dtick_fc = float(_dtick_fc) * 3.0
+                _y_lo = float(_ymin_fc - foot) if _ymin_fc < 0 else 0.0
+                _y_hi = float(_ymax_fc + pad + head)
                 fig_fc.update_layout(
-                    yaxis=dict(range=[0, _ymax_axis_fc], dtick=_dtick_fc, tick0=0)
+                    yaxis=dict(
+                        range=[_y_lo, _y_hi],
+                        dtick=_dtick_fc,
+                        tick0=0,
+                        autorange=False,
+                        zeroline=True,
+                    )
                 )
         try:
             fig_fc.update_layout(
@@ -39221,10 +39325,6 @@ def dashboard_forecast_budget(df):
         fig_fc = _plotly_legend_horizontal_below_plot(
             fig_fc, bottom_px=_leg_fc_pre, legend_y=_leg_y_fc, top_px=_top_px_fc
         )
-        if not _chart_df.empty and np.isfinite(_ymax_fc) and _ymax_fc > 0:
-            fig_fc.update_layout(
-                yaxis=dict(range=[0, _ymax_axis_fc], dtick=_dtick_fc, tick0=0)
-            )
         try:
             fig_fc.update_xaxes(title=dict(text=x_label_fc, standoff=_xs_fc), automargin=True)
         except Exception:
@@ -39248,6 +39348,9 @@ def dashboard_forecast_budget(df):
             ),
             px_per_month=_px_fc,
             force_hscroll=True,
+            n_bar_slots=_fc_bar_slots,
+            bar_width_scale=_fc_bar_scale,
+            max_canvas_width=int(_nfc * _px_fc + 400),
         )
 
     render_table_subheader(st, _fc_name, filters_suffix=_fc_dates)

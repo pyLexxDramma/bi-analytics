@@ -200,7 +200,19 @@ def project_labels_for_filter(
         for raws in by_gk.values():
             use_raws = _raws_for_group_label(raws)
             labels.append(unified_project_display_label(use_raws[0]))
-    return sorted(set(labels), key=lambda x: x.casefold())
+    out: list[str] = []
+    for lab in labels:
+        s = str(lab).strip()
+        if not s:
+            continue
+        if s in MSP_PROJECT_FILTER_EXCLUDE_NAMES:
+            lk = s.lower().replace(" ", "").replace("-", "")
+            if lk.startswith("дмитров"):
+                s = "Дмитровский"
+            else:
+                continue
+        out.append(s)
+    return sorted(set(out), key=lambda x: x.casefold())
 
 
 def apply_unified_project_column(df: pd.DataFrame, col: str) -> pd.DataFrame:

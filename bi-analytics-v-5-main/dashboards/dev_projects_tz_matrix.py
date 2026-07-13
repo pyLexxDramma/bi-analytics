@@ -1051,6 +1051,13 @@ def _projekts_display_by_norm_key() -> Dict[str, str]:
 
 def _control_points_project_label(group_key: str, raw_names: List[str]) -> str:
     """Подпись столбца «Проект» после группировки."""
+    if group_key == "unified_dmitrovsky1":
+        try:
+            from config import MSP_PROJECT_NAME_MAP as M
+
+            return str(M.get("dmitrovsky", M.get("дмитровский", "Дмитровский"))).strip()
+        except Exception:
+            return "Дмитровский"
     proj_ref = _projekts_display_by_norm_key()
     for r in raw_names:
         nk = _norm_dev_project_key(r)
@@ -1073,8 +1080,6 @@ def _control_points_project_label(group_key: str, raw_names: List[str]) -> str:
         nk = _norm_dev_project_key(r)
         if nk and nk in M:
             return str(M[nk]).strip()
-    if group_key == "unified_dmitrovsky1":
-        return proj_ref.get("дмитровский1", "Дмитровский-1")
     for r in raw_names:
         s = str(r).strip()
         if s and re.search(r"[а-яё]", s, flags=re.IGNORECASE):
