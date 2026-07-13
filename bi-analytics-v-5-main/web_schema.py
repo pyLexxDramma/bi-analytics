@@ -108,6 +108,21 @@ def init_web_schema():
             CREATE INDEX IF NOT EXISTS idx_web_files_version
             ON web_files(version_id)
         """)
+        # Инкрементальная загрузка: web_data по (версия, file_id) — копирование
+        # строк неизменённого файла из прошлой версии (INSERT ... SELECT).
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_web_data_version_file
+            ON web_data(version_id, file_id)
+        """)
+
+        # Сигнатура файла (size:mtime) для детекции изменений между версиями.
+        # Миграция старых БД: колонки может не быть — добавляем безопасно.
+        try:
+            _cols = {r[1] for r in cur.execute("PRAGMA table_info(web_files)").fetchall()}
+            if "sig" not in _cols:
+                cur.execute("ALTER TABLE web_files ADD COLUMN sig TEXT")
+        except Exception:
+            pass
 
 
 _ACTIVE_VERSION_CACHE: dict[float, int | None] = {}

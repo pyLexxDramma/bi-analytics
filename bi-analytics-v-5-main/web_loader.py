@@ -20,6 +20,7 @@ import csv
 import io
 import json
 import math
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -1778,6 +1779,77 @@ def _register_file(cur, version_id: int, file_info: Dict, file_type: str, rows_c
     return cur.lastrowid
 
 
+def _incremental_ingest_enabled() -> bool:
+    """Инкрементальная загрузка: копировать строки неизменённых файлов из прошлой
+    версии вместо повторного парсинга. По умолчанию ВКЛ. Отключить: =0."""
+    return str(os.environ.get("BI_ANALYTICS_INCREMENTAL_INGEST", "1")).strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
+def _file_signature(path: Path) -> Optional[str]:
+    """Сигнатура файла ``size:mtime_ns`` для детекции изменений между версиями.
+
+    FTP-скачивание пишет новый файл через os.replace → у изменённого файла меняется
+    mtime. Совпадение size+mtime считаем «файл не изменился» — строки копируем из
+    прошлой версии, без повторного парсинга.
+    """
+    try:
+        stt = Path(path).stat()
+        return f"{int(stt.st_size)}:{int(stt.st_mtime_ns)}"
+    except Exception:
+        return None
+
+
+def _load_base_version_file_map(cur, base_version_id: int) -> Dict[str, list]:
+    """rel_path → список записей web_files базовой версии (id, file_type, rows, sig).
+
+    Один rel_path может иметь несколько записей (файл ресурсов → 'resources' + 'gdrs_fact').
+    """
+    out: Dict[str, list] = {}
+    try:
+        rows = cur.execute(
+            "SELECT id, rel_path, file_type, rows_count, sig FROM web_files WHERE version_id=?",
+            (int(base_version_id),),
+        ).fetchall()
+    except Exception:
+        return out
+    for r in rows:
+        out.setdefault(str(r["rel_path"]), []).append(
+            {
+                "id": int(r["id"]),
+                "file_type": r["file_type"],
+                "rows_count": int(r["rows_count"] or 0),
+                "sig": r["sig"],
+            }
+        )
+    return out
+
+
+def _copy_version_file(cur, new_version_id: int, base_version_id: int, base_file: dict, file_info: Dict) -> int:
+    """Копирует один файл (web_files + его web_data) из базовой версии в новую.
+
+    Возвращает число скопированных строк.
+    """
+    new_id = _register_file(
+        cur, new_version_id, file_info, base_file["file_type"], int(base_file["rows_count"] or 0)
+    )
+    cur.execute(
+        """
+        INSERT INTO web_data (version_id, file_id, file_type, source_file, row_data)
+        SELECT ?, ?, file_type, source_file, row_data
+        FROM web_data
+        WHERE version_id=? AND file_id=?
+        """,
+        (int(new_version_id), int(new_id), int(base_version_id), int(base_file["id"])),
+    )
+    n = cur.rowcount
+    return int(n) if isinstance(n, int) and n >= 0 else int(base_file["rows_count"] or 0)
+
+
 def _save_rows(cur, version_id: int, file_id: int, file_type: str, source_file: str, df: pd.DataFrame):
     """Сохраняет строки DataFrame в web_data как JSON."""
     # Колонки, которые нужно привести к строкам перед JSON (datetime / period).
@@ -1891,10 +1963,37 @@ def load_all_from_web(progress=None) -> Dict:
     except Exception:
         pass
 
+    # Инициализируем до try: используется после commit для гидрации сессии.
+    _incremental_copied = 0
+
     try:
         version_id = _create_version(cur, len(files))
         result["version_id"] = version_id
         total_rows = 0
+
+        # ── Инкрементальная загрузка: карта файлов базовой версии ─────────────
+        # Для неизменённых файлов (совпадает size+mtime) копируем строки из базовой
+        # версии, не парся заново. Базовая версия — активная, иначе последняя success.
+        _incremental = _incremental_ingest_enabled()
+        _base_version_id: Optional[int] = None
+        _base_file_map: Dict[str, list] = {}
+        if _incremental:
+            try:
+                _brow = cur.execute(
+                    "SELECT id FROM web_versions WHERE is_active=1 AND id<>? ORDER BY id DESC LIMIT 1",
+                    (version_id,),
+                ).fetchone()
+                if not _brow:
+                    _brow = cur.execute(
+                        "SELECT id FROM web_versions WHERE status='success' AND id<>? ORDER BY id DESC LIMIT 1",
+                        (version_id,),
+                    ).fetchone()
+                if _brow:
+                    _base_version_id = int(_brow["id"])
+                    _base_file_map = _load_base_version_file_map(cur, _base_version_id)
+            except Exception:
+                _base_version_id = None
+                _base_file_map = {}
 
         _total_files = len(files)
         for _file_idx, file_info in enumerate(files, start=1):
@@ -1902,6 +2001,54 @@ def load_all_from_web(progress=None) -> Dict:
             name: str = file_info["name"]
             rel_path: str = file_info["rel_path"]
             _emit_progress(_file_idx, _total_files, name)
+
+            # ── Инкремент: файл не изменился с базовой версии → копируем строки ──
+            if _incremental and _base_version_id is not None:
+                _sig_now = _file_signature(filepath)
+                _base_entries = _base_file_map.get(rel_path)
+                if (
+                    _sig_now
+                    and _base_entries
+                    and all(str(be["sig"] or "") == _sig_now for be in _base_entries)
+                ):
+                    try:
+                        _copied = 0
+                        for be in _base_entries:
+                            _copied += _copy_version_file(
+                                cur, version_id, _base_version_id, be, file_info
+                            )
+                        total_rows += _copied
+                        _incremental_copied += 1
+                        result["loaded"] += 1
+                        result["diagnostics"].append(
+                            {
+                                "file": rel_path,
+                                "type": _base_entries[0]["file_type"],
+                                "rows": int(_copied),
+                                "incremental": True,
+                            }
+                        )
+                        continue
+                    except Exception as _inc_e:
+                        # Любой сбой копирования → откатываемся к обычному парсингу
+                        # этого файла (строки могли частично записаться — удалим их).
+                        try:
+                            cur.execute(
+                                "DELETE FROM web_data WHERE version_id=? AND file_id IN "
+                                "(SELECT id FROM web_files WHERE version_id=? AND rel_path=?)",
+                                (version_id, version_id, rel_path),
+                            )
+                            cur.execute(
+                                "DELETE FROM web_files WHERE version_id=? AND rel_path=?",
+                                (version_id, rel_path),
+                            )
+                        except Exception:
+                            pass
+                        result.setdefault("warnings", []).append(
+                            _format_skip_reason(
+                                rel_path, "инкремент не удался, парсинг заново", str(_inc_e)
+                            )
+                        )
 
             try:
                 # ── Определяем тип файла через ETL-парсер ──────────────────
@@ -2304,6 +2451,26 @@ def load_all_from_web(progress=None) -> Dict:
                 )
                 result["skipped"] += 1
 
+        # ── Backfill сигнатур: сохраняем size:mtime для всех файлов этой версии
+        # (и распарсенных, и скопированных) — чтобы СЛЕДУЮЩАЯ загрузка могла
+        # определить неизменённые файлы и не парсить их заново.
+        try:
+            for _fi in files:
+                _s = _file_signature(_fi["path"])
+                if _s:
+                    cur.execute(
+                        "UPDATE web_files SET sig=? WHERE version_id=? AND rel_path=?",
+                        (_s, version_id, _fi["rel_path"]),
+                    )
+        except Exception:
+            pass
+
+        if _incremental_copied:
+            result.setdefault("warnings", []).append(
+                f"Инкрементальная загрузка: {_incremental_copied} неизменённых файлов "
+                f"скопировано из версии id={_base_version_id} без повторного парсинга."
+            )
+
         # Обновляем статус версии (warnings не делают partial, только errors)
         status = "partial" if result["errors"] else "success"
         cur.execute(
@@ -2447,6 +2614,21 @@ def load_all_from_web(progress=None) -> Dict:
         )
     else:
         st.session_state["project_data_all_snapshots"] = None
+
+    # ── Инкремент: скопированные файлы не наполняли session_state в цикле
+    # (парсинг пропущен). Гидрируем сессию из активной версии БД — иначе
+    # контракт данных и дашборды увидят пустую сессию (project_data=0).
+    if _incremental_copied:
+        try:
+            from web_schema import get_active_version_id
+
+            _active_id = get_active_version_id()
+            if _active_id:
+                read_version_to_session(int(_active_id))
+        except Exception as _hydr_e:
+            result.setdefault("warnings", []).append(
+                f"Инкремент: не удалось гидрировать сессию из БД: {_hydr_e}"
+            )
 
     return result
 
