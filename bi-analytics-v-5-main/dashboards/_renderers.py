@@ -183,18 +183,36 @@ def _unique_project_labels_for_select(
     return project_labels_for_filter(series, apply_exclude_names=apply_exclude_names)
 
 
-def _session_reset_project_if_excluded(state_key: str) -> None:
-    """Если в session_state сохранён исключённый проект — сброс (пустой список = все)."""
+def _session_reset_project_if_excluded(
+    state_key: str, *, allowed_labels: list[str] | None = None
+) -> None:
+    """Сброс устаревших имён проекта, если их нет в текущем списке фильтра."""
     try:
         if state_key not in st.session_state:
             return
         raw = st.session_state[state_key]
+        allowed = {str(x).strip() for x in (allowed_labels or []) if str(x).strip()}
+
+        def _is_blocked(name: str) -> bool:
+            s = str(name).strip()
+            if s not in MSP_PROJECT_FILTER_EXCLUDE_NAMES:
+                return False
+            if allowed and s in allowed:
+                return False
+            return True
+
         if state_key in ("budget_project", "dev_proj_multi"):
-            if isinstance(raw, str) and raw in MSP_PROJECT_FILTER_EXCLUDE_NAMES:
+            if isinstance(raw, str) and _is_blocked(raw):
                 st.session_state[state_key] = []
-            elif isinstance(raw, list) and any(x in MSP_PROJECT_FILTER_EXCLUDE_NAMES for x in raw):
-                st.session_state[state_key] = []
-        elif raw in MSP_PROJECT_FILTER_EXCLUDE_NAMES:
+            elif isinstance(raw, list):
+                blocked = [x for x in raw if _is_blocked(x)]
+                if blocked:
+                    if allowed:
+                        kept = [x for x in raw if not _is_blocked(x)]
+                        st.session_state[state_key] = kept
+                    else:
+                        st.session_state[state_key] = []
+        elif isinstance(raw, str) and _is_blocked(raw):
             st.session_state[state_key] = "Все"
     except Exception:
         pass
@@ -2394,6 +2412,68 @@ def _deviations_maket_building_label(row, frame: pd.DataFrame, building_col=None
     return ""
 
 
+def _deviations_block_token_from_task_name(task_name) -> str:
+    """Токен «блока» из названия задачи MSP для сопоставления заметок ур. 3."""
+    s = str(task_name or "").replace("\xa0", " ").casefold()
+    s = re.sub(r"\s+", " ", s).strip()
+    m = re.search(r"блок\s*([a-zа-яё0-9.\s]+?)(?:\s*\(|$)", s)
+    if m:
+        return re.sub(r"[\s.]+", "", m.group(1))
+    if re.search(r"\bзавод\b", s):
+        return "завод"
+    return ""
+
+
+def _deviations_block_notes_lookup(
+    full_df: pd.DataFrame, notes_col: str | None
+) -> dict[str, str]:
+    """Заметки с задач ур. 3 «Блок …» — для строк ур. 5 без собственных заметок."""
+    if (
+        full_df is None
+        or getattr(full_df, "empty", True)
+        or not notes_col
+        or notes_col not in full_df.columns
+        or "level" not in full_df.columns
+    ):
+        return {}
+    tc = _deviations_maket_resolve_task_col(full_df)
+    if not tc:
+        return {}
+    out: dict[str, str] = {}
+    lvl = pd.to_numeric(full_df["level"], errors="coerce")
+    for idx in full_df.index[lvl == 3]:
+        note = _clean_display_str(full_df.at[idx, notes_col])
+        if not note:
+            continue
+        tok = _deviations_block_token_from_task_name(full_df.at[idx, tc])
+        if tok and tok not in out:
+            out[tok] = note
+    return out
+
+
+def _deviations_maket_row_note(
+    row,
+    frame: pd.DataFrame,
+    notes_col: str | None,
+    *,
+    block_notes_lookup: dict[str, str] | None = None,
+) -> str:
+    own = (
+        _clean_display_str(row.get(notes_col))
+        if notes_col and notes_col in frame.columns
+        else ""
+    )
+    if own:
+        return own
+    if not block_notes_lookup:
+        return ""
+    tc = _deviations_maket_resolve_task_col(frame)
+    if not tc:
+        return ""
+    tok = _deviations_block_token_from_task_name(row.get(tc))
+    return block_notes_lookup.get(tok, "")
+
+
 def _deviations_maket_col_class(col_name: str) -> str:
     c = str(col_name or "").strip()
     if c in {"Название", "Причина отклонения", "Заметки"}:
@@ -2403,6 +2483,36 @@ def _deviations_maket_col_class(col_name: str) -> str:
     if c == "Проект":
         return "dev-mak-col-proj"
     return "dev-mak-col-narrow"
+
+
+def _deviations_maket_finish_deviation_mask(
+    work_m: pd.DataFrame,
+    *,
+    reason_mask: pd.Series,
+    level_mask: pd.Series,
+) -> pd.Series:
+    """
+    Строки с отклонением окончания для макета:
+    - plan/base end → _end_diff < 0;
+    - колонка deviation in days < 0;
+    - ур. 5 с заполненной причиной, но без базового окончания (НД/пусто) — нельзя посчитать _end_diff.
+    """
+    mask = pd.Series(False, index=work_m.index)
+    if "_end_diff" in work_m.columns:
+        mask = mask | (work_m["_end_diff"].notna() & (work_m["_end_diff"] < 0))
+    if "deviation in days" in work_m.columns:
+        _did = pd.to_numeric(work_m["deviation in days"], errors="coerce")
+        mask = mask | (_did.notna() & (_did < 0))
+    if "base end" in work_m.columns:
+        _be_txt = work_m["base end"].astype(str).str.strip().str.upper()
+        _be_missing = work_m["base end"].isna() | _be_txt.isin(
+            {"", "НД", "ND", "NAN", "NONE", "NAT", "-"}
+        )
+        _pe_ok = pd.Series(True, index=work_m.index)
+        if "plan end" in work_m.columns:
+            _pe_ok = work_m["plan end"].notna()
+        mask = mask | (reason_mask & level_mask & _be_missing & _pe_ok)
+    return mask
 
 
 def _deviations_maket_prepare_df(table_reason_df: pd.DataFrame) -> pd.DataFrame:
@@ -2444,7 +2554,9 @@ def _deviations_maket_prepare_df(table_reason_df: pd.DataFrame) -> pd.DataFrame:
         _lc_maket = _dev_tasks_resolve_level_column(work_m)
         if _lc_maket and _lc_maket in work_m.columns:
             mask_l = pd.to_numeric(work_m[_lc_maket], errors="coerce") == 5
-    mask_neg = work_m["_end_diff"].notna() & (work_m["_end_diff"] < 0)
+    mask_neg = _deviations_maket_finish_deviation_mask(
+        work_m, reason_mask=mask_r, level_mask=mask_l
+    )
     maket_df = work_m[mask_r & mask_l & mask_neg].copy()
     _dd_key_cols = [
         c for c in ["project name", "task name", "plan end", "base end", "reason of deviation"]
@@ -2941,7 +3053,11 @@ def build_deviations_reasons_full_table_export_df(
 
 
 def build_deviations_maket_export_df(
-    table_reason_df, building_col=None, notes_col=None
+    table_reason_df,
+    building_col=None,
+    notes_col=None,
+    *,
+    notes_source_df=None,
 ) -> pd.DataFrame:
     """Строки таблицы по макету (ур. 5, причина, отклонение окончания < 0) — как выгрузка maket."""
     maket_df = _deviations_maket_prepare_df(table_reason_df)
@@ -2950,10 +3066,10 @@ def build_deviations_maket_export_df(
     notes_col_m = (
         notes_col
         if notes_col and notes_col in maket_df.columns
-        else _find_column_by_keywords(
-            maket_df, ("note", "заметк", "comment", "remark", "notes")
-        )
+        else _gantt_resolve_notes_column(maket_df)
     )
+    _src = notes_source_df if notes_source_df is not None else table_reason_df
+    _block_notes = _deviations_block_notes_lookup(_src, notes_col_m)
     _id_col_m = _deviations_maket_task_id_col(maket_df)
     _maket_out = []
     for _, rr in maket_df.iterrows():
@@ -2981,10 +3097,11 @@ def build_deviations_maket_export_df(
                 "Базовое окончание": be.strftime("%d.%m.%Y") if pd.notna(be) else "",
                 "Отклонение": int(round(float(ed), 0)) if pd.notna(ed) else "",
                 "Причина отклонения": _clean_display_str(rr.get("reason of deviation")),
-                "Заметки": (
-                    _clean_display_str(rr.get(notes_col_m))
-                    if notes_col_m and notes_col_m in maket_df.columns
-                    else ""
+                "Заметки": _deviations_maket_row_note(
+                    rr,
+                    maket_df,
+                    notes_col_m,
+                    block_notes_lookup=_block_notes,
                 ),
             }
         )
@@ -2996,23 +3113,18 @@ def _render_deviations_maket_table(
     building_col=None,
     notes_col=None,
     *,
+    notes_source_df=None,
     file_stem: str = "deviations_detail_maket",
     key_prefix: str = "devtable_maket",
 ):
     """Таблица по макету: ур. 5, причина, отклонение окончания < 0."""
-    notes_col_m = (
-        notes_col
-        if notes_col
-        else _find_column_by_keywords(
-            table_reason_df, ("note", "заметк", "comment", "remark", "notes")
-        )
-    )
+    notes_col_m = notes_col if notes_col else _gantt_resolve_notes_column(table_reason_df)
     maket_df = _deviations_maket_prepare_df(table_reason_df)
     _id_col_m = _deviations_maket_task_id_col(maket_df)
     if not notes_col_m or notes_col_m not in getattr(maket_df, "columns", []):
-        notes_col_m = _find_column_by_keywords(
-            maket_df, ("note", "заметк", "comment", "remark", "notes")
-        )
+        notes_col_m = _gantt_resolve_notes_column(maket_df)
+    _src = notes_source_df if notes_source_df is not None else table_reason_df
+    _block_notes = _deviations_block_notes_lookup(_src, notes_col_m)
 
     if maket_df.empty:
         st.info(
@@ -3071,7 +3183,9 @@ def _render_deviations_maket_table(
         pe_s = pe.strftime("%d.%m.%Y") if pd.notna(pe) else ""
         ed_s = str(int(round(float(ed), 0))) if pd.notna(ed) else ""
         rs = _clean_display_str(rr.get("reason of deviation"))
-        nt = _clean_display_str(rr.get(notes_col_m)) if notes_col_m and notes_col_m in maket_df.columns else ""
+        nt = _deviations_maket_row_note(
+            rr, maket_df, notes_col_m, block_notes_lookup=_block_notes
+        )
         tid = ""
         if _id_col_m and _id_col_m in maket_df.columns:
             _raw_id = rr.get(_id_col_m)
@@ -3113,7 +3227,12 @@ def _render_deviations_maket_table(
     _tbl_m.append("</tbody></table></div>")
     _maket_iframe_css = _deviations_maket_iframe_css(_maket_wrap_id, _date_bg_m)
     st.markdown(f"**Записей (по макету):** {len(maket_df)}")
-    maket_csv_df = build_deviations_maket_export_df(table_reason_df, building_col, notes_col_m)
+    maket_csv_df = build_deviations_maket_export_df(
+        table_reason_df,
+        building_col,
+        notes_col_m,
+        notes_source_df=_src,
+    )
     render_report_html_table(
         _maket_iframe_css + _gantt_table_css_for_theme() + mark_html_table_sortable("".join(_tbl_m)),
         export_df=maket_csv_df,
@@ -5531,13 +5650,19 @@ def _deviations_project_slice_by_key(df: pd.DataFrame, state_key: str) -> pd.Dat
     """Срез по выбранному проекту (ключ session_state) — для списков блока/строения."""
     pr = st.session_state.get(state_key, "Все")
     if pr != "Все" and df is not None and "project name" in df.columns:
-        sel_k = _project_filter_norm_key(pr)
-        if not sel_k:
-            return df.copy()
-        return df[
-            df["project name"].map(_project_filter_norm_key) == sel_k
-        ].copy()
+        mask = _project_norm_key_filter_mask(df["project name"], pr)
+        return df[mask].copy()
     return df.copy() if df is not None else df
+
+
+def _project_norm_key_filter_mask(series: pd.Series, selected_label) -> pd.Series:
+    """True для строк, чей project name совпадает с выбранной подписью (в т.ч. «Дмитровский» / «Дмитровский-1»)."""
+    sel_k = _project_filter_norm_key(selected_label)
+    if not sel_k:
+        return pd.Series(True, index=series.index)
+    msp_keys = {sel_k}
+    rk = series.map(_project_filter_norm_key)
+    return rk.map(lambda k: _project_norm_key_matches_msp_keys(k, msp_keys))
 
 
 def _deviations_filter_df_by_project_name(
@@ -5548,10 +5673,8 @@ def _deviations_filter_df_by_project_name(
         return df
     if selected_label is None or str(selected_label).strip() in ("", "Все"):
         return df
-    sel_k = _project_filter_norm_key(selected_label)
-    if not sel_k:
-        return df
-    return df[df["project name"].map(_project_filter_norm_key) == sel_k].copy()
+    mask = _project_norm_key_filter_mask(df["project name"], selected_label)
+    return df[mask].copy()
 
 
 def _filter_df_by_norm_key_col(df: pd.DataFrame, col: str, selected_label) -> pd.DataFrame:
@@ -6338,8 +6461,10 @@ def _render_deviations_combined_shared_filters(df):
             col1, col2, col3, col4, col5 = st.columns(5, gap="small")
             with col1:
                 if "project name" in df.columns:
-                    _session_reset_project_if_excluded("devcombo_project")
                     projects = ["Все"] + _project_name_select_options(df["project name"])
+                    _session_reset_project_if_excluded(
+                        "devcombo_project", allowed_labels=projects
+                    )
                     st.selectbox("Проект", projects, key="devcombo_project")
             with col2:
                 df_opts = _deviations_project_slice_by_key(df, "devcombo_project")
@@ -6634,8 +6759,10 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                     has_project_column = False
 
                 if has_project_column:
-                    _session_reset_project_if_excluded("reason_project")
                     projects = ["Все"] + _project_name_select_options(df["project name"])
+                    _session_reset_project_if_excluded(
+                        "reason_project", allowed_labels=projects
+                    )
                     selected_project = st.selectbox("Проект", projects, key="reason_project")
                 else:
                     selected_project = "Все"
@@ -6755,11 +6882,9 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
                 filtered_df = _project_column_apply_canonical(filtered_df, "project name")
             filtered_df = _deviations_maket_attach_ancestor_keys(filtered_df)
         if selected_project != "Все" and has_project_col:
-            _sel_k = _project_filter_norm_key(selected_project)
-            if _sel_k:
-                filtered_df = filtered_df[
-                    filtered_df["project name"].map(_project_filter_norm_key) == _sel_k
-                ]
+            filtered_df = _deviations_filter_df_by_project_name(
+                filtered_df, selected_project
+            )
         filtered_df = _deviations_apply_block_building_filters(
             filtered_df,
             st.session_state.get("reason_block", "Все"),
@@ -6771,6 +6896,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         )
 
     # ТЗ (макет): диаграммы и таблица — один набор строк (ур. 5, причина, отклонение < 0).
+    _table_source_df = filtered_df.copy()
     maket_df = _deviations_maket_scope_df(filtered_df)
     if maket_df.empty:
         st.info(
@@ -6856,7 +6982,7 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
             text="label_bar",
         )
         fig.update_traces(
-            textposition="outside", textfont=dict(size=14, color=_lbl_clr)
+            textposition="outside", textfont=dict(size=28, color=_lbl_clr)
         )
         fig = _apply_finance_bar_label_layout(fig)
         fig = _apply_vertical_category_bar_width(fig)
@@ -6864,11 +6990,11 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         _ymax = float(reason_counts["Количество"].max() or 0)
         n = len(reason_counts)
         _bar_h = max(960, int(560 + n * 112))
-        _y_top = max(1.0, _ymax * 1.48 + 12.0)
+        _y_top = max(1.0, _ymax * 1.62 + 20.0)
         _gdrs_rc = _plotly_bargaps_sparse_x_like_gdrs(n)
         _ly_rc = dict(
             height=_bar_h,
-            margin=dict(l=48, r=28, t=84, b=240 if n > 6 else 168),
+            margin=dict(l=48, r=28, t=120, b=240 if n > 6 else 168),
             title=dict(
                 text="Причины отклонений (за отчетный период)",
                 x=0.5,
@@ -6978,11 +7104,12 @@ def dashboard_reasons_of_deviation(df, hide_shared_filters=False, building_col=N
         "Детальные данные",
         theme="light" if is_light_preview_active() else "dark",
     )
-    _notes_col_rs = _find_column_by_keywords(
-        filtered_df, ("note", "заметк", "comment", "remark", "notes")
-    )
+    _notes_col_rs = _gantt_resolve_notes_column(_table_source_df)
     _render_deviations_maket_table(
-        filtered_df, building_col, notes_col=_notes_col_rs
+        filtered_df,
+        building_col,
+        notes_col=_notes_col_rs,
+        notes_source_df=_table_source_df,
     )
 
 
@@ -7015,6 +7142,7 @@ DEVIATIONS_REASON_BUCKET_ORDER: tuple[str, ...] = (
     "Изменение объемов",
     "Изменение расценки",
     "Не передан фронт работ",
+    "Нет оплаты Подрядчику",
     "Переделка за предыдущим подрядчиком",
     "Увеличение сроков по вине подрядчика",
     "Расторжение Договора",
@@ -7031,6 +7159,7 @@ def _deviations_reason_bucket_colors() -> dict[str, str]:
         "Изменение объемов": "#cddc39",
         "Изменение расценки": "#fbc02d",
         "Не передан фронт работ": "#26c6da",
+        "Нет оплаты Подрядчику": "#ff9800",
         "Переделка за предыдущим подрядчиком": "#8bc34a",
         "Увеличение сроков по вине подрядчика": "#9e9e9e",
         "Расторжение Договора": "#ff7043",
@@ -7054,6 +7183,8 @@ def _deviations_reason_bucket_label(raw_reason) -> str:
         return "Изменение расценки"
     if "не передан фронт" in s or ("фронт" in s and "не передан" in s):
         return "Не передан фронт работ"
+    if "нет оплат" in s or ("оплат" in s and "подрядчик" in s):
+        return "Нет оплаты Подрядчику"
     if "переделк" in s:
         return "Переделка за предыдущим подрядчиком"
     if "увеличение срок" in s and "подрядчик" in s:
@@ -8962,8 +9093,10 @@ def dashboard_plan_fact_dates(df):
             fl_main1, fl_main2, fl_main3, fl_main4, fl_main5 = st.columns(5, gap="small")
             with fl_main1:
                 if "project name" in df.columns:
-                    _session_reset_project_if_excluded("dates_project")
                     projects = ["Все"] + _project_name_select_options(df["project name"])
+                    _session_reset_project_if_excluded(
+                        "dates_project", allowed_labels=projects
+                    )
                     selected_project = st.selectbox(
                         "Проект",
                         projects,
@@ -11613,8 +11746,10 @@ def dashboard_dynamics_of_reasons(df, hide_shared_filters=False):
                     has_project_column = False
 
                 if has_project_column:
-                    _session_reset_project_if_excluded("reasons_project")
                     projects = ["Все"] + _project_name_select_options(df["project name"])
+                    _session_reset_project_if_excluded(
+                        "reasons_project", allowed_labels=projects
+                    )
                     selected_project = st.selectbox(
                         "Проект", projects, key="reasons_project"
                     )
@@ -43902,7 +44037,6 @@ def dashboard_developer_projects(df, *, theme: str = "dark"):
     def _render_dev_filter_and_matrix(work: pd.DataFrame, project_col: Optional[str]) -> None:
         # По правкам ТЗ: в фильтрах только проект — одна строка на логический объект (совпадает «Контрольные точки»).
         if project_col and project_col in work.columns:
-            _session_reset_project_if_excluded("dev_proj_multi")
             try:
                 from dashboards.dev_projects_tz_matrix import (
                     _control_points_project_group_key as _cp_gk,
@@ -43925,16 +44059,28 @@ def dashboard_developer_projects(df, *, theme: str = "dark"):
                         s = s.replace("  ", " ")
                     if not s or s.lower() in ("nan", "none", "nat"):
                         continue
-                    if s in MSP_PROJECT_FILTER_EXCLUDE_NAMES:
-                        continue
                     gm[str(_cp_gk(s))].append(s)
+
+                def _dev_proj_raws_for_label(raws: list[str]) -> list[str]:
+                    raws_u = sorted(set(raws))
+                    if len(raws_u) <= 1:
+                        return raws_u
+                    kept = [r for r in raws_u if r not in MSP_PROJECT_FILTER_EXCLUDE_NAMES]
+                    return kept if kept else raws_u
+
                 labels = sorted(
-                    (_cp_lab(gk, sorted(set(vs))) for gk, vs in gm.items()),
+                    (
+                        _cp_lab(gk, _dev_proj_raws_for_label(vs))
+                        for gk, vs in gm.items()
+                    ),
                     key=lambda x: str(x).casefold(),
                 )
                 projects = labels
             else:
                 projects = _unique_project_labels_for_select(work[project_col])
+            _session_reset_project_if_excluded(
+                "dev_proj_multi", allowed_labels=projects
+            )
             with filters_panel(st):
                 sel_projs = st.multiselect(
                     "Проект",

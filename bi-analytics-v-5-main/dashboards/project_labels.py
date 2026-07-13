@@ -169,12 +169,18 @@ def project_labels_for_filter(
         s = _clean_raw_name(raw)
         if not s or s.lower() in ("nan", "none", "nat"):
             continue
-        if apply_exclude_names and s in MSP_PROJECT_FILTER_EXCLUDE_NAMES:
-            continue
         if _control_points_project_group_key is not None:
             by_gk[str(_control_points_project_group_key(s))].append(s)
         else:
             by_gk[project_filter_norm_key(s) or s].append(s)
+
+    def _raws_for_group_label(raws: list[str]) -> list[str]:
+        """Исключать дубли написания только если в группе есть другой вариант имени."""
+        raws_u = sorted(set(raws))
+        if not apply_exclude_names or len(raws_u) <= 1:
+            return raws_u
+        kept = [r for r in raws_u if r not in MSP_PROJECT_FILTER_EXCLUDE_NAMES]
+        return kept if kept else raws_u
 
     labels: list[str] = []
     if _control_points_project_group_key is not None:
@@ -182,15 +188,18 @@ def project_labels_for_filter(
             from dashboards.dev_projects_tz_matrix import _control_points_project_label
 
             for gk, raws in by_gk.items():
-                lab = str(_control_points_project_label(gk, sorted(set(raws)))).strip()
+                use_raws = _raws_for_group_label(raws)
+                lab = str(_control_points_project_label(gk, use_raws)).strip()
                 if lab:
                     labels.append(lab)
         except Exception:
             for raws in by_gk.values():
-                labels.append(unified_project_display_label(raws[0]))
+                use_raws = _raws_for_group_label(raws)
+                labels.append(unified_project_display_label(use_raws[0]))
     else:
         for raws in by_gk.values():
-            labels.append(unified_project_display_label(raws[0]))
+            use_raws = _raws_for_group_label(raws)
+            labels.append(unified_project_display_label(use_raws[0]))
     return sorted(set(labels), key=lambda x: x.casefold())
 
 
