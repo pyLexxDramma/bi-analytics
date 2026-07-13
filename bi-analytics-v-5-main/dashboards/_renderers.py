@@ -27475,7 +27475,7 @@ def _dc_advance_semaphore_level(delta, contract_mln) -> str:
     except (TypeError, ValueError):
         return ""
     if p <= 0:
-        return ""
+        return "green" if d <= 0 else "red"
     if d <= 0:
         return "green"
     ratio = d / p
@@ -27501,7 +27501,7 @@ def _dc_advance_assumption_label(delta, contract_mln, level: str) -> str:
     except (TypeError, ValueError):
         return ball
     if p <= 0:
-        return ball
+        return f"{ball} 0.0%" if d <= 0 else f"{ball} —"
     pct = d / p * 100.0
     return f"{ball} {pct:.1f}%"
 
@@ -27533,7 +27533,8 @@ def _render_dc_advance_semaphore_legend(st) -> None:
         f'🟡 &gt; 30% и &lt; 80% стоимости договора • '
         f'🔴 ≥ 80% стоимости договора'
         f'<div style="margin-top:0.35em;color:{_sub};font-size:12px;">'
-        f'Колонка «Аванс − КС-2»: заливка ячейки по тем же порогам.</div></div>',
+        f'Колонки «Допущения по авансированию %» и «Аванс − КС-2»: заливка ячейки по тем же порогам; '
+        f'при нулевой стоимости договора — 🟢 0.0% или 🔴 —.</div></div>',
         unsafe_allow_html=True,
     )
 
@@ -28677,11 +28678,13 @@ def dashboard_debit_credit(df):
     except Exception:
         _dc_light = False
     _cell_bg = pd.DataFrame("", index=display_df.index, columns=display_df.columns)
-    if _ADV_DELTA_COL in _cell_bg.columns:
+    _adv_sem_bg_cols = [c for c in (_ADV_ASSUMP_COL, _ADV_DELTA_COL) if c in _cell_bg.columns]
+    if _adv_sem_bg_cols:
         for _ix, _lv in _sem_levels.items():
             _bg = _dc_advance_semaphore_bg(str(_lv or ""), light=_dc_light)
             if _bg:
-                _cell_bg.at[_ix, _ADV_DELTA_COL] = _bg
+                for _bg_col in _adv_sem_bg_cols:
+                    _cell_bg.at[_ix, _bg_col] = _bg
     # Правки куратора 08.05.2026: финальный порядок колонок по ТЗ.
     desired_order_value = [
         "Договор стоимость",
