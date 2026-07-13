@@ -5054,6 +5054,43 @@ def _gdrs_cached_dannye_maps(version_id: int, db_mtime: float):
     return load_1c_dannye_article_maps_from_df(df)
 
 
+@st.cache_data(show_spinner=False, ttl=3600)
+def _gdrs_cached_enriched_fact(
+    version_id: int,
+    db_mtime: float,
+    dogovor_sources_sig: tuple[str, ...],
+) -> pd.DataFrame:
+    """Обогащённый факт ГДРС (project/contractor ids + kontr-имена + termination).
+
+    Не зависит от значений фильтров, только от версии данных БД. Раньше вся цепочка
+    enrich_* пересчитывалась на каждую смену фильтра (секунды на ререндер) — теперь
+    считается один раз на версию БД и переиспользуется из кэша.
+    """
+    from dashboards.project_labels import apply_unified_project_column
+    from web_db_read import json_records_by_source, load_gdrs_fact_long
+
+    long_fact = load_gdrs_fact_long(int(version_id))
+    if long_fact is None or long_fact.empty:
+        return long_fact
+
+    dog = json_records_by_source(int(version_id), "dogovor_json")
+    kontr_records = json_records_by_source(int(version_id), "kontr_json")
+    kontr_flat = [r for recs in kontr_records.values() for r in recs]
+
+    long_fact = apply_unified_project_column(long_fact, "project_name")
+    kontr_index = load_1c_kontr_index(records=kontr_flat) if kontr_flat else None
+    long_fact = enrich_gdrs_fact_contractor_ids(
+        long_fact, dogovor_records=dog, kontr=kontr_index
+    )
+    long_fact = enrich_gdrs_fact_project_ids(long_fact, dogovor_records=dog)
+    long_fact = gdrs_apply_kontr_contractor_names(long_fact, kontr_index)
+    term_index = _gdrs_cached_termination_index(
+        int(version_id), db_mtime, dogovor_sources_sig
+    )
+    long_fact = gdrs_filter_fact_by_termination(long_fact, term_index)
+    return long_fact
+
+
 def _gdrs_dogovor_sources_sig(version_id: int) -> tuple[str, ...]:
     try:
         from web_db_read import json_records_by_source

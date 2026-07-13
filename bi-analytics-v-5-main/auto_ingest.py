@@ -266,12 +266,14 @@ def _ftp_credentials_configured() -> bool:
 
 
 def run_ftp_sync_to_web(
-    *, log_prefix: str = "[auto_ingest]", prune_orphans: bool | None = None
+    *, log_prefix: str = "[auto_ingest]", prune_orphans: bool | None = None,
+    progress=None,
 ) -> dict | None:
     """Скачать свежие CSV/JSON с FTP в локальный ``web/`` (общая функция для всех окружений).
 
     ``prune_orphans=True`` — зеркальный режим: локальные файлы, которых нет на FTP,
     удаляются (безопасно, только при полном успешном листинге). См. sync_ftp_to_web.
+    ``progress`` — колбэк ``progress(msg: str)`` для живого статуса в UI.
     """
     if not _ftp_credentials_configured():
         safe_stderr_log(f"{log_prefix} FTP host/user not set → пропуск FTP-sync")
@@ -282,7 +284,8 @@ def run_ftp_sync_to_web(
 
         web_dir = get_web_dir()
         result = sync_ftp_to_web(
-            web_dir, use_interprocess_lock=False, prune_orphans=prune_orphans
+            web_dir, use_interprocess_lock=False, prune_orphans=prune_orphans,
+            progress=progress,
         )
         log_ftp_sync_errors(result, log_fn=safe_stderr_log, log_prefix=log_prefix)
         _deleted = result.get("deleted") if isinstance(result, dict) else None
@@ -303,17 +306,21 @@ def _do_ftp_sync() -> dict | None:
 
 
 def maybe_ftp_sync_before_web_load(
-    *, log_prefix: str = "[web_load]", prune_orphans: bool | None = None
+    *, log_prefix: str = "[web_load]", prune_orphans: bool | None = None,
+    progress=None,
 ) -> dict | None:
     """FTP перед ``load_all_from_web()`` — local / dev / release читают один источник.
 
     ``prune_orphans=True`` — зеркальный режим (для явной перезагрузки по кнопке):
     FTP становится единственным источником истины, локальные «сироты» удаляются.
+    ``progress`` — колбэк ``progress(msg: str)`` для живого статуса в UI.
     """
     _maybe_secrets_to_env()
     if not _flag("BI_ANALYTICS_AUTO_FTP_ON_START", default="1"):
         return None
-    return run_ftp_sync_to_web(log_prefix=log_prefix, prune_orphans=prune_orphans)
+    return run_ftp_sync_to_web(
+        log_prefix=log_prefix, prune_orphans=prune_orphans, progress=progress
+    )
 
 
 def _do_load_all() -> dict | None:

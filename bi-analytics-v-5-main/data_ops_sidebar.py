@@ -164,31 +164,60 @@ def _render_ftp_sidebar_controls(st: Any) -> None:
             return
         web_p = get_web_dir()
         web_p.mkdir(parents=True, exist_ok=True)
-        with st.spinner("FTP…"):
+        from web_reload_pipeline import (
+            _FtpProgressTracker,
+            _fmt_duration,
+            finalize_web_load_session,
+            make_db_rebuild_progress,
+        )
+        import time as _time
+
+        with st.status("FTP → web/ → БД…", expanded=True) as _status:
+            _status.write("Шаг 1/2: синхронизация с FTP…")
+            _ftp_line = st.empty()
+            _tracker = _FtpProgressTracker(writer=lambda m: _ftp_line.markdown(m))
             ftp_res = sync_ftp_to_web(
                 web_p,
                 config=cfg,
                 extensions=(".csv", ".json"),
-                progress=lambda _m: None,
+                progress=_tracker,
             )
-        if ftp_res.get("errors"):
-            for e in ftp_res["errors"]:
-                st.error(str(e))
-            return
-        if ftp_res.get("transient_errors"):
-            from auto_ingest import render_ftp_transient_errors_notice
+            try:
+                _ftp_line.empty()
+            except Exception:
+                pass
+            if ftp_res.get("errors"):
+                _status.update(label="FTP: ошибка", state="error")
+                for e in ftp_res["errors"]:
+                    st.error(str(e))
+                return
+            _dl = len(ftp_res.get("downloaded") or [])
+            _same = int(ftp_res.get("skipped_same_size") or 0)
+            _status.write(f"FTP: скачано {_dl}, без изменений {_same}")
+            if ftp_res.get("transient_errors"):
+                from auto_ingest import render_ftp_transient_errors_notice
 
-            st.session_state["_last_ftp_sync_transient"] = list(
-                ftp_res.get("transient_errors") or []
+                st.session_state["_last_ftp_sync_transient"] = list(
+                    ftp_res.get("transient_errors") or []
+                )
+                render_ftp_transient_errors_notice(st, ftp_res["transient_errors"])
+            else:
+                st.session_state["_last_ftp_sync_transient"] = []
+
+            _status.write("Шаг 2/2: пересборка БД из web/…")
+            _db_cb, _db_finish = make_db_rebuild_progress(st)
+            _t0 = _time.monotonic()
+            try:
+                result = load_all_from_web(progress=_db_cb)
+            finally:
+                _db_finish()
+            _elapsed = _fmt_duration(_time.monotonic() - _t0)
+            _loaded = int(result.get("loaded") or 0)
+            _status.update(
+                label=f"Готово за {_elapsed}: {_loaded} файлов в БД",
+                state="complete",
             )
-            render_ftp_transient_errors_notice(st, ftp_res["transient_errors"])
-        else:
-            st.session_state["_last_ftp_sync_transient"] = []
-        with st.spinner("web/ → БД…"):
-            result = load_all_from_web()
         try:
-            from web_reload_pipeline import finalize_web_load_session
-
             finalize_web_load_session(st, result, quiet=False)
         except Exception:
             pass

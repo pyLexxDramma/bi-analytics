@@ -44,14 +44,25 @@ def resolve_version_id(version_id: Optional[int] = None) -> Optional[int]:
         return None
 
 
+# Кеш распарсенных JSON-записей по (path, version_id, file_type, mtime БД).
+# ГДРС и справочники дергают json_records_by_source на КАЖДЫЙ ререндер фрагмента
+# (смена фильтра) — без кеша это полный скан web_data + json.loads тысяч строк
+# каждый раз (задержки 10-20с). Инвалидируется при обновлении web_data.db.
+_JSON_RECORDS_CACHE: dict[tuple[str, int, str, float], Dict[str, List[dict]]] = {}
+
+
 def json_records_by_source(
     version_id: int,
     file_type: str,
     *,
     db_path: str | None = None,
 ) -> Dict[str, List[dict]]:
-    """Сырые JSON-записи из web_data, сгруппированные по source_file."""
+    """Сырые JSON-записи из web_data, сгруппированные по source_file (кешируется)."""
     path = db_path or WEB_DB_PATH
+    _key = (str(path), int(version_id), str(file_type), web_db_mtime())
+    _hit = _JSON_RECORDS_CACHE.get(_key)
+    if _hit is not None:
+        return _hit
     out: Dict[str, List[dict]] = {}
     try:
         conn = sqlite3.connect(path)
@@ -77,6 +88,10 @@ def json_records_by_source(
             continue
         if isinstance(rec, dict):
             out.setdefault(key, []).append(rec)
+    # Ограничиваем рост кеша: держим только свежие срезы (разные file_type одной версии).
+    if len(_JSON_RECORDS_CACHE) > 24:
+        _JSON_RECORDS_CACHE.clear()
+    _JSON_RECORDS_CACHE[_key] = out
     return out
 
 

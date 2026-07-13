@@ -1378,12 +1378,18 @@ def main():
                 result = load_all_from_web()
             else:
                 _load_msg = (
-                    "Шаг 2/2: пересборка БД из web/ (5–15 мин при полном скане)…"
+                    "Пересборка БД из web/ (оценка появится по ходу)…"
                     if force_rescan
                     else "Читаю файлы из web/…"
                 )
-                with st.spinner(_load_msg):
-                    result = load_all_from_web()
+                from web_reload_pipeline import make_db_rebuild_progress
+
+                st.caption(_load_msg)
+                _db_cb, _db_finish = make_db_rebuild_progress(st)
+                try:
+                    result = load_all_from_web(progress=_db_cb)
+                finally:
+                    _db_finish()
 
             _release_quiet = _is_release_client_mode()
             if not _release_quiet:

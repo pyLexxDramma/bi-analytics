@@ -3,7 +3,92 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+import time
+from typing import Any, Callable, Optional
+
+
+def _fmt_duration(seconds: float) -> str:
+    """Человекочитаемая длительность: '45с', '2м 05с', '1ч 03м'."""
+    s = max(0, int(round(seconds)))
+    if s < 60:
+        return f"{s}с"
+    m, sec = divmod(s, 60)
+    if m < 60:
+        return f"{m}м {sec:02d}с"
+    h, m2 = divmod(m, 60)
+    return f"{h}ч {m2:02d}м"
+
+
+class _FtpProgressTracker:
+    """Живой статус FTP-загрузки: счётчик скачанных файлов + прошедшее время.
+
+    FTP-обход рекурсивный и общее число файлов заранее неизвестно, поэтому
+    показываем счётчик скачанных и текущий файл (без процентов).
+    """
+
+    def __init__(self, writer: Optional[Callable[[str], None]] = None) -> None:
+        self._writer = writer
+        self._downloaded = 0
+        self._start = time.monotonic()
+        self._last_emit = 0.0
+
+    def __call__(self, msg: str) -> None:
+        text = str(msg or "")
+        if text.startswith("Скачивание"):
+            self._downloaded += 1
+        if self._writer is None:
+            return
+        now = time.monotonic()
+        # Не чаще ~2 раз в секунду, чтобы не спамить перерисовкой.
+        if now - self._last_emit < 0.5 and not text.startswith("Повторная"):
+            return
+        self._last_emit = now
+        elapsed = _fmt_duration(now - self._start)
+        try:
+            self._writer(
+                f"Скачано файлов: {self._downloaded} · прошло {elapsed}\n\n{text}"
+            )
+        except Exception:
+            pass
+
+
+def make_db_rebuild_progress(st: Any):
+    """Прогресс-бар пересборки БД из web/ с оценкой оставшегося времени (ETA).
+
+    Возвращает ``(callback, finish)``: ``callback(done, total, name)`` передаётся в
+    ``load_all_from_web(progress=...)``, ``finish()`` убирает индикатор после загрузки.
+    """
+    bar = st.progress(0.0, text="Подготовка к пересборке БД…")
+    state = {"start": time.monotonic()}
+
+    def _callback(done: int, total: int, name: str) -> None:
+        total = max(1, int(total))
+        done = max(0, min(int(done), total))
+        frac = done / total
+        elapsed = time.monotonic() - state["start"]
+        eta_txt = ""
+        if done >= 2 and frac < 1.0:
+            rate = elapsed / done
+            remaining = rate * (total - done)
+            eta_txt = f" · осталось ~{_fmt_duration(remaining)}"
+        short = str(name or "")
+        if len(short) > 48:
+            short = short[:45] + "…"
+        try:
+            bar.progress(
+                frac,
+                text=f"Файл {done}/{total}{eta_txt} · {short}",
+            )
+        except Exception:
+            pass
+
+    def _finish() -> None:
+        try:
+            bar.empty()
+        except Exception:
+            pass
+
+    return _callback, _finish
 
 
 def finalize_web_load_session(st: Any, result: dict, *, quiet: bool = False) -> None:
@@ -97,9 +182,16 @@ def run_ftp_force_reload_ui(st: Any, *, quiet: bool = False) -> None:
     else:
         with st.status("Обновление данных с FTP…", expanded=True) as status:
             status.write("Шаг 1/2: синхронизация с FTP (1–5 мин)…")
+            _ftp_line = st.empty()
+            _ftp_tracker = _FtpProgressTracker(writer=lambda m: _ftp_line.markdown(m))
             ftp_res = maybe_ftp_sync_before_web_load(
-                log_prefix="[ftp_force_reload]", prune_orphans=True
+                log_prefix="[ftp_force_reload]", prune_orphans=True,
+                progress=_ftp_tracker,
             )
+            try:
+                _ftp_line.empty()
+            except Exception:
+                pass
             if isinstance(ftp_res, dict):
                 st.session_state["last_ftp_sync_result"] = ftp_res
                 _errs = ftp_res.get("errors") or []
@@ -134,12 +226,18 @@ def run_ftp_force_reload_ui(st: Any, *, quiet: bool = False) -> None:
                 )
                 return
 
-            status.write("Шаг 2/2: пересборка БД из web/ (5–15 мин при полном скане)…")
-            result = load_all_from_web()
+            status.write("Шаг 2/2: пересборка БД из web/ (оценка появится по ходу)…")
+            _db_cb, _db_finish = make_db_rebuild_progress(st)
+            _t0 = time.monotonic()
+            try:
+                result = load_all_from_web(progress=_db_cb)
+            finally:
+                _db_finish()
             finalize_web_load_session(st, result, quiet=quiet)
             loaded = int(result.get("loaded") or 0)
+            _elapsed = _fmt_duration(time.monotonic() - _t0)
             status.update(
-                label=f"Готово: {loaded} файлов в БД, отчёты обновлены",
+                label=f"Готово за {_elapsed}: {loaded} файлов в БД, отчёты обновлены",
                 state="complete",
             )
 

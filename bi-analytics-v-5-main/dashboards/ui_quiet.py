@@ -321,11 +321,32 @@ def _collapse_filters_expander_on_dashboard_open(st: Any, expander_key: str) -> 
 
 
 def reset_filter_widgets(st: Any, keys: Sequence[str]) -> None:
-    """Сбросить значения виджетов по ключам session_state."""
+    """Сбросить значения виджетов по ключам session_state.
+
+    Ключ, оканчивающийся на ``*`` или ``_``, трактуется как префикс: чистятся все
+    ключи session_state с таким началом. Это нужно для дашбордов с динамическими
+    ключами (напр. Гант: ``gantt_block_filter_v2_{хэш_проекта}``), где точное имя
+    заранее неизвестно.
+    """
     if not hasattr(st, "session_state"):
         return
+    prefixes: list[str] = []
+    exact: list[str] = []
     for k in keys:
-        st.session_state.pop(str(k), None)
+        s = str(k)
+        if s.endswith("*"):
+            prefixes.append(s[:-1])
+        elif s.endswith("_"):
+            prefixes.append(s)
+        else:
+            exact.append(s)
+    for k in exact:
+        st.session_state.pop(k, None)
+    if prefixes:
+        for existing in list(st.session_state.keys()):
+            es = str(existing)
+            if any(es.startswith(p) for p in prefixes):
+                st.session_state.pop(existing, None)
 
 
 def render_filter_chips(st: Any, chips: Optional[Sequence[Chip]]) -> None:

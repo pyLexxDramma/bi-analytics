@@ -21,8 +21,14 @@ WEB_DB_PATH = str(os.environ.get("WEB_DB_PATH", _BASE_DIR / "data" / "web_data.d
 @contextmanager
 def get_web_connection():
     """Контекстный менеджер подключения к web_data.db."""
-    conn = sqlite3.connect(WEB_DB_PATH)
+    conn = sqlite3.connect(WEB_DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
+    # busy_timeout: при параллельной записи (auto-ingest + приложение) читатель
+    # ждёт до 30с вместо мгновенного "database is locked".
+    try:
+        conn.execute("PRAGMA busy_timeout=30000")
+    except Exception:
+        pass
     try:
         yield conn
         conn.commit()
@@ -43,6 +49,13 @@ def init_web_schema():
 
     with get_web_connection() as conn:
         cur = conn.cursor()
+
+        # WAL: читатели (дашборд) не блокируются писателем (пересборка БД) и не
+        # ловят "database is locked". Свойство файла — задаётся один раз.
+        try:
+            cur.execute("PRAGMA journal_mode=WAL")
+        except Exception:
+            pass
 
         # ── Версии загрузки ──────────────────────────────────────────────────
         cur.execute("""

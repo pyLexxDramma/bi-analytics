@@ -6181,7 +6181,7 @@ def _render_deviations_combined_shared_filters(df):
     use_hierarchy = bool(level_col and task_col and task_col in df.columns)
     use_flat_bs = _deviations_use_flat_block_section_task(df)
 
-    with filters_panel(st, panel_key="deviations_combined", expanded=False):
+    with filters_panel(st, panel_key="deviations_combined", expanded=False, reset_keys=["devcombo_"]):
         with filters_selectors(st):
             col1, col2, col3, col4, col5 = st.columns(5, gap="small")
             with col1:
@@ -13166,7 +13166,7 @@ def dashboard_budget_by_period(df):
     hide_adjusted = True
 
     filtered_df = df.copy()
-    with filters_panel(st):
+    with filters_panel(st, reset_keys=["budget_project", "budget_period*", "_bdds_period_scope"]):
         with filters_selectors(st):
             col1, col2, col3, col4, col5 = st.columns(5, gap="small")
 
@@ -14236,7 +14236,7 @@ def dashboard_budget_by_period(df):
 def dashboard_budget_cumulative(df):
 
 
-    with filters_panel(st):
+    with filters_panel(st, reset_keys=["budget_cum_"]):
         with filters_selectors(st):
             col1, col2, col3, col4, col5 = st.columns(5, gap="small")
 
@@ -14653,7 +14653,7 @@ def dashboard_budget_by_section(df):
     with st.expander("Вид отображения", expanded=False):
         suppress_caption("По месяцам или накопительно — переключатель в блоке графика ниже.")
 
-    with filters_panel(st):
+    with filters_panel(st, reset_keys=["budget_section*"]):
         col1, col2, col3 = st.columns(3, gap="small")
 
         with col1:
@@ -15232,7 +15232,7 @@ def dashboard_bdr(df):
     _bdr_cal_start = None
     _bdr_cal_end = None
     # Как БДДС: период / проект / год — список проектов из MSP; год после фильтра по проекту.
-    with filters_panel(st):
+    with filters_panel(st, reset_keys=["bdr_project", "bdr_period*", "_bdr_period_scope"]):
         with filters_selectors(st):
             col1, col2, col3, col4, _col5 = st.columns(5, gap="small")
             with col1:
@@ -25896,6 +25896,7 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
         enrich_gdrs_fact_project_ids,
         gdrs_apply_kontr_contractor_names,
         _gdrs_cached_termination_index,
+        _gdrs_cached_enriched_fact,
         gdrs_filter_fact_by_termination,
         week_end_in_filtered_fact,
         gdrs_week_numbers_in_period,
@@ -25920,30 +25921,18 @@ def dashboard_gdrs(df, vid_locked: str | None = None, *, theme: str | None = Non
     _kontr_flat = [r for recs in _kontr_records.values() for r in recs]
     _extra_source_names = sorted(set(_dog_records.keys()) | set(_spr_records.keys()))
 
+    _dog_sig = _gdrs_dogovor_sources_sig(_version_id)
     with st.spinner("Загрузка ресурсов…"):
-        long_fact = _gdrs_cached_load_resursi(_version_id, _db_mtime)
+        long_fact = _gdrs_cached_enriched_fact(_version_id, _db_mtime, _dog_sig)
     if long_fact is None or long_fact.empty:
         st.error(
             "Нет данных ресурсов в БД (gdrs_fact). Выполните загрузку FTP → web/ → БД."
         )
         return
-    long_fact = apply_unified_project_column(long_fact, "project_name")
+    # _kontr_index нужен ниже для gdrs_contractor_filter_options; сам факт уже обогащён
+    # и отфильтрован по termination внутри кэшированной _gdrs_cached_enriched_fact.
     _kontr_index = load_1c_kontr_index(records=_kontr_flat) if _kontr_flat else None
-    long_fact = enrich_gdrs_fact_contractor_ids(
-        long_fact,
-        dogovor_records=_dog_records,
-        kontr=_kontr_index,
-    )
-    long_fact = enrich_gdrs_fact_project_ids(
-        long_fact,
-        dogovor_records=_dog_records,
-    )
-
-    # Kontr — канонизация имён/ID; факт resursi не режем (все подрядчики из CSV).
-    long_fact = gdrs_apply_kontr_contractor_names(long_fact, _kontr_index)
-    _dog_sig = _gdrs_dogovor_sources_sig(_version_id)
     _term_index = _gdrs_cached_termination_index(_version_id, _db_mtime, _dog_sig)
-    long_fact = gdrs_filter_fact_by_termination(long_fact, _term_index)
 
     _month_options = gdrs_month_select_options(
         long_fact,
@@ -46539,7 +46528,7 @@ def dashboard_project_schedule_chart(df):
             ].copy()
         return d
 
-    with stage_timer("gantt: фильтры UI"), filters_panel(st):
+    with stage_timer("gantt: фильтры UI"), filters_panel(st, reset_keys=["gantt_"]):
         sel_proj = "Все"
         sel_block = "Все"
         sel_building = "Все"

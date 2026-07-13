@@ -104,8 +104,23 @@ def _env_config() -> Dict[str, Any]:
         "port": int(os.environ.get("BI_FTP_PORT", "21") or 21),
         "remote_dir": (os.environ.get("BI_FTP_REMOTE_DIR", "/web") or "/web").strip() or "/web",
         "use_tls": os.environ.get("BI_FTP_TLS", "").lower() in ("1", "true", "yes"),
-        "timeout": float(os.environ.get("BI_FTP_TIMEOUT", "60") or 60),
+        "timeout": float(os.environ.get("BI_FTP_TIMEOUT", "120") or 120),
     }
+
+
+def _excluded_dir_names() -> set[str]:
+    """Имена подпапок FTP, которые не обходим (не содержат данных дашборда).
+
+    По умолчанию — веб-каталоги AI-туннеля (``opencode.*``), которые лежат в /web,
+    но не относятся к аналитике; их рекурсивный обход давал таймауты. Расширить/
+    переопределить: BI_FTP_EXCLUDE_DIRS="dir1,dir2" (регистронезависимо).
+    """
+    default = {"opencode.conall.ru", "opencode.ai.conall.ru"}
+    raw = str(os.environ.get("BI_FTP_EXCLUDE_DIRS", "") or "").strip()
+    if not raw:
+        return {d.lower() for d in default}
+    extra = {p.strip().lower() for p in raw.split(",") if p.strip()}
+    return {d.lower() for d in default} | extra
 
 
 def merge_ftp_config(overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -145,12 +160,45 @@ def _connect(cfg: Dict[str, Any]):
         ftp = FTP()
         ftp.connect(host, port, timeout=timeout)
         ftp.login(user, password)
+    # Passive-режим (PASV) явно: за NAT/файрволом активный режим не проходит,
+    # это частая причина «cwd/LIST timed out» при успешном connect/login.
+    try:
+        ftp.set_pasv(True)
+    except Exception:
+        pass
     # Кириллица в именах: пробуем UTF-8 (многие vsftpd/proftpd отдают UTF8)
     try:
         ftp.encoding = "utf-8"
     except Exception:
         pass
     return ftp
+
+
+def _connect_with_cwd(cfg: Dict[str, Any], remote_dir: str, *, attempts: int = 3, delay_s: float = 3.0):
+    """connect + login + cwd с повтором при таймауте/обрыве.
+
+    FTP-соединение с этим сервером бывает нестабильным (control-канал отвечает
+    не сразу). Один timeout на старте не должен ронять всю загрузку — пробуем
+    ещё раз с закрытием предыдущего сокета.
+    """
+    last_exc: Optional[Exception] = None
+    for attempt in range(max(1, int(attempts))):
+        ftp = None
+        try:
+            ftp = _connect(cfg)
+            ftp.cwd(remote_dir)
+            return ftp
+        except Exception as e:
+            last_exc = e
+            try:
+                if ftp is not None:
+                    ftp.close()
+            except Exception:
+                pass
+            if attempt + 1 >= attempts:
+                break
+            time.sleep(delay_s)
+    raise last_exc if last_exc is not None else RuntimeError("FTP connect failed")
 
 
 def _list_dir(ftp) -> List[Tuple[str, str, Optional[int]]]:
@@ -293,14 +341,42 @@ def _safe_size(ftp, name: str) -> Optional[int]:
             return None
 
 
+def _is_connection_dead_error(exc: Exception | str) -> bool:
+    """421 / обрыв control-канала — сервер закрыл сессию (session/idle limit).
+
+    После такой ошибки текущий FTP-объект непригоден: нужно переподключение,
+    иначе все последующие файлы падают с «Код неизвестен» на дохлом сокете.
+    """
+    if isinstance(exc, (EOFError, ConnectionError, TimeoutError, OSError)):
+        return True
+    s = str(exc)
+    msg = s.lower()
+    return (
+        "421" in s
+        or "closing control connection" in msg
+        or "connection reset" in msg
+        or "broken pipe" in msg
+        or "not connected" in msg
+        or "timed out" in msg
+        or "cannot read from timed out" in msg
+        or "connection refused" in msg
+        or "connection aborted" in msg
+    )
+
+
 def _is_transient_ftp_retrieve_error(exc: Exception | str) -> bool:
-    """550 / file busy — файл на FTP перезаписывается (1С/MSP ~07:00 и каждые ~15 мин)."""
+    """Временная ошибка загрузки: файл занят (550/busy) ИЛИ обрыв соединения (421).
+
+    - 550 / file busy — файл на FTP перезаписывается (1С/MSP ~07:00 и каждые ~15 мин).
+    - 421 / обрыв — сервер разорвал сессию; лечится переподключением.
+    """
     msg = str(exc).lower()
     return (
         "550" in str(exc)
         or "failed to open" in msg
         or "file unavailable" in msg
         or "busy" in msg
+        or _is_connection_dead_error(exc)
     )
 
 
@@ -447,8 +523,7 @@ def sync_ftp_to_web(
             remote_dir = "/" + remote_dir
 
         try:
-            ftp = _connect(cfg)
-            ftp.cwd(remote_dir)
+            ftp = _connect_with_cwd(cfg, remote_dir)
         except Exception as e:
             out["ok"] = False
             out["errors"].append(f"FTP подключение или cwd {remote_dir!r}: {e}")
@@ -469,6 +544,7 @@ def sync_ftp_to_web(
 
             stack: List[str] = [""]
             seen_dirs: set = set()
+            _excluded_dirs = _excluded_dir_names()
             # Для prune_orphans: какие папки реально прочитаны с FTP и какие файлы
             # (rel-путь от web_dir) существуют на сервере.
             dirs_listed_ok: set = set()
@@ -516,7 +592,7 @@ def sync_ftp_to_web(
                             kind = "file"
 
                     if kind == "dir":
-                        if recursive:
+                        if recursive and name.lower() not in _excluded_dirs:
                             sub_rel = (rel + "/" + name).lstrip("/") if rel else name
                             stack.append(sub_rel)
                         continue
@@ -557,14 +633,50 @@ def sync_ftp_to_web(
                         if _is_transient_ftp_retrieve_error(e):
                             out["transient_errors"].append(err_line)
                             pending_retries.append((name, local_path, rel_for_report))
+                            # Обрыв control-канала (421) — переподключаемся на месте,
+                            # иначе все оставшиеся файлы упадут на дохлом сокете.
+                            if _is_connection_dead_error(e):
+                                try:
+                                    try:
+                                        ftp.close()
+                                    except Exception:
+                                        pass
+                                    ftp = _connect_with_cwd(cfg, remote_dir)
+                                    try:
+                                        ftp.voidcmd("TYPE I")
+                                    except Exception:
+                                        pass
+                                    _cur_target = remote_dir.rstrip("/") + (
+                                        ("/" + rel) if rel else ""
+                                    )
+                                    ftp.cwd(_cur_target)
+                                except Exception:
+                                    pass
                         else:
                             out["errors"].append(err_line)
                             out["ok"] = False
 
             if pending_retries:
                 _log(
-                    f"Повторная загрузка {len(pending_retries)} файл(ов) после 550/busy…"
+                    f"Повторная загрузка {len(pending_retries)} файл(ов) после 550/busy/обрыва…"
                 )
+                # После 421 control-канал мёртв — переподключаемся перед вторым проходом.
+                try:
+                    ftp.close()
+                except Exception:
+                    pass
+                try:
+                    ftp = _connect_with_cwd(cfg, remote_dir)
+                    try:
+                        ftp.voidcmd("TYPE I")
+                    except Exception:
+                        pass
+                except Exception as _rc_e:
+                    # Не удалось переподключиться — все pending остаются transient.
+                    for _n, _lp, _rr in pending_retries:
+                        out["transient_errors"].append(format_ftp_file_error(_rr, _rc_e))
+                    ftp = None
+
                 retry_stems = {Path(r[2]).stem for r in pending_retries}
                 final_transient: list[str] = [
                     x
@@ -574,7 +686,23 @@ def sync_ftp_to_web(
                 seen_retry_stems: set[str] = set()
                 for name, local_path, rel_for_report in pending_retries:
                     stem = Path(rel_for_report).stem
+                    if ftp is None:
+                        if stem not in seen_retry_stems:
+                            final_transient.append(
+                                format_ftp_file_error(rel_for_report, "нет соединения")
+                            )
+                            seen_retry_stems.add(stem)
+                        continue
                     try:
+                        # cwd в папку файла: rel_for_report = путь от web_dir (с подпапками).
+                        _parent_rel = os.path.dirname(rel_for_report)
+                        _target = remote_dir.rstrip("/") + (
+                            ("/" + _parent_rel) if _parent_rel else ""
+                        )
+                        try:
+                            ftp.cwd(_target)
+                        except Exception:
+                            pass
                         _retrieve(
                             ftp,
                             name,
@@ -584,6 +712,20 @@ def sync_ftp_to_web(
                         )
                         out["downloaded"].append(rel_for_report)
                     except Exception as e:
+                        # На обрыве во втором проходе — переподключаемся и продолжаем.
+                        if _is_connection_dead_error(e):
+                            try:
+                                try:
+                                    ftp.close()
+                                except Exception:
+                                    pass
+                                ftp = _connect_with_cwd(cfg, remote_dir)
+                                try:
+                                    ftp.voidcmd("TYPE I")
+                                except Exception:
+                                    pass
+                            except Exception:
+                                ftp = None
                         err_line = format_ftp_file_error(rel_for_report, e)
                         if _is_transient_ftp_retrieve_error(e):
                             if stem not in seen_retry_stems:

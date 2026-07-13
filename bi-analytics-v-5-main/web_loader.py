@@ -1780,20 +1780,26 @@ def _register_file(cur, version_id: int, file_info: Dict, file_type: str, rows_c
 
 def _save_rows(cur, version_id: int, file_id: int, file_type: str, source_file: str, df: pd.DataFrame):
     """Сохраняет строки DataFrame в web_data как JSON."""
-    df_copy = df.copy()
-    # Даты → строки
-    for col in df_copy.select_dtypes(include=["datetime64[ns]", "datetimetz"]).columns:
-        df_copy[col] = df_copy[col].astype(str)
-    # Period-колонки → строки (pandas Period не сериализуется в JSON напрямую)
-    for col in df_copy.columns:
-        if df_copy[col].dtype == object:
+    # Колонки, которые нужно привести к строкам перед JSON (datetime / period).
+    _dt_cols = list(df.select_dtypes(include=["datetime64[ns]", "datetimetz"]).columns)
+    _period_cols: list = []
+    for col in df.columns:
+        if df[col].dtype == object or col in _dt_cols:
             continue
         try:
-            # Period dtype
-            if hasattr(df_copy[col], "dt") and hasattr(df_copy[col].dt, "to_timestamp"):
-                df_copy[col] = df_copy[col].astype(str)
+            if hasattr(df[col], "dt") and hasattr(df[col].dt, "to_timestamp"):
+                _period_cols.append(col)
         except Exception:
             pass
+
+    # Копируем только если реально есть что конвертировать — на больших кадрах
+    # (ресурсы/MSP) лишний df.copy() заметно тормозит и ест память.
+    if _dt_cols or _period_cols:
+        df_copy = df.copy()
+        for col in _dt_cols + _period_cols:
+            df_copy[col] = df_copy[col].astype(str)
+    else:
+        df_copy = df
 
     rows = df_copy.where(pd.notnull(df_copy), None).to_dict(orient="records")
     cur.executemany(
@@ -1810,12 +1816,24 @@ def _save_rows(cur, version_id: int, file_id: int, file_type: str, source_file: 
 
 # ── Основная функция загрузки ────────────────────────────────────────────────
 
-def load_all_from_web() -> Dict:
+def load_all_from_web(progress=None) -> Dict:
     """
     Сканирует web/, парсит CSV, сохраняет в SQLite.
     Возвращает {"loaded": N, "skipped": N, "errors": [], "version_id": int|None}
+
+    ``progress`` — необязательный колбэк ``progress(done: int, total: int, name: str)``,
+    вызывается перед обработкой каждого файла. Нужен для прогресс-бара с оценкой ETA
+    в UI (кнопки загрузки). Исключения в колбэке подавляются.
     """
     from data_loader import load_data, ensure_data_session_state, update_session_with_loaded_file
+
+    def _emit_progress(done: int, total: int, name: str) -> None:
+        if progress is None:
+            return
+        try:
+            progress(int(done), int(total), str(name))
+        except Exception:
+            pass
 
     result = {
         "loaded": 0,
@@ -1856,19 +1874,34 @@ def load_all_from_web() -> Dict:
     st.session_state["reference_partner_to_project"] = None
 
     import sqlite3
-    conn = sqlite3.connect(WEB_DB_PATH)
+    conn = sqlite3.connect(WEB_DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
+    # Настройки под массовую загрузку: пересборка идёт одной транзакцией и БД в любой
+    # момент восстановима из web/, поэтому можно ослабить durability ради скорости.
+    #   synchronous=OFF   — не ждём fsync на каждый коммит журнала (главный выигрыш);
+    #   temp_store=MEMORY — временные структуры в RAM;
+    #   cache_size ~128MB — меньше вытеснений страниц при сотнях тысяч INSERT;
+    #   busy_timeout      — параллельный читатель ждёт, а не падает с "database is locked".
+    try:
+        cur.execute("PRAGMA busy_timeout=30000")
+        cur.execute("PRAGMA synchronous=OFF")
+        cur.execute("PRAGMA temp_store=MEMORY")
+        cur.execute("PRAGMA cache_size=-131072")
+    except Exception:
+        pass
 
     try:
         version_id = _create_version(cur, len(files))
         result["version_id"] = version_id
         total_rows = 0
 
-        for file_info in files:
+        _total_files = len(files)
+        for _file_idx, file_info in enumerate(files, start=1):
             filepath: Path = file_info["path"]
             name: str = file_info["name"]
             rel_path: str = file_info["rel_path"]
+            _emit_progress(_file_idx, _total_files, name)
 
             try:
                 # ── Определяем тип файла через ETL-парсер ──────────────────
