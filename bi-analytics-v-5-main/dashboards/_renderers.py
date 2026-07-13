@@ -8701,16 +8701,16 @@ def render_plan_fact_dates_metric_plates(
         max_lbl: str,
         plan_lbl: str,
         fact_lbl: str,
+        dev_lbl: str,
         project_name: str = "",
         *,
         show_proj_col: bool = False,
+        dev_class: str = "",
         max_dev_class: str = "",
     ) -> str:
-        dev_cls = f" {max_dev_class}" if max_dev_class else ""
-        cells: list[str] = [
-            f'<div class="pf-kpi-cell"><div class="pf-kpi-lbl">Максимальное отклонение (дней)</div>'
-            f'<div class="pf-kpi-val{dev_cls}">{html_module.escape(max_lbl)}</div></div>',
-        ]
+        max_cls = f" {max_dev_class}" if max_dev_class else ""
+        dev_cls = f" {dev_class}" if dev_class else ""
+        cells: list[str] = []
         if show_proj_col:
             cells.append(
                 f'<div class="pf-kpi-cell"><div class="pf-kpi-lbl">Проект</div>'
@@ -8723,18 +8723,22 @@ def render_plan_fact_dates_metric_plates(
                 f'<div class="pf-kpi-val">{html_module.escape(plan_lbl)}</div></div>',
                 f'<div class="pf-kpi-cell"><div class="pf-kpi-lbl">Факт окончания проекта</div>'
                 f'<div class="pf-kpi-val">{html_module.escape(fact_lbl)}</div></div>',
+                f'<div class="pf-kpi-cell"><div class="pf-kpi-lbl">Отклонение</div>'
+                f'<div class="pf-kpi-val{dev_cls}">{html_module.escape(dev_lbl)}</div></div>',
+                f'<div class="pf-kpi-cell"><div class="pf-kpi-lbl">Максимальное отклонение (дней)</div>'
+                f'<div class="pf-kpi-val{max_cls}">{html_module.escape(max_lbl)}</div></div>',
             ]
         )
         return f'<div class="pf-kpi-row">{"".join(cells)}</div>'
 
     parts: list[str] = [_plan_fact_kpi_plates_css_for_theme(), '<div class="pf-kpi-wrap">']
 
-    def _row_for_scope(scope: pd.DataFrame) -> tuple[str, str, str, str]:
+    def _row_for_scope(scope: pd.DataFrame) -> tuple[str, str, str, str, str, str]:
         if scope is None or getattr(scope, "empty", True):
-            return nd, nd, nd, ""
+            return nd, nd, nd, nd, "", ""
         ensure_date_columns(scope)
         if "plan end" not in scope.columns or "base end" not in scope.columns:
-            return nd, nd, nd, ""
+            return nd, nd, nd, nd, "", ""
         pe = pd.to_datetime(scope["plan end"], errors="coerce", dayfirst=True)
         be = pd.to_datetime(scope["base end"], errors="coerce", dayfirst=True)
         both = pe.notna() & be.notna()
@@ -8752,21 +8756,28 @@ def render_plan_fact_dates_metric_plates(
             dates_notes_col=dates_notes_col,
             dates_milestone_col=dates_milestone_col,
         )
-        plan_lbl = fact_lbl = nd
-        max_dev_class = ""
+        plan_lbl = fact_lbl = dev_lbl = nd
+        dev_class = max_dev_class = ""
         if row is not None:
-            ps = _plan_fact_zos_format_date_cell(row.get("plan end"))
-            fs = _plan_fact_zos_format_date_cell(row.get("base end"))
-            plan_lbl = ps if str(ps).strip() else nd
-            fact_lbl = fs if str(fs).strip() else nd
+            # План = базовое окончание (base end), факт = окончание (plan end).
+            plan_lbl = _plan_fact_zos_format_date_cell(row.get("base end"))
+            fact_lbl = _plan_fact_zos_format_date_cell(row.get("plan end"))
+            plan_lbl = plan_lbl if str(plan_lbl).strip() else nd
+            fact_lbl = fact_lbl if str(fact_lbl).strip() else nd
             _pe = pd.to_datetime(row.get("plan end"), errors="coerce", dayfirst=True)
             _be = pd.to_datetime(row.get("base end"), errors="coerce", dayfirst=True)
             if pd.notna(_pe) and pd.notna(_be):
+                _dev = (_be - _pe).total_seconds() / 86400.0
+                try:
+                    dev_lbl = str(int(round(float(_dev))))
+                except (TypeError, ValueError):
+                    dev_lbl = nd
+                dev_class = "pf-kpi-val-late" if _dev < 0 else ("pf-kpi-val-early" if _dev == 0 else "")
                 max_dev_class = "pf-kpi-val-late" if _pe > _be else "pf-kpi-val-early"
-        return max_lbl, plan_lbl, fact_lbl, max_dev_class
+        return max_lbl, plan_lbl, fact_lbl, dev_lbl, dev_class, max_dev_class
 
     if scope_df is None or getattr(scope_df, "empty", True):
-        parts.append(_one_row_html(nd, nd, nd, max_dev_class=""))
+        parts.append(_one_row_html(nd, nd, nd, nd, max_dev_class=""))
         parts.append("</div>")
         st.markdown("".join(parts), unsafe_allow_html=True)
         return
@@ -8789,13 +8800,19 @@ def render_plan_fact_dates_metric_plates(
             _sub = w[w["project name"].map(_project_filter_norm_key) == _pk]
             if _sub.empty:
                 continue
-            _max, _plan, _fact, _dev_cls = _row_for_scope(_sub)
+            _max, _plan, _fact, _dev, _dev_cls, _max_dev_cls = _row_for_scope(_sub)
             parts.append(
-                _one_row_html(_max, _plan, _fact, project_name=_pn, show_proj_col=True, max_dev_class=_dev_cls)
+                _one_row_html(
+                    _max, _plan, _fact, _dev,
+                    project_name=_pn, show_proj_col=True,
+                    dev_class=_dev_cls, max_dev_class=_max_dev_cls,
+                )
             )
     else:
-        _max, _plan, _fact, _dev_cls = _row_for_scope(w)
-        parts.append(_one_row_html(_max, _plan, _fact, max_dev_class=_dev_cls))
+        _max, _plan, _fact, _dev, _dev_cls, _max_dev_cls = _row_for_scope(w)
+        parts.append(
+            _one_row_html(_max, _plan, _fact, _dev, dev_class=_dev_cls, max_dev_class=_max_dev_cls)
+        )
 
     parts.append("</div>")
     st.markdown("".join(parts), unsafe_allow_html=True)
@@ -9579,17 +9596,14 @@ def dashboard_plan_fact_dates(df):
     # «Уровень 4». Сохраняем срез ДО фильтра уровня в `_zos_source_df`.
     _zos_source_df = filtered_df.copy()
     st.markdown(_PLAN_FACT_SECTION_COMPACT_CSS, unsafe_allow_html=True)
+    st.subheader(_plan_fact_resolved_metric_task_name())
     render_plan_fact_dates_metric_plates(
         _zos_source_df,
         selected_project=selected_project,
         dates_notes_col=dates_notes_col,
         dates_milestone_col=dates_milestone_col,
     )
-    render_plan_fact_zos_covenant_table(
-        _zos_source_df,
-        dates_notes_col=dates_notes_col,
-        dates_milestone_col=dates_milestone_col,
-    )
+    # Таблица ЗОС ниже дублировала верхние KPI-плашки — скрыта (данные вынесены наверх).
 
     # Фильтр по уровню иерархии (макет: сводные 1–3, верхний 4, детальный 5)
     _mask_lvl_col = plan_fact_dates_outline_col
